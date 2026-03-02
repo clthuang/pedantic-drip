@@ -399,7 +399,7 @@ def stamp_header(
             message=f"Stamp failed: {exc}",
         )
 
-    # Step 8: Determine action
+    # Step 8: Determine action (reached only when no exception was raised)
     action = "created" if existing is None or not existing.get("entity_uuid") else "updated"
     return StampResult(
         filepath=filepath,
