@@ -11,11 +11,15 @@
   "depends_on_features": [
     "002-markdown-entity-file-header-sc"
   ],
-  "lastCompletedPhase": "design",
+  "lastCompletedPhase": "create-plan",
   "phases": {
     "specify": {
       "started": "2026-03-02T22:00:00+08:00",
       "completed": "2026-03-02T23:50:00+08:00"
+    },
+    "create-plan": {
+      "started": "2026-03-03T02:00:00+08:00",
+      "completed": "2026-03-03T02:50:00+08:00"
     },
     "design": {
       "started": "2026-03-03T00:00:00+08:00",
