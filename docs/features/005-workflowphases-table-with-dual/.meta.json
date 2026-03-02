@@ -12,11 +12,22 @@
     "004-status-taxonomy-design-and-sch",
     "001-entity-uuid-primary-key-migrat"
   ],
-  "lastCompletedPhase": "specify",
+  "lastCompletedPhase": "design",
   "phases": {
     "specify": {
       "started": "2026-03-03T08:00:00+08:00",
       "completed": "2026-03-03T08:30:00+08:00"
+    },
+    "design": {
+      "started": "2026-03-03T09:00:00+08:00",
+      "completed": "2026-03-03T09:50:00+08:00",
+      "stages": {
+        "research": { "started": "2026-03-03T09:00:00+08:00", "completed": "2026-03-03T09:05:00+08:00", "skipped": false },
+        "architecture": { "started": "2026-03-03T09:05:00+08:00", "completed": "2026-03-03T09:15:00+08:00" },
+        "interface": { "started": "2026-03-03T09:15:00+08:00", "completed": "2026-03-03T09:20:00+08:00" },
+        "designReview": { "started": "2026-03-03T09:20:00+08:00", "completed": "2026-03-03T09:40:00+08:00", "iterations": 3, "reviewerNotes": [] },
+        "handoffReview": { "started": "2026-03-03T09:40:00+08:00", "completed": "2026-03-03T09:50:00+08:00", "iterations": 2, "approved": true, "reviewerNotes": [] }
+      }
     }
   }
 }
