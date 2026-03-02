@@ -82,6 +82,8 @@ Tests (TDD — write first):
   - test_stamp_result_construction: verify 3 fields
   - test_ingest_result_construction: verify 3 fields
   - test_comparable_field_map_content: verify exactly 2 entries
+  - test_module_imports_resolve: import frontmatter_sync, assert COMPARABLE_FIELD_MAP, ARTIFACT_BASENAME_MAP, ARTIFACT_PHASE_MAP exist
+    Note: catches import path errors at Phase 1.2 boundary rather than deferring to Phase 2.1+
 ```
 
 **AC coverage:** Foundation for all ACs.
@@ -131,7 +133,9 @@ Tests (TDD — write first):
   - test_derive_dir_from_artifact_path_dir: artifact_path is a directory
   - test_derive_dir_from_artifact_path_file: artifact_path is a file → dirname
   - test_derive_dir_from_entity_id: no artifact_path, construct from entity_id
+    Setup: create {tmp_path}/features/{entity_id}/ directory before calling
   - test_derive_dir_none: no artifact_path, constructed path doesn't exist → None
+    Setup: do NOT create directory — os.path.isdir check should fail
 ```
 
 **AC coverage:** Enables AC-14, AC-15 (backfill directory resolution).
@@ -151,7 +155,7 @@ Implementation (per design C2):
   3. Look up entity
   4. Branch on header/entity presence → status
   5. Compare COMPARABLE_FIELD_MAP fields (uuid: case-insensitive, type_id: case-sensitive)
-  6. Catch sqlite3.OperationalError → status="error"
+  6. Catch broad Exception → status="error" (per design TD-4 never-raise contract)
 
 Tests (TDD — write first):
   - test_drift_in_sync: matching header and DB → "in_sync" (AC-1)
@@ -161,7 +165,7 @@ Tests (TDD — write first):
   - test_drift_no_header: no header, no type_id → "no_header" (AC-5)
   - test_drift_header_no_uuid_no_type_id: header without entity_uuid, no type_id → "no_header"
   - test_drift_type_id_different_uuid: type_id provided, file has different UUID → "diverged"
-  - test_drift_db_error: DB raises → "error"
+  - test_drift_db_error: DB raises generic Exception (e.g., RuntimeError) → "error" (tests broad except per TD-4)
 ```
 
 **AC coverage:** AC-1, AC-2, AC-3, AC-4, AC-5.
@@ -182,6 +186,7 @@ Implementation (per design C3):
 
 Tests (TDD — write first):
   - test_stamp_creates_header: no existing frontmatter → "created" (AC-6)
+    Assert: header["created_at"] == db_entity["created_at"] (DB-authoritative, NOT datetime.now())
   - test_stamp_with_project_id_from_metadata: metadata project_id in header (AC-6a)
   - test_stamp_updates_header: existing matching header → "updated" (AC-7)
     Note: created_at preserves file's original value on update (write_frontmatter merge semantics), not the DB value
@@ -210,6 +215,7 @@ Implementation (per design C4):
 
 Tests (TDD — write first):
   - test_ingest_updates_path: valid header → "updated", artifact_path set (AC-11)
+    Assert: DB entity's artifact_path updated; passes UUID to update_entity (validates _resolve_identifier UUID path)
   - test_ingest_no_frontmatter: no header → "skipped" (AC-12)
   - test_ingest_entity_not_found: UUID not in DB → "error" (AC-13)
   - test_ingest_no_uuid_in_header: header without entity_uuid → "skipped"
@@ -229,7 +235,9 @@ Tests (TDD — write first):
 ```
 Implementation (per design C5):
   1. Query db.list_entities(entity_type="feature")
-  2. For each: derive directory, scan for artifact files, stamp each
+  2. For each entity: derive directory, scan for artifact files
+  3. For each file: try stamp_header; on unexpected Exception → error StampResult for that file, continue
+     Note: defensive try/except around individual stamp calls ensures bulk operation never aborts on single failure
 
 Tests (TDD — write first):
   - test_backfill_stamps_all: 3 features × 2 files = 6 stamps (AC-14)
@@ -274,6 +282,7 @@ Implementation (per design C7/TD-7):
 
 Tests (TDD — write first):
   - test_backfill_header_aware_true: stamps headers even after backfill_complete (AC-18)
+    Note: requires Phases 1-4 complete (frontmatter_sync.py must be fully importable)
   - test_backfill_header_aware_false: no headers stamped — backward compat (AC-19)
 ```
 
