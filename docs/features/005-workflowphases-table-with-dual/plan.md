@@ -113,6 +113,7 @@ Write tests:
 - Invalid enum value → ValueError (CHECK constraint)
 - Verify `_UNSET` sentinel behavior: omitted vs None
 - Update with no optional fields (only type_id) → only `updated_at` refreshes, all other fields unchanged (valid no-op that exercises the always-present `updated_at = ?` SET clause)
+- Pass kanban_column=None explicitly → ValueError (NOT NULL constraint violation via IntegrityError catch — validates sentinel vs NOT NULL column interaction)
 
 ### Step 2.4: Test — delete_workflow_phase
 
@@ -235,16 +236,17 @@ Implement:
 2. `STATUS_TO_KANBAN` dict constant
 3. `VALID_MODES` frozenset constant
 4. `_derive_next_phase(last_completed)` → str | None
-5. `_read_meta_json(path)` → dict | None (wraps `_read_json`)
+5. `_read_meta_json(path)` → dict | None (calls co-located `_read_json` in same backfill.py module — no cross-module import needed)
 6. `_resolve_meta_path(entity, artifacts_root)` → str | None
 
 ### Step 3.10: Implement — backfill_workflow_phases
 
 Implement main function:
 1. Query entities (exclude projects)
-2. Per-entity: resolve meta path → read meta → resolve status → derive fields → INSERT OR IGNORE
-3. Track created/skipped/errors counters
-4. Return summary dict
+2. Per-entity: resolve meta path → read meta → resolve status → derive fields → INSERT OR IGNORE via `db._conn.execute()` (per design TD-10 — bypasses CRUD for idempotent bulk insert, acceptable within same package)
+3. For unmapped status values: log warning THEN default to "planned" before mapping via STATUS_TO_KANBAN (two-step: warn → default → map, not silent .get() fallthrough)
+4. Track created/skipped/errors counters
+5. Return summary dict
 
 ### Step 3.11: Verify Phase 3
 
