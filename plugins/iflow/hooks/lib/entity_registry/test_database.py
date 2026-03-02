@@ -2354,3 +2354,42 @@ class TestGetEntityDictContainsBothIdentifiers:
             assert "uuid" in entry
             assert "type_id" in entry
             assert _UUID_V4_RE.match(entry["uuid"])
+
+
+# ---------------------------------------------------------------------------
+# list_entities tests (feature 003, task 1.1a)
+# ---------------------------------------------------------------------------
+
+
+class TestListEntities:
+    """Tests for EntityDatabase.list_entities() method."""
+
+    def test_list_entities_returns_all(self, db: EntityDatabase):
+        """list_entities() with no filter returns all registered entities."""
+        db.register_entity("feature", "f1", "Feature One")
+        db.register_entity("feature", "f2", "Feature Two")
+        db.register_entity("project", "p1", "Project One")
+
+        result = db.list_entities()
+        assert len(result) == 3
+
+    def test_list_entities_filter_by_type(self, db: EntityDatabase):
+        """list_entities(entity_type) returns only matching type."""
+        db.register_entity("feature", "f1", "Feature One")
+        db.register_entity("project", "p1", "Project One")
+
+        result = db.list_entities(entity_type="feature")
+        assert len(result) == 1
+        assert result[0]["entity_type"] == "feature"
+
+    def test_list_entities_empty_db(self, db: EntityDatabase):
+        """list_entities() on empty DB returns empty list."""
+        result = db.list_entities()
+        assert result == []
+
+    def test_list_entities_unknown_type(self, db: EntityDatabase):
+        """list_entities() with non-existent type returns empty list."""
+        db.register_entity("feature", "f1", "Feature One")
+
+        result = db.list_entities(entity_type="brainstorm")
+        assert result == []

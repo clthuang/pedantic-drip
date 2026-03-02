@@ -1,7 +1,8 @@
 {
   "id": "002",
   "slug": "markdown-entity-file-header-sc",
-  "status": "active",
+  "status": "completed",
+  "completed": "2026-03-02T05:21:51+08:00",
   "created": "2026-03-01T16:27:59+08:00",
   "mode": "standard",
   "branch": "feature/002-markdown-entity-file-header-sc",
@@ -11,7 +12,7 @@
   "depends_on_features": [
     "001-entity-uuid-primary-key-migrat"
   ],
-  "lastCompletedPhase": "implement",
+  "lastCompletedPhase": "finish",
   "phases": {
     "specify": {
       "started": "2026-03-02T18:00:00+08:00",
@@ -78,6 +79,10 @@
       "status": "completed",
       "reviewIterations": 6,
       "reviewOutcome": "approved"
+    },
+    "finish": {
+      "status": "completed",
+      "completed": "2026-03-02T05:21:51+08:00"
     }
   }
 }

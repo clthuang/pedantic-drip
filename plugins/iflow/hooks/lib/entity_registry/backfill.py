@@ -30,7 +30,9 @@ BACKLOG_MARKER_PATTERN_2 = r"\*\*Backlog Item:\*\*\s*(\d{5})"
 # ---------------------------------------------------------------------------
 
 
-def run_backfill(db: EntityDatabase, artifacts_root: str) -> None:
+def run_backfill(
+    db: EntityDatabase, artifacts_root: str, header_aware: bool = False
+) -> None:
     """Scan artifact directories and register entities in topological order.
 
     Parameters
@@ -39,8 +41,19 @@ def run_backfill(db: EntityDatabase, artifacts_root: str) -> None:
         An open EntityDatabase to register entities into.
     artifacts_root:
         Root directory containing features/, brainstorms/, projects/, backlog.md.
+    header_aware:
+        If True, stamp frontmatter headers on all discovered artifact files
+        BEFORE the backfill_complete guard check.  This ensures headers are
+        stamped even on already-backfilled databases (spec R26).
+        Defaults to False for backward compatibility (spec R25).
     """
-    # Guard: skip if backfill already completed
+    # Step 1: Header stamping (independent of backfill_complete) — spec R26
+    if header_aware:
+        from entity_registry.frontmatter_sync import backfill_headers
+
+        backfill_headers(db, artifacts_root)
+
+    # Guard: skip entity registration if backfill already completed
     if db.get_metadata("backfill_complete") == "1":
         return
 

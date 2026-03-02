@@ -445,6 +445,29 @@ class EntityDatabase:
         ).fetchone()
         return dict(row) if row else None
 
+    def list_entities(self, entity_type: str | None = None) -> list[dict]:
+        """Return all entities, optionally filtered by entity_type.
+
+        Parameters
+        ----------
+        entity_type:
+            If provided, only return entities of this type.
+            If None, return all entities.
+
+        Returns
+        -------
+        list[dict]
+            List of entity dicts with same keys as ``get_entity``.
+        """
+        if entity_type is not None:
+            cur = self._conn.execute(
+                "SELECT * FROM entities WHERE entity_type = ?",
+                (entity_type,),
+            )
+        else:
+            cur = self._conn.execute("SELECT * FROM entities")
+        return [dict(row) for row in cur.fetchall()]
+
     def get_lineage(
         self,
         type_id: str,
