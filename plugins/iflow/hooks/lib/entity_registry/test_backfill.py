@@ -1399,62 +1399,29 @@ class TestWorkflowPhaseBackfill:
         backfill, leaving later entities without workflow_phases rows.
         derived_from: dimension:error_propagation, spec:D-9
         """
-        # Given two features: one that will succeed, one that will fail
-        # We simulate failure by creating an entity whose type_id is
-        # manually corrupted in the DB to violate FK (entity exists in
-        # entities table but causes an error during INSERT)
+        # Given: two features registered, plus a third added after initial backfill
         db.register_entity("feature", "good-entity", "Good Entity")
         db.register_entity("feature", "another-good", "Another Good")
 
-        # Manually insert a non-feature entity to trigger FK error
-        # by inserting a raw row with type_id that is not in entities
-        # Actually - let's use a simpler approach: register 3 features,
-        # the middle one has an artifact_path that triggers _resolve_meta_path
-        # to read a corrupt file; but that's handled gracefully already.
-        #
-        # A cleaner approach: verify that the "errors" list captures failures
-        # and "created" count reflects successes, even when mixed.
+        # When: backfill runs for both
         result = backfill_workflow_phases(db, str(tmp_path))
 
-        # Both should succeed (no actual error injection needed since
-        # the function handles errors per-entity; let's verify the structure)
+        # Then: both succeed
         assert result["created"] == 2
         assert len(result["errors"]) == 0
 
-        # Now verify with a real error: insert a raw entity row that
-        # references a type_id not present in entities (FK violation in
-        # workflow_phases INSERT). We use raw SQL to create an inconsistent state.
-        import sqlite3 as sqlite3_mod
-        import uuid as uuid_mod
-        test_uuid = str(uuid_mod.uuid4())
-        # Temporarily disable FK to insert inconsistent data
-        db._conn.execute("PRAGMA foreign_keys = OFF")
-        db._conn.execute(
-            "INSERT INTO entities (uuid, type_id, entity_type, entity_id, "
-            "name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (test_uuid, "brainstorm:will-fail", "brainstorm", "will-fail",
-             "Will Fail", "2026-01-01T00:00:00", "2026-01-01T00:00:00"),
-        )
-        db._conn.commit()
-        db._conn.execute("PRAGMA foreign_keys = ON")
-
-        # Delete the entity from entities to create orphan scenario where
-        # workflow_phases INSERT might fail... Actually, the entity exists
-        # so FK won't fail. Let's test what we can: that the errors list
-        # is populated when exceptions occur, and good entities still get rows.
+        # Given: add a third feature, clear workflow_phases, re-backfill
         db.register_entity("feature", "post-error", "Post Error")
-
-        # Remove existing workflow_phases rows to allow re-backfill
         db._conn.execute("DELETE FROM workflow_phases")
         db._conn.commit()
 
+        # When: re-backfill with all three
         result2 = backfill_workflow_phases(db, str(tmp_path))
-        # At minimum, the good features get workflow_phases rows
-        assert result2["created"] >= 3  # good-entity, another-good, post-error
-        wp_good = db.get_workflow_phase("feature:good-entity")
-        wp_post = db.get_workflow_phase("feature:post-error")
-        assert wp_good is not None
-        assert wp_post is not None
+
+        # Then: all three get workflow_phases rows
+        assert result2["created"] >= 3
+        assert db.get_workflow_phase("feature:good-entity") is not None
+        assert db.get_workflow_phase("feature:post-error") is not None
 
     # -------------------------------------------------------------------
     # Deepened: _derive_next_phase boundary — brainstorm (first) phase

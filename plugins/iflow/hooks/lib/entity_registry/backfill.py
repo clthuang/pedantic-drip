@@ -254,7 +254,7 @@ def backfill_workflow_phases(
                 type_id, kanban_column, workflow_phase,
                 last_completed_phase, mode, None, db._now_iso(),
             )
-            cursor = db._conn.execute(insert_sql, params)  # TD-10: bypasses CRUD for INSERT OR IGNORE
+            cursor = db._conn.execute(insert_sql, params)
 
             if cursor.rowcount > 0:
                 created += 1
