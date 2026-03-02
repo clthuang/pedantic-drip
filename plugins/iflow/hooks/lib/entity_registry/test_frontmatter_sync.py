@@ -1,6 +1,9 @@
 """Tests for entity_registry.frontmatter_sync module."""
 from __future__ import annotations
 
+import os
+from unittest.mock import MagicMock
+
 import pytest
 
 
@@ -217,3 +220,412 @@ class TestDeriveFeatureDirectory:
         entity = {"artifact_path": None, "entity_id": "999-nonexistent"}
         result = _derive_feature_directory(entity, str(tmp_path))
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: Core function tests (tasks 3.1a, 3.2a, 3.3a)
+# ---------------------------------------------------------------------------
+
+
+def _write_file(path, content: str) -> None:
+    """Helper: write content to a file, creating parent dirs as needed."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+
+
+def _make_frontmatter(
+    uuid: str, type_id: str, artifact_type: str = "spec", created_at: str = "2025-01-01T00:00:00+00:00"
+) -> str:
+    """Helper: build a valid YAML frontmatter block."""
+    return (
+        "---\n"
+        f"entity_uuid: {uuid}\n"
+        f"entity_type_id: {type_id}\n"
+        f"artifact_type: {artifact_type}\n"
+        f"created_at: {created_at}\n"
+        "---\n"
+    )
+
+
+class TestDetectDrift:
+    """Tests for detect_drift() (task 3.1a)."""
+
+    def test_drift_in_sync(self, tmp_path):
+        """Matching header and DB returns status='in_sync' (AC-1)."""
+        from entity_registry.database import EntityDatabase
+        from entity_registry.frontmatter_sync import detect_drift
+
+        db = EntityDatabase(":memory:")
+        entity_uuid = db.register_entity("feature", "001-test", "Test Feature")
+        entity = db.get_entity("feature:001-test")
+
+        filepath = tmp_path / "spec.md"
+        _write_file(filepath, _make_frontmatter(entity_uuid, "feature:001-test"))
+
+        report = detect_drift(db, str(filepath), "feature:001-test")
+        assert report.status == "in_sync"
+        assert report.mismatches == []
+        assert report.file_fields is not None
+        assert report.db_fields is not None
+
+    def test_drift_file_only(self, tmp_path):
+        """Header with UUID but no DB record returns status='file_only' (AC-2)."""
+        from entity_registry.database import EntityDatabase
+        from entity_registry.frontmatter_sync import detect_drift
+
+        db = EntityDatabase(":memory:")
+        fake_uuid = "12345678-1234-4123-8123-123456789abc"
+        filepath = tmp_path / "spec.md"
+        _write_file(filepath, _make_frontmatter(fake_uuid, "feature:999-nonexistent"))
+
+        report = detect_drift(db, str(filepath))
+        assert report.status == "file_only"
+
+    def test_drift_db_only(self, tmp_path):
+        """No header, type_id provided, DB record exists returns status='db_only' (AC-3)."""
+        from entity_registry.database import EntityDatabase
+        from entity_registry.frontmatter_sync import detect_drift
+
+        db = EntityDatabase(":memory:")
+        db.register_entity("feature", "001-test", "Test Feature")
+
+        filepath = tmp_path / "spec.md"
+        _write_file(filepath, "# Spec\n\nBody content, no frontmatter.\n")
+
+        report = detect_drift(db, str(filepath), "feature:001-test")
+        assert report.status == "db_only"
+        assert report.type_id == "feature:001-test"
+
+    def test_drift_diverged_type_id(self, tmp_path):
+        """Header type_id differs from DB type_id returns status='diverged' (AC-4)."""
+        from entity_registry.database import EntityDatabase
+        from entity_registry.frontmatter_sync import detect_drift
+
+        db = EntityDatabase(":memory:")
+        entity_uuid = db.register_entity("feature", "001-test", "Test Feature")
+
+        # File header has wrong type_id
+        filepath = tmp_path / "spec.md"
+        _write_file(filepath, _make_frontmatter(entity_uuid, "feature:999-wrong"))
+
+        report = detect_drift(db, str(filepath), "feature:001-test")
+        assert report.status == "diverged"
+        assert len(report.mismatches) >= 1
+        type_id_mismatches = [m for m in report.mismatches if m.field == "entity_type_id"]
+        assert len(type_id_mismatches) == 1
+        assert type_id_mismatches[0].file_value == "feature:999-wrong"
+        assert type_id_mismatches[0].db_value == "feature:001-test"
+
+    def test_drift_no_header(self, tmp_path):
+        """No header and no type_id returns status='no_header' (AC-5)."""
+        from entity_registry.database import EntityDatabase
+        from entity_registry.frontmatter_sync import detect_drift
+
+        db = EntityDatabase(":memory:")
+
+        filepath = tmp_path / "spec.md"
+        _write_file(filepath, "# Spec\n\nNo frontmatter here.\n")
+
+        report = detect_drift(db, str(filepath))
+        assert report.status == "no_header"
+
+    def test_drift_header_no_uuid_no_type_id(self, tmp_path):
+        """Header without entity_uuid and no type_id returns 'no_header'."""
+        from entity_registry.database import EntityDatabase
+        from entity_registry.frontmatter_sync import detect_drift
+
+        db = EntityDatabase(":memory:")
+
+        # Header with no entity_uuid field
+        filepath = tmp_path / "spec.md"
+        _write_file(filepath, "---\nartifact_type: spec\n---\n# Content\n")
+
+        report = detect_drift(db, str(filepath))
+        assert report.status == "no_header"
+
+    def test_drift_type_id_different_uuid(self, tmp_path):
+        """type_id provided but file has different UUID returns 'diverged'."""
+        from entity_registry.database import EntityDatabase
+        from entity_registry.frontmatter_sync import detect_drift
+
+        db = EntityDatabase(":memory:")
+        db.register_entity("feature", "001-test", "Test Feature")
+
+        # File has a completely different UUID
+        different_uuid = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        filepath = tmp_path / "spec.md"
+        _write_file(filepath, _make_frontmatter(different_uuid, "feature:001-test"))
+
+        report = detect_drift(db, str(filepath), "feature:001-test")
+        assert report.status == "diverged"
+        uuid_mismatches = [m for m in report.mismatches if m.field == "entity_uuid"]
+        assert len(uuid_mismatches) == 1
+
+    def test_drift_db_error(self, tmp_path):
+        """db.get_entity raising RuntimeError returns status='error' (TD-4)."""
+        from entity_registry.frontmatter_sync import detect_drift
+
+        db = MagicMock()
+        db.get_entity.side_effect = RuntimeError("connection lost")
+
+        filepath = tmp_path / "spec.md"
+        _write_file(filepath, _make_frontmatter(
+            "12345678-1234-4123-8123-123456789abc", "feature:001-test"
+        ))
+
+        report = detect_drift(db, str(filepath), "feature:001-test")
+        assert report.status == "error"
+
+
+class TestStampHeader:
+    """Tests for stamp_header() (task 3.2a)."""
+
+    def test_stamp_creates_header(self, tmp_path):
+        """No existing frontmatter creates a new header, action='created' (AC-6).
+
+        created_at must come from the DB record (DB-authoritative).
+        """
+        from entity_registry.database import EntityDatabase
+        from entity_registry.frontmatter import read_frontmatter
+        from entity_registry.frontmatter_sync import stamp_header
+
+        db = EntityDatabase(":memory:")
+        entity_uuid = db.register_entity("feature", "001-test", "Test Feature")
+        db_entity = db.get_entity("feature:001-test")
+
+        filepath = tmp_path / "spec.md"
+        _write_file(filepath, "# Spec\n\nBody content.\n")
+
+        result = stamp_header(db, str(filepath), "feature:001-test", "spec")
+        assert result.action == "created"
+
+        header = read_frontmatter(str(filepath))
+        assert header is not None
+        assert header["entity_uuid"] == entity_uuid
+        assert header["entity_type_id"] == "feature:001-test"
+        assert header["artifact_type"] == "spec"
+        # DB-authoritative: created_at from DB, NOT datetime.now()
+        assert header["created_at"] == db_entity["created_at"]
+
+    def test_stamp_with_project_id_from_metadata(self, tmp_path):
+        """Metadata project_id appears in the stamped header (AC-6a)."""
+        from entity_registry.database import EntityDatabase
+        from entity_registry.frontmatter import read_frontmatter
+        from entity_registry.frontmatter_sync import stamp_header
+
+        db = EntityDatabase(":memory:")
+        db.register_entity(
+            "feature", "001-test", "Test Feature",
+            metadata={"project_id": "P001"},
+        )
+
+        filepath = tmp_path / "spec.md"
+        _write_file(filepath, "# Spec\n")
+
+        result = stamp_header(db, str(filepath), "feature:001-test", "spec")
+        assert result.action == "created"
+
+        header = read_frontmatter(str(filepath))
+        assert header is not None
+        assert header.get("project_id") == "P001"
+
+    def test_stamp_updates_header(self, tmp_path):
+        """Existing matching header returns action='updated' (AC-7).
+
+        created_at preserves the file's original value (write_frontmatter merge semantics).
+        """
+        from entity_registry.database import EntityDatabase
+        from entity_registry.frontmatter import read_frontmatter
+        from entity_registry.frontmatter_sync import stamp_header
+
+        db = EntityDatabase(":memory:")
+        entity_uuid = db.register_entity("feature", "001-test", "Test Feature")
+
+        # Write initial frontmatter with an older created_at
+        original_created = "2024-01-01T00:00:00+00:00"
+        filepath = tmp_path / "spec.md"
+        _write_file(filepath, _make_frontmatter(entity_uuid, "feature:001-test", "spec", original_created))
+
+        result = stamp_header(db, str(filepath), "feature:001-test", "spec")
+        assert result.action == "updated"
+
+        header = read_frontmatter(str(filepath))
+        assert header is not None
+        assert header["entity_uuid"] == entity_uuid
+        # created_at preserved from the file's original value
+        assert header["created_at"] == original_created
+
+    def test_stamp_mismatch_error(self, tmp_path):
+        """Existing different UUID returns action='error' (AC-8)."""
+        from entity_registry.database import EntityDatabase
+        from entity_registry.frontmatter_sync import stamp_header
+
+        db = EntityDatabase(":memory:")
+        db.register_entity("feature", "001-test", "Test Feature")
+
+        # Write frontmatter with a different UUID
+        different_uuid = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        filepath = tmp_path / "spec.md"
+        _write_file(filepath, _make_frontmatter(different_uuid, "feature:001-test"))
+
+        result = stamp_header(db, str(filepath), "feature:001-test", "spec")
+        assert result.action == "error"
+        assert "mismatch" in result.message.lower() or "UUID" in result.message
+
+    def test_stamp_entity_not_found(self, tmp_path):
+        """Bad type_id returns action='error' (AC-9)."""
+        from entity_registry.database import EntityDatabase
+        from entity_registry.frontmatter_sync import stamp_header
+
+        db = EntityDatabase(":memory:")
+
+        filepath = tmp_path / "spec.md"
+        _write_file(filepath, "# Spec\n")
+
+        result = stamp_header(db, str(filepath), "feature:999-nonexistent", "spec")
+        assert result.action == "error"
+        assert "not found" in result.message.lower()
+
+    def test_stamp_preserves_body(self, tmp_path):
+        """Body content is unchanged after stamp (AC-10)."""
+        from entity_registry.database import EntityDatabase
+        from entity_registry.frontmatter_sync import stamp_header
+
+        db = EntityDatabase(":memory:")
+        db.register_entity("feature", "001-test", "Test Feature")
+
+        body_content = "# Spec\n\nThis is the body.\n\n## Section 2\n\nMore content.\n"
+        filepath = tmp_path / "spec.md"
+        _write_file(filepath, body_content)
+
+        stamp_header(db, str(filepath), "feature:001-test", "spec")
+
+        # Read full file, strip frontmatter, verify body
+        with open(str(filepath)) as f:
+            content = f.read()
+        # Body starts after closing ---
+        parts = content.split("---\n", 2)  # opening, header, rest
+        assert len(parts) == 3
+        assert parts[2] == body_content
+
+    def test_stamp_header_no_uuid_in_existing(self, tmp_path):
+        """Existing header without entity_uuid is treated as 'created'."""
+        from entity_registry.database import EntityDatabase
+        from entity_registry.frontmatter import read_frontmatter
+        from entity_registry.frontmatter_sync import stamp_header
+
+        db = EntityDatabase(":memory:")
+        entity_uuid = db.register_entity("feature", "001-test", "Test Feature")
+
+        # Header without entity_uuid
+        filepath = tmp_path / "spec.md"
+        _write_file(filepath, "---\nartifact_type: spec\n---\n# Content\n")
+
+        result = stamp_header(db, str(filepath), "feature:001-test", "spec")
+        # No entity_uuid in existing = treat as create (no mismatch possible)
+        assert result.action == "created"
+
+        header = read_frontmatter(str(filepath))
+        assert header is not None
+        assert header["entity_uuid"] == entity_uuid
+
+    def test_stamp_build_header_error(self, tmp_path):
+        """Invalid artifact_type causes ValueError, returns action='error'."""
+        from entity_registry.database import EntityDatabase
+        from entity_registry.frontmatter_sync import stamp_header
+
+        db = EntityDatabase(":memory:")
+        db.register_entity("feature", "001-test", "Test Feature")
+
+        filepath = tmp_path / "spec.md"
+        _write_file(filepath, "# Spec\n")
+
+        result = stamp_header(db, str(filepath), "feature:001-test", "INVALID_TYPE")
+        assert result.action == "error"
+
+
+class TestIngestHeader:
+    """Tests for ingest_header() (task 3.3a)."""
+
+    def test_ingest_updates_path(self, tmp_path):
+        """Valid header updates DB artifact_path, action='updated' (AC-11).
+
+        Verifies db.update_entity is called with the UUID string (not type_id),
+        exercising the _resolve_identifier path (spec R17).
+        """
+        from entity_registry.database import EntityDatabase
+        from entity_registry.frontmatter_sync import ingest_header
+
+        db = EntityDatabase(":memory:")
+        entity_uuid = db.register_entity("feature", "001-test", "Test Feature")
+
+        filepath = tmp_path / "spec.md"
+        _write_file(filepath, _make_frontmatter(entity_uuid, "feature:001-test"))
+
+        result = ingest_header(db, str(filepath))
+        assert result.action == "updated"
+
+        # Verify DB was updated
+        entity = db.get_entity("feature:001-test")
+        assert entity is not None
+        assert entity["artifact_path"] == os.path.abspath(str(filepath))
+
+    def test_ingest_no_frontmatter(self, tmp_path):
+        """No header returns action='skipped' (AC-12)."""
+        from entity_registry.database import EntityDatabase
+        from entity_registry.frontmatter_sync import ingest_header
+
+        db = EntityDatabase(":memory:")
+
+        filepath = tmp_path / "spec.md"
+        _write_file(filepath, "# Spec\n\nNo frontmatter.\n")
+
+        result = ingest_header(db, str(filepath))
+        assert result.action == "skipped"
+
+    def test_ingest_entity_not_found(self, tmp_path):
+        """UUID not in DB returns action='error' (AC-13)."""
+        from entity_registry.database import EntityDatabase
+        from entity_registry.frontmatter_sync import ingest_header
+
+        db = EntityDatabase(":memory:")
+        fake_uuid = "12345678-1234-4123-8123-123456789abc"
+
+        filepath = tmp_path / "spec.md"
+        _write_file(filepath, _make_frontmatter(fake_uuid, "feature:999-nonexistent"))
+
+        result = ingest_header(db, str(filepath))
+        assert result.action == "error"
+        assert "not found" in result.message.lower()
+
+    def test_ingest_no_uuid_in_header(self, tmp_path):
+        """Header without entity_uuid returns action='skipped'."""
+        from entity_registry.database import EntityDatabase
+        from entity_registry.frontmatter_sync import ingest_header
+
+        db = EntityDatabase(":memory:")
+
+        filepath = tmp_path / "spec.md"
+        _write_file(filepath, "---\nartifact_type: spec\n---\n# Content\n")
+
+        result = ingest_header(db, str(filepath))
+        assert result.action == "skipped"
+
+    def test_ingest_race_condition(self, tmp_path):
+        """db.update_entity raises ValueError after get_entity succeeds -> action='error'."""
+        from entity_registry.database import EntityDatabase
+        from entity_registry.frontmatter_sync import ingest_header
+
+        db = EntityDatabase(":memory:")
+        entity_uuid = db.register_entity("feature", "001-test", "Test Feature")
+
+        filepath = tmp_path / "spec.md"
+        _write_file(filepath, _make_frontmatter(entity_uuid, "feature:001-test"))
+
+        # Mock update_entity to simulate a race condition (entity deleted between read and write)
+        original_update = db.update_entity
+        db.update_entity = MagicMock(side_effect=ValueError("Entity not found"))
+
+        result = ingest_header(db, str(filepath))
+        assert result.action == "error"
+        assert "disappeared" in result.message.lower() or "entity" in result.message.lower()
