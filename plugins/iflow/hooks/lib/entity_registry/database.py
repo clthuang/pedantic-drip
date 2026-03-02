@@ -233,10 +233,104 @@ def _migrate_to_uuid_pk(conn):
         )
 
 
+def _create_workflow_phases_table(conn: sqlite3.Connection) -> None:
+    """Migration 3: Create workflow_phases table with dual-dimension status model.
+
+    Self-managed transaction (BEGIN IMMEDIATE / COMMIT / ROLLBACK).
+    The outer _migrate() performs a second schema_version upsert + commit
+    after this function returns. Both writes set version=3, so the second
+    write is a no-op at the data level but does execute a SQL statement
+    and commit.
+    """
+    # OUTSIDE try — PRAGMA cannot run inside transaction
+    conn.execute("PRAGMA foreign_keys = OFF")
+    fk_status = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+    if fk_status != 0:
+        raise RuntimeError(
+            "PRAGMA foreign_keys = OFF did not take effect — aborting migration"
+        )
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        # Pre-migration FK check (rollback handled by except block below)
+        fk_violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if fk_violations:
+            raise RuntimeError(
+                f"FK violations found before migration: {fk_violations}"
+            )
+
+        # CREATE TABLE with columns, CHECK constraints, FK, DEFAULT values
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS workflow_phases (
+                type_id                    TEXT PRIMARY KEY
+                                           REFERENCES entities(type_id),
+                workflow_phase             TEXT CHECK(workflow_phase IN (
+                                               'brainstorm','specify','design',
+                                               'create-plan','create-tasks',
+                                               'implement','finish'
+                                           ) OR workflow_phase IS NULL),
+                kanban_column              TEXT NOT NULL DEFAULT 'backlog'
+                                           CHECK(kanban_column IN (
+                                               'backlog','prioritised','wip',
+                                               'agent_review','human_review',
+                                               'blocked','documenting','completed'
+                                           )),
+                last_completed_phase       TEXT CHECK(last_completed_phase IN (
+                                               'brainstorm','specify','design',
+                                               'create-plan','create-tasks',
+                                               'implement','finish'
+                                           ) OR last_completed_phase IS NULL),
+                mode                       TEXT CHECK(mode IN ('standard', 'full')
+                                               OR mode IS NULL),
+                backward_transition_reason TEXT,
+                updated_at                 TEXT NOT NULL
+            )
+        """)
+
+        # Immutability trigger for type_id
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS enforce_immutable_wp_type_id
+            BEFORE UPDATE OF type_id ON workflow_phases
+            BEGIN
+                SELECT RAISE(ABORT, 'workflow_phases.type_id is immutable');
+            END
+        """)
+
+        # Indexes for query performance
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_wp_kanban_column "
+            "ON workflow_phases(kanban_column)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_wp_workflow_phase "
+            "ON workflow_phases(workflow_phase)"
+        )
+
+        # Update schema_version inside transaction (atomic with DDL)
+        conn.execute(
+            "INSERT INTO _metadata(key, value) VALUES('schema_version', '3') "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        # Re-enable FKs — runs on both success and failure
+        conn.execute("PRAGMA foreign_keys = ON")
+
+    # Post-migration FK check — outside try, after commit
+    post_violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+    if post_violations:
+        raise RuntimeError(
+            f"FK violations after migration: {post_violations}"
+        )
+
+
 # Ordered mapping of version -> migration function.
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _create_initial_schema,
     2: _migrate_to_uuid_pk,
+    3: _create_workflow_phases_table,
 }
 
 
