@@ -79,6 +79,7 @@ The entity registry database has no concept of workflow phase state or kanban pr
 ### D-8: .meta.json path resolution
 **Decision:** Backfill locates `.meta.json` files using the `artifact_path` column from the `entities` table. For each entity with a non-NULL `artifact_path`, the backfill looks for `{artifact_path}/.meta.json`. If `artifact_path` is NULL, the backfill falls back to the convention `{artifacts_root}/{entity_type}s/{entity_id}/.meta.json` (e.g., `docs/features/005-workflowphases-table-with-dual/.meta.json`). If `.meta.json` does not exist for an entity, backfill proceeds with default values (`workflow_phase=NULL`, `mode=NULL`, `last_completed_phase=NULL`).
 **Rationale:** The `entities` table already stores `artifact_path` for most entities. Falling back to convention-based paths handles legacy entries. Missing `.meta.json` is a normal condition for brainstorm/backlog entities.
+**Note:** For brainstorm and backlog entities, `artifact_path` points to a file (not a directory), so the `{artifact_path}/.meta.json` lookup will not find a file. This is expected — per D-5 and D-9, these entities proceed with defaults. The path resolution logic is primarily relevant to feature entities, which are the only entity type with per-entity `.meta.json` files.
 
 ### D-9: .meta.json error tolerance
 **Decision:** Backfill handles `.meta.json` gracefully:
@@ -119,6 +120,7 @@ The entity registry database has no concept of workflow phase state or kanban pr
 - Then the INSERT/UPDATE fails with IntegrityError
 - And valid values are: `brainstorm`, `specify`, `design`, `create-plan`, `create-tasks`, `implement`, `finish`, NULL
 - And valid `kanban_column` values are: `backlog`, `prioritised`, `wip`, `agent_review`, `human_review`, `blocked`, `documenting`, `completed`
+- And valid `last_completed_phase` values are: `brainstorm`, `specify`, `design`, `create-plan`, `create-tasks`, `implement`, `finish`, NULL (same as `workflow_phase`)
 - And valid `mode` values are: `standard`, `full`, NULL
 
 ### AC-5: CRUD — Create
