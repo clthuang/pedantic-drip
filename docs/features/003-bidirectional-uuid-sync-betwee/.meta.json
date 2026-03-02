@@ -11,11 +11,22 @@
   "depends_on_features": [
     "002-markdown-entity-file-header-sc"
   ],
-  "lastCompletedPhase": "specify",
+  "lastCompletedPhase": "design",
   "phases": {
     "specify": {
       "started": "2026-03-02T22:00:00+08:00",
       "completed": "2026-03-02T23:50:00+08:00"
+    },
+    "design": {
+      "started": "2026-03-03T00:00:00+08:00",
+      "completed": "2026-03-03T01:20:00+08:00",
+      "stages": {
+        "research": { "started": "2026-03-03T00:00:00+08:00", "completed": "2026-03-03T00:05:00+08:00", "skipped": false },
+        "architecture": { "started": "2026-03-03T00:05:00+08:00", "completed": "2026-03-03T00:15:00+08:00" },
+        "interface": { "started": "2026-03-03T00:15:00+08:00", "completed": "2026-03-03T00:20:00+08:00" },
+        "designReview": { "started": "2026-03-03T00:20:00+08:00", "completed": "2026-03-03T01:10:00+08:00", "iterations": 3, "reviewerNotes": [] },
+        "handoffReview": { "started": "2026-03-03T01:15:00+08:00", "completed": "2026-03-03T01:20:00+08:00", "iterations": 2, "approved": true, "reviewerNotes": [] }
+      }
     }
   }
 }
