@@ -81,7 +81,7 @@ Note: PRD FR-14 specifies reconciliation between `.meta.json` and DB state — t
 - R14: `ingest_header(db: EntityDatabase, filepath: str) -> IngestResult` — Read frontmatter from `filepath` and update the corresponding DB record. This is the "file is authoritative" direction.
 - R15: `IngestResult` is a dataclass with: `filepath: str`, `action: str` (one of: `"updated"`, `"skipped"`, `"error"`), `message: str`
 - R16: The DB record is looked up by `entity_uuid` from the file header (via `db.get_entity(entity_uuid)`). If no record is found, return `action="error"` (we don't create DB records from file headers alone — registration is the DB's responsibility).
-- R17: Updatable fields from file→DB: only `artifact_path` (set to the absolute filepath). The `entity_type`, `entity_id`, `type_id`, `uuid`, `name`, `status`, and `created_at` are immutable — never modified by ingest. The frontmatter fields `feature_id`, `feature_slug`, `project_id`, `phase` are informational decorations derived from the DB during stamp — they do NOT flow back into the DB during ingest (the DB is the canonical source for these values). The update is performed via `db.update_entity(entity_uuid, artifact_path=filepath)` — note: `update_entity`'s first parameter is named `type_id` but accepts UUIDs via dual-read resolver (feature 001 R18).
+- R17: Updatable fields from file→DB: only `artifact_path` (set to the absolute filepath). The `entity_type`, `entity_id`, `type_id`, `uuid`, `name`, `status`, and `created_at` are immutable — never modified by ingest. The frontmatter fields `feature_id`, `feature_slug`, `project_id`, `phase` are informational decorations derived from the DB during stamp — they do NOT flow back into the DB during ingest (the DB is the canonical source for these values). The update is performed via `db.update_entity(entity_uuid, artifact_path=filepath)` — note: `update_entity`'s first parameter is named `type_id` but accepts UUIDs via the `_resolve_identifier` dual-read resolver (feature 001 R18; confirmed in `database.py` line 122). The designer should verify this call path against `database.py` to confirm UUID acceptance.
 - R18: If the file has no frontmatter, return `action="skipped"`.
 
 ### Bulk Migration (Backfill Headers)
@@ -177,7 +177,7 @@ Design decisions that remain open: internal helper decomposition, logging verbos
 
 ### Backfill Integration
 
-- AC-18: `run_backfill(db, artifacts_root, header_aware=True)` stamps headers on artifact files after entity registration
+- AC-18: `run_backfill(db, artifacts_root, header_aware=True)` stamps headers on artifact files regardless of `backfill_complete` state, and entity registration proceeds normally after (per R26 ordering)
 - AC-19: `run_backfill(db, artifacts_root)` (default) does NOT stamp headers — backward compatible
 
 ### CLI
