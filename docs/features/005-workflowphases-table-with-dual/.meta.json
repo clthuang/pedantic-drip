@@ -1,0 +1,21 @@
+{
+  "id": "005",
+  "slug": "workflowphases-table-with-dual",
+  "status": "active",
+  "created": "2026-03-01T16:27:59+08:00",
+  "mode": "standard",
+  "branch": "feature/005-workflowphases-table-with-dual",
+  "project_id": "P001",
+  "module": "Status Taxonomy",
+  "brainstorm_source": "docs/brainstorms/20260301-144141-iflow-arch-evolution.prd.md",
+  "depends_on_features": [
+    "004-status-taxonomy-design-and-sch",
+    "001-entity-uuid-primary-key-migrat"
+  ],
+  "lastCompletedPhase": null,
+  "phases": {
+    "specify": {
+      "started": "2026-03-03T08:00:00+08:00"
+    }
+  }
+}
