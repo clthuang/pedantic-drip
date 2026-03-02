@@ -12,10 +12,11 @@
     "004-status-taxonomy-design-and-sch",
     "001-entity-uuid-primary-key-migrat"
   ],
-  "lastCompletedPhase": null,
+  "lastCompletedPhase": "specify",
   "phases": {
     "specify": {
-      "started": "2026-03-03T08:00:00+08:00"
+      "started": "2026-03-03T08:00:00+08:00",
+      "completed": "2026-03-03T08:30:00+08:00"
     }
   }
 }
