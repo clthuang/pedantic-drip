@@ -797,3 +797,686 @@ class TestBackfillCompleteMarker:
             assert db.get_metadata("backfill_complete") == "1"
         finally:
             db.close()
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: Workflow Phase Backfill tests (Tasks 3.1 - 3.8, 3.3b)
+# ---------------------------------------------------------------------------
+
+from entity_registry.backfill import (
+    STATUS_TO_KANBAN,
+    PHASE_SEQUENCE,
+    VALID_MODES,
+    _derive_next_phase,
+    _resolve_meta_path,
+    backfill_workflow_phases,
+)
+
+
+class TestWorkflowPhaseBackfill:
+    """Tests for workflow phase backfill constants, helpers, and main function."""
+
+    @pytest.fixture
+    def db(self, tmp_path):
+        """Create an EntityDatabase with workflow_phases table."""
+        db = EntityDatabase(str(tmp_path / "test.db"))
+        yield db
+        db.close()
+
+    # -------------------------------------------------------------------
+    # Task 3.1: STATUS_TO_KANBAN mapping
+    # -------------------------------------------------------------------
+
+    def test_status_planned_maps_to_backlog(self):
+        assert STATUS_TO_KANBAN["planned"] == "backlog"
+
+    def test_status_active_maps_to_wip(self):
+        assert STATUS_TO_KANBAN["active"] == "wip"
+
+    def test_status_completed_maps_to_completed(self):
+        assert STATUS_TO_KANBAN["completed"] == "completed"
+
+    def test_status_abandoned_maps_to_completed(self):
+        assert STATUS_TO_KANBAN["abandoned"] == "completed"
+
+    def test_unmapped_status_not_in_dict(self):
+        """Unmapped statuses like 'draft' should not be in STATUS_TO_KANBAN."""
+        assert "draft" not in STATUS_TO_KANBAN
+
+    # -------------------------------------------------------------------
+    # Task 3.2: _derive_next_phase
+    # -------------------------------------------------------------------
+
+    def test_derive_next_phase_specify_returns_design(self):
+        assert _derive_next_phase("specify") == "design"
+
+    def test_derive_next_phase_design_returns_create_plan(self):
+        assert _derive_next_phase("design") == "create-plan"
+
+    def test_derive_next_phase_implement_returns_finish(self):
+        assert _derive_next_phase("implement") == "finish"
+
+    def test_derive_next_phase_finish_returns_finish(self):
+        """Terminal state: finish -> finish per spec D-5."""
+        assert _derive_next_phase("finish") == "finish"
+
+    def test_derive_next_phase_none_returns_none(self):
+        assert _derive_next_phase(None) is None
+
+    def test_derive_next_phase_unrecognized_returns_none(self):
+        assert _derive_next_phase("unknown-phase") is None
+
+    # -------------------------------------------------------------------
+    # Task 3.3: _resolve_meta_path
+    # -------------------------------------------------------------------
+
+    def test_resolve_meta_path_directory_artifact_path(self, tmp_path, db):
+        """Entity with artifact_path directory -> {artifact_path}/.meta.json."""
+        feat_dir = tmp_path / "features" / "001-test"
+        feat_dir.mkdir(parents=True)
+        meta_file = feat_dir / ".meta.json"
+        meta_file.write_text('{"id": "001"}')
+
+        entity = {"artifact_path": str(feat_dir), "entity_type": "feature", "entity_id": "001-test"}
+        result = _resolve_meta_path(entity, str(tmp_path))
+        assert result == str(meta_file)
+
+    def test_resolve_meta_path_file_artifact_path_falls_through(self, tmp_path, db):
+        """Entity with file artifact_path (e.g., .prd.md) -> derived path doesn't exist, falls to convention."""
+        prd_file = tmp_path / "brainstorms" / "test.prd.md"
+        prd_file.parent.mkdir(parents=True)
+        prd_file.write_text("content")
+        # No .meta.json at {prd_file}/.meta.json (doesn't make sense for a file)
+        # No convention path either
+
+        entity = {"artifact_path": str(prd_file), "entity_type": "brainstorm", "entity_id": "test"}
+        result = _resolve_meta_path(entity, str(tmp_path))
+        assert result is None
+
+    def test_resolve_meta_path_convention_fallback(self, tmp_path, db):
+        """Entity without artifact_path -> convention fallback path."""
+        feat_dir = tmp_path / "features" / "002-slug"
+        feat_dir.mkdir(parents=True)
+        meta_file = feat_dir / ".meta.json"
+        meta_file.write_text('{"id": "002"}')
+
+        entity = {"artifact_path": None, "entity_type": "feature", "entity_id": "002-slug"}
+        result = _resolve_meta_path(entity, str(tmp_path))
+        assert result == str(meta_file)
+
+    def test_resolve_meta_path_neither_exists_returns_none(self, tmp_path, db):
+        """No artifact_path, no convention path -> returns None."""
+        entity = {"artifact_path": None, "entity_type": "feature", "entity_id": "nonexistent"}
+        result = _resolve_meta_path(entity, str(tmp_path))
+        assert result is None
+
+    # -------------------------------------------------------------------
+    # Task 3.3b: 3-tier status resolution fallback chain
+    # -------------------------------------------------------------------
+
+    def test_status_from_meta_json_when_db_status_null(self, tmp_path, db):
+        """Entity with .meta.json status=active and entities.status=NULL -> uses active."""
+        feat_dir = tmp_path / "features" / "s1-test"
+        feat_dir.mkdir(parents=True)
+        (feat_dir / ".meta.json").write_text('{"status": "active", "lastCompletedPhase": "specify"}')
+
+        db.register_entity("feature", "s1-test", "Status Test 1", artifact_path=str(feat_dir))
+        backfill_workflow_phases(db, str(tmp_path))
+
+        wp = db.get_workflow_phase("feature:s1-test")
+        assert wp is not None
+        assert wp["kanban_column"] == "wip"  # active -> wip
+
+    def test_status_from_db_when_no_meta_json(self, tmp_path, db):
+        """Entity with no .meta.json and entities.status=completed -> uses completed."""
+        db.register_entity("feature", "s2-test", "Status Test 2", status="completed")
+        backfill_workflow_phases(db, str(tmp_path))
+
+        wp = db.get_workflow_phase("feature:s2-test")
+        assert wp is not None
+        assert wp["kanban_column"] == "completed"
+
+    def test_status_defaults_to_planned_when_no_source(self, tmp_path, db):
+        """Entity with no .meta.json and entities.status=NULL -> defaults to planned -> backlog."""
+        db.register_entity("feature", "s3-test", "Status Test 3")
+        backfill_workflow_phases(db, str(tmp_path))
+
+        wp = db.get_workflow_phase("feature:s3-test")
+        assert wp is not None
+        assert wp["kanban_column"] == "backlog"
+
+    def test_meta_json_status_wins_over_db_status(self, tmp_path, db):
+        """Entity with .meta.json status=active AND entities.status=completed -> .meta.json wins."""
+        feat_dir = tmp_path / "features" / "s4-test"
+        feat_dir.mkdir(parents=True)
+        (feat_dir / ".meta.json").write_text('{"status": "active", "lastCompletedPhase": "design"}')
+
+        db.register_entity("feature", "s4-test", "Status Test 4",
+                           status="completed", artifact_path=str(feat_dir))
+        backfill_workflow_phases(db, str(tmp_path))
+
+        wp = db.get_workflow_phase("feature:s4-test")
+        assert wp is not None
+        assert wp["kanban_column"] == "wip"  # active -> wip (not completed)
+
+    def test_unmapped_status_defaults_to_planned_with_warning(self, tmp_path, db, caplog):
+        """Unmapped status (e.g., 'draft') -> default to planned -> backlog, with warning."""
+        import logging
+
+        db.register_entity("feature", "s5-test", "Status Test 5", status="draft")
+
+        with caplog.at_level(logging.WARNING):
+            backfill_workflow_phases(db, str(tmp_path))
+
+        wp = db.get_workflow_phase("feature:s5-test")
+        assert wp is not None
+        assert wp["kanban_column"] == "backlog"
+        # Should have warning about unmapped status
+        assert any("draft" in record.message for record in caplog.records)
+
+    # -------------------------------------------------------------------
+    # Task 3.4: Integration tests for backfill feature entities
+    # -------------------------------------------------------------------
+
+    def test_backfill_active_feature_with_meta(self, tmp_path, db):
+        """Active feature with .meta.json -> correct kanban, workflow_phase, last_completed_phase, mode."""
+        feat_dir = tmp_path / "features" / "f1-active"
+        feat_dir.mkdir(parents=True)
+        (feat_dir / ".meta.json").write_text(json.dumps({
+            "status": "active",
+            "lastCompletedPhase": "design",
+            "mode": "standard",
+        }))
+
+        db.register_entity("feature", "f1-active", "Active Feature",
+                           artifact_path=str(feat_dir), status="active")
+        result = backfill_workflow_phases(db, str(tmp_path))
+
+        wp = db.get_workflow_phase("feature:f1-active")
+        assert wp is not None
+        assert wp["kanban_column"] == "wip"  # active -> wip
+        assert wp["workflow_phase"] == "create-plan"  # next after design
+        assert wp["last_completed_phase"] == "design"
+        assert wp["mode"] == "standard"
+        assert result["created"] >= 1
+
+    def test_backfill_completed_feature(self, tmp_path, db):
+        """Completed feature -> kanban=completed, workflow_phase=finish."""
+        feat_dir = tmp_path / "features" / "f2-done"
+        feat_dir.mkdir(parents=True)
+        (feat_dir / ".meta.json").write_text(json.dumps({
+            "status": "completed",
+            "lastCompletedPhase": "finish",
+            "mode": "standard",
+        }))
+
+        db.register_entity("feature", "f2-done", "Done Feature",
+                           artifact_path=str(feat_dir), status="completed")
+        backfill_workflow_phases(db, str(tmp_path))
+
+        wp = db.get_workflow_phase("feature:f2-done")
+        assert wp is not None
+        assert wp["kanban_column"] == "completed"
+        assert wp["workflow_phase"] == "finish"  # finish -> finish (terminal)
+
+    def test_backfill_planned_feature(self, tmp_path, db):
+        """Planned feature -> kanban=backlog, workflow_phase=NULL."""
+        db.register_entity("feature", "f3-planned", "Planned Feature", status="planned")
+        backfill_workflow_phases(db, str(tmp_path))
+
+        wp = db.get_workflow_phase("feature:f3-planned")
+        assert wp is not None
+        assert wp["kanban_column"] == "backlog"
+        assert wp["workflow_phase"] is None
+
+    def test_backfill_abandoned_feature_with_last_phase(self, tmp_path, db):
+        """Abandoned feature with lastCompletedPhase -> kanban=completed, workflow_phase=next-after-last."""
+        feat_dir = tmp_path / "features" / "f4-abandoned"
+        feat_dir.mkdir(parents=True)
+        (feat_dir / ".meta.json").write_text(json.dumps({
+            "status": "abandoned",
+            "lastCompletedPhase": "create-tasks",
+            "mode": "full",
+        }))
+
+        db.register_entity("feature", "f4-abandoned", "Abandoned Feature",
+                           artifact_path=str(feat_dir), status="abandoned")
+        backfill_workflow_phases(db, str(tmp_path))
+
+        wp = db.get_workflow_phase("feature:f4-abandoned")
+        assert wp is not None
+        assert wp["kanban_column"] == "completed"  # abandoned -> completed
+        assert wp["workflow_phase"] == "implement"  # next after create-tasks
+        assert wp["last_completed_phase"] == "create-tasks"
+        assert wp["mode"] == "full"
+
+    # -------------------------------------------------------------------
+    # Task 3.5: Brainstorm/backlog entities
+    # -------------------------------------------------------------------
+
+    def test_backfill_brainstorm_entity(self, tmp_path, db):
+        """Brainstorm entity -> workflow_phase=NULL, kanban_column from status."""
+        db.register_entity("brainstorm", "bs-test", "Test Brainstorm", status="active")
+        backfill_workflow_phases(db, str(tmp_path))
+
+        wp = db.get_workflow_phase("brainstorm:bs-test")
+        assert wp is not None
+        assert wp["workflow_phase"] is None
+        assert wp["kanban_column"] == "wip"  # active -> wip
+
+    def test_backfill_backlog_entity(self, tmp_path, db):
+        """Backlog entity -> workflow_phase=NULL, kanban_column from status."""
+        db.register_entity("backlog", "bl-test", "Test Backlog", status="planned")
+        backfill_workflow_phases(db, str(tmp_path))
+
+        wp = db.get_workflow_phase("backlog:bl-test")
+        assert wp is not None
+        assert wp["workflow_phase"] is None
+        assert wp["kanban_column"] == "backlog"  # planned -> backlog
+
+    # -------------------------------------------------------------------
+    # Task 3.6: Project entity exclusion
+    # -------------------------------------------------------------------
+
+    def test_backfill_excludes_project_entities(self, tmp_path, db):
+        """Project entities should NOT get workflow_phases rows."""
+        db.register_entity("project", "p1", "Test Project")
+        db.register_entity("feature", "f1", "Test Feature")
+        backfill_workflow_phases(db, str(tmp_path))
+
+        assert db.get_workflow_phase("project:p1") is None
+        assert db.get_workflow_phase("feature:f1") is not None  # feature gets a row
+
+    # -------------------------------------------------------------------
+    # Task 3.7: Backfill idempotency
+    # -------------------------------------------------------------------
+
+    def test_backfill_idempotent_second_run_no_creates(self, tmp_path, db):
+        """Second backfill run creates 0, skips all, no errors."""
+        db.register_entity("feature", "f1", "Feature 1")
+        result1 = backfill_workflow_phases(db, str(tmp_path))
+        assert result1["created"] >= 1
+
+        result2 = backfill_workflow_phases(db, str(tmp_path))
+        assert result2["created"] == 0
+        assert result2["skipped"] >= 1
+        assert len(result2["errors"]) == 0
+
+    def test_backfill_idempotent_existing_rows_not_modified(self, tmp_path, db):
+        """Existing rows should not be modified on re-run."""
+        db.register_entity("feature", "f1", "Feature 1")
+        backfill_workflow_phases(db, str(tmp_path))
+        wp1 = db.get_workflow_phase("feature:f1")
+
+        backfill_workflow_phases(db, str(tmp_path))
+        wp2 = db.get_workflow_phase("feature:f1")
+
+        assert wp1["updated_at"] == wp2["updated_at"]
+
+    def test_backfill_returns_dict_with_required_keys(self, tmp_path, db):
+        """Return dict has created/skipped/errors keys."""
+        result = backfill_workflow_phases(db, str(tmp_path))
+        assert "created" in result
+        assert "skipped" in result
+        assert "errors" in result
+        assert isinstance(result["created"], int)
+        assert isinstance(result["skipped"], int)
+        assert isinstance(result["errors"], list)
+
+    # -------------------------------------------------------------------
+    # Task 3.8: .meta.json error tolerance
+    # -------------------------------------------------------------------
+
+    def test_backfill_malformed_json_uses_defaults(self, tmp_path, db, caplog):
+        """Malformed .meta.json -> warning logged, defaults used."""
+        import logging
+
+        feat_dir = tmp_path / "features" / "bad-json"
+        feat_dir.mkdir(parents=True)
+        (feat_dir / ".meta.json").write_text("{ not valid json }")
+
+        db.register_entity("feature", "bad-json", "Bad JSON", artifact_path=str(feat_dir))
+
+        with caplog.at_level(logging.WARNING):
+            result = backfill_workflow_phases(db, str(tmp_path))
+
+        wp = db.get_workflow_phase("feature:bad-json")
+        assert wp is not None
+        assert wp["kanban_column"] == "backlog"  # defaults applied
+        assert len(result["errors"]) == 0  # not an error, just a warning
+        # AC-18: warning must be logged for malformed JSON
+        assert any("Malformed JSON" in rec.message for rec in caplog.records), (
+            f"Expected 'Malformed JSON' warning in log, got: {[r.message for r in caplog.records]}"
+        )
+
+    def test_backfill_missing_meta_json_uses_defaults(self, tmp_path, db):
+        """Missing .meta.json -> defaults used, no error."""
+        db.register_entity("feature", "no-meta", "No Meta")
+        result = backfill_workflow_phases(db, str(tmp_path))
+
+        wp = db.get_workflow_phase("feature:no-meta")
+        assert wp is not None
+        assert wp["kanban_column"] == "backlog"
+        assert len(result["errors"]) == 0
+
+    def test_backfill_invalid_last_completed_phase_null_with_warning(self, tmp_path, db, caplog):
+        """Invalid lastCompletedPhase -> NULL, warning logged."""
+        import logging
+
+        feat_dir = tmp_path / "features" / "bad-phase"
+        feat_dir.mkdir(parents=True)
+        (feat_dir / ".meta.json").write_text(json.dumps({
+            "status": "active",
+            "lastCompletedPhase": "not-a-valid-phase",
+            "mode": "standard",
+        }))
+
+        db.register_entity("feature", "bad-phase", "Bad Phase", artifact_path=str(feat_dir))
+
+        with caplog.at_level(logging.WARNING):
+            backfill_workflow_phases(db, str(tmp_path))
+
+        wp = db.get_workflow_phase("feature:bad-phase")
+        assert wp is not None
+        assert wp["last_completed_phase"] is None  # invalid -> NULL
+        assert wp["workflow_phase"] is None  # can't derive from invalid
+
+    def test_backfill_invalid_mode_null_with_warning(self, tmp_path, db, caplog):
+        """Invalid mode -> NULL, warning logged."""
+        import logging
+
+        feat_dir = tmp_path / "features" / "bad-mode"
+        feat_dir.mkdir(parents=True)
+        (feat_dir / ".meta.json").write_text(json.dumps({
+            "status": "active",
+            "lastCompletedPhase": "design",
+            "mode": "invalid-mode",
+        }))
+
+        db.register_entity("feature", "bad-mode", "Bad Mode", artifact_path=str(feat_dir))
+
+        with caplog.at_level(logging.WARNING):
+            backfill_workflow_phases(db, str(tmp_path))
+
+        wp = db.get_workflow_phase("feature:bad-mode")
+        assert wp is not None
+        assert wp["mode"] is None  # invalid -> NULL
+        assert wp["last_completed_phase"] == "design"  # this is valid
+
+    # -------------------------------------------------------------------
+    # Deepened: Abandoned vs Completed distinguishability (D-5)
+    # -------------------------------------------------------------------
+
+    def test_abandoned_and_completed_distinguishable_in_same_db(
+        self, tmp_path, db,
+    ):
+        """Abandoned and completed features both map to kanban_column='completed'
+        but MUST be distinguishable by workflow_phase (finish vs non-finish).
+
+        Anticipate: If the abandoned case incorrectly sets workflow_phase='finish',
+        abandoned and completed features would be indistinguishable.
+        derived_from: spec:D-5, dimension:adversarial
+        """
+        # Given a completed feature (lastCompletedPhase=finish)
+        done_dir = tmp_path / "features" / "comp-feat"
+        done_dir.mkdir(parents=True)
+        (done_dir / ".meta.json").write_text(json.dumps({
+            "status": "completed",
+            "lastCompletedPhase": "finish",
+        }))
+        db.register_entity("feature", "comp-feat", "Completed",
+                           artifact_path=str(done_dir), status="completed")
+
+        # And an abandoned feature (lastCompletedPhase=design, stopped mid-work)
+        aband_dir = tmp_path / "features" / "aband-feat"
+        aband_dir.mkdir(parents=True)
+        (aband_dir / ".meta.json").write_text(json.dumps({
+            "status": "abandoned",
+            "lastCompletedPhase": "design",
+        }))
+        db.register_entity("feature", "aband-feat", "Abandoned",
+                           artifact_path=str(aband_dir), status="abandoned")
+
+        # When backfill runs
+        backfill_workflow_phases(db, str(tmp_path))
+
+        # Then both have kanban_column='completed'
+        completed = db.get_workflow_phase("feature:comp-feat")
+        abandoned = db.get_workflow_phase("feature:aband-feat")
+        assert completed["kanban_column"] == "completed"
+        assert abandoned["kanban_column"] == "completed"
+
+        # But they are distinguishable by workflow_phase
+        assert completed["workflow_phase"] == "finish"
+        assert abandoned["workflow_phase"] == "create-plan"  # next after design
+        assert completed["workflow_phase"] != abandoned["workflow_phase"]
+
+    # -------------------------------------------------------------------
+    # Deepened: Active feature with finish as lastCompletedPhase
+    # -------------------------------------------------------------------
+
+    def test_backfill_active_feature_with_finish_as_last_completed_phase(
+        self, tmp_path, db,
+    ):
+        """Active feature where lastCompletedPhase=finish: workflow_phase should
+        be 'finish' (terminal state per D-5), not None.
+
+        Anticipate: _derive_next_phase("finish") returns "finish" (terminal),
+        but then status=="completed" override also sets "finish". For status=="active"
+        with lastCompletedPhase=="finish", the implementation must still derive
+        "finish" without the completed override. A bug would return None if
+        _derive_next_phase tried to find idx+1 past the end.
+        derived_from: spec:D-5, dimension:boundary_values
+        """
+        feat_dir = tmp_path / "features" / "active-finish"
+        feat_dir.mkdir(parents=True)
+        (feat_dir / ".meta.json").write_text(json.dumps({
+            "status": "active",
+            "lastCompletedPhase": "finish",
+        }))
+        db.register_entity("feature", "active-finish", "Active But Finish",
+                           artifact_path=str(feat_dir), status="active")
+        backfill_workflow_phases(db, str(tmp_path))
+
+        wp = db.get_workflow_phase("feature:active-finish")
+        assert wp is not None
+        assert wp["kanban_column"] == "wip"  # active -> wip
+        assert wp["workflow_phase"] == "finish"  # terminal: finish -> finish
+        assert wp["last_completed_phase"] == "finish"
+
+    # -------------------------------------------------------------------
+    # Deepened: Active feature with NULL lastCompletedPhase
+    # -------------------------------------------------------------------
+
+    def test_backfill_active_feature_with_null_last_completed_phase(
+        self, tmp_path, db,
+    ):
+        """Active feature without lastCompletedPhase in .meta.json:
+        workflow_phase should be NULL (can't derive next).
+
+        Anticipate: If backfill defaults to a phase instead of None when
+        lastCompletedPhase is missing, active features with unknown progress
+        would be misrepresented.
+        derived_from: spec:D-5, dimension:boundary_values
+        """
+        feat_dir = tmp_path / "features" / "active-nolcp"
+        feat_dir.mkdir(parents=True)
+        (feat_dir / ".meta.json").write_text(json.dumps({
+            "status": "active",
+        }))
+        db.register_entity("feature", "active-nolcp", "Active No LCP",
+                           artifact_path=str(feat_dir), status="active")
+        backfill_workflow_phases(db, str(tmp_path))
+
+        wp = db.get_workflow_phase("feature:active-nolcp")
+        assert wp is not None
+        assert wp["kanban_column"] == "wip"  # active -> wip
+        assert wp["workflow_phase"] is None  # NULL lastCompletedPhase -> None
+        assert wp["last_completed_phase"] is None
+
+    # -------------------------------------------------------------------
+    # Deepened: Abandoned without lastCompletedPhase
+    # -------------------------------------------------------------------
+
+    def test_backfill_abandoned_feature_without_last_completed_phase(
+        self, tmp_path, db,
+    ):
+        """Abandoned feature without lastCompletedPhase: workflow_phase=NULL,
+        kanban_column='completed'.
+
+        Anticipate: If backfill assigns a default phase to abandoned entities
+        without lastCompletedPhase, they would appear to have made progress
+        they never made. Per D-5: "abandoned -> NULL if lastCompletedPhase
+        is unavailable."
+        derived_from: spec:D-5, dimension:adversarial
+        """
+        feat_dir = tmp_path / "features" / "aband-nolcp"
+        feat_dir.mkdir(parents=True)
+        (feat_dir / ".meta.json").write_text(json.dumps({
+            "status": "abandoned",
+        }))
+        db.register_entity("feature", "aband-nolcp", "Abandoned No LCP",
+                           artifact_path=str(feat_dir), status="abandoned")
+        backfill_workflow_phases(db, str(tmp_path))
+
+        wp = db.get_workflow_phase("feature:aband-nolcp")
+        assert wp is not None
+        assert wp["kanban_column"] == "completed"  # abandoned -> completed
+        assert wp["workflow_phase"] is None  # no lastCompletedPhase -> NULL
+        assert wp["last_completed_phase"] is None
+
+    # -------------------------------------------------------------------
+    # Deepened: Backfill does NOT overwrite manually-updated rows
+    # -------------------------------------------------------------------
+
+    def test_backfill_does_not_overwrite_manually_updated_rows(
+        self, tmp_path, db,
+    ):
+        """INSERT OR IGNORE: if a row was manually updated after first backfill,
+        re-running backfill should NOT overwrite the manual changes.
+
+        Anticipate: If backfill uses INSERT OR REPLACE instead of INSERT OR
+        IGNORE, manually updated rows would be reverted to backfill defaults.
+        derived_from: spec:D-4, dimension:mutation_mindset
+        """
+        # Given a feature entity
+        db.register_entity("feature", "manual-edit", "Manual Edit Test")
+
+        # And first backfill creates a row
+        backfill_workflow_phases(db, str(tmp_path))
+        wp_before = db.get_workflow_phase("feature:manual-edit")
+        assert wp_before is not None
+        assert wp_before["kanban_column"] == "backlog"
+
+        # And someone manually updates it
+        db.update_workflow_phase(
+            "feature:manual-edit",
+            kanban_column="wip",
+            workflow_phase="implement",
+        )
+
+        # When backfill runs again
+        result = backfill_workflow_phases(db, str(tmp_path))
+
+        # Then the manually-updated values are preserved (INSERT OR IGNORE)
+        wp_after = db.get_workflow_phase("feature:manual-edit")
+        assert wp_after["kanban_column"] == "wip"  # manual, not reverted
+        assert wp_after["workflow_phase"] == "implement"  # manual, not reverted
+        assert result["skipped"] >= 1  # row was skipped, not replaced
+
+    # -------------------------------------------------------------------
+    # Deepened: Single entity failure doesn't abort remaining
+    # -------------------------------------------------------------------
+
+    def test_backfill_single_entity_failure_does_not_abort_others(
+        self, tmp_path, db,
+    ):
+        """If one entity causes an exception during backfill, processing
+        continues for remaining entities.
+
+        Anticipate: If the try/except inside the per-entity loop is missing
+        or catches too narrowly, a single failure would abort the entire
+        backfill, leaving later entities without workflow_phases rows.
+        derived_from: dimension:error_propagation, spec:D-9
+        """
+        # Given: two features registered, plus a third added after initial backfill
+        db.register_entity("feature", "good-entity", "Good Entity")
+        db.register_entity("feature", "another-good", "Another Good")
+
+        # When: backfill runs for both
+        result = backfill_workflow_phases(db, str(tmp_path))
+
+        # Then: both succeed
+        assert result["created"] == 2
+        assert len(result["errors"]) == 0
+
+        # Given: add a third feature, clear workflow_phases, re-backfill
+        db.register_entity("feature", "post-error", "Post Error")
+        db._conn.execute("DELETE FROM workflow_phases")
+        db._conn.commit()
+
+        # When: re-backfill with all three
+        result2 = backfill_workflow_phases(db, str(tmp_path))
+
+        # Then: all three get workflow_phases rows
+        assert result2["created"] >= 3
+        assert db.get_workflow_phase("feature:good-entity") is not None
+        assert db.get_workflow_phase("feature:post-error") is not None
+
+    # -------------------------------------------------------------------
+    # Deepened: _derive_next_phase boundary — brainstorm (first) phase
+    # -------------------------------------------------------------------
+
+    def test_derive_next_phase_brainstorm_returns_specify(self):
+        """brainstorm is the first phase; next should be specify.
+
+        Anticipate: If PHASE_SEQUENCE[0] is not correctly handled,
+        the index calculation might underflow or return wrong phase.
+        derived_from: dimension:boundary_values, spec:D-5
+        """
+        assert _derive_next_phase("brainstorm") == "specify"
+
+    def test_derive_next_phase_create_plan_returns_create_tasks(self):
+        """create-plan -> create-tasks (hyphenated phase names).
+
+        Anticipate: If phase sequence matching uses partial string match
+        instead of exact, "create-plan" might match "create-tasks" or vice versa.
+        derived_from: dimension:boundary_values
+        """
+        assert _derive_next_phase("create-plan") == "create-tasks"
+
+    def test_derive_next_phase_create_tasks_returns_implement(self):
+        """create-tasks -> implement.
+        derived_from: dimension:boundary_values
+        """
+        assert _derive_next_phase("create-tasks") == "implement"
+
+    # -------------------------------------------------------------------
+    # Deepened: PHASE_SEQUENCE and VALID_MODES constants
+    # -------------------------------------------------------------------
+
+    def test_phase_sequence_has_exactly_seven_elements(self):
+        """PHASE_SEQUENCE must have exactly 7 elements matching spec.
+
+        Anticipate: If a phase is accidentally added or removed, the
+        derive_next_phase logic and CHECK constraints would silently diverge.
+        derived_from: dimension:mutation_mindset, spec:D-5
+        """
+        assert len(PHASE_SEQUENCE) == 7
+        assert PHASE_SEQUENCE == (
+            "brainstorm", "specify", "design",
+            "create-plan", "create-tasks", "implement", "finish",
+        )
+
+    def test_valid_modes_exactly_two(self):
+        """VALID_MODES must be exactly {'standard', 'full'}.
+        derived_from: dimension:mutation_mindset, spec:AC-4
+        """
+        assert VALID_MODES == frozenset({"standard", "full"})
+
+    def test_status_to_kanban_has_exactly_four_entries(self):
+        """STATUS_TO_KANBAN must map exactly 4 statuses.
+        derived_from: dimension:mutation_mindset, spec:D-5
+        """
+        assert len(STATUS_TO_KANBAN) == 4
+        assert set(STATUS_TO_KANBAN.keys()) == {"planned", "active", "completed", "abandoned"}

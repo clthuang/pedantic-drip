@@ -75,7 +75,7 @@ plugins/iflow/.venv/bin/python -m pytest plugins/iflow/mcp/test_memory_server.py
 # Run MCP bootstrap wrapper tests
 bash plugins/iflow/mcp/test_run_memory_server.sh
 
-# Run entity registry tests (database, backfill, server helpers, frontmatter, frontmatter_sync — 436+ tests)
+# Run entity registry tests (database, backfill, server helpers, frontmatter, frontmatter_sync — 545+ tests)
 plugins/iflow/.venv/bin/python -m pytest plugins/iflow/hooks/lib/entity_registry/ -v
 
 # Run entity server bootstrap wrapper tests

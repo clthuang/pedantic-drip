@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.7.0] - 2026-03-03
+
+### Added
+- `workflow_phases` database table with dual-dimension status model (workflow_phase + kanban_column) per ADR-004
+- CRUD methods `create_workflow_phase` and `update_workflow_phase` with `_UNSET` sentinel pattern for partial updates
+- Backfill function with 3-tier status resolution (entity status, .meta.json status, defaults) and dual-dimension derivation
+- 196 new tests for workflow phases (migration, CRUD, backfill) bringing entity registry total to 545+
+
 ## [4.6.0] - 2026-03-02
 
 ### Added

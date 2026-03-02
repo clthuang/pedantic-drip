@@ -8,11 +8,14 @@ from __future__ import annotations
 
 import glob
 import json
+import logging
 import os
 import re
 import sys
 
 from entity_registry.database import EntityDatabase
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -23,6 +26,74 @@ ENTITY_SCAN_ORDER = ["backlog", "brainstorm", "project", "feature"]
 # Regex patterns for backlog marker extraction from brainstorm PRDs
 BACKLOG_MARKER_PATTERN_1 = r"\*Source:\s*Backlog\s*#(\d{5})\*"
 BACKLOG_MARKER_PATTERN_2 = r"\*\*Backlog Item:\*\*\s*(\d{5})"
+
+PHASE_SEQUENCE: tuple[str, ...] = (
+    "brainstorm", "specify", "design", "create-plan",
+    "create-tasks", "implement", "finish",
+)
+
+STATUS_TO_KANBAN: dict[str, str] = {
+    "planned": "backlog",
+    "active": "wip",
+    "completed": "completed",
+    "abandoned": "completed",
+}
+
+VALID_MODES: frozenset[str] = frozenset({"standard", "full"})
+
+
+# ---------------------------------------------------------------------------
+# Workflow phase helpers (private)
+# ---------------------------------------------------------------------------
+
+
+def _derive_next_phase(last_completed: str | None) -> str | None:
+    """Return the phase after last_completed, or None if finish/unrecognized.
+
+    - None input -> None
+    - "finish" -> "finish" (terminal state per D-5)
+    - Recognized phase -> next phase in PHASE_SEQUENCE
+    - Unrecognized -> None
+    """
+    if last_completed is None:
+        return None
+    if last_completed == "finish":
+        return "finish"
+    try:
+        idx = PHASE_SEQUENCE.index(last_completed)
+    except ValueError:
+        return None
+    if idx + 1 < len(PHASE_SEQUENCE):
+        return PHASE_SEQUENCE[idx + 1]
+    return None
+
+
+def _resolve_meta_path(
+    entity: dict, artifacts_root: str
+) -> str | None:
+    """Resolve .meta.json path from artifact_path or convention fallback.
+
+    Returns None for entities without artifact_path and no matching
+    convention directory (expected for brainstorms/backlogs without
+    artifact directories).
+    """
+    # Priority 1: artifact_path based lookup
+    artifact_path = entity.get("artifact_path")
+    if artifact_path is not None:
+        candidate = os.path.join(artifact_path, ".meta.json")
+        if os.path.isfile(candidate):
+            return candidate
+
+    # Priority 2: convention fallback
+    entity_type = entity["entity_type"]
+    entity_id = entity["entity_id"]
+    convention = os.path.join(
+        artifacts_root, f"{entity_type}s", entity_id, ".meta.json"
+    )
+    if os.path.isfile(convention):
+        return convention
+
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -69,6 +140,134 @@ def run_backfill(
 
     # Mark backfill as complete
     db.set_metadata("backfill_complete", "1")
+
+
+def backfill_workflow_phases(
+    db: EntityDatabase,
+    artifacts_root: str,
+) -> dict:
+    """Backfill workflow_phases rows for all eligible entities.
+
+    Reads entity data from DB + .meta.json files. Creates rows
+    using INSERT OR IGNORE for idempotency.
+
+    Parameters
+    ----------
+    db:
+        Open EntityDatabase instance.
+    artifacts_root:
+        Root directory containing feature/brainstorm/backlog artifacts.
+
+    Returns
+    -------
+    dict
+        {"created": int, "skipped": int, "errors": list[str]}
+    """
+    created = 0
+    skipped = 0
+    errors: list[str] = []
+
+    # Query all entities via public API, exclude projects in Python
+    all_entities = db.list_entities()
+    entities = [e for e in all_entities if e["entity_type"] != "project"]
+
+    for entity in entities:
+        try:
+            type_id = entity["type_id"]
+            entity_type = entity["entity_type"]
+
+            # Resolve .meta.json
+            meta_path = _resolve_meta_path(entity, artifacts_root)
+            meta = None
+            if meta_path is not None:
+                meta = _read_json(meta_path)
+                # Distinguish "malformed JSON" from "file not found" (D-9, AC-18)
+                if meta is None and os.path.isfile(meta_path):
+                    logger.warning(
+                        "Malformed JSON in %s for entity %s, using defaults",
+                        meta_path, type_id,
+                    )
+
+            # 3-tier status resolution
+            status = None
+            if meta is not None and "status" in meta:
+                status = meta["status"]
+            if status is None and entity["status"] is not None:
+                status = entity["status"]
+            if status is None:
+                status = "planned"
+
+            # Validate status against STATUS_TO_KANBAN
+            if status not in STATUS_TO_KANBAN:
+                logger.warning(
+                    "Unmapped status %r for entity %s, defaulting to 'planned'",
+                    status, type_id,
+                )
+                status = "planned"
+
+            kanban_column = STATUS_TO_KANBAN[status]
+
+            # Feature-specific: derive workflow_phase, last_completed_phase, mode
+            workflow_phase = None
+            last_completed_phase = None
+            mode = None
+
+            if entity_type == "feature":
+                # last_completed_phase from .meta.json
+                if meta is not None:
+                    last_completed_phase = meta.get("lastCompletedPhase")
+                # Validate last_completed_phase
+                if last_completed_phase is not None and last_completed_phase not in PHASE_SEQUENCE:
+                    logger.warning(
+                        "Unrecognized lastCompletedPhase %r for entity %s, setting to None",
+                        last_completed_phase, type_id,
+                    )
+                    last_completed_phase = None
+
+                # Derive workflow_phase
+                workflow_phase = _derive_next_phase(last_completed_phase)
+
+                # Special case: completed status -> workflow_phase = finish
+                if status == "completed":
+                    workflow_phase = "finish"
+
+                # mode from .meta.json
+                if meta is not None:
+                    mode = meta.get("mode")
+                # Validate mode
+                if mode is not None and mode not in VALID_MODES:
+                    logger.warning(
+                        "Invalid mode %r for entity %s, setting to None",
+                        mode, type_id,
+                    )
+                    mode = None
+
+            # INSERT OR IGNORE for idempotency (TD-10: bypasses CRUD)
+            insert_sql = (
+                "INSERT OR IGNORE INTO workflow_phases "
+                "(type_id, kanban_column, workflow_phase, "
+                "last_completed_phase, mode, "
+                "backward_transition_reason, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)"
+            )
+            params = (
+                type_id, kanban_column, workflow_phase,
+                last_completed_phase, mode, None, db._now_iso(),
+            )
+            cursor = db._conn.execute(insert_sql, params)
+
+            if cursor.rowcount > 0:
+                created += 1
+            else:
+                skipped += 1
+
+        except Exception as exc:
+            errors.append(f"Error processing {entity.get('type_id', '?')}: {exc}")
+
+    # Commit once at end (TD-10: direct connection access for bulk insert)
+    db._conn.commit()
+
+    return {"created": created, "skipped": skipped, "errors": errors}
 
 
 # ---------------------------------------------------------------------------

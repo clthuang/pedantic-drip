@@ -317,9 +317,9 @@ class TestMigration2:
         _migrate_to_uuid_pk(conn)
         conn.close()
 
-        # Now open it with EntityDatabase — should NOT re-run migration
+        # Now open it with EntityDatabase — runs pending migrations (3+)
         db = EntityDatabase(db_path)
-        assert db.get_metadata("schema_version") == "2"
+        assert db.get_metadata("schema_version") == "3"
 
         # Schema should be intact
         cur = db._conn.execute("PRAGMA table_info(entities)")
@@ -464,7 +464,7 @@ class TestSchemaCreation:
 
 
 class TestTriggers:
-    def test_has_eight_triggers(self, db: EntityDatabase):
+    def test_has_nine_triggers(self, db: EntityDatabase):
         cur = db._conn.execute(
             "SELECT name FROM sqlite_master WHERE type='trigger' ORDER BY name"
         )
@@ -474,6 +474,7 @@ class TestTriggers:
             "enforce_immutable_entity_type",
             "enforce_immutable_type_id",
             "enforce_immutable_uuid",
+            "enforce_immutable_wp_type_id",
             "enforce_no_self_parent",
             "enforce_no_self_parent_update",
             "enforce_no_self_parent_uuid_insert",
@@ -483,7 +484,7 @@ class TestTriggers:
 
 
 class TestIndexes:
-    def test_has_four_indexes(self, db: EntityDatabase):
+    def test_has_six_indexes(self, db: EntityDatabase):
         cur = db._conn.execute(
             "SELECT name FROM sqlite_master WHERE type='index' "
             "AND name NOT LIKE 'sqlite_%' ORDER BY name"
@@ -494,6 +495,8 @@ class TestIndexes:
             "idx_parent_type_id",
             "idx_parent_uuid",
             "idx_status",
+            "idx_wp_kanban_column",
+            "idx_wp_workflow_phase",
         ]
         assert index_names == expected
 
@@ -529,8 +532,8 @@ class TestMetadata:
         db.set_metadata("foo", "baz")
         assert db.get_metadata("foo") == "baz"
 
-    def test_schema_version_is_2(self, db: EntityDatabase):
-        assert db.get_metadata("schema_version") == "2"
+    def test_schema_version_is_3(self, db: EntityDatabase):
+        assert db.get_metadata("schema_version") == "3"
 
 
 # ---------------------------------------------------------------------------
@@ -2296,7 +2299,7 @@ class TestMigrationIdempotency:
         entity = db2.get_entity("project:p1")
         assert entity is not None
         assert entity["uuid"] == p1_uuid
-        assert db2.get_metadata("schema_version") == "2"
+        assert db2.get_metadata("schema_version") == "3"
         db2.close()
 
 
@@ -2393,3 +2396,960 @@ class TestListEntities:
 
         result = db.list_entities(entity_type="brainstorm")
         assert result == []
+
+
+# ---------------------------------------------------------------------------
+# Migration 3: workflow_phases table tests (Tasks 1.1 - 1.5)
+# ---------------------------------------------------------------------------
+
+
+class TestMigration3:
+    """Tests for migration 3: workflow_phases table creation.
+
+    These tests verify the schema, indexes, triggers, constraints, FK
+    enforcement, and fresh-DB safety for the workflow_phases table defined
+    in ADR-004. They use the ``db`` fixture which constructs an
+    EntityDatabase and runs all registered migrations.
+    """
+
+    # -- Task 1.1: Migration creates table with correct schema (AC-1) ------
+
+    def test_workflow_phases_table_exists(self, db: EntityDatabase):
+        """workflow_phases table should exist after migration 3."""
+        cur = db._conn.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name='workflow_phases'"
+        )
+        assert cur.fetchone() is not None
+
+    def test_workflow_phases_has_7_columns(self, db: EntityDatabase):
+        """workflow_phases should have exactly 7 columns."""
+        cur = db._conn.execute("PRAGMA table_info(workflow_phases)")
+        columns = cur.fetchall()
+        assert len(columns) == 7
+
+    def test_workflow_phases_column_names(self, db: EntityDatabase):
+        """workflow_phases columns should match the DDL specification."""
+        cur = db._conn.execute("PRAGMA table_info(workflow_phases)")
+        col_names = [row[1] for row in cur.fetchall()]
+        expected = [
+            "type_id",
+            "workflow_phase",
+            "kanban_column",
+            "last_completed_phase",
+            "mode",
+            "backward_transition_reason",
+            "updated_at",
+        ]
+        assert col_names == expected
+
+    def test_type_id_is_primary_key(self, db: EntityDatabase):
+        """type_id should be the PRIMARY KEY of workflow_phases."""
+        cur = db._conn.execute("PRAGMA table_info(workflow_phases)")
+        col_map = {row[1]: row for row in cur.fetchall()}
+        assert col_map["type_id"][5] == 1  # pk flag
+
+    def test_kanban_column_not_null_default_backlog(self, db: EntityDatabase):
+        """kanban_column should be NOT NULL with DEFAULT 'backlog'."""
+        cur = db._conn.execute("PRAGMA table_info(workflow_phases)")
+        col_map = {row[1]: row for row in cur.fetchall()}
+        # PRAGMA table_info columns: cid, name, type, notnull, dflt_value, pk
+        kanban = col_map["kanban_column"]
+        assert kanban[3] == 1  # notnull flag
+        assert kanban[4] == "'backlog'"  # default value
+
+    def test_updated_at_not_null(self, db: EntityDatabase):
+        """updated_at should be NOT NULL."""
+        cur = db._conn.execute("PRAGMA table_info(workflow_phases)")
+        col_map = {row[1]: row for row in cur.fetchall()}
+        assert col_map["updated_at"][3] == 1  # notnull flag
+
+    def test_nullable_columns(self, db: EntityDatabase):
+        """workflow_phase, last_completed_phase, mode, backward_transition_reason
+        should be nullable (notnull = 0)."""
+        cur = db._conn.execute("PRAGMA table_info(workflow_phases)")
+        col_map = {row[1]: row for row in cur.fetchall()}
+        for col_name in (
+            "workflow_phase",
+            "last_completed_phase",
+            "mode",
+            "backward_transition_reason",
+        ):
+            assert col_map[col_name][3] == 0, (
+                f"{col_name} should be nullable (notnull=0)"
+            )
+
+    def test_fk_type_id_references_entities(self, db: EntityDatabase):
+        """type_id should have a FK reference to entities(type_id)."""
+        cur = db._conn.execute("PRAGMA foreign_key_list(workflow_phases)")
+        fk_rows = cur.fetchall()
+        assert len(fk_rows) >= 1
+        # Find the FK targeting entities.type_id
+        fk_found = False
+        for fk in fk_rows:
+            # PRAGMA foreign_key_list columns: id, seq, table, from, to, ...
+            if fk[2] == "entities" and fk[3] == "type_id" and fk[4] == "type_id":
+                fk_found = True
+                break
+        assert fk_found, (
+            "Expected FK from workflow_phases.type_id -> entities.type_id"
+        )
+
+    def test_schema_version_is_3(self, db: EntityDatabase):
+        """After all migrations, schema_version should be 3."""
+        assert db.get_metadata("schema_version") == "3"
+
+    # -- Task 1.2: Migration creates indexes and trigger (AC-2) ------------
+
+    def test_index_idx_wp_kanban_column_exists(self, db: EntityDatabase):
+        """Index idx_wp_kanban_column should exist on workflow_phases."""
+        cur = db._conn.execute("PRAGMA index_list(workflow_phases)")
+        index_names = [row[1] for row in cur.fetchall()]
+        assert "idx_wp_kanban_column" in index_names
+
+    def test_index_idx_wp_workflow_phase_exists(self, db: EntityDatabase):
+        """Index idx_wp_workflow_phase should exist on workflow_phases."""
+        cur = db._conn.execute("PRAGMA index_list(workflow_phases)")
+        index_names = [row[1] for row in cur.fetchall()]
+        assert "idx_wp_workflow_phase" in index_names
+
+    def test_trigger_enforce_immutable_wp_type_id_exists(
+        self, db: EntityDatabase
+    ):
+        """Trigger enforce_immutable_wp_type_id should exist."""
+        cur = db._conn.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='trigger' AND name='enforce_immutable_wp_type_id'"
+        )
+        assert cur.fetchone() is not None
+
+    def test_trigger_prevents_type_id_update(self, db: EntityDatabase):
+        """Updating type_id on workflow_phases should raise IntegrityError."""
+        # First, insert an entity so FK is satisfied
+        db.register_entity("feature", "trig-test", "Trigger Test")
+        now = EntityDatabase._now_iso()
+        db._conn.execute(
+            "INSERT INTO workflow_phases "
+            "(type_id, kanban_column, updated_at) "
+            "VALUES (?, 'backlog', ?)",
+            ("feature:trig-test", now),
+        )
+        db._conn.commit()
+
+        # Attempt to UPDATE type_id -- trigger should block this
+        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+            db._conn.execute(
+                "UPDATE workflow_phases SET type_id = 'feature:other' "
+                "WHERE type_id = 'feature:trig-test'"
+            )
+
+    # -- Task 1.3: CHECK constraints enforce enums (AC-4) ------------------
+
+    def test_invalid_workflow_phase_rejected(self, db: EntityDatabase):
+        """Invalid workflow_phase value should raise IntegrityError."""
+        db.register_entity("feature", "chk-wp", "Check WP")
+        now = EntityDatabase._now_iso()
+        with pytest.raises(sqlite3.IntegrityError):
+            db._conn.execute(
+                "INSERT INTO workflow_phases "
+                "(type_id, workflow_phase, kanban_column, updated_at) "
+                "VALUES (?, 'invalid-phase', 'backlog', ?)",
+                ("feature:chk-wp", now),
+            )
+
+    def test_invalid_kanban_column_rejected(self, db: EntityDatabase):
+        """Invalid kanban_column value should raise IntegrityError."""
+        db.register_entity("feature", "chk-kc", "Check KC")
+        now = EntityDatabase._now_iso()
+        with pytest.raises(sqlite3.IntegrityError):
+            db._conn.execute(
+                "INSERT INTO workflow_phases "
+                "(type_id, kanban_column, updated_at) "
+                "VALUES (?, 'invalid-column', ?)",
+                ("feature:chk-kc", now),
+            )
+
+    def test_invalid_last_completed_phase_rejected(self, db: EntityDatabase):
+        """Invalid last_completed_phase value should raise IntegrityError."""
+        db.register_entity("feature", "chk-lcp", "Check LCP")
+        now = EntityDatabase._now_iso()
+        with pytest.raises(sqlite3.IntegrityError):
+            db._conn.execute(
+                "INSERT INTO workflow_phases "
+                "(type_id, kanban_column, last_completed_phase, updated_at) "
+                "VALUES (?, 'backlog', 'not-a-phase', ?)",
+                ("feature:chk-lcp", now),
+            )
+
+    def test_invalid_mode_rejected(self, db: EntityDatabase):
+        """Invalid mode value should raise IntegrityError."""
+        db.register_entity("feature", "chk-mode", "Check Mode")
+        now = EntityDatabase._now_iso()
+        with pytest.raises(sqlite3.IntegrityError):
+            db._conn.execute(
+                "INSERT INTO workflow_phases "
+                "(type_id, kanban_column, mode, updated_at) "
+                "VALUES (?, 'backlog', 'invalid-mode', ?)",
+                ("feature:chk-mode", now),
+            )
+
+    def test_null_nullable_columns_accepted(self, db: EntityDatabase):
+        """NULL values for nullable columns should be accepted."""
+        db.register_entity("feature", "chk-null", "Check Null")
+        now = EntityDatabase._now_iso()
+        # INSERT with all nullable columns as NULL (only required: type_id,
+        # kanban_column via DEFAULT, updated_at)
+        db._conn.execute(
+            "INSERT INTO workflow_phases "
+            "(type_id, workflow_phase, kanban_column, last_completed_phase, "
+            "mode, backward_transition_reason, updated_at) "
+            "VALUES (?, NULL, 'backlog', NULL, NULL, NULL, ?)",
+            ("feature:chk-null", now),
+        )
+        db._conn.commit()
+        row = db._conn.execute(
+            "SELECT * FROM workflow_phases WHERE type_id = ?",
+            ("feature:chk-null",),
+        ).fetchone()
+        assert row is not None
+        assert row["workflow_phase"] is None
+        assert row["last_completed_phase"] is None
+        assert row["mode"] is None
+        assert row["backward_transition_reason"] is None
+
+    def test_valid_workflow_phase_values_accepted(self, db: EntityDatabase):
+        """All valid workflow_phase enum values should be accepted."""
+        valid_phases = [
+            "brainstorm", "specify", "design",
+            "create-plan", "create-tasks", "implement", "finish",
+        ]
+        for i, phase in enumerate(valid_phases):
+            entity_id = f"vwp-{i}"
+            db.register_entity("feature", entity_id, f"Valid WP {i}")
+            now = EntityDatabase._now_iso()
+            db._conn.execute(
+                "INSERT INTO workflow_phases "
+                "(type_id, workflow_phase, kanban_column, updated_at) "
+                "VALUES (?, ?, 'backlog', ?)",
+                (f"feature:{entity_id}", phase, now),
+            )
+        db._conn.commit()
+        count = db._conn.execute(
+            "SELECT COUNT(*) FROM workflow_phases"
+        ).fetchone()[0]
+        assert count == len(valid_phases)
+
+    def test_valid_kanban_column_values_accepted(self, db: EntityDatabase):
+        """All valid kanban_column enum values should be accepted."""
+        valid_columns = [
+            "backlog", "prioritised", "wip", "agent_review",
+            "human_review", "blocked", "documenting", "completed",
+        ]
+        for i, col in enumerate(valid_columns):
+            entity_id = f"vkc-{i}"
+            db.register_entity("feature", entity_id, f"Valid KC {i}")
+            now = EntityDatabase._now_iso()
+            db._conn.execute(
+                "INSERT INTO workflow_phases "
+                "(type_id, kanban_column, updated_at) "
+                "VALUES (?, ?, ?)",
+                (f"feature:{entity_id}", col, now),
+            )
+        db._conn.commit()
+        count = db._conn.execute(
+            "SELECT COUNT(*) FROM workflow_phases"
+        ).fetchone()[0]
+        assert count == len(valid_columns)
+
+    def test_valid_mode_values_accepted(self, db: EntityDatabase):
+        """Valid mode values ('standard', 'full') should be accepted."""
+        for i, mode in enumerate(["standard", "full"]):
+            entity_id = f"vm-{i}"
+            db.register_entity("feature", entity_id, f"Valid Mode {i}")
+            now = EntityDatabase._now_iso()
+            db._conn.execute(
+                "INSERT INTO workflow_phases "
+                "(type_id, kanban_column, mode, updated_at) "
+                "VALUES (?, 'backlog', ?, ?)",
+                (f"feature:{entity_id}", mode, now),
+            )
+        db._conn.commit()
+        count = db._conn.execute(
+            "SELECT COUNT(*) FROM workflow_phases"
+        ).fetchone()[0]
+        assert count == 2
+
+    # -- Task 1.4: Fresh DB migration safety (AC-3) ------------------------
+
+    def test_fresh_db_has_all_migrations(self, tmp_path):
+        """A brand-new EntityDatabase should run all 3 migrations."""
+        fresh_db = EntityDatabase(str(tmp_path / "fresh.db"))
+        try:
+            assert fresh_db.get_metadata("schema_version") == "3"
+        finally:
+            fresh_db.close()
+
+    def test_fresh_db_has_entities_table(self, tmp_path):
+        """A fresh DB should have the entities table."""
+        fresh_db = EntityDatabase(str(tmp_path / "fresh.db"))
+        try:
+            cur = fresh_db._conn.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='table' AND name='entities'"
+            )
+            assert cur.fetchone() is not None
+        finally:
+            fresh_db.close()
+
+    def test_fresh_db_has_workflow_phases_table(self, tmp_path):
+        """A fresh DB should have the workflow_phases table."""
+        fresh_db = EntityDatabase(str(tmp_path / "fresh.db"))
+        try:
+            cur = fresh_db._conn.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='table' AND name='workflow_phases'"
+            )
+            assert cur.fetchone() is not None
+        finally:
+            fresh_db.close()
+
+    # -- Task 1.5: FK enforcement (AC-16) ----------------------------------
+
+    def test_insert_nonexistent_type_id_rejected(self, db: EntityDatabase):
+        """INSERT into workflow_phases with non-existent type_id should fail."""
+        now = EntityDatabase._now_iso()
+        with pytest.raises(sqlite3.IntegrityError):
+            db._conn.execute(
+                "INSERT INTO workflow_phases "
+                "(type_id, kanban_column, updated_at) "
+                "VALUES (?, 'backlog', ?)",
+                ("feature:does-not-exist", now),
+            )
+
+    def test_delete_entity_with_workflow_phase_rejected(
+        self, db: EntityDatabase
+    ):
+        """DELETE from entities when workflow_phases row exists should fail.
+
+        ON DELETE NO ACTION means the FK prevents deletion of a parent row
+        when a child row (workflow_phases) references it.
+        """
+        db.register_entity("feature", "fk-del", "FK Delete Test")
+        now = EntityDatabase._now_iso()
+        db._conn.execute(
+            "INSERT INTO workflow_phases "
+            "(type_id, kanban_column, updated_at) "
+            "VALUES (?, 'backlog', ?)",
+            ("feature:fk-del", now),
+        )
+        db._conn.commit()
+
+        # Attempt to DELETE the entity -- FK should prevent this
+        with pytest.raises(sqlite3.IntegrityError):
+            db._conn.execute(
+                "DELETE FROM entities WHERE type_id = ?",
+                ("feature:fk-del",),
+            )
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: Workflow Phase CRUD tests (Tasks 2.1 - 2.5)
+# ---------------------------------------------------------------------------
+
+
+class TestWorkflowPhaseCRUD:
+    """Tests for workflow_phases CRUD methods on EntityDatabase.
+
+    These tests cover create_workflow_phase, get_workflow_phase,
+    update_workflow_phase, delete_workflow_phase, and list_workflow_phases.
+    """
+
+    # -- Task 2.1: create_workflow_phase (AC-5) -----------------------------
+
+    def test_create_workflow_phase_returns_dict_with_all_columns(
+        self, db: EntityDatabase
+    ):
+        """create_workflow_phase for existing entity returns dict with 7 columns."""
+        db.register_entity("feature", "f1", "Test Feature")
+        result = db.create_workflow_phase(
+            "feature:f1",
+            kanban_column="wip",
+            workflow_phase="design",
+            last_completed_phase="specify",
+            mode="standard",
+            backward_transition_reason=None,
+        )
+        assert isinstance(result, dict)
+        expected_keys = {
+            "type_id",
+            "workflow_phase",
+            "kanban_column",
+            "last_completed_phase",
+            "mode",
+            "backward_transition_reason",
+            "updated_at",
+        }
+        assert set(result.keys()) == expected_keys
+        assert result["type_id"] == "feature:f1"
+        assert result["workflow_phase"] == "design"
+        assert result["kanban_column"] == "wip"
+        assert result["last_completed_phase"] == "specify"
+        assert result["mode"] == "standard"
+        assert result["backward_transition_reason"] is None
+        assert result["updated_at"] is not None
+
+    def test_create_workflow_phase_nonexistent_entity_raises(
+        self, db: EntityDatabase
+    ):
+        """create_workflow_phase for non-existent entity raises ValueError."""
+        with pytest.raises(ValueError, match="Entity not found"):
+            db.create_workflow_phase("feature:does-not-exist")
+
+    def test_create_workflow_phase_duplicate_raises(self, db: EntityDatabase):
+        """create_workflow_phase for entity that already has a row raises ValueError."""
+        db.register_entity("feature", "f1", "Test Feature")
+        db.create_workflow_phase("feature:f1")
+        with pytest.raises(ValueError, match="already exists"):
+            db.create_workflow_phase("feature:f1")
+
+    def test_create_workflow_phase_invalid_kanban_column_raises(
+        self, db: EntityDatabase
+    ):
+        """create_workflow_phase with invalid kanban_column raises ValueError."""
+        db.register_entity("feature", "f1", "Test Feature")
+        with pytest.raises(ValueError, match="Invalid value"):
+            db.create_workflow_phase("feature:f1", kanban_column="not-a-column")
+
+    def test_create_workflow_phase_defaults_applied(self, db: EntityDatabase):
+        """create_workflow_phase with no optional args applies defaults."""
+        db.register_entity("feature", "f1", "Test Feature")
+        result = db.create_workflow_phase("feature:f1")
+        assert result["kanban_column"] == "backlog"
+        assert result["workflow_phase"] is None
+        assert result["last_completed_phase"] is None
+        assert result["mode"] is None
+        assert result["backward_transition_reason"] is None
+        assert result["updated_at"] is not None
+
+    # -- Task 2.2: get_workflow_phase (AC-6) --------------------------------
+
+    def test_get_workflow_phase_existing_returns_dict(
+        self, db: EntityDatabase
+    ):
+        """get_workflow_phase for existing row returns dict."""
+        db.register_entity("feature", "f1", "Test Feature")
+        db.create_workflow_phase("feature:f1", kanban_column="wip")
+        result = db.get_workflow_phase("feature:f1")
+        assert isinstance(result, dict)
+        assert result["type_id"] == "feature:f1"
+        assert result["kanban_column"] == "wip"
+
+    def test_get_workflow_phase_nonexistent_returns_none(
+        self, db: EntityDatabase
+    ):
+        """get_workflow_phase for non-existent type_id returns None."""
+        result = db.get_workflow_phase("feature:nonexistent")
+        assert result is None
+
+    def test_get_workflow_phase_has_all_7_columns(self, db: EntityDatabase):
+        """get_workflow_phase result dict has all 7 columns."""
+        db.register_entity("feature", "f1", "Test Feature")
+        db.create_workflow_phase(
+            "feature:f1",
+            kanban_column="wip",
+            workflow_phase="design",
+            last_completed_phase="specify",
+            mode="full",
+            backward_transition_reason="rework needed",
+        )
+        result = db.get_workflow_phase("feature:f1")
+        expected_keys = {
+            "type_id",
+            "workflow_phase",
+            "kanban_column",
+            "last_completed_phase",
+            "mode",
+            "backward_transition_reason",
+            "updated_at",
+        }
+        assert set(result.keys()) == expected_keys
+        assert result["type_id"] == "feature:f1"
+        assert result["workflow_phase"] == "design"
+        assert result["kanban_column"] == "wip"
+        assert result["last_completed_phase"] == "specify"
+        assert result["mode"] == "full"
+        assert result["backward_transition_reason"] == "rework needed"
+        assert result["updated_at"] is not None
+
+    # -- Task 2.3: update_workflow_phase (AC-7) -----------------------------
+
+    def test_update_workflow_phase_single_field(self, db: EntityDatabase):
+        """update_workflow_phase changing one field updates only that field."""
+        db.register_entity("feature", "f1", "Test Feature")
+        created = db.create_workflow_phase(
+            "feature:f1", kanban_column="backlog", workflow_phase="brainstorm"
+        )
+        original_updated_at = created["updated_at"]
+        time.sleep(0.01)
+
+        result = db.update_workflow_phase(
+            "feature:f1", kanban_column="wip"
+        )
+        assert result["kanban_column"] == "wip"
+        # Other fields unchanged
+        assert result["workflow_phase"] == "brainstorm"
+        # updated_at should be refreshed
+        assert result["updated_at"] != original_updated_at
+
+    def test_update_workflow_phase_multiple_fields(self, db: EntityDatabase):
+        """update_workflow_phase changing multiple fields updates all."""
+        db.register_entity("feature", "f1", "Test Feature")
+        db.create_workflow_phase("feature:f1")
+
+        result = db.update_workflow_phase(
+            "feature:f1",
+            kanban_column="wip",
+            workflow_phase="design",
+            mode="standard",
+        )
+        assert result["kanban_column"] == "wip"
+        assert result["workflow_phase"] == "design"
+        assert result["mode"] == "standard"
+
+    def test_update_workflow_phase_explicit_none_sets_null(
+        self, db: EntityDatabase
+    ):
+        """Passing None explicitly sets field to NULL."""
+        db.register_entity("feature", "f1", "Test Feature")
+        db.create_workflow_phase(
+            "feature:f1", workflow_phase="design", mode="standard"
+        )
+
+        result = db.update_workflow_phase(
+            "feature:f1", workflow_phase=None, mode=None
+        )
+        assert result["workflow_phase"] is None
+        assert result["mode"] is None
+
+    def test_update_workflow_phase_omitted_field_unchanged(
+        self, db: EntityDatabase
+    ):
+        """Omitting a field (not passing it) keeps current value (_UNSET sentinel)."""
+        db.register_entity("feature", "f1", "Test Feature")
+        db.create_workflow_phase(
+            "feature:f1",
+            kanban_column="wip",
+            workflow_phase="design",
+            mode="standard",
+        )
+
+        # Only update workflow_phase; kanban_column and mode should be unchanged
+        result = db.update_workflow_phase(
+            "feature:f1", workflow_phase="implement"
+        )
+        assert result["workflow_phase"] == "implement"
+        assert result["kanban_column"] == "wip"  # unchanged
+        assert result["mode"] == "standard"  # unchanged
+
+    def test_update_workflow_phase_nonexistent_raises(
+        self, db: EntityDatabase
+    ):
+        """update_workflow_phase for non-existent type_id raises ValueError."""
+        with pytest.raises(ValueError):
+            db.update_workflow_phase("feature:nonexistent", kanban_column="wip")
+
+    def test_update_workflow_phase_invalid_enum_raises(
+        self, db: EntityDatabase
+    ):
+        """update_workflow_phase with invalid enum value raises ValueError."""
+        db.register_entity("feature", "f1", "Test Feature")
+        db.create_workflow_phase("feature:f1")
+
+        with pytest.raises(ValueError, match="Invalid value"):
+            db.update_workflow_phase(
+                "feature:f1", kanban_column="not-a-column"
+            )
+
+    def test_update_workflow_phase_no_optional_fields_refreshes_timestamp(
+        self, db: EntityDatabase
+    ):
+        """update_workflow_phase with only type_id refreshes updated_at."""
+        db.register_entity("feature", "f1", "Test Feature")
+        created = db.create_workflow_phase("feature:f1")
+        original_updated_at = created["updated_at"]
+        time.sleep(0.01)
+
+        result = db.update_workflow_phase("feature:f1")
+        assert result["updated_at"] != original_updated_at
+        # All other fields unchanged
+        assert result["kanban_column"] == created["kanban_column"]
+        assert result["workflow_phase"] == created["workflow_phase"]
+
+    def test_update_workflow_phase_kanban_column_none_raises(
+        self, db: EntityDatabase
+    ):
+        """Passing kanban_column=None explicitly raises ValueError (NOT NULL)."""
+        db.register_entity("feature", "f1", "Test Feature")
+        db.create_workflow_phase("feature:f1")
+
+        with pytest.raises(ValueError):
+            db.update_workflow_phase("feature:f1", kanban_column=None)
+
+    # -- Task 2.4: delete_workflow_phase (AC-8) -----------------------------
+
+    def test_delete_workflow_phase_existing_removes_row(
+        self, db: EntityDatabase
+    ):
+        """delete_workflow_phase removes the row from the table."""
+        db.register_entity("feature", "f1", "Test Feature")
+        db.create_workflow_phase("feature:f1")
+
+        db.delete_workflow_phase("feature:f1")
+
+        # Verify row is gone via direct SQL
+        row = db._conn.execute(
+            "SELECT * FROM workflow_phases WHERE type_id = ?",
+            ("feature:f1",),
+        ).fetchone()
+        assert row is None
+
+    def test_delete_workflow_phase_nonexistent_raises(
+        self, db: EntityDatabase
+    ):
+        """delete_workflow_phase for non-existent type_id raises ValueError."""
+        with pytest.raises(ValueError):
+            db.delete_workflow_phase("feature:nonexistent")
+
+    def test_get_returns_none_after_delete(self, db: EntityDatabase):
+        """get_workflow_phase returns None after delete_workflow_phase."""
+        db.register_entity("feature", "f1", "Test Feature")
+        db.create_workflow_phase("feature:f1")
+
+        db.delete_workflow_phase("feature:f1")
+        assert db.get_workflow_phase("feature:f1") is None
+
+    # -- Task 2.5: list_workflow_phases (AC-9) ------------------------------
+
+    def test_list_workflow_phases_returns_all(self, db: EntityDatabase):
+        """list_workflow_phases with no filters returns all rows."""
+        db.register_entity("feature", "f1", "Feature 1")
+        db.register_entity("feature", "f2", "Feature 2")
+        db.register_entity("feature", "f3", "Feature 3")
+        db.create_workflow_phase("feature:f1", kanban_column="backlog")
+        db.create_workflow_phase("feature:f2", kanban_column="wip")
+        db.create_workflow_phase("feature:f3", kanban_column="completed")
+
+        result = db.list_workflow_phases()
+        assert len(result) == 3
+        assert all(isinstance(r, dict) for r in result)
+
+    def test_list_workflow_phases_filter_by_kanban_column(
+        self, db: EntityDatabase
+    ):
+        """list_workflow_phases with kanban_column filter returns matching rows."""
+        db.register_entity("feature", "f1", "Feature 1")
+        db.register_entity("feature", "f2", "Feature 2")
+        db.register_entity("feature", "f3", "Feature 3")
+        db.create_workflow_phase("feature:f1", kanban_column="backlog")
+        db.create_workflow_phase("feature:f2", kanban_column="wip")
+        db.create_workflow_phase("feature:f3", kanban_column="backlog")
+
+        result = db.list_workflow_phases(kanban_column="backlog")
+        assert len(result) == 2
+        assert all(r["kanban_column"] == "backlog" for r in result)
+
+    def test_list_workflow_phases_filter_by_workflow_phase(
+        self, db: EntityDatabase
+    ):
+        """list_workflow_phases with workflow_phase filter returns matching rows."""
+        db.register_entity("feature", "f1", "Feature 1")
+        db.register_entity("feature", "f2", "Feature 2")
+        db.register_entity("feature", "f3", "Feature 3")
+        db.create_workflow_phase(
+            "feature:f1", workflow_phase="design"
+        )
+        db.create_workflow_phase(
+            "feature:f2", workflow_phase="implement"
+        )
+        db.create_workflow_phase(
+            "feature:f3", workflow_phase="design"
+        )
+
+        result = db.list_workflow_phases(workflow_phase="design")
+        assert len(result) == 2
+        assert all(r["workflow_phase"] == "design" for r in result)
+
+    def test_list_workflow_phases_both_filters_and_logic(
+        self, db: EntityDatabase
+    ):
+        """list_workflow_phases with both filters uses AND logic."""
+        db.register_entity("feature", "f1", "Feature 1")
+        db.register_entity("feature", "f2", "Feature 2")
+        db.register_entity("feature", "f3", "Feature 3")
+        db.create_workflow_phase(
+            "feature:f1", kanban_column="wip", workflow_phase="design"
+        )
+        db.create_workflow_phase(
+            "feature:f2", kanban_column="wip", workflow_phase="implement"
+        )
+        db.create_workflow_phase(
+            "feature:f3", kanban_column="backlog", workflow_phase="design"
+        )
+
+        result = db.list_workflow_phases(
+            kanban_column="wip", workflow_phase="design"
+        )
+        assert len(result) == 1
+        assert result[0]["type_id"] == "feature:f1"
+
+    def test_list_workflow_phases_empty_result(self, db: EntityDatabase):
+        """list_workflow_phases returns empty list when no rows match."""
+        result = db.list_workflow_phases()
+        assert result == []
+
+        # Also test with filter that matches nothing
+        db.register_entity("feature", "f1", "Feature 1")
+        db.create_workflow_phase("feature:f1", kanban_column="backlog")
+        result = db.list_workflow_phases(kanban_column="completed")
+        assert result == []
+
+
+# ---------------------------------------------------------------------------
+# Phase B Deepened Tests: Workflow Phase CRUD & Migration edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateWorkflowPhaseUnsetVsNone:
+    """Sentinel _UNSET vs explicit None distinction in update_workflow_phase.
+
+    Anticipate: If the sentinel check uses `is not None` instead of
+    `is not _UNSET`, passing None explicitly would be treated as "not
+    provided" and leave the field unchanged, instead of setting it to NULL.
+    derived_from: spec:D-4 (CRUD update), dimension:mutation_mindset
+    """
+
+    def test_explicit_none_sets_last_completed_phase_to_null(
+        self, db: EntityDatabase,
+    ):
+        # Given a workflow phase row with last_completed_phase set
+        db.register_entity("feature", "unset-lcp", "UNSET LCP Test")
+        db.create_workflow_phase(
+            "feature:unset-lcp",
+            kanban_column="wip",
+            workflow_phase="design",
+            last_completed_phase="specify",
+        )
+        # When explicitly passing last_completed_phase=None
+        result = db.update_workflow_phase(
+            "feature:unset-lcp", last_completed_phase=None,
+        )
+        # Then last_completed_phase is set to NULL
+        assert result["last_completed_phase"] is None
+        # And other fields remain unchanged
+        assert result["kanban_column"] == "wip"
+        assert result["workflow_phase"] == "design"
+
+    def test_explicit_none_sets_backward_transition_reason_to_null(
+        self, db: EntityDatabase,
+    ):
+        # Given a row with backward_transition_reason set
+        db.register_entity("feature", "unset-btr", "UNSET BTR Test")
+        db.create_workflow_phase(
+            "feature:unset-btr",
+            kanban_column="wip",
+            backward_transition_reason="rework needed",
+        )
+        # When explicitly passing backward_transition_reason=None
+        result = db.update_workflow_phase(
+            "feature:unset-btr", backward_transition_reason=None,
+        )
+        # Then backward_transition_reason is NULL
+        assert result["backward_transition_reason"] is None
+        # And kanban_column unchanged
+        assert result["kanban_column"] == "wip"
+
+    def test_omitting_last_completed_phase_preserves_value(
+        self, db: EntityDatabase,
+    ):
+        # Given a row with last_completed_phase="design"
+        db.register_entity("feature", "omit-lcp", "Omit LCP Test")
+        db.create_workflow_phase(
+            "feature:omit-lcp",
+            last_completed_phase="design",
+        )
+        # When updating only kanban_column (omitting last_completed_phase entirely)
+        result = db.update_workflow_phase(
+            "feature:omit-lcp", kanban_column="wip",
+        )
+        # Then last_completed_phase is preserved (not set to NULL)
+        assert result["last_completed_phase"] == "design"
+        assert result["kanban_column"] == "wip"
+
+    def test_omitting_backward_transition_reason_preserves_value(
+        self, db: EntityDatabase,
+    ):
+        # Given a row with backward_transition_reason set
+        db.register_entity("feature", "omit-btr", "Omit BTR Test")
+        db.create_workflow_phase(
+            "feature:omit-btr",
+            backward_transition_reason="reviewer requested rework",
+        )
+        # When updating only kanban_column (omitting backward_transition_reason)
+        result = db.update_workflow_phase(
+            "feature:omit-btr", kanban_column="wip",
+        )
+        # Then backward_transition_reason is preserved
+        assert result["backward_transition_reason"] == "reviewer requested rework"
+
+
+class TestCreateWorkflowPhaseErrorMessages:
+    """Error message content validation for create/update/delete ValueError.
+
+    Anticipate: If error messages are generic ("error") instead of
+    informative, callers cannot distinguish between different failure
+    modes programmatically.
+    derived_from: dimension:error_propagation, spec:AC-5, spec:AC-7, spec:AC-8
+    """
+
+    def test_create_nonexistent_entity_message_contains_type_id(
+        self, db: EntityDatabase,
+    ):
+        # Given no entity "feature:ghost" exists
+        # When creating a workflow phase for it
+        # Then ValueError message contains the type_id for debugging
+        with pytest.raises(ValueError) as exc_info:
+            db.create_workflow_phase("feature:ghost")
+        assert "feature:ghost" in str(exc_info.value) or "not found" in str(exc_info.value).lower()
+
+    def test_create_duplicate_message_says_already_exists(
+        self, db: EntityDatabase,
+    ):
+        # Given a workflow phase already exists
+        db.register_entity("feature", "dup-msg", "Dup Message")
+        db.create_workflow_phase("feature:dup-msg")
+        # When trying to create again
+        # Then ValueError message includes "already exists"
+        with pytest.raises(ValueError) as exc_info:
+            db.create_workflow_phase("feature:dup-msg")
+        assert "already exists" in str(exc_info.value).lower()
+
+    def test_update_nonexistent_message_contains_type_id(
+        self, db: EntityDatabase,
+    ):
+        # Given no workflow phase for "feature:phantom"
+        # When updating it
+        with pytest.raises(ValueError) as exc_info:
+            db.update_workflow_phase("feature:phantom", kanban_column="wip")
+        assert "feature:phantom" in str(exc_info.value) or "not found" in str(exc_info.value).lower()
+
+    def test_delete_nonexistent_message_contains_type_id(
+        self, db: EntityDatabase,
+    ):
+        # Given no workflow phase for "feature:void"
+        with pytest.raises(ValueError) as exc_info:
+            db.delete_workflow_phase("feature:void")
+        assert "feature:void" in str(exc_info.value) or "not found" in str(exc_info.value).lower()
+
+    def test_create_invalid_enum_message_says_invalid_value(
+        self, db: EntityDatabase,
+    ):
+        # Given an entity exists
+        db.register_entity("feature", "bad-enum", "Bad Enum")
+        # When creating with invalid workflow_phase value
+        with pytest.raises(ValueError) as exc_info:
+            db.create_workflow_phase(
+                "feature:bad-enum", workflow_phase="not-a-phase",
+            )
+        msg = str(exc_info.value).lower()
+        assert "invalid" in msg or "check" in msg
+
+
+class TestCreateWorkflowPhaseAllEnumValuesViaAPI:
+    """Full enum exhaustion through the Python CRUD API (not raw SQL).
+
+    Anticipate: The Python API might have additional validation beyond
+    CHECK constraints (e.g., pre-validation that rejects valid values),
+    or the SQL might not be parameterized correctly for hyphenated values.
+    derived_from: dimension:boundary_values, spec:AC-4
+    """
+
+    def test_all_seven_workflow_phases_accepted_via_create(
+        self, db: EntityDatabase,
+    ):
+        # Given all 7 valid workflow_phase values
+        valid_phases = [
+            "brainstorm", "specify", "design",
+            "create-plan", "create-tasks", "implement", "finish",
+        ]
+        # When creating workflow phases for each
+        for i, phase in enumerate(valid_phases):
+            db.register_entity("feature", f"enum-wp-{i}", f"Enum WP {i}")
+            result = db.create_workflow_phase(
+                f"feature:enum-wp-{i}", workflow_phase=phase,
+            )
+            # Then each is accepted and returned correctly
+            assert result["workflow_phase"] == phase
+
+    def test_all_eight_kanban_columns_accepted_via_create(
+        self, db: EntityDatabase,
+    ):
+        # Given all 8 valid kanban_column values
+        valid_columns = [
+            "backlog", "prioritised", "wip", "agent_review",
+            "human_review", "blocked", "documenting", "completed",
+        ]
+        # When creating workflow phases for each
+        for i, col in enumerate(valid_columns):
+            db.register_entity("feature", f"enum-kc-{i}", f"Enum KC {i}")
+            result = db.create_workflow_phase(
+                f"feature:enum-kc-{i}", kanban_column=col,
+            )
+            # Then each is accepted and returned correctly
+            assert result["kanban_column"] == col
+
+    def test_null_workflow_phase_accepted_via_create(
+        self, db: EntityDatabase,
+    ):
+        # Given workflow_phase=None (NULL is valid for nullable column)
+        db.register_entity("feature", "null-wp", "Null WP")
+        result = db.create_workflow_phase(
+            "feature:null-wp", workflow_phase=None,
+        )
+        # Then workflow_phase is NULL
+        assert result["workflow_phase"] is None
+
+
+class TestUpdateWorkflowPhaseAllFieldsSimultaneously:
+    """Mutation mindset: updating all 5 mutable fields at once.
+
+    Anticipate: If the SQL SET clause builder has an off-by-one error or
+    truncates the parameter list, only some fields would be updated.
+    derived_from: dimension:mutation_mindset, spec:AC-7
+    """
+
+    def test_update_all_five_mutable_fields_at_once(
+        self, db: EntityDatabase,
+    ):
+        # Given a workflow phase with defaults
+        db.register_entity("feature", "all-fields", "All Fields Test")
+        db.create_workflow_phase("feature:all-fields")
+        time.sleep(0.01)
+        # When updating all 5 mutable fields simultaneously
+        result = db.update_workflow_phase(
+            "feature:all-fields",
+            kanban_column="wip",
+            workflow_phase="implement",
+            last_completed_phase="create-tasks",
+            mode="full",
+            backward_transition_reason="rolled back from finish",
+        )
+        # Then all 5 are updated
+        assert result["kanban_column"] == "wip"
+        assert result["workflow_phase"] == "implement"
+        assert result["last_completed_phase"] == "create-tasks"
+        assert result["mode"] == "full"
+        assert result["backward_transition_reason"] == "rolled back from finish"
+        # And type_id is unchanged (immutable)
+        assert result["type_id"] == "feature:all-fields"
+        # And updated_at is refreshed
+        assert result["updated_at"] is not None
