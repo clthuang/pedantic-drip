@@ -362,6 +362,8 @@
     - "specify"
   yolo_behavior: "unchanged"
   consolidation_target: "transition_gate"
+  consolidation_notes: >
+    Merge with G-13 into fail_open_mcp() wrapper in transition_gate.py.
   duplicates:
     - "G-13"
     - "G-15"
@@ -382,6 +384,8 @@
     - "specify"
   yolo_behavior: "unchanged"
   consolidation_target: "transition_gate"
+  consolidation_notes: >
+    Merge with G-13 into fail_open_mcp() wrapper in transition_gate.py.
   duplicates:
     - "G-13"
     - "G-14"
@@ -402,6 +406,8 @@
     - "finish"
   yolo_behavior: "unchanged"
   consolidation_target: "transition_gate"
+  consolidation_notes: >
+    Merge with G-13 into fail_open_mcp() wrapper in transition_gate.py.
   duplicates:
     - "G-13"
     - "G-14"
@@ -901,6 +907,8 @@
     - "create-tasks"
   yolo_behavior: "unchanged"
   consolidation_target: "transition_gate"
+  consolidation_notes: >
+    Encode as review_quality_gate(phase='create-tasks', reviewer='task-reviewer', max_iterations=5) in transition_gate.py. Same pattern as G-34.
 - id: "G-37"
   name: "Create-tasks phase handoff review gate"
   category: "review-quality"
@@ -917,6 +925,8 @@
     - "create-tasks"
   yolo_behavior: "unchanged"
   consolidation_target: "transition_gate"
+  consolidation_notes: >
+    Encode as phase_handoff_gate(phase='create-tasks', reviewer='phase-reviewer', max_iterations=5) in transition_gate.py. Same pattern as G-35.
 - id: "G-38"
   name: "Design review quality gate"
   category: "review-quality"
