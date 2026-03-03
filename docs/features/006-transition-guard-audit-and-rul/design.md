@@ -33,6 +33,8 @@ The codebase exploration identified guard-bearing locations across 4 file types:
 
 These are data-layer utilities, not guards per the Key Definition (they don't gate/block/warn/redirect transitions). However, they are phase sequence encodings that the convergence check will evaluate for inclusion or documented exclusion.
 
+**Phase encoding count reconciliation:** The spec references 5 phase sequence locations from the original PRD analysis (workflow-state 3 representations, secretary.md, create-specialist-team.md). Codebase exploration found 3 additional encodings: session-start.sh `detect_phase()` (6th), yolo-stop.sh `phase_map` (7th), and backfill.py `PHASE_SEQUENCE` (8th). These were not in the original PRD scope but are discovered by the audit — exactly the kind of finding the two-pass methodology is designed to surface.
+
 **No guards found in:** `plugins/iflow/hooks/lib/semantic_memory/` (query/write utilities), `plugins/iflow/agents/` (agent prompts describe review criteria but don't gate transitions), `plugins/iflow/references/`, `plugins/iflow/templates/`, `plugins/iflow/scripts/`, `plugins/iflow/mcp/`.
 
 ### External Patterns
@@ -89,7 +91,7 @@ Analysis & Reporting
 
 **C2: Pass 2 Walker** — Reads files by type across 7 structural steps, identifies guard logic by semantic analysis, cross-references hooks.json. Operates independently of Pass 1 to avoid confirmation bias.
 
-**C3: Convergence Checker** — Compares C1 and C2 outputs using file+line-range matching: two entries match if they reference the same file AND the Pass 1 line falls within the Pass 2 line range. Secondary matching uses anchor text within the same file when line ranges don't overlap due to triage granularity differences. Guards found by both passes → confirmed. Guards found by one pass only → investigated and resolved (added or documented as false positive). Unresolvable cases → Boundary Cases section.
+**C3: Convergence Checker** — Receives only Pass 1 entries where `triage_result="guard"` (false positives are excluded before convergence). Compares filtered C1 and C2 outputs using file+line-range matching: two entries match if they reference the same file AND the Pass 1 line falls within the Pass 2 line range. Secondary matching uses anchor text within the same file when line ranges don't overlap due to triage granularity differences. Guards found by both passes → confirmed. Guards found by one pass only → investigated and resolved (added or documented as false positive). Unresolvable cases → Boundary Cases section.
 
 **C4: Guard Cataloger** — Takes unified guard set from C3, assigns IDs, populates schema fields, identifies duplicate clusters, classifies consolidation targets. Produces `guard-rules.yaml`. C4 enriches unified_guards with schema fields not captured by either pass (name, trigger, affected_phases, yolo_behavior, consolidation_target). The implementer reads each guard's source file context to determine these values — this is manual domain analysis, not mechanical transformation. IDs are assigned in category order (phase-sequence first, then alphabetically by category) with file-path alphabetical ordering within each category.
 
@@ -205,4 +207,4 @@ unified_guards: list of {
 }
 ```
 
-These are logical interfaces for the audit process — they guide the implementer's workflow, not runtime APIs. The implementer executes these steps sequentially, producing intermediate results that feed into the next step.
+These are logical interfaces for the audit process — they guide the implementer's workflow, not runtime APIs. The implementer executes these steps sequentially, producing intermediate results that feed into the next step. Intermediate results (Pass 1 candidates, Pass 2 structural guards, convergence resolution log) should be captured in the Verification Procedure Results section of audit-report.md to enable reproducibility and auditing of the audit itself.
