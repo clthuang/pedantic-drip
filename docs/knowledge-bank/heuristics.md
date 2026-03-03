@@ -273,3 +273,24 @@ Documentation-only features (ADRs, design docs, knowledge artifacts) should incl
 - Confidence: medium
 - Last observed: Feature #004
 - Observation count: 1
+
+### Audit and Analysis Features Require Bespoke Completeness Criteria
+Documentation/analysis features that perform exhaustive discovery (guard audits, dependency mapping, API inventories) have no natural termination condition. The specify phase must invent a project-specific completeness criterion (e.g., two-pass convergence check, row-count validation, coverage matrix) before implementation can begin. Budget 3-4 extra specify iterations for this invention step, and expect 4 blockers in iter 1.
+- Source: Feature 006 — specify phase required 10 review iterations; 4 blockers in iter 1 were all completeness-criterion gaps; all 4 resolved by iter 2 once two-pass methodology was introduced
+- Confidence: high
+- Last observed: Feature 006
+- Observation count: 1
+
+### Intermediate Result Persistence Overhead Scales With Session Count, Not Task Complexity
+For single-session documentation/analysis tasks, intermediate result persistence requirements are proportional to session count, not task complexity. A complex 60-guard audit in one session requires less persistence infrastructure than a simple 5-file rename across two sessions. When session count is provably 1 and intermediate outputs are reconstructible in minutes, limit design investment in recovery paths to a single sentence.
+- Source: Feature 006 — design handoff consumed 4 of 5 iterations on C1-C3 ephemeral result persistence for a task designed for single-session execution; accepted at cap as acceptable risk
+- Confidence: medium
+- Last observed: Feature 006
+- Observation count: 1
+
+### Reviewer Cap Saturation Across All Phases Is Normal for First-of-Kind Audit Features
+When a feature type has no established workflow template (first audit, novel analysis methodology), expect the iteration cap to be hit in every review phase. This is not a quality failure — it reflects the overhead of inventing the template simultaneously with validating the artifact. Extract the discovered template elements into the specifying skill so the next audit feature completes specify in 2-3 iterations rather than 10.
+- Source: Feature 006 — all 5 review phases hit the iteration cap (5) or near-cap (4); 38 total review iterations for a documentation-only feature; completeness criterion, output schema, and verification procedure were all invented during the specify phase
+- Confidence: medium
+- Last observed: Feature 006
+- Observation count: 1

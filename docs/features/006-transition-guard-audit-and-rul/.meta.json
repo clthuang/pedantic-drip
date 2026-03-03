@@ -1,0 +1,68 @@
+{
+  "id": "006",
+  "slug": "transition-guard-audit-and-rul",
+  "status": "active",
+  "created": "2026-03-01T16:27:59+08:00",
+  "mode": "standard",
+  "branch": "feature/006-transition-guard-audit-and-rul",
+  "project_id": "P001",
+  "module": "State Engine",
+  "depends_on_features": [
+    "004-status-taxonomy-design-and-sch"
+  ],
+  "lastCompletedPhase": "implement",
+  "phases": {
+    "specify": {
+      "started": "2026-03-03T14:00:00+08:00",
+      "completed": "2026-03-03T15:50:00+08:00",
+      "phaseReview": {
+        "iterations": 5,
+        "approved": false,
+        "reviewerNotes": [
+          "Pass 1 triage completion criterion not explicitly defined — acceptable risk for skilled implementer"
+        ]
+      }
+    },
+    "design": {
+      "started": "2026-03-03T16:00:00+08:00",
+      "completed": "2026-03-03T17:05:00+08:00",
+      "stages": {
+        "research": { "started": "2026-03-03T16:00:00+08:00", "completed": "2026-03-03T16:05:00+08:00", "skipped": false },
+        "architecture": { "started": "2026-03-03T16:05:00+08:00", "completed": "2026-03-03T16:15:00+08:00" },
+        "interface": { "started": "2026-03-03T16:15:00+08:00", "completed": "2026-03-03T16:20:00+08:00" },
+        "designReview": { "started": "2026-03-03T16:20:00+08:00", "completed": "2026-03-03T16:40:00+08:00", "iterations": 3, "reviewerNotes": [] },
+        "handoffReview": { "started": "2026-03-03T16:40:00+08:00", "completed": "2026-03-03T17:05:00+08:00", "iterations": 5, "approved": false, "reviewerNotes": ["C1-C3 re-execution scope on interruption — acceptable risk for single-session documentation task"] }
+      }
+    },
+    "create-plan": {
+      "started": "2026-03-03T17:10:00+08:00",
+      "completed": "2026-03-03T18:15:00+08:00",
+      "phaseReview": {
+        "iterations": 5,
+        "approved": false,
+        "reviewerNotes": [
+          "Scratch-note paths should follow agent_sandbox date convention — minor convention concern, not a plan quality issue"
+        ]
+      }
+    },
+    "create-tasks": {
+      "started": "2026-03-03T18:20:00+08:00",
+      "completed": "2026-03-03T19:00:00+08:00",
+      "taskReview": {
+        "iterations": 4,
+        "approved": true
+      },
+      "chainReview": {
+        "iterations": 2,
+        "approved": true
+      }
+    },
+    "implement": {
+      "started": "2026-03-03T19:10:00+08:00",
+      "completed": "2026-03-03T23:59:00+08:00",
+      "reviewIterations": 5,
+      "reviewResult": "approved",
+      "reviewerNotes": []
+    }
+  }
+}

@@ -1,0 +1,1420 @@
+# Guard Rules Inventory
+# Feature 006: Transition Guard Audit and Rule Inventory
+# Generated: 2026-03-03
+# Total guards: 60
+#
+# Ordering: category alphabetical, file-path alphabetical within category.
+#
+# Enum values:
+#   enforcement: hard-block | soft-warn | informational
+#   enforcement_mechanism: code | markdown | convention
+#   yolo_behavior: auto-select | hard-stop | skip | unchanged
+#   consolidation_target: transition_gate | hook | deprecated
+#   affected_phases: specify | design | create-plan | create-tasks | implement | finish
+#
+# Duplicate clusters (7 clusters, 27 guards involved):
+#   1. Hard prerequisite definition + per-command checks: G-02, G-03, G-04, G-05, G-06, G-08
+#   2. Phase sequence encodings: G-18, G-19, G-20, G-21, G-22, G-23, G-24, G-25, G-26
+#      (G-22 is the canonical guard; G-18 backward transition and G-23 soft prerequisites
+#       are cross-cluster relationships within this phase sequence cluster)
+#   3. Branch validation (session-start vs validateAndSetup): G-10, G-11
+#   4. Pre-merge validation (finish-feature vs wrap-up): G-27, G-29
+#   5. YOLO merge conflict hard-stop (finish-feature vs wrap-up): G-28, G-30
+#   6. Task completion gate (finish-feature vs wrap-up): G-52, G-53
+#   7. Fail-open MCP guards: G-13, G-14, G-15, G-16
+
+# =============================================================================
+# ARTIFACT-CONTENT (2 guards)
+# =============================================================================
+
+- id: "G-01"
+  name: "Test file existence reminder"
+  category: "artifact-content"
+  description: >
+    Informational warning if no test files exist when committing. Reminds developer to run tests before committing.
+  source_files:
+    - file: "plugins/iflow/hooks/pre-commit-guard.sh"
+      lines: "158-162"
+      anchor: "has_test_files"
+  trigger: "git commit command executed and no test files detected in project"
+  enforcement: "informational"
+  enforcement_mechanism: "code"
+  affected_phases:
+    - "specify"
+    - "design"
+    - "create-plan"
+    - "create-tasks"
+    - "implement"
+    - "finish"
+  yolo_behavior: "unchanged"
+  consolidation_target: "hook"
+  consolidation_notes: >
+    Stays as hook. This is a general development reminder not specific to workflow transitions.
+- id: "G-02"
+  name: "Artifact content validation (validateArtifact)"
+  category: "artifact-content"
+  description: >
+    4-level content validation for workflow artifacts: (1) existence, (2) non-empty > 100 bytes, (3) markdown structure with headers, (4) type-specific required sections. Used by hard prerequisite checks in commands to validate design.md, plan.md, spec.md, tasks.md.
+  source_files:
+    - file: "plugins/iflow/skills/workflow-state/SKILL.md"
+      lines: "181-230"
+      anchor: "validateArtifact()"
+  trigger: >
+    Phase command invocation requiring artifact validation (create-plan, create-tasks, implement)
+  enforcement: "hard-block"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "create-plan"
+    - "create-tasks"
+    - "implement"
+  yolo_behavior: "unchanged"
+  consolidation_target: "transition_gate"
+  duplicates:
+    - "G-03"
+    - "G-04"
+    - "G-05"
+    - "G-06"
+    - "G-08"
+  consolidation_notes: >
+    Merge with G-03 through G-06 and G-08 (per-command hard prerequisite checks and master table) into a single validate_artifact() function in transition_gate.py. The per-command BLOCKED messages become error return values from the shared function.
+
+# =============================================================================
+# ARTIFACT-EXISTENCE (7 guards)
+# =============================================================================
+
+- id: "G-03"
+  name: "Create-plan hard prerequisite (design.md)"
+  category: "artifact-existence"
+  description: >
+    Blocks create-plan if design.md fails validateArtifact() 4-level check. Shows level-specific BLOCKED error message.
+  source_files:
+    - file: "plugins/iflow/commands/create-plan.md"
+      lines: "16-25"
+      anchor: "BLOCKED: Valid design.md required before planning."
+  trigger: "/iflow:create-plan invocation"
+  enforcement: "hard-block"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "create-plan"
+  yolo_behavior: "unchanged"
+  consolidation_target: "transition_gate"
+  duplicates:
+    - "G-02"
+    - "G-04"
+    - "G-05"
+    - "G-06"
+    - "G-08"
+  consolidation_notes: >
+    Merge into validate_artifact() in transition_gate.py. This is the command-level invocation of the validateArtifact logic defined in G-02. Duplicate of G-08 (hard prerequisites table).
+- id: "G-04"
+  name: "Create-tasks hard prerequisite (plan.md)"
+  category: "artifact-existence"
+  description: >
+    Blocks create-tasks if plan.md fails validateArtifact() 4-level check. Shows level-specific BLOCKED error message.
+  source_files:
+    - file: "plugins/iflow/commands/create-tasks.md"
+      lines: "16-25"
+      anchor: "BLOCKED: Valid plan.md required before task creation."
+  trigger: "/iflow:create-tasks invocation"
+  enforcement: "hard-block"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "create-tasks"
+  yolo_behavior: "unchanged"
+  consolidation_target: "transition_gate"
+  duplicates:
+    - "G-02"
+    - "G-03"
+    - "G-05"
+    - "G-06"
+    - "G-08"
+  consolidation_notes: >
+    Merge into validate_artifact() in transition_gate.py. Same pattern as G-03.
+- id: "G-05"
+  name: "Implement hard prerequisite (spec.md)"
+  category: "artifact-existence"
+  description: >
+    Blocks implement if spec.md fails validateArtifact() 4-level check. Shows level-specific BLOCKED error message.
+  source_files:
+    - file: "plugins/iflow/commands/implement.md"
+      lines: "29-38"
+      anchor: "BLOCKED: Valid spec.md required before implementation."
+  trigger: "/iflow:implement invocation"
+  enforcement: "hard-block"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "implement"
+  yolo_behavior: "unchanged"
+  consolidation_target: "transition_gate"
+  duplicates:
+    - "G-02"
+    - "G-03"
+    - "G-04"
+    - "G-06"
+    - "G-08"
+  consolidation_notes: >
+    Merge into validate_artifact() in transition_gate.py. Same pattern as G-03.
+- id: "G-06"
+  name: "Implement hard prerequisite (tasks.md)"
+  category: "artifact-existence"
+  description: >
+    Blocks implement if tasks.md fails validateArtifact() 4-level check. Shows level-specific BLOCKED error message.
+  source_files:
+    - file: "plugins/iflow/commands/implement.md"
+      lines: "40-48"
+      anchor: "BLOCKED: Valid tasks.md required before implementation."
+  trigger: "/iflow:implement invocation"
+  enforcement: "hard-block"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "implement"
+  yolo_behavior: "unchanged"
+  consolidation_target: "transition_gate"
+  duplicates:
+    - "G-02"
+    - "G-03"
+    - "G-04"
+    - "G-05"
+    - "G-08"
+  consolidation_notes: >
+    Merge into validate_artifact() in transition_gate.py. Same pattern as G-03.
+- id: "G-07"
+  name: "PRD existence validation (create-project)"
+  category: "artifact-existence"
+  description: >
+    Blocks project creation if PRD file is missing or empty (< 100 bytes). Validates the PRD path argument before proceeding.
+  source_files:
+    - file: "plugins/iflow/commands/create-project.md"
+      lines: "20-24"
+      anchor: "Check PRD file exists at path"
+  trigger: "/iflow:create-project invocation"
+  enforcement: "hard-block"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "specify"
+  yolo_behavior: "unchanged"
+  consolidation_target: "transition_gate"
+  consolidation_notes: >
+    Encode as validate_prd() in transition_gate.py. Standalone artifact check for project creation.
+- id: "G-08"
+  name: "Hard prerequisites table"
+  category: "artifact-existence"
+  description: >
+    Master table mapping each phase to required artifact files. Defines that create-plan requires design.md, create-tasks requires plan.md, implement requires spec.md AND tasks.md. Blocks phase entry if artifacts are missing.
+  source_files:
+    - file: "plugins/iflow/skills/workflow-state/SKILL.md"
+      lines: "55-66"
+      anchor: "Hard Prerequisites"
+  trigger: "Any phase command invocation targeting create-plan, create-tasks, or implement"
+  enforcement: "hard-block"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "create-plan"
+    - "create-tasks"
+    - "implement"
+  yolo_behavior: "unchanged"
+  consolidation_target: "transition_gate"
+  duplicates:
+    - "G-02"
+    - "G-03"
+    - "G-04"
+    - "G-05"
+    - "G-06"
+  consolidation_notes: >
+    This is the canonical definition. G-03, G-04, G-05, G-06 are per-command implementations. Merge all into a single check_hard_prerequisites() function in transition_gate.py.
+- id: "G-09"
+  name: "PRD missing check (specifying)"
+  category: "artifact-existence"
+  description: >
+    Redirects workflow when prd.md is not found in the feature folder. Offers user choice to brainstorm first or describe feature directly.
+  source_files:
+    - file: "plugins/iflow/skills/specifying/SKILL.md"
+      lines: "33-49"
+      anchor: "No PRD found"
+  trigger: "/iflow:specify invocation when prd.md does not exist in feature folder"
+  enforcement: "soft-warn"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "specify"
+  yolo_behavior: "auto-select"
+  consolidation_target: "transition_gate"
+  consolidation_notes: >
+    Encode as check_prd_exists() in transition_gate.py. Soft redirect for specify phase entry.
+
+# =============================================================================
+# BRANCH-VALIDATION (3 guards)
+# =============================================================================
+
+- id: "G-10"
+  name: "Branch mismatch check (session start)"
+  category: "branch-validation"
+  description: >
+    Informational warning at session start if current git branch does not match the active feature's expected branch from .meta.json.
+  source_files:
+    - file: "plugins/iflow/hooks/session-start.sh"
+      lines: "146-164"
+      anchor: "check_branch_mismatch()"
+  trigger: "Session start when active feature has a branch defined in .meta.json"
+  enforcement: "informational"
+  enforcement_mechanism: "code"
+  affected_phases:
+    - "specify"
+    - "design"
+    - "create-plan"
+    - "create-tasks"
+    - "implement"
+    - "finish"
+  yolo_behavior: "unchanged"
+  consolidation_target: "hook"
+  duplicates:
+    - "G-11"
+  consolidation_notes: >
+    Stays as hook. Informational session-start check. G-11 is the actionable version during validateAndSetup.
+- id: "G-11"
+  name: "Branch mismatch check (validateAndSetup)"
+  category: "branch-validation"
+  description: >
+    Warns if current git branch differs from feature branch during phase transition. Offers to switch branches via AskUserQuestion.
+  source_files:
+    - file: "plugins/iflow/skills/workflow-transitions/SKILL.md"
+      lines: "72-87"
+      anchor: "Step 2: Check Branch"
+  trigger: "validateAndSetup() execution when feature has branch defined in .meta.json"
+  enforcement: "soft-warn"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "specify"
+    - "design"
+    - "create-plan"
+    - "create-tasks"
+    - "implement"
+    - "finish"
+  yolo_behavior: "auto-select"
+  consolidation_target: "transition_gate"
+  duplicates:
+    - "G-10"
+  consolidation_notes: >
+    Encode as check_branch() in transition_gate.py. G-10 (hook) provides informational context; this guard provides actionable switch prompt.
+- id: "G-12"
+  name: "Protected branch commit reminder"
+  category: "branch-validation"
+  description: >
+    Informational reminder when committing directly to protected branches (main, master, develop). Suggests using a feature branch for larger changes.
+  source_files:
+    - file: "plugins/iflow/hooks/pre-commit-guard.sh"
+      lines: "152-155"
+      anchor: "is_protected_branch"
+  trigger: "git commit command targeting a protected branch (main, master, develop)"
+  enforcement: "informational"
+  enforcement_mechanism: "code"
+  affected_phases:
+    - "specify"
+    - "design"
+    - "create-plan"
+    - "create-tasks"
+    - "implement"
+    - "finish"
+  yolo_behavior: "unchanged"
+  consolidation_target: "hook"
+  consolidation_notes: >
+    Stays as hook. General git hygiene reminder not specific to workflow transitions.
+
+# =============================================================================
+# GRACEFUL-DEGRADATION (4 guards)
+# =============================================================================
+
+- id: "G-13"
+  name: "Fail-open MCP guard (brainstorm)"
+  category: "graceful-degradation"
+  description: >
+    Ensures MCP entity registration failures do not block brainstorm creation. Warns but continues workflow on MCP failure.
+  source_files:
+    - file: "plugins/iflow/skills/brainstorming/SKILL.md"
+      lines: "242"
+      anchor: "do NOT block brainstorm creation"
+  trigger: "MCP registration call failure during brainstorm entity registration"
+  enforcement: "informational"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "specify"
+  yolo_behavior: "unchanged"
+  consolidation_target: "transition_gate"
+  duplicates:
+    - "G-14"
+    - "G-15"
+    - "G-16"
+  consolidation_notes: >
+    Merge G-13, G-14, G-15, G-16 into a single fail_open_mcp() wrapper in transition_gate.py that catches MCP failures and logs warnings.
+- id: "G-14"
+  name: "Fail-open MCP guard (create-feature)"
+  category: "graceful-degradation"
+  description: >
+    Ensures MCP entity registration failures do not block feature creation. Warns but continues workflow on MCP failure.
+  source_files:
+    - file: "plugins/iflow/commands/create-feature.md"
+      lines: "151"
+      anchor: "do NOT block feature creation"
+  trigger: "MCP registration call failure during feature entity registration"
+  enforcement: "informational"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "specify"
+  yolo_behavior: "unchanged"
+  consolidation_target: "transition_gate"
+  duplicates:
+    - "G-13"
+    - "G-15"
+    - "G-16"
+  consolidation_notes: >
+    Merge with G-13 into fail_open_mcp() wrapper in transition_gate.py.
+- id: "G-15"
+  name: "Fail-open MCP guard (create-project)"
+  category: "graceful-degradation"
+  description: >
+    Ensures MCP entity registration failures do not block project creation. Warns but continues workflow on MCP failure.
+  source_files:
+    - file: "plugins/iflow/commands/create-project.md"
+      lines: "85"
+      anchor: "do NOT block project creation"
+  trigger: "MCP registration call failure during project entity registration"
+  enforcement: "informational"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "specify"
+  yolo_behavior: "unchanged"
+  consolidation_target: "transition_gate"
+  duplicates:
+    - "G-13"
+    - "G-14"
+    - "G-16"
+  consolidation_notes: >
+    Merge with G-13 into fail_open_mcp() wrapper in transition_gate.py.
+- id: "G-16"
+  name: "Fail-open memory store guard (retrospective)"
+  category: "graceful-degradation"
+  description: >
+    Ensures semantic memory store failures do not block retrospective completion. Logs to stderr and continues on failure.
+  source_files:
+    - file: "plugins/iflow/skills/retrospecting/SKILL.md"
+      lines: "241"
+      anchor: "do not block retro completion"
+  trigger: "Memory store write failure during retrospective knowledge extraction"
+  enforcement: "informational"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "finish"
+  yolo_behavior: "unchanged"
+  consolidation_target: "transition_gate"
+  duplicates:
+    - "G-13"
+    - "G-14"
+    - "G-15"
+  consolidation_notes: >
+    Merge with G-13 into fail_open_mcp() wrapper in transition_gate.py.
+
+# =============================================================================
+# PARTIAL-RECOVERY (1 guard)
+# =============================================================================
+
+- id: "G-17"
+  name: "Partial phase recovery detection"
+  category: "partial-recovery"
+  description: >
+    Detects started-but-not-completed phases and offers resume, start fresh, or review options via AskUserQuestion.
+  source_files:
+    - file: "plugins/iflow/skills/workflow-transitions/SKILL.md"
+      lines: "89-104"
+      anchor: "Step 3: Check for Partial Phase"
+  trigger: >
+    validateAndSetup() execution when phases.{phaseName}.started exists but completed is null
+  enforcement: "soft-warn"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "specify"
+    - "design"
+    - "create-plan"
+    - "create-tasks"
+    - "implement"
+    - "finish"
+  yolo_behavior: "auto-select"
+  consolidation_target: "transition_gate"
+  consolidation_notes: >
+    Encode as check_partial_phase() in transition_gate.py. Reads .meta.json phases object to detect interrupted work.
+
+# =============================================================================
+# PHASE-SEQUENCE (9 guards)
+# =============================================================================
+
+- id: "G-18"
+  name: "Backward transition warning"
+  category: "phase-sequence"
+  description: >
+    Warns user when re-running a completed phase via AskUserQuestion. Explains that re-running updates timestamps but does not undo previous work. Offers Continue or Cancel options.
+  source_files:
+    - file: "plugins/iflow/skills/workflow-state/SKILL.md"
+      lines: "158-176"
+      anchor: "Backward transition"
+    - file: "plugins/iflow/skills/workflow-transitions/SKILL.md"
+      lines: "39-48"
+      anchor: "If backward: AskUserQuestion"
+  trigger: "validateTransition() returns type 'backward' (targetIndex < currentIndex)"
+  enforcement: "soft-warn"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "specify"
+    - "design"
+    - "create-plan"
+    - "create-tasks"
+    - "implement"
+    - "finish"
+  yolo_behavior: "auto-select"
+  consolidation_target: "transition_gate"
+  duplicates:
+    - "G-22"
+  consolidation_notes: >
+    Encode as check_backward_transition() in transition_gate.py. Two source files: workflow-state defines the concept, workflow-transitions implements the procedural prompt. Merge into single function.
+- id: "G-19"
+  name: "Phase sequence encoding (detect_phase)"
+  category: "phase-sequence"
+  description: >
+    Detects current phase from existing artifacts at session start. Maps artifact presence to phase state for context injection.
+  source_files:
+    - file: "plugins/iflow/hooks/session-start.sh"
+      lines: "112-128"
+      anchor: "detect_phase()"
+  trigger: "Session start when active feature exists"
+  enforcement: "informational"
+  enforcement_mechanism: "code"
+  affected_phases:
+    - "specify"
+    - "design"
+    - "create-plan"
+    - "create-tasks"
+    - "implement"
+    - "finish"
+  yolo_behavior: "unchanged"
+  consolidation_target: "hook"
+  duplicates:
+    - "G-20"
+    - "G-21"
+    - "G-22"
+    - "G-24"
+    - "G-25"
+    - "G-26"
+  consolidation_notes: >
+    Stays as hook. Informational context injection at session start. Part of the phase sequence duplicate cluster (8 encodings across codebase).
+- id: "G-20"
+  name: "Phase-to-command mapping (get_next_command)"
+  category: "phase-sequence"
+  description: >
+    Maps detected phase to the next iflow command for session context injection. Used by session-start hook to suggest next workflow step.
+  source_files:
+    - file: "plugins/iflow/hooks/session-start.sh"
+      lines: "131-143"
+      anchor: "get_next_command()"
+  trigger: "Session start after detect_phase() determines current phase"
+  enforcement: "informational"
+  enforcement_mechanism: "code"
+  affected_phases:
+    - "specify"
+    - "design"
+    - "create-plan"
+    - "create-tasks"
+    - "implement"
+    - "finish"
+  yolo_behavior: "unchanged"
+  consolidation_target: "hook"
+  duplicates:
+    - "G-19"
+    - "G-21"
+    - "G-22"
+    - "G-24"
+    - "G-25"
+    - "G-26"
+  consolidation_notes: >
+    Stays as hook. Companion to G-19 for session context injection.
+- id: "G-21"
+  name: "Phase continuation guard (yolo-stop phase_map)"
+  category: "phase-sequence"
+  description: >
+    Blocks stop tool during YOLO mode to force continuation to next phase. Uses phase_map dict to determine next phase command and sends Claude back to continue workflow.
+  source_files:
+    - file: "plugins/iflow/hooks/yolo-stop.sh"
+      lines: "172-184"
+      anchor: "phase_map"
+  trigger: "Stop tool invocation during YOLO mode with active feature"
+  enforcement: "hard-block"
+  enforcement_mechanism: "code"
+  affected_phases:
+    - "specify"
+    - "design"
+    - "create-plan"
+    - "create-tasks"
+    - "implement"
+    - "finish"
+  yolo_behavior: "hard-stop"
+  consolidation_target: "hook"
+  duplicates:
+    - "G-19"
+    - "G-20"
+    - "G-22"
+    - "G-24"
+    - "G-25"
+    - "G-26"
+  consolidation_notes: >
+    Stays as hook. Runtime enforcement of YOLO phase continuation. Part of the phase sequence duplicate cluster but serves a distinct enforcement purpose (blocking stop tool).
+- id: "G-22"
+  name: "Phase sequence validation (validateTransition)"
+  category: "phase-sequence"
+  description: >
+    Validates that the requested phase transition follows the canonical sequence ordering. Returns block/warn/allow based on phase ordering. Contains the canonical sequence definition and hard-block, backward, skip, and proceed logic branches.
+  source_files:
+    - file: "plugins/iflow/skills/workflow-state/SKILL.md"
+      lines: "16"
+      anchor: "Canonical Sequence"
+    - file: "plugins/iflow/skills/workflow-state/SKILL.md"
+      lines: "126-156"
+      anchor: "validateTransition()"
+  trigger: "Any phase command invocation via validateAndSetup()"
+  enforcement: "soft-warn"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "specify"
+    - "design"
+    - "create-plan"
+    - "create-tasks"
+    - "implement"
+    - "finish"
+  yolo_behavior: "auto-select"
+  consolidation_target: "transition_gate"
+  duplicates:
+    - "G-18"
+    - "G-19"
+    - "G-20"
+    - "G-21"
+    - "G-23"
+    - "G-24"
+    - "G-25"
+    - "G-26"
+  consolidation_notes: >
+    Canonical definition. Encode as validate_transition() in transition_gate.py. This is the single source of truth for phase ordering logic. All other phase-sequence guards duplicate aspects of this logic.
+- id: "G-23"
+  name: "Soft prerequisites warning"
+  category: "phase-sequence"
+  description: >
+    Warns about skipped phases for out-of-order transitions via AskUserQuestion. Allows user to proceed or return to complete skipped phases. Records skipped phases in .meta.json skippedPhases array.
+  source_files:
+    - file: "plugins/iflow/skills/workflow-state/SKILL.md"
+      lines: "68-88"
+      anchor: "Soft prerequisites"
+  trigger: "validateTransition() returns type 'warning' (forward jump skipping phases)"
+  enforcement: "soft-warn"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "specify"
+    - "design"
+    - "create-plan"
+    - "create-tasks"
+    - "implement"
+    - "finish"
+  yolo_behavior: "auto-select"
+  consolidation_target: "transition_gate"
+  duplicates:
+    - "G-22"
+  consolidation_notes: >
+    Encode as check_soft_prerequisites() in transition_gate.py. This is a branch within validateTransition logic (G-22). Separate guard entry because it has distinct behavior (skip recording) from the main validation.
+- id: "G-24"
+  name: "Phase Progression Table (secretary)"
+  category: "phase-sequence"
+  description: >
+    Phase sequence encoding as progression table in secretary routing. Maps lastCompletedPhase to next command for workflow orchestration.
+  source_files:
+    - file: "plugins/iflow/commands/secretary.md"
+      lines: "30-41"
+      anchor: "Phase Progression Table"
+  trigger: "Secretary routing when determining next workflow phase"
+  enforcement: "soft-warn"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "specify"
+    - "design"
+    - "create-plan"
+    - "create-tasks"
+    - "implement"
+    - "finish"
+  yolo_behavior: "auto-select"
+  consolidation_target: "deprecated"
+  duplicates:
+    - "G-19"
+    - "G-20"
+    - "G-21"
+    - "G-22"
+    - "G-25"
+    - "G-26"
+  consolidation_notes: >
+    Deprecate after transition_gate.py provides get_next_phase(). Secretary should call transition_gate instead of maintaining its own lookup table.
+- id: "G-25"
+  name: "Workflow Guardian (secretary)"
+  category: "phase-sequence"
+  description: >
+    Active phase-sequence enforcement in secretary. Validates that the requested phase is the correct next step and redirects to the correct phase if the user's request is out of order.
+  source_files:
+    - file: "plugins/iflow/commands/secretary.md"
+      lines: "509-524"
+      anchor: "Workflow Guardian"
+  trigger: "Secretary workflow pattern match when active feature exists"
+  enforcement: "soft-warn"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "specify"
+    - "design"
+    - "create-plan"
+    - "create-tasks"
+    - "implement"
+    - "finish"
+  yolo_behavior: "auto-select"
+  consolidation_target: "transition_gate"
+  duplicates:
+    - "G-19"
+    - "G-20"
+    - "G-21"
+    - "G-22"
+    - "G-24"
+    - "G-26"
+  consolidation_notes: >
+    Encode redirect logic in transition_gate.py. The secretary should call transition_gate.get_next_phase() instead of maintaining inline logic.
+- id: "G-26"
+  name: "Phase sequence routing (specialist-team)"
+  category: "phase-sequence"
+  description: >
+    Phase sequence encoding and enforcement in specialist team routing. Includes sequence definition, phase-to-command mapping table, and gate that redirects to earlier phase when suggested phase is ahead of sequence.
+  source_files:
+    - file: "plugins/iflow/commands/create-specialist-team.md"
+      lines: "111-214"
+      anchor: "brainstorm -> specify -> design -> create-plan -> create-tasks -> implement -> finish"
+  trigger: "Specialist team synthesis when determining workflow-aware follow-up"
+  enforcement: "informational"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "specify"
+    - "design"
+    - "create-plan"
+    - "create-tasks"
+    - "implement"
+    - "finish"
+  yolo_behavior: "unchanged"
+  consolidation_target: "deprecated"
+  duplicates:
+    - "G-19"
+    - "G-20"
+    - "G-21"
+    - "G-22"
+    - "G-24"
+    - "G-25"
+  consolidation_notes: >
+    Deprecate after transition_gate.py provides get_next_phase(). Specialist team should call transition_gate for phase ordering instead of inline logic.
+
+# =============================================================================
+# PRE-MERGE (4 guards)
+# =============================================================================
+
+- id: "G-27"
+  name: "Pre-merge validation loop (finish-feature)"
+  category: "pre-merge"
+  description: >
+    Discovers and runs project checks (CI, validate.sh, npm test, Makefile targets) up to 3 attempts before merge. Auto-fixes failures between attempts. Hard-blocks merge if tests fail after 3 attempts.
+  source_files:
+    - file: "plugins/iflow/commands/finish-feature.md"
+      lines: "337-371"
+      anchor: "Step 5a: Pre-Merge Validation"
+  trigger: "Finish-feature Step 5 execution before merge/PR creation"
+  enforcement: "hard-block"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "finish"
+  yolo_behavior: "unchanged"
+  consolidation_target: "transition_gate"
+  duplicates:
+    - "G-29"
+  consolidation_notes: >
+    Encode as pre_merge_validation() in transition_gate.py. G-29 (wrap-up) is a duplicate. Merge into single function.
+- id: "G-28"
+  name: "YOLO merge conflict hard-stop (finish-feature)"
+  category: "pre-merge"
+  description: >
+    Prevents autonomous merge conflict resolution in YOLO mode. Forces manual intervention when git merge fails.
+  source_files:
+    - file: "plugins/iflow/commands/finish-feature.md"
+      lines: "23-25"
+      anchor: "YOLO MODE STOPPED: Merge conflict"
+  trigger: "Git merge failure during YOLO mode finish-feature execution"
+  enforcement: "hard-block"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "finish"
+  yolo_behavior: "hard-stop"
+  consolidation_target: "transition_gate"
+  duplicates:
+    - "G-30"
+  consolidation_notes: >
+    Encode as check_merge_conflict() in transition_gate.py. G-30 (wrap-up) is a duplicate. Critical safety boundary for YOLO mode.
+- id: "G-29"
+  name: "Pre-merge validation loop (wrap-up)"
+  category: "pre-merge"
+  description: >
+    Pre-merge validation loop in wrap-up command. Runs test suite up to 3 attempts. Duplicate of finish-feature pre-merge validation.
+  source_files:
+    - file: "plugins/iflow/commands/wrap-up.md"
+      lines: "310-344"
+      anchor: "Pre-Merge Validation"
+  trigger: "Wrap-up execution before merge/PR creation"
+  enforcement: "hard-block"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "finish"
+  yolo_behavior: "unchanged"
+  consolidation_target: "transition_gate"
+  duplicates:
+    - "G-27"
+  consolidation_notes: >
+    Merge with G-27 into single pre_merge_validation() function. wrap-up.md duplicates finish-feature.md logic.
+- id: "G-30"
+  name: "YOLO merge conflict hard-stop (wrap-up)"
+  category: "pre-merge"
+  description: >
+    Prevents autonomous merge conflict resolution in YOLO mode during wrap-up. Duplicate of finish-feature YOLO merge conflict guard.
+  source_files:
+    - file: "plugins/iflow/commands/wrap-up.md"
+      lines: "22-23"
+      anchor: "YOLO MODE STOPPED: Merge conflict"
+  trigger: "Git merge failure during YOLO mode wrap-up execution"
+  enforcement: "hard-block"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "finish"
+  yolo_behavior: "hard-stop"
+  consolidation_target: "transition_gate"
+  duplicates:
+    - "G-28"
+  consolidation_notes: >
+    Merge with G-28 into single check_merge_conflict() function.
+
+# =============================================================================
+# REVIEW-QUALITY (17 guards)
+# =============================================================================
+
+- id: "G-31"
+  name: "Brainstorm blocker decision prompt"
+  category: "review-quality"
+  description: >
+    User prompt when brainstorm has unresolved blockers after readiness check. Offers address issues, promote anyway, or save and exit.
+  source_files:
+    - file: "plugins/iflow/skills/brainstorming/SKILL.md"
+      lines: "436-446"
+      anchor: "BLOCKED (any archetype)"
+  trigger: "Brainstorm readiness check returns BLOCKED status after 3 iterations"
+  enforcement: "soft-warn"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "specify"
+  yolo_behavior: "auto-select"
+  consolidation_target: "transition_gate"
+  consolidation_notes: >
+    Encode as part of brainstorm_readiness_gate() in transition_gate.py. Related to G-33 (readiness check circuit breaker).
+- id: "G-32"
+  name: "PRD quality review gate (brainstorm)"
+  category: "review-quality"
+  description: >
+    PRD quality review gate in brainstorming Stage 4. Dispatches prd-reviewer in a max 3-iteration loop. Blocks or warns on brainstorm quality based on approved/issues response.
+  source_files:
+    - file: "plugins/iflow/skills/brainstorming/SKILL.md"
+      lines: "280-317"
+      anchor: "Stage 4: PRD QUALITY REVIEW"
+  trigger: "Brainstorm Stage 3 completion (PRD file written)"
+  enforcement: "hard-block"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "specify"
+  yolo_behavior: "unchanged"
+  consolidation_target: "transition_gate"
+  consolidation_notes: >
+    Encode as brainstorm_quality_gate() in transition_gate.py. Review loop with auto-correction pattern.
+- id: "G-33"
+  name: "Brainstorm readiness check gate"
+  category: "review-quality"
+  description: >
+    Brainstorm readiness review gate (Stage 5). Dispatches brainstorm-reviewer in a max 3-iteration loop with circuit breaker. Blocks promotion if quality gate not met after 3 iterations.
+  source_files:
+    - file: "plugins/iflow/skills/brainstorming/SKILL.md"
+      lines: "320-367"
+      anchor: "Stage 5: READINESS CHECK"
+  trigger: "Brainstorm Stage 4 completion (PRD quality review passed or exhausted)"
+  enforcement: "hard-block"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "specify"
+  yolo_behavior: "unchanged"
+  consolidation_target: "transition_gate"
+  consolidation_notes: >
+    Encode as brainstorm_readiness_gate() in transition_gate.py. Circuit breaker at 3 iterations. Related to G-31 (blocker decision prompt).
+- id: "G-34"
+  name: "Create-plan review quality gate"
+  category: "review-quality"
+  description: >
+    Plan-reviewer loop with max 5 iterations. Blocks phase completion until reviewer approves plan quality.
+  source_files:
+    - file: "plugins/iflow/commands/create-plan.md"
+      lines: "27-153"
+      anchor: "plan-reviewer"
+  trigger: "/iflow:create-plan after hard prerequisite check passes"
+  enforcement: "hard-block"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "create-plan"
+  yolo_behavior: "unchanged"
+  consolidation_target: "transition_gate"
+  consolidation_notes: >
+    Encode as review_quality_gate(phase, reviewer, max_iterations) in transition_gate.py. Same pattern across all phase commands. Parameterized by phase and reviewer type.
+- id: "G-35"
+  name: "Create-plan phase handoff review gate"
+  category: "review-quality"
+  description: >
+    Phase-reviewer loop with max 5 iterations. Validates plan is ready for the create-tasks phase.
+  source_files:
+    - file: "plugins/iflow/commands/create-plan.md"
+      lines: "155-282"
+      anchor: "Phase Handoff Review"
+  trigger: "Create-plan primary review (G-34) passes"
+  enforcement: "hard-block"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "create-plan"
+  yolo_behavior: "unchanged"
+  consolidation_target: "transition_gate"
+  consolidation_notes: >
+    Encode as phase_handoff_gate(phase, reviewer, max_iterations) in transition_gate.py. Same handoff pattern across phase commands.
+- id: "G-36"
+  name: "Create-tasks review quality gate"
+  category: "review-quality"
+  description: >
+    Task-reviewer loop with max 5 iterations. Blocks phase completion until reviewer approves task breakdown quality.
+  source_files:
+    - file: "plugins/iflow/commands/create-tasks.md"
+      lines: "27-174"
+      anchor: "task-reviewer"
+  trigger: "/iflow:create-tasks after hard prerequisite check passes"
+  enforcement: "hard-block"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "create-tasks"
+  yolo_behavior: "unchanged"
+  consolidation_target: "transition_gate"
+  consolidation_notes: >
+    Encode as review_quality_gate(phase='create-tasks', reviewer='task-reviewer', max_iterations=5) in transition_gate.py. Same pattern as G-34.
+- id: "G-37"
+  name: "Create-tasks phase handoff review gate"
+  category: "review-quality"
+  description: >
+    Phase-reviewer loop with max 5 iterations. Validates tasks are ready for the implement phase.
+  source_files:
+    - file: "plugins/iflow/commands/create-tasks.md"
+      lines: "190-325"
+      anchor: "Phase Handoff Review"
+  trigger: "Create-tasks primary review (G-36) passes"
+  enforcement: "hard-block"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "create-tasks"
+  yolo_behavior: "unchanged"
+  consolidation_target: "transition_gate"
+  consolidation_notes: >
+    Encode as phase_handoff_gate(phase='create-tasks', reviewer='phase-reviewer', max_iterations=5) in transition_gate.py. Same pattern as G-35.
+- id: "G-38"
+  name: "Design review quality gate"
+  category: "review-quality"
+  description: >
+    Design-reviewer loop with max 5 iterations. Blocks phase completion until reviewer approves design quality.
+  source_files:
+    - file: "plugins/iflow/commands/design.md"
+      lines: "189-356"
+      anchor: "Step 3: Design Review"
+  trigger: "/iflow:design after design workflow steps complete"
+  enforcement: "hard-block"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "design"
+  yolo_behavior: "unchanged"
+  consolidation_target: "transition_gate"
+  consolidation_notes: >
+    Encode as review_quality_gate(phase='design', reviewer='design-reviewer', max_iterations=5) in transition_gate.py. Same parameterized pattern as G-34 and G-46.
+- id: "G-39"
+  name: "Design phase handoff review gate"
+  category: "review-quality"
+  description: >
+    Phase-reviewer loop with max 5 iterations. Validates design is ready for the create-plan phase.
+  source_files:
+    - file: "plugins/iflow/commands/design.md"
+      lines: "377-526"
+      anchor: "Step 4: Phase Handoff Review"
+  trigger: "Design primary review (G-38) passes"
+  enforcement: "hard-block"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "design"
+  yolo_behavior: "unchanged"
+  consolidation_target: "transition_gate"
+  consolidation_notes: >
+    Encode as phase_handoff_gate(phase='design', reviewer='phase-reviewer', max_iterations=5) in transition_gate.py. Same parameterized pattern as G-35 and G-47.
+- id: "G-40"
+  name: "Implement review quality gate"
+  category: "review-quality"
+  description: >
+    3-reviewer loop (implementation, code-quality, security) with max 5 iterations. Blocks merge until all reviewers approve or circuit breaker (G-41) triggers.
+  source_files:
+    - file: "plugins/iflow/commands/implement.md"
+      lines: "226-759"
+      anchor: "7. Review Phase (Automated Iteration Loop)"
+  trigger: "/iflow:implement Step 7 after implementation complete"
+  enforcement: "hard-block"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "implement"
+  yolo_behavior: "unchanged"
+  consolidation_target: "transition_gate"
+  consolidation_notes: >
+    Encode as review_quality_gate(phase='implement', reviewer=['implementation-reviewer', 'code-quality-reviewer', 'security-reviewer'], max_iterations=5) in transition_gate.py. Multi-reviewer variant of the parameterized pattern used by G-34, G-38, G-46. Includes circuit breaker linkage to G-41.
+- id: "G-41"
+  name: "Implement YOLO circuit breaker"
+  category: "review-quality"
+  description: >
+    YOLO circuit breaker for implement review phase. Stops autonomous execution after 5 review iterations without approval. Cannot be bypassed -- this is a safety boundary preventing autonomous merge of repeatedly-failing code.
+  source_files:
+    - file: "plugins/iflow/commands/implement.md"
+      lines: "14-21"
+      anchor: "Circuit breaker (5 iterations)"
+  trigger: "5th review iteration failure during YOLO mode implementation"
+  enforcement: "hard-block"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "implement"
+  yolo_behavior: "hard-stop"
+  consolidation_target: "transition_gate"
+  consolidation_notes: >
+    Encode as implement_circuit_breaker() in transition_gate.py. Critical safety boundary for YOLO mode autonomous operation.
+- id: "G-42"
+  name: "Plan review gate (pre-exit-plan-review)"
+  category: "review-quality"
+  description: >
+    Denies first ExitPlanMode attempt, requiring plan-reviewer dispatch before allowing plan mode exit. Counter-based state tracking with YOLO bypass.
+  source_files:
+    - file: "plugins/iflow/hooks/pre-exit-plan-review.sh"
+      lines: "44-81"
+      anchor: "plan_review_count"
+  trigger: "ExitPlanMode tool invocation (first attempt)"
+  enforcement: "hard-block"
+  enforcement_mechanism: "code"
+  affected_phases:
+    - "create-plan"
+    - "create-tasks"
+    - "implement"
+  yolo_behavior: "skip"
+  consolidation_target: "hook"
+  consolidation_notes: >
+    Stays as hook. Runtime enforcement of plan review requirement via PreToolUse hook on ExitPlanMode. Cannot be replicated in transition_gate because it intercepts tool calls.
+- id: "G-43"
+  name: "Plan review context injection (post-enter-plan)"
+  category: "review-quality"
+  description: >
+    Injects reminder that plan-reviewer must be dispatched before ExitPlanMode. Informational context injection after entering plan mode.
+  source_files:
+    - file: "plugins/iflow/hooks/post-enter-plan.sh"
+      lines: "19-51"
+      anchor: "plan review is MANDATORY"
+  trigger: "EnterPlanMode tool invocation (PostToolUse)"
+  enforcement: "informational"
+  enforcement_mechanism: "code"
+  affected_phases:
+    - "create-plan"
+    - "create-tasks"
+    - "implement"
+  yolo_behavior: "unchanged"
+  consolidation_target: "hook"
+  consolidation_notes: >
+    Stays as hook. Companion to G-42. Provides context that G-42 enforces.
+- id: "G-44"
+  name: "Post-approval workflow injection (post-exit-plan)"
+  category: "review-quality"
+  description: >
+    After plan approval and ExitPlanMode, injects workflow context directing next steps (task breakdown, task review, implement, finish).
+  source_files:
+    - file: "plugins/iflow/hooks/post-exit-plan.sh"
+      lines: "39-90"
+      anchor: "Post-Approval Workflow"
+  trigger: "ExitPlanMode tool invocation success (PostToolUse)"
+  enforcement: "informational"
+  enforcement_mechanism: "code"
+  affected_phases:
+    - "create-plan"
+    - "create-tasks"
+    - "implement"
+  yolo_behavior: "unchanged"
+  consolidation_target: "hook"
+  consolidation_notes: >
+    Stays as hook. Post-approval context injection cannot be replicated in transition_gate because it reacts to tool completion events.
+- id: "G-45"
+  name: "Secretary review skip/invoke criteria"
+  category: "review-quality"
+  description: >
+    Controls when secretary-reviewer is dispatched based on confidence level and routing complexity. Skips reviewer when confidence > 85% and match is a direct agent. Invokes reviewer when ambiguous or workflow route.
+  source_files:
+    - file: "plugins/iflow/commands/secretary.md"
+      lines: "154-164"
+      anchor: "Review Skip/Invoke Criteria"
+  trigger: "Secretary routing after initial match scoring"
+  enforcement: "soft-warn"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "specify"
+    - "design"
+    - "create-plan"
+    - "create-tasks"
+    - "implement"
+    - "finish"
+  yolo_behavior: "skip"
+  consolidation_target: "transition_gate"
+  consolidation_notes: >
+    BOUNDARY CASE. Routing optimization controlling when review gate activates. Encode as secretary_review_criteria() in transition_gate.py. Low priority for initial migration.
+- id: "G-46"
+  name: "Specify review quality gate"
+  category: "review-quality"
+  description: >
+    Spec-reviewer loop with max 5 iterations. Blocks phase completion until reviewer approves spec quality.
+  source_files:
+    - file: "plugins/iflow/commands/specify.md"
+      lines: "23-164"
+      anchor: "Step 1: Spec Review"
+  trigger: "/iflow:specify after validateAndSetup passes"
+  enforcement: "hard-block"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "specify"
+  yolo_behavior: "unchanged"
+  consolidation_target: "transition_gate"
+  consolidation_notes: >
+    Encode as review_quality_gate(phase='specify', reviewer='spec-reviewer', max_iterations=5) in transition_gate.py. Same parameterized pattern as G-34, G-38, G-40.
+- id: "G-47"
+  name: "Specify phase handoff review gate"
+  category: "review-quality"
+  description: >
+    Phase-reviewer loop with max 5 iterations. Validates spec is ready for the design phase.
+  source_files:
+    - file: "plugins/iflow/commands/specify.md"
+      lines: "165-298"
+      anchor: "Step 2: Phase Handoff Review"
+  trigger: "Specify primary review (G-46) passes"
+  enforcement: "hard-block"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "specify"
+  yolo_behavior: "unchanged"
+  consolidation_target: "transition_gate"
+  consolidation_notes: >
+    Encode as phase_handoff_gate(phase='specify', reviewer='phase-reviewer', max_iterations=5) in transition_gate.py. Same parameterized pattern as G-35, G-39.
+
+# =============================================================================
+# STATUS-TRANSITION (4 guards)
+# =============================================================================
+
+- id: "G-48"
+  name: "Active feature conflict check"
+  category: "status-transition"
+  description: >
+    Warns if another feature is already active before creating a new feature. Offers to continue with existing feature or create new anyway.
+  source_files:
+    - file: "plugins/iflow/commands/create-feature.md"
+      lines: "26-43"
+      anchor: "Active features found"
+  trigger: "/iflow:create-feature invocation when an active feature exists"
+  enforcement: "soft-warn"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "specify"
+  yolo_behavior: "auto-select"
+  consolidation_target: "transition_gate"
+  consolidation_notes: >
+    Encode as check_active_feature_conflict() in transition_gate.py. Prevents accidental duplicate active features.
+- id: "G-49"
+  name: "No active feature check (specifying)"
+  category: "status-transition"
+  description: >
+    Blocks specification without an active feature. Suggests brainstorming first. Requires user confirmation before proceeding.
+  source_files:
+    - file: "plugins/iflow/skills/specifying/SKILL.md"
+      lines: "28-31"
+      anchor: "No active feature"
+  trigger: "/iflow:specify invocation when no feature folder found in features directory"
+  enforcement: "soft-warn"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "specify"
+  yolo_behavior: "auto-select"
+  consolidation_target: "transition_gate"
+  consolidation_notes: >
+    Encode as check_active_feature() in transition_gate.py. Prerequisite check for specification phase entry.
+- id: "G-50"
+  name: "Planned-to-active status transition"
+  category: "status-transition"
+  description: >
+    Multi-step gate controlling Planned to Active status transition. Includes start confirmation, mode selection, single-active-feature check, .meta.json update, and branch creation.
+  source_files:
+    - file: "plugins/iflow/skills/workflow-state/SKILL.md"
+      lines: "94-121"
+      anchor: "Planned -> Active"
+  trigger: "Phase command targeting a feature with status 'planned'"
+  enforcement: "soft-warn"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "specify"
+    - "design"
+    - "create-plan"
+    - "create-tasks"
+    - "implement"
+    - "finish"
+  yolo_behavior: "auto-select"
+  consolidation_target: "transition_gate"
+  consolidation_notes: >
+    Encode as planned_to_active_transition() in transition_gate.py. Complex multi-step gate with branch creation side effect.
+- id: "G-51"
+  name: "Terminal status enforcement"
+  category: "status-transition"
+  description: >
+    Prevents any phase transitions or status changes on features with terminal statuses (completed or abandoned). Once a feature reaches a terminal status, it is permanently frozen -- no phases can be started, no status changes are allowed, and no workflow commands will operate on it. Users must create a new feature for any follow-up work rather than reopening a closed feature.
+  source_files:
+    - file: "plugins/iflow/skills/workflow-state/SKILL.md"
+      lines: "346"
+      anchor: "Terminal statuses cannot be changed"
+  trigger: "Any attempt to modify status of a completed or abandoned feature"
+  enforcement: "soft-warn"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "specify"
+    - "design"
+    - "create-plan"
+    - "create-tasks"
+    - "implement"
+    - "finish"
+  yolo_behavior: "unchanged"
+  consolidation_target: "transition_gate"
+  consolidation_notes: >
+    Encode as check_terminal_status() in transition_gate.py. Currently a convention-based constraint with no code enforcement -- the LLM is expected to respect this rule but nothing prevents violation. Should be a hard-block in transition_gate to guarantee terminal status immutability.
+
+# =============================================================================
+# TASK-COMPLETION (2 guards)
+# =============================================================================
+
+- id: "G-52"
+  name: "Task completion gate (finish-feature)"
+  category: "task-completion"
+  description: >
+    Warns if tasks are incomplete before finish. Checks for unchecked items in tasks.md. Offers continue anyway, run implement, or loop implement.
+  source_files:
+    - file: "plugins/iflow/commands/finish-feature.md"
+      lines: "54-73"
+      anchor: "Step 2a: Check Task Completion"
+  trigger: "/iflow:finish-feature Step 2a when tasks.md has unchecked items"
+  enforcement: "soft-warn"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "finish"
+  yolo_behavior: "auto-select"
+  consolidation_target: "transition_gate"
+  duplicates:
+    - "G-53"
+  consolidation_notes: >
+    Encode as check_task_completion() in transition_gate.py. G-53 (wrap-up) is a duplicate. Merge into single function.
+- id: "G-53"
+  name: "Task completion gate (wrap-up)"
+  category: "task-completion"
+  description: >
+    Warns if tasks are incomplete before wrap-up. Checks via TaskList for pending/in_progress tasks. Duplicate of finish-feature task completion gate.
+  source_files:
+    - file: "plugins/iflow/commands/wrap-up.md"
+      lines: "40-63"
+      anchor: "Step 2a: Check Task Completion"
+  trigger: "/iflow:wrap-up Step 2a when incomplete tasks exist"
+  enforcement: "soft-warn"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "finish"
+  yolo_behavior: "auto-select"
+  consolidation_target: "transition_gate"
+  duplicates:
+    - "G-52"
+  consolidation_notes: >
+    Merge with G-52 into single check_task_completion() function.
+
+# =============================================================================
+# YOLO-MODE (7 guards)
+# =============================================================================
+
+- id: "G-54"
+  name: "YOLO auto-select guard"
+  category: "yolo-mode"
+  description: >
+    Auto-answers AskUserQuestion prompts during YOLO mode. Selects the recommended option from question options. Core YOLO automation mechanism.
+  source_files:
+    - file: "plugins/iflow/hooks/yolo-guard.sh"
+      lines: "50-126"
+      anchor: "permissionDecision"
+  trigger: "AskUserQuestion tool invocation during YOLO mode (yolo_mode=true, not paused)"
+  enforcement: "hard-block"
+  enforcement_mechanism: "code"
+  affected_phases:
+    - "specify"
+    - "design"
+    - "create-plan"
+    - "create-tasks"
+    - "implement"
+    - "finish"
+  yolo_behavior: "auto-select"
+  consolidation_target: "hook"
+  consolidation_notes: >
+    Stays as hook. Runtime PreToolUse enforcement that intercepts AskUserQuestion calls. Cannot be replicated in transition_gate.
+- id: "G-55"
+  name: "YOLO safety keyword bypass"
+  category: "yolo-mode"
+  description: >
+    Denies auto-select for prompts containing safety keywords (circuit breaker, 5 iterations, force approve, abandon, merge conflict, YOLO MODE STOPPED, pre-merge validation failed). Ensures critical decisions require human input.
+  source_files:
+    - file: "plugins/iflow/hooks/yolo-guard.sh"
+      lines: "54-62"
+      anchor: "SAFETY_KEYWORDS"
+  trigger: "AskUserQuestion containing safety keywords during YOLO mode"
+  enforcement: "hard-block"
+  enforcement_mechanism: "code"
+  affected_phases:
+    - "specify"
+    - "design"
+    - "create-plan"
+    - "create-tasks"
+    - "implement"
+    - "finish"
+  yolo_behavior: "hard-stop"
+  consolidation_target: "hook"
+  consolidation_notes: >
+    Stays as hook. Safety valve within yolo-guard.sh. Critical for preventing auto-selection of dangerous options.
+- id: "G-56"
+  name: "YOLO pause state detection"
+  category: "yolo-mode"
+  description: >
+    Detects YOLO paused state at session start with cooldown logic. Injects behavioral context about YOLO pause status and auto-resume timing.
+  source_files:
+    - file: "plugins/iflow/hooks/inject-secretary-context.sh"
+      lines: "16-80"
+      anchor: "YOLO pause"
+  trigger: "Session start when yolo_mode=true and yolo_paused state detected"
+  enforcement: "informational"
+  enforcement_mechanism: "code"
+  affected_phases:
+    - "specify"
+    - "design"
+    - "create-plan"
+    - "create-tasks"
+    - "implement"
+    - "finish"
+  yolo_behavior: "unchanged"
+  consolidation_target: "hook"
+  consolidation_notes: >
+    Stays as hook. Session-start context injection for YOLO pause awareness.
+- id: "G-57"
+  name: "YOLO usage limit circuit breaker"
+  category: "yolo-mode"
+  description: >
+    Blocks stop tool after exceeding token usage limit (yolo_usage_limit). Sets yolo_paused state to prevent further autonomous operation. Prevents infinite autonomous loops by capping total token consumption.
+  source_files:
+    - file: "plugins/iflow/hooks/yolo-stop.sh"
+      lines: "31-69"
+      anchor: "usage_count"
+  trigger: "Stop tool invocation when total session tokens exceed yolo_usage_limit"
+  enforcement: "hard-block"
+  enforcement_mechanism: "code"
+  affected_phases:
+    - "specify"
+    - "design"
+    - "create-plan"
+    - "create-tasks"
+    - "implement"
+    - "finish"
+  yolo_behavior: "hard-stop"
+  consolidation_target: "hook"
+  consolidation_notes: >
+    Stays as hook. Runtime token consumption tracking. Cannot be replicated in transition_gate.
+- id: "G-58"
+  name: "YOLO max stop blocks safety valve"
+  category: "yolo-mode"
+  description: >
+    Stops blocking the stop tool after hitting max_stop_blocks limit (default 50). Safety valve that prevents the stop hook from permanently blocking the user.
+  source_files:
+    - file: "plugins/iflow/hooks/yolo-stop.sh"
+      lines: "159-169"
+      anchor: "max_stop_blocks"
+  trigger: "Stop tool invocation when stop_count exceeds yolo_max_stop_blocks"
+  enforcement: "hard-block"
+  enforcement_mechanism: "code"
+  affected_phases:
+    - "specify"
+    - "design"
+    - "create-plan"
+    - "create-tasks"
+    - "implement"
+    - "finish"
+  yolo_behavior: "hard-stop"
+  consolidation_target: "hook"
+  consolidation_notes: >
+    Stays as hook. Safety valve for G-21 (phase continuation guard).
+- id: "G-59"
+  name: "YOLO stuck detection"
+  category: "yolo-mode"
+  description: >
+    Allows stop after detecting no progress since last block (same lastCompletedPhase). Safety valve for genuinely stuck sessions where Claude cannot make progress.
+  source_files:
+    - file: "plugins/iflow/hooks/yolo-stop.sh"
+      lines: "148-154"
+      anchor: "stuck_count"
+  trigger: "Stop tool invocation when stop_hook_active=true and no phase progress detected"
+  enforcement: "hard-block"
+  enforcement_mechanism: "code"
+  affected_phases:
+    - "specify"
+    - "design"
+    - "create-plan"
+    - "create-tasks"
+    - "implement"
+    - "finish"
+  yolo_behavior: "hard-stop"
+  consolidation_target: "hook"
+  consolidation_notes: >
+    Stays as hook. Stuck detection requires runtime state comparison.
+- id: "G-60"
+  name: "Orchestrate YOLO prerequisite"
+  category: "yolo-mode"
+  description: >
+    Blocks orchestrate mode unless YOLO mode is active. Secretary orchestrate subcommand requires yolo activation_mode for autonomous workflow execution.
+  source_files:
+    - file: "plugins/iflow/commands/secretary.md"
+      lines: "302-313"
+      anchor: "Orchestrate prerequisite"
+  trigger: "/iflow:secretary orchestrate invocation when activation_mode is not yolo"
+  enforcement: "hard-block"
+  enforcement_mechanism: "markdown"
+  affected_phases:
+    - "specify"
+    - "design"
+    - "create-plan"
+    - "create-tasks"
+    - "implement"
+    - "finish"
+  yolo_behavior: "unchanged"
+  consolidation_target: "transition_gate"
+  consolidation_notes: >
+    Encode as check_orchestrate_prerequisite() in transition_gate.py. Simple mode check before allowing orchestrate.
