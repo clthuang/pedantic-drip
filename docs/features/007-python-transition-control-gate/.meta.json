@@ -1,0 +1,24 @@
+{
+  "id": "007",
+  "slug": "python-transition-control-gate",
+  "status": "active",
+  "created": "2026-03-01T16:27:59+08:00",
+  "mode": "standard",
+  "branch": "feature/007-python-transition-control-gate",
+  "project_id": "P001",
+  "module": "State Engine",
+  "depends_on_features": [
+    "006-transition-guard-audit-and-rul"
+  ],
+  "lastCompletedPhase": "specify",
+  "phases": {
+    "specify": {
+      "started": "2026-03-03T23:00:00+08:00",
+      "completed": "2026-03-04T00:20:00+08:00",
+      "phaseReview": {
+        "iterations": 2,
+        "approved": true
+      }
+    }
+  }
+}
