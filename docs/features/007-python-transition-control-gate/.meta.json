@@ -31,5 +31,24 @@
       "completed": "2026-03-04T01:25:00+08:00"
     }
   },
-  "lastCompletedPhase": "design"
+  "lastCompletedPhase": "create-plan",
+  "currentPhase": "create-tasks",
+  "phases_extra": {
+    "create-plan": {
+      "started": "2026-03-04T01:30:00+08:00",
+      "completed": "2026-03-04T03:15:00+08:00",
+      "planReview": {
+        "iterations": 3,
+        "approved": true
+      },
+      "phaseReview": {
+        "iterations": 5,
+        "approved": false,
+        "reviewerNotes": [
+          "Phase 3g per-phase test breakdown underspecified — review_quality_gate and phase_handoff_gate per-phase coverage not enumerated",
+          "Phase 5 step 4 dependency verification could produce false-green if import succeeds but functions are stubs"
+        ]
+      }
+    }
+  }
 }
