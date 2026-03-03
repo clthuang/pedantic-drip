@@ -10,7 +10,7 @@
   "depends_on_features": [
     "004-status-taxonomy-design-and-sch"
   ],
-  "lastCompletedPhase": "specify",
+  "lastCompletedPhase": "design",
   "phases": {
     "specify": {
       "started": "2026-03-03T14:00:00+08:00",
@@ -21,6 +21,17 @@
         "reviewerNotes": [
           "Pass 1 triage completion criterion not explicitly defined — acceptable risk for skilled implementer"
         ]
+      }
+    },
+    "design": {
+      "started": "2026-03-03T16:00:00+08:00",
+      "completed": "2026-03-03T17:05:00+08:00",
+      "stages": {
+        "research": { "started": "2026-03-03T16:00:00+08:00", "completed": "2026-03-03T16:05:00+08:00", "skipped": false },
+        "architecture": { "started": "2026-03-03T16:05:00+08:00", "completed": "2026-03-03T16:15:00+08:00" },
+        "interface": { "started": "2026-03-03T16:15:00+08:00", "completed": "2026-03-03T16:20:00+08:00" },
+        "designReview": { "started": "2026-03-03T16:20:00+08:00", "completed": "2026-03-03T16:40:00+08:00", "iterations": 3, "reviewerNotes": [] },
+        "handoffReview": { "started": "2026-03-03T16:40:00+08:00", "completed": "2026-03-03T17:05:00+08:00", "iterations": 5, "approved": false, "reviewerNotes": ["C1-C3 re-execution scope on interruption — acceptable risk for single-session documentation task"] }
       }
     }
   }
