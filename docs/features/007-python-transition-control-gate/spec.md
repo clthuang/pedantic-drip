@@ -49,7 +49,7 @@ Per the feature 006 audit report Section 4, the 43 guards consolidate to these P
 | `check_hard_prerequisites(phase, existing_artifacts)` | G-08 | Maps phases to required artifacts, returns missing list |
 | `validate_prd(prd_path_exists)` | G-07 | PRD existence check for project creation |
 | `check_prd_exists(prd_path_exists, meta_has_brainstorm_source)` | G-09 | Soft redirect for specify when PRD missing |
-| `check_branch(current_branch, expected_branch)` | G-11 | Branch mismatch detection with switch suggestion |
+| `check_branch(current_branch, expected_branch)` | G-11 | Branch mismatch detection with switch suggestion. Note: G-10 (session-start variant) is `consolidation_target: hook` — not encoded here. |
 | `fail_open_mcp(service_name, service_available)` | G-13, G-14, G-15, G-16 | Returns warn (not block) when MCP/external service unavailable |
 | `check_partial_phase(phase, phase_started, phase_completed)` | G-17 | Detects interrupted phases, suggests resume |
 | `check_backward_transition(target_phase, last_completed_phase)` | G-18 | Warns on re-running completed phases |
@@ -118,7 +118,7 @@ All 7 canonical phases matching `workflow-state/SKILL.md`: `brainstorm`, `specif
 
 ### YoloBehavior (enum)
 
-`auto_select`, `hard_stop`, `skip`, `unchanged` — from guard-rules.yaml yolo_behavior field.
+`auto_select`, `hard_stop`, `skip`, `unchanged` — from guard-rules.yaml yolo_behavior field. YAML hyphens map to Python underscores (e.g., `auto-select` → `auto_select`).
 
 ## Enforcement Mapping
 
