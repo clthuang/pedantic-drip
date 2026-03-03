@@ -334,3 +334,11 @@ For ADR-style documentation features with multiple appendices, verify at design-
 - Confidence: medium
 - Last observed: Feature #004
 - Observation count: 1
+
+### Pattern: Two-Pass Audit Methodology with Convergence Check
+For exhaustive codebase audits, a two-pass methodology (Pass 1: grep-based candidate extraction with triage; Pass 2: structural file walk by directory) with an explicit convergence check produces reliable completeness. The convergence check compares entry counts between passes and flags discrepancies for investigation, transforming a subjective "I think I found them all" into an objective cross-validation between independent search methods.
+- Observed in: Feature 006, specify phase — spec-reviewer iter 1 blocker "no verifiable completeness criterion"; resolved by adding two-pass methodology with convergence check; 60 guards cataloged with verified completeness
+- Confidence: high
+- Keywords: audit, two-pass, grep, convergence, completeness, codebase-analysis, documentation
+- Last observed: Feature 006
+- Observation count: 1

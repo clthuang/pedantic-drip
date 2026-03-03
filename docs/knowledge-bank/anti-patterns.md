@@ -289,3 +289,21 @@ When a spec defines state-machine forward transitions without explicitly address
 - Confidence: medium
 - Last observed: Feature #004
 - Observation count: 1
+
+### Anti-Pattern: Fixing a Structured-List Bug Without Verifying All Siblings
+When an implement reviewer finds a field-ordering or formatting bug in one entry of a YAML/JSON array, fixing only the flagged entry without scanning all sibling entries for the same defect guarantees the bug recurs in the next review iteration. The same consolidation_notes field-ordering error (placed before duplicates/consolidation_target) recurred at G-14, G-15, and G-16 across three separate implement review iterations.
+- Observed in: Feature 006, implement phase — G-14 fixed iter 1, G-15 same bug iter 2, G-16 same bug iter 4; full sibling verification only at iter 5 after exhausting 4 of 5 iterations
+- Cost: 3 of 5 implement review iterations consumed by a structural defect fully knowable from the first fix
+- Instead: When fixing a field-ordering bug in a structured list, sweep all entries in the same list for the same defect before declaring the fix complete
+- Confidence: high
+- Last observed: Feature 006
+- Observation count: 1
+
+### Anti-Pattern: Gradual Checkpoint Escalation Across Chain Review Iterations
+When a plan-reviewer first flags an intermediate checkpoint as a "suggestion" in iteration 1 and the author treats it as optional, subsequent chain review iterations will escalate it progressively (suggestion to recommendation to required) until it becomes mandatory. Each escalation step consumes a full review iteration. The final enforcement level is knowable from the first flag.
+- Observed in: Feature 006, create-plan chain review — scratch-note checkpoint escalated from suggestion (iter 1) to recommendation (iter 2) to intermediate checkpoint (iter 3) to mandatory required step (iter 4), consuming all 4 chain review iterations
+- Cost: 3 wasted chain review iterations on a concern whose resolution was knowable from iter 1
+- Instead: When a checkpoint concern is first raised in iter 1 (at any severity), immediately elevate it to a required plan step with explicit completion signal
+- Confidence: high
+- Last observed: Feature 006
+- Observation count: 1
