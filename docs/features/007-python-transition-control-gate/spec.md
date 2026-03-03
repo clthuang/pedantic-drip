@@ -10,7 +10,7 @@ This is a **library feature** — deliverable is a Python module with pure funct
 
 Feature 006 audited all 60 transition guards in iflow's workflow system and classified 43 for encoding in Python. Currently, these guards exist as markdown pseudocode (e.g., `validateTransition()`, `validateArtifact()`) that the LLM reads and re-interprets on each invocation. This produces non-deterministic behavior — identical inputs can produce different transition decisions depending on context window state.
 
-The audit report's consolidation summary maps 43 guards to ~25 Python functions across categories: phase sequence validation, artifact checks, branch validation, status transitions, review quality gates, and pre-merge guards.
+The audit report's consolidation summary maps 43 guards to 25 Python functions across categories: phase sequence validation, artifact checks, branch validation, status transitions, review quality gates, and pre-merge guards.
 
 ## Feasibility
 
@@ -25,7 +25,7 @@ The audit report's consolidation summary maps 43 guards to ~25 Python functions 
 - SC-2: Each Python function returns a structured result (`TransitionResult` dataclass) with: allowed (bool), reason (str), severity (enum: block/warn/info), and guard_id (str).
 - SC-3: All functions are pure — they accept state as input parameters, have no side effects, and do not read files, environment variables, or databases directly. State is injected by callers.
 - SC-4: Test coverage achieves 100% of guard IDs — every G-XX has at least one test case exercising its pass and fail conditions. Pass = `allowed: true`, fail = `allowed: false` with severity matching the Enforcement Mapping below.
-- SC-5: The library's phase sequence definition is the single canonical source — it must match the sequence in `workflow-state/SKILL.md` exactly, with a test that verifies this. Note: SC-3 purity constraint applies to library functions, not test code. The SC-5 verification test may read SKILL.md to assert sequence consistency.
+- SC-5: The library's phase sequence definition is the single canonical source — it must match the sequence in `workflow-state/SKILL.md` exactly, with a test that verifies this. The test should search for the arrow-delimited sequence line (e.g., `brainstorm → specify → ...`) under the "Canonical Sequence" heading. Note: SC-3 purity applies to library functions, not test code.
 - SC-6: YOLO mode behavior is encoded per guard as documented in `guard-rules.yaml`'s `yolo_behavior` field, following the YOLO Behavior Semantics defined below.
 
 ## Acceptance Criteria
@@ -33,7 +33,7 @@ The audit report's consolidation summary maps 43 guards to ~25 Python functions 
 - AC-1: `plugins/iflow/hooks/lib/transition_gate/__init__.py` exists and exports all public functions.
 - AC-2: `plugins/iflow/hooks/lib/transition_gate/gate.py` contains the core validation functions (~25 functions per the consolidation summary).
 - AC-3: `plugins/iflow/hooks/lib/transition_gate/models.py` contains dataclasses: `TransitionResult`, `FeatureState`, `PhaseInfo`, and enums: `Phase`, `Severity`, `Enforcement`, `YoloBehavior`. See Data Models section for field definitions.
-- AC-4: `plugins/iflow/hooks/lib/transition_gate/constants.py` contains the canonical phase sequence, hard prerequisites map, artifact-phase map, and guard metadata.
+- AC-4: `plugins/iflow/hooks/lib/transition_gate/constants.py` contains the canonical phase sequence, hard prerequisites map, artifact-phase map, guard metadata, default max_iterations per gate type (brainstorm: 3, all others: 5), and artifact validation thresholds (min size: 100 bytes).
 - AC-5: `plugins/iflow/hooks/lib/transition_gate/test_gate.py` contains tests for all 43 guards (minimum 86 test cases — one pass + one fail per guard).
 - AC-6: All tests pass: `plugins/iflow/.venv/bin/python -m pytest plugins/iflow/hooks/lib/transition_gate/ -v`
 - AC-7: The 2 guards marked `deprecated` in the audit (G-24, G-26) are NOT encoded — they should be retired, not reimplemented.
@@ -45,7 +45,7 @@ Per the feature 006 audit report Section 4, the 43 guards consolidate to these P
 
 | Function | Guard IDs | Description |
 |----------|-----------|-------------|
-| `validate_artifact(feature_state, phase, artifact_path_exists, artifact_size, has_headers, has_required_sections)` | G-02, G-03, G-04, G-05, G-06 | 4-level artifact content validation with per-phase BLOCKED messages |
+| `validate_artifact(phase, artifact_path_exists, artifact_size, has_headers, has_required_sections)` | G-02, G-03, G-04, G-05, G-06 | 4-level artifact content validation with per-phase BLOCKED messages. Callers pre-compute booleans; size threshold (100 bytes) lives in constants. |
 | `check_hard_prerequisites(phase, existing_artifacts)` | G-08 | Maps phases to required artifacts, returns missing list |
 | `validate_prd(prd_path_exists)` | G-07 | PRD existence check for project creation |
 | `check_prd_exists(prd_path_exists, meta_has_brainstorm_source)` | G-09 | Soft redirect for specify when PRD missing |
@@ -60,8 +60,8 @@ Per the feature 006 audit report Section 4, the 43 guards consolidate to these P
 | `check_merge_conflict(is_yolo, merge_succeeded)` | G-28, G-30 | YOLO hard-stop on merge conflict |
 | `brainstorm_quality_gate(iteration, max_iterations, reviewer_approved)` | G-32 | PRD quality review loop |
 | `brainstorm_readiness_gate(iteration, max_iterations, reviewer_approved, has_blockers)` | G-31, G-33 | Readiness check with circuit breaker |
-| `review_quality_gate(phase, iteration, max_iterations, reviewer_approved, has_blockers_or_warnings)` | G-34, G-36, G-38, G-40, G-46 | Pure state evaluator: determines whether a review loop should continue iterating. Caller manages loop. |
-| `phase_handoff_gate(phase, iteration, max_iterations, reviewer_approved, has_blockers_or_warnings)` | G-35, G-37, G-39, G-47 | Pure state evaluator: determines whether a handoff review loop should continue. Caller manages loop. |
+| `review_quality_gate(phase, iteration, max_iterations, reviewer_approved, has_blockers_or_warnings)` | G-34, G-36, G-38, G-40, G-46 | Pure state evaluator: determines whether a review loop should continue. For multi-reviewer phases (G-40), caller aggregates approvals into single boolean (True only when ALL approve). |
+| `phase_handoff_gate(phase, iteration, max_iterations, reviewer_approved, has_blockers_or_warnings)` | G-35, G-37, G-39, G-47 | Pure state evaluator: determines whether a handoff review loop should continue. Caller manages loop and aggregates reviewer state. |
 | `implement_circuit_breaker(is_yolo, iteration, max_iterations)` | G-41 | YOLO safety boundary (hard-stop after 5 failed reviews) |
 | `check_active_feature_conflict(active_feature_count)` | G-48 | Warns about existing active features |
 | `secretary_review_criteria(confidence, is_direct_match)` | G-45 | Routing optimization: skip reviewer when confidence > 85% and direct match |
@@ -83,6 +83,8 @@ Per the feature 006 audit report Section 4, the 43 guards consolidate to these P
 | `guard_id` | `str` | Guard ID (e.g., "G-22") for traceability |
 
 ### FeatureState (dataclass)
+
+Convenience container for callers (e.g., feature 008's WorkflowStateEngine) to aggregate feature state before passing individual fields to gate functions. Gate functions do NOT accept FeatureState directly — they accept primitive parameters per SC-3's purity constraint.
 
 | Field | Type | Description |
 |-------|------|-------------|
