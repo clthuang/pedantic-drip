@@ -10,7 +10,7 @@
   "depends_on_features": [
     "004-status-taxonomy-design-and-sch"
   ],
-  "lastCompletedPhase": "create-plan",
+  "lastCompletedPhase": "create-tasks",
   "phases": {
     "specify": {
       "started": "2026-03-03T14:00:00+08:00",
@@ -43,6 +43,18 @@
         "reviewerNotes": [
           "Scratch-note paths should follow agent_sandbox date convention — minor convention concern, not a plan quality issue"
         ]
+      }
+    },
+    "create-tasks": {
+      "started": "2026-03-03T18:20:00+08:00",
+      "completed": "2026-03-03T19:00:00+08:00",
+      "taskReview": {
+        "iterations": 4,
+        "approved": true
+      },
+      "chainReview": {
+        "iterations": 2,
+        "approved": true
       }
     }
   }
