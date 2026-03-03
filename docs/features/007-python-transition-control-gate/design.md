@@ -148,6 +148,9 @@ Pytest module. Minimum 86 test cases (one pass + one fail per guard ID). Test na
 | YOLO split: 3 functions with `is_yolo`, rest via caller | Only functions where YOLO changes internal behavior accept `is_yolo` (hard_stop, specific logic). For skip/auto_select guards, caller checks GUARD_METADATA before calling. |
 | `str` parameters (not Phase enum) | Functions accept `str` for phase parameters per SC-3 purity. Internally convert via `Phase(phase_str)` for validation and comparison. |
 | G-51 enforcement override | `check_terminal_status` uses Severity.block despite guard-rules.yaml soft-warn. Per spec Enforcement Overrides table. |
+| G-08 as separate function | Spec's G-02 consolidation_notes suggest merging G-08 into validate_artifact, but G-08 checks prerequisite *existence* (which files exist?) while G-02..06 check *content* (is the file valid?). Different inputs, different semantics. |
+| `artifact_name` parameter added | Spec's validate_artifact signature lacks artifact_name; added during design review to enable G-05/G-06 differentiation. Design refines spec signature. |
+| `_phase_index` returns -1 sentinel | Public functions check for -1 and return "Invalid input" TransitionResult. Avoids silent wrong comparisons (e.g., -1 < 3 would pass a forward-only check). |
 
 ## Risks
 
@@ -346,8 +349,13 @@ def check_merge_conflict(
     is_yolo: bool,
     merge_succeeded: bool,
 ) -> TransitionResult:
-    """G-28/30: YOLO hard-stop on merge conflict.
-    Blocks in YOLO mode when merge fails (cannot auto-resolve)."""
+    """G-28/30: Merge conflict handling.
+
+    Truth table:
+    merge_succeeded=True                → allowed=True, info (G-28)
+    merge_succeeded=False, is_yolo=True → allowed=False, block (G-30, "YOLO hard-stop")
+    merge_succeeded=False, is_yolo=False → allowed=False, block (G-28, "merge failed")
+    """
 ```
 
 #### Review Gates
@@ -464,6 +472,8 @@ PHASE_SEQUENCE = (
 COMMAND_PHASES = PHASE_SEQUENCE[1:]  # specify through finish
 
 HARD_PREREQUISITES = {
+    "brainstorm": [],  # No prerequisites
+    "specify": [],     # No prerequisites (PRD check is G-09, not G-08)
     "design": ["spec.md"],
     "create-plan": ["spec.md", "design.md"],
     "create-tasks": ["spec.md", "design.md", "plan.md"],
@@ -498,13 +508,13 @@ SERVICE_GUARD_MAP = {
 
 PHASE_GUARD_MAP = {
     "review_quality": {
-        "specify": "G-34", "design": "G-36",
-        "create-plan": "G-38", "implement": "G-40",
-        "create-tasks": "G-46",
+        "specify": "G-46", "design": "G-38",
+        "create-plan": "G-34", "create-tasks": "G-36",
+        "implement": "G-40",
     },
     "phase_handoff": {
-        "specify": "G-35", "design": "G-37",
-        "create-plan": "G-39", "create-tasks": "G-47",
+        "specify": "G-47", "design": "G-39",
+        "create-plan": "G-35", "create-tasks": "G-37",
     },
 }
 
