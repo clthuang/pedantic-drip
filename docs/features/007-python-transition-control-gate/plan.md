@@ -57,7 +57,7 @@ Phase 5: Integration Verification + SC-5 test   — end-to-end validation
 9. Define `PHASE_GUARD_MAP: dict[str, dict[str, str]]` — review_quality (5 phases) + phase_handoff (4 phases, no implement)
 10. Define `MIN_ARTIFACT_SIZE: int = 100`
 11. Define `MAX_ITERATIONS: dict[str, int]` — brainstorm:3, default:5
-12. Define `GUARD_METADATA: dict[str, dict]` — 43 entries from guard-rules.yaml, each with enforcement, yolo_behavior, affected_phases. Derive values directly from guard-rules.yaml.
+12. Define `GUARD_METADATA: dict[str, dict]` — 43 entries from guard-rules.yaml, each with enforcement, yolo_behavior, affected_phases. Derive values directly from `docs/features/006-transition-guard-audit-and-rul/guard-rules.yaml` (same path as the YAML validation test in step 16).
 13. Define `EXPECTED_GUARD_IDS: frozenset[str]` — explicit set of all 43 guard IDs (G-02 through G-60) for exact membership testing. This prevents both missing and extraneous entries.
 14. Add integrity tests to `test_gate.py`:
     - `assert set(GUARD_METADATA.keys()) == EXPECTED_GUARD_IDS` (exact membership, not just count)
@@ -95,6 +95,8 @@ Add 3 direct tests for `_phase_index`: valid phase returns correct index, invali
 
 ### Phase 3c: Artifact & Prerequisite Functions (G-02..09) + Tests
 
+**Prerequisite:** Phase 3a and 3b complete.
+
 1. `validate_artifact(phase, artifact_name, artifact_path_exists, artifact_size, has_headers, has_required_sections)` — 4-level validation, guard_id from ARTIFACT_GUARD_MAP
 2. `check_hard_prerequisites(phase, existing_artifacts)` — lookup HARD_PREREQUISITES, return missing list
 3. `validate_prd(prd_path_exists)` — G-07 simple boolean check
@@ -103,11 +105,15 @@ Add 3 direct tests for `_phase_index`: valid phase returns correct index, invali
 
 ### Phase 3d: Branch & Service Functions (G-11, G-13..16) + Tests
 
+**Prerequisite:** Phase 3a and 3b complete.
+
 1. `check_branch(current_branch, expected_branch)` — G-11 string comparison
 2. `fail_open_mcp(service_name, service_available)` — G-13..16, always allowed=True on failure (warn)
 3. Add tests: G-11 (2 cases), G-13..16 (8 cases: 4 services x pass/fail)
 
 ### Phase 3e: Phase Transition Functions (G-17, G-18, G-22, G-23, G-25) + Tests
+
+**Prerequisite:** Phase 3a and 3b complete.
 
 1. `check_partial_phase(phase, phase_started, phase_completed)` — G-17 started-but-not-completed detection
 2. `check_backward_transition(target_phase, last_completed_phase)` — G-18 backward movement warning
@@ -118,11 +124,15 @@ Add 3 direct tests for `_phase_index`: valid phase returns correct index, invali
 
 ### Phase 3f: Pre-Merge Functions (G-27..30) + Tests
 
+**Prerequisite:** Phase 3a and 3b complete.
+
 1. `pre_merge_validation(checks_passed, max_attempts, current_attempt)` — G-27/29 with truth table
 2. `check_merge_conflict(is_yolo, merge_succeeded)` — G-28/30 with truth table
 3. Add tests: G-27/29 (4 cases covering truth table), G-28/30 (4 cases covering truth table)
 
 ### Phase 3g: Review Gate Functions (G-31..41, G-46, G-47) + Tests
+
+**Prerequisite:** Phase 3a and 3b complete.
 
 1. `brainstorm_quality_gate(iteration, max_iterations, reviewer_approved)` — G-32
 2. `brainstorm_readiness_gate(iteration, max_iterations, reviewer_approved, has_blockers)` — G-31/33 with decision matrix
@@ -132,6 +142,8 @@ Add 3 direct tests for `_phase_index`: valid phase returns correct index, invali
 6. Add tests: G-31/33 (4 cases for decision matrix), G-32 (3 cases), G-34/36/38/40/46 (10 cases across phases), G-35/37/39/47 (8 cases across phases), G-41 (3 cases including YOLO hard-stop)
 
 ### Phase 3h: Status & Feature Functions (G-45, G-48..53, G-60) + Tests
+
+**Prerequisite:** Phase 3a and 3b complete.
 
 1. `check_active_feature_conflict(active_feature_count)` — G-48
 2. `secretary_review_criteria(confidence, is_direct_match)` — G-45
