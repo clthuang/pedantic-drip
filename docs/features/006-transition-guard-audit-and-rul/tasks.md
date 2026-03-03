@@ -1,5 +1,13 @@
 # Tasks: Transition Guard Audit and Rule Inventory
 
+## Dependency Graph
+
+Task 1 → Task 2 → Task 3 → Task 4 → Task 5 → Task 6 (strictly sequential, no parallel execution possible — each phase depends on the previous phase's complete output).
+
+**Task size note:** Tasks 1 and 2 are intentionally oversized due to the sequential audit pipeline constraint. The <15 min task guideline does not apply to this documentation/analysis feature which requires exhaustive scan of all files under `plugins/iflow/`.
+
+---
+
 ## Task 1: Pass 1 — Pattern Grep Scan (C1)
 
 **Phase:** 1
