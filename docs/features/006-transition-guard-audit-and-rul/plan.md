@@ -19,7 +19,7 @@ This is a documentation/analysis feature with no runtime code. The implementatio
 
 **Key risk:** Pattern 1 (`block|BLOCK|prevent|...`) will produce hundreds of matches. Triage must be thorough — every match reviewed, not just sampled.
 
-**Triage strategy:** Group matches by file first, then triage file-by-file. This provides natural batching and context — seeing multiple matches in one file together helps distinguish guard patterns from incidental keyword usage.
+**Triage strategy:** Group matches by file first, then triage file-by-file. This provides natural batching and context — seeing multiple matches in one file together helps distinguish guard patterns from incidental keyword usage. If match volume is very large, the implementer may write intermediate triage results to a scratch note between file batches to prevent context loss.
 
 ### Phase 2: Pass 2 — Structural Walk (C2)
 
@@ -29,9 +29,9 @@ This is a documentation/analysis feature with no runtime code. The implementatio
 
 **Steps:**
 1. **Commands walk:** Read all `.md` files in `plugins/iflow/commands/` — identify BLOCKED messages, prerequisite checks, AskUserQuestion gates, review-quality loops
-2. **Skills walk:** Read all `.md` files in `plugins/iflow/skills/` — identify validate functions, transition logic, state management guards
+2. **Skills walk:** Read `.md` files in `plugins/iflow/skills/` — prioritize SKILL.md files first (the main skill definitions where guards live), then selectively scan references/ subdirectories only for workflow-related skills (workflow-state, workflow-transitions, finishing-branch, implementing, planning, etc.). Non-workflow skills (crypto-analysis, game-design, etc.) can be skipped after confirming their SKILL.md has no guard logic.
 3. **Hooks walk (shell):** Read all `.sh` files in `plugins/iflow/hooks/` — identify permissionDecision patterns, phase checks, circuit breakers, YOLO guards. Note: some `.sh` files may not be registered in hooks.json (e.g., standalone utility scripts like cleanup-sandbox.sh). These should still be scanned but will likely triage as non-guards. The hooks.json cross-reference in Step 7 surfaces any discrepancies.
-4. **Hooks walk (Python):** Read all `.py` files in `plugins/iflow/hooks/lib/` — focus on `entity_registry/` for phase sequence encodings; scan `semantic_memory/` for completeness. Test files (`test_*.py`) can be batch-skipped after confirming they contain only test assertions, not guard logic.
+4. **Hooks walk (Python):** Read all `.py` files in `plugins/iflow/hooks/lib/` — including top-level files (e.g., `memory.py`) plus `entity_registry/` (focus: phase sequence encodings) and `semantic_memory/` (scan for completeness). Test files (`test_*.py`) can be batch-skipped after confirming they contain only test assertions, not guard logic.
 5. **Agents walk:** Read all `.md` files in `plugins/iflow/agents/` — look for guard-related review criteria (expected: none are guards per design decision, but scan to confirm)
 6. **Peripheral directories walk:** Scan `plugins/iflow/references/`, `plugins/iflow/templates/`, `plugins/iflow/scripts/`, `plugins/iflow/mcp/` — confirm no guards missed
 7. **Hooks registry cross-reference:** Read `plugins/iflow/hooks/hooks.json` and verify all registered hooks were examined in steps 3-4
@@ -48,7 +48,7 @@ This is a documentation/analysis feature with no runtime code. The implementatio
 
 **Steps:**
 1. Filter pass1_guards to `triage_result="guard"` entries only (exclude false positives)
-2. Match filtered Pass 1 entries against Pass 2 entries using file+line-range matching (Pass 1 line falls within Pass 2 line range)
+2. Match filtered Pass 1 entries against Pass 2 entries using file+line-range matching (Pass 1 line falls within Pass 2 line range). When multiple Pass 1 entries match a single Pass 2 entry's line range, check if the Pass 2 entry should be split into multiple guards (use anchor text as disambiguator).
 3. Apply secondary matching (anchor text within same file) for entries that don't match on line ranges
 4. Classify each entry: `found_by: "both"` (confirmed), `"pass1_only"`, or `"pass2_only"`
 5. Investigate pass-only entries: read source file context, determine if guard or false positive, document resolution. Note: entries that don't match via line-range or anchor matching also flow to this investigation step — they are not silently dropped.
@@ -81,10 +81,11 @@ This phase has two sub-tasks: mechanical population (4a) and judgment-based enri
 3. Set `duplicates` field with cross-references to other guard IDs
 4. Write `consolidation_notes` for guards targeting transition_gate (describe merge strategy)
 
-**4c. Write guard-rules.yaml:**
-1. Validate all 11 required fields present per entry
-2. Validate all enum values match spec-defined values
-3. Write YAML file to `docs/features/006-transition-guard-audit-and-rul/guard-rules.yaml`
+**4c. Write and validate guard-rules.yaml:**
+1. Write YAML file to `docs/features/006-transition-guard-audit-and-rul/guard-rules.yaml`
+2. Validate every entry has all 11 required fields: `id`, `name`, `category`, `description`, `source_files`, `trigger`, `enforcement`, `enforcement_mechanism`, `affected_phases`, `yolo_behavior`, `consolidation_target`
+3. Validate all enum values match spec-defined sets (enforcement: hard-block|soft-warn|informational; enforcement_mechanism: code|markdown|convention; yolo_behavior: auto-select|hard-stop|skip|unchanged; consolidation_target: transition_gate|hook|deprecated)
+4. Validate IDs are sequential from G-01 with no gaps
 
 **Completion signal:** guard-rules.yaml exists on disk, validated against schema.
 
@@ -107,7 +108,7 @@ This phase has two sub-tasks: mechanical population (4a) and judgment-based enri
 ## Recovery Strategy
 
 - **C1-C3 ephemeral:** If interrupted before C4, re-execute from C1 (inputs are stable codebase files, grep/read operations are fast)
-- **C4 checkpoint:** If guard-rules.yaml exists on disk, C4 is complete — skip to C5
+- **C4 checkpoint:** If guard-rules.yaml exists on disk AND passes schema validation (Phase 4c checks), C4 is complete — skip to C5. If the file exists but is incomplete or malformed, re-execute from C4.
 - **C5 checkpoint:** If audit-report.md exists on disk, C5 is complete — done
 
 ## Verification
