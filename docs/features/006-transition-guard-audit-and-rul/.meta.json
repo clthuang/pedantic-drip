@@ -10,7 +10,7 @@
   "depends_on_features": [
     "004-status-taxonomy-design-and-sch"
   ],
-  "lastCompletedPhase": "design",
+  "lastCompletedPhase": "create-plan",
   "phases": {
     "specify": {
       "started": "2026-03-03T14:00:00+08:00",
@@ -32,6 +32,17 @@
         "interface": { "started": "2026-03-03T16:15:00+08:00", "completed": "2026-03-03T16:20:00+08:00" },
         "designReview": { "started": "2026-03-03T16:20:00+08:00", "completed": "2026-03-03T16:40:00+08:00", "iterations": 3, "reviewerNotes": [] },
         "handoffReview": { "started": "2026-03-03T16:40:00+08:00", "completed": "2026-03-03T17:05:00+08:00", "iterations": 5, "approved": false, "reviewerNotes": ["C1-C3 re-execution scope on interruption — acceptable risk for single-session documentation task"] }
+      }
+    },
+    "create-plan": {
+      "started": "2026-03-03T17:10:00+08:00",
+      "completed": "2026-03-03T18:15:00+08:00",
+      "phaseReview": {
+        "iterations": 5,
+        "approved": false,
+        "reviewerNotes": [
+          "Scratch-note paths should follow agent_sandbox date convention — minor convention concern, not a plan quality issue"
+        ]
       }
     }
   }
