@@ -77,9 +77,9 @@ Each guard entry in `guard-rules.yaml` must conform to this structure:
 - For `.sh` files: function names (e.g., `phase_map=`) or unique variable assignments (e.g., `permissionDecision`)
 - For `.py` files: function/class names (e.g., `def validate_transition`) or unique string literals
 
-**Required fields:** `id`, `name`, `category`, `source_files`, `trigger`, `enforcement`, `enforcement_mechanism`, `affected_phases`, `yolo_behavior`, `consolidation_target`
+**Required fields:** `id`, `name`, `category`, `description`, `source_files`, `trigger`, `enforcement`, `enforcement_mechanism`, `affected_phases`, `yolo_behavior`, `consolidation_target`
 
-**Optional fields:** `description`, `duplicates`, `consolidation_notes`
+**Optional fields:** `duplicates`, `consolidation_notes`
 
 **Enum values:**
 - `enforcement`: `hard-block` | `soft-warn` | `informational`
