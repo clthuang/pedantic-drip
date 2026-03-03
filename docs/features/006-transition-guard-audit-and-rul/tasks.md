@@ -82,7 +82,7 @@ Compare Pass 1 and Pass 2 guard sets, resolve discrepancies, and produce the uni
 ### Steps
 
 1. Filter pass1_guards to `triage_result="guard"` entries only (exclude false positives)
-2. Match filtered Pass 1 entries against Pass 2 entries using file+line-range matching (Pass 1 line falls within Pass 2 line range). When multiple Pass 1 entries match a single Pass 2 entry's range, check if the Pass 2 entry should be split (use anchor as disambiguator).
+2. Match filtered Pass 1 entries against Pass 2 entries using file+line-range matching (Pass 1 line falls within Pass 2 line range). When multiple Pass 1 entries match a single Pass 2 entry's range, check if the Pass 2 entry should be split (use anchor as disambiguator). If split is warranted, create separate unified_guards entries per anchor with narrowed line ranges.
 3. Apply secondary matching (anchor text within same file) for unmatched entries
 4. Classify each entry: `found_by: "both"`, `"pass1_only"`, or `"pass2_only"`
 5. Investigate pass-only entries: read source file context, determine if guard or false positive, document resolution
@@ -95,7 +95,7 @@ Compare Pass 1 and Pass 2 guard sets, resolve discrepancies, and produce the uni
 - [ ] All Pass 1 guard entries matched or investigated
 - [ ] All Pass 2 guard entries matched or investigated
 - [ ] Every pass-only entry resolved (added to unified set or documented as false positive)
-- [ ] Boundary cases documented with rationale
+- [ ] Boundary cases documented with rationale (guards that can't be definitively classified)
 - [ ] unified_guards list produced and written to scratch note on disk
 
 ---
@@ -187,7 +187,7 @@ Verify both deliverables against all 6 acceptance criteria.
 1. **AC-1:** Confirm guard-rules.yaml exists with all guards from unified set
 2. **AC-2:** Confirm each guard entry has all 11 required fields
 3. **AC-3:** Confirm audit-report.md has all 5 required sections (executive summary, duplicate analysis, gap analysis, consolidation summary, verification results)
-4. **AC-4:** Confirm categories cover at minimum the 10 initial categories (phase-sequence, artifact-existence, artifact-content, branch-validation, status-transition, review-quality, yolo-mode, pre-merge, task-completion, partial-recovery). Document any new categories with rationale.
+4. **AC-4:** Confirm categories cover at minimum these 10 initial categories: phase-sequence, artifact-existence, artifact-content, branch-validation, status-transition, review-quality, yolo-mode, pre-merge, task-completion, partial-recovery. Document any new categories discovered during the audit with rationale.
 5. **AC-5:** Confirm total guard count and verification results are documented in audit-report.md
 6. **AC-6:** Confirm every guard has a consolidation_target field
 
