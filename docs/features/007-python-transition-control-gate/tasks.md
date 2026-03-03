@@ -57,15 +57,20 @@
 - [ ] Define `MAX_ITERATIONS: dict[str, int]` — brainstorm:3, default:5
 - **Done when:** `PHASE_GUARD_MAP["review_quality"]["specify"] == "G-46"` and `MIN_ARTIFACT_SIZE == 100`
 
-### Task 2.4a: Define GUARD_METADATA first half (G-02..G-33, ~22 entries)
+### Task 2.4a: Define GUARD_METADATA batch 1 (G-02..G-18, ~11 entries)
 - [ ] Define `GUARD_METADATA: dict[str, dict]` — begin populating from `docs/features/006-transition-guard-audit-and-rul/guard-rules.yaml`, including only guards where `consolidation_target: transition_gate`. Exclude: all hook-targeted guards (G-10, G-12, G-19, G-20, G-21, G-42, G-43, G-44, G-54, G-55, G-56, G-57, G-58, G-59), deprecated guards (G-24, G-26), and any guard with `consolidation_target: hook` or `consolidation_target: deprecated`.
 - [ ] Each entry: `{"enforcement": Enforcement.X, "yolo_behavior": YoloBehavior.Y, "affected_phases": [...]}`
-- [ ] Populate guards G-02 through G-33 (approximately 22 entries)
-- **Done when:** All guards from G-02 through G-33 with `consolidation_target: transition_gate` are present in GUARD_METADATA
+- [ ] Populate guards G-02 through G-18 (approximately 11 entries)
+- **Done when:** Guards G-02 through G-18 with `consolidation_target: transition_gate` are present in GUARD_METADATA
 
-### Task 2.4b: Define GUARD_METADATA second half (G-34..G-60, ~21 entries)
+### Task 2.4b: Define GUARD_METADATA batch 2 (G-22..G-41, ~11 entries)
 **Prerequisite:** Task 2.4a complete.
-- [ ] Populate guards G-34 through G-60 (approximately 21 entries)
+- [ ] Populate guards G-22 through G-41 (approximately 11 entries, skipping G-24/G-26 deprecated)
+- **Done when:** Guards G-22 through G-41 with `consolidation_target: transition_gate` are present in GUARD_METADATA
+
+### Task 2.4c: Define GUARD_METADATA batch 3 (G-45..G-60, ~11 entries)
+**Prerequisite:** Task 2.4b complete.
+- [ ] Populate guards G-45 through G-60 (approximately 11 entries, skipping hook-targeted guards)
 - [ ] Apply G-51 enforcement override: set to `Enforcement.hard_block` (YAML source says soft-warn, but spec requires hard-block — this is an intentional upgrade, add inline comment documenting the override)
 - **Done when:** `len(GUARD_METADATA) == 43` and `GUARD_METADATA["G-51"]["enforcement"] == Enforcement.hard_block`. Note: after writing all 43 entries, immediately write Task 2.8's YAML validation test and run it (`-k "yaml_validation"`) to catch transcription errors before proceeding to Task 2.5+.
 
@@ -155,13 +160,18 @@
 - [ ] Add 7 tests: G-31/33 (4), G-32 (3)
 - **Done when:** `plugins/iflow/.venv/bin/python -m pytest plugins/iflow/hooks/lib/transition_gate/test_gate.py -v -k "G31 or G32 or G33"` passes
 
-### Task 3.7b: Implement review/handoff gate + circuit breaker functions (G-34..41, G-46, G-47) + tests
+### Task 3.7b: Implement review/handoff gate functions (G-34..40, G-46, G-47) + tests
 **Prerequisite:** Tasks 3.1 and 3.2 complete.
 - [ ] `review_quality_gate(phase, iteration, max_iterations, reviewer_approved, has_blockers_or_warnings)` — G-34/36/38/40/46 via PHASE_GUARD_MAP
 - [ ] `phase_handoff_gate(phase, iteration, max_iterations, reviewer_approved, has_blockers_or_warnings)` — G-35/37/39/47 via PHASE_GUARD_MAP
+- [ ] Add 18 tests: G-34/36/38/40/46 (10 across phases), G-35/37/39/47 (8 across phases)
+- **Done when:** `plugins/iflow/.venv/bin/python -m pytest plugins/iflow/hooks/lib/transition_gate/test_gate.py -v -k "G34 or G35 or G36 or G37 or G38 or G39 or G40 or G46 or G47"` passes
+
+### Task 3.7c: Implement circuit breaker function (G-41) + tests
+**Prerequisite:** Tasks 3.1 and 3.2 complete.
 - [ ] `implement_circuit_breaker(is_yolo, iteration, max_iterations)` — G-41
-- [ ] Add 21 tests: G-34/36/38/40/46 (10 across phases), G-35/37/39/47 (8 across phases), G-41 (3 including YOLO hard-stop)
-- **Done when:** `plugins/iflow/.venv/bin/python -m pytest plugins/iflow/hooks/lib/transition_gate/test_gate.py -v -k "G34 or G35 or G36 or G37 or G38 or G39 or G40 or G41 or G46 or G47"` passes
+- [ ] Add 3 tests: G-41 (3 including YOLO hard-stop behavior)
+- **Done when:** `plugins/iflow/.venv/bin/python -m pytest plugins/iflow/hooks/lib/transition_gate/test_gate.py -v -k "G41"` passes
 
 ### Task 3.8: Implement status & feature functions (G-45, G-48..53, G-60) + tests
 **Prerequisite:** Tasks 3.1 and 3.2 complete.
