@@ -57,9 +57,15 @@
 - [ ] Define `MAX_ITERATIONS: dict[str, int]` — brainstorm:3, default:5
 - **Done when:** `PHASE_GUARD_MAP["review_quality"]["specify"] == "G-46"` and `MIN_ARTIFACT_SIZE == 100`
 
-### Task 2.4: Define GUARD_METADATA (43 entries)
-- [ ] Define `GUARD_METADATA: dict[str, dict]` — 43 entries populated from `docs/features/006-transition-guard-audit-and-rul/guard-rules.yaml`, including only guards where `consolidation_target: transition_gate` (filter out guards with consolidation_target: hook or deprecated)
+### Task 2.4a: Define GUARD_METADATA first half (G-02..G-33, ~22 entries)
+- [ ] Define `GUARD_METADATA: dict[str, dict]` — begin populating from `docs/features/006-transition-guard-audit-and-rul/guard-rules.yaml`, including only guards where `consolidation_target: transition_gate` (filter out guards with consolidation_target: hook or deprecated)
 - [ ] Each entry: `{"enforcement": Enforcement.X, "yolo_behavior": YoloBehavior.Y, "affected_phases": [...]}`
+- [ ] Populate guards G-02 through G-33 (approximately 22 entries)
+- **Done when:** All guards from G-02 through G-33 with `consolidation_target: transition_gate` are present in GUARD_METADATA
+
+### Task 2.4b: Define GUARD_METADATA second half (G-34..G-60, ~21 entries)
+**Prerequisite:** Task 2.4a complete.
+- [ ] Populate guards G-34 through G-60 (approximately 21 entries)
 - [ ] Apply G-51 enforcement override: set to `Enforcement.hard_block` (YAML source says soft-warn, but spec requires hard-block — this is an intentional upgrade, add inline comment documenting the override)
 - **Done when:** `len(GUARD_METADATA) == 43` and `GUARD_METADATA["G-51"]["enforcement"] == Enforcement.hard_block`. Note: after writing all 43 entries, immediately write Task 2.8's YAML validation test and run it (`-k "yaml_validation"`) to catch transcription errors before proceeding to Task 2.5+.
 
@@ -197,7 +203,7 @@
 - [ ] Path: `Path(__file__).resolve().parents[3] / "skills" / "workflow-state" / "SKILL.md"`
 - [ ] Extract arrow-delimited sequence, compare against PHASE_SEQUENCE
 - [ ] Graceful: `pytest.skip("SKILL.md not found at expected path")` if file missing; `pytest.fail("Arrow-delimited sequence not found under any expected heading in SKILL.md")` if file exists but heading not found
-- **Done when:** `plugins/iflow/.venv/bin/python -m pytest plugins/iflow/hooks/lib/transition_gate/test_gate.py -v -k "canonical_sequence"` passes
+- **Done when:** `plugins/iflow/.venv/bin/python -m pytest plugins/iflow/hooks/lib/transition_gate/test_gate.py -v -k "canonical_sequence"` passes (must not show skip — if test skips, verify path resolution before proceeding)
 
 ### Task 5.2: Remove xfail and verify full coverage
 - [ ] Remove `@pytest.mark.xfail` from guard coverage introspection test (Phase 2 Task 2.7)
