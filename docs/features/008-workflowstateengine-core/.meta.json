@@ -11,7 +11,7 @@
     "007-python-transition-control-gate",
     "005-workflowphases-table-with-dual"
   ],
-  "lastCompletedPhase": "create-plan",
+  "lastCompletedPhase": "create-tasks",
   "phases": {
     "specify": {
       "started": "2026-03-04T06:35:00+08:00",
@@ -40,6 +40,18 @@
         "approved": true
       },
       "phaseReview": {
+        "iterations": 2,
+        "approved": true
+      }
+    },
+    "create-tasks": {
+      "started": "2026-03-04T10:35:00+08:00",
+      "completed": "2026-03-04T11:20:00+08:00",
+      "taskReview": {
+        "iterations": 5,
+        "approved": true
+      },
+      "chainReview": {
         "iterations": 2,
         "approved": true
       }
