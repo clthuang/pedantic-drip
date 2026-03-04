@@ -294,3 +294,19 @@ When a feature type has no established workflow template (first audit, novel ana
 - Confidence: medium
 - Last observed: Feature 006
 - Observation count: 1
+
+### Lookup Tables With 5+ Entries Require Independent Cross-Verification
+Any constant mapping one domain to another (phase→guard, artifact→guard, enum values) with 5 or more entries should be independently cross-verified against its source document. Table inversions (keys and values swapped) pass casual inspection because the table looks "full" and "correct" even when every entry is wrong.
+- Source: Feature 007, design iter 2 — PHASE_GUARD_MAP had all 9 entries inverted, passed design-reviewer iter 1; caught only when reviewer's attention was drawn by a related gap in the same section
+- Confidence: high
+- Keywords: ["lookup-table", "cross-verification", "design-review", "constant-validation", "inversion-error"]
+- Last observed: Feature 007
+- Observation count: 1
+
+### Phase-Reviewer Cap Warnings That Don't Materialize Signal Conservative Review, Not Implementation Skill
+When unresolved phase-reviewer cap warnings do not cause implementation failures, the warnings were conservatively classified at the phase-reviewer's information level — reasonable at review time but not blocking in practice. Track which cap warnings materialize across features to calibrate review conservatism over time.
+- Source: Feature 007 — 3 unresolved cap warnings (create-plan: 2 on per-phase test breakdown and false-green risk; create-tasks: 1 on inline verification commands); 0 implementation deviations, 180 tests passing, 29/29 tasks complete
+- Confidence: medium
+- Keywords: ["phase-reviewer", "iteration-cap", "warning-calibration", "conservative-review", "materialization-rate"]
+- Last observed: Feature 007
+- Observation count: 1

@@ -342,3 +342,19 @@ For exhaustive codebase audits, a two-pass methodology (Pass 1: grep-based candi
 - Keywords: audit, two-pass, grep, convergence, completeness, codebase-analysis, documentation
 - Last observed: Feature 006
 - Observation count: 1
+
+### Pattern: Phase-Reviewer as Cross-Artifact Consistency Checker
+The phase-reviewer (gatekeeper) catches cross-artifact consistency failures that domain reviewers miss because it is the only reviewer in the chain with visibility across all artifacts simultaneously. Domain reviewers focus on their artifact type; the phase-reviewer reads the full artifact graph and is structurally positioned to detect cross-artifact contradictions invisible in isolation.
+- Observed in: Feature 007, all 5 phases — PHASE_GUARD_MAP inversion (9 entries inverted, caught design iter 2 after domain approval), __init__.py stub ordering (create-plan), GUARD_METADATA batch verification scope (create-tasks)
+- Confidence: high
+- Keywords: ["phase-reviewer", "cross-artifact", "consistency", "gatekeeper", "review-chain"]
+- Last observed: Feature 007
+- Observation count: 1
+
+### Pattern: Zero-Deviation Implementation After Phase-Reviewer Cap Iterations
+When phase-reviewer caps are hit during create-plan or create-tasks phases, the additional iterations represent front-loaded investment that produces clean implementations. Feature 007 hit caps in both create-plan and create-tasks yet produced 0 deviations across 29 tasks and 180 passing tests. Phase-reviewer caps are not quality failures — they are the pre-implementation investment that eliminates implementation rework.
+- Observed in: Feature 007, implement phase — 0 deviations across 29 tasks, 180 tests passing; preceded by phase-reviewer caps at create-plan iter 5 and create-tasks iter 5
+- Confidence: high
+- Keywords: ["phase-reviewer-cap", "zero-deviation", "pre-implementation-investment", "implementation-quality", "front-loading"]
+- Last observed: Feature 007
+- Observation count: 1

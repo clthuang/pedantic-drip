@@ -1,0 +1,80 @@
+{
+  "id": "007",
+  "slug": "python-transition-control-gate",
+  "status": "active",
+  "created": "2026-03-01T16:27:59+08:00",
+  "mode": "standard",
+  "branch": "feature/007-python-transition-control-gate",
+  "project_id": "P001",
+  "module": "State Engine",
+  "depends_on_features": [
+    "006-transition-guard-audit-and-rul"
+  ],
+  "phases": {
+    "specify": {
+      "started": "2026-03-03T23:00:00+08:00",
+      "completed": "2026-03-04T00:20:00+08:00",
+      "phaseReview": {
+        "iterations": 2,
+        "approved": true
+      }
+    },
+    "design": {
+      "started": "2026-03-04T00:25:00+08:00",
+      "stages": {
+        "research": { "started": "2026-03-04T00:25:00+08:00", "completed": "2026-03-04T00:30:00+08:00", "skipped": false },
+        "architecture": { "started": "2026-03-04T00:30:00+08:00", "completed": "2026-03-04T00:40:00+08:00" },
+        "interface": { "started": "2026-03-04T00:40:00+08:00", "completed": "2026-03-04T00:45:00+08:00" },
+        "designReview": { "started": "2026-03-04T00:45:00+08:00", "completed": "2026-03-04T01:15:00+08:00", "iterations": 3, "reviewerNotes": [] },
+        "handoffReview": { "started": "2026-03-04T01:20:00+08:00", "completed": "2026-03-04T01:25:00+08:00", "iterations": 2, "approved": true, "reviewerNotes": [] }
+      },
+      "completed": "2026-03-04T01:25:00+08:00"
+    }
+  },
+  "lastCompletedPhase": "implement",
+  "phases_extra": {
+    "create-plan": {
+      "started": "2026-03-04T01:30:00+08:00",
+      "completed": "2026-03-04T03:15:00+08:00",
+      "planReview": {
+        "iterations": 3,
+        "approved": true
+      },
+      "phaseReview": {
+        "iterations": 5,
+        "approved": false,
+        "reviewerNotes": [
+          "Phase 3g per-phase test breakdown underspecified — review_quality_gate and phase_handoff_gate per-phase coverage not enumerated",
+          "Phase 5 step 4 dependency verification could produce false-green if import succeeds but functions are stubs"
+        ]
+      }
+    },
+    "implement": {
+      "started": "2026-03-04T05:00:00+08:00",
+      "completed": "2026-03-04T06:10:00+08:00",
+      "reviewIterations": 4,
+      "reviewResult": "approved",
+      "reviewers": {
+        "implementation": { "passed": true, "passedAt": 2 },
+        "quality": { "passed": true, "passedAt": 3 },
+        "security": { "passed": true, "passedAt": 1 }
+      },
+      "finalValidation": true
+    },
+    "create-tasks": {
+      "started": "2026-03-04T03:20:00+08:00",
+      "completed": "2026-03-04T04:40:00+08:00",
+      "taskReview": {
+        "iterations": 3,
+        "approved": true
+      },
+      "chainReview": {
+        "iterations": 5,
+        "approved": false,
+        "concerns": [
+          "GUARD_METADATA batch tasks (2.4a/2.4b) lack inline verification commands in done-when criteria — errors only caught by later integrity/YAML tests"
+        ]
+      }
+    }
+  }
+}

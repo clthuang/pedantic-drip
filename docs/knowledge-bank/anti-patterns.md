@@ -307,3 +307,23 @@ When a plan-reviewer first flags an intermediate checkpoint as a "suggestion" in
 - Confidence: high
 - Last observed: Feature 006
 - Observation count: 1
+
+### Anti-Pattern: Assuming External Library Availability Without Venv Audit
+Planning implementation steps that use external Python libraries (PyYAML, requests, etc.) without verifying they are present in the project venv. The plan compiles syntactically; the test fails at runtime with ModuleNotFoundError — silent until test execution.
+- Observed in: Feature 007, create-plan iter 2 blocker — "PyYAML not in venv dependencies — YAML validation test would fail with ModuleNotFoundError"; resolved by redesigning to stdlib line-by-line string parsing
+- Cost: 1 plan-review blocker; implementation approach redesign required in the same iteration
+- Instead: Plan-reviewer must verify all non-stdlib imports against `plugins/iflow/.venv` installed packages before approving
+- Confidence: high
+- Keywords: ["python-dependency", "venv", "pyyaml", "stdlib", "dependency-audit", "plan-review"]
+- Last observed: Feature 007
+- Observation count: 1
+
+### Anti-Pattern: str(Enum) for String Extraction Instead of .value
+Using `str(SomeEnum.member)` to extract the string value of a Python Enum. `str()` output format varies by Python version and produces `EnumClass.member_name` format in some versions rather than the enum's `.value` string. `.value` is the portable, explicit, intention-revealing approach.
+- Observed in: Feature 007, implement iter 1 blocker — "gate.py uses str(PHASE_SEQUENCE[i]) at lines 298, 319, 345 — Python-version-unsafe. Should use .value"; 3 fix sites required
+- Cost: 1 implement blocker; 3 fix sites; correctable in tasks if specified
+- Instead: Always use `enum_instance.value` for string extraction; `str(enum_instance)` is for display or debug output only
+- Confidence: high
+- Keywords: ["python-enum", "str-conversion", "portability", "enum-value", "python-version"]
+- Last observed: Feature 007
+- Observation count: 1
