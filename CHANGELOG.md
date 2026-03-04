@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Python transition control gate library with 25 gate functions covering all 43 guard IDs across 7 workflow phases
+- Pure stdlib implementation (zero external dependencies) with `GateResult` dataclass return type
+- YOLO mode bypass via `yolo_active` parameter for autonomous workflow execution
+- 257 tests (180 core + 77 deepened) covering guard enforcement, phase sequencing, and edge cases
+
 ## [4.7.1] - 2026-03-03
 
 ### Added
