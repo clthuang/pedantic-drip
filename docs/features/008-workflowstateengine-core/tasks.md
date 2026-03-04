@@ -170,7 +170,7 @@
 - **Dependencies:** Task 6.6
 
 ### Task 7.2: Write gate coverage integration test (RED+GREEN)
-- **Action:** Write `test_all_5_consumed_gates_exercised` (SC-10): patch all 5 gates — `transition_gate.check_backward_transition`, `transition_gate.check_hard_prerequisites`, `transition_gate.check_soft_prerequisites`, `transition_gate.validate_transition`, `transition_gate.check_yolo_override` — each with `side_effect=original_fn` so calls are tracked but still execute normally. Run a lifecycle scenario that exercises all gates. Assert `mock.call_count >= 1` for each of the 5 gates
+- **Action:** Write `test_all_5_consumed_gates_exercised` (SC-10): patch all 5 gates at the engine module namespace (since engine.py uses `from transition_gate import ...`) — `workflow_engine.engine.check_backward_transition`, `workflow_engine.engine.check_hard_prerequisites`, `workflow_engine.engine.check_soft_prerequisites`, `workflow_engine.engine.validate_transition`, `workflow_engine.engine.check_yolo_override` — each with `side_effect=original_fn` so calls are tracked but still execute normally. Run a lifecycle scenario that exercises all gates. Assert `mock.call_count >= 1` for each of the 5 gates
 - **Done when:** Test passes, all 5 gates verified with call_count >= 1
 - **Dependencies:** Task 7.1
 
