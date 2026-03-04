@@ -266,10 +266,9 @@ class WorkflowStateEngine:
                 workflow_phase = next_phase if next_phase is not None else last_completed
             else:
                 workflow_phase = PHASE_SEQUENCE[0].value
-            try:
-                completed_phases = self._derive_completed_phases(last_completed)
-            except ValueError:
-                return None
+            # _next_phase_value above already validated last_completed against
+            # _PHASE_VALUES, so _derive_completed_phases cannot raise here.
+            completed_phases = self._derive_completed_phases(last_completed)
         elif status == "completed":
             workflow_phase = "finish"
             last_completed = last_completed or "finish"
@@ -292,7 +291,10 @@ class WorkflowStateEngine:
                 mode=mode,
             )
         except ValueError:
-            # Race condition: another caller may have created the row first
+            # All inputs (workflow_phase, last_completed, mode) are pre-validated
+            # by _next_phase_value / _derive_completed_phases above, so the only
+            # ValueError from create_workflow_phase is a duplicate-row conflict.
+            # Re-fetch handles the race condition; re-raise if no row found.
             row = self.db.get_workflow_phase(feature_type_id)
             if row is not None:
                 return self._row_to_state(row, source="meta_json")
