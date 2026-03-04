@@ -21,7 +21,7 @@ The engine does NOT use `transitions`, `python-statemachine`, or any external FS
 1. NFR-2 prohibits new pip dependencies
 2. The phase sequence is linear (not a graph) — a full FSM is over-engineering
 3. Gate functions already exist in transition_gate — the engine composes them, not replaces them
-4. Total code is estimated at <200 lines — the overhead of integrating a library exceeds writing it directly
+4. Total code is estimated at 250-350 lines (engine + models + tests) — the overhead of integrating a library exceeds writing it directly
 
 ## Architecture Overview
 
@@ -82,13 +82,14 @@ The engine does NOT use `transitions`, `python-statemachine`, or any external FS
    └─ scan filesystem for artifacts in HARD_PREREQUISITES
 
 3. gate evaluation (ordered, skip inapplicable):
+   For each gate:
+   ├─ if yolo_active: check_yolo_override(guard_id, True) FIRST
+   │  └─ if non-None → short-circuit, use override result (skip gate call)
+   │  └─ if None → proceed to call gate normally
    ├─ check_backward_transition(target, last_completed)  [skip if last_completed is None]
    ├─ check_hard_prerequisites(target, artifacts)
    ├─ check_soft_prerequisites(target, completed_phases)
    └─ validate_transition(current, target, completed)    [skip if current is None]
-
-   For each gate, if yolo_active:
-   └─ check_yolo_override(guard_id, True) → if non-None, replaces gate result
 
 4. all gates pass?
    ├─ yes → update_workflow_phase(type_id, workflow_phase=target)
@@ -221,6 +222,15 @@ class WorkflowStateEngine:
         Returns:
             Updated FeatureWorkflowState reflecting the new state.
 
+        Behavior:
+            Sets last_completed_phase = phase.
+            Sets workflow_phase = _next_phase_value(phase), EXCEPT:
+            - Terminal phase (finish): sets workflow_phase = "finish"
+              (not None) per TD-8 convention.
+            - Backward re-run (phase < last_completed_phase): resets
+              last_completed_phase to phase, sets workflow_phase =
+              _next_phase_value(phase), effectively rolling back progress.
+
         Raises:
             ValueError: If phase doesn't match current_phase and is not
                         a backward re-run (target index > last_completed index).
@@ -243,8 +253,9 @@ class WorkflowStateEngine:
             List of TransitionResult (same as transition_phase would return).
 
         Side effects:
-            None (read-only). May hydrate if get_state triggers hydration,
-            but does not update workflow_phase.
+            Does not update workflow_phase. However, if get_state() triggers
+            lazy hydration (creating a workflow_phases row from .meta.json),
+            that DB write occurs as a side effect of reading state.
 
         Raises:
             ValueError: If feature not found (get_state returns None).
@@ -259,6 +270,16 @@ class WorkflowStateEngine:
         Returns:
             List of FeatureWorkflowState with source="db".
             Empty list if no features match.
+
+        Implementation:
+            Calls db.list_workflow_phases(workflow_phase=phase).
+            Each returned dict row is mapped to FeatureWorkflowState:
+            - feature_type_id = row["type_id"]
+            - current_phase = row["workflow_phase"]
+            - last_completed_phase = row["last_completed_phase"]
+            - completed_phases = _derive_completed_phases(row["last_completed_phase"])
+            - mode = row["mode"]
+            - source = "db"
         """
 
     def list_by_status(self, status: str) -> list[FeatureWorkflowState]:
@@ -271,6 +292,16 @@ class WorkflowStateEngine:
             List of FeatureWorkflowState. Features without workflow_phases
             rows are included with current_phase=None, source="db".
             Empty list if no features match.
+            Entities with status=None in the DB are excluded (only
+            entities with an explicit status value are matched).
+
+        Implementation:
+            Calls db.list_entities(entity_type="feature"), filters by
+            row["status"] == status (exact match, excludes None).
+            For each matching entity, joins with get_workflow_phase()
+            to build FeatureWorkflowState. If no workflow_phases row
+            exists, populates current_phase=None, last_completed_phase=None,
+            completed_phases=(), mode=None, source="db".
         """
 ```
 
@@ -336,10 +367,36 @@ def _evaluate_gates(
     yolo_active: bool,
 ) -> list[TransitionResult]:
     """Run ordered gate evaluation. Returns results list.
-    Skips inapplicable gates, applies YOLO overrides per-gate.
-    Uses _GATE_GUARD_IDS to resolve guard_id for YOLO override checks
-    before calling the actual gate function."""
+    Skips inapplicable gates (per I6 skip conditions).
+    For each non-skipped gate, if yolo_active:
+      1. Call check_yolo_override(guard_id, True) FIRST (short-circuit)
+      2. If non-None → use override result, do NOT call the gate
+      3. If None → call the gate normally
+    Uses _GATE_GUARD_IDS to resolve guard_id before the YOLO check."""
 ```
+
+### I3b: .meta.json Expected Schema
+
+The engine's `_hydrate_from_meta_json` expects these fields:
+
+```json
+{
+  "id": "string",            // Feature numeric ID
+  "slug": "string",          // Feature slug
+  "status": "string",        // "active" | "completed" | "planned" | ...
+  "mode": "string | null",   // "standard" | "full" | null
+  "lastCompletedPhase": "string | null",  // Phase value or null
+  "phases": {                // Object keyed by phase name
+    "<phase>": {
+      "started": "ISO timestamp",
+      "completed": "ISO timestamp | absent"
+    }
+  }
+}
+```
+
+Only `lastCompletedPhase`, `status`, and `mode` are read by hydration.
+`phases` is not consumed by the engine (used by iflow commands directly).
 
 ### I4: Consumed Gate Function Signatures
 
@@ -475,7 +532,9 @@ The engine imports `HARD_PREREQUISITES` from `transition_gate.constants` (not th
 
 ### TD-6: complete_phase() Backward Re-run Resets Progress
 
-When `complete_phase()` is called with a phase earlier than `last_completed_phase`, it resets `last_completed_phase` to that phase. Subsequent phases are no longer considered completed.
+When `complete_phase()` is called with a phase earlier than `last_completed_phase`, it resets `last_completed_phase` to that phase and sets `workflow_phase` to `_next_phase_value(phase)`. Subsequent phases are no longer considered completed.
+
+**DB writes for backward re-run:** `update_workflow_phase(type_id, last_completed_phase=phase, workflow_phase=_next_phase_value(phase))`. This is identical to the forward case — the engine does not special-case backward re-runs in its DB write logic.
 
 **Rationale:** Backward re-runs represent intentional rework. The caller is redoing a phase and should expect the workflow to reflect the reset state. Preserving a stale `last_completed_phase` would create inconsistency between what the user intends and what the DB reflects.
 
@@ -488,6 +547,8 @@ The engine reads `kanban_column` from the DB but does not manage or update it. K
 ### TD-8: Completed Features Use workflow_phase="finish"
 
 For completed features, hydration sets `workflow_phase="finish"` (not `None`). This matches the existing `backfill.py` convention where completed features get `workflow_phase="finish"`.
+
+**Terminal phase in complete_phase():** When `complete_phase("finish")` is called, `_next_phase_value("finish")` returns `None` (finish is the last element). The engine detects this and writes `workflow_phase="finish"` instead of `None`, ensuring consistency with hydration and backfill. The check: `if next_phase is None: next_phase = phase` (i.e., keep current phase as workflow_phase).
 
 **Rationale:** Consistency with existing DB data. `backfill.py` has already populated `workflow_phase="finish"` for completed features. Using `None` would create a split where backfilled rows have "finish" and engine-hydrated rows have `None`, breaking `list_by_phase("finish")` queries. Note: Spec FR-6 line 129 is updated as errata to align with this convention.
 
