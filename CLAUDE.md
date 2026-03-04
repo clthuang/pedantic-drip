@@ -81,6 +81,9 @@ plugins/iflow/.venv/bin/python -m pytest plugins/iflow/hooks/lib/entity_registry
 # Run entity server bootstrap wrapper tests
 bash plugins/iflow/mcp/test_entity_server.sh
 
+# Run transition gate tests (gate functions, constants, models — 257 tests)
+plugins/iflow/.venv/bin/python -m pytest plugins/iflow/hooks/lib/transition_gate/ -v
+
 # Run hook integration tests
 bash plugins/iflow/hooks/tests/test-hooks.sh
 
