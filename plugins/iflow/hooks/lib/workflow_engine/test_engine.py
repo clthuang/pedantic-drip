@@ -1310,8 +1310,7 @@ class TestDeepenedAdversarial:
     def test_hydrate_meta_json_with_corrupt_json(self, tmp_path) -> None:
         """Adversarial: .meta.json contains invalid JSON.
 
-        Anticipate: json.load raises JSONDecodeError. If unhandled, engine crashes
-        instead of returning None.
+        Engine catches JSONDecodeError and returns None (graceful fallback).
         derived_from: dimension:adversarial (starve/corrupt input)
         """
         # Given corrupt .meta.json
@@ -1322,16 +1321,9 @@ class TestDeepenedAdversarial:
         (feature_dir / ".meta.json").write_text("{not valid json!!!")
 
         engine = WorkflowStateEngine(db, str(tmp_path))
-        # When hydrating -- should either return None or raise a clean error
-        # (implementation may raise JSONDecodeError -- this is a spec divergence
-        # if the spec expects graceful fallback)
-        try:
-            state = engine._hydrate_from_meta_json(type_id)
-            # If it returns, it should be None (graceful fallback)
-            assert state is None
-        except json.JSONDecodeError:
-            # Acceptable: engine propagates decode error rather than masking it
-            pass
+        # When hydrating -- returns None for corrupt JSON
+        state = engine._hydrate_from_meta_json(type_id)
+        assert state is None
 
     def test_validate_prerequisites_unknown_phase_gates_handle(
         self, tmp_path

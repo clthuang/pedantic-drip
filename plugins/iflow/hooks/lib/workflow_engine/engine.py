@@ -144,10 +144,14 @@ class WorkflowStateEngine:
         entities = self.db.list_entities(entity_type="feature")
         matching = [e for e in entities if e.get("status") == status]
 
+        # 2-query pattern: fetch all workflow rows once, join in Python
+        wp_rows = self.db.list_workflow_phases()
+        wp_map = {r["type_id"]: r for r in wp_rows}
+
         results: list[FeatureWorkflowState] = []
         for entity in matching:
             type_id = entity["type_id"]
-            wp_row = self.db.get_workflow_phase(type_id)
+            wp_row = wp_map.get(type_id)
             if wp_row is not None:
                 results.append(self._row_to_state(wp_row))
             else:
@@ -242,8 +246,11 @@ class WorkflowStateEngine:
         if not os.path.exists(meta_path):
             return None
 
-        with open(meta_path) as f:
-            meta = json.load(f)
+        try:
+            with open(meta_path) as f:
+                meta = json.load(f)
+        except json.JSONDecodeError:
+            return None
 
         status = meta.get("status")
         mode = meta.get("mode")
@@ -251,7 +258,7 @@ class WorkflowStateEngine:
 
         # Derive workflow_phase based on status
         if status == "active":
-            if last_completed:
+            if last_completed is not None:
                 try:
                     next_phase = self._next_phase_value(last_completed)
                 except ValueError:
