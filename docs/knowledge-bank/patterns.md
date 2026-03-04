@@ -358,3 +358,19 @@ When phase-reviewer caps are hit during create-plan or create-tasks phases, the 
 - Keywords: ["phase-reviewer-cap", "zero-deviation", "pre-implementation-investment", "implementation-quality", "front-loading"]
 - Last observed: Feature 007
 - Observation count: 1
+
+### Pattern: Dependency API Pre-Read Before Spec Authoring
+For features with `depends_on_features`, read each dependency's public interface before authoring any FR. Annotate each consumed API reference with `verified against: <file>:<line>`. All 4 iter-1 blockers in feature 008 specify phase were resolvable by reading feature 007 and feature 005 source before spec authoring — non-existent DB method, wrong function signature, wrong return type, missing entity-existence precondition.
+- Observed in: Feature 008, specify phase — 4 iter-1 blockers all from API assumption errors; resolved by reading dependency source code before authoring FRs
+- Confidence: high
+- Keywords: ["dependency-api", "pre-read", "spec-authoring", "api-assumption", "depends-on-features"]
+- Last observed: Feature 008
+- Observation count: 1
+
+### Pattern: Sibling-Sweep After Cross-Cutting Fix
+After fixing a pattern that must be consistent across N sections, verify the fix is present in ALL sibling sections before submitting. The `if not last_completed:` vs `if last_completed is None:` defect class in feature 008 appeared at iter 2 (derivation path) and iter 3 (hydration path) because the iter 2 fix addressed `_derive_completed_phases` but did not sweep `_hydrate_from_meta_json`.
+- Observed in: Feature 008, implement phase — falsy guard recurred across iters 2 and 3 due to partial-fix sweep; resolved by sweeping all sibling sections
+- Confidence: high
+- Keywords: ["sibling-sweep", "cross-cutting", "partial-fix", "consistency", "none-check"]
+- Last observed: Feature 008
+- Observation count: 1

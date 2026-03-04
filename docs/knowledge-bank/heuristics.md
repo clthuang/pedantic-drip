@@ -310,3 +310,19 @@ When unresolved phase-reviewer cap warnings do not cause implementation failures
 - Keywords: ["phase-reviewer", "iteration-cap", "warning-calibration", "conservative-review", "materialization-rate"]
 - Last observed: Feature 007
 - Observation count: 1
+
+### Pre-spec API Research Budget
+For features with `depends_on_features`, budget 30 minutes to read each dependency's public interface before spec authoring. Feature 008 had 2 dependencies (007, 005) and all 4 iter-1 specify blockers were API assumption errors resolvable by pre-reading. The 30-minute investment would have saved 2 review iterations (~40 minutes).
+- Source: Feature 008, specify phase — 4 iter-1 blockers from unverified API assumptions; 2 dependencies required pre-reading
+- Confidence: high
+- Keywords: ["pre-spec", "api-research", "dependency", "time-budget", "specify-phase"]
+- Last observed: Feature 008
+- Observation count: 1
+
+### 4-5:1 Test-to-Code Line Ratio for Transition-Orchestrator Modules
+State-machine orchestrators require combinatorial path coverage. A 4-5:1 test-to-code line ratio is a floor, not a ceiling. Feature 008 produced 1,739 test lines for 366 engine lines (4.7:1 ratio) with 85 tests covering all transition paths, gate combinations, and hydration scenarios.
+- Source: Feature 008, implement phase — engine.py 366 lines, test_engine.py 1,739 lines / 85 tests (4.7:1 ratio)
+- Confidence: medium
+- Keywords: ["test-ratio", "state-machine", "orchestrator", "combinatorial-coverage", "transition-engine"]
+- Last observed: Feature 008
+- Observation count: 1

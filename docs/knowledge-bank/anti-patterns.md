@@ -327,3 +327,23 @@ Using `str(SomeEnum.member)` to extract the string value of a Python Enum. `str(
 - Keywords: ["python-enum", "str-conversion", "portability", "enum-value", "python-version"]
 - Last observed: Feature 007
 - Observation count: 1
+
+### Anti-Pattern: Applying TDD Reorder Fix Without Per-Phase Verification
+When a TDD ordering fix claims "reordered all phases," verify each phase individually. Unverified global claims guarantee follow-up blockers. In feature 008, plan iter 1 fix stated "Reordered all phase sub-steps" but did not reorder Phase 1, which still scaffolded production files before tests — causing a second blocker in iter 2.
+- Observed in: Feature 008, create-plan phase — TDD ordering blocker at iter 1 AND iter 2 (partial fix); iter 1 claimed global reorder but missed Phase 1
+- Cost: 2 plan-review blockers; could have been 1 if per-phase verification was applied
+- Instead: After any "reorder all" fix, enumerate and verify each phase/section individually before submitting
+- Confidence: high
+- Keywords: ["tdd-ordering", "per-phase-verification", "partial-fix", "global-claim", "plan-review"]
+- Last observed: Feature 008
+- Observation count: 1
+
+### Anti-Pattern: Unspecified Exception Catch Scope in Race Condition Handlers
+When design describes a race condition handler without specifying catch scope, implement reviewers will flip-flop between "too narrow" and "too broad." In feature 008, ValueError catch scope flip-flopped between implement iters 2 and 4 — iter 2 broadened the catch (remove string-match), iter 4 narrowed it (bare catch masks errors). Resolution required only a comment documenting pre-validation invariants.
+- Observed in: Feature 008, implement phase — ValueError catch scope flip-flopped between iters 2 and 4; no design TD addressed catch scope
+- Cost: 2 implement review iterations; flip-flop wasted both iterations
+- Instead: Design Technical Decisions must specify exception types caught and pre-validation invariants that make the catch safe
+- Confidence: medium
+- Keywords: ["exception-catch-scope", "race-condition", "design-td", "valueerror", "flip-flop"]
+- Last observed: Feature 008
+- Observation count: 1
