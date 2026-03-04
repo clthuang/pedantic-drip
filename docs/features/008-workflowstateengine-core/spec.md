@@ -73,9 +73,9 @@ class FeatureWorkflowState:
    - `check_soft_prerequisites(target_phase, completed_phases)` — warn on skipped optional phases between last completed and target
    - `validate_transition(current_phase, target_phase, completed_phases)` — validate phase ordering. **Skip if `current_phase` is None** (new feature entering first phase — ordering check is inapplicable)
    - For each gate: if `yolo_active=True`, prepend `check_yolo_override(guard_id, True)` — if override returns non-None, use that result instead of the gate result
-4. If all gates pass (no `allowed=False` results): update `workflow_phases` table via `update_workflow_phase(type_id, workflow_phase=target_phase, last_completed_phase=current last_completed_phase)`
+4. If all gates pass (no `allowed=False` results): update `workflow_phases` table via `update_workflow_phase(type_id, workflow_phase=target_phase)` — only `workflow_phase` is updated; `last_completed_phase` is not changed during transition entry (it changes only in `complete_phase()`)
 5. If any gate returns `allowed=False`: skip the DB update
-6. Return list of all `TransitionResult` objects from gate checks (identical return type for both success and failure paths — caller inspects results to determine outcome)
+6. Return list of all `TransitionResult` objects from gate checks in evaluation order (check_backward_transition, check_hard_prerequisites, check_soft_prerequisites, validate_transition — with YOLO override results replacing their corresponding gate result in-place; skipped gates are omitted). Identical return type for both success and failure paths — caller inspects results to determine outcome
 
 **Engine-consumed gate functions:** The engine directly invokes these 5 gate functions from `transition_gate`:
 - `check_backward_transition` — backward transition detection (skipped when `last_completed_phase` is None)
@@ -127,6 +127,7 @@ On first access per feature (when `get_workflow_phase()` returns None):
    - If status is `"active"`: derive next phase from `PHASE_SEQUENCE` indexing — find `lastCompletedPhase` index, set `workflow_phase = PHASE_SEQUENCE[idx + 1].value` (or `PHASE_SEQUENCE[0].value` if `lastCompletedPhase` is null)
    - If status is `"completed"`: set `workflow_phase = None` (workflow is done), regardless of `lastCompletedPhase` value
    - If status is `"planned"`: set `workflow_phase = None`, `last_completed_phase = None` (not started — any non-null `lastCompletedPhase` in .meta.json is treated as stale data)
+   - For any other status value (e.g., `"abandoned"`, `"on-hold"`): set `workflow_phase = None`, `last_completed_phase = None` (unknown/terminal statuses are treated as inactive)
 4. Verify entity exists via `get_entity(type_id)`. If not found, return None
 5. Call `create_workflow_phase()` to backfill the row
 6. Return the hydrated state
@@ -185,7 +186,7 @@ Performance measured as wall-clock time using `time.perf_counter()`, warm (secon
 
 | ID | Criterion | Verification |
 |----|-----------|-------------|
-| SC-1 | `transition_phase()` and `complete_phase()` correctly validate and execute forward transitions through all 7 phases | Test: create feature, for each phase call `transition_phase(id, phase)` then `complete_phase(id, phase)`, verify workflow_phase advances correctly through specify→design→create-plan→create-tasks→implement→finish |
+| SC-1 | `transition_phase()` and `complete_phase()` correctly validate and execute forward transitions through all 6 command phases | Test: create feature, for each phase call `transition_phase(id, phase)` then `complete_phase(id, phase)`, verify workflow_phase advances correctly through specify→design→create-plan→create-tasks→implement→finish (brainstorm excluded — not a command-driven phase) |
 | SC-2 | `transition_phase()` blocks transitions when hard prerequisites are missing | Test: attempt design without spec.md, verify `allowed=False` with correct guard_id |
 | SC-3 | `transition_phase()` warns (but allows) backward transitions | Test: complete design, transition back to specify, verify warn severity |
 | SC-4 | Lazy hydration correctly backfills workflow_phases from .meta.json | Test: create .meta.json with lastCompletedPhase="design", call get_state, verify DB row created |
