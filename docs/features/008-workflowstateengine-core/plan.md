@@ -10,14 +10,14 @@ The plan follows a bottom-up TDD approach: models first (no dependencies), then 
 **Why this item:** Models are the leaf dependency — every other component depends on `FeatureWorkflowState`.
 **Why this order:** No dependencies; must exist before anything else can be built.
 
-1. Create `plugins/iflow/hooks/lib/workflow_engine/` directory and empty `__init__.py`
+1. Create `plugins/iflow/hooks/lib/workflow_engine/` directory and empty `__init__.py`. Also create `conftest.py` with `sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))` to ensure `transition_gate` is resolvable — this is a concrete deliverable, not conditional
 2. RED: Write `test_engine.py` — `TestModels` class: verify frozen attribute assignment raises `FrozenInstanceError`, verify `completed_phases` tuple cannot be mutated (tests import `FeatureWorkflowState` from `models.py` — will fail until step 3)
 3. GREEN: Create `models.py` — `FeatureWorkflowState` frozen dataclass (I2) — tests now pass
 4. Create `engine.py` — `WorkflowStateEngine` class skeleton with constructor (C1)
 5. Update `__init__.py` — public API exports (C3)
 
 **Dependencies:** None (leaf node)
-**Artifacts:** `models.py`, `__init__.py`, `engine.py` (skeleton), `test_engine.py` (TestModels)
+**Artifacts:** `models.py`, `__init__.py`, `engine.py` (skeleton), `test_engine.py` (TestModels), `conftest.py`
 
 ### Phase 2: Private Helpers
 
@@ -40,7 +40,7 @@ The plan follows a bottom-up TDD approach: models first (no dependencies), then 
 **2d. _get_existing_artifacts**
 - RED: Write `TestHelpers.test_get_existing_artifacts_some_present`, `test_get_existing_artifacts_none_present`, `test_get_existing_artifacts_all_present`
 - GREEN: Implement: scan feature directory for filenames from `HARD_PREREQUISITES`. Uses `self.artifacts_root` + filesystem checks
-- Import verification test: `test_hard_prerequisites_import` — verify `from transition_gate.constants import HARD_PREREQUISITES; assert isinstance(HARD_PREREQUISITES, dict)` succeeds (concrete R1 mitigation). Note: the existing test runner command (`plugins/iflow/.venv/bin/python -m pytest plugins/iflow/hooks/lib/workflow_engine/`) resolves `transition_gate` because `plugins/iflow/hooks/lib/` is on `sys.path` via the venv's path setup — same mechanism used by transition_gate's own tests. If needed, add a `conftest.py` with `sys.path.insert(0, ...)` as a deliverable. Tests requiring filesystem operations (e.g., `test_get_existing_artifacts_*`) use pytest's `tmp_path` fixture for isolated temp directories — no manual cleanup needed
+- Import verification test: `test_hard_prerequisites_import` — verify `from transition_gate.constants import HARD_PREREQUISITES; assert isinstance(HARD_PREREQUISITES, dict)` succeeds (concrete R1 mitigation). Note: `conftest.py` created in Phase 1 ensures `transition_gate` is resolvable regardless of how pytest is invoked. Tests requiring filesystem operations (e.g., `test_get_existing_artifacts_*`) use pytest's `tmp_path` fixture for isolated temp directories — no manual cleanup needed
 
 **2e. _GATE_GUARD_IDS class variable**
 - Define mapping: `check_backward_transition→G-18`, `check_hard_prerequisites→G-08`, `check_soft_prerequisites→G-23`, `validate_transition→G-22`
@@ -56,11 +56,11 @@ The plan follows a bottom-up TDD approach: models first (no dependencies), then 
 **Why this order:** Depends on Phase 2 helpers (_derive_completed_phases, _extract_slug). Must precede Phase 4 (gate evaluation needs state).
 
 **3a. _hydrate_from_meta_json**
-- RED: Write `TestHydration` class — tests for: active status, completed status (workflow_phase="finish"), planned status, unknown status, missing entity, missing .meta.json, malformed .meta.json (unrecognized phase), concurrent hydration race (ValueError "already exists"), active-but-finished edge case (status="active" + lastCompletedPhase="finish" → workflow_phase="finish")
+- RED: Write `TestHydration` class — tests for: active status, completed status (workflow_phase="finish"), planned status, unknown status, missing entity, missing .meta.json, malformed .meta.json (unrecognized phase), concurrent hydration race (ValueError "already exists"), active-but-finished edge case (status="active" + lastCompletedPhase="finish" → workflow_phase="finish"), `test_hydrate_active_no_completed_phase` (active status + lastCompletedPhase=None → workflow_phase=PHASE_SEQUENCE[0].value)
 - GREEN: Implement: check entity exists → check .meta.json exists → parse JSON → derive state by status → create_workflow_phase() → return FeatureWorkflowState
   - Handle all status paths per FR-6: active, completed, planned, catch-all
   - **Active status derivation:** For active features, derive workflow_phase from lastCompletedPhase:
-    - If lastCompletedPhase is None: set workflow_phase = `PHASE_SEQUENCE[0].value` (i.e., "brainstorm") directly — do NOT call `_next_phase_value(None)` which would raise ValueError. Add test: `test_hydrate_active_no_completed_phase`
+    - If lastCompletedPhase is None: set workflow_phase = `PHASE_SEQUENCE[0].value` (i.e., "brainstorm") directly — do NOT call `_next_phase_value(None)` which would raise ValueError (test already listed in RED above)
     - If lastCompletedPhase is the terminal phase ("finish"): set workflow_phase="finish" (semantically contradictory but defensive — treat as effectively completed)
     - Otherwise: use `_next_phase_value(lastCompletedPhase)`
   - Catch `ValueError` from `_derive_completed_phases` for malformed data → return None
