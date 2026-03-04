@@ -10,7 +10,7 @@
   "depends_on_features": [
     "008-workflowstateengine-core"
   ],
-  "lastCompletedPhase": "create-plan",
+  "lastCompletedPhase": "create-tasks",
   "phases": {
     "specify": {
       "started": "2026-03-04T15:00:00+08:00",
@@ -40,6 +40,18 @@
       },
       "chainReview": {
         "iterations": 3,
+        "approved": true
+      }
+    },
+    "create-tasks": {
+      "started": "2026-03-04T17:35:00+08:00",
+      "completed": "2026-03-04T18:00:00+08:00",
+      "taskReview": {
+        "iterations": 3,
+        "approved": true
+      },
+      "chainReview": {
+        "iterations": 2,
         "approved": true
       }
     }
