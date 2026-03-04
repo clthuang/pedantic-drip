@@ -84,6 +84,9 @@ bash plugins/iflow/mcp/test_entity_server.sh
 # Run transition gate tests (gate functions, constants, models — 257 tests)
 plugins/iflow/.venv/bin/python -m pytest plugins/iflow/hooks/lib/transition_gate/ -v
 
+# Run workflow engine tests (state engine, hydration, transitions — 85 tests)
+plugins/iflow/.venv/bin/python -m pytest plugins/iflow/hooks/lib/workflow_engine/ -v
+
 # Run hook integration tests
 bash plugins/iflow/hooks/tests/test-hooks.sh
 
@@ -106,6 +109,7 @@ bash scripts/release.sh --ci
 - **Knowledge bank:** `docs/knowledge-bank/{patterns,anti-patterns,heuristics}.md` — updated by retrospectives
 - **Global memory store:** `~/.claude/iflow/memory/` — cross-project entries injected at session start
 - **Entity registry DB:** `~/.claude/iflow/entities/entities.db` — cross-project entity lineage (overridable via `ENTITY_DB_PATH` env var)
+- **Entity registry MCP metadata gotcha:** `update_entity` metadata param expects JSON string but parsing is fragile. When updating entity state, prefer updating `.meta.json` directly (source of truth) and skip MCP metadata updates.
 - **Hook subprocess safety:** Always suppress stderr (`2>/dev/null`) for Python/external calls in hooks to prevent corrupting JSON output
 - **Semantic memory CLI:** Find plugin root first: `PLUGIN_ROOT=$(ls -d ~/.claude/plugins/cache/*/iflow*/*/hooks 2>/dev/null | head -1 | xargs dirname)`, then `PYTHONPATH="$PLUGIN_ROOT/hooks/lib" "$PLUGIN_ROOT/.venv/bin/python" -m semantic_memory.writer`. Fallback (dev workspace): `PYTHONPATH=plugins/iflow/hooks/lib python3 -m semantic_memory.writer`
 
@@ -138,6 +142,8 @@ A hookify rule (`.claude/hookify.docs-sync.local.md`) will remind you on plugin 
 - `backfill_scan_dirs` (default: empty) — comma-separated dirs to scan for knowledge banks
 
 Skills/commands reference these as `{iflow_artifacts_root}`, `{iflow_base_branch}`, `{iflow_release_script}`.
+
+**Base branch for this repo is `develop`** — `base_branch: auto` detects `main` from remote HEAD, but all feature branches merge to `develop` (confirmed by git merge history). The release script handles `develop→main`.
 
 **Agent concurrency:** `max_concurrent_agents` in `.claude/iflow.local.md` controls max parallel Task dispatches (default: 5). Skills and commands batch accordingly.
 
