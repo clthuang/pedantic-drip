@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.9.0] - 2026-03-04
+
 ### Added
 - WorkflowStateEngine: stateless orchestrator for workflow phase transitions with DB + .meta.json hydration fallback
 - Ordered gate evaluation pipeline composing transition_gate functions (backward, hard prerequisites, soft prerequisites, validate_transition)
