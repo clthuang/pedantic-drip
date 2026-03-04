@@ -63,7 +63,7 @@ The plan follows a TDD-compatible dependency order: bootstrap infrastructure fir
 
 #### 2.4 Tests + `_process_transition_phase`
 
-- **Tests (RED):** (a) all gates pass → `transitioned: true`, (a2) gate blocks → `transitioned: false` (use target_phase where hard prerequisite artifacts are missing, e.g., transition to `design` without spec.md in tmp_path), (c) ValueError, (d) unexpected exception
+- **Tests (RED):** (a) all gates pass → `transitioned: true`, (a2) gate blocks → `transitioned: false` (use target_phase where hard prerequisite artifacts are missing, e.g., transition to `design` without spec.md in tmp_path), (a3) `yolo_active=True` passes YOLO-overridable gates — seed a feature where a YOLO-overridable guard would normally block, call with `yolo_active=True`, assert `transitioned: true`, (c) ValueError, (d) unexpected exception
 - **Implement (GREEN):** Write `_process_transition_phase` to pass tests
 - **Depends on:** 2.2
 - **Design ref:** I4
