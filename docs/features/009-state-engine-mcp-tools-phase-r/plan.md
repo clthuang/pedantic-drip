@@ -64,6 +64,7 @@ The plan follows a TDD-compatible dependency order: bootstrap infrastructure fir
 #### 2.4 Tests + `_process_transition_phase`
 
 - **Tests (RED):** (a) all gates pass → `transitioned: true`, (a2) gate blocks → `transitioned: false` (use target_phase where hard prerequisite artifacts are missing, e.g., transition to `design` without spec.md in tmp_path), (c) ValueError, (d) unexpected exception
+- **Implement (GREEN):** Write `_process_transition_phase` to pass tests
 - **Depends on:** 2.2
 - **Design ref:** I4
 - **AC coverage:** AC-2, AC-7 (yolo_active), AC-11 (invalid phase)
@@ -153,7 +154,12 @@ The plan follows a TDD-compatible dependency order: bootstrap infrastructure fir
 - **Depends on:** 5.1, 5.2
 - **Purpose:** Ensure no regressions in entity_server or memory_server
 
-**SC-6 note:** Sub-100ms performance for read tools is not explicitly benchmarked in this plan. The architecture (in-memory dict construction, no network I/O for reads, bounded DB queries) makes sub-100ms highly likely for 50 entities. If performance testing is needed, it can be added as a separate benchmark step post-validation.
+#### 5.4 Lightweight performance check (SC-6)
+
+- **Command:** Add timing assertions to `test_workflow_state_server.py` — seed 50 features with workflow phases, then assert `_process_get_phase`, `_process_list_features_by_phase`, `_process_list_features_by_status`, and `_process_validate_prerequisites` each complete in < 100ms wall-clock time.
+- **Depends on:** 5.1 (tests must pass first)
+- **AC coverage:** SC-6
+- **Note:** `validate_prerequisites` involves filesystem I/O for artifact checks, so the 100ms budget accounts for this. If the assertion fails on CI due to resource contention, mark the test with `@pytest.mark.slow` and document the local result.
 
 ## Parallel Execution Groups
 
@@ -217,7 +223,7 @@ Tasks that can execute concurrently:
 | SC-3 | 1.2, 5.2 |
 | SC-4 | 4.1 |
 | SC-5 | 1.2, 5.2 |
-| SC-6 | Deferred (architecture ensures sub-100ms; see note above) |
+| SC-6 | 5.4 (timing assertions with 50 seeded features) |
 
 ## Risk Mitigations
 
