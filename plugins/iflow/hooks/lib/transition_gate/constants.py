@@ -60,7 +60,7 @@ ARTIFACT_GUARD_MAP: dict[tuple[str, str], str] = {
     # Maps (phase, artifact_name) -> guard_id for Level 4 differentiation
     # in validate_artifact. Only explicit overrides stored here.
     # All other (phase, artifact_name) pairs resolve to "G-05" via
-    # caller-side default lookup (not stored in dict).
+    # library-side default in validate_artifact (not stored in dict).
     ("implement", "spec.md"): "G-05",
     ("implement", "tasks.md"): "G-06",
 }

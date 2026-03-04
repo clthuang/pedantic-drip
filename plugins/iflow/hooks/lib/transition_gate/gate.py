@@ -600,16 +600,16 @@ def planned_to_active_transition(
 ) -> TransitionResult:
     """G-50: Multi-step Planned->Active gate.
 
-    Blocks if status is not 'planned' or branch doesn't exist.
+    Warns if status is not 'planned' or branch doesn't exist.
     """
     if current_status != "planned":
-        return _block(
+        return _warn(
             "G-50",
             f"Status is '{current_status}', expected 'planned'.",
         )
 
     if not branch_exists:
-        return _block("G-50", "Feature branch does not exist.")
+        return _warn("G-50", "Feature branch does not exist.")
 
     return _pass_result("G-50", "Planned-to-active transition ready.")
 

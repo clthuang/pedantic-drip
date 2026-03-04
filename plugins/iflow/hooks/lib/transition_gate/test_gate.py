@@ -1725,25 +1725,25 @@ class TestPlannedToActiveTransition:
         assert result.allowed is True
         assert result.guard_id == "G-50"
 
-    def test_G50_planned_to_active_fail_wrong_status(self) -> None:
-        """G-50: Not planned status -> blocked."""
+    def test_G50_planned_to_active_warn_wrong_status(self) -> None:
+        """G-50: Not planned status -> warn (allowed=True, severity=warn)."""
         result = planned_to_active_transition(
             current_status="active",
             branch_exists=True,
         )
-        assert result.allowed is False
+        assert result.allowed is True
         assert result.guard_id == "G-50"
-        assert result.severity == Severity.block
+        assert result.severity == Severity.warn
 
-    def test_G50_planned_to_active_fail_no_branch(self) -> None:
-        """G-50: Planned but no branch -> blocked."""
+    def test_G50_planned_to_active_warn_no_branch(self) -> None:
+        """G-50: Planned but no branch -> warn (allowed=True, severity=warn)."""
         result = planned_to_active_transition(
             current_status="planned",
             branch_exists=False,
         )
-        assert result.allowed is False
+        assert result.allowed is True
         assert result.guard_id == "G-50"
-        assert result.severity == Severity.block
+        assert result.severity == Severity.warn
 
 
 class TestTerminalStatus:
@@ -2954,7 +2954,7 @@ class TestPlannedToActiveAdversarial:
     """
 
     def test_G50_planned_to_active_both_conditions_fail(self) -> None:
-        """G-50: Wrong status AND no branch -> blocks on status first.
+        """G-50: Wrong status AND no branch -> warns on status first.
 
         Anticipate: Status check comes before branch check.
         """
@@ -2962,22 +2962,24 @@ class TestPlannedToActiveAdversarial:
             current_status="active",
             branch_exists=False,
         )
-        assert result.allowed is False
+        assert result.allowed is True
         assert result.guard_id == "G-50"
+        assert result.severity == Severity.warn
         # Should mention wrong status, not missing branch
         assert "active" in result.reason
 
     def test_G50_planned_to_active_completed_status(self) -> None:
-        """G-50: Completed status -> blocks (not 'planned').
+        """G-50: Completed status -> warns (not 'planned').
 
-        Anticipate: Any non-planned status should block.
+        Anticipate: Any non-planned status should warn.
         """
         result = planned_to_active_transition(
             current_status="completed",
             branch_exists=True,
         )
-        assert result.allowed is False
+        assert result.allowed is True
         assert result.guard_id == "G-50"
+        assert result.severity == Severity.warn
 
 
 # ---------------------------------------------------------------------------
