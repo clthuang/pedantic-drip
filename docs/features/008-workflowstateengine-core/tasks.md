@@ -121,13 +121,13 @@
 - **Dependencies:** Task 5.1
 
 ### Task 5.3: Write complete_phase tests (RED)
-- **Action:** Create `TestCompletePhase` class: `test_normal_completion_advances` (SC-5: specify→design), `test_terminal_phase_finish` (TD-8: workflow_phase="finish" not None), `test_backward_rerun_resets` (TD-6), `test_phase_mismatch_raises_valueerror`, `test_missing_feature_raises_valueerror`, `test_no_active_phase_raises_valueerror` (current_phase=None)
-- **Done when:** 6 tests exist and fail
+- **Action:** Create `TestCompletePhase` class: `test_normal_completion_advances` (SC-5: specify→design), `test_terminal_phase_finish` (TD-8: workflow_phase="finish" not None), `test_backward_rerun_resets` (TD-6), `test_phase_mismatch_raises_valueerror`, `test_missing_feature_raises_valueerror`, `test_no_active_phase_raises_valueerror` (current_phase=None), `test_phase_mismatch_no_last_completed` (phase != current_phase AND last_completed_phase=None → ValueError)
+- **Done when:** 7 tests exist and fail
 - **Dependencies:** Task 5.2
 
 ### Task 5.4: Implement complete_phase (GREEN)
-- **Action:** Implement: `get_state()` → ValueError if None → check current_phase not None → validate phase match or backward re-run (compare PHASE_SEQUENCE indices) → derive next via `_next_phase_value()` → terminal check: `if next_phase is None: next_phase = phase` → `update_workflow_phase(type_id, last_completed_phase=phase, workflow_phase=next_phase)` → re-read and return updated state
-- **Done when:** All 6 `TestCompletePhase` tests pass
+- **Action:** Implement: `get_state()` → ValueError if None → check current_phase not None → validate phase match or backward re-run (compare PHASE_SEQUENCE indices; if last_completed_phase is None, backward re-run is not applicable — raise ValueError on phase mismatch) → derive next via `_next_phase_value()` → terminal check: `if next_phase is None: next_phase = phase` → `update_workflow_phase(type_id, last_completed_phase=phase, workflow_phase=next_phase)` → re-read and return updated state
+- **Done when:** All 7 `TestCompletePhase` tests pass
 - **Dependencies:** Task 5.3
 
 ## Phase 6: Public Methods — Query + Validate
@@ -165,12 +165,12 @@
 ## Phase 7: Integration Tests
 
 ### Task 7.1: Write full lifecycle integration test (RED+GREEN)
-- **Action:** Write `test_full_lifecycle_all_6_phases` (SC-1): use `EntityDatabase(":memory:")` for DB fixture, `tmp_path` pytest fixture for artifacts directory, initialize `WorkflowStateEngine(db, str(tmp_path))`. Register entity via `db.create_entity(...)`. Create .meta.json in `tmp_path/features/{slug}/`. Call get_state (triggers hydration) → for each of 6 command phases: transition_phase() + create required artifacts + complete_phase() → verify final state. Interleave artifact creation per HARD_PREREQUISITES
+- **Action:** Write `test_full_lifecycle_all_6_phases` (SC-1): use `EntityDatabase(":memory:")` for DB fixture, `tmp_path` pytest fixture for artifacts directory, initialize `WorkflowStateEngine(db, str(tmp_path))`. Register entity via `db.create_entity(...)`. Create .meta.json in `tmp_path/features/{slug}/`. Call get_state (triggers hydration) → for each of 6 command phases: transition_phase() + create required artifacts + complete_phase() → verify final state. Interleave artifact creation per HARD_PREREQUISITES (specify→spec.md, design→design.md, create-plan→plan.md, create-tasks→tasks.md, implement→no new artifacts needed as spec.md+tasks.md already exist, finish→no prerequisites)
 - **Done when:** Test passes end-to-end
 - **Dependencies:** Task 6.6
 
 ### Task 7.2: Write gate coverage integration test (RED+GREEN)
-- **Action:** Write `test_all_5_consumed_gates_exercised` (SC-10): use `unittest.mock.patch("transition_gate.check_backward_transition")` (and equivalent for each of the 5 gates) with `side_effect=original_fn` so calls are tracked but still execute normally. Run a lifecycle scenario that exercises all gates. Assert `mock.call_count >= 1` for each of the 5 gates
+- **Action:** Write `test_all_5_consumed_gates_exercised` (SC-10): patch all 5 gates — `transition_gate.check_backward_transition`, `transition_gate.check_hard_prerequisites`, `transition_gate.check_soft_prerequisites`, `transition_gate.validate_transition`, `transition_gate.check_yolo_override` — each with `side_effect=original_fn` so calls are tracked but still execute normally. Run a lifecycle scenario that exercises all gates. Assert `mock.call_count >= 1` for each of the 5 gates
 - **Done when:** Test passes, all 5 gates verified with call_count >= 1
 - **Dependencies:** Task 7.1
 
