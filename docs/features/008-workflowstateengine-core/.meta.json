@@ -11,6 +11,15 @@
     "007-python-transition-control-gate",
     "005-workflowphases-table-with-dual"
   ],
-  "lastCompletedPhase": null,
-  "phases": {}
+  "lastCompletedPhase": "specify",
+  "phases": {
+    "specify": {
+      "started": "2026-03-04T06:35:00+08:00",
+      "completed": "2026-03-04T07:45:00+08:00",
+      "phaseReview": {
+        "iterations": 2,
+        "approved": true
+      }
+    }
+  }
 }
