@@ -1922,3 +1922,1359 @@ def test_canonical_sequence_matches_skill_md() -> None:
         f"  SKILL.md:  {skill_phases}\n"
         f"  Library:   {library_phases}"
     )
+
+
+# ===========================================================================
+# Phase B: Deepened tests — edge cases, boundary values, adversarial inputs,
+# mutation-resilience, and spec-contract verification.
+# derived_from references trace to spec criteria or testing dimensions.
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# Dimension 2: Boundary Value — artifact size boundaries (G-02/G-03)
+# ---------------------------------------------------------------------------
+
+
+class TestArtifactValidationBoundary:
+    """Boundary value tests for validate_artifact size threshold.
+    derived_from: dimension:boundary_values (MIN_ARTIFACT_SIZE=100)
+    """
+
+    def test_G03_validate_artifact_size_at_boundary_minus_one(self) -> None:
+        """G-03: Size 99 (min-1) -> blocked at level 2.
+
+        Anticipate: Off-by-one if >= changed to >.
+        """
+        # Given an artifact that exists but is 1 byte under the minimum
+        # When validate_artifact is called with size=99
+        result = validate_artifact(
+            phase="design",
+            artifact_name="spec.md",
+            artifact_path_exists=True,
+            artifact_size=99,
+            has_headers=True,
+            has_required_sections=True,
+        )
+        # Then it blocks at G-03 (size check), not G-04 or G-05
+        assert result.allowed is False
+        assert result.guard_id == "G-03"
+        assert result.severity == Severity.block
+
+    def test_G03_validate_artifact_size_at_boundary_plus_one(self) -> None:
+        """G-03: Size 101 (min+1) -> passes level 2.
+
+        Anticipate: Ensures boundary is inclusive at min, exclusive below.
+        """
+        # Given an artifact at size min+1 with all other checks passing
+        # When validate_artifact is called with size=101
+        result = validate_artifact(
+            phase="design",
+            artifact_name="spec.md",
+            artifact_path_exists=True,
+            artifact_size=101,
+            has_headers=True,
+            has_required_sections=True,
+        )
+        # Then it passes (101 >= 100)
+        assert result.allowed is True
+
+    def test_G03_validate_artifact_size_zero(self) -> None:
+        """G-03: Size 0 -> blocked at level 2.
+
+        Anticipate: Zero-size file should not pass size validation.
+        """
+        # Given an artifact that exists but has zero size
+        # When validate_artifact is called with size=0
+        result = validate_artifact(
+            phase="design",
+            artifact_name="spec.md",
+            artifact_path_exists=True,
+            artifact_size=0,
+            has_headers=True,
+            has_required_sections=True,
+        )
+        # Then it blocks at G-03
+        assert result.allowed is False
+        assert result.guard_id == "G-03"
+
+    def test_G02_validate_artifact_negative_size_still_checks_path_first(self) -> None:
+        """G-02: Negative size with missing path -> blocks at G-02 first.
+
+        Anticipate: Validation order matters. Level 1 (exists) before level 2 (size).
+        """
+        # Given an artifact that doesn't exist with negative size
+        # When validate_artifact is called
+        result = validate_artifact(
+            phase="design",
+            artifact_name="spec.md",
+            artifact_path_exists=False,
+            artifact_size=-100,
+            has_headers=True,
+            has_required_sections=True,
+        )
+        # Then it blocks at G-02 (existence), not G-03 (size)
+        assert result.guard_id == "G-02"
+
+    def test_G03_validate_artifact_negative_size_blocks(self) -> None:
+        """G-03: Negative size with existing path -> blocks at G-03.
+
+        Anticipate: Negative integers should fail the >= MIN_ARTIFACT_SIZE check.
+        """
+        # Given an artifact that exists but has negative size
+        # When validate_artifact is called
+        result = validate_artifact(
+            phase="design",
+            artifact_name="spec.md",
+            artifact_path_exists=True,
+            artifact_size=-1,
+            has_headers=False,
+            has_required_sections=False,
+        )
+        # Then it blocks at G-03 (size), not G-04 (headers)
+        assert result.allowed is False
+        assert result.guard_id == "G-03"
+
+
+# ---------------------------------------------------------------------------
+# Dimension 2: Boundary Value — validate_artifact level ordering (G-02..06)
+# ---------------------------------------------------------------------------
+
+
+class TestArtifactValidationLevelOrdering:
+    """Verify 4-level validation executes in strict order: exist > size > headers > sections.
+    derived_from: spec:Function Consolidation Map (4-level artifact content validation)
+    """
+
+    def test_G02_level_ordering_exist_fails_before_size(self) -> None:
+        """Level 1 fails even when other levels would also fail.
+
+        Anticipate: If levels checked out of order, guard_id would be wrong.
+        """
+        # Given all levels would fail
+        # When validate_artifact is called
+        result = validate_artifact(
+            phase="design",
+            artifact_name="spec.md",
+            artifact_path_exists=False,
+            artifact_size=0,
+            has_headers=False,
+            has_required_sections=False,
+        )
+        # Then earliest failing level (G-02) is returned
+        assert result.guard_id == "G-02"
+
+    def test_G04_level_ordering_headers_fail_after_size_pass(self) -> None:
+        """Level 3 fails only when levels 1 and 2 pass.
+
+        Anticipate: If levels skipped, G-04 wouldn't be reachable.
+        """
+        # Given artifact exists and is large enough but has no headers
+        # When validate_artifact is called
+        result = validate_artifact(
+            phase="design",
+            artifact_name="spec.md",
+            artifact_path_exists=True,
+            artifact_size=200,
+            has_headers=False,
+            has_required_sections=True,
+        )
+        # Then blocks at G-04
+        assert result.guard_id == "G-04"
+        assert result.allowed is False
+
+    def test_G05_validate_artifact_default_guard_for_non_mapped_phase(self) -> None:
+        """G-05: Phase/artifact combo not in ARTIFACT_GUARD_MAP uses default G-05.
+
+        Anticipate: Default lookup fails -> wrong guard_id on level 4.
+        """
+        # Given a (phase, artifact) pair not in ARTIFACT_GUARD_MAP
+        # When validate_artifact fails at level 4
+        result = validate_artifact(
+            phase="design",
+            artifact_name="spec.md",
+            artifact_path_exists=True,
+            artifact_size=200,
+            has_headers=True,
+            has_required_sections=False,
+        )
+        # Then uses default G-05
+        assert result.guard_id == "G-05"
+        assert result.allowed is False
+
+    def test_G05_validate_artifact_blocked_message_format(self) -> None:
+        """BLOCKED message includes artifact_name and phase per spec.
+
+        Anticipate: Message template could omit variables.
+        derived_from: spec:Function Consolidation Map (per-phase BLOCKED messages)
+        """
+        # Given a failing artifact validation
+        # When validate_artifact is called
+        result = validate_artifact(
+            phase="create-tasks",
+            artifact_name="design.md",
+            artifact_path_exists=False,
+            artifact_size=0,
+            has_headers=False,
+            has_required_sections=False,
+        )
+        # Then reason contains "BLOCKED", artifact name, and phase
+        assert "BLOCKED" in result.reason
+        assert "design.md" in result.reason
+        assert "create-tasks" in result.reason
+
+
+# ---------------------------------------------------------------------------
+# Dimension 2/5: Boundary — secretary_review_criteria threshold (G-45)
+# ---------------------------------------------------------------------------
+
+
+class TestSecretaryReviewCriteriaBoundary:
+    """Boundary tests for the 85% confidence threshold.
+    derived_from: spec:Function Consolidation Map (confidence > 85%)
+    """
+
+    def test_G45_secretary_review_criteria_at_exact_threshold(self) -> None:
+        """G-45: Confidence exactly 85.0 with direct match -> review required (warn).
+
+        Anticipate: Spec says "> 85%", not ">= 85%". At exactly 85, should NOT skip.
+        Mutation: changing > to >= would make this test fail.
+        """
+        # Given confidence at exactly 85.0% (threshold boundary)
+        # When secretary_review_criteria is called
+        result = secretary_review_criteria(confidence=85.0, is_direct_match=True)
+        # Then review is required (not skipped) because 85.0 is NOT > 85.0
+        assert result.severity == Severity.warn
+        assert result.guard_id == "G-45"
+
+    def test_G45_secretary_review_criteria_just_above_threshold(self) -> None:
+        """G-45: Confidence 85.01 with direct match -> skip review.
+
+        Anticipate: Just above threshold should skip.
+        """
+        # Given confidence just above 85.0%
+        # When secretary_review_criteria is called
+        result = secretary_review_criteria(confidence=85.01, is_direct_match=True)
+        # Then review is skipped
+        assert result.severity == Severity.info
+        assert result.allowed is True
+
+    def test_G45_secretary_review_criteria_high_confidence_no_direct_match(self) -> None:
+        """G-45: High confidence but no direct match -> review required.
+
+        Anticipate: Both conditions must be true for skip. Tests AND logic.
+        Mutation: changing && to || would fail this test.
+        """
+        # Given high confidence but not a direct match
+        # When secretary_review_criteria is called
+        result = secretary_review_criteria(confidence=99.0, is_direct_match=False)
+        # Then review is required
+        assert result.severity == Severity.warn
+
+    def test_G45_secretary_review_criteria_zero_confidence(self) -> None:
+        """G-45: Zero confidence -> review required.
+
+        Anticipate: Edge case for minimum confidence value.
+        """
+        # Given zero confidence
+        # When secretary_review_criteria is called
+        result = secretary_review_criteria(confidence=0.0, is_direct_match=True)
+        # Then review required
+        assert result.severity == Severity.warn
+
+
+# ---------------------------------------------------------------------------
+# Dimension 2: Boundary — _phase_index edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestPhaseIndexBoundary:
+    """Boundary and adversarial tests for _phase_index helper.
+    derived_from: dimension:boundary_values (phase sequence boundaries)
+    """
+
+    def test_phase_index_empty_string(self) -> None:
+        """Empty string is not a valid phase -> -1.
+
+        Anticipate: Empty string could match something unexpected.
+        """
+        assert _phase_index("") == -1
+
+    def test_phase_index_all_phases_sequential(self) -> None:
+        """Every phase in PHASE_SEQUENCE returns sequential indices 0..6.
+
+        Anticipate: Index gaps or duplicates would indicate broken lookup.
+        """
+        for i, phase in enumerate(PHASE_SEQUENCE):
+            assert _phase_index(phase.value) == i, f"Phase {phase} at wrong index"
+
+    def test_phase_index_case_sensitive(self) -> None:
+        """Phase lookup is case-sensitive -> uppercase fails.
+
+        Anticipate: Case-insensitive matching would be a bug.
+        """
+        assert _phase_index("Brainstorm") == -1
+        assert _phase_index("DESIGN") == -1
+
+
+# ---------------------------------------------------------------------------
+# Dimension 2/3: Boundary — check_backward_transition edge cases (G-18)
+# ---------------------------------------------------------------------------
+
+
+class TestBackwardTransitionBoundary:
+    """Boundary and adversarial tests for check_backward_transition.
+    derived_from: dimension:boundary_values, dimension:adversarial
+    """
+
+    def test_G18_check_backward_transition_same_phase(self) -> None:
+        """G-18: Target equals last completed -> warn (at, not before).
+
+        Anticipate: Uses <= not <. Same phase counts as backward.
+        Mutation: changing <= to < would miss this case.
+        """
+        # Given target phase equals last completed phase
+        # When check_backward_transition is called
+        result = check_backward_transition(
+            target_phase="design",
+            last_completed_phase="design",
+        )
+        # Then it warns (re-running a completed phase)
+        assert result.severity == Severity.warn
+        assert result.guard_id == "G-18"
+
+    def test_G18_check_backward_transition_unknown_target(self) -> None:
+        """G-18: Unknown target phase -> invalid input.
+
+        Anticipate: Missing input validation would cause crash.
+        """
+        # Given an unknown target phase
+        # When check_backward_transition is called
+        result = check_backward_transition(
+            target_phase="nonexistent",
+            last_completed_phase="design",
+        )
+        # Then invalid input
+        assert result.guard_id == "INVALID"
+        assert result.allowed is False
+
+    def test_G18_check_backward_transition_unknown_last_completed(self) -> None:
+        """G-18: Unknown last_completed_phase -> invalid input.
+
+        Anticipate: Second parameter could also be invalid.
+        """
+        # Given an unknown last completed phase
+        # When check_backward_transition is called
+        result = check_backward_transition(
+            target_phase="design",
+            last_completed_phase="nonexistent",
+        )
+        # Then invalid input
+        assert result.guard_id == "INVALID"
+        assert result.allowed is False
+
+    def test_G18_check_backward_transition_first_to_last(self) -> None:
+        """G-18: Forward from first to last phase -> pass.
+
+        Anticipate: Full range traversal should work.
+        """
+        # Given target=finish, last_completed=brainstorm
+        # When check_backward_transition is called
+        result = check_backward_transition(
+            target_phase="finish",
+            last_completed_phase="brainstorm",
+        )
+        # Then forward transition passes
+        assert result.allowed is True
+        assert result.guard_id == "G-18"
+
+    def test_G18_check_backward_transition_last_to_first(self) -> None:
+        """G-18: Backward from last to first -> warn.
+
+        Anticipate: Maximum backward jump should still warn.
+        """
+        # Given target=brainstorm, last_completed=finish
+        # When check_backward_transition is called
+        result = check_backward_transition(
+            target_phase="brainstorm",
+            last_completed_phase="finish",
+        )
+        # Then warns
+        assert result.severity == Severity.warn
+        assert result.guard_id == "G-18"
+
+
+# ---------------------------------------------------------------------------
+# Dimension 2/3: Boundary — validate_transition edge cases (G-22)
+# ---------------------------------------------------------------------------
+
+
+class TestValidateTransitionBoundary:
+    """Boundary and adversarial tests for validate_transition.
+    derived_from: dimension:boundary_values, spec:SC-1 (G-22)
+    """
+
+    def test_G22_validate_transition_same_phase(self) -> None:
+        """G-22: Current == target -> warn (not ahead in sequence).
+
+        Anticipate: Same phase is not a forward transition.
+        Mutation: Changing <= to < would fail this.
+        """
+        # Given current phase equals target phase
+        # When validate_transition is called
+        result = validate_transition(
+            current_phase="design",
+            target_phase="design",
+            completed_phases=["brainstorm", "specify"],
+        )
+        # Then warns (target not ahead of current)
+        assert result.severity == Severity.warn
+        assert result.guard_id == "G-22"
+
+    def test_G22_validate_transition_unknown_target(self) -> None:
+        """G-22: Unknown target phase -> invalid input.
+
+        Anticipate: Bad target should be caught before sequence validation.
+        """
+        result = validate_transition(
+            current_phase="design",
+            target_phase="nonexistent",
+            completed_phases=[],
+        )
+        assert result.guard_id == "INVALID"
+        assert result.allowed is False
+
+    def test_G22_validate_transition_unknown_current(self) -> None:
+        """G-22: Unknown current phase -> invalid input.
+
+        Anticipate: Bad current should be caught too.
+        """
+        result = validate_transition(
+            current_phase="nonexistent",
+            target_phase="design",
+            completed_phases=[],
+        )
+        assert result.guard_id == "INVALID"
+        assert result.allowed is False
+
+    def test_G22_validate_transition_adjacent_forward_no_gap(self) -> None:
+        """G-22: Adjacent forward transition (no intermediate phases) -> pass.
+
+        Anticipate: No intermediate phases to check means direct pass.
+        """
+        # Given current=brainstorm, target=specify (adjacent, no gap)
+        # When validate_transition is called
+        result = validate_transition(
+            current_phase="brainstorm",
+            target_phase="specify",
+            completed_phases=[],
+        )
+        # Then passes (no phases to check between indices 0 and 1)
+        assert result.allowed is True
+        assert result.guard_id == "G-22"
+
+    def test_G22_validate_transition_first_to_last_all_completed(self) -> None:
+        """G-22: Brainstorm to finish with all intermediate phases completed -> pass.
+
+        Anticipate: Full sequence traversal with all phases satisfied.
+        """
+        result = validate_transition(
+            current_phase="brainstorm",
+            target_phase="finish",
+            completed_phases=[
+                "brainstorm", "specify", "design",
+                "create-plan", "create-tasks", "implement",
+            ],
+        )
+        assert result.allowed is True
+        assert result.guard_id == "G-22"
+
+    def test_G22_validate_transition_reports_first_missing_phase(self) -> None:
+        """G-22: Multiple missing phases -> reports the first one in reason.
+
+        Anticipate: Implementation checks phases in order, reports first failure.
+        """
+        # Given skip from brainstorm to finish with no phases completed
+        result = validate_transition(
+            current_phase="brainstorm",
+            target_phase="finish",
+            completed_phases=[],
+        )
+        # Then warns, and reason mentions the first missing phase (specify)
+        assert result.severity == Severity.warn
+        assert "specify" in result.reason
+
+
+# ---------------------------------------------------------------------------
+# Dimension 2/3: Boundary — check_soft_prerequisites edge cases (G-23)
+# ---------------------------------------------------------------------------
+
+
+class TestSoftPrerequisitesBoundary:
+    """Boundary tests for check_soft_prerequisites.
+    derived_from: dimension:boundary_values, spec:SC-1 (G-23)
+    """
+
+    def test_G23_check_soft_prerequisites_unknown_target(self) -> None:
+        """G-23: Unknown target phase -> invalid input.
+
+        Anticipate: Missing validation would crash on phase lookup.
+        """
+        result = check_soft_prerequisites(
+            target_phase="nonexistent",
+            completed_phases=[],
+        )
+        assert result.guard_id == "INVALID"
+        assert result.allowed is False
+
+    def test_G23_check_soft_prerequisites_target_brainstorm(self) -> None:
+        """G-23: Target is first phase (brainstorm, index 0) -> no skipped phases.
+
+        Anticipate: No phases before index 0, so nothing can be skipped.
+        """
+        result = check_soft_prerequisites(
+            target_phase="brainstorm",
+            completed_phases=[],
+        )
+        assert result.allowed is True
+        assert result.guard_id == "G-23"
+
+    def test_G23_check_soft_prerequisites_lists_all_skipped(self) -> None:
+        """G-23: Multiple skipped phases -> all listed in reason.
+
+        Anticipate: Reason should contain all skipped phase names.
+        Note: str(Phase.X) produces "Phase.X" format; use repr-safe matching.
+        """
+        result = check_soft_prerequisites(
+            target_phase="implement",
+            completed_phases=[],
+        )
+        assert result.severity == Severity.warn
+        # All 5 phases before implement should be mentioned in reason
+        # Phase enum str() produces "Phase.brainstorm" etc., so check for
+        # the phase value portion in any format
+        for phase_val in ["brainstorm", "specify", "design", "create-plan", "create-tasks"]:
+            assert phase_val in result.reason, (
+                f"Missing '{phase_val}' in reason: {result.reason}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Dimension 2: Boundary — get_next_phase edge cases (G-25)
+# ---------------------------------------------------------------------------
+
+
+class TestGetNextPhaseBoundary:
+    """Boundary tests for get_next_phase.
+    derived_from: dimension:boundary_values, spec:SC-1 (G-25)
+    """
+
+    def test_G25_get_next_phase_from_brainstorm(self) -> None:
+        """G-25: First phase -> next is specify.
+
+        Anticipate: First element boundary.
+        """
+        result = get_next_phase(last_completed_phase="brainstorm")
+        assert result.allowed is True
+        assert "specify" in result.reason
+
+    def test_G25_get_next_phase_unknown_phase(self) -> None:
+        """G-25: Unknown phase -> invalid input.
+
+        Anticipate: Unrecognized phase should not crash.
+        """
+        result = get_next_phase(last_completed_phase="nonexistent")
+        assert result.guard_id == "INVALID"
+        assert result.allowed is False
+
+    def test_G25_get_next_phase_second_to_last(self) -> None:
+        """G-25: implement -> finish (second-to-last yields last).
+
+        Anticipate: Boundary at sequence end minus one.
+        """
+        result = get_next_phase(last_completed_phase="implement")
+        assert result.allowed is True
+        assert "finish" in result.reason
+
+
+# ---------------------------------------------------------------------------
+# Dimension 2: Boundary — brainstorm gates iteration boundaries (G-31/32/33)
+# ---------------------------------------------------------------------------
+
+
+class TestBrainstormGateBoundary:
+    """Boundary tests for iteration cap logic in brainstorm gates.
+    derived_from: dimension:boundary_values (iteration boundary)
+    """
+
+    def test_G32_brainstorm_quality_iteration_just_under_cap(self) -> None:
+        """G-32: Not approved at max-1 iteration -> still blocked.
+
+        Anticipate: Off-by-one if >= changed to >.
+        """
+        # Given iteration=2 (max-1 when max=3), not approved
+        result = brainstorm_quality_gate(
+            iteration=2,
+            max_iterations=3,
+            reviewer_approved=False,
+        )
+        # Then blocked (not yet at cap)
+        assert result.allowed is False
+        assert result.guard_id == "G-32"
+
+    def test_G32_brainstorm_quality_iteration_zero(self) -> None:
+        """G-32: Iteration 0, not approved -> blocked.
+
+        Anticipate: Zero iteration is valid and under any cap.
+        """
+        result = brainstorm_quality_gate(
+            iteration=0,
+            max_iterations=3,
+            reviewer_approved=False,
+        )
+        assert result.allowed is False
+        assert result.guard_id == "G-32"
+
+    def test_G32_brainstorm_quality_approved_overrides_cap(self) -> None:
+        """G-32: Approved at any iteration (even over cap) -> pass.
+
+        Anticipate: Approval check comes before cap check.
+        """
+        result = brainstorm_quality_gate(
+            iteration=10,
+            max_iterations=3,
+            reviewer_approved=True,
+        )
+        assert result.allowed is True
+        assert result.severity == Severity.info
+
+    def test_G31_brainstorm_readiness_approved_with_blockers(self) -> None:
+        """G-33: Approved but blockers -> blocked (G-33).
+
+        Anticipate: Approval alone is insufficient if blockers remain.
+        This tests a distinct truth table cell from the existing tests.
+        """
+        result = brainstorm_readiness_gate(
+            iteration=2,
+            max_iterations=3,
+            reviewer_approved=True,
+            has_blockers=True,
+        )
+        assert result.allowed is False
+        assert result.guard_id == "G-33"
+
+    def test_G33_brainstorm_readiness_over_cap(self) -> None:
+        """G-33: Not approved, well over cap -> still warns (cap behavior).
+
+        Anticipate: Over-cap should behave same as at-cap.
+        """
+        result = brainstorm_readiness_gate(
+            iteration=10,
+            max_iterations=3,
+            reviewer_approved=False,
+            has_blockers=False,
+        )
+        assert result.allowed is True
+        assert result.severity == Severity.warn
+        assert result.guard_id == "G-33"
+
+
+# ---------------------------------------------------------------------------
+# Dimension 2: Boundary — pre_merge_validation boundaries (G-27/29)
+# ---------------------------------------------------------------------------
+
+
+class TestPreMergeValidationBoundary:
+    """Boundary tests for pre_merge_validation attempt counting.
+    derived_from: dimension:boundary_values (attempt boundary)
+    """
+
+    def test_G27_pre_merge_validation_at_max_minus_one(self) -> None:
+        """G-27: Failed at max-1 attempt -> retry (not exhausted).
+
+        Anticipate: Off-by-one on attempt < max boundary.
+        """
+        result = pre_merge_validation(
+            checks_passed=False,
+            max_attempts=3,
+            current_attempt=2,
+        )
+        assert result.guard_id == "G-27"
+        assert result.allowed is False
+        assert "Retry" in result.reason
+
+    def test_G27_pre_merge_validation_passed_overrides_attempt(self) -> None:
+        """G-27: Passed at any attempt -> allowed regardless of count.
+
+        Anticipate: checks_passed=True should short-circuit, even at high attempt.
+        """
+        result = pre_merge_validation(
+            checks_passed=True,
+            max_attempts=3,
+            current_attempt=99,
+        )
+        assert result.allowed is True
+        assert result.guard_id == "G-27"
+
+
+# ---------------------------------------------------------------------------
+# Dimension 2: Boundary — implement_circuit_breaker boundaries (G-41)
+# ---------------------------------------------------------------------------
+
+
+class TestCircuitBreakerBoundary:
+    """Boundary tests for implement_circuit_breaker iteration cap.
+    derived_from: dimension:boundary_values (iteration boundary)
+    """
+
+    def test_G41_circuit_breaker_at_max_minus_one(self) -> None:
+        """G-41: Iteration just under cap -> still allowed.
+
+        Anticipate: Off-by-one if < changed to <=.
+        """
+        result = implement_circuit_breaker(
+            is_yolo=True,
+            iteration=4,
+            max_iterations=5,
+        )
+        assert result.allowed is True
+        assert result.severity == Severity.info
+
+    def test_G41_circuit_breaker_yolo_over_cap(self) -> None:
+        """G-41: YOLO well over cap -> still hard-stop.
+
+        Anticipate: Over-cap should behave same as at-cap in YOLO mode.
+        """
+        result = implement_circuit_breaker(
+            is_yolo=True,
+            iteration=100,
+            max_iterations=5,
+        )
+        assert result.allowed is False
+        assert result.severity == Severity.block
+
+    def test_G41_circuit_breaker_iteration_zero(self) -> None:
+        """G-41: Iteration 0 -> always allowed (well under cap).
+
+        Anticipate: Zero is a valid iteration count.
+        """
+        result = implement_circuit_breaker(
+            is_yolo=True,
+            iteration=0,
+            max_iterations=5,
+        )
+        assert result.allowed is True
+        assert result.severity == Severity.info
+
+
+# ---------------------------------------------------------------------------
+# Dimension 2/3: Boundary — check_active_feature_conflict (G-48)
+# ---------------------------------------------------------------------------
+
+
+class TestActiveFeatureConflictBoundary:
+    """Boundary tests for active feature count.
+    derived_from: dimension:boundary_values (zero/one/many)
+    """
+
+    def test_G48_check_active_feature_conflict_one(self) -> None:
+        """G-48: Exactly 1 active feature -> warn.
+
+        Anticipate: Boundary between 0 and many. count > 0 must catch 1.
+        """
+        result = check_active_feature_conflict(active_feature_count=1)
+        assert result.severity == Severity.warn
+        assert result.guard_id == "G-48"
+        assert "1" in result.reason
+
+
+# ---------------------------------------------------------------------------
+# Dimension 2/3: Boundary — check_task_completion (G-52/53)
+# ---------------------------------------------------------------------------
+
+
+class TestTaskCompletionBoundary:
+    """Boundary tests for incomplete task count.
+    derived_from: dimension:boundary_values (zero/one/many)
+    """
+
+    def test_G52_check_task_completion_one_incomplete(self) -> None:
+        """G-52: Exactly 1 incomplete task -> warn.
+
+        Anticipate: Boundary at count=1. Tests the > 0 boundary.
+        """
+        result = check_task_completion(incomplete_task_count=1)
+        assert result.severity == Severity.warn
+        assert result.guard_id == "G-52"
+        assert "1" in result.reason
+
+    def test_G52_check_task_completion_large_count(self) -> None:
+        """G-52: Many incomplete tasks -> warn with correct count.
+
+        Anticipate: Large counts should still work and display correctly.
+        """
+        result = check_task_completion(incomplete_task_count=999)
+        assert result.severity == Severity.warn
+        assert "999" in result.reason
+
+
+# ---------------------------------------------------------------------------
+# Dimension 3: Adversarial — review_quality_gate interaction (G-34..46)
+# ---------------------------------------------------------------------------
+
+
+class TestReviewQualityGateAdversarial:
+    """Adversarial tests for review_quality_gate truth table interactions.
+    derived_from: dimension:adversarial (approved + blockers interaction)
+    """
+
+    def test_G34_review_quality_approved_but_blockers(self) -> None:
+        """G-34: Approved=True but has_blockers_or_warnings=True -> blocked.
+
+        Anticipate: Both conditions must be satisfied (approved AND no blockers).
+        Mutation: Removing the `not has_blockers_or_warnings` check would pass this wrongly.
+        """
+        # Given reviewer approved but blockers still present
+        result = review_quality_gate(
+            phase="create-plan",
+            iteration=1,
+            max_iterations=5,
+            reviewer_approved=True,
+            has_blockers_or_warnings=True,
+        )
+        # Then NOT approved (blockers prevent it)
+        # Implementation: approved && !blockers -> pass. Else check cap.
+        # At iteration 1 < 5, so this should block.
+        assert result.allowed is False
+        assert result.guard_id == "G-34"
+
+    def test_G38_review_quality_not_approved_no_blockers_at_cap(self) -> None:
+        """G-38: Not approved, no blockers, at cap -> warn (cap reached).
+
+        Anticipate: Cap logic should trigger regardless of blocker state.
+        """
+        result = review_quality_gate(
+            phase="design",
+            iteration=5,
+            max_iterations=5,
+            reviewer_approved=False,
+            has_blockers_or_warnings=False,
+        )
+        assert result.allowed is True
+        assert result.severity == Severity.warn
+        assert result.guard_id == "G-38"
+
+    def test_G40_review_quality_approved_with_blockers_at_cap(self) -> None:
+        """G-40: Approved + blockers + at cap -> still blocked (cap doesn't override).
+
+        Anticipate: Approval with blockers checked before cap. Tests priority order.
+        Actually: approved=True with blockers falls through to cap check.
+        At cap (iteration >= max), it will warn.
+        """
+        result = review_quality_gate(
+            phase="implement",
+            iteration=5,
+            max_iterations=5,
+            reviewer_approved=True,
+            has_blockers_or_warnings=True,
+        )
+        # approved=True but blockers=True -> falls to cap check -> iteration >= max -> warn
+        assert result.allowed is True
+        assert result.severity == Severity.warn
+        assert result.guard_id == "G-40"
+
+
+# ---------------------------------------------------------------------------
+# Dimension 3: Adversarial — phase_handoff_gate interaction (G-35..47)
+# ---------------------------------------------------------------------------
+
+
+class TestPhaseHandoffGateAdversarial:
+    """Adversarial tests for phase_handoff_gate truth table.
+    derived_from: dimension:adversarial (approved + blockers interaction)
+    """
+
+    def test_G35_phase_handoff_approved_but_blockers(self) -> None:
+        """G-35: Approved but blockers present -> not approved (falls through).
+
+        Anticipate: Same AND logic as review_quality_gate.
+        """
+        result = phase_handoff_gate(
+            phase="create-plan",
+            iteration=1,
+            max_iterations=5,
+            reviewer_approved=True,
+            has_blockers_or_warnings=True,
+        )
+        # Falls through approved check -> iteration check -> blocked
+        assert result.allowed is False
+        assert result.guard_id == "G-35"
+
+    def test_G37_phase_handoff_cap_overrides_blockers(self) -> None:
+        """G-37: At cap with blockers -> warn (cap reached).
+
+        Anticipate: Cap reached always produces warn, regardless of state.
+        """
+        result = phase_handoff_gate(
+            phase="create-tasks",
+            iteration=5,
+            max_iterations=5,
+            reviewer_approved=False,
+            has_blockers_or_warnings=True,
+        )
+        assert result.allowed is True
+        assert result.severity == Severity.warn
+        assert result.guard_id == "G-37"
+
+
+# ---------------------------------------------------------------------------
+# Dimension 3: Adversarial — check_partial_phase truth table (G-17)
+# ---------------------------------------------------------------------------
+
+
+class TestPartialPhaseAdversarial:
+    """Complete truth table for check_partial_phase.
+    derived_from: dimension:adversarial (truth table completeness)
+    """
+
+    def test_G17_check_partial_phase_completed(self) -> None:
+        """G-17: Phase started AND completed -> consistent (pass).
+
+        Anticipate: Completed phase should not trigger "interrupted" warning.
+        """
+        # Given phase started and completed
+        result = check_partial_phase(
+            phase="design",
+            phase_started=True,
+            phase_completed=True,
+        )
+        # Then consistent
+        assert result.allowed is True
+        assert result.severity == Severity.info
+
+    def test_G17_check_partial_phase_not_started_but_completed(self) -> None:
+        """G-17: Phase NOT started but completed -> consistent (pass).
+
+        Anticipate: Logically odd but not an error per spec. Only
+        started-and-not-completed triggers warning.
+        """
+        # Given phase not started but somehow completed
+        result = check_partial_phase(
+            phase="design",
+            phase_started=False,
+            phase_completed=True,
+        )
+        # Then consistent (no warning)
+        assert result.allowed is True
+        assert result.severity == Severity.info
+
+
+# ---------------------------------------------------------------------------
+# Dimension 3: Adversarial — check_prd_exists truth table (G-09)
+# ---------------------------------------------------------------------------
+
+
+class TestCheckPrdExistsTruthTable:
+    """Complete truth table for check_prd_exists.
+    derived_from: dimension:adversarial (truth table completeness), spec:SC-1 (G-09)
+    """
+
+    def test_G09_check_prd_exists_brainstorm_source_no_prd(self) -> None:
+        """G-09: No PRD but has brainstorm source -> pass (not warn).
+
+        Anticipate: brainstorm source should satisfy the gate.
+        """
+        result = check_prd_exists(
+            prd_path_exists=False,
+            meta_has_brainstorm_source=True,
+        )
+        assert result.allowed is True
+        assert result.severity == Severity.info
+        assert result.guard_id == "G-09"
+
+    def test_G09_check_prd_exists_both_present(self) -> None:
+        """G-09: Both PRD and brainstorm source -> pass.
+
+        Anticipate: Having both should still pass (OR logic).
+        """
+        result = check_prd_exists(
+            prd_path_exists=True,
+            meta_has_brainstorm_source=True,
+        )
+        assert result.allowed is True
+        assert result.severity == Severity.info
+
+
+# ---------------------------------------------------------------------------
+# Dimension 3: Adversarial — check_terminal_status (G-51)
+# ---------------------------------------------------------------------------
+
+
+class TestTerminalStatusAdversarial:
+    """Adversarial tests for check_terminal_status.
+    derived_from: dimension:adversarial, spec:Enforcement Overrides (G-51 hard-block)
+    """
+
+    def test_G51_check_terminal_status_planned(self) -> None:
+        """G-51: Status 'planned' (non-terminal) -> allowed.
+
+        Anticipate: Only 'completed' and 'abandoned' are terminal.
+        """
+        result = check_terminal_status(current_status="planned")
+        assert result.allowed is True
+        assert result.guard_id == "G-51"
+
+    def test_G51_check_terminal_status_empty_string(self) -> None:
+        """G-51: Empty string status -> allowed (not terminal).
+
+        Anticipate: Empty string is not in the terminal set.
+        """
+        result = check_terminal_status(current_status="")
+        assert result.allowed is True
+        assert result.guard_id == "G-51"
+
+    def test_G51_check_terminal_status_case_sensitivity(self) -> None:
+        """G-51: 'Completed' (capitalized) -> allowed (case-sensitive match).
+
+        Anticipate: Terminal check should be exact match, not case-insensitive.
+        """
+        result = check_terminal_status(current_status="Completed")
+        assert result.allowed is True
+        assert result.guard_id == "G-51"
+
+
+# ---------------------------------------------------------------------------
+# Dimension 3: Adversarial — planned_to_active_transition (G-50)
+# ---------------------------------------------------------------------------
+
+
+class TestPlannedToActiveAdversarial:
+    """Adversarial tests for planned_to_active_transition.
+    derived_from: dimension:adversarial, spec:SC-1 (G-50)
+    """
+
+    def test_G50_planned_to_active_both_conditions_fail(self) -> None:
+        """G-50: Wrong status AND no branch -> blocks on status first.
+
+        Anticipate: Status check comes before branch check.
+        """
+        result = planned_to_active_transition(
+            current_status="active",
+            branch_exists=False,
+        )
+        assert result.allowed is False
+        assert result.guard_id == "G-50"
+        # Should mention wrong status, not missing branch
+        assert "active" in result.reason
+
+    def test_G50_planned_to_active_completed_status(self) -> None:
+        """G-50: Completed status -> blocks (not 'planned').
+
+        Anticipate: Any non-planned status should block.
+        """
+        result = planned_to_active_transition(
+            current_status="completed",
+            branch_exists=True,
+        )
+        assert result.allowed is False
+        assert result.guard_id == "G-50"
+
+
+# ---------------------------------------------------------------------------
+# Dimension 4: Error Propagation — invalid input handling
+# ---------------------------------------------------------------------------
+
+
+class TestInvalidInputPropagation:
+    """Verify all functions that accept phase names handle invalid input.
+    derived_from: dimension:error_propagation (design:error-contract)
+    """
+
+    def test_G08_check_hard_prerequisites_all_valid_phases(self) -> None:
+        """G-08: Every valid phase in HARD_PREREQUISITES returns a result.
+
+        Anticipate: Missing phase key in HARD_PREREQUISITES would return INVALID.
+        """
+        for phase in HARD_PREREQUISITES:
+            result = check_hard_prerequisites(
+                phase=phase,
+                existing_artifacts=list(HARD_PREREQUISITES[phase]),
+            )
+            assert result.guard_id == "G-08", f"Phase {phase} returned {result.guard_id}"
+            assert result.allowed is True, f"Phase {phase} with all artifacts should pass"
+
+    def test_fail_open_mcp_all_valid_services(self) -> None:
+        """G-13/14/15/16: Every SERVICE_GUARD_MAP entry resolves correctly.
+
+        Anticipate: Missing service key would return INVALID.
+        """
+        for service_name, expected_guard_id in SERVICE_GUARD_MAP.items():
+            result = fail_open_mcp(service_name=service_name, service_available=True)
+            assert result.guard_id == expected_guard_id, (
+                f"Service {service_name} returned {result.guard_id}, "
+                f"expected {expected_guard_id}"
+            )
+
+    def test_review_quality_all_valid_phases(self) -> None:
+        """G-34/36/38/40/46: Every review_quality phase resolves correctly.
+
+        Anticipate: Missing phase in PHASE_GUARD_MAP would return INVALID.
+        """
+        for phase, expected_guard_id in PHASE_GUARD_MAP["review_quality"].items():
+            result = review_quality_gate(
+                phase=phase,
+                iteration=1,
+                max_iterations=5,
+                reviewer_approved=True,
+                has_blockers_or_warnings=False,
+            )
+            assert result.guard_id == expected_guard_id, (
+                f"Phase {phase} returned {result.guard_id}, expected {expected_guard_id}"
+            )
+
+    def test_phase_handoff_all_valid_phases(self) -> None:
+        """G-35/37/39/47: Every phase_handoff phase resolves correctly.
+
+        Anticipate: Missing phase in PHASE_GUARD_MAP would return INVALID.
+        """
+        for phase, expected_guard_id in PHASE_GUARD_MAP["phase_handoff"].items():
+            result = phase_handoff_gate(
+                phase=phase,
+                iteration=1,
+                max_iterations=5,
+                reviewer_approved=True,
+                has_blockers_or_warnings=False,
+            )
+            assert result.guard_id == expected_guard_id, (
+                f"Phase {phase} returned {result.guard_id}, expected {expected_guard_id}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Dimension 5: Mutation Mindset — YOLO override completeness
+# ---------------------------------------------------------------------------
+
+
+class TestYoloOverrideMutationResilience:
+    """Verify YOLO override behavior categorization for all 43 guards.
+    derived_from: dimension:mutation_mindset, spec:SC-6 (YOLO behavior per guard)
+    """
+
+    def test_yolo_skip_guards_return_allowed(self) -> None:
+        """All guards with yolo_behavior=skip -> YOLO returns allowed+info.
+
+        Anticipate: Missing YOLO handler for a skip guard.
+        """
+        skip_guards = [
+            gid for gid, meta in GUARD_METADATA.items()
+            if meta["yolo_behavior"] == YoloBehavior.skip
+        ]
+        assert len(skip_guards) > 0, "Expected at least one skip guard"
+        for gid in skip_guards:
+            result = check_yolo_override(gid, is_yolo=True)
+            assert result is not None, f"{gid} skip should return result"
+            assert result.allowed is True, f"{gid} skip should be allowed"
+            assert result.severity == Severity.info, f"{gid} skip should be info"
+
+    def test_yolo_auto_select_guards_return_warn(self) -> None:
+        """All guards with yolo_behavior=auto_select -> YOLO returns allowed+warn.
+
+        Anticipate: Missing YOLO handler for an auto_select guard.
+        """
+        auto_guards = [
+            gid for gid, meta in GUARD_METADATA.items()
+            if meta["yolo_behavior"] == YoloBehavior.auto_select
+        ]
+        assert len(auto_guards) > 0, "Expected at least one auto_select guard"
+        for gid in auto_guards:
+            result = check_yolo_override(gid, is_yolo=True)
+            assert result is not None, f"{gid} auto_select should return result"
+            assert result.allowed is True, f"{gid} auto_select should be allowed"
+            assert result.severity == Severity.warn, f"{gid} auto_select should be warn"
+
+    def test_yolo_hard_stop_guards_return_none(self) -> None:
+        """All guards with yolo_behavior=hard_stop -> YOLO returns None.
+
+        Anticipate: hard_stop should run guard normally (not override).
+        """
+        hard_stop_guards = [
+            gid for gid, meta in GUARD_METADATA.items()
+            if meta["yolo_behavior"] == YoloBehavior.hard_stop
+        ]
+        assert len(hard_stop_guards) > 0, "Expected at least one hard_stop guard"
+        for gid in hard_stop_guards:
+            result = check_yolo_override(gid, is_yolo=True)
+            assert result is None, f"{gid} hard_stop should return None"
+
+    def test_yolo_unchanged_guards_return_none(self) -> None:
+        """All guards with yolo_behavior=unchanged -> YOLO returns None.
+
+        Anticipate: unchanged should run guard normally (not override).
+        """
+        unchanged_guards = [
+            gid for gid, meta in GUARD_METADATA.items()
+            if meta["yolo_behavior"] == YoloBehavior.unchanged
+        ]
+        assert len(unchanged_guards) > 0, "Expected at least one unchanged guard"
+        for gid in unchanged_guards:
+            result = check_yolo_override(gid, is_yolo=True)
+            assert result is None, f"{gid} unchanged should return None"
+
+    def test_yolo_all_43_guards_categorized(self) -> None:
+        """All 43 guards have a valid YOLO behavior in metadata.
+
+        Anticipate: Missing or invalid yolo_behavior entry.
+        """
+        for gid in EXPECTED_GUARD_IDS:
+            meta = GUARD_METADATA.get(gid)
+            assert meta is not None, f"{gid} missing from GUARD_METADATA"
+            assert isinstance(meta["yolo_behavior"], YoloBehavior), (
+                f"{gid} yolo_behavior is not a YoloBehavior enum"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Dimension 5: Mutation Mindset — TransitionResult immutability
+# ---------------------------------------------------------------------------
+
+
+class TestTransitionResultMutationResilience:
+    """Verify TransitionResult is truly frozen and hashable.
+    derived_from: dimension:mutation_mindset, spec:AC-3 (TransitionResult dataclass)
+    """
+
+    def test_transition_result_frozen_reason(self) -> None:
+        """Cannot mutate reason field.
+
+        Anticipate: If frozen=True removed, mutations would silently succeed.
+        """
+        result = TransitionResult(
+            allowed=True, reason="ok", severity=Severity.info, guard_id="G-01",
+        )
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            result.reason = "modified"  # type: ignore[misc]
+
+    def test_transition_result_frozen_guard_id(self) -> None:
+        """Cannot mutate guard_id field.
+
+        Anticipate: guard_id mutation would corrupt audit trail.
+        """
+        result = TransitionResult(
+            allowed=True, reason="ok", severity=Severity.info, guard_id="G-01",
+        )
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            result.guard_id = "G-99"  # type: ignore[misc]
+
+    def test_transition_result_equality(self) -> None:
+        """Two TransitionResults with same fields are equal.
+
+        Anticipate: Dataclass equality needed for test assertions.
+        """
+        r1 = TransitionResult(
+            allowed=True, reason="ok", severity=Severity.info, guard_id="G-01",
+        )
+        r2 = TransitionResult(
+            allowed=True, reason="ok", severity=Severity.info, guard_id="G-01",
+        )
+        assert r1 == r2
+
+    def test_transition_result_inequality_on_any_field(self) -> None:
+        """TransitionResults differ if ANY field differs.
+
+        Anticipate: Broken equality would mask bugs.
+        """
+        base = TransitionResult(
+            allowed=True, reason="ok", severity=Severity.info, guard_id="G-01",
+        )
+        assert base != TransitionResult(
+            allowed=False, reason="ok", severity=Severity.info, guard_id="G-01",
+        )
+        assert base != TransitionResult(
+            allowed=True, reason="different", severity=Severity.info, guard_id="G-01",
+        )
+        assert base != TransitionResult(
+            allowed=True, reason="ok", severity=Severity.warn, guard_id="G-01",
+        )
+        assert base != TransitionResult(
+            allowed=True, reason="ok", severity=Severity.info, guard_id="G-02",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Dimension 5: Mutation — check_merge_conflict truth table (G-28/30)
+# ---------------------------------------------------------------------------
+
+
+class TestMergeConflictMutationResilience:
+    """Complete truth table verification for check_merge_conflict.
+    derived_from: dimension:mutation_mindset (logic inversion)
+    """
+
+    def test_G28_merge_conflict_full_truth_table(self) -> None:
+        """Verify all 4 cells of the (is_yolo x merge_succeeded) truth table.
+
+        Anticipate: Logic inversion in any condition would break one cell.
+        """
+        # Cell 1: merge_succeeded=True, is_yolo=False -> pass G-28
+        r1 = check_merge_conflict(is_yolo=False, merge_succeeded=True)
+        assert r1.allowed is True and r1.guard_id == "G-28"
+
+        # Cell 2: merge_succeeded=True, is_yolo=True -> pass G-28
+        r2 = check_merge_conflict(is_yolo=True, merge_succeeded=True)
+        assert r2.allowed is True and r2.guard_id == "G-28"
+
+        # Cell 3: merge_succeeded=False, is_yolo=False -> block G-28
+        r3 = check_merge_conflict(is_yolo=False, merge_succeeded=False)
+        assert r3.allowed is False and r3.guard_id == "G-28"
+
+        # Cell 4: merge_succeeded=False, is_yolo=True -> block G-30
+        r4 = check_merge_conflict(is_yolo=True, merge_succeeded=False)
+        assert r4.allowed is False and r4.guard_id == "G-30"
+
+
+# ---------------------------------------------------------------------------
+# Dimension 5: Mutation — check_hard_prerequisites edge cases (G-08)
+# ---------------------------------------------------------------------------
+
+
+class TestHardPrerequisitesMutation:
+    """Mutation-resilience tests for check_hard_prerequisites.
+    derived_from: dimension:mutation_mindset (line deletion)
+    """
+
+    def test_G08_check_hard_prerequisites_extra_artifacts_still_passes(self) -> None:
+        """G-08: Superset of required artifacts -> still passes.
+
+        Anticipate: If 'not in' changed to exact match, extra artifacts would fail.
+        """
+        result = check_hard_prerequisites(
+            phase="design",
+            existing_artifacts=["spec.md", "design.md", "extra.md"],
+        )
+        assert result.allowed is True
+        assert result.guard_id == "G-08"
+
+    def test_G08_check_hard_prerequisites_implement_lists_all_missing(self) -> None:
+        """G-08: implement with no artifacts -> lists both spec.md and tasks.md.
+
+        Anticipate: Missing list construction could skip items.
+        """
+        result = check_hard_prerequisites(
+            phase="implement",
+            existing_artifacts=[],
+        )
+        assert result.allowed is False
+        assert "spec.md" in result.reason
+        assert "tasks.md" in result.reason
+
+    def test_G08_check_hard_prerequisites_partial_match(self) -> None:
+        """G-08: Having one of two required artifacts -> still blocked.
+
+        Anticipate: 'all()' vs 'any()' logic error would pass with partial.
+        """
+        result = check_hard_prerequisites(
+            phase="create-plan",
+            existing_artifacts=["spec.md"],  # missing design.md
+        )
+        assert result.allowed is False
+        assert "design.md" in result.reason

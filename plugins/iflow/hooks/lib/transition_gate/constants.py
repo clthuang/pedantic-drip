@@ -8,6 +8,7 @@ from .models import Enforcement, Phase, YoloBehavior
 # Phase sequences (Task 2.1)
 # ---------------------------------------------------------------------------
 
+# Canonical 7-phase sequence matching workflow-state/SKILL.md (SC-5).
 PHASE_SEQUENCE: tuple[Phase, ...] = (
     Phase.brainstorm,
     Phase.specify,
@@ -17,10 +18,9 @@ PHASE_SEQUENCE: tuple[Phase, ...] = (
     Phase.implement,
     Phase.finish,
 )
-"""Canonical 7-phase sequence matching workflow-state/SKILL.md (SC-5)."""
 
+# Command-driven phases (specify through finish) -- excludes brainstorm.
 COMMAND_PHASES: tuple[Phase, ...] = PHASE_SEQUENCE[1:]
-"""Command-driven phases (specify through finish) — excludes brainstorm."""
 
 
 # ---------------------------------------------------------------------------
@@ -97,14 +97,14 @@ PHASE_GUARD_MAP: dict[str, dict[str, str]] = {
     },
 }
 
+# Minimum artifact size in bytes for Level 2 validation (G-03).
 MIN_ARTIFACT_SIZE: int = 100
-"""Minimum artifact size in bytes for Level 2 validation (G-03)."""
 
+# Maximum review loop iterations per gate type.
 MAX_ITERATIONS: dict[str, int] = {
     "brainstorm": 3,
     "default": 5,
 }
-"""Maximum review loop iterations per gate type."""
 
 
 # ---------------------------------------------------------------------------
