@@ -127,13 +127,16 @@ Error type mapping:
 - `ValueError` (other) → `"invalid_transition"` with hint from error message
 - Other `Exception` → `"internal"` with hint `"Report this error"`
 
-**Breaking change note:** This replaces plain-string error messages (e.g., `"Error: Feature not found: ..."`, `"Internal error: ..."`) with structured JSON. Current consumers (workflow-transitions skill, phase commands) use pattern matching on these strings. All consumers are in-tree (same plugin), so this is a coordinated change within this feature scope.
+**Breaking change note:** This replaces plain-string error messages (e.g., `"Error: Feature not found: ..."`, `"Internal error: ..."`) with structured JSON. Current consumers (workflow-transitions skill, phase commands) use pattern matching on these strings. All consumers are in-tree (same plugin), so this is a coordinated change within this feature scope. Specific consumer patterns to audit:
+- `workflow_state_server.py`: `_process_*` functions currently return `f"Error: {exc}"` and `f"Internal error: ..."` — must return structured JSON instead
+- `test_workflow_state_server.py`: assertions matching `"Error: "` and `"Internal error: "` prefixes — error-path tests updated per AC-8
 
 ### R5: DB Health Probe
 
 Add a `_check_db_health()` method to `WorkflowStateEngine`:
 - Executes `self.db._conn.execute("SELECT 1")` (accesses the `sqlite3.Connection` via `EntityDatabase._conn`)
-- Returns `True` if successful, `False` on any `sqlite3.Error`
+- Guards `self.db._conn is None` → returns `False` immediately (handles uninitialized or closed connection without raising `AttributeError`)
+- Returns `True` if `SELECT 1` succeeds, `False` on any `sqlite3.Error`
 - Called once at the start of each public method to set a `_db_available` flag for the duration of that call
 - The flag is a local variable passed through the call chain, NOT an instance attribute (preserves stateless design per NFR-4)
 - When `_db_available` is `False`, methods skip DB calls entirely and go straight to filesystem fallback
@@ -163,6 +166,8 @@ Note: In normal operation, `list_by_status()` queries the entity table for statu
 ### R7: Transitive Degradation for validate_prerequisites
 
 `validate_prerequisites()` calls `get_state()` internally and then `_evaluate_gates()`. Since `_evaluate_gates()` uses in-memory state and filesystem artifact checks (no DB calls), the only DB dependency is `get_state()`. R1 already handles `get_state()` degradation, so `validate_prerequisites()` degrades transitively — no separate fallback logic needed.
+
+**Return type under degradation:** `validate_prerequisites()` continues to return `list[TransitionResult]` (not wrapped in `TransitionResponse`). The degradation signal is visible in the `FeatureWorkflowState` used internally (its `source` field will be `"meta_json_fallback"`), but the caller only sees `TransitionResult` items with `allowed`/`reason`/`severity` — no `degraded` field surfaces at this level. The MCP handler (`_process_validate_prerequisites`) does not need modification for degradation signaling.
 
 ### R8: No Behavioral Change in Happy Path
 
