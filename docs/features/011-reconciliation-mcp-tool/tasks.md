@@ -39,7 +39,7 @@
   - Null bytes → `ValueError`
   - Symlink traversal → `ValueError` (setup: create actual symlink via `os.symlink()` in tempdir pointing outside `artifacts_root`)
   - Prefix collision (slug that is prefix of another dir) → `ValueError` (setup: create sibling dir e.g. `artifacts_root/features/010-slug-extra/` so realpath demonstrates the `+ os.sep` suffix defense)
-- [ ] **GREEN:** In `plugins/iflow/mcp/workflow_state_server.py`, implement `_validate_feature_type_id()` as module-level helper. Logic: split on `:`, extract slug, check null bytes BEFORE `os.path.realpath()`, realpath resolve, verify resolved path starts with `realpath(artifacts_root) + os.sep`.
+- [ ] **GREEN:** In `plugins/iflow/mcp/workflow_state_server.py`, implement `_validate_feature_type_id()` as module-level helper. Logic: split on `:` — if no colon found, `raise ValueError("invalid_input: missing colon in feature_type_id")`. Extract slug, check null bytes BEFORE `os.path.realpath()`, realpath resolve, verify resolved path starts with `realpath(artifacts_root) + os.sep` — on any path failure, `raise ValueError("feature_not_found: {slug} not found or path traversal blocked")`. This prefix convention enables `_catch_value_error` routing (see Task 5.1).
 - [ ] **REFACTOR:** Verify tests pass.
 
 **Acceptance:** All 6 validation test scenarios pass.
@@ -206,7 +206,7 @@
   - Bulk → JSON with summary
   - Validation error: non-existent slug (realpath fails) → `_validate_feature_type_id` raises `ValueError` → `_catch_value_error` maps to `_make_error("feature_not_found", ...)` (AC-18 case 1). Verify by asserting error JSON contains `"feature_not_found"` type.
   - Validation error: malformed input (no colon) → `_validate_feature_type_id` raises `ValueError` → `_catch_value_error` maps to `_make_error("invalid_transition", ...)` (AC-18 case 2). Verify by asserting error JSON contains `"invalid_transition"` type.
-- [ ] **GREEN:** In `workflow_state_server.py`, implement `_process_reconcile_check()`. Decorated with `@_with_error_handling` and `@_catch_value_error`. The `_catch_value_error` decorator inspects the `ValueError` message to select the error type: messages containing path-traversal/realpath failures → `feature_not_found`; messages about malformed input (missing colon) → `invalid_transition`. If `feature_type_id` provided: call `_validate_feature_type_id()` FIRST, then `check_workflow_drift()`. Serialize result to JSON string.
+- [ ] **GREEN:** In `workflow_state_server.py`, implement `_process_reconcile_check()`. Decorated with `@_with_error_handling` and `@_catch_value_error`. **Error-type routing convention:** `_validate_feature_type_id` raises `ValueError` with distinct prefixes — `raise ValueError("feature_not_found: ...")` for realpath/traversal failures, `raise ValueError("invalid_input: ...")` for missing colon or malformed format. The `_catch_value_error` decorator checks `str(e).startswith("feature_not_found:")` → `_make_error("feature_not_found", ...)`, otherwise → `_make_error("invalid_transition", ...)`. If `feature_type_id` provided: call `_validate_feature_type_id()` FIRST, then `check_workflow_drift()`. Serialize result to JSON string.
 - [ ] **REFACTOR:** Verify tests pass.
 
 **Acceptance:** `pytest test_workflow_state_server.py -k "_process_reconcile_check"` — all pass, including both AC-18 error type assertions.
@@ -225,7 +225,7 @@
   - Invalid direction → error (AC-17)
   - Validation error: non-existent slug → `_catch_value_error` maps to `_make_error("feature_not_found", ...)` (AC-18 case 1)
   - Validation error: malformed input (no colon) → `_catch_value_error` maps to `_make_error("invalid_transition", ...)` (AC-18 case 2)
-- [ ] **GREEN:** In `workflow_state_server.py`, implement `_process_reconcile_apply()`. Decorated with `@_with_error_handling` and `@_catch_value_error` (same error-type routing as 5.1). Validates `direction` against `_SUPPORTED_DIRECTIONS`. If `feature_type_id` provided: `_validate_feature_type_id()` FIRST. Delegates to `apply_workflow_reconciliation()`.
+- [ ] **GREEN:** In `workflow_state_server.py`, implement `_process_reconcile_apply()`. Decorated with `@_with_error_handling` and `@_catch_value_error` (same prefix-based error-type routing as 5.1: `"feature_not_found:"` prefix → `feature_not_found`, else → `invalid_transition`). Validates `direction` against `_SUPPORTED_DIRECTIONS`. If `feature_type_id` provided: `_validate_feature_type_id()` FIRST. Delegates to `apply_workflow_reconciliation()`.
 - [ ] **REFACTOR:** Verify tests pass.
 
 **Acceptance:** `pytest test_workflow_state_server.py -k "_process_reconcile_apply"` — all pass, including AC-17 and both AC-18 error type assertions.
@@ -245,7 +245,7 @@
   - Non-existent directory → empty reports
   - Validation error: non-existent slug → `_catch_value_error` maps to `_make_error("feature_not_found", ...)` (AC-18 case 1)
   - Validation error: malformed input (no colon) → `_catch_value_error` maps to `_make_error("invalid_transition", ...)` (AC-18 case 2)
-- [ ] **GREEN:** In `workflow_state_server.py`, implement `_process_reconcile_frontmatter()`. Decorated with `@_with_error_handling` and `@_catch_value_error` (same error-type routing as 5.1). If `feature_type_id` provided: `slug = _validate_feature_type_id(feature_type_id, artifacts_root)`, construct dir path, iterate `ARTIFACT_BASENAME_MAP` files, call `detect_drift()` per existing file. If omitted: call `scan_all(db, artifacts_root)` from `entity_registry.frontmatter_sync`. Non-existent dir → empty reports.
+- [ ] **GREEN:** In `workflow_state_server.py`, implement `_process_reconcile_frontmatter()`. Decorated with `@_with_error_handling` and `@_catch_value_error` (same prefix-based error-type routing as 5.1: `"feature_not_found:"` prefix → `feature_not_found`, else → `invalid_transition`). If `feature_type_id` provided: `slug = _validate_feature_type_id(feature_type_id, artifacts_root)`, construct dir path, iterate `ARTIFACT_BASENAME_MAP` files, call `detect_drift()` per existing file. If omitted: call `scan_all(db, artifacts_root)` from `entity_registry.frontmatter_sync`. Non-existent dir → empty reports.
 - [ ] **REFACTOR:** Verify tests pass.
 
 **Acceptance:** `pytest test_workflow_state_server.py -k "_process_reconcile_frontmatter"` — all pass, including AC-11 through AC-13 and both AC-18 error type assertions.
