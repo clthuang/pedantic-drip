@@ -189,5 +189,5 @@ Phase 4: Final Regression
 | AC-7 | 1.1 | TestExportEntitiesJson::test_include_lineage_false |
 | AC-8 | 1.1 | TestExportEntitiesJson::test_metadata_null_normalized |
 | AC-9 | 1.1 | TestExportEntitiesJson::test_empty_database |
-| AC-10 | 1.1, 2.1 | TestExportEntitiesJson::test_uuid_in_entity, TestProcessExportEntities::test_output_path_creates_parent_dirs |
+| AC-10 | 1.1 | TestExportEntitiesJson::test_uuid_in_entity |
 | AC-11 | 1.1 | TestExportEntitiesJson::test_performance_1000_entities |
