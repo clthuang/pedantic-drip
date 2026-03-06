@@ -334,3 +334,27 @@ When plans reference specific source line numbers for modification targets (e.g.
 - Keywords: ["line-numbers", "implementation", "grep", "dynamic-resolution", "stale-references"]
 - Last observed: Feature 010
 - Observation count: 1
+
+### Force-Approve Correctness Criteria
+Force-approve is correct when: (1) all domain reviewers have individually approved at least once, (2) remaining warnings are formatting/documentation only (zero logic issues), and (3) the review loop is at iteration 4+ with no convergence path. Document these criteria as the decision framework rather than treating force-approve as an exception.
+- Source: Feature 011, implement phase — all 3 reviewers individually approved; remaining iters 2-4 were type annotation formatting cascade
+- Confidence: high
+- Keywords: ["force-approve", "circuit-breaker", "review-criteria", "formatting-only", "convergence"]
+- Last observed: Feature 011
+- Observation count: 1
+
+### TOCTOU Race Uniform Catch Specification
+For operations that check-then-create (e.g., check file exists → create record), specify "catch ALL ValueError uniformly" as the stable resolution rather than enumerating individual race scenarios. Enumerating race scenarios is always incomplete and consumes plan-review iterations as each new scenario is discovered.
+- Source: Feature 011, create-plan phase — TOCTOU race in meta_json_only path consumed plan-reviewer iterations until uniform catch was specified
+- Confidence: medium
+- Keywords: ["toctou", "race-condition", "uniform-catch", "valueerror", "check-then-create"]
+- Last observed: Feature 011
+- Observation count: 1
+
+### Field-Source Mapping Table as Spec Completeness Signal
+When a feature compares fields from heterogeneous sources (DB vs filesystem, API vs config), require a unified field-source mapping table in the spec. Prose descriptions of field comparison across multiple requirement sections drive 3+ reviewer iterations as each iteration surfaces one more mapping gap.
+- Source: Feature 011, specify phase — comparison semantics described in prose across R1, R2, R8 drove 5 spec-reviewer iterations; a mapping table would have surfaced all gaps at once
+- Confidence: high
+- Keywords: ["field-source-mapping", "spec-completeness", "comparison-feature", "heterogeneous-sources", "specify-phase"]
+- Last observed: Feature 011
+- Observation count: 1

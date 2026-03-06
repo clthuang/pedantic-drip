@@ -155,8 +155,8 @@ When a workflow has nested iteration loops, make budgets independent.
 Heavy upfront review investment (15-30+ pre-implementation review iterations) correlates with clean implementation (0-1 actionable issues across all reviewers). Front-loading review effort shifts risk discovery to phases where changes are cheap (text edits) rather than expensive (code changes).
 - Observed in: Feature #022, implementation phase
 - Confidence: high
-- Last observed: Feature #033
-- Observation count: 7
+- Last observed: Feature 011
+- Observation count: 8
 
 ### Pattern: Template Indentation Matching
 When inserting blocks into existing prompt templates, read the target file first and match its specific indentation level (which may differ per file). Prevents downstream formatting issues.
@@ -374,4 +374,20 @@ After fixing a pattern that must be consistent across N sections, verify the fix
 - Confidence: high
 - Keywords: ["sibling-sweep", "cross-cutting", "partial-fix", "consistency", "none-check"]
 - Last observed: Feature 008
+- Observation count: 1
+
+### Pattern: ValueError Prefix Convention for Multi-Error-Type Routing
+Establish a ValueError prefix convention (e.g., "feature_not_found:", "invalid_type_id:") at design time as a routing contract for catch-all handlers. When multiple error types share ValueError, the prefix enables downstream code to route errors without coupling to message content. Document the prefix registry in the design TD section.
+- Observed in: Feature 011, create-tasks phase — AC-18 error type ambiguity resolved by establishing ValueError prefix convention at chain review iter 2
+- Confidence: medium
+- Keywords: ["valueerror", "prefix-convention", "error-routing", "design-td", "catch-scope"]
+- Last observed: Feature 011
+- Observation count: 1
+
+### Pattern: Design Enhancement Three-Step Atomic Trace
+When design introduces a new enum value or concept not in spec (e.g., ReconcileAction 'created'), complete the three-step trace atomically in one edit: (1) annotate definition with spec deviation note, (2) map to all affected ACs, (3) add test strategy note. Iterating these steps one-per-review-round consumed 5 handoff iterations in Feature 011.
+- Observed in: Feature 011, design handoff phase — ReconcileAction 'created' traced across 5 iterations instead of 1 atomic edit
+- Confidence: high
+- Keywords: ["design-enhancement", "three-step-trace", "spec-deviation", "atomic-edit", "handoff-review"]
+- Last observed: Feature 011
 - Observation count: 1

@@ -356,3 +356,13 @@ When design describes a race condition handler without specifying catch scope, i
 - Keywords: ["exception-catch-scope", "race-condition", "design-td", "valueerror", "flip-flop"]
 - Last observed: Feature 008
 - Observation count: 1
+
+### Anti-Pattern: Type Annotation Branch Cascade
+Adding type annotations to individual branches of an if/else statement instead of at the variable declaration site. Each fix triggers the next reviewer iteration: add annotation to if-branch → reviewer flags missing else-branch → add to both → reviewer flags redundant double annotation → remove else-branch. Three iterations with zero logic changes.
+- Observed in: Feature 011, implement phase — iters 2-4 consumed by type annotation formatting with zero logic changes
+- Cost: 3 wasted review iterations on non-functional formatting
+- Instead: Annotate at the variable declaration site before the conditional, not at each branch
+- Confidence: high
+- Keywords: ["type-annotation", "branch-cascade", "review-waste", "formatting", "python"]
+- Last observed: Feature 011
+- Observation count: 1
