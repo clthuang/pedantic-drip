@@ -1,7 +1,8 @@
 {
   "id": "008",
   "slug": "workflowstateengine-core",
-  "status": "active",
+  "status": "completed",
+  "completed": "2026-03-04T14:30:00+08:00",
   "created": "2026-03-01T16:27:59+08:00",
   "mode": "standard",
   "branch": "feature/008-workflowstateengine-core",
@@ -11,7 +12,7 @@
     "007-python-transition-control-gate",
     "005-workflowphases-table-with-dual"
   ],
-  "lastCompletedPhase": "implement",
+  "lastCompletedPhase": "finish",
   "phases": {
     "specify": {
       "started": "2026-03-04T06:35:00+08:00",
@@ -66,6 +67,10 @@
         "security": { "approved": true, "passedIteration": 1 }
       },
       "finalValidation": "skipped (iteration cap)"
+    },
+    "finish": {
+      "status": "completed",
+      "completed": "2026-03-04T14:30:00+08:00"
     }
   }
 }

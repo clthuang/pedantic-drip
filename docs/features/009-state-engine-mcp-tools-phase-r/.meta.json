@@ -1,0 +1,66 @@
+{
+  "id": "009",
+  "slug": "state-engine-mcp-tools-phase-r",
+  "status": "active",
+  "created": "2026-03-01T16:27:59+08:00",
+  "mode": "standard",
+  "branch": "feature/009-state-engine-mcp-tools-phase-r",
+  "project_id": "P001",
+  "module": "State Engine",
+  "depends_on_features": [
+    "008-workflowstateengine-core"
+  ],
+  "lastCompletedPhase": "implement",
+  "phases": {
+    "specify": {
+      "started": "2026-03-04T15:00:00+08:00",
+      "completed": "2026-03-04T15:30:00+08:00",
+      "phaseReview": {
+        "iterations": 2,
+        "approved": true
+      }
+    },
+    "design": {
+      "started": "2026-03-04T16:00:00+08:00",
+      "stages": {
+        "research": { "started": "2026-03-04T16:00:00+08:00", "completed": "2026-03-04T16:05:00+08:00", "skipped": false },
+        "architecture": { "started": "2026-03-04T16:05:00+08:00", "completed": "2026-03-04T16:15:00+08:00" },
+        "interface": { "started": "2026-03-04T16:15:00+08:00", "completed": "2026-03-04T16:25:00+08:00" },
+        "designReview": { "started": "2026-03-04T16:25:00+08:00", "completed": "2026-03-04T16:40:00+08:00", "iterations": 2, "reviewerNotes": [] },
+        "handoffReview": { "started": "2026-03-04T16:40:00+08:00", "completed": "2026-03-04T16:50:00+08:00", "iterations": 2, "approved": true, "reviewerNotes": [] }
+      },
+      "completed": "2026-03-04T16:50:00+08:00"
+    },
+    "create-plan": {
+      "started": "2026-03-04T16:55:00+08:00",
+      "completed": "2026-03-04T17:30:00+08:00",
+      "planReview": {
+        "iterations": 3,
+        "approved": true
+      },
+      "chainReview": {
+        "iterations": 3,
+        "approved": true
+      }
+    },
+    "create-tasks": {
+      "started": "2026-03-04T17:35:00+08:00",
+      "completed": "2026-03-04T18:00:00+08:00",
+      "taskReview": {
+        "iterations": 3,
+        "approved": true
+      },
+      "chainReview": {
+        "iterations": 2,
+        "approved": true
+      }
+    },
+    "implement": {
+      "started": "2026-03-06T12:00:00+08:00",
+      "completed": "2026-03-06T13:00:00+08:00",
+      "status": "completed",
+      "reviewIterations": 3,
+      "reviewApproved": true
+    }
+  }
+}
