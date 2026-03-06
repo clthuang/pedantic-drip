@@ -192,7 +192,7 @@
 - [ ] Add `search_entities` async function in `entity_server.py` following existing tool pattern
 - [ ] Check `_db is None` → return `"Error: database not initialized"`
 - [ ] Call `db.search_entities(query, entity_type, limit)`
-- [ ] Format results: `"Found {n} entities matching \"{query}\":\n\n1. type_id — \"name\" (status)\n...\n\n{n} results shown (limit: {limit})."` — trailing footer line per spec R4
+- [ ] Format results using `"\n".join(lines)` pattern per design I6: header line `f'Found {n} entities matching "{query}":\n'`, numbered entries `f'{i}. {type_id} — "{name}" ({status})'`, footer `f'\n{n} results shown (limit: {limit}).'` — footer string includes leading `\n` to produce blank separator line when joined
 - [ ] No results: `"No entities found matching \"{query}\"."`
 - [ ] Catch `ValueError` → return `"Search error: {message}"`
 - [ ] Run `TestSearchMCPTool` tests, verify all 5 pass
