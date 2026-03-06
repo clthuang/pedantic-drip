@@ -22,6 +22,10 @@
     "entity-registry": {
       "command": "${CLAUDE_PLUGIN_ROOT}/mcp/run-entity-server.sh",
       "args": []
+    },
+    "workflow-engine": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/mcp/run-workflow-server.sh",
+      "args": []
     }
   }
 }
