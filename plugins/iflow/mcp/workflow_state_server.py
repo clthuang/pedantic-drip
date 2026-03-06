@@ -406,7 +406,7 @@ def _process_reconcile_frontmatter(
     else:
         slug = _validate_feature_type_id(feature_type_id, artifacts_root)
         feat_dir = os.path.join(artifacts_root, "features", slug)
-        reports: list[DriftReport] = []
+        reports = []
         if os.path.isdir(feat_dir):
             for basename in ARTIFACT_BASENAME_MAP:
                 filepath = os.path.join(feat_dir, basename)
