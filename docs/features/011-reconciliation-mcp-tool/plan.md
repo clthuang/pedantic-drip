@@ -38,7 +38,7 @@ Items in this phase have zero interdependencies and can be implemented in parall
 **1.3 — Path-traversal validation (`workflow_state_server.py` — I7)**
 - File: `plugins/iflow/mcp/workflow_state_server.py`
 - Add module-level helper `_validate_feature_type_id(feature_type_id, artifacts_root) -> str`
-- Logic: split on ':', ValueError if no colon; extract slug; realpath resolve; verify resolved path starts with `realpath(artifacts_root) + os.sep` (matches engine's `root + os.sep` pattern to prevent prefix collisions like `/docs/features` matching `/docs/features-extra`); return slug
+- Logic: split on ':', ValueError if no colon; extract slug; check for null bytes in slug BEFORE `os.path.realpath()` (Python 3 raises `ValueError` on null bytes in `os.path.join`/`os.path.realpath` anyway, but explicit check gives a clearer error message and documents intent); realpath resolve; verify resolved path starts with `realpath(artifacts_root) + os.sep` (matches engine's `root + os.sep` pattern to prevent prefix collisions like `/docs/features` matching `/docs/features-extra`); return slug
 - Used by all three `_process_reconcile_*` that accept `feature_type_id` (module-level helper)
 - Note: This deliberately duplicates validation that the engine layer also performs. The MCP boundary validation is intentional defense-in-depth — untrusted input from MCP callers is validated before reaching engine internals. Both layers use realpath-based defense.
 - Why this order: Parallel with 1.1/1.2 — no cross-dependency; needed by Phase 5 processing functions
@@ -48,18 +48,18 @@ Items in this phase have zero interdependencies and can be implemented in parall
 
 **2.1 — Single-feature meta reader (`reconciliation.py` — I3)**
 - File: `plugins/iflow/hooks/lib/workflow_engine/reconciliation.py`
-- Depends on: 1.2 (phase helpers)
+- Depends on: none from this plan (only uses pre-existing `engine._extract_slug()`)
 - Implement `_read_single_meta_json(engine, artifacts_root, feature_type_id)` → `dict | None`
 - Uses `engine._extract_slug()` for path construction, reads/parses JSON
 - Returns None on missing file or parse error
-- Why this order: Needed by 2.2 single-feature check; no dependency on 1.1 dataclasses
+- Why in Phase 2 (not Phase 1): While it has no plan-internal dependencies, it logically belongs with drift detection. Placing it in Phase 2 keeps the module organized by concern. Could technically be parallel with Phase 1 items.
 - Tests (in `test_reconciliation.py`): valid file → dict; missing file → None; corrupt JSON → None
 
 **2.2 — Single-feature drift check (`reconciliation.py` — I3)**
 - File: `plugins/iflow/hooks/lib/workflow_engine/reconciliation.py`
 - Depends on: 1.1 (dataclasses), 1.2 (phase comparison), 2.1 (meta reader)
 - Implement `_check_single_feature(engine, db, feature_type_id, meta)` → `WorkflowDriftReport`
-- Derives state from meta via `engine._derive_state_from_meta(meta, feature_type_id)`
+- Derives state from meta via `engine._derive_state_from_meta(meta, feature_type_id, source='meta_json')` (explicit `source` parameter — uses the default value, matching the existing hydration pattern; the derived state is used only for field extraction, not source tracking)
 - **None guard:** If `_derive_state_from_meta()` returns None (corrupt/unparseable meta), return `WorkflowDriftReport` with `status="error"`, `message="Failed to derive state from .meta.json"`
 - Reads DB via `db.get_workflow_phase(feature_type_id)`
 - Field name mapping: `state.current_phase` → `workflow_phase`, `state.last_completed_phase` → `last_completed_phase`
@@ -73,7 +73,7 @@ Items in this phase have zero interdependencies and can be implemented in parall
 - Depends on: 2.1, 2.2
 - Implement `check_workflow_drift(engine, db, artifacts_root, feature_type_id=None)` → `WorkflowDriftResult`
 - Single-feature path: `_read_single_meta_json()` → if None, check DB for row via `db.get_workflow_phase(feature_type_id)` → row exists: `db_only`, no row: `error` (feature_not_found)
-- Bulk path: `engine._iter_meta_jsons()` → `_check_single_feature()` per feature; detect `db_only` features by: (1) call `db.list_workflow_phases()`, (2) extract `type_id` field from each returned dict, (3) filter to entries where `type_id.startswith("feature:")` (exclude non-feature rows), (4) set-difference against meta-derived type_ids → remaining are `db_only` features
+- Bulk path: `engine._iter_meta_jsons()` → `_check_single_feature()` per feature; detect `db_only` features by: (1) call `db.list_workflow_phases()`, (2) extract `type_id` field from each returned dict, (3) filter to entries where `type_id.startswith("feature:")` (exclude non-feature rows — per spec Out of Scope: "Reconciliation of non-feature entity types (brainstorms, backlogs, projects have no workflow_phases rows)"; add code comment noting this assumption for future maintainers), (4) set-difference against meta-derived type_ids → remaining are `db_only` features
 - Summary aggregation: count features by status
 - Never raises — all exceptions caught → `status="error"` per feature
 - Why this order: Public API entry point for drift detection; required by Phase 3 reconciliation
@@ -85,13 +85,11 @@ Items in this phase have zero interdependencies and can be implemented in parall
 - File: `plugins/iflow/hooks/lib/workflow_engine/reconciliation.py`
 - Depends on: 2.2 (single feature check)
 - Implement `_reconcile_single_feature(engine, db, report, dry_run)` → `ReconcileAction`
-- Note: `report` (a `WorkflowDriftReport`) contains all needed data — `report.meta_json` dict has the derived field values, `report.feature_type_id` identifies the entity. No separate `meta` parameter needed.
+- **Design Deviation:** Design I3 defines `_reconcile_single_feature(engine, db, report, meta, dry_run)` with an explicit `meta: dict` parameter. This plan removes `meta` because `report` (a `WorkflowDriftReport`) already contains all needed data — `report.meta_json` dict has the derived field values (workflow_phase, last_completed_phase, mode), and `report.feature_type_id` identifies the entity. The `meta` parameter would be redundant since `_reconcile_single_feature` never calls `_derive_state_from_meta()` — derivation already happened in the drift detection phase (2.2). Keeping `meta` would create ambiguity about whether to use `report.meta_json` or re-derive from `meta`.
 - **Defensive guard:** If `report.status == "meta_json_only"` and `report.meta_json is None`, return `action="error"`, message "meta_json_only status but no meta_json data available" (should not happen if drift detection is correct, but prevents KeyError on corrupt report)
 - Status-based branching (mutually exclusive):
   - `meta_json_ahead` → `db.update_workflow_phase()` with `workflow_phase`, `last_completed_phase`, `mode`; `kanban_column` left unchanged via `_UNSET` sentinel; `action="reconciled"`. **Race condition:** catch ALL `ValueError` from `db.update_workflow_phase()` uniformly (covers row-deleted, constraint violation, or any other DB-level ValueError) → `action="error"`, message includes original ValueError text
-  - `meta_json_only` → entity-existence check via `db.get_entity(report.feature_type_id)`:
-    - Entity found → `db.create_workflow_phase()` using fields from `report.meta_json` dict: `workflow_phase=report.meta_json["workflow_phase"]`, `last_completed_phase=report.meta_json["last_completed_phase"]`, `mode=report.meta_json["mode"]`; `kanban_column` uses DB default; `action="created"` (design enhancement, AC-8 mapping). **Race condition:** catch ALL `ValueError` from `db.create_workflow_phase()` uniformly (covers duplicate row, entity-deleted-between-get-and-create, constraint violation) → `action="error"`, message includes original ValueError text
-    - Entity not found → `action="error"`, message "Entity not found in DB"
+  - `meta_json_only` → call `db.create_workflow_phase()` directly using fields from `report.meta_json` dict: `workflow_phase=report.meta_json["workflow_phase"]`, `last_completed_phase=report.meta_json["last_completed_phase"]`, `mode=report.meta_json["mode"]`; `kanban_column` uses DB default; `action="created"` (design enhancement, AC-8 mapping). No pre-check with `db.get_entity()` — `create_workflow_phase()` already validates entity existence internally (database.py line 866-871: `SELECT type_id FROM entities WHERE type_id = ?`). Catch ALL `ValueError` from `db.create_workflow_phase()` uniformly (covers entity-not-found, duplicate row, constraint violation) → `action="error"`, message includes original ValueError text. This eliminates the TOCTOU race that a separate pre-check would introduce.
   - `in_sync`, `db_ahead` → `action="skipped"`
   - `db_only` → `action="skipped"`, message "No .meta.json to reconcile from"
   - `error` → `action="error"`, propagate message
@@ -155,7 +153,7 @@ Can be implemented in parallel with Phases 2-3 since they only depend on datacla
 - File: `plugins/iflow/mcp/workflow_state_server.py`
 - Depends on: 1.3 (validation), 4.2 (frontmatter serializer)
 - Decorated with `@_with_error_handling` and `@_catch_value_error`
-- If `feature_type_id` provided: call `_validate_feature_type_id()` FIRST; extract slug; construct directory path; iterate `ARTIFACT_BASENAME_MAP` files; call `detect_drift(db, filepath, type_id=feature_type_id)` per existing file
+- If `feature_type_id` provided: `slug = _validate_feature_type_id(feature_type_id, artifacts_root)` FIRST (uses validated return value for path construction); construct directory path as `os.path.join(artifacts_root, 'features', slug)`; iterate `ARTIFACT_BASENAME_MAP` files; call `detect_drift(db, filepath, type_id=feature_type_id)` per existing file
 - If `feature_type_id` omitted: call `scan_all(db, artifacts_root)`
 - Non-existent feature directory → empty reports list, zero counts
 - Serialize results to JSON string
@@ -172,7 +170,7 @@ Can be implemented in parallel with Phases 2-3 since they only depend on datacla
 - `total_features_checked` = len(workflow features), `total_files_checked` = len(frontmatter reports)
 - **Partial failure behavior:** All-or-nothing within `@_with_error_handling`. If either `check_workflow_drift()` or `scan_all()` raises an unexpected exception, the decorator catches it and returns a structured error. `check_workflow_drift()` is designed never-raise. `scan_all()` delegates to `db.list_entities()` which could raise `sqlite3.Error` on DB corruption — this is an accepted trade-off: DB corruption is a system-level failure that should surface as an error, not be silently swallowed. No per-dimension try/except — partial results (one dimension succeeds, the other fails) would be misleading since `healthy` requires both dimensions.
 - Why this order: Final processing function; depends on both serializer sets + drift detection
-- Tests (in `test_workflow_state_server.py`): all in sync → healthy=true (AC-14); any drift → healthy=false (AC-15); error status in either dimension → healthy=false; scan_all raises sqlite3.Error → decorator returns structured error (accepted trade-off test)
+- Tests (in `test_workflow_state_server.py`): all in sync → healthy=true (AC-14); any drift → healthy=false (AC-15); error status in either dimension → healthy=false; workflow drift succeeds then scan_all raises sqlite3.Error → entire response is structured error with no partial workflow data (validates intentional all-or-nothing design)
 
 ### Phase 6: MCP Tool Handlers (Depends on Phase 5)
 
