@@ -58,7 +58,7 @@ plugins/iflow/mcp/
 
 **Pattern:** Follows existing migration pattern — `BEGIN IMMEDIATE`, DDL, data operations, `COMMIT` in try/except/finally. `BEGIN IMMEDIATE` acquires a write lock upfront, preventing concurrent writers from corrupting the migration mid-flight. This is consistent with migrations 2 and 3. No FK changes needed, no PRAGMA manipulation.
 
-**FTS5 availability check:** Before creating the FTS5 table, verify FTS5 is available by attempting a test query. If FTS5 is not compiled in, raise a clear error rather than failing with a cryptic `OperationalError`.
+**FTS5 availability check:** The `CREATE VIRTUAL TABLE ... USING fts5(...)` itself serves as the availability check — wrap it in try/except and if `OperationalError` contains "no such module: fts5", raise `RuntimeError("FTS5 extension not available")`. See I2 step 1 for the definitive approach.
 
 **Backfill strategy:** `INSERT INTO entities_fts(rowid, name, entity_id, entity_type, status, metadata_text) SELECT rowid, name, entity_id, entity_type, status, '' FROM entities` for the base columns, then iterate rows in Python to flatten metadata JSON per-row. This avoids loading all metadata into memory at once for large registries.
 
@@ -363,8 +363,10 @@ async def search_entities(
 ## Test Strategy
 
 ### Existing Test Updates
-- `test_database.py::TestMetadata::test_schema_version_is_3` (line ~535) → assert `'4'`
-- `test_database.py::TestMigration3::test_schema_version_is_3` (line ~2498) → assert `'4'`
+- `test_database.py::TestMetadata::test_schema_version_is_3` (function name: `test_schema_version_is_3` in class `TestMetadata`, line ~535) → assert `'4'`
+- `test_database.py::TestMigration3::test_schema_version_is_3` (function name: `test_schema_version_is_3` in class `TestMigration3`, line ~2498) → assert `'4'`
+
+Both are locatable via: `grep -n 'test_schema_version_is_3' test_database.py`
 
 ### New Test File: `test_search.py`
 

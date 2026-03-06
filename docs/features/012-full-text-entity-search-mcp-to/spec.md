@@ -36,7 +36,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS entities_fts USING fts5(
 );
 ```
 
-**rowid decision:** The `entities` table uses `uuid TEXT PRIMARY KEY` and is NOT declared `WITHOUT ROWID`, so SQLite maintains an implicit integer rowid. This implicit rowid is stable across VACUUM for non-WITHOUT-ROWID tables. The `content='entities', content_rowid='rowid'` configuration is valid and safe. No schema change needed.
+**rowid decision:** The `entities` table uses `uuid TEXT PRIMARY KEY` and is NOT declared `WITHOUT ROWID`, so SQLite maintains an implicit integer rowid. Implicit rowids are NOT guaranteed stable across VACUUM per SQLite documentation; however, VACUUM is never called in the codebase and WAL mode does not auto-vacuum by default. The `content='entities', content_rowid='rowid'` configuration is valid and safe. If rowid drift occurs (e.g., due to a future VACUUM), the `rebuild` command can reconstruct the FTS index. No schema change needed.
 
 **AC-1:** FTS5 virtual table `entities_fts` exists after migration runs.
 **AC-2:** All 5 indexed fields are searchable via FTS5 MATCH syntax.
