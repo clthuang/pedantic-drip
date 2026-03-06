@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Reconciliation MCP tools: `reconcile_check` (drift detection), `reconcile_apply` (sync DB to filesystem), `reconcile_frontmatter` (frontmatter drift), `reconcile_status` (aggregate health)
+- `reconciliation.py` module (630 lines) with dual-dimension drift detection (workflow state + frontmatter)
+- 249 tests (103 reconciliation unit + 146 MCP integration) covering all drift scenarios, error routing, and edge cases
+
 ## [4.10.0] - 2026-03-06
 
 ### Added
