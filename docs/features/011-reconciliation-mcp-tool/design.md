@@ -347,8 +347,10 @@ def _process_reconcile_check(
 ) -> str:
     """Workflow drift detection. Returns JSON string.
 
-    AC-18 compliance: _catch_value_error converts ValueError from
-    invalid feature_type_id into _make_error("feature_not_found", ...).
+    AC-18 compliance: When feature_type_id is provided, calls
+    _validate_feature_type_id() BEFORE delegating to check_workflow_drift().
+    _catch_value_error intercepts the ValueError from validation (not from
+    check_workflow_drift, which never raises).
     """
 
 @_with_error_handling
@@ -363,9 +365,12 @@ def _process_reconcile_apply(
 ) -> str:
     """Workflow reconciliation. Validates direction, returns JSON string.
 
-    AC-18 compliance: _catch_value_error handles invalid feature_type_id.
-    Direction validation handled explicitly before delegating to
-    apply_workflow_reconciliation().
+    AC-18 compliance: When feature_type_id is provided, calls
+    _validate_feature_type_id() BEFORE delegating to
+    apply_workflow_reconciliation(). _catch_value_error intercepts the
+    ValueError from validation (not from apply_workflow_reconciliation,
+    which never raises).
+    Direction validation handled explicitly before delegation.
     """
 
 @_with_error_handling
@@ -377,7 +382,10 @@ def _process_reconcile_frontmatter(
 ) -> str:
     """Frontmatter drift detection. Returns JSON string.
 
-    AC-18 compliance: _catch_value_error handles invalid feature_type_id.
+    AC-18 compliance: When feature_type_id is provided, calls
+    _validate_feature_type_id() BEFORE delegating to frontmatter_sync
+    functions. _catch_value_error intercepts the ValueError from
+    validation (not from detect_drift/scan_all, which never raise).
     """
 
 @_with_error_handling
