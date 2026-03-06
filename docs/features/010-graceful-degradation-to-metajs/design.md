@@ -111,10 +111,12 @@ get_state() → _check_db_health() returns True
 **Responsibility:** Lightweight DB availability check before each public method call.
 
 **Behavior:**
-- Guard: if `self.db._conn is None` → return `False`
+- Guard: if `self.db._conn is None` → return `False` (defensive — while `EntityDatabase.close()` does not currently set `_conn` to `None`, this guards against future changes or direct `_conn` manipulation)
 - Execute `self.db._conn.execute("SELECT 1")`
 - Return `True` on success, `False` on any `sqlite3.Error`
 - Result stored as local variable `db_available`, passed through call chain
+
+**NFR-1 interaction:** `EntityDatabase` sets `PRAGMA busy_timeout=5000`. In worst case (locked DB), `SELECT 1` may block up to 5s before failing. This violates the `<5ms` single-operation target. **Trade-off accepted:** This is a rare edge case (locked DB with contention), and the health probe correctly reports DB unavailable afterward. NFR-1 `<5ms` applies to the fallback path execution, not the probe on a blocked DB.
 
 **Design decision:** Local variable, not instance attribute. Preserves stateless design (NFR-4). Each public method call gets its own probe result.
 
@@ -141,7 +143,7 @@ get_state() → _check_db_health() returns True
 **Responsibility:** Write state changes to `.meta.json` when DB is unavailable during `complete_phase()`.
 
 **Behavior:**
-1. Read current `.meta.json` content
+1. Read current `.meta.json` content — wrapped in `try/except (FileNotFoundError, json.JSONDecodeError, OSError)` to handle missing or corrupt files. On read failure, raise `ValueError` with descriptive message (caller decides how to handle).
 2. Update fields: `lastCompletedPhase`, `phases.{phase}` timestamps, `status` (if finishing)
 3. Write atomically: write to `{path}.tmp`, then `os.replace()`
 4. Return `FeatureWorkflowState(source="meta_json_fallback")`
@@ -175,7 +177,7 @@ class TransitionResponse:
     degraded: bool
 ```
 
-**Usage:** Only `transition_phase()` returns this. Other methods signal degradation via `FeatureWorkflowState.source`.
+**Usage:** `transition_phase()` ALWAYS returns `TransitionResponse` (both normal and degraded paths). Normal: `TransitionResponse(results=..., degraded=False)`. Degraded: `TransitionResponse(results=..., degraded=True)`. Other methods signal degradation via `FeatureWorkflowState.source`.
 
 ### C6: Structured Error Responses
 
@@ -198,18 +200,33 @@ def _make_error(error_type: str, message: str, recovery_hint: str) -> str:
 - `sqlite3.Error` → `"db_unavailable"`
 - `ValueError("Feature not found")` → `"feature_not_found"`
 - `ValueError` (other) → `"invalid_transition"`
+- `RuntimeError("Engine not initialized")` or similar init errors → `"not_initialized"`
 - `Exception` (other) → `"internal"`
 
 ### C7: MCP Degradation Signal
 
 **Location:** `workflow_state_server.py`, updates to serialization helpers and `_process_*` functions
 
-**Responsibility:** Add `degraded` boolean to MCP responses.
+**Responsibility:** Add `degraded` boolean to MCP responses where applicable.
 
 **Detection logic:**
 - `FeatureWorkflowState` responses: `degraded = (state.source == "meta_json_fallback")`
 - `TransitionResponse`: read `response.degraded` directly
-- `validate_prerequisites`: exempt (no `degraded` field)
+- `validate_prerequisites`: exempt per R7 (no `degraded` field — degradation surfaces transitively via `get_state()`)
+
+### C8: `_scan_features_by_status(status)` Variant
+
+**Location:** `engine.py`, new private method on `WorkflowStateEngine`
+
+**Responsibility:** Enumerate features filtered by `.meta.json` `status` field when DB is unavailable for `list_by_status()`.
+
+**Behavior:**
+1. Glob `{artifacts_root}/features/*/.meta.json`
+2. For each file, read raw JSON and check `meta["status"] == status` BEFORE building `FeatureWorkflowState`
+3. Only build `FeatureWorkflowState` for matches (avoids wasted derivation)
+4. Return filtered `list[FeatureWorkflowState]`
+
+**Why separate from C4 `_scan_features_filesystem`:** `FeatureWorkflowState` has no `status` field. Filtering must happen at the `.meta.json` level before state derivation. `list_by_phase` can filter on `current_phase` (which IS on the dataclass), but `list_by_status` cannot. This variant reads the raw JSON and filters before deriving.
 
 ---
 
@@ -239,13 +256,13 @@ def _make_error(error_type: str, message: str, recovery_hint: str) -> str:
 
 **Trade-off:** Refactoring existing method, but the extraction is mechanical and testable.
 
-### TD-4: `TransitionResponse` for transition_phase Only
+### TD-4: `TransitionResponse` Always Returned from `transition_phase()`
 
-**Decision:** New wrapper dataclass only for `transition_phase()`. Other methods use `FeatureWorkflowState.source` for degradation signal.
+**Decision:** `transition_phase()` ALWAYS returns `TransitionResponse`, both in normal and degraded paths. No union type. Other methods use `FeatureWorkflowState.source` for degradation signal.
 
-**Rationale:** `transition_phase()` returns `list[TransitionResult]` which has no `source` field. It needs a wrapper to carry the degradation flag. Other methods return `FeatureWorkflowState` which already has `source`. `validate_prerequisites()` is exempt per R7.
+**Rationale:** Eliminates the `list[TransitionResult] | TransitionResponse` union type that complicated MCP handler logic. Normal path wraps results in `TransitionResponse(results=..., degraded=False)`. Degraded path uses `TransitionResponse(results=..., degraded=True)`. The MCP handler always receives the same type. `validate_prerequisites()` is exempt per R7.
 
-**Trade-off:** Slight API asymmetry, but avoids unnecessary wrapping of simple return types.
+**Trade-off:** Minor overhead wrapping normal-path results in a dataclass. Justified by much simpler handler code — no type-checking branch needed.
 
 ### TD-5: `os.replace()` Over `os.rename()`
 
@@ -292,8 +309,8 @@ def _make_error(error_type: str, message: str, recovery_hint: str) -> str:
 ### Risk 5: PRAGMA busy_timeout Interaction
 
 **Severity:** Low
-**Description:** `EntityDatabase` sets `PRAGMA busy_timeout=5000`. If the DB is locked, `SELECT 1` may block for up to 5 seconds before failing.
-**Mitigation:** This is a worst-case scenario. In practice, locked DBs are rare in single-user CLI tools. The 5s delay only occurs on the first call to a locked DB — subsequent calls within the same method are skipped via the `db_available` flag.
+**Description:** `EntityDatabase` sets `PRAGMA busy_timeout=5000`. If the DB is locked, `SELECT 1` may block for up to 5 seconds before failing. This violates NFR-1 (`<5ms` single-operation target).
+**Mitigation:** This is a worst-case scenario. In practice, locked DBs are rare in single-user CLI tools (MCP stdio = one session). The 5s delay only occurs on the first call to a locked DB — subsequent calls within the same method are skipped via the `db_available` flag. **NFR-1 exception:** The `<5ms` target applies to fallback path execution after probe completes, not to the probe itself when DB is contended. Once probe returns `False`, all fallback operations are sub-millisecond filesystem reads.
 
 ---
 
@@ -385,8 +402,13 @@ def _write_meta_json_fallback(
     slug = self._extract_slug(feature_type_id)
     meta_path = os.path.join(self.artifacts_root, "features", slug, ".meta.json")
 
-    with open(meta_path) as f:
-        meta = json.load(f)
+    try:
+        with open(meta_path) as f:
+            meta = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError) as exc:
+        raise ValueError(
+            f"Cannot write fallback: .meta.json unreadable at {meta_path}: {exc}"
+        ) from exc
 
     # Update fields (only those that already exist in .meta.json schema)
     meta["lastCompletedPhase"] = phase
@@ -484,11 +506,11 @@ def get_state(self, feature_type_id: str) -> FeatureWorkflowState | None:
 ```python
 def transition_phase(
     self, feature_type_id: str, target_phase: str, yolo_active: bool = False
-) -> list[TransitionResult] | TransitionResponse:
-    """Validate and enter a target phase. Returns TransitionResponse when degraded."""
+) -> TransitionResponse:
+    """Validate and enter a target phase. Always returns TransitionResponse."""
 ```
 
-**Note on return type:** The return type broadens from `list[TransitionResult]` to `list[TransitionResult] | TransitionResponse`. The MCP handler (`_process_transition_phase`) must handle both. In normal mode, it receives `list[TransitionResult]` (backward compatible). In degraded mode, it receives `TransitionResponse` and reads `.degraded`.
+**Note on return type:** The return type changes from `list[TransitionResult]` to `TransitionResponse`. Both normal and degraded paths return `TransitionResponse`. Normal: `TransitionResponse(results=tuple(results), degraded=False)`. Degraded: `TransitionResponse(results=tuple(results), degraded=True)`. The MCP handler always receives the same type — no branching needed.
 
 ### I9: `_make_error()` Helper
 
@@ -523,9 +545,196 @@ def _serialize_state(state: FeatureWorkflowState) -> dict:
 
 ```python
 def _iso_now() -> str:
-    """Return current time as ISO 8601 string with timezone."""
+    """Return current time as ISO 8601 string with local timezone offset.
+    Matches existing .meta.json convention (e.g., '2026-03-06T18:30:00+08:00')."""
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).astimezone().isoformat()
+```
+
+### I12: Full `transition_phase()` with Degraded Path
+
+```python
+def transition_phase(
+    self, feature_type_id: str, target_phase: str, yolo_active: bool = False
+) -> TransitionResponse:
+    """Validate and enter a target phase. Always returns TransitionResponse."""
+    db_available = self._check_db_health()
+
+    # Step 1: Get current state (uses fallback if DB unavailable)
+    state = self.get_state(feature_type_id)
+    if state is None:
+        raise ValueError(f"Feature not found: {feature_type_id}")
+
+    degraded = not db_available or state.source == "meta_json_fallback"
+
+    # Step 2: Evaluate gates (pure logic — no DB dependency)
+    # Gate evaluation works identically on both DB and meta_json_fallback state.
+    # It reads FeatureWorkflowState fields + filesystem artifacts only.
+    results = self._evaluate_gates(state, target_phase, yolo_active)
+
+    # Step 3: Determine if transition is allowed
+    all_passed = all(r.passed for r in results)
+
+    # Step 4: If allowed AND DB available, write transition to DB
+    if all_passed and db_available:
+        try:
+            self.db.set_workflow_phase(feature_type_id, target_phase)
+        except sqlite3.Error as exc:
+            # Secondary defense: DB write failed after probe passed
+            print(f"[degraded] transition_phase: DB write failed: {exc}",
+                  file=sys.stderr)
+            degraded = True
+            # No .meta.json write for transition_phase (per spec R2).
+            # transition_phase records gate results, not state changes.
+            # State is advanced by complete_phase later.
+
+    # Step 5: If allowed but DB unavailable, skip DB write (spec R2)
+    # Gate results are still valid — they don't depend on DB writes.
+    # The transition is "logically valid" even without persistence.
+
+    return TransitionResponse(
+        results=tuple(results),
+        degraded=degraded,
+    )
+```
+
+### I13: Full `complete_phase()` with Degraded Path
+
+```python
+def complete_phase(
+    self, feature_type_id: str, phase: str
+) -> FeatureWorkflowState:
+    """Mark a phase as completed. Falls back to .meta.json write if DB unavailable."""
+    db_available = self._check_db_health()
+
+    # Step 1: Get current state (uses fallback if DB unavailable)
+    state = self.get_state(feature_type_id)
+    if state is None:
+        raise ValueError(f"Feature not found: {feature_type_id}")
+
+    # Step 2: Validate phase completion is allowed (pure logic)
+    # Full validation executes normally on both DB and meta_json_fallback state.
+    # Only the final write triggers fallback behavior.
+    self._validate_complete_phase(state, phase)
+
+    # Step 3: Attempt DB write
+    if db_available:
+        try:
+            self.db.complete_workflow_phase(feature_type_id, phase)
+            # Read back updated state from DB
+            row = self.db.get_workflow_phase(feature_type_id)
+            if row is not None:
+                return self._row_to_state(row)
+            # DB write succeeded but read-back failed — fall through to meta.json
+        except sqlite3.Error as exc:
+            # Secondary defense: DB write failed after probe passed
+            print(f"[degraded] complete_phase: DB write failed: {exc}",
+                  file=sys.stderr)
+
+    # Step 4: Fallback — write to .meta.json
+    print(f"[degraded] complete_phase({feature_type_id}, {phase}): "
+          "writing to .meta.json", file=sys.stderr)
+    return self._write_meta_json_fallback(feature_type_id, phase, state)
+```
+
+### I14: MCP Handler `_process_transition_phase` (Updated)
+
+```python
+async def _process_transition_phase(
+    feature: str, target_phase: str, yolo: bool = False
+) -> str:
+    """MCP handler for transition_phase. Always receives TransitionResponse."""
+    try:
+        response = engine.transition_phase(feature, target_phase, yolo)
+    except ValueError as exc:
+        if "not found" in str(exc).lower():
+            return _make_error("feature_not_found", str(exc),
+                             "Verify feature_type_id exists")
+        return _make_error("invalid_transition", str(exc),
+                         "Check phase name and current state")
+    except sqlite3.Error as exc:
+        return _make_error("db_unavailable", str(exc),
+                         "Check DB file permissions and integrity")
+    except Exception as exc:
+        return _make_error("internal", str(exc), "Check server logs")
+
+    # TransitionResponse always has .results and .degraded
+    transitioned = all(r.passed for r in response.results)
+    result = {
+        "transitioned": transitioned,
+        "results": [_serialize_result(r) for r in response.results],
+        "degraded": response.degraded,
+    }
+    return json.dumps(result)
+```
+
+### I15: Full `list_by_phase()` with Degraded Path
+
+```python
+def list_by_phase(
+    self, phase: str, entity_type: str = "feature"
+) -> list[FeatureWorkflowState]:
+    """List features in a given workflow phase. Falls back to filesystem scan."""
+    db_available = self._check_db_health()
+
+    if db_available:
+        try:
+            rows = self.db.list_by_workflow_phase(phase, entity_type)
+            return [self._row_to_state(r) for r in rows]
+        except sqlite3.Error as exc:
+            print(f"[degraded] list_by_phase: {exc}", file=sys.stderr)
+
+    # Fallback: scan filesystem, filter by current_phase
+    all_states = self._scan_features_filesystem()
+    return [s for s in all_states if s.current_phase == phase]
+```
+
+### I16: Full `list_by_status()` with Degraded Path
+
+```python
+def list_by_status(
+    self, status: str, entity_type: str = "feature"
+) -> list[FeatureWorkflowState]:
+    """List features by status. Falls back to filesystem scan filtered by .meta.json status."""
+    db_available = self._check_db_health()
+
+    if db_available:
+        try:
+            rows = self.db.list_by_status(status, entity_type)
+            return [self._row_to_state(r) for r in rows]
+        except sqlite3.Error as exc:
+            print(f"[degraded] list_by_status: {exc}", file=sys.stderr)
+
+    # Fallback: scan filesystem, filter by .meta.json status field
+    # Cannot use _scan_features_filesystem() because FeatureWorkflowState
+    # has no 'status' field. Must filter at the .meta.json level.
+    return self._scan_features_by_status(status)
+```
+
+### I17: `_scan_features_by_status(status: str) -> list[FeatureWorkflowState]`
+
+```python
+def _scan_features_by_status(self, status: str) -> list[FeatureWorkflowState]:
+    """Scan features directory, filtering by .meta.json status field."""
+    import glob as glob_mod
+    pattern = os.path.join(self.artifacts_root, "features", "*", ".meta.json")
+    results: list[FeatureWorkflowState] = []
+    for meta_path in glob_mod.glob(pattern):
+        try:
+            with open(meta_path) as f:
+                meta = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            continue
+        if meta.get("status") != status:
+            continue
+        feature_dir = os.path.basename(os.path.dirname(meta_path))
+        feature_type_id = f"feature:{feature_dir}"
+        state = self._derive_state_from_meta(
+            meta, feature_type_id, source="meta_json_fallback"
+        )
+        if state is not None:
+            results.append(state)
+    return results
 ```
 
 ---
@@ -539,25 +748,29 @@ C1: _check_db_health
 
 C2: _read_state_from_meta_json
   ├── depends on: C3 (_derive_state_from_meta via TD-3)
-  └── used by: C1 fallback in get_state, C4 scanner
+  └── used by: get_state fallback, C4 scanner
 
 C3: _derive_state_from_meta (extracted from _hydrate_from_meta_json)
-  └── used by: C2, _hydrate_from_meta_json (refactored)
+  └── used by: C2, C8, _hydrate_from_meta_json (refactored)
 
 C4: _write_meta_json_fallback
   └── used by: complete_phase write fallback
 
-C5: _scan_features_filesystem
-  ├── depends on: C2 (_read_state_from_meta_json)
-  └── used by: list_by_phase, list_by_status fallback
+C5: TransitionResponse
+  └── used by: transition_phase (always returned, normal + degraded)
 
-C6: TransitionResponse
-  └── used by: transition_phase (degraded return)
+C6: _scan_features_filesystem
+  ├── depends on: C2 (_read_state_from_meta_json)
+  └── used by: list_by_phase fallback
 
 C7: _make_error
   └── used by: all _process_* functions in MCP server
 
-C8: _serialize_state update (degraded field)
+C8: _scan_features_by_status
+  ├── depends on: C3 (_derive_state_from_meta)
+  └── used by: list_by_status fallback
+
+C9: _serialize_state update (degraded field)
   └── used by: all MCP responses involving FeatureWorkflowState
 ```
 
@@ -566,7 +779,7 @@ C8: _serialize_state update (degraded field)
 | File | Change Type | Scope |
 |------|------------|-------|
 | `workflow_engine/models.py` | Add `TransitionResponse` dataclass, update `source` comment | Small |
-| `workflow_engine/engine.py` | Add C1-C5 methods, wrap public methods with fallback, extract C3 | Large (primary change) |
-| `mcp/workflow_state_server.py` | Add C7-C8, update `_process_*` functions for structured errors and degradation | Medium |
+| `workflow_engine/engine.py` | Add C1-C4, C6, C8 methods; wrap public methods with fallback; extract C3; add imports (`sqlite3`, `tempfile`, `glob`) | Large (primary change) |
+| `mcp/workflow_state_server.py` | Add C7, C9; update `_process_*` for structured errors and degradation; add `import sqlite3` | Medium |
 | `workflow_engine/test_engine.py` | New tests for all degradation paths | Medium |
 | `mcp/test_workflow_state_server.py` | Update error-path assertions, add degradation tests | Medium |
