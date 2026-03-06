@@ -15,7 +15,7 @@ Tests to write:
 2. `test_entity_type_filter` — `entity_type="feature"` → only features (AC-2)
 3. `test_status_filter` — `status="completed"` → only completed
 4. `test_combined_filters` — entity_type + status → AND logic (AC-3)
-5. `test_invalid_entity_type_raises` — `entity_type="invalid"` → `pytest.raises(ValueError, match=r"Invalid entity_type 'invalid'. Must be one of \('backlog',")` (AC-8). Exact database format: `Invalid entity_type 'invalid'. Must be one of ('backlog', 'brainstorm', 'project', 'feature')`
+5. `test_invalid_entity_type_raises` — `entity_type="invalid"` → `pytest.raises(ValueError, match=r"Invalid entity_type 'invalid'. Must be one of \('backlog',")` (ValueError path — spec FR-4). Exact database format: `Invalid entity_type 'invalid'. Must be one of ('backlog', 'brainstorm', 'project', 'feature')`
 6. `test_unmatched_status_returns_empty` — unmatched status → entity_count: 0
 7. `test_empty_database` — no entities → valid envelope with entity_count: 0 (AC-9)
 8. `test_schema_version` — returns schema_version: 1 (FR-6)
@@ -132,7 +132,7 @@ Implementation steps:
 - [ ] Run all existing and new test suites, verify zero failures
 
 **Depends on:** 3.1.2
-**Done when:** All tests pass with zero failures (AC-5).
+**Done when:** All tests in steps 1-3 below pass with zero failures (AC-5).
 
 Steps:
 1. Run entity registry test suite: `plugins/iflow/.venv/bin/python -m pytest plugins/iflow/hooks/lib/entity_registry/ -v`
