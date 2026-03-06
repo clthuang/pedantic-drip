@@ -181,6 +181,9 @@ class ReconciliationResult:
     """Aggregate result from apply_workflow_reconciliation().
 
     Summary extends spec R2 with "created" count (design enhancement).
+    Callers should expect both "reconciled" and "created" keys in summary.
+    Spec R2 defines {reconciled, skipped, error, dry_run}; design adds
+    "created" to distinguish new rows from updates.
     """
     actions: tuple[ReconcileAction, ...]
     summary: dict  # {reconciled, created, skipped, error, dry_run}
@@ -407,9 +410,12 @@ def _process_reconcile_status(
     - frontmatter_drift: serialized list of DriftReports
     - total_features_checked: len(workflow_drift_result.features)
     - total_files_checked: len(frontmatter_reports)
-    - healthy: all workflow summary counts except in_sync are 0
-      (including error=0) AND all frontmatter statuses are "in_sync".
-      A non-zero error count in either dimension sets healthy=False.
+    - healthy: True when BOTH dimensions report zero drift:
+      (1) Workflow: every count in summary except "in_sync" equals 0
+          (meta_json_ahead=0, db_ahead=0, meta_json_only=0, db_only=0, error=0)
+      (2) Frontmatter: every count in summary except "in_sync" equals 0
+          (same zero-check pattern applied to frontmatter DriftReport statuses)
+      Any non-zero count in either dimension sets healthy=False.
 
     No _catch_value_error needed — reconcile_status accepts no
     feature_type_id parameter (always scans all).
