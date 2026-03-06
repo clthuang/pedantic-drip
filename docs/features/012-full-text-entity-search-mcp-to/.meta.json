@@ -10,7 +10,7 @@
   "depends_on_features": [
     "001-entity-uuid-primary-key-migrat"
   ],
-  "lastCompletedPhase": "create-plan",
+  "lastCompletedPhase": "create-tasks",
   "phases": {
     "specify": {
       "started": "2026-03-07T19:00:00+08:00",
@@ -46,6 +46,20 @@
       },
       "phaseReview": {
         "iterations": 2,
+        "approved": true,
+        "reviewerNotes": []
+      }
+    },
+    "create-tasks": {
+      "started": "2026-03-07T22:10:00+08:00",
+      "completed": "2026-03-07T22:40:00+08:00",
+      "taskReview": {
+        "iterations": 3,
+        "approved": true,
+        "reviewerNotes": []
+      },
+      "chainReview": {
+        "iterations": 3,
         "approved": true,
         "reviewerNotes": []
       }
