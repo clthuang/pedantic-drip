@@ -65,7 +65,7 @@ The export format is:
 - `parent_type_id`: Included when `include_lineage=True` — human-readable relationship key
 - `parent_uuid`: Excluded — internal FK derivable from `parent_type_id`; including both would create redundancy and sync risk
 - `created_at`, `updated_at`: Included — temporal audit fields
-- `metadata`: Included — always serialized as `{}` when NULL in database (never omitted, never `null`)
+- `metadata`: Included — always serialized as `{}` when NULL in database (never omitted, never `null`). The NULL-to-`{}` normalization is performed in `export_entities_json` (database layer), not the MCP tool layer
 
 **Timestamps:** The `exported_at` field uses ISO 8601 format with timezone offset (local timezone of the server). Entity timestamps (`created_at`, `updated_at`) are preserved as stored in the database.
 
@@ -81,8 +81,9 @@ When `output_path` is provided:
 - Returns confirmation message: `"Exported {n} entities to {resolved_path}"`
 
 **Error handling for file I/O:**
-- Permission denied or disk full: Propagate the OS error as `"Error writing export: {error message}"`
-- Do not catch generic exceptions — let specific I/O errors surface to the caller
+- Catch `OSError` (covers `PermissionError`, disk full, etc.) and return `"Error writing export: {error message}"`
+- Do not catch broader `Exception` — let unexpected errors (e.g., serialization bugs) propagate as unhandled for debugging
+- This intentionally differs from the existing `export_lineage_markdown` pattern (which catches all `Exception`); narrower error handling is preferred here to surface implementation bugs early
 
 When `output_path` is None:
 - Returns the JSON string directly (for programmatic consumption)
@@ -142,6 +143,7 @@ The `schema_version` field is an integer starting at 1. It reflects the export f
 - AC-8: **Given** entities exist with NULL metadata in the database, **when** exported, **then** metadata appears as `{}` (empty object), never `null` or omitted.
 - AC-9: **Given** an empty database, **when** `export_entities` is called, **then** it returns valid JSON with `entity_count: 0` and an empty `entities` array.
 - AC-10: **Given** each entity has a `uuid` field, **when** exported, **then** the `uuid` appears in each entity dict.
+- AC-11: **Given** a database containing 1000 entities, **when** `export_entities()` is called with no arguments, **then** it returns within 5 seconds (NFR-5).
 
 ## Scope Boundaries
 
@@ -157,7 +159,7 @@ The `schema_version` field is an integer starting at 1. It reflects the export f
 - Export to formats other than JSON — PRD UC-3 includes a `format` parameter but this feature implements JSON-only export as the initial version; additional formats can be added in a future feature
 - Streaming export for very large datasets
 - Incremental/differential export
-- Export of workflow_phases table data (entity-level export only; phase data lives in .meta.json)
+- Export of workflow_phases table data — PRD UC-3 mentions "phase state" but phase data lives in `.meta.json` files and the `workflow_phases` table belongs to Feature 008 (WorkflowStateEngine). Entity-level export is the correct initial scope; phase export can be added once the workflow engine features are complete
 
 ## Dependencies
 
