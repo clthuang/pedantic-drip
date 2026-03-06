@@ -2726,3 +2726,172 @@ class TestScanFeaturesByStatus:
         # Only the valid feature should be returned
         assert len(results) == 1
         assert results[0].feature_type_id == "feature:001-valid"
+
+
+# ===========================================================================
+# Task 4.1: get_state() fallback tests
+# ===========================================================================
+
+
+class TestGetStateFallback:
+    """Task 4.1: get_state() degrades to .meta.json when DB is unhealthy."""
+
+    def test_probe_fails_returns_meta_json_fallback(self, tmp_path) -> None:
+        """When _check_db_health returns False, get_state returns from .meta.json
+        with source='meta_json_fallback'."""
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="design",
+            last_completed_phase="specify",
+        )
+        # Create .meta.json so the fallback has data to read
+        _create_meta_json(
+            tmp_path,
+            "008-test-feature",
+            status="active",
+            last_completed_phase="design",
+        )
+        # Force health probe to fail
+        engine._check_db_health = lambda: False  # type: ignore[assignment]
+
+        state = engine.get_state(type_id)
+
+        assert state is not None
+        assert state.source == "meta_json_fallback"
+        assert state.feature_type_id == type_id
+        # Phase derived from .meta.json: active + lastCompletedPhase=design -> next=create-plan
+        assert state.current_phase == "create-plan"
+        assert state.last_completed_phase == "design"
+
+    def test_probe_fails_no_meta_json_returns_none(self, tmp_path) -> None:
+        """When probe fails and no .meta.json exists, get_state returns None."""
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="design",
+            last_completed_phase="specify",
+        )
+        engine._check_db_health = lambda: False  # type: ignore[assignment]
+
+        state = engine.get_state(type_id)
+
+        assert state is None
+
+    def test_probe_passes_db_query_raises_secondary_defense(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """When probe passes but db.get_workflow_phase raises sqlite3.Error,
+        secondary defense catches it and falls back to .meta.json."""
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="design",
+            last_completed_phase="specify",
+        )
+        _create_meta_json(
+            tmp_path,
+            "008-test-feature",
+            status="active",
+            last_completed_phase="specify",
+        )
+        # Probe passes (DB is actually healthy) but query raises
+        monkeypatch.setattr(
+            db,
+            "get_workflow_phase",
+            lambda *a, **kw: (_ for _ in ()).throw(
+                sqlite3.OperationalError("disk I/O error")
+            ),
+        )
+
+        state = engine.get_state(type_id)
+
+        assert state is not None
+        assert state.source == "meta_json_fallback"
+        assert state.current_phase == "design"
+        assert state.last_completed_phase == "specify"
+
+    def test_probe_passes_db_query_raises_no_meta_json(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """When probe passes, DB query raises, and no .meta.json exists,
+        secondary defense returns None."""
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="design",
+            last_completed_phase="specify",
+        )
+        monkeypatch.setattr(
+            db,
+            "get_workflow_phase",
+            lambda *a, **kw: (_ for _ in ()).throw(
+                sqlite3.DatabaseError("file is not a database")
+            ),
+        )
+
+        state = engine.get_state(type_id)
+
+        assert state is None
+
+    def test_happy_path_unchanged(self, tmp_path) -> None:
+        """When DB is healthy, get_state returns from DB as before."""
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="design",
+            last_completed_phase="specify",
+        )
+
+        state = engine.get_state(type_id)
+
+        assert state is not None
+        assert state.source == "db"
+        assert state.current_phase == "design"
+        assert state.last_completed_phase == "specify"
+
+    def test_probe_fails_logs_to_stderr(self, tmp_path, capsys) -> None:
+        """When probe fails, a degradation message is logged to stderr."""
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="design",
+            last_completed_phase="specify",
+        )
+        _create_meta_json(
+            tmp_path,
+            "008-test-feature",
+            status="active",
+            last_completed_phase="design",
+        )
+        engine._check_db_health = lambda: False  # type: ignore[assignment]
+
+        engine.get_state(type_id)
+
+        captured = capsys.readouterr()
+        assert "DB unhealthy" in captured.err
+        assert type_id in captured.err
+
+    def test_secondary_defense_logs_to_stderr(
+        self, tmp_path, monkeypatch, capsys
+    ) -> None:
+        """When secondary defense catches sqlite3.Error, it logs to stderr."""
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="design",
+            last_completed_phase="specify",
+        )
+        _create_meta_json(
+            tmp_path,
+            "008-test-feature",
+            status="active",
+            last_completed_phase="specify",
+        )
+        monkeypatch.setattr(
+            db,
+            "get_workflow_phase",
+            lambda *a, **kw: (_ for _ in ()).throw(
+                sqlite3.OperationalError("database is locked")
+            ),
+        )
+
+        engine.get_state(type_id)
+
+        captured = capsys.readouterr()
+        assert "DB error in get_state" in captured.err
+        assert "database is locked" in captured.err
+        assert type_id in captured.err

@@ -5,6 +5,7 @@ import glob
 import json
 import os
 import sqlite3
+import sys
 import tempfile
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -51,11 +52,27 @@ class WorkflowStateEngine:
     # ------------------------------------------------------------------
 
     def get_state(self, feature_type_id: str) -> FeatureWorkflowState | None:
-        """Read feature workflow state from DB, falling back to .meta.json hydration."""
-        row = self.db.get_workflow_phase(feature_type_id)
-        if row is not None:
-            return self._row_to_state(row)
-        return self._hydrate_from_meta_json(feature_type_id)
+        """Read feature workflow state, falling back to .meta.json if DB unavailable."""
+        if not self._check_db_health():
+            print(
+                f"workflow-engine: DB unhealthy, falling back to .meta.json "
+                f"for {feature_type_id}",
+                file=sys.stderr,
+            )
+            return self._read_state_from_meta_json(feature_type_id)
+
+        try:
+            row = self.db.get_workflow_phase(feature_type_id)
+            if row is not None:
+                return self._row_to_state(row)
+            return self._hydrate_from_meta_json(feature_type_id)
+        except sqlite3.Error as exc:
+            print(
+                f"workflow-engine: DB error in get_state, falling back to "
+                f".meta.json for {feature_type_id}: {exc}",
+                file=sys.stderr,
+            )
+            return self._read_state_from_meta_json(feature_type_id)
 
     def transition_phase(
         self,
