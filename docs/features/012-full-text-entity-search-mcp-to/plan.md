@@ -72,7 +72,7 @@ Phase 4: Final Regression
 - `TestMigration4::test_backfill_populates_index` — insert entities before migration, verify searchable after (AC-3)
 - `TestMigration4::test_schema_version_is_4` — verify schema_version = '4' (AC-19)
 - `TestMigration4::test_null_metadata_backfill` — entity with NULL metadata → empty string in FTS (AC-18)
-- `TestMigration4::test_idempotent_create` — IF NOT EXISTS prevents error on re-run (AC-16)
+- `TestMigration4::test_idempotent_create` — DROP+CREATE guarantees clean slate on re-run; migration runner skips when schema_version >= 4 (AC-16). **Spec deviation note:** AC-16 says "CREATE VIRTUAL TABLE IF NOT EXISTS for additional safety" but plan uses DROP+CREATE instead because IF NOT EXISTS leaves stale FTS data on crash re-run. The spec's intent (idempotent migration) is preserved via DROP+CREATE + migration runner skip.
 - `TestMigration4::test_preserves_existing_data` — existing entities table data unchanged (AC-17)
 
 **Known limitation:** The FTS5 `rebuild` command cannot be used with this schema because `metadata_text` is a computed column not present in the `entities` table. Recovery from FTS index drift requires re-running the backfill logic (e.g., via a helper function that calls `_create_fts_index`).
