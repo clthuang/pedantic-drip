@@ -10,7 +10,7 @@
   "depends_on_features": [
     "008-workflowstateengine-core"
   ],
-  "lastCompletedPhase": "design",
+  "lastCompletedPhase": "create-plan",
   "phases": {
     "specify": {
       "started": "2026-03-06T17:00:00+08:00",
@@ -29,6 +29,29 @@
         "interface": { "started": "2026-03-06T18:55:00+08:00", "completed": "2026-03-06T19:05:00+08:00" },
         "designReview": { "started": "2026-03-06T19:05:00+08:00", "completed": "2026-03-06T19:15:00+08:00", "iterations": 3, "reviewerNotes": [] },
         "handoffReview": { "started": "2026-03-06T19:15:00+08:00", "completed": "2026-03-06T19:45:00+08:00", "iterations": 5, "approved": true, "reviewerNotes": ["PRAGMA restore try/finally complexity — plan task should pre-decide accept 5s bound", "I13 source='db' provenance on read-back failure — code comment concern"] }
+      }
+    },
+    "create-plan": {
+      "started": "2026-03-06T19:50:00+08:00",
+      "completed": "2026-03-06T22:30:00+08:00",
+      "planReview": {
+        "iterations": 5,
+        "approved": false,
+        "reviewerNotes": [
+          "4.2 call site enumeration — plan should list all 14 assigning sites by line number (605,622,640,659,954,1048,1059,1125,1289,1366,1452,1511,1532 + 777); lines 1289/1366 have downstream iteration risk",
+          "2.2 fd.close() contradiction — plan overrides design I4 (which omits fd.close() from finally); implementer should follow plan",
+          "TDD step 11b-11e atomicity — steps b through e should be treated as single atomic commit",
+          "Consumer audit for dropped 'allowed' key should extend grep to hooks/ and agents/",
+          "1.3 pre-implementation grep for existing _hydrate_from_meta_json tests",
+          "5.1 affects ~12+ error-path tests beyond the 2 explicitly named"
+        ]
+      },
+      "chainReview": {
+        "iterations": 5,
+        "approved": false,
+        "reviewerNotes": [
+          "4.2 line numbers are static approximations — engineer should run pre-commit grep at START of 4.2 to get current line numbers"
+        ]
       }
     }
   }
