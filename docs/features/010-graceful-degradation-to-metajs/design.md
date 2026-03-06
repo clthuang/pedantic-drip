@@ -208,6 +208,10 @@ def _make_error(error_type: str, message: str, recovery_hint: str) -> str:
 return _make_error("not_initialized", "Engine not initialized", "Restart MCP server")
 ```
 
+**Non-exception error paths:** Some `_process_*` functions have explicit None-check returns that bypass exception handling. These MUST also use structured errors:
+- `_process_get_phase`: when `get_state()` returns `None` → `_make_error("feature_not_found", f"Feature not found: {feature_type_id}", "Verify feature_type_id format")`
+- `_process_list_features_by_phase` / `_process_list_features_by_status`: audit for any plain-string error returns and convert similarly
+
 ### C7: MCP Degradation Signal
 
 **Location:** `workflow_state_server.py`, updates to serialization helpers and `_process_*` functions
@@ -838,7 +842,7 @@ _derive_state_from_meta (shared helper, extracted per TD-3)
 | File | Change Type | Scope |
 |------|------------|-------|
 | `workflow_engine/models.py` | Add `TransitionResponse` dataclass, update `source` comment | Small |
-| `workflow_engine/engine.py` | Add C1-C4, C6, C8 methods; wrap public methods with fallback; extract C3; add imports (`sqlite3`, `tempfile`, `glob`) | Large (primary change) |
-| `mcp/workflow_state_server.py` | Add C7, C9; update `_process_*` for structured errors and degradation; add `import sqlite3` | Medium |
+| `workflow_engine/engine.py` | Add C1-C4, C8 methods; extract `_derive_state_from_meta` helper; wrap public methods with fallback; add imports (`sqlite3`, `tempfile`, `glob`) | Large (primary change) |
+| `mcp/workflow_state_server.py` | Add C6, C7; update `_process_*` for structured errors and degradation; update `_engine is None` guards; update non-exception error paths (e.g., `_process_get_phase` None-state check); add `import sqlite3` | Medium |
 | `workflow_engine/test_engine.py` | New tests for all degradation paths | Medium |
 | `mcp/test_workflow_state_server.py` | Update error-path assertions, add degradation tests | Medium |
