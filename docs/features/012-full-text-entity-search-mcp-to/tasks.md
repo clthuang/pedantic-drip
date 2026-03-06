@@ -61,12 +61,13 @@
 **Done when:** All 7 `TestMigration4` tests pass. NOTE: `test_database.py` assertions will fail until Task 1.2.3 completes — do not run full suite regression until after 1.2.3.
 
 ### Task 1.2.3: Update schema version assertions in test_database.py
-- [ ] Update 5 assertions from `'3'` to `'4'`:
-  - Line 322 — `TestMigration2`
-  - Line 536 — `TestMetadata::test_schema_version_is_3`
-  - Line 2302 — `TestMigrationIdempotency`
-  - Line 2500 — `TestMigration3::test_schema_version_is_3`
-  - Line 2688 — `TestMigration3::test_fresh_db_has_all_migrations`
+- [ ] Locate assertions with `grep -n 'schema_version.*"3"' plugins/iflow/hooks/lib/entity_registry/test_database.py` — expect 5 matches in these test classes:
+  - `TestMigration2`
+  - `TestMetadata::test_schema_version_is_3`
+  - `TestMigrationIdempotency`
+  - `TestMigration3::test_schema_version_is_3`
+  - `TestMigration3::test_fresh_db_has_all_migrations`
+- [ ] Update all 5 assertions from `'3'` to `'4'` using grep output line numbers (not hardcoded)
 - [ ] Run full existing test suite: `plugins/iflow/.venv/bin/python -m pytest plugins/iflow/hooks/lib/entity_registry/test_database.py -v`
 - [ ] Verify all 545+ existing tests pass
 
