@@ -13,6 +13,33 @@ _UUID_V4_RE = re.compile(
 )
 
 
+def flatten_metadata(metadata: dict | None) -> str:
+    """Flatten metadata JSON to space-separated string of all leaf scalar values.
+
+    Recursively traverses dicts (values only) and lists (elements).
+    None/null values are skipped. Scalars are converted via str().
+    Returns empty string for None input or empty structures.
+    """
+    if metadata is None:
+        return ""
+    parts: list[str] = []
+
+    def _collect(value):
+        if value is None:
+            return
+        if isinstance(value, dict):
+            for v in value.values():
+                _collect(v)
+        elif isinstance(value, list):
+            for item in value:
+                _collect(item)
+        else:
+            parts.append(str(value))
+
+    _collect(metadata)
+    return " ".join(parts)
+
+
 def _create_initial_schema(conn: sqlite3.Connection) -> None:
     """Migration 1: create entities and _metadata tables, triggers, indexes."""
     conn.executescript("""
@@ -326,11 +353,55 @@ def _create_workflow_phases_table(conn: sqlite3.Connection) -> None:
         )
 
 
+def _create_fts_index(conn: sqlite3.Connection) -> None:
+    """Migration 4: Create FTS5 virtual table and backfill from existing entities."""
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+
+        conn.execute("DROP TABLE IF EXISTS entities_fts")
+
+        try:
+            conn.execute(
+                "CREATE VIRTUAL TABLE entities_fts USING fts5("
+                "name, entity_id, entity_type, status, metadata_text, "
+                "content='entities', content_rowid='rowid')"
+            )
+        except sqlite3.OperationalError as exc:
+            if "no such module: fts5" in str(exc):
+                raise RuntimeError("FTS5 extension not available") from exc
+            raise
+
+        # Backfill existing entities into FTS index
+        rows = conn.execute(
+            "SELECT rowid, name, entity_id, entity_type, status, metadata "
+            "FROM entities"
+        ).fetchall()
+        for row in rows:
+            metadata_text = flatten_metadata(
+                json.loads(row[5]) if row[5] else None
+            )
+            conn.execute(
+                "INSERT INTO entities_fts(rowid, name, entity_id, entity_type, "
+                "status, metadata_text) VALUES(?, ?, ?, ?, ?, ?)",
+                (row[0], row[1], row[2], row[3], row[4] or "", metadata_text),
+            )
+
+        conn.execute(
+            "INSERT INTO _metadata(key, value) VALUES('schema_version', '4') "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
 # Ordered mapping of version -> migration function.
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _create_initial_schema,
     2: _migrate_to_uuid_pk,
     3: _create_workflow_phases_table,
+    4: _create_fts_index,
 }
 
 # Sentinel object to distinguish "not provided" from explicit ``None``.
@@ -453,7 +524,7 @@ class EntityDatabase:
                 parent_uuid = parent_row["uuid"]
 
         entity_uuid = str(uuid_mod.uuid4())
-        self._conn.execute(
+        cursor = self._conn.execute(
             "INSERT OR IGNORE INTO entities "
             "(uuid, type_id, entity_type, entity_id, name, status, "
             "parent_type_id, parent_uuid, artifact_path, "
@@ -463,6 +534,21 @@ class EntityDatabase:
              parent_type_id, parent_uuid, artifact_path, now, now,
              metadata_json),
         )
+        if cursor.rowcount == 1:
+            row = self._conn.execute(
+                "SELECT rowid FROM entities WHERE uuid = ?",
+                (entity_uuid,),
+            ).fetchone()
+            metadata_text = flatten_metadata(
+                json.loads(metadata_json) if metadata_json else None
+            )
+            self._conn.execute(
+                "INSERT INTO entities_fts(rowid, name, entity_id, "
+                "entity_type, status, metadata_text) "
+                "VALUES(?, ?, ?, ?, ?, ?)",
+                (row[0], name, entity_id, entity_type, status or "",
+                 metadata_text),
+            )
         self._conn.commit()
         result = self._conn.execute(
             "SELECT uuid FROM entities WHERE type_id = ?", (type_id,)
@@ -674,6 +760,13 @@ class EntityDatabase:
         # Lets ValueError propagate naturally if entity not found.
         entity_uuid, _ = self._resolve_identifier(type_id)
 
+        # FTS sync: capture old values before UPDATE
+        old_row = self._conn.execute(
+            "SELECT rowid, name, entity_id, entity_type, status, metadata "
+            "FROM entities WHERE uuid = ?",
+            (entity_uuid,),
+        ).fetchone()
+
         set_parts: list[str] = ["updated_at = ?"]
         params: list = [self._now_iso()]
 
@@ -695,14 +788,11 @@ class EntityDatabase:
                 set_parts.append("metadata = ?")
                 params.append(None)
             else:
-                # Shallow merge with existing — fetch current metadata
-                row = self._conn.execute(
-                    "SELECT metadata FROM entities WHERE uuid = ?",
-                    (entity_uuid,),
-                ).fetchone()
-                existing_meta = {}
-                if row and row["metadata"] is not None:
-                    existing_meta = json.loads(row["metadata"])
+                # Shallow merge with existing (old_row already has metadata)
+                existing_meta = (
+                    json.loads(old_row["metadata"])
+                    if old_row["metadata"] else {}
+                )
                 existing_meta.update(metadata)
                 set_parts.append("metadata = ?")
                 params.append(json.dumps(existing_meta))
@@ -710,7 +800,138 @@ class EntityDatabase:
         params.append(entity_uuid)
         sql = f"UPDATE entities SET {', '.join(set_parts)} WHERE uuid = ?"
         self._conn.execute(sql, params)
+
+        # Re-read post-UPDATE values from DB rather than deriving them in
+        # Python. This avoids replicating the metadata-merge logic (None/keep,
+        # {}/clear, dict/shallow-merge) and uses the DB as single source of
+        # truth. If new FTS-indexed fields are added, update both the
+        # old-value SELECT and the FTS insert columns.
+        new_row = self._conn.execute(
+            "SELECT name, entity_id, entity_type, status, metadata "
+            "FROM entities WHERE uuid = ?",
+            (entity_uuid,),
+        ).fetchone()
+        old_meta_text = flatten_metadata(
+            json.loads(old_row["metadata"]) if old_row["metadata"] else None
+        )
+        new_meta_text = flatten_metadata(
+            json.loads(new_row["metadata"]) if new_row["metadata"] else None
+        )
+        self._conn.execute(
+            "INSERT INTO entities_fts(entities_fts, rowid, name, entity_id, "
+            "entity_type, status, metadata_text) "
+            "VALUES('delete', ?, ?, ?, ?, ?, ?)",
+            (old_row["rowid"], old_row["name"], old_row["entity_id"],
+             old_row["entity_type"], old_row["status"] or "",
+             old_meta_text),
+        )
+        self._conn.execute(
+            "INSERT INTO entities_fts(rowid, name, entity_id, entity_type, "
+            "status, metadata_text) VALUES(?, ?, ?, ?, ?, ?)",
+            (old_row["rowid"], new_row["name"], new_row["entity_id"],
+             new_row["entity_type"], new_row["status"] or "",
+             new_meta_text),
+        )
         self._conn.commit()
+
+    # ------------------------------------------------------------------
+    # Search
+    # ------------------------------------------------------------------
+
+    _FTS_CHAR_RE = re.compile(r'[*"()+\-^:]')
+    _FTS_KEYWORDS = {"OR", "AND", "NOT", "NEAR"}
+
+    def _build_fts_query(self, query: str) -> str | None:
+        """Sanitize user input into a safe FTS5 MATCH expression."""
+        query = query.strip()
+        if not query:
+            return None
+
+        # Exact phrase: preserve quoted content
+        if query.startswith('"') and query.endswith('"') and len(query) > 2:
+            inner = self._FTS_CHAR_RE.sub("", query[1:-1]).strip()
+            return f'"{inner}"' if inner else None
+
+        # Strip FTS5 special characters — intentionally replaced with spaces
+        # (not removed) to preserve word boundaries. E.g. "name:recon" becomes
+        # "name recon" (two tokens) rather than "namerecon" (one token).
+        sanitized = self._FTS_CHAR_RE.sub(" ", query)
+        tokens = sanitized.split()
+        # Remove FTS5 keyword operators (case-sensitive uppercase)
+        tokens = [t for t in tokens if t not in self._FTS_KEYWORDS]
+        if not tokens:
+            return None
+        # Append * for prefix matching
+        return " ".join(f"{t}*" for t in tokens)
+
+    def search_entities(
+        self,
+        query: str,
+        entity_type: str | None = None,
+        limit: int = 20,
+    ) -> list[dict]:
+        """Full-text search over entities.
+
+        Parameters
+        ----------
+        query:
+            Search string (prefix-matched, sanitized).
+        entity_type:
+            Optional filter by entity_type.
+        limit:
+            Max results (clamped to 1..100).
+
+        Returns
+        -------
+        list[dict]
+            Matching entities with ``rank`` key, ordered by relevance.
+
+        Raises
+        ------
+        ValueError
+            If FTS index is not available or query is invalid.
+        """
+        # FTS availability guard
+        if self._conn.execute(
+            "SELECT 1 FROM sqlite_master "
+            "WHERE type='table' AND name='entities_fts'"
+        ).fetchone() is None:
+            raise ValueError("fts_not_available")
+
+        if not query or not query.strip():
+            return []
+
+        limit = max(1, min(limit, 100))
+
+        fts_query = self._build_fts_query(query)
+        if fts_query is None:
+            return []
+
+        try:
+            if entity_type is not None:
+                rows = self._conn.execute(
+                    "SELECT e.*, entities_fts.rank "
+                    "FROM entities_fts "
+                    "JOIN entities e ON entities_fts.rowid = e.rowid "
+                    "WHERE entities_fts MATCH ? AND e.entity_type = ? "
+                    "ORDER BY entities_fts.rank "
+                    "LIMIT ?",
+                    (fts_query, entity_type, limit),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT e.*, entities_fts.rank "
+                    "FROM entities_fts "
+                    "JOIN entities e ON entities_fts.rowid = e.rowid "
+                    "WHERE entities_fts MATCH ? "
+                    "ORDER BY entities_fts.rank "
+                    "LIMIT ?",
+                    (fts_query, limit),
+                ).fetchall()
+        except sqlite3.OperationalError as exc:
+            raise ValueError(f"invalid_search_query: {exc}") from exc
+
+        return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------
     # Export

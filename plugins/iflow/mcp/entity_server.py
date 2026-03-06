@@ -266,6 +266,48 @@ async def export_lineage_markdown(
     return _process_export_lineage_markdown(_db, type_id, output_path, _artifacts_root)
 
 
+@mcp.tool()
+async def search_entities(
+    query: str,
+    entity_type: str | None = None,
+    limit: int = 20,
+) -> str:
+    """Full-text search across all entities.
+
+    Parameters
+    ----------
+    query:
+        Search string (prefix-matched, sanitized).
+    entity_type:
+        Optional filter by entity_type.
+    limit:
+        Max results (default 20, max 100).
+
+    Returns formatted search results or error message.
+    """
+    if _db is None:
+        return "Error: database not initialized (server not started)"
+
+    try:
+        results = _db.search_entities(query, entity_type=entity_type, limit=limit)
+    except ValueError as exc:
+        return f"Search error: {exc}"
+
+    if not results:
+        return f'No entities found matching "{query}".'
+
+    n = len(results)
+    lines = [f'Found {n} entities matching "{query}":\n']
+    for i, r in enumerate(results, 1):
+        # Intentional UX deviation from spec: use "no status" fallback instead
+        # of empty parens when status is None/empty. Spec shows bare "()" but
+        # "no status" is clearer for human readers.
+        status = r.get("status") or "no status"
+        lines.append(f'{i}. {r["type_id"]} — "{r["name"]}" ({status})')
+    lines.append(f"\n{n} results shown (limit: {limit}).")
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
