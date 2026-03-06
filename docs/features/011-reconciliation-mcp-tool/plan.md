@@ -75,7 +75,7 @@ Items in this phase have zero interdependencies and can be implemented in parall
 - Single-feature path: `_read_single_meta_json()` → if None, check DB for row via `db.get_workflow_phase(feature_type_id)` → row exists: `db_only`, no row: `error` (feature_not_found)
 - Bulk path: `engine._iter_meta_jsons()` → `_check_single_feature()` per feature; detect `db_only` features by: (1) call `db.list_workflow_phases()`, (2) extract `type_id` field from each returned dict, (3) filter to entries where `type_id.startswith("feature:")` (exclude non-feature rows — per spec Out of Scope: "Reconciliation of non-feature entity types (brainstorms, backlogs, projects have no workflow_phases rows)"; add code comment noting this assumption for future maintainers), (4) set-difference against meta-derived type_ids → remaining are `db_only` features
 - Summary aggregation: count features by status
-- Never raises — all exceptions caught → `status="error"` per feature
+- **Never-raises guarantee scope:** Individual per-feature exceptions (FileNotFoundError, JSONDecodeError, ValueError from DB calls) are caught → `status="error"` per feature. However, `db.list_workflow_phases()` in the bulk path could raise `sqlite3.Error` on DB corruption — this is NOT caught within `check_workflow_drift()` because DB-level corruption is a system failure that should surface to the caller. In MCP context, `@_with_error_handling` on the processing function catches this. The "never raises" guarantee applies to per-feature logic, not the DB list query.
 - Why this order: Public API entry point for drift detection; required by Phase 3 reconciliation
 - Tests (in `test_reconciliation.py`): single feature all statuses (AC-1 through AC-4); bulk scan multiple features (AC-5); exception handling → error status; summary counts correct; db_only detection via list_workflow_phases set difference (filtered to `feature:` type_ids only); non-feature type_ids in DB excluded from db_only detection
 
@@ -96,7 +96,7 @@ Items in this phase have zero interdependencies and can be implemented in parall
 - `dry_run=True` → compute changes but skip DB writes
 - Direction hardcoded as `"meta_json_to_db"` in output
 - Why this order: Core reconciliation logic; requires drift reports from Phase 2
-- Tests (in `test_reconciliation.py`): meta_json_ahead → update (AC-6); in_sync → skip (AC-7); meta_json_only + entity exists → create (AC-8); meta_json_only + no entity → error; meta_json_only + meta_json is None → error; db_ahead → skip; dry_run → no DB writes (AC-9); idempotency (AC-10); ValueError from update_workflow_phase → action="error"; ValueError from create_workflow_phase → action="error" (covers duplicate row AND entity-deleted races)
+- Tests (in `test_reconciliation.py`): meta_json_ahead → update (AC-6); in_sync → skip (AC-7); meta_json_only + entity exists → create (AC-8), verify report.meta_json dict contains keys `workflow_phase`, `last_completed_phase`, `mode` before create call; meta_json_only + entity not found → action="error", message contains "Entity not found" (error flows through ReconcileAction, not via _catch_value_error decorator); meta_json_only + meta_json is None → error; db_ahead → skip; dry_run → no DB writes (AC-9); idempotency (AC-10); ValueError from update_workflow_phase → action="error"; ValueError from create_workflow_phase → action="error" (covers duplicate row AND entity-deleted races)
 
 **3.2 — Public reconciliation (`reconciliation.py` — I2)**
 - File: `plugins/iflow/hooks/lib/workflow_engine/reconciliation.py`
