@@ -116,7 +116,7 @@ get_state() → _check_db_health() returns True
 - Return `True` on success, `False` on any `sqlite3.Error`
 - Result stored as local variable `db_available`, passed through call chain
 
-**NFR-1 interaction:** `EntityDatabase` sets `PRAGMA busy_timeout=5000`. In worst case (locked DB), `SELECT 1` may block up to 5s before failing. This violates the `<5ms` single-operation target. **Trade-off accepted:** This is a rare edge case (locked DB with contention), and the health probe correctly reports DB unavailable afterward. NFR-1 `<5ms` applies to the fallback path execution, not the probe on a blocked DB.
+**NFR-1 interaction:** `EntityDatabase` sets `PRAGMA busy_timeout=5000`. In worst case (locked DB), `SELECT 1` may block up to 5s before failing. This violates the `<5ms` single-operation target. **Accepted product decision:** The `<5ms` NFR-1 target applies to fallback path execution after probe completes, not to the probe itself on a contended DB. The 5s worst-case is bounded by the existing `busy_timeout` setting (not introduced by this feature) and only triggers on locked DBs with active contention — a rare scenario in single-user CLI (MCP stdio = one session). The plan phase should include a task to evaluate whether a reduced probe-specific timeout (e.g., 100ms `PRAGMA busy_timeout` override before probe, restored after) is worth the complexity vs. accepting the inherited 5s bound.
 
 **Design decision:** Local variable, not instance attribute. Preserves stateless design (NFR-4). Each public method call gets its own probe result.
 
@@ -653,6 +653,11 @@ def complete_phase(
         next_phase = phase  # Terminal phase (finish) stays as-is
 
     # Step 3: Attempt DB write
+    # Note: _write_meta_json_fallback (I4) recalculates _next_phase_value(phase)
+    # independently. For terminal phase ("finish"), both sites produce the same
+    # result: _next_phase_value returns None, current_phase is set to phase.
+    # This is intentional — I4 is self-contained and does not receive next_phase
+    # as a parameter, keeping its interface simple.
     if db_available:
         try:
             self.db.update_workflow_phase(
