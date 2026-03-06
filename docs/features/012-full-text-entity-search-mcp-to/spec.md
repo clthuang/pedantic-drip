@@ -49,15 +49,20 @@ Keep the FTS index synchronized with the entities table.
 **Sync approach:** Application-level sync in Python, not SQLite triggers. Reason: metadata JSON flattening requires recursive traversal of arbitrarily nested structures, which cannot be expressed reliably in a SQLite trigger expression. Instead, `EntityDatabase` methods (`register_entity`, `update_entity`, and any delete method) perform FTS writes after the main table write, within the same transaction.
 
 **FTS write operations:**
-- **On INSERT:** After inserting into `entities`, insert into `entities_fts` with flattened metadata.
-- **On UPDATE:** After updating `entities`, delete old FTS row and insert new one using the FTS5 special delete syntax:
+- **On INSERT (register_entity):** After the INSERT OR IGNORE into `entities`, check `cursor.rowcount == 1` to confirm a row was actually inserted (not skipped as duplicate). Only if a row was inserted, insert into `entities_fts` with flattened metadata. When INSERT OR IGNORE skips a duplicate, no FTS write occurs.
+- **On UPDATE (update_entity):** Before executing the UPDATE on `entities`, SELECT the current row to capture old values for all FTS-indexed fields (name, entity_id, entity_type, status, metadata). Then execute the UPDATE. Then use old values in the FTS5 delete command, followed by an FTS insert with new values. All four operations (old-value read, entities UPDATE, FTS delete, FTS insert) occur within the same transaction.
   ```sql
+  -- Step 1: Read old values
+  SELECT rowid, name, entity_id, entity_type, status, metadata FROM entities WHERE uuid = :uuid;
+  -- Step 2: UPDATE entities (existing logic)
+  -- Step 3: FTS delete with old values
   INSERT INTO entities_fts(entities_fts, rowid, name, entity_id, entity_type, status, metadata_text)
   VALUES('delete', :old_rowid, :old_name, :old_entity_id, :old_entity_type, :old_status, :old_metadata_text);
+  -- Step 4: FTS insert with new values
   INSERT INTO entities_fts(rowid, name, entity_id, entity_type, status, metadata_text)
   VALUES(:rowid, :name, :entity_id, :entity_type, :status, :metadata_text);
   ```
-- **On DELETE:** Use the FTS5 special delete command:
+- **On DELETE:** DELETE sync is documented for completeness. Currently no `delete_entity` method exists in `EntityDatabase`. When a delete method is added in the future, it must include FTS cleanup per this pattern:
   ```sql
   INSERT INTO entities_fts(entities_fts, rowid, name, entity_id, entity_type, status, metadata_text)
   VALUES('delete', :rowid, :name, :entity_id, :entity_type, :status, :metadata_text);
@@ -66,6 +71,8 @@ Keep the FTS index synchronized with the entities table.
 **metadata_text extraction (Python helper):** Flatten metadata JSON to a space-separated string of all leaf values. If metadata is NULL, return empty string. Recursively traverse dicts (take values) and lists (take elements), collecting all scalar string representations.
 
 Example: `{"module": "State Engine", "depends_on": ["001"]}` → `"State Engine 001"`.
+
+**Edge cases:** Scalar values are converted via `str(value)`. `None`/`null` values are skipped. Booleans become `"True"`/`"False"`. Numeric values become their string form (e.g., `42` → `"42"`). Empty dicts/lists contribute nothing.
 
 **AC-4:** Inserting an entity via `register_entity` makes it immediately searchable.
 **AC-5:** Updating an entity via `update_entity` reflects changes in search results.
@@ -88,23 +95,29 @@ def search_entities(
 **Behavior:**
 1. If `query` is empty or whitespace-only, return empty list.
 2. Sanitize `query`: strip leading/trailing whitespace.
-3. Build FTS5 MATCH query:
-   a. **Sanitize special characters:** Strip FTS5 operators (`*`, `"`, `(`, `)`, `+`, `-`, `^`, `:`) from the query before tokenizing. This prevents `sqlite3.OperationalError` from malformed FTS syntax.
-   b. **Tokenize:** Split sanitized query on whitespace into individual tokens.
-   c. **Multi-token combination:** Multiple tokens are combined with implicit AND (FTS5 default). Example: query `"state engine"` matches entities containing both "state" AND "engine".
-   d. **Prefix match** (default): Append `*` to each token for prefix matching. Example: query `"recon"` becomes `"recon*"` to match "reconciliation". Multi-token: `"state eng"` becomes `"state* eng*"`.
-   e. **Exact phrase**: If query is wrapped in double quotes, pass through as-is (after sanitization of inner content).
+3. Build FTS5 MATCH query (order of operations matters):
+   a. **Exact phrase detection** (first): If the query starts and ends with double quotes, extract the inner content, strip FTS5 operators from the inner content per step 3b, and wrap the sanitized inner content back in double quotes for FTS5 phrase matching. Return this as the MATCH expression. Skip steps 3b-3d.
+   b. **Sanitize special characters:** Strip FTS5 operators (`*`, `"`, `(`, `)`, `+`, `-`, `^`, `:`) from the query. This prevents `sqlite3.OperationalError` from malformed FTS syntax.
+   c. **Tokenize:** Split sanitized query on whitespace into individual tokens. If no tokens remain after sanitization, return empty list.
+   d. **Multi-token combination:** Multiple tokens are combined with implicit AND (FTS5 default). Example: query `"state engine"` matches entities containing both "state" AND "engine".
+   e. **Prefix match:** Append `*` to each token for prefix matching. Example: query `"recon"` becomes `"recon*"` to match "reconciliation". Multi-token: `"state eng"` becomes `"state* eng*"`.
 4. If `entity_type` provided, filter results to that type.
 5. Order results by FTS5 `rank` (relevance score, lower is better).
 6. Apply `limit` (default 20, max 100).
 7. Return list of entity dicts with same shape as `get_entity` output plus a `rank` field.
 
+**JOIN strategy:** Query joins `entities_fts` with `entities` using rowid: `SELECT e.*, entities_fts.rank FROM entities_fts JOIN entities e ON entities_fts.rowid = e.rowid WHERE entities_fts MATCH :query ORDER BY entities_fts.rank`. The `entity_type` filter and `limit` are applied as additional WHERE/LIMIT clauses.
+
+**Status filtering:** No dedicated `status` parameter is provided. Status is FTS-indexed, so searching `"completed"` will match entities with that status. This satisfies PRD FR-9's status search requirement through the general FTS query mechanism rather than a dedicated filter parameter.
+
+**Rank in output:** Rank (FTS5 relevance score) is used for ordering only and is not displayed in the MCP tool formatted output (R4). It is included in the raw dict returned by the database method for programmatic consumers.
+
 **Error handling:**
 - If FTS5 table doesn't exist (pre-migration DB), raise `ValueError("fts_not_available: search requires migration 4")`.
 - If MATCH syntax is invalid (malformed query), catch `sqlite3.OperationalError` and raise `ValueError("invalid_search_query: {detail}")`.
 
-**AC-7:** `search_entities("recon")` returns entities whose name, ID, or metadata contains words starting with "recon".
-**AC-8:** `search_entities("feature", entity_type="brainstorm")` returns empty (type filter works).
+**AC-7:** Given entities including `feature:011-reconciliation-mcp-tool` (name: "Reconciliation MCP Tool"), `search_entities("recon")` returns results including that entity (prefix match on name).
+**AC-8:** Given entities of type `feature` containing the word "feature" in metadata, `search_entities("feature", entity_type="brainstorm")` returns empty list (type filter excludes non-brainstorm entities).
 **AC-9:** Results are ordered by relevance (best match first).
 **AC-10:** Empty query returns empty list, not all entities.
 **AC-11:** `limit` parameter caps result count; values > 100 are clamped to 100.
@@ -155,7 +168,7 @@ Add as migration 4 in the entity registry migration chain.
 
 Note: No SQLite triggers are created — FTS sync is handled at the application level per R2.
 
-**AC-16:** Migration is idempotent — running on a v4 DB is a no-op.
+**AC-16:** Migration is idempotent at the framework level — the migration runner skips it when `schema_version >= 4`. The migration function uses `CREATE VIRTUAL TABLE IF NOT EXISTS` for additional safety.
 **AC-17:** Migration preserves all existing data.
 **AC-18:** Migration handles NULL metadata gracefully (empty string in FTS).
 **AC-19:** Schema version is 4 after migration.
