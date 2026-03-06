@@ -97,6 +97,27 @@ Responsibilities:
 | Path traversal attacks | Low | High | Reuse existing `resolve_output_path` which enforces containment |
 | Schema version drift | Low | Low | Version is a simple integer constant; bump only when format changes |
 
+## Test Strategy
+
+**Database layer (`test_database.py`):**
+- Filter combinations: no filters, entity_type only, status only, both, invalid entity_type
+- Metadata normalization: valid JSON, NULL, malformed JSON
+- `include_lineage` toggle: True includes parent_type_id, False omits it
+- Empty result set: no matching entities returns entity_count 0
+- Entity ordering: verify created_at ASC, type_id ASC
+- Envelope structure: schema_version, exported_at format, filters_applied
+
+**Helper layer (`test_server_helpers.py`):**
+- File write: output_path creates file with valid JSON, parent directories created
+- Path escape: `../../etc/passwd` returns error
+- OSError handling: permission denied returns error string
+- ValueError propagation: invalid entity_type returns error with database message
+- No output_path: returns JSON string directly
+
+**MCP tool (`entity_server.py`):**
+- Null `_db` guard returns error
+- Delegation to helper (integration-level)
+
 ## Interfaces
 
 ### Database Layer Interface
