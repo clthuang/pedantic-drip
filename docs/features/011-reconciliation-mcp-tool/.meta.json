@@ -1,0 +1,29 @@
+{
+  "id": "011",
+  "slug": "reconciliation-mcp-tool",
+  "status": "active",
+  "created": "2026-03-01T16:27:59+08:00",
+  "mode": "standard",
+  "branch": "feature/011-reconciliation-mcp-tool",
+  "project_id": "P001",
+  "module": "State Engine",
+  "depends_on_features": [
+    "009-state-engine-mcp-tools-phase-r",
+    "003-bidirectional-uuid-sync-betwee"
+  ],
+  "lastCompletedPhase": null,
+  "phases": {
+    "specify": {
+      "started": "2026-03-07T01:40:00+08:00",
+      "phaseReview": {
+        "iterations": 5,
+        "approved": false,
+        "reviewerNotes": [
+          "R3: Missing behavior for non-existent feature directory (suggest return empty reports)",
+          "AC-2: status='active' present but easy to miss (suggest Given/When/Then restructure)",
+          "R3/R5: Two validation approaches (char-level vs realpath) not explicitly justified by engine availability"
+        ]
+      }
+    }
+  }
+}
