@@ -402,6 +402,50 @@ def _derive_state_from_meta(
     )
 ```
 
+### I3b: `_hydrate_from_meta_json` Post-Refactor (Existing Method, Modified)
+
+After extracting `_derive_state_from_meta` (TD-3), the existing `_hydrate_from_meta_json` is refactored to delegate phase derivation:
+
+```python
+def _hydrate_from_meta_json(self, feature_type_id: str) -> FeatureWorkflowState | None:
+    """Lazy hydration: parse .meta.json, derive state, backfill DB row."""
+    # Precondition: entity must exist (unchanged)
+    entity = self.db.get_entity(feature_type_id)
+    if entity is None:
+        return None
+
+    slug = self._extract_slug(feature_type_id)
+    meta_path = os.path.join(self.artifacts_root, "features", slug, ".meta.json")
+    if not os.path.exists(meta_path):
+        return None
+    try:
+        with open(meta_path) as f:
+            meta = json.load(f)
+    except json.JSONDecodeError:
+        return None
+
+    # Delegate phase derivation to shared helper (was inline before)
+    state = self._derive_state_from_meta(meta, feature_type_id, source="meta_json")
+    if state is None:
+        return None
+
+    # Backfill DB row (unchanged — only runs when DB is accessible)
+    try:
+        self.db.create_workflow_phase(
+            feature_type_id,
+            workflow_phase=state.current_phase,
+            last_completed_phase=state.last_completed_phase,
+            mode=state.mode,
+        )
+    except ValueError:
+        row = self.db.get_workflow_phase(feature_type_id)
+        if row is not None:
+            return self._row_to_state(row, source="meta_json")
+        raise
+
+    return state
+```
+
 ### I4: `_write_meta_json_fallback(feature_type_id: str, phase: str) -> FeatureWorkflowState`
 
 ```python
@@ -825,6 +869,14 @@ def _scan_features_by_status(self, status: str) -> list[FeatureWorkflowState]:
 
 ---
 
+## Plan-Phase Open Items
+
+These design decisions are intentionally deferred to the plan phase for task-level resolution:
+
+1. **Probe busy_timeout evaluation (from C1):** Evaluate whether a reduced probe-specific `PRAGMA busy_timeout` (e.g., 100ms) before `SELECT 1`, restored after, is worth the complexity vs. accepting the inherited 5s bound. Document the decision and close this open item.
+
+---
+
 ## Dependency Graph
 
 ```
@@ -866,7 +918,7 @@ _derive_state_from_meta (shared helper, extracted per TD-3)
 | File | Change Type | Scope |
 |------|------------|-------|
 | `workflow_engine/models.py` | Add `TransitionResponse` dataclass, update `source` comment | Small |
-| `workflow_engine/engine.py` | Add C1-C4, C8 methods; extract `_derive_state_from_meta` helper; wrap public methods with fallback; add imports (`sqlite3`, `tempfile`, `glob`) | Large (primary change) |
+| `workflow_engine/engine.py` | Add C1-C4, C8 methods; extract `_derive_state_from_meta` helper; refactor `_hydrate_from_meta_json` to delegate phase derivation to `_derive_state_from_meta`; wrap public methods with fallback; add imports (`sqlite3`, `tempfile`, `glob`) | Large (primary change) |
 | `mcp/workflow_state_server.py` | Add C6, C7; update `_process_*` for structured errors and degradation; update `_engine is None` guards; update non-exception error paths (e.g., `_process_get_phase` None-state check); add `import sqlite3` | Medium |
 | `workflow_engine/test_engine.py` | New tests for all degradation paths | Medium |
 | `mcp/test_workflow_state_server.py` | Update error-path assertions, add degradation tests | Medium |
