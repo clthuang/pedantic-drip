@@ -9,7 +9,8 @@ All Phase 1 tasks are independent and can be implemented in parallel.
 **File:** `plugins/iflow/hooks/lib/workflow_engine/models.py`
 **TDD Step:** 1
 **Depends on:** none
-**Estimated:** 5 min
+**Complexity:** Simple
+**Test file:** `plugins/iflow/hooks/lib/workflow_engine/test_engine.py`
 
 - [ ] Write test functions named `test_transition_response_*` (e.g., `test_transition_response_construction`, `test_transition_response_frozen`, `test_transition_response_field_access`, `test_transition_response_results_is_tuple`): construction, frozen enforcement, field access, `results` is tuple, `degraded` is bool
 - [ ] Add `TransitionResponse` frozen dataclass with `results: tuple[TransitionResult, ...]` and `degraded: bool`
@@ -25,10 +26,10 @@ All Phase 1 tasks are independent and can be implemented in parallel.
 **File:** `plugins/iflow/hooks/lib/workflow_engine/engine.py`
 **TDD Step:** 2
 **Depends on:** none
-**Estimated:** 10 min
+**Complexity:** Moderate
 
 - [ ] Add `import sqlite3` at top of engine.py
-- [ ] Write tests: healthy DB → True; mocked `_conn = None` → False (via `monkeypatch.setattr(engine.db, "_conn", None)` — defensive future-proofing); `db.close()` raising `sqlite3.ProgrammingError` → False (via `monkeypatch.setattr(engine.db, "_conn", MockConn())` where `MockConn().execute` raises `sqlite3.ProgrammingError`); generic `sqlite3.Error` → False
+- [ ] Write tests: healthy DB → True; mocked `_conn = None` → False (via `monkeypatch.setattr(engine.db, "_conn", None)` — defensive future-proofing); `db.close()` raising `sqlite3.ProgrammingError` → False (via `monkeypatch.setattr(engine.db, "_conn", MockConn())` where `MockConn` is defined inline in the test function as `class MockConn: def execute(self, *a): raise sqlite3.ProgrammingError("closed")`); generic `sqlite3.Error` → False
 - [ ] Implement `_check_db_health()` on `WorkflowStateEngine`: guard `self.db._conn is None` → `False`, execute `SELECT 1`, catch `sqlite3.Error` → `False`
 - [ ] Add code comment: `# NOTE: busy_timeout is inherited from EntityDatabase (5s). Accepted product decision — see design C1 NFR-1 interaction.`
 
@@ -41,7 +42,7 @@ All Phase 1 tasks are independent and can be implemented in parallel.
 **File:** `plugins/iflow/hooks/lib/workflow_engine/engine.py`
 **TDD Step:** 3
 **Depends on:** none
-**Estimated:** 15 min
+**Complexity:** Complex
 
 - [ ] Pre-step grep: `grep -n _hydrate_from_meta_json plugins/iflow/hooks/lib/workflow_engine/test_engine.py` — enumerate all ~14 test sites and confirm all pass before proceeding
 - [ ] Write direct `_derive_state_from_meta` tests: active status → correct phase; completed status → `workflow_phase="finish"`; unknown status → `workflow_phase=None`; default `source="meta_json"` parameter (verify omitting source arg uses `"meta_json"`); `ValueError` from `_next_phase_value` returns `None`
@@ -58,7 +59,7 @@ All Phase 1 tasks are independent and can be implemented in parallel.
 **File:** `plugins/iflow/hooks/lib/workflow_engine/engine.py`
 **TDD Step:** 4
 **Depends on:** none
-**Estimated:** 5 min
+**Complexity:** Simple
 
 - [ ] Add `from datetime import datetime, timezone` at top of engine.py
 - [ ] Write test: verify output matches ISO 8601 with timezone offset, matches `.meta.json` convention
@@ -73,7 +74,7 @@ All Phase 1 tasks are independent and can be implemented in parallel.
 **File:** `plugins/iflow/mcp/workflow_state_server.py`
 **TDD Step:** 5
 **Depends on:** none
-**Estimated:** 5 min
+**Complexity:** Simple
 
 - [ ] Write tests in `plugins/iflow/mcp/test_workflow_state_server.py` as new `TestMakeError` class (before `TestProcessGetPhase`): verify JSON structure has `error`, `error_type`, `message`, `recovery_hint` keys; verify all error_type values produce valid JSON
 - [ ] Implement module-level `_make_error(error_type, message, recovery_hint)` returning JSON string
@@ -89,7 +90,7 @@ All Phase 1 tasks are independent and can be implemented in parallel.
 **File:** `plugins/iflow/hooks/lib/workflow_engine/engine.py`
 **TDD Step:** 6
 **Depends on:** Task 1.3 (`_derive_state_from_meta`)
-**Estimated:** 10 min
+**Complexity:** Moderate
 
 - [ ] Write tests: valid `.meta.json` → correct `FeatureWorkflowState` with `source="meta_json_fallback"`; missing file → `None`; corrupt JSON → `None`; `OSError` → `None`; active/completed/unknown status variants
 - [ ] Implement `_read_state_from_meta_json(feature_type_id)`: extract slug, construct path, read JSON, delegate to `_derive_state_from_meta` with `source="meta_json_fallback"`
@@ -104,7 +105,7 @@ All Phase 1 tasks are independent and can be implemented in parallel.
 **File:** `plugins/iflow/hooks/lib/workflow_engine/engine.py`
 **TDD Step:** 7
 **Depends on:** Task 1.4 (`_iso_now`)
-**Estimated:** 15 min
+**Complexity:** Complex
 
 - [ ] Add `import tempfile` at top of engine.py
 - [ ] Write tests: normal write verifies `lastCompletedPhase` and `phases.{phase}` timestamps; atomic replacement (verify tmp cleanup); missing `.meta.json` → `ValueError`; corrupt `.meta.json` → `ValueError`; terminal phase (`finish`) sets `status="completed"`; partial write cleanup (mock `json.dump` to raise → verify temp file not on disk after call raises; simplest: `assert not os.path.exists(tmp_path)`)
@@ -123,7 +124,7 @@ All Phase 1 tasks are independent and can be implemented in parallel.
 **File:** `plugins/iflow/hooks/lib/workflow_engine/engine.py`
 **TDD Step:** 8
 **Depends on:** Task 2.1 (`_read_state_from_meta_json`)
-**Estimated:** 10 min
+**Complexity:** Moderate
 
 - [ ] Add `import glob` at top of engine.py
 - [ ] Write tests: multiple features → correct list; empty dir → empty list; mix of valid and corrupt `.meta.json` files → corrupt ones skipped
@@ -138,7 +139,7 @@ All Phase 1 tasks are independent and can be implemented in parallel.
 **File:** `plugins/iflow/hooks/lib/workflow_engine/engine.py`
 **TDD Step:** 9
 **Depends on:** Task 1.3 (`_derive_state_from_meta`)
-**Estimated:** 10 min
+**Complexity:** Moderate
 
 - [ ] Write tests: filter by `"active"` → only active features; filter by `"completed"` → only completed; corrupt files skipped; empty results when no match
 - [ ] Implement `_scan_features_by_status(status)` per design I17: glob, read raw JSON, filter by `meta["status"]` BEFORE building `FeatureWorkflowState`, then derive state
@@ -155,7 +156,7 @@ All Phase 1 tasks are independent and can be implemented in parallel.
 **File:** `plugins/iflow/hooks/lib/workflow_engine/engine.py`
 **TDD Step:** 10
 **Depends on:** Tasks 1.2, 2.1
-**Estimated:** 10 min
+**Complexity:** Moderate
 
 - [ ] Add `import sys` at top of engine.py (for `print(..., file=sys.stderr)`). Note: `import sys` is owned by Task 4.1. Phase 1 tasks (1.2-1.4) do NOT need `sys`.
 - [ ] Write tests: probe fails → fallback returns from `.meta.json` with `source="meta_json_fallback"`; probe passes but DB query raises `sqlite3.Error` → secondary defense returns from `.meta.json`; happy path unchanged (existing tests still pass)
@@ -171,7 +172,7 @@ All Phase 1 tasks are independent and can be implemented in parallel.
 **File:** `plugins/iflow/hooks/lib/workflow_engine/engine.py`, `plugins/iflow/mcp/workflow_state_server.py`
 **TDD Step:** 11 (sub-steps a-g)
 **Depends on:** Tasks 1.1, 1.2, 4.1
-**Estimated:** 15 min
+**Complexity:** Complex
 
 **CRITICAL: Sub-steps b through e are a single atomic commit. Do NOT commit after 11b alone.**
 
@@ -185,7 +186,7 @@ All Phase 1 tasks are independent and can be implemented in parallel.
 - [ ] **11e.** Migrate `test_transitioned_uses_all_not_any` monkeypatch to return `TransitionResponse(results=tuple(mixed_results), degraded=False)`; add import at top of `plugins/iflow/mcp/test_workflow_state_server.py`: `from workflow_engine.models import TransitionResponse` (place after existing `from workflow_engine.models import FeatureWorkflowState` import)
 - [ ] **COMMIT b-e atomically** — run: `plugins/iflow/.venv/bin/python -m pytest plugins/iflow/hooks/lib/workflow_engine/test_engine.py plugins/iflow/mcp/test_workflow_state_server.py -v`
 - [ ] **11f.** Implement degraded-path logic: health probe check, DB write guard, `TransitionResponse(degraded=True)` on failure
-- [ ] **11g.** Verification grep: `grep -n transition_phase plugins/iflow/hooks/lib/workflow_engine/test_engine.py plugins/iflow/mcp/test_workflow_state_server.py` — confirm no unmigrated sites
+- [ ] **11g.** Verification grep: `grep -n 'transition_phase\|\.allowed' plugins/iflow/hooks/lib/workflow_engine/test_engine.py plugins/iflow/mcp/test_workflow_state_server.py` — confirm no unmigrated call sites AND no remaining bare `.allowed` accesses on the response object
 
 **Done when:** All existing tests pass with unwrapped `.results`. New fallback tests pass. Grep verification shows no unmigrated sites.
 
@@ -196,7 +197,7 @@ All Phase 1 tasks are independent and can be implemented in parallel.
 **File:** `plugins/iflow/hooks/lib/workflow_engine/engine.py`
 **TDD Step:** 12
 **Depends on:** Tasks 1.2, 2.2, 4.1
-**Estimated:** 10 min
+**Complexity:** Moderate
 
 - [ ] Write tests: DB write fail → `.meta.json` updated with `source="meta_json_fallback"`; probe fail → direct `.meta.json` write; DB write succeeds but read-back fails → derived state with `source="db"` (test via: monkeypatch `db.update_workflow_phase` to succeed, then monkeypatch `db.get_workflow_phase` to raise `sqlite3.Error` — two separate monkeypatches); happy path unchanged. Note: `update_workflow_phase` is a plain SQL UPDATE with no triggers — safe to mock independently.
 - [ ] Wrap `complete_phase()` per design I13: probe → `wrote_to_db` flag → secondary defense → `_write_meta_json_fallback`
@@ -211,7 +212,7 @@ All Phase 1 tasks are independent and can be implemented in parallel.
 **File:** `plugins/iflow/hooks/lib/workflow_engine/engine.py`
 **TDD Step:** 13
 **Depends on:** Tasks 1.2, 3.1
-**Estimated:** 5 min
+**Complexity:** Simple
 
 - [ ] Write tests: probe fail → filesystem results via `_scan_features_filesystem` filtered by `current_phase`; DB query raises → secondary defense; happy path unchanged
 - [ ] Wrap `list_by_phase()` per design I15: health probe → filesystem scan → filter
@@ -225,7 +226,7 @@ All Phase 1 tasks are independent and can be implemented in parallel.
 **File:** `plugins/iflow/hooks/lib/workflow_engine/engine.py`
 **TDD Step:** 14
 **Depends on:** Tasks 1.2, 3.2
-**Estimated:** 5 min
+**Complexity:** Simple
 
 - [ ] Write tests: probe fail → filesystem results via `_scan_features_by_status`; happy path unchanged
 - [ ] Wrap `list_by_status()` per design I16: health probe → `_scan_features_by_status`; secondary catch → same
@@ -241,9 +242,9 @@ All Phase 1 tasks are independent and can be implemented in parallel.
 **File:** `plugins/iflow/mcp/workflow_state_server.py`, `plugins/iflow/mcp/test_workflow_state_server.py`
 **TDD Step:** 15
 **Depends on:** Task 1.5 (`_make_error`)
-**Estimated:** 15 min
+**Complexity:** Complex
 
-- [ ] Pre-step grep: `grep -n "startswith\|Error:\|Internal error" plugins/iflow/mcp/test_workflow_state_server.py` to enumerate all string-format assertions. Expected ~25 hits total; classify into: assertion sites (~15), comments/docstrings (~10). If count differs significantly, audit before proceeding.
+- [ ] Pre-step grep: `grep -n 'startswith\|"Error:\|Internal error' plugins/iflow/mcp/test_workflow_state_server.py` to enumerate all string-format error assertions. This pattern matches: `startswith(` calls (assertion sites), literal `"Error:` strings in assertions, and `Internal error` strings. Expected ~17 assertion sites that need migration. If count differs significantly from ~17, audit the extra/missing hits before proceeding.
 - [ ] Add `import sqlite3` to `workflow_state_server.py`
 - [ ] Update all 6 `_engine is None` guards to use `_make_error("not_initialized", ...)`
 - [ ] Update `_process_*` functions to use `_make_error` for error returns (ValueError, sqlite3.Error, Exception)
@@ -266,7 +267,7 @@ All Phase 1 tasks are independent and can be implemented in parallel.
 **File:** `plugins/iflow/mcp/workflow_state_server.py`, `plugins/iflow/mcp/test_workflow_state_server.py`
 **TDD Step:** 16 (sub-steps a-b)
 **Depends on:** Tasks 4.2, 5.1
-**Estimated:** 15 min
+**Complexity:** Complex
 
 **Sub-step A — Serialization update:**
 - [ ] Write `_serialize_state` degraded-field tests: `source="db"` → `degraded: false`; `source="meta_json_fallback"` → `degraded: true`
@@ -295,7 +296,7 @@ All Phase 1 tasks are independent and can be implemented in parallel.
 **File:** `plugins/iflow/hooks/lib/workflow_engine/test_engine.py`
 **TDD Step:** 17 (engine portion)
 **Depends on:** All Phase 1-5 tasks
-**Estimated:** 10 min
+**Complexity:** Moderate
 
 - [ ] Full workflow: create state → close DB → `get_state()` → verify fallback returns `source="meta_json_fallback"`
 - [ ] Full workflow: create state → close DB → `complete_phase()` → verify `.meta.json` write
@@ -312,7 +313,7 @@ All Phase 1 tasks are independent and can be implemented in parallel.
 **File:** `plugins/iflow/mcp/test_workflow_state_server.py`
 **TDD Step:** 17 (MCP portion)
 **Depends on:** All Phase 1-5 tasks
-**Estimated:** 10 min
+**Complexity:** Moderate
 
 - [ ] Test each MCP tool (`get_phase`, `transition_phase`, `complete_phase`, `list_by_phase`, `list_by_status`) with mocked DB failure → verify `degraded: true` in response
 - [ ] Test structured error format for each error type (`db_unavailable`, `feature_not_found`, `invalid_transition`, `internal`, `not_initialized`)
