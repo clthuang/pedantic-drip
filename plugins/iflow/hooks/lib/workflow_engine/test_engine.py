@@ -3097,6 +3097,57 @@ class TestCompletePhaseFallback:
         assert state.last_completed_phase == "specify"
         assert state.current_phase == "design"
 
+    def test_fallback_sets_started_when_missing(self, tmp_path) -> None:
+        """When fallback writes to .meta.json and phase has no 'started'
+        timestamp, it adds one (spec R2, design I4)."""
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="specify",
+            last_completed_phase="brainstorm",
+        )
+        # Create .meta.json with no 'started' on the specify phase
+        _create_meta_json(
+            tmp_path,
+            "008-test-feature",
+            status="active",
+            last_completed_phase="brainstorm",
+        )
+        engine._check_db_health = lambda: False  # type: ignore[assignment]
+
+        engine.complete_phase(type_id, "specify")
+
+        meta_path = tmp_path / "features" / "008-test-feature" / ".meta.json"
+        meta = json.loads(meta_path.read_text())
+        phase_obj = meta["phases"]["specify"]
+        assert "started" in phase_obj, "started timestamp must be set when missing"
+        assert "completed" in phase_obj
+
+    def test_fallback_preserves_existing_started(self, tmp_path) -> None:
+        """When fallback writes to .meta.json and phase already has 'started',
+        it preserves the original value."""
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="specify",
+            last_completed_phase="brainstorm",
+        )
+        feature_dir = tmp_path / "features" / "008-test-feature"
+        feature_dir.mkdir(parents=True, exist_ok=True)
+        original_started = "2026-01-01T00:00:00+00:00"
+        meta = {
+            "id": "008",
+            "slug": "test-feature",
+            "status": "active",
+            "lastCompletedPhase": "brainstorm",
+            "phases": {"specify": {"started": original_started}},
+        }
+        (feature_dir / ".meta.json").write_text(json.dumps(meta))
+        engine._check_db_health = lambda: False  # type: ignore[assignment]
+
+        engine.complete_phase(type_id, "specify")
+
+        updated = json.loads((feature_dir / ".meta.json").read_text())
+        assert updated["phases"]["specify"]["started"] == original_started
+
 
 # ===========================================================================
 # Task 4.4: list_by_phase() fallback
@@ -3228,3 +3279,907 @@ class TestListByPhaseFallback:
         assert len(results) == 2
         assert all(r.current_phase == "specify" for r in results)
         assert all(r.source == "db" for r in results)
+
+
+# ===========================================================================
+# Phase 6 (Task 6.1): Integration Tests — Degradation Path
+# ===========================================================================
+
+
+class TestIntegrationDegradation:
+    """Task 6.1: End-to-end degradation path integration tests.
+
+    Each test creates a fully seeded DB+entity+meta.json, then closes the DB
+    connection to trigger the degraded-mode fallback path.
+    """
+
+    def test_get_state_fallback_after_db_close(self, tmp_path) -> None:
+        """Full workflow: create feature in DB -> close DB -> get_state() returns meta_json_fallback.
+
+        Covers: _check_db_health() returning False -> _read_state_from_meta_json path.
+        """
+        db = EntityDatabase(":memory:")
+        slug = "009-integration-get-state"
+        type_id = f"feature:{slug}"
+        db.register_entity(
+            entity_type="feature",
+            entity_id=slug,
+            name="Integration Get State Test",
+            status="active",
+        )
+        db.create_workflow_phase(
+            type_id,
+            workflow_phase="design",
+            last_completed_phase="specify",
+            mode="standard",
+        )
+
+        # Create .meta.json so fallback can read it
+        feature_dir = tmp_path / "features" / slug
+        feature_dir.mkdir(parents=True)
+        _create_meta_json(
+            tmp_path,
+            slug,
+            status="active",
+            mode="standard",
+            last_completed_phase="specify",
+        )
+
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        # Verify DB path works before closing
+        state_before = engine.get_state(type_id)
+        assert state_before is not None
+        assert state_before.source == "db"
+
+        # Close the DB to force degradation
+        db.close()
+
+        # get_state should now fall back to .meta.json
+        state_after = engine.get_state(type_id)
+        assert state_after is not None
+        assert state_after.source == "meta_json_fallback"
+        # Fallback reads from .meta.json: lastCompletedPhase="specify" -> current="design"
+        assert state_after.last_completed_phase == "specify"
+        assert state_after.current_phase == "design"
+
+    def test_complete_phase_fallback_writes_meta_json(self, tmp_path) -> None:
+        """Full workflow: create feature in DB -> close DB -> complete_phase() writes .meta.json.
+
+        Covers: complete_phase() detecting source='meta_json_fallback' and calling
+        _write_meta_json_fallback() instead of updating the DB.
+        """
+        db = EntityDatabase(":memory:")
+        slug = "009-integration-complete"
+        type_id = f"feature:{slug}"
+        db.register_entity(
+            entity_type="feature",
+            entity_id=slug,
+            name="Integration Complete Phase Test",
+            status="active",
+        )
+        db.create_workflow_phase(
+            type_id,
+            workflow_phase="specify",
+            last_completed_phase="brainstorm",
+            mode="standard",
+        )
+
+        # Create .meta.json so degraded mode can operate
+        feature_dir = tmp_path / "features" / slug
+        feature_dir.mkdir(parents=True)
+        _create_meta_json(
+            tmp_path,
+            slug,
+            status="active",
+            mode="standard",
+            last_completed_phase="brainstorm",
+        )
+
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        # Close the DB to force degradation
+        db.close()
+
+        # complete_phase should fall back to writing .meta.json
+        state = engine.complete_phase(type_id, "specify")
+
+        # Verify returned state reflects the completion
+        assert state.source == "meta_json_fallback"
+        assert state.last_completed_phase == "specify"
+        assert state.current_phase == "design"  # next after specify
+
+        # Verify .meta.json was actually written with updated phase
+        import json as _json
+
+        meta_path = feature_dir / ".meta.json"
+        with open(meta_path) as f:
+            meta = _json.load(f)
+
+        assert meta["lastCompletedPhase"] == "specify"
+        assert "specify" in meta.get("phases", {})
+        assert meta["phases"]["specify"]["completed"] is not None
+
+    def test_list_by_phase_fallback_filesystem_scan(self, tmp_path) -> None:
+        """Full workflow: create features in DB -> close DB -> list_by_phase() uses filesystem scan.
+
+        Covers: list_by_phase() detecting unhealthy DB -> _scan_features_filesystem()
+        filtering by current_phase.
+        """
+        db = EntityDatabase(":memory:")
+
+        # Seed 3 features: 2 in "specify" (via meta), 1 in "design"
+        # last_completed="brainstorm" -> next phase = "specify"
+        # last_completed="specify"   -> next phase = "design"
+        for slug, last_completed in [
+            ("009-lbp-alpha", "brainstorm"),
+            ("009-lbp-beta", "brainstorm"),
+            ("009-lbp-gamma", "specify"),
+        ]:
+            type_id = f"feature:{slug}"
+            db.register_entity(
+                entity_type="feature",
+                entity_id=slug,
+                name=f"Test {slug}",
+                status="active",
+            )
+            # Use the correct next-phase value matching what the meta.json will report
+            next_phase = "specify" if last_completed == "brainstorm" else "design"
+            db.create_workflow_phase(
+                type_id,
+                workflow_phase=next_phase,
+                last_completed_phase=last_completed,
+                mode="standard",
+            )
+            _create_meta_json(
+                tmp_path,
+                slug,
+                status="active",
+                mode="standard",
+                last_completed_phase=last_completed,
+            )
+
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        # Close the DB to force degradation
+        db.close()
+
+        # list_by_phase should scan filesystem
+        # last_completed="brainstorm" -> current_phase="specify" (next after brainstorm)
+        results = engine.list_by_phase("specify")
+
+        assert len(results) == 2
+        assert all(r.current_phase == "specify" for r in results)
+        assert all(r.source == "meta_json_fallback" for r in results)
+        slugs = {r.feature_type_id for r in results}
+        assert "feature:009-lbp-alpha" in slugs
+        assert "feature:009-lbp-beta" in slugs
+
+    def test_list_by_status_fallback_filesystem_scan(self, tmp_path) -> None:
+        """Full workflow: create features in DB -> close DB -> list_by_status() uses filesystem scan.
+
+        Covers: list_by_status() detecting unhealthy DB -> _scan_features_by_status()
+        filtering by .meta.json status field.
+        """
+        db = EntityDatabase(":memory:")
+
+        # Seed: 2 active, 1 completed
+        for slug, status, last_completed in [
+            ("009-lbs-active1", "active", "specify"),
+            ("009-lbs-active2", "active", "brainstorm"),
+            ("009-lbs-done", "completed", "finish"),
+        ]:
+            type_id = f"feature:{slug}"
+            db.register_entity(
+                entity_type="feature",
+                entity_id=slug,
+                name=f"Test {slug}",
+                status=status,
+            )
+            _create_meta_json(
+                tmp_path,
+                slug,
+                status=status,
+                mode="standard",
+                last_completed_phase=last_completed,
+            )
+
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        # Close the DB to force degradation
+        db.close()
+
+        # list_by_status("active") should return only the 2 active features
+        results = engine.list_by_status("active")
+
+        assert len(results) == 2
+        assert all(r.source == "meta_json_fallback" for r in results)
+        slugs = {r.feature_type_id for r in results}
+        assert "feature:009-lbs-active1" in slugs
+        assert "feature:009-lbs-active2" in slugs
+        assert "feature:009-lbs-done" not in slugs
+
+        # list_by_status("completed") should return only the completed feature
+        results_done = engine.list_by_status("completed")
+        assert len(results_done) == 1
+        assert results_done[0].feature_type_id == "feature:009-lbs-done"
+        assert results_done[0].current_phase == "finish"
+
+
+# ===========================================================================
+# Phase 6 (Task 6.1): Health Probe Performance
+# ===========================================================================
+
+
+class TestHealthProbePerformance:
+    """Task 6.1: _check_db_health() performance contract.
+
+    1000 iterations must complete with mean < 1ms using an in-memory SQLite DB.
+    """
+
+    def test_health_probe_1000_iterations_under_1ms_mean(self) -> None:
+        """Performance: 1000 _check_db_health() calls must average < 1ms each.
+
+        Uses an in-memory DB (:memory:) to isolate probe latency from disk I/O.
+        Acceptable on any modern machine -- SELECT 1 on a healthy in-memory
+        connection is typically sub-10us.
+        """
+        import time
+
+        db = EntityDatabase(":memory:")
+        engine = WorkflowStateEngine(db, "/tmp")
+
+        # Warm-up: let SQLite and Python reach steady state
+        for _ in range(10):
+            engine._check_db_health()
+
+        # Time 1000 iterations
+        iterations = 1000
+        start = time.perf_counter()
+        for _ in range(iterations):
+            result = engine._check_db_health()
+        elapsed_s = time.perf_counter() - start
+
+        assert result is True  # Verify the probe returns correct value
+        mean_ms = (elapsed_s / iterations) * 1000
+        assert mean_ms < 1.0, (
+            f"_check_db_health() mean latency {mean_ms:.3f}ms exceeds 1ms threshold "
+            f"over {iterations} iterations"
+        )
+
+
+# ===========================================================================
+# Phase 8b: Test-Deepener Feature 010 (Graceful Degradation)
+# ===========================================================================
+
+
+class TestDegradedGetStateCatchesSqliteSubclasses:
+    """Dimension 5 (mutation mindset): Verify get_state catches all sqlite3.Error
+    subclasses, not just the base class.
+
+    Anticipate: If the except clause used a specific subclass like
+    sqlite3.OperationalError instead of sqlite3.Error, other subclasses
+    (DatabaseError, InterfaceError, ProgrammingError) would propagate uncaught.
+    derived_from: dimension:mutation_mindset (error type classification)
+    """
+
+    def test_catches_database_error(self, tmp_path, monkeypatch) -> None:
+        """get_state catches sqlite3.DatabaseError (subclass of sqlite3.Error).
+        derived_from: dimension:mutation_mindset (catches all sqlite3.Error subclasses)
+        """
+        # Given a healthy engine with meta.json fallback available
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="design",
+            last_completed_phase="specify",
+        )
+        _create_meta_json(
+            tmp_path, "008-test-feature", status="active",
+            last_completed_phase="specify",
+        )
+        # When DB raises DatabaseError on query
+        monkeypatch.setattr(
+            db, "get_workflow_phase",
+            lambda *a, **kw: (_ for _ in ()).throw(
+                sqlite3.DatabaseError("file is not a database")
+            ),
+        )
+        # Then get_state catches it and falls back to meta_json
+        state = engine.get_state(type_id)
+        assert state is not None
+        assert state.source == "meta_json_fallback"
+
+    def test_catches_interface_error(self, tmp_path, monkeypatch) -> None:
+        """get_state catches sqlite3.InterfaceError (subclass of sqlite3.Error).
+        derived_from: dimension:mutation_mindset (catches all sqlite3.Error subclasses)
+        """
+        # Given a healthy engine with meta.json fallback available
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="design",
+            last_completed_phase="specify",
+        )
+        _create_meta_json(
+            tmp_path, "008-test-feature", status="active",
+            last_completed_phase="specify",
+        )
+        # When DB raises InterfaceError on query
+        monkeypatch.setattr(
+            db, "get_workflow_phase",
+            lambda *a, **kw: (_ for _ in ()).throw(
+                sqlite3.InterfaceError("binding mismatch")
+            ),
+        )
+        # Then get_state catches it and falls back to meta_json
+        state = engine.get_state(type_id)
+        assert state is not None
+        assert state.source == "meta_json_fallback"
+
+    def test_does_not_re_raise_sqlite_error(self, tmp_path, monkeypatch) -> None:
+        """get_state NEVER re-raises sqlite3.Error -- it always falls back gracefully.
+        derived_from: dimension:adversarial (does not re-raise sqlite error)
+
+        Anticipate: If the except clause accidentally had a `raise` or
+        was missing entirely, sqlite errors would propagate to the caller.
+        """
+        # Given a healthy engine with meta.json fallback available
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="design",
+            last_completed_phase="specify",
+        )
+        _create_meta_json(
+            tmp_path, "008-test-feature", status="active",
+            last_completed_phase="specify",
+        )
+        # When DB raises sqlite3.Error on query
+        monkeypatch.setattr(
+            db, "get_workflow_phase",
+            lambda *a, **kw: (_ for _ in ()).throw(
+                sqlite3.Error("generic sqlite error")
+            ),
+        )
+        # Then get_state does NOT raise -- it returns a state or None
+        state = engine.get_state(type_id)
+        # Should be meta_json_fallback (not raised, not None since meta.json exists)
+        assert state is not None
+        assert state.source == "meta_json_fallback"
+
+
+class TestHealthProbePerCallNotCached:
+    """Dimension 5 (mutation mindset): Verify _check_db_health is called per-call,
+    not cached from a previous invocation.
+
+    Anticipate: If health was cached at construction time or memoized, a DB that
+    becomes unhealthy after the first call would not be detected.
+    derived_from: dimension:mutation_mindset (per-call health probe)
+    """
+
+    def test_probe_called_fresh_each_time(self, tmp_path, monkeypatch) -> None:
+        """Health probe must be invoked on each get_state call.
+
+        First call: DB healthy -> returns source='db'.
+        Second call: DB unhealthy -> returns source='meta_json_fallback'.
+        """
+        # Given a healthy engine
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="design",
+            last_completed_phase="specify",
+        )
+        _create_meta_json(
+            tmp_path, "008-test-feature", status="active",
+            last_completed_phase="specify",
+        )
+
+        # When first call: DB healthy
+        state1 = engine.get_state(type_id)
+        assert state1 is not None
+        assert state1.source == "db"
+
+        # When DB becomes unhealthy between calls
+        db.close()
+
+        # Then second call detects the unhealthy DB
+        state2 = engine.get_state(type_id)
+        assert state2 is not None
+        assert state2.source == "meta_json_fallback"
+
+    def test_probe_recovery_after_unhealthy(self, tmp_path, monkeypatch) -> None:
+        """Health probe detects recovery: unhealthy -> healthy.
+
+        Uses monkeypatch to simulate probe failure then removal.
+        """
+        # Given a healthy engine
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="design",
+            last_completed_phase="specify",
+        )
+        _create_meta_json(
+            tmp_path, "008-test-feature", status="active",
+            last_completed_phase="specify",
+        )
+
+        # When probe is temporarily unhealthy
+        original_check = engine._check_db_health
+        engine._check_db_health = lambda: False  # type: ignore[assignment]
+
+        state1 = engine.get_state(type_id)
+        assert state1 is not None
+        assert state1.source == "meta_json_fallback"
+
+        # When probe recovers
+        engine._check_db_health = original_check  # type: ignore[assignment]
+
+        state2 = engine.get_state(type_id)
+        assert state2 is not None
+        assert state2.source == "db"
+
+
+class TestTransitionPhaseDualConditionDegraded:
+    """Dimension 5 (mutation mindset): transition_phase has TWO degradation paths:
+    1. Primary: get_state returns source='meta_json_fallback' -> skip DB write
+    2. Secondary: DB write fails with sqlite3.Error -> return degraded=True
+
+    Both must set degraded=True. Deleting either path would miss degradation.
+    derived_from: dimension:mutation_mindset (dual-condition degraded)
+    """
+
+    def test_primary_defense_source_check_sets_degraded(self, tmp_path) -> None:
+        """When get_state returns meta_json_fallback, transition sets degraded=True
+        WITHOUT attempting a DB write.
+        derived_from: dimension:mutation_mindset (dual-condition degraded: primary)
+        """
+        # Given engine with probe failure -> get_state returns meta_json_fallback
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="specify",
+            last_completed_phase="brainstorm",
+        )
+        _create_meta_json(
+            tmp_path, "008-test-feature", status="active",
+            last_completed_phase="brainstorm",
+        )
+        engine._check_db_health = lambda: False  # type: ignore[assignment]
+
+        # Track whether update_workflow_phase was called
+        update_called = []
+        original_update = db.update_workflow_phase
+
+        def tracking_update(*a, **kw):
+            update_called.append(True)
+            return original_update(*a, **kw)
+
+        db.update_workflow_phase = tracking_update  # type: ignore[assignment]
+
+        # When transitioning
+        response = engine.transition_phase(type_id, "specify")
+
+        # Then degraded=True and DB write was NOT attempted
+        assert response.degraded is True
+        assert len(update_called) == 0, "DB write should not be attempted in primary defense"
+
+    def test_secondary_defense_write_fail_sets_degraded(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """When get_state returns source='db' but DB write fails,
+        transition sets degraded=True.
+        derived_from: dimension:mutation_mindset (dual-condition degraded: secondary)
+        """
+        # Given engine with healthy probe but write failure
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="specify",
+            last_completed_phase="brainstorm",
+        )
+        feature_dir = tmp_path / "features" / "008-test-feature"
+        feature_dir.mkdir(parents=True, exist_ok=True)
+        (feature_dir / "spec.md").write_text("# Spec")
+
+        monkeypatch.setattr(
+            db, "update_workflow_phase",
+            lambda *a, **kw: (_ for _ in ()).throw(
+                sqlite3.OperationalError("disk full")
+            ),
+        )
+
+        # When transitioning (all gates pass because spec.md exists)
+        response = engine.transition_phase(type_id, "design")
+
+        # Then degraded=True from secondary defense
+        assert response.degraded is True
+        assert all(r.allowed for r in response.results)
+
+    def test_normal_path_not_degraded(self, tmp_path) -> None:
+        """When both probe and write succeed, degraded=False.
+        derived_from: dimension:mutation_mindset (return value mutation)
+        """
+        # Given a fully healthy engine
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="specify",
+            last_completed_phase="brainstorm",
+        )
+        feature_dir = tmp_path / "features" / "008-test-feature"
+        feature_dir.mkdir(parents=True, exist_ok=True)
+        (feature_dir / "spec.md").write_text("# Spec")
+
+        # When transitioning successfully
+        response = engine.transition_phase(type_id, "design")
+
+        # Then degraded=False
+        assert response.degraded is False
+        assert all(r.allowed for r in response.results)
+
+
+class TestCompletePhaseFallbackWriteVsRead:
+    """Dimension 4 (error propagation): complete_phase distinguishes between
+    read-failure (meta.json unreadable) and write-success-but-degraded.
+
+    derived_from: dimension:error_propagation (error type classification)
+    """
+
+    def test_fallback_write_unreadable_meta_raises_value_error(
+        self, tmp_path
+    ) -> None:
+        """When DB is degraded and meta.json is unreadable, complete_phase raises
+        ValueError (not silently returning None or corrupt state).
+        derived_from: dimension:adversarial (meta.json unreadable raises ValueError)
+        """
+        # Given engine with probe failure and corrupt meta.json
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="specify",
+            last_completed_phase="brainstorm",
+        )
+        # Create corrupt .meta.json
+        feature_dir = tmp_path / "features" / "008-test-feature"
+        feature_dir.mkdir(parents=True, exist_ok=True)
+        (feature_dir / ".meta.json").write_text("{corrupt json!!!")
+        engine._check_db_health = lambda: False  # type: ignore[assignment]
+
+        # When completing phase -- get_state returns None (corrupt meta)
+        # Then ValueError is raised (feature not found)
+        with pytest.raises(ValueError, match="Feature not found"):
+            engine.complete_phase(type_id, "specify")
+
+    def test_fallback_write_success_returns_correct_state(
+        self, tmp_path
+    ) -> None:
+        """When DB is degraded but meta.json is readable, complete_phase
+        writes fallback and returns FeatureWorkflowState with source='meta_json_fallback'.
+        derived_from: dimension:error_propagation (partial failure consistency)
+        """
+        # Given engine with probe failure and valid meta.json
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="specify",
+            last_completed_phase="brainstorm",
+        )
+        _create_meta_json(
+            tmp_path, "008-test-feature", status="active",
+            last_completed_phase="brainstorm",
+        )
+        engine._check_db_health = lambda: False  # type: ignore[assignment]
+
+        # When completing phase
+        state = engine.complete_phase(type_id, "specify")
+
+        # Then state is correct with fallback source
+        assert state.source == "meta_json_fallback"
+        assert state.last_completed_phase == "specify"
+        assert state.current_phase == "design"
+        assert state.completed_phases == ("brainstorm", "specify")
+
+        # And meta.json was actually updated
+        meta_path = tmp_path / "features" / "008-test-feature" / ".meta.json"
+        with open(meta_path) as f:
+            meta = json.load(f)
+        assert meta["lastCompletedPhase"] == "specify"
+
+
+class TestListByStatusDbQueryRaisesFallback:
+    """Dimension 4 (error propagation): list_by_status falls back to filesystem
+    when DB query raises sqlite3.Error after probe passes.
+
+    Anticipate: If secondary defense is missing in list_by_status,
+    a late DB error after successful probe would propagate uncaught.
+    derived_from: dimension:error_propagation (upstream dependency failure)
+    """
+
+    def test_list_entities_raises_falls_back_to_filesystem(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """When db.list_entities raises sqlite3.Error, list_by_status
+        falls back to _scan_features_by_status.
+        """
+        # Given engine with features in meta.json
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="design",
+            last_completed_phase="specify",
+        )
+        _create_meta_json(
+            tmp_path, "008-test-feature", status="active",
+            last_completed_phase="specify",
+        )
+
+        # When list_entities raises on query
+        monkeypatch.setattr(
+            db, "list_entities",
+            lambda *a, **kw: (_ for _ in ()).throw(
+                sqlite3.OperationalError("table locked")
+            ),
+        )
+
+        # Then list_by_status falls back to filesystem scan
+        results = engine.list_by_status("active")
+        assert len(results) >= 1
+        assert all(r.source == "meta_json_fallback" for r in results)
+
+    def test_fallback_logs_to_stderr(
+        self, tmp_path, monkeypatch, capsys
+    ) -> None:
+        """When list_by_status falls back, it logs the error to stderr.
+        derived_from: dimension:adversarial (stderr-only logging)
+        """
+        # Given engine with features in meta.json
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="design",
+            last_completed_phase="specify",
+        )
+        _create_meta_json(
+            tmp_path, "008-test-feature", status="active",
+            last_completed_phase="specify",
+        )
+
+        # When list_entities raises on query
+        monkeypatch.setattr(
+            db, "list_entities",
+            lambda *a, **kw: (_ for _ in ()).throw(
+                sqlite3.OperationalError("database is locked")
+            ),
+        )
+
+        engine.list_by_status("active")
+
+        captured = capsys.readouterr()
+        assert "DB error in list_by_status" in captured.err
+        assert "database is locked" in captured.err
+
+
+class TestTransitionPhaseNoDoubleWrite:
+    """Dimension 5 (mutation mindset): When gates block the transition,
+    update_workflow_phase must NOT be called.
+
+    Anticipate: If update_workflow_phase is called before the gate check
+    (or unconditionally), a blocked transition would still mutate DB state.
+    derived_from: dimension:mutation_mindset (no double-write)
+    """
+
+    def test_blocked_transition_does_not_call_update(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """When any gate blocks, update_workflow_phase is never called.
+        """
+        # Given a feature missing spec.md (G-08 blocks design transition)
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="specify",
+            last_completed_phase="brainstorm",
+        )
+
+        update_calls = []
+        original_update = db.update_workflow_phase
+
+        def tracking_update(*a, **kw):
+            update_calls.append((a, kw))
+            return original_update(*a, **kw)
+
+        monkeypatch.setattr(db, "update_workflow_phase", tracking_update)
+
+        # When transitioning to design (blocked by G-08 -- no spec.md)
+        response = engine.transition_phase(type_id, "design")
+
+        # Then blocked and no update called
+        blocked = [r for r in response.results if not r.allowed]
+        assert len(blocked) > 0
+        assert len(update_calls) == 0, (
+            f"update_workflow_phase called {len(update_calls)} times "
+            f"despite blocked transition"
+        )
+
+    def test_allowed_transition_calls_update_exactly_once(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """When all gates pass, update_workflow_phase is called exactly once.
+        derived_from: dimension:mutation_mindset (no double-write)
+        """
+        # Given a feature with spec.md present
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="specify",
+            last_completed_phase="brainstorm",
+        )
+        feature_dir = tmp_path / "features" / "008-test-feature"
+        feature_dir.mkdir(parents=True, exist_ok=True)
+        (feature_dir / "spec.md").write_text("# Spec")
+
+        update_calls = []
+        original_update = db.update_workflow_phase
+
+        def tracking_update(*a, **kw):
+            update_calls.append((a, kw))
+            return original_update(*a, **kw)
+
+        monkeypatch.setattr(db, "update_workflow_phase", tracking_update)
+
+        # When transitioning to design (allowed)
+        response = engine.transition_phase(type_id, "design")
+
+        # Then update called exactly once
+        assert all(r.allowed for r in response.results)
+        assert len(update_calls) == 1, (
+            f"update_workflow_phase called {len(update_calls)} times, expected 1"
+        )
+
+
+class TestSchemaNotModifiedDuringDegradation:
+    """Dimension 3 (adversarial): Degraded-mode operations must not accidentally
+    modify the DB schema or create tables/indices.
+
+    Anticipate: If a degraded-mode code path calls create_workflow_phase or
+    other DDL-triggering methods, it could corrupt the schema.
+    derived_from: dimension:adversarial (schema not modified)
+    """
+
+    def test_get_state_degraded_does_not_create_workflow_phase_row(
+        self, tmp_path
+    ) -> None:
+        """When get_state falls back to meta_json, it does NOT backfill a DB row.
+        This is the key difference between _hydrate_from_meta_json (which backfills)
+        and _read_state_from_meta_json (which does NOT backfill).
+        """
+        # Given engine with probe failure
+        db = _make_db()
+        type_id = _register_feature(db, "008-no-backfill")
+        _create_meta_json(
+            tmp_path, "008-no-backfill", status="active",
+            last_completed_phase="specify",
+        )
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        # Count existing workflow phase rows
+        rows_before = db.list_workflow_phases()
+        count_before = len(rows_before)
+
+        # Force probe failure
+        engine._check_db_health = lambda: False  # type: ignore[assignment]
+
+        # When getting state in degraded mode
+        state = engine.get_state(type_id)
+        assert state is not None
+        assert state.source == "meta_json_fallback"
+
+        # Then no new workflow_phase row was created
+        # Re-enable probe to read DB
+        engine._check_db_health = lambda: True  # type: ignore[assignment]
+        rows_after = db.list_workflow_phases()
+        count_after = len(rows_after)
+        assert count_after == count_before, (
+            f"Degraded get_state created {count_after - count_before} "
+            f"workflow_phase rows"
+        )
+
+
+class TestValidatePrerequisitesDegradedMode:
+    """Dimension 1 (BDD): validate_prerequisites works correctly in degraded mode.
+
+    Anticipate: validate_prerequisites calls get_state internally. If get_state
+    returns source='meta_json_fallback', validate should still return gate results
+    (not raise or return empty).
+    derived_from: spec:AC-6 (validate_prerequisites dry-run in degraded mode)
+    """
+
+    def test_returns_gate_results_when_degraded(self, tmp_path) -> None:
+        """validate_prerequisites returns gate results even when DB is unhealthy.
+        """
+        # Given engine with probe failure
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="specify",
+            last_completed_phase="brainstorm",
+        )
+        _create_meta_json(
+            tmp_path, "008-test-feature", status="active",
+            last_completed_phase="brainstorm",
+        )
+        engine._check_db_health = lambda: False  # type: ignore[assignment]
+
+        # When validating prerequisites
+        results = engine.validate_prerequisites(type_id, "specify")
+
+        # Then gate results are returned (not empty, not error)
+        assert len(results) > 0
+        # Should have at minimum G-08 and G-23
+        guard_ids = {r.guard_id for r in results}
+        assert "G-08" in guard_ids
+        assert "G-23" in guard_ids
+
+
+class TestTransitionPhaseLogsWriteFailure:
+    """Dimension 3 (adversarial): transition_phase logs DB write failure to stderr.
+
+    derived_from: dimension:adversarial (stderr-only logging)
+    """
+
+    def test_write_failure_logged_to_stderr(
+        self, tmp_path, monkeypatch, capsys
+    ) -> None:
+        """When DB write fails in transition_phase, error is logged to stderr.
+        """
+        # Given engine with healthy probe but write failure
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="specify",
+            last_completed_phase="brainstorm",
+        )
+        feature_dir = tmp_path / "features" / "008-test-feature"
+        feature_dir.mkdir(parents=True, exist_ok=True)
+        (feature_dir / "spec.md").write_text("# Spec")
+
+        monkeypatch.setattr(
+            db, "update_workflow_phase",
+            lambda *a, **kw: (_ for _ in ()).throw(
+                sqlite3.OperationalError("disk I/O error")
+            ),
+        )
+
+        # When transitioning
+        engine.transition_phase(type_id, "design")
+
+        # Then error is logged to stderr
+        captured = capsys.readouterr()
+        assert "DB write failed in transition_phase" in captured.err
+        assert "disk I/O error" in captured.err
+        assert type_id in captured.err
+
+
+class TestCompletePhaseFallbackLogsToStderr:
+    """Dimension 3 (adversarial): complete_phase logs DB write failure to stderr.
+
+    derived_from: dimension:adversarial (stderr-only logging)
+    """
+
+    def test_write_failure_logged_to_stderr(
+        self, tmp_path, monkeypatch, capsys
+    ) -> None:
+        """When DB write fails in complete_phase, error is logged to stderr.
+        """
+        # Given engine with healthy probe but write failure
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="specify",
+            last_completed_phase="brainstorm",
+        )
+        _create_meta_json(
+            tmp_path, "008-test-feature", status="active",
+            last_completed_phase="brainstorm",
+        )
+        monkeypatch.setattr(
+            db, "update_workflow_phase",
+            lambda *a, **kw: (_ for _ in ()).throw(
+                sqlite3.OperationalError("disk full")
+            ),
+        )
+
+        # When completing phase
+        engine.complete_phase(type_id, "specify")
+
+        # Then error is logged to stderr
+        captured = capsys.readouterr()
+        assert "DB write failed in complete_phase" in captured.err
+        assert "disk full" in captured.err
+        assert type_id in captured.err

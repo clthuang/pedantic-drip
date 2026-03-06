@@ -306,17 +306,31 @@ class WorkflowStateEngine:
         )
 
     def _extract_slug(self, feature_type_id: str) -> str:
-        """Extract slug from type_id. 'feature:008-foo' -> '008-foo'."""
+        """Extract slug from type_id. 'feature:008-foo' -> '008-foo'.
+
+        Validates that the resolved path stays within artifacts_root
+        as defense-in-depth against path traversal.
+        """
         if ":" not in feature_type_id:
             raise ValueError(
                 f"Invalid feature_type_id (missing ':'): {feature_type_id}"
             )
         parts = feature_type_id.split(":", 1)
-        if not parts[1]:
+        slug = parts[1]
+        if not slug:
             raise ValueError(
                 f"Invalid feature_type_id (empty slug): {feature_type_id}"
             )
-        return parts[1]
+        # Defense-in-depth: ensure resolved path stays within artifacts_root
+        resolved = os.path.realpath(
+            os.path.join(self.artifacts_root, "features", slug)
+        )
+        root = os.path.realpath(self.artifacts_root)
+        if not resolved.startswith(root + os.sep):
+            raise ValueError(
+                f"Invalid feature_type_id (path traversal): {feature_type_id}"
+            )
+        return slug
 
     def _derive_completed_phases(
         self, last_completed: str | None
@@ -451,32 +465,36 @@ class WorkflowStateEngine:
         meta["lastCompletedPhase"] = phase
         meta.setdefault("phases", {})
         meta["phases"].setdefault(phase, {})
+        if "started" not in meta["phases"][phase]:
+            meta["phases"][phase]["started"] = now
         meta["phases"][phase]["completed"] = now
-
-        if phase == "finish":
-            meta["status"] = "completed"
-            meta["completed"] = now
 
         next_phase = self._next_phase_value(phase)
         workflow_phase = next_phase if next_phase is not None else phase
 
-        fd = None
+        if next_phase is None:
+            meta["status"] = "completed"
+            meta["completed"] = now
+
+        # Atomic write: NamedTemporaryFile + os.replace().
+        # Catches BaseException (not just Exception) to clean up temp file
+        # on KeyboardInterrupt or SystemExit, preventing stale .tmp files.
+        tmp_name = None
         try:
-            fd = tempfile.NamedTemporaryFile(
+            with tempfile.NamedTemporaryFile(
                 mode="w",
                 dir=os.path.dirname(meta_path),
                 suffix=".tmp",
                 delete=False,
-            )
-            json.dump(meta, fd, indent=2)
-            fd.close()
-            os.replace(fd.name, meta_path)
+                encoding="utf-8",
+            ) as fd:
+                tmp_name = fd.name
+                json.dump(meta, fd, indent=2)
+            os.replace(tmp_name, meta_path)
         except BaseException:
-            if fd is not None and not fd.closed:
-                fd.close()
-            if fd is not None:
+            if tmp_name is not None:
                 try:
-                    os.unlink(fd.name)
+                    os.unlink(tmp_name)
                 except OSError:
                     pass
             raise
@@ -490,21 +508,30 @@ class WorkflowStateEngine:
             source="meta_json_fallback",
         )
 
-    def _scan_features_filesystem(self) -> list[FeatureWorkflowState]:
-        """Scan features directory for .meta.json files.
-
-        Used when DB is unavailable for list operations. Delegates to
-        _read_state_from_meta_json for each discovered file, which handles
-        corrupt/unparseable files by returning None (silently skipped).
-        """
+    def _iter_meta_jsons(self):
+        """Yield (feature_type_id, meta_dict) for each parseable .meta.json."""
         pattern = os.path.join(
             self.artifacts_root, "features", "*", ".meta.json"
         )
-        results: list[FeatureWorkflowState] = []
         for meta_path in glob.glob(pattern):
+            try:
+                with open(meta_path) as f:
+                    meta = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                continue
             feature_dir = os.path.basename(os.path.dirname(meta_path))
-            feature_type_id = f"feature:{feature_dir}"
-            state = self._read_state_from_meta_json(feature_type_id)
+            yield f"feature:{feature_dir}", meta
+
+    def _scan_features_filesystem(self) -> list[FeatureWorkflowState]:
+        """Scan features directory for .meta.json files.
+
+        Used when DB is unavailable for list operations.
+        """
+        results: list[FeatureWorkflowState] = []
+        for feature_type_id, meta in self._iter_meta_jsons():
+            state = self._derive_state_from_meta(
+                meta, feature_type_id, source="meta_json_fallback"
+            )
             if state is not None:
                 results.append(state)
         return results
@@ -514,26 +541,13 @@ class WorkflowStateEngine:
     ) -> list[FeatureWorkflowState]:
         """Scan features directory, filtering by .meta.json status field.
 
-        Reads raw JSON and filters by meta["status"] BEFORE building
-        FeatureWorkflowState (which has no status field). Only matching
-        features get state derivation, avoiding wasted computation.
-
+        Only matching features get state derivation, avoiding wasted computation.
         Used by list_by_status() fallback when DB is unavailable.
         """
-        pattern = os.path.join(
-            self.artifacts_root, "features", "*", ".meta.json"
-        )
         results: list[FeatureWorkflowState] = []
-        for meta_path in glob.glob(pattern):
-            try:
-                with open(meta_path) as f:
-                    meta = json.load(f)
-            except (OSError, json.JSONDecodeError):
-                continue
+        for feature_type_id, meta in self._iter_meta_jsons():
             if meta.get("status") != status:
                 continue
-            feature_dir = os.path.basename(os.path.dirname(meta_path))
-            feature_type_id = f"feature:{feature_dir}"
             state = self._derive_state_from_meta(
                 meta, feature_type_id, source="meta_json_fallback"
             )
