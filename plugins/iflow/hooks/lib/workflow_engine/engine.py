@@ -1,9 +1,11 @@
 """WorkflowStateEngine -- stateless orchestrator for workflow phase transitions."""
 from __future__ import annotations
 
+import glob
 import json
 import os
 import sqlite3
+import tempfile
 from collections.abc import Callable
 from datetime import datetime, timezone
 
@@ -327,6 +329,125 @@ class WorkflowStateEngine:
         return self._derive_state_from_meta(
             meta, feature_type_id, source="meta_json_fallback"
         )
+
+    def _write_meta_json_fallback(
+        self,
+        feature_type_id: str,
+        phase: str,
+        state: FeatureWorkflowState,
+    ) -> FeatureWorkflowState:
+        """Atomic .meta.json update when DB is unavailable.
+
+        Reads current .meta.json, updates lastCompletedPhase and phase
+        timestamps, writes atomically via NamedTemporaryFile + os.replace().
+
+        Only state.mode is read from the state parameter -- all other data
+        comes from the .meta.json file and the phase argument.
+        """
+        slug = self._extract_slug(feature_type_id)
+        meta_path = os.path.join(
+            self.artifacts_root, "features", slug, ".meta.json"
+        )
+
+        try:
+            with open(meta_path) as f:
+                meta = json.load(f)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"Cannot update .meta.json: {exc}") from exc
+
+        now = _iso_now()
+        meta["lastCompletedPhase"] = phase
+        meta.setdefault("phases", {})
+        meta["phases"].setdefault(phase, {})
+        meta["phases"][phase]["completed"] = now
+
+        if phase == "finish":
+            meta["status"] = "completed"
+            meta["completed"] = now
+
+        next_phase = self._next_phase_value(phase)
+        workflow_phase = next_phase if next_phase is not None else phase
+
+        fd = None
+        try:
+            fd = tempfile.NamedTemporaryFile(
+                mode="w",
+                dir=os.path.dirname(meta_path),
+                suffix=".tmp",
+                delete=False,
+            )
+            json.dump(meta, fd, indent=2)
+            fd.close()
+            os.replace(fd.name, meta_path)
+        except BaseException:
+            if fd is not None and not fd.closed:
+                fd.close()
+            if fd is not None:
+                try:
+                    os.unlink(fd.name)
+                except OSError:
+                    pass
+            raise
+
+        return FeatureWorkflowState(
+            feature_type_id=feature_type_id,
+            current_phase=workflow_phase,
+            last_completed_phase=phase,
+            completed_phases=self._derive_completed_phases(phase),
+            mode=state.mode,
+            source="meta_json_fallback",
+        )
+
+    def _scan_features_filesystem(self) -> list[FeatureWorkflowState]:
+        """Scan features directory for .meta.json files.
+
+        Used when DB is unavailable for list operations. Delegates to
+        _read_state_from_meta_json for each discovered file, which handles
+        corrupt/unparseable files by returning None (silently skipped).
+        """
+        pattern = os.path.join(
+            self.artifacts_root, "features", "*", ".meta.json"
+        )
+        results: list[FeatureWorkflowState] = []
+        for meta_path in glob.glob(pattern):
+            feature_dir = os.path.basename(os.path.dirname(meta_path))
+            feature_type_id = f"feature:{feature_dir}"
+            state = self._read_state_from_meta_json(feature_type_id)
+            if state is not None:
+                results.append(state)
+        return results
+
+    def _scan_features_by_status(
+        self, status: str
+    ) -> list[FeatureWorkflowState]:
+        """Scan features directory, filtering by .meta.json status field.
+
+        Reads raw JSON and filters by meta["status"] BEFORE building
+        FeatureWorkflowState (which has no status field). Only matching
+        features get state derivation, avoiding wasted computation.
+
+        Used by list_by_status() fallback when DB is unavailable.
+        """
+        pattern = os.path.join(
+            self.artifacts_root, "features", "*", ".meta.json"
+        )
+        results: list[FeatureWorkflowState] = []
+        for meta_path in glob.glob(pattern):
+            try:
+                with open(meta_path) as f:
+                    meta = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                continue
+            if meta.get("status") != status:
+                continue
+            feature_dir = os.path.basename(os.path.dirname(meta_path))
+            feature_type_id = f"feature:{feature_dir}"
+            state = self._derive_state_from_meta(
+                meta, feature_type_id, source="meta_json_fallback"
+            )
+            if state is not None:
+                results.append(state)
+        return results
 
     def _hydrate_from_meta_json(
         self, feature_type_id: str

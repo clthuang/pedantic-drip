@@ -2173,3 +2173,556 @@ class TestReadStateFromMetaJson:
         result = engine._read_state_from_meta_json(f"feature:{slug}")
 
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# _write_meta_json_fallback (Task 2.2)
+# ---------------------------------------------------------------------------
+
+
+class TestWriteMetaJsonFallback:
+    """Task 2.2: _write_meta_json_fallback() atomic .meta.json writer tests."""
+
+    def test_normal_write_updates_last_completed_and_phase_timestamp(
+        self, tmp_path
+    ) -> None:
+        """Normal write updates lastCompletedPhase and phases.{phase}.completed."""
+        db = _make_db()
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        slug = "008-write-test"
+        _create_meta_json(
+            tmp_path, slug, status="active", mode="standard",
+            last_completed_phase="specify",
+        )
+
+        input_state = FeatureWorkflowState(
+            feature_type_id=f"feature:{slug}",
+            current_phase="design",
+            last_completed_phase="specify",
+            completed_phases=("brainstorm", "specify"),
+            mode="standard",
+            source="meta_json_fallback",
+        )
+
+        result = engine._write_meta_json_fallback(
+            f"feature:{slug}", "design", input_state
+        )
+
+        # Verify returned FeatureWorkflowState
+        assert result is not None
+        assert result.source == "meta_json_fallback"
+        assert result.last_completed_phase == "design"
+        assert result.current_phase == "create-plan"  # next after design
+        assert result.completed_phases == ("brainstorm", "specify", "design")
+        assert result.mode == "standard"
+        assert result.feature_type_id == f"feature:{slug}"
+
+        # Verify .meta.json file was updated
+        meta_path = tmp_path / "features" / slug / ".meta.json"
+        with open(meta_path) as f:
+            meta = json.load(f)
+
+        assert meta["lastCompletedPhase"] == "design"
+        assert "design" in meta["phases"]
+        assert "completed" in meta["phases"]["design"]
+        # Verify timestamp is ISO 8601 with timezone
+        import re
+        iso_pattern = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}"
+        assert re.match(iso_pattern, meta["phases"]["design"]["completed"])
+
+    def test_atomic_replacement_cleans_up_temp_file(self, tmp_path) -> None:
+        """After successful write, no temp files remain in the feature dir."""
+        import glob
+
+        db = _make_db()
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        slug = "008-atomic-test"
+        _create_meta_json(
+            tmp_path, slug, status="active", mode="standard",
+            last_completed_phase="brainstorm",
+        )
+
+        input_state = FeatureWorkflowState(
+            feature_type_id=f"feature:{slug}",
+            current_phase="specify",
+            last_completed_phase="brainstorm",
+            completed_phases=("brainstorm",),
+            mode="standard",
+            source="meta_json_fallback",
+        )
+
+        engine._write_meta_json_fallback(
+            f"feature:{slug}", "specify", input_state
+        )
+
+        # No .tmp files should remain in the feature directory
+        feature_dir = tmp_path / "features" / slug
+        tmp_files = glob.glob(str(feature_dir / "*.tmp"))
+        assert tmp_files == [], f"Temp files left behind: {tmp_files}"
+
+    def test_missing_meta_json_raises_value_error(self, tmp_path) -> None:
+        """Missing .meta.json raises ValueError."""
+        db = _make_db()
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        slug = "008-missing"
+        # Do NOT create .meta.json
+
+        input_state = FeatureWorkflowState(
+            feature_type_id=f"feature:{slug}",
+            current_phase="specify",
+            last_completed_phase="brainstorm",
+            completed_phases=("brainstorm",),
+            mode="standard",
+            source="meta_json_fallback",
+        )
+
+        with pytest.raises(ValueError, match="Cannot update .meta.json"):
+            engine._write_meta_json_fallback(
+                f"feature:{slug}", "specify", input_state
+            )
+
+    def test_corrupt_meta_json_raises_value_error(self, tmp_path) -> None:
+        """Corrupt .meta.json raises ValueError."""
+        db = _make_db()
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        slug = "008-corrupt-write"
+        feature_dir = tmp_path / "features" / slug
+        feature_dir.mkdir(parents=True)
+        (feature_dir / ".meta.json").write_text("{broken json!!!")
+
+        input_state = FeatureWorkflowState(
+            feature_type_id=f"feature:{slug}",
+            current_phase="specify",
+            last_completed_phase="brainstorm",
+            completed_phases=("brainstorm",),
+            mode="standard",
+            source="meta_json_fallback",
+        )
+
+        with pytest.raises(ValueError, match="Cannot update .meta.json"):
+            engine._write_meta_json_fallback(
+                f"feature:{slug}", "specify", input_state
+            )
+
+    def test_terminal_phase_finish_sets_status_completed(
+        self, tmp_path
+    ) -> None:
+        """Completing 'finish' phase sets status='completed' and completed timestamp."""
+        db = _make_db()
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        slug = "008-finish-test"
+        _create_meta_json(
+            tmp_path, slug, status="active", mode="standard",
+            last_completed_phase="implement",
+        )
+
+        input_state = FeatureWorkflowState(
+            feature_type_id=f"feature:{slug}",
+            current_phase="finish",
+            last_completed_phase="implement",
+            completed_phases=(
+                "brainstorm", "specify", "design",
+                "create-plan", "create-tasks", "implement",
+            ),
+            mode="standard",
+            source="meta_json_fallback",
+        )
+
+        result = engine._write_meta_json_fallback(
+            f"feature:{slug}", "finish", input_state
+        )
+
+        # Verify returned state
+        assert result.current_phase == "finish"  # terminal: stays at finish
+        assert result.last_completed_phase == "finish"
+        assert result.source == "meta_json_fallback"
+        assert "finish" in result.completed_phases
+
+        # Verify .meta.json
+        meta_path = tmp_path / "features" / slug / ".meta.json"
+        with open(meta_path) as f:
+            meta = json.load(f)
+
+        assert meta["status"] == "completed"
+        assert meta["lastCompletedPhase"] == "finish"
+        assert "finish" in meta["phases"]
+        assert "completed" in meta["phases"]["finish"]
+        # completed timestamp at top level
+        assert "completed" in meta
+
+    def test_partial_write_cleanup_removes_temp_file(self, tmp_path) -> None:
+        """When json.dump raises mid-write, temp file is cleaned up."""
+        import glob
+
+        db = _make_db()
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        slug = "008-partial-write"
+        _create_meta_json(
+            tmp_path, slug, status="active", mode="standard",
+            last_completed_phase="brainstorm",
+        )
+
+        input_state = FeatureWorkflowState(
+            feature_type_id=f"feature:{slug}",
+            current_phase="specify",
+            last_completed_phase="brainstorm",
+            completed_phases=("brainstorm",),
+            mode="standard",
+            source="meta_json_fallback",
+        )
+
+        # Mock json.dump to raise mid-write
+        with patch("workflow_engine.engine.json.dump", side_effect=IOError("disk full")):
+            with pytest.raises(IOError, match="disk full"):
+                engine._write_meta_json_fallback(
+                    f"feature:{slug}", "specify", input_state
+                )
+
+        # Verify no temp files left behind
+        feature_dir = tmp_path / "features" / slug
+        tmp_files = glob.glob(str(feature_dir / "*.tmp"))
+        assert tmp_files == [], f"Temp files left behind after failure: {tmp_files}"
+
+        # Verify original .meta.json is unchanged (not corrupted)
+        meta_path = feature_dir / ".meta.json"
+        with open(meta_path) as f:
+            meta = json.load(f)
+        assert meta["lastCompletedPhase"] == "brainstorm"  # unchanged
+
+    def test_state_mode_is_used_from_input_state(self, tmp_path) -> None:
+        """Only state.mode is read from the input state parameter."""
+        db = _make_db()
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        slug = "008-mode-test"
+        _create_meta_json(
+            tmp_path, slug, status="active", mode="standard",
+            last_completed_phase="brainstorm",
+        )
+
+        # Input state has mode="full" which differs from .meta.json mode="standard"
+        input_state = FeatureWorkflowState(
+            feature_type_id=f"feature:{slug}",
+            current_phase="specify",
+            last_completed_phase="brainstorm",
+            completed_phases=("brainstorm",),
+            mode="full",
+            source="meta_json_fallback",
+        )
+
+        result = engine._write_meta_json_fallback(
+            f"feature:{slug}", "specify", input_state
+        )
+
+        # Returned state uses input_state.mode, not .meta.json mode
+        assert result.mode == "full"
+
+    def test_phases_setdefault_creates_missing_phases_dict(
+        self, tmp_path
+    ) -> None:
+        """When .meta.json has no 'phases' key, it is created."""
+        db = _make_db()
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        slug = "008-no-phases"
+        # Create .meta.json without 'phases' key
+        feature_dir = tmp_path / "features" / slug
+        feature_dir.mkdir(parents=True)
+        meta = {"id": "008", "slug": slug, "status": "active", "mode": "standard"}
+        (feature_dir / ".meta.json").write_text(json.dumps(meta))
+
+        input_state = FeatureWorkflowState(
+            feature_type_id=f"feature:{slug}",
+            current_phase="brainstorm",
+            last_completed_phase=None,
+            completed_phases=(),
+            mode="standard",
+            source="meta_json_fallback",
+        )
+
+        result = engine._write_meta_json_fallback(
+            f"feature:{slug}", "brainstorm", input_state
+        )
+
+        assert result is not None
+        # Verify the file now has phases dict
+        meta_path = feature_dir / ".meta.json"
+        with open(meta_path) as f:
+            updated = json.load(f)
+        assert "phases" in updated
+        assert "brainstorm" in updated["phases"]
+        assert "completed" in updated["phases"]["brainstorm"]
+
+
+class TestScanFeaturesFilesystem:
+    """Task 3.1: _scan_features_filesystem() directory scanner tests."""
+
+    def test_multiple_features_returns_correct_list(self, tmp_path) -> None:
+        """Scanning a dir with multiple valid .meta.json files returns all."""
+        db = _make_db()
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        # Create three features with valid .meta.json
+        _create_meta_json(tmp_path, "001-alpha", status="active", mode="standard")
+        _create_meta_json(
+            tmp_path, "002-beta", status="active", mode="full",
+            last_completed_phase="brainstorm",
+        )
+        _create_meta_json(tmp_path, "003-gamma", status="completed",
+                          last_completed_phase="finish")
+
+        results = engine._scan_features_filesystem()
+
+        assert len(results) == 3
+        type_ids = {r.feature_type_id for r in results}
+        assert type_ids == {
+            "feature:001-alpha",
+            "feature:002-beta",
+            "feature:003-gamma",
+        }
+        # All results have meta_json_fallback source
+        for r in results:
+            assert r.source == "meta_json_fallback"
+
+    def test_empty_dir_returns_empty_list(self, tmp_path) -> None:
+        """Empty features directory returns empty list."""
+        db = _make_db()
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        # Create features dir but no feature subdirectories
+        (tmp_path / "features").mkdir(parents=True, exist_ok=True)
+
+        results = engine._scan_features_filesystem()
+
+        assert results == []
+
+    def test_no_features_dir_returns_empty_list(self, tmp_path) -> None:
+        """Missing features directory returns empty list (no crash)."""
+        db = _make_db()
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        # Do NOT create features dir at all
+        results = engine._scan_features_filesystem()
+
+        assert results == []
+
+    def test_corrupt_meta_json_files_skipped(self, tmp_path) -> None:
+        """Mix of valid and corrupt .meta.json files -- corrupt ones skipped."""
+        db = _make_db()
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        # Valid feature
+        _create_meta_json(tmp_path, "001-valid", status="active", mode="standard")
+
+        # Corrupt feature -- invalid JSON
+        corrupt_dir = tmp_path / "features" / "002-corrupt"
+        corrupt_dir.mkdir(parents=True)
+        (corrupt_dir / ".meta.json").write_text("{broken json!!!")
+
+        # Another valid feature
+        _create_meta_json(
+            tmp_path, "003-also-valid", status="completed",
+            last_completed_phase="finish",
+        )
+
+        results = engine._scan_features_filesystem()
+
+        assert len(results) == 2
+        type_ids = {r.feature_type_id for r in results}
+        assert "feature:001-valid" in type_ids
+        assert "feature:003-also-valid" in type_ids
+        assert "feature:002-corrupt" not in type_ids
+
+    def test_feature_type_id_derived_from_dir_name(self, tmp_path) -> None:
+        """feature_type_id is 'feature:{dirname}' from the .meta.json parent dir."""
+        db = _make_db()
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        _create_meta_json(tmp_path, "042-specific-slug", status="active")
+
+        results = engine._scan_features_filesystem()
+
+        assert len(results) == 1
+        assert results[0].feature_type_id == "feature:042-specific-slug"
+
+    def test_states_have_correct_phase_derivation(self, tmp_path) -> None:
+        """States returned have correct phase derivation from .meta.json data."""
+        db = _make_db()
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        _create_meta_json(
+            tmp_path, "010-phase-test", status="active", mode="full",
+            last_completed_phase="specify",
+        )
+
+        results = engine._scan_features_filesystem()
+
+        assert len(results) == 1
+        state = results[0]
+        assert state.current_phase == "design"  # next after specify
+        assert state.last_completed_phase == "specify"
+        assert state.completed_phases == ("brainstorm", "specify")
+        assert state.mode == "full"
+
+
+class TestScanFeaturesByStatus:
+    """Task 3.2: _scan_features_by_status() filesystem scanner filtered by status."""
+
+    def test_filter_active_returns_only_active(self, tmp_path) -> None:
+        """Filtering by 'active' returns only features with status='active'."""
+        db = _make_db()
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        _create_meta_json(tmp_path, "001-active-a", status="active", mode="standard")
+        _create_meta_json(
+            tmp_path, "002-active-b", status="active", mode="full",
+            last_completed_phase="brainstorm",
+        )
+        _create_meta_json(
+            tmp_path, "003-completed", status="completed",
+            last_completed_phase="finish",
+        )
+        _create_meta_json(tmp_path, "004-planned", status="planned")
+
+        results = engine._scan_features_by_status("active")
+
+        assert len(results) == 2
+        type_ids = {r.feature_type_id for r in results}
+        assert type_ids == {"feature:001-active-a", "feature:002-active-b"}
+        for r in results:
+            assert r.source == "meta_json_fallback"
+
+    def test_filter_completed_returns_only_completed(self, tmp_path) -> None:
+        """Filtering by 'completed' returns only features with status='completed'."""
+        db = _make_db()
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        _create_meta_json(tmp_path, "001-active", status="active", mode="standard")
+        _create_meta_json(
+            tmp_path, "002-done", status="completed",
+            last_completed_phase="finish",
+        )
+        _create_meta_json(
+            tmp_path, "003-also-done", status="completed",
+            last_completed_phase="implement",
+        )
+
+        results = engine._scan_features_by_status("completed")
+
+        assert len(results) == 2
+        type_ids = {r.feature_type_id for r in results}
+        assert type_ids == {"feature:002-done", "feature:003-also-done"}
+        for r in results:
+            assert r.source == "meta_json_fallback"
+            assert r.current_phase == "finish"  # completed status -> finish
+
+    def test_corrupt_files_skipped(self, tmp_path) -> None:
+        """Corrupt .meta.json files are silently skipped, not raising errors."""
+        db = _make_db()
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        _create_meta_json(tmp_path, "001-valid", status="active", mode="standard")
+
+        # Corrupt feature -- invalid JSON
+        corrupt_dir = tmp_path / "features" / "002-corrupt"
+        corrupt_dir.mkdir(parents=True)
+        (corrupt_dir / ".meta.json").write_text("{broken json!!!")
+
+        _create_meta_json(tmp_path, "003-also-valid", status="active", mode="full")
+
+        results = engine._scan_features_by_status("active")
+
+        assert len(results) == 2
+        type_ids = {r.feature_type_id for r in results}
+        assert "feature:001-valid" in type_ids
+        assert "feature:003-also-valid" in type_ids
+        assert "feature:002-corrupt" not in type_ids
+
+    def test_empty_results_when_no_match(self, tmp_path) -> None:
+        """When no features match the status, returns empty list."""
+        db = _make_db()
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        _create_meta_json(tmp_path, "001-active", status="active", mode="standard")
+        _create_meta_json(
+            tmp_path, "002-completed", status="completed",
+            last_completed_phase="finish",
+        )
+
+        results = engine._scan_features_by_status("planned")
+
+        assert results == []
+
+    def test_empty_features_dir_returns_empty_list(self, tmp_path) -> None:
+        """Empty features directory returns empty list."""
+        db = _make_db()
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        (tmp_path / "features").mkdir(parents=True, exist_ok=True)
+
+        results = engine._scan_features_by_status("active")
+
+        assert results == []
+
+    def test_no_features_dir_returns_empty_list(self, tmp_path) -> None:
+        """Missing features directory returns empty list (no crash)."""
+        db = _make_db()
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        results = engine._scan_features_by_status("active")
+
+        assert results == []
+
+    def test_filters_before_state_derivation(self, tmp_path) -> None:
+        """Status filtering happens at raw JSON level, not on FeatureWorkflowState.
+
+        This is important because FeatureWorkflowState has no status field.
+        Verify by checking that only matching features get derived states.
+        """
+        db = _make_db()
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        _create_meta_json(
+            tmp_path, "001-active", status="active", mode="standard",
+            last_completed_phase="design",
+        )
+        _create_meta_json(
+            tmp_path, "002-completed", status="completed",
+            last_completed_phase="finish",
+        )
+
+        active_results = engine._scan_features_by_status("active")
+        assert len(active_results) == 1
+        assert active_results[0].feature_type_id == "feature:001-active"
+        assert active_results[0].current_phase == "create-plan"  # next after design
+
+        completed_results = engine._scan_features_by_status("completed")
+        assert len(completed_results) == 1
+        assert completed_results[0].feature_type_id == "feature:002-completed"
+        assert completed_results[0].current_phase == "finish"
+
+    def test_derive_state_returns_none_skips_feature(self, tmp_path) -> None:
+        """When _derive_state_from_meta returns None, that feature is skipped.
+
+        This can happen when lastCompletedPhase is an invalid phase name.
+        """
+        db = _make_db()
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        # Valid active feature
+        _create_meta_json(tmp_path, "001-valid", status="active", mode="standard")
+
+        # Active feature with invalid lastCompletedPhase -> _derive returns None
+        bad_dir = tmp_path / "features" / "002-bad-phase"
+        bad_dir.mkdir(parents=True)
+        meta = {
+            "id": "002",
+            "slug": "002-bad-phase",
+            "status": "active",
+            "mode": "standard",
+            "lastCompletedPhase": "invalid-phase-name",
+        }
+        (bad_dir / ".meta.json").write_text(json.dumps(meta))
+
+        results = engine._scan_features_by_status("active")
+
+        # Only the valid feature should be returned
+        assert len(results) == 1
+        assert results[0].feature_type_id == "feature:001-valid"
