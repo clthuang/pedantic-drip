@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.11.1] - 2026-03-07
+
 ### Added
 - Full-text entity search: `search_entities` MCP tool with FTS5-backed search across name, type, status, and parent fields
 - Application-level FTS5 sync (register, update, delete) with external content table architecture
