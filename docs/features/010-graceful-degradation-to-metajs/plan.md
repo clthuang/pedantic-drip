@@ -65,7 +65,7 @@ These items have zero interdependencies and can be implemented in any order with
 - File: `workflow_engine/engine.py`
 - Depends on: 1.4 (`_iso_now`)
 - Read current .meta.json, update `lastCompletedPhase`, `phases.{phase}` timestamps, `status` if finishing
-- Atomic write: `NamedTemporaryFile(delete=False)` → `json.dump()` → `fd.close()` → `os.replace()`. Use try/finally to ensure temp file fd is closed AND unlinked on any failure (including `json.dump` raising mid-write). Note: `fd.close()` flushes Python and OS buffers; explicit `flush()`+`fsync()` omitted to match design I4 code — crash-consistency guarantees are unnecessary for a single-user CLI tool where fallback data is ephemeral (reconciled by feature 011).
+- Atomic write: `NamedTemporaryFile(delete=False)` → `json.dump()` → `fd.close()` → `os.replace()`. Use try/finally to ensure temp file fd is closed AND unlinked on any failure (including `json.dump` raising mid-write). The finally block must explicitly close fd (`if fd is not None and not fd.closed: fd.close()`) before unlink to avoid leaking file descriptors on partial-write failures. Note: `fd.close()` flushes Python and OS buffers; explicit `flush()`+`fsync()` omitted to match design I4 code — crash-consistency guarantees are unnecessary for a single-user CLI tool where fallback data is ephemeral (reconciled by feature 011).
 - Raise `ValueError` on unreadable .meta.json
 - Add `import tempfile` at top of engine.py
 - Tests: normal write; atomic replacement (verify tmp cleanup); missing .meta.json → ValueError; corrupt .meta.json → ValueError; terminal phase sets `status="completed"`; partial write cleanup (mock `json.dump` to raise → verify temp file is removed)
@@ -118,7 +118,7 @@ Wire fallback paths into existing public methods. Each method gets:
 - File: `workflow_engine/engine.py`
 - Depends on: 1.2 (health probe), 2.2 (write fallback), 4.1 (get_state)
 - Add probe → `wrote_to_db` flag pattern → secondary defense → `_write_meta_json_fallback`
-- Read-back failure after successful DB write → derive state from params (no .meta.json write)
+- Read-back failure after successful DB write → derive state from params (no .meta.json write). Note: `update_workflow_phase` is a plain SQL UPDATE with no triggers or side effects — a successful `update_workflow_phase` call guarantees the row is updated, so deriving state from params after a read-back failure is safe.
 - Tests: DB write fail → .meta.json updated; probe fail → direct .meta.json write; DB write + read-back fail → derived state with source="db"; happy path unchanged
 
 **4.4 — `list_by_phase()` fallback (I15)**
@@ -141,16 +141,15 @@ Wire fallback paths into existing public methods. Each method gets:
 - Update all `_process_*` functions to use `_make_error` for error returns
 - Update all 6 `_engine is None` guards to use `_make_error("not_initialized", ...)`
 - Update non-exception error paths (e.g., `_process_get_phase` None-state check)
-- Add `import sqlite3` for type-specific catches. This is a third-layer defense: (1) engine health probe, (2) engine try/except, (3) MCP handler catch. If the engine has a bug and misses a catch path, the MCP handler provides a structured error instead of an opaque "Internal error" string.
+- Add `import sqlite3` for type-specific catches. This is a third-layer defense: (1) engine health probe, (2) engine try/except, (3) MCP handler catch. If the engine has a bug and misses a catch path, the MCP handler provides a structured error instead of an opaque "Internal error" string. Note: this catch is additive — no existing tests currently pass `sqlite3.Error` through the engine layer, so adding `except sqlite3.Error` introduces no behavioral change for passing tests.
 - Tests: update existing error-path assertions to check JSON structure; verify all error types. Specific migrations: `test_not_found` (line ~144) and `test_get_phase_none_state_returns_not_found` (line ~765-779) must update from plain string assertions to structured JSON with `error_type: "feature_not_found"`.
 
 **5.2 — MCP degradation signal (C7 / I10)**
 - File: `mcp/workflow_state_server.py`
 - Depends on: 4.2 (TransitionResponse + MCP handler already updated), 5.1 (structured errors)
 - Note: `TransitionResponse` import and `_process_transition_phase` unwrap already done in 4.2. This step adds serialization changes and the remaining handler updates.
-- Update `_serialize_state` to include `degraded = (state.source == "meta_json_fallback")`
-- Update `_process_transition_phase` response shape — per design I14, response drops `allowed` key (uses `results` from `TransitionResponse`), adds `degraded` field
-- Update `_process_complete_phase`, `_process_list_*` for degradation field
+- **Sub-step A — Serialization update:** Update `_serialize_state` to include `degraded = (state.source == "meta_json_fallback")`; migrate `TestSerializeState` and `TestAdversarial` exact key-set assertions to add `degraded` to expected keys
+- **Sub-step B — Transition response shape:** Update `_process_transition_phase` response shape — per design I14, response drops `allowed` key (uses `results` from `TransitionResponse`), adds `degraded` field. **Consumer audit:** grep `allowed` in `plugins/iflow/skills/` and `plugins/iflow/commands/` — these parse JSON programmatically (not string-matching), so no breakage from dropped `allowed` key. Update `_process_complete_phase`, `_process_list_*` for degradation field.
 - **Existing MCP test migration (ATOMIC with serialization changes):**
   - `TestSerializeState` and `TestAdversarial` exact key-set assertions must add `degraded` to expected keys
   - `test_transition_result_json_has_exact_key_set` (line ~638-653): expected key set changes from `{"allowed", "results", "transitioned"}` to `{"transitioned", "results", "degraded"}`
@@ -229,12 +228,22 @@ Each item is implemented RED → GREEN → REFACTOR.
 8. Write `_scan_features_filesystem` tests → implement scanner (3.1)
 9. Write `_scan_features_by_status` tests → implement scanner (3.2)
 10. Write `get_state()` fallback tests → wrap with probe + catch (4.1)
-11. Write `transition_phase()` tests → change return type + add fallback + **migrate ~17 existing engine test call sites** + **update MCP handler `_process_transition_phase` to unwrap `TransitionResponse.results`** + **migrate `test_transitioned_uses_all_not_any` monkeypatch** (4.2). All changes atomic with return type change.
+11. `transition_phase()` atomic return type change (4.2) — sub-ordered steps:
+    a. Write new fallback tests (RED) — probe fail → `degraded=True`, DB write fail → `degraded=True`
+    b. Change `transition_phase()` return type: wrap `results` in `TransitionResponse(results=tuple(results), degraded=False)` — all existing engine tests now FAIL
+    c. Migrate ~15 engine test call sites to unwrap `.results` (GREEN) — 14 assigning sites add `.results`, 1 special site (line ~777) reassigns `transition_results = response.results`; 2 `pytest.raises` + 1 fire-and-forget unchanged
+    d. Update MCP handler `_process_transition_phase` to unwrap `TransitionResponse.results` — prevents iterating dataclass fields
+    e. Migrate `test_transitioned_uses_all_not_any` monkeypatch to return `TransitionResponse(results=tuple(mixed_results), degraded=False)` + add import
+    f. Implement degraded-path logic (health probe, DB write guard) — new fallback tests now GREEN
+    g. Run full suite: `grep -n 'transition_phase\|\.allowed' test_engine.py test_workflow_state_server.py` to verify no unmigrated sites
 12. Write `complete_phase()` tests → add wrote_to_db pattern + fallback (4.3)
 13. Write `list_by_phase()` fallback tests → add probe + scanner (4.4)
 14. Write `list_by_status()` fallback tests → add probe + scanner (4.5)
 15. Write structured error tests → update `_process_*` functions (5.1)
-16. Write degradation signal tests → update serialization + remaining handlers + **migrate key-set assertions (`degraded` key) and transition response shape (`allowed` → `degraded`)** (5.2). Note: `_process_transition_phase` unwrap and monkeypatch migration already done in step 11.
+16. Write degradation signal tests (5.2) — sub-ordered per 5.2 sub-steps:
+    a. (Sub-step A) Write `_serialize_state` degraded-field tests → implement; migrate `TestSerializeState`/`TestAdversarial` key-set assertions to add `degraded`
+    b. (Sub-step B) Write transition response shape tests → update `_process_transition_phase` response shape (drop `allowed`, add `degraded`); migrate `test_transition_result_json_has_exact_key_set` and `test_success`; update `_process_complete_phase`/`_process_list_*` for degradation field; run consumer audit grep
+    Note: `_process_transition_phase` unwrap and monkeypatch migration already done in step 11.
 17. Write integration tests → end-to-end scenarios (6.1, 6.2)
 
 ## Files Modified
