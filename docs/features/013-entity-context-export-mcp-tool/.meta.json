@@ -10,7 +10,7 @@
   "depends_on_features": [
     "001-entity-uuid-primary-key-migrat"
   ],
-  "lastCompletedPhase": "specify",
+  "lastCompletedPhase": "create-plan",
   "phases": {
     "specify": {
       "started": "2026-03-07T03:10:00+08:00",
@@ -35,7 +35,20 @@
         "handoffReview": { "started": "2026-03-07T04:15:00+08:00", "completed": "2026-03-07T04:40:00+08:00", "iterations": 5, "approved": true, "reviewerNotes": ["test_entity_server.py not clarified as new or existing file in File Change Summary"] }
       },
       "completed": "2026-03-07T04:40:00+08:00"
+    },
+    "create-plan": {
+      "started": "2026-03-07T04:45:00+08:00",
+      "completed": "2026-03-07T05:05:00+08:00",
+      "phaseReview": {
+        "iterations": 3,
+        "approved": true,
+        "reviewerNotes": []
+      },
+      "handoffReview": {
+        "iterations": 2,
+        "approved": true,
+        "reviewerNotes": []
+      }
     }
-  },
-  "lastCompletedPhase": "design"
+  }
 }
