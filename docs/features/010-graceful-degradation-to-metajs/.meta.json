@@ -1,7 +1,8 @@
 {
   "id": "010",
   "slug": "graceful-degradation-to-metajs",
-  "status": "active",
+  "status": "completed",
+  "completed": "2026-03-07T01:30:00+08:00",
   "created": "2026-03-01T16:27:59+08:00",
   "mode": "standard",
   "branch": "feature/010-graceful-degradation-to-metajs",
@@ -10,7 +11,7 @@
   "depends_on_features": [
     "008-workflowstateengine-core"
   ],
-  "lastCompletedPhase": "implement",
+  "lastCompletedPhase": "finish",
   "phases": {
     "specify": {
       "started": "2026-03-06T17:00:00+08:00",
@@ -48,6 +49,10 @@
       "completed": "2026-03-07T01:00:00+08:00",
       "reviewIterations": 5,
       "reviewResult": "approved"
+    },
+    "finish": {
+      "status": "completed",
+      "completed": "2026-03-07T01:30:00+08:00"
     },
     "create-plan": {
       "started": "2026-03-06T19:50:00+08:00",
