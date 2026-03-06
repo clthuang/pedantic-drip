@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from dataclasses import FrozenInstanceError
 from unittest.mock import patch
 
@@ -1809,3 +1810,44 @@ class TestTransitionResponse:
         response = TransitionResponse(results=(), degraded=False)
         assert response.results == ()
         assert len(response.results) == 0
+
+
+class TestCheckDbHealth:
+    """Tests for _check_db_health() -- DB availability probe."""
+
+    def test_healthy_db_returns_true(self, tmp_path) -> None:
+        """A healthy in-memory DB returns True from _check_db_health."""
+        db = _make_db()
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        assert engine._check_db_health() is True
+
+    def test_conn_none_returns_false(self, tmp_path, monkeypatch) -> None:
+        """When db._conn is None (defensive guard), returns False."""
+        db = _make_db()
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        monkeypatch.setattr(engine.db, "_conn", None)
+        assert engine._check_db_health() is False
+
+    def test_programming_error_returns_false(self, tmp_path, monkeypatch) -> None:
+        """When execute raises sqlite3.ProgrammingError (closed DB), returns False."""
+        db = _make_db()
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        class MockConn:
+            def execute(self, *a):
+                raise sqlite3.ProgrammingError("closed")
+
+        monkeypatch.setattr(engine.db, "_conn", MockConn())
+        assert engine._check_db_health() is False
+
+    def test_generic_sqlite_error_returns_false(self, tmp_path, monkeypatch) -> None:
+        """When execute raises generic sqlite3.Error, returns False."""
+        db = _make_db()
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        class MockConn:
+            def execute(self, *a):
+                raise sqlite3.Error("generic error")
+
+        monkeypatch.setattr(engine.db, "_conn", MockConn())
+        assert engine._check_db_health() is False

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 from collections.abc import Callable
 
 from entity_registry.database import EntityDatabase
@@ -170,6 +171,21 @@ class WorkflowStateEngine:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _check_db_health(self) -> bool:
+        """Fast health probe -- SELECT 1 on the existing connection.
+
+        Returns True if DB is usable, False otherwise.
+        """
+        # NOTE: busy_timeout is inherited from EntityDatabase (5s).
+        # Accepted product decision -- see design C1 NFR-1 interaction.
+        if self.db._conn is None:
+            return False
+        try:
+            self.db._conn.execute("SELECT 1")
+            return True
+        except sqlite3.Error:
+            return False
 
     def _row_to_state(
         self, row: dict, source: str = "db"
