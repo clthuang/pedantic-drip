@@ -25,6 +25,8 @@ export_entities(
 
 **Returns:** JSON string containing all matching entities with schema version, or confirmation message if `output_path` is provided.
 
+> The `format` parameter from PRD UC-3 is explicitly out of scope for this feature; this implementation is JSON-only. See Scope Boundaries for rationale.
+
 ### FR-2: Export JSON Schema
 
 Each entity in the export includes all database columns needed for faithful backup/restore. The `uuid` field is the database primary key and is required for identity preservation across exports. The `parent_type_id` is included (rather than `parent_uuid`) because it is the human-readable relationship identifier used by all other MCP tools; `parent_uuid` is an internal FK that can be resolved from `parent_type_id` during import.
