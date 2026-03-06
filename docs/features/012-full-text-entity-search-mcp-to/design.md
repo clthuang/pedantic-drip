@@ -250,8 +250,8 @@ new_metadata_text = flatten_metadata(final_metadata)
 self._conn.execute(
     "INSERT INTO entities_fts(rowid, name, entity_id, entity_type, status, metadata_text) "
     "VALUES(?, ?, ?, ?, ?, ?)",
-    (old_rowid, name or old_name, old_entity_id, old_entity_type,
-     (status or old_status) or "", new_metadata_text),
+    (old_rowid, name if name is not None else old_name, old_entity_id, old_entity_type,
+     (status if status is not None else old_status) or "", new_metadata_text),
 )
 
 self._conn.commit()  # Moved to after FTS writes
