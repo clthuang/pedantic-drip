@@ -171,6 +171,9 @@ class ReconcileAction:
     action: str  # "reconciled"|"skipped"|"created"|"error"
     direction: str  # "meta_json_to_db"
     changes: tuple[WorkflowMismatch, ...]  # reuse Mismatch as {field, old, new}
+    # Serialization note: when serialized via _serialize_reconcile_action,
+    # db_value → "old_value" and meta_json_value → "new_value".
+    # This convention applies to meta_json_to_db direction only.
     message: str
 
 @dataclass(frozen=True)
@@ -466,7 +469,10 @@ if direction not in _SUPPORTED_DIRECTIONS:
     )
 ```
 
-### I7: Path-Traversal Validation (`_process_reconcile_frontmatter`)
+### I7: Path-Traversal Validation (module-level helper in `workflow_state_server.py`)
+
+`_validate_feature_type_id` is a module-level helper in `workflow_state_server.py`, called
+by all three `_process_*` functions that accept `feature_type_id` (check, apply, frontmatter).
 
 ```python
 def _validate_feature_type_id(feature_type_id: str, artifacts_root: str) -> str:
