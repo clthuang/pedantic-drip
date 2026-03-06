@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import sys
 from contextlib import asynccontextmanager
 
@@ -116,10 +117,24 @@ def _process_get_phase(engine: WorkflowStateEngine, feature_type_id: str) -> str
     try:
         state = engine.get_state(feature_type_id)
         if state is None:
-            return f"Feature not found: {feature_type_id}"
+            return _make_error(
+                "feature_not_found",
+                f"Feature not found: {feature_type_id}",
+                "Verify feature_type_id format: 'feature:{id}-{slug}'",
+            )
         return json.dumps(_serialize_state(state))
+    except sqlite3.Error as exc:
+        return _make_error(
+            "db_unavailable",
+            f"Database error: {type(exc).__name__}: {exc}",
+            "Check database file permissions and disk space",
+        )
     except Exception as exc:
-        return f"Internal error: {type(exc).__name__}: {exc}"
+        return _make_error(
+            "internal",
+            f"Internal error: {type(exc).__name__}: {exc}",
+            "Report this error — it may indicate a bug",
+        )
 
 
 def _process_transition_phase(
@@ -137,9 +152,23 @@ def _process_transition_phase(
             "transitioned": transitioned,
         })
     except ValueError as exc:
-        return f"Error: {exc}"
+        return _make_error(
+            "invalid_transition",
+            f"Error: {exc}",
+            "Check current phase with get_phase before transitioning",
+        )
+    except sqlite3.Error as exc:
+        return _make_error(
+            "db_unavailable",
+            f"Database error: {type(exc).__name__}: {exc}",
+            "Check database file permissions and disk space",
+        )
     except Exception as exc:
-        return f"Internal error: {type(exc).__name__}: {exc}"
+        return _make_error(
+            "internal",
+            f"Internal error: {type(exc).__name__}: {exc}",
+            "Report this error — it may indicate a bug",
+        )
 
 
 def _process_complete_phase(
@@ -151,9 +180,23 @@ def _process_complete_phase(
         state = engine.complete_phase(feature_type_id, phase)
         return json.dumps(_serialize_state(state))
     except ValueError as exc:
-        return f"Error: {exc}"
+        return _make_error(
+            "invalid_transition",
+            f"Error: {exc}",
+            "Check current phase with get_phase before transitioning",
+        )
+    except sqlite3.Error as exc:
+        return _make_error(
+            "db_unavailable",
+            f"Database error: {type(exc).__name__}: {exc}",
+            "Check database file permissions and disk space",
+        )
     except Exception as exc:
-        return f"Internal error: {type(exc).__name__}: {exc}"
+        return _make_error(
+            "internal",
+            f"Internal error: {type(exc).__name__}: {exc}",
+            "Report this error — it may indicate a bug",
+        )
 
 
 def _process_validate_prerequisites(
@@ -169,29 +212,63 @@ def _process_validate_prerequisites(
             "results": [_serialize_result(r) for r in results],
         })
     except ValueError as exc:
-        return f"Error: {exc}"
+        return _make_error(
+            "invalid_transition",
+            f"Error: {exc}",
+            "Check current phase with get_phase before transitioning",
+        )
+    except sqlite3.Error as exc:
+        return _make_error(
+            "db_unavailable",
+            f"Database error: {type(exc).__name__}: {exc}",
+            "Check database file permissions and disk space",
+        )
     except Exception as exc:
-        return f"Internal error: {type(exc).__name__}: {exc}"
+        return _make_error(
+            "internal",
+            f"Internal error: {type(exc).__name__}: {exc}",
+            "Report this error — it may indicate a bug",
+        )
 
 
 def _process_list_features_by_phase(engine: WorkflowStateEngine, phase: str) -> str:
     # ValueError from _row_to_state on corrupt DB data is intentionally caught
-    # by Exception and reported as "Internal error:" (not user input error).
+    # by Exception and reported as "internal" error (not user input error).
     try:
         states = engine.list_by_phase(phase)
         return json.dumps([_serialize_state(s) for s in states])
+    except sqlite3.Error as exc:
+        return _make_error(
+            "db_unavailable",
+            f"Database error: {type(exc).__name__}: {exc}",
+            "Check database file permissions and disk space",
+        )
     except Exception as exc:
-        return f"Internal error: {type(exc).__name__}: {exc}"
+        return _make_error(
+            "internal",
+            f"Internal error: {type(exc).__name__}: {exc}",
+            "Report this error — it may indicate a bug",
+        )
 
 
 def _process_list_features_by_status(engine: WorkflowStateEngine, status: str) -> str:
     # ValueError from _row_to_state on corrupt DB data is intentionally caught
-    # by Exception and reported as "Internal error:" (not user input error).
+    # by Exception and reported as "internal" error (not user input error).
     try:
         states = engine.list_by_status(status)
         return json.dumps([_serialize_state(s) for s in states])
+    except sqlite3.Error as exc:
+        return _make_error(
+            "db_unavailable",
+            f"Database error: {type(exc).__name__}: {exc}",
+            "Check database file permissions and disk space",
+        )
     except Exception as exc:
-        return f"Internal error: {type(exc).__name__}: {exc}"
+        return _make_error(
+            "internal",
+            f"Internal error: {type(exc).__name__}: {exc}",
+            "Report this error — it may indicate a bug",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +282,7 @@ mcp = FastMCP("workflow-engine", lifespan=lifespan)
 async def get_phase(feature_type_id: str) -> str:
     """Read the current workflow state for a feature."""
     if _engine is None:
-        return "Error: engine not initialized (server not started)"
+        return _make_error("not_initialized", "Engine not initialized (server not started)", "Wait for server startup or restart the MCP server")
     return _process_get_phase(_engine, feature_type_id)
 
 
@@ -217,7 +294,7 @@ async def transition_phase(
 ) -> str:
     """Validate and enter a target phase."""
     if _engine is None:
-        return "Error: engine not initialized (server not started)"
+        return _make_error("not_initialized", "Engine not initialized (server not started)", "Wait for server startup or restart the MCP server")
     return _process_transition_phase(_engine, feature_type_id, target_phase, yolo_active)
 
 
@@ -225,7 +302,7 @@ async def transition_phase(
 async def complete_phase(feature_type_id: str, phase: str) -> str:
     """Record a phase as completed and advance to next phase."""
     if _engine is None:
-        return "Error: engine not initialized (server not started)"
+        return _make_error("not_initialized", "Engine not initialized (server not started)", "Wait for server startup or restart the MCP server")
     return _process_complete_phase(_engine, feature_type_id, phase)
 
 
@@ -233,7 +310,7 @@ async def complete_phase(feature_type_id: str, phase: str) -> str:
 async def validate_prerequisites(feature_type_id: str, target_phase: str) -> str:
     """Dry-run gate evaluation without executing the transition."""
     if _engine is None:
-        return "Error: engine not initialized (server not started)"
+        return _make_error("not_initialized", "Engine not initialized (server not started)", "Wait for server startup or restart the MCP server")
     return _process_validate_prerequisites(_engine, feature_type_id, target_phase)
 
 
@@ -241,7 +318,7 @@ async def validate_prerequisites(feature_type_id: str, target_phase: str) -> str
 async def list_features_by_phase(phase: str) -> str:
     """All features currently in a given workflow phase."""
     if _engine is None:
-        return "Error: engine not initialized (server not started)"
+        return _make_error("not_initialized", "Engine not initialized (server not started)", "Wait for server startup or restart the MCP server")
     return _process_list_features_by_phase(_engine, phase)
 
 
@@ -249,7 +326,7 @@ async def list_features_by_phase(phase: str) -> str:
 async def list_features_by_status(status: str) -> str:
     """All features with a given entity status."""
     if _engine is None:
-        return "Error: engine not initialized (server not started)"
+        return _make_error("not_initialized", "Engine not initialized (server not started)", "Wait for server startup or restart the MCP server")
     return _process_list_features_by_status(_engine, status)
 
 
