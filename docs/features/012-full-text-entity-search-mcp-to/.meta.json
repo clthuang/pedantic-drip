@@ -1,7 +1,8 @@
 {
   "id": "012",
   "slug": "full-text-entity-search-mcp-to",
-  "status": "active",
+  "status": "completed",
+  "completed": "2026-03-07T03:05:00+08:00",
   "created": "2026-03-01T16:27:59+08:00",
   "mode": "standard",
   "branch": "feature/012-full-text-entity-search-mcp-to",
@@ -10,7 +11,7 @@
   "depends_on_features": [
     "001-entity-uuid-primary-key-migrat"
   ],
-  "lastCompletedPhase": "implement",
+  "lastCompletedPhase": "finish",
   "phases": {
     "specify": {
       "started": "2026-03-07T19:00:00+08:00",
@@ -73,6 +74,10 @@
         "quality": { "approved": true, "iterations": 2 },
         "security": { "approved": true, "iterations": 1 }
       }
+    },
+    "finish": {
+      "status": "completed",
+      "completed": "2026-03-07T03:05:00+08:00"
     }
   }
 }

@@ -379,3 +379,19 @@ When a feature compares fields from heterogeneous sources (DB vs filesystem, API
 - Keywords: ["field-source-mapping", "spec-completeness", "comparison-feature", "heterogeneous-sources", "specify-phase"]
 - Last observed: Feature 011
 - Observation count: 1
+
+### Accepted-Delta Annotation Must Be Self-Sufficient in One Write
+When writing an "accepted delta" annotation for a spec-design divergence, complete the annotation in one edit with: (1) the exact canonical format string, (2) any prefix the helper layer adds (e.g., "Error: " + ValueError.message), and (3) one concrete test assertion example.
+- Source: Feature 013, design handoff — 5 iterations extracting one sub-component each
+- Confidence: high
+- Keywords: ["accepted-delta", "annotation-completeness", "handoff-review", "error-format", "one-write"]
+- Last observed: Feature 013
+- Observation count: 1
+
+### Spec Issue Count Predicts Duration Only When Issues Are Interdependent
+10 spec issues in iteration 1 resolved in 3 total iterations when all issues were leaf concerns (each independently fixable). When iteration-1 issues are disjoint, total phase duration scales with distinct concern categories, not total issue count. Only branching concerns (one fix reveals sub-issues) drive high iteration cascades.
+- Source: Feature 013, specify phase — 10 issues iter 1 (3 blockers, 7 warnings), all independently fixable; 3 total iterations to approval
+- Confidence: medium
+- Keywords: ["spec-review", "issue-count", "convergence", "leaf-concerns", "specify-phase"]
+- Last observed: Feature 013
+- Observation count: 1

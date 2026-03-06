@@ -980,3 +980,453 @@ class TestProcessGetLineageUuidRoot:
             assert _UUID_V4_RE.match(root_arg), (
                 f"Expected UUID root_id for downward lineage, got: {root_arg}"
             )
+
+
+# ---------------------------------------------------------------------------
+# _process_export_entities tests
+# ---------------------------------------------------------------------------
+
+from entity_registry.server_helpers import _process_export_entities
+
+
+class TestProcessExportEntities:
+    """TDD tests for _process_export_entities() helper.
+
+    Tests cover: JSON return, file write, parent dir creation, path escape,
+    OSError handling, ValueError propagation, UTF-8 encoding, indentation,
+    include_lineage forwarding, and confirmation message format.
+    """
+
+    def test_no_output_path_returns_json_string(self, db: EntityDatabase):
+        """When output_path is None, returns valid JSON string directly."""
+        import json
+
+        db.register_entity("feature", "001", "Feature One", status="active")
+        result = _process_export_entities(
+            db,
+            entity_type=None,
+            status=None,
+            output_path=None,
+            include_lineage=True,
+            artifacts_root="/tmp",
+        )
+        # Must be a valid JSON string
+        parsed = json.loads(result)
+        assert isinstance(parsed, dict)
+        assert "entities" in parsed
+        assert parsed["entity_count"] >= 1
+
+    def test_output_path_writes_file(self, db: EntityDatabase, tmp_path):
+        """When output_path provided, file is created with valid JSON
+        and returns confirmation message (AC-4)."""
+        import json
+
+        db.register_entity("feature", "001", "Feature One", status="active")
+        out_file = str(tmp_path / "export.json")
+        result = _process_export_entities(
+            db,
+            entity_type=None,
+            status=None,
+            output_path=out_file,
+            include_lineage=True,
+            artifacts_root=str(tmp_path),
+        )
+        # File must exist with valid JSON
+        assert os.path.exists(out_file)
+        with open(out_file, encoding="utf-8") as f:
+            data = json.load(f)
+        assert isinstance(data, dict)
+        assert data["entity_count"] >= 1
+        # Confirmation message
+        assert "Exported" in result
+        assert out_file in result or str(tmp_path) in result
+
+    def test_output_path_creates_parent_dirs(self, db: EntityDatabase, tmp_path):
+        """When output_path has non-existent parent dirs, they are
+        auto-created (AC-10)."""
+        db.register_entity("feature", "001", "Feature One", status="active")
+        nested = tmp_path / "deep" / "nested" / "dir"
+        out_file = str(nested / "export.json")
+        result = _process_export_entities(
+            db,
+            entity_type=None,
+            status=None,
+            output_path=out_file,
+            include_lineage=True,
+            artifacts_root=str(tmp_path),
+        )
+        assert os.path.exists(out_file)
+        assert "Exported" in result
+
+    def test_path_escape_returns_error(self, db: EntityDatabase, tmp_path):
+        """Path escape attempt returns error string (AC-6)."""
+        result = _process_export_entities(
+            db,
+            entity_type=None,
+            status=None,
+            output_path="../../etc/passwd",
+            include_lineage=True,
+            artifacts_root=str(tmp_path),
+        )
+        assert result == "Error: output path escapes artifacts root"
+
+    def test_oserror_returns_error_string(self, db: EntityDatabase, tmp_path):
+        """OSError (e.g. permission denied) returns error string (FR-3)."""
+        from unittest.mock import patch
+
+        db.register_entity("feature", "001", "Feature One", status="active")
+        out_file = str(tmp_path / "export.json")
+        with patch("builtins.open", side_effect=OSError("Permission denied")):
+            result = _process_export_entities(
+                db,
+                entity_type=None,
+                status=None,
+                output_path=out_file,
+                include_lineage=True,
+                artifacts_root=str(tmp_path),
+            )
+        assert result.startswith("Error writing export: ")
+        assert "Permission denied" in result
+
+    def test_invalid_entity_type_returns_error(self, db: EntityDatabase):
+        """Invalid entity_type ValueError returns error string with
+        'Error: ' prefix. Database format is authoritative."""
+        result = _process_export_entities(
+            db,
+            entity_type="xyz",
+            status=None,
+            output_path=None,
+            include_lineage=True,
+            artifacts_root="/tmp",
+        )
+        assert result == (
+            "Error: Invalid entity_type 'xyz'. "
+            "Must be one of ('backlog', 'brainstorm', 'project', 'feature')"
+        )
+
+    def test_json_encoding_utf8(self, db: EntityDatabase):
+        """Non-ASCII characters are preserved in JSON output."""
+        import json
+
+        db.register_entity(
+            "feature", "001", "Funcionalidad especial", status="activo"
+        )
+        result = _process_export_entities(
+            db,
+            entity_type=None,
+            status=None,
+            output_path=None,
+            include_lineage=True,
+            artifacts_root="/tmp",
+        )
+        parsed = json.loads(result)
+        names = [e["name"] for e in parsed["entities"]]
+        assert any("especial" in n for n in names)
+        # ensure_ascii=False means no \u escapes for these chars
+        assert "\\u" not in result
+
+    def test_json_indentation(self, db: EntityDatabase):
+        """JSON output uses 2-space indentation."""
+        db.register_entity("feature", "001", "Feature One", status="active")
+        result = _process_export_entities(
+            db,
+            entity_type=None,
+            status=None,
+            output_path=None,
+            include_lineage=True,
+            artifacts_root="/tmp",
+        )
+        # 2-space indent means lines should start with "  " (2 spaces), not
+        # "    " (4 spaces) at the first nesting level
+        lines = result.split("\n")
+        indented_lines = [l for l in lines if l.startswith("  ") and not l.startswith("    ")]
+        assert len(indented_lines) > 0, "Expected 2-space indented lines"
+        # Also verify no tabs used for indentation
+        assert "\t" not in result
+
+    def test_include_lineage_forwarded(self, db: EntityDatabase):
+        """include_lineage=False is passed through to database method."""
+        from unittest.mock import patch
+
+        db.register_entity("feature", "001", "Feature One", status="active")
+        with patch.object(
+            db, "export_entities_json", wraps=db.export_entities_json
+        ) as mock_export:
+            _process_export_entities(
+                db,
+                entity_type=None,
+                status=None,
+                output_path=None,
+                include_lineage=False,
+                artifacts_root="/tmp",
+            )
+            mock_export.assert_called_once_with(None, None, False)
+
+    def test_confirmation_message_format(self, db: EntityDatabase, tmp_path):
+        """Returns 'Exported {n} entities to {path}' with correct count."""
+        db.register_entity("feature", "001", "F1", status="active")
+        db.register_entity("feature", "002", "F2", status="active")
+        db.register_entity("project", "P1", "P1", status="active")
+        out_file = str(tmp_path / "export.json")
+        result = _process_export_entities(
+            db,
+            entity_type=None,
+            status=None,
+            output_path=out_file,
+            include_lineage=True,
+            artifacts_root=str(tmp_path),
+        )
+        # Resolve the output path to match what the function returns
+        resolved = os.path.realpath(out_file)
+        assert result == f"Exported 3 entities to {resolved}"
+
+
+# ---------------------------------------------------------------------------
+# _process_export_entities deepened tests (test-deepener Phase B)
+# ---------------------------------------------------------------------------
+
+
+class TestProcessExportEntitiesDeepened:
+    """Deepened tests for _process_export_entities() helper.
+
+    Covers adversarial, error propagation, and mutation dimensions that
+    supplement the existing TDD tests above.
+    """
+
+    # -- Dimension 3: Adversarial ------------------------------------------
+
+    def test_path_traversal_with_intermediate_segments(
+        self, db: EntityDatabase, tmp_path,
+    ):
+        """Path traversal hidden in intermediate segments is rejected.
+
+        derived_from: adversarial: path traversal variant
+        """
+        # Given an output_path with traversal embedded in intermediate segments
+        db.register_entity("feature", "001", "Feature One")
+        result = _process_export_entities(
+            db,
+            entity_type=None,
+            status=None,
+            output_path="backup/../../../etc/passwd",
+            include_lineage=True,
+            artifacts_root=str(tmp_path),
+        )
+        # Then the path escape error is returned
+        assert result == "Error: output path escapes artifacts root"
+        # And no file was written outside the sandbox
+        assert not os.path.exists("/etc/passwd.json")
+
+    def test_entity_type_sql_injection_returns_error_not_crash(
+        self, db: EntityDatabase,
+    ):
+        """SQL injection in entity_type returns error string, table intact.
+
+        derived_from: adversarial: SQL injection
+        """
+        # Given a malicious entity_type
+        db.register_entity("feature", "001", "Safe Feature")
+        result = _process_export_entities(
+            db,
+            entity_type="'; DROP TABLE entities; --",
+            status=None,
+            output_path=None,
+            include_lineage=True,
+            artifacts_root="/tmp",
+        )
+        # Then an error string is returned (not exception)
+        assert result.startswith("Error:")
+        assert "Invalid entity_type" in result
+        # And the database is still intact
+        count = db._conn.execute(
+            "SELECT count(*) FROM entities"
+        ).fetchone()[0]
+        assert count >= 1, "entities table should survive injection attempt"
+
+    def test_entity_type_case_sensitive_returns_error(
+        self, db: EntityDatabase,
+    ):
+        """Case mismatch in entity_type returns error at helper layer.
+
+        derived_from: adversarial: case boundary
+        """
+        # Given entities of type 'feature' exist
+        db.register_entity("feature", "001", "Feature One")
+        # When calling with 'Feature' (capital F)
+        result = _process_export_entities(
+            db,
+            entity_type="Feature",
+            status=None,
+            output_path=None,
+            include_lineage=True,
+            artifacts_root="/tmp",
+        )
+        # Then error is returned about invalid entity_type
+        assert result.startswith("Error:")
+        assert "Invalid entity_type" in result
+
+    # -- Dimension 4: Error Propagation ------------------------------------
+
+    def test_path_escape_error_message_exact_content(
+        self, db: EntityDatabase, tmp_path,
+    ):
+        """Path escape returns the exact documented error string.
+
+        derived_from: error: path escape message
+        """
+        # Given an output_path that escapes artifacts root
+        result = _process_export_entities(
+            db,
+            entity_type=None,
+            status=None,
+            output_path="../../escape",
+            include_lineage=True,
+            artifacts_root=str(tmp_path),
+        )
+        # Then the exact error string matches (not a partial match)
+        assert result == "Error: output path escapes artifacts root"
+
+    def test_malformed_metadata_json_does_not_crash_export(
+        self, db: EntityDatabase,
+    ):
+        """Entity with malformed JSON metadata exports with {} metadata.
+
+        derived_from: error: malformed metadata
+        """
+        import json as json_mod
+
+        # Given an entity exists with corrupted metadata in the database
+        db.register_entity("feature", "001", "Feature One")
+        db._conn.execute(
+            "UPDATE entities SET metadata = '{bad json' WHERE type_id = ?",
+            ("feature:001",),
+        )
+        db._conn.commit()
+        # When export is called
+        result = _process_export_entities(
+            db,
+            entity_type=None,
+            status=None,
+            output_path=None,
+            include_lineage=True,
+            artifacts_root="/tmp",
+        )
+        # Then export succeeds with metadata as empty dict
+        parsed = json_mod.loads(result)
+        entity = parsed["entities"][0]
+        assert entity["metadata"] == {}
+
+    # -- Dimension 5: Mutation Mindset -------------------------------------
+
+    def test_no_output_path_returns_parseable_json_with_correct_count(
+        self, db: EntityDatabase,
+    ):
+        """Returned JSON string has entity_count matching actual entities.
+
+        derived_from: mutation: return value
+        """
+        import json as json_mod
+
+        # Given 4 entities exist
+        for i in range(4):
+            db.register_entity("feature", f"f{i}", f"Feature {i}")
+        # When export with no output_path
+        result = _process_export_entities(
+            db,
+            entity_type=None,
+            status=None,
+            output_path=None,
+            include_lineage=True,
+            artifacts_root="/tmp",
+        )
+        # Then entity_count matches len(entities) in the JSON
+        parsed = json_mod.loads(result)
+        assert parsed["entity_count"] == len(parsed["entities"])
+        assert parsed["entity_count"] == 4
+
+    def test_file_output_uses_utf8_encoding(
+        self, db: EntityDatabase, tmp_path,
+    ):
+        """File written with UTF-8 encoding preserves unicode characters.
+
+        derived_from: adversarial: encoding
+        """
+        import json as json_mod
+
+        # Given an entity with unicode characters in its name
+        db.register_entity(
+            "feature", "001", "Funcion especial con acentos y tildes",
+        )
+        out_file = str(tmp_path / "export.json")
+        # When export to file
+        _process_export_entities(
+            db,
+            entity_type=None,
+            status=None,
+            output_path=out_file,
+            include_lineage=True,
+            artifacts_root=str(tmp_path),
+        )
+        # Then file is valid UTF-8 JSON with characters preserved
+        with open(out_file, encoding="utf-8") as f:
+            data = json_mod.load(f)
+        names = [e["name"] for e in data["entities"]]
+        assert any("especial" in n for n in names)
+
+    def test_include_lineage_false_omits_parent_type_id_in_json_output(
+        self, db: EntityDatabase,
+    ):
+        """include_lineage=False means parent_type_id key is absent in output.
+
+        derived_from: mutation: key presence
+        """
+        import json as json_mod
+
+        # Given entities with parent relationships
+        db.register_entity("project", "p1", "Project One")
+        db.register_entity(
+            "feature", "f1", "Feature One", parent_type_id="project:p1",
+        )
+        # When export with include_lineage=False
+        result = _process_export_entities(
+            db,
+            entity_type=None,
+            status=None,
+            output_path=None,
+            include_lineage=False,
+            artifacts_root="/tmp",
+        )
+        # Then parent_type_id key is completely absent from entity dicts
+        parsed = json_mod.loads(result)
+        for entity in parsed["entities"]:
+            assert "parent_type_id" not in entity, (
+                f"parent_type_id should be absent but found in {entity['type_id']}"
+            )
+
+    def test_include_lineage_true_shows_parent_type_id_in_json_output(
+        self, db: EntityDatabase,
+    ):
+        """include_lineage=True includes parent_type_id with correct value.
+
+        derived_from: spec:FR-5, spec:FR-2
+        """
+        import json as json_mod
+
+        # Given entities with parent relationships
+        db.register_entity("project", "p1", "Project One")
+        db.register_entity(
+            "feature", "f1", "Feature One", parent_type_id="project:p1",
+        )
+        # When export with include_lineage=True
+        result = _process_export_entities(
+            db,
+            entity_type=None,
+            status=None,
+            output_path=None,
+            include_lineage=True,
+            artifacts_root="/tmp",
+        )
+        # Then parent_type_id is present and correct
+        parsed = json_mod.loads(result)
+        child = [e for e in parsed["entities"] if e["type_id"] == "feature:f1"][0]
+        assert child["parent_type_id"] == "project:p1"

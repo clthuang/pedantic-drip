@@ -1,0 +1,75 @@
+{
+  "id": "013",
+  "slug": "entity-context-export-mcp-tool",
+  "status": "active",
+  "created": "2026-03-01T16:27:59+08:00",
+  "mode": "standard",
+  "branch": "feature/013-entity-context-export-mcp-tool",
+  "project_id": "P001",
+  "module": "Entity DB Capabilities",
+  "depends_on_features": [
+    "001-entity-uuid-primary-key-migrat"
+  ],
+  "lastCompletedPhase": "implement",
+  "phases": {
+    "specify": {
+      "started": "2026-03-07T03:10:00+08:00",
+      "completed": "2026-03-07T03:40:00+08:00",
+      "phaseReview": {
+        "iterations": 3,
+        "approved": true,
+        "reviewerNotes": []
+      },
+      "handoffReview": {
+        "iterations": 2,
+        "approved": true
+      }
+    },
+    "design": {
+      "started": "2026-03-07T03:45:00+08:00",
+      "stages": {
+        "research": { "started": "2026-03-07T03:45:00+08:00", "completed": "2026-03-07T03:50:00+08:00", "skipped": false },
+        "architecture": { "started": "2026-03-07T03:50:00+08:00", "completed": "2026-03-07T03:55:00+08:00" },
+        "interface": { "started": "2026-03-07T03:55:00+08:00", "completed": "2026-03-07T04:00:00+08:00" },
+        "designReview": { "started": "2026-03-07T04:00:00+08:00", "completed": "2026-03-07T04:15:00+08:00", "iterations": 3, "reviewerNotes": [] },
+        "handoffReview": { "started": "2026-03-07T04:15:00+08:00", "completed": "2026-03-07T04:40:00+08:00", "iterations": 5, "approved": true, "reviewerNotes": ["test_entity_server.py not clarified as new or existing file in File Change Summary"] }
+      },
+      "completed": "2026-03-07T04:40:00+08:00"
+    },
+    "create-plan": {
+      "started": "2026-03-07T04:45:00+08:00",
+      "completed": "2026-03-07T05:05:00+08:00",
+      "phaseReview": {
+        "iterations": 3,
+        "approved": true,
+        "reviewerNotes": []
+      },
+      "handoffReview": {
+        "iterations": 2,
+        "approved": true,
+        "reviewerNotes": []
+      }
+    },
+    "create-tasks": {
+      "started": "2026-03-07T05:10:00+08:00",
+      "completed": "2026-03-07T05:35:00+08:00",
+      "taskReview": {
+        "iterations": 3,
+        "approved": true,
+        "reviewerNotes": []
+      },
+      "chainReview": {
+        "iterations": 2,
+        "approved": true,
+        "reviewerNotes": []
+      }
+    },
+    "implement": {
+      "started": "2026-03-07T05:40:00+08:00",
+      "completed": "2026-03-07T07:05:00+08:00",
+      "status": "completed",
+      "reviewIterations": 3,
+      "reviewApproved": true
+    }
+  }
+}

@@ -384,3 +384,13 @@ Adding type annotations to individual branches of an if/else statement instead o
 - Keywords: ["type-annotation", "branch-cascade", "review-waste", "formatting", "python"]
 - Last observed: Feature 011
 - Observation count: 1
+
+### Anti-Pattern: Partial Accepted-Delta Annotation Requiring Iterative Narrowing
+Annotating a spec-design divergence as "accepted delta" without specifying the full error surface (canonical format string, prefix chain, concrete test assertion example) causes the handoff reviewer to extract each sub-component in separate iterations, consuming the iteration cap on a single concern.
+- Observed in: Feature 013, design handoff — 5 iterations all addressing the same error-message format delta
+- Cost: 4 of 5 handoff iterations consumed by a concern whose full resolution was knowable from iter 2's fix
+- Instead: Complete the accepted-delta annotation in one atomic write with: (1) exact canonical format string, (2) any prefix the helper layer adds, (3) one concrete test assertion example
+- Confidence: high
+- Keywords: ["accepted-delta", "error-format", "handoff-reviewer", "incomplete-annotation", "iteration-cap"]
+- Last observed: Feature 013
+- Observation count: 1

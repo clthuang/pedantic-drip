@@ -289,6 +289,59 @@ def _process_export_lineage_markdown(
         return f"Error exporting lineage: {exc}"
 
 
+def _process_export_entities(
+    db,
+    entity_type: str | None,
+    status: str | None,
+    output_path: str | None,
+    include_lineage: bool,
+    artifacts_root: str,
+) -> str:
+    """Export entities as JSON, optionally writing to a file.
+
+    Parameters
+    ----------
+    db : EntityDatabase
+        Active database instance.
+    entity_type : str or None
+        Filter by entity type (backlog/brainstorm/project/feature).
+    status : str or None
+        Filter by status value.
+    output_path : str or None
+        File path to write JSON to. None returns JSON string directly.
+    include_lineage : bool
+        Include parent_type_id in entity dicts.
+    artifacts_root : str
+        Root directory for path containment check.
+
+    Returns
+    -------
+    str
+        JSON string, file-write confirmation, or error message.
+        Never raises exceptions.
+    """
+    try:
+        data = db.export_entities_json(entity_type, status, include_lineage)
+    except ValueError as exc:
+        return f"Error: {exc}"
+
+    if output_path is not None:
+        resolved = resolve_output_path(output_path, artifacts_root)
+        if resolved is None:
+            return "Error: output path escapes artifacts root"
+        try:
+            parent_dir = os.path.dirname(resolved)
+            if parent_dir:
+                os.makedirs(parent_dir, exist_ok=True)
+            with open(resolved, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            return f"Exported {data['entity_count']} entities to {resolved}"
+        except OSError as exc:
+            return f"Error writing export: {exc}"
+
+    return json.dumps(data, indent=2, ensure_ascii=False)
+
+
 def _process_get_lineage(
     db,
     type_id: str,

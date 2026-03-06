@@ -18,6 +18,7 @@ if _hooks_lib not in (os.path.normpath(p) for p in sys.path):
 from entity_registry.backfill import run_backfill
 from entity_registry.database import EntityDatabase
 from entity_registry.server_helpers import (
+    _process_export_entities,
     _process_export_lineage_markdown,
     _process_get_lineage,
     _process_register_entity,
@@ -264,6 +265,35 @@ async def export_lineage_markdown(
         return "Error: database not initialized (server not started)"
 
     return _process_export_lineage_markdown(_db, type_id, output_path, _artifacts_root)
+
+
+@mcp.tool()
+async def export_entities(
+    entity_type: str | None = None,
+    status: str | None = None,
+    output_path: str | None = None,
+    include_lineage: bool = True,
+) -> str:
+    """Export all entities (or a filtered subset) as structured JSON.
+
+    Parameters
+    ----------
+    entity_type:
+        Filter by type (backlog, brainstorm, project, feature).
+    status:
+        Filter by status string.
+    output_path:
+        Write to file; if None, return as string.
+    include_lineage:
+        Include parent/child relationships (default True).
+
+    Returns JSON string or file-write confirmation.
+    """
+    if _db is None:
+        return "Error: database not initialized (server not started)"
+    return _process_export_entities(
+        _db, entity_type, status, output_path, include_lineage, _artifacts_root
+    )
 
 
 @mcp.tool()

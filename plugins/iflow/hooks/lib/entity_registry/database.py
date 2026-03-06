@@ -407,6 +407,9 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
 # Sentinel object to distinguish "not provided" from explicit ``None``.
 _UNSET = object()
 
+# Export format version — separate from the DB schema version.
+EXPORT_SCHEMA_VERSION = 1
+
 
 class EntityDatabase:
     """SQLite-backed storage for entity registry.
@@ -1041,6 +1044,90 @@ class EntityDatabase:
             lines.append(f"{indent}- ... (depth limit reached)")
 
         return "\n".join(lines)
+
+    def export_entities_json(
+        self,
+        entity_type: str | None = None,
+        status: str | None = None,
+        include_lineage: bool = True,
+    ) -> dict:
+        """Export entities as a structured dict with schema version metadata.
+
+        Parameters
+        ----------
+        entity_type:
+            Filter by entity type. Must be one of VALID_ENTITY_TYPES if
+            provided. Raises ValueError if invalid.
+        status:
+            Filter by status string. No validation (free-form).
+        include_lineage:
+            If True, include parent_type_id in each entity dict.
+            If False, omit parent_type_id.
+
+        Returns
+        -------
+        dict
+            Export envelope: {schema_version, exported_at, entity_count,
+            filters_applied, entities: [...]}.
+        """
+        # 1. Validate entity_type (only when provided)
+        if entity_type is not None:
+            self._validate_entity_type(entity_type)
+
+        # 2. Build query conditionally (matches list_entities pattern)
+        query = (
+            "SELECT uuid, type_id, entity_type, entity_id, name, status, "
+            "artifact_path, parent_type_id, created_at, updated_at, metadata "
+            "FROM entities"
+        )
+        conditions: list[str] = []
+        params: list[str] = []
+        if entity_type is not None:
+            conditions.append("entity_type = ?")
+            params.append(entity_type)
+        if status is not None:
+            conditions.append("status = ?")
+            params.append(status)
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        query += " ORDER BY created_at ASC, type_id ASC"
+
+        rows = self._conn.execute(query, params).fetchall()
+
+        # 3. Build entity dicts with metadata normalization
+        entities: list[dict] = []
+        for row in rows:
+            try:
+                metadata = json.loads(row["metadata"]) if row["metadata"] else {}
+            except (json.JSONDecodeError, ValueError):
+                metadata = {}
+            entity = {
+                "uuid": row["uuid"],
+                "type_id": row["type_id"],
+                "entity_type": row["entity_type"],
+                "entity_id": row["entity_id"],
+                "name": row["name"],
+                "status": row["status"],
+                "artifact_path": row["artifact_path"],
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+                "metadata": metadata,
+            }
+            if include_lineage:
+                entity["parent_type_id"] = row["parent_type_id"]
+            entities.append(entity)
+
+        # 4. Assemble envelope
+        return {
+            "schema_version": EXPORT_SCHEMA_VERSION,
+            "exported_at": datetime.now().astimezone().isoformat(),
+            "entity_count": len(entities),
+            "filters_applied": {
+                "entity_type": entity_type,
+                "status": status,
+            },
+            "entities": entities,
+        }
 
     # ------------------------------------------------------------------
     # Workflow Phase CRUD

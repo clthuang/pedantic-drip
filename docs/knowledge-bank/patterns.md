@@ -155,8 +155,8 @@ When a workflow has nested iteration loops, make budgets independent.
 Heavy upfront review investment (15-30+ pre-implementation review iterations) correlates with clean implementation (0-1 actionable issues across all reviewers). Front-loading review effort shifts risk discovery to phases where changes are cheap (text edits) rather than expensive (code changes).
 - Observed in: Feature #022, implementation phase
 - Confidence: high
-- Last observed: Feature 012
-- Observation count: 9
+- Last observed: Feature 013
+- Observation count: 10
 
 ### Pattern: Template Indentation Matching
 When inserting blocks into existing prompt templates, read the target file first and match its specific indentation level (which may differ per file). Prevents downstream formatting issues.

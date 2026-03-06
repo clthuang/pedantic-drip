@@ -1,6 +1,6 @@
 {
   "name": "iflow",
-  "version": "4.11.1",
+  "version": "4.11.2",
   "description": "Structured feature development workflow with skills, agents, and commands for methodical development from ideation to implementation",
   "author": {
     "name": "clthuang"

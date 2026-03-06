@@ -16,6 +16,8 @@ from entity_registry.database import (
     _migrate_to_uuid_pk,
 )
 
+from entity_registry.database import EXPORT_SCHEMA_VERSION
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -3353,3 +3355,528 @@ class TestUpdateWorkflowPhaseAllFieldsSimultaneously:
         assert result["type_id"] == "feature:all-fields"
         # And updated_at is refreshed
         assert result["updated_at"] is not None
+
+
+# ---------------------------------------------------------------------------
+# export_entities_json tests
+# ---------------------------------------------------------------------------
+
+import time as time_mod
+
+
+class TestExportEntitiesJson:
+    """Tests for EntityDatabase.export_entities_json() method."""
+
+    # -- Envelope, Filters, Validation (Task 1.1.1a) -----------------------
+
+    def test_no_filters_returns_all(self, mem_db: EntityDatabase):
+        """No args returns all entities with correct envelope keys."""
+        mem_db.register_entity("feature", "f1", "Feature One")
+        mem_db.register_entity("project", "p1", "Project One")
+        mem_db.register_entity("brainstorm", "b1", "Brainstorm One")
+
+        result = mem_db.export_entities_json()
+
+        assert isinstance(result, dict)
+        expected_keys = {
+            "schema_version", "exported_at", "entity_count",
+            "filters_applied", "entities",
+        }
+        assert set(result.keys()) == expected_keys
+        assert result["entity_count"] == 3
+        assert len(result["entities"]) == 3
+
+    def test_entity_type_filter(self, mem_db: EntityDatabase):
+        """entity_type='feature' returns only features."""
+        mem_db.register_entity("feature", "f1", "Feature One")
+        mem_db.register_entity("project", "p1", "Project One")
+
+        result = mem_db.export_entities_json(entity_type="feature")
+
+        assert result["entity_count"] == 1
+        assert len(result["entities"]) == 1
+        assert result["entities"][0]["entity_type"] == "feature"
+
+    def test_status_filter(self, mem_db: EntityDatabase):
+        """status='completed' returns only completed entities."""
+        mem_db.register_entity(
+            "feature", "f1", "Feature One", status="completed",
+        )
+        mem_db.register_entity(
+            "feature", "f2", "Feature Two", status="active",
+        )
+
+        result = mem_db.export_entities_json(status="completed")
+
+        assert result["entity_count"] == 1
+        assert len(result["entities"]) == 1
+        assert result["entities"][0]["status"] == "completed"
+
+    def test_combined_filters(self, mem_db: EntityDatabase):
+        """entity_type + status uses AND logic."""
+        mem_db.register_entity(
+            "feature", "f1", "Active Feature", status="active",
+        )
+        mem_db.register_entity(
+            "feature", "f2", "Completed Feature", status="completed",
+        )
+        mem_db.register_entity(
+            "project", "p1", "Active Project", status="active",
+        )
+
+        result = mem_db.export_entities_json(
+            entity_type="feature", status="active",
+        )
+
+        assert result["entity_count"] == 1
+        assert len(result["entities"]) == 1
+        entity = result["entities"][0]
+        assert entity["entity_type"] == "feature"
+        assert entity["status"] == "active"
+        assert entity["entity_id"] == "f1"
+
+    def test_invalid_entity_type_raises(self, mem_db: EntityDatabase):
+        """Invalid entity_type raises ValueError."""
+        with pytest.raises(
+            ValueError,
+            match=r"Invalid entity_type 'invalid'\. Must be one of \('backlog',",
+        ):
+            mem_db.export_entities_json(entity_type="invalid")
+
+    def test_unmatched_status_returns_empty(self, mem_db: EntityDatabase):
+        """Unmatched status returns valid envelope with zero entities."""
+        mem_db.register_entity(
+            "feature", "f1", "Feature One", status="active",
+        )
+
+        result = mem_db.export_entities_json(status="nonexistent")
+
+        assert result["entity_count"] == 0
+        assert result["entities"] == []
+
+    def test_empty_database(self, mem_db: EntityDatabase):
+        """Empty database returns valid envelope with zero entities."""
+        result = mem_db.export_entities_json()
+
+        assert isinstance(result, dict)
+        assert result["entity_count"] == 0
+        assert result["entities"] == []
+        assert "schema_version" in result
+        assert "exported_at" in result
+        assert "filters_applied" in result
+
+    def test_schema_version(self, mem_db: EntityDatabase):
+        """schema_version matches EXPORT_SCHEMA_VERSION constant (== 1)."""
+        result = mem_db.export_entities_json()
+
+        assert result["schema_version"] == EXPORT_SCHEMA_VERSION
+        assert result["schema_version"] == 1
+
+    def test_exported_at_format(self, mem_db: EntityDatabase):
+        """exported_at is ISO 8601 with timezone offset."""
+        result = mem_db.export_entities_json()
+
+        exported_at = result["exported_at"]
+        assert re.match(
+            r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.*[+-]\d{2}:\d{2}$",
+            exported_at,
+        ), f"exported_at '{exported_at}' is not valid ISO 8601 with timezone"
+
+    def test_filters_applied_in_envelope(self, mem_db: EntityDatabase):
+        """filters_applied dict has entity_type and status keys only."""
+        result = mem_db.export_entities_json(
+            entity_type="feature", status="active",
+        )
+
+        filters = result["filters_applied"]
+        assert "entity_type" in filters
+        assert "status" in filters
+        assert filters["entity_type"] == "feature"
+        assert filters["status"] == "active"
+        assert "include_lineage" not in filters
+
+    # -- Lineage, Metadata, Ordering, Performance (Task 1.1.1b) ------------
+
+    def test_uuid_in_entity(self, mem_db: EntityDatabase):
+        """Each entity dict has a uuid field matching UUID v4 pattern."""
+        mem_db.register_entity("feature", "f1", "Feature One")
+
+        result = mem_db.export_entities_json()
+
+        for entity in result["entities"]:
+            assert "uuid" in entity
+            assert re.match(
+                _UUID_V4_RE, entity["uuid"],
+            ), f"uuid '{entity['uuid']}' does not match UUID v4 pattern"
+
+    def test_include_lineage_true(self, mem_db: EntityDatabase):
+        """include_lineage=True includes parent_type_id in entity dicts."""
+        mem_db.register_entity("project", "p1", "Project One")
+        mem_db.register_entity(
+            "feature", "f1", "Feature One",
+            parent_type_id="project:p1",
+        )
+
+        result = mem_db.export_entities_json(include_lineage=True)
+
+        for entity in result["entities"]:
+            assert "parent_type_id" in entity
+        # Verify the child has the correct parent
+        child = [
+            e for e in result["entities"] if e["type_id"] == "feature:f1"
+        ][0]
+        assert child["parent_type_id"] == "project:p1"
+
+    def test_include_lineage_false(self, mem_db: EntityDatabase):
+        """include_lineage=False excludes parent_type_id from entity dicts."""
+        mem_db.register_entity("project", "p1", "Project One")
+        mem_db.register_entity(
+            "feature", "f1", "Feature One",
+            parent_type_id="project:p1",
+        )
+
+        result = mem_db.export_entities_json(include_lineage=False)
+
+        for entity in result["entities"]:
+            assert "parent_type_id" not in entity
+
+    def test_metadata_null_normalized(self, mem_db: EntityDatabase):
+        """Entity with no metadata has metadata field as {} (not None)."""
+        mem_db.register_entity("feature", "f1", "Feature One")
+
+        result = mem_db.export_entities_json()
+
+        entity = result["entities"][0]
+        assert entity["metadata"] == {}
+        assert entity["metadata"] is not None
+
+    def test_metadata_valid_json(self, mem_db: EntityDatabase):
+        """Entity with metadata={'key': 'value'} returns that dict."""
+        mem_db.register_entity(
+            "feature", "f1", "Feature One",
+            metadata={"key": "value"},
+        )
+
+        result = mem_db.export_entities_json()
+
+        entity = result["entities"][0]
+        assert entity["metadata"] == {"key": "value"}
+
+    def test_metadata_malformed_json(self, mem_db: EntityDatabase):
+        """Entity with malformed JSON metadata returns {} (empty dict)."""
+        mem_db.register_entity("feature", "f1", "Feature One")
+        # Directly corrupt metadata in DB
+        mem_db._conn.execute(
+            "UPDATE entities SET metadata = '{bad' WHERE type_id = ?",
+            ("feature:f1",),
+        )
+        mem_db._conn.commit()
+
+        result = mem_db.export_entities_json()
+
+        entity = result["entities"][0]
+        assert entity["metadata"] == {}
+
+    def test_entity_ordering(self, mem_db: EntityDatabase):
+        """Results ordered by created_at ASC, then type_id ASC."""
+        # Insert with explicit created_at in reverse order to verify sorting
+        now = mem_db._now_iso()
+        # Insert entities with controlled timestamps via direct SQL
+        rows = [
+            (str(uuid.uuid4()), "feature:f3", "feature", "f3", "Third",
+             "active", None, None, None, "2026-01-03T00:00:00+00:00",
+             "2026-01-03T00:00:00+00:00", None),
+            (str(uuid.uuid4()), "feature:f1", "feature", "f1", "First",
+             "active", None, None, None, "2026-01-01T00:00:00+00:00",
+             "2026-01-01T00:00:00+00:00", None),
+            (str(uuid.uuid4()), "project:p1", "project", "p1", "Also First",
+             "active", None, None, None, "2026-01-01T00:00:00+00:00",
+             "2026-01-01T00:00:00+00:00", None),
+            (str(uuid.uuid4()), "feature:f2", "feature", "f2", "Second",
+             "active", None, None, None, "2026-01-02T00:00:00+00:00",
+             "2026-01-02T00:00:00+00:00", None),
+        ]
+        mem_db._conn.executemany(
+            "INSERT INTO entities (uuid, type_id, entity_type, entity_id, "
+            "name, status, artifact_path, parent_type_id, parent_uuid, "
+            "created_at, updated_at, metadata) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            rows,
+        )
+        # Insert matching FTS entries
+        fts_rows = []
+        for row in mem_db._conn.execute(
+            "SELECT rowid, name, entity_id, entity_type, status "
+            "FROM entities"
+        ).fetchall():
+            fts_rows.append(
+                (row[0], row[1], row[2], row[3], row[4] or "", ""),
+            )
+        mem_db._conn.executemany(
+            "INSERT INTO entities_fts(rowid, name, entity_id, entity_type, "
+            "status, metadata_text) VALUES(?, ?, ?, ?, ?, ?)",
+            fts_rows,
+        )
+        mem_db._conn.commit()
+
+        result = mem_db.export_entities_json()
+
+        type_ids = [e["type_id"] for e in result["entities"]]
+        # Same timestamp: type_id ASC (feature:f1 < project:p1)
+        # Then feature:f2 (2026-01-02), then feature:f3 (2026-01-03)
+        assert type_ids == [
+            "feature:f1", "project:p1", "feature:f2", "feature:f3",
+        ]
+
+    def test_all_entity_fields_present(self, mem_db: EntityDatabase):
+        """Each entity dict has exactly the expected keys."""
+        mem_db.register_entity("project", "p1", "Project One")
+        mem_db.register_entity(
+            "feature", "f1", "Feature One",
+            parent_type_id="project:p1",
+            metadata={"key": "value"},
+        )
+
+        # With lineage
+        result = mem_db.export_entities_json(include_lineage=True)
+        expected_keys = {
+            "uuid", "type_id", "entity_type", "entity_id", "name",
+            "status", "artifact_path", "created_at", "updated_at",
+            "metadata", "parent_type_id",
+        }
+        for entity in result["entities"]:
+            assert set(entity.keys()) == expected_keys, (
+                f"Entity {entity.get('type_id', '?')} has keys "
+                f"{set(entity.keys())} but expected {expected_keys}"
+            )
+
+        # Without lineage - parent_type_id should be absent
+        result_no_lineage = mem_db.export_entities_json(include_lineage=False)
+        expected_keys_no_lineage = expected_keys - {"parent_type_id"}
+        for entity in result_no_lineage["entities"]:
+            assert set(entity.keys()) == expected_keys_no_lineage
+
+    def test_performance_1000_entities(self, mem_db: EntityDatabase):
+        """1000 entities exported in under 5 seconds."""
+        now = mem_db._now_iso()
+        rows = [
+            (
+                str(uuid.uuid4()), f"feature:{i:04d}", "feature",
+                f"{i:04d}", f"Entity {i}", "active",
+                None, None, None, now, now, None,
+            )
+            for i in range(1000)
+        ]
+        mem_db._conn.executemany(
+            "INSERT INTO entities (uuid, type_id, entity_type, entity_id, "
+            "name, status, artifact_path, parent_type_id, parent_uuid, "
+            "created_at, updated_at, metadata) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            rows,
+        )
+        # Insert matching FTS entries
+        fts_rows = []
+        for row in mem_db._conn.execute(
+            "SELECT rowid, name, entity_id, entity_type, status "
+            "FROM entities WHERE entity_type = 'feature'"
+        ).fetchall():
+            fts_rows.append(
+                (row[0], row[1], row[2], row[3], row[4] or "", ""),
+            )
+        mem_db._conn.executemany(
+            "INSERT INTO entities_fts(rowid, name, entity_id, entity_type, "
+            "status, metadata_text) VALUES(?, ?, ?, ?, ?, ?)",
+            fts_rows,
+        )
+        mem_db._conn.commit()
+
+        start = time_mod.perf_counter()
+        result = mem_db.export_entities_json()
+        elapsed = time_mod.perf_counter() - start
+
+        assert result["entity_count"] == 1000
+        assert len(result["entities"]) == 1000
+        assert elapsed < 5.0, (
+            f"export_entities_json took {elapsed:.2f}s, exceeds 5s limit"
+        )
+
+
+# ---------------------------------------------------------------------------
+# export_entities_json deepened tests (test-deepener Phase B)
+# ---------------------------------------------------------------------------
+
+
+class TestExportEntitiesJsonDeepened:
+    """Deepened tests for EntityDatabase.export_entities_json().
+
+    Covers boundary, adversarial, and mutation dimensions that supplement
+    the existing TDD tests above.
+    """
+
+    # -- Dimension 2: Boundary Values --------------------------------------
+
+    def test_single_entity_export(self, mem_db: EntityDatabase):
+        """Single entity returns entity_count=1 and exactly one entry.
+
+        derived_from: boundary: single element
+        """
+        # Given exactly one entity exists in the database
+        mem_db.register_entity("feature", "solo", "Solo Feature", status="active")
+        # When export_entities_json() is called with no arguments
+        result = mem_db.export_entities_json()
+        # Then entity_count is 1 and entities array has exactly one element
+        assert result["entity_count"] == 1
+        assert len(result["entities"]) == 1
+        assert result["entities"][0]["entity_id"] == "solo"
+
+    def test_filter_matches_all_entities(self, mem_db: EntityDatabase):
+        """Filter that matches every entity returns all of them.
+
+        derived_from: boundary: all match
+        """
+        # Given all entities in the database are features
+        mem_db.register_entity("feature", "f1", "F1", status="active")
+        mem_db.register_entity("feature", "f2", "F2", status="active")
+        mem_db.register_entity("feature", "f3", "F3", status="active")
+        # When filtering by entity_type='feature'
+        result = mem_db.export_entities_json(entity_type="feature")
+        # Then all three entities are returned
+        assert result["entity_count"] == 3
+        assert len(result["entities"]) == 3
+        for e in result["entities"]:
+            assert e["entity_type"] == "feature"
+
+    def test_entity_type_boundary_each_valid_type(self, mem_db: EntityDatabase):
+        """Each valid entity_type can be used as a filter without error.
+
+        derived_from: boundary: equivalence partitioning
+        """
+        # Given one entity of each valid type exists
+        valid_types = ("backlog", "brainstorm", "project", "feature")
+        for et in valid_types:
+            mem_db.register_entity(et, f"{et}-001", f"Entity {et}")
+        # When filtering by each valid type individually
+        for et in valid_types:
+            result = mem_db.export_entities_json(entity_type=et)
+            # Then exactly one entity is returned and it matches the filter
+            assert result["entity_count"] == 1, (
+                f"Expected 1 entity for type '{et}', got {result['entity_count']}"
+            )
+            assert result["entities"][0]["entity_type"] == et
+
+    def test_metadata_with_deeply_nested_json(self, mem_db: EntityDatabase):
+        """Metadata with nested objects is parsed into a nested dict.
+
+        derived_from: boundary: metadata nested JSON
+        """
+        # Given an entity has deeply nested metadata
+        nested_meta = {
+            "config": {
+                "level1": {"level2": {"value": 42}},
+                "tags": ["alpha", "beta"],
+            }
+        }
+        mem_db.register_entity(
+            "feature", "f1", "Nested Meta Feature", metadata=nested_meta,
+        )
+        # When export_entities_json() is called
+        result = mem_db.export_entities_json()
+        # Then metadata is the full nested dict, not a flat string
+        entity = result["entities"][0]
+        assert isinstance(entity["metadata"], dict)
+        assert entity["metadata"]["config"]["level1"]["level2"]["value"] == 42
+        assert entity["metadata"]["config"]["tags"] == ["alpha", "beta"]
+
+    # -- Dimension 3: Adversarial ------------------------------------------
+
+    def test_entity_type_with_sql_injection_attempt(self, mem_db: EntityDatabase):
+        """SQL injection in entity_type raises ValueError, not SQL error.
+
+        derived_from: adversarial: SQL injection
+        """
+        # Given a malicious entity_type string containing SQL injection
+        malicious_type = "'; DROP TABLE entities; --"
+        # When export_entities_json is called with the malicious input
+        with pytest.raises(ValueError, match=r"Invalid entity_type"):
+            mem_db.export_entities_json(entity_type=malicious_type)
+        # Then the entities table still exists and is intact
+        count = mem_db._conn.execute(
+            "SELECT count(*) FROM entities"
+        ).fetchone()[0]
+        assert count >= 0, "entities table should still exist after injection attempt"
+
+    def test_entity_type_case_sensitivity(self, mem_db: EntityDatabase):
+        """entity_type validation is case-sensitive ('Feature' != 'feature').
+
+        derived_from: adversarial: case boundary
+        """
+        # Given entities of type 'feature' exist
+        mem_db.register_entity("feature", "f1", "Feature One")
+        # When filtering with incorrect case 'Feature'
+        with pytest.raises(ValueError, match=r"Invalid entity_type"):
+            mem_db.export_entities_json(entity_type="Feature")
+
+    def test_entity_with_null_parent_and_lineage_true(
+        self, mem_db: EntityDatabase
+    ):
+        """Entity with no parent has parent_type_id=None (not omitted).
+
+        derived_from: adversarial: null relationship
+        """
+        # Given an entity with no parent exists
+        mem_db.register_entity("feature", "orphan", "Orphan Feature")
+        # When export with include_lineage=True
+        result = mem_db.export_entities_json(include_lineage=True)
+        # Then parent_type_id key is present but value is None
+        entity = result["entities"][0]
+        assert "parent_type_id" in entity
+        assert entity["parent_type_id"] is None
+
+    # -- Dimension 5: Mutation Mindset -------------------------------------
+
+    def test_entity_count_matches_actual_entities_array_length(
+        self, mem_db: EntityDatabase
+    ):
+        """entity_count in envelope equals len(entities) exactly.
+
+        derived_from: mutation: return value
+        """
+        # Given 5 entities exist
+        for i in range(5):
+            mem_db.register_entity("feature", f"f{i}", f"Feature {i}")
+        # When export_entities_json() is called
+        result = mem_db.export_entities_json()
+        # Then entity_count equals len(entities) -- not off-by-one, not hardcoded
+        assert result["entity_count"] == len(result["entities"])
+        assert result["entity_count"] == 5
+
+    def test_filters_applied_null_when_no_filters_given(
+        self, mem_db: EntityDatabase
+    ):
+        """filters_applied shows None for both fields when no filters used.
+
+        derived_from: mutation: filter values
+        """
+        # Given entities exist
+        mem_db.register_entity("feature", "f1", "Feature One")
+        # When export with no filters
+        result = mem_db.export_entities_json()
+        # Then both filter fields are None (not missing, not empty string)
+        filters = result["filters_applied"]
+        assert filters["entity_type"] is None
+        assert filters["status"] is None
+        assert set(filters.keys()) == {"entity_type", "status"}
+
+    def test_schema_version_is_integer_not_string(self, mem_db: EntityDatabase):
+        """schema_version is int 1, not string '1', not 0, not 2.
+
+        derived_from: mutation: constant
+        """
+        # Given export is called
+        result = mem_db.export_entities_json()
+        # Then schema_version is exactly integer 1
+        assert result["schema_version"] == 1
+        assert isinstance(result["schema_version"], int)
+        assert result["schema_version"] != "1"
+        assert result["schema_version"] != 0
+        assert result["schema_version"] != 2
