@@ -1,0 +1,19 @@
+{
+  "id": "012",
+  "slug": "full-text-entity-search-mcp-to",
+  "status": "active",
+  "created": "2026-03-01T16:27:59+08:00",
+  "mode": "standard",
+  "branch": "feature/012-full-text-entity-search-mcp-to",
+  "project_id": "P001",
+  "module": "Entity DB Capabilities",
+  "depends_on_features": [
+    "001-entity-uuid-primary-key-migrat"
+  ],
+  "lastCompletedPhase": null,
+  "phases": {
+    "specify": {
+      "started": "2026-03-07T19:00:00+08:00"
+    }
+  }
+}

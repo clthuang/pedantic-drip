@@ -140,7 +140,7 @@ Parameters:
   entity_type (str, optional): Filter to specific entity type (backlog, brainstorm, project, feature).
   limit (int, optional, default=20): Maximum results to return (max 100).
 
-Returns: Formatted text listing matching entities with type_id, name, status, and relevance rank.
+Returns: Formatted text listing matching entities with type_id, name (display name), and status.
 ```
 
 **Output format:** Each result shows `type_id`, `name` (display name), and `status`.
