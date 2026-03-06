@@ -128,7 +128,7 @@ Reconciliation logic for `meta_json_to_db`:
 2-5 below are mutually exclusive branches — each feature's `status` from step 1 maps to exactly one branch:
 2. For each feature with `status == "meta_json_ahead"`:
    a. Read `.meta.json` to derive target state via `engine._derive_state_from_meta()` (instance method on the passed WorkflowStateEngine)
-   b. If `workflow_phases` row exists: call `db.update_workflow_phase()` with `workflow_phase`, `last_completed_phase`, and `mode` derived from `.meta.json`. **`kanban_column` is left unchanged** — the `_UNSET` sentinel pattern in `update_workflow_phase()` means omitted keyword arguments are not written to the DB; passing only `workflow_phase`, `last_completed_phase`, and `mode` leaves `kanban_column` at its existing value. This is a known limitation; callers should verify kanban state separately.
+   b. If `workflow_phases` row exists: call `db.update_workflow_phase()` with `workflow_phase`, `last_completed_phase`, and `mode` derived from `.meta.json`. **Field name translation:** `FeatureWorkflowState.current_phase` maps to the `workflow_phase` DB column; `FeatureWorkflowState.last_completed_phase` maps directly. **`kanban_column` is left unchanged** — the `_UNSET` sentinel pattern in `update_workflow_phase()` means omitted keyword arguments are not written to the DB; passing only `workflow_phase`, `last_completed_phase`, and `mode` leaves `kanban_column` at its existing value. This is a known limitation; callers should verify kanban state separately.
    c. If no `workflow_phases` row: call `db.create_workflow_phase()` to create the row. `kanban_column` uses the DB default (`"backlog"`).
    d. Record the changes made
 3. For features with `status == "in_sync"`: skip (action `"skipped"`, message "Already in sync")
@@ -149,7 +149,7 @@ Reconciliation logic for `meta_json_to_db`:
   - `summary: dict` — aggregate counts by status (`in_sync`, `file_only`, `db_only`, `diverged`, `no_header`, `error`)
 
 Implementation:
-- If `feature_type_id` provided: extract feature directory name via `feature_type_id.split(":", 1)[1]` (e.g., `"feature:010-graceful-degradation"` → `"010-graceful-degradation"`), then check each artifact file listed in `ARTIFACT_BASENAME_MAP` from `entity_registry.frontmatter_sync` (currently: `spec.md`, `design.md`, `plan.md`, `tasks.md`, `retro.md`, `prd.md`) using `detect_drift()`. Note: all artifact files under a feature share the same entity record. `detect_drift()` compares each file's frontmatter against that single entity record. A feature with 6 artifact files produces up to 6 `DriftReport` entries, all referencing the same `type_id`.
+- If `feature_type_id` provided: (1) extract feature slug via `feature_type_id.split(":", 1)[1]` with path-traversal validation (reject if slug contains `..`, `/`, or null bytes — same defense as `engine._extract_slug()`), (2) construct directory path `os.path.join(artifacts_root, "features", slug)`, (3) iterate artifact files listed in `ARTIFACT_BASENAME_MAP` from `entity_registry.frontmatter_sync` (currently: `spec.md`, `design.md`, `plan.md`, `tasks.md`, `retro.md`, `prd.md`), calling `detect_drift(db, filepath)` for each existing file. This is a known simplification vs `frontmatter_sync._derive_feature_directory()`'s 4-step fallback chain; all features in this codebase follow the `{slug}` directory convention. Note: all artifact files under a feature share the same entity record. `detect_drift()` compares each file's frontmatter against that single entity record. A feature with 6 artifact files produces up to 6 `DriftReport` entries, all referencing the same `type_id`.
 - If omitted: call `scan_all()` from `frontmatter_sync`
 - Serialize `DriftReport` dataclass fields to JSON dict (filepath, type_id, status, file_fields, db_fields, mismatches)
 - Serialize `FieldMismatch` as `{field, file_value, db_value}`
@@ -173,7 +173,7 @@ Each tool delegates to a `_process_*()` function that accepts explicit parameter
 New processing functions (use existing `_with_error_handling` and `_catch_value_error` decorators from `workflow_state_server.py` for consistent error handling):
 - `_process_reconcile_check(engine, db, artifacts_root, feature_type_id)` — delegates to `check_workflow_drift()`
 - `_process_reconcile_apply(engine, db, artifacts_root, feature_type_id, direction, dry_run)` — validates `direction == "meta_json_to_db"` (returns `_make_error("invalid_transition", ...)` for unsupported directions), then delegates to `apply_workflow_reconciliation()` (which has no `direction` param since only one direction is supported)
-- `_process_reconcile_frontmatter(db, artifacts_root, feature_type_id)` — extracts feature directory name from `feature_type_id` via string split (no engine needed), then delegates to per-feature `detect_drift()` or `frontmatter_sync.scan_all()` when no `feature_type_id`
+- `_process_reconcile_frontmatter(db, artifacts_root, feature_type_id)` — extracts feature slug from `feature_type_id` via string split with path-traversal validation (no engine needed), then delegates to per-feature `detect_drift()` or `frontmatter_sync.scan_all()` when no `feature_type_id`
 - `_process_reconcile_status(engine, db, artifacts_root)` — calls both check and frontmatter internally
 
 ### R6: Reconciliation Engine Module
@@ -282,7 +282,7 @@ Edge case: if `.meta.json` has `status: "completed"` and DB has `workflow_phase:
 
 - AC-16: All reconciliation tools return structured JSON error (via `_make_error`) when DB is unavailable
 - AC-17: `reconcile_apply` with unsupported direction returns structured error with `invalid_transition` type
-- AC-18: `reconcile_check` with invalid `feature_type_id` format returns structured error with `feature_not_found` type
+- AC-18: `reconcile_check` with non-existent `feature_type_id` (e.g., `"feature:999-nonexistent"`) returns structured error with `feature_not_found` type. Malformed `feature_type_id` (e.g., missing colon) returns `invalid_transition` type via `_catch_value_error`
 
 ## Test Strategy
 
