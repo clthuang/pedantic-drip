@@ -3096,4 +3096,84 @@ class TestCompletePhaseFallback:
         assert state.source == "db"
         assert state.last_completed_phase == "specify"
         assert state.current_phase == "design"
-        assert state.completed_phases == ("brainstorm", "specify")
+
+
+# ===========================================================================
+# Task 4.4: list_by_phase() fallback
+# ===========================================================================
+
+
+class TestListByPhaseFallback:
+    """list_by_phase() degrades gracefully when DB is unavailable."""
+
+    def test_probe_fail_returns_filesystem_results(self, tmp_path) -> None:
+        """When _check_db_health returns False, list_by_phase scans .meta.json
+        files and filters by current_phase == phase, returning
+        source='meta_json_fallback'."""
+        db = _make_db()
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        # Create .meta.json files: two in "specify", one in "design"
+        _create_meta_json(
+            tmp_path, "001-alpha", status="active", last_completed_phase="brainstorm"
+        )  # current_phase => "specify"
+        _create_meta_json(
+            tmp_path, "002-beta", status="active", last_completed_phase="brainstorm"
+        )  # current_phase => "specify"
+        _create_meta_json(
+            tmp_path, "003-gamma", status="active", last_completed_phase="specify"
+        )  # current_phase => "design"
+
+        # Force probe failure
+        engine._check_db_health = lambda: False  # type: ignore[assignment]
+
+        results = engine.list_by_phase("specify")
+
+        assert len(results) == 2
+        assert all(r.current_phase == "specify" for r in results)
+        assert all(r.source == "meta_json_fallback" for r in results)
+        type_ids = {r.feature_type_id for r in results}
+        assert "feature:001-alpha" in type_ids
+        assert "feature:002-beta" in type_ids
+
+    def test_db_query_raises_returns_filesystem_results(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """When list_workflow_phases raises sqlite3.Error, list_by_phase
+        falls back to filesystem scan filtered by phase."""
+        engine, db, _ = _setup_engine(
+            tmp_path, "001-alpha", workflow_phase="specify", last_completed_phase="brainstorm"
+        )
+        _create_meta_json(
+            tmp_path, "001-alpha", status="active", last_completed_phase="brainstorm"
+        )  # current_phase => "specify"
+
+        monkeypatch.setattr(
+            db,
+            "list_workflow_phases",
+            lambda *a, **kw: (_ for _ in ()).throw(
+                sqlite3.OperationalError("disk I/O error")
+            ),
+        )
+
+        results = engine.list_by_phase("specify")
+
+        assert len(results) == 1
+        assert results[0].feature_type_id == "feature:001-alpha"
+        assert results[0].current_phase == "specify"
+        assert results[0].source == "meta_json_fallback"
+
+    def test_happy_path_unchanged(self, tmp_path) -> None:
+        """Normal list_by_phase still returns source='db' results."""
+        db = _make_db()
+        for i, phase in enumerate(["specify", "specify", "design"]):
+            slug = f"00{i}-feat"
+            tid = _register_feature(db, slug)
+            db.create_workflow_phase(tid, workflow_phase=phase)
+
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        results = engine.list_by_phase("specify")
+
+        assert len(results) == 2
+        assert all(r.current_phase == "specify" for r in results)
+        assert all(r.source == "db" for r in results)

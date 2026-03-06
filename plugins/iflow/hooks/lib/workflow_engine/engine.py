@@ -202,8 +202,30 @@ class WorkflowStateEngine:
 
     def list_by_phase(self, phase: str) -> list[FeatureWorkflowState]:
         """All features currently in the given phase."""
-        rows = self.db.list_workflow_phases(workflow_phase=phase)
-        return [self._row_to_state(row) for row in rows]
+        if not self._check_db_health():
+            print(
+                f"workflow-engine: DB unhealthy, falling back to filesystem "
+                f"scan for list_by_phase(phase={phase!r})",
+                file=sys.stderr,
+            )
+            return [
+                s for s in self._scan_features_filesystem()
+                if s.current_phase == phase
+            ]
+
+        try:
+            rows = self.db.list_workflow_phases(workflow_phase=phase)
+            return [self._row_to_state(row) for row in rows]
+        except sqlite3.Error as exc:
+            print(
+                f"workflow-engine: DB error in list_by_phase, falling back to "
+                f"filesystem scan for phase={phase!r}: {exc}",
+                file=sys.stderr,
+            )
+            return [
+                s for s in self._scan_features_filesystem()
+                if s.current_phase == phase
+            ]
 
     def list_by_status(self, status: str) -> list[FeatureWorkflowState]:
         """All features with the given entity status."""
