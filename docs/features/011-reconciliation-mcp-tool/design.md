@@ -161,6 +161,11 @@ class ReconcileAction:
     Design extends spec R2 action enum with "created" to differentiate
     update (existing DB row) vs create (new row for meta_json_only).
     This provides better caller diagnostics without breaking spec semantics.
+
+    AC-8 mapping: "reconcile_apply on meta_json_only creates a new row"
+    → test assertions should use action="created" for this case.
+    AC-6 mapping: "reconcile_apply on meta_json_ahead updates existing row"
+    → test assertions should use action="reconciled" for this case.
     """
     feature_type_id: str
     action: str  # "reconciled"|"skipped"|"created"|"error"
@@ -391,8 +396,9 @@ def _process_reconcile_status(
     - frontmatter_drift: serialized list of DriftReports
     - total_features_checked: len(workflow_drift_result.features)
     - total_files_checked: len(frontmatter_reports)
-    - healthy: all workflow summary counts except in_sync are 0 AND
-      all frontmatter statuses are "in_sync"
+    - healthy: all workflow summary counts except in_sync are 0
+      (including error=0) AND all frontmatter statuses are "in_sync".
+      A non-zero error count in either dimension sets healthy=False.
 
     No _catch_value_error needed — reconcile_status accepts no
     feature_type_id parameter (always scans all).
