@@ -2972,3 +2972,128 @@ class TestTransitionPhaseFallback:
         assert isinstance(response.results, tuple)
         # The transition should still be "allowed" from gate evaluation
         assert all(r.allowed for r in response.results)
+
+
+class TestCompletePhaseFallback:
+    """complete_phase() degrades gracefully when DB is unavailable."""
+
+    def test_db_write_fail_falls_back_to_meta_json(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """When db.update_workflow_phase raises sqlite3.Error,
+        complete_phase falls back to _write_meta_json_fallback and returns
+        source='meta_json_fallback'."""
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="specify",
+            last_completed_phase="brainstorm",
+        )
+        # .meta.json must exist for the fallback writer
+        _create_meta_json(
+            tmp_path,
+            "008-test-feature",
+            status="active",
+            last_completed_phase="brainstorm",
+        )
+
+        # Probe passes (DB healthy for reads) but write raises
+        monkeypatch.setattr(
+            db,
+            "update_workflow_phase",
+            lambda *a, **kw: (_ for _ in ()).throw(
+                sqlite3.OperationalError("database is locked")
+            ),
+        )
+
+        state = engine.complete_phase(type_id, "specify")
+
+        assert state.source == "meta_json_fallback"
+        assert state.last_completed_phase == "specify"
+        assert state.current_phase == "design"
+        assert "specify" in state.completed_phases
+
+    def test_probe_fail_uses_meta_json_fallback(self, tmp_path) -> None:
+        """When _check_db_health returns False (probe fail), complete_phase
+        skips DB write entirely and writes to .meta.json."""
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="specify",
+            last_completed_phase="brainstorm",
+        )
+        _create_meta_json(
+            tmp_path,
+            "008-test-feature",
+            status="active",
+            last_completed_phase="brainstorm",
+        )
+        # Force health probe to fail -- get_state returns meta_json_fallback
+        engine._check_db_health = lambda: False  # type: ignore[assignment]
+
+        state = engine.complete_phase(type_id, "specify")
+
+        assert state.source == "meta_json_fallback"
+        assert state.last_completed_phase == "specify"
+        assert state.current_phase == "design"
+
+    def test_db_write_succeeds_readback_fails_returns_source_db(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """When DB write succeeds but get_workflow_phase would fail on a
+        hypothetical read-back, complete_phase still returns source='db'
+        because it derives state from params rather than reading back.
+
+        Uses a call-counting wrapper: first call to get_workflow_phase
+        (inside get_state) succeeds normally; subsequent calls raise
+        sqlite3.Error -- simulating DB degrading after initial read."""
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="specify",
+            last_completed_phase="brainstorm",
+        )
+
+        original_get_wp = db.get_workflow_phase
+        call_count = 0
+
+        def get_wp_after_first_fails(*a, **kw):
+            nonlocal call_count
+            call_count += 1
+            if call_count > 1:
+                raise sqlite3.OperationalError("disk I/O error")
+            return original_get_wp(*a, **kw)
+
+        # Let update_workflow_phase succeed (no-op)
+        monkeypatch.setattr(
+            db,
+            "update_workflow_phase",
+            lambda *a, **kw: None,
+        )
+        # First get_workflow_phase call (in get_state) succeeds;
+        # any subsequent call would raise
+        monkeypatch.setattr(
+            db,
+            "get_workflow_phase",
+            get_wp_after_first_fails,
+        )
+
+        state = engine.complete_phase(type_id, "specify")
+
+        # Should still succeed with source="db" since complete_phase
+        # derives state from params, not from a DB read-back
+        assert state.source == "db"
+        assert state.last_completed_phase == "specify"
+        assert state.current_phase == "design"
+
+    def test_happy_path_unchanged(self, tmp_path) -> None:
+        """Normal complete_phase still returns source='db' when everything works."""
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="specify",
+            last_completed_phase="brainstorm",
+        )
+
+        state = engine.complete_phase(type_id, "specify")
+
+        assert state.source == "db"
+        assert state.last_completed_phase == "specify"
+        assert state.current_phase == "design"
+        assert state.completed_phases == ("brainstorm", "specify")

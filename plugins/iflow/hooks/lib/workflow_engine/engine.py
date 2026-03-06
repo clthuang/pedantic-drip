@@ -149,11 +149,33 @@ class WorkflowStateEngine:
         if next_phase is None:
             next_phase = phase  # Terminal phase (finish) stays as-is
 
-        self.db.update_workflow_phase(
-            feature_type_id,
-            last_completed_phase=phase,
-            workflow_phase=next_phase,
-        )
+        # Primary defense: DB was already unhealthy during get_state
+        if state.source == "meta_json_fallback":
+            print(
+                f"workflow-engine: DB already degraded, writing "
+                f"complete_phase to .meta.json for {feature_type_id}",
+                file=sys.stderr,
+            )
+            return self._write_meta_json_fallback(
+                feature_type_id, phase, state
+            )
+
+        # Secondary defense: catch DB write failures
+        try:
+            self.db.update_workflow_phase(
+                feature_type_id,
+                last_completed_phase=phase,
+                workflow_phase=next_phase,
+            )
+        except sqlite3.Error as exc:
+            print(
+                f"workflow-engine: DB write failed in complete_phase "
+                f"for {feature_type_id}: {exc}",
+                file=sys.stderr,
+            )
+            return self._write_meta_json_fallback(
+                feature_type_id, phase, state
+            )
 
         return FeatureWorkflowState(
             feature_type_id=feature_type_id,
