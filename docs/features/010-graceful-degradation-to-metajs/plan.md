@@ -38,6 +38,7 @@ These items have zero interdependencies and can be implemented in any order with
 - Extract phase derivation logic from `_hydrate_from_meta_json` (lines 255-283) into new `_derive_state_from_meta(meta, feature_type_id, source)` method. The extraction covers phase derivation logic ONLY. The file-reading and exception handling in `_hydrate_from_meta_json` (lines 249-253, catching only `json.JSONDecodeError`) must NOT be modified. `_read_state_from_meta_json` (item 2.1) has its own file-reading logic that additionally catches `OSError`.
 - Refactor `_hydrate_from_meta_json` to delegate to `_derive_state_from_meta` (per design I3b)
 - Add `source` parameter to `_derive_state_from_meta` (default `"meta_json"`)
+- Pre-step grep: `grep -n '_hydrate_from_meta_json' plugins/iflow/hooks/lib/workflow_engine/test_engine.py` to enumerate all ~14 test sites (primary class ~lines 268-413, plus distant tests in TestDeepenedAdversarial ~line 1325 and TestDeepenedMutationMindset-adjacent ~lines 1617, 1667). Confirm all pass before proceeding.
 - Tests: existing `_hydrate_from_meta_json` tests MUST still pass (regression). Add direct `_derive_state_from_meta` tests for active/completed/unknown status paths. Add explicit test for default `source="meta_json"` parameter value.
 
 **1.4 — `_iso_now()` helper (I11)**
@@ -106,11 +107,12 @@ Wire fallback paths into existing public methods. Each method gets:
 - Gate evaluation unchanged (pure logic, no DB dependency)
 - **Unwrap pattern:** Common case: `response = engine.transition_phase(type_id, 'design'); results = response.results`. For line ~777: `response = engine.transition_phase(type_id, 'design'); transition_results = response.results`.
 - **Existing ENGINE test migration (ATOMIC with return type change — ~17 call sites in test_engine.py):**
-  - 14 call sites assign results (e.g., `results = engine.transition_phase(...)`) → unwrap via `.results`
-  - 1 call site at line ~777 (`test_returns_same_results_as_transition`): does `transition_results = engine.transition_phase(...)` then `len(transition_results)` and `zip(validate_results, transition_results)`. After migration: reassign `transition_results = response.results`. `len()` works on tuples. `validate_prerequisites()` returns `list[TransitionResult]` while `TransitionResponse.results` is `tuple[TransitionResult, ...]` — `zip()` works across both types. Do NOT add type equality assertions.
+  - 14 assigning call sites by line number: 605, 622, 640, 659, 954, 1048, 1059, 1125, 1289, 1366, 1452, 1511, 1532 (all `results = engine.transition_phase(...)` → unwrap via `response = engine.transition_phase(...); results = response.results`)
+  - **Downstream iteration risk:** Lines 1289 and 1366 iterate over `results` immediately after the call (`blocked = [r for r in results if not r.allowed]`). After unwrapping to `results = response.results`, verify the list comprehension iterates on the tuple, not the response object.
+  - 1 special site at line ~777 (`test_returns_same_results_as_transition`): does `transition_results = engine.transition_phase(...)` then `len(transition_results)` and `zip(validate_results, transition_results)`. After migration: `response = engine.transition_phase(...); transition_results = response.results`. `len()` works on tuples. `validate_prerequisites()` returns `list[TransitionResult]` while `TransitionResponse.results` is `tuple[TransitionResult, ...]` — `zip()` works across both types. Do NOT add type equality assertions.
   - 2 call sites inside `pytest.raises` — no unwrapping needed (exception raised before return)
   - 1 fire-and-forget perf test at line ~1704 — no unwrapping needed (return value unused)
-  - Run grep: `grep -n 'transition_phase\|\.allowed' test_engine.py` before committing.
+  - Pre-commit grep: `grep -n 'transition_phase' plugins/iflow/hooks/lib/workflow_engine/test_engine.py` to verify all sites migrated.
 - **MCP handler update (ATOMIC with return type change):** Update `_process_transition_phase` in `workflow_state_server.py` to unwrap `TransitionResponse.results` — the handler currently iterates directly over the return value (`all(r.allowed for r in results)`), which would fail on a `TransitionResponse` dataclass. Add `from workflow_engine.models import TransitionResponse` import. Also migrate `test_transitioned_uses_all_not_any` (line ~716-740): monkeypatches `seeded_engine.transition_phase` to return bare `list[TransitionResult]` — must update to return `TransitionResponse(results=tuple(mixed_results), degraded=False)`. Add `TransitionResponse` import to test file.
 - Tests: normal → `TransitionResponse(degraded=False)`; DB write fail → `degraded=True`; probe fail → skip DB write, results still valid; all existing engine tests AND MCP transition tests pass with unwrapped results
 
@@ -142,14 +144,20 @@ Wire fallback paths into existing public methods. Each method gets:
 - Update all 6 `_engine is None` guards to use `_make_error("not_initialized", ...)`
 - Update non-exception error paths (e.g., `_process_get_phase` None-state check)
 - Add `import sqlite3` for type-specific catches. This is a third-layer defense: (1) engine health probe, (2) engine try/except, (3) MCP handler catch. If the engine has a bug and misses a catch path, the MCP handler provides a structured error instead of an opaque "Internal error" string. Note: this catch is additive — no existing tests currently pass `sqlite3.Error` through the engine layer, so adding `except sqlite3.Error` introduces no behavioral change for passing tests.
-- Tests: update existing error-path assertions to check JSON structure; verify all error types. Specific migrations: `test_not_found` (line ~144) and `test_get_phase_none_state_returns_not_found` (line ~765-779) must update from plain string assertions to structured JSON with `error_type: "feature_not_found"`.
+- Pre-step grep: `grep -n 'startswith\|"Error:\|Internal error' plugins/iflow/mcp/test_workflow_state_server.py` to enumerate all string-format assertions before beginning migration.
+- Tests: update existing error-path assertions to check JSON structure; verify all error types. Specific migrations:
+  - `test_not_found` (line ~144): update from plain string to structured JSON with `error_type: "feature_not_found"`
+  - `test_get_phase_none_state_returns_not_found` (line ~765-779): update from plain string to structured JSON with `error_type: "feature_not_found"`
+  - Line ~150 (`result.startswith('Internal error: ZeroDivisionError:')` in TestProcessGetPhase): update to assert structured JSON with `error_type: "internal"`
+  - Line ~635 (`result.startswith('Error:')` in TestProcessCompletePhase): update to assert structured JSON with `error_type: "feature_not_found"`
+  - Note: lines ~171/740 assertions on `data['allowed']` top-level key are handled by 5.2 Sub-step B (cross-reference — not a 5.1 concern)
 
 **5.2 — MCP degradation signal (C7 / I10)**
 - File: `mcp/workflow_state_server.py`
 - Depends on: 4.2 (TransitionResponse + MCP handler already updated), 5.1 (structured errors)
 - Note: `TransitionResponse` import and `_process_transition_phase` unwrap already done in 4.2. This step adds serialization changes and the remaining handler updates.
 - **Sub-step A — Serialization update:** Update `_serialize_state` to include `degraded = (state.source == "meta_json_fallback")`; migrate `TestSerializeState` and `TestAdversarial` exact key-set assertions to add `degraded` to expected keys
-- **Sub-step B — Transition response shape:** Update `_process_transition_phase` response shape — per design I14, response drops `allowed` key (uses `results` from `TransitionResponse`), adds `degraded` field. **Consumer audit:** grep `allowed` in `plugins/iflow/skills/` and `plugins/iflow/commands/` — these parse JSON programmatically (not string-matching), so no breakage from dropped `allowed` key. Update `_process_complete_phase`, `_process_list_*` for degradation field.
+- **Sub-step B — Transition response shape:** Update `_process_transition_phase` response shape — per design I14, response drops `allowed` key (uses `results` from `TransitionResponse`), adds `degraded` field. **Consumer audit:** `grep -rn '"allowed"\|data\[.allowed.\]' plugins/iflow/skills/ plugins/iflow/commands/ plugins/iflow/hooks/ plugins/iflow/agents/` — matches in hooks/ Python files are attribute accesses on `TransitionResult` dataclass fields (`r.allowed`), not MCP JSON key accesses — no changes needed there. Only grep hits in .md skill/command files or test files parsing JSON responses require updates. Update `_process_complete_phase`, `_process_list_*` for degradation field.
 - **Existing MCP test migration (ATOMIC with serialization changes):**
   - `TestSerializeState` and `TestAdversarial` exact key-set assertions must add `degraded` to expected keys
   - `test_transition_result_json_has_exact_key_set` (line ~638-653): expected key set changes from `{"allowed", "results", "transitioned"}` to `{"transitioned", "results", "degraded"}`
@@ -229,6 +237,7 @@ Each item is implemented RED → GREEN → REFACTOR.
 9. Write `_scan_features_by_status` tests → implement scanner (3.2)
 10. Write `get_state()` fallback tests → wrap with probe + catch (4.1)
 11. `transition_phase()` atomic return type change (4.2) — sub-ordered steps:
+    **Commit boundary:** Sub-steps b through e are a single atomic commit — do not commit after 11b alone. The test suite will be RED after 11b and must stay unstaged until 11e is complete and all engine + MCP handler tests are GREEN.
     a. Write new fallback tests (RED) — probe fail → `degraded=True`, DB write fail → `degraded=True`
     b. Change `transition_phase()` return type: wrap `results` in `TransitionResponse(results=tuple(results), degraded=False)` — all existing engine tests now FAIL
     c. Migrate ~15 engine test call sites to unwrap `.results` (GREEN) — 14 assigning sites add `.results`, 1 special site (line ~777) reassigns `transition_results = response.results`; 2 `pytest.raises` + 1 fire-and-forget unchanged
