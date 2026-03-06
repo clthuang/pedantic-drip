@@ -402,7 +402,7 @@ def _process_reconcile_frontmatter(
 ) -> str:
     """Frontmatter drift detection. Returns JSON string."""
     if feature_type_id is None:
-        reports = scan_all(db, artifacts_root)
+        reports: list[DriftReport] = scan_all(db, artifacts_root)
     else:
         slug = _validate_feature_type_id(feature_type_id, artifacts_root)
         feat_dir = os.path.join(artifacts_root, "features", slug)
