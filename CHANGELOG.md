@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Graceful degradation: all 6 engine operations (get_state, transition_phase, complete_phase, validate_prerequisites, list_by_phase, list_by_status) fall back to .meta.json when database is unavailable
+- TransitionResponse dataclass carrying degradation state through the transition pipeline
+- DB health check (`_check_db_health`) with 5-second PRAGMA timeout for bounded failure detection
+- Filesystem scanning fallback for list operations (`_scan_features_filesystem`, `_scan_features_by_status`)
+- 99 new tests (engine + MCP server) covering all degradation paths, bringing totals to 184 engine tests and 85 server tests
+
+### Changed
+- MCP server error responses migrated from ad-hoc strings to structured `_make_error()` with error_type, message, and recovery_hint fields
+
 ## [4.9.1] - 2026-03-06
 
 ### Added
