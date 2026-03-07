@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- UI server: FastAPI-based web server with Kanban board view for entity workflow visualization
+- UI server: HTMX-powered card interactions with drag-and-drop phase transitions
+- UI server: CLI launcher (`python -m iflow.ui`) with `--host`, `--port`, `--artifacts-root` options
+- UI server: Bootstrap script (`run-ui-server.sh`) for MCP integration
+
 ## [4.11.6] - 2026-03-08
 
 ### Removed
