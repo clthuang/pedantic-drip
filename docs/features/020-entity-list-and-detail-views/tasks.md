@@ -64,24 +64,31 @@
 - **Done when:** File exists AND contains `{% extends "base.html" %}` AND contains `Entity not found` AND contains `href="/entities"`
 - **Depends on:** none
 
-### Task 2.2: Create _entities_content.html HTMX partial
+### Task 2.2a: Create _entities_content.html filter controls
 - **File:** `plugins/iflow/ui/templates/_entities_content.html` (NEW)
-- **Action:** Create partial template containing ALL filter controls AND table inside a single fragment:
+- **Action:** Create partial template with filter controls section:
   - Filter tabs: "All" + one per entity type as `<a>` links with `hx-get="/entities?type=X"`, `hx-target="#entities-content"`, `hx-replace-url="true"`. Active tab highlighted based on `current_type`.
   - Hidden input: `<input type="hidden" name="type" value="{{ current_type or '' }}">`
   - Search input: `<input name="q" value="{{ search_query or '' }}" hx-get="/entities" hx-trigger="input changed delay:300ms" hx-target="#entities-content" hx-sync="this:replace" hx-include="[name='type'],[name='status']" hx-replace-url="true">`. Show "Search unavailable" when `search_available` is False.
   - Status dropdown: `<select name="status" hx-get="/entities" hx-trigger="change" hx-target="#entities-content" hx-include="[name='type'],[name='q']" hx-replace-url="true">` with All/active/completed/planned options. Pre-select `current_status`.
+  - Leave a placeholder comment `{# Table section added in 2.2b #}` where the table will go.
+- **Done when:** File exists AND contains `hx-get="/entities"` AND contains `hx-trigger="input changed delay:300ms"` AND contains `hx-replace-url="true"`
+- **Depends on:** none
+
+### Task 2.2b: Add entity table to _entities_content.html
+- **File:** `plugins/iflow/ui/templates/_entities_content.html` (MODIFIED)
+- **Action:** Replace the placeholder comment with the entity table section:
   - Table: columns Name (clickable link to `/entities/{{ entity.type_id }}`), Type ID, Type, Status, Kanban Column (`entity.kanban_column`, blank when None), Updated.
   - Row count: `{{ entities|length }} entities`
   - Empty state: "No entities found" / "No entities match your search"
-- **Done when:** File exists AND contains `hx-get="/entities"` AND contains `hx-trigger="input changed delay:300ms"` AND contains `hx-replace-url="true"` AND contains `entities|length`
-- **Depends on:** none
+- **Done when:** File contains `entities|length` AND contains `href="/entities/{{ entity.type_id }}"` AND contains `No entities`
+- **Depends on:** 2.2a
 
 ### Task 2.3: Create entities.html full page wrapper
 - **File:** `plugins/iflow/ui/templates/entities.html` (NEW)
 - **Action:** Create template extending base.html. Content block contains page heading "Entities" and `<div id="entities-content">{% include "_entities_content.html" %}</div>`. No filter controls here — all in _entities_content.html partial.
 - **Done when:** File exists AND contains `{% extends "base.html" %}` AND contains `id="entities-content"` AND contains `{% include "_entities_content.html" %}`
-- **Depends on:** 2.2
+- **Depends on:** 2.2b
 
 ### Task 2.4: Create entity_detail.html template
 - **File:** `plugins/iflow/ui/templates/entity_detail.html` (NEW)
@@ -173,8 +180,9 @@ Phase 1 (TDD Cycle):
 
 Phase 2 (Templates — independent of Phase 1):
   2.1 (404.html) — independent
-  2.2 (_entities_content.html) — independent
-  2.2 → 2.3 (entities.html)
+  2.2a (_entities_content.html filter controls) — independent
+  2.2a → 2.2b (_entities_content.html table)
+  2.2b → 2.3 (entities.html)
   2.4 (entity_detail.html) — independent
 
 Phase 3 (Modifications — independent):
@@ -190,8 +198,8 @@ Phase 4 (Integration Tests — after all above):
 ```
 
 **Parallel groups:**
-- Group A (no dependencies): 1.1, 2.1, 2.2, 2.4, 3.1, 3.2, 3.3
-- Group B (after 1.1): 1.2, 1.3, 1.4
+- Group A (no dependencies): 1.1, 2.1, 2.2a, 2.4, 3.1, 3.2, 3.3
+- Group B (after 1.1 / 2.2a): 1.2, 1.3, 1.4, 2.2b
 - Group C (after Group B): 1.5a, 1.6a, 2.3
 - Group D (after 1.5a/1.6a): 1.5b, 1.6b
 - Group E (after 1.5b+1.6b): 1.7
