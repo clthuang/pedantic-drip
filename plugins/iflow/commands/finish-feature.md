@@ -428,7 +428,7 @@ Run automatically after Step 5 completes.
 }
 ```
 
-After updating .meta.json, sync workflow state to the database:
+**Sync workflow state to the database:**
 1. Construct feature_type_id as "feature:{folder_name}" where {folder_name} is the
    feature directory name (e.g., "015-small-command-migration-finish").
 2. Call complete_phase(feature_type_id, "finish").
