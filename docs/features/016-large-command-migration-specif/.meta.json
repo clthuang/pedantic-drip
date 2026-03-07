@@ -10,7 +10,7 @@
   "depends_on_features": [
     "015-small-command-migration-finish"
   ],
-  "lastCompletedPhase": "design",
+  "lastCompletedPhase": "create-plan",
   "phases": {
     "design": {
       "started": "2026-03-07T18:36:00+08:00",
@@ -22,6 +22,20 @@
         "handoffReview": { "started": "2026-03-07T19:05:00+08:00", "completed": "2026-03-07T19:15:00+08:00", "iterations": 2, "approved": true, "reviewerNotes": [] }
       },
       "completed": "2026-03-07T19:15:00+08:00"
+    },
+    "create-plan": {
+      "started": "2026-03-07T19:20:00+08:00",
+      "completed": "2026-03-07T19:45:00+08:00",
+      "phaseReview": {
+        "iterations": 4,
+        "approved": true,
+        "reviewerNotes": []
+      },
+      "handoffReview": {
+        "iterations": 1,
+        "approved": true,
+        "reviewerNotes": []
+      }
     },
     "specify": {
       "started": "2026-03-07T20:00:00+08:00",
