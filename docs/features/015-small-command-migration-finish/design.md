@@ -13,6 +13,10 @@
 - **Circuit breaker for batched calls:** First failure → skip remaining calls in batch. Matches AC-8/AC-9 batching short-circuit.
 - **Hard-to-soft dependency transformation (AWS Well-Architected):** MCP tools are soft dependencies — failure degrades to artifact-based detection but does not block the command.
 
+## Dependencies
+
+**Runtime:** Workflow-engine MCP server (feature 009) must be registered in the Claude session for MCP paths to activate. No new servers, tools, or packages are required (NFR-1).
+
 ## Architecture Overview
 
 This migration modifies three markdown command files. Since these are Claude instruction files (not executable code), the "architecture" is the structure of instruction changes within each file.
@@ -46,7 +50,7 @@ No shared code or abstractions are introduced — each command file is self-cont
 
 #### C1.1: Phase Resolution Algorithm Block
 
-Insert a new subsection between the Config Variables section and Section 1. This block defines the algorithm once; sections reference it. Mark with `<!-- SYNC: phase-resolution-algorithm -->` at start and end.
+Insert a new subsection after the line `Display a workspace dashboard with current context, open features, and brainstorms.` and before the line `## Section 1: Current Context`. This block defines the algorithm once; sections reference it. Mark with `<!-- SYNC: phase-resolution-algorithm -->` at start and end.
 
 **Algorithm (pseudocode):**
 ```
@@ -115,7 +119,7 @@ Change: "Phase: determined using the Phase Resolution algorithm above"
 
 #### C2.1: Phase Resolution Algorithm Block
 
-Insert the same algorithm block as C1.1 between "Gather Features" and "For Each Feature" sections. The algorithm is identical — duplicated for self-containment (each command file must be independently interpretable). Both copies are marked with `<!-- SYNC: phase-resolution-algorithm -->` at start and end to enable drift detection via text comparison (follows existing `<!-- SYNC: ... -->` convention in finish-feature.md).
+Insert the same algorithm block as C1.1 after the line `## Gather Features` section (after step 3) and before the line `## For Each Feature`. The algorithm is identical — duplicated for self-containment (each command file must be independently interpretable). Both copies are marked with `<!-- SYNC: phase-resolution-algorithm -->` at start and end to enable drift detection via text comparison (follows existing `<!-- SYNC: ... -->` convention in finish-feature.md).
 
 #### C2.2: Phase Determination Change
 
