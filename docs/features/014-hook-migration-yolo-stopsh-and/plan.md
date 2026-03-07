@@ -9,8 +9,8 @@ Phase 0: Baseline verification
   → Task 0.1: Run existing hook tests to establish passing baseline
 
 Phase 1: Replace phase_map (core change)
-  → Task 1.1: Replace phase_map block with combined Python invocation
-  → Task 1.2: Verify PYTHONPATH and shell variable interpolation
+  → Task 1.1: Pre-flight check — PYTHONPATH and variable scope
+  → Task 1.2: Replace phase_map block with combined Python invocation
 
 Phase 2: Test verification
   → Task 2.1: Run existing hook tests (AC-6) — compare against baseline
@@ -34,7 +34,18 @@ Establishes a passing baseline. If any tests fail here, they are pre-existing fa
 
 ## Phase 1: Replace phase_map with Combined Python Invocation
 
-### Task 1.1: Replace phase_map block
+### Task 1.1: Pre-flight check — PYTHONPATH and variable scope
+
+**This is a read-only validation before committing the change, not a code modification step.** Confirm the following before proceeding. If any check fails, trace the assignment in the hook and resolve before replacing the block.
+
+Checks:
+- `${SCRIPT_DIR}/lib` resolves to the hooks/lib directory containing `transition_gate/`, `workflow_engine/`, `entity_registry/` — run `ls plugins/iflow/hooks/lib/` to confirm
+- Shell variables are in scope at the replacement point — trace assignments: `FEATURE_ID` at line 126, `LAST_COMPLETED_PHASE` at line 126, `PROJECT_ROOT` at line 11, `ARTIFACTS_ROOT` at line 73
+- The `NEXT_PHASE=$( ... )` capture pattern matches the existing assignment
+
+**Pass:** All three packages exist in `lib/`, all variables assigned before line 172. **Fail:** Stop and investigate.
+
+### Task 1.2: Replace phase_map block
 
 **File:** `plugins/iflow/hooks/yolo-stop.sh`
 
@@ -49,17 +60,6 @@ Establishes a passing baseline. If any tests fail here, they are pre-existing fa
 The `2>/dev/null` stderr suppression is preserved per NFR-4.
 
 **What stays after (pre-migration lines 185-200):** The `NEXT_PHASE` empty check, `FEATURE_REF` construction, `REASON` message, and JSON output block are untouched — they consume `$NEXT_PHASE` identically regardless of how it was derived. Post-migration, these lines shift down by ~25 lines due to the larger replacement block.
-
-### Task 1.2: Pre-flight check — PYTHONPATH and variable scope
-
-**This is a read-only validation before committing the change, not a code modification step.** Confirm the following before proceeding. If any check fails, trace the assignment in the hook and resolve before replacing the block.
-
-Checks:
-- `${SCRIPT_DIR}/lib` resolves to the hooks/lib directory containing `transition_gate/`, `workflow_engine/`, `entity_registry/` — run `ls plugins/iflow/hooks/lib/` to confirm
-- Shell variables are in scope at the replacement point — trace assignments: `FEATURE_ID` at line 126, `LAST_COMPLETED_PHASE` at line 126, `PROJECT_ROOT` at line 11, `ARTIFACTS_ROOT` at line 73
-- The `NEXT_PHASE=$( ... )` capture pattern matches the existing assignment
-
-**Pass:** All three packages exist in `lib/`, all variables assigned before line 172. **Fail:** Stop and investigate.
 
 ## Phase 2: Test Verification
 
@@ -98,15 +98,15 @@ This compensates for zero automated hook-level coverage of the primary engine pa
 
 | AC | Covered By |
 |----|------------|
-| AC-1: No hardcoded phase_map in primary path | Task 1.1 — phase_map moves to except block only |
-| AC-2: Uses PHASE_SEQUENCE | Task 1.1 — try block imports and uses PHASE_SEQUENCE |
+| AC-1: No hardcoded phase_map in primary path | Task 1.2 — phase_map moves to except block only |
+| AC-2: Uses PHASE_SEQUENCE | Task 1.2 — try block imports and uses PHASE_SEQUENCE |
 | AC-3: specify → "Invoke /iflow:design" | Task 2.1 (fallback), Task 3.1 (engine) |
 | AC-4: null → "Invoke /iflow:specify" | Task 2.1 (fallback). Note: brainstorm → specify is also covered implicitly by PHASE_SEQUENCE index lookup (index 0 → index 1) |
 | AC-5: finish/completed → clean exit | Unchanged (lines 132-135 untouched) |
 | AC-6: Existing tests pass | Task 2.1 |
-| AC-7: Graceful fallback on import/DB failure | Task 1.1 — except Exception block |
+| AC-7: Graceful fallback on import/DB failure | Task 1.2 — except Exception block |
 | AC-8: Engine path manual verification | Task 3.1 (required gate) |
-| AC-9: PYTHONPATH correct | Task 1.2 |
+| AC-9: PYTHONPATH correct | Task 1.1 |
 
 ## Risk Mitigations
 
