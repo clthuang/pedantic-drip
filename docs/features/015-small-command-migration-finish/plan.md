@@ -68,11 +68,12 @@ Replace the artifact-based detection text in Section 1 (design C1.2). The replac
 **Why:** Section 1.5 lists all project features including non-active ones. The phase annotation format must change to use the algorithm for active features and display status directly for non-active.
 **Why this order:** Algorithm block (1.2) must exist before this step can reference it.
 
-Modify Section 1.5 feature listing (design C1.3). The existing template `- {id}-{slug} ({status}[, phase: {phase}])` is preserved structurally. The change is to the instructional prose around the template — add a rule that for non-active features the `[, phase: {phase}]` portion is omitted, and for active features `{phase}` comes from the Phase Resolution algorithm:
-- Old instruction: phase is implicitly artifact-based for all features
-- New instruction: Non-active features (planned, completed, abandoned) omit the `[, phase: {phase}]` portion — show `- {id}-{slug} ({status})` with status from `.meta.json` directly. Active features include it — show `- {id}-{slug} ({status}, phase: {resolved_phase})` where `{resolved_phase}` comes from the Phase Resolution algorithm.
+Modify Section 1.5 feature listing step 2d (design C1.3). The current text to locate and replace is:
 
-**Done when:** Section 1.5 instructions distinguish active vs non-active phase resolution. Template syntax preserved. Only the prose describing phase source is changed.
+- Old (line 32): `d. List all features for that project as bullets: \`- {id}-{slug} ({status}[, phase: {phase}])\` — include ALL statuses (planned, active, completed, abandoned)`
+- New: `d. List all features for that project as bullets — include ALL statuses (planned, active, completed, abandoned). For active features: \`- {id}-{slug} ({status}, phase: {resolved_phase})\` where \`{resolved_phase}\` comes from the Phase Resolution algorithm above. For non-active features (planned, completed, abandoned): \`- {id}-{slug} ({status})\` with status from \`.meta.json\` directly — omit the phase annotation.`
+
+**Done when:** Section 1.5 step 2d distinguishes active vs non-active phase resolution with explicit old/new text replaced. Template syntax matches design C1.3.
 
 ### 1.5: Update Section 2 phase detection
 
