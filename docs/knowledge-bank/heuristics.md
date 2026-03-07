@@ -483,3 +483,19 @@ A PoC validation gate in a design document must specify all four elements atomic
 - Keywords: ["poc-gate", "design-handoff", "feasibility", "pass-fail-criteria", "contingency-plan", "atomic-specification", "task-sequencing"]
 - Last observed: Feature 018
 - Observation count: 1
+
+### Shared Error Utility Section for Multi-Route UI Features
+For FastAPI+Jinja2 features with 2+ sibling route modules, include a "Shared Error Utilities" design section naming any common error-response helpers with their module path. This prevents DRY violations from reaching implement review.
+- Source: Feature 020, implement iter 1 — board.py duplicated missing-DB error block that entities.py had extracted; fix required creating helpers.py, updating imports in 2 files, correcting 6 test assertions
+- Confidence: high
+- Keywords: ["shared-utilities", "design-section", "multi-route", "error-helpers", "dry-prevention", "fastapi", "jinja2"]
+- Last observed: Feature 020
+- Observation count: 1
+
+### User-Safe Error Constants Required at Design Time for Web UI Features
+Require user-safe message constants for all error template variables in web UI designs. Design-reviewer prompt should include: "Verify all error template variables use user-safe constants (not str(exc), exception.args, or raw traceback content)."
+- Source: Feature 020, implement iter 1 — security reviewer surfaced raw exception message str(exc) rendered in error.html, exposing internal details at two call sites
+- Confidence: high
+- Keywords: ["error-constants", "user-safe-message", "design-review", "security-check", "template-variables", "web-ui", "data-exposure"]
+- Last observed: Feature 020
+- Observation count: 1

@@ -484,3 +484,23 @@ Changing a bootstrap wrapper from `uv pip install <list>` to `uv sync --no-dev` 
 - Keywords: ["uv-sync", "install-command", "manifest-audit", "bootstrap-wrapper", "runtime-gap", "pyproject-toml"]
 - Last observed: Feature 018
 - Observation count: 1
+
+### Anti-Pattern: Sibling Route Modules Without Named Shared Error Utility at Design Time
+Designing sibling route modules (e.g., board.py and entities.py) without naming shared error-response helpers at design time. The DRY violation only surfaces at implement review, requiring creation of a helpers.py module, import updates in 2 files, and correction of 6 test assertions.
+- Observed in: Feature 020, implement iter 1 — quality reviewer caught board.py duplicating the missing-DB error block that entities.py had extracted into _missing_db_response()
+- Cost: Extra implement review iteration; required creating helpers.py, updating imports in 2 files, correcting 6 test assertions
+- Instead: When a design covers 2+ sibling route modules, include a "Shared Utilities" subsection naming any common error-response helpers with their module path.
+- Confidence: high
+- Keywords: ["dry-violation", "sibling-routes", "shared-helpers", "design-gap", "error-response", "fastapi", "route-modules"]
+- Last observed: Feature 020
+- Observation count: 1
+
+### Anti-Pattern: Raw Exception Content as HTML Error Template Variables
+Passing raw exception content (str(exc)) as template variables to HTML error pages, exposing internal details (file paths, SQL queries, stack traces) to end users. This is a web UI security class not caught at design time.
+- Observed in: Feature 020, implement iter 1 — security reviewer surfaced raw exception rendering in error.html at two call sites
+- Cost: Required creating DB_ERROR_USER_MESSAGE constant, updating 2 error handlers, correcting 6 test assertions
+- Instead: Always use user-safe message constants for all error template variables in web UI designs. Keep detailed error in stderr log only.
+- Confidence: high
+- Keywords: ["raw-exception", "html-template", "data-exposure", "error-message", "security", "str-exc", "jinja2", "web-ui"]
+- Last observed: Feature 020
+- Observation count: 1

@@ -296,8 +296,8 @@ Three-reviewer parallel dispatch with selective re-dispatch resolves implementat
 - Observed in: Feature #031, implement phase — 3 distinct issue categories found and fixed in one cycle
 - Evidence: Quality caught phase_iteration off-by-one, security caught git add -A staging scope, implementation caught spec compliance — all fixed in 1 pass, approved by iter 2
 - Confidence: high
-- Last observed: Feature #033
-- Observation count: 2
+- Last observed: Feature 020
+- Observation count: 3
 
 ### Pattern: Enumerate Git Edge Cases in Design Technical Decisions
 When design involves git operations (diff, commit, staging), enumerate all edge cases in a dedicated Technical Decision section: diff baseline strategy, empty commit handling, staging scope, commit message format, SHA lifecycle.
