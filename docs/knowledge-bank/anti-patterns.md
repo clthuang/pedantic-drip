@@ -414,3 +414,23 @@ Using `git checkout <hook-file>` to restore after instrumented testing destroys 
 - Keywords: ["git-checkout", "restore", "hook-testing", "migration", "uncommitted-changes", "destructive"]
 - Last observed: Feature 014
 - Observation count: 1
+
+### Anti-Pattern: Serial Single-Issue Implement Review Iterations on Markdown Files
+Quality reviewer finds exactly one readability issue per iteration on markdown command files, each fix exposing an adjacent concern. Pattern: iter 1 stale text, iter 2 enum mismatch, iter 3 scope description, iter 4 missing formatting — all independent issues discoverable by holistic pre-flight read. This always terminates at the circuit breaker (5 iterations) with no logic or correctness issues resolved.
+- Observed in: Feature 015, implement run 1 iters 1-4 — four consecutive single-issue warnings on show-status.md and list-features.md, circuit breaker at iter 5
+- Cost: 5 wasted review iterations + circuit breaker trigger + fresh run required
+- Instead: Mandate holistic pre-flight sweep — read all changed files end-to-end before flagging any individual issue on markdown command migrations.
+- Confidence: high
+- Keywords: ["serial-review", "single-issue", "markdown-migration", "circuit-breaker", "quality-reviewer", "holistic-sweep"]
+- Last observed: Feature 015
+- Observation count: 1
+
+### Anti-Pattern: Plan Edit Descriptions Without Exact Old/New Text Pairs Propagate as Task-Review Blockers
+When plan.md edit steps describe changes in prose ("update Section 1.5 to include...") instead of quoting exact old/new text, the ambiguity propagates to task-review as blockers: task too large (combines unclear edits), missing explicit instructions, subjective acceptance criteria. Plan-review cap warnings about ambiguity directly cause 1-2 extra task-review iterations.
+- Observed in: Feature 015, plan-review cap warning about step 1.4 ambiguity → task review iter 1 surfaced 5 issues rooted in the same precision gaps
+- Cost: 2 unresolved plan warnings → 2 extra task-review iterations (5 issues in iter 1)
+- Instead: Require every plan edit step to include quoted old/new text pairs for markdown files.
+- Confidence: high
+- Keywords: ["plan-ambiguity", "edit-descriptions", "old-new-pairs", "task-review-blockers", "downstream-propagation"]
+- Last observed: Feature 015
+- Observation count: 1

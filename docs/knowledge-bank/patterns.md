@@ -421,3 +421,19 @@ When a static code reviewer cannot confirm that a live-state gate task was execu
 - Keywords: ["manual-verification", "evidence-provision", "implement-review", "static-review-limit", "gate-task"]
 - Last observed: Feature 014
 - Observation count: 1
+
+### Pattern: sed+diff Algorithm Consistency Check for SYNC-Marked Duplicate Blocks
+When two or more files contain SYNC-marked duplicate blocks (e.g., `<!-- SYNC: phase-resolution-algorithm -->`), run a character-identity diff between the canonical blocks after any edit to either file. This catches enum value inconsistencies (`complete` vs `completed`), stale prose, and scope description mismatches that serial single-issue reviewers find one at a time.
+- Observed in: Feature 015, implement run 1 iters 1-4 — four independent readability issues in SYNC blocks between show-status.md and list-features.md discovered one per iteration
+- Confidence: high
+- Keywords: ["sync-markers", "duplicate-blocks", "diff-verification", "markdown-migration", "consistency-check"]
+- Last observed: Feature 015
+- Observation count: 1
+
+### Pattern: Fresh Implement Review Run Catches Structural Issues Serial Runs Miss
+When a circuit breaker terminates an implement review run that was dominated by serial surface-level fixes, a fresh review run (reset reviewers, full scope) finds qualitatively different structural issues: SYNC cross-reference gaps, missing status variants in display examples, incomplete gather step scoping. The fresh run converges faster (2-3 iterations vs 5 circuit breaker) because it reviews holistically rather than incrementally.
+- Observed in: Feature 015, implement run 2 — found SYNC cross-reference gaps, gather step scope issue, missing abandoned feature row, display example completeness; converged in 3 iterations vs run 1's 5-iteration circuit breaker
+- Confidence: high
+- Keywords: ["circuit-breaker", "fresh-review", "structural-issues", "holistic-review", "implement-review"]
+- Last observed: Feature 015
+- Observation count: 1
