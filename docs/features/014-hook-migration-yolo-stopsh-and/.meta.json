@@ -52,6 +52,16 @@
         "approved": true,
         "reviewerNotes": []
       }
+    },
+    "create-tasks": {
+      "started": "2026-03-07T11:50:00+08:00",
+      "taskReview": {
+        "iterations": 5,
+        "approved": false,
+        "concerns": [
+          "Task 3.1 restore commands and schema check notes added at iteration cap — not reviewer-verified"
+        ]
+      }
     }
   }
 }

@@ -6,11 +6,11 @@
 
 **Why:** Establishes passing baseline so Phase 2 can detect regressions (plan Phase 0).
 
-- [ ] Run `bash plugins/iflow/hooks/tests/test-hooks.sh`
-- [ ] Record test count and pass/fail status
+- [ ] Run `bash plugins/iflow/hooks/tests/test-hooks.sh 2>&1 | tee /tmp/hook-test-baseline.txt`
+- [ ] Record test count and pass/fail status from the output
 - [ ] If any tests fail, note them as pre-existing — not regressions
 
-**Done when:** All tests run and baseline results are recorded. Pre-existing failures are noted but do not block.
+**Done when:** All tests run and baseline results are captured in `/tmp/hook-test-baseline.txt`. Pre-existing failures are noted but do not block.
 
 **Files:** None (read-only)
 
@@ -104,7 +104,7 @@ except Exception:
 **Depends on:** Tasks 0.1 and 1.2
 
 - [ ] Run `bash plugins/iflow/hooks/tests/test-hooks.sh`
-- [ ] Compare results against Task 0.1 baseline — same tests must pass
+- [ ] Compare results against Task 0.1 baseline (`/tmp/hook-test-baseline.txt`) — same tests must pass
 - [ ] If any test that passed in baseline now fails, it is a regression — fix before proceeding
 
 **Done when:** All tests that passed in Phase 0 baseline still pass. Zero regressions.
@@ -144,9 +144,9 @@ except Exception:
 **This is a required gate task** — it must pass before the feature can be marked complete.
 
 - [ ] Ensure `ENTITY_DB_PATH` points to a valid database (default: `~/.claude/iflow/entities/entities.db`)
-- [ ] Verify the feature entity exists: `sqlite3 $ENTITY_DB_PATH "SELECT type_id FROM entities WHERE type_id = 'feature:014-hook-migration-yolo-stopsh-and'"`. If missing, register via: `sqlite3 $ENTITY_DB_PATH "INSERT INTO entities (type_id, entity_type, entity_id, name, status) VALUES ('feature:014-hook-migration-yolo-stopsh-and', 'feature', '014-hook-migration-yolo-stopsh-and', 'hook-migration-yolo-stopsh-and', 'active')"`
-- [ ] Verify feature 014 is the only active feature: run `grep -r '"status": "active"' docs/features/*/.meta.json` and confirm exactly one match pointing to `014-hook-migration-yolo-stopsh-and`. If other features are active, temporarily deactivate them: `sed -i '' 's/"status": "active"/"status": "paused"/' docs/features/NNN-other-feature/.meta.json` (restore after the test)
-- [ ] Set up the test state: ensure the feature's `.meta.json` at `docs/features/014-hook-migration-yolo-stopsh-and/.meta.json` has `"lastCompletedPhase": "specify"`. If not, set it: `python3 -c "import json; f='docs/features/014-hook-migration-yolo-stopsh-and/.meta.json'; d=json.load(open(f)); d['lastCompletedPhase']='specify'; json.dump(d,open(f,'w'),indent=2)"` (restore original value after the test)
+- [ ] Verify the feature entity exists: `sqlite3 $ENTITY_DB_PATH "SELECT type_id FROM entities WHERE type_id = 'feature:014-hook-migration-yolo-stopsh-and'"`. If missing, register via: `sqlite3 $ENTITY_DB_PATH "INSERT INTO entities (type_id, entity_type, entity_id, name, status) VALUES ('feature:014-hook-migration-yolo-stopsh-and', 'feature', '014-hook-migration-yolo-stopsh-and', 'hook-migration-yolo-stopsh-and', 'active')"`. Note: the entity should already exist in a live iflow session DB. If the INSERT fails due to schema constraints, run `sqlite3 $ENTITY_DB_PATH ".schema entities"` to check required columns
+- [ ] Verify feature 014 is the only active feature: run `grep -r '"status": "active"' docs/features/*/.meta.json` and confirm exactly one match pointing to `014-hook-migration-yolo-stopsh-and`. If other features are active, temporarily deactivate them: `sed -i '' 's/"status": "active"/"status": "paused"/' docs/features/NNN-other-feature/.meta.json`. Restore after the test: `sed -i '' 's/"status": "paused"/"status": "active"/' docs/features/NNN-other-feature/.meta.json`
+- [ ] Set up the test state: ensure the feature's `.meta.json` at `docs/features/014-hook-migration-yolo-stopsh-and/.meta.json` has `"lastCompletedPhase": "specify"`. If not, set it: `python3 -c "import json; f='docs/features/014-hook-migration-yolo-stopsh-and/.meta.json'; d=json.load(open(f)); d['lastCompletedPhase']='specify'; json.dump(d,open(f,'w'),indent=2)"`. Restore original value after the test: `git checkout docs/features/014-hook-migration-yolo-stopsh-and/.meta.json`
 - [ ] Run the hook from the project root with stdin pipe (the hook reads stdin via `INPUT=$(cat)` on line 17 — without stdin it hangs): `OUTPUT=$(echo '{"stop_hook_active":false}' | bash plugins/iflow/hooks/yolo-stop.sh); echo "$OUTPUT"`
 - [ ] Parse and inspect the JSON output: `echo "$OUTPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('reason','NO REASON FIELD'))"` — confirm the reason field contains `"Invoke /iflow:design"`
 
