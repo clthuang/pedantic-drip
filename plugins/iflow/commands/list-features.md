@@ -1,5 +1,5 @@
 ---
-description: List all active features and their branches
+description: List all features and their branches
 ---
 
 # /iflow:list-features Command
@@ -8,7 +8,7 @@ description: List all active features and their branches
 Use these values from session context (injected at session start):
 - `{iflow_artifacts_root}` — root directory for feature artifacts (default: `docs`)
 
-List all active features.
+List all features.
 
 ## Gather Features
 
@@ -72,7 +72,7 @@ Determine:
 ## Display
 
 ```
-Active Features:
+Features:
 
 ID   Name              Phase        Branch                          Project    Last Activity
 ───  ────              ─────        ──────                          ───────    ─────────────
@@ -90,7 +90,7 @@ Commands:
 ## If No Features
 
 ```
-No active features.
+No features found.
 
 Run /iflow:create-feature "description" to start a new feature.
 ```
