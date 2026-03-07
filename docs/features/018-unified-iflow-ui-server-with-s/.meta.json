@@ -15,8 +15,19 @@
     "019-kanban-board-view"
   ],
   "brainstorm_source": "docs/brainstorms/20260308-002418-unified-iflow-ui-server.prd.md",
-  "lastCompletedPhase": "specify",
+  "lastCompletedPhase": "design",
   "phases": {
+    "design": {
+      "started": "2026-03-08T17:10:00+08:00",
+      "completed": "2026-03-08T18:25:00+08:00",
+      "stages": {
+        "research": { "started": "2026-03-08T17:10:00+08:00", "completed": "2026-03-08T17:15:00+08:00", "skipped": false },
+        "architecture": { "started": "2026-03-08T17:15:00+08:00", "completed": "2026-03-08T17:25:00+08:00" },
+        "interface": { "started": "2026-03-08T17:25:00+08:00", "completed": "2026-03-08T17:30:00+08:00" },
+        "designReview": { "started": "2026-03-08T17:30:00+08:00", "completed": "2026-03-08T18:00:00+08:00", "iterations": 3, "reviewerNotes": [] },
+        "handoffReview": { "started": "2026-03-08T18:05:00+08:00", "completed": "2026-03-08T18:25:00+08:00", "iterations": 4, "approved": true, "reviewerNotes": [] }
+      }
+    },
     "specify": {
       "started": "2026-03-08T16:30:00+08:00",
       "completed": "2026-03-08T17:00:00+08:00",
