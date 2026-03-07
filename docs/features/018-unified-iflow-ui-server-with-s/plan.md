@@ -21,7 +21,7 @@
 - Why: Must validate SQLite thread safety before committing to sync vs async route design.
 - Create `agent_sandbox/018-poc/test_thread_safety.py` — 20-line script:
   - FastAPI app with sync route using `sqlite3.connect(path, check_same_thread=False)` on temp DB
-  - Must replicate EntityDatabase's PRAGMA settings: `journal_mode=WAL`, `busy_timeout=5000`, `foreign_keys=ON` (same as `_set_pragmas()`)
+  - Must replicate EntityDatabase's PRAGMA settings: `journal_mode=WAL`, `busy_timeout=5000`, `foreign_keys=ON`, `cache_size=-8000` (same as `_set_pragmas()`)
   - Note: Uses raw sqlite3 because EntityDatabase's `check_same_thread` parameter is not yet added (that's 1.1). The PRAGMAs are what matter for concurrency behavior.
   - Seed 10 workflow_phases rows
   - Fire 10 concurrent GET requests via `asyncio.gather` + `httpx.AsyncClient`
@@ -185,10 +185,11 @@ Done when: all templates have valid Jinja2 syntax
                                                                     (templates)        │
                                                                           │            ▼
                                                                           ▼       4.3 (wrapper)
-                                                                    4.1 (integration tests)
-                                                                          │
-                                                                          ▼
-                                                                    5.1-5.3 (verify)
+                                                                    4.1 (integration tests)  │
+                                                                          │                   │
+                                                                          └──────┬────────────┘
+                                                                                 ▼
+                                                                           5.1-5.3 (verify)
 ```
 
 ## Acceptance Criteria Coverage
