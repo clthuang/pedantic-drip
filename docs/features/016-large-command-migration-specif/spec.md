@@ -42,7 +42,7 @@ Feature 016 does NOT cover:
 2. **Add a `transition_phase` MCP call** after the `.meta.json` update:
    - Construct `feature_type_id` as `"feature:{id}-{slug}"` from the feature's `.meta.json` `id` and `slug` fields. This matches the convention used by entity registry registration and feature 015's `feature_type_id` construction.
    - Call `transition_phase(feature_type_id, "{phaseName}")`.
-   - If MCP succeeds: log success silently (no user-visible output change).
+   - If MCP succeeds: no output — proceed to next step.
    - If MCP fails for any reason: warn using the standard format (see NFR-3) but do NOT block. The `.meta.json` update already succeeded, so the phase has started regardless. The DB will sync later via reconciliation.
 
 **Interaction with YOLO mode:** The `yolo_active` parameter of `transition_phase` should be set to `true` when `[YOLO_MODE]` is active in the execution context. When `[YOLO_MODE]` is NOT active, omit the `yolo_active` parameter (defaults to `false`) or explicitly pass `yolo_active=false`. This allows the engine to record YOLO mode for audit purposes.
@@ -75,7 +75,7 @@ Feature 016 does NOT cover:
 2. **Add a `complete_phase` MCP call** after the `.meta.json` update:
    - Use the same `feature_type_id` constructed in `validateAndSetup()` (or re-construct from `.meta.json` if needed).
    - Call `complete_phase(feature_type_id, "{phaseName}")`.
-   - If MCP succeeds: log success silently (no user-visible output change).
+   - If MCP succeeds: no output — proceed to next step.
    - If MCP fails for any reason: warn using the standard format (see NFR-3) but do NOT block. The `.meta.json` update already succeeded.
 
 **`complete_phase` failure modes:** Same as FR-1 — MCP unavailable, phase mismatch (DB state behind `.meta.json`), feature not found. All handled identically: warn, do not block.
@@ -174,15 +174,17 @@ If the `.meta.json` write fails, skip the MCP call (the phase operation failed).
 Verification is manual — skill and command files are markdown instructions, not executable code:
 
 1. Run `/iflow:specify` on a test feature with the workflow-engine MCP server running and confirm `transition_phase` is called in Step 4 of `validateAndSetup()` and `complete_phase` is called in Step 2 of `commitAndComplete()`.
-2. Stop the workflow-engine MCP server and re-run a phase command to confirm the command completes identically with non-blocking warnings.
-3. Check the entity DB after a successful run to verify the phase state matches `.meta.json` state.
-4. Run a phase command in YOLO mode and verify `yolo_active=true` is passed to `transition_phase`.
-5. After a successful phase run, query `get_phase` with the same `feature_type_id` used by `transition_phase`/`complete_phase` and confirm the phase state matches. This validates both the format correctness and round-trip consistency.
+2. Repeat step 1 with at least one other phase command (e.g., `/iflow:design`) to confirm the shared skill propagates correctly across commands. A single command test validates the skill; a second command confirms no command-level override exists.
+3. Stop the workflow-engine MCP server and re-run a phase command to confirm the command completes identically with non-blocking warnings.
+4. Check the entity DB after a successful run to verify the phase state matches `.meta.json` state.
+5. Run a phase command in YOLO mode and verify `yolo_active=true` is passed to `transition_phase`. Confirm by inspecting the `transition_phase` tool call arguments in Claude's tool invocation sidebar.
+6. After a successful phase run, query `get_phase` with the same `feature_type_id` used by `transition_phase`/`complete_phase` and confirm the phase state matches. This validates both the format correctness and round-trip consistency.
 
 ## Technical Notes
 
 - `transition_phase` returns `{transitioned: bool, results: [...], degraded: bool}`. The `transitioned` field indicates success. Error responses have the shape `{error: true, error_type: "...", message: "...", recovery_hint: "..."}` — this JSON is produced by the MCP server's error handling decorators (`_with_error_handling`, `_catch_value_error`), not by the engine methods directly. The engine methods raise `ValueError`; the MCP layer converts these to structured JSON errors.
 - `complete_phase` returns the updated `FeatureWorkflowState` on success. Error handling follows the same MCP decorator pattern as `transition_phase`.
-- The skill's Step 1 (Validate Transition) already validates transitions via its own logic. The `transition_phase` MCP call in Step 4 provides a secondary validation — if the engine rejects, it's logged but not blocking. The two validation paths may disagree if the DB state diverges from `.meta.json` (expected during migration period).
+- The skill's Step 1 (Validate Transition) already validates transitions via its own logic. The `transition_phase` MCP call in Step 4 provides a secondary validation — if the engine rejects, it's logged but not blocking. The two validation paths may disagree if the DB state diverges from `.meta.json` (expected until feature 017 removes `.meta.json` writes and reconciliation resolves any remaining drift).
+- PRD FR-1 defines `transition_phase(feature_id, from_phase, to_phase)`; the implemented API is `transition_phase(feature_type_id, target_phase, yolo_active)` — the `from_phase` argument was removed during feature 008 design (engine determines current phase internally).
 - Design's `stages` sub-object (12+ writes for research, architecture, interface, designReview, handoffReview) represents sub-phase tracking not modeled in `FeatureWorkflowState`. The engine only tracks top-level phases. These stay as inline `.meta.json` writes.
 - MCP tool calls from skills use the standard Claude MCP tool invocation syntax. No PYTHONPATH or subprocess management is needed.
