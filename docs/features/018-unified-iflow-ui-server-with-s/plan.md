@@ -119,7 +119,7 @@ Done when: all templates have valid Jinja2 syntax
 ### Phase 4: Integration Tests + CLI (Sequential)
 
 **4.1: Integration tests (require templates from Phase 3)**
-- Why: TestClient integration tests need templates to render. Separated from unit tests (2.1) to avoid circular dependency.
+- Why: TestClient integration tests need templates to render. Separated from unit tests (2.1) to avoid circular dependency. No dependency on 4.2/4.3 — TestClient creates the app in-process, bypassing CLI and shell wrapper entirely.
 - File: `plugins/iflow/ui/tests/test_app.py` (append to existing test file)
 - TestClient GET `/` full page: returns 200, contains 8 column headers
 - TestClient GET `/` with `HX-Request: true` header: returns 200, partial HTML (no `<html>` wrapper)
@@ -144,7 +144,8 @@ Done when: all templates have valid Jinja2 syntax
 - Adapt `run-workflow-server.sh` pattern: venv resolution, forward args
 - PYTHONPATH must include `$PLUGIN_DIR/hooks/lib` (for entity_registry imports)
 - Invocation: `exec "$VENV_DIR/bin/python" "$PLUGIN_DIR/ui/__main__.py" "$@"` (direct script path, matching the existing run-workflow-server.sh pattern — avoids module resolution issues when invoked from plugin cache location vs dev workspace)
-- Done when: `bash plugins/iflow/mcp/run-ui-server.sh` starts the server
+- Note: `__main__.py` must use `sys.path` or rely on PYTHONPATH for imports (not relative imports, which require `-m` invocation). Verify at implementation: if `from plugins.iflow.ui import create_app` fails under direct script invocation, fall back to `-m plugins.iflow.ui` with PYTHONPATH including project root.
+- Done when: `bash plugins/iflow/mcp/run-ui-server.sh` starts the server and `create_app` import resolves correctly
 
 ### Phase 5: Verification (Sequential)
 
@@ -185,11 +186,11 @@ Done when: all templates have valid Jinja2 syntax
                                                                     (templates)        │
                                                                           │            ▼
                                                                           ▼       4.3 (wrapper)
-                                                                    4.1 (integration tests)  │
-                                                                          │                   │
-                                                                          └──────┬────────────┘
-                                                                                 ▼
-                                                                           5.1-5.3 (verify)
+                                                                    4.1 (integ tests)  │
+                                                                          │            │
+                                                                          ▼            ▼
+                                                                       5.1-5.3 (verify)
+                                                                    (requires both 4.1 and 4.3)
 ```
 
 ## Acceptance Criteria Coverage
