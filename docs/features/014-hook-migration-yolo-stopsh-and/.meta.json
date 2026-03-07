@@ -1,0 +1,15 @@
+{
+  "id": "014",
+  "slug": "hook-migration-yolo-stopsh-and",
+  "status": "active",
+  "created": "2026-03-01T16:27:59+08:00",
+  "mode": "standard",
+  "branch": "feature/014-hook-migration-yolo-stopsh-and",
+  "project_id": "P001",
+  "module": "Command and Hook Migration",
+  "depends_on_features": [
+    "009-state-engine-mcp-tools-phase-r"
+  ],
+  "lastCompletedPhase": null,
+  "phases": {}
+}
