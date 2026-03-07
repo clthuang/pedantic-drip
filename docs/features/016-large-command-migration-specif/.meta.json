@@ -10,7 +10,7 @@
   "depends_on_features": [
     "015-small-command-migration-finish"
   ],
-  "lastCompletedPhase": "create-plan",
+  "lastCompletedPhase": "create-tasks",
   "phases": {
     "design": {
       "started": "2026-03-07T18:36:00+08:00",
@@ -35,6 +35,20 @@
         "iterations": 1,
         "approved": true,
         "reviewerNotes": []
+      }
+    },
+    "create-tasks": {
+      "started": "2026-03-07T20:15:00+08:00",
+      "completed": "2026-03-07T20:45:00+08:00",
+      "taskReview": {
+        "iterations": 3,
+        "approved": true,
+        "concerns": []
+      },
+      "chainReview": {
+        "iterations": 2,
+        "approved": true,
+        "concerns": []
       }
     },
     "specify": {
