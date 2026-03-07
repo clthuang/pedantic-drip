@@ -7,19 +7,19 @@ Phase 4 depends on Phases 1-3 completion.
 ## Phase 1: Core Removal (workflow-state/SKILL.md)
 
 ### Task 1.1: Capture pre-edit baselines for all target files
-- [ ] Run `wc -l` on all 9 editable target files and record results:
-  - `plugins/iflow/skills/workflow-state/SKILL.md` (~363 lines)
-  - `plugins/iflow/commands/secretary.md`
-  - `plugins/iflow/commands/create-specialist-team.md`
-  - `plugins/iflow/skills/workflow-transitions/SKILL.md`
-  - `plugins/iflow/commands/implement.md`
-  - `plugins/iflow/commands/create-tasks.md`
-  - `plugins/iflow/commands/create-plan.md`
-  - `CLAUDE.md`
-  - `.claude/hookify.docs-sync.local.md`
-  - `docs/dev_guides/templates/command-template.md`
+- [ ] Run `wc -l` on all 10 editable target files and record results in task execution output (stdout):
+  1. `plugins/iflow/skills/workflow-state/SKILL.md` (~363 lines)
+  2. `plugins/iflow/commands/secretary.md`
+  3. `plugins/iflow/commands/create-specialist-team.md`
+  4. `plugins/iflow/skills/workflow-transitions/SKILL.md`
+  5. `plugins/iflow/commands/implement.md`
+  6. `plugins/iflow/commands/create-tasks.md`
+  7. `plugins/iflow/commands/create-plan.md`
+  8. `CLAUDE.md`
+  9. `.claude/hookify.docs-sync.local.md`
+  10. `docs/dev_guides/templates/command-template.md`
 
-**Done when:** All 9 baseline line counts are recorded in the implementation log.
+**Done when:** `wc -l` on all 10 files returns numeric output with no errors. Results are recorded in task execution output.
 
 ### Task 1.2: Remove Phase Sequence table and Workflow Map from SKILL.md
 - [ ] Locate `## Phase Sequence` heading
@@ -57,25 +57,28 @@ Phase 4 depends on Phases 1-3 completion.
 
 **Done when:** `grep "validateArtifact\|function validateArtifact" SKILL.md` returns zero matches. `grep "## Artifact Validation" SKILL.md` returns zero matches.
 
-### Task 1.7: Normalize spacing, update cross-reference, verify preservation
-- [ ] Ensure each remaining section is separated by exactly one blank line (no double blank lines)
+### Task 1.7: Normalize spacing and update cross-reference in SKILL.md
+- [ ] Ensure each remaining section is separated by exactly one blank line — run `grep -n '^$' SKILL.md | awk -F: 'prev+1==$1{print NR": consecutive blank at line "$1} {prev=$1}'` to find consecutive blank lines; fix any found
 - [ ] Locate line containing `proceed to \`validateTransition\` below`
 - [ ] Replace with `proceed to workflow-transitions Step 1`
-- [ ] Verify: `grep "proceed to workflow-transitions Step 1" SKILL.md` returns one match
-- [ ] Confirm `## Phase Sequence` heading present
-- [ ] Confirm one-liner `brainstorm → specify → design → create-plan → create-tasks → implement → finish` present
-- [ ] Confirm `## Planned→Active Transition` section intact
-- [ ] Confirm `## State Schema` section intact
 
-**Done when:** All four preserved sections confirmed. `grep "proceed to workflow-transitions Step 1" SKILL.md` returns one match. No double blank lines between sections.
+**Done when:** `grep "proceed to workflow-transitions Step 1" SKILL.md` returns one match. Consecutive blank line check returns zero hits.
 
-### Task 1.8: Run early SC-5 test
+### Task 1.8: Verify SKILL.md preservation after Phase 1 edits
+- [ ] `grep "## Phase Sequence" SKILL.md` → one match
+- [ ] `grep "brainstorm → specify → design → create-plan → create-tasks → implement → finish" SKILL.md` → one match
+- [ ] `grep "## Planned→Active Transition" SKILL.md` → one match
+- [ ] `grep "## State Schema" SKILL.md` → one match
+
+**Done when:** All four grep checks return exactly one match each.
+
+### Task 1.9: Run early SC-5 test
 - [ ] Run `plugins/iflow/.venv/bin/python -m pytest plugins/iflow/hooks/lib/transition_gate/test_gate.py -k "SC_5"`
 - [ ] If fails: fix immediately before proceeding
 
 **Done when:** SC-5 test passes.
 
-**Parallel group:** Tasks 1.2-1.6 are sequential (same file, content-match removal order matters). Task 1.7 depends on 1.2-1.6. Task 1.8 depends on 1.7. Task 1.1 is independent (baseline capture).
+**Parallel group:** Tasks 1.2-1.6 are sequential (same file, content-match removal order matters). Task 1.7 depends on 1.2-1.6. Task 1.8 depends on 1.7. Task 1.9 depends on 1.8. Task 1.1 is independent (baseline capture).
 
 ## Phase 2: Table Replacements (secretary.md, create-specialist-team.md)
 
@@ -99,9 +102,9 @@ Phase 4 depends on Phases 1-3 completion.
   and apply the same canonical-sequence logic.
   ```
 
-**Done when:** `grep "Phase Progression Table" secretary.md` returns zero matches. `grep "get_phase" secretary.md` returns match at Orchestrate site.
+**Done when:** `grep "Phase Progression Table" secretary.md` returns zero matches. `grep -A5 "Determine Next Command" secretary.md | grep "get_phase"` returns a match (confirms replacement inserted at Orchestrate site).
 
-**Note:** Table removal and site 1 replacement are done atomically per Technical Decision 1 (within-file atomic replace-then-remove). The intermediate state after table removal but before replacement is acceptable because markdown files are not executed, but complete both operations before any smoke test.
+**Note:** Table removal and site 1 replacement are done atomically per Technical Decision 1 (within-file atomic replace-then-remove). Complete both operations before any smoke test.
 
 ### Task 2.2: Update secretary.md site 2 — Workflow Guardian
 - [ ] Locate "Workflow Guardian" (~line 520) containing `Determine next phase using the Phase Progression Table above`
@@ -121,7 +124,7 @@ Phase 4 depends on Phases 1-3 completion.
   and apply the same canonical-sequence logic.
   ```
 
-**Done when:** `grep "Phase Progression Table" secretary.md` returns zero matches at both sites. `grep "get_phase" secretary.md` returns matches in both sites. `grep "lastCompletedPhase" secretary.md` returns match (fallback).
+**Done when:** `grep "get_phase" secretary.md` returns at least 2 matches (both sites). `grep -B5 "get_phase" secretary.md | grep -i "guardian"` returns a match (confirms insertion at Workflow Guardian site). `grep "lastCompletedPhase" secretary.md` returns match (fallback).
 
 ### Task 2.3: Update create-specialist-team.md — three targets
 - [ ] **Target 1 — Step 3 inline sequence** (~lines 111-112): Replace the instruction ending with colon + arrow-delimited sequence line with the following verbatim text (maintain 6-space indentation):
@@ -152,7 +155,14 @@ Phase 4 depends on Phases 1-3 completion.
 
 ### Task 3.1: Update workflow-transitions Step 1
 - [ ] Locate Step 1 (~lines 34-36) in `plugins/iflow/skills/workflow-transitions/SKILL.md` containing `Apply validateTransition logic`
-- [ ] Replace 3-line block with updated text per spec FR-9: "Check transition validity" heading, read `.meta.json` state, hard prerequisites validated by calling command before Step 1, determine transition type (normal forward, backward, or skip), command already stopped if blocked
+- [ ] Replace the 3-line block with the following verbatim text:
+  ```
+  Check transition validity:
+  - Read current `.meta.json` state (get `lastCompletedPhase`)
+  - Hard prerequisites are validated by the calling command before Step 1
+  - Determine transition type: normal forward, backward, or skip
+  - If blocked by command prerequisite: command already stopped before reaching Step 1
+  ```
 
 **Done when:** `grep "validateTransition" workflow-transitions/SKILL.md` returns zero matches. `grep "Check transition validity" workflow-transitions/SKILL.md` returns one match.
 
@@ -181,7 +191,9 @@ Phase 4 depends on Phases 1-3 completion.
 - [ ] Locate reference to `Workflow Map` in `.claude/hookify.docs-sync.local.md`; replace with the literal text `Phase Sequence one-liner`
 - [ ] Locate line 16 in `docs/dev_guides/templates/command-template.md`: `- Apply validateTransition logic for target phase`; replace with `- Check transition validity by following workflow-transitions Step 1 for target phase`
 
-**Done when:** `grep "Workflow Map" CLAUDE.md .claude/hookify.docs-sync.local.md` returns zero matches. `grep "validateTransition" docs/dev_guides/templates/command-template.md` returns zero matches. `grep "Phase Sequence one-liner" CLAUDE.md` returns one match.
+- [ ] Run `grep -n "Workflow Map\|validateTransition\|validateArtifact\|Phase Progression Table" README.md README_FOR_DEV.md` — if any matches found, update the affected lines
+
+**Done when:** `grep "Workflow Map" CLAUDE.md .claude/hookify.docs-sync.local.md` returns zero matches. `grep "validateTransition" docs/dev_guides/templates/command-template.md` returns zero matches. `grep "Phase Sequence one-liner" CLAUDE.md` returns one match. `grep "Phase Sequence one-liner" .claude/hookify.docs-sync.local.md` returns one match.
 
 ### Task 4.2: Verify read-only targets
 - [ ] Run `grep -n "PHASE_SEQUENCE\|phase_map" plugins/iflow/hooks/yolo-stop.sh` — confirm `PHASE_SEQUENCE` appears in primary path, `phase_map` appears only inside an `except:` block
@@ -219,12 +231,14 @@ Phase 4 depends on Phases 1-3 completion.
 - [ ] Run `grep -rn 'validateTransition\|validateArtifact\|Phase Progression Table\|Workflow Map' . --include='*.md' | grep -v docs/features/ | grep -v docs/projects/ | grep -v docs/brainstorms/` — expected hit only in `docs/knowledge-bank/patterns.md` (historical, acceptable)
 - [ ] Run `./validate.sh` — must pass
 - [ ] Run `plugins/iflow/.venv/bin/python -m pytest plugins/iflow/hooks/lib/transition_gate/test_gate.py -k "SC_5 or sc_5 or skill_md"` — must pass
-- [ ] Smoke test: Run `/iflow:specify` on a scratch/test feature. Pass conditions:
+- [ ] Smoke test setup: Create a throwaway test feature via `mkdir -p docs/features/999-smoke-test && echo '{"id":"999","slug":"smoke-test","status":"active","created":"2026-03-08T00:00:00+08:00","branch":"feature/017-command-cleanup-and-pseudocode","lastCompletedPhase":null,"phases":{}}' > docs/features/999-smoke-test/.meta.json`
+- [ ] Run `/iflow:specify --feature=999-smoke-test` (can cancel after phase begins). Pass conditions:
   1. No `validateTransition` string appears in workflow output
-  2. Phase starts successfully (`.meta.json` `lastCompletedPhase` updated)
-  3. No error messages about missing functions or broken references
+  2. Phase begins without errors about missing functions or broken references
+  3. No crash or unhandled reference errors
+- [ ] Clean up: `rm -rf docs/features/999-smoke-test`
 
-**Done when:** Broad grep shows only acceptable historical hits. Both test suites pass. All 3 smoke test conditions met.
+**Done when:** Broad grep shows only acceptable historical hits. Both test suites pass. All 3 smoke test conditions met. Test feature cleaned up.
 
 ### Task 4.6: Update CHANGELOG.md
 - [ ] Add entry under `[Unreleased]` documenting pseudocode/table removal
@@ -243,7 +257,7 @@ Phase 4 is the blocking gate (depends on Phases 1-3).
 
 Phase 1 (sequential):
   1.1 (baseline, independent)
-  1.2 → 1.3 → 1.4 → 1.5 → 1.6 → 1.7 → 1.8
+  1.2 → 1.3 → 1.4 → 1.5 → 1.6 → 1.7 → 1.8 → 1.9
 
 Phase 2 (mixed):
   2.1 → 2.2 (secretary.md, sequential)
@@ -263,8 +277,8 @@ Phase 4 (mixed, after Phases 1-3):
 
 | Phase | Tasks | Steps | Complexity |
 |-------|-------|-------|------------|
-| Phase 1 | 8 | 11 | Medium — many sections but single file, content-match removal + early test |
+| Phase 1 | 9 | 12 | Medium — many sections but single file, content-match removal + early test |
 | Phase 2 | 3 | 7 | Medium — atomic replace-then-remove, two files |
 | Phase 3 | 3 | 5 | Simple — small text replacements, four files |
 | Phase 4 | 6 | 11 | Medium — documentation updates + validation sweep + smoke test |
-| **Total** | **20** | **34** | |
+| **Total** | **21** | **35** | |
