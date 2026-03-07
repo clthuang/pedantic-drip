@@ -147,6 +147,8 @@ When MCP is available, commands use MCP state (authoritative). When MCP is unava
 - AC-6: GIVEN a feature with `status: "planned"`, WHEN show-status or list-features runs, THEN phase is displayed as `"planned"` directly from `.meta.json` without calling `get_phase`
 - AC-7: GIVEN a feature with `status: "completed"` or `"abandoned"`, WHEN show-status Section 1.5 lists it, THEN the status is displayed from `.meta.json` without calling `get_phase`
 - AC-8: GIVEN show-status is scanning 3+ features, WHEN the first `get_phase` call returns an error, THEN the remaining features use artifact-based phase detection AND no additional `get_phase` MCP calls are made in that invocation
+- AC-9: GIVEN list-features is scanning 3+ features, WHEN the first `get_phase` call returns an error, THEN the remaining features use artifact-based phase detection AND no additional `get_phase` MCP calls are made in that invocation
+- AC-10: GIVEN `get_phase` returns `current_phase` of `null` or `"brainstorm"` for an active feature, WHEN show-status or list-features displays phase, THEN the displayed value is `"specify"`
 
 ## Out of Scope
 
