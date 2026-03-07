@@ -1,0 +1,26 @@
+{% set total_items = columns.values() | map('length') | sum %}
+
+{% if total_items == 0 %}
+<div class="flex items-center justify-center p-12">
+    <div class="text-center text-base-content/60">
+        <p class="text-lg font-semibold">No features yet</p>
+        <p class="text-sm mt-2">Features will appear here once they are tracked in the entity registry.</p>
+    </div>
+</div>
+{% else %}
+<div class="flex gap-3 overflow-x-auto pb-4">
+    {% for col in column_order %}
+    <div class="flex-shrink-0 w-56 bg-base-100 rounded-lg p-3">
+        <div class="flex items-center justify-between mb-3">
+            <h2 class="text-sm font-semibold uppercase tracking-wide">{{ col | replace("_", " ") }}</h2>
+            <span class="badge badge-sm badge-ghost">{{ columns[col] | length }}</span>
+        </div>
+        <div class="flex flex-col gap-2">
+            {% for item in columns[col] %}
+                {% include "_card.html" %}
+            {% endfor %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}

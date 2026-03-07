@@ -21,7 +21,7 @@ iflow provides zero visual observability into the feature pipeline — developer
 - Kanban board routes: `GET /` serves full page or HTMX partial based on `HX-Request` header
 - SQLite database access via `EntityDatabase` with new optional `check_same_thread` parameter (default=True); UI server passes `check_same_thread=False`
 - HTMX-powered board refresh via manual refresh button (no auto-polling)
-- CDN assets: `https://cdn.jsdelivr.net/npm/daisyui@5/daisyui.css` + `https://cdn.tailwindcss.com` for styling, `https://unpkg.com/htmx.org` for HTMX (3 CDN tags)
+- CDN assets: `https://cdn.jsdelivr.net/npm/daisyui@5/daisyui.css` + `https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4` for styling, `https://unpkg.com/htmx.org` for HTMX (3 CDN tags)
 - Jinja2 HTML templates at `plugins/iflow/ui/templates/`: base.html (layout + CDN links), board.html (full board page extending base), _board_content.html (HTMX partial for refresh), _card.html (single card fragment), error.html (error display)
 - Database path resolved via `ENTITY_DB_PATH` env var, falling back to `~/.claude/iflow/entities/entities.db` (matching existing MCP server pattern in workflow_state_server.py)
 - CLI startup: `python -m plugins.iflow.ui` with defaults (host=127.0.0.1, port=8718, --port flag for override)
@@ -86,7 +86,7 @@ iflow provides zero visual observability into the feature pipeline — developer
 ### AC-9: CDN Asset Delivery
 - Given the UI server is running
 - When the page loads
-- Then 3 CDN resources load: daisyui.css from jsdelivr, Tailwind CSS v4 from cdn.tailwindcss.com, and htmx.org from unpkg. No local JS/CSS build artifacts exist.
+- Then 3 CDN resources load: daisyui.css from jsdelivr, Tailwind CSS v4 from cdn.jsdelivr.net/npm/@tailwindcss/browser@4, and htmx.org from unpkg. No local JS/CSS build artifacts exist.
 
 ### AC-10: Graceful CLI Independence
 - Given the UI server is NOT running
@@ -109,7 +109,7 @@ iflow provides zero visual observability into the feature pipeline — developer
 - `EntityDatabase.list_workflow_phases(kanban_column=...)` method at database.py:1325 — returns `list[dict]` with columns: type_id, workflow_phase, kanban_column, last_completed_phase, mode, backward_transition_reason, updated_at
 - FastAPI >= 0.128.3 (to be added via `uv add`)
 - Uvicorn 0.41.0 (already in uv.lock)
-- Jinja2 (already available in plugin venv)
+- Jinja2 (added via `uv add jinja2`)
 
 ## Open Questions
 None — all questions resolved during brainstorm phase.

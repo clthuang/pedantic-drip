@@ -423,8 +423,8 @@ class EntityDatabase:
 
     VALID_ENTITY_TYPES = ("backlog", "brainstorm", "project", "feature")
 
-    def __init__(self, db_path: str) -> None:
-        self._conn = sqlite3.connect(db_path, timeout=5.0)
+    def __init__(self, db_path: str, *, check_same_thread: bool = True) -> None:
+        self._conn = sqlite3.connect(db_path, timeout=5.0, check_same_thread=check_same_thread)
         self._conn.row_factory = sqlite3.Row
         self._set_pragmas()
         self._migrate()
