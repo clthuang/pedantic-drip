@@ -434,3 +434,33 @@ When plan.md edit steps describe changes in prose ("update Section 1.5 to includ
 - Keywords: ["plan-ambiguity", "edit-descriptions", "old-new-pairs", "task-review-blockers", "downstream-propagation"]
 - Last observed: Feature 015
 - Observation count: 1
+
+### Anti-Pattern: Building Component Maps From Planned Scope Not Grep Results
+When a design component map is built from the initially planned scope (e.g., "7 target files") instead of running a broad grep first, stale references outside that list are discovered only during review iterations. In feature 017, the target file list grew from 7 to 10 files across 3 design iterations.
+- Observed in: Feature 017, design phase — 3 files outside initial 7 targets contained stale references (hookify.docs-sync.local.md, command-template.md, patterns.md), discovered across 3 design review iterations
+- Cost: 3 extra design review iterations to expand scope from 7 to 10 files
+- Instead: Run broad-scope grep before drafting the component map to capture all affected files on first pass.
+- Confidence: high
+- Keywords: ["component-map", "scope-discovery", "grep-first", "design-review", "stale-references"]
+- Last observed: Feature 017
+- Observation count: 1
+
+### Anti-Pattern: Referencing MCP Response Shapes By Field Name Only
+When specs reference MCP tool response shapes by field name only (e.g., "use the current_phase field") without documenting the full JSON structure including null variants, downstream phases hit blockers when encountering unexpected null values. Feature 017 needed 2 spec iterations for get_phase JSON response shape.
+- Observed in: Feature 017, specify phase — 2 iterations needed for get_phase JSON response shape including null current_phase handling
+- Cost: 2 extra spec review iterations
+- Instead: Document full MCP tool response shapes (including null variants) inline in the spec.
+- Confidence: high
+- Keywords: ["mcp-response", "json-shape", "null-handling", "spec-precision", "field-reference"]
+- Last observed: Feature 017
+- Observation count: 1
+
+### Anti-Pattern: Specifying Smoke Tests With Unverified CLI Flags
+When smoke test specifications assume CLI flags exist without verifying against the actual interface, the test goes through multiple revision cycles. In feature 017, a --feature flag was assumed to exist but didn't, causing 4 revision cycles for the smoke test specification.
+- Observed in: Feature 017, create-tasks phase — --feature flag assumed to exist but was nonexistent, causing 4 revision cycles
+- Cost: 4 revision cycles for smoke test specification
+- Instead: Verify smoke test command syntax against actual CLI interface during spec authoring.
+- Confidence: high
+- Keywords: ["smoke-test", "cli-flags", "unverified-assumptions", "test-specification", "revision-cycles"]
+- Last observed: Feature 017
+- Observation count: 1
