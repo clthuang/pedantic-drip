@@ -76,7 +76,7 @@ iflow provides zero visual observability into the feature pipeline — developer
 ### AC-7: Database Missing
 - Given the entity database file does not exist at the expected path
 - When the board loads
-- Then an error page is displayed showing the expected database path and setup instructions
+- Then an error page is displayed showing the expected database path and setup instructions (instructions direct the user to run the entity registry MCP server to initialize the database, or set `ENTITY_DB_PATH` env var to point to an existing database)
 
 ### AC-8: Thread-Safe Database Access
 - Given the UI server is running with Uvicorn
