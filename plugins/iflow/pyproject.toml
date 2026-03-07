@@ -7,6 +7,7 @@ dependencies = [
     "jinja2>=3.1.6",
     "numpy>=1.24,<3",
     "python-dotenv>=1.0,<2",
+    "uvicorn>=0.34",
 ]
 
 [project.optional-dependencies]

@@ -832,6 +832,7 @@ dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "python-dotenv" },
+    { name = "uvicorn" },
 ]
 
 [package.optional-dependencies]
@@ -867,6 +868,7 @@ requires-dist = [
     { name = "ollama", marker = "extra == 'ollama'", specifier = ">=0.4,<1" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=1.0,<3" },
     { name = "python-dotenv", specifier = ">=1.0,<2" },
+    { name = "uvicorn", specifier = ">=0.34" },
     { name = "voyageai", marker = "extra == 'voyage'", specifier = ">=0.3,<1" },
 ]
 provides-extras = ["mcp", "gemini", "voyage", "openai", "ollama"]
