@@ -112,12 +112,12 @@ For each selected template:
       Parse the JSON response: if `current_phase` is non-null, use it; if null, determine next
       phase from `last_completed_phase` using the canonical sequence in workflow-state SKILL.md.
       If MCP unavailable, fall back to `lastCompletedPhase` from `.meta.json` (already extracted).
-      Apply the same edge cases as FR-7 (null+null → specify, last=finish → complete, no active feature → brainstorm).
+      Apply the same edge cases: null+null → route to specify, last=finish → complete, no active feature → brainstorm.
      Check which artifacts exist (prd.md, spec.md, design.md, plan.md, tasks.md)
    - Format as:
      ```
      Active feature: {id}-{slug} ({mode} mode)
-     Current phase: {lastCompletedPhase}
+     Current phase: {phase}
      Next phase: {next phase}
      Artifacts: {comma-separated existing artifacts}
      Directory: {iflow_artifacts_root}/features/{id}-{slug}/
