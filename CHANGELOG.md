@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.11.4] - 2026-03-07
+
 ### Changed
 - Command migration: `show-status.md` and `list-features.md` upgraded from artifact-based phase detection to MCP-primary (`get_phase`) with tri-state `mcp_available` circuit breaker and artifact-based fallback
 - Command migration: `finish-feature.md` Step 6a added `complete_phase` MCP dual-write block with `####` sub-header
