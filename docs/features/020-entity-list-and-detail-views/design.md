@@ -267,3 +267,18 @@ app.include_router(entities_router)
 ### Board Route Modification
 
 Board route must pass `active_page: "board"` in all template contexts for navbar active state to work correctly. This is a minimal change: add `"active_page": "board"` to each context dict.
+
+### Testing
+
+Tests follow feature 018's pattern: pytest with httpx `TestClient` against the FastAPI app. Test file: `plugins/iflow/ui/tests/test_entities.py`.
+
+Key test scenarios (derived from spec acceptance criteria):
+- Entity list returns all entities (FR-1)
+- Type filtering returns only matching entities (FR-2)
+- Status filtering returns only matching entities (FR-3)
+- Entity detail returns full entity data with workflow fields (FR-4)
+- Entity detail returns 404 for missing entity (FR-4)
+- Lineage display shows ancestors and children with self stripped (FR-5)
+- Search returns FTS matches; fallback when FTS unavailable (FR-8)
+- HX-Request header returns partial template (FR-9)
+- Missing DB returns error.html (all routes)
