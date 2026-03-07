@@ -10,7 +10,7 @@
   "depends_on_features": [
     "009-state-engine-mcp-tools-phase-r"
   ],
-  "lastCompletedPhase": "specify",
+  "lastCompletedPhase": "design",
   "phases": {
     "specify": {
       "started": "2026-03-07T07:45:00+08:00",
@@ -27,6 +27,17 @@
           "AC-8 manual verification checkpoint formalization — reviewer wanted explicit definition of done (who runs it, pass criteria, where result recorded). Spec already specifies concrete expected output but does not formalize as deliverable."
         ]
       }
+    },
+    "design": {
+      "started": "2026-03-07T10:00:00+08:00",
+      "stages": {
+        "research": { "started": "2026-03-07T10:00:00+08:00", "completed": "2026-03-07T10:10:00+08:00", "skipped": false },
+        "architecture": { "started": "2026-03-07T10:10:00+08:00", "completed": "2026-03-07T10:20:00+08:00" },
+        "interface": { "started": "2026-03-07T10:20:00+08:00", "completed": "2026-03-07T10:25:00+08:00" },
+        "designReview": { "started": "2026-03-07T10:30:00+08:00", "completed": "2026-03-07T11:00:00+08:00", "iterations": 3, "reviewerNotes": [] },
+        "handoffReview": { "started": "2026-03-07T11:05:00+08:00", "completed": "2026-03-07T11:10:00+08:00", "iterations": 2, "approved": true, "reviewerNotes": [] }
+      },
+      "completed": "2026-03-07T11:10:00+08:00"
     }
   }
 }
