@@ -56,9 +56,9 @@
 
 - [ ] Read `plugins/iflow/commands/list-features.md` in full
 - [ ] Confirm anchor lines: after `## Gather Features` section (after step 3, ~line 17), before `## For Each Feature` (line 19)
-- [ ] Insert identical algorithm block from Task 1.1 — same `## Phase Resolution Algorithm` heading, same single SYNC marker, same pseudocode, same key behaviors
+- [ ] Insert identical algorithm block from show-status.md (as written by Task 1.2) — same `## Phase Resolution Algorithm` heading, same single SYNC marker, same pseudocode, same key behaviors
 - [ ] The `##` heading level matches peer headings (`## Gather Features`, `## For Each Feature`)
-- [ ] Verify inserted text is character-identical to show-status.md's algorithm block — run the diff command from Task 2.2 step 7 immediately as a smoke check
+- [ ] Verify inserted text is character-identical to show-status.md's algorithm block — run: `diff <(sed -n '/^## Phase Resolution Algorithm$/,/^## /p' plugins/iflow/commands/show-status.md | sed '$d') <(sed -n '/^## Phase Resolution Algorithm$/,/^## /p' plugins/iflow/commands/list-features.md | sed '$d')` — must produce no output
 
 **Depends on:** Task 1.4
 **Plan ref:** Steps 2.1 + 2.2
