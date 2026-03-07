@@ -79,11 +79,11 @@ Modify Section 1.5 feature listing (design C1.3). The existing template `- {id}-
 **Why:** Section 2 has its own inline artifact-based detection that must be replaced.
 **Why this order:** Algorithm block (1.2) must exist. Independent of 1.3/1.4 but logically follows the section ordering.
 
-Replace Section 2 phase detection (design C1.4):
-- Old: `Phase: determined from first missing artifact...`
-- New: `Phase: determined using the Phase Resolution algorithm above`
+Replace Section 2 phase detection (design C1.4). Preserve the bold markdown formatting on "Phase":
+- Old: `**Phase**: determined from first missing artifact (spec.md, design.md, plan.md, tasks.md) or "implement" if all exist`
+- New: `**Phase**: determined using the Phase Resolution algorithm above`
 
-**Done when:** Section 2 references the algorithm.
+**Done when:** Section 2 references the algorithm. Bold formatting on "Phase" preserved.
 
 ### 1.6: Verify show-status.md integrity
 
@@ -121,7 +121,7 @@ Confirm the phase determination line to be replaced (~line 23).
 **Why:** list-features.md needs its own copy of the algorithm for self-containment (design D1).
 **Why this order:** Must be inserted before step 2.3 can reference it.
 
-Insert the identical algorithm block from Phase 1 — same `## Phase Resolution Algorithm` heading, same single SYNC marker, same pseudocode and key behaviors — between the identified anchors (design C2.1).
+Insert the identical algorithm block from Phase 1 — same `## Phase Resolution Algorithm` heading, same single SYNC marker, same pseudocode and key behaviors — between the identified anchors (design C2.1). The `##` heading level is intentional and matches the peer headings (`## Gather Features`, `## For Each Feature`) — it logically sits between the gathering and iteration phases.
 
 **Design deviation:** Same as step 1.2 — design C2.1 says markers "at start and end" but codebase convention is a single marker per block. Use single marker only.
 
