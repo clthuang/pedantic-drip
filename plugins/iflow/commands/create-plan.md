@@ -13,7 +13,7 @@ Invoke the planning skill for the current feature context.
 
 Follow `validateAndSetup("create-plan")` from the **workflow-transitions** skill.
 
-**Hard prerequisite:** Before standard validation, validate design.md using `validateArtifact(path, "design.md")`. If validation fails:
+**Hard prerequisite:** Before standard validation, validate design.md exists and has substantive content (>100 bytes, has ## headers, has required sections). If validation fails:
 ```
 BLOCKED: Valid design.md required before planning.
 

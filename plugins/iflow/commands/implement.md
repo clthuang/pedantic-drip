@@ -26,7 +26,7 @@ If `[YOLO_MODE]` is active:
 
 Follow `validateAndSetup("implement")` from the **workflow-transitions** skill.
 
-**Hard prerequisite:** Before standard validation, validate spec.md using `validateArtifact(path, "spec.md")`. If validation fails:
+**Hard prerequisite:** Before standard validation, validate spec.md exists and has substantive content (>100 bytes, has ## headers, has required sections). If validation fails:
 ```
 BLOCKED: Valid spec.md required before implementation.
 
@@ -37,7 +37,7 @@ BLOCKED: Valid spec.md required before implementation.
 ```
 Stop execution. Do not proceed.
 
-**Hard prerequisite:** Additionally, validate tasks.md using `validateArtifact(path, "tasks.md")`. If validation fails:
+**Hard prerequisite:** Additionally, validate tasks.md exists and has substantive content (>100 bytes, has ## headers, has required sections). If validation fails:
 ```
 BLOCKED: Valid tasks.md required before implementation.
 

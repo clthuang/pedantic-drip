@@ -437,3 +437,19 @@ When a circuit breaker terminates an implement review run that was dominated by 
 - Keywords: ["circuit-breaker", "fresh-review", "structural-issues", "holistic-review", "implement-review"]
 - Last observed: Feature 015
 - Observation count: 1
+
+### Pattern: Inline Verbatim Replacement Text in Tasks
+When plan/task steps that write to files include exact verbatim replacement text inline (rather than referencing spec section numbers), implementation proceeds with zero blockers. In feature 017, 5 of 6 task-review blockers involved text referenced by spec section — inlined tasks had zero implementation blockers.
+- Observed in: Feature 017, create-tasks phase — tasks referencing spec sections caused 5 blockers; inlined tasks had zero
+- Confidence: high
+- Keywords: ["verbatim-text", "task-authoring", "inline-content", "replacement-text", "implementation-blockers"]
+- Last observed: Feature 017
+- Observation count: 1
+
+### Pattern: Parallelize Implementation Across Disjoint File Sets
+When implementation tasks target non-overlapping file sets, they can be dispatched in parallel without merge conflicts or ordering concerns. Feature 017 successfully parallelized across 4 phases targeting disjoint file groups.
+- Observed in: Feature 017, implement phase — 4 phases with disjoint file targets executed cleanly
+- Confidence: high
+- Keywords: ["parallel-implementation", "disjoint-files", "task-dispatch", "merge-conflict-avoidance"]
+- Last observed: Feature 017
+- Observation count: 1

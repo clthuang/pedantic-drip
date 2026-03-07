@@ -31,10 +31,11 @@ Execute steps 1-3 in order. Stop on any blocking result.
 
 ### Step 1: Validate Transition
 
-Check prerequisites using workflow-state skill:
-- Read current `.meta.json` state
-- Apply validateTransition logic for target phase `{phaseName}`
-- If blocked: Show error, stop
+Check transition validity:
+- Read current `.meta.json` state (get `lastCompletedPhase`)
+- Hard prerequisites are validated by the calling command before Step 1
+- Determine transition type: normal forward, backward, or skip
+- If blocked by command prerequisite: command already stopped before reaching Step 1
 
 **If backward** (re-running completed phase):
 ```

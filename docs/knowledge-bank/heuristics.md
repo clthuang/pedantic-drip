@@ -435,3 +435,27 @@ When plan-review hits its iteration cap with unresolved warnings about prose amb
 - Keywords: ["plan-cap", "unresolved-warnings", "downstream-cost", "task-review", "ambiguity", "iteration-budget"]
 - Last observed: Feature 015
 - Observation count: 1
+
+### Grep-First Scope Discovery for Removal/Renaming Features
+For features that remove or rename code references, run a broad-scope grep across the entire codebase before drafting the design component map. This captures all affected files on the first pass instead of discovering them incrementally during review iterations.
+- Source: Feature 017, design phase — component map grew 7 to 10 files across 3 iterations; earlier grep would have produced correct scope on first pass
+- Confidence: high
+- Keywords: ["grep-first", "scope-discovery", "removal-features", "renaming-features", "component-map", "design-phase"]
+- Last observed: Feature 017
+- Observation count: 1
+
+### Full JSON Response Shapes Inline in Specs
+When specifying MCP tool interactions, include the full JSON response shape (including null variants and edge cases) inline in the spec rather than referencing field names only. This prevents downstream phases from hitting blockers when encountering unexpected response structures.
+- Source: Feature 017, specify phase — 2 iterations needed for get_phase JSON response shape including null current_phase handling
+- Confidence: medium
+- Keywords: ["json-response", "mcp-tools", "spec-precision", "null-variants", "inline-documentation"]
+- Last observed: Feature 017
+- Observation count: 1
+
+### Derive Counts From Lists Rather Than Hardcoding in Prose
+When prose references a count (e.g., "7 target files"), derive it from the actual list rather than hardcoding. Lists change during review iterations; hardcoded counts become stale and trigger additional review cycles to correct.
+- Source: Feature 017, design phase — file count "7" became stale after adding 3 files, triggering an extra review iteration
+- Confidence: high
+- Keywords: ["derived-counts", "hardcoded-numbers", "stale-references", "prose-accuracy", "review-iterations"]
+- Last observed: Feature 017
+- Observation count: 1

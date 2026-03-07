@@ -25,20 +25,6 @@ Apply when `[YOLO_MODE]` is active:
 - Step 6 (RECOMMEND): Auto-select highest-confidence match in Standard mode
 - Step 7 (DELEGATE): If workflow pattern detected, redirect to orchestrate subcommand handler directly. Otherwise proceed immediately.
 
-### Phase Progression Table
-
-| lastCompletedPhase | Next Command |
-|---|---|
-| (no active feature) | iflow:brainstorm |
-| null (feature exists, no phases) | iflow:specify |
-| brainstorm | iflow:specify |
-| specify | iflow:design |
-| design | iflow:create-plan |
-| create-plan | iflow:create-tasks |
-| create-tasks | iflow:implement |
-| implement | iflow:finish-feature |
-| finish-feature | Already complete — report "Feature already completed." and stop |
-
 ### Specialist Fast-Path Table
 
 Before running semantic matching, check against known specialist patterns:
@@ -317,7 +303,7 @@ If argument starts with `orchestrate` or `continue`:
 1. Glob `{iflow_artifacts_root}/features/*/.meta.json`
 2. Read each file, look for `"status": "active"`
 3. If active feature found:
-   - Extract `lastCompletedPhase` from .meta.json
+   - Extract `id`, `slug`, and `lastCompletedPhase` from .meta.json as discrete values
    - Report: "Active feature: {id}-{slug}, last phase: {lastCompletedPhase}"
 4. If no active feature AND description provided after "orchestrate":
    - This is a new feature request, start from brainstorm
@@ -333,7 +319,17 @@ If argument starts with `orchestrate` or `continue`:
 
 ### Determine Next Command
 
-Use the Phase Progression Table above to determine the next command based on `lastCompletedPhase`.
+Construct `feature_type_id` as `"feature:{id}-{slug}"` from the `id` and `slug` fields
+already extracted from `.meta.json`.
+Call `get_phase(feature_type_id)`. Parse the JSON response object.
+- If `current_phase` is non-null: the feature is mid-phase. Route to `iflow:{current_phase}`
+  (or `iflow:finish-feature` when `current_phase` is `finish`).
+- If `current_phase` is null: the feature is between phases. Use `last_completed_phase`
+  to determine the next phase from the canonical sequence:
+  brainstorm → specify → design → create-plan → create-tasks → implement → finish.
+  Route to the command for that next phase.
+If MCP unavailable, fall back to `.meta.json` `lastCompletedPhase` (camelCase)
+and apply the same canonical-sequence logic.
 
 ### Execute in Main Session
 
@@ -516,8 +512,18 @@ When a workflow pattern is detected (feature request, "build X", "implement X", 
    - If triage set `workflow_match = "iflow:brainstorm"` → preserve that route. Explain: "No active feature. Starting from brainstorm to ensure research and planning phases are complete."
    - If no triage ran (safety default) → route to `iflow:brainstorm`
 4. If active feature found:
-   - Extract `lastCompletedPhase` from .meta.json
-   - Determine next phase using the Phase Progression Table above.
+   - Extract `id`, `slug`, and `lastCompletedPhase` from the `.meta.json` already read above
+   - Construct `feature_type_id` as `"feature:{id}-{slug}"` from the `id` and `slug` fields
+     already extracted from `.meta.json`.
+     Call `get_phase(feature_type_id)`. Parse the JSON response object.
+     - If `current_phase` is non-null: the feature is mid-phase. Route to `iflow:{current_phase}`
+       (or `iflow:finish-feature` when `current_phase` is `finish`).
+     - If `current_phase` is null: the feature is between phases. Use `last_completed_phase`
+       to determine the next phase from the canonical sequence:
+       brainstorm → specify → design → create-plan → create-tasks → implement → finish.
+       Route to the command for that next phase.
+     If MCP unavailable, fall back to `.meta.json` `lastCompletedPhase` (camelCase)
+     and apply the same canonical-sequence logic.
    - If the next phase matches what the user asked for → route with: "All prerequisite phases complete. Proceeding to {phase}."
    - If the next phase is earlier than what the user asked for → route to the next phase with: "You asked to {user request}, but {next phase} hasn't been completed yet. Routing to {next phase} to ensure planning phase is complete."
 

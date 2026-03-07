@@ -13,4 +13,4 @@ action: warn
 **Plugin component modified.** If you added, removed, or renamed a skill, command, or agent, update:
 - `README.md` — user-facing tables
 - `README_FOR_DEV.md` — developer lists and counts
-- `plugins/iflow/skills/workflow-state/SKILL.md` — Workflow Map (if phase sequence changed)
+- `plugins/iflow/skills/workflow-state/SKILL.md` — Phase Sequence one-liner (if phase names change)

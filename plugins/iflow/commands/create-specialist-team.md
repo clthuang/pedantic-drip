@@ -108,13 +108,16 @@ For each selected template:
    - Find the active feature (`"status": "active"`)
      - If multiple active features: use highest ID number, log warning
    - If found: extract id, slug, lastCompletedPhase, mode; determine next phase
-     using the canonical phase sequence (matches .meta.json values):
-       brainstorm → specify → design → create-plan → create-tasks → implement → finish
+      by calling `get_phase("feature:{id}-{slug}")` (using `id` and `slug` extracted above).
+      Parse the JSON response: if `current_phase` is non-null, use it; if null, determine next
+      phase from `last_completed_phase` using the canonical sequence in workflow-state SKILL.md.
+      If MCP unavailable, fall back to `lastCompletedPhase` from `.meta.json` (already extracted).
+      Apply the same edge cases: null+null → route to specify, last=finish → complete, no active feature → brainstorm.
      Check which artifacts exist (prd.md, spec.md, design.md, plan.md, tasks.md)
    - Format as:
      ```
      Active feature: {id}-{slug} ({mode} mode)
-     Current phase: {lastCompletedPhase}
+     Current phase: {phase}
      Next phase: {next phase}
      Artifacts: {comma-separated existing artifacts}
      Directory: {iflow_artifacts_root}/features/{id}-{slug}/
@@ -177,17 +180,8 @@ After all specialists complete:
 
    Read active feature state (Glob `{iflow_artifacts_root}/features/*/.meta.json`, find `"status": "active"`).
 
-   **Phase-to-command mapping** (use phase names for sequence comparisons; command names only at dispatch time):
-
-   | Phase name (.meta.json) | Command (Skill dispatch) |
-   |------------------------|--------------------------|
-   | brainstorm | iflow:brainstorm |
-   | specify | iflow:specify |
-   | design | iflow:design |
-   | create-plan | iflow:create-plan |
-   | create-tasks | iflow:create-tasks |
-   | implement | iflow:implement |
-   | finish | iflow:finish-feature |
+   Phase names map 1:1 to commands: `iflow:{phase-name}`, except:
+   - finish → `iflow:finish-feature`
 
    #### If no active feature:
    | Output signals | Recommended action |
@@ -209,9 +203,9 @@ After all specialists complete:
    | Code changes, tests added, implementation complete | `implement` (continue) or `finish` |
    | Coverage gaps, test results | `implement` (address gaps) |
 
-   If the suggested phase is later than next phase in the sequence, recommend next phase instead
-   (prerequisites must be satisfied first). When output matches multiple categories, prefer the
-   phase closest to the next phase in the sequence — this minimizes phase-skipping.
+   If the suggested phase differs from the MCP-reported current phase (from the
+   `get_phase` response `current_phase` field), recommend the current phase instead
+   (prerequisites must be satisfied first).
 
 4. **Present workflow-aware follow-up:**
 

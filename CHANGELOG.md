@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.11.6] - 2026-03-08
+
+### Removed
+- Command cleanup: removed pseudocode functions (`validateTransition`, `validateArtifact`), Workflow Map, Phase Progression Table, and redundant phase-sequence encodings from 7 skill/command files; replaced with descriptive text referencing Python transition gate and MCP `get_phase` calls. Net reduction: 188 lines (~1,880-2,820 tokens saved per session injection)
+
 ## [4.11.5] - 2026-03-07
 
 ### Changed

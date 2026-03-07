@@ -13,7 +13,7 @@ Read docs/features/ to find active feature, then follow the workflow below.
 
 Before executing, check prerequisites using workflow-state skill:
 - Read current `.meta.json` state
-- Apply validateTransition logic for target phase
+- Check transition validity by following workflow-transitions Step 1 for target phase
 - If blocked: Show error, stop
 
 ### 2. Execute

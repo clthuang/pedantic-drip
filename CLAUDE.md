@@ -137,7 +137,7 @@ bash scripts/release.sh --ci
 **Documentation sync:** When adding, removing, or renaming skills, commands, agents, or hooks in `plugins/iflow/`, update:
 - `README.md` and `README_FOR_DEV.md` — skill/agent/command tables and counts
 - `plugins/iflow/README.md` — component counts table and command/agent tables
-- `plugins/iflow/skills/workflow-state/SKILL.md` — Workflow Map section (if phase sequence or prerequisites change)
+- `plugins/iflow/skills/workflow-state/SKILL.md` — Phase Sequence one-liner (if phase names change)
 - `plugins/iflow/commands/secretary.md` — Specialist Fast-Path table (if renaming agents listed there)
 - `README_FOR_DEV.md` — hooks table (if adding/removing hooks)
 
