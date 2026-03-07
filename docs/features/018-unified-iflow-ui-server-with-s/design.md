@@ -72,6 +72,7 @@ Creates and configures the FastAPI application instance.
 **Spec inaccuracies addressed by this design:**
 - Spec Dependencies (line 112) claims "Jinja2 (already available in plugin venv)" — incorrect. Jinja2 must be explicitly added via `uv add jinja2`. See Technical Decisions table.
 - Spec SC-8, AC-9, and In Scope (line 24) reference `cdn.tailwindcss.com` — DaisyUI v5 requires `@tailwindcss/browser@4` from jsdelivr instead. See base.html template contract.
+- **Plan requirement:** The implementation plan must include a task to update spec SC-8 and AC-9 CDN URLs before implementation begins. Design CDN URLs (base.html contract) supersede spec's CDN URLs.
 
 #### C2: CLI Entry Point (`__main__.py`)
 Handles `python -m plugins.iflow.ui` invocation. Not invoked directly by users — the shell bootstrap wrapper (`run-ui-server.sh`) sets up PYTHONPATH and activates the venv before calling this module.
@@ -163,6 +164,8 @@ HTML templates rendering the Kanban board.
 | SQLite `check_same_thread=False` causes data corruption | Very Low | Medium | WAL mode + busy_timeout provide isolation; PoC validates before full impl |
 | CDN unavailability breaks board rendering | Low | Low (local dev tool) | Acceptable risk for a localhost tool; CDN outages are rare and temporary |
 | Uvicorn thread pool exhaustion under heavy load | Very Low | Low | Single-user local tool; default thread pool (40 threads) is sufficient |
+
+**PoC Failure Contingency:** If the `check_same_thread=False` PoC fails (concurrent requests produce `ProgrammingError`), the fallback is wrapping all `EntityDatabase` calls with `asyncio.to_thread()` and converting the board route to `async def`. This eliminates thread-safety concerns at the cost of slightly more complex route code. The plan should encode this as a conditional task: "If PoC fails → apply async fallback."
 
 ## Interfaces
 
@@ -387,6 +390,6 @@ Displays: error title, message, and optional DB path with setup instructions
 | `plugins/iflow/ui/templates/_board_content.html` | NEW — HTMX partial |
 | `plugins/iflow/ui/templates/_card.html` | NEW — Card fragment |
 | `plugins/iflow/ui/templates/error.html` | NEW — Error display |
-| `plugins/iflow/ui/run-ui-server.sh` | NEW — Shell bootstrap wrapper (venv resolution, PYTHONPATH, forwarding args) |
+| `plugins/iflow/mcp/run-ui-server.sh` | NEW — Shell bootstrap wrapper (venv resolution, PYTHONPATH, forwarding args) — placed alongside sibling `run-*-server.sh` scripts |
 | `plugins/iflow/hooks/lib/entity_registry/database.py` | MODIFY — Add `check_same_thread` parameter to `__init__` |
 | `plugins/iflow/pyproject.toml` | MODIFY — Add `fastapi>=0.128.3` and `jinja2` dependencies |
