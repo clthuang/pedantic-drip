@@ -1,7 +1,8 @@
 {
   "id": "018",
   "slug": "unified-iflow-ui-server-with-s",
-  "status": "active",
+  "status": "completed",
+  "completed": "2026-03-09T03:00:00+08:00",
   "created": "2026-03-01T16:27:59+08:00",
   "mode": "full",
   "branch": "feature/018-unified-iflow-ui-server-with-s",
@@ -15,7 +16,7 @@
     "019-kanban-board-view"
   ],
   "brainstorm_source": "docs/brainstorms/20260308-002418-unified-iflow-ui-server.prd.md",
-  "lastCompletedPhase": "implement",
+  "lastCompletedPhase": "finish",
   "phases": {
     "design": {
       "started": "2026-03-08T17:10:00+08:00",
@@ -63,7 +64,9 @@
       "forceApproveReason": "Circuit breaker at iteration 5. Quality+security passed final validation (iter 4). Implementation passed iter 5 after trivially safe pyproject.toml fix. Only change between final validation pass and iter 5 was adding uvicorn to base dependencies."
     },
     "finish": {
-      "started": "2026-03-09T02:35:00+08:00"
+      "started": "2026-03-09T02:35:00+08:00",
+      "status": "completed",
+      "completed": "2026-03-09T03:00:00+08:00"
     },
     "specify": {
       "started": "2026-03-08T16:30:00+08:00",
