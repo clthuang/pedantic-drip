@@ -137,7 +137,9 @@ Done when: all templates have valid Jinja2 syntax
 - Print startup URL to stdout
 - `uvicorn.run(create_app(), host="127.0.0.1", port=port)`
 - Use absolute imports only (e.g., `from entity_registry.database import EntityDatabase`). Relative imports will fail when `__main__.py` is invoked directly via the shell wrapper (not via `-m`).
-- Write unit test for CLI port-conflict detection (socket.bind on occupied port raises expected error) in `plugins/iflow/ui/tests/test_cli.py`
+- Write unit tests in `plugins/iflow/ui/tests/test_cli.py`:
+  - Port-conflict detection: socket.bind on occupied port raises expected error
+  - Startup URL output: mock `uvicorn.run`, capture stdout, assert printed URL matches `http://127.0.0.1:{port}/` (AC-1 verification)
 - Done when: CLI port-conflict unit test passes; `python -c "from plugins.iflow.ui import create_app; print(create_app())"` succeeds with correct PYTHONPATH. Full server startup verification deferred to 4.3 (wrapper) and 5.3 (smoke test).
 
 **4.3: Shell Bootstrap Wrapper (C2b)**
