@@ -132,6 +132,47 @@ All Python subprocess calls must continue to suppress stderr (`2>/dev/null`) to 
 
 When using the engine path (non-fallback), FR-1 (next-phase lookup) and FR-2 (state retrieval) should be combined into a single Python invocation that: (a) constructs `EntityDatabase` + `WorkflowStateEngine`, (b) calls `get_state()`, (c) derives `next_phase` from `PHASE_SEQUENCE`. This avoids double module loading overhead and stays within the NFR-2 500ms budget. The fallback path (import failure) retains the current separate-invocation structure.
 
+**Combined invocation skeleton:**
+```bash
+NEXT_PHASE=$(PYTHONPATH="${SCRIPT_DIR}/lib" python3 -c "
+try:
+    from transition_gate.constants import PHASE_SEQUENCE
+    from workflow_engine.engine import WorkflowStateEngine
+    from entity_registry.database import EntityDatabase
+    import os
+
+    _PHASE_VALUES = tuple(p.value for p in PHASE_SEQUENCE)
+    db_path = os.environ.get('ENTITY_DB_PATH', os.path.expanduser('~/.claude/iflow/entities/entities.db'))
+    db = EntityDatabase(db_path)
+    engine = WorkflowStateEngine(db, '${PROJECT_ROOT}/${ARTIFACTS_ROOT}')
+    state = engine.get_state('feature:${FEATURE_ID}-${FEATURE_SLUG}')
+
+    if state is not None:
+        last = state.last_completed_phase or ''
+    else:
+        last = '${LAST_COMPLETED_PHASE}'
+
+    if last in ('null', ''):
+        print(PHASE_SEQUENCE[1].value)
+    elif last in _PHASE_VALUES:
+        idx = _PHASE_VALUES.index(last)
+        print(_PHASE_VALUES[idx + 1] if idx < len(_PHASE_VALUES) - 1 else '')
+    else:
+        print('')
+except Exception:
+    # Fallback: inline phase_map
+    phase_map = {
+        'null': 'specify', 'brainstorm': 'specify', 'specify': 'design',
+        'design': 'create-plan', 'create-plan': 'create-tasks',
+        'create-tasks': 'implement', 'implement': 'finish',
+    }
+    last = '${LAST_COMPLETED_PHASE}'
+    print(phase_map.get(last, ''))
+" 2>/dev/null)
+```
+
+The single invocation captures `NEXT_PHASE` from stdout. Stderr is suppressed via `2>/dev/null`. The except block provides the fallback `phase_map` within the same subprocess. Shell variables (`${FEATURE_ID}`, `${FEATURE_SLUG}`, etc.) are interpolated by bash before Python executes.
+
 ## Technical Notes
 
 - The `PHASE_SEQUENCE` constant is a tuple of `Phase` enum values. Each `Phase` has a `.value` attribute that returns the string name (e.g., `"specify"`, `"design"`). The `create_plan` enum member has value `"create-plan"` (hyphenated).
