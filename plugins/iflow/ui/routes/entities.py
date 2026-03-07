@@ -46,8 +46,8 @@ def entity_list(
     1. Missing DB (app.state.db is None) -> error.html
     2. DB query error -> error.html with stderr logging
     3. Search with FTS unavailable (ValueError) -> fallback to list_entities
-    4. HX-Request header -> _entities_content.html partial (placeholder)
-    5. Normal request -> entities.html full page (placeholder)
+    4. HX-Request header -> _entities_content.html partial
+    5. Normal request -> entities.html full page
     """
     db = request.app.state.db
     db_path = request.app.state.db_path

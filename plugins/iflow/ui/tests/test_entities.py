@@ -942,8 +942,9 @@ def test_entity_detail_with_null_fields(tmp_path):
 
     assert response.status_code == 200
     assert "Minimal Entity" in response.text
-    # Null fields should show '-' placeholder, not literal 'None'
-    assert "None" not in response.text or "No parent" in response.text
+    # Null fields should not render as literal 'None'
+    assert ">None<" not in response.text
+    assert "No parent" in response.text
 
 
 # derived_from: dimension:boundary (special characters in type_id)
