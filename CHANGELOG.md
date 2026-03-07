@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.11.8] - 2026-03-08
+
 ### Added
 - UI server: Entity list view with type/status filtering, full-text search, and HTMX partial refresh
 - UI server: Entity detail view with lineage (ancestors/children), workflow phase, and formatted metadata
