@@ -116,6 +116,7 @@ Other branches: main, {iflow_base_branch}
 ID   Name                    Phase        Branch
 018  show-status-upgrade     design       feature/018-show-status-upgrade
 016  api-refactor            implement    feature/016-api-refactor
+017  old-experiment          abandoned    feature/017-old-experiment
 
 ## Open Brainstorms
 20260205-002937-rca-agent.prd.md (1 day ago)

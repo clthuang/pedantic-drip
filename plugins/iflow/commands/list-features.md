@@ -14,7 +14,7 @@ List all features.
 
 1. **Scan {iflow_artifacts_root}/features/** for feature folders. If the directory does not exist, display "No features found" and stop.
 2. **Read .meta.json** from each to get branch info
-3. **Determine status** from `.meta.json` for each feature. Include features with `status: "planned"` in addition to active features.
+3. **Determine status** from `.meta.json` for each feature. Include all statuses (active, planned, completed, abandoned).
 
 ## Phase Resolution Algorithm
 
