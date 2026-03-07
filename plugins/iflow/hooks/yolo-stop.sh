@@ -169,18 +169,41 @@ if [[ "$STOP_COUNT" -gt "$MAX_BLOCKS" ]]; then
 fi
 
 # Determine next phase
-NEXT_PHASE=$(python3 -c "
-phase_map = {
-    'null': 'specify',
-    'brainstorm': 'specify',
-    'specify': 'design',
-    'design': 'create-plan',
-    'create-plan': 'create-tasks',
-    'create-tasks': 'implement',
-    'implement': 'finish',
-}
-last = '${LAST_COMPLETED_PHASE}'
-print(phase_map.get(last, ''))
+NEXT_PHASE=$(PYTHONPATH="${SCRIPT_DIR}/lib" python3 -c "
+try:
+    from transition_gate.constants import PHASE_SEQUENCE
+    from workflow_engine.engine import WorkflowStateEngine
+    from entity_registry.database import EntityDatabase
+    import os
+
+    _PHASE_VALUES = tuple(p.value for p in PHASE_SEQUENCE)
+    db_path = os.environ.get('ENTITY_DB_PATH',
+        os.path.expanduser('~/.claude/iflow/entities/entities.db'))
+    db = EntityDatabase(db_path)
+    engine = WorkflowStateEngine(db, '${PROJECT_ROOT}/${ARTIFACTS_ROOT}')
+    state = engine.get_state('feature:${FEATURE_ID}-${FEATURE_SLUG}')
+
+    if state is not None:
+        last = state.last_completed_phase or ''
+    else:
+        last = '${LAST_COMPLETED_PHASE}'
+
+    # 'null' (from .meta.json) and '' (from engine None->or fallback) both map to specify
+    if last in ('null', ''):
+        print(PHASE_SEQUENCE[1].value)  # specify — first command phase
+    elif last in _PHASE_VALUES:
+        idx = _PHASE_VALUES.index(last)
+        print(_PHASE_VALUES[idx + 1] if idx < len(_PHASE_VALUES) - 1 else '')
+    else:
+        print('')
+except Exception:
+    phase_map = {
+        'null': 'specify', 'brainstorm': 'specify', 'specify': 'design',
+        'design': 'create-plan', 'create-plan': 'create-tasks',
+        'create-tasks': 'implement', 'implement': 'finish',
+    }
+    last = '${LAST_COMPLETED_PHASE}'
+    print(phase_map.get(last, ''))
 " 2>/dev/null)
 
 if [[ -z "$NEXT_PHASE" ]]; then

@@ -1,7 +1,8 @@
 {
   "id": "013",
   "slug": "entity-context-export-mcp-tool",
-  "status": "active",
+  "status": "completed",
+  "completed": "2026-03-07T07:30:00+08:00",
   "created": "2026-03-01T16:27:59+08:00",
   "mode": "standard",
   "branch": "feature/013-entity-context-export-mcp-tool",
@@ -10,7 +11,7 @@
   "depends_on_features": [
     "001-entity-uuid-primary-key-migrat"
   ],
-  "lastCompletedPhase": "implement",
+  "lastCompletedPhase": "finish",
   "phases": {
     "specify": {
       "started": "2026-03-07T03:10:00+08:00",
@@ -70,6 +71,10 @@
       "status": "completed",
       "reviewIterations": 3,
       "reviewApproved": true
+    },
+    "finish": {
+      "status": "completed",
+      "completed": "2026-03-07T07:30:00+08:00"
     }
   }
 }

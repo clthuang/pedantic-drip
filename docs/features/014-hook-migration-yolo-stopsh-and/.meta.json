@@ -1,0 +1,82 @@
+{
+  "id": "014",
+  "slug": "hook-migration-yolo-stopsh-and",
+  "status": "active",
+  "created": "2026-03-01T16:27:59+08:00",
+  "mode": "standard",
+  "branch": "feature/014-hook-migration-yolo-stopsh-and",
+  "project_id": "P001",
+  "module": "Command and Hook Migration",
+  "depends_on_features": [
+    "009-state-engine-mcp-tools-phase-r"
+  ],
+  "lastCompletedPhase": "implement",
+  "phases": {
+    "specify": {
+      "started": "2026-03-07T07:45:00+08:00",
+      "completed": "2026-03-07T09:35:00+08:00",
+      "phaseReview": {
+        "iterations": 4,
+        "approved": true,
+        "reviewerNotes": []
+      },
+      "handoffReview": {
+        "iterations": 5,
+        "approved": false,
+        "reviewerNotes": [
+          "AC-8 manual verification checkpoint formalization — reviewer wanted explicit definition of done (who runs it, pass criteria, where result recorded). Spec already specifies concrete expected output but does not formalize as deliverable."
+        ]
+      }
+    },
+    "design": {
+      "started": "2026-03-07T10:00:00+08:00",
+      "stages": {
+        "research": { "started": "2026-03-07T10:00:00+08:00", "completed": "2026-03-07T10:10:00+08:00", "skipped": false },
+        "architecture": { "started": "2026-03-07T10:10:00+08:00", "completed": "2026-03-07T10:20:00+08:00" },
+        "interface": { "started": "2026-03-07T10:20:00+08:00", "completed": "2026-03-07T10:25:00+08:00" },
+        "designReview": { "started": "2026-03-07T10:30:00+08:00", "completed": "2026-03-07T11:00:00+08:00", "iterations": 3, "reviewerNotes": [] },
+        "handoffReview": { "started": "2026-03-07T11:05:00+08:00", "completed": "2026-03-07T11:10:00+08:00", "iterations": 2, "approved": true, "reviewerNotes": [] }
+      },
+      "completed": "2026-03-07T11:10:00+08:00"
+    },
+    "create-plan": {
+      "started": "2026-03-07T11:15:00+08:00",
+      "completed": "2026-03-07T11:45:00+08:00",
+      "phaseReview": {
+        "iterations": 3,
+        "approved": true,
+        "reviewerNotes": []
+      },
+      "handoffReview": {
+        "iterations": 3,
+        "approved": true,
+        "reviewerNotes": []
+      }
+    },
+    "create-tasks": {
+      "started": "2026-03-07T11:50:00+08:00",
+      "completed": "2026-03-07T13:45:00+08:00",
+      "taskReview": {
+        "iterations": 5,
+        "approved": false,
+        "concerns": [
+          "Task 3.1 restore commands and schema check notes added at iteration cap — not reviewer-verified"
+        ]
+      },
+      "chainReview": {
+        "iterations": 5,
+        "approved": true,
+        "concerns": []
+      }
+    },
+    "implement": {
+      "started": "2026-03-07T14:00:00+08:00",
+      "completed": "2026-03-07T16:30:00+08:00",
+      "reviewIterations": 5,
+      "reviewApproved": true,
+      "reviewerNotes": [
+        "Pre-existing shell variable interpolation pattern noted by security reviewer (design R-4 accepted)"
+      ]
+    }
+  }
+}

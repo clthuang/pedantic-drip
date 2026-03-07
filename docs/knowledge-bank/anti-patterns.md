@@ -394,3 +394,23 @@ Annotating a spec-design divergence as "accepted delta" without specifying the f
 - Keywords: ["accepted-delta", "error-format", "handoff-reviewer", "incomplete-annotation", "iteration-cap"]
 - Last observed: Feature 013
 - Observation count: 1
+
+### Anti-Pattern: Running Debug Hook Copy From /tmp Instead of Hook Directory
+Placing a debug copy of a bash hook in /tmp causes SCRIPT_DIR to resolve to /tmp, making PYTHONPATH point to /tmp/lib (nonexistent). Engine imports fail silently, fallback runs with empty stderr, giving a false-positive pass on the primary path.
+- Observed in: Feature 014, create-tasks chain review iter 4
+- Cost: 1 chain review blocker; would have caused undetected false-positive verification
+- Instead: Place debug copy in the same directory as the original hook so SCRIPT_DIR resolves correctly. Delete after verification.
+- Confidence: high
+- Keywords: ["hook-debug", "script-dir", "pythonpath", "tmp-directory", "false-positive", "bash-hook"]
+- Last observed: Feature 014
+- Observation count: 1
+
+### Anti-Pattern: Restoring Modified Hook Files With git checkout During Verification
+Using `git checkout <hook-file>` to restore after instrumented testing destroys uncommitted migration changes on a feature branch.
+- Observed in: Feature 014, create-tasks chain review iter 3
+- Cost: 1 chain review blocker; would have destroyed the feature's implementation
+- Instead: Create a debug copy via `cp + sed`, run verification against the copy, then delete it. Never modify committed hook files in-place during verification.
+- Confidence: high
+- Keywords: ["git-checkout", "restore", "hook-testing", "migration", "uncommitted-changes", "destructive"]
+- Last observed: Feature 014
+- Observation count: 1
