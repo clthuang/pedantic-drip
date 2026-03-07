@@ -6,7 +6,7 @@ iflow provides zero visual observability into the feature pipeline — developer
 ## Success Criteria
 - [ ] SC-1: Single FastAPI server process serves a Kanban board at `http://127.0.0.1:8718/`
 - [ ] SC-2: Board displays 8 columns matching `kanban_column` values: backlog, prioritised, wip, agent_review, human_review, blocked, documenting, completed
-- [ ] SC-3: Feature cards show type_id, slug, mode, workflow_phase, and last_completed_phase
+- [ ] SC-3: Feature cards show type_id, slug (extracted from type_id), mode, workflow_phase, and last_completed_phase
 - [ ] SC-4: Server responds with complete HTML in <200ms for 100 features (TTFB measured on warm server after at least one prior request, with 100 pre-seeded workflow_phases rows, via server middleware timing); full page render including CDN assets completes in <2s on localhost
 - [ ] SC-5: HTMX partial refresh (manual button click) updates board content without full page reload
 - [ ] SC-6: Server starts with `python -m plugins.iflow.ui` from the project root, with zero configuration (note: PRD FR-5 references `iflow ui` CLI command; the CLI wrapper is intentionally deferred to Out of Scope — this release uses direct Python module invocation)
