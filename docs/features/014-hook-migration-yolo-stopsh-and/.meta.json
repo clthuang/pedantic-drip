@@ -10,7 +10,7 @@
   "depends_on_features": [
     "009-state-engine-mcp-tools-phase-r"
   ],
-  "lastCompletedPhase": "create-plan",
+  "lastCompletedPhase": "create-tasks",
   "phases": {
     "specify": {
       "started": "2026-03-07T07:45:00+08:00",
@@ -55,12 +55,18 @@
     },
     "create-tasks": {
       "started": "2026-03-07T11:50:00+08:00",
+      "completed": "2026-03-07T13:45:00+08:00",
       "taskReview": {
         "iterations": 5,
         "approved": false,
         "concerns": [
           "Task 3.1 restore commands and schema check notes added at iteration cap — not reviewer-verified"
         ]
+      },
+      "chainReview": {
+        "iterations": 5,
+        "approved": true,
+        "concerns": []
       }
     }
   }
