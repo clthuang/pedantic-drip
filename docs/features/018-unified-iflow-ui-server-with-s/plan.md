@@ -125,6 +125,7 @@ Done when: all templates have valid Jinja2 syntax
 - TestClient GET `/` with `HX-Request: true` header: returns 200, partial HTML (no `<html>` wrapper)
 - TestClient GET `/` with missing DB (`app.state.db = None`): returns error page with setup instructions
 - TestClient GET `/` with DB error: returns error page with error message
+- TestClient GET `/` with seeded data: response HTML contains expected slug, workflow_phase badge, and mode values from seeded row (AC-5 card content verification)
 - Run: `plugins/iflow/.venv/bin/python -m pytest plugins/iflow/ui/tests/ -v`
 - Done when: all unit and integration tests pass
 
@@ -143,8 +144,7 @@ Done when: all templates have valid Jinja2 syntax
 - File: `plugins/iflow/mcp/run-ui-server.sh`
 - Adapt `run-workflow-server.sh` pattern: venv resolution, forward args
 - PYTHONPATH must include `$PLUGIN_DIR/hooks/lib` (for entity_registry imports)
-- Invocation: `exec "$VENV_DIR/bin/python" "$PLUGIN_DIR/ui/__main__.py" "$@"` (direct script path, matching the existing run-workflow-server.sh pattern — avoids module resolution issues when invoked from plugin cache location vs dev workspace)
-- Note: `__main__.py` must use `sys.path` or rely on PYTHONPATH for imports (not relative imports, which require `-m` invocation). Verify at implementation: if `from plugins.iflow.ui import create_app` fails under direct script invocation, fall back to `-m plugins.iflow.ui` with PYTHONPATH including project root.
+- Invocation: `exec "$VENV_DIR/bin/python" "$PLUGIN_DIR/ui/__main__.py" "$@"` — this is the established pattern used by `run-workflow-server.sh` (direct script path with `SERVER_SCRIPT`, never `-m`). The `__main__.py` must use absolute imports resolved via PYTHONPATH (e.g., `from entity_registry.database import EntityDatabase`), not relative imports (which require `-m` invocation).
 - Done when: `bash plugins/iflow/mcp/run-ui-server.sh` starts the server and `create_app` import resolves correctly
 
 ### Phase 5: Verification (Sequential)
@@ -201,7 +201,7 @@ Done when: all templates have valid Jinja2 syntax
 | AC-2 | 4.2 CLI Entry Point + test | Port conflict error (unit test) |
 | AC-3 | 4.1 + 3.1-3.3 | Full page with 8 columns (TestClient + smoke) |
 | AC-4 | 4.1 + 3.2-3.3 | HTMX partial refresh (TestClient + smoke) |
-| AC-5 | 3.4 _card.html | Card displays correct fields |
+| AC-5 | 3.4 + 4.1 integration test | Card displays correct fields (TestClient + smoke) |
 | AC-6 | 4.1 + 3.3 | Empty state message (TestClient + smoke) |
 | AC-7 | 4.1 + 3.5 | Error page with DB path (TestClient) |
 | AC-8 | 0.3 PoC + 1.1 C4 | Concurrent requests pass |
