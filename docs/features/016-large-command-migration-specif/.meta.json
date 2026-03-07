@@ -1,0 +1,75 @@
+{
+  "id": "016",
+  "slug": "large-command-migration-specif",
+  "status": "active",
+  "created": "2026-03-01T16:27:59+08:00",
+  "mode": "standard",
+  "branch": "feature/016-large-command-migration-specif",
+  "project_id": "P001",
+  "module": "Command and Hook Migration",
+  "depends_on_features": [
+    "015-small-command-migration-finish"
+  ],
+  "lastCompletedPhase": "implement",
+  "phases": {
+    "design": {
+      "started": "2026-03-07T18:36:00+08:00",
+      "stages": {
+        "research": { "started": "2026-03-07T18:36:00+08:00", "completed": "2026-03-07T18:40:00+08:00", "skipped": false },
+        "architecture": { "started": "2026-03-07T18:40:00+08:00", "completed": "2026-03-07T18:45:00+08:00" },
+        "interface": { "started": "2026-03-07T18:45:00+08:00", "completed": "2026-03-07T18:50:00+08:00" },
+        "designReview": { "started": "2026-03-07T18:50:00+08:00", "completed": "2026-03-07T19:05:00+08:00", "iterations": 4, "reviewerNotes": [] },
+        "handoffReview": { "started": "2026-03-07T19:05:00+08:00", "completed": "2026-03-07T19:15:00+08:00", "iterations": 2, "approved": true, "reviewerNotes": [] }
+      },
+      "completed": "2026-03-07T19:15:00+08:00"
+    },
+    "create-plan": {
+      "started": "2026-03-07T19:20:00+08:00",
+      "completed": "2026-03-07T19:45:00+08:00",
+      "phaseReview": {
+        "iterations": 4,
+        "approved": true,
+        "reviewerNotes": []
+      },
+      "handoffReview": {
+        "iterations": 1,
+        "approved": true,
+        "reviewerNotes": []
+      }
+    },
+    "create-tasks": {
+      "started": "2026-03-07T20:15:00+08:00",
+      "completed": "2026-03-07T20:45:00+08:00",
+      "taskReview": {
+        "iterations": 3,
+        "approved": true,
+        "concerns": []
+      },
+      "chainReview": {
+        "iterations": 2,
+        "approved": true,
+        "concerns": []
+      }
+    },
+    "implement": {
+      "started": "2026-03-07T21:00:00+08:00",
+      "completed": "2026-03-07T21:50:00+08:00",
+      "iterations": 4,
+      "reviewerNotes": []
+    },
+    "specify": {
+      "started": "2026-03-07T20:00:00+08:00",
+      "completed": "2026-03-07T18:35:31+08:00",
+      "phaseReview": {
+        "iterations": 2,
+        "approved": true,
+        "reviewerNotes": []
+      },
+      "handoffReview": {
+        "iterations": 2,
+        "approved": true,
+        "reviewerNotes": []
+      }
+    }
+  }
+}

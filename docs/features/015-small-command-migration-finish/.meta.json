@@ -1,7 +1,8 @@
 {
   "id": "015",
   "slug": "small-command-migration-finish",
-  "status": "active",
+  "status": "completed",
+  "completed": "2026-03-08T02:00:00+08:00",
   "created": "2026-03-01T16:27:59+08:00",
   "mode": "standard",
   "branch": "feature/015-small-command-migration-finish",
@@ -10,7 +11,7 @@
   "depends_on_features": [
     "009-state-engine-mcp-tools-phase-r"
   ],
-  "lastCompletedPhase": "implement",
+  "lastCompletedPhase": "finish",
   "phases": {
     "specify": {
       "started": "2026-03-07T18:00:00+08:00",
@@ -72,6 +73,10 @@
       "started": "2026-03-07T22:40:00+08:00",
       "completed": "2026-03-08T01:00:00+08:00",
       "status": "completed"
+    },
+    "finish": {
+      "status": "completed",
+      "completed": "2026-03-08T02:00:00+08:00"
     }
   }
 }

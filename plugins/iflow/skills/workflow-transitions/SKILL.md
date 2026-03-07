@@ -116,6 +116,22 @@ Update `.meta.json`:
 }
 ```
 
+**Sync to workflow DB (best-effort):**
+
+After the `.meta.json` update above, sync the phase transition to the workflow database:
+
+1. Construct `feature_type_id` as `"feature:{id}-{slug}"` from the `.meta.json` `id` and `slug` fields (available from the `.meta.json` read in Step 1). This is the same value as `entity_type_id` used elsewhere in this skill.
+2. Call `transition_phase(feature_type_id, "{phaseName}")`.
+   - If `[YOLO_MODE]` is active in the current context: include `yolo_active=true`.
+   - If `[YOLO_MODE]` is NOT active: omit `yolo_active` (defaults to `false`).
+3. If the call succeeds (response contains `transitioned: true` and `degraded: false`): no output, proceed to Step 5.
+4. If the call fails for any reason (MCP tool unavailable, response contains `error: true`, `transitioned: false`, `degraded: true`, or response is not valid JSON):
+   output `Note: Workflow DB sync skipped — {reason}. State will reconcile on next reconcile_apply run.`
+   where `{reason}` is a brief description (e.g., "MCP tool unavailable", "transition rejected", "feature not found").
+   Do NOT block — the `.meta.json` update already succeeded.
+
+Note: On partial-phase resume (Step 3 → "Continue"), this call may target a phase already active in the DB. The engine handles re-entry gracefully; any rejection is covered by step 4's warn-and-continue.
+
 ### Step 5: Inject Project Context (conditional)
 
 If feature `.meta.json` has no `project_id` (null or absent): skip Step 5 entirely.
@@ -199,3 +215,15 @@ Update `.meta.json`:
   "lastCompletedPhase": "{phaseName}"
 }
 ```
+
+**Sync to workflow DB (best-effort):**
+
+After the `.meta.json` update above, sync the phase completion to the workflow database:
+
+1. Construct `feature_type_id` as `"feature:{id}-{slug}"` from `.meta.json` `id` and `slug` fields (same value used in `validateAndSetup` Step 4, and as `entity_type_id` in Step 1 frontmatter injection).
+2. Call `complete_phase(feature_type_id, "{phaseName}")`.
+3. If the call succeeds: no output, proceed.
+4. If the call fails for any reason (MCP tool unavailable, response contains `error: true`, or response is not valid JSON):
+   output `Note: Workflow DB sync skipped — {reason}. State will reconcile on next reconcile_apply run.`
+   where `{reason}` is a brief description (e.g., "MCP tool unavailable", "phase mismatch", "feature not found").
+   Do NOT block — the `.meta.json` update already succeeded.

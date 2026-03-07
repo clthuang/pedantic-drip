@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.11.5] - 2026-03-07
+
+### Changed
+- Skill migration: `workflow-transitions/SKILL.md` added `transition_phase` and `complete_phase` MCP dual-write blocks in `validateAndSetup` Step 4 and `commitAndComplete` Step 2
+
 ## [4.11.4] - 2026-03-07
 
 ### Changed
