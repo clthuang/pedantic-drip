@@ -212,7 +212,7 @@ Total: ~33 steps across 4 phases. All text-only edits.
 
 ## Risks and Mitigations
 
-1. **SC-5 test failure** — Mitigated by Step 1.9 preservation check and Step 4.9 test run
+1. **SC-5 test failure** — Mitigated by Step 1.10 preservation check, Step 1.11 early SC-5 test, and Step 4.9 test run
 2. **Secretary routing broken** — Mitigated by atomic replace-then-remove (Steps 2.2-2.4)
 3. **Stale references missed** — Mitigated by broad grep (Step 4.8) and AC-1 through AC-15
 4. **Line number drift** — Mitigated by Technical Decision 4 (match by content, not line numbers)
