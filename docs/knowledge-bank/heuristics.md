@@ -419,3 +419,19 @@ When a hook wraps existing logic in try/except with a fallback producing identic
 - Keywords: ["fallback-path", "try-except", "debug-strategy", "stderr", "path-discrimination", "hook-migration"]
 - Last observed: Feature 014
 - Observation count: 1
+
+### Single-Issue First Implement Iteration on Markdown Files Is a Holistic Sweep Signal
+When the first implement review iteration on a markdown-only feature returns exactly one readability warning (not a logic or correctness issue), it signals the quality reviewer is scanning incrementally. Expect 3-4 more single-issue iterations leading to circuit breaker. Intervene immediately: instruct reviewer to read all changed files end-to-end before flagging.
+- Source: Feature 015, implement run 1 iter 1 — single stale text warning predicted 3 more single-issue iterations
+- Confidence: high
+- Keywords: ["first-iteration", "single-issue", "markdown", "holistic-sweep", "quality-reviewer", "early-signal"]
+- Last observed: Feature 015
+- Observation count: 1
+
+### Unresolved Plan Cap Warnings About Ambiguity Cost 1-2 Task Review Iterations Each
+When plan-review hits its iteration cap with unresolved warnings about prose ambiguity in edit steps, each warning materializes as 1-2 task-review blockers. The warnings don't disappear — they shift downstream. Budget accordingly: 2 unresolved plan warnings ≈ 2 extra task-review iterations.
+- Source: Feature 015, plan-review cap (iter 5) left 2 warnings → task review iter 1 surfaced 5 issues (3 rooted in plan ambiguity)
+- Confidence: high
+- Keywords: ["plan-cap", "unresolved-warnings", "downstream-cost", "task-review", "ambiguity", "iteration-budget"]
+- Last observed: Feature 015
+- Observation count: 1

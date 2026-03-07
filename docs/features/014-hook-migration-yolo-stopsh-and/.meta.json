@@ -1,7 +1,8 @@
 {
   "id": "014",
   "slug": "hook-migration-yolo-stopsh-and",
-  "status": "active",
+  "status": "completed",
+  "completed": "2026-03-07T17:00:00+08:00",
   "created": "2026-03-01T16:27:59+08:00",
   "mode": "standard",
   "branch": "feature/014-hook-migration-yolo-stopsh-and",
@@ -10,7 +11,7 @@
   "depends_on_features": [
     "009-state-engine-mcp-tools-phase-r"
   ],
-  "lastCompletedPhase": "implement",
+  "lastCompletedPhase": "finish",
   "phases": {
     "specify": {
       "started": "2026-03-07T07:45:00+08:00",
@@ -77,6 +78,10 @@
       "reviewerNotes": [
         "Pre-existing shell variable interpolation pattern noted by security reviewer (design R-4 accepted)"
       ]
+    },
+    "finish": {
+      "status": "completed",
+      "completed": "2026-03-07T17:00:00+08:00"
     }
   }
 }

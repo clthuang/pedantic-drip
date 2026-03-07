@@ -1,0 +1,77 @@
+{
+  "id": "015",
+  "slug": "small-command-migration-finish",
+  "status": "active",
+  "created": "2026-03-01T16:27:59+08:00",
+  "mode": "standard",
+  "branch": "feature/015-small-command-migration-finish",
+  "project_id": "P001",
+  "module": "Command and Hook Migration",
+  "depends_on_features": [
+    "009-state-engine-mcp-tools-phase-r"
+  ],
+  "lastCompletedPhase": "implement",
+  "phases": {
+    "specify": {
+      "started": "2026-03-07T18:00:00+08:00",
+      "completed": "2026-03-07T19:30:00+08:00",
+      "phaseReview": {
+        "iterations": 4,
+        "approved": true,
+        "reviewerNotes": []
+      },
+      "handoffReview": {
+        "iterations": 2,
+        "approved": true,
+        "reviewerNotes": []
+      }
+    },
+    "design": {
+      "started": "2026-03-07T20:00:00+08:00",
+      "stages": {
+        "research": { "started": "2026-03-07T20:00:00+08:00", "completed": "2026-03-07T20:05:00+08:00", "skipped": false },
+        "architecture": { "started": "2026-03-07T20:05:00+08:00", "completed": "2026-03-07T20:15:00+08:00" },
+        "interface": { "started": "2026-03-07T20:15:00+08:00", "completed": "2026-03-07T20:20:00+08:00" },
+        "designReview": { "started": "2026-03-07T20:25:00+08:00", "completed": "2026-03-07T20:40:00+08:00", "iterations": 3, "reviewerNotes": [] },
+        "handoffReview": { "started": "2026-03-07T20:45:00+08:00", "completed": "2026-03-07T20:55:00+08:00", "iterations": 2, "approved": true, "reviewerNotes": [] }
+      },
+      "completed": "2026-03-07T20:55:00+08:00"
+    },
+    "create-plan": {
+      "started": "2026-03-07T21:00:00+08:00",
+      "phaseReview": {
+        "iterations": 5,
+        "approved": true,
+        "reviewerNotes": [
+          "Step 1.4 Section 1.5 edit description ambiguous about exact text being added/changed — reviewers found prose-level change descriptions harder to verify than exact old/new text quotes",
+          "Step 2.2 insertion density — algorithm block (~25-30 lines) inserted between lines 17-19 of list-features.md (design D1 self-containment choice, no action required)"
+        ]
+      },
+      "handoffReview": {
+        "iterations": 2,
+        "approved": true,
+        "reviewerNotes": []
+      },
+      "completed": "2026-03-07T21:50:00+08:00"
+    },
+    "create-tasks": {
+      "started": "2026-03-07T22:00:00+08:00",
+      "taskReview": {
+        "iterations": 3,
+        "approved": true,
+        "reviewerNotes": []
+      },
+      "chainReview": {
+        "iterations": 2,
+        "approved": true,
+        "reviewerNotes": []
+      },
+      "completed": "2026-03-07T22:35:00+08:00"
+    },
+    "implement": {
+      "started": "2026-03-07T22:40:00+08:00",
+      "completed": "2026-03-08T01:00:00+08:00",
+      "status": "completed"
+    }
+  }
+}

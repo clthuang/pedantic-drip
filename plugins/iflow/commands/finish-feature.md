@@ -428,6 +428,18 @@ Run automatically after Step 5 completes.
 }
 ```
 
+#### Sync Workflow State to Database
+
+1. Construct feature_type_id as "feature:{folder_name}" where {folder_name} is the
+   feature directory name (e.g., "015-small-command-migration-finish").
+2. Call complete_phase(feature_type_id, "finish").
+3. If the call succeeds: no additional output needed.
+4. If the call fails (MCP unavailable, phase mismatch, feature not found, or
+   no active phase in DB): output a warning line "Note: Workflow DB sync
+   skipped — {error reason}. State will reconcile on next reconcile_apply
+   run." but do NOT stop or block the completion flow. The .meta.json
+   update already succeeded. All error types are handled identically.
+
 ### Step 6b: Delete temporary files
 
 ```bash
