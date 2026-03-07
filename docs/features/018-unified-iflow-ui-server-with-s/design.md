@@ -69,6 +69,10 @@ Creates and configures the FastAPI application instance.
 - `create_app()` does NOT raise `FileNotFoundError` for missing DB. Instead, `app.state.db` is set to `None` and the board route renders `error.html` with setup instructions (AC-7). This allows the server to start and display a helpful error page rather than crashing at startup.
 - The UI server expects a pre-existing, already-migrated database. `EntityDatabase.__init__` calls `_migrate()` but this is idempotent on an existing schema — no new tables or columns are created by the UI server. The MCP servers are responsible for initial schema creation.
 
+**Spec inaccuracies addressed by this design:**
+- Spec Dependencies (line 112) claims "Jinja2 (already available in plugin venv)" — incorrect. Jinja2 must be explicitly added via `uv add jinja2`. See Technical Decisions table.
+- Spec SC-8, AC-9, and In Scope (line 24) reference `cdn.tailwindcss.com` — DaisyUI v5 requires `@tailwindcss/browser@4` from jsdelivr instead. See base.html template contract.
+
 #### C2: CLI Entry Point (`__main__.py`)
 Handles `python -m plugins.iflow.ui` invocation. Not invoked directly by users — the shell bootstrap wrapper (`run-ui-server.sh`) sets up PYTHONPATH and activates the venv before calling this module.
 
@@ -102,7 +106,7 @@ Single route handler serving the Kanban board.
 - `GET /` — fetch all workflow_phases rows, group by `kanban_column`, render
 - Detect `HX-Request` header: if present, return `_board_content.html` partial; otherwise return `board.html` full page
 - Handle missing DB (`app.state.db is None`) — render `error.html` with DB path and setup instructions (AC-7)
-- Handle DB query errors gracefully (return error template)
+- Handle DB query errors: catch `Exception`, log to stderr, return `error.html` with `error_title="Database Error"` and `error_message=str(exc)`
 - Handle empty board state (all columns empty)
 
 **Design decisions:**
@@ -199,7 +203,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
 
 # Exit codes:
 #   0 — clean shutdown
-#   1 — port conflict or DB missing
+#   1 — port conflict
 ```
 
 **CLI arguments:**
@@ -236,7 +240,8 @@ def board(request: Request) -> HTMLResponse:
     - If db is None: return error.html with db_path and setup instructions
     - If HX-Request header present: return _board_content.html partial
     - If HX-Request header absent: return board.html full page
-    - If DB query error: return error.html with details
+    - If DB query error: catch Exception, log to stderr, return error.html
+      with error_title="Database Error" and error_message=str(exception)
 
     Template rendering (modern FastAPI convention):
         templates.TemplateResponse(request, "board.html", context)
@@ -303,8 +308,10 @@ CDN tags (in order — DaisyUI v5 requires this specific order):
   1. <link href="https://cdn.jsdelivr.net/npm/daisyui@5/daisyui.css" rel="stylesheet">
   2. <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
   3. <script src="https://unpkg.com/htmx.org"></script>
-Note: Spec SC-8 lists cdn.tailwindcss.com but DaisyUI v5 requires
-      @tailwindcss/browser@4 from jsdelivr for compatibility.
+Note: Spec SC-8 and AC-9 list cdn.tailwindcss.com — this is a spec
+      inaccuracy. DaisyUI v5 requires @tailwindcss/browser@4 from jsdelivr.
+      Implementation must use the corrected URLs above, not spec's CDN URLs.
+      (Spec correction deferred to implementation phase.)
 Block: {% block content %}{% endblock %}
 ```
 
@@ -352,7 +359,12 @@ Displays: error title, message, and optional DB path with setup instructions
    a. db = request.app.state.db
    b. If db is None:
         return templates.TemplateResponse(request, "error.html", {db_path, setup instructions})
-   c. rows = db.list_workflow_phases()        # All rows, no filter
+   c. try:
+        rows = db.list_workflow_phases()      # All rows, no filter
+      except Exception as exc:
+        import sys; print(f"DB query error: {exc}", file=sys.stderr)
+        return templates.TemplateResponse(request, "error.html",
+          {"error_title": "Database Error", "error_message": str(exc), "db_path": db_path})
    d. columns = _group_by_column(rows)        # O(n) grouping
    e. context = {"columns": columns, "column_order": COLUMN_ORDER}
    f. If HX-Request header:
