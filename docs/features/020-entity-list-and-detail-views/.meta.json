@@ -11,7 +11,7 @@
     "018-unified-iflow-ui-server-with-s"
   ],
   "brainstorm_source": "docs/projects/P001-iflow-arch-evolution/prd.md",
-  "lastCompletedPhase": "specify",
+  "lastCompletedPhase": "design",
   "phases": {
     "specify": {
       "started": "2026-03-09T03:10:00+08:00",
@@ -20,6 +20,17 @@
         "iterations": 2,
         "reviewerNotes": []
       }
+    },
+    "design": {
+      "started": "2026-03-09T04:00:00+08:00",
+      "stages": {
+        "research": { "started": "2026-03-09T04:00:00+08:00", "completed": "2026-03-09T04:05:00+08:00", "skipped": false },
+        "architecture": { "started": "2026-03-09T04:05:00+08:00", "completed": "2026-03-09T04:15:00+08:00" },
+        "interface": { "started": "2026-03-09T04:15:00+08:00", "completed": "2026-03-09T04:20:00+08:00" },
+        "designReview": { "started": "2026-03-09T04:25:00+08:00", "completed": "2026-03-09T04:35:00+08:00", "iterations": 3, "reviewerNotes": [] },
+        "handoffReview": { "started": "2026-03-09T04:40:00+08:00", "completed": "2026-03-09T04:45:00+08:00", "iterations": 2, "approved": true, "reviewerNotes": [] }
+      },
+      "completed": "2026-03-09T04:45:00+08:00"
     }
   }
 }
