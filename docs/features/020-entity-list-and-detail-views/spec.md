@@ -2,13 +2,13 @@
 
 ## Overview
 
-Add entity list and detail views to the iflow-ui web application, enabling users to browse all entities by type, view individual entity details (lineage, metadata, artifact paths), and navigate between related entities. Feature entities additionally display workflow phase data including current Kanban column and phase history. Builds on the existing Kanban board UI (feature 018) using the same FastAPI + Jinja2 + HTMX + DaisyUI stack.
+Add entity list and detail views to the iflow-ui web application, enabling users to browse all entities by type, view individual entity details (lineage, metadata, artifact paths), and navigate between related entities. Feature entities additionally display workflow phase data including current Kanban column, workflow phase, and mode. Builds on the existing Kanban board UI (feature 018) using the same FastAPI + Jinja2 + HTMX + DaisyUI stack.
 
 ## Scope
 
 ### In Scope
 - Entity list page showing all entities with filtering by type and status
-- Entity detail page showing full entity information including lineage, phase history, and Kanban column
+- Entity detail page showing full entity information including lineage and workflow state
 - Navigation between board view and entity views (navbar links)
 - Kanban card click-through to entity detail view
 - HTMX-powered partial refreshes for filter changes
@@ -16,6 +16,7 @@ Add entity list and detail views to the iflow-ui web application, enabling users
 
 ### Out of Scope
 - DAG/tree visualization with Cytoscape.js (feature 021)
+- Per-phase history with started/completed timestamps (requires schema extension to workflow_phases table; deferred to future feature)
 - Drag-and-drop Kanban column changes from entity views
 - Entity creation/editing via the UI
 - Cross-project entity browsing
@@ -45,10 +46,10 @@ The application SHALL serve an entity list page at `/entities` that displays all
 **Acceptance Criteria:**
 - GET `/entities` returns a full HTML page listing all entities in a table with one entity per row
 - Each entity row shows: name, type_id, entity_type, status, kanban_column (for feature entities; blank for others), updated_at
-- Entity list is sorted by updated_at descending (most recently updated first)
+- Entity list is sorted by updated_at descending in Python after fetching from `list_entities()` (which has no ORDER BY clause)
 - Empty state shows a clear "No entities found" message when DB has no entities
 - Error state shows the existing error.html template when DB is unavailable
-- Filter tabs correspond to the entity_type CHECK constraint values (backlog, brainstorm, project, feature); if entity types change in the DB schema, filter tabs must be updated accordingly
+- Filter tabs are hardcoded to the entity_type CHECK constraint values (backlog, brainstorm, project, feature); if entity types change in the DB schema, filter tabs must be updated in the template accordingly
 
 ### FR-2: Entity Type Filtering
 The entity list SHALL support filtering by entity_type via query parameter.
@@ -76,7 +77,7 @@ The application SHALL serve an entity detail page at `/entities/{identifier}` sh
 **Acceptance Criteria:**
 - GET `/entities/feature:020-entity-list-and-detail-views` returns the entity detail page
 - Detail page shows all entity fields: name, type_id, uuid, entity_type, entity_id, status, artifact_path, created_at, updated_at, metadata (formatted JSON)
-- For feature entities, detail page additionally shows workflow data: workflow_phase, last_completed_phase, kanban_column, mode, and per-phase history (started/completed timestamps from workflow_phases table)
+- For feature entities, detail page additionally shows workflow data: workflow_phase, last_completed_phase, kanban_column, mode, and backward_transition_reason (all fields available in workflow_phases table)
 - 404 page returned if entity not found
 - Route accepts any string as the path parameter and delegates to `get_entity()` which internally distinguishes UUID vs type_id format
 
@@ -113,7 +114,9 @@ The entity list page SHALL support text search using the existing FTS index.
 **Acceptance Criteria:**
 - Search input field on the entity list page
 - GET `/entities?q=search+term` filters entities using `search_entities()` method
-- Search is combinable with type and status filters
+- When `search_entities()` raises `ValueError` (FTS index unavailable), the route falls back to displaying all entities with the search field disabled and a "Search unavailable" indicator
+- Search passes `limit=100` to `search_entities()` to reduce silent truncation when combining with post-filters; the UI does not paginate (all results shown)
+- Search is combinable with type and status filters; note that status post-filtering on search results may reduce the result count below the FTS limit
 - HTMX partial refresh on search input, debounced at 300ms using `hx-trigger="input changed delay:300ms"`
 - Empty search results show "No entities match your search" message
 
@@ -123,7 +126,7 @@ All entity list filtering and search operations SHALL support HTMX partial refre
 **Acceptance Criteria:**
 - When `HX-Request` header is present, routes return only the content partial (not the full page with navbar)
 - Filter/search state is reflected in the URL (via hx-push-url) for bookmarkability
-- Page is functionally navigable without JavaScript (full page reload fallback); styling may degrade since Tailwind CSS v4 uses a browser-only script tag in the existing base.html
+- Page is functionally navigable without JavaScript (full page reload fallback): filter tabs are `<a>` links with href query params, search requires pressing Enter to submit a form; styling may degrade since Tailwind CSS v4 uses a browser-only script tag in the existing base.html
 
 ## Data Access
 
@@ -134,7 +137,13 @@ All data access uses the existing `EntityDatabase` class methods:
 - `search_entities(query, entity_type, limit)` — FTS search with ranking
 - `list_workflow_phases()` — workflow phase data for Kanban column and phase history
 
-No new database methods are needed. Status filtering is performed via Python-side post-filtering on the list returned by `list_entities()` or `search_entities()`. Workflow phase data for the entity list (kanban_column) and entity detail (phase history) is obtained by calling `list_workflow_phases()` and matching by type_id.
+No new database methods are needed. Status filtering is performed via Python-side post-filtering on the results from `list_entities()` and `search_entities()`. Workflow phase data for the entity list (kanban_column) and entity detail (phase history) is obtained by calling `list_workflow_phases()` and matching by type_id.
+
+**Data access strategy:**
+- Sorting: `list_entities()` returns rows without ORDER BY; the route sorts results by `updated_at` descending in Python before rendering.
+- Workflow join: Call `list_workflow_phases()` once per request, build a `dict[str, dict]` keyed by `type_id` for O(1) lookup when annotating entity rows with kanban_column.
+- FTS fallback: If `search_entities()` raises `ValueError`, fall back to `list_entities()` with search field disabled.
+- Search limit: Pass `limit=100` to `search_entities()` to reduce truncation when combining with status post-filtering.
 
 ## Feasibility
 
@@ -153,8 +162,9 @@ All required DB methods (list_entities, get_entity, get_lineage, search_entities
 - Given a database with N entities, when GET `/entities` is requested, then the response returns HTTP 200 and contains exactly N entity rows
 - Given a database with M feature entities, when GET `/entities?type=feature` is requested, then the response contains exactly M rows
 - Given a feature entity with type_id "feature:020-entity-list-and-detail-views", when GET `/entities/feature:020-entity-list-and-detail-views` is requested, then the response returns HTTP 200 and displays all entity fields plus workflow phase data
-- Given a feature entity with workflow_phases data, when viewing its detail page, then the page displays kanban_column and phase history (started/completed per phase)
+- Given a feature entity with workflow_phases data, when viewing its detail page, then the page displays kanban_column, workflow_phase, last_completed_phase, and mode
 - Given a Kanban card with type_id "feature:001", when the card is clicked, then the browser navigates to `/entities/feature:001`
 - Given the search term "auth", when GET `/entities?q=auth` is requested, then the response contains entities matching the FTS query
+- Given the FTS index is unavailable, when GET `/entities?q=test` is requested, then the response falls back to showing all entities with the search field disabled
 - Given the DB is unavailable (app.state.db is None), when any entity route is requested, then the error.html template is rendered
 - Given an HX-Request header is present, when any entity list route is requested, then only the content partial is returned
