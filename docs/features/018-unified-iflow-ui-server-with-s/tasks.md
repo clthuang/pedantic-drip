@@ -173,7 +173,7 @@
 
 ### Task 4.1.5: Write integration test — card content (AC-5)
 - **File:** `plugins/iflow/ui/tests/test_app.py`
-- **Action:** Create schema-initialized temp DB via `EntityDatabase(tmp)`. Seed row via raw SQL: `conn = sqlite3.connect(tmp); conn.execute("INSERT INTO workflow_phases (type_id, workflow_phase, kanban_column, mode) VALUES ('feature:test-slug', 'wip', 'wip', 'standard')"); conn.commit(); conn.close()`. Then `create_app(db_path=tmp)`, GET `/`, assert response HTML contains "test-slug", "wip" badge, and "standard"
+- **Action:** Create schema-initialized temp DB via `EntityDatabase(tmp)`. Seed row via raw SQL: `conn = sqlite3.connect(tmp); conn.execute("INSERT INTO workflow_phases (type_id, workflow_phase, kanban_column, mode) VALUES ('feature:test-slug', 'wip', 'wip', 'standard')"); conn.commit(); conn.close()`. Note: all omitted columns (last_completed_phase, backward_transition_reason, updated_at) are nullable with no NOT NULL constraint — the INSERT safely leaves them as NULL. Then `create_app(db_path=tmp)`, GET `/`, assert response HTML contains "test-slug", "wip" badge, and "standard"
 - **Done when:** test passes
 - **Depends on:** 3.4.1, 3.3.1, 3.2.1, 3.1.1
 
@@ -196,7 +196,7 @@
 
 ### Task 4.2.2: Write CLI port-conflict unit test (AC-2)
 - **File:** `plugins/iflow/ui/tests/test_cli.py`
-- **Action:** Bind a socket to a port, then invoke port-conflict detection with that port, assert it raises expected error
+- **Action:** Bind a socket to a port, then invoke the CLI main function with that port. Assert it raises `SystemExit` (via `pytest.raises(SystemExit)`) because the port-check in 4.2.1 calls `sys.exit(1)` when bind fails
 - **Done when:** test passes
 - **Depends on:** 4.2.1
 
@@ -220,12 +220,12 @@
 ## Phase 5: Verification
 
 ### Task 5.1.1: Verify SIGINT clean exit
-- **Action:** Run `bash plugins/iflow/mcp/run-ui-server.sh 2>/tmp/018-sigint-stderr.txt & PID=$!; sleep 2; kill -INT $PID; wait $PID; echo "EXIT:$?"`. Verify exit code is 0 and `grep -c Traceback /tmp/018-sigint-stderr.txt` returns 0
+- **Action:** Run `bash plugins/iflow/mcp/run-ui-server.sh 2>/tmp/018-sigint-stderr.txt & PID=$!; sleep 3; kill -INT $PID; wait $PID; echo "EXIT:$?"`. Verify exit code is 0 and `grep -c Traceback /tmp/018-sigint-stderr.txt` returns 0. Note: 3-second sleep matches 4.3.2's startup margin for consistency.
 - **Done when:** exit code is 0 AND no traceback in stderr
 - **Depends on:** 4.1.7, 4.3.1
 
 ### Task 5.1.2: Verify SIGTERM clean exit
-- **Action:** Run `bash plugins/iflow/mcp/run-ui-server.sh 2>/tmp/018-sigterm-stderr.txt & PID=$!; sleep 2; kill -TERM $PID; wait $PID; echo "EXIT:$?"`. Verify exit code is 0 and `grep -c Traceback /tmp/018-sigterm-stderr.txt` returns 0
+- **Action:** Run `bash plugins/iflow/mcp/run-ui-server.sh 2>/tmp/018-sigterm-stderr.txt & PID=$!; sleep 3; kill -TERM $PID; wait $PID; echo "EXIT:$?"`. Verify exit code is 0 and `grep -c Traceback /tmp/018-sigterm-stderr.txt` returns 0. Note: 3-second sleep matches 4.3.2's startup margin for consistency.
 - **Done when:** exit code is 0 AND no traceback in stderr
 - **Depends on:** 4.1.7, 4.3.1
 
