@@ -202,7 +202,7 @@ After the `.meta.json` update above, sync the phase transition to the workflow d
    - If `[YOLO_MODE]` is active in the current context: include `yolo_active=true`.
    - If `[YOLO_MODE]` is NOT active: omit `yolo_active` (defaults to `false`).
 3. If the call succeeds (response contains `transitioned: true` and `degraded: false`): no output, proceed to Step 5.
-4. If the call fails (MCP tool unavailable, response contains `error: true`, `transitioned: false`, or `degraded: true`):
+4. If the call fails for any reason (MCP tool unavailable, response contains `error: true`, `transitioned: false`, `degraded: true`, or response is not valid JSON):
    output `Note: Workflow DB sync skipped — {reason}. State will reconcile on next reconcile_apply run.`
    where `{reason}` is a brief description (e.g., "MCP tool unavailable", "transition rejected", "feature not found").
    Do NOT block — the `.meta.json` update already succeeded.
@@ -220,7 +220,7 @@ After the `.meta.json` update above, sync the phase completion to the workflow d
 1. Construct `entity_type_id` as `"feature:{id}-{slug}"` from `.meta.json` `id` and `slug` fields (same value used in `validateAndSetup` Step 4, and in Step 1 frontmatter injection).
 2. Call `complete_phase(entity_type_id, "{phaseName}")`.
 3. If the call succeeds: no output, proceed.
-4. If the call fails (MCP tool unavailable, response contains `error: true`, or phase mismatch):
+4. If the call fails for any reason (MCP tool unavailable, response contains `error: true`, or response is not valid JSON):
    output `Note: Workflow DB sync skipped — {reason}. State will reconcile on next reconcile_apply run.`
    Do NOT block — the `.meta.json` update already succeeded.
 ```
