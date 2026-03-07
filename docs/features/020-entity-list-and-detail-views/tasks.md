@@ -26,23 +26,35 @@
 - **Done when:** `plugins/iflow/.venv/bin/python -m pytest plugins/iflow/ui/tests/test_entities.py -k "format_metadata" -v` passes all 4 tests
 - **Depends on:** 1.1
 
-### Task 1.5: Implement entity_list route handler (~20-30 min — atomic multi-path handler)
+### Task 1.5a: Implement entity_list error and fallback code paths
 - **File:** `plugins/iflow/ui/routes/entities.py`
-- **Action:** Replace entity_list stub with full implementation following design Route Contract. 5 code paths: (1) `db is None` → error.html, (2) DB query exception → error.html with `print(..., file=sys.stderr)`, (3) search with `ValueError` → fallback to `list_entities` with `search_available=False`, (4) `HX-Request` header → `_entities_content.html` partial, (5) normal → `entities.html` full page. Validate type param against ENTITY_TYPES (invalid → None). Post-filter by status. Sort by `updated_at` DESC. Build workflow lookup. Annotate entities with `kanban_column`. Pass `active_page: "entities"` in context.
-- **Done when:** `cd plugins/iflow && PYTHONPATH=.:hooks/lib .venv/bin/python -c "from ui.routes.entities import entity_list; print('OK')"` prints OK AND function signature matches `(request: Request, type: str | None = None, status: str | None = None, q: str | None = None)` AND `grep -cE "db is None|search_available|HX-Request|ValueError" plugins/iflow/ui/routes/entities.py` returns at least 4 (one per code path pattern). Note: Import + grep gate only. The grep gate checks the entire shared entities.py file, so patterns from entity_detail may contribute to the count — this is a loose sanity check, not function-scoped validation. Full code-path verification is deferred to Phase 4 integration tests (4.1, 4.3).
+- **Action:** Replace entity_list stub with error-handling skeleton: (1) `db is None` → error.html, (2) DB query exception → error.html with `print(..., file=sys.stderr)`, (3) search with `ValueError` → fallback to `list_entities` with `search_available=False`. Add a temporary success return (empty entities list → `entities.html`) so function is importable and runnable.
+- **Done when:** `cd plugins/iflow && PYTHONPATH=.:hooks/lib .venv/bin/python -c "from ui.routes.entities import entity_list; print('OK')"` prints OK AND `grep -cE "db is None|search_available|ValueError" plugins/iflow/ui/routes/entities.py` returns at least 3
 - **Depends on:** 1.2, 1.4
 
-### Task 1.6: Implement entity_detail route handler (~20-30 min — atomic multi-path handler)
+### Task 1.5b: Implement entity_list success paths (filter/sort/HTMX)
 - **File:** `plugins/iflow/ui/routes/entities.py`
-- **Action:** Replace entity_detail stub with full implementation following design Route Contract. 4 code paths: (1) `db is None` → error.html, (2) entity not found → 404.html with `status_code=404`, (3) DB query exception → error.html, (4) normal → entity_detail.html with `status_code=200`. Extract `type_id` from entity dict. Call `get_lineage` up/down with `_strip_self_from_lineage`. Call `get_workflow_phase(type_id)`. Format metadata. Pass `active_page: "entities"` in context. All DB calls wrapped in single try/except — no partial degradation.
-- **Done when:** `cd plugins/iflow && PYTHONPATH=.:hooks/lib .venv/bin/python -c "from ui.routes.entities import entity_detail; print('OK')"` prints OK AND function signature matches `(request: Request, identifier: str)` AND `grep -cE "db is None|status_code=404|error\.html" plugins/iflow/ui/routes/entities.py` returns at least 3 (one per code path pattern). Note: Import + grep gate only. The grep gate checks the entire shared entities.py file, so patterns from entity_list may contribute to the count — this is a loose sanity check, not function-scoped validation. Full code-path verification is deferred to Phase 4 integration tests (4.2, 4.3).
+- **Action:** Complete entity_list success logic: validate type param against ENTITY_TYPES (invalid → None), post-filter by status, sort by `updated_at` DESC, build workflow lookup via `_build_workflow_lookup`, annotate entities with `kanban_column`, (4) `HX-Request` header → `_entities_content.html` partial, (5) normal → `entities.html` full page. Pass `active_page: "entities"` in context.
+- **Done when:** Function signature matches `(request: Request, type: str | None = None, status: str | None = None, q: str | None = None)` AND `grep -cE "HX-Request|kanban_column|sorted.*updated_at" plugins/iflow/ui/routes/entities.py` returns at least 3. Note: Grep gate is a loose sanity check on shared file. Full code-path verification deferred to Phase 4 integration tests (4.1, 4.3).
+- **Depends on:** 1.5a
+
+### Task 1.6a: Implement entity_detail error and 404 code paths
+- **File:** `plugins/iflow/ui/routes/entities.py`
+- **Action:** Replace entity_detail stub with error-handling skeleton: (1) `db is None` → error.html, (2) entity not found → 404.html with `status_code=404`, (3) DB query exception → error.html. Add a temporary success return so function is importable.
+- **Done when:** `cd plugins/iflow && PYTHONPATH=.:hooks/lib .venv/bin/python -c "from ui.routes.entities import entity_detail; print('OK')"` prints OK AND `grep -cE "db is None|status_code=404" plugins/iflow/ui/routes/entities.py` returns at least 2
 - **Depends on:** 1.3, 1.4
+
+### Task 1.6b: Implement entity_detail success path (lineage/workflow/metadata)
+- **File:** `plugins/iflow/ui/routes/entities.py`
+- **Action:** Complete entity_detail success logic: extract `type_id` from entity dict, call `get_lineage` up/down with `_strip_self_from_lineage`, call `get_workflow_phase(type_id)`, format metadata via `_format_metadata`. Return entity_detail.html with `status_code=200`. Pass `active_page: "entities"` in context. All DB calls wrapped in single try/except — no partial degradation.
+- **Done when:** Function signature matches `(request: Request, identifier: str)` AND `grep -cE "get_lineage|get_workflow_phase|_format_metadata" plugins/iflow/ui/routes/entities.py` returns at least 3. Note: Grep gate is a loose sanity check on shared file. Full code-path verification deferred to Phase 4 integration tests (4.2, 4.3).
+- **Depends on:** 1.6a
 
 ### Task 1.7: Register entities router in __init__.py
 - **File:** `plugins/iflow/ui/__init__.py` (MODIFIED)
 - **Action:** Add `from ui.routes.entities import router as entities_router` and `app.include_router(entities_router)` after existing board router registration.
 - **Done when:** `cd plugins/iflow && PYTHONPATH=.:hooks/lib .venv/bin/python -c "from ui import create_app; app = create_app('/tmp/test.db'); paths = [r.path for r in app.routes]; assert any(p.startswith('/entities') for p in paths); print('OK')"` prints OK
-- **Depends on:** 1.5, 1.6
+- **Depends on:** 1.5b, 1.6b
 
 ## Phase 2: Templates
 
@@ -105,21 +117,27 @@
 
 ## Phase 4: Integration Tests
 
-### Task 4.1: Write integration test infrastructure + entity list tests
+### Task 4.0: Create integration test fixture
 - **File:** `plugins/iflow/ui/tests/test_entities.py` (MODIFIED — append to file from Phase 1)
-- **Action:** Add integration test section using httpx TestClient matching test_app.py patterns. Create a pytest fixture for DB + app setup:
+- **Action:** Add integration test section with a shared pytest fixture for DB + app setup matching test_app.py patterns:
   - Instantiate `EntityDatabase(tmp_path / "test.db")` (import from `entity_registry.database`)
   - Seed entities: `db.register_entity("feature", "feat-alpha", "Alpha Feature", status="active")`, `db.register_entity("feature", "feat-beta", "Beta Feature", status="completed")`, `db.register_entity("brainstorm", "bs-one", "Brainstorm One", status="active")`, `db.register_entity("project", "proj-one", "Project One", status="active")`
   - Set parent: `db.set_parent("feature:feat-alpha", "project:proj-one")`
   - Disable FK enforcement: `db.conn.execute("PRAGMA foreign_keys = OFF")`
   - Seed workflow phases via raw SQL: `db.conn.execute("INSERT INTO workflow_phases (type_id, kanban_column, workflow_phase) VALUES (?, ?, ?)", ("feature:feat-alpha", "In Progress", "implement"))`
   - Create app: `app = create_app(str(tmp_path / "test.db"))` and use `httpx.AsyncClient(transport=ASGITransport(app=app))` or `TestClient(app)`
-  Write tests:
+  - Return client (and optionally app) for use by test functions
+- **Done when:** `cd plugins/iflow && PYTHONPATH=.:hooks/lib .venv/bin/python -c "from ui.tests.test_entities import *; print('OK')"` prints OK (fixture importable, no syntax errors)
+- **Depends on:** 1.7, 2.1, 2.2, 2.3, 2.4
+
+### Task 4.1: Write entity list integration tests
+- **File:** `plugins/iflow/ui/tests/test_entities.py`
+- **Action:** Write 3 test functions using the fixture from 4.0:
   1. **Entity list (FR-1):** GET /entities returns HTTP 200 with all seeded entities in table
   2. **Type filtering (FR-2):** GET /entities?type=feature returns only feature entities
   3. **Status filtering (FR-3):** GET /entities?status=active returns only active entities
 - **Done when:** `plugins/iflow/.venv/bin/python -m pytest plugins/iflow/ui/tests/test_entities.py -k "test_entity_list or test_type_filter or test_status_filter" -v` passes all 3 tests
-- **Depends on:** 1.7, 2.1, 2.2, 2.3, 2.4
+- **Depends on:** 4.0
 
 ### Task 4.2: Write entity detail + lineage integration tests
 - **File:** `plugins/iflow/ui/tests/test_entities.py`
@@ -128,7 +146,7 @@
   5. **Entity detail 404 (FR-4):** GET /entities/nonexistent:xxx returns HTTP 404 with "Entity not found"
   6. **Lineage (FR-5):** Detail page for entity with parent shows ancestors list and children list, self stripped from both
 - **Done when:** `plugins/iflow/.venv/bin/python -m pytest plugins/iflow/ui/tests/test_entities.py -k "test_entity_detail or test_entity_404 or test_lineage" -v` passes all 3 tests
-- **Depends on:** 4.1
+- **Depends on:** 4.0
 
 ### Task 4.3: Write search, HTMX, and error handling integration tests
 - **File:** `plugins/iflow/ui/tests/test_entities.py`
@@ -137,7 +155,7 @@
   8. **HTMX partial (FR-9):** GET /entities with `HX-Request: true` header returns content partial only (no `<html>` tag, has table)
   9. **Missing DB:** Create a separate app instance or set `app.state.db = None` before the request. Verify GET /entities returns error.html content (check for "error" or "Database" text).
 - **Done when:** `plugins/iflow/.venv/bin/python -m pytest plugins/iflow/ui/tests/test_entities.py -k "test_search or test_htmx or test_missing_db" -v` passes all 3 tests
-- **Depends on:** 4.1
+- **Depends on:** 4.0
 
 ## Dependency Graph
 
@@ -147,9 +165,11 @@ Phase 1 (TDD Cycle):
     ├── 1.2 (workflow lookup helper + tests)
     ├── 1.3 (lineage strip helper + tests)
     └── 1.4 (metadata format helper + tests)
-  1.2 + 1.4 → 1.5 (entity_list route)
-  1.3 + 1.4 → 1.6 (entity_detail route)
-  1.5 + 1.6 → 1.7 (router registration)
+  1.2 + 1.4 → 1.5a (entity_list error/fallback paths)
+  1.5a → 1.5b (entity_list success paths)
+  1.3 + 1.4 → 1.6a (entity_detail error/404 paths)
+  1.6a → 1.6b (entity_detail success path)
+  1.5b + 1.6b → 1.7 (router registration)
 
 Phase 2 (Templates — independent of Phase 1):
   2.1 (404.html) — independent
@@ -163,15 +183,17 @@ Phase 3 (Modifications — independent):
   3.3 (_card.html link) — independent (soft dep on 1.7)
 
 Phase 4 (Integration Tests — after all above):
-  1.7 + 2.1-2.4 → 4.1 (list tests)
-  4.1 → 4.2 (detail + lineage tests)
-  4.1 → 4.3 (search + HTMX + error tests)
+  1.7 + 2.1-2.4 → 4.0 (fixture setup)
+  4.0 → 4.1 (list tests)
+  4.0 → 4.2 (detail + lineage tests)
+  4.0 → 4.3 (search + HTMX + error tests)
 ```
 
 **Parallel groups:**
 - Group A (no dependencies): 1.1, 2.1, 2.2, 2.4, 3.1, 3.2, 3.3
 - Group B (after 1.1): 1.2, 1.3, 1.4
-- Group C (after Group B): 1.5, 1.6, 2.3
-- Group D (after 1.5+1.6): 1.7
-- Group E (after all code): 4.1
-- Group F (after 4.1): 4.2, 4.3
+- Group C (after Group B): 1.5a, 1.6a, 2.3
+- Group D (after 1.5a/1.6a): 1.5b, 1.6b
+- Group E (after 1.5b+1.6b): 1.7
+- Group F (after all code): 4.0
+- Group G (after 4.0): 4.1, 4.2, 4.3
