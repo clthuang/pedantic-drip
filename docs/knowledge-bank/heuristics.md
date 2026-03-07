@@ -395,3 +395,27 @@ When writing an "accepted delta" annotation for a spec-design divergence, comple
 - Keywords: ["spec-review", "issue-count", "convergence", "leaf-concerns", "specify-phase"]
 - Last observed: Feature 013
 - Observation count: 1
+
+### Manual Verification AC Requires Three Elements at Spec Time
+When authoring a manual verification AC, include all three: (1) exact environment setup, (2) exact command to run, (3) exact expected output. Missing any one causes the handoff reviewer to request it — one per iteration.
+- Source: Feature 014, specify-handoff iters 3-5 — each iteration added one more precision element
+- Confidence: high
+- Keywords: ["acceptance-criteria", "manual-verification", "specify-phase", "handoff-review", "three-elements"]
+- Last observed: Feature 014
+- Observation count: 1
+
+### Hook Smoke-Test Task Requires Four Pre-Specified Mechanics
+Pre-specify all four: (1) debug copy in hooks dir (not /tmp) for correct SCRIPT_DIR; (2) cp+sed approach, never git checkout; (3) pipe stdin explicitly; (4) capture stdout and debug-stderr separately. These are discovered in strict sequential order by chain reviewers when missing.
+- Source: Feature 014, create-tasks chain review iters 1-5
+- Confidence: high
+- Keywords: ["hook-smoke-test", "bash-hook", "instrumented-copy", "stdin-pipe", "stderr-capture", "task-authoring"]
+- Last observed: Feature 014
+- Observation count: 1
+
+### Identical-Output Fallback Paths Require Stderr-Based Path Discrimination
+When a hook wraps existing logic in try/except with a fallback producing identical stdout, the only verification is stderr inspection. Design the debug strategy around stderr capture before task authoring.
+- Source: Feature 014, design + create-tasks — stderr capture strategy discovered during chain review rather than task authoring
+- Confidence: high
+- Keywords: ["fallback-path", "try-except", "debug-strategy", "stderr", "path-discrimination", "hook-migration"]
+- Last observed: Feature 014
+- Observation count: 1

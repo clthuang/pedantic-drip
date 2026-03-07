@@ -405,3 +405,19 @@ When design introduces a new enum value or concept not in spec (e.g., ReconcileA
 - Keywords: ["design-enhancement", "three-step-trace", "spec-deviation", "atomic-edit", "handoff-review"]
 - Last observed: Feature 011
 - Observation count: 1
+
+### Pattern: Unresolved Manual Verification AC Requires Design-Phase Gate Formalization
+When a manual verification AC exits specify with an unresolved formalization concern, the design artifact must include a 'Manual Verification Gate' subsection specifying: (1) responsible party, (2) exact environment setup, (3) exact command, (4) expected output, (5) where result is recorded. Without this, the concern propagates independently to every downstream phase boundary.
+- Observed in: Feature 014, specify-handoff (cap) -> design-handoff iter 1 -> create-tasks task-reviewer (cap) -> implement iter 1 — AC-8 formalization crossed 4 phase boundaries
+- Confidence: high
+- Keywords: ["manual-verification", "ac-formalization", "phase-propagation", "gate-task", "specify-handoff", "design-gate"]
+- Last observed: Feature 014
+- Observation count: 1
+
+### Pattern: Live-State Verification Evidence Resolves Static Review Stalls in One Iteration
+When a static code reviewer cannot confirm that a live-state gate task was executed, presenting captured evidence (exact command, stdout output, debug-stderr content, restore confirmation) resolves the stall in one iteration without code changes.
+- Observed in: Feature 014, implement iters 1-2 — Task 3.1 evidence (stdout "Invoke /iflow:design", empty debug stderr, restored .meta.json) turned warning into approval
+- Confidence: high
+- Keywords: ["manual-verification", "evidence-provision", "implement-review", "static-review-limit", "gate-task"]
+- Last observed: Feature 014
+- Observation count: 1
