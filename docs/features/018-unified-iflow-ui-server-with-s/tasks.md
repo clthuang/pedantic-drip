@@ -11,12 +11,12 @@
 ### Task 0.2.1: Install FastAPI dependency
 - **Action:** Run `cd plugins/iflow && uv add "fastapi>=0.128.3"`
 - **Done when:** `uv run python -c "import fastapi; print(fastapi.__version__)"` prints a version >= 0.128.3
-- **Depends on:** 0.1.1
+- **Depends on:** none
 
 ### Task 0.2.2: Install Jinja2 dependency
 - **Action:** Run `cd plugins/iflow && uv add jinja2`
 - **Done when:** `uv run python -c "import jinja2; print('OK')"` prints OK
-- **Depends on:** 0.1.1
+- **Depends on:** none
 
 ### Task 0.2.3: Verify httpx availability
 - **Action:** Run `cd plugins/iflow && uv run python -c "import httpx; print('OK')"`. If import fails, run `uv add httpx`
@@ -73,19 +73,19 @@
 
 ### Task 2.1.3: Write _group_by_column() empty input test (RED)
 - **File:** `plugins/iflow/ui/tests/test_app.py`
-- **Action:** Write test `test_group_by_column_empty_input` — imports `from plugins.iflow.ui.routes.board import _group_by_column`, calls `_group_by_column([])`, asserts returns dict with 8 keys each mapping to empty list
+- **Action:** Write test `test_group_by_column_empty_input` — imports `from ui.routes.board import _group_by_column` (PYTHONPATH includes `$PLUGIN_DIR`), calls `_group_by_column([])`, asserts returns dict with 8 keys each mapping to empty list
 - **Done when:** test function defined, runs and FAILS (ImportError expected)
 - **Depends on:** 1.2.2
 
 ### Task 2.1.4: Write _group_by_column() routing test (RED)
 - **File:** `plugins/iflow/ui/tests/test_app.py`
-- **Action:** Write test `test_group_by_column_routes_to_correct_column` — imports `from plugins.iflow.ui.routes.board import _group_by_column`, calls with single row `{"kanban_column": "wip", "type_id": "feature:test"}`, asserts row appears in `wip` list and other lists are empty
+- **Action:** Write test `test_group_by_column_routes_to_correct_column` — imports `from ui.routes.board import _group_by_column` (PYTHONPATH includes `$PLUGIN_DIR`), calls with single row `{"kanban_column": "wip", "type_id": "feature:test"}`, asserts row appears in `wip` list and other lists are empty
 - **Done when:** test function defined, runs and FAILS
 - **Depends on:** 1.2.2
 
 ### Task 2.1.5: Write _group_by_column() default and drop tests (RED)
 - **File:** `plugins/iflow/ui/tests/test_app.py`
-- **Action:** Import `from plugins.iflow.ui.routes.board import _group_by_column`. Write test `test_group_by_column_none_defaults_to_backlog` — row with `kanban_column=None` appears in backlog. Write test `test_group_by_column_unknown_column_dropped` — row with `kanban_column="archived"` appears in no column
+- **Action:** Import `from ui.routes.board import _group_by_column` (PYTHONPATH includes `$PLUGIN_DIR`). Write test `test_group_by_column_none_defaults_to_backlog` — row with `kanban_column=None` appears in backlog. Write test `test_group_by_column_unknown_column_dropped` — row with `kanban_column="archived"` appears in no column
 - **Done when:** both test functions defined, run and FAIL
 - **Depends on:** 1.2.2
 
@@ -161,7 +161,7 @@
 
 ### Task 4.1.4: Write integration test — DB error
 - **File:** `plugins/iflow/ui/tests/test_app.py`
-- **Action:** Create app via `create_app()` with valid temp DB. Replace `app.state.db.list_workflow_phases` with `unittest.mock.MagicMock(side_effect=Exception("DB error"))`. Use `TestClient(app)`, GET `/` returns response containing error message text
+- **Action:** Create app via `create_app(db_path=tmp_db_path)` where `tmp_db_path` is a real temp DB file (so `app.state.db` is a real EntityDatabase instance, not None). Then patch the method: `app.state.db.list_workflow_phases = unittest.mock.MagicMock(side_effect=Exception("DB error"))`. Use `TestClient(app)`, GET `/` returns response containing error message text
 - **Done when:** test passes
 - **Depends on:** 3.5.1
 
@@ -178,7 +178,7 @@
 
 ### Task 4.2.1: Implement CLI entry point
 - **File:** `plugins/iflow/ui/__main__.py`
-- **Action:** argparse with `--port` (int, default 8718). Port conflict detection via `socket.socket()` bind attempt. Print startup URL `http://127.0.0.1:{port}/` to stdout. Call `uvicorn.run(create_app(), host="127.0.0.1", port=port)`. In `__main__.py` specifically, use absolute imports resolved via PYTHONPATH (e.g., `from entity_registry.database import EntityDatabase`) — NOT relative imports, because `__main__.py` is invoked directly by the shell wrapper, not via `-m`
+- **Action:** argparse with `--port` (int, default 8718). Port conflict detection via `socket.socket()` bind attempt. Print startup URL `http://127.0.0.1:{port}/` to stdout. Call `uvicorn.run(create_app(), host="127.0.0.1", port=port)`. Use absolute imports resolved via PYTHONPATH: `from ui import create_app` (PYTHONPATH includes `$PLUGIN_DIR`) and `from entity_registry.database import EntityDatabase` (PYTHONPATH includes `$PLUGIN_DIR/hooks/lib`). NOT relative imports, because `__main__.py` is invoked directly by the shell wrapper, not via `-m`
 - **Done when:** file exists with argparse, port check, URL print, and uvicorn.run call
 - **Depends on:** 2.3.2
 
@@ -196,7 +196,7 @@
 
 ### Task 4.3.1: Create shell bootstrap wrapper
 - **File:** `plugins/iflow/mcp/run-ui-server.sh`
-- **Action:** Adapt `run-workflow-server.sh` pattern: resolve PLUGIN_DIR and VENV_DIR, set `PYTHONPATH` to include `$PLUGIN_DIR/hooks/lib`, invoke `exec "$VENV_DIR/bin/python" "$PLUGIN_DIR/ui/__main__.py" "$@"`
+- **Action:** Adapt `run-workflow-server.sh` pattern: resolve PLUGIN_DIR and VENV_DIR, set `PYTHONPATH` to include both `$PLUGIN_DIR/hooks/lib` (for entity_registry imports) and `$PLUGIN_DIR` (for `from ui import create_app`), invoke `exec "$VENV_DIR/bin/python" "$PLUGIN_DIR/ui/__main__.py" "$@"`
 - **Done when:** file exists, is executable, and follows run-workflow-server.sh structure
 - **Depends on:** 4.2.1
 
@@ -208,17 +208,17 @@
 ## Phase 5: Verification
 
 ### Task 5.1.1: Verify SIGINT clean exit
-- **Action:** Run `bash plugins/iflow/mcp/run-ui-server.sh & PID=$!; sleep 2; kill -INT $PID; wait $PID 2>/tmp/018-sigint-stderr.txt; echo "EXIT:$?"`. Verify exit code is 0 and `grep -c Traceback /tmp/018-sigint-stderr.txt` returns 0
+- **Action:** Run `bash plugins/iflow/mcp/run-ui-server.sh 2>/tmp/018-sigint-stderr.txt & PID=$!; sleep 2; kill -INT $PID; wait $PID; echo "EXIT:$?"`. Verify exit code is 0 and `grep -c Traceback /tmp/018-sigint-stderr.txt` returns 0
 - **Done when:** exit code is 0 AND no traceback in stderr
 - **Depends on:** 4.1.6
 
 ### Task 5.1.2: Verify SIGTERM clean exit
-- **Action:** Run `bash plugins/iflow/mcp/run-ui-server.sh & PID=$!; sleep 2; kill -TERM $PID; wait $PID 2>/tmp/018-sigterm-stderr.txt; echo "EXIT:$?"`. Verify exit code is 0 and `grep -c Traceback /tmp/018-sigterm-stderr.txt` returns 0
+- **Action:** Run `bash plugins/iflow/mcp/run-ui-server.sh 2>/tmp/018-sigterm-stderr.txt & PID=$!; sleep 2; kill -TERM $PID; wait $PID; echo "EXIT:$?"`. Verify exit code is 0 and `grep -c Traceback /tmp/018-sigterm-stderr.txt` returns 0
 - **Done when:** exit code is 0 AND no traceback in stderr
 - **Depends on:** 4.1.6
 
 ### Task 5.1.3: Verify DB integrity after shutdown
-- **Action:** After 5.1.1 or 5.1.2, run `sqlite3 <db_path> 'PRAGMA integrity_check'`
+- **Action:** After 5.1.1 and 5.1.2, run `sqlite3 ~/.claude/iflow/entities/entities.db 'PRAGMA integrity_check'` (or the path from `ENTITY_DB_PATH` if set)
 - **Done when:** integrity_check returns "ok"
 - **Depends on:** 5.1.1, 5.1.2
 
@@ -250,7 +250,7 @@
 ## Dependency Summary
 
 ### Parallel Groups
-- **Tasks 0.2.1, 0.2.2:** can run in parallel (independent package installs)
+- **Tasks 0.1.1, 0.2.1, 0.2.2, 0.2.3:** can run in parallel (spec fix and package installs are independent)
 - **Tasks 2.1.1–2.1.5:** logically independent test functions; write to same test file so execute sequentially for a single engineer, but can be parallelized across multiple engineers
 - **Tasks 3.1.1–3.5.1:** can run in parallel (independent template files)
 - **Tasks 4.1.1–4.1.5:** can run in parallel after all templates complete (independent test functions)
@@ -260,5 +260,6 @@
 
 ### Critical Path
 ```
-0.1.1 → 0.2.x → 0.3.x → 1.1.x → 1.2.x → 2.1.x → 2.2.1 → 2.3.x → 3.x → 4.1.x → 5.x
+0.2.x → 0.3.x → 1.1.x → 1.2.x → 2.1.x → 2.2.1 → 2.3.x → 3.x → 4.1.x → 5.x
+(0.1.1 runs in parallel with 0.2.x — not on critical path)
 ```
