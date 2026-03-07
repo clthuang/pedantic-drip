@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.11.7] - 2026-03-08
+
 ### Added
 - UI server: FastAPI-based web server with Kanban board view for entity workflow visualization
 - UI server: HTMX-powered card interactions with drag-and-drop phase transitions
