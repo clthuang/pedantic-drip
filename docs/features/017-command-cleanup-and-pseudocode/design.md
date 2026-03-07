@@ -24,7 +24,7 @@
 
 ### Change Nature: Text-Only Cleanup
 
-This feature modifies **only markdown files** — no Python code, no MCP servers, no database changes. All changes are deletions or text replacements within 7 markdown files.
+This feature modifies **only markdown files** — no Python code, no MCP servers, no database changes. All changes are deletions or text replacements within 9 markdown files (plus 1 verify-only).
 
 ### Component Map
 
@@ -121,7 +121,7 @@ Each FR is independent at the implementation level (separate files or sections),
 
 ### Verification Contracts
 
-- **Pre-edit:** `wc -l` on all 7 target files to capture before counts (FR-13)
+- **Pre-edit:** `wc -l` on all 9 editable target files to capture before counts (FR-13)
 - **Post-edit:** Same `wc -l` to compute reductions
 - **Grep validation:** All AC-1 through AC-15 grep patterns must pass
 - **Test suite:** `./validate.sh` and SC-5 specific test must pass
