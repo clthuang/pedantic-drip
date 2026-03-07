@@ -1,3 +1,4 @@
+<a href="/entities/{{ item.type_id }}" class="block no-underline [color:inherit]">
 <div class="card bg-base-200 shadow-sm p-3">
     <div class="font-semibold text-sm truncate">
         {{ item.type_id.split(':')[1] if ':' in item.type_id else item.type_id }}
@@ -22,3 +23,4 @@
     </div>
     {% endif %}
 </div>
+</a>

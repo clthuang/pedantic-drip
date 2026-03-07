@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="mb-4">
+    <a href="/entities" class="btn btn-sm btn-ghost gap-1">&larr; Back to Entity List</a>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+    <!-- Entity Info -->
+    <div class="card bg-base-200 shadow-sm p-4">
+        <h2 class="text-lg font-bold mb-3">Entity Info</h2>
+        <div class="overflow-x-auto">
+            <table class="table table-sm">
+                <tbody>
+                    <tr><td class="font-semibold w-48">Name</td><td>{{ entity.name or '-' }}</td></tr>
+                    <tr><td class="font-semibold">Type ID</td><td class="font-mono text-sm">{{ entity.type_id }}</td></tr>
+                    <tr><td class="font-semibold">UUID</td><td class="font-mono text-xs break-all">{{ entity.uuid or '-' }}</td></tr>
+                    <tr><td class="font-semibold">Entity Type</td><td>{{ entity.entity_type or '-' }}</td></tr>
+                    <tr><td class="font-semibold">Entity ID</td><td>{{ entity.entity_id or '-' }}</td></tr>
+                    <tr><td class="font-semibold">Status</td><td>
+                        {% if entity.status %}
+                        {% set status_badges = {'active': 'badge-primary', 'completed': 'badge-success', 'planned': 'badge-warning'} %}
+                        <span class="badge badge-sm {{ status_badges.get(entity.status, 'badge-ghost') }}">{{ entity.status }}</span>
+                        {% else %}-{% endif %}
+                    </td></tr>
+                    <tr><td class="font-semibold">Artifact Path</td><td class="font-mono text-xs break-all">{{ entity.artifact_path or '-' }}</td></tr>
+                    <tr><td class="font-semibold">Created</td><td>{{ entity.created_at or '-' }}</td></tr>
+                    <tr><td class="font-semibold">Updated</td><td>{{ entity.updated_at or '-' }}</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Workflow State -->
+    {% if workflow %}
+    <div class="card bg-base-200 shadow-sm p-4">
+        <h2 class="text-lg font-bold mb-3">Workflow State</h2>
+        <div class="overflow-x-auto">
+            <table class="table table-sm">
+                <tbody>
+                    <tr><td class="font-semibold w-48">Kanban Column</td><td>{{ workflow.kanban_column or '-' }}</td></tr>
+                    <tr><td class="font-semibold">Workflow Phase</td><td>
+                        {% if workflow.workflow_phase %}
+                        {% set phase_badges = {'implement': 'badge-primary', 'blocked': 'badge-error', 'completed': 'badge-success'} %}
+                        <span class="badge badge-sm {{ phase_badges.get(workflow.workflow_phase, 'badge-ghost') }}">{{ workflow.workflow_phase }}</span>
+                        {% else %}-{% endif %}
+                    </td></tr>
+                    <tr><td class="font-semibold">Last Completed Phase</td><td>{{ workflow.last_completed_phase or '-' }}</td></tr>
+                    <tr><td class="font-semibold">Mode</td><td>{{ workflow.mode or '-' }}</td></tr>
+                    <tr><td class="font-semibold">Backward Transition Reason</td><td>{{ workflow.backward_transition_reason or '-' }}</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Lineage -->
+    <div class="card bg-base-200 shadow-sm p-4">
+        <h2 class="text-lg font-bold mb-3">Lineage</h2>
+        <div class="mb-3">
+            <h3 class="text-sm font-semibold mb-1">Ancestors</h3>
+            {% if ancestors %}
+            <ul class="list-disc list-inside text-sm">
+                {% for a in ancestors %}
+                <li><a href="/entities/{{ a.type_id }}" class="link link-primary">{{ a.type_id }}</a></li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p class="text-sm text-base-content/50">No parent</p>
+            {% endif %}
+        </div>
+        <div>
+            <h3 class="text-sm font-semibold mb-1">Children</h3>
+            {% if children %}
+            <ul class="list-disc list-inside text-sm">
+                {% for c in children %}
+                <li><a href="/entities/{{ c.type_id }}" class="link link-primary">{{ c.type_id }}</a></li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p class="text-sm text-base-content/50">No children</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Metadata -->
+    <div class="card bg-base-200 shadow-sm p-4">
+        <h2 class="text-lg font-bold mb-3">Metadata</h2>
+        <pre class="text-xs bg-base-300 p-3 rounded overflow-x-auto max-h-96">{{ metadata_formatted }}</pre>
+    </div>
+</div>
+{% endblock %}

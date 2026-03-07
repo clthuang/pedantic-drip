@@ -1,0 +1,90 @@
+<!-- Filter tabs -->
+<div class="flex flex-wrap gap-2 mb-4">
+    <a href="/entities"
+       hx-get="/entities"
+       hx-target="#entities-content"
+       hx-replace-url="true"
+       class="btn btn-sm {{ 'btn-active' if not current_type else '' }}">All</a>
+    {% for etype in entity_types %}
+    <a href="/entities?type={{ etype }}"
+       hx-get="/entities?type={{ etype }}"
+       hx-target="#entities-content"
+       hx-replace-url="true"
+       class="btn btn-sm {{ 'btn-active' if current_type == etype else '' }}">{{ etype }}</a>
+    {% endfor %}
+</div>
+
+<input type="hidden" name="type" value="{{ current_type or '' }}">
+
+<!-- Search and status filters -->
+<div class="flex flex-wrap gap-3 mb-4 items-center">
+    {% if search_available %}
+    <input type="text"
+           name="q"
+           value="{{ search_query or '' }}"
+           placeholder="Search entities..."
+           class="input input-bordered input-sm w-64"
+           hx-get="/entities"
+           hx-trigger="input changed delay:300ms"
+           hx-target="#entities-content"
+           hx-sync="this:replace"
+           hx-include="[name='type'],[name='status']"
+           hx-replace-url="true">
+    {% else %}
+    <span class="text-sm text-base-content/50">Search unavailable</span>
+    {% endif %}
+
+    <select name="status"
+            class="select select-bordered select-sm"
+            hx-get="/entities"
+            hx-trigger="change"
+            hx-target="#entities-content"
+            hx-include="[name='type'],[name='q']"
+            hx-replace-url="true">
+        <option value="" {{ 'selected' if not current_status else '' }}>All statuses</option>
+        <option value="active" {{ 'selected' if current_status == 'active' else '' }}>active</option>
+        <option value="completed" {{ 'selected' if current_status == 'completed' else '' }}>completed</option>
+        <option value="planned" {{ 'selected' if current_status == 'planned' else '' }}>planned</option>
+    </select>
+</div>
+
+<!-- Entity table -->
+{% if entities %}
+<p class="text-sm text-base-content/60 mb-2">{{ entities|length }} entities</p>
+<div class="overflow-x-auto">
+    <table class="table table-zebra">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Type ID</th>
+                <th>Type</th>
+                <th>Status</th>
+                <th>Kanban Column</th>
+                <th>Updated</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for entity in entities %}
+            <tr>
+                <td><a href="/entities/{{ entity.type_id }}" class="link link-primary">{{ entity.name or entity.type_id }}</a></td>
+                <td class="font-mono text-sm">{{ entity.type_id }}</td>
+                <td>{{ entity.entity_type }}</td>
+                <td>{{ entity.status or '' }}</td>
+                <td>{{ entity.kanban_column if entity.kanban_column is not none else '' }}</td>
+                <td>{{ entity.updated_at or '' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="flex items-center justify-center p-12">
+    <div class="text-center text-base-content/60">
+        {% if search_query %}
+        <p class="text-lg font-semibold">No entities match your search</p>
+        {% else %}
+        <p class="text-lg font-semibold">No entities found</p>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
