@@ -20,7 +20,7 @@ Phase 3: Manual verification checkpoint (AC-8 required gate)
   → Task 3.1: Execute AC-8 manual verification
 ```
 
-**Line number convention:** All line references below are pre-migration values from the current `yolo-stop.sh`. The replacement block (~25 lines) is longer than the original (13 lines), so post-migration line numbers for subsequent sections will shift by ~12 lines. Implementers should locate blocks by code pattern, not line number alone.
+**Line number convention:** All line references below are pre-migration values from the current `yolo-stop.sh`. The replacement block (design.md C1, ~38 lines including the `NEXT_PHASE=$(...)` wrapper) is longer than the original (13 lines), so post-migration line numbers for subsequent sections will shift by ~25 lines. Implementers should locate blocks by code pattern, not line number alone.
 
 ## Phase 0: Baseline Verification
 
@@ -40,7 +40,7 @@ Establishes a passing baseline. If any tests fail here, they are pre-existing fa
 
 **What stays (lines 1-171):** All existing code is untouched — YOLO checks (20-69), active feature scanning (75-107), feature state reading (110-130), completion check (132-135), stop_hook_active check (137-154), stop count / max blocks (155-169), and the `# Determine next phase` comment on line 171.
 
-**What gets replaced (lines 172-184):** The `NEXT_PHASE=$(python3 -c "phase_map = {` block — locate by pattern-matching the `phase_map` dictionary assignment opening and the `" 2>/dev/null)` closing. The block starts with `NEXT_PHASE=$(python3 -c "` and ends with `" 2>/dev/null)`.
+**What gets replaced (lines 172-184):** The entire `NEXT_PHASE=$(python3 -c "phase_map = {` block — locate by pattern-matching the `phase_map` dictionary assignment opening and the `" 2>/dev/null)` closing. Line 172 itself (`NEXT_PHASE=$(python3 -c "`) is rewritten to include the `PYTHONPATH` prefix: `NEXT_PHASE=$(PYTHONPATH="${SCRIPT_DIR}/lib" python3 -c "`. The block starts with `NEXT_PHASE=$(` and ends with `" 2>/dev/null)`.
 
 **Replacement:** The combined Python invocation from design.md C1 — a single `PYTHONPATH="${SCRIPT_DIR}/lib" python3 -c` call that:
 1. **Try block (engine path):** Imports `PHASE_SEQUENCE`, `WorkflowStateEngine`, `EntityDatabase`. Constructs DB connection, calls `get_state()`, derives next phase via sequence index lookup.
@@ -48,7 +48,7 @@ Establishes a passing baseline. If any tests fail here, they are pre-existing fa
 
 The `2>/dev/null` stderr suppression is preserved per NFR-4.
 
-**What stays after (pre-migration lines 185-200):** The `NEXT_PHASE` empty check, `FEATURE_REF` construction, `REASON` message, and JSON output block are untouched — they consume `$NEXT_PHASE` identically regardless of how it was derived. Post-migration, these lines shift down by ~12 lines due to the larger replacement block.
+**What stays after (pre-migration lines 185-200):** The `NEXT_PHASE` empty check, `FEATURE_REF` construction, `REASON` message, and JSON output block are untouched — they consume `$NEXT_PHASE` identically regardless of how it was derived. Post-migration, these lines shift down by ~25 lines due to the larger replacement block.
 
 ### Task 1.2: Verify PYTHONPATH and variable interpolation
 
@@ -83,9 +83,10 @@ Confirms the engine modules (184 + 257 tests) that the hook now depends on are h
 **This is a required gate task** — it must pass before the feature can be marked complete.
 
 **Steps:**
-1. Ensure `ENTITY_DB_PATH` points to a valid database containing the active feature entity
-2. Run the hook against a feature with `lastCompletedPhase="specify"`
-3. Confirm the block message reads `"Invoke /iflow:design"` — proving the engine path produced the correct next phase
+1. Ensure `ENTITY_DB_PATH` points to a valid database
+2. Verify the feature entity exists in the DB: `sqlite3 $ENTITY_DB_PATH "SELECT type_id FROM entities WHERE type_id = 'feature:014-hook-migration-yolo-stopsh-and'"`. If missing, register it first — otherwise `get_state()` returns None and the verification silently tests the fallback-within-try path instead of the DB path
+3. Run the hook against a feature with `lastCompletedPhase="specify"`
+4. Confirm the block message reads `"Invoke /iflow:design"` — proving the engine path produced the correct next phase
 
 This compensates for zero automated hook-level coverage of the primary engine path.
 
