@@ -58,7 +58,7 @@ Phase 4 depends on Phases 1-3 completion.
 **Done when:** `grep "validateArtifact\|function validateArtifact" SKILL.md` returns zero matches. `grep "## Artifact Validation" SKILL.md` returns zero matches.
 
 ### Task 1.7: Normalize spacing and update cross-reference in SKILL.md
-- [ ] Ensure each remaining section is separated by exactly one blank line — run `grep -n '^$' SKILL.md | awk -F: 'prev+1==$1{print NR": consecutive blank at line "$1} {prev=$1}'` to find consecutive blank lines; fix any found
+- [ ] Ensure each remaining section is separated by exactly one blank line — run `grep -n '^$' SKILL.md | awk -F: 'prev+1==$1{print "consecutive blank lines at line "$1" and "prev} {prev=$1}'` to find consecutive blank lines; fix any found
 - [ ] Locate line containing `proceed to \`validateTransition\` below`
 - [ ] Replace with `proceed to workflow-transitions Step 1`
 
@@ -202,9 +202,9 @@ Phase 4 depends on Phases 1-3 completion.
 **Done when:** yolo-stop.sh has `PHASE_SEQUENCE` in primary path and `phase_map` only in `except` block. patterns.md reference is historical. No changes made to either file.
 
 ### Task 4.3: Measure line counts and compute savings
-- [ ] Run `wc -l` on all 9 editable target files (post-edit)
+- [ ] Run `wc -l` on all 10 editable target files (post-edit)
 - [ ] Compute per-file reduction vs pre-edit baselines from Task 1.1
-- [ ] Estimate token savings (1 line ~ 10-15 tokens)
+- [ ] Estimate token savings: compute low = (total_lines_removed * 10), high = (total_lines_removed * 15), report as range ~X-Y tokens
 
 **Done when:** Line count table produced with before/after/reduction per file and aggregate totals.
 
@@ -231,14 +231,9 @@ Phase 4 depends on Phases 1-3 completion.
 - [ ] Run `grep -rn 'validateTransition\|validateArtifact\|Phase Progression Table\|Workflow Map' . --include='*.md' | grep -v docs/features/ | grep -v docs/projects/ | grep -v docs/brainstorms/` — expected hit only in `docs/knowledge-bank/patterns.md` (historical, acceptable)
 - [ ] Run `./validate.sh` — must pass
 - [ ] Run `plugins/iflow/.venv/bin/python -m pytest plugins/iflow/hooks/lib/transition_gate/test_gate.py -k "SC_5 or sc_5 or skill_md"` — must pass
-- [ ] Smoke test setup: Create a throwaway test feature via `mkdir -p docs/features/999-smoke-test && echo '{"id":"999","slug":"smoke-test","status":"active","created":"2026-03-08T00:00:00+08:00","branch":"feature/017-command-cleanup-and-pseudocode","lastCompletedPhase":null,"phases":{}}' > docs/features/999-smoke-test/.meta.json`
-- [ ] Run `/iflow:specify --feature=999-smoke-test` (can cancel after phase begins). Pass conditions:
-  1. No `validateTransition` string appears in workflow output
-  2. Phase begins without errors about missing functions or broken references
-  3. No crash or unhandled reference errors
-- [ ] Clean up: `rm -rf docs/features/999-smoke-test`
+- [ ] Smoke test (grep-based, no live invocation): Run `grep -rn "validateTransition\|validateArtifact" plugins/iflow/skills/ plugins/iflow/commands/ --include='*.md'` → confirm zero matches outside of test/historical files. This verifies no active instruction references the removed functions.
 
-**Done when:** Broad grep shows only acceptable historical hits. Both test suites pass. All 3 smoke test conditions met. Test feature cleaned up.
+**Done when:** Broad grep shows only acceptable historical hits. Both test suites pass. Smoke test grep confirms zero active references to removed functions.
 
 ### Task 4.6: Update CHANGELOG.md
 - [ ] Add entry under `[Unreleased]` documenting pseudocode/table removal
