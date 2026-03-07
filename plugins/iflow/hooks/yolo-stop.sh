@@ -188,9 +188,7 @@ try:
     else:
         last = '${LAST_COMPLETED_PHASE}'
 
-    # Both null representations converge here:
-    # Engine path: None -> '' (via 'or' fallback above)
-    # Fallback path: string 'null' (from .meta.json parsing)
+    # 'null' (from .meta.json) and '' (from engine None->or fallback) both map to specify
     if last in ('null', ''):
         print(PHASE_SEQUENCE[1].value)  # specify — first command phase
     elif last in _PHASE_VALUES:
