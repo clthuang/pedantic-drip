@@ -4,8 +4,8 @@
 
 ### Task 0.1.1: Fix spec.md inaccuracies (CDN URL + Jinja2 dep)
 - **File:** `docs/features/018-unified-iflow-ui-server-with-s/spec.md`
-- **Action:** (1) Replace all occurrences of `cdn.tailwindcss.com` with `cdn.jsdelivr.net/npm/@tailwindcss/browser@4`. (2) Change line 112 from "already available in plugin venv" to "added via `uv add jinja2`"
-- **Done when:** `grep cdn.tailwindcss.com spec.md` returns zero matches AND `grep "uv add jinja2" spec.md` returns a match
+- **Action:** (1) Replace ALL occurrences of `cdn.tailwindcss.com` with `cdn.jsdelivr.net/npm/@tailwindcss/browser@4` — this includes SC-8, AC-9, AND the In Scope section (line 24). (2) Change line 112 from "already available in plugin venv" to "added via `uv add jinja2`"
+- **Done when:** `grep cdn.tailwindcss.com spec.md` returns zero matches (across ALL sections) AND `grep "uv add jinja2" spec.md` returns a match
 - **Depends on:** none
 
 ### Task 0.2.1: Install FastAPI dependency
@@ -26,12 +26,12 @@
 ### Task 0.3.1: Write PoC thread safety script
 - **File:** `agent_sandbox/018-poc/test_thread_safety.py`
 - **Action:** Create ~20-line script with FastAPI app, sync route using `sqlite3.connect(path, check_same_thread=False)`, PRAGMAs (`journal_mode=WAL`, `busy_timeout=5000`, `foreign_keys=ON`, `cache_size=-8000`), seed 10 rows, fire 10 concurrent GETs via `asyncio.gather` + `httpx.AsyncClient`
-- **Done when:** script file exists and is syntactically valid Python
+- **Done when:** script file exists AND `cd plugins/iflow && uv run python -m py_compile ../../agent_sandbox/018-poc/test_thread_safety.py` succeeds (syntax + import resolution)
 - **Depends on:** 0.2.1, 0.2.2, 0.2.3
 
 ### Task 0.3.2: Run PoC and evaluate result
-- **Action:** Run `cd plugins/iflow && uv run python ../../agent_sandbox/018-poc/test_thread_safety.py`. If pass (exit 0, all 200s, no ProgrammingError) → continue with sync routes. If fail → note async fallback for task 2.3.1.
-- **Done when:** script exits 0 (pass) or async fallback is documented (fail)
+- **Action:** Run `cd plugins/iflow && uv run python ../../agent_sandbox/018-poc/test_thread_safety.py`. If pass (exit 0, all 10 responses HTTP 200, no ProgrammingError in output) → continue with sync routes. If fail → append `# ASYNC_FALLBACK=True` comment to `agent_sandbox/018-poc/test_thread_safety.py` and update tasks 2.3.1/2.3.2 action text to use `async def` instead of `def`.
+- **Done when:** (pass) script exits 0 with all 200s OR (fail) `grep ASYNC_FALLBACK agent_sandbox/018-poc/test_thread_safety.py` returns a match
 - **Depends on:** 0.3.1
 
 ## Phase 1: Foundation
@@ -52,9 +52,9 @@
 - **Done when:** all 4 directories exist
 - **Depends on:** 1.1.2
 
-### Task 1.2.2: Create __init__.py files
-- **Action:** Create empty `__init__.py` files: `plugins/iflow/ui/__init__.py`, `plugins/iflow/ui/routes/__init__.py`, `plugins/iflow/ui/tests/__init__.py`
-- **Done when:** `test -f plugins/iflow/ui/__init__.py && test -f plugins/iflow/ui/routes/__init__.py && test -f plugins/iflow/ui/tests/__init__.py` succeeds
+### Task 1.2.2: Create __init__.py files and board router stub
+- **Action:** Create empty `__init__.py` files: `plugins/iflow/ui/__init__.py`, `plugins/iflow/ui/routes/__init__.py`, `plugins/iflow/ui/tests/__init__.py`. Also create `plugins/iflow/ui/routes/board.py` with stub: `from fastapi import APIRouter` and `router = APIRouter()` — this allows create_app() (2.2.1) to import and register the router before the full board route implementation (2.3.x) fills in the handler.
+- **Done when:** `test -f plugins/iflow/ui/__init__.py && test -f plugins/iflow/ui/routes/__init__.py && test -f plugins/iflow/ui/tests/__init__.py && python -c "import importlib.util; spec=importlib.util.spec_from_file_location('board','plugins/iflow/ui/routes/board.py'); print('OK')"` succeeds
 - **Depends on:** 1.2.1
 
 ## Phase 2: Core Application — TDD
@@ -171,15 +171,21 @@
 - **Done when:** test passes
 - **Depends on:** 3.4.1, 3.3.1, 3.2.1, 3.1.1
 
-### Task 4.1.6: Run full test suite
+### Task 4.1.6: Write integration test — empty board state (AC-6)
+- **File:** `plugins/iflow/ui/tests/test_app.py`
+- **Action:** Create app with temp DB that has zero workflow_phases rows (empty table). GET `/`, assert response contains "No features yet" empty state message
+- **Done when:** test passes
+- **Depends on:** 3.3.1, 3.2.1, 3.1.1
+
+### Task 4.1.7: Run full test suite
 - **Action:** Run `plugins/iflow/.venv/bin/python -m pytest plugins/iflow/ui/tests/ -v`
 - **Done when:** all unit and integration tests pass
-- **Depends on:** 4.1.1, 4.1.2, 4.1.3, 4.1.4, 4.1.5
+- **Depends on:** 4.1.1, 4.1.2, 4.1.3, 4.1.4, 4.1.5, 4.1.6
 
 ### Task 4.2.1: Implement CLI entry point
 - **File:** `plugins/iflow/ui/__main__.py`
-- **Action:** argparse with `--port` (int, default 8718). Port conflict detection via `socket.socket()` bind attempt. Print startup URL `http://127.0.0.1:{port}/` to stdout. Call `uvicorn.run(create_app(), host="127.0.0.1", port=port)`. Use absolute imports resolved via PYTHONPATH: `from ui import create_app` (PYTHONPATH includes `$PLUGIN_DIR`) and `from entity_registry.database import EntityDatabase` (PYTHONPATH includes `$PLUGIN_DIR/hooks/lib`). NOT relative imports, because `__main__.py` is invoked directly by the shell wrapper, not via `-m`
-- **Done when:** file exists with argparse, port check, URL print, and uvicorn.run call
+- **Action:** Implement in this order: (1) parse args via argparse with `--port` (int, default 8718), (2) check port availability via `socket.socket()` bind attempt — exit with error if occupied, (3) call `create_app()` to build the FastAPI app, (4) print startup URL `http://127.0.0.1:{port}/` to stdout, (5) call `uvicorn.run(app, host="127.0.0.1", port=port)`. Use absolute imports resolved via PYTHONPATH: `from ui import create_app` (PYTHONPATH includes `$PLUGIN_DIR`). NOT relative imports, because `__main__.py` is invoked directly by the shell wrapper, not via `-m`
+- **Done when:** file exists with argparse, port check before create_app, URL print, and uvicorn.run call
 - **Depends on:** 2.3.2
 
 ### Task 4.2.2: Write CLI port-conflict unit test (AC-2)
@@ -210,42 +216,42 @@
 ### Task 5.1.1: Verify SIGINT clean exit
 - **Action:** Run `bash plugins/iflow/mcp/run-ui-server.sh 2>/tmp/018-sigint-stderr.txt & PID=$!; sleep 2; kill -INT $PID; wait $PID; echo "EXIT:$?"`. Verify exit code is 0 and `grep -c Traceback /tmp/018-sigint-stderr.txt` returns 0
 - **Done when:** exit code is 0 AND no traceback in stderr
-- **Depends on:** 4.1.6
+- **Depends on:** 4.1.7
 
 ### Task 5.1.2: Verify SIGTERM clean exit
 - **Action:** Run `bash plugins/iflow/mcp/run-ui-server.sh 2>/tmp/018-sigterm-stderr.txt & PID=$!; sleep 2; kill -TERM $PID; wait $PID; echo "EXIT:$?"`. Verify exit code is 0 and `grep -c Traceback /tmp/018-sigterm-stderr.txt` returns 0
 - **Done when:** exit code is 0 AND no traceback in stderr
-- **Depends on:** 4.1.6
+- **Depends on:** 4.1.7
 
 ### Task 5.1.3: Verify DB integrity after shutdown
-- **Action:** After 5.1.1 and 5.1.2, run `sqlite3 ~/.claude/iflow/entities/entities.db 'PRAGMA integrity_check'` (or the path from `ENTITY_DB_PATH` if set)
+- **Action:** After 5.1.1 and 5.1.2, run `DB_PATH="${ENTITY_DB_PATH:-$HOME/.claude/iflow/entities/entities.db}" && sqlite3 "$DB_PATH" 'PRAGMA integrity_check'`
 - **Done when:** integrity_check returns "ok"
 - **Depends on:** 5.1.1, 5.1.2
 
 ### Task 5.2.1: Run entity registry regression tests (AC-10)
 - **Action:** `plugins/iflow/.venv/bin/python -m pytest plugins/iflow/hooks/lib/entity_registry/ -v`
 - **Done when:** all tests pass
-- **Depends on:** 4.1.6
+- **Depends on:** 4.1.7
 
 ### Task 5.2.2: Run workflow engine regression tests (AC-10)
 - **Action:** `plugins/iflow/.venv/bin/python -m pytest plugins/iflow/hooks/lib/workflow_engine/ -v`
 - **Done when:** all tests pass
-- **Depends on:** 4.1.6
+- **Depends on:** 4.1.7
 
 ### Task 5.2.3: Run transition gate regression tests (AC-10)
 - **Action:** `plugins/iflow/.venv/bin/python -m pytest plugins/iflow/hooks/lib/transition_gate/ -v`
 - **Done when:** all tests pass
-- **Depends on:** 4.1.6
+- **Depends on:** 4.1.7
 
 ### Task 5.2.4: Run MCP server regression tests (AC-10)
 - **Action:** `plugins/iflow/.venv/bin/python -m pytest plugins/iflow/mcp/test_workflow_state_server.py -v`
 - **Done when:** all tests pass
-- **Depends on:** 4.1.6
+- **Depends on:** 4.1.7
 
 ### Task 5.3.1: Manual smoke test
 - **Action:** Start server, open browser to `http://127.0.0.1:8718/`. Verify: 8 columns rendered, cards display correct data, refresh button works (HTMX partial), empty state message shown when no data
 - **Done when:** visual verification confirms AC-3, AC-4, AC-5, AC-6
-- **Depends on:** 4.1.6, 4.3.2
+- **Depends on:** 4.1.7, 4.3.2
 
 ## Dependency Summary
 
@@ -253,13 +259,13 @@
 - **Tasks 0.1.1, 0.2.1, 0.2.2, 0.2.3:** can run in parallel (spec fix and package installs are independent)
 - **Tasks 2.1.1–2.1.5:** logically independent test functions; write to same test file so execute sequentially for a single engineer, but can be parallelized across multiple engineers
 - **Tasks 3.1.1–3.5.1:** can run in parallel (independent template files)
-- **Tasks 4.1.1–4.1.5:** can run in parallel after all templates complete (independent test functions)
+- **Tasks 4.1.1–4.1.6:** can run in parallel after all templates complete (independent test functions)
 - **Tasks 4.2.1–4.2.3, 4.3.1–4.3.2:** can run in parallel with 4.1.x (CLI track independent of integration test track)
 - **Tasks 5.1.1–5.1.2:** can run in parallel (independent signal tests)
 - **Tasks 5.2.1–5.2.4:** can run in parallel (independent test suites)
 
 ### Critical Path
 ```
-0.2.x → 0.3.x → 1.1.x → 1.2.x → 2.1.x → 2.2.1 → 2.3.x → 3.x → 4.1.x → 5.x
+0.2.x → 0.3.x → 1.1.x → 1.2.x → 2.1.x → 2.2.1 → 2.3.x → 3.x → 4.1.x → 4.1.7 → 5.x
 (0.1.1 runs in parallel with 0.2.x — not on critical path)
 ```
