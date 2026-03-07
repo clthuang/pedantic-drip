@@ -180,7 +180,9 @@ Claude interprets the skill instructions. Adding more prose increases the chance
 
 **Success response:** Updated `FeatureWorkflowState` — no output, continue.
 
-**Error responses:** Same pattern as Interface 1. No `yolo_active` parameter.
+**Error responses:**
+- Structured error: `{error: true, error_type: "invalid_transition" | "feature_not_found" | "db_unavailable", message: "...", recovery_hint: "..."}` — warn with reason from `message`.
+- Tool unavailable: MCP framework surfaces tool error — warn with "MCP tool unavailable".
 
 **Warning format:** Same as Interface 1.
 
@@ -195,12 +197,12 @@ The five command files (`specify.md`, `design.md`, `create-plan.md`, `create-tas
 
 After the `.meta.json` update above, sync the phase transition to the workflow database:
 
-1. Construct `entity_type_id` as `"feature:{id}-{slug}"` from the `.meta.json` `id` and `slug` fields already read in Step 1.
+1. Construct `entity_type_id` as `"feature:{id}-{slug}"` from the `.meta.json` `id` and `slug` fields (available from the `.meta.json` read in Step 1).
 2. Call `transition_phase(entity_type_id, "{phaseName}")`.
    - If `[YOLO_MODE]` is active in the current context: include `yolo_active=true`.
    - If `[YOLO_MODE]` is NOT active: omit `yolo_active` (defaults to `false`).
-3. If the call succeeds (response contains `transitioned: true`): no output, proceed to Step 5.
-4. If the call fails (MCP tool unavailable, response contains `error: true`, or `transitioned: false`):
+3. If the call succeeds (response contains `transitioned: true` and `degraded: false`): no output, proceed to Step 5.
+4. If the call fails (MCP tool unavailable, response contains `error: true`, `transitioned: false`, or `degraded: true`):
    output `Note: Workflow DB sync skipped — {reason}. State will reconcile on next reconcile_apply run.`
    where `{reason}` is a brief description (e.g., "MCP tool unavailable", "transition rejected", "feature not found").
    Do NOT block — the `.meta.json` update already succeeded.
