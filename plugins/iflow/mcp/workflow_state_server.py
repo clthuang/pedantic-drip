@@ -798,7 +798,11 @@ def _process_init_feature_state(
         try:
             db.update_workflow_phase(feature_type_id, kanban_column=init_kanban)
         except ValueError:
-            pass  # Row may not exist if engine initialization failed
+            # Row may not exist if engine initialization failed — create it.
+            try:
+                db.create_workflow_phase(feature_type_id, kanban_column=init_kanban)
+            except Exception:
+                pass  # Entity itself may be missing; nothing to do
 
     result = {
         "created": True,
