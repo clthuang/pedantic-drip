@@ -517,3 +517,19 @@ Organizing 36 tasks into 5 named phases (A: Foundation, B: Projection, C: MCP To
 - Keywords: ["phased-grouping", "task-organization", "bridge-tasks", "implementation-checkpoints", "large-feature"]
 - Last observed: Feature 034
 - Observation count: 1
+
+### Pattern: Detailed Plan With Inline Code Produces First-Try Implementation Approval
+When plan phase includes inline code snippets with exact insertion points and edge-case handling, implementation passes all 3 reviewers on the first iteration. The cost of plan iterations (text-only) is lower than implementation iterations (code + tests).
+- Observed in: Feature 035 — plan required 4 iterations (3 plan-reviewer + 1 phase-reviewer) but implementation passed all 3 reviewers first try. Plan included inline backfill guard code with 3-case logic.
+- Confidence: high
+- Keywords: ["plan-detail", "first-try-approval", "insertion-point", "tdd-task-structure", "inline-code"]
+- Last observed: Feature 035
+- Observation count: 1
+
+### Pattern: Isolation Principle for MCP Server Extensions
+When adding new functionality to an existing MCP server, use own error decorator, own constants, and zero shared code paths with existing tools. Makes it impossible for new code to break existing tests.
+- Observed in: Feature 035 — _catch_entity_value_error decorator + ENTITY_MACHINES constants isolated from feature workflow. 1,658 tests passed with zero modifications to existing feature tests.
+- Confidence: high
+- Keywords: ["mcp-isolation", "error-decorator", "zero-coupling", "regression-safety", "extension"]
+- Last observed: Feature 035
+- Observation count: 1

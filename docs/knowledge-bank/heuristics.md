@@ -524,6 +524,22 @@ For features extending MCP servers with entity registry integration, budget 3-4 
 - Last observed: Feature 034
 - Observation count: 1
 
+### Plan-Reviewer 3+ Iterations Signals Design Gap, Not Plan Problem
+If plan-reviewer requires 3+ iterations, the root cause is usually an incomplete design rather than a bad plan. Check whether the design doc covers all row states and edge cases before re-submitting the plan.
+- Source: Feature 035 — plan iterations 1-2 had blockers that traced to design gap (missing C6 case 3 null-phase UPDATE). Plan was structurally sound; design was incomplete.
+- Confidence: medium
+- Keywords: ["plan-reviewer", "iteration-count", "design-gap", "root-cause", "row-states"]
+- Last observed: Feature 035
+- Observation count: 1
+
+### Derive Entity Type From type_id in Templates, Not Route Parameters
+For entity-type-aware UI changes, extract entity_type from type_id in the template (split on colon) rather than passing it as a separate variable from the route. Avoids route signature changes and keeps the data contract minimal.
+- Source: Feature 035, UI phase — card template used `item.type_id.split(':')[0]` inline in Jinja2, requiring zero Python route changes
+- Confidence: high
+- Keywords: ["jinja2", "entity-type", "template-derivation", "ui-card", "type-id", "route-decoupling"]
+- Last observed: Feature 035
+- Observation count: 1
+
 ### PreToolUse Deny Hook for Write Protection Is Fast and Reliable
 A bash PreToolUse hook using string matching (~12ms) is sufficient for protecting files from LLM writes. JSONL instrumentation logging adds negligible overhead. This is the correct enforcement pattern for 'no direct writes to X' invariants — replaces non-deterministic LLM writes with deterministic MCP tool code plus defense-in-depth hook.
 - Source: Feature 034, meta-json-guard.sh — 9 hook tests, ~12ms latency (well under 50ms NFR-3). Replaces 9 LLM-driven write sites with MCP tool calls + hook enforcement.

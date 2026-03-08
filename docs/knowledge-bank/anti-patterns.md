@@ -524,3 +524,13 @@ Writing design pseudocode that uses attribute-style access (entity.metadata) whe
 - Keywords: ["pseudocode", "access-pattern", "dict-vs-attribute", "entity-registry", "design-accuracy"]
 - Last observed: Feature 034
 - Observation count: 1
+
+### Anti-Pattern: Passing Design Through Review Without Enumerating Database Row States
+Not explicitly enumerating all possible database row states (no row, null fields, populated fields) for each DB-touching component. Missing states surface later as plan-reviewer blockers or implementation bugs.
+- Observed in: Feature 035, design phase — design.md C6 initially missed the null-phase UPDATE case for backfill. Discovered during plan creation, requiring retroactive design fix (commit 9db4135).
+- Cost: Retroactive design fix + extra plan iteration
+- Instead: For any component touching DB tables, design-reviewer should require enumeration of all row states with handling logic for each
+- Confidence: medium
+- Keywords: ["database-state-enumeration", "design-completeness", "backfill", "null-handling", "row-states"]
+- Last observed: Feature 035
+- Observation count: 1
