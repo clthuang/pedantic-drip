@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Feature kanban column now updates during lifecycle transitions (was stuck on "backlog")
+- Added `FEATURE_PHASE_TO_KANBAN` mapping for phase-to-kanban column derivation
+- Kanban column drift detection and auto-correction in reconciliation
+- Init-time kanban override sets correct column based on feature status
+- Data remediation script (`scripts/fix_kanban_columns.py`) for existing features
+
 ## [4.12.1] - 2026-03-09
 
 ### Added
