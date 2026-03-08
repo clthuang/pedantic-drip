@@ -4,6 +4,30 @@
 
 Implementation follows the dependency chain from design.md (C8→C2→C1→C3→C4→C5→C6→C7→sites→hook), with tests written TDD-style before each component.
 
+**Deployment constraint:** All 10 steps must land in a single merge to develop. Do NOT merge partial skill updates without the corresponding MCP tools — the feature branch provides natural isolation.
+
+### Entity access convention
+
+`db.get_entity()` returns `dict | None`. Access fields via dict keys: `entity["status"]`, `entity["metadata"]`, `entity["artifact_path"]`, `entity["created_at"]`. The `metadata` field is a JSON TEXT column — must `json.loads(entity["metadata"])` before use. All `_process_*` functions and `_project_meta_json()` must use dict-style access throughout.
+
+### Step 0: `_iso_now()` utility
+
+**Files:** `plugins/iflow/mcp/workflow_state_server.py`, `plugins/iflow/mcp/test_workflow_state_server.py`
+
+**Why this item:** Referenced by Steps 2, 4, 7, 8 for timestamp generation. Must exist before any caller.
+
+**What:**
+- Add `def _iso_now() -> str: return datetime.now(timezone.utc).isoformat()` utility function
+- Add `from datetime import datetime, timezone` import if not present
+
+**Tests (write first):**
+- Returns ISO 8601 format string
+- Returns UTC timezone
+
+**Depends on:** Nothing
+
+---
+
 ### Step 1: `_atomic_json_write()` utility (C8)
 
 **Files:** `plugins/iflow/mcp/workflow_state_server.py`, `plugins/iflow/mcp/test_workflow_state_server.py`
@@ -32,18 +56,20 @@ Implementation follows the dependency chain from design.md (C8→C2→C1→C3→
 - Build `.meta.json` structure from entity metadata + engine state
 - Call `_atomic_json_write()` for crash-safe write
 - Return `None` on success, warning string on failure (fail-open)
-- Accept `engine: WorkflowStateEngine | None` — short-circuit `engine.get_state()` when `None`
+- Accept `engine: WorkflowStateEngine | None` — if `None`, skip `engine.get_state()` and fall back to metadata-only projection (needed for `init_feature_state` where no prior engine state exists)
+- Parse `entity["metadata"]` via `json.loads()` — it's a JSON TEXT column, not a dict
 
 **Tests (write first):**
 - Projects correct JSON structure from mock DB entity + engine state
 - Falls back to metadata when engine state unavailable
+- Projects correctly with `engine=None` (new feature, no prior state)
 - Returns warning string (not raises) on write failure
-- Resolves `feature_dir` from `entity.artifact_path` when not provided
+- Resolves `feature_dir` from `entity["artifact_path"]` when not provided
 - Handles missing entity gracefully
 - Includes optional fields (`brainstorm_source`, `skippedPhases`) only when present
 - Phase timing with `iterations` and `reviewerNotes` projected correctly
 
-**Depends on:** Step 1
+**Depends on:** Steps 0, 1
 
 ---
 
@@ -67,7 +93,9 @@ Implementation follows the dependency chain from design.md (C8→C2→C1→C3→
 - Fast-path: returns `{}` immediately when input has no `.meta.json` reference
 - Log entry created with correct JSONL format
 - Feature ID extracted from path regex
-- Latency < 50ms (NFR-3)
+- Latency benchmark: verify < 200ms for CI stability (target 50ms per NFR-3, documented as local verification)
+
+**Test approach:** Pipe mock JSON stdin to `meta-json-guard.sh` and assert stdout. Check existing `test-hooks.sh` for precedent patterns — extend with deny/allow test cases.
 
 **Depends on:** Nothing (independent of C2, but ordered here for build clarity)
 
@@ -147,10 +175,12 @@ Implementation follows the dependency chain from design.md (C8→C2→C1→C3→
 
 **What:**
 - Modify `_process_transition_phase` signature: add `db: EntityDatabase` and `skipped_phases: str | None` params
-- After successful transition: store `phase_timing[target_phase].started` in entity metadata
+- After successful transition: store `phase_timing[target_phase].started` in entity metadata (use `json.loads(entity["metadata"])` for dict access)
 - Store `skipped_phases` in metadata when provided
 - Call `_project_meta_json()` after DB update
 - Update `@mcp.tool()` wrapper: pass `_db`, add `skipped_phases` param
+
+**Signature change impact:** All existing test calls to `_process_transition_phase()` must add the `db` param. Grep `_process_transition_phase` in test files to identify affected call sites and update them first.
 
 **Tests (extend existing):**
 - `.meta.json` projected after successful transition
@@ -159,7 +189,7 @@ Implementation follows the dependency chain from design.md (C8→C2→C1→C3→
 - Skipped phases not stored when None
 - `started_at` included in response
 - `projection_warning` included when projection fails
-- Existing transition tests still pass (backward compatible)
+- Existing transition tests still pass (with updated call signatures)
 
 **Depends on:** Step 2
 
@@ -171,11 +201,13 @@ Implementation follows the dependency chain from design.md (C8→C2→C1→C3→
 
 **What:**
 - Modify `_process_complete_phase` signature: add `db: EntityDatabase`, `iterations: int | None`, `reviewer_notes: str | None` params
-- After engine completes phase: store timing metadata (completed timestamp, iterations, reviewerNotes)
+- After engine completes phase: store timing metadata (use `json.loads(entity["metadata"])` for dict access)
 - Store `last_completed_phase` in entity metadata
 - For `phase == "finish"`: set entity status to "completed"
 - Call `_project_meta_json()` after DB update
 - Update `@mcp.tool()` wrapper: pass `_db`, add `iterations`/`reviewer_notes` params
+
+**Signature change impact:** All existing test calls to `_process_complete_phase()` must add the `db` param. Grep `_process_complete_phase` in test files to identify affected call sites and update them first.
 
 **Tests (extend existing):**
 - `.meta.json` projected after successful completion
@@ -184,7 +216,7 @@ Implementation follows the dependency chain from design.md (C8→C2→C1→C3→
 - Terminal phase ("finish") sets entity status to "completed"
 - `completed_at` included in response
 - `projection_warning` included when projection fails
-- Existing completion tests still pass (backward compatible)
+- Existing completion tests still pass (with updated call signatures)
 - `reviewer_notes` parsed from JSON string
 
 **Depends on:** Step 2
@@ -253,7 +285,8 @@ Steps that share no dependencies can be implemented in parallel:
 - **Step 7 + Step 8**: Both depend on Step 2, independent of each other
 
 Sequential constraints:
-- Step 2 must follow Step 1
+- Step 0 has no dependencies (can run in parallel with Step 1 + Step 3)
+- Step 2 must follow Steps 0 and 1
 - Steps 4-8 must follow Step 2
 - Step 9 must follow Steps 4-8
 - Step 10 must follow Steps 3 and 9
