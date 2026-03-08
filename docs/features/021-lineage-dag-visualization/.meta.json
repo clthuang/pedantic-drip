@@ -1,8 +1,9 @@
 {
   "id": "021",
   "slug": "lineage-dag-visualization",
-  "status": "active",
+  "status": "completed",
   "created": "2026-03-01T16:27:59+08:00",
+  "completed": "2026-03-08T20:30:00+08:00",
   "mode": "standard",
   "branch": "feature/021-lineage-dag-visualization",
   "brainstorm_source": "docs/brainstorms/20260308-075713-lineage-dag-visualization.prd.md",
@@ -15,7 +16,7 @@
   "absorbed_features": [
     "022-kanban-card-click-through-navi"
   ],
-  "lastCompletedPhase": "create-tasks",
+  "lastCompletedPhase": "finish",
   "phases": {
     "design": {
       "stages": {
@@ -41,6 +42,19 @@
         "taskReviewer": 3,
         "phaseReviewer": 2
       }
+    },
+    "implement": {
+      "started": "2026-03-08T19:00:00+08:00",
+      "completed": "2026-03-08T20:20:00+08:00",
+      "reviewIterations": {
+        "implementationReviewer": 3,
+        "qualityReviewer": 3,
+        "securityReviewer": 3
+      }
+    },
+    "finish": {
+      "status": "completed",
+      "completed": "2026-03-08T20:30:00+08:00"
     }
   }
 }
