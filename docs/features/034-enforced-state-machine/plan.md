@@ -10,6 +10,8 @@ Implementation follows the dependency chain from design.md (C8→C2→C1→C3→
 
 `db.get_entity()` returns `dict | None`. Access fields via dict keys: `entity["status"]`, `entity["metadata"]`, `entity["artifact_path"]`, `entity["created_at"]`. The `metadata` field is a nullable JSON TEXT column — use `json.loads(entity["metadata"]) if entity["metadata"] else {}` for safe parsing. All `_process_*` functions and `_project_meta_json()` must use dict-style access throughout.
 
+**Note:** Design.md pseudocode (C3, C5, C6, C7) uses attribute-style access (`entity.metadata`) for readability. This plan overrides: use dict-style access (`entity["metadata"]`) in actual implementation.
+
 ### Step 0: `_iso_now()` utility
 
 **Files:** `plugins/iflow/mcp/workflow_state_server.py`, `plugins/iflow/mcp/test_workflow_state_server.py`
@@ -280,9 +282,8 @@ Implementation follows the dependency chain from design.md (C8→C2→C1→C3→
 ## Parallelizable Steps
 
 Steps that share no dependencies can be implemented in parallel:
-- **Step 1 + Step 3**: `_atomic_json_write` and `meta-json-guard.sh` are independent
-- **Step 4 + Step 5 + Step 6**: All depend on Step 2, but are independent of each other
-- **Step 7 + Step 8**: Both depend on Step 2, independent of each other
+- **Step 0 + Step 1 + Step 3 + Step 5**: All independent (Step 5 needs only Step 1, not Step 2)
+- **Step 4 + Step 6 + Step 7 + Step 8**: All depend on Step 2, independent of each other
 
 Sequential constraints:
 - Step 0 has no dependencies (can run in parallel with Step 1 + Step 3)
