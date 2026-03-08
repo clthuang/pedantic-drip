@@ -520,6 +520,13 @@ def _process_transition_phase(
 
         db.update_entity(feature_type_id, metadata=metadata)
 
+        # Update kanban_column for features based on phase
+        if feature_type_id.startswith("feature:"):
+            from workflow_engine.constants import FEATURE_PHASE_TO_KANBAN
+            kanban = FEATURE_PHASE_TO_KANBAN.get(target_phase)
+            if kanban:
+                db.update_workflow_phase(feature_type_id, kanban_column=kanban)
+
         # Project .meta.json
         warning = _project_meta_json(db, engine, feature_type_id)
 
@@ -576,6 +583,16 @@ def _process_complete_phase(
         if phase == "finish":
             update_kwargs["status"] = "completed"
         db.update_entity(feature_type_id, **update_kwargs)
+
+        # Update kanban_column for features based on completed phase
+        if feature_type_id.startswith("feature:"):
+            from workflow_engine.constants import FEATURE_PHASE_TO_KANBAN
+            if phase == "finish":
+                kanban = "completed"
+            else:
+                kanban = FEATURE_PHASE_TO_KANBAN.get(state.current_phase)
+            if kanban:
+                db.update_workflow_phase(feature_type_id, kanban_column=kanban)
 
         # Project .meta.json
         warning = _project_meta_json(db, engine, feature_type_id)
