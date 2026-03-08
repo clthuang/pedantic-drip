@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.12.1] - 2026-03-09
+
 ### Added
 - Brainstorm lifecycle state tracking: `draft → reviewing → promoted | abandoned`
 - Backlog lifecycle state tracking: `open → triaged → promoted | dropped`
