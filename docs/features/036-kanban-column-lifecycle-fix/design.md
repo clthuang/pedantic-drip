@@ -80,6 +80,7 @@ if feature_type_id.startswith("feature:"):
 After `_project_meta_json()` call (which triggers engine hydration → `create_workflow_phase` via degraded-mode backfill), add explicit kanban correction:
 ```python
 # Fix kanban_column based on status (init-time uses STATUS_TO_KANBAN)
+# Must match STATUS_TO_KANBAN in backfill.py:35-40
 STATUS_TO_KANBAN = {"active": "wip", "planned": "backlog",
                     "completed": "completed", "abandoned": "completed"}
 init_kanban = STATUS_TO_KANBAN.get(status)
@@ -164,13 +165,14 @@ Add kanban_column to the update call. Passes `meta["workflow_phase"]` and `meta[
 expected_kanban = _derive_expected_kanban(
     meta["workflow_phase"], meta["last_completed_phase"]
 )
-db.update_workflow_phase(
-    feature_type_id,
+kwargs = dict(
     workflow_phase=meta["workflow_phase"],
     last_completed_phase=meta["last_completed_phase"],
     mode=meta["mode"],
-    kanban_column=expected_kanban,  # NEW
 )
+if expected_kanban is not None:
+    kwargs["kanban_column"] = expected_kanban
+db.update_workflow_phase(feature_type_id, **kwargs)
 ```
 
 **5. Data remediation: `scripts/fix_kanban_columns.py`**
@@ -198,6 +200,7 @@ SET kanban_column = CASE
     WHEN 'active' THEN 'wip'
     WHEN 'completed' THEN 'completed'
     WHEN 'abandoned' THEN 'completed'
+    ELSE kanban_column  -- preserve current value for orphaned rows
 END,
 updated_at = datetime('now')
 WHERE type_id LIKE 'feature:%'
