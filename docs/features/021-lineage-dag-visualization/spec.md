@@ -80,12 +80,12 @@ Escapes characters that would break Mermaid node labels inside double quotes.
 1. Replace `"` with `'` (single quote)
 2. Replace `[` and `]` with `(` and `)` respectively
 3. Replace `\` with `/`
-4. Replace `&` with `&amp;` (defense-in-depth for `| safe` rendering — prevents `&` from being interpreted as HTML entity start)
+4. Replace `<` with `&lt;` and `>` with `&gt;` (defense-in-depth for `| safe` rendering — prevents HTML injection in `<pre>` before Mermaid JS loads)
 
 **AC:**
 - AC-R1.9: `He said "hello"` → `He said 'hello'`
 - AC-R1.10: `feature[0]` → `feature(0)`
-- AC-R1.11: `foo & bar` → `foo &amp; bar`
+- AC-R1.11: `<script>` → `&lt;script&gt;`
 
 ### R2: Route Changes
 
@@ -215,7 +215,7 @@ Escapes characters that would break Mermaid node labels inside double quotes.
 | `test_entity_detail_contains_mermaid_pre` | AC-R3.1 |
 | `test_board_page_no_mermaid_script` | AC-R3.4 |
 | `test_entity_list_no_mermaid_script` | AC-R3.5 |
-| `test_entity_detail_context_has_mermaid_dag` | AC-R2.1 |
+| `test_entity_detail_has_mermaid_dag` | AC-R2.1 |
 | `test_entity_detail_mermaid_dag_contains_entity_node` | AC-R2.1: mermaid_dag string contains sanitized node ID for the entity |
 | `test_entity_detail_children_depth_beyond_one` | AC-R2.2: mermaid_dag or children list contains grandchildren (depth>1 entities) |
 | `test_entity_detail_flat_list_in_details` | AC-R3.2: response contains `<details>` wrapping lineage lists with no `open` attribute (collapsed) |

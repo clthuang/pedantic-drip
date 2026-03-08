@@ -26,11 +26,12 @@ Strict dependency chain: C1 → C2 → C3. Each step follows TDD (test first, th
 - `test_sanitize_label_quotes` — AC-R1.9: `"` → `'`
 - `test_sanitize_label_brackets` — AC-R1.10: `[]` → `()`
 - `test_sanitize_label_backslash` — `\` → `/`
-- `test_sanitize_label_ampersand` — `&` → `&amp;` (defense-in-depth for Jinja2 `| safe`)
+- `test_sanitize_label_less_than` — `<` → `&lt;` (defense-in-depth for `| safe` — prevents HTML injection in `<pre>` before Mermaid loads)
+- `test_sanitize_label_greater_than` — `>` → `&gt;`
 
 **Implementation:**
 - `_sanitize_id`: `re.sub` + digit/o/x prefix + SHA-256 hash suffix (4 hex chars, UTF-8 encoded)
-- `_sanitize_label`: chained `.replace()` calls (including `&` → `&amp;` to prevent HTML injection when rendered with `| safe`)
+- `_sanitize_label`: chained `.replace()` calls (including `<` → `&lt;`, `>` → `&gt;` to prevent HTML injection in `<pre>` before Mermaid JS loads)
 - Constants: `_ENTITY_TYPE_STYLES` dict, `_CURRENT_STYLE` string, `_KNOWN_ENTITY_TYPES` set
 
 **Dependencies:** None (pure stdlib: `re`, `hashlib`)
@@ -167,5 +168,5 @@ Step 5: Browser verification (all steps complete)
 - **Mermaid reserved IDs:** `_sanitize_id` prefixes `n` for digit/o/x starts
 - **Click handler:** Uses `href` keyword for explicit URL link syntax
 - **Dict merge order:** `ancestors + children + [entity]` ensures entity dict wins
-- **Jinja2 autoescaping:** Template uses `| safe` filter; `_sanitize_label` handles `&` → `&amp;` as defense-in-depth
+- **Jinja2 autoescaping:** Template uses `| safe` filter; `_sanitize_label` handles `<`/`>` → `&lt;`/`&gt;` as defense-in-depth against HTML injection in `<pre>` before Mermaid loads
 - **Seed ordering:** Integration tests seed entities parent-first so `parent_uuid` lookup resolves
