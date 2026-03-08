@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Enforced state machine: PreToolUse hook blocks all direct `.meta.json` writes — LLM agents must use MCP tools instead
+- 3 new MCP tools: `init_feature_state`, `init_project_state`, `activate_feature` for state management
+- Extended `transition_phase` and `complete_phase` MCP tools with entity metadata storage and `.meta.json` projection
+- JSONL instrumentation logging for blocked `.meta.json` write attempts
+
+### Changed
+- 9 skill/command write sites updated to use MCP tool calls instead of direct `.meta.json` writes
+
 ## [4.11.11] - 2026-03-08
 
 ### Added
