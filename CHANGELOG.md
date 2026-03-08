@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.11.11] - 2026-03-08
+
 ### Added
 - UI server: HTMX polling for real-time updates — board auto-refreshes every 3s, entities list every 5s; no manual page refresh needed
 
