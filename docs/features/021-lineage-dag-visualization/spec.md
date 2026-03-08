@@ -80,10 +80,12 @@ Escapes characters that would break Mermaid node labels inside double quotes.
 1. Replace `"` with `'` (single quote)
 2. Replace `[` and `]` with `(` and `)` respectively
 3. Replace `\` with `/`
+4. Replace `&` with `&amp;` (defense-in-depth for `| safe` rendering — prevents `&` from being interpreted as HTML entity start)
 
 **AC:**
 - AC-R1.9: `He said "hello"` → `He said 'hello'`
 - AC-R1.10: `feature[0]` → `feature(0)`
+- AC-R1.11: `foo & bar` → `foo &amp; bar`
 
 ### R2: Route Changes
 
@@ -114,7 +116,7 @@ Escapes characters that would break Mermaid node labels inside double quotes.
 
 1. Add Mermaid diagram above the existing lineage lists:
    ```html
-   <pre class="mermaid">{{ mermaid_dag }}</pre>
+   <pre class="mermaid">{{ mermaid_dag | safe }}</pre>
    ```
 
 2. Wrap existing ancestor/children lists in collapsed `<details>`:

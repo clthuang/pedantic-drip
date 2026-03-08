@@ -26,10 +26,11 @@ Strict dependency chain: C1 → C2 → C3. Each step follows TDD (test first, th
 - `test_sanitize_label_quotes` — AC-R1.9: `"` → `'`
 - `test_sanitize_label_brackets` — AC-R1.10: `[]` → `()`
 - `test_sanitize_label_backslash` — `\` → `/`
+- `test_sanitize_label_ampersand` — `&` → `&amp;` (defense-in-depth for Jinja2 `| safe`)
 
 **Implementation:**
 - `_sanitize_id`: `re.sub` + digit/o/x prefix + SHA-256 hash suffix (4 hex chars, UTF-8 encoded)
-- `_sanitize_label`: chained `.replace()` calls
+- `_sanitize_label`: chained `.replace()` calls (including `&` → `&amp;` to prevent HTML injection when rendered with `| safe`)
 - Constants: `_ENTITY_TYPE_STYLES` dict, `_CURRENT_STYLE` string, `_KNOWN_ENTITY_TYPES` set
 
 **Dependencies:** None (pure stdlib: `re`, `hashlib`)
@@ -56,11 +57,12 @@ Strict dependency chain: C1 → C2 → C3. Each step follows TDD (test first, th
 - `test_unknown_entity_type_defaults_feature` — AC-R4.3: unknown type → `feature` class
 - `test_click_handler_uses_href_keyword` — click line contains `href "/entities/..."`
 - `test_click_handler_raw_type_id_with_colon` — type_id with colon appears unencoded in URL
+- `test_classdef_lines_emitted` — output contains all 5 classDef lines (feature, project, brainstorm, backlog, current) with correct fill values
 
 **Implementation:**
 - 1 prep step + 6 emission steps per design
 - Dict merge: `ancestors + children + [entity]` (entity last wins)
-- Click: `click {safe_id} href "/entities/{tid}"`
+- Click: `click {safe_id} href "/entities/{tid}"` — contingency: if Step 5 browser verification reveals Mermaid fails to parse colons in relative URLs, URL-encode the type_id (`feature%3A021-foo`); FastAPI's path parameter decodes automatically
 - Class: `current` for entity, `entity_type` (default `feature`) for others
 
 **Dependencies:** Step 1 (uses `_sanitize_id`, `_sanitize_label`, constants)
@@ -76,14 +78,16 @@ Strict dependency chain: C1 → C2 → C3. Each step follows TDD (test first, th
 - EDIT: `plugins/iflow/ui/tests/test_entities.py` — add integration tests
 
 **Tests (write first):**
-- `test_entity_detail_context_has_mermaid_dag` — AC-R2.1: context contains `mermaid_dag` key
-- `test_entity_detail_mermaid_dag_contains_entity_node` — AC-R2.1: mermaid_dag contains entity's sanitized node ID
+- `test_entity_detail_has_mermaid_dag` — AC-R2.1: `response.text` contains `flowchart TD` (validates mermaid_dag passed to template and rendered)
+- `test_entity_detail_mermaid_dag_contains_entity_node` — AC-R2.1: `response.text` contains entity's sanitized node ID
 - `test_entity_detail_children_depth_beyond_one` — AC-R2.2: grandchildren present in response
 - Add `_seed_entity_with_parent(db_file, ...)` helper to test file (sets both `parent_type_id` and `parent_uuid`)
 
+**Note:** Seed entities in parent-first order (project → brainstorm → feature) so `parent_uuid` lookup resolves correctly.
+
 **Implementation:**
 1. Add import: `from ui.mermaid import build_mermaid_dag`
-2. Change `db.get_lineage(type_id, "down", 1)` → `db.get_lineage(type_id, "down", 10)`
+2. Change `db.get_lineage(type_id, "down", 1)` → `db.get_lineage(type_id, "down", 10)` — note: this also affects the flat children list in `<details>` fallback (now shows all descendants without nesting; accepted trade-off per design)
 3. Add `mermaid_dag = build_mermaid_dag(entity, ancestors, children)` after lineage computation
 4. Add `"mermaid_dag": mermaid_dag` to template context dict
 
@@ -107,7 +111,7 @@ Strict dependency chain: C1 → C2 → C3. Each step follows TDD (test first, th
 
 **Implementation:**
 1. Replace Lineage card content (the `<!-- Lineage -->` section):
-   - Add `<pre class="mermaid">{{ mermaid_dag }}</pre>` above existing lists
+   - Add `<pre class="mermaid">{{ mermaid_dag | safe }}</pre>` above existing lists (Jinja2 autoescaping is enabled by default in Starlette — `| safe` required to prevent `-->` being escaped to `--&gt;`; safe because `_sanitize_label` strips dangerous characters and entity data is internal)
    - Wrap existing ancestor/children markup in `<details class="mt-3">` with summary
 2. Add Mermaid CDN script before `{% endblock %}`:
    ```html
@@ -139,7 +143,7 @@ Strict dependency chain: C1 → C2 → C3. Each step follows TDD (test first, th
 - Verify entity list page (`/entities`) has no mermaid script
 
 **Dependencies:** Steps 1-4 all complete
-**Verification:** Playwright MCP browser tools
+**Verification:** Playwright MCP browser tools. Fallback: manually start UI server and verify in browser if Playwright MCP is unavailable.
 
 ## Dependency Graph
 
@@ -163,3 +167,5 @@ Step 5: Browser verification (all steps complete)
 - **Mermaid reserved IDs:** `_sanitize_id` prefixes `n` for digit/o/x starts
 - **Click handler:** Uses `href` keyword for explicit URL link syntax
 - **Dict merge order:** `ancestors + children + [entity]` ensures entity dict wins
+- **Jinja2 autoescaping:** Template uses `| safe` filter; `_sanitize_label` handles `&` → `&amp;` as defense-in-depth
+- **Seed ordering:** Integration tests seed entities parent-first so `parent_uuid` lookup resolves
