@@ -141,6 +141,7 @@ Escapes characters that would break Mermaid node labels inside double quotes.
    - `startOnLoad: true` causes Mermaid to scan the DOM for `<pre class="mermaid">` elements on page load, render them to SVG, and bind click handlers automatically. No manual `mermaid.run()` or `bindFunctions()` call is needed for full-page loads.
    - `securityLevel: 'loose'` is required for click URL links to be interactive. This is safe because we only emit URL strings (no JS callbacks) in the Mermaid definition.
    - Before Mermaid initializes, the raw flowchart text is briefly visible in the `<pre>` block. This is acceptable — the text is human-readable and renders within ~200ms on typical hardware.
+   - Note: PRD assumed URL links work without `securityLevel: 'loose'`; Mermaid docs confirm click functionality requires `loose` or `antiscript` level regardless of syntax.
 
 **AC:**
 - AC-R3.1: Entity detail page contains `<pre class="mermaid">` element
@@ -214,6 +215,7 @@ Escapes characters that would break Mermaid node labels inside double quotes.
 | `test_entity_list_no_mermaid_script` | AC-R3.5 |
 | `test_entity_detail_context_has_mermaid_dag` | AC-R2.1 |
 | `test_entity_detail_mermaid_dag_contains_entity_node` | AC-R2.1: mermaid_dag string contains sanitized node ID for the entity |
+| `test_entity_detail_children_depth_beyond_one` | AC-R2.2: mermaid_dag or children list contains grandchildren (depth>1 entities) |
 
 ### Browser Verification (Playwright MCP)
 
