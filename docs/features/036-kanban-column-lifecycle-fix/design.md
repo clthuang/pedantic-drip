@@ -79,8 +79,9 @@ if feature_type_id.startswith("feature:"):
 *c. `_process_init_feature_state()` (line ~726):*
 After `_project_meta_json()` call (which triggers engine hydration → `create_workflow_phase` via degraded-mode backfill), add explicit kanban correction:
 ```python
-# Fix kanban_column based on status (init-time uses STATUS_TO_KANBAN)
-# Must match STATUS_TO_KANBAN in backfill.py:35-40
+# Fix kanban_column based on status (init-time uses STATUS_TO_KANBAN).
+# Inline copy — consolidation into constants.py is out of scope (spec R1).
+# Must match STATUS_TO_KANBAN in backfill.py:35-40.
 STATUS_TO_KANBAN = {"active": "wip", "planned": "backlog",
                     "completed": "completed", "abandoned": "completed"}
 init_kanban = STATUS_TO_KANBAN.get(status)
@@ -192,7 +193,8 @@ the feature lifecycle.
 For completed/abandoned features, both mappings agree (→ 'completed').
 """
 
-# SQL (idempotent):
+# SQL (idempotent). Uses SQLite simple CASE (CASE expr WHEN val THEN ...).
+# Test against in-memory DB before running on production.
 UPDATE workflow_phases
 SET kanban_column = CASE
     (SELECT status FROM entities WHERE entities.type_id = workflow_phases.type_id)
