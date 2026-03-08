@@ -134,7 +134,7 @@
 **Do:**
 - In the `<!-- Lineage -->` section, add above existing lists: `<pre class="mermaid">{{ mermaid_dag | safe }}</pre>`
 - Wrap existing ancestor/children markup in `<details class="mt-3"><summary class="text-sm cursor-pointer text-base-content/50">Show flat list</summary>...existing markup...</details>`
-**Done when:** Template contains `<pre class="mermaid">` and `<details>` wrapper
+**Done when:** Run `PYTHONPATH="plugins/iflow/hooks/lib:plugins/iflow" plugins/iflow/.venv/bin/python -m pytest plugins/iflow/ui/tests/test_entities.py::test_entity_detail_contains_mermaid_pre plugins/iflow/ui/tests/test_entities.py::test_entity_detail_flat_list_in_details -v` — both tests pass
 **Depends on:** Task 4.1
 
 ### Task 4.3: Add Mermaid CDN script to entity_detail.html
