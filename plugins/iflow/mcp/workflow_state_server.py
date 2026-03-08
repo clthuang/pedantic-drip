@@ -10,7 +10,9 @@ import json
 import os
 import sqlite3
 import sys
+import tempfile
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 # Make workflow_engine, transition_gate, entity_registry, semantic_memory
 # importable from hooks/lib/ — safety net for direct invocation and tests.
@@ -171,6 +173,40 @@ def _build_frontmatter_summary(reports: list[DriftReport]) -> dict[str, int]:
         else:
             summary["error"] += 1
     return summary
+
+
+# ---------------------------------------------------------------------------
+# Utility functions
+# ---------------------------------------------------------------------------
+
+
+def _iso_now() -> str:
+    """Return current UTC time as ISO 8601 string."""
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _atomic_json_write(path: str, data: dict) -> None:
+    """Atomic JSON write: NamedTemporaryFile + os.replace()."""
+    tmp_name = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            dir=os.path.dirname(path),
+            suffix=".tmp",
+            delete=False,
+            encoding="utf-8",
+        ) as fd:
+            tmp_name = fd.name
+            json.dump(data, fd, indent=2)
+            fd.write("\n")
+        os.replace(tmp_name, path)
+    except BaseException:
+        if tmp_name is not None:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+        raise
 
 
 # ---------------------------------------------------------------------------

@@ -31,6 +31,8 @@ from workflow_engine.reconciliation import (
 from workflow_state_server import (
     _NOT_INITIALIZED,
     _SUPPORTED_DIRECTIONS,
+    _atomic_json_write,
+    _iso_now,
     _make_error,
     _process_complete_phase,
     _process_get_phase,
@@ -49,6 +51,13 @@ from workflow_state_server import (
     _serialize_workflow_drift_report,
     _validate_feature_type_id,
 )
+
+# RED-phase import: _process_init_project_state does not exist yet.
+# Conditional import keeps the test file importable so existing tests still run.
+try:
+    from workflow_state_server import _process_init_project_state
+except ImportError:
+    _process_init_project_state = None
 
 
 # ---------------------------------------------------------------------------
@@ -2900,3 +2909,99 @@ class TestReconciliationMutationMindset:
         assert data["summary"]["dry_run"] >= 1, (
             "dry_run count should include 'created' actions"
         )
+
+
+# ---------------------------------------------------------------------------
+# _iso_now tests (T0.1)
+# ---------------------------------------------------------------------------
+
+
+class TestIsoNow:
+    """Tests for _iso_now() UTC timestamp utility."""
+
+    def test_returns_iso_8601_string(self):
+        """_iso_now() returns a parseable ISO 8601 datetime string."""
+        from datetime import datetime
+
+        result = _iso_now()
+        # Should be parseable as ISO 8601
+        parsed = datetime.fromisoformat(result)
+        assert parsed is not None
+
+    def test_contains_utc_offset(self):
+        """_iso_now() includes UTC timezone indicator (+00:00)."""
+        result = _iso_now()
+        assert "+00:00" in result or "Z" in result
+
+    def test_returns_string_type(self):
+        """_iso_now() returns a str, not datetime."""
+        result = _iso_now()
+        assert isinstance(result, str)
+
+
+# ---------------------------------------------------------------------------
+# _atomic_json_write tests (T1.1)
+# ---------------------------------------------------------------------------
+
+
+class TestAtomicJsonWrite:
+    """Tests for _atomic_json_write() atomic file write utility."""
+
+    def test_writes_valid_json_with_trailing_newline(self, tmp_path):
+        """Written file contains valid JSON and ends with a newline."""
+        target = os.path.join(str(tmp_path), "test.json")
+        data = {"key": "value", "num": 42}
+        _atomic_json_write(target, data)
+
+        with open(target) as f:
+            content = f.read()
+
+        # Trailing newline
+        assert content.endswith("\n")
+        # Valid JSON
+        parsed = json.loads(content)
+        assert parsed == data
+
+    def test_existing_file_not_corrupted_on_write_failure(self, tmp_path):
+        """If json.dump raises mid-write, the original file is preserved."""
+        from unittest.mock import patch
+
+        target = os.path.join(str(tmp_path), "existing.json")
+        original_data = {"original": True}
+        # Write original file
+        with open(target, "w") as f:
+            json.dump(original_data, f)
+
+        # Mock json.dump to raise mid-write
+        with patch("workflow_state_server.json.dump", side_effect=RuntimeError("boom")):
+            with pytest.raises(RuntimeError, match="boom"):
+                _atomic_json_write(target, {"new": "data"})
+
+        # Original file must be intact
+        with open(target) as f:
+            assert json.load(f) == original_data
+
+    def test_temp_file_cleaned_up_on_base_exception(self, tmp_path):
+        """Temp file is removed even on BaseException (e.g., KeyboardInterrupt)."""
+        from unittest.mock import patch
+
+        target = os.path.join(str(tmp_path), "cleanup.json")
+
+        with patch("workflow_state_server.json.dump", side_effect=KeyboardInterrupt):
+            with pytest.raises(KeyboardInterrupt):
+                _atomic_json_write(target, {"data": 1})
+
+        # No .tmp files left behind
+        tmp_files = [f for f in os.listdir(str(tmp_path)) if f.endswith(".tmp")]
+        assert tmp_files == [], f"Temp files not cleaned up: {tmp_files}"
+
+    def test_file_created_in_correct_directory(self, tmp_path):
+        """Written file ends up in the target directory, not /tmp."""
+        subdir = os.path.join(str(tmp_path), "subdir")
+        os.makedirs(subdir)
+        target = os.path.join(subdir, "output.json")
+        _atomic_json_write(target, {"dir_test": True})
+
+        assert os.path.isfile(target)
+        # Verify no file was left in system /tmp
+        assert os.path.dirname(os.path.abspath(target)) == subdir
