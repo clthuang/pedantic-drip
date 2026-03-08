@@ -5,13 +5,21 @@
   "status": "active",
   "created": "2026-03-08T19:53:36.043914+00:00",
   "branch": "feature/036-kanban-column-lifecycle-fix",
-  "lastCompletedPhase": null,
+  "lastCompletedPhase": "design",
   "phases": {
     "brainstorm": {
       "started": "2026-03-08T19:53:36.043853+00:00"
     },
     "specify": {
-      "started": "2026-03-08T19:54:07.361369+00:00"
+      "started": "2026-03-08T19:54:07.361369+00:00",
+      "completed": "2026-03-08T20:01:28.064810+00:00",
+      "iterations": 2,
+      "reviewerNotes": "[{\"reviewer\": \"spec-reviewer\", \"approved\": true, \"summary\": \"Approved iteration 2/5\"}, {\"reviewer\": \"phase-reviewer\", \"approved\": true, \"summary\": \"Approved iteration 1/5\"}]"
+    },
+    "design": {
+      "started": "2026-03-08T20:01:38.925661+00:00",
+      "completed": "2026-03-08T20:14:49.193497+00:00",
+      "iterations": 3
     }
   }
 }
