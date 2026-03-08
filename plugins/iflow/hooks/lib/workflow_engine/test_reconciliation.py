@@ -81,6 +81,7 @@ def _setup_engine(
     workflow_phase: str | None = None,
     last_completed_phase: str | None = None,
     mode: str | None = "standard",
+    kanban_column: str = "backlog",
     create_wp: bool = True,
 ) -> tuple[WorkflowStateEngine, EntityDatabase, str]:
     """Full setup: DB + entity + workflow_phase row + engine."""
@@ -92,6 +93,7 @@ def _setup_engine(
             workflow_phase=workflow_phase,
             last_completed_phase=last_completed_phase,
             mode=mode,
+            kanban_column=kanban_column,
         )
     engine = WorkflowStateEngine(db, str(tmp_path))
     return engine, db, type_id
@@ -408,6 +410,7 @@ class TestCheckSingleFeature:
             workflow_phase="create-plan",
             last_completed_phase="design",
             mode="standard",
+            kanban_column="prioritised",
         )
         meta = {
             "status": "active",
@@ -1600,8 +1603,8 @@ class TestCheckSingleFeatureBoundary:
         assert len(report.mismatches) > 0
         mismatch_fields = {m.field for m in report.mismatches}
         assert "status" not in mismatch_fields
-        # Only these three fields can appear as mismatches
-        assert mismatch_fields.issubset({"last_completed_phase", "workflow_phase", "mode"})
+        # Only these four fields can appear as mismatches
+        assert mismatch_fields.issubset({"last_completed_phase", "workflow_phase", "mode", "kanban_column"})
 
     def test_meta_json_dict_includes_status_field(self, tmp_path) -> None:
         """report.meta_json includes status for informational purposes.
@@ -2387,3 +2390,172 @@ class TestKanbanReconciliation:
         assert row["kanban_column"] == "backlog", (
             f"Expected kanban_column='backlog' (unchanged), got '{row['kanban_column']}'"
         )
+
+
+# ===========================================================================
+# Deepened tests: _derive_expected_kanban boundary values + mutation mindset
+# ===========================================================================
+
+
+class TestDeriveExpectedKanbanDeepened:
+    """Boundary value and mutation tests for _derive_expected_kanban.
+
+    derived_from: dimension:boundary_values, dimension:mutation_mindset
+    """
+
+    def test_derive_expected_kanban_finish_with_none_last_completed(self):
+        """Finish phase with None last_completed should return 'documenting' (in-progress).
+
+        Anticipate: If the special-case check for finish+finish is inverted
+        (checking for None instead of 'finish'), this would incorrectly return
+        'completed'. The function should fall through to FEATURE_PHASE_TO_KANBAN
+        lookup which maps finish -> 'documenting'.
+        derived_from: dimension:boundary_values (finish phase boundary)
+        """
+        # Given a finish phase with no last_completed_phase (None)
+        # When we derive the expected kanban
+        result = _derive_expected_kanban("finish", None)
+        # Then it should be 'documenting' (finish in-progress, not completed)
+        assert result == "documenting"
+
+    def test_derive_expected_kanban_finish_with_implement_last_completed(self):
+        """Finish phase with implement as last_completed returns 'documenting'.
+
+        Anticipate: If the condition is broadened (e.g., any non-None
+        last_completed triggers 'completed'), this test catches it.
+        derived_from: dimension:boundary_values (finish phase mid-range)
+        """
+        # Given finish phase with last_completed='implement' (not finish itself)
+        result = _derive_expected_kanban("finish", "implement")
+        # Then should be 'documenting' — finish not yet completed
+        assert result == "documenting"
+
+    def test_derive_expected_kanban_empty_string_phase(self):
+        """Empty string phase returns None (not in FEATURE_PHASE_TO_KANBAN).
+
+        Anticipate: If empty string is treated as truthy but not found in map,
+        should return None (from dict.get default). If code uses `if not phase`
+        it would return None via the None path. Either way, None is correct.
+        derived_from: dimension:boundary_values (empty string edge)
+        """
+        # Given an empty string phase
+        result = _derive_expected_kanban("", None)
+        # Then should return None (empty string is not a valid phase)
+        assert result is None
+
+    def test_derive_expected_kanban_every_phase_in_sequence(self):
+        """Exhaustive check: every phase in PHASE_SEQUENCE maps to correct kanban.
+
+        Anticipate: If any phase is missing from FEATURE_PHASE_TO_KANBAN,
+        this test catches it with a specific assertion per phase.
+        derived_from: dimension:boundary_values (exhaustive coverage)
+        """
+        from workflow_engine.constants import FEATURE_PHASE_TO_KANBAN
+
+        expected_mapping = {
+            "brainstorm": "backlog",
+            "specify": "backlog",
+            "design": "prioritised",
+            "create-plan": "prioritised",
+            "create-tasks": "prioritised",
+            "implement": "wip",
+            "finish": "documenting",
+        }
+        # Given every phase in the known sequence
+        for phase, expected_kanban in expected_mapping.items():
+            # When we derive expected kanban (with arbitrary last_completed)
+            result = _derive_expected_kanban(phase, None)
+            # Then it matches the FEATURE_PHASE_TO_KANBAN mapping
+            assert result == expected_kanban, (
+                f"Phase '{phase}': expected kanban='{expected_kanban}', got '{result}'"
+            )
+
+
+# ===========================================================================
+# Deepened tests: Kanban drift detection for finish phase variants
+# ===========================================================================
+
+
+class TestKanbanDriftDetectionDeepened:
+    """Adversarial tests for kanban drift detection with finish phase edge cases.
+
+    derived_from: dimension:adversarial (finish phase variants)
+    """
+
+    def test_check_single_feature_detects_kanban_drift_finish_not_completed(self, tmp_path):
+        """Finish phase with implement as last_completed expects 'documenting'.
+        If DB has 'backlog', drift should be detected.
+
+        Anticipate: If drift detection uses a naive finish->completed mapping
+        without checking last_completed_phase, it would expect 'completed'
+        instead of 'documenting'.
+        derived_from: spec:AC-4 (kanban drift detection for finish in-progress)
+        """
+        # Given a feature at finish phase with last_completed='implement'
+        # (not finished yet — finish is current, not completed)
+        # and DB has kanban_column='backlog' (wrong — should be 'documenting')
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="finish",
+            last_completed_phase="implement",
+            mode="standard",
+            kanban_column="backlog",
+        )
+        # Meta uses camelCase keys matching .meta.json format
+        meta = {
+            "status": "active",
+            "mode": "standard",
+            "lastCompletedPhase": "implement",
+        }
+
+        # When we check for drift
+        report = _check_single_feature(engine, db, type_id, meta)
+
+        # Then kanban drift is detected: expected 'documenting', got 'backlog'
+        kanban_mismatches = [m for m in report.mismatches if m.field == "kanban_column"]
+        assert len(kanban_mismatches) == 1, (
+            f"Expected 1 kanban_column mismatch, got {len(kanban_mismatches)}. "
+            f"All mismatches: {report.mismatches}"
+        )
+        assert kanban_mismatches[0].meta_json_value == "documenting"
+        assert kanban_mismatches[0].db_value == "backlog"
+
+    def test_check_single_feature_detects_kanban_drift_finish_completed(self, tmp_path):
+        """Finish phase with finish as last_completed expects 'completed'.
+        If DB has 'documenting', drift should be detected.
+
+        Anticipate: If the code omits the finish+finish special case from
+        drift detection, it would expect 'documenting' (from the map) and
+        not flag the mismatch properly.
+        derived_from: spec:AC-4 (kanban drift detection for completed finish)
+        """
+        # Given a feature at finish phase with last_completed='finish' (fully completed)
+        # Status must be 'completed' for _derive_state_from_meta to set
+        # last_completed to 'finish' (completed status path)
+        # and DB has kanban_column='documenting' (wrong — should be 'completed')
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="finish",
+            last_completed_phase="finish",
+            mode="standard",
+            kanban_column="documenting",
+        )
+        # Meta uses camelCase keys matching .meta.json format
+        # status='completed' triggers the completed path in _derive_state_from_meta
+        meta = {
+            "status": "completed",
+            "mode": "standard",
+            "lastCompletedPhase": "finish",
+        }
+
+        # When we check for drift
+        report = _check_single_feature(engine, db, type_id, meta)
+
+        # Then kanban drift is detected: expected 'completed', got 'documenting'
+        kanban_mismatches = [m for m in report.mismatches if m.field == "kanban_column"]
+        assert len(kanban_mismatches) == 1, (
+            f"Expected 1 kanban_column mismatch, got {len(kanban_mismatches)}. "
+            f"All mismatches: {report.mismatches}"
+        )
+        assert kanban_mismatches[0].meta_json_value == "completed"
+        assert kanban_mismatches[0].db_value == "documenting"

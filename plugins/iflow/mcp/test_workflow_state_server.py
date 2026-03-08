@@ -5884,3 +5884,187 @@ class TestKanbanColumnLifecycle:
         wp = db.get_workflow_phase(type_id)
         assert wp is not None
         assert wp["kanban_column"] == "prioritised"
+
+
+class TestKanbanColumnLifecycleDeepened:
+    """Deepened tests for kanban column lifecycle across init, transition, and complete.
+
+    Covers: adversarial (non-feature entities), mutation mindset (wrong field used),
+    BDD (init completed/abandoned), boundary (degraded backfill phases).
+
+    derived_from: feature:036 — Kanban Column Lifecycle Fix
+    """
+
+    def _setup_feature(self, db, tmp_path, feature_num, slug, phase, kanban="backlog"):
+        """Helper: register entity, create workflow phase, return engine."""
+        feature_dir = os.path.join(str(tmp_path), "features", f"{feature_num}-{slug}")
+        os.makedirs(feature_dir, exist_ok=True)
+        type_id = f"feature:{feature_num}-{slug}"
+        with open(os.path.join(feature_dir, ".meta.json"), "w") as f:
+            json.dump({
+                "id": str(feature_num), "slug": slug, "status": "active",
+                "mode": "standard", "branch": f"feature/{feature_num}-{slug}",
+                "phase_timing": {},
+            }, f)
+        db.register_entity(
+            "feature", f"{feature_num}-{slug}", slug,
+            artifact_path=feature_dir, status="active",
+            metadata={
+                "id": str(feature_num), "slug": slug, "mode": "standard",
+                "branch": "", "phase_timing": {},
+            },
+        )
+        db.create_workflow_phase(type_id, workflow_phase=phase, kanban_column=kanban)
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        return engine, type_id
+
+    # -- BDD: init completed/abandoned status (outline 13, 14) ---------------
+
+    def test_init_feature_state_completed_status_sets_kanban_completed(self, db, tmp_path):
+        """Init with status='completed' should set kanban_column to 'completed'.
+
+        Anticipate: If STATUS_TO_KANBAN is missing the 'completed' key or
+        the update_workflow_phase call is skipped, kanban stays at default 'backlog'.
+        derived_from: spec:AC-6 (init-time kanban from status)
+        """
+        # Given a feature directory with status 'completed'
+        engine = WorkflowStateEngine(db=db, artifacts_root=str(tmp_path))
+        feat_dir = os.path.join(str(tmp_path), "features", "300-comp-test")
+        os.makedirs(feat_dir, exist_ok=True)
+
+        # When init_feature_state is called with completed status
+        result = _process_init_feature_state(
+            db, engine, feat_dir, "300", "comp-test", "standard", "main",
+            None, None, "completed", artifacts_root=str(tmp_path),
+        )
+        data = json.loads(result)
+        assert data["created"] is True
+
+        # Then kanban_column is 'completed'
+        wp = db.get_workflow_phase("feature:300-comp-test")
+        assert wp is not None, "workflow_phase row should exist after init"
+        assert wp["kanban_column"] == "completed"
+
+    def test_init_feature_state_abandoned_status_sets_kanban_completed(self, db, tmp_path):
+        """Init with status='abandoned' should set kanban_column to 'completed'.
+
+        Anticipate: 'abandoned' maps to 'completed' in STATUS_TO_KANBAN.
+        If the mapping is missing, kanban would stay at 'backlog'.
+        derived_from: spec:AC-6 (init-time kanban from status)
+        """
+        # Given a feature directory with status 'abandoned'
+        engine = WorkflowStateEngine(db=db, artifacts_root=str(tmp_path))
+        feat_dir = os.path.join(str(tmp_path), "features", "301-aband-test")
+        os.makedirs(feat_dir, exist_ok=True)
+
+        # When init_feature_state is called with abandoned status
+        result = _process_init_feature_state(
+            db, engine, feat_dir, "301", "aband-test", "standard", "main",
+            None, None, "abandoned", artifacts_root=str(tmp_path),
+        )
+        data = json.loads(result)
+        assert data["created"] is True
+
+        # Then kanban_column is 'completed' (abandoned -> completed kanban)
+        wp = db.get_workflow_phase("feature:301-aband-test")
+        assert wp is not None, "workflow_phase row should exist after init"
+        assert wp["kanban_column"] == "completed"
+
+    # -- Mutation mindset: complete_finish is 'completed' not 'documenting' (outline 10) --
+
+    def test_complete_finish_kanban_is_completed_not_documenting(self, db, tmp_path):
+        """Completing finish must set kanban to 'completed', not 'documenting'.
+
+        Anticipate: If complete_phase uses FEATURE_PHASE_TO_KANBAN[state.current_phase]
+        instead of the special-case 'completed' for finish, kanban would be
+        'documenting' (the map value for 'finish').
+        derived_from: dimension:mutation_mindset (arithmetic swap)
+        """
+        # Given a feature at finish phase with kanban='documenting'
+        engine, type_id = self._setup_feature(
+            db, tmp_path, 304, "mut-finish", "finish", kanban="documenting",
+        )
+
+        # When finish is completed
+        result = _process_complete_phase(
+            engine, type_id, "finish",
+            db=db, iterations=None, reviewer_notes=None,
+        )
+        data = json.loads(result)
+        assert "error" not in data
+
+        # Then kanban is 'completed' (NOT 'documenting')
+        wp = db.get_workflow_phase(type_id)
+        assert wp is not None
+        assert wp["kanban_column"] == "completed", (
+            f"Expected 'completed' for finished feature, got '{wp['kanban_column']}'"
+        )
+
+    # -- Mutation mindset: transition uses target_phase not current_phase (outline 11) --
+
+    def test_transition_uses_target_phase_not_current_phase(self, db, tmp_path):
+        """Transition kanban must come from the TARGET phase, not the source.
+
+        Anticipate: If code uses current_phase for FEATURE_PHASE_TO_KANBAN lookup
+        instead of target_phase, kanban would stay 'backlog' (specify's column)
+        instead of becoming 'prioritised' (design's column).
+        derived_from: dimension:mutation_mindset (return value mutation)
+        """
+        # Given feature at 'specify' (kanban='backlog')
+        engine, type_id = self._setup_feature(
+            db, tmp_path, 305, "mut-trans", "specify", kanban="backlog",
+        )
+        feat_dir = os.path.join(str(tmp_path), "features", "305-mut-trans")
+        with open(os.path.join(feat_dir, "spec.md"), "w") as f:
+            f.write("# Spec\n")
+        db.update_entity(
+            type_id, artifact_path=feat_dir,
+            metadata={"id": "305", "slug": "mut-trans", "mode": "standard",
+                       "branch": "feature/305-mut-trans"},
+        )
+
+        # When transitioning to 'design'
+        result = _process_transition_phase(
+            engine, type_id, "design", yolo_active=False,
+            db=db, skipped_phases=None,
+        )
+        data = json.loads(result)
+        assert data["transitioned"] is True
+
+        # Then kanban is from target phase ('design' -> 'prioritised'),
+        # not source ('specify' -> 'backlog')
+        wp = db.get_workflow_phase(type_id)
+        assert wp is not None
+        assert wp["kanban_column"] == "prioritised", (
+            f"Expected 'prioritised' from target phase, got '{wp['kanban_column']}'"
+        )
+
+    # -- Mutation mindset: complete non-finish uses current_phase (next) (outline 12) --
+
+    def test_complete_uses_state_current_phase_not_completed_phase(self, db, tmp_path):
+        """Completing specify should use current_phase (=design after advance) for kanban.
+
+        Anticipate: If complete_phase used the completed phase ('specify') for
+        kanban lookup, kanban would be 'backlog' instead of 'prioritised'.
+        derived_from: dimension:mutation_mindset (return value mutation)
+        """
+        # Given feature at 'specify' with kanban='backlog'
+        engine, type_id = self._setup_feature(
+            db, tmp_path, 306, "mut-comp", "specify", kanban="backlog",
+        )
+
+        # When specify is completed (advances to design)
+        result = _process_complete_phase(
+            engine, type_id, "specify",
+            db=db, iterations=None, reviewer_notes=None,
+        )
+        data = json.loads(result)
+        assert data["current_phase"] == "design"
+
+        # Then kanban is from the NEW current_phase ('design' -> 'prioritised'),
+        # not the completed phase ('specify' -> 'backlog')
+        wp = db.get_workflow_phase(type_id)
+        assert wp is not None
+        assert wp["kanban_column"] == "prioritised", (
+            f"Expected 'prioritised' from new current_phase, got '{wp['kanban_column']}'"
+        )

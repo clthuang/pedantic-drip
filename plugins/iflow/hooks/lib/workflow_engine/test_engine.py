@@ -4227,3 +4227,115 @@ class TestCompletePhaseFallbackLogsToStderr:
         assert "DB write failed in complete_phase" in captured.err
         assert "disk full" in captured.err
         assert type_id in captured.err
+
+
+# ===========================================================================
+# Feature 036: Kanban Column Lifecycle Fix
+# ===========================================================================
+
+
+class TestDegradedModeBackfillSetsKanbanFromPhase:
+    """Backfill via _hydrate_from_meta_json should derive kanban_column from
+    the current phase using FEATURE_PHASE_TO_KANBAN, not default to 'backlog'.
+
+    derived_from: feature:036, requirement:R8
+    """
+
+    def test_degraded_mode_backfill_sets_kanban_from_phase(
+        self, tmp_path
+    ) -> None:
+        """When get_state triggers hydration from .meta.json with
+        last_completed_phase='design', current_phase resolves to 'create-plan'
+        and kanban_column should be 'prioritised' (not 'backlog').
+        """
+        # Given: DB with registered entity, no workflow_phases row,
+        # and .meta.json with last_completed_phase="design"
+        db = _make_db()
+        slug = "036-kanban-fix"
+        type_id = _register_feature(db, slug)
+        _create_meta_json(
+            tmp_path, slug, status="active",
+            last_completed_phase="design",
+        )
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        # When: get_state triggers degraded-mode backfill (no DB row exists)
+        state = engine.get_state(type_id)
+
+        # Then: state was hydrated successfully
+        assert state is not None
+        assert state.current_phase == "create-plan"
+
+        # And: the backfilled DB row has kanban_column derived from the phase
+        row = db.get_workflow_phase(type_id)
+        assert row is not None
+        assert row["kanban_column"] == "prioritised"
+
+
+class TestDegradedModeBackfillSetsKanbanFromPhaseDeepened:
+    """Deepened tests for degraded-mode backfill kanban column derivation.
+
+    Tests additional phases beyond create-plan to ensure FEATURE_PHASE_TO_KANBAN
+    is consistently applied during hydration from .meta.json.
+
+    derived_from: feature:036, dimension:bdd_scenarios, dimension:boundary_values
+    """
+
+    def test_degraded_backfill_implement_phase_sets_wip(self, tmp_path) -> None:
+        """Backfill with last_completed_phase='create-tasks' resolves to
+        current_phase='implement' and kanban_column should be 'wip'.
+
+        Anticipate: If FEATURE_PHASE_TO_KANBAN is missing 'implement' or
+        the backfill defaults to 'backlog', this test catches it.
+        derived_from: spec:R8 (degraded backfill kanban)
+        """
+        # Given: registered entity, no workflow_phases row,
+        # .meta.json with last_completed_phase="create-tasks"
+        db = _make_db()
+        slug = "036-backfill-impl"
+        type_id = _register_feature(db, slug)
+        _create_meta_json(
+            tmp_path, slug, status="active",
+            last_completed_phase="create-tasks",
+        )
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        # When: get_state triggers hydration
+        state = engine.get_state(type_id)
+
+        # Then: current_phase is 'implement', kanban is 'wip'
+        assert state is not None
+        assert state.current_phase == "implement"
+        row = db.get_workflow_phase(type_id)
+        assert row is not None
+        assert row["kanban_column"] == "wip"
+
+    def test_degraded_backfill_finish_phase_sets_documenting(self, tmp_path) -> None:
+        """Backfill with last_completed_phase='implement' resolves to
+        current_phase='finish' and kanban_column should be 'documenting'.
+
+        Anticipate: If the code maps finish to 'completed' without checking
+        last_completed_phase, this test catches it. Backfill should use
+        FEATURE_PHASE_TO_KANBAN which maps finish -> 'documenting'.
+        derived_from: spec:R8 (degraded backfill kanban)
+        """
+        # Given: registered entity, no workflow_phases row,
+        # .meta.json with last_completed_phase="implement"
+        db = _make_db()
+        slug = "036-backfill-finish"
+        type_id = _register_feature(db, slug)
+        _create_meta_json(
+            tmp_path, slug, status="active",
+            last_completed_phase="implement",
+        )
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        # When: get_state triggers hydration
+        state = engine.get_state(type_id)
+
+        # Then: current_phase is 'finish', kanban is 'documenting'
+        assert state is not None
+        assert state.current_phase == "finish"
+        row = db.get_workflow_phase(type_id)
+        assert row is not None
+        assert row["kanban_column"] == "documenting"
