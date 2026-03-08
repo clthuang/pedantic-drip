@@ -14,7 +14,7 @@
 - Write `test_sanitize_id_regex_safe`: result matches `^[a-zA-Z_][a-zA-Z0-9_]*$`
 - Write `test_sanitize_id_digit_prefix`: `_sanitize_id("1abc")` starts with `n`
 - Write `test_sanitize_id_o_x_prefix`: `_sanitize_id("order")` and `_sanitize_id("xray")` start with `n`
-**Done when:** Tests exist and fail with `ImportError` (module not yet created)
+**Done when:** Test file created; pytest reports collection/import errors (module not yet created). Proceeding to Task 1.3 resolves this.
 **Depends on:** none
 
 ### Task 1.2: Write tests for `_sanitize_label`
@@ -76,7 +76,7 @@
 - Step 5: emit classDef blocks for each type in `_ENTITY_TYPE_STYLES` + `classDef current {_CURRENT_STYLE}`
 - Step 6: emit class assignments — `class {safe_id} current` for entity, `class {safe_id} {entity_type}` for others (default to `feature` if entity_type not in `_KNOWN_ENTITY_TYPES`)
 - Join all lines with `\n`
-**Done when:** `PYTHONPATH="plugins/iflow/hooks/lib:plugins/iflow" plugins/iflow/.venv/bin/python -m pytest plugins/iflow/ui/tests/test_mermaid.py -v` — all ~23 tests pass
+**Done when:** `PYTHONPATH="plugins/iflow/hooks/lib:plugins/iflow" plugins/iflow/.venv/bin/python -m pytest plugins/iflow/ui/tests/test_mermaid.py -v` — all 22 tests pass (10 from Phase 1 + 12 from Task 2.1)
 **Depends on:** Task 2.1
 
 ---
