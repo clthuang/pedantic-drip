@@ -136,9 +136,7 @@ T8: Integration verification
 
 **Implement:**
 
-**Insertion point:** Add `elif entity_type in ("brainstorm", "backlog"):` block after the existing `if entity_type == "feature":` block (after line ~256), with `continue` at the end to skip the generic INSERT OR IGNORE. This is an `elif` — brainstorm/backlog entities never reach the STATUS_TO_KANBAN lookup (line ~200) or generic INSERT because the new block handles them completely.
-
-**Wait — STATUS_TO_KANBAN runs BEFORE the feature block (line 200).** Brainstorm/backlog entities with statuses like `"draft"` will hit the STATUS_TO_KANBAN check first (line 201) and get a spurious warning + default to `"planned"`. To fix this, add an early-exit guard **before** the STATUS_TO_KANBAN lookup (before line 200):
+**Insertion point:** Add an early-exit guard **before** the STATUS_TO_KANBAN lookup (before line 200). STATUS_TO_KANBAN runs before the feature block, so brainstorm/backlog entities with statuses like `"draft"` would get spurious warnings if they reached it. The early-exit guard handles all 3 cases and `continue`s, preventing brainstorm/backlog from reaching STATUS_TO_KANBAN or the feature block:
 
 ```python
 # Early handling for brainstorm/backlog — skip STATUS_TO_KANBAN
@@ -188,7 +186,7 @@ if entity_type in ("brainstorm", "backlog"):
 
     # Case 1: no row → INSERT inline (do NOT fall through — subsequent
     # code would overwrite workflow_phase/kanban_column via STATUS_TO_KANBAN)
-    db._conn.execute(
+    cursor = db._conn.execute(
         "INSERT OR IGNORE INTO workflow_phases "
         "(type_id, kanban_column, workflow_phase, "
         "last_completed_phase, mode, "
@@ -196,7 +194,10 @@ if entity_type in ("brainstorm", "backlog"):
         "VALUES (?, ?, ?, ?, ?, ?, ?)",
         (type_id, kanban_column, workflow_phase, None, None, None, db._now_iso()),
     )
-    created += 1
+    if cursor.rowcount > 0:
+        created += 1
+    else:
+        skipped += 1  # concurrent insert won the race
     continue
 ```
 
