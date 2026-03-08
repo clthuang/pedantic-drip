@@ -43,7 +43,7 @@ Only applies when `transitioned == True` and `db is not None` and entity type is
 1. Checking if `feature_type_id` starts with `"feature:"`
 2. Determining the kanban column:
    - If `phase == "finish"`: kanban_column = `"completed"` (terminal state)
-   - Otherwise: after `engine.complete_phase()` returns the new state, use `state.current_phase` (which is the phase the feature has transitioned INTO after completion) as the lookup key in `FEATURE_PHASE_TO_KANBAN`
+   - Otherwise: after `engine.complete_phase()` returns the new state, use `state.current_phase` (which is the phase the feature has transitioned INTO after completion) as the lookup key in `FEATURE_PHASE_TO_KANBAN`. If `state.current_phase` is not in `FEATURE_PHASE_TO_KANBAN`, log a warning and leave kanban_column unchanged.
 3. Calling `db.update_workflow_phase(feature_type_id, kanban_column=mapped_column)`
 
 Only applies when `db is not None` and entity type is `"feature"`.
@@ -79,7 +79,7 @@ Provide a one-time SQL remediation that fixes existing stale `kanban_column` val
 3. Only update rows where `type_id LIKE 'feature:%'`
 4. Be idempotent (safe to run multiple times)
 
-This can be a standalone script or integrated into the backfill module's existing `backfill_workflow_phases()` function as an UPDATE pass.
+Implement as a standalone script at `scripts/fix_kanban_columns.py` (preferred for one-time operations — keeps backfill.py focused on initial population).
 
 ### R8: Engine Degraded-Mode Backfill Passes Kanban Column
 
@@ -92,6 +92,7 @@ This can be a standalone script or integrated into the backfill module's existin
 - AC-1: After `transition_phase("feature:X", "implement")`, the `workflow_phases` row for `feature:X` has `kanban_column="wip"`.
 - AC-2: After `complete_phase("feature:X", "finish")`, the `workflow_phases` row for `feature:X` has `kanban_column="completed"`.
 - AC-3: After `complete_phase("feature:X", "specify")`, the `workflow_phases` row for `feature:X` has `kanban_column="prioritised"` (mapped from `state.current_phase == "design"` after completion).
+- AC-3b: After `complete_phase("feature:X", "design")`, the `workflow_phases` row has `kanban_column="prioritised"` (mapped from `state.current_phase == "create-plan"` after completion).
 - AC-4: `reconcile_check()` detects kanban_column mismatch as a `WorkflowMismatch` with `field="kanban_column"`.
 - AC-5: `reconcile_apply()` corrects kanban_column when `meta_json_ahead`.
 - AC-6: A newly created active feature via `init_feature_state` has `kanban_column="wip"` (not `"backlog"`).

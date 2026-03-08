@@ -1,0 +1,17 @@
+{
+  "id": "036",
+  "slug": "kanban-column-lifecycle-fix",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-03-08T19:53:36.043914+00:00",
+  "branch": "feature/036-kanban-column-lifecycle-fix",
+  "lastCompletedPhase": null,
+  "phases": {
+    "brainstorm": {
+      "started": "2026-03-08T19:53:36.043853+00:00"
+    },
+    "specify": {
+      "started": "2026-03-08T19:54:07.361369+00:00"
+    }
+  }
+}
