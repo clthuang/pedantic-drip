@@ -205,6 +205,22 @@ def _process_init_entity_workflow(
     if entity is None:
         raise ValueError(f"entity_not_found: {type_id}")
 
+    # 1b. Validate workflow_phase/kanban_column against ENTITY_MACHINES
+    if ":" in type_id:
+        entity_type = type_id.split(":", 1)[0]
+        if entity_type in ENTITY_MACHINES:
+            machine = ENTITY_MACHINES[entity_type]
+            if workflow_phase not in machine["columns"]:
+                raise ValueError(
+                    f"invalid_transition: {workflow_phase} is not a valid phase for {entity_type}"
+                )
+            expected_column = machine["columns"][workflow_phase]
+            if kanban_column != expected_column:
+                raise ValueError(
+                    f"invalid_transition: kanban_column {kanban_column} does not match "
+                    f"expected {expected_column} for phase {workflow_phase}"
+                )
+
     # 2. Check idempotency — existing row means no-op (preserves MCP-managed state)
     existing = db._conn.execute(
         "SELECT workflow_phase, kanban_column FROM workflow_phases WHERE type_id = ?",
@@ -278,6 +294,11 @@ def _process_transition_entity_phase(
     if row is None:
         raise ValueError(f"entity_not_found: no workflow_phases row for {type_id}")
     current_phase = row["workflow_phase"]
+    if current_phase is None:
+        raise ValueError(
+            f"invalid_transition: {type_id} has NULL current_phase — "
+            "call init_entity_workflow first"
+        )
 
     # 5. Validate transition
     machine = ENTITY_MACHINES[entity_type]
@@ -343,6 +364,8 @@ async def transition_entity_phase(type_id: str, target_phase: str) -> str:
 
 **Current code (line 224):** `workflow_phase = None` for non-feature entities.
 
+**Ordering fix:** The brainstorm/backlog early-exit block below must be placed **BEFORE** the existing `STATUS_TO_KANBAN` lookup (line ~225). Currently, non-feature entities with statuses like `"draft"` or `"open"` fall through to `STATUS_TO_KANBAN.get(status)` which returns `None` and triggers a log warning. By handling brainstorm/backlog entities first and `continue`-ing, we avoid spurious warnings.
+
 **New logic:**
 ```python
 if entity_type == "feature":
@@ -371,6 +394,8 @@ elif entity_type in ("brainstorm", "backlog"):
 The rest of the function (INSERT OR IGNORE) handles the actual row creation. The `continue` on existing non-null rows short-circuits to skip the INSERT.
 
 **Child-completion override** remains at line 210-221 — it runs before this new block, and `kanban_column` may be overridden to `"completed"` regardless of the derived phase.
+
+**Known v1 limitation:** The `continue` on non-null `workflow_phase` (step "Preserve MCP-managed state") will skip the entity even if the child-completion override would change `kanban_column` to `"completed"`. This means a brainstorm/backlog whose MCP-managed phase was set early won't get its `kanban_column` updated by backfill when all children complete. Acceptable because: (1) brainstorms rarely have children at the time of backfill, (2) the `transition_entity_phase` MCP tool handles lifecycle transitions for actively-managed entities, and (3) a future backfill enhancement can reconcile kanban_column post-hoc if needed.
 
 ### C7: UI Card Template Update
 
@@ -479,6 +504,10 @@ PHASE_COLORS = {
 **File:** `plugins/iflow/commands/add-to-backlog.md`
 
 **Changes:** After markdown row append, add `register_entity` + `init_entity_workflow` calls with error handling.
+
+**File:** `plugins/iflow/commands/cleanup-brainstorms.md`
+
+**No changes required.** `cleanup-brainstorms` is a file listing/deletion utility — it operates on `.prd.md` files only. It does not interact with entities, workflow_phases, or MCP tools. If a brainstorm file is deleted via this command, the `brainstorm:*` entity and its `workflow_phases` row remain in the DB as orphaned records (harmless — the entity registry has no FK to the filesystem). A future cleanup-entities command could garbage-collect these, but that's out of scope for this feature.
 
 ## Technical Decisions
 
