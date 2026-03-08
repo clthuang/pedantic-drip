@@ -277,6 +277,7 @@ async def complete_phase(
 - [ ] Log file created on first write (no pre-creation needed, `mkdir -p` + `>>` handles it)
 - [ ] Log entries are valid JSONL (one JSON object per line)
 - [ ] Feature ID extracted from path where possible
+- [ ] Calling command NOT logged (unavailable in PreToolUse hook context — documented deviation from FR-11)
 
 ### 4. New MCP Tools Summary
 
@@ -311,7 +312,7 @@ def _project_meta_json(feature_type_id: str, feature_dir: str | None = None) -> 
     """
 ```
 
-**Directory resolution:** For tools that don't have `feature_dir` as a parameter (e.g., `transition_phase`, `complete_phase`), the MCP server resolves it via `db.get_entity(feature_type_id).artifact_path` (existing field in entity registry, populated during `register_entity`).
+**Directory resolution:** For tools that don't have `feature_dir` as a parameter (e.g., `transition_phase`, `complete_phase`), the MCP server resolves it via `db.get_entity(feature_type_id).artifact_path` (existing field in entity registry, populated during `register_entity`). If `artifact_path` is `None` or empty, `_project_meta_json` logs a warning and returns without writing (DB state is preserved). The MCP tool response includes a warning: `"artifact_path not set for entity"`.
 
 **Fields projected:**
 - `id`, `slug` — from entity metadata
