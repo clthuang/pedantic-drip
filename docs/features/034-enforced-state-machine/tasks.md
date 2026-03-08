@@ -3,7 +3,10 @@
 ## Dependency Graph
 
 ```
-Phase A (parallel):  T0.1  T1.1─T1.2  T3.1─T3.2─T3.3─T3.4  T5.1─T5.2─T5.3
+Phase A (parallel):  T0.1  T1.1─T1.2  T3.1─T3.2─T3.3  T5.1
+                                  │                           │
+                                  ▼                           ▼
+Phase A→B bridge:               T1.2─────────────────────→T5.2─T5.3
                        │      │
                        ▼      ▼
 Phase B:             T2.1─T2.2─T2.3─T2.4
@@ -25,7 +28,7 @@ Phase E:             T10.1─T10.2
 ### T0.1: Add `_iso_now()` utility + tests
 **File:** `plugins/iflow/mcp/workflow_state_server.py`, `plugins/iflow/mcp/test_workflow_state_server.py`
 **Do:**
-1. Add `from datetime import datetime, timezone` import
+1. Run `grep -n "from datetime import" plugins/iflow/mcp/workflow_state_server.py` — add import only if absent
 2. Add `def _iso_now() -> str: return datetime.now(timezone.utc).isoformat()`
 3. Write tests: returns ISO 8601 string, contains `+00:00` or `Z` suffix
 **Done when:** Tests pass, `_iso_now()` callable
@@ -55,52 +58,44 @@ Phase E:             T10.1─T10.2
 
 ---
 
-### T3.1: Study existing hook test patterns
+### T3.1: Write `meta-json-guard.sh` deny/allow tests (RED)
 **File:** `plugins/iflow/hooks/tests/test-hooks.sh`
 **Do:**
-1. Read `test-hooks.sh` to find how existing hooks are tested (stdin piping, stdout assertions)
-2. Note the test helper functions and assertion patterns available
-**Done when:** Test approach documented mentally, ready to write tests
-
----
-
-### T3.2: Write `meta-json-guard.sh` deny/allow tests (RED)
-**File:** `plugins/iflow/hooks/tests/test-hooks.sh`
-**Do:**
+0. Read existing `test-hooks.sh` to understand stdin piping and assertion patterns before writing tests
 1. Add test function: pipe Write + `.meta.json` stdin → assert stdout contains `permissionDecision.*deny`
 2. Add test: pipe Edit + `.meta.json` stdin → assert deny
 3. Add test: pipe Write + `projects/XXX/.meta.json` → assert deny
 4. Add test: pipe Write + `spec.md` stdin → assert stdout is `{}`
 5. Add test: pipe stdin with `.meta.json` in content but different file_path → assert `{}`
 6. Add test: pipe stdin with no `.meta.json` reference → assert `{}`
-7. Add test: check JSONL log entry created after deny
-8. Add test: feature_id extracted correctly from path
+7. Add test: after deny, check `~/.claude/iflow/meta-json-guard.log` last line is valid JSON with keys `timestamp`, `tool`, `path`, `feature_id` (redirect HOME to temp dir in test)
+8. Add test: feature_id extracted correctly from path (`features/034-foo/.meta.json` → `034-foo`)
 **Done when:** 8 tests written, all FAIL (script doesn't exist)
 
 ---
 
-### T3.3: Implement `meta-json-guard.sh` (GREEN)
+### T3.2: Implement `meta-json-guard.sh` (GREEN)
 **File:** `plugins/iflow/hooks/meta-json-guard.sh`
 **Do:**
 1. Create file with shebang `#!/usr/bin/env bash`, `set -euo pipefail`
 2. Source `lib/common.sh` for `escape_json()`, `install_err_trap()`
 3. Read stdin: `INPUT=$(cat)`
 4. Fast-path: `if [[ "$INPUT" != *".meta.json"* ]]; then echo '{}'; exit 0; fi`
-5. Single python3 call: extract `file_path` + `tool_name` via tab delimiter
+5. Single python3 call per design C1: `IFS=$'\t' read -r FILE_PATH TOOL_NAME < <(echo "$INPUT" | python3 -c ...)` — do NOT use separate python3 calls or jq (design D2 requires single subprocess)
 6. Check `[[ "$FILE_PATH" != *".meta.json" ]]` → allow
 7. `log_blocked_attempt()` function: mkdir -p, extract feature_id via regex, append JSONL
 8. Inline deny JSON via `cat <<EOF`
 9. `chmod +x meta-json-guard.sh`
-**Done when:** T3.2 tests pass, script is executable
+**Done when:** T3.1 tests pass, script is executable
 
 ---
 
-### T3.4: Verify hook latency benchmark
+### T3.3: Verify hook latency benchmark
 **File:** `plugins/iflow/hooks/tests/test-hooks.sh`
 **Do:**
-1. Add timing test: run hook with non-.meta.json input, assert < 200ms (CI threshold)
-2. Locally verify < 50ms for fast-path (NFR-3)
-**Done when:** Latency test passes
+1. Add timing test in `test-hooks.sh`: run hook with non-.meta.json input, assert < 200ms (CI threshold)
+2. Run locally once: `time echo '{"tool_name":"Write","tool_input":{"file_path":"foo.md"}}' | plugins/iflow/hooks/meta-json-guard.sh` → verify real < 0.050s
+**Done when:** CI latency test (< 200ms) passes; NFR-3 (< 50ms) verified once locally
 
 ---
 
@@ -112,7 +107,7 @@ Phase E:             T10.1─T10.2
 3. Test: brainstorm_source included when provided, omitted when None
 4. Test: JSON string params parsed correctly
 5. Test: `@_catch_value_error` catches malformed JSON string for `features`/`milestones`
-6. Test: `.meta.json` has no `phases`, `lastCompletedPhase`, `branch`, `mode` fields
+6. Test: project `.meta.json` contains `id`, `slug`, `status`, `created`, `features` (list), `milestones` (list) — and does NOT contain `phases`, `lastCompletedPhase`, `branch`, `mode` (these are feature-only per design C4)
 **Done when:** All tests written, all FAIL
 
 ---
@@ -143,10 +138,11 @@ Phase E:             T10.1─T10.2
 
 ### T2.1: Write `_project_meta_json()` tests — happy path (RED)
 **File:** `plugins/iflow/mcp/test_workflow_state_server.py`
+**Mock entity shape:** `{"artifact_path": "...", "metadata": json.dumps({"id":"034","slug":"foo","mode":"standard","branch":"feature/034-foo","phase_timing":{...}}), "status": "active", "created_at": "2026-..."}` — metadata is a JSON string (TEXT column), not a dict.
 **Do:**
 1. Add test class `TestProjectMetaJson`
 2. Test: projects correct JSON structure from mock entity dict + mock engine state
-3. Test: `engine=None` → falls back to metadata-only (no engine.get_state call)
+3. Test: `engine=None` → falls back to metadata-only (no `engine.get_state` call); `last_completed` from `metadata.get("last_completed_phase")`
 4. Test: resolves `feature_dir` from `entity["artifact_path"]` when not provided
 5. Test: phase timing with `iterations` and `reviewerNotes` projected correctly
 **Done when:** 4 tests written, all FAIL
@@ -157,7 +153,7 @@ Phase E:             T10.1─T10.2
 **File:** `plugins/iflow/mcp/test_workflow_state_server.py`
 **Do:**
 1. Test: missing entity → returns warning string
-2. Test: write failure (mock `_atomic_json_write` to raise) → returns warning, no exception
+2. Test: write failure → `@patch("<module_path>._atomic_json_write", side_effect=OSError("disk full"))` → returns warning string, no exception raised
 3. Test: optional fields (`brainstorm_source`, `skippedPhases`) only present when set
 4. Test: NULL metadata → uses empty dict, no TypeError
 5. Test: entity with no `artifact_path` and no `feature_dir` param → returns warning
@@ -170,7 +166,7 @@ Phase E:             T10.1─T10.2
 **Do:**
 1. Add function per design C2 with dict-style entity access
 2. `json.loads(entity["metadata"]) if entity["metadata"] else {}` for safe metadata parsing
-3. `if engine is not None: engine_state = engine.get_state(...)` guard
+3. Guard: `if engine is not None: engine_state = engine.get_state(...); last_completed = engine_state.last_completed_phase if engine_state else None` else: `last_completed = metadata.get("last_completed_phase")`
 4. Build `.meta.json` dict: id, slug, mode, status, created, branch, optional fields
 5. Phase timing loop from metadata
 6. `try: _atomic_json_write(...); return None except Exception as exc: return f"projection failed: {exc}"`
@@ -448,10 +444,11 @@ Phase E:             T10.1─T10.2
 
 | Phase | Tasks | Parallel | Depends On |
 |-------|-------|----------|------------|
-| A | T0.1, T1.1-T1.2, T3.1-T3.4, T5.1-T5.3 | Yes | None |
+| A | T0.1, T1.1-T1.2, T3.1-T3.3, T5.1 | Yes | None |
+| A→B | T5.2-T5.3 | No | T1.2 |
 | B | T2.1-T2.4 | No | A (T0.1, T1.2) |
 | C | T4.1-T4.3, T6.1-T6.2, T7.1-T7.3, T8.1-T8.3 | Yes | B (T2.3) |
 | D | T9.1-T9.9 | Sequential | C (all) |
-| E | T10.1-T10.2 | No | D + T3.3 |
+| E | T10.1-T10.2 | No | D + T3.2 |
 
-**Total:** 37 tasks across 5 phases
+**Total:** 36 tasks across 5 phases
