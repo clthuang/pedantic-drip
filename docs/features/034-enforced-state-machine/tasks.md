@@ -108,6 +108,7 @@ Phase E:             T10.1─T10.2
 4. Test: JSON string params parsed correctly
 5. Test: `@_catch_value_error` catches malformed JSON string for `features`/`milestones`
 6. Test: project `.meta.json` contains `id`, `slug`, `status`, `created`, `features` (list), `milestones` (list) — and does NOT contain `phases`, `lastCompletedPhase`, `branch`, `mode` (these are feature-only per design C4)
+7. Test: mock `_atomic_json_write` to verify it is called with correct path and dict (not `open()` + `json.dump()` directly)
 **Done when:** All tests written, all FAIL
 
 ---
@@ -118,7 +119,7 @@ Phase E:             T10.1─T10.2
 1. Add `_process_init_project_state(db, project_dir, project_id, slug, features, milestones, brainstorm_source)` per design C4
 2. `@_with_error_handling` + `@_catch_value_error` decorators
 3. `json.loads(features)`, `json.loads(milestones)` for param parsing
-4. `db.register_entity(entity_type="project", entity_id=project_id, name=slug, artifact_path=project_dir, status="active", metadata={"id": project_id, "slug": slug, "features": features_list, "milestones": milestones_list})` — type_id resolves to `project:{project_id}`
+4. `db.register_entity(entity_type="project", entity_id=project_id, name=slug, artifact_path=project_dir, status="active", metadata={"id": project_id, "slug": slug, "features": features_list, "milestones": milestones_list})` — internally computes `type_id = "project:{project_id}"`
 5. Build project `.meta.json` dict, call `_atomic_json_write()`
 **Done when:** T5.1 tests pass
 
@@ -153,7 +154,7 @@ Phase E:             T10.1─T10.2
 **File:** `plugins/iflow/mcp/test_workflow_state_server.py`
 **Do:**
 1. Test: missing entity → returns warning string
-2. Test: write failure → `@patch("<module_path>._atomic_json_write", side_effect=OSError("disk full"))` → returns warning string, no exception raised
+2. Test: write failure → `@patch("workflow_state_server._atomic_json_write", side_effect=OSError("disk full"))` → returns warning string, no exception raised
 3. Test: optional fields (`brainstorm_source`, `skippedPhases`) only present when set
 4. Test: NULL metadata → uses empty dict, no TypeError
 5. Test: entity with no `artifact_path` and no `feature_dir` param → returns warning
@@ -337,8 +338,8 @@ Phase E:             T10.1─T10.2
 ### T9.2: Update `skills/decomposing/SKILL.md` — planned features (Site 2)
 **File:** `plugins/iflow/skills/decomposing/SKILL.md`
 **Do:**
-1. Find Write instruction for planned feature `.meta.json` (~lines 224-239)
-2. Replace with `init_feature_state(feature_dir, feature_id, slug, mode, branch, status="planned")` call
+1. Run `grep -n 'Write.*meta.json\|\.meta\.json' plugins/iflow/skills/decomposing/SKILL.md` to find exact lines
+2. Replace planned feature `.meta.json` Write instruction with `init_feature_state(feature_dir, feature_id, slug, mode, branch, status="planned")` call
 **Verify:** Check file for remaining `.meta.json` write instructions
 **Done when:** Planned feature creation uses MCP tool
 
@@ -347,7 +348,7 @@ Phase E:             T10.1─T10.2
 ### T9.3: Update `skills/decomposing/SKILL.md` — project .meta.json (Site 3)
 **File:** `plugins/iflow/skills/decomposing/SKILL.md`
 **Do:**
-1. Find Write instruction for project `.meta.json` (~lines 282-292)
+1. Run `grep -n 'Write.*meta.json\|project.*meta\.json' plugins/iflow/skills/decomposing/SKILL.md` to find project `.meta.json` write
 2. Replace with `init_project_state(project_dir, project_id, slug, features, milestones, brainstorm_source)` call
 **Verify:** `grep -n 'Write.*meta.json\|Edit.*meta.json' plugins/iflow/skills/decomposing/SKILL.md` returns empty
 **Done when:** No direct `.meta.json` write instructions remain in file
@@ -357,7 +358,7 @@ Phase E:             T10.1─T10.2
 ### T9.4: Update `skills/workflow-state/SKILL.md` — planned→active (Site 4)
 **File:** `plugins/iflow/skills/workflow-state/SKILL.md`
 **Do:**
-1. Find Edit instruction for status planned→active (~lines 41-46)
+1. Run `grep -n 'Edit.*meta.json\|planned.*active\|status.*active' plugins/iflow/skills/workflow-state/SKILL.md` to find planned→active Edit
 2. Replace with `activate_feature(feature_type_id)` call
 **Done when:** Status transition uses MCP tool
 
@@ -366,7 +367,7 @@ Phase E:             T10.1─T10.2
 ### T9.5: Update `skills/workflow-state/SKILL.md` — skippedPhases (Site 5)
 **File:** `plugins/iflow/skills/workflow-state/SKILL.md`
 **Do:**
-1. Find Edit instruction for `skippedPhases` array (~lines 117-120)
+1. Run `grep -n 'skippedPhases\|Edit.*meta.json' plugins/iflow/skills/workflow-state/SKILL.md` to find skippedPhases Edit
 2. Replace with `transition_phase(feature_type_id, target_phase, yolo_active, skipped_phases=json_string)` call
 **Verify:** `grep -n 'Write.*meta.json\|Edit.*meta.json' plugins/iflow/skills/workflow-state/SKILL.md` returns empty
 **Done when:** No direct `.meta.json` write instructions remain in file
@@ -376,7 +377,7 @@ Phase E:             T10.1─T10.2
 ### T9.6: Update `skills/workflow-transitions/SKILL.md` — phase started (Site 6)
 **File:** `plugins/iflow/skills/workflow-transitions/SKILL.md`
 **Do:**
-1. Find Edit instruction for `phases.{name}.started` (~lines 109-118)
+1. Run `grep -n 'Edit.*meta.json\|\.started\|phase.*started' plugins/iflow/skills/workflow-transitions/SKILL.md` to find phase-started Edit
 2. Remove — `transition_phase()` now stores started timestamp automatically via `_project_meta_json()`
 3. Update surrounding text to note the timestamp comes from MCP response `started_at` field
 **Done when:** No direct phase-started Edit instruction remains
@@ -386,7 +387,7 @@ Phase E:             T10.1─T10.2
 ### T9.7: Update `skills/workflow-transitions/SKILL.md` — phase completed (Site 7)
 **File:** `plugins/iflow/skills/workflow-transitions/SKILL.md`
 **Do:**
-1. Find Edit instruction for `phases.{name}.completed`, `iterations`, `reviewerNotes`, `lastCompletedPhase` (~lines 206-217)
+1. Run `grep -n 'Edit.*meta.json\|\.completed\|lastCompletedPhase\|reviewerNotes' plugins/iflow/skills/workflow-transitions/SKILL.md` to find phase-completed Edit
 2. Remove — `complete_phase()` now stores timing data + projects `.meta.json` automatically
 3. Update surrounding text to note `complete_phase(feature_type_id, phase, iterations, reviewer_notes)` handles this
 **Verify:** `grep -n 'Write.*meta.json\|Edit.*meta.json' plugins/iflow/skills/workflow-transitions/SKILL.md` returns empty
@@ -397,7 +398,7 @@ Phase E:             T10.1─T10.2
 ### T9.8: Update `commands/finish-feature.md` — terminal status (Site 8)
 **File:** `plugins/iflow/commands/finish-feature.md`
 **Do:**
-1. Find Edit instruction for `status: "completed"` (~lines 415-429)
+1. Run `grep -n 'Edit.*meta.json\|status.*completed' plugins/iflow/commands/finish-feature.md` to find terminal status Edit
 2. Replace with `complete_phase(feature_type_id, "finish")` — this sets entity status to "completed" and projects `.meta.json`
 **Verify:** `grep -n 'Write.*meta.json\|Edit.*meta.json' plugins/iflow/commands/finish-feature.md` returns empty
 **Done when:** No direct `.meta.json` write instructions remain in file
@@ -426,7 +427,7 @@ Phase E:             T10.1─T10.2
      "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/meta-json-guard.sh" }]
    }
    ```
-2. If `Write|Edit` regex matcher fails empirically, fall back to two separate entries
+2. Run `bash plugins/iflow/hooks/tests/test-hooks.sh` — verify deny tests pass for both Write and Edit. If either fails, split into two entries: one with matcher `Write`, one with matcher `Edit`
 **Done when:** Hook registered, JSON valid
 
 ---
