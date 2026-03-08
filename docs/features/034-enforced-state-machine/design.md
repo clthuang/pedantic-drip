@@ -277,7 +277,7 @@ def _project_meta_json(
         return f"projection failed: {exc}"
 ```
 
-**Caller integration:** Each `_process_*()` function calls `_project_meta_json(db, engine, ...)` after DB mutation succeeds, using `_engine` module global. If it returns a warning, include it in the MCP response JSON as `"projection_warning": "..."`. For `init_feature_state`, pass `_engine` (may be None if engine not needed for new features — the function handles this gracefully).
+**Caller integration:** Each `_process_*()` function accepts `db` and `engine` as explicit parameters (injected by MCP wrappers from module globals `_db` and `_engine`) and calls `_project_meta_json(db, engine, ...)` after DB mutation succeeds. If it returns a warning, include it in the MCP response JSON as `"projection_warning": "..."`. For `init_feature_state`, `engine` may be None if engine not needed for new features — the function handles this gracefully.
 
 ### C3: `init_feature_state` (New MCP Tool)
 
@@ -296,6 +296,7 @@ def _project_meta_json(
 @_catch_value_error
 def _process_init_feature_state(
     db: EntityDatabase,
+    engine: WorkflowStateEngine,
     feature_dir: str,
     feature_id: str,
     slug: str,
@@ -342,7 +343,7 @@ def _process_init_feature_state(
         db.update_entity(feature_type_id, status=status, metadata=metadata)
 
     # Project .meta.json
-    warning = _project_meta_json(db, _engine, feature_type_id, feature_dir)
+    warning = _project_meta_json(db, engine, feature_type_id, feature_dir)
 
     result = {
         "created": True,
@@ -436,6 +437,7 @@ def _process_init_project_state(
 @_catch_value_error
 def _process_activate_feature(
     db: EntityDatabase,
+    engine: WorkflowStateEngine,
     feature_type_id: str,
 ) -> str:
     entity = db.get_entity(feature_type_id)
@@ -449,7 +451,7 @@ def _process_activate_feature(
 
     db.update_entity(feature_type_id, status="active")
 
-    warning = _project_meta_json(db, _engine, feature_type_id)
+    warning = _project_meta_json(db, engine, feature_type_id)
 
     result = {
         "activated": True,
@@ -617,7 +619,7 @@ async def init_feature_state(
 ) -> str:
     if _db is None:
         return _NOT_INITIALIZED
-    return _process_init_feature_state(_db, feature_dir, feature_id, slug, mode, branch, brainstorm_source, backlog_source, status)
+    return _process_init_feature_state(_db, _engine, feature_dir, feature_id, slug, mode, branch, brainstorm_source, backlog_source, status)
 
 @mcp.tool()
 async def init_project_state(
@@ -632,7 +634,7 @@ async def init_project_state(
 async def activate_feature(feature_type_id: str) -> str:
     if _db is None:
         return _NOT_INITIALIZED
-    return _process_activate_feature(_db, feature_type_id)
+    return _process_activate_feature(_db, _engine, feature_type_id)
 ```
 
 ### C8: Shared Utility — `_atomic_json_write()` (New Function)
