@@ -17,7 +17,7 @@
 <input type="hidden" name="type" value="{{ current_type or '' }}">
 
 <!-- Search and status filters -->
-<div class="flex flex-wrap gap-3 mb-4 items-center">
+<div class="flex flex-wrap gap-3 mb-4 items-center" id="entity-filters">
     {% if search_available %}
     <input type="text"
            name="q"
@@ -29,7 +29,9 @@
            hx-target="#entities-content"
            hx-sync="this:replace"
            hx-include="[name='type'],[name='status']"
-           hx-replace-url="true">
+           hx-replace-url="true"
+           hx-indicator="#search-spinner">
+    <span id="search-spinner" class="loading loading-spinner loading-sm htmx-indicator"></span>
     {% else %}
     <span class="text-sm text-base-content/50">Search unavailable</span>
     {% endif %}
@@ -40,11 +42,13 @@
             hx-trigger="change"
             hx-target="#entities-content"
             hx-include="[name='type'],[name='q']"
-            hx-replace-url="true">
+            hx-replace-url="true"
+            hx-indicator="#search-spinner">
         <option value="" {{ 'selected' if not current_status else '' }}>All statuses</option>
         <option value="active" {{ 'selected' if current_status == 'active' else '' }}>active</option>
         <option value="completed" {{ 'selected' if current_status == 'completed' else '' }}>completed</option>
         <option value="planned" {{ 'selected' if current_status == 'planned' else '' }}>planned</option>
+        <option value="abandoned" {{ 'selected' if current_status == 'abandoned' else '' }}>abandoned</option>
     </select>
 </div>
 
@@ -65,13 +69,17 @@
         </thead>
         <tbody>
             {% for entity in entities %}
-            <tr>
+            <tr class="hover:bg-base-200">
                 <td><a href="/entities/{{ entity.type_id }}" class="link link-primary">{{ entity.name or entity.type_id }}</a></td>
                 <td class="font-mono text-sm">{{ entity.type_id }}</td>
                 <td>{{ entity.entity_type }}</td>
-                <td>{{ entity.status or '' }}</td>
+                <td>
+                    {% if entity.status %}
+                    <span class="badge badge-sm {{ status_colors.get(entity.status, 'badge-ghost') }}">{{ entity.status }}</span>
+                    {% endif %}
+                </td>
                 <td>{{ entity.kanban_column if entity.kanban_column is not none else '' }}</td>
-                <td>{{ entity.updated_at or '' }}</td>
+                <td>{{ entity.updated_at | timeago }}</td>
             </tr>
             {% endfor %}
         </tbody>
@@ -80,6 +88,7 @@
 {% else %}
 <div class="flex items-center justify-center p-12">
     <div class="text-center text-base-content/60">
+        <svg xmlns="http://www.w3.org/2000/svg" class="mx-auto mb-3 opacity-40" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
         {% if search_query %}
         <p class="text-lg font-semibold">No entities match your search</p>
         {% else %}
