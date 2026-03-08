@@ -205,9 +205,13 @@ def _process_init_entity_workflow(
     if entity is None:
         raise ValueError(f"entity_not_found: {type_id}")
 
-    # 1b. Validate workflow_phase/kanban_column against ENTITY_MACHINES
+    # 1b. Reject entity types that have their own workflow management
     if ":" in type_id:
         entity_type = type_id.split(":", 1)[0]
+        if entity_type in ("feature", "project"):
+            raise ValueError(
+                f"invalid_entity_type: {entity_type} entities use the feature workflow engine"
+            )
         if entity_type in ENTITY_MACHINES:
             machine = ENTITY_MACHINES[entity_type]
             if workflow_phase not in machine["columns"]:

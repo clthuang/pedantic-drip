@@ -39,8 +39,8 @@ T8: Integration verification
 2. Follow Migration 3 pattern: PRAGMA foreign_keys OFF, BEGIN IMMEDIATE, CREATE workflow_phases_new with expanded CHECK, copy data, drop old, rename, recreate trigger + indexes, COMMIT, PRAGMA foreign_keys ON, FK check
 3. Expanded CHECK values: existing 7 feature phases + `draft`, `reviewing`, `promoted`, `abandoned`, `open`, `triaged`, `dropped`
 4. Same expansion for `last_completed_phase` column
-5. Add `5: _expand_workflow_phase_check` to `MIGRATIONS` dict
-6. Bump `SCHEMA_VERSION` to 5
+5. Add `5: _expand_workflow_phase_check` to `MIGRATIONS` dict (the `_migrate()` loop auto-discovers target version via `max(MIGRATIONS)` and writes `schema_version` to `_metadata` after each migration — no separate constant to bump)
+6. Migration 3 writes `schema_version` inside its own transaction for crash safety. Follow same pattern: include `UPDATE _metadata SET value='5' WHERE key='schema_version'` inside the BEGIN IMMEDIATE / COMMIT block
 
 **Acceptance:** AC-DB-1 through AC-DB-4
 
@@ -65,6 +65,8 @@ T8: Integration verification
 2. Add `_ENTITY_RECOVERY_HINTS` dict
 3. Add `_catch_entity_value_error` decorator after `_catch_value_error` (per design C2)
 
+**Note:** Tests should verify against `_make_error` output format (dict with keys: `error`, `error_type`, `message`, `recovery_hint`). Verify `_make_error` signature at line ~311 before writing test assertions.
+
 **Acceptance:** AC-ERR-1 through AC-ERR-4
 
 **Depends on:** Nothing (can parallelize with T1 but same-file risk is low since different files)
@@ -80,7 +82,8 @@ T8: Integration verification
   - `test_init_entity_workflow_entity_not_found`: Non-existent type_id → error response
   - `test_init_entity_workflow_validates_phase_against_machine`: Invalid phase for known entity type → error
   - `test_init_entity_workflow_validates_kanban_column_consistency`: Mismatched column → error
-  - `test_init_entity_workflow_unknown_entity_type_skips_validation`: Entity types not in ENTITY_MACHINES skip phase/column validation
+  - `test_init_entity_workflow_rejects_feature_entity_type`: Feature type_id → invalid_entity_type error (prevents conflict with feature workflow engine)
+  - `test_init_entity_workflow_rejects_project_entity_type`: Project type_id → invalid_entity_type error
 
 **Implement:**
 1. Add `_process_init_entity_workflow` function (per design C4)
@@ -115,7 +118,7 @@ T8: Integration verification
 
 **Acceptance:** AC-MCP-1 through AC-MCP-6
 
-**Depends on:** T1 (expanded CHECK), T2 (decorator + constants), T3 (init tool for test setup)
+**Depends on:** T1 (expanded CHECK), T2 (decorator + constants). Test fixtures use direct SQL INSERT to create workflow_phases rows — no runtime dependency on T3.
 
 ### T5: Backfill Update
 
@@ -132,10 +135,73 @@ T8: Integration verification
   - `test_backfill_returns_updated_counter`: Return dict includes `updated` key
 
 **Implement:**
-1. Place brainstorm/backlog early-exit block **BEFORE** `STATUS_TO_KANBAN` lookup to avoid spurious warnings
-2. Implement 3-case logic: (1) no row → INSERT, (2) non-null phase → skip, (3) null phase → UPDATE
-3. Add `updated` counter to return dict
-4. Child-completion override remains unchanged (runs before the new block)
+
+**Insertion point:** Add `elif entity_type in ("brainstorm", "backlog"):` block after the existing `if entity_type == "feature":` block (after line ~256), with `continue` at the end to skip the generic INSERT OR IGNORE. This is an `elif` — brainstorm/backlog entities never reach the STATUS_TO_KANBAN lookup (line ~200) or generic INSERT because the new block handles them completely.
+
+**Wait — STATUS_TO_KANBAN runs BEFORE the feature block (line 200).** Brainstorm/backlog entities with statuses like `"draft"` will hit the STATUS_TO_KANBAN check first (line 201) and get a spurious warning + default to `"planned"`. To fix this, add an early-exit guard **before** the STATUS_TO_KANBAN lookup (before line 200):
+
+```python
+# Early handling for brainstorm/backlog — skip STATUS_TO_KANBAN
+if entity_type in ("brainstorm", "backlog"):
+    # Child-completion override (moved here from general block)
+    kanban_column = None  # will be set below
+    children = [
+        e for e in all_entities
+        if e.get("parent_type_id") == type_id
+        and e["entity_type"] == "feature"
+    ]
+    all_children_completed = children and all(
+        c.get("status") == "completed" for c in children
+    )
+
+    # Check existing workflow_phases row
+    existing_row = db._conn.execute(
+        "SELECT workflow_phase FROM workflow_phases WHERE type_id = ?",
+        (type_id,)
+    ).fetchone()
+
+    if existing_row and existing_row["workflow_phase"] is not None:
+        skipped += 1
+        continue
+
+    # Derive defaults
+    if entity_type == "brainstorm":
+        workflow_phase = "draft"
+        kanban_column = "wip"
+    else:
+        workflow_phase = "open"
+        kanban_column = "backlog"
+
+    # Apply child-completion override
+    if all_children_completed:
+        kanban_column = "completed"
+
+    # Case 3: existing row with NULL phase → UPDATE
+    if existing_row and existing_row["workflow_phase"] is None:
+        db._conn.execute(
+            "UPDATE workflow_phases SET workflow_phase = ?, kanban_column = ?, "
+            "updated_at = ? WHERE type_id = ?",
+            (workflow_phase, kanban_column, db._now_iso(), type_id),
+        )
+        db._conn.commit()
+        updated += 1
+        continue
+
+    # Case 1: no row → fall through to INSERT OR IGNORE below
+    # (but we still need to set the variables for INSERT)
+    last_completed_phase = None
+    mode = None
+    # Don't continue — let the INSERT OR IGNORE at line ~258 handle it
+```
+
+This replaces the original lines 210-221 child-completion block (which only applies to brainstorm/backlog). The feature path is unchanged.
+
+1. Add early-exit guard for brainstorm/backlog BEFORE STATUS_TO_KANBAN (line ~200)
+2. Move child-completion override logic INTO the early-exit guard
+3. Implement 3-case logic inside the guard: (1) non-null phase → skip, (2) null phase → UPDATE, (3) no row → fall through to INSERT
+4. Add `updated` counter to return dict
+5. Remove the old child-completion block (lines 210-221) — it only applied to brainstorm/backlog, and features don't need it
+6. Before implementing, grep for callers of `backfill_workflow_phases` to verify adding `updated` key won't break any destructuring assertions
 
 **Acceptance:** AC-BF-1 through AC-BF-4
 
@@ -165,7 +231,7 @@ T8: Integration verification
 
 **Acceptance:** AC-UI-1 through AC-UI-5
 
-**Depends on:** Nothing (independent of DB/MCP changes)
+**Depends on:** Soft dependency on T1 — PHASE_COLORS test values must align with T1's expanded CHECK constraint values. Implement T1 first or verify phase values match.
 
 ### T7: Skill/Command File Updates
 
@@ -195,6 +261,12 @@ T8: Integration verification
 ### T8: Integration Verification
 
 **No new code.** Run all existing test suites to confirm no regressions.
+
+**T7 verification checklist:**
+1. Review brainstorming SKILL.md: verify `init_entity_workflow` call present in Stage 3, `transition_entity_phase` calls in Stage 4 and Stage 6
+2. Review add-to-backlog.md: verify `register_entity` + `init_entity_workflow` calls present after markdown row append
+3. Verify all MCP calls have warn-but-don't-block error handling wrappers
+4. Verify backlog reference handling has the 3-step sequence (register → init_workflow → transition)
 
 **Commands:**
 ```bash
