@@ -788,6 +788,18 @@ def _process_init_feature_state(
     # Project .meta.json
     warning = _project_meta_json(db, engine, feature_type_id, feature_dir)
 
+    # Fix kanban_column based on status (init-time uses STATUS_TO_KANBAN).
+    # Inline copy — must match STATUS_TO_KANBAN in backfill.py:35-40.
+    # See also: scripts/fix_kanban_columns.py
+    STATUS_TO_KANBAN = {"active": "wip", "planned": "backlog",
+                        "completed": "completed", "abandoned": "completed"}
+    init_kanban = STATUS_TO_KANBAN.get(status)
+    if init_kanban:
+        try:
+            db.update_workflow_phase(feature_type_id, kanban_column=init_kanban)
+        except ValueError:
+            pass  # Row may not exist if engine initialization failed
+
     result = {
         "created": True,
         "feature_type_id": feature_type_id,
