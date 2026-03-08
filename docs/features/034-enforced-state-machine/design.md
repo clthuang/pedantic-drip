@@ -185,7 +185,7 @@ log_blocked_attempt() {
 - **Placed in MCP server, not engine.** The engine is a state machine; file projection is a server-layer concern. Keeps engine testable without filesystem coupling.
 - **Atomic write:** Reuse `NamedTemporaryFile` + `os.replace()` pattern from `_write_meta_json_fallback()`.
 - **Fail-open for projection:** If projection fails (disk full, permissions), DB state is preserved. MCP tool returns success with a warning field. The LLM can still proceed; `.meta.json` will be stale until next successful projection.
-- **Uses `_db` and `_engine` globals** — same as all other MCP server processing functions.
+- **Accepts `db` and `engine` as explicit parameters** (injected by callers from module globals `_db`/`_engine`). Enables unit testing with mock dependencies, consistent with D7.
 
 **Internal structure:**
 ```python
@@ -507,7 +507,7 @@ def _process_transition_phase(
         db.update_entity(feature_type_id, metadata=metadata)
 
         # Project .meta.json
-        warning = _project_meta_json(db, _engine, feature_type_id)
+        warning = _project_meta_json(db, engine, feature_type_id)
 
     result = {
         "transitioned": transitioned,
@@ -568,7 +568,7 @@ def _process_complete_phase(
         db.update_entity(feature_type_id, metadata=metadata)
 
     # Project .meta.json
-    warning = _project_meta_json(db, _engine, feature_type_id)
+    warning = _project_meta_json(db, engine, feature_type_id)
 
     result = _serialize_state(state)
     result["completed_at"] = phase_timing[phase]["completed"]
