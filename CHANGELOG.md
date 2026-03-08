@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.12.2] - 2026-03-09
+
 ### Fixed
 - Feature kanban column now updates during lifecycle transitions (was stuck on "backlog")
 - Added `FEATURE_PHASE_TO_KANBAN` mapping for phase-to-kanban column derivation
