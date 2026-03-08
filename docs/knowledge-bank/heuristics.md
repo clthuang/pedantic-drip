@@ -515,3 +515,19 @@ Require user-safe message constants for all error template variables in web UI d
 - Keywords: ["error-constants", "user-safe-message", "design-review", "security-check", "template-variables", "web-ui", "data-exposure"]
 - Last observed: Feature 020
 - Observation count: 1
+
+### Task-Reviewer Blocker Counts for Entity Registry Extensions
+For features extending MCP servers with entity registry integration, budget 3-4 task-review iterations. Entity_id conventions, mock shapes, and dependency chains are recurring blocker categories that decrease monotonically (specificity cascade). Phase-reviewer typically approves first pass after task-reviewer convergence.
+- Source: Feature 034, create-tasks — 4 iterations with 6→4→3→0 blocker counts. Phase-reviewer approved first pass.
+- Confidence: medium
+- Keywords: ["task-review", "entity-registry", "mcp-extension", "specificity-cascade", "blocker-budget"]
+- Last observed: Feature 034
+- Observation count: 1
+
+### PreToolUse Deny Hook for Write Protection Is Fast and Reliable
+A bash PreToolUse hook using string matching (~12ms) is sufficient for protecting files from LLM writes. JSONL instrumentation logging adds negligible overhead. This is the correct enforcement pattern for 'no direct writes to X' invariants — replaces non-deterministic LLM writes with deterministic MCP tool code plus defense-in-depth hook.
+- Source: Feature 034, meta-json-guard.sh — 9 hook tests, ~12ms latency (well under 50ms NFR-3). Replaces 9 LLM-driven write sites with MCP tool calls + hook enforcement.
+- Confidence: high
+- Keywords: ["pretooluse-hook", "write-protection", "bash-hook", "string-matching", "latency", "enforcement"]
+- Last observed: Feature 034
+- Observation count: 1

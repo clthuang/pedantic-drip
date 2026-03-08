@@ -493,3 +493,27 @@ When a feature introduces a new Python package under plugins/iflow/, annotate al
 - Keywords: ["python-imports", "pythonpath", "package-structure", "conftest", "sys-path", "new-package", "spec-annotation"]
 - Last observed: Feature 018
 - Observation count: 1
+
+### Pattern: CQRS Pattern Naming in Plan Reduces Plan Review Iterations
+When a feature's architecture maps to a named pattern (CQRS, event sourcing, saga), naming it explicitly in the plan makes the structure self-evident to reviewers. Plan-reviewer approved in 2 iterations (vs typical 3-5) and phase-reviewer approved on first attempt.
+- Observed in: Feature 034, create-plan phase — plan-reviewer 2 iterations, phase-reviewer 1 iteration (first-pass). CQRS: SQLite DB as write model, .meta.json as synchronous read projection.
+- Confidence: medium
+- Keywords: ["cqrs", "architecture-naming", "plan-review", "design-pattern", "review-efficiency"]
+- Last observed: Feature 034
+- Observation count: 1
+
+### Pattern: Keyword-Only Params With None Defaults for Backward-Compatible MCP Tool Extension
+When extending existing MCP tool functions with new parameters (db, iterations, reviewer_notes), use keyword-only params with None defaults instead of positional params. This preserves backward compatibility with all existing call sites and degraded-mode tests without requiring simultaneous updates.
+- Observed in: Feature 034, implement phase — D7 decision: keyword params (db=None defaults) preserved backward compat with 14 transition_phase and 7 complete_phase existing call sites. Zero breakage across 289 engine tests.
+- Confidence: high
+- Keywords: ["keyword-params", "backward-compat", "mcp-extension", "none-defaults", "api-evolution"]
+- Last observed: Feature 034
+- Observation count: 1
+
+### Pattern: Phased Task Grouping (A-E) With Bridge Tasks for Large Implementation Sets
+Organizing 36 tasks into 5 named phases (A: Foundation, B: Projection, C: MCP Tools, D: Write Sites, E: Enforcement) with explicit bridge tasks between phases produces clean sequential execution with clear checkpoints.
+- Observed in: Feature 034, implement phase — 36/36 tasks completed with 0 blockers across 3 reviewers. Implementation log shows clean phase transitions with running test counts at each checkpoint.
+- Confidence: high
+- Keywords: ["phased-grouping", "task-organization", "bridge-tasks", "implementation-checkpoints", "large-feature"]
+- Last observed: Feature 034
+- Observation count: 1
