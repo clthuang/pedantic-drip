@@ -26,7 +26,7 @@ These 7 phases (brainstorm, specify, design, create-plan, create-tasks, implemen
 
 The constant `FEATURE_PHASE_TO_KANBAN` maps `"finish"` → `"documenting"` (the in-progress case). The terminal completed case (`kanban_column="completed"`) is handled by conditional logic in R3 when `phase == "finish"` and the feature is fully complete.
 
-**Location:** Define `FEATURE_PHASE_TO_KANBAN` as a module-level dict in a shared location importable by both `workflow_state_server.py` and `reconciliation.py`. Recommended: add to `plugins/iflow/hooks/lib/workflow_engine/constants.py` (or create if absent) since both modules already import from the workflow_engine package. This avoids reconciliation.py importing from the MCP server (which would invert the dependency direction).
+**Location:** Define `FEATURE_PHASE_TO_KANBAN` as a module-level dict in a shared location importable by both `workflow_state_server.py` and `reconciliation.py`. Recommended: add to `plugins/iflow/hooks/lib/workflow_engine/constants.py` (or create if absent) since both modules already import from the workflow_engine package. This avoids reconciliation.py importing from the MCP server (which would invert the dependency direction). Only `FEATURE_PHASE_TO_KANBAN` is added to constants.py — existing constants (`PHASE_SEQUENCE` in backfill.py, `STATUS_TO_KANBAN` in backfill.py) remain in their current locations; consolidation is out of scope.
 
 ### R2: Transition Phase Updates Kanban Column
 
@@ -83,9 +83,9 @@ This can be a standalone script or integrated into the backfill module's existin
 
 ### R8: Engine Degraded-Mode Backfill Passes Kanban Column
 
-`create_workflow_phase()` in `engine.py` (degraded-mode backfill path, ~line 590) must pass `kanban_column` derived from the feature's status. Currently it omits `kanban_column`, inheriting the `"backlog"` default regardless of actual status. Use `STATUS_TO_KANBAN` from `backfill.py` or derive from the active status context.
+`create_workflow_phase()` in `engine.py` (degraded-mode backfill path, ~line 590) must pass `kanban_column` derived from the feature's current phase using `FEATURE_PHASE_TO_KANBAN` (consistent with R1-R3). The engine has `current_phase` from `.meta.json` state, so no additional DB lookup is needed. Currently it omits `kanban_column`, inheriting the `"backlog"` default regardless of actual phase.
 
-**Note:** This path is a safety net for degraded mode. Even if not fixed, R4/R5 reconciliation would correct the value on next reconcile run. However, fixing it at source prevents temporary drift.
+**Note:** This path is a safety net for degraded mode. Even if not fixed here, once the row exists with wrong kanban_column, R4/R5 reconciliation would correct it on the next reconcile run. However, fixing it at source prevents temporary drift.
 
 ## Acceptance Criteria
 
