@@ -221,23 +221,18 @@ For each feature in `execution_order`:
 1. Look up feature data from `mapped_decomposition` (name, description, module, depends_on, complexity).
 2. Derive `{id}` and `{slug}` from the `{id}-{slug}` string.
 3. Create directory `{iflow_artifacts_root}/features/{id}-{slug}/`.
-4. Write `{iflow_artifacts_root}/features/{id}-{slug}/.meta.json`:
-   ```json
-   {
-     "id": "{id}",
-     "slug": "{slug}",
-     "status": "planned",
-     "created": "{ISO timestamp}",
-     "mode": null,
-     "branch": null,
-     "project_id": "{project P-ID from project_dir basename}",
-     "module": "{module name}",
-     "depends_on_features": ["{dep-id}-{dep-slug}", ...],
-     "lastCompletedPhase": null,
-     "phases": {}
-   }
+4. Call `init_feature_state` MCP tool to create the planned feature state:
    ```
-   Note: `mode` and `branch` are null for planned features -- set during planned-to-active transition.
+   init_feature_state(
+     feature_dir="{iflow_artifacts_root}/features/{id}-{slug}",
+     feature_id="{id}",
+     slug="{slug}",
+     mode="standard",
+     branch="",
+     status="planned"
+   )
+   ```
+   Note: `mode` and `branch` are placeholders for planned features -- set during planned-to-active transition via `activate_feature`.
 
 5. **Register feature entity** in the entity registry. If the MCP call fails, warn `"Entity registration failed for {id}-{slug}: {error}"` but do NOT block feature creation. Continue with the next feature.
 
@@ -279,17 +274,27 @@ Sources:
 - `cross_cutting` array directly from decomposition.
 - Mermaid edges: for each feature with dependencies, emit `F{dep-id}[{dep-id}-{dep-slug}] --> F{feature-id}[{feature-id}-{feature-slug}]`.
 
-## Stage 10: Update Project .meta.json
+## Stage 10: Update Project State
 
-Read `{project_dir}/.meta.json` and update two fields:
+Call `init_project_state` MCP tool to update the project state and `.meta.json`:
 
-1. Set `"features"` to array of `"{id}-{slug}"` strings in execution order.
-2. Set `"milestones"` to array from `suggested_milestones` with feature refs as ID-slugs. Assign sequential IDs (`M1`, `M2`, ...) and set the first milestone's `status` to `"active"`, subsequent to `"planned"`:
+1. Build `features` as a JSON array of `"{id}-{slug}"` strings in execution order.
+2. Build `milestones` as a JSON array from `suggested_milestones` with feature refs as ID-slugs. Assign sequential IDs (`M1`, `M2`, ...) and set the first milestone's `status` to `"active"`, subsequent to `"planned"`:
    ```json
    [{"id": "M1", "name": "...", "status": "active", "features": ["{id}-{slug}", ...]}, {"id": "M2", "name": "...", "status": "planned", "features": [...]}]
    ```
 
-Write the updated JSON back to `{project_dir}/.meta.json`.
+3. Call the MCP tool:
+   ```
+   init_project_state(
+     project_dir="{project_dir}",
+     project_id="{project P-ID}",
+     slug="{slug}",
+     features='["{id}-{slug}", ...]',
+     milestones='[{"id": "M1", ...}, ...]',
+     brainstorm_source="{prd-path if applicable}"
+   )
+   ```
 
 ## Error Handling
 
