@@ -13,23 +13,25 @@
 | 5 | Write failing kanban drift detection/reconciliation tests | 10m | 4b | AC-4, AC-5 |
 | 6 | Implement kanban drift detection in _check_single_feature | 5m | 5 | AC-4 |
 | 7 | Implement kanban fix in _reconcile_single_feature | 5m | 5 | AC-5 |
-| 8 | Write failing MCP server kanban integration tests | 15m | 1 | AC-1,2,3,3b,6 |
-| 9 | Implement _process_transition_phase kanban update | 5m | 8 | AC-1 |
-| 10 | Implement _process_complete_phase kanban update | 5m | 8 | AC-2, AC-3, AC-3b |
-| 11 | Implement _process_init_feature_state kanban override | 5m | 8 | AC-6 |
+| 8a | Write failing MCP transition/complete kanban tests | 10m | 1 | AC-1,2,3,3b |
+| 8b | Write failing MCP init_feature_state kanban tests | 10m | 1 | AC-6 |
+| 9 | Implement _process_transition_phase kanban update | 5m | 8a | AC-1 |
+| 10 | Implement _process_complete_phase kanban update | 5m | 8a | AC-2, AC-3, AC-3b |
+| 11 | Implement _process_init_feature_state kanban override | 5m | 8b | AC-6 |
 | 12 | Write failing remediation script test | 10m | — | AC-7 |
 | 13 | Implement fix_kanban_columns.py remediation script | 10m | 12 | AC-7 |
 | 14 | Run full regression test suite | 5m | 1-13 | AC-8, AC-9 |
 
 ## Parallel Groups
 
-After Task 1: Tasks 2, 3a, 4a, 8, 12 can run in parallel.
+After Task 1: Tasks 2, 3a, 4a, 8a, 8b, 12 can run in parallel.
 
 ```
 Group A: Task 2 (standalone)
 Group B: Task 3a → 3b
 Group C: Task 4a → 4b → Task 5 → Tasks 6, 7 (parallel)
-Group D: Task 8 → Tasks 9, 10, 11 (parallel)
+Group D1: Task 8a → Tasks 9, 10 (parallel)
+Group D2: Task 8b → Task 11
 Group E: Task 12 → 13
 Final:   Task 14 (after all above)
 ```
@@ -96,6 +98,7 @@ Final:   Task 14 (after all above)
    - Create `WorkflowStateEngine` with `artifacts_root=tmp_path`
    - Call `engine.get_state(type_id)` — triggers degraded-mode backfill (no DB row exists)
 3. Assert: `db.get_workflow_phase(type_id)["kanban_column"] == "prioritised"` (from `FEATURE_PHASE_TO_KANBAN["create-plan"]`)
+   - Note: The engine derives `current_phase` as the phase immediately after `last_completed_phase` in `PHASE_SEQUENCE`. With `last_completed_phase="design"`, `current_phase` resolves to `"create-plan"`, so kanban_column should be `"prioritised"`.
 4. Run test — should FAIL (current code always creates with `kanban_column="backlog"`)
 
 ### Done when
@@ -268,11 +271,11 @@ Final:   Task 14 (after all above)
 
 ---
 
-## Task 8: Write failing MCP server kanban integration tests
+## Task 8a: Write failing MCP transition/complete kanban tests
 
 **File:** `plugins/iflow/mcp/test_workflow_state_server.py` (existing)
 **Deps:** Task 1
-**AC:** AC-1, AC-2, AC-3, AC-3b, AC-6
+**AC:** AC-1, AC-2, AC-3, AC-3b
 
 ### Steps
 1. Add test `test_transition_phase_sets_kanban_for_feature`:
@@ -291,26 +294,40 @@ Final:   Task 14 (after all above)
    - Setup: feature at `design` phase, complete `design` → `state.current_phase` becomes `create-plan`
    - Assert: `db.get_workflow_phase(type_id)["kanban_column"] == "prioritised"`
 
-5. Add test `test_init_feature_state_active_sets_kanban_wip`:
+5. Run tests — all 4 should FAIL (kanban updates not yet implemented in MCP server)
+
+### Done when
+- All 4 tests exist and FAIL
+
+---
+
+## Task 8b: Write failing MCP init_feature_state kanban tests
+
+**File:** `plugins/iflow/mcp/test_workflow_state_server.py` (existing)
+**Deps:** Task 1
+**AC:** AC-6
+
+### Steps
+1. Add test `test_init_feature_state_active_sets_kanban_wip`:
    - Construct engine: `engine = WorkflowStateEngine(db=db, artifacts_root=str(tmp_path))` — follow the engine fixture pattern in `test_engine.py`
    - Call `_process_init_feature_state(db=db, engine=engine, feature_dir=str(tmp_path/"features"/"099-test"), feature_id="099", slug="test", mode="standard", branch="feature/099-test", brainstorm_source=None, backlog_source=None, status="active", artifacts_root=str(tmp_path))`
    - Assert: `db.get_workflow_phase("feature:099-test")["kanban_column"] == "wip"`
 
-6. Add test `test_init_feature_state_planned_sets_kanban_backlog`:
+2. Add test `test_init_feature_state_planned_sets_kanban_backlog`:
    - Same engine construction and call pattern but `status="planned"`, different feature_id/slug
    - Assert: `db.get_workflow_phase(type_id)["kanban_column"] == "backlog"`
 
-7. Run tests — all should FAIL (kanban updates not yet implemented in MCP server)
+3. Run tests — both should FAIL (kanban override not yet implemented in MCP server)
 
 ### Done when
-- All 6 tests exist and FAIL
+- Both tests exist and FAIL
 
 ---
 
 ## Task 9: Implement `_process_transition_phase` kanban update
 
 **File:** `plugins/iflow/mcp/workflow_state_server.py` (~line 521, after `db.update_entity()`)
-**Deps:** Task 8
+**Deps:** Task 8a
 **AC:** AC-1
 
 ### Steps
@@ -323,11 +340,11 @@ Final:   Task 14 (after all above)
        if kanban:
            db.update_workflow_phase(feature_type_id, kanban_column=kanban)
    ```
-2. Run Task 8 transition test — should now PASS
+2. Run Task 8a transition test — should now PASS
 3. Run full MCP server test suite: `plugins/iflow/.venv/bin/python -m pytest plugins/iflow/mcp/test_workflow_state_server.py -v`
 
 ### Done when
-- Task 8 transition test passes
+- Task 8a transition test passes
 - All existing MCP server tests pass
 
 ---
@@ -335,7 +352,7 @@ Final:   Task 14 (after all above)
 ## Task 10: Implement `_process_complete_phase` kanban update
 
 **File:** `plugins/iflow/mcp/workflow_state_server.py` (~line 578, after `db.update_entity()`)
-**Deps:** Task 8
+**Deps:** Task 8a
 **AC:** AC-2, AC-3, AC-3b
 
 ### Steps
@@ -351,11 +368,11 @@ Final:   Task 14 (after all above)
        if kanban:
            db.update_workflow_phase(feature_type_id, kanban_column=kanban)
    ```
-2. Run Task 8 complete tests — should now PASS
+2. Run Task 8a complete tests — should now PASS
 3. Run full MCP server test suite
 
 ### Done when
-- Task 8 complete tests (finish, specify, design) all pass
+- Task 8a complete tests (finish, specify, design) all pass
 - All existing MCP server tests pass
 
 ---
@@ -363,7 +380,7 @@ Final:   Task 14 (after all above)
 ## Task 11: Implement `_process_init_feature_state` kanban override
 
 **File:** `plugins/iflow/mcp/workflow_state_server.py` (after `_project_meta_json()` call in `_process_init_feature_state`)
-**Deps:** Task 8
+**Deps:** Task 8b
 **AC:** AC-6
 
 ### Steps
@@ -381,11 +398,11 @@ Final:   Task 14 (after all above)
        except ValueError:
            pass  # Row may not exist if engine initialization failed
    ```
-2. Run Task 8 init tests — should now PASS
+2. Run Task 8b init tests — should now PASS
 3. Run full MCP server test suite
 
 ### Done when
-- Task 8 init tests (active→wip, planned→backlog) pass
+- Task 8b init tests (active→wip, planned→backlog) pass
 - All existing MCP server tests pass
 
 ---
@@ -407,7 +424,7 @@ Final:   Task 14 (after all above)
    - `feature:005-orphaned` — in `workflow_phases` but NOT in `entities` → expect `"backlog"` (preserved)
 4. Import and call: `from fix_kanban_columns import fix_kanban_columns; fix_kanban_columns(conn)` — the function accepts a `sqlite3.Connection` for testing
 5. Assert each feature's kanban_column matches expected value
-6. Run: `plugins/iflow/.venv/bin/python -m pytest scripts/test_fix_kanban_columns.py -v` — should FAIL (script not yet implemented)
+6. Run: `PYTHONPATH=scripts plugins/iflow/.venv/bin/python -m pytest scripts/test_fix_kanban_columns.py -v` — should FAIL (script not yet implemented)
 
 ### Done when
 - Test exists and FAILS with `ImportError` or `ModuleNotFoundError`
@@ -437,7 +454,7 @@ Final:   Task 14 (after all above)
 ## Task 14: Run full regression test suite
 
 **File:** No changes
-**Deps:** Tasks 1-13
+**Deps:** Tasks 1-13 (all)
 **AC:** AC-8, AC-9
 
 ### Steps
@@ -446,7 +463,7 @@ Final:   Task 14 (after all above)
 3. Run reconciliation tests: `plugins/iflow/.venv/bin/python -m pytest plugins/iflow/mcp/test_reconciliation.py -v`
 4. Run transition gate tests: `plugins/iflow/.venv/bin/python -m pytest plugins/iflow/hooks/lib/transition_gate/ -v`
 5. Run entity registry tests: `plugins/iflow/.venv/bin/python -m pytest plugins/iflow/hooks/lib/entity_registry/ -v`
-6. Run remediation test: `plugins/iflow/.venv/bin/python -m pytest scripts/test_fix_kanban_columns.py -v`
+6. Run remediation test: `PYTHONPATH=scripts plugins/iflow/.venv/bin/python -m pytest scripts/test_fix_kanban_columns.py -v`
 7. Verify AC-8 specifically: existing `transition_entity_phase` tests for brainstorm/backlog entities pass unchanged
 
 ### Done when
