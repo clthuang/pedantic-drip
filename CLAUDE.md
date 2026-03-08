@@ -75,7 +75,7 @@ plugins/iflow/.venv/bin/python -m pytest plugins/iflow/mcp/test_memory_server.py
 # Run MCP bootstrap wrapper tests
 bash plugins/iflow/mcp/test_run_memory_server.sh
 
-# Run entity registry tests (database, backfill, server helpers, frontmatter, frontmatter_sync, search — 633+ tests)
+# Run entity registry tests (database, backfill, server helpers, frontmatter, frontmatter_sync, search — 667+ tests)
 plugins/iflow/.venv/bin/python -m pytest plugins/iflow/hooks/lib/entity_registry/ -v
 
 # Run entity search MCP tool tests
@@ -87,7 +87,7 @@ bash plugins/iflow/mcp/test_entity_server.sh
 # Run transition gate tests (gate functions, constants, models — 257 tests)
 plugins/iflow/.venv/bin/python -m pytest plugins/iflow/hooks/lib/transition_gate/ -v
 
-# Run workflow engine tests (state engine, hydration, transitions, degradation — 184 tests)
+# Run workflow engine tests (state engine, hydration, transitions, degradation — 289 tests)
 plugins/iflow/.venv/bin/python -m pytest plugins/iflow/hooks/lib/workflow_engine/ -v
 
 # Run reconciliation module tests (drift detection, apply, frontmatter sync — 103 tests)
