@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Brainstorm lifecycle state tracking: `draft → reviewing → promoted | abandoned`
+- Backlog lifecycle state tracking: `open → triaged → promoted | dropped`
+- 2 new MCP tools: `init_entity_workflow` and `transition_entity_phase` for brainstorm/backlog state management
+- Entity-type-aware kanban board cards: mode badge for features, type badge for brainstorm/backlog/project
+- Backfill support for brainstorm/backlog entities with 3-case logic (INSERT/UPDATE/skip)
+
+### Changed
+- Brainstorming skill now registers entity workflow state at PRD creation and transitions phases at review/promotion
+- Add-to-backlog command now registers entity and initializes workflow state
+
 ## [4.12.0] - 2026-03-08
 
 ### Added
