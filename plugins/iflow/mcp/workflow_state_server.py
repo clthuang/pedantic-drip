@@ -29,6 +29,7 @@ from entity_registry.frontmatter_sync import (
 )
 from semantic_memory.config import read_config
 from transition_gate.models import Severity, TransitionResult
+from workflow_engine.constants import FEATURE_PHASE_TO_KANBAN
 from workflow_engine.engine import WorkflowStateEngine
 from workflow_engine.models import FeatureWorkflowState, TransitionResponse
 from workflow_engine.reconciliation import (
@@ -83,6 +84,18 @@ ENTITY_MACHINES: dict[str, dict] = {
             ("open", "dropped"),
         },
     },
+}
+
+# ---------------------------------------------------------------------------
+# Status-to-kanban mapping for feature init-time (matches backfill.py:35-40).
+# Also referenced by scripts/fix_kanban_columns.py.
+# ---------------------------------------------------------------------------
+
+STATUS_TO_KANBAN: dict[str, str] = {
+    "active": "wip",
+    "planned": "backlog",
+    "completed": "completed",
+    "abandoned": "completed",
 }
 
 # ---------------------------------------------------------------------------
@@ -520,6 +533,12 @@ def _process_transition_phase(
 
         db.update_entity(feature_type_id, metadata=metadata)
 
+        # Update kanban_column for features based on phase
+        if feature_type_id.startswith("feature:"):
+            kanban = FEATURE_PHASE_TO_KANBAN.get(target_phase)
+            if kanban:
+                db.update_workflow_phase(feature_type_id, kanban_column=kanban)
+
         # Project .meta.json
         warning = _project_meta_json(db, engine, feature_type_id)
 
@@ -576,6 +595,15 @@ def _process_complete_phase(
         if phase == "finish":
             update_kwargs["status"] = "completed"
         db.update_entity(feature_type_id, **update_kwargs)
+
+        # Update kanban_column for features based on completed phase
+        if feature_type_id.startswith("feature:"):
+            if phase == "finish":
+                kanban = "completed"
+            else:
+                kanban = FEATURE_PHASE_TO_KANBAN.get(state.current_phase)
+            if kanban:
+                db.update_workflow_phase(feature_type_id, kanban_column=kanban)
 
         # Project .meta.json
         warning = _project_meta_json(db, engine, feature_type_id)
@@ -770,6 +798,18 @@ def _process_init_feature_state(
 
     # Project .meta.json
     warning = _project_meta_json(db, engine, feature_type_id, feature_dir)
+
+    # Fix kanban_column based on status (init-time uses STATUS_TO_KANBAN).
+    init_kanban = STATUS_TO_KANBAN.get(status)
+    if init_kanban:
+        try:
+            db.update_workflow_phase(feature_type_id, kanban_column=init_kanban)
+        except ValueError:
+            # Row may not exist if engine initialization failed — create it.
+            try:
+                db.create_workflow_phase(feature_type_id, kanban_column=init_kanban)
+            except ValueError:
+                pass  # Entity itself may be missing; workflow row cannot be created
 
     result = {
         "created": True,

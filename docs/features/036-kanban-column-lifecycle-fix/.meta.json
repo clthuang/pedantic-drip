@@ -1,0 +1,50 @@
+{
+  "id": "036",
+  "slug": "kanban-column-lifecycle-fix",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-03-08T19:53:36.043914+00:00",
+  "branch": "feature/036-kanban-column-lifecycle-fix",
+  "lastCompletedPhase": "create-tasks",
+  "phases": {
+    "brainstorm": {
+      "started": "2026-03-08T19:53:36.043853+00:00"
+    },
+    "specify": {
+      "started": "2026-03-08T19:54:07.361369+00:00",
+      "completed": "2026-03-08T20:01:28.064810+00:00",
+      "iterations": 2,
+      "reviewerNotes": "[{\"reviewer\": \"spec-reviewer\", \"approved\": true, \"summary\": \"Approved iteration 2/5\"}, {\"reviewer\": \"phase-reviewer\", \"approved\": true, \"summary\": \"Approved iteration 1/5\"}]"
+    },
+    "design": {
+      "started": "2026-03-08T20:01:38.925661+00:00",
+      "completed": "2026-03-08T20:14:49.193497+00:00",
+      "iterations": 3
+    },
+    "create-plan": {
+      "started": "2026-03-08T20:15:13.610704+00:00",
+      "completed": "2026-03-08T20:25:43.162755+00:00",
+      "iterations": 3
+    },
+    "create-tasks": {
+      "started": "2026-03-08T20:25:57.107610+00:00",
+      "completed": "2026-03-08T20:40:33.169453+00:00",
+      "iterations": 3,
+      "reviewerNotes": [
+        {
+          "reviewer": "task-reviewer",
+          "approved": true,
+          "summary": "Approved iteration 3/5"
+        },
+        {
+          "reviewer": "phase-reviewer",
+          "approved": true,
+          "summary": "Approved iteration 2/5"
+        }
+      ]
+    },
+    "implement": {
+      "started": "2026-03-08T20:40:51.855739+00:00"
+    }
+  }
+}

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from entity_registry.database import EntityDatabase
 from transition_gate.constants import PHASE_SEQUENCE
 
+from .constants import FEATURE_PHASE_TO_KANBAN
 from .engine import WorkflowStateEngine
 
 # Precomputed phase values from immutable PHASE_SEQUENCE (same pattern as engine.py)
@@ -171,6 +172,24 @@ def _read_single_meta_json(
         return None
 
 
+def _derive_expected_kanban(
+    workflow_phase: str | None,
+    last_completed_phase: str | None,
+) -> str | None:
+    """Derive the expected kanban column from workflow phase.
+
+    Special case: finish phase with finish as last_completed means the
+    feature completed all phases -> 'completed' column.
+    Otherwise, look up the phase in FEATURE_PHASE_TO_KANBAN.
+    Returns None for unknown or None phases.
+    """
+    if workflow_phase is None:
+        return None
+    if workflow_phase == "finish" and last_completed_phase == "finish":
+        return "completed"
+    return FEATURE_PHASE_TO_KANBAN.get(workflow_phase)
+
+
 def _check_single_feature(
     engine: WorkflowStateEngine,
     db: EntityDatabase,
@@ -256,6 +275,17 @@ def _check_single_feature(
             db_value=row["mode"],
         ))
 
+    # Kanban column drift detection
+    expected_kanban = _derive_expected_kanban(
+        state.current_phase, state.last_completed_phase
+    )
+    if expected_kanban is not None and expected_kanban != row["kanban_column"]:
+        mismatches.append(WorkflowMismatch(
+            field="kanban_column",
+            meta_json_value=expected_kanban,
+            db_value=row["kanban_column"],
+        ))
+
     return WorkflowDriftReport(
         feature_type_id=feature_type_id,
         status=status,
@@ -293,12 +323,17 @@ def _reconcile_single_feature(
                     message="meta_json_ahead status but no meta_json data",
                 )
             try:
-                db.update_workflow_phase(
-                    feature_type_id,
+                expected_kanban = _derive_expected_kanban(
+                    meta["workflow_phase"], meta["last_completed_phase"]
+                )
+                kwargs = dict(
                     workflow_phase=meta["workflow_phase"],
                     last_completed_phase=meta["last_completed_phase"],
                     mode=meta["mode"],
                 )
+                if expected_kanban is not None:
+                    kwargs["kanban_column"] = expected_kanban
+                db.update_workflow_phase(feature_type_id, **kwargs)
             except ValueError as exc:
                 return ReconcileAction(
                     feature_type_id=feature_type_id,
