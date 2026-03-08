@@ -514,3 +514,13 @@ Passing raw exception content (str(exc)) as template variables to HTML error pag
 - Keywords: ["raw-exception", "html-template", "data-exposure", "error-message", "security", "str-exc", "jinja2", "web-ui"]
 - Last observed: Feature 020
 - Observation count: 1
+
+### Anti-Pattern: Design Pseudocode With Wrong Access Pattern for Existing API
+Writing design pseudocode that uses attribute-style access (entity.metadata) when the actual API returns dicts (entity['metadata']) forces plan-level overrides and creates a spec-design divergence that must be resolved during implementation.
+- Observed in: Feature 034, design phase — pseudocode used attribute-style access; plan overrode to dict-style access for entity metadata
+- Cost: Plan-level override required; caught at plan phase, not design review
+- Instead: Design-reviewer should verify access patterns against the actual API return type before approving pseudocode
+- Confidence: medium
+- Keywords: ["pseudocode", "access-pattern", "dict-vs-attribute", "entity-registry", "design-accuracy"]
+- Last observed: Feature 034
+- Observation count: 1

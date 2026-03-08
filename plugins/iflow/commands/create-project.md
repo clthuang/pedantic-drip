@@ -57,22 +57,22 @@ AskUserQuestion:
 1. Create `{iflow_artifacts_root}/projects/` if it doesn't exist
 2. Create `{iflow_artifacts_root}/projects/P{NNN}-{slug}/`
 
-## Step 7: Write Project .meta.json
+## Step 7: Create Project State
 
-```json
-{
-  "id": "P{NNN}",
-  "slug": "{slug}",
-  "status": "active",
-  "expected_lifetime": "{selected lifetime}",
-  "created": "{ISO timestamp}",
-  "completed": null,
-  "brainstorm_source": "{prd-path}",
-  "milestones": [],
-  "features": [],
-  "lastCompletedMilestone": null
-}
+Call `init_project_state` MCP tool to create the project state and `.meta.json`:
+
 ```
+init_project_state(
+  project_dir="{iflow_artifacts_root}/projects/P{NNN}-{slug}",
+  project_id="P{NNN}",
+  slug="{slug}",
+  features='[]',
+  milestones='[]',
+  brainstorm_source="{prd-path}"
+)
+```
+
+The MCP tool creates the `.meta.json` with required fields: `id`, `slug`, `status`, `created` timestamp, `features`, `milestones`, and `brainstorm_source`.
 
 ## Step 8: Copy PRD
 

@@ -1303,6 +1303,180 @@ test_advisors_use_base_directory_derivation() {
     fi
 }
 
+# === Meta-JSON Guard Tests ===
+
+# Helper: setup temp HOME for meta-json-guard log tests
+META_GUARD_TMPDIR=""
+setup_meta_guard_test() {
+    META_GUARD_TMPDIR=$(mktemp -d)
+    mkdir -p "${META_GUARD_TMPDIR}/.claude/iflow"
+}
+
+teardown_meta_guard_test() {
+    if [[ -n "$META_GUARD_TMPDIR" ]] && [[ -d "$META_GUARD_TMPDIR" ]]; then
+        rm -rf "$META_GUARD_TMPDIR"
+    fi
+    META_GUARD_TMPDIR=""
+}
+
+# Test: meta-json-guard denies Write to .meta.json
+test_meta_json_guard_denies_write() {
+    log_test "meta-json-guard denies Write to .meta.json"
+
+    local output
+    output=$(echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/034-enforced-state-machine/.meta.json","content":"{}"}}' | HOME="$(mktemp -d)" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null)
+
+    if echo "$output" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['hookSpecificOutput']['permissionDecision'] == 'deny'" 2>/dev/null; then
+        log_pass
+    else
+        log_fail "Expected deny for Write to .meta.json, got: $output"
+    fi
+}
+
+# Test: meta-json-guard denies Edit to .meta.json
+test_meta_json_guard_denies_edit() {
+    log_test "meta-json-guard denies Edit to .meta.json"
+
+    local output
+    output=$(echo '{"tool_name":"Edit","tool_input":{"file_path":"docs/features/034-enforced-state-machine/.meta.json","old_string":"planned","new_string":"active"}}' | HOME="$(mktemp -d)" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null)
+
+    if echo "$output" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['hookSpecificOutput']['permissionDecision'] == 'deny'" 2>/dev/null; then
+        log_pass
+    else
+        log_fail "Expected deny for Edit to .meta.json, got: $output"
+    fi
+}
+
+# Test: meta-json-guard denies Write to projects/.meta.json
+test_meta_json_guard_denies_project_meta() {
+    log_test "meta-json-guard denies Write to projects/.meta.json"
+
+    local output
+    output=$(echo '{"tool_name":"Write","tool_input":{"file_path":"docs/projects/001-my-project/.meta.json","content":"{}"}}' | HOME="$(mktemp -d)" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null)
+
+    if echo "$output" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['hookSpecificOutput']['permissionDecision'] == 'deny'" 2>/dev/null; then
+        log_pass
+    else
+        log_fail "Expected deny for Write to projects .meta.json, got: $output"
+    fi
+}
+
+# Test: meta-json-guard allows Write to spec.md
+test_meta_json_guard_allows_non_meta() {
+    log_test "meta-json-guard allows Write to spec.md"
+
+    local output
+    output=$(echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/034-foo/spec.md","content":"# Spec"}}' | "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null)
+
+    if [[ "$output" == "{}" ]]; then
+        log_pass
+    else
+        log_fail "Expected '{}' for non-.meta.json file, got: $output"
+    fi
+}
+
+# Test: meta-json-guard allows when .meta.json in content but not file_path
+test_meta_json_guard_allows_meta_in_content_only() {
+    log_test "meta-json-guard allows .meta.json in content but different file_path"
+
+    local output
+    output=$(echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/034-foo/SKILL.md","content":"Read .meta.json for state"}}' | "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null)
+
+    if [[ "$output" == "{}" ]]; then
+        log_pass
+    else
+        log_fail "Expected '{}' when .meta.json only in content, got: $output"
+    fi
+}
+
+# Test: meta-json-guard fast-path allows when no .meta.json reference
+test_meta_json_guard_fast_path_allow() {
+    log_test "meta-json-guard fast-path allows no .meta.json reference"
+
+    local output
+    output=$(echo '{"tool_name":"Write","tool_input":{"file_path":"src/main.py","content":"print(1)"}}' | "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null)
+
+    if [[ "$output" == "{}" ]]; then
+        log_pass
+    else
+        log_fail "Expected '{}' for fast-path, got: $output"
+    fi
+}
+
+# Test: meta-json-guard logs blocked attempt with valid JSONL
+test_meta_json_guard_logs_blocked_attempt() {
+    log_test "meta-json-guard logs blocked attempt as valid JSONL"
+
+    setup_meta_guard_test
+
+    echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/034-foo/.meta.json","content":"{}"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null > /dev/null
+
+    local log_file="${META_GUARD_TMPDIR}/.claude/iflow/meta-json-guard.log"
+    if [[ -f "$log_file" ]]; then
+        local last_line
+        last_line=$(tail -1 "$log_file")
+        if echo "$last_line" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+assert 'timestamp' in d, 'missing timestamp'
+assert 'tool' in d, 'missing tool'
+assert 'path' in d, 'missing path'
+assert 'feature_id' in d, 'missing feature_id'
+assert d['tool'] == 'Write'
+assert d['path'] == 'docs/features/034-foo/.meta.json'
+" 2>/dev/null; then
+            log_pass
+        else
+            log_fail "JSONL entry missing required keys or wrong values: $last_line"
+        fi
+    else
+        log_fail "Log file not created at $log_file"
+    fi
+
+    teardown_meta_guard_test
+}
+
+# Test: meta-json-guard extracts feature_id from path
+test_meta_json_guard_extracts_feature_id() {
+    log_test "meta-json-guard extracts feature_id from path"
+
+    setup_meta_guard_test
+
+    echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/034-enforced-state-machine/.meta.json","content":"{}"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null > /dev/null
+
+    local log_file="${META_GUARD_TMPDIR}/.claude/iflow/meta-json-guard.log"
+    if [[ -f "$log_file" ]]; then
+        local last_line
+        last_line=$(tail -1 "$log_file")
+        if echo "$last_line" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['feature_id'] == '034-enforced-state-machine', f'got {d[\"feature_id\"]}'" 2>/dev/null; then
+            log_pass
+        else
+            log_fail "Expected feature_id '034-enforced-state-machine', got: $last_line"
+        fi
+    else
+        log_fail "Log file not created"
+    fi
+
+    teardown_meta_guard_test
+}
+
+# Test: meta-json-guard latency < 200ms (CI threshold, NFR-3 target is 50ms)
+test_meta_json_guard_latency() {
+    log_test "meta-json-guard fast-path latency < 200ms"
+
+    local start_ms end_ms elapsed_ms
+    start_ms=$(python3 -c "import time; print(int(time.time()*1000))")
+    echo '{"tool_name":"Write","tool_input":{"file_path":"src/main.py","content":"x"}}' | "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null > /dev/null
+    end_ms=$(python3 -c "import time; print(int(time.time()*1000))")
+    elapsed_ms=$((end_ms - start_ms))
+
+    if [[ $elapsed_ms -lt 200 ]]; then
+        log_pass
+    else
+        log_fail "Fast-path took ${elapsed_ms}ms (threshold: 200ms)"
+    fi
+}
+
 # Run all tests
 main() {
     echo "=========================================="
@@ -1382,6 +1556,20 @@ main() {
     test_secretary_handles_corrupt_state
     test_yolo_stop_handles_nonnumeric_limit
     test_sync_cache_handles_rsync_failure
+
+    echo ""
+    echo "--- Meta-JSON Guard Tests ---"
+    echo ""
+
+    test_meta_json_guard_denies_write
+    test_meta_json_guard_denies_edit
+    test_meta_json_guard_denies_project_meta
+    test_meta_json_guard_allows_non_meta
+    test_meta_json_guard_allows_meta_in_content_only
+    test_meta_json_guard_fast_path_allow
+    test_meta_json_guard_logs_blocked_attempt
+    test_meta_json_guard_extracts_feature_id
+    test_meta_json_guard_latency
 
     echo ""
     echo "--- Path Portability Tests ---"

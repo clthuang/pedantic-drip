@@ -65,7 +65,7 @@ AskUserQuestion:
     "multiSelect": false
   }]
 ```
-If "Continue": Record skipped phases in `.meta.json` skippedPhases array, then proceed.
+If "Continue": Pass skipped phases to `transition_phase` via `skipped_phases` parameter (see workflow-state skill), then proceed.
 If "Stop": Stop execution.
 
 ### Step 2: Check Branch
@@ -106,32 +106,19 @@ AskUserQuestion:
 
 ### Step 4: Mark Phase Started
 
-Update `.meta.json`:
-```json
-{
-  "phases": {
-    "{phaseName}": {
-      "started": "{ISO timestamp}"
-    }
-  }
-}
-```
-
-**Sync to workflow DB (best-effort):**
-
-After the `.meta.json` update above, sync the phase transition to the workflow database:
+Call `transition_phase` MCP tool to record the phase start and update `.meta.json`:
 
 1. Construct `feature_type_id` as `"feature:{id}-{slug}"` from the `.meta.json` `id` and `slug` fields (available from the `.meta.json` read in Step 1). This is the same value as `entity_type_id` used elsewhere in this skill.
 2. Call `transition_phase(feature_type_id, "{phaseName}")`.
    - If `[YOLO_MODE]` is active in the current context: include `yolo_active=true`.
    - If `[YOLO_MODE]` is NOT active: omit `yolo_active` (defaults to `false`).
-3. If the call succeeds (response contains `transitioned: true` and `degraded: false`): no output, proceed to Step 5.
+3. If the call succeeds (response contains `transitioned: true`): the `started_at` field in the response contains the phase start timestamp. The tool automatically updates the DB and projects `.meta.json`. Proceed to Step 5.
 4. If the call fails for any reason (MCP tool unavailable, response contains `error: true`, `transitioned: false`, `degraded: true`, or response is not valid JSON):
    output `Note: Workflow DB sync skipped — {reason}. State will reconcile on next reconcile_apply run.`
    where `{reason}` is a brief description (e.g., "MCP tool unavailable", "transition rejected", "feature not found").
-   Do NOT block — the `.meta.json` update already succeeded.
+   Do NOT block — proceed to Step 5 regardless.
 
-Note: On partial-phase resume (Step 3 → "Continue"), this call may target a phase already active in the DB. The engine handles re-entry gracefully; any rejection is covered by step 4's warn-and-continue.
+Note: On partial-phase resume (Step 3 -> "Continue"), this call may target a phase already active in the DB. The engine handles re-entry gracefully; any rejection is covered by step 4's warn-and-continue.
 
 ### Step 5: Inject Project Context (conditional)
 
@@ -203,28 +190,21 @@ git push
 
 ### Step 2: Update State
 
-Update `.meta.json`:
-```json
-{
-  "phases": {
-    "{phaseName}": {
-      "completed": "{ISO timestamp}",
-      "iterations": {count},
-      "reviewerNotes": ["any unresolved concerns"]
-    }
-  },
-  "lastCompletedPhase": "{phaseName}"
-}
-```
-
-**Sync to workflow DB (best-effort):**
-
-After the `.meta.json` update above, sync the phase completion to the workflow database:
+Call `complete_phase` MCP tool to record the phase completion, timing data, and update `.meta.json`:
 
 1. Construct `feature_type_id` as `"feature:{id}-{slug}"` from `.meta.json` `id` and `slug` fields (same value used in `validateAndSetup` Step 4, and as `entity_type_id` in Step 1 frontmatter injection).
-2. Call `complete_phase(feature_type_id, "{phaseName}")`.
+2. Call the MCP tool:
+   ```
+   complete_phase(
+     feature_type_id="feature:{id}-{slug}",
+     phase="{phaseName}",
+     iterations={count},
+     reviewer_notes='["any unresolved concerns"]'
+   )
+   ```
+   The tool stores `completed` timestamp, `iterations`, `reviewerNotes`, and `lastCompletedPhase` in the DB and projects the updated `.meta.json`. The `completed_at` field in the response contains the completion timestamp.
 3. If the call succeeds: no output, proceed.
 4. If the call fails for any reason (MCP tool unavailable, response contains `error: true`, or response is not valid JSON):
    output `Note: Workflow DB sync skipped — {reason}. State will reconcile on next reconcile_apply run.`
    where `{reason}` is a brief description (e.g., "MCP tool unavailable", "phase mismatch", "feature not found").
-   Do NOT block — the `.meta.json` update already succeeded.
+   Do NOT block — proceed regardless.

@@ -38,11 +38,12 @@ When a phase command targets a feature with `status: "planned"`, handle the tran
    - If found: AskUserQuestion "Feature {active-id}-{active-slug} is already active. Activate {id}-{slug} anyway?"
    - Options: "Continue" / "Cancel"
    - If "Cancel": stop execution
-5. Update `.meta.json`:
-   - `status` → `"active"`
-   - `mode` → selected mode
-   - `branch` → `"feature/{id}-{slug}"`
-   - `lastCompletedPhase` → `"brainstorm"` (project PRD serves as brainstorm artifact, so `/specify` is a normal forward transition — no skip warning)
+5. Call `activate_feature` MCP tool to transition the feature to active:
+   ```
+   activate_feature(feature_type_id="feature:{id}-{slug}")
+   ```
+   This sets `status` to `"active"` and projects the updated `.meta.json`.
+   Note: `mode` and `branch` are set by the entity metadata. `lastCompletedPhase` is set to `"brainstorm"` (project PRD serves as brainstorm artifact, so `/specify` is a normal forward transition — no skip warning).
 6. Create git branch: `git checkout -b feature/{id}-{slug}`
 7. Continue with normal phase execution (proceed to workflow-transitions Step 1)
 
@@ -115,10 +116,18 @@ The `.meta.json` file in each feature folder:
 ```
 
 When user confirms skipping phases via AskUserQuestion soft prerequisite warning:
-1. Read current `.meta.json`
-2. Append to `skippedPhases` array for each skipped phase
-3. Write updated `.meta.json`
-4. Proceed with target phase
+1. Build a JSON array of skipped phase entries (see structure above)
+2. Pass to `transition_phase` as the `skipped_phases` parameter:
+   ```
+   transition_phase(
+     feature_type_id="feature:{id}-{slug}",
+     target_phase="{target phase}",
+     yolo_active={true if YOLO_MODE else false},
+     skipped_phases='[{"phase": "...", "skippedAt": "...", "fromPhase": "...", "toPhase": "..."}]'
+   )
+   ```
+   The MCP tool stores the skipped phases and projects the updated `.meta.json`.
+3. Proceed with target phase
 
 ### Phase Tracking Fields
 

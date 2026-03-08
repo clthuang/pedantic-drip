@@ -1,0 +1,39 @@
+{
+  "id": "034",
+  "slug": "enforced-state-machine",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-03-08T21:15:00Z",
+  "branch": "feature/034-enforced-state-machine",
+  "brainstorm_source": "docs/brainstorms/20260308-204500-enforced-state-machine.prd.md",
+  "lastCompletedPhase": "create-tasks",
+  "phases": {
+    "specify": {
+      "started": "2026-03-08T21:16:00Z",
+      "completed": "2026-03-08T22:45:00Z",
+      "iterations": 4,
+      "reviewerNotes": ["spec-reviewer: 4 iterations (3 blockers → 4 warnings → 2 warnings → approved)", "phase-reviewer: 2 iterations (3 warnings → approved)"]
+    },
+    "design": {
+      "started": "2026-03-08T22:46:00Z",
+      "completed": "2026-03-09T01:30:00Z",
+      "iterations": 3,
+      "reviewerNotes": ["design-reviewer: 3 iterations (2 blockers → 1 warning → approved)", "phase-reviewer: 3 iterations (2 warnings → 1 warning → approved)"]
+    },
+    "create-plan": {
+      "started": "2026-03-09T01:31:00Z",
+      "completed": "2026-03-09T02:45:00Z",
+      "iterations": 3,
+      "reviewerNotes": ["plan-reviewer: 2 iterations (3 blockers → approved)", "phase-reviewer: 1 iteration (approved)"]
+    },
+    "create-tasks": {
+      "started": "2026-03-09T02:46:00Z",
+      "completed": "2026-03-09T04:00:00Z",
+      "iterations": 4,
+      "reviewerNotes": ["task-reviewer: 4 iterations (6 blockers → 4 blockers → 3 blockers → approved)", "phase-reviewer: 1 iteration (approved)"]
+    },
+    "implement": {
+      "started": "2026-03-09T04:01:00Z"
+    }
+  }
+}

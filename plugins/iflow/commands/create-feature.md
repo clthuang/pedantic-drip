@@ -94,26 +94,24 @@ Note: If "Full" indicators are detected in the description, swap the recommended
 
 ## Create Metadata File
 
-Write to `{iflow_artifacts_root}/features/{id}-{slug}/.meta.json`:
+Call `init_feature_state` MCP tool to create the feature state and `.meta.json`:
 
-```json
-{
-  "id": "{id}",
-  "slug": "{slug}",
-  "mode": "{selected-mode}",
-  "status": "active",
-  "created": "{ISO timestamp}",
-  "branch": "feature/{id}-{slug}",
-  "brainstorm_source": "{path-to-brainstorm-if-promoted}",
-  "lastCompletedPhase": null,
-  "phases": {}
-}
+```
+init_feature_state(
+  feature_dir="{iflow_artifacts_root}/features/{id}-{slug}",
+  feature_id="{id}",
+  slug="{slug}",
+  mode="{selected-mode}",
+  branch="feature/{id}-{slug}",
+  brainstorm_source="{path-to-brainstorm-if-promoted}",
+  status="active"
+)
 ```
 
 Notes:
-- `brainstorm_source` is only included when feature is promoted from a brainstorm
-- `phases` is initialized empty; phase commands populate it as they execute
-- `lastCompletedPhase` tracks the last completed phase (null until first phase completes)
+- `brainstorm_source` is only included when feature is promoted from a brainstorm — omit the parameter if not applicable
+- The MCP tool creates the `.meta.json` with required fields (phases, lastCompletedPhase, timestamps)
+- The tool returns `feature_type_id` and `meta_json_path` in its response
 
 ## Handle PRD Source
 
@@ -122,7 +120,7 @@ If `--prd` argument provided (promotion from brainstorm):
 1. Copy the PRD file: `{prd-path}` → `{iflow_artifacts_root}/features/{id}-{slug}/prd.md`
 2. **Verify copy succeeded:** Confirm destination file exists and is non-empty
 3. If verification fails: Output error and STOP
-4. Add to `.meta.json`: `"brainstorm_source": "{prd-path}"`
+4. The `brainstorm_source` is already passed to `init_feature_state` above
 
 If `--prd` NOT provided (direct creation):
 - No PRD file is created
@@ -135,7 +133,7 @@ If feature was promoted from a brainstorm that originated from a backlog item:
 1. **Read brainstorm content** from `brainstorm_source` path in context
 2. **Parse for backlog source** using pattern `\*Source: Backlog #(\d{5})\*`
 3. **If found:**
-   - Add `"backlog_source": "{id}"` to `.meta.json`
+   - Include `backlog_source="{id}"` in the `init_feature_state` call above
    - Read `{iflow_artifacts_root}/backlog.md`
    - Find row matching `| {id} |`
    - **Annotate the row** (do NOT remove it):

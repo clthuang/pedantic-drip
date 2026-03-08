@@ -10,7 +10,9 @@ import json
 import os
 import sqlite3
 import sys
+import tempfile
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 # Make workflow_engine, transition_gate, entity_registry, semantic_memory
 # importable from hooks/lib/ — safety net for direct invocation and tests.
@@ -174,6 +176,134 @@ def _build_frontmatter_summary(reports: list[DriftReport]) -> dict[str, int]:
 
 
 # ---------------------------------------------------------------------------
+# Utility functions
+# ---------------------------------------------------------------------------
+
+
+def _iso_now() -> str:
+    """Return current UTC time as ISO 8601 string."""
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _atomic_json_write(path: str, data: dict) -> None:
+    """Atomic JSON write: NamedTemporaryFile + os.replace()."""
+    tmp_name = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            dir=os.path.dirname(path),
+            suffix=".tmp",
+            delete=False,
+            encoding="utf-8",
+        ) as fd:
+            tmp_name = fd.name
+            json.dump(data, fd, indent=2)
+            fd.write("\n")
+        os.replace(tmp_name, path)
+    except BaseException:
+        if tmp_name is not None:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+        raise
+
+
+# ---------------------------------------------------------------------------
+# Projection function
+# ---------------------------------------------------------------------------
+
+
+def _project_meta_json(
+    db: EntityDatabase,
+    engine: WorkflowStateEngine | None,
+    feature_type_id: str,
+    feature_dir: str | None = None,
+) -> str | None:
+    """Regenerate .meta.json from DB + engine state. Returns warning string or None.
+
+    Uses engine.get_state() as authoritative source for last_completed_phase
+    and current_phase. Falls back to entity metadata if engine is None or
+    engine state unavailable. Phase timing details (iterations, reviewerNotes)
+    come from entity metadata only (engine doesn't track these).
+    """
+    entity = db.get_entity(feature_type_id)
+    if entity is None:
+        return f"entity not found: {feature_type_id}"
+
+    if feature_dir is None:
+        feature_dir = entity.get("artifact_path")
+        if not feature_dir:
+            return f"artifact_path not set and no feature_dir provided: {feature_type_id}"
+
+    meta_path = os.path.join(feature_dir, ".meta.json")
+
+    # Parse metadata -- it's a JSON TEXT column, not a dict
+    raw_metadata = entity.get("metadata")
+    if raw_metadata:
+        metadata = json.loads(raw_metadata) if isinstance(raw_metadata, str) else raw_metadata
+    else:
+        metadata = {}
+
+    phase_timing = metadata.get("phase_timing", {})
+
+    # Get authoritative state from engine when available
+    if engine is not None:
+        engine_state = engine.get_state(feature_type_id)
+        last_completed = (
+            engine_state.last_completed_phase if engine_state else None
+        )
+    else:
+        last_completed = metadata.get("last_completed_phase")
+
+    # Build .meta.json structure
+    meta = {
+        "id": metadata.get("id", ""),
+        "slug": metadata.get("slug", ""),
+        "mode": metadata.get("mode", "standard"),
+        "status": entity.get("status") or "active",
+        "created": entity.get("created_at") or _iso_now(),
+        "branch": metadata.get("branch", ""),
+    }
+
+    # Optional fields -- only include when present
+    if metadata.get("brainstorm_source"):
+        meta["brainstorm_source"] = metadata["brainstorm_source"]
+    if metadata.get("backlog_source"):
+        meta["backlog_source"] = metadata["backlog_source"]
+
+    # Workflow state (engine is authoritative when available)
+    meta["lastCompletedPhase"] = last_completed
+
+    # Phases from phase_timing metadata
+    phases = {}
+    for phase_name, timing in phase_timing.items():
+        phase_entry = {}
+        if timing.get("started"):
+            phase_entry["started"] = timing["started"]
+        if timing.get("completed"):
+            phase_entry["completed"] = timing["completed"]
+        if timing.get("iterations") is not None:
+            phase_entry["iterations"] = timing["iterations"]
+        if timing.get("reviewerNotes"):
+            phase_entry["reviewerNotes"] = timing["reviewerNotes"]
+        if phase_entry:
+            phases[phase_name] = phase_entry
+    meta["phases"] = phases
+
+    # Skipped phases
+    if metadata.get("skipped_phases"):
+        meta["skippedPhases"] = metadata["skipped_phases"]
+
+    # Atomic write (fail-open)
+    try:
+        _atomic_json_write(meta_path, meta)
+        return None  # success
+    except Exception as exc:
+        return f"projection failed: {exc}"
+
+
+# ---------------------------------------------------------------------------
 # Processing functions
 # ---------------------------------------------------------------------------
 
@@ -254,6 +384,9 @@ def _validate_feature_type_id(feature_type_id: str, artifacts_root: str) -> str:
 
     slug = feature_type_id.split(":", 1)[1]
 
+    if not slug:
+        raise ValueError("feature_not_found: empty slug")
+
     # Check null bytes before ANY filesystem call
     if "\0" in slug:
         raise ValueError(f"feature_not_found: {slug} not found or path traversal blocked")
@@ -287,14 +420,48 @@ def _process_transition_phase(
     feature_type_id: str,
     target_phase: str,
     yolo_active: bool,
+    db: EntityDatabase | None = None,
+    skipped_phases: str | None = None,
 ) -> str:
     response = engine.transition_phase(feature_type_id, target_phase, yolo_active)
     transitioned = all(r.allowed for r in response.results)
-    return json.dumps({
+
+    result: dict = {
         "transitioned": transitioned,
         "results": [_serialize_result(r) for r in response.results],
         "degraded": response.degraded,
-    })
+    }
+
+    if transitioned and db is not None:
+        # Store phase timing in entity metadata
+        entity = db.get_entity(feature_type_id)
+        raw_metadata = entity.get("metadata") if entity else None
+        if raw_metadata:
+            metadata = json.loads(raw_metadata) if isinstance(raw_metadata, str) else raw_metadata
+        else:
+            metadata = {}
+
+        phase_timing = metadata.get("phase_timing", {})
+        phase_timing.setdefault(target_phase, {})
+        phase_timing[target_phase]["started"] = _iso_now()
+        metadata["phase_timing"] = phase_timing
+
+        # Store skipped phases if provided
+        if skipped_phases:
+            metadata["skipped_phases"] = json.loads(skipped_phases)
+
+        db.update_entity(feature_type_id, metadata=metadata)
+
+        # Project .meta.json
+        warning = _project_meta_json(db, engine, feature_type_id)
+
+        result["started_at"] = phase_timing[target_phase]["started"]
+        if skipped_phases:
+            result["skipped_phases_stored"] = True
+        if warning:
+            result["projection_warning"] = warning
+
+    return json.dumps(result)
 
 
 @_with_error_handling
@@ -303,9 +470,53 @@ def _process_complete_phase(
     engine: WorkflowStateEngine,
     feature_type_id: str,
     phase: str,
+    db: EntityDatabase | None = None,
+    iterations: int | None = None,
+    reviewer_notes: str | None = None,
 ) -> str:
     state = engine.complete_phase(feature_type_id, phase)
-    return json.dumps(_serialize_state(state))
+    result = _serialize_state(state)
+
+    if db is not None:
+        # Store timing metadata in entity
+        entity = db.get_entity(feature_type_id)
+        if entity is None:
+            return _make_error(
+                "feature_not_found",
+                f"Feature not found after completion: {feature_type_id}",
+                "Verify feature_type_id format: 'feature:{id}-{slug}'",
+            )
+
+        raw_metadata = entity.get("metadata")
+        if raw_metadata:
+            metadata = json.loads(raw_metadata) if isinstance(raw_metadata, str) else raw_metadata
+        else:
+            metadata = {}
+
+        phase_timing = metadata.get("phase_timing", {})
+        phase_timing.setdefault(phase, {})
+        phase_timing[phase]["completed"] = _iso_now()
+        if iterations is not None:
+            phase_timing[phase]["iterations"] = iterations
+        if reviewer_notes:
+            phase_timing[phase]["reviewerNotes"] = json.loads(reviewer_notes)
+        metadata["phase_timing"] = phase_timing
+        metadata["last_completed_phase"] = phase
+
+        # Update entity -- set status to "completed" for terminal phase
+        update_kwargs: dict = {"metadata": metadata}
+        if phase == "finish":
+            update_kwargs["status"] = "completed"
+        db.update_entity(feature_type_id, **update_kwargs)
+
+        # Project .meta.json
+        warning = _project_meta_json(db, engine, feature_type_id)
+
+        result["completed_at"] = phase_timing[phase]["completed"]
+        if warning:
+            result["projection_warning"] = warning
+
+    return json.dumps(result)
 
 
 @_with_error_handling
@@ -429,6 +640,193 @@ def _process_reconcile_frontmatter(
 
 
 @_with_error_handling
+@_catch_value_error
+def _process_init_feature_state(
+    db: EntityDatabase,
+    engine: WorkflowStateEngine | None,
+    feature_dir: str,
+    feature_id: str,
+    slug: str,
+    mode: str,
+    branch: str,
+    brainstorm_source: str | None,
+    backlog_source: str | None,
+    status: str,
+    *,
+    artifacts_root: str,
+) -> str:
+    """Create initial feature state in DB + entity registry, then project .meta.json."""
+    feature_type_id = f"feature:{feature_id}-{slug}"
+
+    # Validate feature_type_id for path traversal defense
+    _validate_feature_type_id(feature_type_id, artifacts_root)
+
+    # Build metadata dict
+    metadata: dict = {
+        "id": feature_id,
+        "slug": slug,
+        "mode": mode,
+        "branch": branch,
+        "phase_timing": {"brainstorm": {"started": _iso_now()}} if status == "active" else {},
+    }
+    if brainstorm_source:
+        metadata["brainstorm_source"] = brainstorm_source
+    if backlog_source:
+        metadata["backlog_source"] = backlog_source
+
+    # Register or update entity
+    existing = db.get_entity(feature_type_id)
+    if existing is None:
+        db.register_entity(
+            entity_type="feature",
+            entity_id=f"{feature_id}-{slug}",
+            name=slug,
+            artifact_path=feature_dir,
+            status=status,
+            metadata=metadata,
+        )
+    else:
+        # Retry path: preserve existing phase_timing, last_completed_phase,
+        # skipped_phases to avoid clobbering progress data.
+        existing_meta_raw = existing.get("metadata")
+        if existing_meta_raw:
+            existing_meta = json.loads(existing_meta_raw) if isinstance(existing_meta_raw, str) else existing_meta_raw
+        else:
+            existing_meta = {}
+        metadata["phase_timing"] = existing_meta.get("phase_timing", metadata["phase_timing"])
+        if existing_meta.get("last_completed_phase"):
+            metadata["last_completed_phase"] = existing_meta["last_completed_phase"]
+        if existing_meta.get("skipped_phases"):
+            metadata["skipped_phases"] = existing_meta["skipped_phases"]
+        db.update_entity(feature_type_id, status=status, metadata=metadata)
+
+    # Project .meta.json
+    warning = _project_meta_json(db, engine, feature_type_id, feature_dir)
+
+    result = {
+        "created": True,
+        "feature_type_id": feature_type_id,
+        "status": status,
+        "meta_json_path": os.path.join(feature_dir, ".meta.json"),
+    }
+    if warning:
+        result["projection_warning"] = warning
+    return json.dumps(result)
+
+
+@_with_error_handling
+@_catch_value_error
+def _process_init_project_state(
+    db: EntityDatabase,
+    project_dir: str,
+    project_id: str,
+    slug: str,
+    features: str,  # JSON string
+    milestones: str,  # JSON string
+    brainstorm_source: str | None,
+) -> str:
+    """Create initial project state in DB + .meta.json."""
+    # Path traversal validation: block null bytes and ensure resolved path
+    # matches the intended directory (no symlink escape)
+    if "\0" in project_dir:
+        raise ValueError("invalid_input: project_dir path traversal blocked")
+    resolved = os.path.realpath(project_dir)
+    if not os.path.isdir(resolved):
+        raise ValueError(f"invalid_input: project_dir does not exist: {project_dir}")
+
+    project_type_id = f"project:{project_id}-{slug}"
+
+    # Parse JSON params (raises ValueError/JSONDecodeError on malformed input)
+    features_list = json.loads(features)
+    milestones_list = json.loads(milestones)
+
+    # Register entity (idempotent — skip if already exists)
+    existing = db.get_entity(project_type_id)
+    metadata = {
+        "id": project_id,
+        "slug": slug,
+        "features": features_list,
+        "milestones": milestones_list,
+    }
+    if brainstorm_source:
+        metadata["brainstorm_source"] = brainstorm_source
+
+    if existing is None:
+        db.register_entity(
+            entity_type="project",
+            entity_id=f"{project_id}-{slug}",
+            name=slug,
+            artifact_path=project_dir,
+            status="active",
+            metadata=metadata,
+        )
+
+    # Build project .meta.json (different schema from features — no phases,
+    # lastCompletedPhase, branch, mode)
+    meta = {
+        "id": project_id,
+        "slug": slug,
+        "status": "active",
+        "created": _iso_now(),
+        "features": features_list,
+        "milestones": milestones_list,
+    }
+    if brainstorm_source:
+        meta["brainstorm_source"] = brainstorm_source
+
+    # Atomic write
+    meta_path = os.path.join(project_dir, ".meta.json")
+    _atomic_json_write(meta_path, meta)
+
+    return json.dumps({
+        "created": True,
+        "project_type_id": project_type_id,
+        "meta_json_path": meta_path,
+    })
+
+
+@_with_error_handling
+@_catch_value_error
+def _process_activate_feature(
+    db: EntityDatabase,
+    engine: WorkflowStateEngine,
+    feature_type_id: str,
+    artifacts_root: str,
+) -> str:
+    """Transition a planned feature to active status.
+
+    Pre-condition: entity status must be 'planned'.
+    Post-condition: entity status becomes 'active', .meta.json projected.
+    """
+    _validate_feature_type_id(feature_type_id, artifacts_root)
+
+    entity = db.get_entity(feature_type_id)
+    if entity is None:
+        raise ValueError(f"feature_not_found: {feature_type_id}")
+
+    current_status = entity.get("status")
+    if current_status != "planned":
+        raise ValueError(
+            f"invalid_transition: feature status is '{current_status}', "
+            f"expected 'planned' for activation"
+        )
+
+    db.update_entity(feature_type_id, status="active")
+
+    warning = _project_meta_json(db, engine, feature_type_id)
+
+    result = {
+        "activated": True,
+        "feature_type_id": feature_type_id,
+        "previous_status": "planned",
+        "new_status": "active",
+    }
+    if warning:
+        result["projection_warning"] = warning
+    return json.dumps(result)
+
+
+@_with_error_handling
 def _process_reconcile_status(
     engine: WorkflowStateEngine,
     db: EntityDatabase,
@@ -495,19 +893,31 @@ async def transition_phase(
     feature_type_id: str,
     target_phase: str,
     yolo_active: bool = False,
+    skipped_phases: str | None = None,
 ) -> str:
     """Validate and enter a target phase."""
-    if _engine is None:
+    if _engine is None or _db is None:
         return _NOT_INITIALIZED
-    return _process_transition_phase(_engine, feature_type_id, target_phase, yolo_active)
+    return _process_transition_phase(
+        _engine, feature_type_id, target_phase, yolo_active,
+        db=_db, skipped_phases=skipped_phases,
+    )
 
 
 @mcp.tool()
-async def complete_phase(feature_type_id: str, phase: str) -> str:
+async def complete_phase(
+    feature_type_id: str,
+    phase: str,
+    iterations: int | None = None,
+    reviewer_notes: str | None = None,
+) -> str:
     """Record a phase as completed and advance to next phase."""
-    if _engine is None:
+    if _engine is None or _db is None:
         return _NOT_INITIALIZED
-    return _process_complete_phase(_engine, feature_type_id, phase)
+    return _process_complete_phase(
+        _engine, feature_type_id, phase,
+        db=_db, iterations=iterations, reviewer_notes=reviewer_notes,
+    )
 
 
 @mcp.tool()
@@ -570,6 +980,52 @@ async def reconcile_status() -> str:
     if _engine is None or _db is None:
         return _NOT_INITIALIZED
     return _process_reconcile_status(_engine, _db, _artifacts_root)
+
+
+@mcp.tool()
+async def init_feature_state(
+    feature_dir: str,
+    feature_id: str,
+    slug: str,
+    mode: str,
+    branch: str,
+    brainstorm_source: str | None = None,
+    backlog_source: str | None = None,
+    status: str = "active",
+) -> str:
+    """Create initial feature state in DB and write feature .meta.json."""
+    if _db is None:
+        return _NOT_INITIALIZED
+    return _process_init_feature_state(
+        _db, _engine, feature_dir, feature_id, slug, mode, branch,
+        brainstorm_source, backlog_source, status,
+        artifacts_root=_artifacts_root,
+    )
+
+
+@mcp.tool()
+async def init_project_state(
+    project_dir: str,
+    project_id: str,
+    slug: str,
+    features: str,
+    milestones: str,
+    brainstorm_source: str | None = None,
+) -> str:
+    """Create initial project state in DB and write project .meta.json."""
+    if _db is None:
+        return _NOT_INITIALIZED
+    return _process_init_project_state(
+        _db, project_dir, project_id, slug, features, milestones, brainstorm_source
+    )
+
+
+@mcp.tool()
+async def activate_feature(feature_type_id: str) -> str:
+    """Transition a planned feature to active status."""
+    if _db is None or _engine is None:
+        return _NOT_INITIALIZED
+    return _process_activate_feature(_db, _engine, feature_type_id, _artifacts_root)
 
 
 # ---------------------------------------------------------------------------
