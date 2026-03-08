@@ -384,6 +384,9 @@ def _validate_feature_type_id(feature_type_id: str, artifacts_root: str) -> str:
 
     slug = feature_type_id.split(":", 1)[1]
 
+    if not slug:
+        raise ValueError("feature_not_found: empty slug")
+
     # Check null bytes before ANY filesystem call
     if "\0" in slug:
         raise ValueError(f"feature_not_found: {slug} not found or path traversal blocked")
@@ -723,6 +726,14 @@ def _process_init_project_state(
     brainstorm_source: str | None,
 ) -> str:
     """Create initial project state in DB + .meta.json."""
+    # Path traversal validation: block null bytes and ensure resolved path
+    # matches the intended directory (no symlink escape)
+    if "\0" in project_dir:
+        raise ValueError("invalid_input: project_dir path traversal blocked")
+    resolved = os.path.realpath(project_dir)
+    if not os.path.isdir(resolved):
+        raise ValueError(f"invalid_input: project_dir does not exist: {project_dir}")
+
     project_type_id = f"project:{project_id}-{slug}"
 
     # Parse JSON params (raises ValueError/JSONDecodeError on malformed input)

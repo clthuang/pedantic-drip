@@ -34,8 +34,11 @@ from workflow_state_server import (
     _atomic_json_write,
     _iso_now,
     _make_error,
+    _process_activate_feature,
     _process_complete_phase,
     _process_get_phase,
+    _process_init_feature_state,
+    _process_init_project_state,
     _process_list_features_by_phase,
     _process_list_features_by_status,
     _process_reconcile_apply,
@@ -44,6 +47,7 @@ from workflow_state_server import (
     _process_reconcile_status,
     _process_transition_phase,
     _process_validate_prerequisites,
+    _project_meta_json,
     _serialize_drift_report,
     _serialize_reconcile_action,
     _serialize_result,
@@ -51,31 +55,6 @@ from workflow_state_server import (
     _serialize_workflow_drift_report,
     _validate_feature_type_id,
 )
-
-# RED-phase import: _process_init_project_state does not exist yet.
-# Conditional import keeps the test file importable so existing tests still run.
-try:
-    from workflow_state_server import _process_init_project_state
-except ImportError:
-    _process_init_project_state = None
-
-# RED-phase import: _project_meta_json does not exist yet.
-try:
-    from workflow_state_server import _project_meta_json
-except ImportError:
-    _project_meta_json = None
-
-# RED-phase import: _process_init_feature_state does not exist yet.
-try:
-    from workflow_state_server import _process_init_feature_state
-except ImportError:
-    _process_init_feature_state = None
-
-# RED-phase import: _process_activate_feature does not exist yet.
-try:
-    from workflow_state_server import _process_activate_feature
-except ImportError:
-    _process_activate_feature = None
 
 
 # ---------------------------------------------------------------------------
@@ -3321,28 +3300,18 @@ class TestAtomicJsonWrite:
 
 
 # ---------------------------------------------------------------------------
-# init_project_state tests (T5.1 — RED phase)
+# init_project_state tests
 # ---------------------------------------------------------------------------
 
 
 class TestInitProjectState:
-    """Tests for _process_init_project_state.
+    """Tests for _process_init_project_state."""
 
-    RED phase: _process_init_project_state does not exist yet.
-    All tests will fail (TypeError from None call or AttributeError).
-    """
-
-    def _skip_if_not_implemented(self):
-        """Guard: skip with clear message if function not yet available."""
-        if _process_init_project_state is None:
-            pytest.fail(
-                "_process_init_project_state is not implemented yet (RED phase)"
-            )
 
     def test_creates_project_entity_and_meta_json(self, db, tmp_path):
         """Creates project entity in DB and writes .meta.json with features
         and milestones arrays."""
-        self._skip_if_not_implemented()
+
 
         project_dir = os.path.join(str(tmp_path), "projects", "001-my-project")
         os.makedirs(project_dir, exist_ok=True)
@@ -3380,7 +3349,7 @@ class TestInitProjectState:
 
     def test_brainstorm_source_included_when_provided(self, db, tmp_path):
         """brainstorm_source appears in .meta.json when provided."""
-        self._skip_if_not_implemented()
+
 
         project_dir = os.path.join(str(tmp_path), "projects", "002-src")
         os.makedirs(project_dir, exist_ok=True)
@@ -3402,7 +3371,7 @@ class TestInitProjectState:
 
     def test_brainstorm_source_omitted_when_none(self, db, tmp_path):
         """brainstorm_source is NOT present in .meta.json when None."""
-        self._skip_if_not_implemented()
+
 
         project_dir = os.path.join(str(tmp_path), "projects", "003-no-src")
         os.makedirs(project_dir, exist_ok=True)
@@ -3424,7 +3393,7 @@ class TestInitProjectState:
 
     def test_json_string_params_parsed_correctly(self, db, tmp_path):
         """features and milestones JSON strings are parsed into lists."""
-        self._skip_if_not_implemented()
+
 
         project_dir = os.path.join(str(tmp_path), "projects", "004-parse")
         os.makedirs(project_dir, exist_ok=True)
@@ -3453,7 +3422,7 @@ class TestInitProjectState:
 
     def test_catch_value_error_on_malformed_features_json(self, db, tmp_path):
         """@_catch_value_error catches malformed JSON string for features."""
-        self._skip_if_not_implemented()
+
 
         project_dir = os.path.join(str(tmp_path), "projects", "005-bad")
         os.makedirs(project_dir, exist_ok=True)
@@ -3473,7 +3442,7 @@ class TestInitProjectState:
 
     def test_catch_value_error_on_malformed_milestones_json(self, db, tmp_path):
         """@_catch_value_error catches malformed JSON string for milestones."""
-        self._skip_if_not_implemented()
+
 
         project_dir = os.path.join(str(tmp_path), "projects", "006-bad-ms")
         os.makedirs(project_dir, exist_ok=True)
@@ -3496,7 +3465,7 @@ class TestInitProjectState:
         """Project .meta.json contains id, slug, status, created, features,
         milestones — and does NOT contain phases, lastCompletedPhase, branch,
         mode (these are feature-only per design C4)."""
-        self._skip_if_not_implemented()
+
 
         project_dir = os.path.join(str(tmp_path), "projects", "007-fields")
         os.makedirs(project_dir, exist_ok=True)
@@ -3534,7 +3503,7 @@ class TestInitProjectState:
     def test_atomic_json_write_called_with_correct_args(self, db, tmp_path):
         """_atomic_json_write is called with the correct path and dict
         (not open() + json.dump() directly)."""
-        self._skip_if_not_implemented()
+
 
         project_dir = os.path.join(str(tmp_path), "projects", "008-atomic")
         os.makedirs(project_dir, exist_ok=True)
@@ -3579,15 +3548,12 @@ class TestProjectMetaJson:
     status, created_at. metadata must be parsed via json.loads().
     """
 
-    def _skip_if_not_implemented(self):
-        if _project_meta_json is None:
-            pytest.fail("_project_meta_json is not implemented yet (RED phase)")
 
     # -- T2.1: Happy path tests --
 
     def test_projects_correct_json_structure(self, db, tmp_path):
         """Projects correct .meta.json from mock entity dict + mock engine state."""
-        self._skip_if_not_implemented()
+
 
         feature_dir = os.path.join(str(tmp_path), "features", "034-foo")
         os.makedirs(feature_dir, exist_ok=True)
@@ -3637,7 +3603,7 @@ class TestProjectMetaJson:
     def test_engine_none_falls_back_to_metadata(self, db, tmp_path):
         """engine=None falls back to metadata-only (no engine.get_state call);
         last_completed from metadata.get('last_completed_phase')."""
-        self._skip_if_not_implemented()
+
 
         feature_dir = os.path.join(str(tmp_path), "features", "035-noengine")
         os.makedirs(feature_dir, exist_ok=True)
@@ -3671,7 +3637,7 @@ class TestProjectMetaJson:
 
     def test_resolves_feature_dir_from_entity_artifact_path(self, db, tmp_path):
         """Resolves feature_dir from entity['artifact_path'] when not provided."""
-        self._skip_if_not_implemented()
+
 
         feature_dir = os.path.join(str(tmp_path), "features", "036-resolve")
         os.makedirs(feature_dir, exist_ok=True)
@@ -3699,7 +3665,7 @@ class TestProjectMetaJson:
 
     def test_phase_timing_with_iterations_and_reviewer_notes(self, db, tmp_path):
         """Phase timing with iterations and reviewerNotes projected correctly."""
-        self._skip_if_not_implemented()
+
 
         feature_dir = os.path.join(str(tmp_path), "features", "037-timing")
         os.makedirs(feature_dir, exist_ok=True)
@@ -3742,7 +3708,7 @@ class TestProjectMetaJson:
 
     def test_missing_entity_returns_warning(self, db, tmp_path):
         """Missing entity returns warning string."""
-        self._skip_if_not_implemented()
+
 
         result = _project_meta_json(db, None, "feature:999-missing", str(tmp_path))
         assert result is not None
@@ -3751,7 +3717,7 @@ class TestProjectMetaJson:
 
     def test_write_failure_returns_warning_no_exception(self, db, tmp_path):
         """Write failure returns warning string, no exception raised."""
-        self._skip_if_not_implemented()
+
         from unittest.mock import patch
 
         feature_dir = os.path.join(str(tmp_path), "features", "038-fail")
@@ -3783,7 +3749,7 @@ class TestProjectMetaJson:
 
     def test_optional_fields_only_present_when_set(self, db, tmp_path):
         """Optional fields (brainstorm_source, skippedPhases) only present when set."""
-        self._skip_if_not_implemented()
+
 
         feature_dir = os.path.join(str(tmp_path), "features", "039-optional")
         os.makedirs(feature_dir, exist_ok=True)
@@ -3842,7 +3808,7 @@ class TestProjectMetaJson:
 
     def test_null_metadata_uses_empty_dict(self, db, tmp_path):
         """NULL metadata uses empty dict, no TypeError."""
-        self._skip_if_not_implemented()
+
 
         feature_dir = os.path.join(str(tmp_path), "features", "041-nullmeta")
         os.makedirs(feature_dir, exist_ok=True)
@@ -3868,7 +3834,7 @@ class TestProjectMetaJson:
 
     def test_no_artifact_path_and_no_feature_dir_returns_warning(self, db, tmp_path):
         """Entity with no artifact_path and no feature_dir param returns warning."""
-        self._skip_if_not_implemented()
+
 
         # Register entity without artifact_path
         db.register_entity(
@@ -3894,15 +3860,10 @@ class TestInitFeatureState:
     status, created_at. metadata must be parsed via json.loads().
     """
 
-    def _skip_if_not_implemented(self):
-        if _process_init_feature_state is None:
-            pytest.fail(
-                "_process_init_feature_state is not implemented yet (RED phase)"
-            )
 
     def test_creates_new_entity_and_meta_json_with_all_fields(self, db, engine, tmp_path):
         """Creates new entity + .meta.json with all required fields."""
-        self._skip_if_not_implemented()
+
 
         feature_dir = os.path.join(str(tmp_path), "features", "050-init-test")
         os.makedirs(feature_dir, exist_ok=True)
@@ -3937,7 +3898,7 @@ class TestInitFeatureState:
     def test_idempotent_retry_preserves_existing_timing(self, db, engine, tmp_path):
         """Idempotent retry preserves existing phase_timing, last_completed_phase,
         skipped_phases."""
-        self._skip_if_not_implemented()
+
 
         feature_dir = os.path.join(str(tmp_path), "features", "051-retry")
         os.makedirs(feature_dir, exist_ok=True)
@@ -3978,7 +3939,7 @@ class TestInitFeatureState:
 
     def test_brainstorm_source_and_backlog_source_included(self, db, engine, tmp_path):
         """brainstorm_source and backlog_source included when provided."""
-        self._skip_if_not_implemented()
+
 
         feature_dir = os.path.join(str(tmp_path), "features", "052-sources")
         os.makedirs(feature_dir, exist_ok=True)
@@ -4000,7 +3961,7 @@ class TestInitFeatureState:
 
     def test_status_defaults_to_active_and_respects_planned(self, db, engine, tmp_path):
         """Status defaults to 'active', respects 'planned'."""
-        self._skip_if_not_implemented()
+
 
         feat_dir_a = os.path.join(str(tmp_path), "features", "053-active")
         os.makedirs(feat_dir_a, exist_ok=True)
@@ -4032,7 +3993,7 @@ class TestInitFeatureState:
 
     def test_projection_warning_returned_on_failure(self, db, engine, tmp_path):
         """Returns projection_warning if _project_meta_json returns warning."""
-        self._skip_if_not_implemented()
+
         from unittest.mock import patch
 
         feature_dir = os.path.join(str(tmp_path), "features", "055-warn")
@@ -4053,7 +4014,7 @@ class TestInitFeatureState:
 
     def test_catch_value_error_on_bad_input(self, db, engine, tmp_path):
         """@_catch_value_error catches ValueError on bad input."""
-        self._skip_if_not_implemented()
+
 
         feature_dir = os.path.join(str(tmp_path), "features", "056-bad")
         os.makedirs(feature_dir, exist_ok=True)
@@ -4069,7 +4030,7 @@ class TestInitFeatureState:
 
     def test_no_projection_warning_when_successful(self, db, engine, tmp_path):
         """No projection_warning key when projection succeeds."""
-        self._skip_if_not_implemented()
+
 
         feature_dir = os.path.join(str(tmp_path), "features", "057-nowarning")
         os.makedirs(feature_dir, exist_ok=True)
@@ -4096,16 +4057,10 @@ class TestActivateFeature:
     Post-condition: entity status becomes 'active', .meta.json projected.
     """
 
-    def _skip_if_not_implemented(self):
-        """Guard: skip with clear message if function not yet available."""
-        if _process_activate_feature is None:
-            pytest.fail(
-                "_process_activate_feature is not implemented yet (RED phase)"
-            )
 
     def test_planned_entity_activated_to_active(self, db, tmp_path):
         """Planned entity is activated, status becomes 'active'."""
-        self._skip_if_not_implemented()
+
 
         feature_dir = os.path.join(str(tmp_path), "features", "050-activate")
         os.makedirs(feature_dir, exist_ok=True)
@@ -4142,7 +4097,7 @@ class TestActivateFeature:
 
     def test_non_planned_entity_raises_value_error(self, db, tmp_path):
         """Non-planned entity (e.g., 'active') raises ValueError via error response."""
-        self._skip_if_not_implemented()
+
 
         feature_dir = os.path.join(str(tmp_path), "features", "051-already-active")
         os.makedirs(feature_dir, exist_ok=True)
@@ -4175,7 +4130,7 @@ class TestActivateFeature:
 
     def test_nonexistent_entity_raises_value_error(self, db, tmp_path):
         """Non-existent entity raises ValueError via error response."""
-        self._skip_if_not_implemented()
+
 
         # Create the feature directory so _validate_feature_type_id passes
         feature_dir = os.path.join(str(tmp_path), "features", "999-ghost")
@@ -4194,7 +4149,7 @@ class TestActivateFeature:
 
     def test_meta_json_projected_after_activation(self, db, tmp_path):
         """.meta.json is projected after activation."""
-        self._skip_if_not_implemented()
+
 
         feature_dir = os.path.join(str(tmp_path), "features", "052-project")
         os.makedirs(feature_dir, exist_ok=True)
@@ -4232,7 +4187,7 @@ class TestActivateFeature:
 
     def test_projection_warning_returned_on_failure(self, db, tmp_path):
         """Returns projection_warning if projection fails."""
-        self._skip_if_not_implemented()
+
         from unittest.mock import patch
 
         feature_dir = os.path.join(str(tmp_path), "features", "053-projfail")
@@ -4265,3 +4220,863 @@ class TestActivateFeature:
         data = json.loads(result)
         assert data["activated"] is True
         assert data["projection_warning"] == "projection failed: disk full"
+
+
+# ---------------------------------------------------------------------------
+# Test Deepening: BDD Scenarios (Dimension 1)
+# derived_from: spec:AC (end-to-end workflow), design:CQRS
+# ---------------------------------------------------------------------------
+
+
+class TestEndToEndWorkflow:
+    """BDD scenarios covering the full init -> activate -> transition -> complete flow.
+
+    Anticipate: Integration bugs where state from one step is not visible to the next.
+    Challenge: Would catch if _project_meta_json silently fails mid-flow.
+    Verify: Mutation of any step's DB write would break downstream assertions.
+    """
+
+    def test_full_lifecycle_init_activate_transition_complete(self, db, tmp_path):
+        """End-to-end: init_feature_state -> activate_feature -> transition_phase -> complete_phase."""
+        # derived_from: spec:AC (Sites 1,4,6,7) — full lifecycle via MCP tools
+
+        # Given a feature directory exists
+        feature_dir = os.path.join(str(tmp_path), "features", "100-lifecycle")
+        os.makedirs(feature_dir, exist_ok=True)
+
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        # When init_feature_state is called with status="planned"
+        result = _process_init_feature_state(
+            db, engine, feature_dir, "100", "lifecycle", "standard",
+            "feature/100-lifecycle", None, None, "planned",
+            artifacts_root=str(tmp_path),
+        )
+        data = json.loads(result)
+        assert data["created"] is True
+        assert data["status"] == "planned"
+
+        # Then entity is in "planned" status with empty phase_timing
+        entity = db.get_entity("feature:100-lifecycle")
+        assert entity["status"] == "planned"
+        meta_raw = json.loads(entity["metadata"]) if entity["metadata"] else {}
+        assert meta_raw.get("phase_timing", {}) == {}
+
+        # When activate_feature is called
+        result = _process_activate_feature(
+            db, engine, "feature:100-lifecycle", str(tmp_path),
+        )
+        data = json.loads(result)
+        assert data["activated"] is True
+        assert data["new_status"] == "active"
+
+        # Then entity is in "active" status
+        entity = db.get_entity("feature:100-lifecycle")
+        assert entity["status"] == "active"
+
+        # When transitioning to "specify" (engine auto-hydrates workflow phase from .meta.json)
+        result = _process_transition_phase(
+            engine, "feature:100-lifecycle", "specify", False,
+            db=db, skipped_phases=None,
+        )
+        data = json.loads(result)
+        assert data["transitioned"] is True
+        assert "started_at" in data
+
+        # Then .meta.json reflects the phase start
+        meta_path = os.path.join(feature_dir, ".meta.json")
+        with open(meta_path) as f:
+            meta = json.load(f)
+        assert "specify" in meta["phases"]
+        assert "started" in meta["phases"]["specify"]
+
+        # When completing the phase
+        result = _process_complete_phase(
+            engine, "feature:100-lifecycle", "specify",
+            db=db, iterations=2, reviewer_notes='["Fix edge case"]',
+        )
+        data = json.loads(result)
+        assert "completed_at" in data
+
+        # Then .meta.json reflects completed phase with timing metadata
+        with open(meta_path) as f:
+            meta = json.load(f)
+        assert meta["phases"]["specify"]["iterations"] == 2
+        assert meta["phases"]["specify"]["reviewerNotes"] == ["Fix edge case"]
+        assert "completed" in meta["phases"]["specify"]
+        assert meta["lastCompletedPhase"] == "specify"
+
+    def test_init_planned_has_empty_phase_timing_active_has_brainstorm(self, db, tmp_path):
+        """Planned features get empty phase_timing; active features get brainstorm started."""
+        # derived_from: spec:Site1 + spec:Site2 — status-dependent phase_timing init
+
+        # Given two feature directories
+        dir_planned = os.path.join(str(tmp_path), "features", "101-planned")
+        dir_active = os.path.join(str(tmp_path), "features", "102-active")
+        os.makedirs(dir_planned, exist_ok=True)
+        os.makedirs(dir_active, exist_ok=True)
+
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        # When creating planned feature
+        _process_init_feature_state(
+            db, engine, dir_planned, "101", "planned", "standard",
+            "feature/101-planned", None, None, "planned",
+            artifacts_root=str(tmp_path),
+        )
+
+        # Then phase_timing is empty
+        entity = db.get_entity("feature:101-planned")
+        meta_raw = json.loads(entity["metadata"]) if entity["metadata"] else {}
+        assert meta_raw["phase_timing"] == {}
+
+        # When creating active feature
+        _process_init_feature_state(
+            db, engine, dir_active, "102", "active", "standard",
+            "feature/102-active", None, None, "active",
+            artifacts_root=str(tmp_path),
+        )
+
+        # Then phase_timing has brainstorm started
+        entity = db.get_entity("feature:102-active")
+        meta_raw = json.loads(entity["metadata"]) if entity["metadata"] else {}
+        assert "brainstorm" in meta_raw["phase_timing"]
+        assert "started" in meta_raw["phase_timing"]["brainstorm"]
+
+
+# ---------------------------------------------------------------------------
+# Test Deepening: Boundary Values (Dimension 2)
+# ---------------------------------------------------------------------------
+
+
+class TestBoundaryValuesDeepened:
+    """Boundary value analysis for new MCP tools and extended functions.
+
+    Anticipate: Off-by-one, empty vs null, zero values.
+    """
+
+    def test_complete_phase_iterations_zero_stored(self, db, tmp_path):
+        """iterations=0 is a valid boundary value and should be stored, not skipped."""
+        # derived_from: spec:Site7 — iterations is int|None, 0 is valid
+        # Anticipate: `if iterations:` would skip 0 since 0 is falsy
+
+        feature_dir = os.path.join(str(tmp_path), "features", "009-test")
+        os.makedirs(feature_dir, exist_ok=True)
+        with open(os.path.join(feature_dir, ".meta.json"), "w") as f:
+            f.write('{"id": "009", "slug": "test", "status": "active", "mode": "standard"}')
+
+        db.register_entity(
+            "feature", "009-test", "Test Feature", status="active",
+            artifact_path=feature_dir,
+            metadata={"id": "009", "slug": "test", "mode": "standard", "branch": "", "phase_timing": {}},
+        )
+        db.create_workflow_phase("feature:009-test", workflow_phase="specify")
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        result = _process_complete_phase(
+            engine, "feature:009-test", "specify",
+            db=db, iterations=0, reviewer_notes=None,
+        )
+        data = json.loads(result)
+
+        # Then iterations=0 should be stored
+        entity = db.get_entity("feature:009-test")
+        meta_raw = json.loads(entity["metadata"]) if entity["metadata"] else {}
+        assert meta_raw["phase_timing"]["specify"]["iterations"] == 0
+
+    def test_complete_phase_empty_reviewer_notes_array(self, db, tmp_path):
+        """Empty reviewer_notes array '[]' is valid and should be stored."""
+        # derived_from: spec:Site7 — reviewer_notes is JSON array, empty array is valid
+        # Anticipate: `if reviewer_notes:` would skip "[]" since it's truthy but empty array
+
+        feature_dir = os.path.join(str(tmp_path), "features", "110-empty-notes")
+        os.makedirs(feature_dir, exist_ok=True)
+        with open(os.path.join(feature_dir, ".meta.json"), "w") as f:
+            f.write('{"id": "110", "slug": "empty-notes", "status": "active", "mode": "standard"}')
+
+        db.register_entity(
+            "feature", "110-empty-notes", "empty-notes", status="active",
+            artifact_path=feature_dir,
+            metadata={"id": "110", "slug": "empty-notes", "mode": "standard", "branch": "", "phase_timing": {}},
+        )
+        db.create_workflow_phase("feature:110-empty-notes", workflow_phase="specify")
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        result = _process_complete_phase(
+            engine, "feature:110-empty-notes", "specify",
+            db=db, iterations=None, reviewer_notes='[]',
+        )
+        data = json.loads(result)
+
+        entity = db.get_entity("feature:110-empty-notes")
+        meta_raw = json.loads(entity["metadata"]) if entity["metadata"] else {}
+        # "[]" is truthy, so reviewer_notes should be parsed and stored as []
+        assert meta_raw["phase_timing"]["specify"]["reviewerNotes"] == []
+
+    def test_transition_phase_empty_skipped_phases_array(self, db, tmp_path):
+        """Empty skipped_phases '[]' is valid JSON but falsy — should be stored."""
+        # derived_from: spec:Site5 — skipped_phases JSON array, empty edge case
+        # Anticipate: `if skipped_phases:` treats "[]" as truthy (non-empty string)
+
+        feature_dir = os.path.join(str(tmp_path), "features", "009-test")
+        os.makedirs(feature_dir, exist_ok=True)
+        with open(os.path.join(feature_dir, ".meta.json"), "w") as f:
+            f.write('{"id": "009", "slug": "test", "status": "active", "mode": "standard"}')
+
+        db.register_entity(
+            "feature", "009-test", "Test Feature", status="active",
+            artifact_path=feature_dir,
+            metadata={"id": "009", "slug": "test", "mode": "standard", "branch": "", "phase_timing": {}},
+        )
+        db.create_workflow_phase("feature:009-test", workflow_phase="specify")
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        result = _process_transition_phase(
+            engine, "feature:009-test", "specify", False,
+            db=db, skipped_phases='[]',
+        )
+        data = json.loads(result)
+
+        assert data["transitioned"] is True
+        # "[]" is a truthy string, so skipped_phases_stored should be True
+        assert data.get("skipped_phases_stored") is True
+
+        # Verify empty array stored in metadata
+        entity = db.get_entity("feature:009-test")
+        meta_raw = json.loads(entity["metadata"]) if entity["metadata"] else {}
+        assert meta_raw.get("skipped_phases") == []
+
+    def test_init_project_state_empty_features_and_milestones(self, db, tmp_path):
+        """Empty features and milestones arrays are valid."""
+        # derived_from: spec:Site3/Site9 — features/milestones can be empty
+
+        project_dir = os.path.join(str(tmp_path), "projects", "111-empty")
+        os.makedirs(project_dir, exist_ok=True)
+
+        result = _process_init_project_state(
+            db, project_dir, "111", "empty", "[]", "[]", None,
+        )
+        data = json.loads(result)
+        assert data["created"] is True
+
+        meta_path = os.path.join(project_dir, ".meta.json")
+        with open(meta_path) as f:
+            meta = json.load(f)
+        assert meta["features"] == []
+        assert meta["milestones"] == []
+
+    def test_atomic_json_write_unicode_content(self, tmp_path):
+        """Unicode content is written correctly via atomic write."""
+        # derived_from: dimension:boundary — unicode characters in JSON
+
+        target = os.path.join(str(tmp_path), "unicode.json")
+        data = {"name": "日本語テスト", "emoji": "🎉", "accent": "café"}
+        _atomic_json_write(target, data)
+
+        with open(target, encoding="utf-8") as f:
+            parsed = json.load(f)
+        assert parsed == data
+
+    def test_atomic_json_write_empty_dict(self, tmp_path):
+        """Empty dict is written as valid JSON."""
+        # derived_from: dimension:boundary — minimum valid input
+
+        target = os.path.join(str(tmp_path), "empty.json")
+        _atomic_json_write(target, {})
+
+        with open(target) as f:
+            parsed = json.load(f)
+        assert parsed == {}
+
+    def test_init_project_state_large_features_array(self, db, tmp_path):
+        """Large features array (50 items) handled correctly."""
+        # derived_from: dimension:boundary — collection size
+
+        project_dir = os.path.join(str(tmp_path), "projects", "112-large")
+        os.makedirs(project_dir, exist_ok=True)
+
+        features = [f"feat-{i:03d}" for i in range(50)]
+        result = _process_init_project_state(
+            db, project_dir, "112", "large",
+            json.dumps(features), "[]", None,
+        )
+        data = json.loads(result)
+        assert data["created"] is True
+
+        meta_path = os.path.join(project_dir, ".meta.json")
+        with open(meta_path) as f:
+            meta = json.load(f)
+        assert len(meta["features"]) == 50
+
+
+# ---------------------------------------------------------------------------
+# Test Deepening: Adversarial / Negative Testing (Dimension 3)
+# ---------------------------------------------------------------------------
+
+
+class TestAdversarialDeepened:
+    """Adversarial tests for new MCP tools.
+
+    Anticipate: Invalid state transitions, malformed inputs, double operations.
+    """
+
+    def test_activate_feature_completed_status_rejected(self, db, tmp_path):
+        """Activating a 'completed' feature should be rejected."""
+        # derived_from: spec:Site4 — pre-condition: status must be 'planned'
+        # Anticipate: Only checking `!= "planned"` vs specifically allowing certain states
+
+        feature_dir = os.path.join(str(tmp_path), "features", "120-completed")
+        os.makedirs(feature_dir, exist_ok=True)
+
+        db.register_entity(
+            "feature", "120-completed", "completed",
+            artifact_path=feature_dir,
+            status="completed",
+            metadata={"id": "120", "slug": "completed", "mode": "standard", "branch": "", "phase_timing": {}},
+        )
+
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        result = _process_activate_feature(
+            db, engine, "feature:120-completed", str(tmp_path),
+        )
+        data = json.loads(result)
+
+        assert data["error"] is True
+        assert data["error_type"] == "invalid_transition"
+        assert "completed" in data["message"]
+
+    def test_activate_feature_double_activation_rejected(self, db, tmp_path):
+        """Activating an already-active feature should be rejected."""
+        # derived_from: spec:Site4 — race condition: double activation
+        # Anticipate: Second activation attempt after first succeeds
+
+        feature_dir = os.path.join(str(tmp_path), "features", "121-double")
+        os.makedirs(feature_dir, exist_ok=True)
+
+        db.register_entity(
+            "feature", "121-double", "double",
+            artifact_path=feature_dir,
+            status="planned",
+            metadata={"id": "121", "slug": "double", "mode": "standard", "branch": "", "phase_timing": {}},
+        )
+
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        # First activation succeeds
+        result1 = _process_activate_feature(
+            db, engine, "feature:121-double", str(tmp_path),
+        )
+        data1 = json.loads(result1)
+        assert data1["activated"] is True
+
+        # Second activation fails — status is now 'active', not 'planned'
+        result2 = _process_activate_feature(
+            db, engine, "feature:121-double", str(tmp_path),
+        )
+        data2 = json.loads(result2)
+        assert data2["error"] is True
+        assert data2["error_type"] == "invalid_transition"
+
+    def test_transition_phase_malformed_skipped_phases_json(self, db, tmp_path):
+        """Malformed skipped_phases JSON should return error."""
+        # derived_from: spec:Site5 — skipped_phases is JSON string
+        # Anticipate: json.loads failure on malformed input
+
+        feature_dir = os.path.join(str(tmp_path), "features", "009-test")
+        os.makedirs(feature_dir, exist_ok=True)
+        with open(os.path.join(feature_dir, ".meta.json"), "w") as f:
+            f.write('{"id": "009", "slug": "test", "status": "active", "mode": "standard"}')
+
+        db.register_entity(
+            "feature", "009-test", "Test Feature", status="active",
+            artifact_path=feature_dir,
+            metadata={"id": "009", "slug": "test", "mode": "standard", "branch": "", "phase_timing": {}},
+        )
+        db.create_workflow_phase("feature:009-test", workflow_phase="specify")
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        result = _process_transition_phase(
+            engine, "feature:009-test", "specify", False,
+            db=db, skipped_phases="not-valid-json",
+        )
+        data = json.loads(result)
+
+        # Malformed JSON should be caught by error handling
+        # json.loads raises ValueError/JSONDecodeError which is caught
+        assert data.get("error") is True
+
+    def test_complete_phase_malformed_reviewer_notes_json(self, db, tmp_path):
+        """Malformed reviewer_notes JSON should return error."""
+        # derived_from: spec:Site7 — reviewer_notes is JSON string
+        # Anticipate: json.loads failure on malformed input
+
+        feature_dir = os.path.join(str(tmp_path), "features", "122-bad-notes")
+        os.makedirs(feature_dir, exist_ok=True)
+        with open(os.path.join(feature_dir, ".meta.json"), "w") as f:
+            f.write('{"id": "122", "slug": "bad-notes", "status": "active", "mode": "standard"}')
+
+        db.register_entity(
+            "feature", "122-bad-notes", "bad-notes", status="active",
+            artifact_path=feature_dir,
+            metadata={"id": "122", "slug": "bad-notes", "mode": "standard", "branch": "", "phase_timing": {}},
+        )
+        db.create_workflow_phase("feature:122-bad-notes", workflow_phase="specify")
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        result = _process_complete_phase(
+            engine, "feature:122-bad-notes", "specify",
+            db=db, iterations=1, reviewer_notes="not-valid-json",
+        )
+        data = json.loads(result)
+
+        assert data.get("error") is True
+
+    def test_complete_phase_non_terminal_does_not_set_completed_status(self, db, tmp_path):
+        """Completing a non-terminal phase (e.g., 'specify') should NOT set status to 'completed'."""
+        # derived_from: spec:Site8 — only complete_phase("finish") sets status="completed"
+        # Anticipate: Bug where any complete_phase sets status="completed"
+
+        feature_dir = os.path.join(str(tmp_path), "features", "123-nonterminal")
+        os.makedirs(feature_dir, exist_ok=True)
+        with open(os.path.join(feature_dir, ".meta.json"), "w") as f:
+            f.write('{"id": "123", "slug": "nonterminal", "status": "active", "mode": "standard"}')
+
+        db.register_entity(
+            "feature", "123-nonterminal", "nonterminal", status="active",
+            artifact_path=feature_dir,
+            metadata={"id": "123", "slug": "nonterminal", "mode": "standard", "branch": "", "phase_timing": {}},
+        )
+        db.create_workflow_phase("feature:123-nonterminal", workflow_phase="specify")
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        result = _process_complete_phase(
+            engine, "feature:123-nonterminal", "specify",
+            db=db, iterations=1, reviewer_notes=None,
+        )
+        data = json.loads(result)
+
+        # Status should still be "active", not "completed"
+        entity = db.get_entity("feature:123-nonterminal")
+        assert entity["status"] == "active"
+
+    def test_init_project_state_idempotent_existing_entity(self, db, tmp_path):
+        """Calling init_project_state twice with same ID — second call should not crash.
+        Spec says: 'Register entity (idempotent — skip if already exists)'.
+        """
+        # derived_from: design:C4 — idempotent entity registration
+
+        project_dir = os.path.join(str(tmp_path), "projects", "124-idempotent")
+        os.makedirs(project_dir, exist_ok=True)
+
+        # First call
+        result1 = _process_init_project_state(
+            db, project_dir, "124", "idempotent",
+            '["feat-a"]', '[]', None,
+        )
+        data1 = json.loads(result1)
+        assert data1["created"] is True
+
+        # Second call — should succeed (entity exists, skip registration)
+        result2 = _process_init_project_state(
+            db, project_dir, "124", "idempotent",
+            '["feat-a", "feat-b"]', '[]', None,
+        )
+        data2 = json.loads(result2)
+        assert data2["created"] is True
+
+        # .meta.json should reflect the second call's data
+        meta_path = os.path.join(project_dir, ".meta.json")
+        with open(meta_path) as f:
+            meta = json.load(f)
+        assert meta["features"] == ["feat-a", "feat-b"]
+
+    def test_init_feature_state_path_traversal_blocked(self, db, tmp_path):
+        """Path traversal via feature_id is blocked by _validate_feature_type_id."""
+        # derived_from: design:C3 — _validate_feature_type_id defense
+
+        feature_dir = os.path.join(str(tmp_path), "features", "../../etc")
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        result = _process_init_feature_state(
+            db, engine, feature_dir, "999", "../../etc", "standard",
+            "feature/999", None, None, "active",
+            artifacts_root=str(tmp_path),
+        )
+        data = json.loads(result)
+        assert data.get("error") is True
+
+
+# ---------------------------------------------------------------------------
+# Test Deepening: Error Propagation (Dimension 4)
+# ---------------------------------------------------------------------------
+
+
+class TestErrorPropagationDeepened:
+    """Error propagation tests for new/extended functions.
+
+    Anticipate: Errors swallowed silently, partial state on failure.
+    """
+
+    def test_init_feature_state_sqlite_error_returns_db_unavailable(self, db, tmp_path):
+        """SQLite error during entity registration returns db_unavailable."""
+        # derived_from: design:D7 — _with_error_handling catches sqlite3.Error
+        # Anticipate: sqlite3.Error not caught, propagates as 500
+
+        from unittest.mock import patch
+
+        feature_dir = os.path.join(str(tmp_path), "features", "130-sqlerr")
+        os.makedirs(feature_dir, exist_ok=True)
+
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        with patch.object(
+            db, "get_entity", side_effect=sqlite3.OperationalError("database locked"),
+        ):
+            result = _process_init_feature_state(
+                db, engine, feature_dir, "130", "sqlerr", "standard",
+                "feature/130-sqlerr", None, None, "active",
+                artifacts_root=str(tmp_path),
+            )
+
+        data = json.loads(result)
+        assert data["error"] is True
+        assert data["error_type"] == "db_unavailable"
+
+    def test_init_project_state_sqlite_error_returns_db_unavailable(self, db, tmp_path):
+        """SQLite error during project entity registration returns db_unavailable."""
+        # derived_from: design:D7 — _with_error_handling
+
+        from unittest.mock import patch
+
+        project_dir = os.path.join(str(tmp_path), "projects", "131-sqlerr")
+        os.makedirs(project_dir, exist_ok=True)
+
+        with patch.object(
+            db, "get_entity", side_effect=sqlite3.OperationalError("database locked"),
+        ):
+            result = _process_init_project_state(
+                db, project_dir, "131", "sqlerr", "[]", "[]", None,
+            )
+
+        data = json.loads(result)
+        assert data["error"] is True
+        assert data["error_type"] == "db_unavailable"
+
+    def test_activate_feature_sqlite_error_returns_db_unavailable(self, db, tmp_path):
+        """SQLite error during activation returns db_unavailable."""
+        # derived_from: design:D7 — _with_error_handling
+
+        from unittest.mock import patch
+
+        feature_dir = os.path.join(str(tmp_path), "features", "132-sqlerr")
+        os.makedirs(feature_dir, exist_ok=True)
+
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        with patch.object(
+            db, "get_entity", side_effect=sqlite3.OperationalError("database locked"),
+        ):
+            result = _process_activate_feature(
+                db, engine, "feature:132-sqlerr", str(tmp_path),
+            )
+
+        data = json.loads(result)
+        assert data["error"] is True
+        assert data["error_type"] == "db_unavailable"
+
+    def test_complete_phase_db_preserves_state_on_projection_failure(self, db, tmp_path):
+        """When projection fails after complete_phase, DB state is still updated correctly."""
+        # derived_from: spec:Section5-AC5 — if projection fails, DB state preserved
+        # Anticipate: rollback on projection failure losing the DB mutation
+
+        from unittest.mock import patch
+
+        feature_dir = os.path.join(str(tmp_path), "features", "133-projfail")
+        os.makedirs(feature_dir, exist_ok=True)
+        with open(os.path.join(feature_dir, ".meta.json"), "w") as f:
+            f.write('{"id": "133", "slug": "projfail", "status": "active", "mode": "standard"}')
+
+        db.register_entity(
+            "feature", "133-projfail", "projfail", status="active",
+            artifact_path=feature_dir,
+            metadata={"id": "133", "slug": "projfail", "mode": "standard", "branch": "", "phase_timing": {}},
+        )
+        db.create_workflow_phase("feature:133-projfail", workflow_phase="specify")
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        with patch(
+            "workflow_state_server._project_meta_json",
+            return_value="projection failed: disk full",
+        ):
+            result = _process_complete_phase(
+                engine, "feature:133-projfail", "specify",
+                db=db, iterations=3, reviewer_notes=None,
+            )
+
+        data = json.loads(result)
+        assert "projection_warning" in data
+
+        # DB state should still be updated even though projection failed
+        entity = db.get_entity("feature:133-projfail")
+        meta_raw = json.loads(entity["metadata"]) if entity["metadata"] else {}
+        assert meta_raw["last_completed_phase"] == "specify"
+        assert meta_raw["phase_timing"]["specify"]["iterations"] == 3
+
+    def test_transition_phase_db_preserves_state_on_projection_failure(self, db, tmp_path):
+        """When projection fails after transition_phase, DB state is still updated."""
+        # derived_from: spec:Section5-AC5 — DB preserved on projection failure
+
+        from unittest.mock import patch
+
+        feature_dir = os.path.join(str(tmp_path), "features", "134-projfail")
+        os.makedirs(feature_dir, exist_ok=True)
+        with open(os.path.join(feature_dir, ".meta.json"), "w") as f:
+            f.write('{"id": "134", "slug": "projfail", "status": "active", "mode": "standard"}')
+
+        db.register_entity(
+            "feature", "134-projfail", "projfail", status="active",
+            artifact_path=feature_dir,
+            metadata={"id": "134", "slug": "projfail", "mode": "standard", "branch": "", "phase_timing": {}},
+        )
+        db.create_workflow_phase("feature:134-projfail", workflow_phase="specify")
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        with patch(
+            "workflow_state_server._project_meta_json",
+            return_value="projection failed: permissions",
+        ):
+            result = _process_transition_phase(
+                engine, "feature:134-projfail", "specify", False,
+                db=db, skipped_phases=None,
+            )
+
+        data = json.loads(result)
+        assert data["transitioned"] is True
+        assert "projection_warning" in data
+
+        # DB should have phase timing stored
+        entity = db.get_entity("feature:134-projfail")
+        meta_raw = json.loads(entity["metadata"]) if entity["metadata"] else {}
+        assert "specify" in meta_raw["phase_timing"]
+        assert "started" in meta_raw["phase_timing"]["specify"]
+
+
+# ---------------------------------------------------------------------------
+# Test Deepening: Mutation Mindset (Dimension 5)
+# ---------------------------------------------------------------------------
+
+
+class TestMutationMindsetDeepened:
+    """Mutation-oriented tests to pin behavior against common operator mutations.
+
+    Each test targets a specific mutation operator that would break behavior.
+    """
+
+    def test_complete_phase_finish_sets_completed_not_active(self, db, tmp_path):
+        """complete_phase('finish') sets status to 'completed', NOT 'active'."""
+        # derived_from: spec:Site8 — terminal status update
+        # Mutation: swap "completed" → "active" in `if phase == "finish"` branch
+        # Verify: would catch if status value was wrong
+
+        feature_dir = os.path.join(str(tmp_path), "features", "140-terminal")
+        os.makedirs(feature_dir, exist_ok=True)
+        with open(os.path.join(feature_dir, ".meta.json"), "w") as f:
+            f.write('{"id": "140", "slug": "terminal", "status": "active", "mode": "standard"}')
+
+        db.register_entity(
+            "feature", "140-terminal", "terminal", status="active",
+            artifact_path=feature_dir,
+            metadata={"id": "140", "slug": "terminal", "mode": "standard", "branch": "", "phase_timing": {}},
+        )
+        # Need to set up workflow so complete_phase("finish") is valid
+        # The engine needs the feature at the "finish" phase
+        db.create_workflow_phase("feature:140-terminal", workflow_phase="finish")
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        result = _process_complete_phase(
+            engine, "feature:140-terminal", "finish",
+            db=db, iterations=None, reviewer_notes=None,
+        )
+        data = json.loads(result)
+
+        entity = db.get_entity("feature:140-terminal")
+        assert entity["status"] == "completed"
+
+    def test_activate_feature_checks_planned_not_active(self, db, tmp_path):
+        """activate_feature checks status == 'planned', not status == 'active'."""
+        # derived_from: spec:Site4 — pre-condition: status must be 'planned'
+        # Mutation: swap `!= "planned"` → `!= "active"` in condition
+
+        feature_dir = os.path.join(str(tmp_path), "features", "141-check")
+        os.makedirs(feature_dir, exist_ok=True)
+
+        # Register as "planned" — should succeed
+        db.register_entity(
+            "feature", "141-check", "check",
+            artifact_path=feature_dir,
+            status="planned",
+            metadata={"id": "141", "slug": "check", "mode": "standard", "branch": "", "phase_timing": {}},
+        )
+
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        result = _process_activate_feature(
+            db, engine, "feature:141-check", str(tmp_path),
+        )
+        data = json.loads(result)
+        assert data["activated"] is True
+
+        # Verify the entity is now active (not still planned)
+        entity = db.get_entity("feature:141-check")
+        assert entity["status"] == "active"
+
+    def test_project_meta_json_uses_engine_state_over_metadata_for_last_completed(
+        self, db, tmp_path
+    ):
+        """_project_meta_json uses engine.get_state() for last_completed_phase,
+        not metadata alone. Engine is authoritative."""
+        # derived_from: design:C2 — engine is authoritative for last_completed_phase
+        # Mutation: swap engine_state.last_completed_phase with metadata fallback
+
+        feature_dir = os.path.join(str(tmp_path), "features", "142-authority")
+        os.makedirs(feature_dir, exist_ok=True)
+
+        metadata = {
+            "id": "142",
+            "slug": "authority",
+            "mode": "standard",
+            "branch": "feature/142-authority",
+            "last_completed_phase": "brainstorm",  # stale metadata
+            "phase_timing": {},
+        }
+        db.register_entity(
+            "feature", "142-authority", "authority",
+            artifact_path=feature_dir,
+            status="active",
+            metadata=metadata,
+        )
+        # Set engine state to specify (more recent than metadata's "brainstorm")
+        db.create_workflow_phase("feature:142-authority", workflow_phase="design")
+
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        result = _project_meta_json(db, engine, "feature:142-authority", feature_dir)
+        assert result is None
+
+        meta_path = os.path.join(feature_dir, ".meta.json")
+        with open(meta_path) as f:
+            meta = json.load(f)
+
+        # Engine says last_completed is "specify" (previous to design),
+        # NOT metadata's stale "brainstorm"
+        engine_state = engine.get_state("feature:142-authority")
+        assert meta["lastCompletedPhase"] == engine_state.last_completed_phase
+
+    def test_transition_phase_transitioned_uses_all_not_any_with_db(
+        self, db, tmp_path
+    ):
+        """When db is provided, phase timing is only stored if ALL gates pass (not ANY)."""
+        # derived_from: dimension:mutation — all() vs any() operator
+        # Mutation: swap `all(r.allowed ...)` → `any(r.allowed ...)`
+
+        feature_dir = os.path.join(str(tmp_path), "features", "143-allvsany")
+        os.makedirs(feature_dir, exist_ok=True)
+        with open(os.path.join(feature_dir, ".meta.json"), "w") as f:
+            f.write('{"id": "143", "slug": "allvsany", "status": "active", "mode": "standard"}')
+
+        db.register_entity(
+            "feature", "143-allvsany", "allvsany", status="active",
+            artifact_path=feature_dir,
+            metadata={"id": "143", "slug": "allvsany", "mode": "standard", "branch": "", "phase_timing": {}},
+        )
+        db.create_workflow_phase("feature:143-allvsany", workflow_phase="specify")
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        # Transition to "design" without completing "specify" — gate should block
+        result = _process_transition_phase(
+            engine, "feature:143-allvsany", "design", False,
+            db=db, skipped_phases=None,
+        )
+        data = json.loads(result)
+
+        # Transition should be blocked
+        assert data["transitioned"] is False
+        # No phase timing should be stored when transition is blocked
+        assert "started_at" not in data
+
+    def test_project_meta_json_empty_phase_entry_excluded(self, db, tmp_path):
+        """Phase timing entries with no fields (empty dict) are excluded from phases."""
+        # derived_from: dimension:mutation — line deletion of `if phase_entry:` guard
+        # Mutation: removing `if phase_entry:` would include empty phase dicts
+
+        feature_dir = os.path.join(str(tmp_path), "features", "144-empty-phase")
+        os.makedirs(feature_dir, exist_ok=True)
+
+        metadata = {
+            "id": "144",
+            "slug": "empty-phase",
+            "mode": "standard",
+            "branch": "feature/144-empty-phase",
+            "phase_timing": {
+                "brainstorm": {},  # empty — should be excluded
+                "specify": {"started": "2026-03-01T00:00:00Z"},  # has data — include
+            },
+        }
+        db.register_entity(
+            "feature", "144-empty-phase", "empty-phase",
+            artifact_path=feature_dir,
+            status="active",
+            metadata=metadata,
+        )
+
+        result = _project_meta_json(db, None, "feature:144-empty-phase", feature_dir)
+        assert result is None
+
+        meta_path = os.path.join(feature_dir, ".meta.json")
+        with open(meta_path) as f:
+            meta = json.load(f)
+
+        # Empty brainstorm entry should NOT be in phases
+        assert "brainstorm" not in meta["phases"]
+        # Non-empty specify entry should be in phases
+        assert "specify" in meta["phases"]
+        assert meta["phases"]["specify"]["started"] == "2026-03-01T00:00:00Z"
+
+    def test_init_feature_state_retry_preserves_skipped_phases_not_overwritten(
+        self, db, tmp_path
+    ):
+        """Retry of init_feature_state preserves skipped_phases from first call."""
+        # derived_from: design:C3 — retry path preserves existing timing data
+        # Mutation: deleting `if existing_meta.get("skipped_phases"):` line
+
+        feature_dir = os.path.join(str(tmp_path), "features", "145-preserve")
+        os.makedirs(feature_dir, exist_ok=True)
+
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        # First call
+        _process_init_feature_state(
+            db, engine, feature_dir, "145", "preserve", "standard",
+            "feature/145-preserve", None, None, "active",
+            artifacts_root=str(tmp_path),
+        )
+
+        # Simulate progress: add skipped_phases to entity metadata
+        entity = db.get_entity("feature:145-preserve")
+        meta_raw = json.loads(entity["metadata"]) if entity["metadata"] else {}
+        meta_raw["skipped_phases"] = [{"phase": "brainstorm", "reason": "existing doc"}]
+        meta_raw["last_completed_phase"] = "specify"
+        db.update_entity("feature:145-preserve", metadata=meta_raw)
+
+        # Retry call — should preserve skipped_phases and last_completed_phase
+        _process_init_feature_state(
+            db, engine, feature_dir, "145", "preserve", "standard",
+            "feature/145-preserve", None, None, "active",
+            artifacts_root=str(tmp_path),
+        )
+
+        entity = db.get_entity("feature:145-preserve")
+        meta_raw = json.loads(entity["metadata"]) if entity["metadata"] else {}
+        assert meta_raw["skipped_phases"] == [{"phase": "brainstorm", "reason": "existing doc"}]
+        assert meta_raw["last_completed_phase"] == "specify"
