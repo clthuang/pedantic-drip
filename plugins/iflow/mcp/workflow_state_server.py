@@ -29,6 +29,7 @@ from entity_registry.frontmatter_sync import (
 )
 from semantic_memory.config import read_config
 from transition_gate.models import Severity, TransitionResult
+from workflow_engine.constants import FEATURE_PHASE_TO_KANBAN
 from workflow_engine.engine import WorkflowStateEngine
 from workflow_engine.models import FeatureWorkflowState, TransitionResponse
 from workflow_engine.reconciliation import (
@@ -83,6 +84,18 @@ ENTITY_MACHINES: dict[str, dict] = {
             ("open", "dropped"),
         },
     },
+}
+
+# ---------------------------------------------------------------------------
+# Status-to-kanban mapping for feature init-time (matches backfill.py:35-40).
+# Also referenced by scripts/fix_kanban_columns.py.
+# ---------------------------------------------------------------------------
+
+STATUS_TO_KANBAN: dict[str, str] = {
+    "active": "wip",
+    "planned": "backlog",
+    "completed": "completed",
+    "abandoned": "completed",
 }
 
 # ---------------------------------------------------------------------------
@@ -522,7 +535,6 @@ def _process_transition_phase(
 
         # Update kanban_column for features based on phase
         if feature_type_id.startswith("feature:"):
-            from workflow_engine.constants import FEATURE_PHASE_TO_KANBAN
             kanban = FEATURE_PHASE_TO_KANBAN.get(target_phase)
             if kanban:
                 db.update_workflow_phase(feature_type_id, kanban_column=kanban)
@@ -586,7 +598,6 @@ def _process_complete_phase(
 
         # Update kanban_column for features based on completed phase
         if feature_type_id.startswith("feature:"):
-            from workflow_engine.constants import FEATURE_PHASE_TO_KANBAN
             if phase == "finish":
                 kanban = "completed"
             else:
@@ -789,10 +800,6 @@ def _process_init_feature_state(
     warning = _project_meta_json(db, engine, feature_type_id, feature_dir)
 
     # Fix kanban_column based on status (init-time uses STATUS_TO_KANBAN).
-    # Inline copy — must match STATUS_TO_KANBAN in backfill.py:35-40.
-    # See also: scripts/fix_kanban_columns.py
-    STATUS_TO_KANBAN = {"active": "wip", "planned": "backlog",
-                        "completed": "completed", "abandoned": "completed"}
     init_kanban = STATUS_TO_KANBAN.get(status)
     if init_kanban:
         try:
@@ -801,8 +808,8 @@ def _process_init_feature_state(
             # Row may not exist if engine initialization failed — create it.
             try:
                 db.create_workflow_phase(feature_type_id, kanban_column=init_kanban)
-            except Exception:
-                pass  # Entity itself may be missing; nothing to do
+            except ValueError:
+                pass  # Entity itself may be missing; workflow row cannot be created
 
     result = {
         "created": True,
