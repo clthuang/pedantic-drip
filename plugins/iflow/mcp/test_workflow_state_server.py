@@ -4048,6 +4048,46 @@ class TestInitFeatureState:
         assert data["created"] is True
         assert "projection_warning" not in data
 
+    # -- Kanban column lifecycle tests (AC-6) --------------------------------
+
+    def test_init_feature_state_active_sets_kanban_wip(self, db, tmp_path):
+        """Active feature init must set kanban_column to 'wip'.
+        derived_from: spec:AC-6
+        """
+        engine = WorkflowStateEngine(db=db, artifacts_root=str(tmp_path))
+
+        feature_dir = os.path.join(str(tmp_path), "features", "099-test")
+        os.makedirs(feature_dir, exist_ok=True)
+
+        _process_init_feature_state(
+            db, engine, feature_dir, "099", "test", "standard",
+            "feature/099-test", None, None, "active",
+            artifacts_root=str(tmp_path),
+        )
+
+        wp = db.get_workflow_phase("feature:099-test")
+        assert wp is not None, "workflow_phase row should exist after init"
+        assert wp["kanban_column"] == "wip"
+
+    def test_init_feature_state_planned_sets_kanban_backlog(self, db, tmp_path):
+        """Planned feature init must set kanban_column to 'backlog'.
+        derived_from: spec:AC-6
+        """
+        engine = WorkflowStateEngine(db=db, artifacts_root=str(tmp_path))
+
+        feature_dir = os.path.join(str(tmp_path), "features", "100-planned")
+        os.makedirs(feature_dir, exist_ok=True)
+
+        _process_init_feature_state(
+            db, engine, feature_dir, "100", "planned", "standard",
+            "feature/100-planned", None, None, "planned",
+            artifacts_root=str(tmp_path),
+        )
+
+        wp = db.get_workflow_phase("feature:100-planned")
+        assert wp is not None, "workflow_phase row should exist after init"
+        assert wp["kanban_column"] == "backlog"
+
 
 # ---------------------------------------------------------------------------
 # T6.1: activate_feature tests
@@ -5722,3 +5762,125 @@ class TestErrorDecoratorDeepened:
         # Then the RuntimeError propagates unmodified
         with pytest.raises(RuntimeError, match="unexpected crash"):
             raises_runtime()
+
+
+class TestKanbanColumnLifecycle:
+    """Tests that transition_phase and complete_phase update kanban_column in DB.
+
+    derived_from: feature:036 — Kanban Column Lifecycle Fix
+    AC: AC-1, AC-2, AC-3, AC-3b
+    """
+
+    def _setup_feature(self, db, tmp_path, feature_num, slug, phase, kanban="backlog"):
+        """Helper: register entity, create workflow phase, return engine."""
+        feature_dir = os.path.join(str(tmp_path), "features", f"{feature_num}-{slug}")
+        os.makedirs(feature_dir, exist_ok=True)
+        with open(os.path.join(feature_dir, ".meta.json"), "w") as f:
+            json.dump(
+                {"id": str(feature_num), "slug": slug, "status": "active", "mode": "standard"},
+                f,
+            )
+
+        type_id = f"feature:{feature_num}-{slug}"
+        db.register_entity(
+            "feature", f"{feature_num}-{slug}", slug,
+            status="active",
+            artifact_path=feature_dir,
+            metadata={
+                "id": str(feature_num), "slug": slug, "mode": "standard",
+                "branch": "", "phase_timing": {},
+            },
+        )
+        db.create_workflow_phase(type_id, workflow_phase=phase, kanban_column=kanban)
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        return engine, type_id
+
+    def test_transition_phase_sets_kanban_for_feature(self, db, tmp_path):
+        """AC-1: transition_phase updates kanban_column to match target phase.
+
+        Setup: feature at 'specify', transition to 'design'.
+        Expected: kanban_column changes from 'backlog' to 'prioritised'.
+        """
+        engine, type_id = self._setup_feature(db, tmp_path, 200, "kanban-trans", "specify")
+
+        # Create spec.md artifact required by hard-prerequisite gate for design
+        feat_dir = os.path.join(str(tmp_path), "features", "200-kanban-trans")
+        with open(os.path.join(feat_dir, "spec.md"), "w") as f:
+            f.write("# Spec\n")
+        db.update_entity(
+            type_id, artifact_path=feat_dir,
+            metadata={"id": "200", "slug": "kanban-trans", "mode": "standard", "branch": "feature/200-kanban-trans"},
+        )
+
+        result = _process_transition_phase(
+            engine, type_id, "design", yolo_active=False,
+            db=db, skipped_phases=None,
+        )
+        data = json.loads(result)
+        assert data["transitioned"] is True
+
+        wp = db.get_workflow_phase(type_id)
+        assert wp is not None
+        assert wp["kanban_column"] == "prioritised"
+
+    def test_complete_phase_finish_sets_kanban_completed(self, db, tmp_path):
+        """AC-2: completing 'finish' phase sets kanban_column to 'completed'.
+
+        Setup: feature at 'finish' phase, complete it.
+        Expected: kanban_column == 'completed'.
+        """
+        engine, type_id = self._setup_feature(
+            db, tmp_path, 201, "kanban-finish", "finish", kanban="documenting",
+        )
+
+        result = _process_complete_phase(
+            engine, type_id, "finish",
+            db=db, iterations=None, reviewer_notes=None,
+        )
+        data = json.loads(result)
+
+        wp = db.get_workflow_phase(type_id)
+        assert wp is not None
+        assert wp["kanban_column"] == "completed"
+
+    def test_complete_phase_specify_sets_kanban_from_next_phase(self, db, tmp_path):
+        """AC-3: completing 'specify' advances to 'design'; kanban matches design's column.
+
+        Setup: feature at 'specify', complete it.
+        Expected: current_phase becomes 'design', kanban_column == 'prioritised'.
+        """
+        engine, type_id = self._setup_feature(
+            db, tmp_path, 202, "kanban-specify", "specify", kanban="backlog",
+        )
+
+        result = _process_complete_phase(
+            engine, type_id, "specify",
+            db=db, iterations=None, reviewer_notes=None,
+        )
+        data = json.loads(result)
+        assert data["current_phase"] == "design"
+
+        wp = db.get_workflow_phase(type_id)
+        assert wp is not None
+        assert wp["kanban_column"] == "prioritised"
+
+    def test_complete_phase_design_sets_kanban_from_next_phase(self, db, tmp_path):
+        """AC-3b: completing 'design' advances to 'create-plan'; kanban matches column.
+
+        Setup: feature at 'design' with kanban='backlog' (stale), complete it.
+        Expected: current_phase becomes 'create-plan', kanban_column == 'prioritised'.
+        """
+        engine, type_id = self._setup_feature(
+            db, tmp_path, 203, "kanban-design", "design", kanban="backlog",
+        )
+
+        result = _process_complete_phase(
+            engine, type_id, "design",
+            db=db, iterations=None, reviewer_notes=None,
+        )
+        data = json.loads(result)
+        assert data["current_phase"] == "create-plan"
+
+        wp = db.get_workflow_phase(type_id)
+        assert wp is not None
+        assert wp["kanban_column"] == "prioritised"
