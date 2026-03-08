@@ -88,7 +88,7 @@ engine.transition_phase() → DB fails → _write_meta_json_fallback() → .meta
 **Responsibility:** Block all LLM Write/Edit tool calls targeting `*.meta.json` files. Log blocked attempts.
 
 **Design decisions:**
-- **Fast-path optimization:** Check `*".meta.json"*` via bash string match before any JSON parsing. ~99% of Write/Edit calls don't target `.meta.json`, so this avoids the python3/jq overhead. Borrowed from `yolo-guard.sh` pattern.
+- **Fast-path optimization:** Check `*".meta.json"*` via bash string match before any JSON parsing. ~99% of Write/Edit calls don't target `.meta.json`, so this avoids the python3/jq overhead. Borrowed from `yolo-guard.sh` pattern. **Accepted trade-off:** Write calls whose *content* mentions `.meta.json` (e.g., writing a skill file that references it) trigger a false-positive python3 call (~30ms), but correctness is maintained because python3 checks `file_path`, not content. Still under NFR-3's 50ms threshold.
 - **Path extraction:** Use python3 inline (same as `pre-commit-guard.sh`) to parse `tool_input.file_path` from stdin JSON. Suppress stderr (`2>/dev/null`) per hook safety convention.
 - **Logging:** Append JSONL to `~/.claude/iflow/meta-json-guard.log` before returning deny. Use `date -u +%Y-%m-%dT%H:%M:%SZ` for timestamp. Extract feature_id via bash regex on path.
 - **Source common.sh:** For `escape_json()`, `detect_project_root()`, `install_err_trap()`. Deny JSON is inlined (no shared `output_block()` exists — it's local to `pre-commit-guard.sh`).
@@ -112,15 +112,16 @@ if [[ "$INPUT" != *".meta.json"* ]]; then
 fi
 
 # Extract file_path AND tool_name in a single python3 call
-read -r FILE_PATH TOOL_NAME < <(echo "$INPUT" | python3 -c "
+# Use tab delimiter to handle paths with spaces
+IFS=$'\t' read -r FILE_PATH TOOL_NAME < <(echo "$INPUT" | python3 -c "
 import json, sys
 try:
     data = json.load(sys.stdin)
     fp = data.get('tool_input', {}).get('file_path', '')
     tn = data.get('tool_name', 'unknown')
-    print(fp, tn)
+    print(fp + '\t' + tn)
 except:
-    print(' unknown')
+    print('\tunknown')
 " 2>/dev/null)
 
 # Check if target is .meta.json
@@ -218,7 +219,11 @@ def _project_meta_json(
     metadata = entity.metadata or {}
     phase_timing = metadata.get("phase_timing", {})
 
-    # Get authoritative state from engine (handles migration from existing features)
+    # Get authoritative state from engine (handles migration from existing features).
+    # Note: _project_meta_json is only called after successful DB mutation, so
+    # engine.get_state() reads from DB (not .meta.json). If DB degrades between
+    # mutation and this call (extremely unlikely), engine falls back to .meta.json
+    # which is stale but acceptable — projection will use stale last_completed_phase.
     engine_state = engine.get_state(feature_type_id)
     last_completed = (
         engine_state.last_completed_phase if engine_state
@@ -264,27 +269,11 @@ def _project_meta_json(
     if metadata.get("skipped_phases"):
         meta["skippedPhases"] = metadata["skipped_phases"]
 
-    # Atomic write
+    # Atomic write (fail-open: catch Exception, let BaseException propagate)
     try:
-        tmp_name = None
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            dir=os.path.dirname(meta_path),
-            suffix=".tmp",
-            delete=False,
-            encoding="utf-8",
-        ) as fd:
-            tmp_name = fd.name
-            json.dump(meta, fd, indent=2)
-            fd.write("\n")
-        os.replace(tmp_name, meta_path)
+        _atomic_json_write(meta_path, meta)
         return None  # success
-    except BaseException as exc:
-        if tmp_name is not None:
-            try:
-                os.unlink(tmp_name)
-            except OSError:
-                pass
+    except Exception as exc:
         return f"projection failed: {exc}"
 ```
 
@@ -342,6 +331,14 @@ def _process_init_feature_state(
             metadata=metadata,
         )
     else:
+        # Retry path: preserve existing phase_timing to avoid clobbering
+        # progress data. Only update status and non-timing metadata.
+        existing_meta = existing.metadata or {}
+        metadata["phase_timing"] = existing_meta.get("phase_timing", metadata["phase_timing"])
+        if existing_meta.get("last_completed_phase"):
+            metadata["last_completed_phase"] = existing_meta["last_completed_phase"]
+        if existing_meta.get("skipped_phases"):
+            metadata["skipped_phases"] = existing_meta["skipped_phases"]
         db.update_entity(feature_type_id, status=status, metadata=metadata)
 
     # Project .meta.json
