@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.12.4] - 2026-03-09
+
 ### Added
 - UI server auto-starts on session start — the Kanban board launches in background when Claude Code opens, no manual startup needed
 - `ui_server_enabled` config field (default: `true`) to opt out of auto-start
