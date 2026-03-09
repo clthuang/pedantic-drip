@@ -57,8 +57,8 @@ flowchart TD
 | Skills | 29 |
 | Agents | 28 |
 | Commands | 28 |
-| Hooks | 12 |
-| MCP Tools | 8 |
+| Hooks | 13 |
+| MCP Tools | 25 |
 
 ## Commands
 
@@ -217,7 +217,7 @@ $PLUGIN_ROOT/.venv/bin/pip install "google-genai>=1.0,<2"
 
 ### Entity Registry Server
 
-The entity registry server (`mcp/entity_server.py`) exposes six tools for entity lineage tracking:
+The entity registry server (`mcp/entity_server.py`) exposes eight tools for entity lineage tracking:
 
 | Tool | Purpose |
 |------|---------|
@@ -227,8 +227,34 @@ The entity registry server (`mcp/entity_server.py`) exposes six tools for entity
 | `get_lineage` | Get the full lineage tree for an entity (ancestors and descendants) |
 | `update_entity` | Update entity name, status, or metadata |
 | `export_lineage_markdown` | Export lineage tree as a markdown file |
+| `search_entities` | Search entities by name, type, status, or metadata |
+| `export_entities` | Export all entities as structured data |
 
 The server is bootstrapped by `mcp/run-entity-server.sh` and declared in `plugin.json` via `mcpServers`.
+
+### Workflow Engine Server
+
+The workflow engine server (`mcp/workflow_state_server.py`) exposes fifteen tools for workflow state management:
+
+| Tool | Purpose |
+|------|---------|
+| `get_phase` | Get current workflow phase for a feature |
+| `transition_phase` | Transition a feature to the next workflow phase |
+| `complete_phase` | Mark the current phase as complete |
+| `validate_prerequisites` | Check if prerequisites are met for a target phase |
+| `list_features_by_phase` | List all features currently in a given phase |
+| `list_features_by_status` | List all features with a given status |
+| `reconcile_check` | Check for drift between state file and artifacts |
+| `reconcile_apply` | Apply reconciliation fixes for detected drift |
+| `reconcile_frontmatter` | Sync frontmatter metadata across feature artifacts |
+| `reconcile_status` | Get overall reconciliation status summary |
+| `init_feature_state` | Initialize workflow state for a new feature |
+| `init_project_state` | Initialize workflow state for a new project |
+| `activate_feature` | Activate a planned feature for development |
+| `init_entity_workflow` | Initialize entity workflow tracking |
+| `transition_entity_phase` | Transition an entity to a new workflow phase |
+
+The server is bootstrapped by `mcp/run-workflow-server.sh` and declared in `plugin.json` via `mcpServers`.
 
 ## Setup
 

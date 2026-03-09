@@ -164,9 +164,9 @@ flowchart TD
         F4[tasks.md] ~~~ F5[impl-log.md] ~~~ F6[.meta.json]
     end
 
-    subgraph HOOKS["Hooks · 11 scripts"]
-        H1["SessionStart (4)<br/>sync-cache, session-start,<br/>inject-secretary-context,<br/>cleanup-locks"]
-        H2["PreToolUse (3)<br/>pre-commit-guard,<br/>pre-exit-plan-review,<br/>yolo-guard"]
+    subgraph HOOKS["Hooks · 13 scripts"]
+        H1["SessionStart (5)<br/>sync-cache, session-start,<br/>inject-secretary-context,<br/>cleanup-locks, start-ui-server"]
+        H2["PreToolUse (4)<br/>pre-commit-guard,<br/>pre-exit-plan-review,<br/>meta-json-guard,<br/>yolo-guard"]
         H3["PostToolUse (2)<br/>post-enter-plan,<br/>post-exit-plan"]
         H4["Stop (1)<br/>yolo-stop"]
     end
@@ -179,7 +179,7 @@ flowchart TD
         MB --> MCP2[search_memory]
     end
 
-    subgraph ENT["Entity Registry · 6 MCP tools"]
+    subgraph ENT["Entity Registry · 8 MCP tools"]
         direction TB
         ET1[register_entity] ~~~ ET2[set_parent] ~~~ ET3[get_entity]
         ET4[get_lineage] ~~~ ET5[update_entity] ~~~ ET6[export_lineage_markdown]
@@ -328,8 +328,10 @@ Hooks execute automatically at lifecycle points.
 | `cleanup-locks` | SessionStart (startup\|resume\|clear) | Removes stale lock files |
 | `session-start` | SessionStart (startup\|resume\|clear) | Injects active feature context and knowledge bank memory |
 | `inject-secretary-context` | SessionStart (startup\|resume\|clear) | Injects available agent/command context for secretary |
+| `start-ui-server` | SessionStart (startup\|resume\|clear) | Auto-starts UI server (Kanban board) in background |
 | `cleanup-sandbox` | (utility) | Cleans up agent_sandbox/ temporary files |
 | `pre-commit-guard` | PreToolUse (Bash) | Branch protection and iflow directory protection |
+| `meta-json-guard` | PreToolUse (Write\|Edit) | Protects .meta.json files from unauthorized modifications |
 | `yolo-guard` | PreToolUse (.*) | Enforces YOLO mode safety boundaries on all tool calls |
 | `post-enter-plan` | PostToolUse (EnterPlanMode) | Injects plan review instructions before approval |
 | `post-exit-plan` | PostToolUse (ExitPlanMode) | Injects task breakdown and implementation workflow |
@@ -501,17 +503,42 @@ The entity registry tracks the lineage of iflow artifacts (backlog items, brains
 
 **MCP Server:** `plugins/iflow/mcp/entity_server.py` (bootstrapped via `plugins/iflow/mcp/run-entity-server.sh`)
 
-**MCP Tools (6):**
+**MCP Tools (8):**
 - `register_entity` -- Register a new entity (backlog, brainstorm, project, or feature) with optional parent link and metadata
 - `set_parent` -- Set or change the parent of an entity (with circular reference detection)
 - `get_entity` -- Retrieve a single entity by type_id
 - `get_lineage` -- Traverse the entity hierarchy upward (toward root) or downward (toward leaves) with depth limiting
 - `update_entity` -- Update mutable fields (name, status, artifact_path, metadata) of an existing entity
 - `export_lineage_markdown` -- Export entity lineage as a markdown tree, optionally writing to a file
+- `search_entities` -- Search entities by name, type, status, or metadata
+- `export_entities` -- Export all entities as structured data
 
 **Backfill Scanner:** `plugins/iflow/hooks/lib/entity_registry/backfill.py` scans existing artifact directories (features/, brainstorms/, projects/, backlog.md) and registers entities in topological order (backlog -> brainstorm -> project -> feature). Runs once on first server start; subsequent runs are skipped via a `backfill_complete` metadata marker.
 
 **Command:** `/iflow:show-lineage` displays the entity lineage tree for a given entity, showing ancestors or descendants with Unicode box-drawing formatting.
+
+## Workflow Engine
+
+The workflow engine manages feature lifecycle state, phase transitions, and drift reconciliation via a SQLite-backed state machine.
+
+**MCP Server:** `plugins/iflow/mcp/workflow_state_server.py` (bootstrapped via `plugins/iflow/mcp/run-workflow-server.sh`)
+
+**MCP Tools (15):**
+- `get_phase` -- Get current workflow phase for a feature
+- `transition_phase` -- Transition a feature to the next workflow phase
+- `complete_phase` -- Mark the current phase as complete
+- `validate_prerequisites` -- Check if prerequisites are met for a target phase
+- `list_features_by_phase` -- List all features currently in a given phase
+- `list_features_by_status` -- List all features with a given status
+- `reconcile_check` -- Check for drift between state file and artifacts
+- `reconcile_apply` -- Apply reconciliation fixes for detected drift
+- `reconcile_frontmatter` -- Sync frontmatter metadata across feature artifacts
+- `reconcile_status` -- Get overall reconciliation status summary
+- `init_feature_state` -- Initialize workflow state for a new feature
+- `init_project_state` -- Initialize workflow state for a new project
+- `activate_feature` -- Activate a planned feature for development
+- `init_entity_workflow` -- Initialize entity workflow tracking
+- `transition_entity_phase` -- Transition an entity to a new workflow phase
 
 ## Creating Components
 

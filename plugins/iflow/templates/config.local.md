@@ -50,4 +50,10 @@ memory_keyword_provider: auto
 memory_model_capture_mode: ask-first
 # Max silent captures per session (only applies when capture mode is "silent")
 memory_silent_capture_budget: 5
+
+# UI Server — Kanban board
+# Auto-start UI server on session start
+ui_server_enabled: true
+# Port for the UI server
+ui_server_port: 8718
 ---

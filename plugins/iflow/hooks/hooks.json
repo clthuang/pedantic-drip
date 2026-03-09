@@ -36,6 +36,15 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/inject-secretary-context.sh"
           }
         ]
+      },
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/start-ui-server.sh"
+          }
+        ]
       }
     ],
     "PreToolUse": [
