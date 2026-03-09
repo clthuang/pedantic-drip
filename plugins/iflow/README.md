@@ -57,7 +57,7 @@ flowchart TD
 | Skills | 29 |
 | Agents | 28 |
 | Commands | 28 |
-| Hooks | 11 |
+| Hooks | 12 |
 | MCP Tools | 8 |
 
 ## Commands

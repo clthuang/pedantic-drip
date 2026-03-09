@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.12.3] - 2026-03-09
+
+### Added
+- Entity names displayed on kanban board cards — shows human-readable name with raw ID as fallback
+
+### Changed
+- Backlog items now store title (≤80 chars) and full description as separate metadata fields
+- Brainstorm entities extract title from PRD `#` headings instead of using raw filename slugs
+- Feature and project entities get human-readable names derived from slug humanization
+
+### Fixed
+- NULL `workflow_phase` values for existing entities auto-corrected during backfill via LEFT JOIN enrichment
+
 ## [4.12.2] - 2026-03-09
 
 ### Fixed
