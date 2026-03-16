@@ -105,6 +105,10 @@ PYTHONPATH="plugins/iflow/hooks/lib:plugins/iflow" plugins/iflow/.venv/bin/pytho
 # - test_deepened_app.py: intermittent segfault (SQLite threading)
 # - test_cli.py::test_cli_startup_url_output: fails when port 8718 in use
 
+# Run migration tool tests (system python3, not plugin venv — 128 tests)
+python3 -m pytest scripts/test_migrate_db.py scripts/test_migrate_e2e.py scripts/test_migrate_deepened.py -v
+bash scripts/test_migrate_bash.sh
+
 # Run hook integration tests
 bash plugins/iflow/hooks/tests/test-hooks.sh
 
