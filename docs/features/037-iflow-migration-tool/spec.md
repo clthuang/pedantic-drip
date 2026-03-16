@@ -290,13 +290,14 @@ def validate_manifest(bundle_dir: str) -> tuple[bool, list[str]]:
     """Validate bundle checksums. Returns (valid, error_messages)."""
 
 def merge_memory_db(src_path: str, dst_path: str, dry_run: bool = False) -> dict:
-    """Merge memory entries using source_hash dedup. Returns {added, skipped, errors}."""
+    """Merge memory entries using source_hash dedup. Returns {added, skipped}."""
 
 def merge_entities_db(src_path: str, dst_path: str, dry_run: bool = False) -> dict:
-    """Merge entities + workflow_phases using type_id dedup. Returns {added, skipped, conflicts}."""
+    """Merge entities + workflow_phases using type_id dedup. Returns {added, skipped}."""
 
-def verify_database(db_path: str, expected_count: int) -> dict:
-    """Run PRAGMA integrity_check and count comparison. Returns {ok, actual_count, integrity}."""
+def verify_database(db_path: str, expected_count: int, table: str) -> dict:
+    """Run PRAGMA integrity_check and count comparison. Returns {ok, actual_count, integrity}.
+    If expected_count is 0, skip count validation and just return actual_count + integrity."""
 
 def detect_embedding_mismatch(bundle_manifest: dict, dst_db_path: str) -> str | None:
     """Compare embedding_provider/model. Returns warning message or None.
@@ -345,7 +346,7 @@ import uuid as uuid_mod
 def merge_entities_db(src_path, dst_path, dry_run=False):
     src = sqlite3.connect(src_path)
     dst = sqlite3.connect(dst_path)
-    dst.execute("PRAGMA foreign_keys = ON")
+    dst.execute("PRAGMA foreign_keys = OFF")  # OFF: avoids insertion-order FK violations; WHERE clause validates type_id
 
     # Get column names for proper mapping
     src_cols = [desc[0] for desc in src.execute("SELECT * FROM entities LIMIT 0").description]

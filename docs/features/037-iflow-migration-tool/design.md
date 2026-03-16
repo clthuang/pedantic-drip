@@ -427,6 +427,18 @@ copy_markdown_files(src_dir, dst_dir)
 
 Receives the global `$FORCE` flag from migrate.sh argument parsing.
 
+### C1 internal: copy_file
+
+```bash
+copy_file(src, dst)
+  # Copies a single file from src to dst
+  # If dst exists and --force is NOT set: skip
+  # If dst exists and --force IS set: overwrite
+  # If dst does not exist: copy
+```
+
+Used for projects.txt and any single-file copy outside the markdown glob.
+
 ### C1 → C3: Bundle format
 
 **Export produces:** `iflow-export-YYYYMMDD-HHMMSS.tar.gz`
