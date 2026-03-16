@@ -45,7 +45,7 @@ Use PROJECT_ROOT for dynamic project state, PLUGIN_ROOT for static plugin assets
 - Benefit: Prevents reading stale cached data when plugin files are copied
 - Implementation: Shared `detect_project_root()` function in `hooks/lib/common.sh`
 - Key insight: Claude's PWD may be a subdirectory, so walk up to find `.git`
-- See: [Hook Development Guide](../guides/hook-development.md)
+- See: [Hook Development Guide](../dev_guides/hook-development.md)
 
 ### Pattern: Hook Schema Compliance
 Hook JSON output must use correct field names for each hook type.
@@ -532,4 +532,28 @@ When adding new functionality to an existing MCP server, use own error decorator
 - Confidence: high
 - Keywords: ["mcp-isolation", "error-decorator", "zero-coupling", "regression-safety", "extension"]
 - Last observed: Feature 035
+- Observation count: 1
+
+### Pattern: sqlite3.Connection.backup() for WAL-Safe DB Snapshots
+When exporting a live SQLite database that may have WAL mode enabled, use the Python sqlite3.Connection.backup() API rather than file copy. Produces a consistent snapshot regardless of WAL state.
+- Used in: Feature 037, design TD
+- Confidence: high
+- Keywords: ["sqlite", "wal-mode", "backup", "export", "snapshot", "migration", "database-safety"]
+- Last observed: Feature 037
+- Observation count: 1
+
+### Pattern: Bash + Python Dual-Script Architecture for Migration Tools
+Use a thin bash orchestrator (migrate.sh) for user-facing CLI and delegate all DB operations to a Python subprocess (migrate_db.py). Each layer tested independently (30 bash + 49 unit tests).
+- Used in: Feature 037
+- Confidence: medium
+- Keywords: ["bash-python", "migration-tool", "orchestrator-pattern", "dual-script", "sqlite"]
+- Last observed: Feature 037
+- Observation count: 1
+
+### Pattern: ATTACH DATABASE for SQL-Level Merge Operations
+Use ATTACH DATABASE to reference the source DB and execute SQL-level INSERT OR IGNORE directly. Faster than Python-side row iteration. Requires explicit injection surface enumeration at design time.
+- Used in: Feature 037
+- Confidence: medium
+- Keywords: ["sqlite", "attach-database", "merge", "import", "sql-level", "migration"]
+- Last observed: Feature 037
 - Observation count: 1

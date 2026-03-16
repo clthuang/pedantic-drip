@@ -189,4 +189,4 @@ If TodoWrite:
 ## Completion
 
 "Tasks created. {n} tasks across {m} phases, {p} parallel groups."
-"Run /iflow:verify to check, or /iflow:implement to start building."
+"Run /iflow:show-status to check, or /iflow:implement to start building."

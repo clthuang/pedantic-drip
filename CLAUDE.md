@@ -87,13 +87,13 @@ bash plugins/iflow/mcp/test_entity_server.sh
 # Run transition gate tests (gate functions, constants, models — 257 tests)
 plugins/iflow/.venv/bin/python -m pytest plugins/iflow/hooks/lib/transition_gate/ -v
 
-# Run workflow engine tests (state engine, hydration, transitions, degradation — 289 tests)
+# Run workflow engine tests (state engine, hydration, transitions, degradation — 309 tests)
 plugins/iflow/.venv/bin/python -m pytest plugins/iflow/hooks/lib/workflow_engine/ -v
 
-# Run reconciliation module tests (drift detection, apply, frontmatter sync — 103 tests)
+# Run reconciliation module tests (drift detection, apply, frontmatter sync — 118 tests)
 plugins/iflow/.venv/bin/python -m pytest plugins/iflow/hooks/lib/workflow_engine/test_reconciliation.py -v
 
-# Run workflow state MCP server tests (processing + reconciliation integration — 146 tests)
+# Run workflow state MCP server tests (processing + reconciliation integration — 272 tests)
 plugins/iflow/.venv/bin/python -m pytest plugins/iflow/mcp/test_workflow_state_server.py -v
 
 # Run workflow server bootstrap wrapper tests
@@ -104,6 +104,10 @@ PYTHONPATH="plugins/iflow/hooks/lib:plugins/iflow" plugins/iflow/.venv/bin/pytho
 # Known pre-existing test issues (not regressions):
 # - test_deepened_app.py: intermittent segfault (SQLite threading)
 # - test_cli.py::test_cli_startup_url_output: fails when port 8718 in use
+
+# Run migration tool tests (system python3, not plugin venv — 128 tests)
+python3 -m pytest scripts/test_migrate_db.py scripts/test_migrate_e2e.py scripts/test_migrate_deepened.py -v
+bash scripts/test_migrate_bash.sh
 
 # Run hook integration tests
 bash plugins/iflow/hooks/tests/test-hooks.sh

@@ -2,11 +2,11 @@
   "id": "035",
   "slug": "brainstorm-backlog-state-track",
   "mode": "standard",
-  "status": "active",
+  "status": "completed",
   "created": "2026-03-08T16:26:30.970103+00:00",
   "branch": "feature/035-brainstorm-backlog-state-track",
   "brainstorm_source": "docs/brainstorms/20260309-160000-brainstorm-backlog-state-tracking.prd.md",
-  "lastCompletedPhase": "implement",
+  "lastCompletedPhase": "finish",
   "phases": {
     "brainstorm": {
       "started": "2026-03-08T16:26:30.969814+00:00"
@@ -18,6 +18,9 @@
       "completed": "2026-03-08T17:45:14.208381+00:00",
       "iterations": 1,
       "reviewerNotes": "[{\"reviewer\": \"implementation-reviewer\", \"approved\": true, \"summary\": \"All ACs verified\"}, {\"reviewer\": \"code-quality-reviewer\", \"approved\": true, \"summary\": \"3 warnings, none blocking\"}, {\"reviewer\": \"security-reviewer\", \"approved\": true, \"summary\": \"No critical/high vulns\"}]"
+    },
+    "finish": {
+      "completed": "2026-03-15T17:27:17.189985+00:00"
     }
   }
 }

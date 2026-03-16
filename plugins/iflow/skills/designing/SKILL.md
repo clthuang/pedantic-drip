@@ -167,4 +167,4 @@ Errors: {error cases}
 ## Completion
 
 "Design complete. Saved to design.md."
-"Run /iflow:verify to check, or /iflow:create-plan to continue."
+"Run /iflow:show-status to check, or /iflow:create-plan to continue."

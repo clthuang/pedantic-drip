@@ -534,3 +534,23 @@ Not explicitly enumerating all possible database row states (no row, null fields
 - Keywords: ["database-state-enumeration", "design-completeness", "backfill", "null-handling", "row-states"]
 - Last observed: Feature 035
 - Observation count: 1
+
+### Anti-Pattern: Defining Migration Bundle Schema as Prose Without Complete JSON Example
+Describing a manifest/bundle structure in prose without a complete worked JSON example causes structural ambiguities (flat vs nested, array vs object) to survive to implementation review as blockers.
+- Observed in: Feature 037, implement review — manifest structure mismatch (flat checksums+counts vs per-file files dict) found as a blocker
+- Cost: Full manifest restructure across 7 files mid-implementation
+- Instead: Include at least one complete JSON example with all fields at correct nesting in the design
+- Confidence: high
+- Keywords: ["manifest-schema", "migration-bundle", "json-example", "serialization-design", "design-completeness"]
+- Last observed: Feature 037
+- Observation count: 1
+
+### Anti-Pattern: Dynamic SQL Construction Without Design-Time Injection Surface Enumeration
+When design selects ATTACH DATABASE or SQL-level merge patterns, failing to enumerate injectable parameters and escaping strategy leaves SQL injection for implementation reviewers to find.
+- Observed in: Feature 037, implement review — SQL injection in entity merge Phase 4 using f-string interpolation in WHERE IN clause
+- Cost: Blocker requiring parameterized query rewrite + regression testing
+- Instead: Design TD for SQL merge must list all injectable parameters with escaping strategy
+- Confidence: high
+- Keywords: ["sql-injection", "dynamic-sql", "attach-database", "security-surface", "design-review", "migration-tool"]
+- Last observed: Feature 037
+- Observation count: 1

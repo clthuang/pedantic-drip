@@ -2,10 +2,10 @@
   "id": "036",
   "slug": "kanban-column-lifecycle-fix",
   "mode": "standard",
-  "status": "active",
+  "status": "completed",
   "created": "2026-03-08T19:53:36.043914+00:00",
   "branch": "feature/036-kanban-column-lifecycle-fix",
-  "lastCompletedPhase": "create-tasks",
+  "lastCompletedPhase": "finish",
   "phases": {
     "brainstorm": {
       "started": "2026-03-08T19:53:36.043853+00:00"
@@ -45,6 +45,9 @@
     },
     "implement": {
       "started": "2026-03-08T20:40:51.855739+00:00"
+    },
+    "finish": {
+      "completed": "2026-03-15T17:28:04.145941+00:00"
     }
   }
 }

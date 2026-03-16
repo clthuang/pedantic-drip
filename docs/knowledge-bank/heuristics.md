@@ -547,3 +547,27 @@ A bash PreToolUse hook using string matching (~12ms) is sufficient for protectin
 - Keywords: ["pretooluse-hook", "write-protection", "bash-hook", "string-matching", "latency", "enforcement"]
 - Last observed: Feature 034
 - Observation count: 1
+
+### Security Injection Enumeration for Migration Tools Touching SQLite
+For migration/export-import tools, add a Security Injection Enumeration step to design review: list every point where external input flows into a SQL statement and specify the parameterization strategy.
+- Source: Feature 037 — SQL injection blocker would have been caught at design with explicit enumeration
+- Confidence: high
+- Keywords: ["sqlite", "migration-tool", "injection-enumeration", "design-review", "security", "external-input"]
+- Last observed: Feature 037
+- Observation count: 1
+
+### Capture .review-history.md Even in YOLO/Automated Runs
+Review feedback is the highest-signal retrospective input. A feature without .review-history.md has no per-iteration record, making it impossible to detect recurring issue categories.
+- Source: Feature 037 — no .review-history.md produced; four of six phases have unknown iteration counts
+- Confidence: high
+- Keywords: ["review-history", "yolo-mode", "automation", "retrospective", "feedback-capture"]
+- Last observed: Feature 037
+- Observation count: 1
+
+### Version Migration Bundle Schemas at Design Time
+Add a manifest_version field at design time, even for v1. Version fields are free to add at design time and expensive to retrofit when the first backward-compatibility break occurs.
+- Source: Feature 037 — manifest structure required rework mid-implementation
+- Confidence: medium
+- Keywords: ["manifest-versioning", "migration-bundle", "schema-evolution", "forward-compatibility"]
+- Last observed: Feature 037
+- Observation count: 1

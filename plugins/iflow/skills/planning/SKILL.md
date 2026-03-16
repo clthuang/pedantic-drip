@@ -132,4 +132,4 @@ Items depending on Stage 2.
 ## Completion
 
 "Plan complete. Saved to plan.md."
-"Run /iflow:verify to check, or /iflow:create-tasks to break into actionable items."
+"Run /iflow:show-status to check, or /iflow:create-tasks to break into actionable items."

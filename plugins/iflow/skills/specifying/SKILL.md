@@ -192,4 +192,4 @@ If any check fails, revise before saving.
 ## Completion
 
 "Spec complete. Saved to spec.md."
-"Run /iflow:verify to check, or /iflow:design to continue."
+"Run /iflow:show-status to check, or /iflow:design to continue."

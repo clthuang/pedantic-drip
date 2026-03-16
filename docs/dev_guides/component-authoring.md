@@ -260,10 +260,10 @@ When referencing commands, skills, or agents within plugin files, use the plugin
 
 | Plugin | Command Reference | Subagent Reference |
 |--------|-------------------|-------------------|
-| `iflow` | `/iflow:verify` | `iflow:prd-reviewer` |
-| `iflow` | `/iflow:verify` | `iflow:prd-reviewer` |
+| `iflow` | `/iflow:show-status` | `iflow:prd-reviewer` |
+| `iflow` | `/iflow:show-status` | `iflow:prd-reviewer` |
 
-**Why this matters:** Using the wrong prefix causes cross-plugin invocation. For example, `/iflow:verify` in `iflow` would invoke the production plugin instead of the dev plugin.
+**Why this matters:** Using the wrong prefix causes cross-plugin invocation. For example, `/iflow:show-status` in `iflow` would invoke the production plugin instead of the dev plugin.
 
 **Build-time conversion:** The release script (`scripts/release.sh`) automatically converts `iflow:` → `iflow:` when copying files from `iflow` to `iflow`. This allows development to use the correct dev prefix while production uses the correct production prefix.
 
