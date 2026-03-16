@@ -165,9 +165,63 @@ def cmd_manifest(args: argparse.Namespace) -> None:
     _json_out(manifest)
 
 
-def cmd_validate(_args: argparse.Namespace) -> None:
+def cmd_validate(args: argparse.Namespace) -> None:
     """Validate a migration bundle directory."""
-    _json_stub()
+    bundle_dir = args.bundle_dir
+    manifest_path = os.path.join(bundle_dir, "manifest.json")
+
+    # Read manifest
+    with open(manifest_path) as f:
+        manifest = json.load(f)
+
+    errors: list[str] = []
+
+    # Check schema version
+    schema_version = manifest.get("schema_version", 0)
+    if schema_version > SUPPORTED_SCHEMA_VERSION:
+        errors.append(
+            f"Unsupported schema version {schema_version} "
+            f"(max supported: {SUPPORTED_SCHEMA_VERSION})"
+        )
+        _json_out({"valid": False, "errors": errors})
+        sys.exit(1)
+
+    # Verify checksums for each listed file
+    checksums = manifest.get("checksums", {})
+    checksum_mismatch = False
+    for rel_path, expected_sha in checksums.items():
+        fpath = os.path.join(bundle_dir, rel_path)
+        if not os.path.exists(fpath):
+            errors.append(f"Missing file: {rel_path}")
+            checksum_mismatch = True
+            continue
+        sha = hashlib.sha256()
+        with open(fpath, "rb") as f:
+            while True:
+                chunk = f.read(8192)
+                if not chunk:
+                    break
+                sha.update(chunk)
+        if sha.hexdigest() != expected_sha:
+            errors.append(f"Checksum mismatch: {rel_path}")
+            checksum_mismatch = True
+
+    if checksum_mismatch:
+        _json_out({"valid": False, "errors": errors})
+        sys.exit(3)
+
+    # Check for unexpected files (not in manifest and not manifest.json)
+    for root, _dirs, files in os.walk(bundle_dir):
+        for fname in sorted(files):
+            fpath = os.path.join(root, fname)
+            rel = os.path.relpath(fpath, bundle_dir)
+            if rel == "manifest.json":
+                continue
+            if rel not in checksums:
+                errors.append(f"Unexpected file: {rel}")
+
+    valid = len(errors) == 0
+    _json_out({"valid": valid, "errors": errors})
 
 
 def cmd_merge_memory(args: argparse.Namespace) -> None:
@@ -374,14 +428,50 @@ def cmd_verify(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def cmd_info(_args: argparse.Namespace) -> None:
+def cmd_info(args: argparse.Namespace) -> None:
     """Display information from a migration manifest."""
-    _json_stub()
+    with open(args.manifest_path) as f:
+        manifest = json.load(f)
+    _json_out(manifest)
 
 
-def cmd_check_embeddings(_args: argparse.Namespace) -> None:
+def cmd_check_embeddings(args: argparse.Namespace) -> None:
     """Check embedding consistency between manifest and destination DB."""
-    _json_stub()
+    with open(args.manifest_path) as f:
+        manifest = json.load(f)
+
+    src_provider = manifest.get("embedding_provider")
+
+    # Null provider in bundle — skip check
+    if src_provider is None:
+        _json_out({"mismatch": False})
+        return
+
+    # Read dst _metadata table
+    conn = sqlite3.connect(args.dst_memory_db)
+    try:
+        row = conn.execute(
+            "SELECT value FROM _metadata WHERE key='embedding_provider'"
+        ).fetchone()
+        dst_provider = row[0] if row else None
+    except sqlite3.OperationalError:
+        # _metadata table doesn't exist (fresh machine)
+        _json_out({"mismatch": False})
+        return
+    finally:
+        conn.close()
+
+    if dst_provider is None or src_provider == dst_provider:
+        _json_out({"mismatch": False})
+    else:
+        _json_out({
+            "mismatch": True,
+            "warning": (
+                f"Embedding provider mismatch: bundle uses '{src_provider}' "
+                f"but destination uses '{dst_provider}'. "
+                "Cosine similarity may be degraded."
+            ),
+        })
 
 
 def build_parser() -> argparse.ArgumentParser:

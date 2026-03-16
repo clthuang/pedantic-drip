@@ -73,12 +73,10 @@ def test_subcommand_stubs(subcommand: str, args: list[str]) -> None:
     )
     # Allow stubs that still return {} and real implementations that may fail
     # on missing files — but skip validation for stubs that are not yet implemented
-    if subcommand in ("validate", "info", "check-embeddings"):
-        assert result.returncode == 0, (
-            f"{subcommand} failed (exit {result.returncode}): {result.stderr}"
-        )
-        parsed = json.loads(result.stdout)
-        assert isinstance(parsed, dict), f"{subcommand} did not return a JSON object"
+    if subcommand in ("info", "check-embeddings", "validate"):
+        # These are now fully implemented and require real files;
+        # skip the stub test (covered by dedicated test classes)
+        pass
 
 
 # ============================================================
@@ -855,3 +853,206 @@ class TestManifest:
         assert result["counts"]["memory_entries"] == 3
         assert result["counts"]["entities"] == 2
         assert result["counts"]["workflow_phases"] == 1
+
+
+# ============================================================
+# Step 4: validate subcommand tests
+# ============================================================
+
+
+def _create_valid_bundle(tmp_path: Path) -> Path:
+    """Create a staging dir and generate a manifest, returning the bundle path."""
+    staging = _create_staging_dir(tmp_path)
+    run_cli("manifest", str(staging), "--plugin-version", "4.12.0")
+    return staging
+
+
+class TestValidate:
+    """Tests for the validate subcommand."""
+
+    # --- Task 4.1: test_validate_passes ---
+    def test_validate_passes(self, tmp_path: Path) -> None:
+        """Valid bundle with matching checksums returns valid=true, errors=[]."""
+        bundle = _create_valid_bundle(tmp_path)
+
+        result = run_cli("validate", str(bundle))
+
+        assert result["valid"] is True
+        assert result["errors"] == []
+
+    # --- Task 4.2: test_validate_checksum_mismatch ---
+    def test_validate_checksum_mismatch(self, tmp_path: Path) -> None:
+        """Tampered file after manifest generation detected with exit 3."""
+        bundle = _create_valid_bundle(tmp_path)
+
+        # Tamper with a file after manifest was generated
+        tampered = bundle / "projects.txt"
+        tampered.write_text("TAMPERED CONTENT\n")
+
+        result = run_cli("validate", str(bundle), expect_rc=3)
+
+        assert result["valid"] is False
+        assert any("projects.txt" in e for e in result["errors"])
+
+    # --- Task 4.3: test_validate_schema_too_new ---
+    def test_validate_schema_too_new(self, tmp_path: Path) -> None:
+        """Schema version 99 rejected with exit 1 and correct error message."""
+        bundle = _create_valid_bundle(tmp_path)
+
+        # Overwrite schema_version in manifest
+        manifest_path = bundle / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["schema_version"] = 99
+        manifest_path.write_text(json.dumps(manifest, indent=2))
+
+        result = run_cli("validate", str(bundle), expect_rc=1)
+
+        assert result["valid"] is False
+        assert any("schema" in e.lower() for e in result["errors"])
+
+    # --- Task 4.4: test_validate_schema_current ---
+    def test_validate_schema_current(self, tmp_path: Path) -> None:
+        """Schema version 1 (current) passes validation."""
+        bundle = _create_valid_bundle(tmp_path)
+
+        # Verify manifest has schema_version=1
+        manifest_path = bundle / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        assert manifest["schema_version"] == 1
+
+        result = run_cli("validate", str(bundle))
+
+        assert result["valid"] is True
+
+    # --- Task 4.5: test_validate_unexpected_files ---
+    def test_validate_unexpected_files(self, tmp_path: Path) -> None:
+        """Extra file not in manifest flagged in errors."""
+        bundle = _create_valid_bundle(tmp_path)
+
+        # Add an unexpected file
+        (bundle / "sneaky.txt").write_text("I should not be here\n")
+
+        result = run_cli("validate", str(bundle))
+
+        assert result["valid"] is False
+        assert any("sneaky.txt" in e for e in result["errors"])
+
+
+# ============================================================
+# Step 8: info and check-embeddings subcommand tests
+# ============================================================
+
+
+def _write_manifest(path: Path, manifest: dict) -> str:
+    """Write a manifest dict to a JSON file and return its path as str."""
+    manifest_file = path / "manifest.json"
+    manifest_file.write_text(json.dumps(manifest, indent=2))
+    return str(manifest_file)
+
+
+def _create_metadata_db(path: str, provider: str | None = None, model: str | None = None) -> None:
+    """Create a memory.db with a _metadata table containing embedding info."""
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE _metadata (key TEXT PRIMARY KEY, value TEXT)")
+    if provider is not None:
+        conn.execute("INSERT INTO _metadata (key, value) VALUES ('embedding_provider', ?)", (provider,))
+    if model is not None:
+        conn.execute("INSERT INTO _metadata (key, value) VALUES ('embedding_model', ?)", (model,))
+    conn.commit()
+    conn.close()
+
+
+class TestCheckEmbeddings:
+    """Tests for the check-embeddings subcommand."""
+
+    # --- Task 8.1: test_check_same_provider ---
+    def test_check_same_provider(self, tmp_path: Path) -> None:
+        """Same embedding_provider in bundle and dst -> mismatch=false."""
+        manifest_path = _write_manifest(tmp_path, {
+            "schema_version": 1,
+            "embedding_provider": "openai",
+            "embedding_model": "text-embedding-3-small",
+        })
+        dst_db = str(tmp_path / "dst_memory.db")
+        _create_metadata_db(dst_db, provider="openai", model="text-embedding-3-small")
+
+        result = run_cli("check-embeddings", manifest_path, dst_db)
+
+        assert result["mismatch"] is False
+
+    # --- Task 8.2: test_check_different_provider ---
+    def test_check_different_provider(self, tmp_path: Path) -> None:
+        """Different provider -> mismatch=true with warning."""
+        manifest_path = _write_manifest(tmp_path, {
+            "schema_version": 1,
+            "embedding_provider": "openai",
+            "embedding_model": "text-embedding-3-small",
+        })
+        dst_db = str(tmp_path / "dst_memory.db")
+        _create_metadata_db(dst_db, provider="voyage", model="voyage-3")
+
+        result = run_cli("check-embeddings", manifest_path, dst_db)
+
+        assert result["mismatch"] is True
+        assert "warning" in result
+        assert "openai" in result["warning"]
+        assert "voyage" in result["warning"]
+
+    # --- Task 8.3: test_check_fresh_machine ---
+    def test_check_fresh_machine(self, tmp_path: Path) -> None:
+        """No _metadata table in dst (fresh machine) -> mismatch=false."""
+        manifest_path = _write_manifest(tmp_path, {
+            "schema_version": 1,
+            "embedding_provider": "openai",
+            "embedding_model": "text-embedding-3-small",
+        })
+        # Create a bare DB with no _metadata table
+        dst_db = str(tmp_path / "dst_memory.db")
+        conn = sqlite3.connect(dst_db)
+        conn.execute("CREATE TABLE entries (id TEXT PRIMARY KEY)")
+        conn.commit()
+        conn.close()
+
+        result = run_cli("check-embeddings", manifest_path, dst_db)
+
+        assert result["mismatch"] is False
+
+    # --- Task 8.4: test_check_null_provider_in_bundle ---
+    def test_check_null_provider_in_bundle(self, tmp_path: Path) -> None:
+        """Bundle has null embedding_provider -> skip check, no warning."""
+        manifest_path = _write_manifest(tmp_path, {
+            "schema_version": 1,
+            "embedding_provider": None,
+            "embedding_model": None,
+        })
+        dst_db = str(tmp_path / "dst_memory.db")
+        _create_metadata_db(dst_db, provider="openai", model="text-embedding-3-small")
+
+        result = run_cli("check-embeddings", manifest_path, dst_db)
+
+        assert result["mismatch"] is False
+        assert "warning" not in result
+
+
+class TestInfo:
+    """Tests for the info subcommand."""
+
+    # --- Task 8.5: test_info_returns_manifest ---
+    def test_info_returns_manifest(self, tmp_path: Path) -> None:
+        """Info subcommand returns full manifest JSON."""
+        manifest_data = {
+            "schema_version": 1,
+            "plugin_version": "4.12.0",
+            "export_timestamp": "2026-03-16T00:00:00Z",
+            "source_platform": "darwin-arm64",
+            "python_version": "3.12.0",
+            "embedding_provider": "openai",
+            "embedding_model": "text-embedding-3-small",
+            "counts": {"memory_entries": 10, "entities": 5},
+            "checksums": {"memory/memory.db": "abc123"},
+        }
+        manifest_path = _write_manifest(tmp_path, manifest_data)
+
+        result = run_cli("info", manifest_path)
+
+        assert result == manifest_data
