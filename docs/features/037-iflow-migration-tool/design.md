@@ -144,69 +144,87 @@ The merge uses a two-phase approach: ATTACH for the SQL query, Python for UUID g
 ```python
 def merge_entities_db(src_path, dst_path, dry_run=False):
     dst = sqlite3.connect(dst_path)
-    dst.execute(f"ATTACH DATABASE '{src_path}' AS src")
+    try:
+        dst.execute(f"ATTACH DATABASE '{src_path}' AS src")
 
-    # FK enforcement OFF during merge — we validate parent_type_id existence
-    # via the WHERE clause instead. This avoids insertion-order issues where
-    # a child entity might be inserted before its parent within the same batch.
-    dst.execute("PRAGMA foreign_keys = OFF")
+        # FK enforcement OFF during merge — we validate parent_type_id existence
+        # via the WHERE clause instead. This avoids insertion-order issues where
+        # a child entity might be inserted before its parent within the same batch.
+        dst.execute("PRAGMA foreign_keys = OFF")
 
-    # Count for dry-run
-    new_type_ids = dst.execute("""
-        SELECT src.type_id FROM src.entities src
-        WHERE src.type_id NOT IN (SELECT type_id FROM main.entities)
-    """).fetchall()
-    skip_count = dst.execute("SELECT count(*) FROM src.entities").fetchone()[0] - len(new_type_ids)
+        # Count for dry-run
+        new_type_ids = dst.execute("""
+            SELECT src.type_id FROM src.entities src
+            WHERE src.type_id NOT IN (SELECT type_id FROM main.entities)
+        """).fetchall()
+        skip_count = dst.execute("SELECT count(*) FROM src.entities").fetchone()[0] - len(new_type_ids)
 
-    if dry_run:
-        return {"added": len(new_type_ids), "skipped": skip_count}
+        if dry_run:
+            # Note: dry-run "added" count may slightly overestimate if PK (uuid)
+            # collisions would occur during actual insert. This is rare (<0.01%
+            # probability for <10k entries) and acceptable for preview purposes.
+            return {"added": len(new_type_ids), "skipped": skip_count}
 
-    # Phase 2: Insert with Python-generated UUIDs
-    for (type_id,) in new_type_ids:
-        row = dst.execute("SELECT * FROM src.entities WHERE type_id = ?", (type_id,)).fetchone()
+        dst.execute("BEGIN")
+
+        # Phase 2: Insert with Python-generated UUIDs
+        # Resolve column metadata once outside the loop
         cols = [desc[0] for desc in dst.execute("SELECT * FROM src.entities LIMIT 0").description]
         uuid_idx = cols.index("uuid")
         parent_uuid_idx = cols.index("parent_uuid")
-
-        row = list(row)
-        row[uuid_idx] = str(uuid.uuid4())   # New UUID (Python stdlib)
-        row[parent_uuid_idx] = None          # Cleared — reconstructed below
-
-        placeholders = ",".join("?" * len(row))
+        placeholders = ",".join("?" * len(cols))
         col_names = ",".join(f'"{c}"' for c in cols)
-        dst.execute(f"INSERT INTO main.entities ({col_names}) VALUES ({placeholders})", row)
 
-    # Phase 3: Merge workflow_phases for newly inserted entities
-    dst.execute("""
-        INSERT OR IGNORE INTO main.workflow_phases (type_id, workflow_phase, kanban_column,
-            last_completed_phase, mode, completed_phases, phase_iterations, phase_reviewer_notes)
-        SELECT wp.type_id, wp.workflow_phase, wp.kanban_column,
-            wp.last_completed_phase, wp.mode, wp.completed_phases,
-            wp.phase_iterations, wp.phase_reviewer_notes
-        FROM src.workflow_phases wp
-        WHERE wp.type_id NOT IN (SELECT type_id FROM main.workflow_phases)
-    """)
+        for (type_id,) in new_type_ids:
+            row = dst.execute("SELECT * FROM src.entities WHERE type_id = ?", (type_id,)).fetchone()
+            row = list(row)
+            row[uuid_idx] = str(uuid.uuid4())   # New UUID (Python stdlib)
+            row[parent_uuid_idx] = None          # Cleared — reconstructed below
+            dst.execute(f"INSERT INTO main.entities ({col_names}) VALUES ({placeholders})", row)
 
-    # Phase 4: Reconstruct parent_uuid for imported entities
-    # server_helpers.py uses parent_uuid for UI tree building, so we must populate it.
-    dst.execute("""
-        UPDATE main.entities
-        SET parent_uuid = (
-            SELECT uuid FROM main.entities AS parent
-            WHERE parent.type_id = main.entities.parent_type_id
-        )
-        WHERE parent_uuid IS NULL
-          AND parent_type_id IS NOT NULL
-    """)
+        # Phase 3: Merge workflow_phases for newly inserted entities
+        dst.execute("""
+            INSERT OR IGNORE INTO main.workflow_phases (type_id, workflow_phase, kanban_column,
+                last_completed_phase, mode, completed_phases, phase_iterations, phase_reviewer_notes)
+            SELECT wp.type_id, wp.workflow_phase, wp.kanban_column,
+                wp.last_completed_phase, wp.mode, wp.completed_phases,
+                wp.phase_iterations, wp.phase_reviewer_notes
+            FROM src.workflow_phases wp
+            WHERE wp.type_id NOT IN (SELECT type_id FROM main.workflow_phases)
+        """)
 
-    # Phase 5: Rebuild FTS5 index for imported entities
-    try:
-        dst.execute("INSERT INTO entities_fts(entities_fts) VALUES('rebuild')")
-    except sqlite3.OperationalError:
-        pass  # FTS5 may not be configured; non-fatal
+        # Phase 4: Reconstruct parent_uuid for imported entities
+        # Scoped to newly imported type_ids only. This avoids unbounded side-effects
+        # on pre-existing rows whose parent_uuid may be intentionally NULL.
+        # server_helpers.py uses parent_uuid for UI tree building, so we must populate it.
+        imported_type_id_list = ",".join(f"'{tid}'" for (tid,) in new_type_ids)
+        if imported_type_id_list:
+            dst.execute(f"""
+                UPDATE main.entities
+                SET parent_uuid = (
+                    SELECT uuid FROM main.entities AS parent
+                    WHERE parent.type_id = main.entities.parent_type_id
+                )
+                WHERE type_id IN ({imported_type_id_list})
+                  AND parent_uuid IS NULL
+                  AND parent_type_id IS NOT NULL
+            """)
 
-    dst.commit()
-    dst.execute("DETACH DATABASE src")
+        # Phase 5: Rebuild FTS5 index for imported entities
+        try:
+            dst.execute("INSERT INTO entities_fts(entities_fts) VALUES('rebuild')")
+        except sqlite3.OperationalError:
+            pass  # FTS5 may not be configured; non-fatal
+
+        dst.commit()
+    except Exception:
+        dst.rollback()
+        raise
+    finally:
+        try:
+            dst.execute("DETACH DATABASE src")
+        except Exception:
+            pass
     return {"added": len(new_type_ids), "skipped": skip_count}
 ```
 
@@ -221,43 +239,53 @@ def merge_entities_db(src_path, dst_path, dry_run=False):
 ```python
 def merge_memory_db(src_path, dst_path, dry_run=False):
     dst = sqlite3.connect(dst_path)
-    dst.execute(f"ATTACH DATABASE '{src_path}' AS src")
+    try:
+        dst.execute(f"ATTACH DATABASE '{src_path}' AS src")
 
-    # Count for reporting
-    add_count = dst.execute("""
-        SELECT count(*) FROM src.entries
-        WHERE source_hash NOT IN (SELECT source_hash FROM main.entries)
-    """).fetchone()[0]
-    skip_count = dst.execute("SELECT count(*) FROM src.entries").fetchone()[0] - add_count
+        # Count for reporting
+        add_count = dst.execute("""
+            SELECT count(*) FROM src.entries
+            WHERE source_hash NOT IN (SELECT source_hash FROM main.entries)
+        """).fetchone()[0]
+        skip_count = dst.execute("SELECT count(*) FROM src.entries").fetchone()[0] - add_count
 
-    if dry_run:
-        return {"added": add_count, "skipped": skip_count}
+        if dry_run:
+            return {"added": add_count, "skipped": skip_count}
 
-    # INSERT OR IGNORE: source_hash dedup is the primary filter (WHERE clause).
-    # OR IGNORE handles the rare case where id (PK) collides but source_hash differs.
-    dst.execute("""
-        INSERT OR IGNORE INTO main.entries (id, name, description, reasoning, category,
-            keywords, source, source_project, "references", observation_count, confidence,
-            recall_count, last_recalled_at, embedding, created_at, updated_at,
-            source_hash, created_timestamp_utc)
-        SELECT src.id, src.name, src.description, src.reasoning, src.category,
-            src.keywords, src.source, src.source_project, src."references",
-            src.observation_count, src.confidence, src.recall_count,
-            src.last_recalled_at, src.embedding, src.created_at, src.updated_at,
-            src.source_hash, src.created_timestamp_utc
-        FROM src.entries src
-        WHERE src.source_hash NOT IN (SELECT source_hash FROM main.entries)
-    """)
+        dst.execute("BEGIN")
 
-    # Rebuild FTS5 index for imported entries
-    if add_count > 0:
+        # INSERT OR IGNORE: source_hash dedup is the primary filter (WHERE clause).
+        # OR IGNORE handles the rare case where id (PK) collides but source_hash differs.
+        dst.execute("""
+            INSERT OR IGNORE INTO main.entries (id, name, description, reasoning, category,
+                keywords, source, source_project, "references", observation_count, confidence,
+                recall_count, last_recalled_at, embedding, created_at, updated_at,
+                source_hash, created_timestamp_utc)
+            SELECT src.id, src.name, src.description, src.reasoning, src.category,
+                src.keywords, src.source, src.source_project, src."references",
+                src.observation_count, src.confidence, src.recall_count,
+                src.last_recalled_at, src.embedding, src.created_at, src.updated_at,
+                src.source_hash, src.created_timestamp_utc
+            FROM src.entries src
+            WHERE src.source_hash NOT IN (SELECT source_hash FROM main.entries)
+        """)
+
+        # Rebuild FTS5 index for imported entries
+        if add_count > 0:
+            try:
+                dst.execute("INSERT INTO entries_fts(entries_fts) VALUES('rebuild')")
+            except sqlite3.OperationalError:
+                pass  # FTS5 may not be configured; non-fatal
+
+        dst.commit()
+    except Exception:
+        dst.rollback()
+        raise
+    finally:
         try:
-            dst.execute("INSERT INTO entries_fts(entries_fts) VALUES('rebuild')")
-        except sqlite3.OperationalError:
-            pass  # FTS5 may not be configured; non-fatal
-
-    dst.commit()
-    dst.execute("DETACH DATABASE src")
+            dst.execute("DETACH DATABASE src")
+        except Exception:
+            pass
     return {"added": add_count, "skipped": skip_count}
 ```
 
@@ -483,7 +511,7 @@ import_flow() {
 
 - migrate_db.py communicates errors via stderr + non-zero exit code
 - migrate.sh captures exit codes and translates to user-facing messages (from Error Messages table in spec)
-- All SQLite operations in migrate_db.py use explicit transactions (BEGIN/COMMIT with rollback on exception)
+- All SQLite merge operations use explicit BEGIN/COMMIT with try/except/rollback — on any exception, dst.rollback() is called before re-raising, ensuring partial merges never persist
 - File operations in migrate.sh track progress for partial-failure reporting
 
 ### Expected count computation for verification
