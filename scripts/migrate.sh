@@ -72,8 +72,8 @@ extract_json_field() {
 }
 
 extract_manifest_count() {
-    local manifest_path="$1" count_key="$2"
-    "$PYTHON" -c "import json,sys; print(json.load(open(sys.argv[1])).get('counts',{}).get(sys.argv[2],0))" "$manifest_path" "$count_key"
+    local manifest_path="$1" file_key="$2" count_key="$3"
+    "$PYTHON" -c "import json,sys; m=json.load(open(sys.argv[1])); print(m.get('files',{}).get(sys.argv[2],{}).get(sys.argv[3],0))" "$manifest_path" "$file_key" "$count_key"
 }
 
 # File copy helpers
@@ -114,6 +114,29 @@ resolve_plugin_version() {
         "$PYTHON" -c "import json,sys; print(json.load(open(sys.argv[1]))['version'])" "$pjson"
     else
         echo "unknown"
+    fi
+}
+
+# Doctor check per AC-15 and design TD-6
+run_doctor_check() {
+    local doctor="${SCRIPT_DIR}/../plugins/iflow/scripts/doctor.sh"
+    if [ ! -x "$doctor" ]; then
+        doctor="$(ls ~/.claude/plugins/cache/*/iflow*/*/scripts/doctor.sh 2>/dev/null | head -1)"
+    fi
+    if [ -n "${doctor:-}" ] && [ -x "$doctor" ]; then
+        "$doctor" --quiet 2>/dev/null || warn "doctor.sh reported issues (non-fatal)"
+    else
+        # Inline fallback: verify DBs are readable
+        local check_ok=true
+        if [ -f "$MEMORY_DB" ]; then
+            "$PYTHON" -c "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('SELECT count(*) FROM entries'); c.close()" "$MEMORY_DB" 2>/dev/null || check_ok=false
+        fi
+        if [ -f "$ENTITY_DB" ]; then
+            "$PYTHON" -c "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('SELECT count(*) FROM entities'); c.close()" "$ENTITY_DB" 2>/dev/null || check_ok=false
+        fi
+        if [ "$check_ok" = false ]; then
+            warn "Inline health check detected issues (non-fatal)"
+        fi
     fi
 }
 
@@ -356,7 +379,8 @@ import_flow() {
     validate_output="$("$PYTHON" "$MIGRATE_DB" validate "$bundle_dir" 2>/dev/null)" || validate_rc=$?
     if [ $validate_rc -ne 0 ]; then
         if [ $validate_rc -eq 3 ]; then
-            die "Bundle checksum validation failed (exit 3)"
+            echo -e "${RED}Error: Bundle checksum validation failed${NC}" >&2
+            exit 3
         else
             die "Bundle validation failed: $validate_output"
         fi
@@ -421,7 +445,7 @@ import_flow() {
         if [ ! -f "$MEMORY_DB" ]; then
             # Fresh machine — direct copy
             local manifest_mem_count
-            manifest_mem_count="$(extract_manifest_count "$bundle_dir/manifest.json" memory_entries)"
+            manifest_mem_count="$(extract_manifest_count "$bundle_dir/manifest.json" "memory/memory.db" entry_count)"
             if [ -n "$DRY_RUN" ]; then
                 memory_added=$manifest_mem_count
                 memory_action="would-copy"
@@ -478,7 +502,7 @@ import_flow() {
         if [ ! -f "$ENTITY_DB" ]; then
             # Fresh machine — direct copy
             local manifest_ent_count
-            manifest_ent_count="$(extract_manifest_count "$bundle_dir/manifest.json" entities)"
+            manifest_ent_count="$(extract_manifest_count "$bundle_dir/manifest.json" "entities/entities.db" entity_count)"
             if [ -n "$DRY_RUN" ]; then
                 entity_added=$manifest_ent_count
                 entity_action="would-copy"
@@ -555,6 +579,9 @@ import_flow() {
         exit 1
     fi
 
+    # Doctor check (AC-15)
+    run_doctor_check
+
     # Summary
     info ""
     ok "Import complete"
@@ -566,6 +593,7 @@ import_flow() {
     if [ $verify_errors -gt 0 ]; then
         warn "  $verify_errors verification warning(s) — review above"
     fi
+    info "  Run your first Claude session to verify MCP servers can connect."
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

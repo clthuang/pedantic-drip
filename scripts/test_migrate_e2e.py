@@ -176,16 +176,16 @@ class TestExportRoundTrip:
         assert manifest_path.exists()
         manifest = json.loads(manifest_path.read_text())
 
-        # Every file in manifest checksums must exist and match
-        for rel_path, expected_sha in manifest["checksums"].items():
+        # Every file in manifest files must exist and match
+        for rel_path, file_info in manifest["files"].items():
             fpath = bundle_dir / rel_path
             assert fpath.exists(), f"Missing file: {rel_path}"
             actual_sha = hashlib.sha256(fpath.read_bytes()).hexdigest()
-            assert actual_sha == expected_sha, f"Checksum mismatch: {rel_path}"
+            assert actual_sha == file_info["sha256"], f"Checksum mismatch: {rel_path}"
 
-        # Counts should match
-        assert manifest["counts"]["memory_entries"] == 3
-        assert manifest["counts"]["entities"] == 2
+        # Per-file counts should match
+        assert manifest["files"]["memory/memory.db"]["entry_count"] == 3
+        assert manifest["files"]["entities/entities.db"]["entity_count"] == 2
 
 
 # ============================================================

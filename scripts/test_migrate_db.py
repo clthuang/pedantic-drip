@@ -785,25 +785,26 @@ def _create_staging_dir(tmp_path: Path, with_metadata: bool = False,
 class TestManifest:
     """Tests for the manifest subcommand."""
 
-    # --- Task 3.1: test_manifest_checksums ---
-    def test_manifest_checksums(self, tmp_path: Path) -> None:
-        """All files in staging dir listed with correct SHA-256 checksums."""
+    # --- Task 3.1: test_manifest_files ---
+    def test_manifest_files(self, tmp_path: Path) -> None:
+        """All files in staging dir listed with correct SHA-256 in per-file entries."""
         staging = _create_staging_dir(tmp_path)
 
         result = run_cli("manifest", str(staging), "--plugin-version", "4.12.0")
 
-        # Verify checksums section exists
-        assert "checksums" in result
+        # Verify files section exists
+        assert "files" in result
 
         # Independently compute checksums for all files (excluding manifest.json)
-        for rel_path, expected_sha in result["checksums"].items():
+        for rel_path, file_info in result["files"].items():
             full_path = staging / rel_path
-            assert full_path.exists(), f"File {rel_path} in checksums but doesn't exist"
+            assert full_path.exists(), f"File {rel_path} in files but doesn't exist"
             actual_sha = hashlib.sha256(full_path.read_bytes()).hexdigest()
-            assert actual_sha == expected_sha, f"Checksum mismatch for {rel_path}"
+            assert actual_sha == file_info["sha256"], f"Checksum mismatch for {rel_path}"
+            assert "size_bytes" in file_info
 
-        # Verify manifest.json itself is NOT in the checksums
-        assert "manifest.json" not in result["checksums"]
+        # Verify manifest.json itself is NOT in files
+        assert "manifest.json" not in result["files"]
 
         # Verify all non-manifest files are accounted for
         expected_files = set()
@@ -813,7 +814,7 @@ class TestManifest:
                 rel = os.path.relpath(fpath, str(staging))
                 if rel != "manifest.json":
                     expected_files.add(rel)
-        assert set(result["checksums"].keys()) == expected_files
+        assert set(result["files"].keys()) == expected_files
 
     # --- Task 3.2: test_manifest_embedding_metadata ---
     def test_manifest_embedding_metadata(self, tmp_path: Path) -> None:
@@ -848,11 +849,11 @@ class TestManifest:
         assert result["export_timestamp"].endswith("Z")
         assert "source_platform" in result
         assert "python_version" in result
-        # Verify entry counts are present
-        assert "counts" in result
-        assert result["counts"]["memory_entries"] == 3
-        assert result["counts"]["entities"] == 2
-        assert result["counts"]["workflow_phases"] == 1
+        # Verify per-file entry counts are present
+        assert "files" in result
+        assert result["files"]["memory/memory.db"]["entry_count"] == 3
+        assert result["files"]["entities/entities.db"]["entity_count"] == 2
+        assert result["files"]["entities/entities.db"]["workflow_phases_count"] == 1
 
 
 # ============================================================
@@ -1048,8 +1049,7 @@ class TestInfo:
             "python_version": "3.12.0",
             "embedding_provider": "openai",
             "embedding_model": "text-embedding-3-small",
-            "counts": {"memory_entries": 10, "entities": 5},
-            "checksums": {"memory/memory.db": "abc123"},
+            "files": {"memory/memory.db": {"sha256": "abc123", "size_bytes": 4096, "entry_count": 10}},
         }
         manifest_path = _write_manifest(tmp_path, manifest_data)
 

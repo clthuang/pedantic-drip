@@ -67,18 +67,20 @@ def cmd_manifest(args: argparse.Namespace) -> None:
     """Generate a migration manifest for a staging directory."""
     staging_dir = args.staging_dir
 
-    # Walk staging dir and compute SHA-256 checksums (exclude manifest.json)
-    checksums: dict[str, str] = {}
+    # Build per-file entries with sha256 and size_bytes
+    file_entries: dict[str, dict] = {}
     for root, _dirs, files in os.walk(staging_dir):
         for fname in sorted(files):
             fpath = os.path.join(root, fname)
             rel = os.path.relpath(fpath, staging_dir)
             if rel == "manifest.json":
                 continue
-            checksums[rel] = _file_sha256(fpath)
+            file_entries[rel] = {
+                "sha256": _file_sha256(fpath),
+                "size_bytes": os.path.getsize(fpath),
+            }
 
-    # Read entry counts and embedding metadata from DBs
-    counts: dict[str, int] = {}
+    # Enrich DB file entries with counts; read embedding metadata
     embedding_provider = None
     embedding_model = None
 
@@ -86,11 +88,13 @@ def cmd_manifest(args: argparse.Namespace) -> None:
     if os.path.exists(memory_db):
         conn = sqlite3.connect(memory_db)
         try:
-            counts["memory_entries"] = conn.execute(
+            entry_count = conn.execute(
                 "SELECT count(*) FROM entries"
             ).fetchone()[0]
         except sqlite3.OperationalError:
-            counts["memory_entries"] = 0
+            entry_count = 0
+        if "memory/memory.db" in file_entries:
+            file_entries["memory/memory.db"]["entry_count"] = entry_count
         try:
             row = conn.execute(
                 "SELECT value FROM _metadata WHERE key='embedding_provider'"
@@ -110,17 +114,20 @@ def cmd_manifest(args: argparse.Namespace) -> None:
     if os.path.exists(entities_db):
         conn = sqlite3.connect(entities_db)
         try:
-            counts["entities"] = conn.execute(
+            entity_count = conn.execute(
                 "SELECT count(*) FROM entities"
             ).fetchone()[0]
         except sqlite3.OperationalError:
-            counts["entities"] = 0
+            entity_count = 0
         try:
-            counts["workflow_phases"] = conn.execute(
+            wp_count = conn.execute(
                 "SELECT count(*) FROM workflow_phases"
             ).fetchone()[0]
         except sqlite3.OperationalError:
-            counts["workflow_phases"] = 0
+            wp_count = 0
+        if "entities/entities.db" in file_entries:
+            file_entries["entities/entities.db"]["entity_count"] = entity_count
+            file_entries["entities/entities.db"]["workflow_phases_count"] = wp_count
         conn.close()
 
     manifest = {
@@ -131,8 +138,7 @@ def cmd_manifest(args: argparse.Namespace) -> None:
         "python_version": platform.python_version(),
         "embedding_provider": embedding_provider,
         "embedding_model": embedding_model,
-        "counts": counts,
-        "checksums": checksums,
+        "files": file_entries,
     }
 
     # Write manifest.json to staging dir
@@ -166,9 +172,10 @@ def cmd_validate(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     # Verify checksums for each listed file
-    checksums = manifest.get("checksums", {})
+    file_entries = manifest.get("files", {})
     checksum_mismatch = False
-    for rel_path, expected_sha in checksums.items():
+    for rel_path, file_info in file_entries.items():
+        expected_sha = file_info.get("sha256", "")
         fpath = os.path.join(bundle_dir, rel_path)
         if not os.path.exists(fpath):
             errors.append(f"Missing file: {rel_path}")
@@ -189,7 +196,7 @@ def cmd_validate(args: argparse.Namespace) -> None:
             rel = os.path.relpath(fpath, bundle_dir)
             if rel == "manifest.json":
                 continue
-            if rel not in checksums:
+            if rel not in file_entries:
                 errors.append(f"Unexpected file: {rel}")
 
     valid = len(errors) == 0

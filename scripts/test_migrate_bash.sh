@@ -1102,8 +1102,8 @@ FAKE
     output=$(PATH="$bin_dir:$PATH" HOME="$fresh_home" PYTHON=python3 \
         bash "$MIGRATE_SH" import "$corrupt_bundle" 2>&1) || exit_code=$?
 
-    if [[ $exit_code -ne 1 ]]; then
-        log_fail "Expected exit 1, got $exit_code (output: $output)"
+    if [[ $exit_code -ne 3 ]]; then
+        log_fail "Expected exit 3, got $exit_code (output: $output)"
         return
     fi
 
@@ -1328,7 +1328,7 @@ import tarfile, io, os
 buf = io.BytesIO()
 with tarfile.open(fileobj=buf, mode='w:gz') as tar:
     # Add a normal manifest.json
-    manifest = b'{\"schema_version\": 1, \"checksums\": {}}'
+    manifest = b'{\"schema_version\": 1, \"files\": {}}'
     info = tarfile.TarInfo(name='iflow-export-evil/manifest.json')
     info.size = len(manifest)
     tar.addfile(info, io.BytesIO(manifest))

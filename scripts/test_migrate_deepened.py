@@ -112,7 +112,7 @@ class TestEmptyDatabases:
         result = run_cli("manifest", str(staging), "--plugin-version", "1.0.0")
 
         # Then memory_entries count is 0
-        assert result["counts"]["memory_entries"] == 0
+        assert result["files"]["memory/memory.db"]["entry_count"] == 0
 
     def test_merge_memory_empty_src_into_populated_dst(self, tmp_path: Path) -> None:
         """Merging empty source into populated destination adds nothing.
@@ -383,10 +383,10 @@ class TestUnicode:
         # When we generate manifest
         result = run_cli("manifest", str(staging), "--plugin-version", "1.0.0")
 
-        # Then the unicode filename appears in checksums
+        # Then the unicode filename appears in files
         # On macOS, the path separator is /
         expected_key = os.path.join("memory", "caf\u00e9-patterns.md")
-        assert expected_key in result["checksums"]
+        assert expected_key in result["files"]
 
     def test_merge_memory_unicode_source_hash(self, tmp_path: Path) -> None:
         """source_hash containing unicode: deduplication still works.
@@ -431,12 +431,12 @@ class TestConcurrentManifest:
         result1 = run_cli("manifest", str(staging), "--plugin-version", "1.0.0")
         result2 = run_cli("manifest", str(staging), "--plugin-version", "1.0.0")
 
-        # Then manifest.json is excluded from checksums in both runs
-        assert "manifest.json" not in result1["checksums"]
-        assert "manifest.json" not in result2["checksums"]
+        # Then manifest.json is excluded from files in both runs
+        assert "manifest.json" not in result1["files"]
+        assert "manifest.json" not in result2["files"]
 
-        # And checksums are identical (file content unchanged)
-        assert result1["checksums"] == result2["checksums"]
+        # And file entries are identical (file content unchanged)
+        assert result1["files"] == result2["files"]
 
     def test_validate_after_manifest_regeneration(self, tmp_path: Path) -> None:
         """Validate passes after manifest is regenerated.
