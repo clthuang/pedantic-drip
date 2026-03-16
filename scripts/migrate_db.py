@@ -20,42 +20,42 @@ def _json_stub() -> None:
     print()  # trailing newline
 
 
-def cmd_backup(args: argparse.Namespace) -> None:
+def cmd_backup(_args: argparse.Namespace) -> None:
     """Backup a database table."""
     _json_stub()
 
 
-def cmd_manifest(args: argparse.Namespace) -> None:
+def cmd_manifest(_args: argparse.Namespace) -> None:
     """Generate a migration manifest for a staging directory."""
     _json_stub()
 
 
-def cmd_validate(args: argparse.Namespace) -> None:
+def cmd_validate(_args: argparse.Namespace) -> None:
     """Validate a migration bundle directory."""
     _json_stub()
 
 
-def cmd_merge_memory(args: argparse.Namespace) -> None:
+def cmd_merge_memory(_args: argparse.Namespace) -> None:
     """Merge memory entries from source to destination database."""
     _json_stub()
 
 
-def cmd_merge_entities(args: argparse.Namespace) -> None:
+def cmd_merge_entities(_args: argparse.Namespace) -> None:
     """Merge entity records from source to destination database."""
     _json_stub()
 
 
-def cmd_verify(args: argparse.Namespace) -> None:
+def cmd_verify(_args: argparse.Namespace) -> None:
     """Verify row counts in a database table after migration."""
     _json_stub()
 
 
-def cmd_info(args: argparse.Namespace) -> None:
+def cmd_info(_args: argparse.Namespace) -> None:
     """Display information from a migration manifest."""
     _json_stub()
 
 
-def cmd_check_embeddings(args: argparse.Namespace) -> None:
+def cmd_check_embeddings(_args: argparse.Namespace) -> None:
     """Check embedding consistency between manifest and destination DB."""
     _json_stub()
 
