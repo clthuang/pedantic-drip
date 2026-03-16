@@ -65,10 +65,15 @@ check_active_session() {
     return 1
 }
 
-# JSON extraction helper
+# JSON extraction helpers
 extract_json_field() {
     local json_str="$1" field="$2"
     "$PYTHON" -c "import json,sys; print(json.loads(sys.argv[1])[sys.argv[2]])" "$json_str" "$field"
+}
+
+extract_manifest_count() {
+    local manifest_path="$1" count_key="$2"
+    "$PYTHON" -c "import json,sys; print(json.load(open(sys.argv[1])).get('counts',{}).get(sys.argv[2],0))" "$manifest_path" "$count_key"
 }
 
 # File copy helpers
@@ -109,6 +114,34 @@ resolve_plugin_version() {
         "$PYTHON" -c "import json,sys; print(json.load(open(sys.argv[1]))['version'])" "$pjson"
     else
         echo "unknown"
+    fi
+}
+
+# Verify DB integrity after import; sets verify_errors on failure
+# Usage: verify_imported_db <db_path> <table> <label> <action> <added_count>
+verify_imported_db() {
+    local db_path="$1" table="$2" label="$3" action="$4" added_count="$5"
+    [ -f "$db_path" ] || return 0
+
+    local expected_count
+    if [ "$action" = "copied" ]; then
+        expected_count=$added_count
+    else
+        expected_count=0  # count-only mode for merges
+    fi
+
+    local verify_output
+    verify_output="$("$PYTHON" "$MIGRATE_DB" verify "$db_path" --expected-count "$expected_count" --table "$table" 2>/dev/null)" || true
+    [ -n "$verify_output" ] || return 0
+
+    local is_ok actual_count
+    is_ok="$(extract_json_field "$verify_output" ok)" || true
+    actual_count="$(extract_json_field "$verify_output" actual_count)" || true
+    if [ "$is_ok" = "True" ]; then
+        ok "  ${label}: integrity OK ($actual_count entries)"
+    else
+        warn "  ${label}: verification issue (expected=$expected_count, actual=$actual_count)"
+        verify_errors=$((verify_errors + 1))
     fi
 }
 
@@ -357,7 +390,7 @@ import_flow() {
             mismatch="$(extract_json_field "$embed_output" mismatch)" || true
             if [ "$mismatch" = "True" ]; then
                 local embed_warning
-                embed_warning="$("$PYTHON" -c "import json,sys; print(json.loads(sys.argv[1]).get('warning',''))" "$embed_output")"
+                embed_warning="$(extract_json_field "$embed_output" warning)" || embed_warning=""
                 warn "  $embed_warning"
             else
                 ok "  Embeddings compatible"
@@ -386,7 +419,7 @@ import_flow() {
         if [ ! -f "$MEMORY_DB" ]; then
             # Fresh machine — direct copy
             local manifest_mem_count
-            manifest_mem_count="$("$PYTHON" -c "import json; m=json.load(open('$bundle_dir/manifest.json')); print(m.get('counts',{}).get('memory_entries',0))")"
+            manifest_mem_count="$(extract_manifest_count "$bundle_dir/manifest.json" memory_entries)"
             if [ -n "$DRY_RUN" ]; then
                 memory_added=$manifest_mem_count
                 memory_action="would-copy"
@@ -443,7 +476,7 @@ import_flow() {
         if [ ! -f "$ENTITY_DB" ]; then
             # Fresh machine — direct copy
             local manifest_ent_count
-            manifest_ent_count="$("$PYTHON" -c "import json; m=json.load(open('$bundle_dir/manifest.json')); print(m.get('counts',{}).get('entities',0))")"
+            manifest_ent_count="$(extract_manifest_count "$bundle_dir/manifest.json" entities)"
             if [ -n "$DRY_RUN" ]; then
                 entity_added=$manifest_ent_count
                 entity_action="would-copy"
@@ -508,50 +541,8 @@ import_flow() {
 
     step "8/8" "Verifying integrity"
     local verify_errors=0
-
-    if [ -f "$MEMORY_DB" ]; then
-        local expected_mem
-        if [ "$memory_action" = "copied" ]; then
-            expected_mem=$memory_added
-        else
-            expected_mem=0  # count-only mode for merges
-        fi
-        local verify_mem
-        verify_mem="$("$PYTHON" "$MIGRATE_DB" verify "$MEMORY_DB" --expected-count "$expected_mem" --table entries 2>/dev/null)" || true
-        if [ -n "$verify_mem" ]; then
-            local mem_ok mem_actual
-            mem_ok="$(extract_json_field "$verify_mem" ok)" || true
-            mem_actual="$(extract_json_field "$verify_mem" actual_count)" || true
-            if [ "$mem_ok" = "True" ]; then
-                ok "  memory.db: integrity OK ($mem_actual entries)"
-            else
-                warn "  memory.db: verification issue (expected=$expected_mem, actual=$mem_actual)"
-                verify_errors=$((verify_errors + 1))
-            fi
-        fi
-    fi
-
-    if [ -f "$ENTITY_DB" ]; then
-        local expected_ent
-        if [ "$entity_action" = "copied" ]; then
-            expected_ent=$entity_added
-        else
-            expected_ent=0  # count-only mode for merges
-        fi
-        local verify_ent
-        verify_ent="$("$PYTHON" "$MIGRATE_DB" verify "$ENTITY_DB" --expected-count "$expected_ent" --table entities 2>/dev/null)" || true
-        if [ -n "$verify_ent" ]; then
-            local ent_ok ent_actual
-            ent_ok="$(extract_json_field "$verify_ent" ok)" || true
-            ent_actual="$(extract_json_field "$verify_ent" actual_count)" || true
-            if [ "$ent_ok" = "True" ]; then
-                ok "  entities.db: integrity OK ($ent_actual entities)"
-            else
-                warn "  entities.db: verification issue (expected=$expected_ent, actual=$ent_actual)"
-                verify_errors=$((verify_errors + 1))
-            fi
-        fi
-    fi
+    verify_imported_db "$MEMORY_DB" entries "memory.db" "$memory_action" "$memory_added"
+    verify_imported_db "$ENTITY_DB" entities "entities.db" "$entity_action" "$entity_added"
 
     # Check for partial failures
     if [ ${#import_failures[@]} -gt 0 ]; then

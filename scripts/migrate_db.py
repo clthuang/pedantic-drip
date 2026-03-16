@@ -14,29 +14,25 @@ import os
 import platform
 import sqlite3
 import sys
-import traceback
 import uuid as uuid_mod
 from datetime import datetime, timezone
 
 SUPPORTED_SCHEMA_VERSION = 1
 
 
-def _json_stub() -> None:
-    """Print empty JSON object stub and exit successfully."""
-    json.dump({}, sys.stdout)
-    print()  # trailing newline
+def _file_sha256(path: str) -> str:
+    """Compute SHA-256 hex digest of a file."""
+    sha = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            sha.update(chunk)
+    return sha.hexdigest()
 
 
 def _json_out(data: dict) -> None:
     """Print JSON to stdout with trailing newline."""
     json.dump(data, sys.stdout)
     print()
-
-
-def _json_error(msg: str) -> None:
-    """Print error JSON to stdout and exit 1."""
-    _json_out({"ok": False, "error": msg})
-    sys.exit(1)
 
 
 def cmd_backup(args: argparse.Namespace) -> None:
@@ -48,12 +44,6 @@ def cmd_backup(args: argparse.Namespace) -> None:
     finally:
         src_conn.close()
         dst_conn.close()
-
-    # Compute SHA-256 of the backup file
-    sha = hashlib.sha256()
-    with open(args.dst_db, "rb") as f:
-        for chunk in iter(lambda: f.read(8192), b""):
-            sha.update(chunk)
 
     # Count rows in the specified table
     conn = sqlite3.connect(args.dst_db)
@@ -67,7 +57,7 @@ def cmd_backup(args: argparse.Namespace) -> None:
     size_bytes = os.path.getsize(args.dst_db)
 
     _json_out({
-        "sha256": sha.hexdigest(),
+        "sha256": _file_sha256(args.dst_db),
         "size_bytes": size_bytes,
         "entry_count": entry_count,
     })
@@ -85,17 +75,13 @@ def cmd_manifest(args: argparse.Namespace) -> None:
             rel = os.path.relpath(fpath, staging_dir)
             if rel == "manifest.json":
                 continue
-            sha = hashlib.sha256()
-            with open(fpath, "rb") as f:
-                while True:
-                    chunk = f.read(8192)
-                    if not chunk:
-                        break
-                    sha.update(chunk)
-            checksums[rel] = sha.hexdigest()
+            checksums[rel] = _file_sha256(fpath)
 
-    # Read entry counts from DBs
+    # Read entry counts and embedding metadata from DBs
     counts: dict[str, int] = {}
+    embedding_provider = None
+    embedding_model = None
+
     memory_db = os.path.join(staging_dir, "memory", "memory.db")
     if os.path.exists(memory_db):
         conn = sqlite3.connect(memory_db)
@@ -105,6 +91,19 @@ def cmd_manifest(args: argparse.Namespace) -> None:
             ).fetchone()[0]
         except sqlite3.OperationalError:
             counts["memory_entries"] = 0
+        try:
+            row = conn.execute(
+                "SELECT value FROM _metadata WHERE key='embedding_provider'"
+            ).fetchone()
+            if row:
+                embedding_provider = row[0]
+            row = conn.execute(
+                "SELECT value FROM _metadata WHERE key='embedding_model'"
+            ).fetchone()
+            if row:
+                embedding_model = row[0]
+        except sqlite3.OperationalError:
+            pass  # _metadata table doesn't exist
         conn.close()
 
     entities_db = os.path.join(staging_dir, "entities", "entities.db")
@@ -122,26 +121,6 @@ def cmd_manifest(args: argparse.Namespace) -> None:
             ).fetchone()[0]
         except sqlite3.OperationalError:
             counts["workflow_phases"] = 0
-        conn.close()
-
-    # Read embedding metadata from memory.db _metadata table
-    embedding_provider = None
-    embedding_model = None
-    if os.path.exists(memory_db):
-        conn = sqlite3.connect(memory_db)
-        try:
-            row = conn.execute(
-                "SELECT value FROM _metadata WHERE key='embedding_provider'"
-            ).fetchone()
-            if row:
-                embedding_provider = row[0]
-            row = conn.execute(
-                "SELECT value FROM _metadata WHERE key='embedding_model'"
-            ).fetchone()
-            if row:
-                embedding_model = row[0]
-        except sqlite3.OperationalError:
-            pass  # _metadata table doesn't exist
         conn.close()
 
     manifest = {
@@ -195,14 +174,7 @@ def cmd_validate(args: argparse.Namespace) -> None:
             errors.append(f"Missing file: {rel_path}")
             checksum_mismatch = True
             continue
-        sha = hashlib.sha256()
-        with open(fpath, "rb") as f:
-            while True:
-                chunk = f.read(8192)
-                if not chunk:
-                    break
-                sha.update(chunk)
-        if sha.hexdigest() != expected_sha:
+        if _file_sha256(fpath) != expected_sha:
             errors.append(f"Checksum mismatch: {rel_path}")
             checksum_mismatch = True
 
@@ -389,43 +361,38 @@ def cmd_merge_entities(args: argparse.Namespace) -> None:
 
 def cmd_verify(args: argparse.Namespace) -> None:
     """Verify row counts in a database table after migration."""
+    conn = sqlite3.connect(args.db_path)
     try:
-        conn = sqlite3.connect(args.db_path)
         integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]
+    except Exception as e:
+        conn.close()
+        _json_out({"ok": False, "actual_count": 0, "integrity": str(e)})
+        sys.exit(1)
 
-        if integrity != "ok":
-            _json_out({
-                "ok": False,
-                "actual_count": 0,
-                "integrity": integrity,
-            })
-            conn.close()
-            sys.exit(1)
+    if integrity != "ok":
+        conn.close()
+        _json_out({"ok": False, "actual_count": 0, "integrity": integrity})
+        sys.exit(1)
 
+    try:
         actual_count = conn.execute(
             f"SELECT count(*) FROM [{args.table}]"
         ).fetchone()[0]
+    except Exception as e:
+        conn.close()
+        _json_out({"ok": False, "actual_count": 0, "integrity": str(e)})
+        sys.exit(1)
+    finally:
         conn.close()
 
-        expected = args.expected_count
-        # If expected_count is 0, skip the comparison (count-only mode)
-        if expected == 0:
-            ok = True
-        else:
-            ok = actual_count == expected
+    # If expected_count is 0, skip the comparison (count-only mode)
+    ok = args.expected_count == 0 or actual_count == args.expected_count
 
-        _json_out({
-            "ok": ok,
-            "actual_count": actual_count,
-            "integrity": integrity,
-        })
-    except Exception as e:
-        _json_out({
-            "ok": False,
-            "actual_count": 0,
-            "integrity": str(e),
-        })
-        sys.exit(1)
+    _json_out({
+        "ok": ok,
+        "actual_count": actual_count,
+        "integrity": integrity,
+    })
 
 
 def cmd_info(args: argparse.Namespace) -> None:
