@@ -113,7 +113,7 @@ All migrate_db.py subcommands are independently testable with pytest + tmp_path 
 - `test_merge_memory_rollback` — Simulated failure mid-merge → rollback, no partial state
 **GREEN:** Implement merge_memory_db() to pass all tests.
 
-**Note:** The design's TD-3 uses explicit column names in the INSERT statement. The implementation should dynamically resolve column names from the destination schema to be robust against future schema evolution. Validate that source columns are a subset of destination columns.
+**Note:** Use the ATTACH-based INSERT OR IGNORE approach from design TD-3 with explicit column names. Column schema evolution is handled by updating the explicit column list in TD-3, not by dynamic resolution.
 
 #### Step 7: merge-entities subcommand
 
@@ -171,22 +171,15 @@ All migrate_db.py subcommands are independently testable with pytest + tmp_path 
 
 **Dependencies:** Step 1 (migrate_db.py must exist for Python path validation)
 
-**AC coverage:** AC-3 (session detection), AC-12 (ENTITY_DB_PATH), AC-14 (progress output)
+**AC coverage:** AC-3 (session detection), AC-10 (force mode), AC-12 (ENTITY_DB_PATH), AC-14 (progress output)
 
-#### Step 9b: Bash utility tests
-
-**What:** Write `scripts/test_migrate_bash.sh` (simple test harness or bats-core) covering shared Bash utilities:
-- `check_active_session()` — mock pgrep to test both active and inactive paths
+**RED:** Write `scripts/test_migrate_bash.sh` (plain shell assertions matching existing `plugins/iflow/hooks/tests/test-hooks.sh` patterns) covering shared Bash utilities:
+- `check_active_session()` — mock pgrep via PATH prepend with fake script to test both active and inactive paths
 - `copy_markdown_files()` — with and without --force, skip vs overwrite
 - `copy_file()` — skip vs overwrite vs create new
 - JSON extraction helpers — verify they parse migrate_db.py output correctly
 - ENTITY_DB_PATH override — verify path constants resolve from env var
-
-**Why:** These functions underpin AC-3, AC-10, AC-12. Catching regressions here prevents integration failures in Steps 10-11.
-
-**Dependencies:** Step 9
-
-**AC coverage:** AC-3, AC-10, AC-12
+**GREEN:** Implement the migrate.sh scaffold to pass all tests.
 
 #### Step 10: Export flow
 
@@ -220,7 +213,7 @@ All migrate_db.py subcommands are independently testable with pytest + tmp_path 
 
 **Dependencies:** Steps 4, 5, 6, 7, 8, 9
 
-**AC coverage:** AC-4, AC-5, AC-6, AC-7, AC-8, AC-9, AC-10, AC-11, AC-13, AC-15
+**AC coverage:** AC-3 (session check uses exit code 2, same as export per spec), AC-4, AC-5, AC-6, AC-7, AC-8, AC-9, AC-10, AC-11, AC-13, AC-15
 
 **RED:** Write integration tests:
 - Export from test state → import into empty dir → verify
@@ -276,16 +269,16 @@ All migrate_db.py subcommands are independently testable with pytest + tmp_path 
 |----|-------|
 | AC-1 (export bundle) | 2, 3, 10 |
 | AC-2 (backup API) | 2, 10 |
-| AC-3 (session detection) | 9, 9b, 10 |
+| AC-3 (session detection) | 9, 10, 11 |
 | AC-4 (fresh import) | 11 |
 | AC-5 (merge) | 6, 7, 11 |
 | AC-6 (dry-run) | 6, 7, 11 |
 | AC-7 (bundle validation) | 4, 11 |
 | AC-8 (version compat) | 1, 4 |
 | AC-9 (embedding mismatch) | 3, 8, 11 |
-| AC-10 (force mode) | 9, 9b, 11 |
+| AC-10 (force mode) | 9, 11 |
 | AC-11 (verification) | 5, 11 |
-| AC-12 (ENTITY_DB_PATH) | 9, 9b |
+| AC-12 (ENTITY_DB_PATH) | 9 |
 | AC-13 (disk full) | 6, 7, 13 |
 | AC-14 (progress output) | 9, 10, 11 |
 | AC-15 (doctor check) | 11 |
@@ -303,7 +296,6 @@ Step 1 (scaffold)
 ├── Step 8 (info + check-embed) ──┤
 │                                 │
 └── Step 9 (migrate.sh scaffold) ─┤
-    └── Step 9b (bash tests) ─────┤
         ├── Step 10 (export flow) ┤
         └── Step 11 (import flow) ┤
                                   │
@@ -312,5 +304,5 @@ Step 1 (scaffold)
 ```
 
 Steps 2, 5, 6, 7, 8 can be implemented in parallel (all depend only on Step 1).
-Steps 10, 11 can be partially parallelized (both depend on Step 9b + respective Python steps).
+Steps 10, 11 can be partially parallelized (both depend on Step 9 + respective Python steps).
 Steps 12, 13 run after both flows are complete.
