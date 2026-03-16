@@ -65,12 +65,13 @@
 **Decision:** Use `ATTACH DATABASE` for merge operations instead of row-by-row SELECT + INSERT.
 
 **Rationale:**
-- Research shows ATTACH is significantly faster (single SQL statement, no Python-side iteration)
-- Handles all column mapping implicitly (no positional index fragility)
-- Dedup via WHERE NOT EXISTS subquery — clean SQL, no Python bookkeeping
-- Transaction is natural (single statement = atomic)
+- Cleaner SQL — dedup via WHERE NOT IN subquery, no Python-side bookkeeping
+- Handles all column mapping explicitly (no positional index fragility)
+- Single statement per table = natural transaction boundary
 
-**Spec pseudocode shows row-by-row approach** — design upgrades to ATTACH for performance while preserving the same dedup semantics (source_hash for memory, type_id for entities).
+**Trade-off acknowledged:** For typical scale (<500 entries), row-by-row would also be fast enough. ATTACH is chosen for SQL clarity and elimination of Python iteration bugs, not raw performance. Dry-run uses COUNT queries (no actual inserts).
+
+**Spec pseudocode shows row-by-row approach** — design upgrades to ATTACH while preserving the same dedup semantics (source_hash for memory, type_id for entities).
 
 ### Design Decision: projects.txt inclusion
 
@@ -79,6 +80,8 @@
 **Rationale:** Codebase exploration revealed this file exists in the global state directory. It tracks registered projects. Omitting it would lose project registration state on import.
 
 **Impact:** Add to Data Inventory as a fourth store. Bundle gains `projects.txt` at top level.
+
+**Spec discrepancy:** The spec's Data Inventory and bundle format do not include projects.txt. Spec must be updated before implementation to add projects.txt as a fourth data store.
 
 ## Components
 
@@ -132,78 +135,136 @@ iflow-export-YYYYMMDD-HHMMSS/
 
 Export creates a temp staging dir (`mktemp -d`), writes all files there, generates manifest, creates tar.gz from it, then removes staging dir. This ensures atomic bundle creation — partial failures leave no artifacts.
 
-### TD-2: Entity merge via ATTACH + new UUID generation
+### TD-2: Entity merge via ATTACH + Python UUID generation
 
-```sql
--- Attach source database
-ATTACH DATABASE '{src_path}' AS src;
+The merge uses a two-phase approach: ATTACH for the SQL query, Python for UUID generation.
 
--- Enable FK enforcement
-PRAGMA foreign_keys = ON;
+**Phase 1: Identify new entities (Python)**
 
--- Merge entities: skip where type_id already exists, generate new UUID
-INSERT INTO main.entities (uuid, type_id, entity_type, entity_id, name,
-    status, parent_type_id, parent_uuid, artifact_path, created_at, updated_at, metadata)
-SELECT
-    lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' ||
-          substr(hex(randomblob(2)),2) || '-' ||
-          substr('89ab', abs(random()) % 4 + 1, 1) ||
-          substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6))),
-    src.type_id, src.entity_type, src.entity_id, src.name,
-    src.status, src.parent_type_id, NULL, src.artifact_path,
-    src.created_at, src.updated_at, src.metadata
-FROM src.entities src
-WHERE src.type_id NOT IN (SELECT type_id FROM main.entities);
+```python
+def merge_entities_db(src_path, dst_path, dry_run=False):
+    dst = sqlite3.connect(dst_path)
+    dst.execute(f"ATTACH DATABASE '{src_path}' AS src")
 
--- Merge workflow_phases for newly inserted entities only
-INSERT OR IGNORE INTO main.workflow_phases
-SELECT wp.*
-FROM src.workflow_phases wp
-WHERE wp.type_id IN (
-    SELECT type_id FROM main.entities
-    WHERE type_id IN (SELECT type_id FROM src.entities)
-    AND type_id NOT IN (
-        SELECT type_id FROM main.entities
-        WHERE uuid NOT LIKE '%-%-%-%-%'  -- pre-existing rows have real UUIDs
-    )
-);
+    # FK enforcement OFF during merge — we validate parent_type_id existence
+    # via the WHERE clause instead. This avoids insertion-order issues where
+    # a child entity might be inserted before its parent within the same batch.
+    dst.execute("PRAGMA foreign_keys = OFF")
+
+    # Count for dry-run
+    new_type_ids = dst.execute("""
+        SELECT src.type_id FROM src.entities src
+        WHERE src.type_id NOT IN (SELECT type_id FROM main.entities)
+    """).fetchall()
+    skip_count = dst.execute("SELECT count(*) FROM src.entities").fetchone()[0] - len(new_type_ids)
+
+    if dry_run:
+        return {"added": len(new_type_ids), "skipped": skip_count}
+
+    # Phase 2: Insert with Python-generated UUIDs
+    for (type_id,) in new_type_ids:
+        row = dst.execute("SELECT * FROM src.entities WHERE type_id = ?", (type_id,)).fetchone()
+        cols = [desc[0] for desc in dst.execute("SELECT * FROM src.entities LIMIT 0").description]
+        uuid_idx = cols.index("uuid")
+        parent_uuid_idx = cols.index("parent_uuid")
+
+        row = list(row)
+        row[uuid_idx] = str(uuid.uuid4())   # New UUID (Python stdlib)
+        row[parent_uuid_idx] = None          # Cleared — reconstructed below
+
+        placeholders = ",".join("?" * len(row))
+        col_names = ",".join(f'"{c}"' for c in cols)
+        dst.execute(f"INSERT INTO main.entities ({col_names}) VALUES ({placeholders})", row)
+
+    # Phase 3: Merge workflow_phases for newly inserted entities
+    dst.execute("""
+        INSERT OR IGNORE INTO main.workflow_phases (type_id, workflow_phase, kanban_column,
+            last_completed_phase, mode, completed_phases, phase_iterations, phase_reviewer_notes)
+        SELECT wp.type_id, wp.workflow_phase, wp.kanban_column,
+            wp.last_completed_phase, wp.mode, wp.completed_phases,
+            wp.phase_iterations, wp.phase_reviewer_notes
+        FROM src.workflow_phases wp
+        WHERE wp.type_id NOT IN (SELECT type_id FROM main.workflow_phases)
+    """)
+
+    # Phase 4: Reconstruct parent_uuid for imported entities
+    # server_helpers.py uses parent_uuid for UI tree building, so we must populate it.
+    dst.execute("""
+        UPDATE main.entities
+        SET parent_uuid = (
+            SELECT uuid FROM main.entities AS parent
+            WHERE parent.type_id = main.entities.parent_type_id
+        )
+        WHERE parent_uuid IS NULL
+          AND parent_type_id IS NOT NULL
+    """)
+
+    # Phase 5: Rebuild FTS5 index for imported entities
+    try:
+        dst.execute("INSERT INTO entities_fts(entities_fts) VALUES('rebuild')")
+    except sqlite3.OperationalError:
+        pass  # FTS5 may not be configured; non-fatal
+
+    dst.commit()
+    dst.execute("DETACH DATABASE src")
+    return {"added": len(new_type_ids), "skipped": skip_count}
 ```
 
-**Note on parent_uuid:** Set to NULL for imported entities because parent UUIDs from the source don't match destination UUIDs. The parent_type_id relationship (which uses type_id, not uuid) is preserved. This is acceptable because parent_uuid is a denormalized cache — the type_id FK is the authoritative relationship.
-
-**Revised approach — simpler workflow_phases merge:**
-
-```sql
--- Merge workflow_phases: insert for any type_id that exists in src but was just added to main
-INSERT OR IGNORE INTO main.workflow_phases (type_id, workflow_phase, kanban_column,
-    last_completed_phase, mode, completed_phases, phase_iterations, phase_reviewer_notes)
-SELECT wp.type_id, wp.workflow_phase, wp.kanban_column,
-    wp.last_completed_phase, wp.mode, wp.completed_phases,
-    wp.phase_iterations, wp.phase_reviewer_notes
-FROM src.workflow_phases wp
-WHERE wp.type_id NOT IN (SELECT type_id FROM main.workflow_phases);
-```
-
-This is simpler and correct: workflow_phases.type_id is PK with FK to entities(type_id). If the entity was skipped (type_id conflict), its workflow_phases row already exists. If the entity was inserted, the workflow_phases row is new.
+**Key design choices:**
+- **Python UUIDs** (not SQL randomblob): More reliable across SQLite versions, uses stdlib `uuid.uuid4()`
+- **FK OFF during merge**: Avoids insertion-order issues when child entities appear before parents in the result set. Validity is enforced by the WHERE clause (only type_ids from source that don't exist in destination).
+- **parent_uuid reconstruction**: Phase 4 UPDATE populates parent_uuid by looking up the new UUID via parent_type_id. This preserves UI tree hierarchy (server_helpers.py uses parent_uuid for tree building).
+- **FTS5 rebuild**: Phase 5 rebuilds entities_fts so imported entities appear in search.
 
 ### TD-3: Memory merge via ATTACH + source_hash dedup
 
-```sql
-ATTACH DATABASE '{src_path}' AS src;
+```python
+def merge_memory_db(src_path, dst_path, dry_run=False):
+    dst = sqlite3.connect(dst_path)
+    dst.execute(f"ATTACH DATABASE '{src_path}' AS src")
 
-INSERT INTO main.entries (id, name, description, reasoning, category, keywords,
-    source, source_project, "references", observation_count, confidence,
-    recall_count, last_recalled_at, embedding, created_at, updated_at,
-    source_hash, created_timestamp_utc)
-SELECT src.id, src.name, src.description, src.reasoning, src.category, src.keywords,
-    src.source, src.source_project, src."references", src.observation_count,
-    src.confidence, src.recall_count, src.last_recalled_at, src.embedding,
-    src.created_at, src.updated_at, src.source_hash, src.created_timestamp_utc
-FROM src.entries src
-WHERE src.source_hash NOT IN (SELECT source_hash FROM main.entries);
+    # Count for reporting
+    add_count = dst.execute("""
+        SELECT count(*) FROM src.entries
+        WHERE source_hash NOT IN (SELECT source_hash FROM main.entries)
+    """).fetchone()[0]
+    skip_count = dst.execute("SELECT count(*) FROM src.entries").fetchone()[0] - add_count
+
+    if dry_run:
+        return {"added": add_count, "skipped": skip_count}
+
+    # INSERT OR IGNORE: source_hash dedup is the primary filter (WHERE clause).
+    # OR IGNORE handles the rare case where id (PK) collides but source_hash differs.
+    dst.execute("""
+        INSERT OR IGNORE INTO main.entries (id, name, description, reasoning, category,
+            keywords, source, source_project, "references", observation_count, confidence,
+            recall_count, last_recalled_at, embedding, created_at, updated_at,
+            source_hash, created_timestamp_utc)
+        SELECT src.id, src.name, src.description, src.reasoning, src.category,
+            src.keywords, src.source, src.source_project, src."references",
+            src.observation_count, src.confidence, src.recall_count,
+            src.last_recalled_at, src.embedding, src.created_at, src.updated_at,
+            src.source_hash, src.created_timestamp_utc
+        FROM src.entries src
+        WHERE src.source_hash NOT IN (SELECT source_hash FROM main.entries)
+    """)
+
+    # Rebuild FTS5 index for imported entries
+    if add_count > 0:
+        try:
+            dst.execute("INSERT INTO entries_fts(entries_fts) VALUES('rebuild')")
+        except sqlite3.OperationalError:
+            pass  # FTS5 may not be configured; non-fatal
+
+    dst.commit()
+    dst.execute("DETACH DATABASE src")
+    return {"added": add_count, "skipped": skip_count}
 ```
 
-**Note:** `entries.id` is a TEXT PRIMARY KEY (not auto-increment). Source IDs are UUIDs, so collision risk is negligible. If a collision occurs, the INSERT fails and the row is skipped (acceptable — same content via source_hash means same entry).
+**Key design choices:**
+- **INSERT OR IGNORE**: Handles rare PK collision (different content but same id) gracefully — skips the row instead of aborting the entire merge.
+- **Dry-run via COUNT**: Uses the same WHERE clause in a SELECT count(*) to preview results without modifying data.
+- **FTS5 rebuild**: Integrated into the merge function (not a separate post-step).
 
 ### TD-4: Manifest metadata sourcing
 
@@ -265,12 +326,14 @@ run_doctor_check() {
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| ATTACH merge SQL wrong column order | Silent data corruption | Test with actual DB schemas; use explicit column lists (not SELECT *) |
-| parent_uuid NULL breaks UI | Entity display issues | parent_type_id is the authoritative FK; verify UI uses type_id, not uuid |
-| FTS5 index inconsistency after merge | Search misses new entries | Rebuild FTS after merge: `INSERT INTO entries_fts(entries_fts) VALUES('rebuild')` |
-| Large embedding BLOBs slow merge | Export/import takes minutes | Not a problem for typical usage (<500 entries); note in constraints |
+| ATTACH merge SQL wrong column order | Silent data corruption | Use explicit column lists (not SELECT *); test with actual schemas |
+| parent_uuid reconstruction misses orphans | Entity display issues in UI tree | Phase 4 UPDATE handles all NULL parent_uuid rows; verified server_helpers.py uses parent_uuid |
+| FTS5 index inconsistency after merge | Search misses new entries | Both merge functions rebuild FTS5 (entries_fts and entities_fts) |
+| Memory id PK collision | Row silently skipped | INSERT OR IGNORE; source_hash dedup catches most cases; PK collision = same or near-identical entry |
+| Large embedding BLOBs slow merge | Export/import takes minutes | Acceptable for typical usage (<500 entries) |
 | projects.txt format changes | Import breaks project list | Simple text file (one path per line); low risk |
 | WAL checkpoint during export | Backup captures partial state | .backup() API handles this atomically |
+| Spec does not include projects.txt | Implementation gap | Flagged for spec update before implementation |
 
 ## Interfaces
 
@@ -384,16 +447,22 @@ import_flow() {
 
   step 5/8 "Restoring semantic memory"
   if [ -f "$MEMORY_DB" ]; then
-    MERGE_RESULT=$("$PYTHON" "$MIGRATE_DB" merge-memory "$EXTRACTED/memory/memory.db" "$MEMORY_DB" $DRY_RUN_FLAG)
+    PRE_MEM_COUNT=$("$PYTHON" "$MIGRATE_DB" verify "$MEMORY_DB" --expected-count 0 --table entries | extract_actual_count)
+    MEM_MERGE=$("$PYTHON" "$MIGRATE_DB" merge-memory "$EXTRACTED/memory/memory.db" "$MEMORY_DB" $DRY_RUN_FLAG)
+    EXPECTED_MEMORY=$((PRE_MEM_COUNT + $(echo "$MEM_MERGE" | extract_added)))
   else
     cp "$EXTRACTED/memory/memory.db" "$MEMORY_DB"
+    EXPECTED_MEMORY=$(manifest_entry_count "$EXTRACTED/manifest.json" "memory/memory.db")
   fi
 
   step 6/8 "Restoring entity registry"
   if [ -f "$ENTITY_DB" ]; then
-    MERGE_RESULT=$("$PYTHON" "$MIGRATE_DB" merge-entities "$EXTRACTED/entities/entities.db" "$ENTITY_DB" $DRY_RUN_FLAG)
+    PRE_ENT_COUNT=$("$PYTHON" "$MIGRATE_DB" verify "$ENTITY_DB" --expected-count 0 --table entities | extract_actual_count)
+    ENT_MERGE=$("$PYTHON" "$MIGRATE_DB" merge-entities "$EXTRACTED/entities/entities.db" "$ENTITY_DB" $DRY_RUN_FLAG)
+    EXPECTED_ENTITIES=$((PRE_ENT_COUNT + $(echo "$ENT_MERGE" | extract_added)))
   else
     cp "$EXTRACTED/entities/entities.db" "$ENTITY_DB"
+    EXPECTED_ENTITIES=$(manifest_entity_count "$EXTRACTED/manifest.json")
   fi
 
   step 7/8 "Copying files"
@@ -417,17 +486,10 @@ import_flow() {
 - All SQLite operations in migrate_db.py use explicit transactions (BEGIN/COMMIT with rollback on exception)
 - File operations in migrate.sh track progress for partial-failure reporting
 
-### FTS5 rebuild after memory merge
+### Expected count computation for verification
 
-After merging entries into memory.db, the FTS5 index must be rebuilt:
+After import, the verify step needs expected counts:
+- **Fresh import** (no pre-existing DB): expected = manifest entry_count / entity_count
+- **Merge import**: expected = pre_merge_count + merge_result["added"]
 
-```python
-# In merge-memory subcommand, after INSERT completes:
-if not dry_run and added > 0:
-    try:
-        dst.execute("INSERT INTO entries_fts(entries_fts) VALUES('rebuild')")
-    except sqlite3.OperationalError:
-        pass  # FTS5 may not be configured; non-fatal
-```
-
-This ensures full-text search works correctly for newly imported entries.
+The import flow captures pre-merge count before calling merge, then adds the "added" value from the merge JSON output. Both values are passed to the verify subcommand.
