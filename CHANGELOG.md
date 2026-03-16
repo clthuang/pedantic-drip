@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.13.1] - 2026-03-16
+
 ### Fixed
 - Move `mcp` from optional to core dependency — all 3 MCP servers require it at runtime
 - Add `pydantic` and `pydantic-settings` as explicit dependencies (previously only transitive)
