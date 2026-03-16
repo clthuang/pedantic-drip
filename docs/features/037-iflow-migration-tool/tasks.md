@@ -98,7 +98,7 @@
   - **Done:** Test exists, fails (RED).
   - **Deps:** 1.3
 
-- [ ] **5.2** Write `test_verify_count_only` — call verify with `--expected-count 0`, assert ok=true with actual_count populated (no count comparison).
+- [ ] **5.2** Write `test_verify_count_only` — create DB with 5 rows, call verify with `--expected-count 0`, assert ok=true AND actual_count=5 (confirms skip-count-validation path returns correct actual_count).
   - **Done:** Test exists, fails (RED).
   - **Deps:** 1.3
 
@@ -134,13 +134,17 @@
   - **Done:** Test exists, fails (RED).
   - **Deps:** 1.3
 
-- [ ] **6.5** Write `test_merge_memory_rollback` — simulate failure mid-merge (e.g., corrupt dst mid-transaction), assert rollback leaves dst unchanged.
+- [ ] **6.5** Write `test_merge_memory_rollback` — use `unittest.mock.patch` to replace `dst.execute` with a `side_effect` that raises `sqlite3.OperationalError` after N successful calls. Assert dst row count unchanged after the exception.
   - **Done:** Test exists, fails (RED).
   - **Deps:** 1.3
 
 - [ ] **6.6** Implement `merge_memory_db()` per design TD-3 — ATTACH source, INSERT OR IGNORE with source_hash dedup (WHERE clause), FTS5 rebuild, BEGIN/COMMIT with try/except/rollback. Support `--dry-run` via COUNT queries.
   - **Done:** All 5 merge-memory tests pass (GREEN).
   - **Deps:** 6.1, 6.2, 6.3, 6.4, 6.5
+
+- [ ] **6.7** Write `test_merge_memory_fts_rebuild` — after a no-overlap merge, query `entries_fts` with a known term from a merged entry, assert row returned.
+  - **Done:** Test passes (verifies FTS5 rebuild).
+  - **Deps:** 6.6
 
 ### Step 7: merge-entities subcommand
 
@@ -162,13 +166,17 @@
   - **Done:** Test exists, fails (RED).
   - **Deps:** 1.3
 
-- [ ] **7.5** Write `test_merge_entities_rollback` — simulate failure mid-merge, assert rollback leaves dst unchanged.
+- [ ] **7.5** Write `test_merge_entities_rollback` — use `unittest.mock.patch` to replace `dst.execute` with a `side_effect` that raises `sqlite3.OperationalError` after N successful calls. Assert dst row count unchanged after the exception.
   - **Done:** Test exists, fails (RED).
   - **Deps:** 1.3
 
 - [ ] **7.6** Implement `merge_entities_db()` per design TD-2 — ATTACH source, FK OFF, identify new type_ids, insert with Python UUID generation, merge workflow_phases, reconstruct parent_uuid scoped to imported type_ids, FTS5 rebuild, BEGIN/COMMIT with try/except/rollback. Support `--dry-run`.
   - **Done:** All 5 merge-entities tests pass (GREEN).
   - **Deps:** 7.1, 7.2, 7.3, 7.4, 7.5
+
+- [ ] **7.7** Write `test_merge_entities_fts_rebuild` — after a no-overlap merge, query `entities_fts` with a known term from an imported entity, assert row returned.
+  - **Done:** Test passes (verifies FTS5 rebuild).
+  - **Deps:** 7.6
 
 ### Step 8: info and check-embeddings subcommands
 
@@ -334,22 +342,38 @@
   - **Done:** Test passes.
   - **Deps:** 10.2, 11.3
 
-- [ ] **13.6** Write test: no data to export → verify "Error: No iflow data found..." and exit 1. Implement check in export_flow.
-  - **Done:** Test passes, check implemented.
+- [ ] **13.6a** Write test: no data to export — run `migrate.sh export` with empty `~/.claude/iflow/`, verify "Error: No iflow data found..." and exit 1.
+  - **Done:** Test exists, fails (RED).
   - **Deps:** 10.2
 
-- [ ] **13.7** Write test: Python not available → verify "Error: Python 3 required..." and exit 1. Implement check in migrate.sh before invoking migrate_db.py.
-  - **Done:** Test passes, check implemented.
+- [ ] **13.6b** Implement "no data to export" pre-flight check in export_flow — validate MEMORY_DB or ENTITY_DB exists before starting.
+  - **Done:** Test from 13.6a passes (GREEN).
+  - **Deps:** 13.6a
+
+- [ ] **13.7a** Write test: Python not available — set PATH to exclude python3, run `migrate.sh export`, verify "Error: Python 3 required..." and exit 1.
+  - **Done:** Test exists, fails (RED).
   - **Deps:** 9.6
 
-- [ ] **13.8** Implement disk-full partial failure reporting in import_flow — track which files were/weren't restored, report in error message on write failure (AC-13).
-  - **Done:** Import flow tracks file copy progress and reports partial state on failure.
+- [ ] **13.7b** Implement Python availability check in migrate.sh — verify `$PYTHON` is executable before invoking migrate_db.py.
+  - **Done:** Test from 13.7a passes (GREEN).
+  - **Deps:** 13.7a
+
+- [ ] **13.8a** Write test: disk-full mid-import — mock write failure after N files copied, assert exit 1, error message lists restored files and NOT-restored files, DB changes rolled back.
+  - **Done:** Test exists, fails (RED).
+  - **Deps:** 11.3
+
+- [ ] **13.8b** Implement disk-full partial failure reporting in import_flow — track which files were/weren't restored, report in error message on write failure (AC-13).
+  - **Done:** Test from 13.8a passes (GREEN).
+  - **Deps:** 13.8a
+
+- [ ] **13.9** Write test: path traversal in bundle — create a tar.gz with an entry like `../../etc/passwd`, verify import rejects with exit 1 before extracting any files.
+  - **Done:** Test passes.
   - **Deps:** 11.3
 
 ## Summary
 
-- **Total tasks:** 58
-- **Phase 1 (Python):** 35 tasks across 8 steps
+- **Total tasks:** 79
+- **Phase 1 (Python):** 43 tasks across 8 steps
 - **Phase 2 (Bash):** 11 tasks across 3 steps
-- **Phase 3 (Integration):** 12 tasks across 2 steps
+- **Phase 3 (Integration):** 25 tasks across 2 steps
 - **Parallel groups:** Steps 2, 5, 6, 7 can run in parallel after Step 1. Steps 10, 11 can partially parallelize after Step 9.
