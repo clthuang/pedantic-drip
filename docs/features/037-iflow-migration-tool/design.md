@@ -380,10 +380,13 @@ python migrate_db.py manifest <staging-dir> --plugin-version <ver>
   stdout: (writes manifest.json to staging-dir)
   exit: 0=success, 1=error
 
-# Validate manifest checksums
+# Validate manifest checksums + schema version
 python migrate_db.py validate <bundle-dir>
   stdout: JSON {"valid": true/false, "errors": [...]}
-  exit: 0=valid, 1=invalid
+  exit: 0=valid, 1=schema version unsupported, 3=checksum mismatch
+  Note: Checks schema_version against SUPPORTED_SCHEMA_VERSION first (AC-8).
+  If version > supported, returns {"valid": false, "errors": ["Bundle requires schema version N..."]}
+  with exit 1. Then validates checksums — exits 3 on mismatch.
 
 # Merge databases (memory)
 python migrate_db.py merge-memory <src-db> <dst-db> [--dry-run]
@@ -533,6 +536,12 @@ import_flow() {
   rm -rf "$BUNDLE_DIR"
   print_import_summary
 }
+
+# Bash helper functions (parse JSON from migrate_db.py output):
+# extract_actual_count: python3 -c "import json,sys; print(json.load(sys.stdin)['actual_count'])"
+# extract_added: python3 -c "import json,sys; print(json.load(sys.stdin)['added'])"
+# manifest_entry_count: python3 -c "import json,sys; m=json.load(open(sys.argv[1])); print(m['files']['memory/memory.db']['entry_count'])" "$1"
+# manifest_entity_count: python3 -c "import json,sys; m=json.load(open(sys.argv[1])); print(m['files']['entities/entities.db']['entity_count'])" "$1"
 ```
 
 ### Error handling contract
