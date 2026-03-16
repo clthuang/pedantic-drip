@@ -81,6 +81,7 @@ Compressed to `iflow-export-YYYYMMDD-HHMMSS.tar.gz`.
   "plugin_version": "4.12.4-dev",
   "export_timestamp": "2026-03-16T02:54:08Z",
   "source_platform": "darwin-arm64",
+  "python_version": "3.11.6",
   "embedding_provider": "gemini",
   "embedding_model": "text-embedding-004",
   "files": {
@@ -138,7 +139,8 @@ Compressed to `iflow-export-YYYYMMDD-HHMMSS.tar.gz`.
 - **Given** destination already has memory.db and entities.db with data
 - **When** `scripts/migrate.sh import bundle.tar.gz` is run
 - **Then** memory entries are merged using source_hash deduplication (skip rows where source_hash exists in destination)
-- **And** entity records are merged using `INSERT OR IGNORE` on `type_id` primary key (destination-wins)
+- **And** entity records are merged using `INSERT OR IGNORE` on `type_id` UNIQUE constraint (destination-wins). New UUIDs are generated for inserted rows since `uuid` is the actual PK.
+- **And** `PRAGMA foreign_keys = ON` is set before merging to enforce `workflow_phases.type_id` FK
 - **And** for each newly inserted entity, its `workflow_phases` row is also inserted
 - **And** for skipped entities (type_id conflict), workflow_phases rows are also skipped
 - **And** markdown files are skipped if they already exist (unless `--force`)
@@ -159,9 +161,9 @@ Compressed to `iflow-export-YYYYMMDD-HHMMSS.tar.gz`.
 - **And** exit code is 3
 
 ### AC-8: Version compatibility
-- **Given** a bundle with `schema_version` higher than the script supports
+- **Given** a bundle with `schema_version` higher than `SUPPORTED_SCHEMA_VERSION` (constant in migrate_db.py, initially 1)
 - **When** import is attempted
-- **Then** error: "Bundle requires migrate.sh >= X.Y.Z (schema version N)"
+- **Then** error: "Bundle schema version {n} is not supported. This script supports up to version {max}. Update your iflow plugin."
 - **Given** a bundle with `schema_version` equal to or lower than supported
 - **When** import is attempted
 - **Then** import proceeds (forward-compatible)
@@ -171,6 +173,9 @@ Compressed to `iflow-export-YYYYMMDD-HHMMSS.tar.gz`.
 - **When** import runs
 - **Then** warning: "Embeddings were generated with {provider}/{model}. Semantic search may degrade. Run backfill to regenerate."
 - **And** import continues (embeddings are still imported)
+- **Given** destination has no `_metadata` table (fresh machine)
+- **When** import runs
+- **Then** mismatch check is skipped (no baseline to compare against)
 
 ### AC-10: Force mode
 - **Given** destination has existing markdown files
@@ -197,13 +202,21 @@ Compressed to `iflow-export-YYYYMMDD-HHMMSS.tar.gz`.
 - **When** a write operation fails
 - **Then** script aborts cleanly
 - **And** reports what was and wasn't restored
-- **And** does NOT leave partial database state (DB operations use transactions)
+- **And** does NOT leave partial database state — all DB merges are wrapped in a single `BEGIN`/`COMMIT` transaction per database; on failure, Python's `connection.rollback()` reverts all inserts
+- **And** file copies that already completed remain on disk (no filesystem rollback); the error message lists which files were and weren't restored
 
 ### AC-14: Progress output
 - **Given** export or import is running
 - **Then** step-by-step progress is printed to stderr: "Step N/M: {description}..."
 - **And** completed steps show past tense: "Step N/M: {description}... done"
 - **And** `NO_COLOR` env var suppresses ANSI color codes
+
+### AC-15: Post-import doctor check
+- **Given** import completes successfully
+- **When** verification step runs
+- **Then** script runs basic health checks: both databases respond to `SELECT count(*) FROM {main_table}`, markdown files are readable
+- **And** if any check fails, warning is printed but import is not rolled back (data is already committed)
+- **And** output suggests "Run your first Claude session to verify MCP servers can connect"
 
 ## Technical Specifications
 
@@ -224,6 +237,8 @@ if pgrep -f 'memory_server|entity_server|workflow_state_server' > /dev/null 2>&1
 fi
 ```
 Note: Pattern should be verified against actual MCP server launch commands during implementation. If `pgrep` pattern doesn't match, fall back to checking for `.db-wal` file size > 0 as a secondary indicator.
+
+**Session detection also applies to import** (same logic, same exit code 2). Both export and import check for active sessions before proceeding.
 
 **Python invocation:**
 ```bash
@@ -251,7 +266,17 @@ def backup_database(src_path: str, dst_path: str) -> dict:
     """Backup SQLite DB using .backup API. Returns {sha256, size_bytes, entry_count}."""
 
 def generate_manifest(staging_dir: str, plugin_version: str) -> dict:
-    """Generate manifest.json with checksums and metadata."""
+    """Generate manifest.json with checksums and metadata.
+
+    Sources:
+    - plugin_version: read from plugins/iflow/plugin.json "version" field
+    - embedding_provider/model: read from memory.db _metadata table (keys: embedding_provider, embedding_model)
+    - python_version: platform.python_version()
+    - source_platform: platform.platform() (e.g. 'darwin-arm64')
+    - entry_count: SELECT count(*) FROM entries
+    - entity_count: SELECT count(*) FROM entities
+    - workflow_phases_count: SELECT count(*) FROM workflow_phases
+    """
 
 def validate_manifest(bundle_dir: str) -> tuple[bool, list[str]]:
     """Validate bundle checksums. Returns (valid, error_messages)."""
@@ -266,7 +291,11 @@ def verify_database(db_path: str, expected_count: int) -> dict:
     """Run PRAGMA integrity_check and count comparison. Returns {ok, actual_count, integrity}."""
 
 def detect_embedding_mismatch(bundle_manifest: dict, dst_db_path: str) -> str | None:
-    """Compare embedding_provider/model. Returns warning message or None."""
+    """Compare embedding_provider/model. Returns warning message or None.
+
+    If dst_db_path does not exist or has no _metadata table, returns None (fresh machine — skip check).
+    Reads destination provider from: SELECT value FROM _metadata WHERE key='embedding_provider'.
+    """
 ```
 
 **Merge strategy detail:**
@@ -295,34 +324,41 @@ def merge_memory_db(src_path, dst_path, dry_run=False):
     return {"added": added, "skipped": skipped}
 
 # entities.db merge
+# Schema: uuid TEXT NOT NULL PRIMARY KEY, type_id TEXT NOT NULL UNIQUE, ...
+# Dedup key: type_id (UNIQUE constraint), NOT uuid (PK)
+# Must generate new uuids for inserted rows to avoid PK collision
+import uuid as uuid_mod
+
 def merge_entities_db(src_path, dst_path, dry_run=False):
     src = sqlite3.connect(src_path)
     dst = sqlite3.connect(dst_path)
+    dst.execute("PRAGMA foreign_keys = ON")
+
+    # Get column names for proper mapping
+    src_cols = [desc[0] for desc in src.execute("SELECT * FROM entities LIMIT 0").description]
+    type_id_idx = src_cols.index("type_id")
+    uuid_idx = src_cols.index("uuid")
 
     src_entities = src.execute("SELECT * FROM entities").fetchall()
+    dst_type_ids = {row[0] for row in dst.execute("SELECT type_id FROM entities")}
     added, skipped = 0, 0
 
     for entity in src_entities:
-        type_id = entity[0]  # type_id is PK
-        try:
-            if not dry_run:
-                dst.execute("INSERT OR IGNORE INTO entities VALUES (...)", entity)
-                if dst.total_changes > prev_changes:  # actually inserted
-                    # Also insert workflow_phases row
-                    wp = src.execute("SELECT * FROM workflow_phases WHERE type_id=?", (type_id,)).fetchone()
-                    if wp:
-                        dst.execute("INSERT OR IGNORE INTO workflow_phases VALUES (...)", wp)
-                    added += 1
-                else:
-                    skipped += 1
-            else:
-                exists = dst.execute("SELECT 1 FROM entities WHERE type_id=?", (type_id,)).fetchone()
-                if exists:
-                    skipped += 1
-                else:
-                    added += 1
-        except sqlite3.Error:
+        type_id = entity[type_id_idx]
+        if type_id in dst_type_ids:
             skipped += 1
+            continue
+
+        if not dry_run:
+            # Generate new uuid to avoid PK collision
+            row = list(entity)
+            row[uuid_idx] = str(uuid_mod.uuid4())
+            dst.execute(f"INSERT INTO entities VALUES ({','.join('?' * len(row))})", row)
+            # Also insert workflow_phases row (FK: type_id)
+            wp = src.execute("SELECT * FROM workflow_phases WHERE type_id=?", (type_id,)).fetchone()
+            if wp:
+                dst.execute(f"INSERT OR IGNORE INTO workflow_phases VALUES ({','.join('?' * len(wp))})", wp)
+        added += 1
 
     if not dry_run:
         dst.commit()
@@ -398,10 +434,12 @@ Dry-run preview (no changes will be made):
 - Must NOT overwrite existing state without `--force`
 - Must NOT export project-level data (docs/knowledge-bank/, .meta.json)
 - Must NOT require active Claude session
-- Export < 30 seconds for typical state
+- Export < 30 seconds for typical state (≤500 memory entries, ≤200 entities, ≤10 markdown files)
 - Bundle < 50MB for typical usage
-- No dependencies beyond Python stdlib + iflow venv
+- No dependencies beyond Python 3.8+ stdlib + iflow venv
 - Respects `NO_COLOR` env var
+- `plugin_version` in manifest sourced from `plugins/iflow/plugin.json` (Glob: `~/.claude/plugins/cache/*/iflow*/*/plugin.json`, fallback `plugins/iflow/plugin.json`)
+- Tables enumerated for merge: `entries` (memory.db), `entities` + `workflow_phases` (entities.db). Future tables require migrate_db.py update.
 
 ## Error Messages
 
@@ -428,3 +466,6 @@ Tests live in `scripts/test_migrate.py` using pytest + tmp_path fixtures:
 6. **Session detection:** Mock pgrep → verify abort without --force
 7. **ENTITY_DB_PATH:** Set override → verify export reads correct path
 8. **Embedding mismatch:** Different provider in bundle vs dest → verify warning
+9. **Post-import doctor:** Import → verify health checks run and report readable output
+10. **Fresh machine embedding check:** Import into empty dir (no _metadata) → verify no mismatch warning
+11. **UUID generation on merge:** Import with overlapping entities → verify new uuids generated, type_id dedup works
