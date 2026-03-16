@@ -204,6 +204,7 @@ Compressed to `iflow-export-YYYYMMDD-HHMMSS.tar.gz`.
 - **And** reports what was and wasn't restored
 - **And** does NOT leave partial database state — all DB merges are wrapped in a single `BEGIN`/`COMMIT` transaction per database; on failure, Python's `connection.rollback()` reverts all inserts
 - **And** file copies that already completed remain on disk (no filesystem rollback); the error message lists which files were and weren't restored
+- **And** exit code is 1
 
 ### AC-14: Progress output
 - **Given** export or import is running
@@ -217,7 +218,7 @@ Compressed to `iflow-export-YYYYMMDD-HHMMSS.tar.gz`.
 - **Then** if `scripts/doctor.sh` exists, invoke it and report pass/fail. If doctor.sh is unavailable (fresh machine, no dev workspace), fall back to inline health checks: both databases respond to `SELECT count(*) FROM {main_table}`, markdown files are readable.
 - **And** if any check fails, warning is printed but import is not rolled back (data is already committed)
 - **And** output suggests "Run your first Claude session to verify MCP servers can connect"
-- **Note:** doctor.sh is the canonical health check (PRD SC-7). Inline checks are a subset approximation for environments where doctor.sh is not present.
+- **Note:** doctor.sh is the canonical health check (PRD SC-7). Inline checks are a subset approximation for environments where doctor.sh is not present. doctor.sh is resolved via the same plugin path discovery logic as VENV_PYTHON (dev workspace first, then plugin cache Glob).
 
 ## Technical Specifications
 
