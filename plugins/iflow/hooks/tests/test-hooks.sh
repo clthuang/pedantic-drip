@@ -1477,6 +1477,151 @@ test_meta_json_guard_latency() {
     fi
 }
 
+# === YOLO Dependency-Aware Feature Selection Tests (Feature 038) ===
+
+# Test: yolo-stop skips feature with blocked dep, selects eligible one
+test_yolo_stop_skips_blocked_dep() {
+    log_test "yolo-stop skips feature with unmet dep, selects eligible one"
+
+    setup_yolo_test
+    cat > "${YOLO_TMPDIR}/.claude/iflow.local.md" << 'TMPL'
+---
+yolo_mode: true
+artifacts_root: docs
+yolo_max_stop_blocks: 50
+---
+TMPL
+    echo '{}' > "${YOLO_TMPDIR}/.claude/.yolo-hook-state"
+
+    # X-blocked: active, depends on Z-dep (blocked) -> should be skipped
+    mkdir -p "${YOLO_TMPDIR}/docs/features/X-blocked"
+    cat > "${YOLO_TMPDIR}/docs/features/X-blocked/.meta.json" << 'META'
+{"id":"X","slug":"blocked","status":"active","depends_on_features":["Z-dep"],"lastCompletedPhase":"specify"}
+META
+
+    # Y-eligible: active, depends on W-dep (completed) -> should be selected
+    mkdir -p "${YOLO_TMPDIR}/docs/features/Y-eligible"
+    cat > "${YOLO_TMPDIR}/docs/features/Y-eligible/.meta.json" << 'META'
+{"id":"Y","slug":"eligible","status":"active","depends_on_features":["W-dep"],"lastCompletedPhase":"specify"}
+META
+
+    # Z-dep: blocked (unmet)
+    mkdir -p "${YOLO_TMPDIR}/docs/features/Z-dep"
+    cat > "${YOLO_TMPDIR}/docs/features/Z-dep/.meta.json" << 'META'
+{"id":"Z","slug":"dep","status":"blocked"}
+META
+
+    # W-dep: completed (met)
+    mkdir -p "${YOLO_TMPDIR}/docs/features/W-dep"
+    cat > "${YOLO_TMPDIR}/docs/features/W-dep/.meta.json" << 'META'
+{"id":"W","slug":"dep","status":"completed"}
+META
+
+    cd "$YOLO_TMPDIR"
+    local output stderr_output
+    stderr_output=$(mktemp)
+    output=$(echo '{}' | "${HOOKS_DIR}/yolo-stop.sh" 2>"$stderr_output")
+    local stderr_content
+    stderr_content=$(cat "$stderr_output")
+    rm -f "$stderr_output"
+
+    # Verify: stdout JSON selects Y-eligible (block decision), X-blocked was skipped
+    # Also verify stderr contains skip diagnostic for X-blocked
+    local json_ok=false skip_diag=false
+    if echo "$output" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+assert d['decision'] == 'block', f'Expected block, got {d[\"decision\"]}'
+assert 'Y-eligible' in d['reason'], f'Expected Y-eligible in reason, got {d[\"reason\"]}'
+assert 'X-blocked' not in d['reason'], f'X-blocked should not be selected'
+" 2>/dev/null; then
+        json_ok=true
+    fi
+
+    if echo "$stderr_content" | grep -q "Skipped X-blocked.*Z-dep" 2>/dev/null; then
+        skip_diag=true
+    fi
+
+    if [[ "$json_ok" == "true" && "$skip_diag" == "true" ]]; then
+        log_pass
+    else
+        log_fail "Expected block with Y-eligible and skip diagnostic for X-blocked. json_ok=$json_ok, skip_diag=$skip_diag, stdout: '$output', stderr: '$stderr_content'"
+    fi
+
+    teardown_yolo_test
+}
+
+# Test: yolo-stop allows stop when all active features have unmet deps
+test_yolo_stop_all_deps_unmet_allows_stop() {
+    log_test "yolo-stop allows stop when all deps unmet"
+
+    setup_yolo_test
+    cat > "${YOLO_TMPDIR}/.claude/iflow.local.md" << 'TMPL'
+---
+yolo_mode: true
+artifacts_root: docs
+yolo_max_stop_blocks: 50
+---
+TMPL
+    echo '{}' > "${YOLO_TMPDIR}/.claude/.yolo-hook-state"
+
+    # A-blocked: active, depends on C-dep (blocked)
+    mkdir -p "${YOLO_TMPDIR}/docs/features/A-blocked"
+    cat > "${YOLO_TMPDIR}/docs/features/A-blocked/.meta.json" << 'META'
+{"id":"A","slug":"blocked","status":"active","depends_on_features":["C-dep"],"lastCompletedPhase":"specify"}
+META
+
+    # B-blocked: active, depends on D-dep (planned)
+    mkdir -p "${YOLO_TMPDIR}/docs/features/B-blocked"
+    cat > "${YOLO_TMPDIR}/docs/features/B-blocked/.meta.json" << 'META'
+{"id":"B","slug":"blocked","status":"active","depends_on_features":["D-dep"],"lastCompletedPhase":"specify"}
+META
+
+    # C-dep: blocked (unmet)
+    mkdir -p "${YOLO_TMPDIR}/docs/features/C-dep"
+    cat > "${YOLO_TMPDIR}/docs/features/C-dep/.meta.json" << 'META'
+{"id":"C","slug":"dep","status":"blocked"}
+META
+
+    # D-dep: planned (unmet)
+    mkdir -p "${YOLO_TMPDIR}/docs/features/D-dep"
+    cat > "${YOLO_TMPDIR}/docs/features/D-dep/.meta.json" << 'META'
+{"id":"D","slug":"dep","status":"planned"}
+META
+
+    cd "$YOLO_TMPDIR"
+    local output stderr_output exit_code
+    stderr_output=$(mktemp)
+    output=$(echo '{}' | "${HOOKS_DIR}/yolo-stop.sh" 2>"$stderr_output") || true
+    exit_code=$?
+    local stderr_content
+    stderr_content=$(cat "$stderr_output")
+    rm -f "$stderr_output"
+
+    # Verify: exit 0, no JSON on stdout, stderr contains diagnostics
+    local no_json has_no_eligible
+    no_json=true
+    has_no_eligible=false
+
+    if [[ -n "$output" ]]; then
+        if echo "$output" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null; then
+            no_json=false
+        fi
+    fi
+
+    if echo "$stderr_content" | grep -q "No eligible active features. Allowing stop." 2>/dev/null; then
+        has_no_eligible=true
+    fi
+
+    if [[ "$no_json" == "true" && "$has_no_eligible" == "true" ]]; then
+        log_pass
+    else
+        log_fail "Expected no JSON output and diagnostic on stderr. exit=$exit_code, stdout: '$output', stderr: '$stderr_content'"
+    fi
+
+    teardown_yolo_test
+}
+
 # Run all tests
 main() {
     echo "=========================================="
@@ -1516,6 +1661,8 @@ main() {
     test_yolo_stop_blocks_with_next_phase
     test_yolo_stop_detects_stuck
     test_yolo_stop_max_blocks
+    test_yolo_stop_skips_blocked_dep
+    test_yolo_stop_all_deps_unmet_allows_stop
 
     echo ""
     echo "--- Plan Review Gate Tests ---"

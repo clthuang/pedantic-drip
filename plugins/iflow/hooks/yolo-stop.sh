@@ -80,19 +80,54 @@ fi
 
 ACTIVE_META=""
 ACTIVE_META_MTIME=0
+declare -a SKIP_REASONS=()
 
 for meta_file in "${FEATURES_DIR}"/*/.meta.json; do
     [[ -f "$meta_file" ]] || continue
-    status=$(python3 -c "
-import json, sys
+
+    # Combined status + dependency check (Feature 038)
+    # Output format: "status|dep_result" where dep_result is ELIGIBLE or SKIP:dep_ref:dep_status
+    IFS='|' read -r status dep_result <<< "$(PYTHONPATH="${SCRIPT_DIR}/lib" python3 -c "
+import json, sys, os
 try:
-    with open('$meta_file') as f:
+    from yolo_deps import check_feature_deps
+except ImportError:
+    check_feature_deps = None
+
+meta_path = sys.argv[1]
+features_dir = sys.argv[2]
+
+try:
+    with open(meta_path) as f:
         d = json.load(f)
-    print(d.get('status', ''))
-except:
-    print('')
-" 2>/dev/null)
+    status = d.get('status', '')
+except Exception:
+    status = ''
+
+if check_feature_deps is None:
+    print(f'{status}|ELIGIBLE')
+    sys.exit(0)
+
+eligible, reason = check_feature_deps(meta_path, features_dir)
+if eligible:
+    print(f'{status}|ELIGIBLE')
+else:
+    print(f'{status}|SKIP:{reason}')
+" "$meta_file" "$FEATURES_DIR" 2>/dev/null)"
+
     if [[ "$status" == "active" ]]; then
+        if [[ "$dep_result" == SKIP:* ]]; then
+            # Extract feature ref from directory name
+            feature_dir=$(dirname "$meta_file")
+            feature_ref=$(basename "$feature_dir")
+            # Parse SKIP:dep_ref:dep_status
+            skip_info="${dep_result#SKIP:}"
+            dep_ref="${skip_info%%:*}"
+            dep_status="${skip_info#*:}"
+            SKIP_REASONS+=("[YOLO_MODE] Skipped ${feature_ref}: depends on ${dep_ref} (status: ${dep_status}).")
+            continue
+        fi
+
         # Get mtime for most-recently-modified tiebreak
         mtime=$(stat -f "%m" "$meta_file" 2>/dev/null || stat -c "%Y" "$meta_file" 2>/dev/null || echo "0")
         if [[ "$mtime" -gt "$ACTIVE_META_MTIME" ]]; then
@@ -101,6 +136,19 @@ except:
         fi
     fi
 done
+
+# Emit skip diagnostics to stderr for visibility (FR-2)
+if [[ ${#SKIP_REASONS[@]} -gt 0 ]]; then
+    for reason in "${SKIP_REASONS[@]}"; do
+        echo "$reason" >&2
+    done
+fi
+
+# All-skipped check: active features exist but none are eligible due to unmet deps
+if [[ -z "$ACTIVE_META" && ${#SKIP_REASONS[@]} -gt 0 ]]; then
+    echo "[YOLO_MODE] No eligible active features. Allowing stop." >&2
+    exit 0
+fi
 
 if [[ -z "$ACTIVE_META" ]]; then
     exit 0

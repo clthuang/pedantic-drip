@@ -39,6 +39,10 @@ def check_feature_deps(meta_path: str, features_dir: str) -> tuple[bool, str | N
             return (False, f"{dep}:missing")
 
         dep_meta_path = os.path.join(features_dir, dep, ".meta.json")
+        # Guard against path traversal (e.g., "../../etc" or absolute paths)
+        resolved = os.path.realpath(dep_meta_path)
+        if not resolved.startswith(os.path.realpath(features_dir) + os.sep):
+            return (False, f"{dep}:missing")
         try:
             with open(dep_meta_path) as f:
                 dep_data = json.load(f)

@@ -1153,6 +1153,30 @@ class TestCheckFeatureDeps:
         assert parts[0] == "B"
         assert parts[1] == "planned"
 
+    def test_path_traversal_dep_treated_as_missing(self, tmp_path):
+        """A dependency ref with path traversal (e.g., '../../etc') is treated as missing.
+        Guards against reading .meta.json files outside the features directory."""
+        features_dir = tmp_path / "features"
+        self._write_meta(features_dir / "A" / ".meta.json",
+                        {"status": "active", "depends_on_features": ["../../etc"]})
+        eligible, reason = check_feature_deps(
+            str(features_dir / "A" / ".meta.json"),
+            str(features_dir))
+        assert eligible is False
+        assert reason == "../../etc:missing"
+
+    def test_absolute_path_dep_treated_as_missing(self, tmp_path):
+        """A dependency ref with an absolute path is treated as missing.
+        os.path.join discards prior components for absolute paths."""
+        features_dir = tmp_path / "features"
+        self._write_meta(features_dir / "A" / ".meta.json",
+                        {"status": "active", "depends_on_features": ["/etc"]})
+        eligible, reason = check_feature_deps(
+            str(features_dir / "A" / ".meta.json"),
+            str(features_dir))
+        assert eligible is False
+        assert reason == "/etc:missing"
+
     def test_deps_checked_in_array_order(self, tmp_path):
         """['Z-last', 'A-first'], Z unmet -> (False, "Z-last:active").
         Anticipate: If deps were sorted before checking, A-first would fail first.
