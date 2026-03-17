@@ -57,6 +57,34 @@ yolo-stop.sh
 
 **Dependencies:** Python stdlib only (`json`, `os`). No project imports.
 
+**Edge cases:**
+- If `meta_path` itself is unreadable or has malformed JSON → return `(True, None)` (treat as no deps, backward-compatible)
+- Non-string elements in `depends_on_features` → `isinstance(dep, str)` check; if False, return `(False, f"{dep}:missing")`
+
+**Pseudocode:**
+```python
+def check_feature_deps(meta_path, features_dir):
+    try:
+        meta = json.load(open(meta_path))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return (True, None)  # Can't read own meta → no deps assumed
+    deps = meta.get("depends_on_features") or []
+    for dep in deps:
+        if not isinstance(dep, str):
+            return (False, f"{dep}:missing")
+        dep_meta_path = os.path.join(features_dir, dep, ".meta.json")
+        try:
+            dep_data = json.load(open(dep_meta_path))
+            status = dep_data.get("status", "unknown")
+            if status != "completed":
+                return (False, f"{dep}:{status}")
+        except FileNotFoundError:
+            return (False, f"{dep}:missing")
+        except (json.JSONDecodeError, OSError):
+            return (False, f"{dep}:unreadable")
+    return (True, None)
+```
+
 ### C-2: Modified Feature Selection Loop in `yolo-stop.sh`
 
 **Location:** `plugins/iflow/hooks/yolo-stop.sh` lines 84-103
@@ -101,20 +129,20 @@ def check_feature_deps(meta_path: str, features_dir: str) -> tuple[bool, str | N
 
 ### I-2: Shell Integration — Combined Python Call
 
-The existing Python call at lines 86-94 is replaced with a single call that returns both status and dep-check result:
+The existing Python call at lines 86-94 is replaced with a single call that returns both status and dep-check result. Paths are passed as `sys.argv` (not shell-interpolated strings) to handle special characters safely. Output uses pipe delimiter (matching existing pattern at line 126).
 
 ```bash
 # Output format: "status|dep_result"
 # dep_result is either "ELIGIBLE" or "SKIP:dep_ref:dep_status"
-read -r status dep_result <<< "$(PYTHONPATH="${SCRIPT_DIR}/lib" python3 -c "
+IFS='|' read -r status dep_result <<< "$(PYTHONPATH="${SCRIPT_DIR}/lib" python3 -c "
 import json, sys, os
 try:
     from yolo_deps import check_feature_deps
 except ImportError:
     check_feature_deps = None
 
-meta_path = '$meta_file'
-features_dir = '$FEATURES_DIR'
+meta_path = sys.argv[1]
+features_dir = sys.argv[2]
 
 try:
     with open(meta_path) as f:
@@ -123,19 +151,24 @@ try:
 except Exception:
     status = ''
 
-if status != 'active' or check_feature_deps is None:
-    print(f'{status} ELIGIBLE')
+# Shell owns the 'active' gate (I-4). Python always returns status + dep result.
+if check_feature_deps is None:
+    print(f'{status}|ELIGIBLE')
     sys.exit(0)
 
 eligible, reason = check_feature_deps(meta_path, features_dir)
 if eligible:
-    print(f'{status} ELIGIBLE')
+    print(f'{status}|ELIGIBLE')
 else:
-    print(f'{status} SKIP:{reason}')
-" 2>/dev/null)"
+    print(f'{status}|SKIP:{reason}')
+" "$meta_file" "$FEATURES_DIR" 2>/dev/null)"
 ```
 
-**Fallback behavior:** If `yolo_deps` import fails, `check_feature_deps` is `None`, and the feature is treated as ELIGIBLE (backward-compatible).
+**Design notes:**
+- **Safe path handling:** `sys.argv[1]` and `sys.argv[2]` avoid shell interpolation into Python string literals (matches safer pattern at line 55 of yolo-stop.sh).
+- **Pipe delimiter:** `IFS='|' read -r` matches the existing pattern at line 126. Status values and feature refs never contain `|`.
+- **Fallback:** If `yolo_deps` import fails, `check_feature_deps` is `None`, and the feature is treated as ELIGIBLE (backward-compatible).
+- **Layering:** Shell owns control flow (`status == "active"` check in I-4). Python is pure data extraction — always returns status and dep result regardless of status value.
 
 ### I-3: Diagnostic Output Format
 
@@ -157,8 +190,8 @@ declare -a SKIP_REASONS=()
 for meta_file in "${FEATURES_DIR}"/*/.meta.json; do
     [[ -f "$meta_file" ]] || continue
 
-    # Combined status + dep check (I-2)
-    read -r status dep_result <<< "$(PYTHONPATH=... python3 -c "..." 2>/dev/null)"
+    # Combined status + dep check (I-2) — pipe-delimited, paths via sys.argv
+    IFS='|' read -r status dep_result <<< "$(PYTHONPATH="${SCRIPT_DIR}/lib" python3 -c "..." "$meta_file" "$FEATURES_DIR" 2>/dev/null)"
 
     if [[ "$status" == "active" ]]; then
         if [[ "$dep_result" == SKIP:* ]]; then
@@ -166,6 +199,8 @@ for meta_file in "${FEATURES_DIR}"/*/.meta.json; do
             feature_dir=$(dirname "$meta_file")
             feature_ref=$(basename "$feature_dir")
             # Parse SKIP:dep_ref:dep_status
+            # Colon-safe: feature refs use {id}-{slug} format (no colons),
+            # status values are single-word enum members (no colons).
             skip_info="${dep_result#SKIP:}"
             dep_ref="${skip_info%%:*}"
             dep_status="${skip_info#*:}"
