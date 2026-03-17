@@ -1319,13 +1319,18 @@ teardown_meta_guard_test() {
     META_GUARD_TMPDIR=""
 }
 
+# Helper: setup with bootstrap sentinel (MCP available)
+setup_meta_guard_test_with_sentinel() {
+    setup_meta_guard_test
+    mkdir -p "$META_GUARD_TMPDIR/.claude/plugins/cache/test-org/iflow-test/1.0.0/.venv"
+    touch "$META_GUARD_TMPDIR/.claude/plugins/cache/test-org/iflow-test/1.0.0/.venv/.bootstrap-complete"
+}
+
 # Test: meta-json-guard denies Write to .meta.json
 test_meta_json_guard_denies_write() {
     log_test "meta-json-guard denies Write to .meta.json"
 
-    setup_meta_guard_test
-    mkdir -p "$META_GUARD_TMPDIR/.claude/plugins/cache/test-org/iflow-test/1.0.0/.venv"
-    touch "$META_GUARD_TMPDIR/.claude/plugins/cache/test-org/iflow-test/1.0.0/.venv/.bootstrap-complete"
+    setup_meta_guard_test_with_sentinel
 
     local output
     output=$(echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/034-enforced-state-machine/.meta.json","content":"{}"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null)
@@ -1343,9 +1348,7 @@ test_meta_json_guard_denies_write() {
 test_meta_json_guard_denies_edit() {
     log_test "meta-json-guard denies Edit to .meta.json"
 
-    setup_meta_guard_test
-    mkdir -p "$META_GUARD_TMPDIR/.claude/plugins/cache/test-org/iflow-test/1.0.0/.venv"
-    touch "$META_GUARD_TMPDIR/.claude/plugins/cache/test-org/iflow-test/1.0.0/.venv/.bootstrap-complete"
+    setup_meta_guard_test_with_sentinel
 
     local output
     output=$(echo '{"tool_name":"Edit","tool_input":{"file_path":"docs/features/034-enforced-state-machine/.meta.json","old_string":"planned","new_string":"active"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null)
@@ -1363,9 +1366,7 @@ test_meta_json_guard_denies_edit() {
 test_meta_json_guard_denies_project_meta() {
     log_test "meta-json-guard denies Write to projects/.meta.json"
 
-    setup_meta_guard_test
-    mkdir -p "$META_GUARD_TMPDIR/.claude/plugins/cache/test-org/iflow-test/1.0.0/.venv"
-    touch "$META_GUARD_TMPDIR/.claude/plugins/cache/test-org/iflow-test/1.0.0/.venv/.bootstrap-complete"
+    setup_meta_guard_test_with_sentinel
 
     local output
     output=$(echo '{"tool_name":"Write","tool_input":{"file_path":"docs/projects/001-my-project/.meta.json","content":"{}"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null)
@@ -1425,9 +1426,7 @@ test_meta_json_guard_fast_path_allow() {
 test_meta_json_guard_logs_blocked_attempt() {
     log_test "meta-json-guard logs blocked attempt as valid JSONL"
 
-    setup_meta_guard_test
-    mkdir -p "$META_GUARD_TMPDIR/.claude/plugins/cache/test-org/iflow-test/1.0.0/.venv"
-    touch "$META_GUARD_TMPDIR/.claude/plugins/cache/test-org/iflow-test/1.0.0/.venv/.bootstrap-complete"
+    setup_meta_guard_test_with_sentinel
 
     echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/034-foo/.meta.json","content":"{}"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null > /dev/null
 
@@ -1460,9 +1459,7 @@ assert d['path'] == 'docs/features/034-foo/.meta.json'
 test_meta_json_guard_extracts_feature_id() {
     log_test "meta-json-guard extracts feature_id from path"
 
-    setup_meta_guard_test
-    mkdir -p "$META_GUARD_TMPDIR/.claude/plugins/cache/test-org/iflow-test/1.0.0/.venv"
-    touch "$META_GUARD_TMPDIR/.claude/plugins/cache/test-org/iflow-test/1.0.0/.venv/.bootstrap-complete"
+    setup_meta_guard_test_with_sentinel
 
     echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/034-enforced-state-machine/.meta.json","content":"{}"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null > /dev/null
 
@@ -1544,9 +1541,7 @@ test_meta_json_guard_logs_permit_degraded() {
 test_meta_json_guard_deny_message_has_feature_type_id() {
     log_test "meta-json-guard deny message has feature_type_id format"
 
-    setup_meta_guard_test
-    mkdir -p "$META_GUARD_TMPDIR/.claude/plugins/cache/test-org/iflow-test/1.0.0/.venv"
-    touch "$META_GUARD_TMPDIR/.claude/plugins/cache/test-org/iflow-test/1.0.0/.venv/.bootstrap-complete"
+    setup_meta_guard_test_with_sentinel
 
     local output
     output=$(echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/034-enforced-state-machine/.meta.json","content":"{}"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null)
@@ -1566,9 +1561,7 @@ test_meta_json_guard_deny_message_has_feature_type_id() {
 test_meta_json_guard_deny_message_has_fallback() {
     log_test "meta-json-guard deny message has fallback instruction"
 
-    setup_meta_guard_test
-    mkdir -p "$META_GUARD_TMPDIR/.claude/plugins/cache/test-org/iflow-test/1.0.0/.venv"
-    touch "$META_GUARD_TMPDIR/.claude/plugins/cache/test-org/iflow-test/1.0.0/.venv/.bootstrap-complete"
+    setup_meta_guard_test_with_sentinel
 
     local output
     output=$(echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/034-foo/.meta.json","content":"{}"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null)
