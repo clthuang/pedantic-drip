@@ -191,6 +191,7 @@ for meta_file in "${FEATURES_DIR}"/*/.meta.json; do
     [[ -f "$meta_file" ]] || continue
 
     # Combined status + dep check (I-2) — pipe-delimited, paths via sys.argv
+    # If Python fails entirely, both vars are empty → feature skipped (safe default)
     IFS='|' read -r status dep_result <<< "$(PYTHONPATH="${SCRIPT_DIR}/lib" python3 -c "..." "$meta_file" "$FEATURES_DIR" 2>/dev/null)"
 
     if [[ "$status" == "active" ]]; then
