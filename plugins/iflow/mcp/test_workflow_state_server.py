@@ -743,6 +743,120 @@ class TestCompletePhaseEntityMetadata:
         metadata = json.loads(entity["metadata"])
         assert metadata["phase_timing"]["specify"]["reviewerNotes"] == notes_obj
 
+    def test_finish_phase_projects_toplevel_completed(self, db, tmp_path):
+        """AC1: complete_phase('finish') produces top-level completed in .meta.json."""
+        db.register_entity("feature", "040-test", "Completed Test", status="active")
+        db.create_workflow_phase("feature:040-test", workflow_phase="finish")
+
+        feat_dir = os.path.join(str(tmp_path), "features", "040-test")
+        os.makedirs(feat_dir, exist_ok=True)
+        db.update_entity(
+            "feature:040-test",
+            artifact_path=feat_dir,
+            metadata={
+                "id": "040", "slug": "test", "mode": "standard",
+                "branch": "feature/040-test", "phase_timing": {},
+            },
+        )
+
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        result = _process_complete_phase(engine, "feature:040-test", "finish", db=db)
+        data = json.loads(result)
+        assert "error" not in data
+
+        meta_path = os.path.join(feat_dir, ".meta.json")
+        with open(meta_path) as f:
+            meta = json.load(f)
+        assert meta["status"] == "completed"
+        assert "completed" in meta
+        assert "T" in meta["completed"]  # ISO 8601
+
+    def test_active_status_no_completed_field(self, seeded_engine, db, tmp_path):
+        """AC3: Active features don't have a completed field."""
+        feat_dir = os.path.join(str(tmp_path), "features", "009-test")
+        os.makedirs(feat_dir, exist_ok=True)
+        db.update_entity(
+            "feature:009-test",
+            artifact_path=feat_dir,
+            metadata={
+                "id": "009", "slug": "test", "mode": "standard",
+                "branch": "feature/009-test", "phase_timing": {},
+            },
+        )
+
+        result = _process_complete_phase(
+            seeded_engine, "feature:009-test", "specify", db=db,
+        )
+        data = json.loads(result)
+        assert "error" not in data
+
+        meta_path = os.path.join(feat_dir, ".meta.json")
+        with open(meta_path) as f:
+            meta = json.load(f)
+        assert meta["status"] == "active"
+        assert "completed" not in meta
+
+    def test_abandoned_status_gets_completed_fallback(self, db, tmp_path):
+        """AC5: Abandoned status with no finish timing gets completed via _iso_now() fallback."""
+        db.register_entity("feature", "041-abandoned", "Abandoned Test", status="abandoned")
+
+        feat_dir = os.path.join(str(tmp_path), "features", "041-abandoned")
+        os.makedirs(feat_dir, exist_ok=True)
+
+        # Abandoned feature: has some phase timing but no finish phase
+        db.update_entity(
+            "feature:041-abandoned",
+            artifact_path=feat_dir,
+            metadata={
+                "id": "041", "slug": "abandoned", "mode": "standard",
+                "branch": "feature/041-abandoned",
+                "phase_timing": {
+                    "specify": {"started": "2026-01-01T00:00:00+00:00", "completed": "2026-01-01T01:00:00+00:00"},
+                },
+            },
+        )
+
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        from workflow_state_server import _project_meta_json
+        warning = _project_meta_json(db, engine, "feature:041-abandoned")
+        assert warning is None or not warning.startswith("error")
+
+        meta_path = os.path.join(feat_dir, ".meta.json")
+        with open(meta_path) as f:
+            meta = json.load(f)
+        assert meta["status"] == "abandoned"
+        assert "completed" in meta
+        assert "T" in meta["completed"]  # ISO 8601 fallback
+
+    def test_finish_completed_timestamp_matches_phase_timing(self, db, tmp_path):
+        """R1: completed timestamp comes from finish phase timing, not _iso_now()."""
+        expected_ts = "2026-03-17T06:31:08.766797+00:00"
+        db.register_entity("feature", "042-ts", "Timestamp Test", status="completed")
+
+        feat_dir = os.path.join(str(tmp_path), "features", "042-ts")
+        os.makedirs(feat_dir, exist_ok=True)
+
+        db.update_entity(
+            "feature:042-ts",
+            artifact_path=feat_dir,
+            metadata={
+                "id": "042", "slug": "ts", "mode": "standard",
+                "branch": "feature/042-ts",
+                "phase_timing": {
+                    "finish": {"completed": expected_ts},
+                },
+            },
+        )
+
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        from workflow_state_server import _project_meta_json
+        _project_meta_json(db, engine, "feature:042-ts")
+
+        meta_path = os.path.join(feat_dir, ".meta.json")
+        with open(meta_path) as f:
+            meta = json.load(f)
+        assert meta["completed"] == expected_ts
+
 
 # ---------------------------------------------------------------------------
 # _process_validate_prerequisites tests (Task 2.6)

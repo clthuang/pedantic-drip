@@ -324,6 +324,11 @@ def _project_meta_json(
         "branch": metadata.get("branch", ""),
     }
 
+    # Top-level completed timestamp for terminal statuses (R1/R2/R4)
+    if meta["status"] in ("completed", "abandoned"):
+        finish_completed = phase_timing.get("finish", {}).get("completed")
+        meta["completed"] = finish_completed or _iso_now()
+
     # Optional fields -- only include when present
     if metadata.get("brainstorm_source"):
         meta["brainstorm_source"] = metadata["brainstorm_source"]

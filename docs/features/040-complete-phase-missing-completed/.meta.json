@@ -1,0 +1,19 @@
+{
+  "id": "040",
+  "slug": "complete-phase-missing-completed",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-03-17T16:38:22.848782+00:00",
+  "branch": "feature/040-complete-phase-missing-completed",
+  "lastCompletedPhase": "specify",
+  "phases": {
+    "brainstorm": {
+      "started": "2026-03-17T16:38:22.848726+00:00"
+    },
+    "specify": {
+      "started": "2026-03-17T16:38:52.308228+00:00",
+      "completed": "2026-03-17T16:45:57.223902+00:00",
+      "iterations": 3
+    }
+  }
+}
