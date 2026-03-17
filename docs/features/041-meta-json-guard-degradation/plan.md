@@ -24,7 +24,7 @@ Create `.bootstrap-complete` sentinel in `META_GUARD_TMPDIR` for:
 
 **Step 3: Add 4 new tests**
 
-- `test_meta_json_guard_permits_when_no_sentinel` — No sentinel in temp HOME → hook returns `{}` (uses helpers, no sentinel created). **Note:** Before Phase 2, hook has no sentinel check so this test will get a deny instead of permit. Use defensive assertion: capture exit code and output, assert non-zero exit or `{}` — the test will fail (red) until Phase 2 adds the degraded path.
+- `test_meta_json_guard_permits_when_no_sentinel` — No sentinel in temp HOME → hook returns `{}` (uses helpers, no sentinel created). **Note:** Before Phase 2, hook has no sentinel check so this test will get a deny instead of permit. Use `output=$(...) || true` to prevent `set -e` from aborting the suite. The actual green-phase assertion (exit 0 + output == `{}`) will pass once Phase 2 adds the degraded path.
 - `test_meta_json_guard_logs_permit_degraded` — No sentinel → verify JSONL log has `"action": "permit-degraded"` (uses helpers, no sentinel created). Will fail (red) until Phase 2.
 - `test_meta_json_guard_deny_message_has_feature_type_id` — Sentinel present → deny message contains `feature:{id}-{slug}` (uses helpers, creates sentinel). Will fail (red) until Phase 2 updates REASON string.
 - `test_meta_json_guard_deny_message_has_fallback` — Sentinel present → deny message contains fallback instruction (uses helpers, creates sentinel). Will fail (red) until Phase 2 updates REASON string.
@@ -55,7 +55,7 @@ Create `.bootstrap-complete` sentinel in `META_GUARD_TMPDIR` for:
 Phase 1 (steps 1-4) → Phase 2 (steps 5-10)
 ```
 
-Within Phase 2, linear order: Step 5 → Step 6 → Step 7 → Step 8 → Step 9 → Step 10. Steps 6 must precede both Steps 7 and 8 (both call `log_guard_event`). Step 5 is independent but placed first for readability. Step 10 runs after all code changes.
+Within Phase 2, linear order: Step 5 → Step 6 → Step 7 → Step 8 → Step 9 → Step 10. Step 6 must precede both Steps 7 and 8 (both call `log_guard_event`). Step 5 is independent but placed first for readability. Step 10 runs after all code changes.
 
 ## Files Modified
 
