@@ -13,7 +13,7 @@ Single file (`plugins/iflow/hooks/meta-json-guard.sh`) with test updates in `plu
 Convert `test_meta_json_guard_denies_write`, `test_meta_json_guard_denies_edit`, `test_meta_json_guard_denies_project_meta` from inline `HOME="$(mktemp -d)"` to `setup_meta_guard_test`/`teardown_meta_guard_test` pattern. Specifically:
 - (a) Call `setup_meta_guard_test` at test start
 - (b) Use `HOME="$META_GUARD_TMPDIR"` in the hook invocation line (replacing inline mktemp)
-- (c) Keep existing stdout capture pattern (`output=$(... | HOME="$META_GUARD_TMPDIR" bash ...)`)
+- (c) Keep existing stdout capture pattern (`output=$(... | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null)`) — note: tests invoke the script directly, not via `bash`
 - (d) Call `teardown_meta_guard_test` at test end
 
 **Step 2: Add sentinel to all 5 existing tests**
@@ -24,12 +24,14 @@ Create `.bootstrap-complete` sentinel in `META_GUARD_TMPDIR` for:
 
 **Step 3: Add 4 new tests**
 
-- `test_meta_json_guard_permits_when_no_sentinel` — No sentinel in temp HOME → hook returns `{}` (uses helpers, no sentinel created)
-- `test_meta_json_guard_logs_permit_degraded` — No sentinel → verify JSONL log has `"action": "permit-degraded"` (uses helpers, no sentinel created)
-- `test_meta_json_guard_deny_message_has_feature_type_id` — Sentinel present → deny message contains `feature:{id}-{slug}` (uses helpers, creates sentinel)
-- `test_meta_json_guard_deny_message_has_fallback` — Sentinel present → deny message contains fallback instruction (uses helpers, creates sentinel)
+- `test_meta_json_guard_permits_when_no_sentinel` — No sentinel in temp HOME → hook returns `{}` (uses helpers, no sentinel created). **Note:** Before Phase 2, hook has no sentinel check so this test will get a deny instead of permit. Use defensive assertion: capture exit code and output, assert non-zero exit or `{}` — the test will fail (red) until Phase 2 adds the degraded path.
+- `test_meta_json_guard_logs_permit_degraded` — No sentinel → verify JSONL log has `"action": "permit-degraded"` (uses helpers, no sentinel created). Will fail (red) until Phase 2.
+- `test_meta_json_guard_deny_message_has_feature_type_id` — Sentinel present → deny message contains `feature:{id}-{slug}` (uses helpers, creates sentinel). Will fail (red) until Phase 2 updates REASON string.
+- `test_meta_json_guard_deny_message_has_fallback` — Sentinel present → deny message contains fallback instruction (uses helpers, creates sentinel). Will fail (red) until Phase 2 updates REASON string.
 
-**Step 4: Verify existing tests still pass** — Run `bash plugins/iflow/hooks/tests/test-hooks.sh`. Expect 9 existing meta-json-guard tests pass. New tests 4-7 will fail (red — expected, no code changes yet).
+**Test safety under `set -euo pipefail`:** New tests that expect failure (non-zero exit) must capture output and exit code defensively (e.g., `output=$(...) || true` or `if output=$(...); then fail; fi`) to avoid aborting the test suite.
+
+**Step 4: Verify existing tests still pass** — Run `bash plugins/iflow/hooks/tests/test-hooks.sh`. Expect 9 existing meta-json-guard tests pass. The 4 new tests from Step 3 will fail (red — expected, no code changes yet).
 
 ### Phase 2: Implement Code Changes (Green)
 
@@ -39,9 +41,9 @@ Create `.bootstrap-complete` sentinel in `META_GUARD_TMPDIR` for:
 
 **Step 6: Rename `log_blocked_attempt` → `log_guard_event`** — Add optional `action` parameter, build conditional `action_field` in JSONL output.
 
-**Step 7: Add degraded permit path** — `if ! check_mcp_available; then log_guard_event + echo '{}' + exit 0` block after python3 parse, before existing log+deny block. Note: if logging fails, the ERR trap (`install_err_trap` emitting `{}`) provides crash-level safety — no additional error handling needed.
+**Step 7: Add degraded permit path** — `if ! check_mcp_available; then log_guard_event + echo '{}' + exit 0` block after python3 parse, before existing log+deny block. Must happen after Step 6 (calls `log_guard_event`). Note: if logging fails, the ERR trap (`install_err_trap` emitting `{}`) provides crash-level safety — no additional error handling needed.
 
-**Step 8: Update deny call site** — Change `log_blocked_attempt` → `log_guard_event` (no action param). Must happen after step 6 (rename).
+**Step 8: Update deny call site** — Change `log_blocked_attempt` → `log_guard_event` (no action param). Must happen after Step 6 (rename).
 
 **Step 9: Update REASON string** — Add `feature_type_id` format, parameter hints, and fallback instruction.
 
@@ -53,7 +55,7 @@ Create `.bootstrap-complete` sentinel in `META_GUARD_TMPDIR` for:
 Phase 1 (steps 1-4) → Phase 2 (steps 5-10)
 ```
 
-Within Phase 2, steps 5-9 can be done in any order EXCEPT that step 6 (rename) must precede step 8 (update call site). Step 10 runs after all code changes.
+Within Phase 2, linear order: Step 5 → Step 6 → Step 7 → Step 8 → Step 9 → Step 10. Steps 6 must precede both Steps 7 and 8 (both call `log_guard_event`). Step 5 is independent but placed first for readability. Step 10 runs after all code changes.
 
 ## Files Modified
 
