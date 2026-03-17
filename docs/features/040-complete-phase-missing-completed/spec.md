@@ -10,7 +10,7 @@ Affected features: 035-039 — all required manual patching (see commits `47014e
 
 `_project_meta_json()` in `workflow_state_server.py` builds the `.meta.json` dict (the `meta = {...}` construction block between the `# Build .meta.json structure` comment and the `_atomic_json_write` call) but never populates a top-level `completed` field. The finish timestamp exists in `phase_timing["finish"]["completed"]` but is not extracted to the top level.
 
-**Invariant:** `status == "completed"` is only set when the finish phase is completed via `complete_phase`. If this invariant is violated (status is completed but no finish phase timing exists), R2 fallback applies.
+**Invariant:** `status == "completed"` (not `"abandoned"`) is only reachable when the finish phase is completed via `complete_phase`. The `"abandoned"` status is set via direct entity update, not through `complete_phase`. If either invariant is violated (status is terminal but no finish phase timing exists), R2 fallback applies.
 
 ## Requirements
 
@@ -32,13 +32,15 @@ When `status == "active"`, the top-level `completed` field MUST NOT appear in `.
 
 When `status == "abandoned"`, set `meta["completed"]` using the same logic as R1/R2. `validate.sh` requires `completed` for both `completed` and `abandoned` statuses.
 
+Note: For abandoned features, finish phase timing will typically be absent, so R2 fallback (`_iso_now()`) is the expected path. The completed timestamp will reflect the time of the abandon-action projection.
+
 ## Acceptance Criteria
 
 - AC1: Given a feature with active status, when `complete_phase("feature:X", "finish")` is called, then the projected `.meta.json` contains a top-level `completed` key whose value is an ISO 8601 timestamp matching the format used by `_iso_now()`.
 - AC2: Given a projected `.meta.json` with `status: "completed"`, when `validate.sh` runs, then no errors are reported for the `completed` field.
 - AC3: Given a feature with `status: "active"`, when `.meta.json` is projected, then no `completed` field is present.
 - AC4: Existing tests continue to pass (`plugins/iflow/.venv/bin/python -m pytest plugins/iflow/mcp/test_workflow_state_server.py -v`).
-- AC5: Given a feature with `status: "abandoned"`, when `.meta.json` is projected, then a top-level `completed` field is present.
+- AC5: Given a feature with `status: "abandoned"` and no finish phase timing, when `.meta.json` is projected, then a top-level `completed` field is present with a value from `_iso_now()` (R2 fallback).
 
 ## Scope
 
