@@ -9,12 +9,12 @@ Phase 1: Test Scaffold + Foundation (sequential)
   ├─ Task 1.1: Create test_bootstrap_venv.sh with unit test cases (RED)
   └─ Task 1.2: Create bootstrap-venv.sh shared library (GREEN)
 
-Phase 2: Integration (parallel — each script independent)
-  ├─ Task 2.1: Refactor run-memory-server.sh to thin wrapper
-  ├─ Task 2.2: Refactor run-entity-server.sh to thin wrapper
-  ├─ Task 2.3: Refactor run-workflow-server.sh to thin wrapper
-  ├─ Task 2.4: Refactor run-ui-server.sh to thin wrapper
-  └─ Task 2.5: Verify existing test scripts still pass
+Phase 2: Integration (sequential — 2.1-2.4 parallel, then 2.5 after)
+  ├─ Task 2.1: Refactor run-memory-server.sh to thin wrapper      ┐
+  ├─ Task 2.2: Refactor run-entity-server.sh to thin wrapper      │ parallel
+  ├─ Task 2.3: Refactor run-workflow-server.sh to thin wrapper     │
+  ├─ Task 2.4: Refactor run-ui-server.sh to thin wrapper          ┘
+  └─ Task 2.5: Update and verify existing test scripts (after 2.1-2.4)
 
 Phase 3: Integration Tests (depends on Phase 1+2)
   └─ Task 3.1: Add integration tests to test_bootstrap_venv.sh
@@ -33,7 +33,7 @@ Phase 4: Spec Amendment (no deps — documentation only)
 
 **Unit test cases to write first:**
 
-1. **check_python_version test:** Create a mock `python3` reporting 3.10 in a subshell `(PATH=/mock:$PATH; check_python_version)` to isolate PATH. Assert exit 1 with error containing required and detected versions.
+1. **check_python_version test:** Create an argument-aware mock `python3` script that, when called with `-c "import sys; ..."`, outputs `3.10`. Source only the function definitions from bootstrap-venv.sh, then call `check_python_version` in a subshell with the mock on PATH: `(PATH="$MOCK_DIR:$PATH"; check_python_version 2>"$STDERR_FILE")`. Assert exit 1 and stderr contains both "3.12" (required) and "3.10" (detected).
 
 2. **check_venv_deps test (all present):** Create a venv with all deps, assert returns 0.
 
@@ -42,6 +42,14 @@ Phase 4: Spec Amendment (no deps — documentation only)
 4. **Dep array alignment test:** Parse `pyproject.toml` for `[project].dependencies`, compare with `DEP_PIP_NAMES` array to ensure they stay in sync.
 
 5. **Bash 3.2 compatibility test:** Run under `/bin/bash` (macOS 3.2) — verify array declaration, `[@]` iteration, and `+=` string concatenation all work correctly. This validates TD-5 assumptions.
+
+6. **acquire_lock unit tests:**
+   - **Lock acquired:** Assert `acquire_lock` returns 0 when lock dir does not exist.
+   - **Sentinel appears during wait:** In background, sleep 1 then touch sentinel. Call `acquire_lock` with lock pre-created. Assert returns 1 (another process completed).
+   - **Stale lock detection:** Pre-create lock dir, backdate mtime with `touch -t 202001010000`. Assert `acquire_lock` cleans up stale lock and returns 0 (re-acquired).
+   - **Timeout:** Pre-create lock dir (fresh mtime, not stale), no sentinel. Call `acquire_lock` with a short timeout override (e.g., `BOOTSTRAP_TIMEOUT=3`). Assert exit 1 with error on stderr.
+
+7. **Empty lock directory invariant test:** Create lock dir, put a file inside it. Call `release_lock`. Assert rmdir fails (lock dir still exists because non-empty). This enforces the constraint that lock dir must remain empty — prevents future changes from breaking rmdir-based cleanup.
 
 All tests run in subshells for isolation. Each test uses `(subshell)` to prevent PATH/env leaks between tests.
 
@@ -53,10 +61,12 @@ All tests run in subshells for isolation. Each test uses `(subshell)` to prevent
 
 **What to implement (in order within the file):**
 
-1. **Canonical dependency arrays (I7):** Two index-aligned bash arrays at top of file:
-   - `DEP_PIP_NAMES` — pip install specifiers with version constraints from pyproject.toml
-   - `DEP_IMPORT_NAMES` — Python import names (note: `python-dotenv` → `dotenv`, `pydantic-settings` → `pydantic_settings`)
-   - All 8 deps: fastapi, jinja2, mcp, numpy, pydantic, pydantic-settings, python-dotenv, uvicorn
+1. **Constants:**
+   - `BOOTSTRAP_TIMEOUT=${BOOTSTRAP_TIMEOUT:-120}` — spin-wait timeout in seconds (overridable for testing)
+   - Canonical dependency arrays (I7): two index-aligned bash arrays:
+     - `DEP_PIP_NAMES` — pip install specifiers with version constraints from pyproject.toml
+     - `DEP_IMPORT_NAMES` — Python import names (note: `python-dotenv` → `dotenv`, `pydantic-settings` → `pydantic_settings`)
+     - All 8 deps: fastapi, jinja2, mcp, numpy, pydantic, pydantic-settings, python-dotenv, uvicorn
 
 2. **`check_python_version` (I2, FR-3):**
    - Run `python3 -c` to extract major.minor
@@ -89,8 +99,8 @@ All tests run in subshells for isolation. Each test uses `(subshell)` to prevent
    - Takes `lock_dir`, `sentinel`, `server_name`
    - Phase 1: `mkdir "$lock_dir"` — if succeeds return 0
    - Phase 2a: stale check via `find "$lock_dir" -maxdepth 0 -mmin +2` — if stale, `rmdir "$lock_dir"` + retry mkdir once; if retry fails, fall through to 2b
-   - Phase 2b: spin-wait on sentinel file (1s sleep, 120 iterations) — return 1 if sentinel appears, exit 1 if timeout (AC-1.5)
-   - **Constraint:** Lock directory must remain empty (no PID files or other contents). This ensures `rmdir` works reliably for both normal release and stale cleanup. PID-based debugging was considered (design) but rejected for simplicity.
+   - Phase 2b: spin-wait on sentinel file (`sleep 1` intervals, `$BOOTSTRAP_TIMEOUT` iterations) — return 1 if sentinel appears, exit 1 if timeout (AC-1.5)
+   - **Constraint:** Lock directory must remain empty (no PID files or other contents). This ensures `rmdir` works reliably for both normal release and stale cleanup.
 
 8. **`release_lock` (I5):**
    - Takes `lock_dir`
@@ -103,16 +113,23 @@ All tests run in subshells for isolation. Each test uses `(subshell)` to prevent
    - Step 3: Fast-path — if `bin/python` exists AND sentinel (`.bootstrap-complete`) exists:
      - If `check_venv_deps` passes → export `PYTHON="$venv_dir/bin/python"`, return
      - If fails → fall through to Step 4 (acquire lock before installing, to avoid concurrent install race)
+   - Step 3b: Sentinel recovery — if `bin/python` exists but NO sentinel:
+     - If `check_venv_deps` passes → re-write sentinel (`touch "$venv_dir/.bootstrap-complete"`), export PYTHON, return. This handles the case where a previous leader installed deps but crashed before writing the sentinel.
+     - If fails → fall through to Step 4
    - Step 4: `acquire_lock`
-     - If returns 1 (another process bootstrapped) → re-check deps via `check_venv_deps`, self-heal if needed (install_all_deps under lock is already done by leader, so deps should be present; if still missing, log warning and install), export PYTHON, return
+     - If returns 1 (another process bootstrapped) → re-check deps via `check_venv_deps`, self-heal if needed (log warning and install), export PYTHON, return
      - If returns 0 (lock acquired):
        - Set trap: `trap 'rmdir "$lock_dir" 2>/dev/null' EXIT`
        - Re-check: if sentinel exists AND `check_venv_deps` passes (double-checked locking) → `release_lock`, `trap - EXIT`, export PYTHON, return
-       - `create_venv` → `install_all_deps` → write sentinel (`.bootstrap-complete`) → `release_lock` → `trap - EXIT`
+       - If `bin/python` exists (partial venv) → skip create_venv
+       - Else → `create_venv`
+       - `install_all_deps` → write sentinel (`.bootstrap-complete`) → `release_lock` → `trap - EXIT`
        - export `PYTHON="$venv_dir/bin/python"`, return
-   - **Trap lifecycle:** The `trap EXIT` is set immediately after `acquire_lock` returns 0 and cleared (`trap - EXIT`) before returning from `bootstrap_venv`. This prevents the trap from persisting into the calling script (trap EXIT is script-global, not function-scoped). Sequence: set trap → create/install → write sentinel → release_lock → clear trap → return.
+   - **Trap lifecycle:** The `trap EXIT` is set immediately after `acquire_lock` returns 0 and cleared (`trap - EXIT`) before returning from `bootstrap_venv`. This prevents the trap from persisting into the calling script (trap EXIT is script-global, not function-scoped). Sequence: set trap → create/install → write sentinel → release_lock → clear trap → return. Note: bootstrap_venv must not leave an active trap EXIT — the calling script may set its own.
 
-**Fast-path self-heal race condition (addressed):** The fast-path (Step 3) does NOT call `install_all_deps` directly. If deps are missing, it falls through to Step 4 which acquires the lock first. This prevents concurrent `pip install` / `uv pip install` calls from multiple servers that all detect missing deps simultaneously. The lock serializes all install operations.
+**Fast-path self-heal race condition (addressed):** The fast-path (Steps 3/3b) does NOT call `install_all_deps` directly when deps are missing. If deps are missing, it falls through to Step 4 which acquires the lock first. This prevents concurrent `pip install` / `uv pip install` calls from multiple servers that all detect missing deps simultaneously. The lock serializes all install operations.
+
+**Sentinel recovery (addressed):** Step 3b handles the edge case where a previous leader installed deps but crashed before writing the sentinel. If `bin/python` exists, no sentinel, but deps are all present → re-write the sentinel to restore the fast-path for future invocations. This is safe without locking because it's a benign idempotent write (touch) and only happens when deps are verified present.
 
 **`export PYTHON` (not just `set`):** All paths that resolve the Python interpreter use `export PYTHON=...` per design interface I1. This ensures `PYTHON` is visible to any subprocess if needed.
 
@@ -149,18 +166,22 @@ All 4 tasks follow the same pattern (I6 template). Each script becomes ~15 lines
 **After:** Same thin wrapper pattern but with different PYTHONPATH (adds `$PLUGIN_DIR` for `ui` module) and SERVER_SCRIPT (`$PLUGIN_DIR/ui/__main__.py`).
 **Key difference:** `PYTHONPATH="$PLUGIN_DIR/hooks/lib:$PLUGIN_DIR${PYTHONPATH:+:$PYTHONPATH}"` per I6 note.
 
-### Task 2.5: Verify Existing Test Scripts
+### Task 2.5: Update and Verify Existing Test Scripts (after 2.1-2.4)
 
-**Goal:** Run existing bootstrap wrapper tests to confirm no regression.
+**Goal:** Update existing bootstrap wrapper tests to work with the new thin-wrapper + shared library pattern, then verify they pass.
 
-**Files to run:**
-- `bash plugins/iflow/mcp/test_run_memory_server.sh`
-- `bash plugins/iflow/mcp/test_run_workflow_server.sh`
-- `bash plugins/iflow/mcp/test_entity_server.sh` (if exists)
+**Required fix (certain breakage):** Existing tests (`test_run_memory_server.sh`, `test_entity_server.sh`, `test_run_workflow_server.sh`) copy only the wrapper script to a temp directory. After refactoring, wrappers source `bootstrap-venv.sh` from `$SCRIPT_DIR`, so the shared library must also be present. Update each test to copy `bootstrap-venv.sh` alongside the wrapper to the temp SCRIPT_DIR.
 
-**If tests fail:** Fix the test scripts to match the new thin-wrapper interface (they may expect the old inline bootstrap output patterns). Document changes.
+**Steps:**
+1. Read each test script to identify what it copies and what assertions it makes
+2. Add `cp bootstrap-venv.sh "$TEMP_DIR/"` (or equivalent) before running the wrapper
+3. Update any assertions that check for old inline bootstrap output patterns (e.g., "bootstrapping venv with uv" messages may now come from bootstrap-venv.sh instead of the wrapper)
+4. Run all updated tests and verify they pass
 
-**If tests are fully superseded** by Phase 3's comprehensive test: note that in the implementation log and keep them as smoke tests.
+**Files to update and run:**
+- `plugins/iflow/mcp/test_run_memory_server.sh`
+- `plugins/iflow/mcp/test_run_workflow_server.sh`
+- `plugins/iflow/mcp/test_entity_server.sh`
 
 ## Phase 3: Integration Tests
 
@@ -170,15 +191,17 @@ All 4 tasks follow the same pattern (I6 template). Each script becomes ~15 lines
 
 **Integration test cases:**
 
-1. **Concurrent launch test (AC-1.1):** Spawn 4 bootstrap_venv calls as background processes in a temp dir (fresh install simulation), wait for all, assert venv exists and all deps importable. Use a barrier file (`touch /tmp/barrier`) so all 4 processes start simultaneously.
+1. **Concurrent launch test (AC-1.1):** Spawn 4 bootstrap_venv calls as background processes in a temp dir (fresh install simulation), wait for all, assert venv exists and all deps importable. Best-effort concurrency — processes may not start exactly simultaneously, but the locking logic handles any interleaving.
 
-2. **Stale lock test (AC-1.3):** Pre-create a lock directory, backdate its mtime with `touch -t`, launch a bootstrap, assert stale detection removes the lock and bootstrap succeeds.
+2. **Stale lock test (AC-1.3):** Pre-create a lock directory, backdate its mtime with `touch -t 202001010000` (portable format, well in the past, works on both macOS and Linux), launch a bootstrap, assert stale detection removes the lock and bootstrap succeeds.
 
-3. **Missing dep self-heal test (AC-2.4):** Create a venv with all deps, write sentinel, then remove one dep (`pip uninstall numpy`). Launch bootstrap — sentinel exists but deps fail. Assert it falls through to locked install and restores all deps.
+3. **Missing dep self-heal test (AC-2.4):** Create a venv with all deps, write sentinel, then remove one dep (`pip uninstall numpy`). Launch bootstrap — sentinel exists but deps fail in Step 3. Assert it falls through to locked install (Step 4) and restores all deps.
 
 4. **uv-absent fallback test (DC-5):** Run bootstrap in a subshell with `uv` removed from PATH. Assert pip fallback is used and all deps installed.
 
 5. **Fast-path test:** Create venv with all deps + sentinel, run bootstrap, assert it takes fast-path (no lock directory created).
+
+6. **Sentinel recovery test:** Create venv with all deps but NO sentinel. Run bootstrap. Assert sentinel is re-written (Step 3b) and PYTHON is exported correctly.
 
 ## Phase 4: Spec Amendment
 
