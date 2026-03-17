@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.13.5] - 2026-03-18
+
+### Fixed
+- `meta-json-guard` hook deadlock on fresh installs — hook now permits `.meta.json` writes when MCP workflow tools are unavailable (no bootstrap sentinel), preventing infinite retry loops
+- `meta-json-guard` deny message now includes `feature_type_id` format guidance and fallback instruction
+
 ## [4.13.4] - 2026-03-18
 
 ### Fixed

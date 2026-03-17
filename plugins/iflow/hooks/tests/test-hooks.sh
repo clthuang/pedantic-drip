@@ -1319,46 +1319,65 @@ teardown_meta_guard_test() {
     META_GUARD_TMPDIR=""
 }
 
+# Helper: setup with bootstrap sentinel (MCP available)
+setup_meta_guard_test_with_sentinel() {
+    setup_meta_guard_test
+    mkdir -p "$META_GUARD_TMPDIR/.claude/plugins/cache/test-org/iflow-test/1.0.0/.venv"
+    touch "$META_GUARD_TMPDIR/.claude/plugins/cache/test-org/iflow-test/1.0.0/.venv/.bootstrap-complete"
+}
+
 # Test: meta-json-guard denies Write to .meta.json
 test_meta_json_guard_denies_write() {
     log_test "meta-json-guard denies Write to .meta.json"
 
+    setup_meta_guard_test_with_sentinel
+
     local output
-    output=$(echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/034-enforced-state-machine/.meta.json","content":"{}"}}' | HOME="$(mktemp -d)" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null)
+    output=$(echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/034-enforced-state-machine/.meta.json","content":"{}"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null)
 
     if echo "$output" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['hookSpecificOutput']['permissionDecision'] == 'deny'" 2>/dev/null; then
         log_pass
     else
         log_fail "Expected deny for Write to .meta.json, got: $output"
     fi
+
+    teardown_meta_guard_test
 }
 
 # Test: meta-json-guard denies Edit to .meta.json
 test_meta_json_guard_denies_edit() {
     log_test "meta-json-guard denies Edit to .meta.json"
 
+    setup_meta_guard_test_with_sentinel
+
     local output
-    output=$(echo '{"tool_name":"Edit","tool_input":{"file_path":"docs/features/034-enforced-state-machine/.meta.json","old_string":"planned","new_string":"active"}}' | HOME="$(mktemp -d)" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null)
+    output=$(echo '{"tool_name":"Edit","tool_input":{"file_path":"docs/features/034-enforced-state-machine/.meta.json","old_string":"planned","new_string":"active"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null)
 
     if echo "$output" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['hookSpecificOutput']['permissionDecision'] == 'deny'" 2>/dev/null; then
         log_pass
     else
         log_fail "Expected deny for Edit to .meta.json, got: $output"
     fi
+
+    teardown_meta_guard_test
 }
 
 # Test: meta-json-guard denies Write to projects/.meta.json
 test_meta_json_guard_denies_project_meta() {
     log_test "meta-json-guard denies Write to projects/.meta.json"
 
+    setup_meta_guard_test_with_sentinel
+
     local output
-    output=$(echo '{"tool_name":"Write","tool_input":{"file_path":"docs/projects/001-my-project/.meta.json","content":"{}"}}' | HOME="$(mktemp -d)" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null)
+    output=$(echo '{"tool_name":"Write","tool_input":{"file_path":"docs/projects/001-my-project/.meta.json","content":"{}"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null)
 
     if echo "$output" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['hookSpecificOutput']['permissionDecision'] == 'deny'" 2>/dev/null; then
         log_pass
     else
         log_fail "Expected deny for Write to projects .meta.json, got: $output"
     fi
+
+    teardown_meta_guard_test
 }
 
 # Test: meta-json-guard allows Write to spec.md
@@ -1407,7 +1426,7 @@ test_meta_json_guard_fast_path_allow() {
 test_meta_json_guard_logs_blocked_attempt() {
     log_test "meta-json-guard logs blocked attempt as valid JSONL"
 
-    setup_meta_guard_test
+    setup_meta_guard_test_with_sentinel
 
     echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/034-foo/.meta.json","content":"{}"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null > /dev/null
 
@@ -1440,7 +1459,7 @@ assert d['path'] == 'docs/features/034-foo/.meta.json'
 test_meta_json_guard_extracts_feature_id() {
     log_test "meta-json-guard extracts feature_id from path"
 
-    setup_meta_guard_test
+    setup_meta_guard_test_with_sentinel
 
     echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/034-enforced-state-machine/.meta.json","content":"{}"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null > /dev/null
 
@@ -1475,6 +1494,570 @@ test_meta_json_guard_latency() {
     else
         log_fail "Fast-path took ${elapsed_ms}ms (threshold: 200ms)"
     fi
+}
+
+# Test: meta-json-guard permits when no sentinel (degraded mode)
+test_meta_json_guard_permits_when_no_sentinel() {
+    log_test "meta-json-guard permits when no bootstrap sentinel"
+
+    setup_meta_guard_test
+
+    local output
+    output=$(echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/034-foo/.meta.json","content":"{}"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null) || true
+    if [[ "$output" == "{}" ]]; then
+        log_pass
+    else
+        log_fail "Expected {}, got: $output"
+    fi
+
+    teardown_meta_guard_test
+}
+
+# Test: meta-json-guard logs permit-degraded action
+test_meta_json_guard_logs_permit_degraded() {
+    log_test "meta-json-guard logs permit-degraded action"
+
+    setup_meta_guard_test
+
+    echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/034-foo/.meta.json","content":"{}"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null > /dev/null || true
+
+    local log_file="${META_GUARD_TMPDIR}/.claude/iflow/meta-json-guard.log"
+    if [[ -f "$log_file" ]]; then
+        local last_line
+        last_line=$(tail -1 "$log_file")
+        if echo "$last_line" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('action') == 'permit-degraded', f'got action={d.get(\"action\")}'" 2>/dev/null; then
+            log_pass
+        else
+            log_fail "Expected action=permit-degraded, got: $last_line"
+        fi
+    else
+        log_fail "Log file not created at $log_file"
+    fi
+
+    teardown_meta_guard_test
+}
+
+# Test: meta-json-guard deny message contains feature_type_id format
+test_meta_json_guard_deny_message_has_feature_type_id() {
+    log_test "meta-json-guard deny message has feature_type_id format"
+
+    setup_meta_guard_test_with_sentinel
+
+    local output
+    output=$(echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/034-enforced-state-machine/.meta.json","content":"{}"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null)
+
+    local reason
+    reason=$(echo "$output" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['hookSpecificOutput']['permissionDecisionReason'])" 2>/dev/null) || true
+    if [[ "$reason" == *"feature:"* ]]; then
+        log_pass
+    else
+        log_fail "Expected reason to contain 'feature:', got: $reason"
+    fi
+
+    teardown_meta_guard_test
+}
+
+# Test: meta-json-guard deny message contains fallback instruction
+test_meta_json_guard_deny_message_has_fallback() {
+    log_test "meta-json-guard deny message has fallback instruction"
+
+    setup_meta_guard_test_with_sentinel
+
+    local output
+    output=$(echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/034-foo/.meta.json","content":"{}"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null)
+
+    local reason
+    reason=$(echo "$output" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['hookSpecificOutput']['permissionDecisionReason'])" 2>/dev/null) || true
+    if [[ "$reason" == *"fallback"* ]]; then
+        log_pass
+    else
+        log_fail "Expected reason to contain 'fallback', got: $reason"
+    fi
+
+    teardown_meta_guard_test
+}
+
+# === Meta-JSON Guard Deepened Tests ===
+
+# Test: meta-json-guard permits Edit when no bootstrap sentinel exists
+# derived_from: spec:AC1
+test_meta_json_guard_permits_edit_when_no_sentinel() {
+    log_test "meta-json-guard permits Edit when no bootstrap sentinel"
+
+    # Given no sentinel file exists (HOME set to empty temp dir)
+    setup_meta_guard_test
+
+    # When hook receives Edit tool input targeting a .meta.json file
+    local output
+    output=$(echo '{"tool_name":"Edit","tool_input":{"file_path":"docs/features/041-meta-json-guard-degradation/.meta.json","old_string":"planned","new_string":"active"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null) || true
+
+    # Then hook returns permit decision (empty JSON {})
+    if [[ "$output" == "{}" ]]; then
+        log_pass
+    else
+        log_fail "Expected {}, got: $output"
+    fi
+
+    teardown_meta_guard_test
+}
+
+# Test: meta-json-guard sentinel detection with multiple matching cache dirs
+# derived_from: spec:R1
+test_meta_json_guard_sentinel_multiple_cache_dirs() {
+    log_test "meta-json-guard detects sentinel across multiple cache dirs"
+
+    # Given three cache directories with sentinels
+    setup_meta_guard_test
+    mkdir -p "$META_GUARD_TMPDIR/.claude/plugins/cache/org-a/iflow-a/1.0/.venv"
+    touch "$META_GUARD_TMPDIR/.claude/plugins/cache/org-a/iflow-a/1.0/.venv/.bootstrap-complete"
+    mkdir -p "$META_GUARD_TMPDIR/.claude/plugins/cache/org-b/iflow-b/2.0/.venv"
+    touch "$META_GUARD_TMPDIR/.claude/plugins/cache/org-b/iflow-b/2.0/.venv/.bootstrap-complete"
+    mkdir -p "$META_GUARD_TMPDIR/.claude/plugins/cache/org-c/iflow-c/3.0/.venv"
+    touch "$META_GUARD_TMPDIR/.claude/plugins/cache/org-c/iflow-c/3.0/.venv/.bootstrap-complete"
+
+    # When hook receives a .meta.json write
+    local output
+    output=$(echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/041-foo/.meta.json","content":"{}"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null)
+
+    # Then sentinel is detected, hook denies
+    if echo "$output" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['hookSpecificOutput']['permissionDecision'] == 'deny'" 2>/dev/null; then
+        log_pass
+    else
+        log_fail "Expected deny with multiple sentinels, got: $output"
+    fi
+
+    teardown_meta_guard_test
+}
+
+# Test: meta-json-guard permits when cache dir exists but has zero iflow dirs
+# derived_from: spec:R1
+test_meta_json_guard_sentinel_zero_iflow_dirs() {
+    log_test "meta-json-guard permits when cache has no iflow dirs"
+
+    # Given cache directory exists but contains no iflow directories
+    setup_meta_guard_test
+    mkdir -p "$META_GUARD_TMPDIR/.claude/plugins/cache/some-org/other-plugin/1.0"
+
+    # When hook receives a .meta.json write
+    local output
+    output=$(echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/041-foo/.meta.json","content":"{}"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null) || true
+
+    # Then no sentinel found, hook permits with degraded mode
+    if [[ "$output" == "{}" ]]; then
+        log_pass
+    else
+        log_fail "Expected {} (degraded permit), got: $output"
+    fi
+
+    teardown_meta_guard_test
+}
+
+# Test: meta-json-guard permits when .claude directory does not exist
+# derived_from: spec:R1
+test_meta_json_guard_sentinel_no_claude_dir() {
+    log_test "meta-json-guard permits when .claude dir missing entirely"
+
+    # Given HOME/.claude does not exist at all
+    local tmpdir
+    tmpdir=$(mktemp -d)
+
+    # When hook receives a .meta.json write
+    local output
+    output=$(echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/041-foo/.meta.json","content":"{}"}}' | HOME="$tmpdir" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null) || true
+
+    # Then no sentinel found, hook permits
+    if [[ "$output" == "{}" ]]; then
+        log_pass
+    else
+        log_fail "Expected {} (degraded permit), got: $output"
+    fi
+
+    rm -rf "$tmpdir"
+}
+
+# Test: meta-json-guard permits when .venv exists but no sentinel file
+# derived_from: spec:R1
+test_meta_json_guard_sentinel_venv_no_sentinel_file() {
+    log_test "meta-json-guard permits when .venv exists but no sentinel"
+
+    # Given cache directory with .venv but no .bootstrap-complete
+    setup_meta_guard_test
+    mkdir -p "$META_GUARD_TMPDIR/.claude/plugins/cache/test-org/iflow-test/1.0/.venv"
+    # No .bootstrap-complete created
+
+    # When hook receives a .meta.json write
+    local output
+    output=$(echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/041-foo/.meta.json","content":"{}"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null) || true
+
+    # Then no sentinel found, hook permits
+    if [[ "$output" == "{}" ]]; then
+        log_pass
+    else
+        log_fail "Expected {} (degraded permit), got: $output"
+    fi
+
+    teardown_meta_guard_test
+}
+
+# Test: meta-json-guard extracts feature_id from projects path
+# derived_from: design:C2
+test_meta_json_guard_feature_id_from_projects_path() {
+    log_test "meta-json-guard extracts feature_id from projects path"
+
+    # Given file path is docs/projects/my-project/.meta.json
+    setup_meta_guard_test_with_sentinel
+
+    echo '{"tool_name":"Write","tool_input":{"file_path":"docs/projects/my-project/.meta.json","content":"{}"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null > /dev/null
+
+    # Then feature_id is my-project
+    local log_file="${META_GUARD_TMPDIR}/.claude/iflow/meta-json-guard.log"
+    if [[ -f "$log_file" ]]; then
+        local last_line
+        last_line=$(tail -1 "$log_file")
+        if echo "$last_line" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['feature_id'] == 'my-project', f'got {d[\"feature_id\"]}'" 2>/dev/null; then
+            log_pass
+        else
+            log_fail "Expected feature_id 'my-project', got: $last_line"
+        fi
+    else
+        log_fail "Log file not created"
+    fi
+
+    teardown_meta_guard_test
+}
+
+# Test: meta-json-guard extracts unknown feature_id from non-standard path
+# derived_from: design:C2
+test_meta_json_guard_feature_id_unknown_path() {
+    log_test "meta-json-guard extracts unknown feature_id from non-standard path"
+
+    # Given file path is some/random/path/.meta.json
+    setup_meta_guard_test_with_sentinel
+
+    echo '{"tool_name":"Write","tool_input":{"file_path":"some/random/path/.meta.json","content":"{}"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null > /dev/null
+
+    # Then feature_id is unknown
+    local log_file="${META_GUARD_TMPDIR}/.claude/iflow/meta-json-guard.log"
+    if [[ -f "$log_file" ]]; then
+        local last_line
+        last_line=$(tail -1 "$log_file")
+        if echo "$last_line" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['feature_id'] == 'unknown', f'got {d[\"feature_id\"]}'" 2>/dev/null; then
+            log_pass
+        else
+            log_fail "Expected feature_id 'unknown', got: $last_line"
+        fi
+    else
+        log_fail "Log file not created"
+    fi
+
+    teardown_meta_guard_test
+}
+
+# Test: meta-json-guard deny log entry has NO action field
+# derived_from: spec:R3
+test_meta_json_guard_deny_log_has_no_action() {
+    log_test "meta-json-guard deny log entry has no action field"
+
+    # Given sentinel exists, hook will deny
+    setup_meta_guard_test_with_sentinel
+
+    # When hook denies a .meta.json write
+    echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/041-foo/.meta.json","content":"{}"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null > /dev/null
+
+    # Then log entry does NOT contain an action field
+    local log_file="${META_GUARD_TMPDIR}/.claude/iflow/meta-json-guard.log"
+    if [[ -f "$log_file" ]]; then
+        local last_line
+        last_line=$(tail -1 "$log_file")
+        if echo "$last_line" | python3 -c "import json,sys; d=json.load(sys.stdin); assert 'action' not in d, f'deny log should not have action, got {d}'" 2>/dev/null; then
+            log_pass
+        else
+            log_fail "Deny log entry should NOT have action field, got: $last_line"
+        fi
+    else
+        log_fail "Log file not created"
+    fi
+
+    teardown_meta_guard_test
+}
+
+# Test: meta-json-guard permit-degraded log has ISO 8601 UTC timestamp
+# derived_from: spec:R3
+test_meta_json_guard_degraded_log_timestamp_format() {
+    log_test "meta-json-guard degraded log has ISO 8601 UTC timestamp"
+
+    # Given no sentinel
+    setup_meta_guard_test
+
+    # When hook permits in degraded mode
+    echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/041-foo/.meta.json","content":"{}"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null > /dev/null || true
+
+    # Then log entry timestamp matches YYYY-MM-DDTHH:MM:SSZ
+    local log_file="${META_GUARD_TMPDIR}/.claude/iflow/meta-json-guard.log"
+    if [[ -f "$log_file" ]]; then
+        local last_line
+        last_line=$(tail -1 "$log_file")
+        if echo "$last_line" | python3 -c "
+import json, sys, re
+d = json.load(sys.stdin)
+ts = d['timestamp']
+assert re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$', ts), f'timestamp {ts} does not match ISO 8601 UTC'
+" 2>/dev/null; then
+            log_pass
+        else
+            log_fail "Timestamp format not ISO 8601 UTC: $last_line"
+        fi
+    else
+        log_fail "Log file not created"
+    fi
+
+    teardown_meta_guard_test
+}
+
+# Test: meta-json-guard deny message includes all three MCP tool names
+# derived_from: spec:R2
+test_meta_json_guard_deny_mentions_all_mcp_tools() {
+    log_test "meta-json-guard deny mentions transition_phase, complete_phase, init_feature_state"
+
+    # Given sentinel exists
+    setup_meta_guard_test_with_sentinel
+
+    # When hook denies a .meta.json write
+    local output
+    output=$(echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/041-foo/.meta.json","content":"{}"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null)
+
+    # Then deny reason mentions all three tools
+    local reason
+    reason=$(echo "$output" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['hookSpecificOutput']['permissionDecisionReason'])" 2>/dev/null) || true
+    local pass=true
+    if [[ "$reason" != *"transition_phase"* ]]; then
+        log_fail "Missing transition_phase in deny reason"
+        pass=false
+    fi
+    if [[ "$reason" != *"complete_phase"* ]]; then
+        $pass && log_fail "Missing complete_phase in deny reason"
+        pass=false
+    fi
+    if [[ "$reason" != *"init_feature_state"* ]]; then
+        $pass && log_fail "Missing init_feature_state in deny reason"
+        pass=false
+    fi
+    if $pass; then
+        log_pass
+    fi
+
+    teardown_meta_guard_test
+}
+
+# Test: meta-json-guard creates log directory if missing on degraded permit
+# derived_from: design:C2
+test_meta_json_guard_creates_log_dir_if_missing() {
+    log_test "meta-json-guard creates log dir if missing on degraded permit"
+
+    # Given no sentinel AND ~/.claude/iflow/ does not exist
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    # Intentionally NOT creating .claude/iflow
+
+    # When hook permits in degraded mode and logs
+    echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/041-foo/.meta.json","content":"{}"}}' | HOME="$tmpdir" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null > /dev/null || true
+
+    # Then log directory is created and log file exists
+    local log_file="$tmpdir/.claude/iflow/meta-json-guard.log"
+    if [[ -f "$log_file" ]]; then
+        log_pass
+    else
+        log_fail "Expected log file at $log_file to be created"
+    fi
+
+    rm -rf "$tmpdir"
+}
+
+# Test: meta-json-guard does not crash when glob path does not exist
+# derived_from: design:C1
+test_meta_json_guard_no_crash_on_missing_glob_path() {
+    log_test "meta-json-guard does not crash when glob path missing"
+
+    # Given HOME points to a directory where .claude does not exist
+    local tmpdir
+    tmpdir=$(mktemp -d)
+
+    # When check_mcp_available runs against non-existent glob
+    local output
+    output=$(echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/041-foo/.meta.json","content":"{}"}}' | HOME="$tmpdir" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null) || true
+
+    # Then hook does not crash and permits
+    if [[ "$output" == "{}" ]]; then
+        log_pass
+    else
+        log_fail "Expected {} (no crash), got: $output"
+    fi
+
+    rm -rf "$tmpdir"
+}
+
+# Test: action field distinguishes deny from degraded permit log entries
+# derived_from: mutation: line deletion
+test_meta_json_guard_action_field_distinguishes_deny_vs_degraded() {
+    log_test "meta-json-guard action field distinguishes deny vs degraded"
+
+    # Scenario 1: Deny (sentinel exists) - no action field
+    setup_meta_guard_test_with_sentinel
+    echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/041-foo/.meta.json","content":"{}"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null > /dev/null
+    local deny_log="${META_GUARD_TMPDIR}/.claude/iflow/meta-json-guard.log"
+    local deny_line
+    deny_line=$(tail -1 "$deny_log")
+    teardown_meta_guard_test
+
+    # Scenario 2: Degraded permit (no sentinel) - has action field
+    setup_meta_guard_test
+    echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/041-foo/.meta.json","content":"{}"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null > /dev/null || true
+    local degraded_log="${META_GUARD_TMPDIR}/.claude/iflow/meta-json-guard.log"
+    local degraded_line
+    degraded_line=$(tail -1 "$degraded_log")
+    teardown_meta_guard_test
+
+    # Then deny has no action, degraded has action=permit-degraded
+    if python3 -c "
+import json, sys
+deny = json.loads('''$deny_line''')
+degraded = json.loads('''$degraded_line''')
+assert 'action' not in deny, f'deny should not have action: {deny}'
+assert degraded.get('action') == 'permit-degraded', f'degraded should have action=permit-degraded: {degraded}'
+" 2>/dev/null; then
+        log_pass
+    else
+        log_fail "Deny log: $deny_line | Degraded log: $degraded_line"
+    fi
+}
+
+# Test: meta-json-guard degraded path output is exactly {} (no deny appended)
+# derived_from: mutation: exit 0 deletion
+test_meta_json_guard_degraded_output_is_exactly_empty_json() {
+    log_test "meta-json-guard degraded output is exactly {} (no deny appended)"
+
+    # Given no sentinel (degraded mode)
+    setup_meta_guard_test
+
+    # When hook enters degraded permit path
+    local output
+    output=$(echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/041-foo/.meta.json","content":"{}"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null) || true
+
+    # Then output is exactly {} with no deny JSON appended
+    if [[ "$output" == "{}" ]]; then
+        log_pass
+    else
+        log_fail "Expected exactly '{}', got '$output' (length ${#output})"
+    fi
+
+    teardown_meta_guard_test
+}
+
+# Test: meta-json-guard deny reason is non-empty and contains key guidance
+# derived_from: mutation: return value
+test_meta_json_guard_deny_reason_non_empty_with_guidance() {
+    log_test "meta-json-guard deny reason non-empty with feature: and fallback"
+
+    # Given sentinel exists
+    setup_meta_guard_test_with_sentinel
+
+    # When hook denies
+    local output
+    output=$(echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/041-foo/.meta.json","content":"{}"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null)
+
+    # Then permissionDecisionReason is non-empty containing both feature: and fallback
+    local reason
+    reason=$(echo "$output" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['hookSpecificOutput']['permissionDecisionReason'])" 2>/dev/null) || true
+    if [[ -n "$reason" ]] && [[ "$reason" == *"feature:"* ]] && [[ "$reason" == *"fallback"* ]]; then
+        log_pass
+    else
+        log_fail "Expected non-empty reason with 'feature:' and 'fallback', got: $reason"
+    fi
+
+    teardown_meta_guard_test
+}
+
+# Test: meta-json-guard deny path latency < 200ms
+# derived_from: spec:R1
+test_meta_json_guard_deny_path_latency() {
+    log_test "meta-json-guard deny path latency < 500ms"
+
+    # Given sentinel exists (deny path)
+    setup_meta_guard_test_with_sentinel
+
+    # When hook processes a .meta.json input
+    # Note: 500ms threshold accounts for python3 subprocess overhead in JSON parsing path
+    # (fast-path test at 200ms covers the no-python3 path; this tests regression on full path)
+    local start_ms end_ms elapsed_ms
+    start_ms=$(python3 -c "import time; print(int(time.time()*1000))")
+    echo '{"tool_name":"Edit","tool_input":{"file_path":"docs/features/041-foo/.meta.json","old_string":"x","new_string":"y"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null > /dev/null
+    end_ms=$(python3 -c "import time; print(int(time.time()*1000))")
+    elapsed_ms=$((end_ms - start_ms))
+
+    # Then total execution time is under 500ms
+    if [[ $elapsed_ms -lt 500 ]]; then
+        log_pass
+    else
+        log_fail "Deny path took ${elapsed_ms}ms (threshold: 500ms)"
+    fi
+
+    teardown_meta_guard_test
+}
+
+# Test: meta-json-guard degraded permit path latency < 200ms
+# derived_from: spec:R1
+test_meta_json_guard_degraded_permit_path_latency() {
+    log_test "meta-json-guard degraded permit path latency < 500ms"
+
+    # Given no sentinel (degraded permit path)
+    setup_meta_guard_test
+
+    # When hook processes a .meta.json input
+    # Note: 500ms threshold accounts for python3 subprocess overhead in JSON parsing path
+    local start_ms end_ms elapsed_ms
+    start_ms=$(python3 -c "import time; print(int(time.time()*1000))")
+    echo '{"tool_name":"Edit","tool_input":{"file_path":"docs/features/041-foo/.meta.json","old_string":"x","new_string":"y"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null > /dev/null || true
+    end_ms=$(python3 -c "import time; print(int(time.time()*1000))")
+    elapsed_ms=$((end_ms - start_ms))
+
+    # Then total execution time is under 500ms
+    if [[ $elapsed_ms -lt 500 ]]; then
+        log_pass
+    else
+        log_fail "Degraded permit path took ${elapsed_ms}ms (threshold: 500ms)"
+    fi
+
+    teardown_meta_guard_test
+}
+
+# Test: meta-json-guard deny output has correct JSON structure
+# derived_from: spec:AC7
+test_meta_json_guard_deny_structure_matches_spec() {
+    log_test "meta-json-guard deny output has hookSpecificOutput structure"
+
+    # Given sentinel exists
+    setup_meta_guard_test_with_sentinel
+
+    # When hook receives Edit/Write targeting .meta.json
+    local output
+    output=$(echo '{"tool_name":"Edit","tool_input":{"file_path":"docs/features/041-foo/.meta.json","old_string":"x","new_string":"y"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null)
+
+    # Then deny has correct structure: hookSpecificOutput.{hookEventName, permissionDecision, permissionDecisionReason}
+    if echo "$output" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+hso = d['hookSpecificOutput']
+assert hso['hookEventName'] == 'PreToolUse', f'hookEventName={hso[\"hookEventName\"]}'
+assert hso['permissionDecision'] == 'deny', f'permissionDecision={hso[\"permissionDecision\"]}'
+assert len(hso['permissionDecisionReason']) > 0, 'permissionDecisionReason is empty'
+assert len(hso) == 3, f'expected 3 keys in hookSpecificOutput, got {len(hso)}'
+" 2>/dev/null; then
+        log_pass
+    else
+        log_fail "Deny structure mismatch: $output"
+    fi
+
+    teardown_meta_guard_test
 }
 
 # === YOLO Dependency-Aware Feature Selection Tests (Feature 038) ===
@@ -1717,6 +2300,33 @@ main() {
     test_meta_json_guard_logs_blocked_attempt
     test_meta_json_guard_extracts_feature_id
     test_meta_json_guard_latency
+    test_meta_json_guard_permits_when_no_sentinel
+    test_meta_json_guard_logs_permit_degraded
+    test_meta_json_guard_deny_message_has_feature_type_id
+    test_meta_json_guard_deny_message_has_fallback
+
+    echo ""
+    echo "--- Meta-JSON Guard Deepened Tests ---"
+    echo ""
+
+    test_meta_json_guard_permits_edit_when_no_sentinel
+    test_meta_json_guard_sentinel_multiple_cache_dirs
+    test_meta_json_guard_sentinel_zero_iflow_dirs
+    test_meta_json_guard_sentinel_no_claude_dir
+    test_meta_json_guard_sentinel_venv_no_sentinel_file
+    test_meta_json_guard_feature_id_from_projects_path
+    test_meta_json_guard_feature_id_unknown_path
+    test_meta_json_guard_deny_log_has_no_action
+    test_meta_json_guard_degraded_log_timestamp_format
+    test_meta_json_guard_deny_mentions_all_mcp_tools
+    test_meta_json_guard_creates_log_dir_if_missing
+    test_meta_json_guard_no_crash_on_missing_glob_path
+    test_meta_json_guard_action_field_distinguishes_deny_vs_degraded
+    test_meta_json_guard_degraded_output_is_exactly_empty_json
+    test_meta_json_guard_deny_reason_non_empty_with_guidance
+    test_meta_json_guard_deny_path_latency
+    test_meta_json_guard_degraded_permit_path_latency
+    test_meta_json_guard_deny_structure_matches_spec
 
     echo ""
     echo "--- Path Portability Tests ---"

@@ -2,10 +2,11 @@
   "id": "040",
   "slug": "complete-phase-missing-completed",
   "mode": "standard",
-  "status": "active",
+  "status": "completed",
   "created": "2026-03-17T16:38:22.848782+00:00",
+  "completed": "2026-03-17T16:56:03.038494+00:00",
   "branch": "feature/040-complete-phase-missing-completed",
-  "lastCompletedPhase": "implement",
+  "lastCompletedPhase": "finish",
   "phases": {
     "brainstorm": {
       "started": "2026-03-17T16:38:22.848726+00:00"
@@ -36,7 +37,8 @@
       "iterations": 1
     },
     "finish": {
-      "started": "2026-03-17T16:52:48.714249+00:00"
+      "started": "2026-03-17T16:52:48.714249+00:00",
+      "completed": "2026-03-17T16:56:03.038494+00:00"
     }
   }
 }

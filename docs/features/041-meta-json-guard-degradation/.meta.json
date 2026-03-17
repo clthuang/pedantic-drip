@@ -1,0 +1,38 @@
+{
+  "id": "041",
+  "slug": "meta-json-guard-degradation",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-03-17T17:37:06.274975+00:00",
+  "branch": "feature/041-meta-json-guard-degradation",
+  "lastCompletedPhase": "implement",
+  "phases": {
+    "brainstorm": {
+      "started": "2026-03-17T17:37:06.274931+00:00"
+    },
+    "specify": {
+      "started": "2026-03-17T17:37:38.940767+00:00",
+      "completed": "2026-03-17T17:44:47.327191+00:00",
+      "iterations": 2
+    },
+    "design": {
+      "started": "2026-03-17T17:44:58.855523+00:00",
+      "completed": "2026-03-17T17:56:42.736341+00:00",
+      "iterations": 3
+    },
+    "create-plan": {
+      "started": "2026-03-17T17:57:05.551170+00:00",
+      "completed": "2026-03-17T18:07:09.984458+00:00",
+      "iterations": 3
+    },
+    "create-tasks": {
+      "completed": "2026-03-17T18:17:55.482647+00:00",
+      "iterations": 5
+    },
+    "implement": {
+      "started": "2026-03-17T18:18:35.898694+00:00",
+      "completed": "2026-03-17T18:37:52.479492+00:00",
+      "iterations": 2
+    }
+  }
+}
