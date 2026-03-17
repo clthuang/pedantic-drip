@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- MCP server bootstrap race condition — concurrent server starts no longer cause duplicate venv creation or partial dependency installs
+- Shared `bootstrap-venv.sh` library replaces duplicated bootstrap logic across all 4 MCP server wrappers (`run-memory-server.sh`, `run-entity-server.sh`, `run-workflow-server.sh`, `run-ui-server.sh`)
+- Atomic mkdir-based locking with spin-wait for safe concurrent venv initialization
+- Canonical dependency list in single location prevents per-consumer dependency subset drift
+
 ## [4.13.2] - 2026-03-17
 
 ### Added
