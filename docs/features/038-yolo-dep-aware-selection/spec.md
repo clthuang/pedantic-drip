@@ -30,6 +30,9 @@ After confirming a feature has `status: "active"` (existing check, line 95), add
    - Check `status` field
 4. If ANY dependency has `status != "completed"` → skip this feature
 5. If dependency `.meta.json` is missing or unparseable → treat as unmet (fail-safe)
+6. If any element in `depends_on_features` is not a string → treat as unmet (fail-safe)
+
+Dependencies are checked in array order; the first unmet dependency encountered (by array position) is reported.
 
 **Implementation constraint:** Use a single batched Python subprocess per feature (not one per dependency). The existing loop already spawns Python to read status; extend that call to also check dependencies.
 
@@ -71,7 +74,7 @@ def check_feature_deps(meta_path: str, features_dir: str) -> tuple[bool, str | N
 - **Stuck-detection (lines 147-154):** No change. Stuck-detection only fires when `stop_hook_active=true` (i.e., the hook previously issued a block). When all features are skipped by dependency check, no block is issued, so stuck-detection never activates for this case.
 - **Max iterations (lines 159-169):** No change. `stop_count` is only incremented when a block IS issued. Skipped features that lead to `exit 0` don't increment the counter.
 - **Usage limit (lines 31-70):** No change. Runs before feature selection.
-- **stop_count (OQ-1):** When all active features are skipped (no eligible candidate), `stop_count` is not incremented and not reset — the hook simply allows stop via `exit 0` before reaching the block/count logic. No change needed.
+- **stop_count (OQ-1 resolved):** When all active features are skipped (no eligible candidate), `stop_count` is neither incremented nor reset — the hook exits via `exit 0` before reaching counter logic. This deviates from the PRD's suggestion to reset, but is simpler and achieves the same effect (no false stuck-detection since no block is issued).
 
 ## Acceptance Criteria
 
@@ -168,3 +171,4 @@ These use mock `.meta.json` directories created in the test setup, following exi
 | `plugins/iflow/hooks/lib/yolo_deps.py` | **New.** `check_feature_deps()` function |
 | `plugins/iflow/hooks/yolo-stop.sh` | Import and call `check_feature_deps()` in feature selection loop |
 | `plugins/iflow/hooks/tests/test_yolo_stop_phase_logic.py` | New `TestCheckFeatureDeps` test class |
+| `plugins/iflow/hooks/tests/test-hooks.sh` | Two integration test cases for AC-8, AC-9 |
