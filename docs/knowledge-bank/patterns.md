@@ -557,3 +557,19 @@ Use ATTACH DATABASE to reference the source DB and execute SQL-level INSERT OR I
 - Keywords: ["sqlite", "attach-database", "merge", "import", "sql-level", "migration"]
 - Last observed: Feature 037
 - Observation count: 1
+
+### Pattern: Shared Bootstrap Library for Concurrent-Process Resource Initialization
+When N concurrent processes share a resource requiring one-time initialization (venv creation, DB migration, asset compilation), extract all initialization logic into a single sourced/imported library implementing: (1) `mkdir`-based atomic lock, (2) sentinel file written only after initialization fully completes, (3) spin-wait on sentinel for non-leader processes, (4) self-healing fast-path that verifies resource health on every entry, (5) single canonical requirements list serving all consumers.
+- Observed in: Feature 039, design phase — bootstrap-venv.sh sourced by 4 concurrent server scripts
+- Confidence: high
+- Keywords: ["shared-library", "bootstrap", "concurrent-processes", "atomic-lock", "sentinel-file", "mkdir-lock", "self-healing", "venv", "race-condition"]
+- Last observed: Feature 039
+- Observation count: 1
+
+### Pattern: File-Based Counters for Cross-Subshell Test Tallying in Bash
+When a bash test suite uses subshells for test isolation, use file-based counters (write PASS/FAIL increments to temp files, read totals at end) rather than shell variables. Shell variables mutated inside subshells are silently discarded at subshell exit; the parent sees the original value and test counts appear vacuously correct.
+- Observed in: Feature 039, implement phase — PASS_FILE/FAIL_FILE architecture in test_bootstrap_venv.sh
+- Confidence: high
+- Keywords: ["bash-testing", "subshell", "test-counter", "file-based-counter", "silent-failure"]
+- Last observed: Feature 039
+- Observation count: 1
