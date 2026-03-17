@@ -1538,7 +1538,7 @@ assert 'X-blocked' not in d['reason'], f'X-blocked should not be selected'
         json_ok=true
     fi
 
-    if echo "$stderr_content" | grep -q "Skipped X-blocked.*Z-dep" 2>/dev/null; then
+    if echo "$stderr_content" | grep -q "Skipped X-blocked.*Z-dep"; then
         skip_diag=true
     fi
 
