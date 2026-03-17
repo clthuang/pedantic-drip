@@ -116,8 +116,9 @@ Process D (ui-server):         [version guard][sys check][no venv] → lock busy
 
 **Internal functions:**
 - `check_python_version` — FR-3 implementation
-- `check_system_python` — System python3 fallback: verifies ALL canonical deps are importable on system python3 (not just the calling server's deps). Behavioral change from current scripts where each checks different subsets. If all deps are importable, sets `PYTHON=python3` and returns 0; otherwise returns 1 to proceed to venv path.
+- `check_system_python` — System python3 fallback: verifies ALL canonical deps are importable on system python3 (not just the calling server's deps). **Spec deviation:** The spec Design Notes say "preserved as-is" for this path, but the current per-server dep subsets are the root cause of RC-2 (entity-server checks only `mcp`, skips `numpy` which memory-server needs). Unifying to check ALL deps is the principled fix. Trade-off: this makes the system python3 path a no-op in practice (no system has all 8 deps globally), but it was already unreliable — dev machines with `uv sync`'d global python are the only case where it triggered, and those machines also have the venv. This is an acceptable behavioral change; the spec should be amended during implementation to replace "preserved as-is" with "unified to check all canonical deps". If all deps are importable, sets `PYTHON=python3` and returns 0; otherwise returns 1 to proceed to venv path.
 - `check_venv_deps` — FR-2 fast-path import verification
+- `create_venv` — Creates venv at given path. Uses `uv venv` if available, falls back to `python3 -m venv`. Arguments: venv_dir, server_name (for logging). All output to stderr.
 - `install_all_deps` — Installs all canonical deps (uv preferred, pip fallback)
 - `acquire_lock` — mkdir-based lock with spin-wait + stale detection (FR-1)
 - `release_lock` — rmdir + sentinel write
@@ -179,6 +180,8 @@ Process D (ui-server):         [version guard][sys check][no venv] → lock busy
 
 **Trade-off:** Granularity is 1 minute (find -mmin rounds). A lock at 119s won't be detected until ~180s. Acceptable — the spec says 120s is the threshold, and the extra ~60s worst-case is within the "minimize overhead" guidance (AC-1.4).
 
+**Interaction with spin-wait timeout:** In the concurrent launch scenario, if the leader crashes at T=0, waiters timeout at T=120s (AC-1.5) *before* stale detection would trigger at T≈180s. This is correct: waiters fail fast via timeout, not via stale detection. Stale detection serves a different purpose — cleaning up locks from a *previous* session's crash, discovered by processes in a *new* session.
+
 ### TD-5: Indexed Arrays for Dep List (Not Associative)
 
 **Decision:** Two index-aligned bash arrays — `DEP_PIP_NAMES` and `DEP_IMPORT_NAMES` — at the top of `bootstrap-venv.sh`. Derived from `pyproject.toml` `[project].dependencies`.
@@ -219,7 +222,11 @@ If a legitimate bootstrap takes >120s (very slow network for pip install), a wai
 
 If a user manually deletes `.bootstrap-complete` from the venv, the next server start will re-verify deps (import check) and either find them present (re-write sentinel) or re-install. Self-healing handles this.
 
-### R4: SIGKILL During Bootstrap (Low)
+### R4: Leader Install Failure (Low)
+
+If the bootstrap leader's `pip install` / `uv pip install` fails (network error, package conflict), the EXIT trap releases the lock but `.bootstrap-complete` is never written. Waiters spin for 120s then timeout (AC-1.5). The partial venv (`bin/python` exists, deps incomplete) is left behind. On next server restart, the fast-path detects missing deps and self-heals (AC-2.4). **The 120s waiter timeout is acceptable** because install failures are rare and the timeout matches the spec-mandated ceiling. A failure sentinel (`.bootstrap-failed`) was considered but rejected as over-engineering — the self-healing fast-path handles recovery on retry.
+
+### R5: SIGKILL During Bootstrap (Low)
 
 If the bootstrap leader is killed with SIGKILL (not trappable), the trap won't fire and the lock persists. **Mitigated** by stale detection: the next server start (or another waiter) detects mtime >120s and cleans up.
 
@@ -370,7 +377,7 @@ This ensures the lock is released even if `uv pip install` or `python3 -m venv` 
 
 ### I6: Server Script Interface (Post-Refactor)
 
-Each server script follows this template:
+Each server script follows this template. **Contract:** `PYTHONPATH` must be exported *before* `source bootstrap-venv.sh`, as `check_system_python` depends on it for import verification.
 
 ```bash
 #!/bin/bash
