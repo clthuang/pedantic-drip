@@ -77,13 +77,18 @@ Input (stdin JSON)
 
 ### C1: `check_mcp_available()`
 
+Define this function near the top of the file, grouped with `log_guard_event` (around line 40), before the sentinel check call site.
+
 ```bash
 # Returns 0 if MCP sentinel found (available), 1 if not (unavailable)
+# Both stdout and stderr suppressed — stdout must not leak into hook JSON output.
 # Stderr suppressed per spec R1 idiom.
 check_mcp_available() {
-    ls "$HOME"/.claude/plugins/cache/*/iflow*/*/.venv/.bootstrap-complete 2>/dev/null
+    ls "$HOME"/.claude/plugins/cache/*/iflow*/*/.venv/.bootstrap-complete >/dev/null 2>/dev/null
 }
 ```
+
+**`set -e` interaction:** The call site uses `if ! check_mcp_available; then`, which per POSIX suppresses errexit for the function body. The ERR trap (`install_err_trap`) will NOT fire when `ls` returns non-zero inside this `if` context.
 
 ### Degraded Permit Path (call site)
 
@@ -94,6 +99,13 @@ if ! check_mcp_available; then
     echo '{}'
     exit 0
 fi
+```
+
+### Deny Path (updated call site)
+
+```bash
+# Existing line 63, just function name change (no action param for deny)
+log_guard_event "$FILE_PATH" "$TOOL_NAME"
 ```
 
 ### C2: `log_guard_event(file_path, tool_name [, action])`
