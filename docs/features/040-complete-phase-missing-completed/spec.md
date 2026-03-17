@@ -32,7 +32,7 @@ When `status == "active"`, the top-level `completed` field MUST NOT appear in `.
 
 When `status == "abandoned"`, set `meta["completed"]` using the same logic as R1/R2. `validate.sh` requires `completed` for both `completed` and `abandoned` statuses.
 
-Note: For abandoned features, finish phase timing will typically be absent, so R2 fallback (`_iso_now()`) is the expected path. The completed timestamp will reflect the time of the abandon-action projection.
+Note: Abandoned features never reach the finish phase, so finish phase timing is always absent. R2 fallback (`_iso_now()`) is the only path for abandoned status. The completed timestamp will reflect the time of the abandon-action projection.
 
 ## Acceptance Criteria
 
