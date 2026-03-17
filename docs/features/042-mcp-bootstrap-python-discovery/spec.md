@@ -25,12 +25,12 @@ Replace `check_python_version()` with a new `discover_python()` function that se
 4. On failure (no interpreter >= 3.12 found), emit a diagnostic listing what was tried and exit 1
 
 All callsites that currently use bare `python3` must be updated to use `$PYTHON_FOR_VENV`:
-- `check_python_version()` line 28: `python3 -c "import sys..."` → use `$PYTHON_FOR_VENV` (replaced by `discover_python()`)
-- `check_system_python()` line 54: `check_venv_deps python3` → `check_venv_deps "$PYTHON_FOR_VENV"`
-- `create_venv()` line 75: `python3 -m venv` → `"$PYTHON_FOR_VENV" -m venv`
-- `create_venv()` line 72: `uv venv "$venv_dir"` → `uv venv --python "$PYTHON_FOR_VENV" "$venv_dir"`
+- `check_python_version()`: `python3 -c "import sys..."` → replaced by `discover_python()`
+- `check_system_python()`: `check_venv_deps python3` → `check_venv_deps "$PYTHON_FOR_VENV"`
+- `create_venv()` non-uv path: `python3 -m venv` → `"$PYTHON_FOR_VENV" -m venv`
+- `create_venv()` uv path: `uv venv "$venv_dir"` → `uv venv --python "$PYTHON_FOR_VENV" "$venv_dir"`
 
-**Platform scope:** macOS (Apple Silicon and Intel). The search paths cover Homebrew locations. Linux users typically have correct PATH ordering; adding `/usr/bin/python3.1x` is out of scope but the bare `python3` fallback covers Linux.
+**Platform scope:** macOS (Apple Silicon and Intel). Assumes versioned `python3.XX` executables exist in `/opt/homebrew/bin` (standard Homebrew symlink behavior). Formula-specific paths like `/opt/homebrew/opt/python@3.XX/bin/` are out of scope. Linux users typically have correct PATH ordering; the bare `python3` fallback covers Linux.
 
 **Acceptance Criteria:**
 - AC-1.1: On a system where `/usr/bin/python3` is 3.9 and `/opt/homebrew/bin/python3.13` exists, bootstrap discovers and uses 3.13
@@ -61,7 +61,7 @@ When bootstrap fails, write a diagnostic to a well-known log file that session-s
 
 1. On `discover_python()` failure, write a JSON line to `~/.claude/iflow/mcp-bootstrap-errors.log`
 2. On other bootstrap failures (venv creation, dep install, lock timeout), write a JSON line similarly
-3. Log file is append-only. Session-start truncates entries older than 1 hour after reading (simple rotation).
+3. Log file is append-only. Session-start truncates entries older than 1 hour after reading (simple rotation). Truncation is best-effort with no locking — concurrent truncation of old entries is safe since only old entries are removed and append is atomic for lines < PIPE_BUF.
 
 **Log entry JSON schema:**
 - Required fields: `timestamp` (ISO-8601 UTC), `server` (string, e.g. "memory-server"), `error` (string enum: "python_version", "venv_creation", "dep_install", "lock_timeout"), `message` (human-readable string)
@@ -86,7 +86,7 @@ When bootstrap fails, write a diagnostic to a well-known log file that session-s
 Add a check that reads `~/.claude/iflow/mcp-bootstrap-errors.log` for recent errors and surfaces them prominently.
 
 1. After existing first-run detection (near the venv existence check in `build_session_context`), check for bootstrap error log entries from the last 10 minutes. Timestamps are UTC ISO-8601; comparison uses `date +%s` epoch arithmetic: `current_epoch - entry_epoch < 600`.
-2. If recent errors found, emit a **hard warning** (not buried in additionalContext) — prepend to context so it appears first:
+2. If recent errors found, prepend the warning text to the `additionalContext` string (before memory context and workflow status) so it appears first in the agent's context. "Hard warning" means positioning, not a separate protocol mechanism:
    ```
    WARNING: MCP servers failed to start. Workflow tools (transition_phase, store_memory, etc.) are unavailable.
    Error: Python >= 3.12 required, found 3.9. Run: bash "{PLUGIN_ROOT}/scripts/setup.sh"
@@ -106,11 +106,11 @@ Add a check that reads `~/.claude/iflow/mcp-bootstrap-errors.log` for recent err
 
 The current first-run message is a soft note buried in additionalContext. Strengthen it:
 
-1. When `.venv` is missing OR `~/.claude/iflow/memory` is missing, emit the setup prompt **before** other context (not appended at the end)
+1. When `.venv` is missing OR `~/.claude/iflow/memory` is missing, evaluate in `main()` before `build_context()` and prepend to `full_context`, ensuring it appears before both memory and workflow context
 2. Change wording from informational to actionable: "Setup required for MCP workflow tools. Run: bash \"{PLUGIN_ROOT}/scripts/setup.sh\""
 
 **Acceptance Criteria:**
-- AC-5.1: When `.venv` is missing, setup prompt appears before feature status in context output
+- AC-5.1: When `.venv` is missing, setup prompt appears before feature status in context output (evaluated in `main()` before `build_context()`)
 - AC-5.2: Setup message is clearly actionable (includes the exact command to run)
 
 ### R6: Stale Sentinel Handling in meta-json-guard
