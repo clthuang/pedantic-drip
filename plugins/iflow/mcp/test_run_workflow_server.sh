@@ -54,6 +54,7 @@ MOCK
 
     echo '# mock' > "$T/plugin/mcp/workflow_state_server.py"
     cp "$WRAPPER" "$T/plugin/mcp/run-workflow-server.sh"
+    cp "$SCRIPT_DIR/bootstrap-venv.sh" "$T/plugin/mcp/"
     chmod +x "$T/plugin/mcp/run-workflow-server.sh"
 
     cd "$T/plugin/mcp"
@@ -108,6 +109,7 @@ MOCK
 
     echo '# mock' > "$T/plugin/mcp/workflow_state_server.py"
     cp "$WRAPPER" "$T/plugin/mcp/run-workflow-server.sh"
+    cp "$SCRIPT_DIR/bootstrap-venv.sh" "$T/plugin/mcp/"
     chmod +x "$T/plugin/mcp/run-workflow-server.sh"
 
     cd "$T/plugin/mcp"
@@ -134,6 +136,7 @@ MOCK
 
     echo '# mock' > "$T/plugin/mcp/workflow_state_server.py"
     cp "$WRAPPER" "$T/plugin/mcp/run-workflow-server.sh"
+    cp "$SCRIPT_DIR/bootstrap-venv.sh" "$T/plugin/mcp/"
     chmod +x "$T/plugin/mcp/run-workflow-server.sh"
 
     cd "$T/plugin/mcp"

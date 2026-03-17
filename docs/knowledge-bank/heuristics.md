@@ -571,3 +571,11 @@ Add a manifest_version field at design time, even for v1. Version fields are fre
 - Keywords: ["manifest-versioning", "migration-bundle", "schema-evolution", "forward-compatibility"]
 - Last observed: Feature 037
 - Observation count: 1
+
+### Assume Bash 3.2 Compatibility for Any Script Targeting macOS
+When writing bash scripts that must run on macOS, assume bash 3.2 (Apple ships this at `/bin/bash` under GPLv3 embargo since 2007). Specifically: (1) no associative arrays (`declare -A`) — use parallel indexed arrays; (2) `command -v` not `which`; (3) `mkdir` not `flock` for locks; (4) `find -mmin` not `stat` for portable mtime; (5) no `${!var}` nameref.
+- Source: Feature 039, design TD-5 — macOS bash 3.2 constraint drove indexed arrays and mkdir-based locking
+- Confidence: high
+- Keywords: ["bash", "macos", "portability", "bash-3-2", "associative-arrays", "flock", "mkdir-lock", "find-mmin"]
+- Last observed: Feature 039
+- Observation count: 1

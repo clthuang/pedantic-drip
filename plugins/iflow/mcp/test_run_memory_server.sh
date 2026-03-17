@@ -38,8 +38,9 @@ MOCK
     # Create a minimal server script
     echo '# mock server' > "$T/plugin/mcp/memory_server.py"
 
-    # Copy the wrapper and adjust PLUGIN_DIR detection
+    # Copy the wrapper and shared bootstrap library
     cp "$WRAPPER" "$T/plugin/mcp/run-memory-server.sh"
+    cp "$SCRIPT_DIR/bootstrap-venv.sh" "$T/plugin/mcp/"
     chmod +x "$T/plugin/mcp/run-memory-server.sh"
 
     # Run the wrapper (exec is replaced by the mock python)
@@ -69,6 +70,7 @@ MOCK
 
     echo '# mock' > "$T/plugin/mcp/memory_server.py"
     cp "$WRAPPER" "$T/plugin/mcp/run-memory-server.sh"
+    cp "$SCRIPT_DIR/bootstrap-venv.sh" "$T/plugin/mcp/"
     chmod +x "$T/plugin/mcp/run-memory-server.sh"
 
     cd "$T/plugin/mcp"
@@ -96,6 +98,7 @@ MOCK
 
     echo '# mock' > "$T/plugin/mcp/memory_server.py"
     cp "$WRAPPER" "$T/plugin/mcp/run-memory-server.sh"
+    cp "$SCRIPT_DIR/bootstrap-venv.sh" "$T/plugin/mcp/"
     chmod +x "$T/plugin/mcp/run-memory-server.sh"
 
     cd "$T/plugin/mcp"
@@ -122,6 +125,7 @@ MOCK
 
     echo '# mock' > "$T/plugin/mcp/memory_server.py"
     cp "$WRAPPER" "$T/plugin/mcp/run-memory-server.sh"
+    cp "$SCRIPT_DIR/bootstrap-venv.sh" "$T/plugin/mcp/"
     chmod +x "$T/plugin/mcp/run-memory-server.sh"
 
     cd "$T/plugin/mcp"

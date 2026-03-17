@@ -554,3 +554,13 @@ When design selects ATTACH DATABASE or SQL-level merge patterns, failing to enum
 - Keywords: ["sql-injection", "dynamic-sql", "attach-database", "security-surface", "design-review", "migration-tool"]
 - Last observed: Feature 037
 - Observation count: 1
+
+### Anti-Pattern: Per-Consumer Dependency Subsets for a Shared Resource
+Defining per-consumer dependency subsets for a shared resource (venv, DB schema, cache) instead of a single canonical dependency list. Whichever consumer bootstraps the resource first installs only its subset; subsequent consumers find the resource in a partial state and fail at import/access time.
+- Observed in: Feature 039, prd.md RC-2 — entity-server and workflow-server installed only `mcp`; memory-server required `numpy` and `dotenv`; whichever ran first left an incomplete venv
+- Cost: All MCP servers non-functional on fresh marketplace installs; required architectural refactor
+- Instead: Define a single canonical dependency list at the shared resource level serving all consumers
+- Confidence: high
+- Keywords: ["shared-resource", "dependency-subset", "bootstrap", "venv", "canonical-list", "partial-state"]
+- Last observed: Feature 039
+- Observation count: 1

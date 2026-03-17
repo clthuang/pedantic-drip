@@ -75,6 +75,9 @@ plugins/iflow/.venv/bin/python -m pytest plugins/iflow/mcp/test_memory_server.py
 # Run MCP bootstrap wrapper tests
 bash plugins/iflow/mcp/test_run_memory_server.sh
 
+# Run MCP bootstrap shared library tests (unit + integration, ~2-5 min)
+bash plugins/iflow/mcp/test_bootstrap_venv.sh
+
 # Run entity registry tests (database, backfill, server helpers, frontmatter, frontmatter_sync, search — 710+ tests)
 plugins/iflow/.venv/bin/python -m pytest plugins/iflow/hooks/lib/entity_registry/ -v
 
@@ -115,6 +118,7 @@ bash plugins/iflow/hooks/tests/test-hooks.sh
 # Release (bumps version, merges develop→main, tags)
 # Uses --ci for non-interactive; BUMP_OVERRIDE=patch|minor|major to force bump type
 bash scripts/release.sh --ci
+# Preconditions: (1) clean working tree — git stash first, (2) CHANGELOG.md needs entries under [Unreleased]
 ```
 
 ## Key References
