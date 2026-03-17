@@ -53,6 +53,10 @@ Phase 4: Spec Amendment (no deps — documentation only)
 
 All tests run in subshells for isolation. Each test uses `(subshell)` to prevent PATH/env leaks between tests.
 
+**Stub for RED phase:** Create a minimal `bootstrap-venv.sh` stub with empty function bodies (all functions `return 1`) so tests can source it and fail on assertions rather than on file-not-found. Task 1.2 replaces the stub with the real implementation.
+
+**Expected runtime:** ~15-20 seconds (lock timeout tests use shortened `BOOTSTRAP_TIMEOUT=3`).
+
 ### Task 1.2: Create `bootstrap-venv.sh` (GREEN)
 
 **Goal:** Implement the shared bootstrap library. Make tests from Task 1.1 pass.
@@ -98,9 +102,9 @@ All tests run in subshells for isolation. Each test uses `(subshell)` to prevent
 7. **`acquire_lock` (I5, FR-1):**
    - Takes `lock_dir`, `sentinel`, `server_name`
    - Phase 1: `mkdir "$lock_dir"` — if succeeds return 0
-   - Phase 2a: stale check via `find "$lock_dir" -maxdepth 0 -mmin +2` — if stale, `rmdir "$lock_dir"` + retry mkdir once; if retry fails, fall through to 2b
+   - Phase 2a: stale check via `find "$lock_dir" -maxdepth 0 -mmin +2` — if stale, `rmdir "$lock_dir"` (must use `rmdir`, not `rm -rf`, to preserve the empty-dir invariant) + retry mkdir once; if retry fails, fall through to 2b
    - Phase 2b: spin-wait on sentinel file (`sleep 1` intervals, `$BOOTSTRAP_TIMEOUT` iterations) — return 1 if sentinel appears, exit 1 if timeout (AC-1.5)
-   - **Constraint:** Lock directory must remain empty (no PID files or other contents). This ensures `rmdir` works reliably for both normal release and stale cleanup.
+   - **Constraint:** Lock directory must remain empty (no PID files or other contents). This ensures `rmdir` works reliably for both normal release and stale cleanup. All lock operations (release, stale cleanup) use `rmdir` exclusively — never `rm -rf`.
 
 8. **`release_lock` (I5):**
    - Takes `lock_dir`
@@ -112,7 +116,7 @@ All tests run in subshells for isolation. Each test uses `(subshell)` to prevent
    - Step 2: `check_system_python` — if returns 0, return (PYTHON already exported)
    - Step 3: Fast-path — if `bin/python` exists AND sentinel (`.bootstrap-complete`) exists:
      - If `check_venv_deps` passes → export `PYTHON="$venv_dir/bin/python"`, return
-     - If fails → fall through to Step 4 (acquire lock before installing, to avoid concurrent install race)
+     - If fails → fall through to Step 4 (acquire lock before installing, to avoid concurrent install race). **Note:** The stale sentinel is NOT deleted — it is harmless because Step 4 (both leader and waiter paths) always verify deps via `check_venv_deps` before proceeding. Deleting the sentinel could cause spin-waiters to miss the signal and timeout unnecessarily.
    - Step 3b: Sentinel recovery — if `bin/python` exists but NO sentinel:
      - If `check_venv_deps` passes → re-write sentinel (`touch "$venv_dir/.bootstrap-complete"`), export PYTHON, return. This handles the case where a previous leader installed deps but crashed before writing the sentinel.
      - If fails → fall through to Step 4
@@ -177,6 +181,8 @@ All 4 tasks follow the same pattern (I6 template). Each script becomes ~15 lines
 2. Add `cp bootstrap-venv.sh "$TEMP_DIR/"` (or equivalent) before running the wrapper
 3. Update any assertions that check for old inline bootstrap output patterns (e.g., "bootstrapping venv with uv" messages may now come from bootstrap-venv.sh instead of the wrapper)
 4. Run all updated tests and verify they pass
+
+**Note on Test 4 (server starts without crash):** Tests in entity/workflow scripts that run the real wrapper in-place (not a temp copy) will now exercise `bootstrap-venv.sh` with the real venv. No changes needed — this validates end-to-end behavior, which is desirable.
 
 **Files to update and run:**
 - `plugins/iflow/mcp/test_run_memory_server.sh`
