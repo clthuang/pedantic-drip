@@ -1,0 +1,17 @@
+{
+  "id": "041",
+  "slug": "meta-json-guard-degradation",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-03-17T17:37:06.274975+00:00",
+  "branch": "feature/041-meta-json-guard-degradation",
+  "lastCompletedPhase": null,
+  "phases": {
+    "brainstorm": {
+      "started": "2026-03-17T17:37:06.274931+00:00"
+    },
+    "specify": {
+      "started": "2026-03-17T17:37:38.940767+00:00"
+    }
+  }
+}
