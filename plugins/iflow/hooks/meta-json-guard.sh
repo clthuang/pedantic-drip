@@ -36,13 +36,19 @@ if [[ "$FILE_PATH" != *".meta.json" ]]; then
     exit 0
 fi
 
-# Log blocked attempt (FR-11 instrumentation)
-log_blocked_attempt() {
+# Check if MCP workflow tools are available via bootstrap sentinel
+check_mcp_available() {
+    ls "$HOME"/.claude/plugins/cache/*/iflow*/*/.venv/.bootstrap-complete >/dev/null 2>/dev/null
+}
+
+# Log guard event (FR-11 instrumentation)
+log_guard_event() {
     local file_path="$1"
     local tool_name="$2"
+    local action="${3:-}"
     local log_dir="$HOME/.claude/iflow"
     local log_file="$log_dir/meta-json-guard.log"
-    local timestamp feature_id
+    local timestamp feature_id action_field
 
     mkdir -p "$log_dir"
     timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -56,14 +62,28 @@ log_blocked_attempt() {
         feature_id="unknown"
     fi
 
+    # Build optional action field
+    if [[ -n "$action" ]]; then
+        action_field=",\"action\":\"$(escape_json "$action")\""
+    else
+        action_field=""
+    fi
+
     # Append JSONL (>> is atomic for lines < PIPE_BUF on POSIX)
-    echo "{\"timestamp\":\"$timestamp\",\"tool\":\"$tool_name\",\"path\":\"$(escape_json "$file_path")\",\"feature_id\":\"$feature_id\"}" >> "$log_file"
+    echo "{\"timestamp\":\"$timestamp\",\"tool\":\"$tool_name\",\"path\":\"$(escape_json "$file_path")\",\"feature_id\":\"$feature_id\"${action_field}}" >> "$log_file"
 }
 
-log_blocked_attempt "$FILE_PATH" "$TOOL_NAME"
+# Degraded permit: allow write when MCP tools unavailable
+if ! check_mcp_available; then
+    log_guard_event "$FILE_PATH" "$TOOL_NAME" "permit-degraded"
+    echo '{}'
+    exit 0
+fi
+
+log_guard_event "$FILE_PATH" "$TOOL_NAME"
 
 # Deny (inline JSON -- no shared output_block helper exists across hooks)
-REASON="Direct .meta.json writes are blocked. Use MCP workflow tools instead: transition_phase() to enter a phase, complete_phase() to finish a phase, or init_feature_state() to create a new feature."
+REASON="Direct .meta.json writes are blocked. Use MCP workflow tools instead: transition_phase(feature_type_id, target_phase) to enter a phase, complete_phase(feature_type_id, phase) to finish a phase, or init_feature_state(...) to create a new feature. The feature_type_id format is \"feature:{id}-{slug}\" (e.g., \"feature:041-meta-json-guard-degradation\"). If MCP workflow tools are not available in this session, the guard will allow direct writes as a fallback."
 ESCAPED_REASON=$(escape_json "$REASON")
 cat <<EOF
 {
