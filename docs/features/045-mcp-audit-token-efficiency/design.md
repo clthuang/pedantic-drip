@@ -417,28 +417,31 @@ def upsert_workflow_phase(self, type_id: str, **kwargs) -> None:
     if invalid:
         raise ValueError(f"Invalid workflow_phases columns: {invalid}")
 
-    entity_uuid, _ = self._resolve_identifier(type_id)
+    now = self._now_iso()
 
-    # INSERT OR IGNORE (no-op if exists)
+    # Atomic INSERT with all fields (no partial row risk)
+    wf = kwargs.get("workflow_phase")
+    kc = kwargs.get("kanban_column")
     self._conn.execute(
-        "INSERT OR IGNORE INTO workflow_phases (entity_uuid, type_id) VALUES (?, ?)",
-        (entity_uuid, type_id),
+        "INSERT OR IGNORE INTO workflow_phases "
+        "(type_id, workflow_phase, kanban_column, updated_at) VALUES (?, ?, ?, ?)",
+        (type_id, wf, kc, now),
     )
 
-    # UPDATE with provided fields + timestamp
+    # UPDATE with provided fields (handles existing row case)
     if kwargs:
-        kwargs["updated_at"] = self._now_iso()
+        kwargs["updated_at"] = now
         set_parts = []
         params = []
         for key, value in kwargs.items():
             set_parts.append(f"{key} = ?")
             params.append(value)
-        params.append(entity_uuid)
+        params.append(type_id)
         self._conn.execute(
-            f"UPDATE workflow_phases SET {', '.join(set_parts)} WHERE entity_uuid = ?",
+            f"UPDATE workflow_phases SET {', '.join(set_parts)} WHERE type_id = ?",
             params,
         )
-        self._conn.commit()
+    self._conn.commit()
 ```
 
 ### P2-C3: feature_lifecycle.py — Feature State Initialization
@@ -635,15 +638,20 @@ def transition_entity_phase(db: EntityDatabase, type_id: str,
 ### I5: feature_lifecycle public API
 ```python
 # hooks/lib/workflow_engine/feature_lifecycle.py
-def init_feature_state(db, engine, feature_dir, feature_id, slug, mode, branch,
-                       brainstorm_source=None, backlog_source=None,
-                       status="active") -> dict
+def init_feature_state(db, engine, artifacts_root, feature_dir, feature_id,
+                       slug, mode, branch, brainstorm_source=None,
+                       backlog_source=None, status="active") -> dict
 
-def init_project_state(db, engine, project_dir, project_id, slug, branch,
+def init_project_state(db, engine, artifacts_root, project_dir, project_id,
+                       slug, branch, features="", milestones="",
                        brainstorm_source=None, status="active") -> dict
 
-def activate_feature(db, engine, feature_type_id) -> dict
+def activate_feature(db, engine, artifacts_root, feature_type_id) -> dict
 ```
+
+**Return type convention:** Library functions return `dict`. MCP handlers call `json.dumps()` on the result. This matches the thin-wrapper pattern — library returns data, MCP serializes.
+
+**Decorator handling:** MCP handlers retain `@_with_error_handling` and `@_catch_entity_value_error` decorators. Library functions raise `ValueError` on validation failures; the MCP decorator converts these to structured JSON error responses.
 
 ### I6: EntityDatabase.upsert_workflow_phase()
 ```python
