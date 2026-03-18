@@ -1,0 +1,19 @@
+{
+  "id": "043",
+  "slug": "state-consistency-consolid",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-03-18T04:33:20.131475+00:00",
+  "branch": "feature/043-state-consistency-consolid",
+  "brainstorm_source": "docs/brainstorms/20260318-041527-state-consistency-consolidation.prd.md",
+  "backlog_source": "00038",
+  "lastCompletedPhase": null,
+  "phases": {
+    "brainstorm": {
+      "started": "2026-03-18T04:33:20.131384+00:00"
+    },
+    "specify": {
+      "started": "2026-03-18T04:34:17.461926+00:00"
+    }
+  }
+}

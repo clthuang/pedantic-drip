@@ -38,7 +38,7 @@ The iflow plugin has dual write paths that cause silent divergence between its d
 - Knowledge bank deduplication (fuzzy matching of semantically similar entries)
 - Entity registry garbage collection — "archived" status preserves lineage
 - Migrating `show-status` to a standalone Python CLI tool
-- `list-features` migration to entity registry queries — deferred until `show-status` migration proves the pattern
+- `list-features` migration to entity registry queries — deferred until `show-status` migration proves the pattern (note: PRD success criterion for list-features will be addressed in a follow-up feature)
 
 ## Acceptance Criteria
 
@@ -65,7 +65,7 @@ The iflow plugin has dual write paths that cause silent divergence between its d
 ### AC-5: Brainstorm entity registration
 - Given a brainstorm file exists at `{artifacts_root}/brainstorms/20260318-example.prd.md` with no entity in registry
 - When session-start reconciliation scans brainstorms directory
-- Then a brainstorm entity is registered with `entity_type` = "brainstorm", `entity_id` = filename stem (e.g., "20260318-example"), `entity_type_id` = "brainstorm:20260318-example", `artifact_path` = file path
+- Then a brainstorm entity is registered with `entity_type` = "brainstorm", `entity_id` = filename stem (e.g., "20260318-example"), `entity_type_id` = "brainstorm:20260318-example", `artifact_path` = file path, `status` = "active"
 
 ### AC-6: Brainstorm entity registration (already registered)
 - Given a brainstorm file exists and its entity is already in the registry
@@ -84,13 +84,13 @@ The iflow plugin has dual write paths that cause silent divergence between its d
 
 ### AC-9: Feature abandonment
 - Given an active feature with `.meta.json` status "active" and entity registry status "active"
-- When the abandonment flow is triggered
-- Then `.meta.json` status is set to "abandoned", followed by entity registry status update to "abandoned". If entity registry update fails, `.meta.json` change persists and session-start reconciliation will resolve the drift on next session.
+- When `/iflow:abandon-feature` is run for the feature
+- Then `.meta.json` status is set to "abandoned", followed by entity registry status update to "abandoned". The abandonment command updates only `.meta.json` and entity registry status — it does not call `complete_phase` or modify the `workflow_phases` table. If entity registry update fails, `.meta.json` change persists and session-start reconciliation will resolve the drift on next session.
 
 ### AC-10: show-status via entity registry (MCP available)
 - Given MCP servers are available and entity registry has current data
 - When `/iflow:show-status` runs
-- Then it uses MCP tool calls (`search_entities`, `get_phase`, `list_features_by_status`) to retrieve data, verified by debug logging showing MCP query calls instead of `.meta.json` file reads
+- Then it uses MCP tool calls (`search_entities`, `get_phase`, `list_features_by_status`) to retrieve data. Output includes `Source: entity-registry` footer when MCP is available, vs `Source: filesystem` in fallback mode.
 
 ### AC-11: show-status fallback (MCP unavailable)
 - Given MCP servers are unavailable
@@ -108,9 +108,9 @@ The iflow plugin has dual write paths that cause silent divergence between its d
 - Then total wall-clock elapsed time is under 5 seconds (measured on development machine with warm filesystem cache). Diagnostic logging reports elapsed time per sub-operation.
 
 ### AC-14: Reconciliation fail-open
-- Given MCP servers are unavailable during session-start
-- When reconciliation is triggered
-- Then reconciliation is skipped silently with a warning log, and the session proceeds normally
+- Given the reconciliation orchestrator fails to start (missing venv, DB unavailable, Python import error, or subprocess timeout)
+- When session-start triggers reconciliation
+- Then the failure is caught, logged as a warning, and the session proceeds normally
 
 ### AC-15: Status mapping completeness
 - Given the status reconciliation function
@@ -158,5 +158,5 @@ The iflow plugin has dual write paths that cause silent divergence between its d
 - **Abandonment flow surface:** New `/iflow:abandon-feature` command (separation of concerns — `finish-feature` has completion semantics, abandonment is a different intent).
 
 ## Implementation Constraints
-- Session-start reconciliation MUST be implemented as a single Python subprocess call (orchestrator pattern) to avoid multiplying subprocess overhead. All reconciliation sub-operations (entity status, KB import, brainstorm registration) execute within one Python invocation.
+- Session-start reconciliation MUST be implemented as a single Python subprocess call (orchestrator pattern) to avoid multiplying subprocess overhead. All reconciliation sub-operations (entity status, KB import, brainstorm registration) execute within one Python invocation. The orchestrator directly imports `entity_registry` and `semantic_memory` Python modules (no MCP round-trips during reconciliation — MCP tools are for agent use, the orchestrator uses the underlying libraries).
 - `MarkdownImporter` uses `source_hash` (content hashing) for entry-level dedup, not file-level mtime. The existing dedup mechanism is sufficient for correctness; file-level mtime optimization is a future enhancement if performance requires it.
