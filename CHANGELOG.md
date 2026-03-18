@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Session-start reconciliation orchestrator — syncs entity registry status with `.meta.json`, registers brainstorm entities, and imports markdown KB entries to semantic DB
+- `/iflow:abandon-feature` command — transitions features to abandoned status with entity registry update
+- `show-status` entity registry migration — queries MCP tools instead of scanning filesystem, with promoted brainstorm filtering and filesystem fallback
+
+### Changed
+- `cleanup-brainstorms` now updates entity registry (marks deleted brainstorms as "archived")
+- `show-status` output includes `Source: entity-registry` or `Source: filesystem` footer
+
 ## [4.13.6] - 2026-03-18
 
 ### Added
