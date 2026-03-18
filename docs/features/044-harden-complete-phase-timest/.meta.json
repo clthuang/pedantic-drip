@@ -1,0 +1,17 @@
+{
+  "id": "044",
+  "slug": "harden-complete-phase-timest",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-03-18T07:05:14.804495+00:00",
+  "branch": "feature/044-harden-complete-phase-timest",
+  "lastCompletedPhase": null,
+  "phases": {
+    "brainstorm": {
+      "started": "2026-03-18T07:05:14.804417+00:00"
+    },
+    "specify": {
+      "started": "2026-03-18T07:05:33.691429+00:00"
+    }
+  }
+}

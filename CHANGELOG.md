@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.13.8] - 2026-03-18
+
+### Fixed
+- `_project_meta_json` now adds `completed` timestamp when `lastCompletedPhase == "finish"` as a defensive fallback, preventing CI failures from missing `completed` field when entity status is `None`
+
 ## [4.13.7] - 2026-03-18
 
 ### Added
