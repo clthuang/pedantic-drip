@@ -7,8 +7,8 @@
 - **Files:** `plugins/iflow/mcp/entity_server.py`, `plugins/iflow/hooks/lib/entity_registry/test_entity_server.py`
 - **Steps:**
   1. Add 5 tests to `test_entity_server.py`: `test_register_entity_metadata_dict` (pass dict, verify JSON string in DB), `test_register_entity_metadata_string` (JSON string passthrough), `test_register_entity_metadata_none` (None passthrough), `test_update_entity_metadata_dict` (dict update stored as JSON), `test_register_entity_metadata_invalid_json_string` (graceful error via parse_metadata, annotate as `derived_from: server_helpers:parse_metadata`)
-  2. In `entity_server.py` `register_entity`: change `metadata: str | None = None` to `metadata: str | dict | None = None`. Add `if isinstance(metadata, dict): metadata = json.dumps(metadata)` as standalone statement before the `_process_register_entity` call (line ~144).
-  3. Same change for `update_entity` (line ~224): type annotation + coercion before `parse_metadata(metadata)` call.
+  2. In `entity_server.py` `register_entity`: change `metadata: str | None = None` to `metadata: str | dict | None = None`. Add `if isinstance(metadata, dict): metadata = json.dumps(metadata)` as a standalone statement before line 144 (the `_process_register_entity` call). Note: `parse_metadata(metadata)` is called inline as an argument at line 147 — the coercion must run before this entire call so parse_metadata receives a string.
+  3. Same change for `update_entity` (line ~224): type annotation + coercion as standalone statement before the `_db.update_entity(...)` call where `parse_metadata(metadata)` is called inline at line 249.
   4. Update `register_entity` docstring (line ~137): `"Optional JSON string of additional metadata."` → `"Optional metadata — pass a dict (preferred) or a JSON string; dicts are auto-coerced to JSON."`
   5. Update `update_entity` docstring (line ~239): `"JSON string of metadata to shallow-merge."` → `"Metadata to shallow-merge — pass a dict (preferred) or a JSON string; dicts are auto-coerced. Empty dict '{}' clears."`
   6. Run entity registry tests — all 757+ pass
@@ -35,13 +35,13 @@
   1. Find the entity registry MCP metadata gotcha entry
   2. Replace with: `**Entity registry MCP metadata gotcha:** register_entity and update_entity accept metadata as either a dict or JSON string (dict preferred). Internally coerced to JSON string via json.dumps() before parse_metadata.`
 - **Acceptance:** Gotcha mentions both tools, states dict is preferred, explains coercion
-- **Depends on:** Nothing
+- **Depends on:** Task 1.1 (documents behavior that only exists after coercion is implemented)
 
 ## Dependency Graph
 
 ```
 Stage 1: [1.1]
-Stage 2: [2.1] [2.2]  (parallel, after 1.1)
+Stage 2: [2.1] [2.2]  (parallel, both after 1.1)
 ```
 
 ## Summary
