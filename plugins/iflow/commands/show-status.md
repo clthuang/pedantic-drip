@@ -1,5 +1,5 @@
 ---
-description: Show workspace dashboard with features, branches, and brainstorms
+description: Show workspace dashboard with features, branches, brainstorms, and backlogs
 ---
 
 # /iflow:show-status Command
@@ -9,7 +9,7 @@ Use these values from session context (injected at session start):
 - `{iflow_artifacts_root}` — root directory for feature artifacts (default: `docs`)
 - `{iflow_base_branch}` — base branch for the project (default: `main`)
 
-Display a workspace dashboard with current context, open features, and brainstorms.
+Display a workspace dashboard with current context, open features, brainstorms, and backlogs.
 
 ## Data Source Detection
 
@@ -150,6 +150,32 @@ List files in `{iflow_artifacts_root}/brainstorms/` excluding `.gitkeep`. If the
 
 If no brainstorm files exist, show "None".
 
+## Section 4: Open Backlogs
+
+### MCP Path (mcp_available == true)
+
+Call `export_entities(entity_type="backlog")` to get all backlog entities.
+
+1. Filter: exclude entities where `status != "open"` (client-side)
+2. For each remaining backlog item:
+   - **ID**: from `entity_id` (5-digit zero-padded)
+   - **Description**: from `metadata.description` (truncate to ~80 chars with "..." if longer)
+   - **Age**: from entity `created` timestamp, formatted as relative time ("2 days ago", etc.)
+
+If no open backlogs exist, show "None".
+
+### Filesystem Fallback (mcp_available == false)
+
+Read `{iflow_artifacts_root}/backlog.md` and parse the markdown table rows. If the file does not exist, show "None".
+
+1. Exclude rows containing "(promoted" in description (these have been actioned)
+2. For each remaining row, show:
+   - **ID**: from table column
+   - **Description**: from table column (truncate to ~80 chars with "..." if longer)
+   - **Age**: from Timestamp column, formatted as relative time ("2 days ago", etc.)
+
+If no open backlog items exist, show "None".
+
 ## Display Format
 
 When on a feature branch:
@@ -169,11 +195,15 @@ Other branches: main, {iflow_base_branch}
 ID   Name                    Phase        Branch
 018  show-status-upgrade     design       feature/018-show-status-upgrade
 016  api-refactor            implement    feature/016-api-refactor
-017  old-experiment          abandoned    feature/017-old-experiment
 
 ## Open Brainstorms
 20260205-002937-rca-agent.prd.md (1 day ago)
 20260204-secretary-agent.prd.md (2 days ago)
+
+## Open Backlogs
+ID      Description                                                  Age
+00001   Add retry logic to webhook delivery                          2 days ago
+00002   Investigate flaky test in auth module                        5 days ago
 
 Source: entity-registry
 Next: Run /iflow:design to continue
@@ -192,6 +222,9 @@ None
 
 ## Open Brainstorms
 20260205-002937-rca-agent.prd.md (1 day ago)
+
+## Open Backlogs
+None
 
 Source: filesystem
 Tip: Run /iflow:create-feature or /iflow:brainstorm to start
@@ -219,6 +252,9 @@ Tip: Run /iflow:create-feature or /iflow:brainstorm to start
 5. Section 3 (Open Brainstorms):
    → MCP: call export_entities(entity_type="brainstorm"), filter exclude promoted/archived
    → Fallback: list brainstorms/ directory files
-6. For active features in Sections 1.5 and 2: call get_phase() per feature (both paths)
-7. Footer: source line + next-command/tip
+6. Section 4 (Open Backlogs):
+   → MCP: call export_entities(entity_type="backlog"), filter status == "open"
+   → Fallback: read backlog.md, parse table, exclude promoted rows
+7. For active features in Sections 1.5 and 2: call get_phase() per feature (both paths)
+8. Footer: source line + next-command/tip
 ```
