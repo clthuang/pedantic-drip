@@ -160,8 +160,18 @@ def _process_search_memory(
     config: dict,
     query: str,
     limit: int = 10,
+    category: str | None = None,
+    brief: bool = False,
 ) -> str:
     """Search the semantic memory database for relevant entries.
+
+    Parameters
+    ----------
+    category:
+        If set, only entries matching this category are considered (pre-ranking).
+    brief:
+        If True, return compact plain-text (one line per entry) instead of
+        full Markdown.
 
     Returns formatted results or an error string. Never raises.
     """
@@ -172,6 +182,11 @@ def _process_search_memory(
     result = pipeline.retrieve(query.strip())
 
     all_entries = db.get_all_entries()
+
+    # Category filter BEFORE ranking — narrows candidates
+    if category:
+        all_entries = [e for e in all_entries if e.get("category") == category]
+
     entries_by_id = {e["id"]: e for e in all_entries}
 
     engine = RankingEngine(config)
@@ -180,13 +195,21 @@ def _process_search_memory(
     if not selected:
         return "No matching memories found."
 
+    # Brief mode: compact plain-text, one line per entry
+    if brief:
+        lines: list[str] = [f"Found {len(selected)} entries:"]
+        for entry in selected:
+            lines.append(f"- {entry['name']} ({entry.get('confidence', 'unknown')})")
+        return "\n".join(lines)
+
+    # Full mode: Markdown with details
     cat_prefix_map = {
         "anti-patterns": "Anti-Pattern",
         "patterns": "Pattern",
         "heuristics": "Heuristic",
     }
 
-    lines: list[str] = [f"Found {len(selected)} relevant memories:\n"]
+    lines = [f"Found {len(selected)} relevant memories:\n"]
     for entry in selected:
         prefix = cat_prefix_map.get(entry["category"], entry["category"])
         lines.append(f"### {prefix}: {entry['name']}")
@@ -314,6 +337,8 @@ async def store_memory(
 async def search_memory(
     query: str,
     limit: int = 10,
+    category: str | None = None,
+    brief: bool = False,
 ) -> str:
     """Search long-term memory for relevant learnings.
 
@@ -328,6 +353,12 @@ async def search_memory(
         'git workflow mistakes', 'testing best practices').
     limit:
         Maximum number of results to return (default: 10).
+    category:
+        Filter to a specific category before ranking. One of:
+        anti-patterns, patterns, heuristics.  Default: None (all).
+    brief:
+        Return compact plain-text (one line per entry) instead of
+        full Markdown detail.  Default: False.
 
     Returns matching memories ranked by relevance.
     """
@@ -340,6 +371,8 @@ async def search_memory(
         config=_config,
         query=query,
         limit=limit,
+        category=category,
+        brief=brief,
     )
 
 
