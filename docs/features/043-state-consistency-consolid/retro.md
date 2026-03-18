@@ -55,9 +55,17 @@
 - Verify-Before-Reference for Interface Authoring
 - Prevention vs Remediation Test for Low-Drift Diagnostics
 
+## Addendum: Session 2 (2026-03-19)
+
+Added Task 4 to the reconciliation orchestrator: auto-run `apply_workflow_reconciliation()` at session start. This was the remaining gap discovered during feature 046 — DB workflow state drifted mid-session but was never re-synced from `.meta.json` on next session start.
+
+- **Implementation:** 1 commit, 2 files changed (+197/-1)
+- **Tests:** 4 new test classes (TDD), all passing. 17 total orchestrator tests, 118 reconciliation tests, 276 workflow state server tests — zero regressions.
+- **Approach:** Clean TDD cycle. Only issue was `type_id` format (`feature:id` not `feature/id`) caught by first test run.
+
 ## Raw Data
 
-- Commits: 19 | Files: 26 | +3,568 / -11
-- Tests: 32 (all passing)
+- Commits: 20 | Files: 28 | +3,765 / -12
+- Tests: 36 (all passing)
 - Artifacts: spec (162L), design (516L), plan (150L), tasks (302L)
 - Backlog items resolved: #00038, #00039, #00040, #00041

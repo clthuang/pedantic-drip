@@ -470,3 +470,179 @@ class TestExitCodeAlwaysZero:
         # Must be parseable JSON
         data = json.loads(output)
         assert "errors" in data
+
+
+# ---------------------------------------------------------------------------
+# Task 4: workflow reconciliation tests
+# ---------------------------------------------------------------------------
+
+
+class TestWorkflowReconcileKeyPresent:
+    """Output JSON includes `workflow_reconcile` key with summary dict."""
+
+    def test_workflow_reconcile_key_in_output(self, tmp_path):
+        """Subprocess run includes workflow_reconcile key (empty DB = all zeros)."""
+        entity_db_path = str(tmp_path / "entities.db")
+        memory_db_path = str(tmp_path / "memory.db")
+        _make_entity_db(entity_db_path)
+        _make_memory_db(memory_db_path)
+
+        result = _run_cli(
+            project_root=str(tmp_path),
+            artifacts_root="docs",
+            entity_db=entity_db_path,
+            memory_db=memory_db_path,
+        )
+
+        assert result.returncode == 0
+        data = json.loads(result.stdout.strip())
+        assert "workflow_reconcile" in data, f"Missing workflow_reconcile key: {data}"
+        # With empty DB, summary should have all-zero counts
+        summary = data["workflow_reconcile"]
+        assert isinstance(summary, dict), f"Expected dict, got {type(summary)}"
+        assert summary.get("reconciled", -1) == 0
+        assert summary.get("skipped", -1) == 0
+
+
+class TestWorkflowReconcileAppliesDrift:
+    """Create feature with .meta.json ahead of DB, verify reconciliation."""
+
+    def test_reconciles_drifted_feature(self, tmp_path):
+        """Feature with .meta.json phase ahead of DB gets reconciled."""
+        entity_db_path = str(tmp_path / "entities.db")
+        memory_db_path = str(tmp_path / "memory.db")
+
+        # Seed entity DB with a feature at "specifying" phase
+        db = EntityDatabase(entity_db_path)
+        db.register_entity(
+            entity_type="feature",
+            entity_id="099-drift-test",
+            name="099-drift-test",
+            status="active",
+        )
+        # Set workflow phase to "specify" in DB (behind .meta.json)
+        db.create_workflow_phase(
+            "feature:099-drift-test",
+            workflow_phase="specify",
+            kanban_column="wip",
+        )
+        db.close()
+
+        _make_memory_db(memory_db_path)
+
+        # Write .meta.json with lastCompletedPhase="create-tasks" → derived phase "implement"
+        # This is ahead of DB's "specify", creating drift
+        feature_dir = tmp_path / "docs" / "features" / "099-drift-test"
+        feature_dir.mkdir(parents=True)
+        (feature_dir / ".meta.json").write_text(json.dumps({
+            "status": "active",
+            "lastCompletedPhase": "create-tasks",
+        }))
+
+        result = _run_cli(
+            project_root=str(tmp_path),
+            artifacts_root="docs",
+            entity_db=entity_db_path,
+            memory_db=memory_db_path,
+        )
+
+        assert result.returncode == 0
+        data = json.loads(result.stdout.strip())
+        summary = data.get("workflow_reconcile")
+        assert summary is not None, f"workflow_reconcile is None: {data}"
+        assert summary["reconciled"] >= 1, f"Expected >=1 reconciled, got: {summary}"
+
+
+class TestWorkflowReconcileErrorIsolation:
+    """Patch apply_workflow_reconciliation to raise, verify other tasks still run."""
+
+    def test_workflow_error_does_not_block_other_tasks(self, tmp_path):
+        entity_db_path = str(tmp_path / "entities.db")
+        memory_db_path = str(tmp_path / "memory.db")
+        _make_entity_db(entity_db_path)
+        _make_memory_db(memory_db_path)
+
+        import reconciliation_orchestrator.__main__ as orch_main
+        import argparse
+
+        args = argparse.Namespace(
+            project_root=str(tmp_path),
+            artifacts_root="docs",
+            entity_db=entity_db_path,
+            memory_db=memory_db_path,
+        )
+
+        with patch(
+            "workflow_engine.reconciliation.apply_workflow_reconciliation",
+            side_effect=RuntimeError("forced workflow reconcile failure"),
+        ):
+            written_chunks = []
+
+            def fake_exit(code):
+                raise SystemExit(code)
+
+            with patch("sys.stdout") as mock_stdout, patch("sys.exit", side_effect=fake_exit):
+                mock_stdout.write = lambda s: written_chunks.append(s)
+                try:
+                    orch_main.run(args)
+                except SystemExit:
+                    pass
+
+            data = json.loads("".join(written_chunks))
+
+        # Other 3 tasks should still have results
+        assert "entity_sync" in data
+        assert "brainstorm_sync" in data
+        assert "kb_import" in data
+        # workflow_reconcile should be None (error before assignment)
+        assert data["workflow_reconcile"] is None
+        # Error captured
+        assert any("workflow_reconcile" in e for e in data["errors"])
+
+
+class TestWorkflowReconcileImportDiagnostic:
+    """Patch import to raise ImportError, verify diagnostic in errors."""
+
+    def test_import_error_captured_in_errors(self, tmp_path):
+        entity_db_path = str(tmp_path / "entities.db")
+        memory_db_path = str(tmp_path / "memory.db")
+        _make_entity_db(entity_db_path)
+        _make_memory_db(memory_db_path)
+
+        import reconciliation_orchestrator.__main__ as orch_main
+        import argparse
+        import builtins
+
+        args = argparse.Namespace(
+            project_root=str(tmp_path),
+            artifacts_root="docs",
+            entity_db=entity_db_path,
+            memory_db=memory_db_path,
+        )
+
+        original_import = builtins.__import__
+
+        def mock_import(name, *a, **kw):
+            if name == "workflow_engine.engine" or name == "workflow_engine.reconciliation":
+                raise ImportError(f"mocked missing: {name}")
+            return original_import(name, *a, **kw)
+
+        with patch("builtins.__import__", side_effect=mock_import):
+            written_chunks = []
+
+            def fake_exit(code):
+                raise SystemExit(code)
+
+            with patch("sys.stdout") as mock_stdout, patch("sys.exit", side_effect=fake_exit):
+                mock_stdout.write = lambda s: written_chunks.append(s)
+                try:
+                    orch_main.run(args)
+                except SystemExit:
+                    pass
+
+            data = json.loads("".join(written_chunks))
+
+        # workflow_reconcile stays None
+        assert data["workflow_reconcile"] is None
+        # Diagnostic error captured
+        assert any("import skipped" in e for e in data["errors"])
