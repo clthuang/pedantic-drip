@@ -1,0 +1,17 @@
+{
+  "id": "045",
+  "slug": "mcp-audit-token-efficiency",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-03-18T10:32:07.755343+00:00",
+  "branch": "feature/045-mcp-audit-token-efficiency",
+  "lastCompletedPhase": null,
+  "phases": {
+    "brainstorm": {
+      "started": "2026-03-18T10:32:07.755041+00:00"
+    },
+    "specify": {
+      "started": "2026-03-18T10:38:08.938946+00:00"
+    }
+  }
+}
