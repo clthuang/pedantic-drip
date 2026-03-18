@@ -16,7 +16,7 @@ from workflow_engine.engine import WorkflowStateEngine
 
 
 # ---------------------------------------------------------------------------
-# Status-to-kanban mapping (mirrors workflow_state_server.STATUS_TO_KANBAN)
+# Status-to-kanban mapping (single source of truth — also imported by workflow_state_server)
 # ---------------------------------------------------------------------------
 
 STATUS_TO_KANBAN: dict[str, str] = {

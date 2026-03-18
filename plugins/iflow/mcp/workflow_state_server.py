@@ -10,9 +10,7 @@ import json
 import os
 import sqlite3
 import sys
-import tempfile
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
 
 # Make workflow_engine, transition_gate, entity_registry, semantic_memory
 # importable from hooks/lib/ — safety net for direct invocation and tests.
@@ -55,12 +53,7 @@ from mcp.server.fastmcp import FastMCP
 # Also referenced by scripts/fix_kanban_columns.py.
 # ---------------------------------------------------------------------------
 
-STATUS_TO_KANBAN: dict[str, str] = {
-    "active": "wip",
-    "planned": "backlog",
-    "completed": "completed",
-    "abandoned": "completed",
-}
+from workflow_engine.feature_lifecycle import STATUS_TO_KANBAN  # single source of truth
 
 # ---------------------------------------------------------------------------
 # Module-level globals (set during lifespan)
@@ -195,38 +188,11 @@ def _build_frontmatter_summary(reports: list[DriftReport]) -> dict[str, int]:
     return summary
 
 
-# ---------------------------------------------------------------------------
-# Utility functions
-# ---------------------------------------------------------------------------
-
-
-def _iso_now() -> str:
-    """Return current UTC time as ISO 8601 string."""
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _atomic_json_write(path: str, data: dict) -> None:
-    """Atomic JSON write: NamedTemporaryFile + os.replace()."""
-    tmp_name = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            dir=os.path.dirname(path),
-            suffix=".tmp",
-            delete=False,
-            encoding="utf-8",
-        ) as fd:
-            tmp_name = fd.name
-            json.dump(data, fd, indent=2)
-            fd.write("\n")
-        os.replace(tmp_name, path)
-    except BaseException:
-        if tmp_name is not None:
-            try:
-                os.unlink(tmp_name)
-            except OSError:
-                pass
-        raise
+from workflow_engine.feature_lifecycle import (
+    _atomic_json_write,
+    _iso_now,
+    _validate_feature_type_id as _lib_validate_feature_type_id,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -418,37 +384,8 @@ def _catch_entity_value_error(func):
 
 
 def _validate_feature_type_id(feature_type_id: str, artifacts_root: str) -> str:
-    """Validate feature_type_id and extract slug with realpath defense.
-
-    1. Split on ':', raise ValueError if no colon present
-    2. Extract slug from second part
-    3. Check null bytes BEFORE os.path.realpath()
-    4. Resolve realpath of {artifacts_root}/features/{slug}/
-    5. Verify resolved path starts with realpath(artifacts_root) + os.sep
-    6. Return validated slug
-
-    Raises ValueError on invalid input (caught by _catch_value_error).
-    """
-    if ":" not in feature_type_id:
-        raise ValueError("invalid_input: missing colon in feature_type_id")
-
-    slug = feature_type_id.split(":", 1)[1]
-
-    if not slug:
-        raise ValueError("feature_not_found: empty slug")
-
-    # Check null bytes before ANY filesystem call
-    if "\0" in slug:
-        raise ValueError(f"feature_not_found: {slug} not found or path traversal blocked")
-
-    candidate = os.path.join(artifacts_root, "features", slug)
-    resolved = os.path.realpath(candidate)
-    root = os.path.realpath(artifacts_root)
-
-    if not resolved.startswith(root + os.sep) or not os.path.isdir(resolved):
-        raise ValueError(f"feature_not_found: {slug} not found or path traversal blocked")
-
-    return slug
+    """Validate feature_type_id — delegates to feature_lifecycle."""
+    return _lib_validate_feature_type_id(feature_type_id, artifacts_root)
 
 
 @_with_error_handling
