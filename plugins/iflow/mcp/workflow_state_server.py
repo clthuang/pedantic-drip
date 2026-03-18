@@ -34,6 +34,10 @@ from transition_gate.models import Severity, TransitionResult
 from workflow_engine.constants import FEATURE_PHASE_TO_KANBAN
 from workflow_engine.engine import WorkflowStateEngine
 from workflow_engine.feature_lifecycle import (
+    STATUS_TO_KANBAN,
+    _atomic_json_write,
+    _iso_now,
+    _validate_feature_type_id,
     activate_feature as _lib_activate_feature,
     init_feature_state as _lib_init_feature_state,
     init_project_state as _lib_init_project_state,
@@ -47,13 +51,6 @@ from workflow_engine.reconciliation import (
 )
 
 from mcp.server.fastmcp import FastMCP
-
-# ---------------------------------------------------------------------------
-# Status-to-kanban mapping for feature init-time (matches backfill.py:35-40).
-# Also referenced by scripts/fix_kanban_columns.py.
-# ---------------------------------------------------------------------------
-
-from workflow_engine.feature_lifecycle import STATUS_TO_KANBAN  # single source of truth
 
 # ---------------------------------------------------------------------------
 # Module-level globals (set during lifespan)
@@ -186,13 +183,6 @@ def _build_frontmatter_summary(reports: list[DriftReport]) -> dict[str, int]:
         else:
             summary["error"] += 1
     return summary
-
-
-from workflow_engine.feature_lifecycle import (
-    _atomic_json_write,
-    _iso_now,
-    _validate_feature_type_id as _lib_validate_feature_type_id,
-)
 
 
 # ---------------------------------------------------------------------------
@@ -382,10 +372,6 @@ def _catch_entity_value_error(func):
             raise
     return wrapper
 
-
-def _validate_feature_type_id(feature_type_id: str, artifacts_root: str) -> str:
-    """Validate feature_type_id — delegates to feature_lifecycle."""
-    return _lib_validate_feature_type_id(feature_type_id, artifacts_root)
 
 
 @_with_error_handling
