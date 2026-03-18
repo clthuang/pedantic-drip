@@ -4245,3 +4245,115 @@ class TestMigration5Deepened:
             "WHERE type_id LIKE 'feature:fp-%'"
         ).fetchone()[0]
         assert count == 7
+
+
+class TestUpsertWorkflowPhase:
+    """Tests for EntityDatabase.upsert_workflow_phase (Task 4.1)."""
+
+    def test_upsert_inserts_new_row(self, db: EntityDatabase):
+        """upsert_workflow_phase creates a new row when none exists."""
+        db.register_entity("feature", "u1", "Upsert Feature")
+        db.upsert_workflow_phase(
+            "feature:u1",
+            workflow_phase="design",
+            kanban_column="wip",
+        )
+        row = db.get_workflow_phase("feature:u1")
+        assert row is not None
+        assert row["type_id"] == "feature:u1"
+        assert row["workflow_phase"] == "design"
+        assert row["kanban_column"] == "wip"
+        assert row["updated_at"] is not None
+
+    def test_upsert_updates_existing_row(self, db: EntityDatabase):
+        """upsert_workflow_phase updates fields on an existing row."""
+        db.register_entity("feature", "u2", "Upsert Feature 2")
+        db.upsert_workflow_phase(
+            "feature:u2",
+            workflow_phase="design",
+            kanban_column="wip",
+        )
+        db.upsert_workflow_phase(
+            "feature:u2",
+            workflow_phase="implement",
+            kanban_column="wip",
+            last_completed_phase="design",
+        )
+        row = db.get_workflow_phase("feature:u2")
+        assert row is not None
+        assert row["workflow_phase"] == "implement"
+        assert row["last_completed_phase"] == "design"
+
+    def test_upsert_rejects_invalid_column_name(self, db: EntityDatabase):
+        """upsert_workflow_phase raises ValueError for invalid column names."""
+        db.register_entity("feature", "u3", "Upsert Feature 3")
+        with pytest.raises(ValueError, match="Invalid workflow_phases columns"):
+            db.upsert_workflow_phase(
+                "feature:u3",
+                workflow_phase="design",
+                evil_column="DROP TABLE",
+            )
+
+    def test_upsert_idempotent_reinsert(self, db: EntityDatabase):
+        """upsert_workflow_phase with same data is idempotent."""
+        db.register_entity("feature", "u4", "Upsert Feature 4")
+        db.upsert_workflow_phase(
+            "feature:u4",
+            workflow_phase="design",
+            kanban_column="wip",
+        )
+        row1 = db.get_workflow_phase("feature:u4")
+        # Re-upsert with same values
+        db.upsert_workflow_phase(
+            "feature:u4",
+            workflow_phase="design",
+            kanban_column="wip",
+        )
+        row2 = db.get_workflow_phase("feature:u4")
+        assert row2["workflow_phase"] == row1["workflow_phase"]
+        assert row2["kanban_column"] == row1["kanban_column"]
+
+    def test_upsert_sets_updated_at_on_update(self, db: EntityDatabase):
+        """upsert_workflow_phase refreshes updated_at on each call."""
+        db.register_entity("feature", "u5", "Upsert Feature 5")
+        db.upsert_workflow_phase("feature:u5", workflow_phase="design")
+        row1 = db.get_workflow_phase("feature:u5")
+        # Second upsert should update timestamp
+        db.upsert_workflow_phase("feature:u5", workflow_phase="implement")
+        row2 = db.get_workflow_phase("feature:u5")
+        # updated_at should be set (both non-None)
+        assert row1["updated_at"] is not None
+        assert row2["updated_at"] is not None
+
+    def test_upsert_with_mode_and_backward_reason(self, db: EntityDatabase):
+        """upsert_workflow_phase handles mode and backward_transition_reason."""
+        db.register_entity("feature", "u6", "Upsert Feature 6")
+        db.upsert_workflow_phase(
+            "feature:u6",
+            workflow_phase="design",
+            kanban_column="wip",
+            mode="standard",
+            backward_transition_reason="rework needed",
+        )
+        row = db.get_workflow_phase("feature:u6")
+        assert row["mode"] == "standard"
+        assert row["backward_transition_reason"] == "rework needed"
+
+    def test_upsert_no_kwargs_still_inserts(self, db: EntityDatabase):
+        """upsert_workflow_phase with no kwargs creates row with defaults."""
+        db.register_entity("feature", "u7", "Upsert Feature 7")
+        db.upsert_workflow_phase("feature:u7")
+        row = db.get_workflow_phase("feature:u7")
+        assert row is not None
+        assert row["type_id"] == "feature:u7"
+        assert row["updated_at"] is not None
+
+    def test_upsert_multiple_invalid_columns_reported(self, db: EntityDatabase):
+        """upsert_workflow_phase reports all invalid column names."""
+        db.register_entity("feature", "u8", "Upsert Feature 8")
+        with pytest.raises(ValueError, match="Invalid workflow_phases columns"):
+            db.upsert_workflow_phase(
+                "feature:u8",
+                bad_col="x",
+                another_bad="y",
+            )
