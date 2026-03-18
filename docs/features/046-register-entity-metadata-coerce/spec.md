@@ -63,7 +63,7 @@ LLMs consistently pass `metadata` as a dict to `register_entity` and `update_ent
 ### AC-7: Invalid JSON string still handled gracefully
 - Given a call to `register_entity` with `metadata="{bad json}"`
 - When the tool executes
-- Then it succeeds (no crash), entity is registered, metadata stored as `{"error": "..."}` dict (existing `parse_metadata` behavior unchanged)
+- Then it succeeds (no crash), entity is registered, metadata stored as `{"error": "..."}` dict (existing `parse_metadata` behavior in `server_helpers.py:139-158` unchanged)
 
 ## Feasibility Assessment
 **Overall:** Confirmed via reproduction script (`agent_sandbox/20260318/rca-register-entity-metadata/reproduction/repro.py`) and schema verification experiment. Change is isolated to two call sites in `entity_server.py`; `parse_metadata` and database layers are untouched.
