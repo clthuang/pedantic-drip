@@ -21,6 +21,11 @@ if _hooks_lib not in (os.path.normpath(p) for p in sys.path):
     sys.path.insert(0, _hooks_lib)
 
 from entity_registry.database import EntityDatabase
+from entity_registry.entity_lifecycle import (  # noqa: F401 — re-export for compat
+    ENTITY_MACHINES,
+    init_entity_workflow as _lib_init_entity_workflow,
+    transition_entity_phase as _lib_transition_entity_phase,
+)
 from entity_registry.frontmatter_sync import (
     ARTIFACT_BASENAME_MAP,
     DriftReport,
@@ -40,51 +45,6 @@ from workflow_engine.reconciliation import (
 )
 
 from mcp.server.fastmcp import FastMCP
-
-# ---------------------------------------------------------------------------
-# Entity lifecycle state machines — single registry keyed by entity_type.
-# Each entry defines: valid transitions, phase-to-kanban-column mapping,
-# and forward transition set (for last_completed_phase updates).
-# ---------------------------------------------------------------------------
-
-ENTITY_MACHINES: dict[str, dict] = {
-    "brainstorm": {
-        "transitions": {
-            "draft": ["reviewing", "abandoned"],
-            "reviewing": ["promoted", "draft", "abandoned"],
-        },
-        "columns": {
-            "draft": "wip",
-            "reviewing": "agent_review",
-            "promoted": "completed",
-            "abandoned": "completed",
-        },
-        "forward": {
-            ("draft", "reviewing"),
-            ("reviewing", "promoted"),
-            ("reviewing", "abandoned"),
-            ("draft", "abandoned"),
-        },
-    },
-    "backlog": {
-        "transitions": {
-            "open": ["triaged", "dropped"],
-            "triaged": ["promoted", "dropped"],
-        },
-        "columns": {
-            "open": "backlog",
-            "triaged": "prioritised",
-            "promoted": "completed",
-            "dropped": "completed",
-        },
-        "forward": {
-            ("open", "triaged"),
-            ("triaged", "promoted"),
-            ("triaged", "dropped"),
-            ("open", "dropped"),
-        },
-    },
-}
 
 # ---------------------------------------------------------------------------
 # Status-to-kanban mapping for feature init-time (matches backfill.py:35-40).
@@ -944,65 +904,8 @@ def _process_activate_feature(
 def _process_init_entity_workflow(
     db: EntityDatabase, type_id: str, workflow_phase: str, kanban_column: str
 ) -> str:
-    """Create a workflow_phases row for a brainstorm or backlog entity.
-
-    Idempotent: if a row already exists, returns existing values with created=false.
-    Validates entity existence, rejects feature/project types, and checks
-    phase/column consistency against ENTITY_MACHINES when applicable.
-    """
-    # 1. Validate entity exists
-    entity = db.get_entity(type_id)
-    if entity is None:
-        raise ValueError(f"entity_not_found: {type_id}")
-
-    # 1b. Reject entity types that have their own workflow management
-    if ":" in type_id:
-        entity_type = type_id.split(":", 1)[0]
-        if entity_type in ("feature", "project"):
-            raise ValueError(
-                f"invalid_entity_type: {entity_type} entities use the feature workflow engine"
-            )
-        if entity_type in ENTITY_MACHINES:
-            machine = ENTITY_MACHINES[entity_type]
-            if workflow_phase not in machine["columns"]:
-                raise ValueError(
-                    f"invalid_transition: {workflow_phase} is not a valid phase for {entity_type}"
-                )
-            expected_column = machine["columns"][workflow_phase]
-            if kanban_column != expected_column:
-                raise ValueError(
-                    f"invalid_transition: kanban_column {kanban_column} does not match "
-                    f"expected {expected_column} for phase {workflow_phase}"
-                )
-
-    # 2. Check idempotency — existing row means no-op (preserves MCP-managed state)
-    existing = db._conn.execute(
-        "SELECT workflow_phase, kanban_column FROM workflow_phases WHERE type_id = ?",
-        (type_id,),
-    ).fetchone()
-    if existing:
-        return json.dumps({
-            "created": False,
-            "type_id": type_id,
-            "workflow_phase": existing["workflow_phase"],
-            "kanban_column": existing["kanban_column"],
-            "reason": "already_exists",
-        })
-
-    # 3. Insert workflow_phases row
-    db._conn.execute(
-        "INSERT INTO workflow_phases (type_id, workflow_phase, kanban_column, updated_at) "
-        "VALUES (?, ?, ?, ?)",
-        (type_id, workflow_phase, kanban_column, db._now_iso()),
-    )
-    db._conn.commit()
-
-    return json.dumps({
-        "created": True,
-        "type_id": type_id,
-        "workflow_phase": workflow_phase,
-        "kanban_column": kanban_column,
-    })
+    """Thin wrapper — delegates to entity_lifecycle.init_entity_workflow."""
+    return json.dumps(_lib_init_entity_workflow(db, type_id, workflow_phase, kanban_column))
 
 
 @_with_error_handling
@@ -1010,86 +913,8 @@ def _process_init_entity_workflow(
 def _process_transition_entity_phase(
     db: EntityDatabase, type_id: str, target_phase: str
 ) -> str:
-    """Transition a brainstorm or backlog entity to a new lifecycle phase.
-
-    Validates entity type, existence, current phase, and transition legality
-    against ENTITY_MACHINES. Updates both entities.status and workflow_phases
-    atomically. Forward transitions update last_completed_phase; backward
-    transitions preserve it.
-    """
-    # 1. Parse entity_type
-    if ":" not in type_id:
-        raise ValueError(f"invalid_entity_type: malformed type_id: {type_id}")
-    entity_type = type_id.split(":", 1)[0]
-
-    # 2. Validate entity_type
-    if entity_type not in ENTITY_MACHINES:
-        raise ValueError(
-            f"invalid_entity_type: {entity_type} — only brainstorm and backlog supported"
-        )
-
-    # 3. Validate entity exists
-    entity = db.get_entity(type_id)
-    if entity is None:
-        raise ValueError(f"entity_not_found: {type_id}")
-
-    # 4. Get current phase
-    row = db._conn.execute(
-        "SELECT workflow_phase FROM workflow_phases WHERE type_id = ?", (type_id,)
-    ).fetchone()
-    if row is None:
-        raise ValueError(f"entity_not_found: no workflow_phases row for {type_id}")
-    current_phase = row["workflow_phase"]
-    if current_phase is None:
-        raise ValueError(
-            f"invalid_transition: {type_id} has NULL current_phase — "
-            "call init_entity_workflow first"
-        )
-
-    # 5. Validate transition
-    machine = ENTITY_MACHINES[entity_type]
-    valid_targets = machine["transitions"].get(current_phase, [])
-    if target_phase not in valid_targets:
-        raise ValueError(
-            f"invalid_transition: cannot transition {entity_type} from "
-            f"{current_phase} to {target_phase}"
-        )
-
-    # 6. Look up target kanban column
-    kanban_column = machine["columns"][target_phase]
-
-    # 7. Determine if forward transition (for last_completed_phase)
-    is_forward = (current_phase, target_phase) in machine["forward"]
-
-    # 8. Atomic update in transaction
-    now = db._now_iso()
-    db._conn.execute(
-        "UPDATE entities SET status = ?, updated_at = ? WHERE type_id = ?",
-        (target_phase, now, type_id),
-    )
-
-    if is_forward:
-        db._conn.execute(
-            "UPDATE workflow_phases SET workflow_phase = ?, kanban_column = ?, "
-            "last_completed_phase = ?, updated_at = ? WHERE type_id = ?",
-            (target_phase, kanban_column, current_phase, now, type_id),
-        )
-    else:
-        db._conn.execute(
-            "UPDATE workflow_phases SET workflow_phase = ?, kanban_column = ?, "
-            "updated_at = ? WHERE type_id = ?",
-            (target_phase, kanban_column, now, type_id),
-        )
-
-    db._conn.commit()
-
-    return json.dumps({
-        "transitioned": True,
-        "type_id": type_id,
-        "from_phase": current_phase,
-        "to_phase": target_phase,
-        "kanban_column": kanban_column,
-    })
+    """Thin wrapper — delegates to entity_lifecycle.transition_entity_phase."""
+    return json.dumps(_lib_transition_entity_phase(db, type_id, target_phase))
 
 
 @_with_error_handling

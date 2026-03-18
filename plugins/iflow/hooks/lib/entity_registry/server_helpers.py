@@ -397,3 +397,27 @@ def _process_get_lineage(
         return render_tree(entities, root_type_id)
     except Exception as exc:
         return f"Error retrieving lineage: {exc}"
+
+
+def _process_set_parent(db, type_id: str, parent_type_id: str) -> str:
+    """Set or change the parent of an entity.
+
+    Parameters
+    ----------
+    db:
+        An EntityDatabase instance.
+    type_id:
+        The entity to update (e.g. ``'feature:029-entity-lineage-tracking'``).
+    parent_type_id:
+        The new parent entity (e.g. ``'project:my-project'``).
+
+    Returns
+    -------
+    str
+        Confirmation message, or error message.  Never raises exceptions.
+    """
+    try:
+        db.set_parent(type_id, parent_type_id)
+        return f"Parent set: {type_id} → {parent_type_id}"
+    except Exception as exc:
+        return f"Error setting parent: {exc}"

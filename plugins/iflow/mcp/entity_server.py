@@ -22,6 +22,7 @@ from entity_registry.server_helpers import (
     _process_export_lineage_markdown,
     _process_get_lineage,
     _process_register_entity,
+    _process_set_parent,
     parse_metadata,
 )
 from semantic_memory.config import read_config
@@ -163,11 +164,7 @@ async def set_parent(type_id: str, parent_type_id: str) -> str:
     if _db is None:
         return "Error: database not initialized (server not started)"
 
-    try:
-        _db.set_parent(type_id, parent_type_id)
-        return f"Parent set: {type_id} \u2192 {parent_type_id}"
-    except Exception as exc:
-        return f"Error setting parent: {exc}"
+    return _process_set_parent(_db, type_id, parent_type_id)
 
 
 @mcp.tool()
