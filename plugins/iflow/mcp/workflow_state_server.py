@@ -36,6 +36,11 @@ from semantic_memory.config import read_config
 from transition_gate.models import Severity, TransitionResult
 from workflow_engine.constants import FEATURE_PHASE_TO_KANBAN
 from workflow_engine.engine import WorkflowStateEngine
+from workflow_engine.feature_lifecycle import (
+    activate_feature as _lib_activate_feature,
+    init_feature_state as _lib_init_feature_state,
+    init_project_state as _lib_init_project_state,
+)
 from workflow_engine.models import FeatureWorkflowState, TransitionResponse
 from workflow_engine.reconciliation import (
     ReconcileAction,
@@ -716,72 +721,21 @@ def _process_init_feature_state(
     *,
     artifacts_root: str,
 ) -> str:
-    """Create initial feature state in DB + entity registry, then project .meta.json."""
-    feature_type_id = f"feature:{feature_id}-{slug}"
-
-    # Validate feature_type_id for path traversal defense
-    _validate_feature_type_id(feature_type_id, artifacts_root)
-
-    # Build metadata dict
-    metadata: dict = {
-        "id": feature_id,
-        "slug": slug,
-        "mode": mode,
-        "branch": branch,
-        "phase_timing": {"brainstorm": {"started": _iso_now()}} if status == "active" else {},
-    }
-    if brainstorm_source:
-        metadata["brainstorm_source"] = brainstorm_source
-    if backlog_source:
-        metadata["backlog_source"] = backlog_source
-
-    # Register or update entity
-    existing = db.get_entity(feature_type_id)
-    if existing is None:
-        db.register_entity(
-            entity_type="feature",
-            entity_id=f"{feature_id}-{slug}",
-            name=slug.replace("-", " ").title(),
-            artifact_path=feature_dir,
-            status=status,
-            metadata=metadata,
-        )
-    else:
-        # Retry path: preserve existing phase_timing, last_completed_phase,
-        # skipped_phases to avoid clobbering progress data.
-        existing_meta_raw = existing.get("metadata")
-        if existing_meta_raw:
-            existing_meta = json.loads(existing_meta_raw) if isinstance(existing_meta_raw, str) else existing_meta_raw
-        else:
-            existing_meta = {}
-        metadata["phase_timing"] = existing_meta.get("phase_timing", metadata["phase_timing"])
-        if existing_meta.get("last_completed_phase"):
-            metadata["last_completed_phase"] = existing_meta["last_completed_phase"]
-        if existing_meta.get("skipped_phases"):
-            metadata["skipped_phases"] = existing_meta["skipped_phases"]
-        db.update_entity(feature_type_id, status=status, metadata=metadata)
-
-    # Project .meta.json
-    warning = _project_meta_json(db, engine, feature_type_id, feature_dir)
-
-    # Fix kanban_column based on status (init-time uses STATUS_TO_KANBAN).
-    init_kanban = STATUS_TO_KANBAN.get(status)
-    if init_kanban:
-        try:
-            db.update_workflow_phase(feature_type_id, kanban_column=init_kanban)
-        except ValueError:
-            # Row may not exist if engine initialization failed — create it.
-            try:
-                db.create_workflow_phase(feature_type_id, kanban_column=init_kanban)
-            except ValueError:
-                pass  # Entity itself may be missing; workflow row cannot be created
-
-    result = {
-        "created": True,
-        "feature_type_id": feature_type_id,
-        "status": status,
-        "meta_json_path": os.path.join(feature_dir, ".meta.json"),
-    }
+    """Thin wrapper — delegates to feature_lifecycle.init_feature_state."""
+    result = _lib_init_feature_state(
+        db=db,
+        engine=engine,
+        artifacts_root=artifacts_root,
+        feature_dir=feature_dir,
+        feature_id=feature_id,
+        slug=slug,
+        mode=mode,
+        branch=branch,
+        brainstorm_source=brainstorm_source,
+        backlog_source=backlog_source,
+        status=status,
+    )
+    warning = _project_meta_json(db, engine, result["feature_type_id"], feature_dir)
     if warning:
         result["projection_warning"] = warning
     return json.dumps(result)
@@ -798,64 +752,19 @@ def _process_init_project_state(
     milestones: str,  # JSON string
     brainstorm_source: str | None,
 ) -> str:
-    """Create initial project state in DB + .meta.json."""
-    # Path traversal validation: block null bytes and ensure resolved path
-    # matches the intended directory (no symlink escape)
-    if "\0" in project_dir:
-        raise ValueError("invalid_input: project_dir path traversal blocked")
-    resolved = os.path.realpath(project_dir)
-    if not os.path.isdir(resolved):
-        raise ValueError(f"invalid_input: project_dir does not exist: {project_dir}")
-
-    project_type_id = f"project:{project_id}-{slug}"
-
-    # Parse JSON params (raises ValueError/JSONDecodeError on malformed input)
-    features_list = json.loads(features)
-    milestones_list = json.loads(milestones)
-
-    # Register entity (idempotent — skip if already exists)
-    existing = db.get_entity(project_type_id)
-    metadata = {
-        "id": project_id,
-        "slug": slug,
-        "features": features_list,
-        "milestones": milestones_list,
-    }
-    if brainstorm_source:
-        metadata["brainstorm_source"] = brainstorm_source
-
-    if existing is None:
-        db.register_entity(
-            entity_type="project",
-            entity_id=f"{project_id}-{slug}",
-            name=slug.replace("-", " ").title(),
-            artifact_path=project_dir,
-            status="active",
-            metadata=metadata,
-        )
-
-    # Build project .meta.json (different schema from features — no phases,
-    # lastCompletedPhase, branch, mode)
-    meta = {
-        "id": project_id,
-        "slug": slug,
-        "status": "active",
-        "created": _iso_now(),
-        "features": features_list,
-        "milestones": milestones_list,
-    }
-    if brainstorm_source:
-        meta["brainstorm_source"] = brainstorm_source
-
-    # Atomic write
-    meta_path = os.path.join(project_dir, ".meta.json")
-    _atomic_json_write(meta_path, meta)
-
-    return json.dumps({
-        "created": True,
-        "project_type_id": project_type_id,
-        "meta_json_path": meta_path,
-    })
+    """Thin wrapper — delegates to feature_lifecycle.init_project_state."""
+    result = _lib_init_project_state(
+        db=db,
+        artifacts_root=_artifacts_root,
+        project_dir=project_dir,
+        project_id=project_id,
+        slug=slug,
+        branch="",  # Not used in original project init path
+        features=features,
+        milestones=milestones,
+        brainstorm_source=brainstorm_source,
+    )
+    return json.dumps(result)
 
 
 @_with_error_handling
@@ -866,34 +775,14 @@ def _process_activate_feature(
     feature_type_id: str,
     artifacts_root: str,
 ) -> str:
-    """Transition a planned feature to active status.
-
-    Pre-condition: entity status must be 'planned'.
-    Post-condition: entity status becomes 'active', .meta.json projected.
-    """
-    _validate_feature_type_id(feature_type_id, artifacts_root)
-
-    entity = db.get_entity(feature_type_id)
-    if entity is None:
-        raise ValueError(f"feature_not_found: {feature_type_id}")
-
-    current_status = entity.get("status")
-    if current_status != "planned":
-        raise ValueError(
-            f"invalid_transition: feature status is '{current_status}', "
-            f"expected 'planned' for activation"
-        )
-
-    db.update_entity(feature_type_id, status="active")
-
-    warning = _project_meta_json(db, engine, feature_type_id)
-
-    result = {
-        "activated": True,
-        "feature_type_id": feature_type_id,
-        "previous_status": "planned",
-        "new_status": "active",
-    }
+    """Thin wrapper — delegates to feature_lifecycle.activate_feature."""
+    result = _lib_activate_feature(
+        db=db,
+        engine=engine,
+        artifacts_root=artifacts_root,
+        feature_type_id=feature_type_id,
+    )
+    warning = _project_meta_json(db, engine, result["feature_type_id"])
     if warning:
         result["projection_warning"] = warning
     return json.dumps(result)

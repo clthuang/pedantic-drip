@@ -1,0 +1,398 @@
+"""Tests for workflow_engine.feature_lifecycle — extracted business logic."""
+from __future__ import annotations
+
+import json
+import os
+import tempfile
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from workflow_engine.feature_lifecycle import (
+    activate_feature,
+    init_feature_state,
+    init_project_state,
+)
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def tmp_artifacts(tmp_path):
+    """Create a temporary artifacts_root with a features/ subdirectory."""
+    features_dir = tmp_path / "features"
+    features_dir.mkdir()
+    return str(tmp_path)
+
+
+@pytest.fixture()
+def feature_dir(tmp_artifacts):
+    """Create a feature directory under artifacts_root.
+
+    The directory name must match the slug used in feature_type_id.
+    For feature_id='001', slug='001-my-feature', the type_id slug becomes
+    '001-001-my-feature', which _validate_feature_type_id resolves against
+    artifacts_root/features/.
+    """
+    d = os.path.join(tmp_artifacts, "features", "001-001-my-feature")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+@pytest.fixture()
+def mock_db():
+    db = MagicMock()
+    db.get_entity.return_value = None
+    return db
+
+
+@pytest.fixture()
+def mock_engine():
+    return MagicMock()
+
+
+# ===========================================================================
+# init_feature_state
+# ===========================================================================
+
+class TestInitFeatureState:
+    """Tests for init_feature_state."""
+
+    def test_creates_new_feature_entity(self, mock_db, mock_engine, tmp_artifacts, feature_dir):
+        """Happy path: registers new entity when none exists."""
+        result = init_feature_state(
+            db=mock_db,
+            engine=mock_engine,
+            artifacts_root=tmp_artifacts,
+            feature_dir=feature_dir,
+            feature_id="001",
+            slug="001-my-feature",
+            mode="standard",
+            branch="feature/001",
+            status="active",
+        )
+
+        assert result["created"] is True
+        assert result["feature_type_id"] == "feature:001-001-my-feature"
+        assert result["status"] == "active"
+        assert result["meta_json_path"] == os.path.join(feature_dir, ".meta.json")
+        mock_db.register_entity.assert_called_once()
+
+    def test_updates_existing_entity_preserves_timing(self, mock_db, mock_engine, tmp_artifacts, feature_dir):
+        """When entity exists, update it and preserve phase_timing."""
+        mock_db.get_entity.return_value = {
+            "status": "active",
+            "metadata": json.dumps({
+                "phase_timing": {"brainstorm": {"started": "2025-01-01T00:00:00"}},
+                "last_completed_phase": "design",
+                "skipped_phases": ["brainstorm"],
+            }),
+        }
+
+        result = init_feature_state(
+            db=mock_db,
+            engine=mock_engine,
+            artifacts_root=tmp_artifacts,
+            feature_dir=feature_dir,
+            feature_id="001",
+            slug="001-my-feature",
+            mode="standard",
+            branch="feature/001",
+            status="active",
+        )
+
+        assert result["created"] is True
+        mock_db.register_entity.assert_not_called()
+        mock_db.update_entity.assert_called_once()
+        # Verify preserved fields passed through
+        call_kwargs = mock_db.update_entity.call_args
+        metadata = call_kwargs[1].get("metadata") or call_kwargs[0][2] if len(call_kwargs[0]) > 2 else call_kwargs[1]["metadata"]
+        assert metadata["last_completed_phase"] == "design"
+        assert metadata["skipped_phases"] == ["brainstorm"]
+
+    def test_includes_brainstorm_source(self, mock_db, mock_engine, tmp_artifacts, feature_dir):
+        result = init_feature_state(
+            db=mock_db,
+            engine=mock_engine,
+            artifacts_root=tmp_artifacts,
+            feature_dir=feature_dir,
+            feature_id="001",
+            slug="001-my-feature",
+            mode="standard",
+            branch="feature/001",
+            brainstorm_source="brainstorm:001",
+            status="active",
+        )
+        assert result["created"] is True
+        # brainstorm_source should be in the metadata passed to register_entity
+        call_kwargs = mock_db.register_entity.call_args[1]
+        assert call_kwargs["metadata"]["brainstorm_source"] == "brainstorm:001"
+
+    def test_includes_backlog_source(self, mock_db, mock_engine, tmp_artifacts, feature_dir):
+        result = init_feature_state(
+            db=mock_db,
+            engine=mock_engine,
+            artifacts_root=tmp_artifacts,
+            feature_dir=feature_dir,
+            feature_id="001",
+            slug="001-my-feature",
+            mode="standard",
+            branch="feature/001",
+            backlog_source="backlog:001",
+            status="active",
+        )
+        assert result["created"] is True
+        call_kwargs = mock_db.register_entity.call_args[1]
+        assert call_kwargs["metadata"]["backlog_source"] == "backlog:001"
+
+    def test_planned_status_sets_kanban_backlog(self, mock_db, mock_engine, tmp_artifacts, feature_dir):
+        result = init_feature_state(
+            db=mock_db,
+            engine=mock_engine,
+            artifacts_root=tmp_artifacts,
+            feature_dir=feature_dir,
+            feature_id="001",
+            slug="001-my-feature",
+            mode="standard",
+            branch="feature/001",
+            status="planned",
+        )
+        assert result["status"] == "planned"
+        mock_db.update_workflow_phase.assert_called_once_with(
+            "feature:001-001-my-feature", kanban_column="backlog"
+        )
+
+    def test_kanban_update_falls_back_to_create(self, mock_db, mock_engine, tmp_artifacts, feature_dir):
+        """When update_workflow_phase fails, falls back to create_workflow_phase."""
+        mock_db.update_workflow_phase.side_effect = ValueError("no row")
+
+        result = init_feature_state(
+            db=mock_db,
+            engine=mock_engine,
+            artifacts_root=tmp_artifacts,
+            feature_dir=feature_dir,
+            feature_id="001",
+            slug="001-my-feature",
+            mode="standard",
+            branch="feature/001",
+            status="active",
+        )
+        assert result["created"] is True
+        mock_db.create_workflow_phase.assert_called_once()
+
+    def test_invalid_feature_type_id_raises(self, mock_db, mock_engine, tmp_artifacts):
+        """Path traversal: feature_dir doesn't match artifacts_root."""
+        with pytest.raises(ValueError, match="feature_not_found"):
+            init_feature_state(
+                db=mock_db,
+                engine=mock_engine,
+                artifacts_root=tmp_artifacts,
+                feature_dir="/tmp/evil",
+                feature_id="001",
+                slug="../../etc",
+                mode="standard",
+                branch="feature/001",
+                status="active",
+            )
+
+    def test_no_projection_warning_when_none(self, mock_db, mock_engine, tmp_artifacts, feature_dir):
+        """projection_warning key absent when no warning."""
+        result = init_feature_state(
+            db=mock_db,
+            engine=mock_engine,
+            artifacts_root=tmp_artifacts,
+            feature_dir=feature_dir,
+            feature_id="001",
+            slug="001-my-feature",
+            mode="standard",
+            branch="feature/001",
+            status="active",
+        )
+        assert "projection_warning" not in result
+
+
+# ===========================================================================
+# init_project_state
+# ===========================================================================
+
+class TestInitProjectState:
+    """Tests for init_project_state."""
+
+    def test_creates_new_project(self, mock_db, tmp_path):
+        project_dir = str(tmp_path / "projects" / "my-proj")
+        os.makedirs(project_dir, exist_ok=True)
+
+        result = init_project_state(
+            db=mock_db,
+            artifacts_root=str(tmp_path),
+            project_dir=project_dir,
+            project_id="P01",
+            slug="my-proj",
+            branch="feature/P01",
+            features='["feat-a","feat-b"]',
+            milestones='["m1"]',
+        )
+
+        assert result["created"] is True
+        assert result["project_type_id"] == "project:P01-my-proj"
+        assert os.path.isfile(result["meta_json_path"])
+        mock_db.register_entity.assert_called_once()
+
+    def test_idempotent_existing_project(self, mock_db, tmp_path):
+        """If project entity already exists, skip registration."""
+        project_dir = str(tmp_path / "projects" / "my-proj")
+        os.makedirs(project_dir, exist_ok=True)
+        mock_db.get_entity.return_value = {"status": "active"}
+
+        result = init_project_state(
+            db=mock_db,
+            artifacts_root=str(tmp_path),
+            project_dir=project_dir,
+            project_id="P01",
+            slug="my-proj",
+            branch="feature/P01",
+            features='["feat-a"]',
+            milestones='["m1"]',
+        )
+
+        assert result["created"] is True
+        mock_db.register_entity.assert_not_called()
+
+    def test_meta_json_content(self, mock_db, tmp_path):
+        project_dir = str(tmp_path / "projects" / "my-proj")
+        os.makedirs(project_dir, exist_ok=True)
+
+        result = init_project_state(
+            db=mock_db,
+            artifacts_root=str(tmp_path),
+            project_dir=project_dir,
+            project_id="P01",
+            slug="my-proj",
+            branch="feature/P01",
+            features='["feat-a"]',
+            milestones='["m1","m2"]',
+            brainstorm_source="brainstorm:001",
+        )
+
+        with open(result["meta_json_path"]) as f:
+            meta = json.load(f)
+        assert meta["id"] == "P01"
+        assert meta["slug"] == "my-proj"
+        assert meta["features"] == ["feat-a"]
+        assert meta["milestones"] == ["m1", "m2"]
+        assert meta["brainstorm_source"] == "brainstorm:001"
+
+    def test_null_byte_raises(self, mock_db, tmp_path):
+        with pytest.raises(ValueError, match="path traversal"):
+            init_project_state(
+                db=mock_db,
+                artifacts_root=str(tmp_path),
+                project_dir="/some/dir\0evil",
+                project_id="P01",
+                slug="my-proj",
+                branch="feature/P01",
+                features="[]",
+                milestones="[]",
+            )
+
+    def test_nonexistent_dir_raises(self, mock_db, tmp_path):
+        with pytest.raises(ValueError, match="does not exist"):
+            init_project_state(
+                db=mock_db,
+                artifacts_root=str(tmp_path),
+                project_dir="/nonexistent/dir",
+                project_id="P01",
+                slug="my-proj",
+                branch="feature/P01",
+                features="[]",
+                milestones="[]",
+            )
+
+    def test_invalid_json_features_raises(self, mock_db, tmp_path):
+        project_dir = str(tmp_path / "projects" / "my-proj")
+        os.makedirs(project_dir, exist_ok=True)
+
+        with pytest.raises((ValueError, json.JSONDecodeError)):
+            init_project_state(
+                db=mock_db,
+                artifacts_root=str(tmp_path),
+                project_dir=project_dir,
+                project_id="P01",
+                slug="my-proj",
+                branch="feature/P01",
+                features="not-json",
+                milestones="[]",
+            )
+
+    def test_features_and_milestones_are_required(self):
+        """features and milestones are required str params (no defaults)."""
+        import inspect
+        sig = inspect.signature(init_project_state)
+        features_param = sig.parameters["features"]
+        milestones_param = sig.parameters["milestones"]
+        assert features_param.default is inspect.Parameter.empty
+        assert milestones_param.default is inspect.Parameter.empty
+
+
+# ===========================================================================
+# activate_feature
+# ===========================================================================
+
+class TestActivateFeature:
+    """Tests for activate_feature."""
+
+    def test_activates_planned_feature(self, mock_db, mock_engine, tmp_artifacts, feature_dir):
+        mock_db.get_entity.return_value = {"status": "planned"}
+
+        result = activate_feature(
+            db=mock_db,
+            engine=mock_engine,
+            artifacts_root=tmp_artifacts,
+            feature_type_id="feature:001-001-my-feature",
+        )
+
+        assert result["activated"] is True
+        assert result["previous_status"] == "planned"
+        assert result["new_status"] == "active"
+        assert result["feature_type_id"] == "feature:001-001-my-feature"
+        mock_db.update_entity.assert_called_once_with(
+            "feature:001-001-my-feature", status="active"
+        )
+
+    def test_feature_not_found_raises(self, mock_db, mock_engine, tmp_artifacts, feature_dir):
+        mock_db.get_entity.return_value = None
+
+        with pytest.raises(ValueError, match="feature_not_found"):
+            activate_feature(
+                db=mock_db,
+                engine=mock_engine,
+                artifacts_root=tmp_artifacts,
+                feature_type_id="feature:001-001-my-feature",
+            )
+
+    def test_non_planned_status_raises(self, mock_db, mock_engine, tmp_artifacts, feature_dir):
+        mock_db.get_entity.return_value = {"status": "active"}
+
+        with pytest.raises(ValueError, match="invalid_transition"):
+            activate_feature(
+                db=mock_db,
+                engine=mock_engine,
+                artifacts_root=tmp_artifacts,
+                feature_type_id="feature:001-001-my-feature",
+            )
+
+    def test_projection_warning_included(self, mock_db, mock_engine, tmp_artifacts, feature_dir):
+        """When _project_meta_json returns a warning, include it in result."""
+        mock_db.get_entity.return_value = {"status": "planned"}
+
+        # activate_feature does NOT call _project_meta_json — that stays in the server wrapper.
+        # So there should be no projection_warning key.
+        result = activate_feature(
+            db=mock_db,
+            engine=mock_engine,
+            artifacts_root=tmp_artifacts,
+            feature_type_id="feature:001-001-my-feature",
+        )
+        assert "projection_warning" not in result

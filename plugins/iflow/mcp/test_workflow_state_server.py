@@ -3723,7 +3723,7 @@ class TestInitProjectState:
         from unittest.mock import patch
 
         with patch(
-            "workflow_state_server._atomic_json_write"
+            "workflow_engine.feature_lifecycle._atomic_json_write"
         ) as mock_write:
             _process_init_project_state(
                 db,
