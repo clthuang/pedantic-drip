@@ -147,7 +147,7 @@ def sync_entity_statuses(db, full_artifacts_path):
                 results["skipped"] += 1  # entity not in registry
                 continue
 
-            if entity.status != meta_status:
+            if entity["status"] != meta_status:
                 db.update_entity(type_id, status=meta_status)
                 results["updated"] += 1
             else:
@@ -162,9 +162,9 @@ def sync_entity_statuses(db, full_artifacts_path):
 
 **Algorithm:**
 ```python
-def sync_brainstorm_entities(db, artifacts_root):
+def sync_brainstorm_entities(db, full_artifacts_path):
     results = {"registered": 0, "skipped": 0}
-    brainstorms_dir = os.path.join(artifacts_root, "brainstorms")
+    brainstorms_dir = os.path.join(full_artifacts_path, "brainstorms")
 
     if not os.path.isdir(brainstorms_dir):
         return results
@@ -483,13 +483,15 @@ If MCP call fails or entity not found:
 ```
 1. Call search_entities(entity_type="feature") → all feature entities
 2. For each entity:
-   - status from entity.status
+   - status from entity["status"]
    - project_id from entity.metadata (if present)
    - For active features: call get_phase(feature_type_id=entity.type_id)
 3. Call search_entities(entity_type="brainstorm") → all brainstorm entities
 4. Filter: status != "promoted" AND status != "archived"
 5. For each: get file age from artifact_path mtime (if file still exists)
 ```
+
+**Note:** `search_entities` MCP tool supports `entity_type` filter and returns all matching entities. Status filtering (e.g., excluding "completed") must be done client-side by the LLM after receiving results. The tool does not support `NOT IN` or multi-value exclusion filters.
 
 **Fallback (MCP unavailable):** Existing filesystem scanning preserved unchanged.
 
@@ -508,6 +510,6 @@ Phase 2 (depends on Phase 1 for entity consistency):
   C5 (abandon-feature) — standalone command, no code dependencies
   C6 (cleanup-brainstorms mod) — standalone command edit, no code dependencies
 
-Phase 3 (depends on Phase 1 for entity data, Phase 2 for complete status coverage):
-  C7 (show-status migration) — depends on entities being registered and statuses synced
+Phase 3 (depends on Phase 1 for entity data; soft dependency on Phase 2 for abandoned status accuracy):
+  C7 (show-status migration) — functional after Phase 1; Phase 2 only needed for abandoned features to appear correctly
 ```
