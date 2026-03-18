@@ -655,16 +655,9 @@ def _process_reconcile_apply(
     db: EntityDatabase,
     artifacts_root: str,
     feature_type_id: str | None,
-    direction: str,
     dry_run: bool,
 ) -> str:
-    """Workflow reconciliation. Validates direction, returns JSON string."""
-    if direction not in _SUPPORTED_DIRECTIONS:
-        return _make_error(
-            "invalid_transition",
-            f"Unsupported direction: {direction}. Supported: {', '.join(sorted(_SUPPORTED_DIRECTIONS))}",
-            "Use direction='meta_json_to_db' (the only supported direction)",
-        )
+    """Workflow reconciliation. Hardcodes meta_json_to_db direction, returns JSON string."""
     if feature_type_id is not None:
         _validate_feature_type_id(feature_type_id, artifacts_root)
     result = apply_workflow_reconciliation(
@@ -953,14 +946,13 @@ async def reconcile_check(feature_type_id: str | None = None) -> str:
 @mcp.tool()
 async def reconcile_apply(
     feature_type_id: str | None = None,
-    direction: str = "meta_json_to_db",
     dry_run: bool = False,
 ) -> str:
     """Sync .meta.json workflow state to DB for features where .meta.json is ahead."""
     if _engine is None or _db is None:
         return _NOT_INITIALIZED
     return _process_reconcile_apply(
-        _engine, _db, _artifacts_root, feature_type_id, direction, dry_run
+        _engine, _db, _artifacts_root, feature_type_id, dry_run
     )
 
 

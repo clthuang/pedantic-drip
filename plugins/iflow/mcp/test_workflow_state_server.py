@@ -2329,7 +2329,7 @@ class TestProcessReconcileApply:
         """Reconcile returns JSON with action list."""
         engine, db, arts = reconcile_env
         result = _process_reconcile_apply(
-            engine, db, arts, "feature:011-app", "meta_json_to_db", False
+            engine, db, arts, "feature:011-app", False
         )
         data = json.loads(result)
         assert "error" not in data
@@ -2340,7 +2340,7 @@ class TestProcessReconcileApply:
         """dry_run returns changes without applying."""
         engine, db, arts = reconcile_env
         result = _process_reconcile_apply(
-            engine, db, arts, "feature:011-app", "meta_json_to_db", True
+            engine, db, arts, "feature:011-app", True
         )
         data = json.loads(result)
         assert "error" not in data
@@ -2351,22 +2351,11 @@ class TestProcessReconcileApply:
         check_data = json.loads(check)
         assert check_data["features"][0]["status"] == "meta_json_ahead"
 
-    def test_invalid_direction_returns_error(self, reconcile_env):
-        """Unsupported direction returns structured error (AC-17)."""
-        engine, db, arts = reconcile_env
-        result = _process_reconcile_apply(
-            engine, db, arts, None, "db_to_meta_json", False
-        )
-        data = json.loads(result)
-        assert data["error"] is True
-        assert data["error_type"] == "invalid_transition"
-        assert "Unsupported direction" in data["message"]
-
     def test_nonexistent_slug_returns_feature_not_found(self, db, tmp_path):
         """Non-existent slug -> feature_not_found (AC-18)."""
         engine = WorkflowStateEngine(db, str(tmp_path))
         result = _process_reconcile_apply(
-            engine, db, str(tmp_path), "feature:999-missing", "meta_json_to_db", False
+            engine, db, str(tmp_path), "feature:999-missing", False
         )
         data = json.loads(result)
         assert data["error"] is True
@@ -2376,7 +2365,7 @@ class TestProcessReconcileApply:
         """Missing colon -> invalid_transition (AC-18 case 2)."""
         engine = WorkflowStateEngine(db, str(tmp_path))
         result = _process_reconcile_apply(
-            engine, db, str(tmp_path), "nocolon", "meta_json_to_db", False
+            engine, db, str(tmp_path), "nocolon", False
         )
         data = json.loads(result)
         assert data["error"] is True
@@ -2757,7 +2746,7 @@ class TestReconciliationEndToEnd:
         # Step 2: Apply reconciliation
         apply_result = json.loads(
             _process_reconcile_apply(
-                engine, db, str(tmp_path), None, "meta_json_to_db", False
+                engine, db, str(tmp_path), None, False
             )
         )
         assert "error" not in apply_result
@@ -2835,17 +2824,6 @@ class TestReconciliationEndToEnd:
             mod._engine = orig_engine
             mod._db = orig_db
 
-    def test_error_invalid_direction(self, db, tmp_path):
-        """Invalid direction returns structured error (AC-17)."""
-        engine = WorkflowStateEngine(db, str(tmp_path))
-        result = _process_reconcile_apply(
-            engine, db, str(tmp_path), None, "invalid_direction", False
-        )
-        data = json.loads(result)
-        assert data["error"] is True
-        assert data["error_type"] == "invalid_transition"
-        assert "Unsupported direction" in data["message"]
-
     def test_error_invalid_feature_type_id(self, db, tmp_path):
         """Invalid feature_type_id returns structured errors (AC-18)."""
         engine = WorkflowStateEngine(db, str(tmp_path))
@@ -2908,7 +2886,7 @@ class TestReconciliationBoundaryValues:
         engine = WorkflowStateEngine(db, str(tmp_path))
         # When applying reconciliation in bulk
         result = _process_reconcile_apply(
-            engine, db, str(tmp_path), None, "meta_json_to_db", False
+            engine, db, str(tmp_path), None, False
         )
         data = json.loads(result)
         # Then summary has all 5 keys, all zero
@@ -2916,25 +2894,6 @@ class TestReconciliationBoundaryValues:
         expected_keys = {"reconciled", "created", "skipped", "error", "dry_run"}
         assert set(data["summary"].keys()) == expected_keys
         assert all(v == 0 for v in data["summary"].values())
-
-    def test_reconcile_apply_empty_direction_returns_error(self, db, tmp_path):
-        """Empty string direction returns structured error.
-        derived_from: dimension:boundary_values (empty string input)
-
-        Anticipate: Empty string might accidentally match a valid direction
-        if the check uses `in` substring matching instead of set membership.
-        """
-        # Given an engine
-        engine = WorkflowStateEngine(db, str(tmp_path))
-        # When applying with empty direction
-        result = _process_reconcile_apply(
-            engine, db, str(tmp_path), None, "", False
-        )
-        data = json.loads(result)
-        # Then structured error
-        assert data["error"] is True
-        assert data["error_type"] == "invalid_transition"
-        assert "Unsupported direction" in data["message"]
 
     def test_reconcile_check_response_json_shape(self, db, tmp_path):
         """reconcile_check response has exactly {features, summary} top-level keys.
@@ -2975,7 +2934,7 @@ class TestReconciliationBoundaryValues:
         """
         engine = WorkflowStateEngine(db, str(tmp_path))
         result = _process_reconcile_apply(
-            engine, db, str(tmp_path), None, "meta_json_to_db", False
+            engine, db, str(tmp_path), None, False
         )
         data = json.loads(result)
         assert set(data.keys()) == {"actions", "summary"}
@@ -3045,7 +3004,7 @@ class TestReconciliationAdversarial:
         """
         engine = WorkflowStateEngine(db, str(tmp_path))
         result = _process_reconcile_apply(
-            engine, db, str(tmp_path), "feature:../../../evil", "meta_json_to_db", False
+            engine, db, str(tmp_path), "feature:../../../evil", False
         )
         data = json.loads(result)
         assert data["error"] is True
@@ -3142,7 +3101,7 @@ class TestReconciliationAdversarial:
 
         engine = WorkflowStateEngine(db, str(tmp_path))
         result = _process_reconcile_apply(
-            engine, db, str(tmp_path), "feature:011-shape3", "meta_json_to_db", False
+            engine, db, str(tmp_path), "feature:011-shape3", False
         )
         data = json.loads(result)
 
@@ -3205,7 +3164,7 @@ class TestReconciliationErrorPropagation:
         monkeypatch.setattr(mod, "apply_workflow_reconciliation", raise_sqlite)
 
         result = _process_reconcile_apply(
-            engine, db, str(tmp_path), None, "meta_json_to_db", False
+            engine, db, str(tmp_path), None, False
         )
         data = json.loads(result)
         assert data["error"] is True
@@ -3404,7 +3363,7 @@ class TestReconciliationMutationMindset:
 
         engine = WorkflowStateEngine(db, str(tmp_path))
         result = _process_reconcile_apply(
-            engine, db, str(tmp_path), "feature:011-create", "meta_json_to_db", True
+            engine, db, str(tmp_path), "feature:011-create", True
         )
         data = json.loads(result)
 
