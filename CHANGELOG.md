@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Intelligent Python discovery in MCP bootstrap — searches `uv python find`, versioned interpreters in `/opt/homebrew/bin` and `/usr/local/bin`, before falling back to bare `python3`
+- Structured JSONL error logging for bootstrap failures at `~/.claude/iflow/mcp-bootstrap-errors.log`
+- Session-start MCP health check — surfaces actionable warnings when bootstrap errors are detected
+- Enhanced sentinel files — store interpreter path and version for stale detection without spawning Python
+
+### Changed
+- `doctor.sh` Python version requirement raised from 3.10 to 3.12 to match MCP server bootstrap requirement
+- First-run setup detection moved earlier in session-start and given stronger, actionable wording
+- `meta-json-guard` sentinel validation now checks interpreter existence and version (not just file presence)
+
 ## [4.13.5] - 2026-03-18
 
 ### Fixed
