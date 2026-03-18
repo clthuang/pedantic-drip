@@ -1097,13 +1097,31 @@ def _process_reconcile_status(
     engine: WorkflowStateEngine,
     db: EntityDatabase,
     artifacts_root: str,
+    summary_only: bool = False,
 ) -> str:
-    """Combined drift report. Returns JSON string."""
+    """Combined drift report. Returns JSON string.
+
+    When summary_only=True, returns a compact 3-field response:
+    {"healthy": bool, "workflow_drift_count": int, "frontmatter_drift_count": int}
+    """
     # Workflow drift
     workflow_result = check_workflow_drift(engine, db, artifacts_root)
 
     # Frontmatter drift
     frontmatter_reports = scan_all(db, artifacts_root)
+
+    if summary_only:
+        wf_drift = sum(
+            1 for r in workflow_result.features if r.status != "in_sync"
+        )
+        fm_drift = sum(
+            1 for r in frontmatter_reports if r.status != "in_sync"
+        )
+        return json.dumps({
+            "healthy": wf_drift == 0 and fm_drift == 0,
+            "workflow_drift_count": wf_drift,
+            "frontmatter_drift_count": fm_drift,
+        })
 
     fm_summary = _build_frontmatter_summary(frontmatter_reports)
 
@@ -1241,11 +1259,11 @@ async def reconcile_frontmatter(feature_type_id: str | None = None) -> str:
 
 
 @mcp.tool()
-async def reconcile_status() -> str:
+async def reconcile_status(summary_only: bool = False) -> str:
     """Unified health report across workflow state and frontmatter drift."""
     if _engine is None or _db is None:
         return _NOT_INITIALIZED
-    return _process_reconcile_status(_engine, _db, _artifacts_root)
+    return _process_reconcile_status(_engine, _db, _artifacts_root, summary_only=summary_only)
 
 
 @mcp.tool()

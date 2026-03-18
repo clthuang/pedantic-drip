@@ -2577,6 +2577,91 @@ class TestProcessReconcileStatus:
 
         monkeypatch.setattr(mod, "scan_all", original_scan_all)
 
+    # --- Task 2.2: summary_only mode ---
+
+    def test_summary_only_healthy(self, db, tmp_path):
+        """summary_only=True returns exactly 3 fields when healthy."""
+        # Set up an in-sync feature
+        db.register_entity("feature", "011-sum-h", "SumH", status="active")
+        db.create_workflow_phase(
+            "feature:011-sum-h",
+            workflow_phase="specify",
+            last_completed_phase="brainstorm",
+            mode="standard",
+        )
+        feat_dir = os.path.join(str(tmp_path), "features", "011-sum-h")
+        os.makedirs(feat_dir, exist_ok=True)
+        with open(os.path.join(feat_dir, ".meta.json"), "w") as f:
+            json.dump({
+                "id": "011", "slug": "011-sum-h", "status": "active",
+                "mode": "standard", "lastCompletedPhase": "brainstorm",
+                "phases": {"brainstorm": {"status": "completed"}},
+            }, f)
+
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        result = _process_reconcile_status(engine, db, str(tmp_path), summary_only=True)
+        data = json.loads(result)
+
+        # Exactly 3 keys
+        assert set(data.keys()) == {"healthy", "workflow_drift_count", "frontmatter_drift_count"}
+        assert data["healthy"] is True
+        assert data["workflow_drift_count"] == 0
+        assert data["frontmatter_drift_count"] == 0
+
+    def test_summary_only_unhealthy(self, db, tmp_path):
+        """summary_only=True returns correct drift counts when drift exists."""
+        # Set up a drifted feature (meta.json ahead of DB)
+        db.register_entity("feature", "011-sum-d", "SumD", status="active")
+        db.create_workflow_phase(
+            "feature:011-sum-d",
+            workflow_phase="specify",
+            last_completed_phase="brainstorm",
+            mode="standard",
+        )
+        feat_dir = os.path.join(str(tmp_path), "features", "011-sum-d")
+        os.makedirs(feat_dir, exist_ok=True)
+        with open(os.path.join(feat_dir, ".meta.json"), "w") as f:
+            json.dump({
+                "id": "011", "slug": "011-sum-d", "status": "active",
+                "mode": "standard", "lastCompletedPhase": "implement",
+                "phases": {
+                    "brainstorm": {"status": "completed"},
+                    "specify": {"status": "completed"},
+                    "design": {"status": "completed"},
+                    "create-plan": {"status": "completed"},
+                    "create-tasks": {"status": "completed"},
+                    "implement": {"status": "completed"},
+                },
+            }, f)
+
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        result = _process_reconcile_status(engine, db, str(tmp_path), summary_only=True)
+        data = json.loads(result)
+
+        assert set(data.keys()) == {"healthy", "workflow_drift_count", "frontmatter_drift_count"}
+        assert data["healthy"] is False
+        assert data["workflow_drift_count"] >= 1
+
+    def test_summary_only_false_returns_full_report(self, db, tmp_path):
+        """summary_only=False (default) returns the full 5-key report unchanged."""
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        result = _process_reconcile_status(engine, db, str(tmp_path), summary_only=False)
+        data = json.loads(result)
+        expected_keys = {
+            "workflow_drift", "frontmatter_drift", "healthy",
+            "total_features_checked", "total_files_checked",
+        }
+        assert set(data.keys()) == expected_keys
+
+    def test_summary_only_default_is_false(self, db, tmp_path):
+        """Calling without summary_only returns full report (backward compat)."""
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        result = _process_reconcile_status(engine, db, str(tmp_path))
+        data = json.loads(result)
+        # Should have the full 5-key shape, not the 3-key summary
+        assert "workflow_drift" in data
+        assert "total_features_checked" in data
+
 
 # ---------------------------------------------------------------------------
 # Task 6.1: MCP tool handlers (not-initialized guards)
