@@ -146,8 +146,8 @@ check_python3() {
     local major minor
     major="${version%%.*}"
     minor="${version#*.}"
-    if (( major < 3 || (major == 3 && minor < 10) )); then
-        fail "python3 version ${version} < 3.10 required" "$(install_cmd python3)"
+    if (( major < 3 || (major == 3 && minor < 12) )); then
+        fail "python3 version ${version} < 3.12 required" "$(install_cmd python3)"
         return 1
     fi
     pass "python3 ${version}"

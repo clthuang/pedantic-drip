@@ -2205,6 +2205,286 @@ META
     teardown_yolo_test
 }
 
+# === Feature 042: MCP Bootstrap Python Discovery Tests ===
+
+# Test: check_mcp_health returns warning for recent error log entries
+test_check_mcp_health_recent_errors() {
+    log_test "check_mcp_health returns warning for recent error log entries"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    mkdir -p "$tmpdir/.claude/iflow"
+
+    # Write a recent error log entry (current UTC timestamp)
+    local ts
+    ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    echo "{\"timestamp\":\"$ts\",\"server\":\"memory-server\",\"error\":\"python_version\",\"message\":\"Python >= 3.12 required\"}" > "$tmpdir/.claude/iflow/mcp-bootstrap-errors.log"
+
+    # Write a test script that sources the function and calls it
+    local test_script="$tmpdir/test_health.sh"
+    cat > "$test_script" << 'SCRIPT_EOF'
+#!/usr/bin/env bash
+set +euo pipefail 2>/dev/null || true
+SCRIPT_EOF
+    # Append the function definition from session-start.sh
+    sed -n '/^check_mcp_health/,/^}/p' "${HOOKS_DIR}/session-start.sh" >> "$test_script"
+    echo 'check_mcp_health' >> "$test_script"
+    chmod +x "$test_script"
+
+    cd "$PROJECT_ROOT"
+    local output
+    output=$(HOME="$tmpdir" PLUGIN_ROOT="${HOOKS_DIR}/.." bash "$test_script" 2>/dev/null) || true
+
+    if [[ "$output" == *"WARNING"* ]] && [[ "$output" == *"MCP servers failed"* ]]; then
+        log_pass
+    else
+        log_fail "Expected WARNING about MCP servers, got: '$output'"
+    fi
+
+    rm -rf "$tmpdir"
+}
+
+# Test: check_mcp_health returns empty for old entries
+test_check_mcp_health_old_entries() {
+    log_test "check_mcp_health returns empty for old entries"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    mkdir -p "$tmpdir/.claude/iflow"
+
+    # Write an old error log entry (2 hours ago)
+    echo '{"timestamp":"2020-01-01T00:00:00Z","server":"memory-server","error":"python_version","message":"old error"}' > "$tmpdir/.claude/iflow/mcp-bootstrap-errors.log"
+
+    output=$(HOME="$tmpdir" PLUGIN_ROOT="${HOOKS_DIR}/.." bash -c '
+        set +euo pipefail 2>/dev/null || true
+        PLUGIN_ROOT="'"${HOOKS_DIR}/.."'"
+        '"$(sed -n '/^check_mcp_health/,/^}/p' "${HOOKS_DIR}/session-start.sh")"'
+        check_mcp_health
+    ' 2>/dev/null) || true
+
+    if [[ -z "$output" ]]; then
+        log_pass
+    else
+        log_fail "Expected empty output for old entries, got: '$output'"
+    fi
+
+    rm -rf "$tmpdir"
+}
+
+# Test: check_mcp_health returns empty when no log file
+test_check_mcp_health_no_log() {
+    log_test "check_mcp_health returns empty when no log file"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    mkdir -p "$tmpdir/.claude/iflow"
+
+    output=$(HOME="$tmpdir" PLUGIN_ROOT="${HOOKS_DIR}/.." bash -c '
+        set +euo pipefail 2>/dev/null || true
+        PLUGIN_ROOT="'"${HOOKS_DIR}/.."'"
+        '"$(sed -n '/^check_mcp_health/,/^}/p' "${HOOKS_DIR}/session-start.sh")"'
+        check_mcp_health
+    ' 2>/dev/null) || true
+
+    if [[ -z "$output" ]]; then
+        log_pass
+    else
+        log_fail "Expected empty output, got: '$output'"
+    fi
+
+    rm -rf "$tmpdir"
+}
+
+# Test: meta-json-guard sentinel with valid content blocks writes
+test_meta_json_guard_sentinel_valid_content() {
+    log_test "meta-json-guard sentinel with valid content blocks writes"
+
+    setup_meta_guard_test
+    local sentinel_dir="$META_GUARD_TMPDIR/.claude/plugins/cache/test-org/iflow-test/1.0.0/.venv"
+    mkdir -p "$sentinel_dir"
+
+    # Write sentinel with valid content (real python path)
+    local real_python
+    real_python=$(command -v python3)
+    local real_version
+    real_version=$(python3 -c "import sys; print('{0}.{1}'.format(sys.version_info.major, sys.version_info.minor))" 2>/dev/null)
+    echo "$real_python:$real_version" > "$sentinel_dir/.bootstrap-complete"
+
+    local output
+    output=$(echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/042-foo/.meta.json","content":"{}"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null)
+
+    if echo "$output" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['hookSpecificOutput']['permissionDecision'] == 'deny'" 2>/dev/null; then
+        log_pass
+    else
+        log_fail "Expected deny with valid sentinel content, got: $output"
+    fi
+
+    teardown_meta_guard_test
+}
+
+# Test: meta-json-guard sentinel with removed interpreter permits
+test_meta_json_guard_sentinel_removed_interpreter() {
+    log_test "meta-json-guard sentinel with removed interpreter permits"
+
+    setup_meta_guard_test
+    local sentinel_dir="$META_GUARD_TMPDIR/.claude/plugins/cache/test-org/iflow-test/1.0.0/.venv"
+    mkdir -p "$sentinel_dir"
+
+    # Write sentinel with non-existent python path
+    echo "/nonexistent/python3.13:3.13" > "$sentinel_dir/.bootstrap-complete"
+
+    local output
+    output=$(echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/042-foo/.meta.json","content":"{}"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null) || true
+
+    # Should permit (degraded) because interpreter doesn't exist
+    if echo "$output" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d == {}" 2>/dev/null; then
+        log_pass
+    else
+        log_fail "Expected permit (empty JSON) for removed interpreter, got: $output"
+    fi
+
+    teardown_meta_guard_test
+}
+
+# Test: meta-json-guard sentinel with old version permits
+test_meta_json_guard_sentinel_old_version() {
+    log_test "meta-json-guard sentinel with old version (3.9) permits"
+
+    setup_meta_guard_test
+    local sentinel_dir="$META_GUARD_TMPDIR/.claude/plugins/cache/test-org/iflow-test/1.0.0/.venv"
+    mkdir -p "$sentinel_dir"
+
+    # Write sentinel with valid path but old version
+    local real_python
+    real_python=$(command -v python3)
+    echo "$real_python:3.9" > "$sentinel_dir/.bootstrap-complete"
+
+    local output
+    output=$(echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/042-foo/.meta.json","content":"{}"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null) || true
+
+    # Should permit (degraded) because version < 3.12
+    if echo "$output" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d == {}" 2>/dev/null; then
+        log_pass
+    else
+        log_fail "Expected permit for old version, got: $output"
+    fi
+
+    teardown_meta_guard_test
+}
+
+# Test: meta-json-guard legacy empty sentinel (recent mtime) blocks
+test_meta_json_guard_legacy_sentinel_recent() {
+    log_test "meta-json-guard legacy empty sentinel (recent mtime) blocks"
+
+    setup_meta_guard_test
+    local sentinel_dir="$META_GUARD_TMPDIR/.claude/plugins/cache/test-org/iflow-test/1.0.0/.venv"
+    mkdir -p "$sentinel_dir"
+
+    # Create empty sentinel (legacy format) with current mtime
+    touch "$sentinel_dir/.bootstrap-complete"
+
+    local output
+    output=$(echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/042-foo/.meta.json","content":"{}"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null)
+
+    if echo "$output" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['hookSpecificOutput']['permissionDecision'] == 'deny'" 2>/dev/null; then
+        log_pass
+    else
+        log_fail "Expected deny for recent legacy sentinel, got: $output"
+    fi
+
+    teardown_meta_guard_test
+}
+
+# Test: meta-json-guard legacy empty sentinel (stale mtime > 24h) permits
+test_meta_json_guard_legacy_sentinel_stale() {
+    log_test "meta-json-guard legacy empty sentinel (stale > 24h) permits"
+
+    setup_meta_guard_test
+    local sentinel_dir="$META_GUARD_TMPDIR/.claude/plugins/cache/test-org/iflow-test/1.0.0/.venv"
+    mkdir -p "$sentinel_dir"
+
+    # Create empty sentinel and backdate to > 24h ago
+    touch "$sentinel_dir/.bootstrap-complete"
+    touch -t 202001010000 "$sentinel_dir/.bootstrap-complete"
+
+    local output
+    output=$(echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/042-foo/.meta.json","content":"{}"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null) || true
+
+    # Should permit (degraded) because mtime > 24h
+    if echo "$output" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d == {}" 2>/dev/null; then
+        log_pass
+    else
+        log_fail "Expected permit for stale legacy sentinel, got: $output"
+    fi
+
+    teardown_meta_guard_test
+}
+
+# Test: meta-json-guard stale sentinel logs permit-degraded-stale-sentinel
+test_meta_json_guard_stale_sentinel_log() {
+    log_test "meta-json-guard stale sentinel logs permit-degraded-stale-sentinel"
+
+    setup_meta_guard_test
+    local sentinel_dir="$META_GUARD_TMPDIR/.claude/plugins/cache/test-org/iflow-test/1.0.0/.venv"
+    mkdir -p "$sentinel_dir"
+
+    # Create sentinel with non-existent interpreter
+    echo "/nonexistent/python3.13:3.13" > "$sentinel_dir/.bootstrap-complete"
+
+    echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/042-foo/.meta.json","content":"{}"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null > /dev/null || true
+
+    local log_file="${META_GUARD_TMPDIR}/.claude/iflow/meta-json-guard.log"
+    if [[ -f "$log_file" ]]; then
+        local last_line
+        last_line=$(tail -1 "$log_file")
+        if echo "$last_line" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('action') == 'permit-degraded-stale-sentinel'" 2>/dev/null; then
+            log_pass
+        else
+            log_fail "Expected permit-degraded-stale-sentinel action in log, got: $last_line"
+        fi
+    else
+        log_fail "No guard log file found"
+    fi
+
+    teardown_meta_guard_test
+}
+
+# Test: session-start first-run message appears when .venv missing
+test_session_start_first_run_when_venv_missing() {
+    log_test "session-start first-run setup message when .venv missing"
+
+    # Create a temp HOME and project without .venv and memory dir
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    local fake_home
+    fake_home=$(mktemp -d)
+    mkdir -p "$tmpdir/.git" "$tmpdir/.claude"
+    cat > "$tmpdir/.claude/iflow.local.md" << 'TMPL'
+---
+memory_injection_enabled: false
+---
+TMPL
+
+    cd "$tmpdir"
+    local output
+    # Override HOME so memory dir check fails; PLUGIN_ROOT will be derived from
+    # the real hook script location, but the first-run check also looks at
+    # $HOME/.claude/iflow/memory which won't exist in fake_home
+    output=$(HOME="$fake_home" "${HOOKS_DIR}/session-start.sh" 2>/dev/null) || true
+
+    local context
+    context=$(echo "$output" | python3 -c "import json,sys; print(json.load(sys.stdin).get('hookSpecificOutput',{}).get('additionalContext',''))" 2>/dev/null)
+
+    if [[ "$context" == *"Setup required"* ]] && [[ "$context" == *"setup.sh"* ]]; then
+        log_pass
+    else
+        log_fail "Expected 'Setup required' message, got: ${context:0:200}"
+    fi
+
+    cd "$PROJECT_ROOT"
+    rm -rf "$tmpdir" "$fake_home"
+}
+
 # Run all tests
 main() {
     echo "=========================================="
@@ -2327,6 +2607,21 @@ main() {
     test_meta_json_guard_deny_path_latency
     test_meta_json_guard_degraded_permit_path_latency
     test_meta_json_guard_deny_structure_matches_spec
+
+    echo ""
+    echo "--- Feature 042: MCP Bootstrap Python Discovery Tests ---"
+    echo ""
+
+    test_check_mcp_health_recent_errors
+    test_check_mcp_health_old_entries
+    test_check_mcp_health_no_log
+    test_meta_json_guard_sentinel_valid_content
+    test_meta_json_guard_sentinel_removed_interpreter
+    test_meta_json_guard_sentinel_old_version
+    test_meta_json_guard_legacy_sentinel_recent
+    test_meta_json_guard_legacy_sentinel_stale
+    test_meta_json_guard_stale_sentinel_log
+    test_session_start_first_run_when_venv_missing
 
     echo ""
     echo "--- Path Portability Tests ---"

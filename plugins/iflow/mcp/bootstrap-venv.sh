@@ -10,6 +10,7 @@
 # --- Constants ---
 
 BOOTSTRAP_TIMEOUT=${BOOTSTRAP_TIMEOUT:-120}
+BOOTSTRAP_ERROR_LOG="$HOME/.claude/iflow/mcp-bootstrap-errors.log"
 
 # Single source of truth for all server dependencies (AC-2.1).
 # Index-aligned: DEP_PIP_NAMES[i] installs as DEP_IMPORT_NAMES[i].
@@ -18,20 +19,130 @@ BOOTSTRAP_TIMEOUT=${BOOTSTRAP_TIMEOUT:-120}
 DEP_PIP_NAMES=("fastapi>=0.128.3" "jinja2>=3.1.6" "mcp>=1.0,<2" "numpy>=1.24,<3" "pydantic>=2.11,<3" "pydantic-settings>=2.5,<3" "python-dotenv>=1.0,<2" "uvicorn>=0.34")
 DEP_IMPORT_NAMES=(fastapi jinja2 mcp numpy pydantic pydantic_settings dotenv uvicorn)
 
+# Module-level variables set during bootstrap_venv():
+#   PYTHON_FOR_VENV - absolute path to the discovered Python >= 3.12 interpreter (for venv creation)
+#   SENTINEL_PATH   - path to the bootstrap-complete sentinel file
+#   SERVER_NAME     - human-readable server name for logging
+
 # --- Functions ---
 
-# Verifies python3 is >= 3.12. Exits with code 1 if not (FR-3, AC-3.1, AC-3.2).
-# Arguments: none (uses python3 from PATH)
-# Returns: 0 on success, exits 1 on failure
-check_python_version() {
+# Writes a JSONL error entry to ~/.claude/iflow/mcp-bootstrap-errors.log.
+# Called before exit 1 on any fatal bootstrap error.
+# All output to stderr (MCP stdio safety).
+#
+# Arguments:
+#   $1 - server_name: which server failed (e.g., "memory-server")
+#   $2 - error_type: one of "python_version", "venv_creation", "dep_install", "lock_timeout"
+#   $3 - message: human-readable error description
+#   $4 - extra_json: optional additional JSON fields (e.g., '"found":"3.9","required":"3.12"')
+log_bootstrap_error() {
+    local server_name="$1"
+    local error_type="$2"
+    local msg="$3"
+    local extra_json="${4:-}"
+    local log_dir="$HOME/.claude/iflow"
+    local ts
+
+    mkdir -p "$log_dir" 2>/dev/null || true
+    ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    echo "{\"timestamp\":\"$ts\",\"server\":\"$server_name\",\"error\":\"$error_type\",\"message\":\"$msg\"${extra_json:+,$extra_json}}" >> "$BOOTSTRAP_ERROR_LOG"
+}
+
+# Writes the sentinel file with interpreter metadata.
+# Format: <absolute_path>:<major.minor>
+# Example: /opt/homebrew/bin/python3.13:3.13
+#
+# Arguments:
+#   $1 - sentinel_path: path to the sentinel file
+#   $2 - python_path: absolute path to the Python interpreter used
+write_sentinel() {
+    local sentinel_path="$1"
+    local python_path="$2"
     local version
-    version=$(python3 -c "import sys; print('{0}.{1}'.format(sys.version_info.major, sys.version_info.minor))" 2>/dev/null || echo "0.0")
-    local major="${version%%.*}"
-    local minor="${version#*.}"
-    if [ "$major" -lt 3 ] 2>/dev/null || { [ "$major" -eq 3 ] && [ "$minor" -lt 12 ]; } 2>/dev/null; then
-        echo "${SERVER_NAME:-bootstrap}: ERROR: Python >= 3.12 required, found ${version}" >&2
-        exit 1
+
+    version=$("$python_path" -c "import sys; print('{0}.{1}'.format(sys.version_info.major, sys.version_info.minor))" 2>/dev/null || echo "")
+    if [ -n "$version" ]; then
+        echo "$python_path:$version" > "$sentinel_path"
+    else
+        # Fallback: write sentinel without version info (better than no sentinel)
+        echo "$python_path:" > "$sentinel_path"
     fi
+}
+
+# Discovers a Python >= 3.12 interpreter and sets PYTHON_FOR_VENV.
+# Search order:
+#   1. uv python find --system '>=3.12' (if uv available)
+#   2. python3.14, python3.13, python3.12 in /opt/homebrew/bin
+#   3. python3.14, python3.13, python3.12 in /usr/local/bin
+#   4. Bare python3 from PATH
+# For each candidate (tiers 2-4), verify version >= 3.12.
+# On failure: calls log_bootstrap_error() and exits 1.
+# On success: sets PYTHON_FOR_VENV=<absolute path>
+#
+# Arguments: none
+# Sets: PYTHON_FOR_VENV (module-level, NOT exported)
+# Requires: SERVER_NAME must be set before calling
+discover_python() {
+    local candidate version major minor
+
+    # Tier 1: uv python find (if uv available)
+    if command -v uv >/dev/null 2>&1; then
+        candidate=$(uv python find --system '>=3.12' 2>/dev/null) || true
+        if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+            PYTHON_FOR_VENV="$candidate"
+            echo "${SERVER_NAME:-bootstrap}: discovered Python via uv: $PYTHON_FOR_VENV" >&2
+            return 0
+        fi
+    fi
+
+    # Tier 2-3: Manual search in well-known directories
+    local search_dirs="/opt/homebrew/bin /usr/local/bin"
+    local search_versions="python3.14 python3.13 python3.12"
+    for dir in $search_dirs; do
+        for ver in $search_versions; do
+            candidate="$dir/$ver"
+            if [ -x "$candidate" ]; then
+                version=$("$candidate" -c "import sys; print('{0}.{1}'.format(sys.version_info.major, sys.version_info.minor))" 2>/dev/null || echo "0.0")
+                major="${version%%.*}"
+                minor="${version#*.}"
+                # Validate: accept if >= 3.12
+                if [ -n "$minor" ] && [ "$minor" -eq "$minor" ] 2>/dev/null; then
+                    if [ "$major" -gt 3 ] 2>/dev/null || { [ "$major" -eq 3 ] && [ "$minor" -ge 12 ]; } 2>/dev/null; then
+                        PYTHON_FOR_VENV="$candidate"
+                        echo "${SERVER_NAME:-bootstrap}: discovered Python at $PYTHON_FOR_VENV ($version)" >&2
+                        return 0
+                    fi
+                fi
+            fi
+        done
+    done
+
+    # Tier 4: Bare python3 from PATH
+    candidate=$(command -v python3 2>/dev/null || true)
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+        version=$("$candidate" -c "import sys; print('{0}.{1}'.format(sys.version_info.major, sys.version_info.minor))" 2>/dev/null || echo "0.0")
+        major="${version%%.*}"
+        minor="${version#*.}"
+        if [ -n "$minor" ] && [ "$minor" -eq "$minor" ] 2>/dev/null; then
+            if [ "$major" -gt 3 ] 2>/dev/null || { [ "$major" -eq 3 ] && [ "$minor" -ge 12 ]; } 2>/dev/null; then
+                PYTHON_FOR_VENV="$candidate"
+                echo "${SERVER_NAME:-bootstrap}: using python3 from PATH: $PYTHON_FOR_VENV ($version)" >&2
+                return 0
+            fi
+        fi
+        # python3 found but version too low — record the found version for the error
+        local found_version="$version"
+    else
+        local found_version="none"
+    fi
+
+    # All tiers exhausted — failure
+    local searched_json="\"/opt/homebrew/bin/python3.{14,13,12}\",\"/usr/local/bin/python3.{14,13,12}\",\"python3 (PATH)\""
+    echo "${SERVER_NAME:-bootstrap}: ERROR: Python >= 3.12 required, found ${found_version:-none}" >&2
+    echo "${SERVER_NAME:-bootstrap}: Searched: /opt/homebrew/bin, /usr/local/bin, PATH" >&2
+    log_bootstrap_error "${SERVER_NAME:-bootstrap}" "python_version" "Python >= 3.12 required, found ${found_version:-none}" "\"found\":\"${found_version:-none}\",\"required\":\"3.12\",\"searched\":[$searched_json]"
+    exit 1
 }
 
 # Checks if all canonical deps are importable in the given Python interpreter.
@@ -48,11 +159,12 @@ check_venv_deps() {
     "$python_path" -c "$imports" 2>/dev/null
 }
 
-# System python3 check — uses check_venv_deps with system python3.
+# System python check — uses check_venv_deps with PYTHON_FOR_VENV.
 # If all canonical deps are importable globally, we can skip venv bootstrap entirely.
 check_system_python() {
-    if check_venv_deps python3; then
-        export PYTHON=python3
+    if check_venv_deps "$PYTHON_FOR_VENV"; then
+        export PYTHON="$PYTHON_FOR_VENV"
+        write_sentinel "$SENTINEL_PATH" "$PYTHON_FOR_VENV"
         return 0
     fi
     return 1
@@ -69,10 +181,10 @@ create_venv() {
     local server_name="$2"
     if command -v uv >/dev/null 2>&1; then
         echo "${server_name}: creating venv with uv..." >&2
-        uv venv "$venv_dir" >&2
+        uv venv --python "$PYTHON_FOR_VENV" "$venv_dir" >&2
     else
-        echo "${server_name}: creating venv with python3 -m venv..." >&2
-        python3 -m venv "$venv_dir" >&2
+        echo "${server_name}: creating venv with $PYTHON_FOR_VENV -m venv..." >&2
+        "$PYTHON_FOR_VENV" -m venv "$venv_dir" >&2
     fi
 }
 
@@ -152,6 +264,7 @@ acquire_lock() {
 
     # Timeout — no sentinel appeared within BOOTSTRAP_TIMEOUT seconds
     echo "${server_name}: ERROR: bootstrap lock timeout after ${BOOTSTRAP_TIMEOUT}s" >&2
+    log_bootstrap_error "$server_name" "lock_timeout" "Bootstrap lock timeout after ${BOOTSTRAP_TIMEOUT}s" "\"timeout_seconds\":$BOOTSTRAP_TIMEOUT"
     exit 1
 }
 
@@ -182,15 +295,16 @@ bootstrap_venv() {
     local lock_dir="${venv_dir}.bootstrap.lock"
     local sentinel="${venv_dir}/.bootstrap-complete"
 
-    # Expose server_name for check_python_version error messages
+    # Set module-level variables before discover_python()
     SERVER_NAME="$server_name"
+    SENTINEL_PATH="$sentinel"
 
-    # Step 1: Python version guard (FR-3)
-    check_python_version
+    # Step 1: Python discovery — find a suitable interpreter >= 3.12
+    discover_python
 
-    # Step 2: System python3 check — if all deps importable, use system python3
+    # Step 2: System python check — if all deps importable, use system python
     if check_system_python; then
-        echo "${server_name}: using system python3 (all deps available)" >&2
+        echo "${server_name}: using system python (all deps available)" >&2
         return 0
     fi
 
@@ -198,8 +312,8 @@ bootstrap_venv() {
     # Handles both normal fast-path (sentinel present) and sentinel recovery
     # (sentinel missing but deps present — previous leader crashed before writing sentinel).
     if [ -x "$venv_dir/bin/python" ] && check_venv_deps "$venv_dir/bin/python"; then
-        # Re-write sentinel if missing (sentinel recovery, safe without locking — idempotent touch)
-        [ -f "$sentinel" ] || { touch "$sentinel"; echo "${server_name}: sentinel recovered (deps already present)" >&2; }
+        # Re-write sentinel if missing (sentinel recovery, safe without locking — idempotent)
+        [ -f "$sentinel" ] || { write_sentinel "$sentinel" "$PYTHON_FOR_VENV"; echo "${server_name}: sentinel recovered (deps already present)" >&2; }
         export PYTHON="$venv_dir/bin/python"
         return 0
     fi
@@ -233,7 +347,7 @@ bootstrap_venv() {
         install_all_deps "$venv_dir" "$server_name"
 
         # Write sentinel (before releasing lock so waiters see it immediately)
-        touch "$sentinel"
+        write_sentinel "$sentinel" "$PYTHON_FOR_VENV"
 
         # Release lock and clear trap
         release_lock "$lock_dir"
@@ -256,7 +370,7 @@ bootstrap_venv() {
             create_venv "$venv_dir" "$server_name"
         fi
         install_all_deps "$venv_dir" "$server_name"
-        touch "$sentinel"
+        write_sentinel "$sentinel" "$PYTHON_FOR_VENV"
         export PYTHON="$venv_dir/bin/python"
         return 0
     fi

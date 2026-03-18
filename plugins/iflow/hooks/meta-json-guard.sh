@@ -36,9 +36,54 @@ if [[ "$FILE_PATH" != *".meta.json" ]]; then
     exit 0
 fi
 
-# Check if MCP workflow tools are available via bootstrap sentinel
+# Check if MCP workflow tools are available via bootstrap sentinel.
+# Enhanced: reads sentinel content, validates interpreter path + version.
+# Falls back to mtime check for legacy empty sentinels.
 check_mcp_available() {
-    ls "$HOME"/.claude/plugins/cache/*/iflow*/*/.venv/.bootstrap-complete >/dev/null 2>/dev/null
+    local sentinel_file
+    sentinel_file=$(ls "$HOME"/.claude/plugins/cache/*/iflow*/*/.venv/.bootstrap-complete 2>/dev/null | head -1) || true
+
+    if [[ -z "$sentinel_file" ]] || [[ ! -f "$sentinel_file" ]]; then
+        return 1
+    fi
+
+    # Read sentinel content (format: <path>:<version>)
+    local interp_path="" interp_version=""
+    IFS=: read -r interp_path interp_version < "$sentinel_file" 2>/dev/null || true
+
+    if [[ -n "$interp_path" ]] && [[ -n "$interp_version" ]]; then
+        # Content present: validate interpreter path exists
+        if [[ ! -x "$interp_path" ]]; then
+            MCP_UNAVAILABLE_REASON="stale-sentinel"
+            return 1
+        fi
+
+        # Parse version and validate >= 3.12
+        local major="${interp_version%%.*}"
+        local minor="${interp_version#*.}"
+
+        # Guard against non-numeric values
+        [[ -n "$minor" ]] && [[ "$minor" -eq "$minor" ]] 2>/dev/null || { MCP_UNAVAILABLE_REASON="stale-sentinel"; return 1; }
+        [[ -n "$major" ]] && [[ "$major" -eq "$major" ]] 2>/dev/null || { MCP_UNAVAILABLE_REASON="stale-sentinel"; return 1; }
+
+        # Version too low check (correctly handles Python 4.x: major > 3 passes)
+        if [[ "$major" -lt 3 ]] 2>/dev/null || { [[ "$major" -eq 3 ]] && [[ "$minor" -lt 12 ]]; } 2>/dev/null; then
+            MCP_UNAVAILABLE_REASON="stale-sentinel"
+            return 1
+        fi
+
+        # Both OK — interpreter exists and version is adequate
+        return 0
+    fi
+
+    # Legacy sentinel: content empty, fall back to mtime check (< 24h = recent)
+    if [[ -n "$(find "$sentinel_file" -mmin -1440 -print 2>/dev/null)" ]]; then
+        return 0
+    fi
+
+    # Legacy sentinel is stale (> 24h)
+    MCP_UNAVAILABLE_REASON="stale-sentinel"
+    return 1
 }
 
 # Log guard event (FR-11 instrumentation)
@@ -74,8 +119,13 @@ log_guard_event() {
 }
 
 # Degraded permit: allow write when MCP tools unavailable
+MCP_UNAVAILABLE_REASON=""
 if ! check_mcp_available; then
-    log_guard_event "$FILE_PATH" "$TOOL_NAME" "permit-degraded"
+    if [[ "$MCP_UNAVAILABLE_REASON" == "stale-sentinel" ]]; then
+        log_guard_event "$FILE_PATH" "$TOOL_NAME" "permit-degraded-stale-sentinel"
+    else
+        log_guard_event "$FILE_PATH" "$TOOL_NAME" "permit-degraded"
+    fi
     echo '{}'
     exit 0
 fi

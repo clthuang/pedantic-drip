@@ -163,6 +163,85 @@ check_branch_mismatch() {
     return 1  # Match
 }
 
+# Check MCP bootstrap error log for recent failures.
+# Reads ~/.claude/iflow/mcp-bootstrap-errors.log for entries < 10 minutes old.
+# Returns warning text via stdout, or empty string.
+# Truncates entries > 1 hour from the log file on every invocation.
+# Wrapped for error resilience — must never crash session-start.
+check_mcp_health() {
+    (
+        set +e
+        local log_file="$HOME/.claude/iflow/mcp-bootstrap-errors.log"
+        if [[ ! -f "$log_file" ]]; then
+            return 0
+        fi
+
+        local current_epoch
+        current_epoch=$(date +%s 2>/dev/null) || return 0
+
+        local recent_errors=""
+        local keep_lines=""
+        local one_hour=3600
+        local ten_min=600
+
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            # Extract timestamp from JSONL
+            local ts
+            ts=$(echo "$line" | sed 's/.*"timestamp":"\([^"]*\)".*/\1/')
+            [[ -z "$ts" ]] && continue
+
+            # Parse timestamp to epoch (timestamps are UTC ISO-8601)
+            local entry_epoch=""
+            # BSD date (macOS) — TZ=UTC ensures input is treated as UTC
+            entry_epoch=$(TZ=UTC date -jf '%Y-%m-%dT%H:%M:%SZ' "$ts" +%s 2>/dev/null) || true
+            # Python fallback
+            if [[ -z "$entry_epoch" ]]; then
+                entry_epoch=$(python3 -c "import calendar,time; print(calendar.timegm(time.strptime('$ts','%Y-%m-%dT%H:%M:%SZ')))" 2>/dev/null) || true
+            fi
+            [[ -z "$entry_epoch" ]] && continue
+
+            local age=$((current_epoch - entry_epoch))
+
+            # Keep entries < 1 hour for the truncated file
+            if [[ "$age" -lt "$one_hour" ]]; then
+                if [[ -n "$keep_lines" ]]; then
+                    keep_lines="${keep_lines}
+${line}"
+                else
+                    keep_lines="$line"
+                fi
+            fi
+
+            # Collect entries < 10 minutes for warning
+            if [[ "$age" -lt "$ten_min" ]]; then
+                local msg
+                msg=$(echo "$line" | sed 's/.*"message":"\([^"]*\)".*/\1/')
+                if [[ -n "$msg" ]]; then
+                    if [[ -n "$recent_errors" ]]; then
+                        recent_errors="${recent_errors}; ${msg}"
+                    else
+                        recent_errors="$msg"
+                    fi
+                fi
+            fi
+        done < "$log_file"
+
+        # Truncate: write kept entries to temp file, atomic mv
+        local tmp_file="$HOME/.claude/iflow/.mcp-errors-tmp.$$"
+        if [[ -n "$keep_lines" ]]; then
+            echo "$keep_lines" > "$tmp_file" 2>/dev/null && mv "$tmp_file" "$log_file" 2>/dev/null || rm -f "$tmp_file" 2>/dev/null
+        else
+            rm -f "$log_file" 2>/dev/null
+        fi
+
+        # Output warning if recent errors found
+        if [[ -n "$recent_errors" ]]; then
+            echo "WARNING: MCP servers failed to start. Workflow tools (transition_phase, store_memory, etc.) are unavailable.\nError: ${recent_errors}. Run: bash \"${PLUGIN_ROOT}/scripts/setup.sh\""
+        fi
+    ) 2>/dev/null || echo ""
+}
+
 # Check if claude-md-management plugin is available
 check_claude_md_plugin() {
     local cache_dir="$HOME/.claude/plugins/cache"
@@ -268,12 +347,6 @@ else:
         context+="\n\nNote: claude-md-management plugin not installed. Install it from claude-plugins-official marketplace for automatic CLAUDE.md updates during /finish-feature."
     fi
 
-    # First-run detection: prompt user to run setup if key components are missing
-    if [[ ! -d "$HOME/.claude/iflow/memory" ]] || [[ ! -x "${PLUGIN_ROOT}/.venv/bin/python" ]]; then
-        context+="\n\nFirst run detected — run the setup script for full functionality (semantic memory, embedding search):"
-        context+="\n  bash \"${PLUGIN_ROOT}/scripts/setup.sh\""
-    fi
-
     if [[ -z "$meta_file" ]]; then
         context+="\n\nNo active feature. Use /brainstorm to start exploring ideas, or /create-feature to skip brainstorming."
     fi
@@ -364,16 +437,43 @@ EOF
         exit 0
     fi
 
+    # Check MCP health before building context (R4: surface bootstrap failures early)
+    local mcp_warning=""
+    mcp_warning=$(check_mcp_health)
+
+    # First-run detection (R5: moved to main() for early evaluation, before build_context)
+    local first_run_warning=""
+    if [[ ! -d "$HOME/.claude/iflow/memory" ]] || [[ ! -x "${PLUGIN_ROOT}/.venv/bin/python" ]]; then
+        first_run_warning="Setup required for MCP workflow tools. Run: bash \"${PLUGIN_ROOT}/scripts/setup.sh\""
+    fi
+
     local memory_context=""
     memory_context=$(build_memory_context)
 
     local context
     context=$(build_context)
 
-    # Prepend memory before workflow state
+    # Prepend warnings, then memory, then workflow state
     local full_context=""
+    if [[ -n "$mcp_warning" ]]; then
+        full_context="${mcp_warning}"
+    fi
+    if [[ -n "$first_run_warning" ]]; then
+        if [[ -n "$full_context" ]]; then
+            full_context="${full_context}\n\n${first_run_warning}"
+        else
+            full_context="${first_run_warning}"
+        fi
+    fi
     if [[ -n "$memory_context" ]]; then
-        full_context="${memory_context}\n\n${context}"
+        if [[ -n "$full_context" ]]; then
+            full_context="${full_context}\n\n${memory_context}"
+        else
+            full_context="${memory_context}"
+        fi
+    fi
+    if [[ -n "$full_context" ]]; then
+        full_context="${full_context}\n\n${context}"
     else
         full_context="$context"
     fi
