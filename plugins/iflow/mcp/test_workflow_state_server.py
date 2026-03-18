@@ -117,10 +117,10 @@ class TestSerializeState:
         assert isinstance(result, dict)
         assert set(result.keys()) == {
             "feature_type_id", "current_phase", "last_completed_phase",
-            "completed_phases", "mode", "source", "degraded",
+            "mode", "degraded",
         }
 
-    def test_completed_phases_tuple_to_list(self):
+    def test_no_completed_phases_key(self):
         state = FeatureWorkflowState(
             feature_type_id="feature:009-test",
             current_phase="design",
@@ -130,8 +130,19 @@ class TestSerializeState:
             source="entity_db",
         )
         result = _serialize_state(state)
-        assert isinstance(result["completed_phases"], list)
-        assert result["completed_phases"] == ["brainstorm", "specify"]
+        assert "completed_phases" not in result
+
+    def test_no_source_key(self):
+        state = FeatureWorkflowState(
+            feature_type_id="feature:009-test",
+            current_phase="design",
+            last_completed_phase="specify",
+            completed_phases=("brainstorm", "specify"),
+            mode="standard",
+            source="entity_db",
+        )
+        result = _serialize_state(state)
+        assert "source" not in result
 
     def test_degraded_false_for_db_source(self):
         state = FeatureWorkflowState(
@@ -536,7 +547,8 @@ class TestProcessCompletePhase:
             db=seeded_engine.db,
         )
         data = json.loads(result)
-        assert "specify" in data["completed_phases"]
+        assert "error" not in data
+        assert data["degraded"] is False
 
     def test_value_error(self, seeded_engine, monkeypatch):
         monkeypatch.setattr(
@@ -1119,14 +1131,10 @@ class TestBoundaryValues:
         # Then all 50 features are returned
         assert len(data) == 50
 
-    def test_serialize_state_empty_completed_phases(self):
-        """Empty completed_phases tuple serializes to empty list.
-        derived_from: dimension:boundary_values (empty collection)
-
-        Anticipate: list(()) is [] but a mutation swapping to str() or
-        leaving as tuple would break JSON consumers expecting array type.
+    def test_serialize_state_no_completed_phases_in_output(self):
+        """Serialized state never contains completed_phases key.
+        derived_from: dimension:boundary_values (removed field)
         """
-        # Given a state with no completed phases
         state = FeatureWorkflowState(
             feature_type_id="feature:010-test",
             current_phase="brainstorm",
@@ -1135,20 +1143,13 @@ class TestBoundaryValues:
             mode="standard",
             source="db",
         )
-        # When serialized
         result = _serialize_state(state)
-        # Then completed_phases is an empty list (not tuple, not None)
-        assert result["completed_phases"] == []
-        assert isinstance(result["completed_phases"], list)
+        assert "completed_phases" not in result
 
-    def test_serialize_state_multiple_completed_phases_preserves_order(self):
-        """Multiple completed phases maintain insertion order after serialization.
-        derived_from: dimension:boundary_values (multi-element collection)
-
-        Anticipate: Serialization might sort or reverse the phase list,
-        breaking downstream consumers that rely on chronological order.
+    def test_serialize_state_no_source_in_output(self):
+        """Serialized state never contains source key.
+        derived_from: dimension:boundary_values (removed field)
         """
-        # Given a state with 3 completed phases in chronological order
         state = FeatureWorkflowState(
             feature_type_id="feature:010-test",
             current_phase="create-plan",
@@ -1157,10 +1158,8 @@ class TestBoundaryValues:
             mode="standard",
             source="db",
         )
-        # When serialized
         result = _serialize_state(state)
-        # Then the order is preserved exactly
-        assert result["completed_phases"] == ["brainstorm", "specify", "design"]
+        assert "source" not in result
 
 
 # ---------------------------------------------------------------------------
@@ -1279,10 +1278,10 @@ class TestAdversarial:
         # When reading its phase
         result = _process_get_phase(seeded_engine, "feature:009-test")
         data = json.loads(result)
-        # Then all 6 fields are present
+        # Then all 5 fields are present
         expected_keys = {
             "feature_type_id", "current_phase", "last_completed_phase",
-            "completed_phases", "mode", "source", "degraded",
+            "mode", "degraded",
         }
         assert set(data.keys()) == expected_keys
 
@@ -1526,7 +1525,6 @@ class TestIntegrationDegradation:
         # Must be a state dict (not an error), with degraded=True
         assert "error" not in data
         assert data["degraded"] is True
-        assert "brainstorm" in data["completed_phases"]
 
     def test_list_features_by_phase_db_closed_returns_degraded_states(
         self, degraded_engine
@@ -1864,11 +1862,10 @@ class TestCompletePhaseDegradedSourceValue:
         result = _process_complete_phase(engine, "feature:010-test", "brainstorm")
         data = json.loads(result)
 
-        # Then source is exactly 'meta_json_fallback' and degraded is True
+        # Then degraded is True (source was meta_json_fallback)
         assert "error" not in data, f"Unexpected error: {data}"
-        assert data["source"] == "meta_json_fallback"
+        assert "source" not in data
         assert data["degraded"] is True
-        assert "brainstorm" in data["completed_phases"]
 
     def test_normal_complete_phase_source_is_db(self, seeded_engine):
         """Normal complete_phase returns source='db' and degraded=False.
@@ -1881,8 +1878,8 @@ class TestCompletePhaseDegradedSourceValue:
         )
         data = json.loads(result)
 
-        # Then source is 'db' and degraded is False
-        assert data["source"] == "db"
+        # Then degraded is False (source was db)
+        assert "source" not in data
         assert data["degraded"] is False
 
 

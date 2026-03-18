@@ -151,9 +151,7 @@ def _serialize_state(state: FeatureWorkflowState) -> dict:
         "feature_type_id": state.feature_type_id,
         "current_phase": state.current_phase,
         "last_completed_phase": state.last_completed_phase,
-        "completed_phases": list(state.completed_phases),
         "mode": state.mode,
-        "source": state.source,
         "degraded": state.source == "meta_json_fallback",
     }
 
