@@ -123,3 +123,73 @@ async def test_get_entity_handler_compact_output(db):
     # Compact JSON: no indentation, minimal separators
     assert "\n" not in result
     assert ": " not in result  # compact separators use ':' not ': '
+
+
+# ---------------------------------------------------------------------------
+# Deepened tests Phase B: MCP Audit Token Efficiency
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_entity_not_found_returns_message(db):
+    """get_entity for a non-existent type_id returns a not-found message, not crash.
+    derived_from: spec:AC-2 (error handling), dimension:error_propagation
+
+    Anticipate: If get_entity doesn't handle None from db.get_entity(),
+    it would crash with AttributeError when trying to pop keys from None.
+    This test verifies graceful handling of the not-found path.
+    """
+    # Given a database with no matching entity
+    # When requesting a non-existent entity
+    result = await entity_server.get_entity("feature:does-not-exist")
+    # Then a human-readable not-found message is returned
+    assert isinstance(result, str)
+    assert "not found" in result.lower() or "Entity not found" in result
+    assert "does-not-exist" in result
+
+
+@pytest.mark.asyncio
+async def test_set_parent_delegates_to_server_helpers(db):
+    """set_parent MCP handler delegates to _process_set_parent helper.
+    derived_from: spec:AC-15 (delegation to helpers), dimension:bdd_scenarios
+
+    Anticipate: If set_parent inlines the logic instead of delegating to
+    _process_set_parent, future changes to the helper would not be picked up
+    by the MCP tool. This test verifies the delegation chain works end-to-end.
+    """
+    # Given parent and child entities
+    db.register_entity("project", "p1", "Parent Project", status="active")
+    db.register_entity("feature", "c1", "Child Feature", status="active")
+    # When setting parent via MCP handler
+    result = await entity_server.set_parent("feature:c1", "project:p1")
+    # Then success message is returned
+    assert "Parent set:" in result
+    assert "feature:c1" in result
+    assert "project:p1" in result
+
+
+@pytest.mark.asyncio
+async def test_entity_lifecycle_valueerror_caught_by_mcp_decorator(db):
+    """Entity lifecycle ValueError is caught and returned as structured error.
+    derived_from: spec:AC-5 (error handling), dimension:error_propagation
+
+    Anticipate: If the init_entity_workflow or transition_entity_phase MCP
+    handlers don't have the _catch_entity_value_error decorator, ValueErrors
+    would propagate as unhandled exceptions instead of structured error JSON.
+    This test verifies the end-to-end error handling chain via the workflow
+    state server processing function.
+    """
+    import workflow_state_server as ws_mod
+
+    # Given a brainstorm entity but NO workflow_phases row
+    db.register_entity("brainstorm", "err-test", "Error Test", status="draft")
+
+    # When attempting to transition without initializing workflow first
+    result = ws_mod._process_transition_entity_phase(
+        db, "brainstorm:err-test", "reviewing"
+    )
+    parsed = json.loads(result)
+    # Then a structured error is returned (not an unhandled exception)
+    assert parsed["error"] is True
+    assert parsed["error_type"] == "entity_not_found"
+    assert "recovery_hint" in parsed

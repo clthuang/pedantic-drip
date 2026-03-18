@@ -921,3 +921,68 @@ class TestSearchMemoryMCPToolParams:
         sig = inspect.signature(search_memory)
         param = sig.parameters["brief"]
         assert param.default is False
+
+
+# ---------------------------------------------------------------------------
+# Deepened tests Phase B: MCP Audit Token Efficiency
+# ---------------------------------------------------------------------------
+
+
+class TestSearchMemoryCategoryFilterBeforeRankingDeepened:
+    """Mutation test: category filter must apply BEFORE ranking, not after.
+    derived_from: spec:AC-7 (category pre-filtering), dimension:mutation_mindset
+    """
+
+    def test_search_memory_category_filters_before_ranking(self, db: MemoryDatabase):
+        """Category filter narrows candidates before ranking, not after.
+        derived_from: spec:AC-7, dimension:mutation_mindset
+
+        Anticipate: If category filtering happens AFTER ranking (post-filter),
+        the limit would be applied to unfiltered results first, potentially
+        returning fewer than `limit` results even when enough category-matching
+        entries exist. Pre-filtering ensures the ranking engine sees only
+        category-matching candidates.
+
+        Setup: 5 'patterns' entries and 5 'heuristics' entries, all sharing
+        the keyword 'workflow'. With limit=3 and category='heuristics',
+        pre-filtering gives ranking 5 heuristics to choose 3 from.
+        Post-filtering might give ranking all 10, pick top 3, then filter
+        out patterns -- potentially returning <3 results.
+
+        Challenge: swapping the order of filter-then-rank to rank-then-filter
+        would produce different (likely fewer) results for the filtered category.
+        """
+        # Given 5 patterns and 5 heuristics entries sharing keyword 'workflow'
+        for i in range(5):
+            _process_store_memory(
+                db=db, provider=None, keyword_gen=None,
+                name=f"Pattern workflow {i}",
+                description=f"A workflow pattern about testing number {i}",
+                reasoning=f"Pattern reason {i}",
+                category="patterns", references=[],
+            )
+        for i in range(5):
+            _process_store_memory(
+                db=db, provider=None, keyword_gen=None,
+                name=f"Heuristic workflow {i}",
+                description=f"A workflow heuristic about testing number {i}",
+                reasoning=f"Heuristic reason {i}",
+                category="heuristics", references=[],
+            )
+
+        # When searching with category filter and limit
+        result = _process_search_memory(
+            db=db, provider=None, config={},
+            query="workflow testing",
+            limit=3,
+            category="heuristics",
+        )
+
+        # Then results contain ONLY heuristic entries (not patterns)
+        assert "Pattern workflow" not in result, (
+            "Category filter should exclude 'patterns' entries"
+        )
+        # And we get the requested number of results
+        assert "Found 3" in result, (
+            "Pre-ranking filter should provide enough candidates for limit=3"
+        )

@@ -1566,3 +1566,145 @@ class TestProcessExportEntitiesFields:
             data = json_mod.load(f)
         for entity in data["entities"]:
             assert set(entity.keys()) == {"type_id", "status"}
+
+
+# ---------------------------------------------------------------------------
+# Deepened tests: export_entities fields boundary + adversarial
+# derived_from: spec:AC-1 (field projection), dimension:boundary_values,
+#               dimension:adversarial
+# ---------------------------------------------------------------------------
+
+
+class TestProcessExportEntitiesFieldsDeepened:
+    """Deepened tests for _process_export_entities() fields parameter.
+
+    Covers boundary values (single field, all fields) and adversarial
+    (empty string input). Each test targets a specific failure mode that
+    the TDD tests above do not cover.
+    """
+
+    def test_export_entities_fields_single_field(self, db: EntityDatabase):
+        """Boundary: fields with exactly one valid field name returns only that field.
+        derived_from: spec:AC-1 (field projection), dimension:boundary_values
+
+        Anticipate: If the split/filter logic has an off-by-one or requires
+        a minimum of 2 fields, single-field projection would fail or return
+        empty entities.
+        Challenge: Swapping 'in field_set' to 'not in field_set' would invert
+        which fields appear — this test catches that because only 'name' should
+        appear.
+        """
+        import json as json_mod
+
+        # Given an entity in the database
+        db.register_entity("feature", "sf-001", "Single Field", status="active")
+        # When exporting with exactly one field
+        result = _process_export_entities(
+            db,
+            entity_type=None,
+            status=None,
+            output_path=None,
+            include_lineage=True,
+            artifacts_root="/tmp",
+            fields="name",
+        )
+        parsed = json_mod.loads(result)
+        # Then each entity has exactly one key
+        assert len(parsed["entities"]) >= 1
+        for entity in parsed["entities"]:
+            assert set(entity.keys()) == {"name"}
+            assert entity["name"] != ""
+
+    def test_export_entities_fields_all_valid_fields(self, db: EntityDatabase):
+        """Boundary: requesting every valid field returns the same as fields=None.
+        derived_from: spec:AC-1 (field projection), dimension:boundary_values
+
+        Anticipate: If the field projection drops keys that are present in
+        the raw export (e.g., due to name mismatch between DB columns and
+        JSON keys), some fields would be missing in the projected output.
+        """
+        import json as json_mod
+
+        # Given an entity with known fields
+        db.register_entity("feature", "af-001", "All Fields", status="active")
+        # First get the full set of field names from an unfiltered export
+        unfiltered = json_mod.loads(
+            _process_export_entities(
+                db, entity_type=None, status=None, output_path=None,
+                include_lineage=True, artifacts_root="/tmp", fields=None,
+            )
+        )
+        all_keys = set(unfiltered["entities"][0].keys())
+        all_fields_str = ",".join(sorted(all_keys))
+
+        # When exporting with all valid fields listed explicitly
+        result = _process_export_entities(
+            db,
+            entity_type=None,
+            status=None,
+            output_path=None,
+            include_lineage=True,
+            artifacts_root="/tmp",
+            fields=all_fields_str,
+        )
+        parsed = json_mod.loads(result)
+        # Then every entity has the full set of keys
+        for entity in parsed["entities"]:
+            assert set(entity.keys()) == all_keys
+
+    def test_export_entities_fields_empty_string(self, db: EntityDatabase):
+        """Adversarial: fields='' (empty string) should not crash.
+        derived_from: spec:AC-1 (field projection), dimension:adversarial
+
+        Anticipate: If the code splits '' on ',', it produces [''] which
+        is a set {''}. This is an all-invalid-fields case — it should
+        either return an error or return entities with no projected keys.
+        Bug caught: split('') producing ghost empty-string field names that
+        match nothing, leading to empty entities without an error message.
+        """
+        # Given an entity in the database
+        db.register_entity("feature", "ef-001", "Empty Fields", status="active")
+        # When exporting with empty string fields
+        result = _process_export_entities(
+            db,
+            entity_type=None,
+            status=None,
+            output_path=None,
+            include_lineage=True,
+            artifacts_root="/tmp",
+            fields="",
+        )
+        # Then either an error is returned (preferred) or entities are empty
+        # The implementation treats '' as a field set containing '' which is
+        # all-invalid -> should return error
+        assert "Error" in result
+
+    def test_export_entities_compact_inline_json(self, db: EntityDatabase):
+        """BDD: inline JSON output uses compact separators (no indent).
+        derived_from: spec:AC-1 (compact output), dimension:bdd_scenarios
+
+        Anticipate: If json.dumps uses indent=2 instead of separators=(',',':'),
+        the inline output would contain unnecessary whitespace, wasting tokens.
+        Mutation: changing separators to default would add spaces after : and ,.
+        """
+        import json as json_mod
+
+        # Given an entity in the database
+        db.register_entity("feature", "ci-001", "Compact Inline", status="active")
+        # When exporting inline (no output_path)
+        result = _process_export_entities(
+            db,
+            entity_type=None,
+            status=None,
+            output_path=None,
+            include_lineage=True,
+            artifacts_root="/tmp",
+        )
+        # Then the JSON string uses compact separators
+        assert isinstance(result, str)
+        # Compact JSON: no indentation newlines within entity objects
+        parsed = json_mod.loads(result)
+        assert len(parsed["entities"]) >= 1
+        # Re-encode with compact separators and compare
+        expected_compact = json_mod.dumps(parsed, separators=(",", ":"), ensure_ascii=False)
+        assert result == expected_compact

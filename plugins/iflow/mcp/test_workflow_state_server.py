@@ -6222,3 +6222,251 @@ class TestKanbanColumnLifecycleDeepened:
         assert wp["kanban_column"] == "prioritised", (
             f"Expected 'prioritised' from new current_phase, got '{wp['kanban_column']}'"
         )
+
+
+# ---------------------------------------------------------------------------
+# Deepened tests Phase B: MCP Audit Token Efficiency
+# ---------------------------------------------------------------------------
+
+
+class TestListFeaturesByPhaseOmitsFieldsDeepened:
+    """Verify list_features_by_phase output omits completed_phases and source.
+    derived_from: spec:AC-5 (token efficiency — strip verbose fields)
+    """
+
+    def test_list_features_by_phase_omits_completed_phases_and_source(self, seeded_engine):
+        """AC-5: serialized list entries must not contain completed_phases or source.
+        derived_from: spec:AC-5, dimension:bdd_scenarios
+
+        Anticipate: If _serialize_state accidentally includes completed_phases
+        (a potentially large tuple) or source (internal detail), each feature
+        listing wastes tokens on data the caller never uses.
+        Challenge: A mutation adding completed_phases back to the dict would
+        make this test fail.
+        """
+        # Given a seeded engine with feature at 'specify' phase
+        # When listing features by phase
+        result = _process_list_features_by_phase(seeded_engine, "specify")
+        data = json.loads(result)
+        # Then each entry omits completed_phases and source
+        assert len(data) >= 1
+        for entry in data:
+            assert "completed_phases" not in entry, (
+                "completed_phases should be stripped for token efficiency"
+            )
+            assert "source" not in entry, (
+                "source should be stripped for token efficiency"
+            )
+            # Must still have the essential fields
+            assert "feature_type_id" in entry
+            assert "current_phase" in entry
+            assert "degraded" in entry
+
+
+class TestListFeaturesByStatusOmitsFieldsDeepened:
+    """Verify list_features_by_status output omits completed_phases and source.
+    derived_from: spec:AC-5 (token efficiency — strip verbose fields)
+    """
+
+    def test_list_features_by_status_omits_completed_phases_and_source(self, seeded_engine):
+        """AC-5: serialized list entries must not contain completed_phases or source.
+        derived_from: spec:AC-5, dimension:bdd_scenarios
+
+        Anticipate: Same risk as by_phase — if _serialize_state leaks
+        completed_phases, the list response grows O(features * phases).
+        """
+        # Given a seeded engine with feature at status 'active'
+        # When listing features by status
+        result = _process_list_features_by_status(seeded_engine, "active")
+        data = json.loads(result)
+        # Then each entry omits completed_phases and source
+        assert len(data) >= 1
+        for entry in data:
+            assert "completed_phases" not in entry
+            assert "source" not in entry
+            assert "feature_type_id" in entry
+            assert "current_phase" in entry
+
+
+class TestSerializeStateDegradedLogicDeepened:
+    """Mutation tests for _serialize_state degraded flag logic.
+    derived_from: spec:AC-6 (degraded only for meta_json_fallback),
+                  dimension:mutation_mindset
+    """
+
+    def test_serialize_state_degraded_true_only_for_meta_json_fallback(self):
+        """Only source='meta_json_fallback' should produce degraded=True.
+        derived_from: spec:AC-6, dimension:mutation_mindset
+
+        Anticipate: If the condition is `source != "db"` instead of
+        `source == "meta_json_fallback"`, then source="meta_json" would
+        incorrectly show degraded=True.
+        Mutation: changing == to != or to "in" with wrong set would
+        break exactly one of the three assertions below.
+        """
+        # Given states with different source values
+        sources_and_expected = [
+            ("db", False),
+            ("entity_db", False),
+            ("meta_json", False),
+            ("meta_json_fallback", True),
+        ]
+        for source, expected_degraded in sources_and_expected:
+            state = FeatureWorkflowState(
+                feature_type_id="feature:deg-test",
+                current_phase="specify",
+                last_completed_phase=None,
+                completed_phases=(),
+                mode="standard",
+                source=source,
+            )
+            result = _serialize_state(state)
+            assert result["degraded"] is expected_degraded, (
+                f"source={source!r}: expected degraded={expected_degraded}, "
+                f"got {result['degraded']}"
+            )
+
+
+class TestReconcileApplyNoDirectionParamDeepened:
+    """Verify reconcile_apply has no direction parameter (hardcoded meta_json_to_db).
+    derived_from: spec:AC-14 (direction hardcoded, no user param)
+    """
+
+    def test_reconcile_apply_no_direction_param(self):
+        """AC-14: _process_reconcile_apply does not accept a direction parameter.
+        derived_from: spec:AC-14, dimension:bdd_scenarios
+
+        Anticipate: If a developer adds a 'direction' param to allow
+        db_to_meta_json sync, it would bypass the spec requirement that
+        only meta_json_to_db is supported. This signature test catches
+        accidental param additions.
+        """
+        import inspect
+
+        # Given the processing function
+        sig = inspect.signature(_process_reconcile_apply)
+        param_names = set(sig.parameters.keys())
+        # Then it must not have a 'direction' parameter
+        assert "direction" not in param_names, (
+            "_process_reconcile_apply should not expose a direction parameter; "
+            "direction is hardcoded to meta_json_to_db per spec AC-14"
+        )
+        # And it must have exactly these params
+        expected_params = {"engine", "db", "artifacts_root", "feature_type_id", "dry_run"}
+        assert param_names == expected_params, (
+            f"Unexpected params: {param_names - expected_params}"
+        )
+
+
+class TestReconcileFrontmatterBulkBoundaryDeepened:
+    """Boundary tests for reconcile_frontmatter bulk scan.
+    derived_from: spec:AC-11/AC-12 (frontmatter drift), dimension:boundary_values
+    """
+
+    def test_reconcile_frontmatter_all_in_sync(self, db, tmp_path):
+        """Boundary: when all features have matching frontmatter, drifted_count=0.
+        derived_from: spec:AC-11, dimension:boundary_values
+
+        Anticipate: If the drifted_count calculation uses len(reports) instead
+        of counting non-in_sync reports, an all-in-sync scan would incorrectly
+        report drift.
+        """
+        # Given multiple features with perfectly matching frontmatter
+        for i in range(3):
+            slug = f"sync-{i:03d}"
+            db.register_entity("feature", slug, f"Sync Feature {i}", status="active")
+            entity = db.get_entity(f"feature:{slug}")
+            feat_dir = os.path.join(str(tmp_path), "features", slug)
+            os.makedirs(feat_dir, exist_ok=True)
+            with open(os.path.join(feat_dir, "spec.md"), "w") as f:
+                f.write(
+                    f"---\nentity_uuid: {entity['uuid']}\n"
+                    f"entity_type_id: feature:{slug}\n---\n# Spec\n"
+                )
+            db.update_entity(entity["uuid"], artifact_path=feat_dir)
+
+        # When running bulk frontmatter scan
+        result = _process_reconcile_frontmatter(db, str(tmp_path), None)
+        data = json.loads(result)
+        # Then all features are in sync
+        assert data["drifted_count"] == 0
+        assert len(data["reports"]) == 0
+        assert data["total_scanned"] >= 3
+
+    def test_reconcile_frontmatter_all_drifted(self, db, tmp_path):
+        """Boundary: when all features have missing frontmatter, all are drifted.
+        derived_from: spec:AC-12, dimension:boundary_values
+
+        Anticipate: If the filter logic incorrectly keeps in_sync reports or
+        drops db_only reports, the drifted_count would be wrong.
+        """
+        # Given multiple features with NO frontmatter in spec files
+        for i in range(3):
+            slug = f"drift-{i:03d}"
+            db.register_entity("feature", slug, f"Drift Feature {i}", status="active")
+            entity = db.get_entity(f"feature:{slug}")
+            feat_dir = os.path.join(str(tmp_path), "features", slug)
+            os.makedirs(feat_dir, exist_ok=True)
+            with open(os.path.join(feat_dir, "spec.md"), "w") as f:
+                f.write("# Spec\nNo frontmatter here.\n")
+            db.update_entity(entity["uuid"], artifact_path=feat_dir)
+
+        # When running bulk frontmatter scan
+        result = _process_reconcile_frontmatter(db, str(tmp_path), None)
+        data = json.loads(result)
+        # Then all features are drifted (db_only status)
+        assert data["drifted_count"] >= 3
+        assert len(data["reports"]) >= 3
+        for report in data["reports"]:
+            assert report["status"] == "db_only"
+
+
+class TestReconcileStatusHealthyWithFrontmatterDriftDeepened:
+    """Mutation test: healthy must be False when ONLY frontmatter drift exists.
+    derived_from: spec:AC-14/AC-15 (healthy = workflow AND frontmatter),
+                  dimension:mutation_mindset
+    """
+
+    def test_reconcile_status_healthy_false_when_only_frontmatter_drift(
+        self, db, tmp_path
+    ):
+        """healthy must be False even if workflow is in sync but frontmatter drifts.
+        derived_from: spec:AC-14, dimension:mutation_mindset
+
+        Anticipate: If the healthy check only considers workflow_drift (AND
+        ignores frontmatter_drift), or uses OR instead of AND, this test
+        catches it. The mutation `healthy = wf_healthy` (dropping fm_healthy)
+        would make this test pass when it shouldn't.
+        """
+        # Given a feature with workflow IN SYNC but frontmatter DRIFTED
+        db.register_entity("feature", "fm-only-drift", "FM Only Drift", status="active")
+        db.create_workflow_phase(
+            "feature:fm-only-drift",
+            workflow_phase="specify",
+            last_completed_phase="brainstorm",
+            mode="standard",
+        )
+        entity = db.get_entity("feature:fm-only-drift")
+        feat_dir = os.path.join(str(tmp_path), "features", "fm-only-drift")
+        os.makedirs(feat_dir, exist_ok=True)
+        # meta.json matches DB (workflow in sync)
+        with open(os.path.join(feat_dir, ".meta.json"), "w") as f:
+            json.dump({
+                "id": "fm", "slug": "fm-only-drift", "status": "active",
+                "mode": "standard", "lastCompletedPhase": "brainstorm",
+                "phases": {"brainstorm": {"status": "completed"}},
+            }, f)
+        # spec.md has NO frontmatter -> triggers frontmatter drift
+        with open(os.path.join(feat_dir, "spec.md"), "w") as f:
+            f.write("# Spec\nNo frontmatter here.\n")
+        db.update_entity(entity["uuid"], artifact_path=feat_dir)
+
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        # When checking reconcile status
+        result = _process_reconcile_status(engine, db, str(tmp_path))
+        data = json.loads(result)
+        # Then healthy is False because frontmatter drift exists
+        assert data["healthy"] is False, (
+            "healthy should be False when frontmatter drift exists, "
+            "even if workflow is in sync"
+        )
