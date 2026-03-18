@@ -15,7 +15,7 @@ Each item follows: (a) update/write tests, (b) implement to make tests pass, (c)
    - **Complexity:** Simple
    - **Files:** `plugins/iflow/mcp/entity_server.py`, `plugins/iflow/hooks/lib/entity_registry/test_entity_server.py`
    - **TDD:** (a) Add tests: dict input accepted, string passthrough, None passthrough, dict update, invalid JSON graceful. (b) Implement type change + coercion + docstrings. (c) Full entity registry tests pass.
-   - **Verification:** New tests pass. Existing 757+ tests pass. FastMCP schema includes object type for metadata.
+   - **Verification:** New tests pass. Existing 757+ tests pass. Inspect generated JSON Schema (via MCP tool listing or test introspection) — if `metadata` does not include `object` in `anyOf`, replace `str | dict | None` with `Any = None` and rerun tests.
 
 ### Stage 2: Template + Doc Updates (parallel, no code dependencies)
 
