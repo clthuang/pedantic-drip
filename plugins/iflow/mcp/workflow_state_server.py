@@ -10,9 +10,7 @@ import json
 import os
 import sqlite3
 import sys
-import tempfile
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
 
 # Make workflow_engine, transition_gate, entity_registry, semantic_memory
 # importable from hooks/lib/ — safety net for direct invocation and tests.
@@ -21,6 +19,10 @@ if _hooks_lib not in (os.path.normpath(p) for p in sys.path):
     sys.path.insert(0, _hooks_lib)
 
 from entity_registry.database import EntityDatabase
+from entity_registry.entity_lifecycle import (
+    init_entity_workflow as _lib_init_entity_workflow,
+    transition_entity_phase as _lib_transition_entity_phase,
+)
 from entity_registry.frontmatter_sync import (
     ARTIFACT_BASENAME_MAP,
     DriftReport,
@@ -31,6 +33,15 @@ from semantic_memory.config import read_config
 from transition_gate.models import Severity, TransitionResult
 from workflow_engine.constants import FEATURE_PHASE_TO_KANBAN
 from workflow_engine.engine import WorkflowStateEngine
+from workflow_engine.feature_lifecycle import (
+    STATUS_TO_KANBAN,
+    _atomic_json_write,
+    _iso_now,
+    _validate_feature_type_id,
+    activate_feature as _lib_activate_feature,
+    init_feature_state as _lib_init_feature_state,
+    init_project_state as _lib_init_project_state,
+)
 from workflow_engine.models import FeatureWorkflowState, TransitionResponse
 from workflow_engine.reconciliation import (
     ReconcileAction,
@@ -40,63 +51,6 @@ from workflow_engine.reconciliation import (
 )
 
 from mcp.server.fastmcp import FastMCP
-
-# ---------------------------------------------------------------------------
-# Entity lifecycle state machines — single registry keyed by entity_type.
-# Each entry defines: valid transitions, phase-to-kanban-column mapping,
-# and forward transition set (for last_completed_phase updates).
-# ---------------------------------------------------------------------------
-
-ENTITY_MACHINES: dict[str, dict] = {
-    "brainstorm": {
-        "transitions": {
-            "draft": ["reviewing", "abandoned"],
-            "reviewing": ["promoted", "draft", "abandoned"],
-        },
-        "columns": {
-            "draft": "wip",
-            "reviewing": "agent_review",
-            "promoted": "completed",
-            "abandoned": "completed",
-        },
-        "forward": {
-            ("draft", "reviewing"),
-            ("reviewing", "promoted"),
-            ("reviewing", "abandoned"),
-            ("draft", "abandoned"),
-        },
-    },
-    "backlog": {
-        "transitions": {
-            "open": ["triaged", "dropped"],
-            "triaged": ["promoted", "dropped"],
-        },
-        "columns": {
-            "open": "backlog",
-            "triaged": "prioritised",
-            "promoted": "completed",
-            "dropped": "completed",
-        },
-        "forward": {
-            ("open", "triaged"),
-            ("triaged", "promoted"),
-            ("triaged", "dropped"),
-            ("open", "dropped"),
-        },
-    },
-}
-
-# ---------------------------------------------------------------------------
-# Status-to-kanban mapping for feature init-time (matches backfill.py:35-40).
-# Also referenced by scripts/fix_kanban_columns.py.
-# ---------------------------------------------------------------------------
-
-STATUS_TO_KANBAN: dict[str, str] = {
-    "active": "wip",
-    "planned": "backlog",
-    "completed": "completed",
-    "abandoned": "completed",
-}
 
 # ---------------------------------------------------------------------------
 # Module-level globals (set during lifespan)
@@ -151,9 +105,7 @@ def _serialize_state(state: FeatureWorkflowState) -> dict:
         "feature_type_id": state.feature_type_id,
         "current_phase": state.current_phase,
         "last_completed_phase": state.last_completed_phase,
-        "completed_phases": list(state.completed_phases),
         "mode": state.mode,
-        "source": state.source,
         "degraded": state.source == "meta_json_fallback",
     }
 
@@ -231,40 +183,6 @@ def _build_frontmatter_summary(reports: list[DriftReport]) -> dict[str, int]:
         else:
             summary["error"] += 1
     return summary
-
-
-# ---------------------------------------------------------------------------
-# Utility functions
-# ---------------------------------------------------------------------------
-
-
-def _iso_now() -> str:
-    """Return current UTC time as ISO 8601 string."""
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _atomic_json_write(path: str, data: dict) -> None:
-    """Atomic JSON write: NamedTemporaryFile + os.replace()."""
-    tmp_name = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            dir=os.path.dirname(path),
-            suffix=".tmp",
-            delete=False,
-            encoding="utf-8",
-        ) as fd:
-            tmp_name = fd.name
-            json.dump(data, fd, indent=2)
-            fd.write("\n")
-        os.replace(tmp_name, path)
-    except BaseException:
-        if tmp_name is not None:
-            try:
-                os.unlink(tmp_name)
-            except OSError:
-                pass
-        raise
 
 
 # ---------------------------------------------------------------------------
@@ -455,39 +373,6 @@ def _catch_entity_value_error(func):
     return wrapper
 
 
-def _validate_feature_type_id(feature_type_id: str, artifacts_root: str) -> str:
-    """Validate feature_type_id and extract slug with realpath defense.
-
-    1. Split on ':', raise ValueError if no colon present
-    2. Extract slug from second part
-    3. Check null bytes BEFORE os.path.realpath()
-    4. Resolve realpath of {artifacts_root}/features/{slug}/
-    5. Verify resolved path starts with realpath(artifacts_root) + os.sep
-    6. Return validated slug
-
-    Raises ValueError on invalid input (caught by _catch_value_error).
-    """
-    if ":" not in feature_type_id:
-        raise ValueError("invalid_input: missing colon in feature_type_id")
-
-    slug = feature_type_id.split(":", 1)[1]
-
-    if not slug:
-        raise ValueError("feature_not_found: empty slug")
-
-    # Check null bytes before ANY filesystem call
-    if "\0" in slug:
-        raise ValueError(f"feature_not_found: {slug} not found or path traversal blocked")
-
-    candidate = os.path.join(artifacts_root, "features", slug)
-    resolved = os.path.realpath(candidate)
-    root = os.path.realpath(artifacts_root)
-
-    if not resolved.startswith(root + os.sep) or not os.path.isdir(resolved):
-        raise ValueError(f"feature_not_found: {slug} not found or path traversal blocked")
-
-    return slug
-
 
 @_with_error_handling
 def _process_get_phase(engine: WorkflowStateEngine, feature_type_id: str) -> str:
@@ -650,12 +535,6 @@ def _process_list_features_by_status(engine: WorkflowStateEngine, status: str) -
 
 
 # ---------------------------------------------------------------------------
-# Reconciliation constants
-# ---------------------------------------------------------------------------
-
-_SUPPORTED_DIRECTIONS = frozenset({"meta_json_to_db"})
-
-
 # ---------------------------------------------------------------------------
 # Reconciliation processing functions
 # ---------------------------------------------------------------------------
@@ -692,16 +571,9 @@ def _process_reconcile_apply(
     db: EntityDatabase,
     artifacts_root: str,
     feature_type_id: str | None,
-    direction: str,
     dry_run: bool,
 ) -> str:
-    """Workflow reconciliation. Validates direction, returns JSON string."""
-    if direction not in _SUPPORTED_DIRECTIONS:
-        return _make_error(
-            "invalid_transition",
-            f"Unsupported direction: {direction}. Supported: {', '.join(sorted(_SUPPORTED_DIRECTIONS))}",
-            "Use direction='meta_json_to_db' (the only supported direction)",
-        )
+    """Workflow reconciliation. Hardcodes meta_json_to_db direction, returns JSON string."""
     if feature_type_id is not None:
         _validate_feature_type_id(feature_type_id, artifacts_root)
     result = apply_workflow_reconciliation(
@@ -734,11 +606,11 @@ def _process_reconcile_frontmatter(
                     report = detect_drift(db, filepath, type_id=feature_type_id)
                     reports.append(report)
 
-    summary = _build_frontmatter_summary(reports)
-
+    drifted = [r for r in reports if r.status != "in_sync"]
     return json.dumps({
-        "reports": [_serialize_drift_report(r) for r in reports],
-        "summary": summary,
+        "total_scanned": len(reports),
+        "drifted_count": len(drifted),
+        "reports": [_serialize_drift_report(r) for r in drifted],
     })
 
 
@@ -758,72 +630,21 @@ def _process_init_feature_state(
     *,
     artifacts_root: str,
 ) -> str:
-    """Create initial feature state in DB + entity registry, then project .meta.json."""
-    feature_type_id = f"feature:{feature_id}-{slug}"
-
-    # Validate feature_type_id for path traversal defense
-    _validate_feature_type_id(feature_type_id, artifacts_root)
-
-    # Build metadata dict
-    metadata: dict = {
-        "id": feature_id,
-        "slug": slug,
-        "mode": mode,
-        "branch": branch,
-        "phase_timing": {"brainstorm": {"started": _iso_now()}} if status == "active" else {},
-    }
-    if brainstorm_source:
-        metadata["brainstorm_source"] = brainstorm_source
-    if backlog_source:
-        metadata["backlog_source"] = backlog_source
-
-    # Register or update entity
-    existing = db.get_entity(feature_type_id)
-    if existing is None:
-        db.register_entity(
-            entity_type="feature",
-            entity_id=f"{feature_id}-{slug}",
-            name=slug.replace("-", " ").title(),
-            artifact_path=feature_dir,
-            status=status,
-            metadata=metadata,
-        )
-    else:
-        # Retry path: preserve existing phase_timing, last_completed_phase,
-        # skipped_phases to avoid clobbering progress data.
-        existing_meta_raw = existing.get("metadata")
-        if existing_meta_raw:
-            existing_meta = json.loads(existing_meta_raw) if isinstance(existing_meta_raw, str) else existing_meta_raw
-        else:
-            existing_meta = {}
-        metadata["phase_timing"] = existing_meta.get("phase_timing", metadata["phase_timing"])
-        if existing_meta.get("last_completed_phase"):
-            metadata["last_completed_phase"] = existing_meta["last_completed_phase"]
-        if existing_meta.get("skipped_phases"):
-            metadata["skipped_phases"] = existing_meta["skipped_phases"]
-        db.update_entity(feature_type_id, status=status, metadata=metadata)
-
-    # Project .meta.json
-    warning = _project_meta_json(db, engine, feature_type_id, feature_dir)
-
-    # Fix kanban_column based on status (init-time uses STATUS_TO_KANBAN).
-    init_kanban = STATUS_TO_KANBAN.get(status)
-    if init_kanban:
-        try:
-            db.update_workflow_phase(feature_type_id, kanban_column=init_kanban)
-        except ValueError:
-            # Row may not exist if engine initialization failed — create it.
-            try:
-                db.create_workflow_phase(feature_type_id, kanban_column=init_kanban)
-            except ValueError:
-                pass  # Entity itself may be missing; workflow row cannot be created
-
-    result = {
-        "created": True,
-        "feature_type_id": feature_type_id,
-        "status": status,
-        "meta_json_path": os.path.join(feature_dir, ".meta.json"),
-    }
+    """Thin wrapper — delegates to feature_lifecycle.init_feature_state."""
+    result = _lib_init_feature_state(
+        db=db,
+        engine=engine,
+        artifacts_root=artifacts_root,
+        feature_dir=feature_dir,
+        feature_id=feature_id,
+        slug=slug,
+        mode=mode,
+        branch=branch,
+        brainstorm_source=brainstorm_source,
+        backlog_source=backlog_source,
+        status=status,
+    )
+    warning = _project_meta_json(db, engine, result["feature_type_id"], feature_dir)
     if warning:
         result["projection_warning"] = warning
     return json.dumps(result)
@@ -840,64 +661,19 @@ def _process_init_project_state(
     milestones: str,  # JSON string
     brainstorm_source: str | None,
 ) -> str:
-    """Create initial project state in DB + .meta.json."""
-    # Path traversal validation: block null bytes and ensure resolved path
-    # matches the intended directory (no symlink escape)
-    if "\0" in project_dir:
-        raise ValueError("invalid_input: project_dir path traversal blocked")
-    resolved = os.path.realpath(project_dir)
-    if not os.path.isdir(resolved):
-        raise ValueError(f"invalid_input: project_dir does not exist: {project_dir}")
-
-    project_type_id = f"project:{project_id}-{slug}"
-
-    # Parse JSON params (raises ValueError/JSONDecodeError on malformed input)
-    features_list = json.loads(features)
-    milestones_list = json.loads(milestones)
-
-    # Register entity (idempotent — skip if already exists)
-    existing = db.get_entity(project_type_id)
-    metadata = {
-        "id": project_id,
-        "slug": slug,
-        "features": features_list,
-        "milestones": milestones_list,
-    }
-    if brainstorm_source:
-        metadata["brainstorm_source"] = brainstorm_source
-
-    if existing is None:
-        db.register_entity(
-            entity_type="project",
-            entity_id=f"{project_id}-{slug}",
-            name=slug.replace("-", " ").title(),
-            artifact_path=project_dir,
-            status="active",
-            metadata=metadata,
-        )
-
-    # Build project .meta.json (different schema from features — no phases,
-    # lastCompletedPhase, branch, mode)
-    meta = {
-        "id": project_id,
-        "slug": slug,
-        "status": "active",
-        "created": _iso_now(),
-        "features": features_list,
-        "milestones": milestones_list,
-    }
-    if brainstorm_source:
-        meta["brainstorm_source"] = brainstorm_source
-
-    # Atomic write
-    meta_path = os.path.join(project_dir, ".meta.json")
-    _atomic_json_write(meta_path, meta)
-
-    return json.dumps({
-        "created": True,
-        "project_type_id": project_type_id,
-        "meta_json_path": meta_path,
-    })
+    """Thin wrapper — delegates to feature_lifecycle.init_project_state."""
+    result = _lib_init_project_state(
+        db=db,
+        artifacts_root=_artifacts_root,
+        project_dir=project_dir,
+        project_id=project_id,
+        slug=slug,
+        branch="",  # Not used in original project init path
+        features=features,
+        milestones=milestones,
+        brainstorm_source=brainstorm_source,
+    )
+    return json.dumps(result)
 
 
 @_with_error_handling
@@ -908,34 +684,14 @@ def _process_activate_feature(
     feature_type_id: str,
     artifacts_root: str,
 ) -> str:
-    """Transition a planned feature to active status.
-
-    Pre-condition: entity status must be 'planned'.
-    Post-condition: entity status becomes 'active', .meta.json projected.
-    """
-    _validate_feature_type_id(feature_type_id, artifacts_root)
-
-    entity = db.get_entity(feature_type_id)
-    if entity is None:
-        raise ValueError(f"feature_not_found: {feature_type_id}")
-
-    current_status = entity.get("status")
-    if current_status != "planned":
-        raise ValueError(
-            f"invalid_transition: feature status is '{current_status}', "
-            f"expected 'planned' for activation"
-        )
-
-    db.update_entity(feature_type_id, status="active")
-
-    warning = _project_meta_json(db, engine, feature_type_id)
-
-    result = {
-        "activated": True,
-        "feature_type_id": feature_type_id,
-        "previous_status": "planned",
-        "new_status": "active",
-    }
+    """Thin wrapper — delegates to feature_lifecycle.activate_feature."""
+    result = _lib_activate_feature(
+        db=db,
+        engine=engine,
+        artifacts_root=artifacts_root,
+        feature_type_id=feature_type_id,
+    )
+    warning = _project_meta_json(db, engine, result["feature_type_id"])
     if warning:
         result["projection_warning"] = warning
     return json.dumps(result)
@@ -946,65 +702,8 @@ def _process_activate_feature(
 def _process_init_entity_workflow(
     db: EntityDatabase, type_id: str, workflow_phase: str, kanban_column: str
 ) -> str:
-    """Create a workflow_phases row for a brainstorm or backlog entity.
-
-    Idempotent: if a row already exists, returns existing values with created=false.
-    Validates entity existence, rejects feature/project types, and checks
-    phase/column consistency against ENTITY_MACHINES when applicable.
-    """
-    # 1. Validate entity exists
-    entity = db.get_entity(type_id)
-    if entity is None:
-        raise ValueError(f"entity_not_found: {type_id}")
-
-    # 1b. Reject entity types that have their own workflow management
-    if ":" in type_id:
-        entity_type = type_id.split(":", 1)[0]
-        if entity_type in ("feature", "project"):
-            raise ValueError(
-                f"invalid_entity_type: {entity_type} entities use the feature workflow engine"
-            )
-        if entity_type in ENTITY_MACHINES:
-            machine = ENTITY_MACHINES[entity_type]
-            if workflow_phase not in machine["columns"]:
-                raise ValueError(
-                    f"invalid_transition: {workflow_phase} is not a valid phase for {entity_type}"
-                )
-            expected_column = machine["columns"][workflow_phase]
-            if kanban_column != expected_column:
-                raise ValueError(
-                    f"invalid_transition: kanban_column {kanban_column} does not match "
-                    f"expected {expected_column} for phase {workflow_phase}"
-                )
-
-    # 2. Check idempotency — existing row means no-op (preserves MCP-managed state)
-    existing = db._conn.execute(
-        "SELECT workflow_phase, kanban_column FROM workflow_phases WHERE type_id = ?",
-        (type_id,),
-    ).fetchone()
-    if existing:
-        return json.dumps({
-            "created": False,
-            "type_id": type_id,
-            "workflow_phase": existing["workflow_phase"],
-            "kanban_column": existing["kanban_column"],
-            "reason": "already_exists",
-        })
-
-    # 3. Insert workflow_phases row
-    db._conn.execute(
-        "INSERT INTO workflow_phases (type_id, workflow_phase, kanban_column, updated_at) "
-        "VALUES (?, ?, ?, ?)",
-        (type_id, workflow_phase, kanban_column, db._now_iso()),
-    )
-    db._conn.commit()
-
-    return json.dumps({
-        "created": True,
-        "type_id": type_id,
-        "workflow_phase": workflow_phase,
-        "kanban_column": kanban_column,
-    })
+    """Thin wrapper — delegates to entity_lifecycle.init_entity_workflow."""
+    return json.dumps(_lib_init_entity_workflow(db, type_id, workflow_phase, kanban_column))
 
 
 @_with_error_handling
@@ -1012,86 +711,8 @@ def _process_init_entity_workflow(
 def _process_transition_entity_phase(
     db: EntityDatabase, type_id: str, target_phase: str
 ) -> str:
-    """Transition a brainstorm or backlog entity to a new lifecycle phase.
-
-    Validates entity type, existence, current phase, and transition legality
-    against ENTITY_MACHINES. Updates both entities.status and workflow_phases
-    atomically. Forward transitions update last_completed_phase; backward
-    transitions preserve it.
-    """
-    # 1. Parse entity_type
-    if ":" not in type_id:
-        raise ValueError(f"invalid_entity_type: malformed type_id: {type_id}")
-    entity_type = type_id.split(":", 1)[0]
-
-    # 2. Validate entity_type
-    if entity_type not in ENTITY_MACHINES:
-        raise ValueError(
-            f"invalid_entity_type: {entity_type} — only brainstorm and backlog supported"
-        )
-
-    # 3. Validate entity exists
-    entity = db.get_entity(type_id)
-    if entity is None:
-        raise ValueError(f"entity_not_found: {type_id}")
-
-    # 4. Get current phase
-    row = db._conn.execute(
-        "SELECT workflow_phase FROM workflow_phases WHERE type_id = ?", (type_id,)
-    ).fetchone()
-    if row is None:
-        raise ValueError(f"entity_not_found: no workflow_phases row for {type_id}")
-    current_phase = row["workflow_phase"]
-    if current_phase is None:
-        raise ValueError(
-            f"invalid_transition: {type_id} has NULL current_phase — "
-            "call init_entity_workflow first"
-        )
-
-    # 5. Validate transition
-    machine = ENTITY_MACHINES[entity_type]
-    valid_targets = machine["transitions"].get(current_phase, [])
-    if target_phase not in valid_targets:
-        raise ValueError(
-            f"invalid_transition: cannot transition {entity_type} from "
-            f"{current_phase} to {target_phase}"
-        )
-
-    # 6. Look up target kanban column
-    kanban_column = machine["columns"][target_phase]
-
-    # 7. Determine if forward transition (for last_completed_phase)
-    is_forward = (current_phase, target_phase) in machine["forward"]
-
-    # 8. Atomic update in transaction
-    now = db._now_iso()
-    db._conn.execute(
-        "UPDATE entities SET status = ?, updated_at = ? WHERE type_id = ?",
-        (target_phase, now, type_id),
-    )
-
-    if is_forward:
-        db._conn.execute(
-            "UPDATE workflow_phases SET workflow_phase = ?, kanban_column = ?, "
-            "last_completed_phase = ?, updated_at = ? WHERE type_id = ?",
-            (target_phase, kanban_column, current_phase, now, type_id),
-        )
-    else:
-        db._conn.execute(
-            "UPDATE workflow_phases SET workflow_phase = ?, kanban_column = ?, "
-            "updated_at = ? WHERE type_id = ?",
-            (target_phase, kanban_column, now, type_id),
-        )
-
-    db._conn.commit()
-
-    return json.dumps({
-        "transitioned": True,
-        "type_id": type_id,
-        "from_phase": current_phase,
-        "to_phase": target_phase,
-        "kanban_column": kanban_column,
-    })
+    """Thin wrapper — delegates to entity_lifecycle.transition_entity_phase."""
+    return json.dumps(_lib_transition_entity_phase(db, type_id, target_phase))
 
 
 @_with_error_handling
@@ -1099,13 +720,31 @@ def _process_reconcile_status(
     engine: WorkflowStateEngine,
     db: EntityDatabase,
     artifacts_root: str,
+    summary_only: bool = False,
 ) -> str:
-    """Combined drift report. Returns JSON string."""
+    """Combined drift report. Returns JSON string.
+
+    When summary_only=True, returns a compact 3-field response:
+    {"healthy": bool, "workflow_drift_count": int, "frontmatter_drift_count": int}
+    """
     # Workflow drift
     workflow_result = check_workflow_drift(engine, db, artifacts_root)
 
     # Frontmatter drift
     frontmatter_reports = scan_all(db, artifacts_root)
+
+    if summary_only:
+        wf_drift = sum(
+            1 for r in workflow_result.features if r.status != "in_sync"
+        )
+        fm_drift = sum(
+            1 for r in frontmatter_reports if r.status != "in_sync"
+        )
+        return json.dumps({
+            "healthy": wf_drift == 0 and fm_drift == 0,
+            "workflow_drift_count": wf_drift,
+            "frontmatter_drift_count": fm_drift,
+        })
 
     fm_summary = _build_frontmatter_summary(frontmatter_reports)
 
@@ -1223,14 +862,13 @@ async def reconcile_check(feature_type_id: str | None = None) -> str:
 @mcp.tool()
 async def reconcile_apply(
     feature_type_id: str | None = None,
-    direction: str = "meta_json_to_db",
     dry_run: bool = False,
 ) -> str:
     """Sync .meta.json workflow state to DB for features where .meta.json is ahead."""
     if _engine is None or _db is None:
         return _NOT_INITIALIZED
     return _process_reconcile_apply(
-        _engine, _db, _artifacts_root, feature_type_id, direction, dry_run
+        _engine, _db, _artifacts_root, feature_type_id, dry_run
     )
 
 
@@ -1243,11 +881,11 @@ async def reconcile_frontmatter(feature_type_id: str | None = None) -> str:
 
 
 @mcp.tool()
-async def reconcile_status() -> str:
+async def reconcile_status(summary_only: bool = False) -> str:
     """Unified health report across workflow state and frontmatter drift."""
     if _engine is None or _db is None:
         return _NOT_INITIALIZED
-    return _process_reconcile_status(_engine, _db, _artifacts_root)
+    return _process_reconcile_status(_engine, _db, _artifacts_root, summary_only=summary_only)
 
 
 @mcp.tool()

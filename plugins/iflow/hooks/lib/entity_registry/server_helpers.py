@@ -229,7 +229,7 @@ def _process_register_entity(
         Never raises exceptions.
     """
     try:
-        entity_uuid = db.register_entity(
+        db.register_entity(
             entity_type=entity_type,
             entity_id=entity_id,
             name=name,
@@ -239,7 +239,7 @@ def _process_register_entity(
             metadata=metadata,
         )
         type_id = f"{entity_type}:{entity_id}"
-        return f"Registered entity: {entity_uuid} ({type_id})"
+        return f"Registered: {type_id}"
     except Exception as exc:
         return f"Error registering entity: {exc}"
 
@@ -296,6 +296,7 @@ def _process_export_entities(
     output_path: str | None,
     include_lineage: bool,
     artifacts_root: str,
+    fields: str | None = None,
 ) -> str:
     """Export entities as JSON, optionally writing to a file.
 
@@ -313,6 +314,9 @@ def _process_export_entities(
         Include parent_type_id in entity dicts.
     artifacts_root : str
         Root directory for path containment check.
+    fields : str or None
+        Comma-separated field names to include per entity (projection).
+        None returns all fields (backward compatible).
 
     Returns
     -------
@@ -324,6 +328,19 @@ def _process_export_entities(
         data = db.export_entities_json(entity_type, status, include_lineage)
     except ValueError as exc:
         return f"Error: {exc}"
+
+    if fields is not None:
+        field_set = {f.strip() for f in fields.split(",")}
+        entities = data["entities"]
+        # Validate: if entities exist and ALL requested fields are invalid, return error
+        if entities:
+            valid_fields = set(entities[0].keys())
+            if not field_set & valid_fields:
+                return f"Error: no valid fields in '{fields}'. Valid fields: {', '.join(sorted(valid_fields))}"
+        data["entities"] = [
+            {k: v for k, v in entity.items() if k in field_set}
+            for entity in entities
+        ]
 
     if output_path is not None:
         resolved = resolve_output_path(output_path, artifacts_root)
@@ -339,7 +356,7 @@ def _process_export_entities(
         except OSError as exc:
             return f"Error writing export: {exc}"
 
-    return json.dumps(data, indent=2, ensure_ascii=False)
+    return json.dumps(data, separators=(",", ":"), ensure_ascii=False)
 
 
 def _process_get_lineage(
@@ -380,3 +397,27 @@ def _process_get_lineage(
         return render_tree(entities, root_type_id)
     except Exception as exc:
         return f"Error retrieving lineage: {exc}"
+
+
+def _process_set_parent(db, type_id: str, parent_type_id: str) -> str:
+    """Set or change the parent of an entity.
+
+    Parameters
+    ----------
+    db:
+        An EntityDatabase instance.
+    type_id:
+        The entity to update (e.g. ``'feature:029-entity-lineage-tracking'``).
+    parent_type_id:
+        The new parent entity (e.g. ``'project:my-project'``).
+
+    Returns
+    -------
+    str
+        Confirmation message, or error message.  Never raises exceptions.
+    """
+    try:
+        db.set_parent(type_id, parent_type_id)
+        return f"Parent set: {type_id} → {parent_type_id}"
+    except Exception as exc:
+        return f"Error setting parent: {exc}"

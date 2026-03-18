@@ -28,10 +28,9 @@ from workflow_engine.reconciliation import (
     WorkflowMismatch,
 )
 
+from entity_registry.entity_lifecycle import ENTITY_MACHINES
 from workflow_state_server import (
-    ENTITY_MACHINES,
     _NOT_INITIALIZED,
-    _SUPPORTED_DIRECTIONS,
     _atomic_json_write,
     _catch_entity_value_error,
     _iso_now,
@@ -117,10 +116,10 @@ class TestSerializeState:
         assert isinstance(result, dict)
         assert set(result.keys()) == {
             "feature_type_id", "current_phase", "last_completed_phase",
-            "completed_phases", "mode", "source", "degraded",
+            "mode", "degraded",
         }
 
-    def test_completed_phases_tuple_to_list(self):
+    def test_no_completed_phases_key(self):
         state = FeatureWorkflowState(
             feature_type_id="feature:009-test",
             current_phase="design",
@@ -130,8 +129,19 @@ class TestSerializeState:
             source="entity_db",
         )
         result = _serialize_state(state)
-        assert isinstance(result["completed_phases"], list)
-        assert result["completed_phases"] == ["brainstorm", "specify"]
+        assert "completed_phases" not in result
+
+    def test_no_source_key(self):
+        state = FeatureWorkflowState(
+            feature_type_id="feature:009-test",
+            current_phase="design",
+            last_completed_phase="specify",
+            completed_phases=("brainstorm", "specify"),
+            mode="standard",
+            source="entity_db",
+        )
+        result = _serialize_state(state)
+        assert "source" not in result
 
     def test_degraded_false_for_db_source(self):
         state = FeatureWorkflowState(
@@ -536,7 +546,8 @@ class TestProcessCompletePhase:
             db=seeded_engine.db,
         )
         data = json.loads(result)
-        assert "specify" in data["completed_phases"]
+        assert "error" not in data
+        assert data["degraded"] is False
 
     def test_value_error(self, seeded_engine, monkeypatch):
         monkeypatch.setattr(
@@ -1119,14 +1130,10 @@ class TestBoundaryValues:
         # Then all 50 features are returned
         assert len(data) == 50
 
-    def test_serialize_state_empty_completed_phases(self):
-        """Empty completed_phases tuple serializes to empty list.
-        derived_from: dimension:boundary_values (empty collection)
-
-        Anticipate: list(()) is [] but a mutation swapping to str() or
-        leaving as tuple would break JSON consumers expecting array type.
+    def test_serialize_state_no_completed_phases_in_output(self):
+        """Serialized state never contains completed_phases key.
+        derived_from: dimension:boundary_values (removed field)
         """
-        # Given a state with no completed phases
         state = FeatureWorkflowState(
             feature_type_id="feature:010-test",
             current_phase="brainstorm",
@@ -1135,20 +1142,13 @@ class TestBoundaryValues:
             mode="standard",
             source="db",
         )
-        # When serialized
         result = _serialize_state(state)
-        # Then completed_phases is an empty list (not tuple, not None)
-        assert result["completed_phases"] == []
-        assert isinstance(result["completed_phases"], list)
+        assert "completed_phases" not in result
 
-    def test_serialize_state_multiple_completed_phases_preserves_order(self):
-        """Multiple completed phases maintain insertion order after serialization.
-        derived_from: dimension:boundary_values (multi-element collection)
-
-        Anticipate: Serialization might sort or reverse the phase list,
-        breaking downstream consumers that rely on chronological order.
+    def test_serialize_state_no_source_in_output(self):
+        """Serialized state never contains source key.
+        derived_from: dimension:boundary_values (removed field)
         """
-        # Given a state with 3 completed phases in chronological order
         state = FeatureWorkflowState(
             feature_type_id="feature:010-test",
             current_phase="create-plan",
@@ -1157,10 +1157,8 @@ class TestBoundaryValues:
             mode="standard",
             source="db",
         )
-        # When serialized
         result = _serialize_state(state)
-        # Then the order is preserved exactly
-        assert result["completed_phases"] == ["brainstorm", "specify", "design"]
+        assert "source" not in result
 
 
 # ---------------------------------------------------------------------------
@@ -1279,10 +1277,10 @@ class TestAdversarial:
         # When reading its phase
         result = _process_get_phase(seeded_engine, "feature:009-test")
         data = json.loads(result)
-        # Then all 6 fields are present
+        # Then all 5 fields are present
         expected_keys = {
             "feature_type_id", "current_phase", "last_completed_phase",
-            "completed_phases", "mode", "source", "degraded",
+            "mode", "degraded",
         }
         assert set(data.keys()) == expected_keys
 
@@ -1526,7 +1524,6 @@ class TestIntegrationDegradation:
         # Must be a state dict (not an error), with degraded=True
         assert "error" not in data
         assert data["degraded"] is True
-        assert "brainstorm" in data["completed_phases"]
 
     def test_list_features_by_phase_db_closed_returns_degraded_states(
         self, degraded_engine
@@ -1864,11 +1861,10 @@ class TestCompletePhaseDegradedSourceValue:
         result = _process_complete_phase(engine, "feature:010-test", "brainstorm")
         data = json.loads(result)
 
-        # Then source is exactly 'meta_json_fallback' and degraded is True
+        # Then degraded is True (source was meta_json_fallback)
         assert "error" not in data, f"Unexpected error: {data}"
-        assert data["source"] == "meta_json_fallback"
+        assert "source" not in data
         assert data["degraded"] is True
-        assert "brainstorm" in data["completed_phases"]
 
     def test_normal_complete_phase_source_is_db(self, seeded_engine):
         """Normal complete_phase returns source='db' and degraded=False.
@@ -1881,8 +1877,8 @@ class TestCompletePhaseDegradedSourceValue:
         )
         data = json.loads(result)
 
-        # Then source is 'db' and degraded is False
-        assert data["source"] == "db"
+        # Then degraded is False (source was db)
+        assert "source" not in data
         assert data["degraded"] is False
 
 
@@ -2332,7 +2328,7 @@ class TestProcessReconcileApply:
         """Reconcile returns JSON with action list."""
         engine, db, arts = reconcile_env
         result = _process_reconcile_apply(
-            engine, db, arts, "feature:011-app", "meta_json_to_db", False
+            engine, db, arts, "feature:011-app", False
         )
         data = json.loads(result)
         assert "error" not in data
@@ -2343,7 +2339,7 @@ class TestProcessReconcileApply:
         """dry_run returns changes without applying."""
         engine, db, arts = reconcile_env
         result = _process_reconcile_apply(
-            engine, db, arts, "feature:011-app", "meta_json_to_db", True
+            engine, db, arts, "feature:011-app", True
         )
         data = json.loads(result)
         assert "error" not in data
@@ -2354,22 +2350,11 @@ class TestProcessReconcileApply:
         check_data = json.loads(check)
         assert check_data["features"][0]["status"] == "meta_json_ahead"
 
-    def test_invalid_direction_returns_error(self, reconcile_env):
-        """Unsupported direction returns structured error (AC-17)."""
-        engine, db, arts = reconcile_env
-        result = _process_reconcile_apply(
-            engine, db, arts, None, "db_to_meta_json", False
-        )
-        data = json.loads(result)
-        assert data["error"] is True
-        assert data["error_type"] == "invalid_transition"
-        assert "Unsupported direction" in data["message"]
-
     def test_nonexistent_slug_returns_feature_not_found(self, db, tmp_path):
         """Non-existent slug -> feature_not_found (AC-18)."""
         engine = WorkflowStateEngine(db, str(tmp_path))
         result = _process_reconcile_apply(
-            engine, db, str(tmp_path), "feature:999-missing", "meta_json_to_db", False
+            engine, db, str(tmp_path), "feature:999-missing", False
         )
         data = json.loads(result)
         assert data["error"] is True
@@ -2379,7 +2364,7 @@ class TestProcessReconcileApply:
         """Missing colon -> invalid_transition (AC-18 case 2)."""
         engine = WorkflowStateEngine(db, str(tmp_path))
         result = _process_reconcile_apply(
-            engine, db, str(tmp_path), "nocolon", "meta_json_to_db", False
+            engine, db, str(tmp_path), "nocolon", False
         )
         data = json.loads(result)
         assert data["error"] is True
@@ -2395,7 +2380,7 @@ class TestProcessReconcileFrontmatter:
     """Processing function for frontmatter drift detection."""
 
     def test_single_feature_with_frontmatter(self, db, tmp_path):
-        """Single feature with valid frontmatter returns drift reports (AC-11)."""
+        """Single in_sync feature is filtered out of reports (AC-11)."""
         # Register entity in DB
         db.register_entity("feature", "011-fm", "FM Test", status="active")
 
@@ -2413,9 +2398,12 @@ class TestProcessReconcileFrontmatter:
         result = _process_reconcile_frontmatter(db, str(tmp_path), "feature:011-fm")
         data = json.loads(result)
         assert "error" not in data
-        assert len(data["reports"]) >= 1
-        assert data["reports"][0]["status"] == "in_sync"
-        assert data["summary"]["in_sync"] >= 1
+        # New envelope format
+        assert "summary" not in data
+        assert data["total_scanned"] >= 1
+        # in_sync reports are filtered out
+        assert data["drifted_count"] == 0
+        assert len(data["reports"]) == 0
 
     def test_no_frontmatter(self, db, tmp_path):
         """Feature with no frontmatter in files returns db_only reports (AC-12)."""
@@ -2429,12 +2417,14 @@ class TestProcessReconcileFrontmatter:
         result = _process_reconcile_frontmatter(db, str(tmp_path), "feature:011-nofm")
         data = json.loads(result)
         assert "error" not in data
+        # db_only is drifted -> included in reports
+        assert data["total_scanned"] >= 1
+        assert data["drifted_count"] >= 1
         assert len(data["reports"]) >= 1
-        # With type_id passed, detect_drift returns db_only for no-header files
         assert data["reports"][0]["status"] == "db_only"
 
     def test_bulk_scan(self, db, tmp_path):
-        """Bulk scan via scan_all returns aggregate summary (AC-13)."""
+        """Bulk scan via scan_all returns envelope with total_scanned/drifted_count (AC-13)."""
         # Register entity
         db.register_entity("feature", "011-bulk", "Bulk Test", status="active")
         entity = db.get_entity("feature:011-bulk")
@@ -2455,8 +2445,12 @@ class TestProcessReconcileFrontmatter:
         result = _process_reconcile_frontmatter(db, str(tmp_path), None)
         data = json.loads(result)
         assert "error" not in data
-        assert "summary" in data
-        assert isinstance(data["summary"], dict)
+        assert "summary" not in data
+        assert "total_scanned" in data
+        assert "drifted_count" in data
+        assert isinstance(data["total_scanned"], int)
+        assert isinstance(data["drifted_count"], int)
+        assert isinstance(data["reports"], list)
 
     def test_nonexistent_directory_returns_empty(self, db, tmp_path):
         """Non-existent feature directory returns empty reports."""
@@ -2466,8 +2460,9 @@ class TestProcessReconcileFrontmatter:
         data = json.loads(result)
         assert "error" not in data
         # No artifact files in the dir -> empty reports
+        assert data["total_scanned"] == 0
+        assert data["drifted_count"] == 0
         assert len(data["reports"]) == 0
-        assert all(v == 0 for v in data["summary"].values())
 
     def test_nonexistent_slug_returns_feature_not_found(self, db, tmp_path):
         """Non-existent slug -> feature_not_found (AC-18)."""
@@ -2580,6 +2575,91 @@ class TestProcessReconcileStatus:
 
         monkeypatch.setattr(mod, "scan_all", original_scan_all)
 
+    # --- Task 2.2: summary_only mode ---
+
+    def test_summary_only_healthy(self, db, tmp_path):
+        """summary_only=True returns exactly 3 fields when healthy."""
+        # Set up an in-sync feature
+        db.register_entity("feature", "011-sum-h", "SumH", status="active")
+        db.create_workflow_phase(
+            "feature:011-sum-h",
+            workflow_phase="specify",
+            last_completed_phase="brainstorm",
+            mode="standard",
+        )
+        feat_dir = os.path.join(str(tmp_path), "features", "011-sum-h")
+        os.makedirs(feat_dir, exist_ok=True)
+        with open(os.path.join(feat_dir, ".meta.json"), "w") as f:
+            json.dump({
+                "id": "011", "slug": "011-sum-h", "status": "active",
+                "mode": "standard", "lastCompletedPhase": "brainstorm",
+                "phases": {"brainstorm": {"status": "completed"}},
+            }, f)
+
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        result = _process_reconcile_status(engine, db, str(tmp_path), summary_only=True)
+        data = json.loads(result)
+
+        # Exactly 3 keys
+        assert set(data.keys()) == {"healthy", "workflow_drift_count", "frontmatter_drift_count"}
+        assert data["healthy"] is True
+        assert data["workflow_drift_count"] == 0
+        assert data["frontmatter_drift_count"] == 0
+
+    def test_summary_only_unhealthy(self, db, tmp_path):
+        """summary_only=True returns correct drift counts when drift exists."""
+        # Set up a drifted feature (meta.json ahead of DB)
+        db.register_entity("feature", "011-sum-d", "SumD", status="active")
+        db.create_workflow_phase(
+            "feature:011-sum-d",
+            workflow_phase="specify",
+            last_completed_phase="brainstorm",
+            mode="standard",
+        )
+        feat_dir = os.path.join(str(tmp_path), "features", "011-sum-d")
+        os.makedirs(feat_dir, exist_ok=True)
+        with open(os.path.join(feat_dir, ".meta.json"), "w") as f:
+            json.dump({
+                "id": "011", "slug": "011-sum-d", "status": "active",
+                "mode": "standard", "lastCompletedPhase": "implement",
+                "phases": {
+                    "brainstorm": {"status": "completed"},
+                    "specify": {"status": "completed"},
+                    "design": {"status": "completed"},
+                    "create-plan": {"status": "completed"},
+                    "create-tasks": {"status": "completed"},
+                    "implement": {"status": "completed"},
+                },
+            }, f)
+
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        result = _process_reconcile_status(engine, db, str(tmp_path), summary_only=True)
+        data = json.loads(result)
+
+        assert set(data.keys()) == {"healthy", "workflow_drift_count", "frontmatter_drift_count"}
+        assert data["healthy"] is False
+        assert data["workflow_drift_count"] >= 1
+
+    def test_summary_only_false_returns_full_report(self, db, tmp_path):
+        """summary_only=False (default) returns the full 5-key report unchanged."""
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        result = _process_reconcile_status(engine, db, str(tmp_path), summary_only=False)
+        data = json.loads(result)
+        expected_keys = {
+            "workflow_drift", "frontmatter_drift", "healthy",
+            "total_features_checked", "total_files_checked",
+        }
+        assert set(data.keys()) == expected_keys
+
+    def test_summary_only_default_is_false(self, db, tmp_path):
+        """Calling without summary_only returns full report (backward compat)."""
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        result = _process_reconcile_status(engine, db, str(tmp_path))
+        data = json.loads(result)
+        # Should have the full 5-key shape, not the 3-key summary
+        assert "workflow_drift" in data
+        assert "total_features_checked" in data
+
 
 # ---------------------------------------------------------------------------
 # Task 6.1: MCP tool handlers (not-initialized guards)
@@ -2665,7 +2745,7 @@ class TestReconciliationEndToEnd:
         # Step 2: Apply reconciliation
         apply_result = json.loads(
             _process_reconcile_apply(
-                engine, db, str(tmp_path), None, "meta_json_to_db", False
+                engine, db, str(tmp_path), None, False
             )
         )
         assert "error" not in apply_result
@@ -2709,11 +2789,13 @@ class TestReconciliationEndToEnd:
         )
         data = json.loads(result)
         assert "error" not in data
-        assert len(data["reports"]) == 2
-        statuses = [r["status"] for r in data["reports"]]
-        assert "in_sync" in statuses
+        # 2 files scanned total (spec.md + design.md)
+        assert data["total_scanned"] == 2
+        # Only drifted reports included (in_sync filtered out)
+        assert data["drifted_count"] == 1
+        assert len(data["reports"]) == 1
         # design.md has no header but type_id was passed -> db_only
-        assert "db_only" in statuses
+        assert data["reports"][0]["status"] == "db_only"
 
     def test_error_uninitialized_guard(self):
         """Uninitialized engine/db returns not_initialized error (AC-16)."""
@@ -2740,17 +2822,6 @@ class TestReconciliationEndToEnd:
         finally:
             mod._engine = orig_engine
             mod._db = orig_db
-
-    def test_error_invalid_direction(self, db, tmp_path):
-        """Invalid direction returns structured error (AC-17)."""
-        engine = WorkflowStateEngine(db, str(tmp_path))
-        result = _process_reconcile_apply(
-            engine, db, str(tmp_path), None, "invalid_direction", False
-        )
-        data = json.loads(result)
-        assert data["error"] is True
-        assert data["error_type"] == "invalid_transition"
-        assert "Unsupported direction" in data["message"]
 
     def test_error_invalid_feature_type_id(self, db, tmp_path):
         """Invalid feature_type_id returns structured errors (AC-18)."""
@@ -2814,7 +2885,7 @@ class TestReconciliationBoundaryValues:
         engine = WorkflowStateEngine(db, str(tmp_path))
         # When applying reconciliation in bulk
         result = _process_reconcile_apply(
-            engine, db, str(tmp_path), None, "meta_json_to_db", False
+            engine, db, str(tmp_path), None, False
         )
         data = json.loads(result)
         # Then summary has all 5 keys, all zero
@@ -2822,25 +2893,6 @@ class TestReconciliationBoundaryValues:
         expected_keys = {"reconciled", "created", "skipped", "error", "dry_run"}
         assert set(data["summary"].keys()) == expected_keys
         assert all(v == 0 for v in data["summary"].values())
-
-    def test_reconcile_apply_empty_direction_returns_error(self, db, tmp_path):
-        """Empty string direction returns structured error.
-        derived_from: dimension:boundary_values (empty string input)
-
-        Anticipate: Empty string might accidentally match a valid direction
-        if the check uses `in` substring matching instead of set membership.
-        """
-        # Given an engine
-        engine = WorkflowStateEngine(db, str(tmp_path))
-        # When applying with empty direction
-        result = _process_reconcile_apply(
-            engine, db, str(tmp_path), None, "", False
-        )
-        data = json.loads(result)
-        # Then structured error
-        assert data["error"] is True
-        assert data["error_type"] == "invalid_transition"
-        assert "Unsupported direction" in data["message"]
 
     def test_reconcile_check_response_json_shape(self, db, tmp_path):
         """reconcile_check response has exactly {features, summary} top-level keys.
@@ -2881,7 +2933,7 @@ class TestReconciliationBoundaryValues:
         """
         engine = WorkflowStateEngine(db, str(tmp_path))
         result = _process_reconcile_apply(
-            engine, db, str(tmp_path), None, "meta_json_to_db", False
+            engine, db, str(tmp_path), None, False
         )
         data = json.loads(result)
         assert set(data.keys()) == {"actions", "summary"}
@@ -2913,18 +2965,6 @@ class TestReconciliationAdversarial:
     derived_from: dimension:adversarial
     """
 
-    def test_supported_directions_is_frozenset(self):
-        """_SUPPORTED_DIRECTIONS must be a frozenset (immutable).
-        derived_from: dimension:adversarial (Never/Always: immutability)
-
-        Anticipate: If _SUPPORTED_DIRECTIONS is a regular set, code
-        could accidentally mutate it (e.g., .add("db_to_meta_json")),
-        silently enabling unsupported directions.
-        """
-        assert isinstance(_SUPPORTED_DIRECTIONS, frozenset)
-        assert "meta_json_to_db" in _SUPPORTED_DIRECTIONS
-        assert len(_SUPPORTED_DIRECTIONS) == 1
-
     def test_path_traversal_in_reconcile_check(self, db, tmp_path):
         """Path traversal in feature_type_id is blocked by _validate_feature_type_id.
         derived_from: dimension:adversarial (path traversal)
@@ -2951,7 +2991,7 @@ class TestReconciliationAdversarial:
         """
         engine = WorkflowStateEngine(db, str(tmp_path))
         result = _process_reconcile_apply(
-            engine, db, str(tmp_path), "feature:../../../evil", "meta_json_to_db", False
+            engine, db, str(tmp_path), "feature:../../../evil", False
         )
         data = json.loads(result)
         assert data["error"] is True
@@ -3048,7 +3088,7 @@ class TestReconciliationAdversarial:
 
         engine = WorkflowStateEngine(db, str(tmp_path))
         result = _process_reconcile_apply(
-            engine, db, str(tmp_path), "feature:011-shape3", "meta_json_to_db", False
+            engine, db, str(tmp_path), "feature:011-shape3", False
         )
         data = json.loads(result)
 
@@ -3111,7 +3151,7 @@ class TestReconciliationErrorPropagation:
         monkeypatch.setattr(mod, "apply_workflow_reconciliation", raise_sqlite)
 
         result = _process_reconcile_apply(
-            engine, db, str(tmp_path), None, "meta_json_to_db", False
+            engine, db, str(tmp_path), None, False
         )
         data = json.loads(result)
         assert data["error"] is True
@@ -3310,7 +3350,7 @@ class TestReconciliationMutationMindset:
 
         engine = WorkflowStateEngine(db, str(tmp_path))
         result = _process_reconcile_apply(
-            engine, db, str(tmp_path), "feature:011-create", "meta_json_to_db", True
+            engine, db, str(tmp_path), "feature:011-create", True
         )
         data = json.loads(result)
 
@@ -3629,7 +3669,7 @@ class TestInitProjectState:
         from unittest.mock import patch
 
         with patch(
-            "workflow_state_server._atomic_json_write"
+            "workflow_engine.feature_lifecycle._atomic_json_write"
         ) as mock_write:
             _process_init_project_state(
                 db,
@@ -6181,4 +6221,252 @@ class TestKanbanColumnLifecycleDeepened:
         assert wp is not None
         assert wp["kanban_column"] == "prioritised", (
             f"Expected 'prioritised' from new current_phase, got '{wp['kanban_column']}'"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Deepened tests Phase B: MCP Audit Token Efficiency
+# ---------------------------------------------------------------------------
+
+
+class TestListFeaturesByPhaseOmitsFieldsDeepened:
+    """Verify list_features_by_phase output omits completed_phases and source.
+    derived_from: spec:AC-5 (token efficiency — strip verbose fields)
+    """
+
+    def test_list_features_by_phase_omits_completed_phases_and_source(self, seeded_engine):
+        """AC-5: serialized list entries must not contain completed_phases or source.
+        derived_from: spec:AC-5, dimension:bdd_scenarios
+
+        Anticipate: If _serialize_state accidentally includes completed_phases
+        (a potentially large tuple) or source (internal detail), each feature
+        listing wastes tokens on data the caller never uses.
+        Challenge: A mutation adding completed_phases back to the dict would
+        make this test fail.
+        """
+        # Given a seeded engine with feature at 'specify' phase
+        # When listing features by phase
+        result = _process_list_features_by_phase(seeded_engine, "specify")
+        data = json.loads(result)
+        # Then each entry omits completed_phases and source
+        assert len(data) >= 1
+        for entry in data:
+            assert "completed_phases" not in entry, (
+                "completed_phases should be stripped for token efficiency"
+            )
+            assert "source" not in entry, (
+                "source should be stripped for token efficiency"
+            )
+            # Must still have the essential fields
+            assert "feature_type_id" in entry
+            assert "current_phase" in entry
+            assert "degraded" in entry
+
+
+class TestListFeaturesByStatusOmitsFieldsDeepened:
+    """Verify list_features_by_status output omits completed_phases and source.
+    derived_from: spec:AC-5 (token efficiency — strip verbose fields)
+    """
+
+    def test_list_features_by_status_omits_completed_phases_and_source(self, seeded_engine):
+        """AC-5: serialized list entries must not contain completed_phases or source.
+        derived_from: spec:AC-5, dimension:bdd_scenarios
+
+        Anticipate: Same risk as by_phase — if _serialize_state leaks
+        completed_phases, the list response grows O(features * phases).
+        """
+        # Given a seeded engine with feature at status 'active'
+        # When listing features by status
+        result = _process_list_features_by_status(seeded_engine, "active")
+        data = json.loads(result)
+        # Then each entry omits completed_phases and source
+        assert len(data) >= 1
+        for entry in data:
+            assert "completed_phases" not in entry
+            assert "source" not in entry
+            assert "feature_type_id" in entry
+            assert "current_phase" in entry
+
+
+class TestSerializeStateDegradedLogicDeepened:
+    """Mutation tests for _serialize_state degraded flag logic.
+    derived_from: spec:AC-6 (degraded only for meta_json_fallback),
+                  dimension:mutation_mindset
+    """
+
+    def test_serialize_state_degraded_true_only_for_meta_json_fallback(self):
+        """Only source='meta_json_fallback' should produce degraded=True.
+        derived_from: spec:AC-6, dimension:mutation_mindset
+
+        Anticipate: If the condition is `source != "db"` instead of
+        `source == "meta_json_fallback"`, then source="meta_json" would
+        incorrectly show degraded=True.
+        Mutation: changing == to != or to "in" with wrong set would
+        break exactly one of the three assertions below.
+        """
+        # Given states with different source values
+        sources_and_expected = [
+            ("db", False),
+            ("entity_db", False),
+            ("meta_json", False),
+            ("meta_json_fallback", True),
+        ]
+        for source, expected_degraded in sources_and_expected:
+            state = FeatureWorkflowState(
+                feature_type_id="feature:deg-test",
+                current_phase="specify",
+                last_completed_phase=None,
+                completed_phases=(),
+                mode="standard",
+                source=source,
+            )
+            result = _serialize_state(state)
+            assert result["degraded"] is expected_degraded, (
+                f"source={source!r}: expected degraded={expected_degraded}, "
+                f"got {result['degraded']}"
+            )
+
+
+class TestReconcileApplyNoDirectionParamDeepened:
+    """Verify reconcile_apply has no direction parameter (hardcoded meta_json_to_db).
+    derived_from: spec:AC-14 (direction hardcoded, no user param)
+    """
+
+    def test_reconcile_apply_no_direction_param(self):
+        """AC-14: _process_reconcile_apply does not accept a direction parameter.
+        derived_from: spec:AC-14, dimension:bdd_scenarios
+
+        Anticipate: If a developer adds a 'direction' param to allow
+        db_to_meta_json sync, it would bypass the spec requirement that
+        only meta_json_to_db is supported. This signature test catches
+        accidental param additions.
+        """
+        import inspect
+
+        # Given the processing function
+        sig = inspect.signature(_process_reconcile_apply)
+        param_names = set(sig.parameters.keys())
+        # Then it must not have a 'direction' parameter
+        assert "direction" not in param_names, (
+            "_process_reconcile_apply should not expose a direction parameter; "
+            "direction is hardcoded to meta_json_to_db per spec AC-14"
+        )
+        # And it must have exactly these params
+        expected_params = {"engine", "db", "artifacts_root", "feature_type_id", "dry_run"}
+        assert param_names == expected_params, (
+            f"Unexpected params: {param_names - expected_params}"
+        )
+
+
+class TestReconcileFrontmatterBulkBoundaryDeepened:
+    """Boundary tests for reconcile_frontmatter bulk scan.
+    derived_from: spec:AC-11/AC-12 (frontmatter drift), dimension:boundary_values
+    """
+
+    def test_reconcile_frontmatter_all_in_sync(self, db, tmp_path):
+        """Boundary: when all features have matching frontmatter, drifted_count=0.
+        derived_from: spec:AC-11, dimension:boundary_values
+
+        Anticipate: If the drifted_count calculation uses len(reports) instead
+        of counting non-in_sync reports, an all-in-sync scan would incorrectly
+        report drift.
+        """
+        # Given multiple features with perfectly matching frontmatter
+        for i in range(3):
+            slug = f"sync-{i:03d}"
+            db.register_entity("feature", slug, f"Sync Feature {i}", status="active")
+            entity = db.get_entity(f"feature:{slug}")
+            feat_dir = os.path.join(str(tmp_path), "features", slug)
+            os.makedirs(feat_dir, exist_ok=True)
+            with open(os.path.join(feat_dir, "spec.md"), "w") as f:
+                f.write(
+                    f"---\nentity_uuid: {entity['uuid']}\n"
+                    f"entity_type_id: feature:{slug}\n---\n# Spec\n"
+                )
+            db.update_entity(entity["uuid"], artifact_path=feat_dir)
+
+        # When running bulk frontmatter scan
+        result = _process_reconcile_frontmatter(db, str(tmp_path), None)
+        data = json.loads(result)
+        # Then all features are in sync
+        assert data["drifted_count"] == 0
+        assert len(data["reports"]) == 0
+        assert data["total_scanned"] >= 3
+
+    def test_reconcile_frontmatter_all_drifted(self, db, tmp_path):
+        """Boundary: when all features have missing frontmatter, all are drifted.
+        derived_from: spec:AC-12, dimension:boundary_values
+
+        Anticipate: If the filter logic incorrectly keeps in_sync reports or
+        drops db_only reports, the drifted_count would be wrong.
+        """
+        # Given multiple features with NO frontmatter in spec files
+        for i in range(3):
+            slug = f"drift-{i:03d}"
+            db.register_entity("feature", slug, f"Drift Feature {i}", status="active")
+            entity = db.get_entity(f"feature:{slug}")
+            feat_dir = os.path.join(str(tmp_path), "features", slug)
+            os.makedirs(feat_dir, exist_ok=True)
+            with open(os.path.join(feat_dir, "spec.md"), "w") as f:
+                f.write("# Spec\nNo frontmatter here.\n")
+            db.update_entity(entity["uuid"], artifact_path=feat_dir)
+
+        # When running bulk frontmatter scan
+        result = _process_reconcile_frontmatter(db, str(tmp_path), None)
+        data = json.loads(result)
+        # Then all features are drifted (db_only status)
+        assert data["drifted_count"] >= 3
+        assert len(data["reports"]) >= 3
+        for report in data["reports"]:
+            assert report["status"] == "db_only"
+
+
+class TestReconcileStatusHealthyWithFrontmatterDriftDeepened:
+    """Mutation test: healthy must be False when ONLY frontmatter drift exists.
+    derived_from: spec:AC-14/AC-15 (healthy = workflow AND frontmatter),
+                  dimension:mutation_mindset
+    """
+
+    def test_reconcile_status_healthy_false_when_only_frontmatter_drift(
+        self, db, tmp_path
+    ):
+        """healthy must be False even if workflow is in sync but frontmatter drifts.
+        derived_from: spec:AC-14, dimension:mutation_mindset
+
+        Anticipate: If the healthy check only considers workflow_drift (AND
+        ignores frontmatter_drift), or uses OR instead of AND, this test
+        catches it. The mutation `healthy = wf_healthy` (dropping fm_healthy)
+        would make this test pass when it shouldn't.
+        """
+        # Given a feature with workflow IN SYNC but frontmatter DRIFTED
+        db.register_entity("feature", "fm-only-drift", "FM Only Drift", status="active")
+        db.create_workflow_phase(
+            "feature:fm-only-drift",
+            workflow_phase="specify",
+            last_completed_phase="brainstorm",
+            mode="standard",
+        )
+        entity = db.get_entity("feature:fm-only-drift")
+        feat_dir = os.path.join(str(tmp_path), "features", "fm-only-drift")
+        os.makedirs(feat_dir, exist_ok=True)
+        # meta.json matches DB (workflow in sync)
+        with open(os.path.join(feat_dir, ".meta.json"), "w") as f:
+            json.dump({
+                "id": "fm", "slug": "fm-only-drift", "status": "active",
+                "mode": "standard", "lastCompletedPhase": "brainstorm",
+                "phases": {"brainstorm": {"status": "completed"}},
+            }, f)
+        # spec.md has NO frontmatter -> triggers frontmatter drift
+        with open(os.path.join(feat_dir, "spec.md"), "w") as f:
+            f.write("# Spec\nNo frontmatter here.\n")
+        db.update_entity(entity["uuid"], artifact_path=feat_dir)
+
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        # When checking reconcile status
+        result = _process_reconcile_status(engine, db, str(tmp_path))
+        data = json.loads(result)
+        # Then healthy is False because frontmatter drift exists
+        assert data["healthy"] is False, (
+            "healthy should be False when frontmatter drift exists, "
+            "even if workflow is in sync"
         )

@@ -1,6 +1,7 @@
 """Tests for entity_server MCP handler dual-identity messages."""
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
@@ -30,34 +31,35 @@ def db(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_set_parent_handler_dual_identity_message(db):
-    """set_parent handler response contains both UUID and type_id for child and parent."""
+async def test_set_parent_handler_concise_message(db):
+    """set_parent handler returns concise message with only type_ids, no UUIDs.
+    derived_from: feature:045-mcp-audit-token-efficiency P1-C3
+    """
     parent_uuid = db.register_entity("project", "parent", "Parent Project", status="active")
     child_uuid = db.register_entity("feature", "child", "Child Feature")
 
     result = await entity_server.set_parent("feature:child", "project:parent")
 
     assert isinstance(result, str)
-    # Should contain child UUID and type_id
-    assert child_uuid in result
-    assert "feature:child" in result
-    # Should contain parent UUID and type_id
-    assert parent_uuid in result
-    assert "project:parent" in result
+    assert result == "Parent set: feature:child \u2192 project:parent"
+    # UUIDs must NOT appear in confirmation messages
+    assert child_uuid not in result
+    assert parent_uuid not in result
 
 
 @pytest.mark.asyncio
-async def test_update_entity_handler_dual_identity_message(db):
-    """update_entity handler response contains both UUID and type_id."""
+async def test_update_entity_handler_concise_message(db):
+    """update_entity handler returns concise message with only type_id, no UUID.
+    derived_from: feature:045-mcp-audit-token-efficiency P1-C3
+    """
     entity_uuid = db.register_entity("feature", "f1", "Feature One", status="active")
 
     result = await entity_server.update_entity("feature:f1", status="completed")
 
     assert isinstance(result, str)
-    # Should contain UUID
-    assert _UUID_V4_RE.search(result)
-    # Should contain type_id
-    assert "feature:f1" in result
+    assert result == "Updated: feature:f1"
+    # UUID must NOT appear in confirmation message
+    assert entity_uuid not in result
 
 
 # ---------------------------------------------------------------------------
@@ -66,11 +68,9 @@ async def test_update_entity_handler_dual_identity_message(db):
 
 
 @pytest.mark.asyncio
-async def test_register_entity_handler_dual_identity_message(db):
-    """register_entity handler response contains both UUID and type_id.
-    Anticipate: If the handler only returns type_id (pre-migration behavior),
-    the UUID would be missing from the response.
-    derived_from: spec:R28, spec:R34
+async def test_register_entity_handler_concise_message(db):
+    """register_entity handler returns concise message with only type_id, no UUID.
+    derived_from: feature:045-mcp-audit-token-efficiency P1-C3
     """
     result = await entity_server.register_entity(
         entity_type="feature",
@@ -78,12 +78,9 @@ async def test_register_entity_handler_dual_identity_message(db):
         name="Registration Test",
     )
     assert isinstance(result, str)
-    # Should contain UUID
-    assert _UUID_V4_RE.search(result), f"Expected UUID in: {result}"
-    # Should contain type_id
-    assert "feature:reg-test" in result
-    # Should match format "Registered entity: {uuid} ({type_id})"
-    assert "Registered entity:" in result
+    assert result == "Registered: feature:reg-test"
+    # UUID must NOT appear in confirmation message
+    assert not _UUID_V4_RE.search(result), f"UUID found in message: {result}"
 
 
 @pytest.mark.asyncio
@@ -100,20 +97,99 @@ async def test_set_parent_handler_uses_uuid_identifiers(db):
     assert isinstance(result, str)
     # Should not contain "Error"
     assert "Error" not in result
-    # Should contain both UUIDs and type_ids
-    assert child_uuid in result
-    assert parent_uuid in result
+    # Concise message uses type_ids only
+    assert "Parent set:" in result
 
 
 @pytest.mark.asyncio
-async def test_get_entity_handler_returns_uuid_field(db):
-    """get_entity handler response includes uuid field.
-    Anticipate: If get_entity dict conversion drops uuid column,
-    the response would be missing the canonical identifier.
-    derived_from: spec:AC-17, spec:R28
+async def test_get_entity_handler_compact_output(db):
+    """get_entity handler returns compact JSON without uuid, entity_id, parent_uuid.
+    These internal fields are stripped for token efficiency — callers already
+    know the type_id they queried with, and uuid/parent_uuid are internal.
+    derived_from: feature:045-mcp-audit-token-efficiency P1-C2
     """
-    entity_uuid = db.register_entity("feature", "get-test", "Get Test")
+    db.register_entity("feature", "get-test", "Get Test", status="active")
     result = await entity_server.get_entity("feature:get-test")
     assert isinstance(result, str)
-    # Should contain the UUID somewhere in the response
-    assert entity_uuid in result or _UUID_V4_RE.search(result)
+    parsed = json.loads(result)
+    # Excluded fields
+    assert "uuid" not in parsed
+    assert "entity_id" not in parsed
+    assert "parent_uuid" not in parsed
+    # Retained fields
+    assert parsed["type_id"] == "feature:get-test"
+    assert parsed["name"] == "Get Test"
+    assert parsed["status"] == "active"
+    # Compact JSON: no indentation, minimal separators
+    assert "\n" not in result
+    assert ": " not in result  # compact separators use ':' not ': '
+
+
+# ---------------------------------------------------------------------------
+# Deepened tests Phase B: MCP Audit Token Efficiency
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_entity_not_found_returns_message(db):
+    """get_entity for a non-existent type_id returns a not-found message, not crash.
+    derived_from: spec:AC-2 (error handling), dimension:error_propagation
+
+    Anticipate: If get_entity doesn't handle None from db.get_entity(),
+    it would crash with AttributeError when trying to pop keys from None.
+    This test verifies graceful handling of the not-found path.
+    """
+    # Given a database with no matching entity
+    # When requesting a non-existent entity
+    result = await entity_server.get_entity("feature:does-not-exist")
+    # Then a human-readable not-found message is returned
+    assert isinstance(result, str)
+    assert "not found" in result.lower() or "Entity not found" in result
+    assert "does-not-exist" in result
+
+
+@pytest.mark.asyncio
+async def test_set_parent_delegates_to_server_helpers(db):
+    """set_parent MCP handler delegates to _process_set_parent helper.
+    derived_from: spec:AC-15 (delegation to helpers), dimension:bdd_scenarios
+
+    Anticipate: If set_parent inlines the logic instead of delegating to
+    _process_set_parent, future changes to the helper would not be picked up
+    by the MCP tool. This test verifies the delegation chain works end-to-end.
+    """
+    # Given parent and child entities
+    db.register_entity("project", "p1", "Parent Project", status="active")
+    db.register_entity("feature", "c1", "Child Feature", status="active")
+    # When setting parent via MCP handler
+    result = await entity_server.set_parent("feature:c1", "project:p1")
+    # Then success message is returned
+    assert "Parent set:" in result
+    assert "feature:c1" in result
+    assert "project:p1" in result
+
+
+@pytest.mark.asyncio
+async def test_entity_lifecycle_valueerror_caught_by_mcp_decorator(db):
+    """Entity lifecycle ValueError is caught and returned as structured error.
+    derived_from: spec:AC-5 (error handling), dimension:error_propagation
+
+    Anticipate: If the init_entity_workflow or transition_entity_phase MCP
+    handlers don't have the _catch_entity_value_error decorator, ValueErrors
+    would propagate as unhandled exceptions instead of structured error JSON.
+    This test verifies the end-to-end error handling chain via the workflow
+    state server processing function.
+    """
+    import workflow_state_server as ws_mod
+
+    # Given a brainstorm entity but NO workflow_phases row
+    db.register_entity("brainstorm", "err-test", "Error Test", status="draft")
+
+    # When attempting to transition without initializing workflow first
+    result = ws_mod._process_transition_entity_phase(
+        db, "brainstorm:err-test", "reviewing"
+    )
+    parsed = json.loads(result)
+    # Then a structured error is returned (not an unhandled exception)
+    assert parsed["error"] is True
+    assert parsed["error_type"] == "entity_not_found"
+    assert "recovery_hint" in parsed

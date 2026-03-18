@@ -1,0 +1,32 @@
+{
+  "id": "045",
+  "slug": "mcp-audit-token-efficiency",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-03-18T10:32:07.755343+00:00",
+  "branch": "feature/045-mcp-audit-token-efficiency",
+  "lastCompletedPhase": "create-plan",
+  "phases": {
+    "brainstorm": {
+      "started": "2026-03-18T10:32:07.755041+00:00"
+    },
+    "specify": {
+      "started": "2026-03-18T10:38:08.938946+00:00",
+      "completed": "2026-03-18T10:48:51.923784+00:00",
+      "iterations": 3
+    },
+    "design": {
+      "started": "2026-03-18T10:49:10.492400+00:00",
+      "completed": "2026-03-18T11:05:38.513941+00:00",
+      "iterations": 4
+    },
+    "create-plan": {
+      "started": "2026-03-18T11:08:05.741541+00:00",
+      "completed": "2026-03-18T11:17:23.805782+00:00",
+      "iterations": 3
+    },
+    "create-tasks": {
+      "started": "2026-03-18T11:28:05.461042+00:00"
+    }
+  }
+}

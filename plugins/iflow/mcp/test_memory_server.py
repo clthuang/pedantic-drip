@@ -726,3 +726,263 @@ class TestSysPathIdempotency:
         assert len(matches) <= 1, (
             f"hooks/lib appears {len(matches)} times in sys.path: {matches}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Test: search_memory category filter and brief mode (Task 3.1)
+# ---------------------------------------------------------------------------
+
+from memory_server import search_memory  # noqa: E402
+
+
+def _seed_entries(db):
+    """Seed DB with entries across categories for filter tests.
+
+    Each description includes the shared keyword 'workflow' so FTS5 can
+    match all entries with a single-term query, letting category/brief
+    filtering be tested independently of retrieval quirks.
+    """
+    entries = [
+        ("Hook stderr pattern", "Suppress stderr in workflow hooks", "Prevents JSON corruption", "patterns"),
+        ("Validate inputs pattern", "Always validate workflow inputs before processing", "Prevents runtime errors", "patterns"),
+        ("Avoid global state", "Global workflow state causes hidden coupling", "Hard to test and debug", "anti-patterns"),
+        ("Test before commit", "Run workflow tests before committing", "Catches regressions early", "heuristics"),
+    ]
+    for name, desc, reasoning, cat in entries:
+        _process_store_memory(
+            db=db,
+            provider=None,
+            keyword_gen=None,
+            name=name,
+            description=desc,
+            reasoning=reasoning,
+            category=cat,
+            references=[],
+            confidence="high",
+        )
+
+
+class TestSearchMemoryCategoryFilter:
+    def test_category_filters_to_matching_entries(self, db: MemoryDatabase):
+        """search_memory(category='patterns') returns only pattern entries."""
+        _seed_entries(db)
+
+        # Use shared keyword 'workflow' that appears in all seeded entries
+        result = _process_search_memory(
+            db=db,
+            provider=None,
+            config={},
+            query="workflow",
+            limit=10,
+            category="patterns",
+        )
+
+        # Should contain pattern entries
+        assert "Hook stderr pattern" in result or "Validate inputs pattern" in result
+        # Should NOT contain anti-pattern or heuristic entries
+        assert "Avoid global state" not in result
+        assert "Test before commit" not in result
+
+    def test_non_matching_category_returns_empty_not_error(self, db: MemoryDatabase):
+        """A category with no matching entries returns 'No matching', not an error."""
+        # Seed only pattern entries
+        _process_store_memory(
+            db=db, provider=None, keyword_gen=None,
+            name="Only pattern", description="A workflow pattern entry",
+            reasoning="Reason", category="patterns", references=[], confidence="high",
+        )
+
+        # Search with a category that has zero entries
+        result = _process_search_memory(
+            db=db,
+            provider=None,
+            config={},
+            query="workflow",
+            limit=10,
+            category="anti-patterns",
+        )
+
+        assert "Error" not in result
+        assert "No matching memories found" in result
+
+    def test_category_with_zero_entries_returns_no_matches(self, db: MemoryDatabase):
+        """Empty DB + category filter returns no-match, not error."""
+        result = _process_search_memory(
+            db=db,
+            provider=None,
+            config={},
+            query="anything",
+            limit=10,
+            category="anti-patterns",
+        )
+
+        assert "Error" not in result
+        assert "No matching memories found" in result
+
+
+class TestSearchMemoryBriefMode:
+    def test_brief_returns_plain_text_format(self, db: MemoryDatabase):
+        """brief=True returns plain-text lines: '- {name} ({confidence})'."""
+        _seed_entries(db)
+
+        result = _process_search_memory(
+            db=db,
+            provider=None,
+            config={},
+            query="workflow",
+            limit=10,
+            brief=True,
+        )
+
+        # Should start with "Found N entries:"
+        assert result.startswith("Found ")
+        assert "entries:" in result
+        # Each entry line should be "- {name} ({confidence})"
+        lines = result.strip().split("\n")
+        entry_lines = [l for l in lines if l.startswith("- ")]
+        assert len(entry_lines) > 0
+        # Verify format: each line has name and confidence in parens
+        for line in entry_lines:
+            assert line.startswith("- ")
+            assert "(" in line and ")" in line
+
+    def test_brief_does_not_contain_json_or_markdown(self, db: MemoryDatabase):
+        """brief mode should NOT contain markdown headers or JSON structure."""
+        _seed_entries(db)
+
+        result = _process_search_memory(
+            db=db,
+            provider=None,
+            config={},
+            query="workflow",
+            limit=10,
+            brief=True,
+        )
+
+        assert "###" not in result
+        assert "Why:" not in result
+        assert "Confidence:" not in result
+
+    def test_brief_with_category_combined(self, db: MemoryDatabase):
+        """brief + category should work together."""
+        _seed_entries(db)
+
+        result = _process_search_memory(
+            db=db,
+            provider=None,
+            config={},
+            query="workflow",
+            limit=10,
+            category="patterns",
+            brief=True,
+        )
+
+        assert result.startswith("Found ")
+        # Should not mention non-pattern entries
+        assert "Avoid global state" not in result
+        assert "Test before commit" not in result
+
+    def test_brief_shows_confidence(self, db: MemoryDatabase):
+        """brief mode should show confidence in parentheses."""
+        _seed_entries(db)
+
+        result = _process_search_memory(
+            db=db,
+            provider=None,
+            config={},
+            query="workflow",
+            limit=10,
+            brief=True,
+        )
+
+        # All seeded entries have confidence="high"
+        assert "(high)" in result
+
+
+class TestSearchMemoryMCPToolParams:
+    def test_search_memory_has_category_parameter(self):
+        """The search_memory MCP tool must accept a 'category' parameter."""
+        sig = inspect.signature(search_memory)
+        assert "category" in sig.parameters
+
+    def test_search_memory_category_defaults_to_none(self):
+        """category parameter should default to None."""
+        sig = inspect.signature(search_memory)
+        param = sig.parameters["category"]
+        assert param.default is None
+
+    def test_search_memory_has_brief_parameter(self):
+        """The search_memory MCP tool must accept a 'brief' parameter."""
+        sig = inspect.signature(search_memory)
+        assert "brief" in sig.parameters
+
+    def test_search_memory_brief_defaults_to_false(self):
+        """brief parameter should default to False."""
+        sig = inspect.signature(search_memory)
+        param = sig.parameters["brief"]
+        assert param.default is False
+
+
+# ---------------------------------------------------------------------------
+# Deepened tests Phase B: MCP Audit Token Efficiency
+# ---------------------------------------------------------------------------
+
+
+class TestSearchMemoryCategoryFilterBeforeRankingDeepened:
+    """Mutation test: category filter must apply BEFORE ranking, not after.
+    derived_from: spec:AC-7 (category pre-filtering), dimension:mutation_mindset
+    """
+
+    def test_search_memory_category_filters_before_ranking(self, db: MemoryDatabase):
+        """Category filter narrows candidates before ranking, not after.
+        derived_from: spec:AC-7, dimension:mutation_mindset
+
+        Anticipate: If category filtering happens AFTER ranking (post-filter),
+        the limit would be applied to unfiltered results first, potentially
+        returning fewer than `limit` results even when enough category-matching
+        entries exist. Pre-filtering ensures the ranking engine sees only
+        category-matching candidates.
+
+        Setup: 5 'patterns' entries and 5 'heuristics' entries, all sharing
+        the keyword 'workflow'. With limit=3 and category='heuristics',
+        pre-filtering gives ranking 5 heuristics to choose 3 from.
+        Post-filtering might give ranking all 10, pick top 3, then filter
+        out patterns -- potentially returning <3 results.
+
+        Challenge: swapping the order of filter-then-rank to rank-then-filter
+        would produce different (likely fewer) results for the filtered category.
+        """
+        # Given 5 patterns and 5 heuristics entries sharing keyword 'workflow'
+        for i in range(5):
+            _process_store_memory(
+                db=db, provider=None, keyword_gen=None,
+                name=f"Pattern workflow {i}",
+                description=f"A workflow pattern about testing number {i}",
+                reasoning=f"Pattern reason {i}",
+                category="patterns", references=[],
+            )
+        for i in range(5):
+            _process_store_memory(
+                db=db, provider=None, keyword_gen=None,
+                name=f"Heuristic workflow {i}",
+                description=f"A workflow heuristic about testing number {i}",
+                reasoning=f"Heuristic reason {i}",
+                category="heuristics", references=[],
+            )
+
+        # When searching with category filter and limit
+        result = _process_search_memory(
+            db=db, provider=None, config={},
+            query="workflow testing",
+            limit=3,
+            category="heuristics",
+        )
+
+        # Then results contain ONLY heuristic entries (not patterns)
+        assert "Pattern workflow" not in result, (
+            "Category filter should exclude 'patterns' entries"
+        )
+        # And we get the requested number of results
+        assert "Found 3" in result, (
+            "Pre-ranking filter should provide enough candidates for limit=3"
+        )

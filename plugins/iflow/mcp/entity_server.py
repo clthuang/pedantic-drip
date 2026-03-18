@@ -22,6 +22,7 @@ from entity_registry.server_helpers import (
     _process_export_lineage_markdown,
     _process_get_lineage,
     _process_register_entity,
+    _process_set_parent,
     parse_metadata,
 )
 from semantic_memory.config import read_config
@@ -163,13 +164,7 @@ async def set_parent(type_id: str, parent_type_id: str) -> str:
     if _db is None:
         return "Error: database not initialized (server not started)"
 
-    try:
-        child_uuid = _db.set_parent(type_id, parent_type_id)
-        child = _db.get_entity(child_uuid)
-        parent = _db.get_entity(child["parent_uuid"])
-        return f"Set parent of {child_uuid} ({child['type_id']}) to {child['parent_uuid']} ({parent['type_id']})"
-    except Exception as exc:
-        return f"Error setting parent: {exc}"
+    return _process_set_parent(_db, type_id, parent_type_id)
 
 
 @mcp.tool()
@@ -189,7 +184,9 @@ async def get_entity(type_id: str) -> str:
     entity = _db.get_entity(type_id)
     if entity is None:
         return f"Entity not found: {type_id}"
-    return json.dumps(entity, indent=2)
+    for key in ("uuid", "entity_id", "parent_uuid"):
+        entity.pop(key, None)
+    return json.dumps(entity, separators=(",", ":"))
 
 
 @mcp.tool()
@@ -251,8 +248,7 @@ async def update_entity(
             type_id, name=name, status=status,
             artifact_path=artifact_path, metadata=parse_metadata(metadata),
         )
-        entity = _db.get_entity(type_id)
-        return f"Updated entity: {entity['uuid']} ({entity['type_id']})"
+        return f"Updated: {type_id}"
     except Exception as exc:
         return f"Error updating entity: {exc}"
 
@@ -288,6 +284,7 @@ async def export_entities(
     status: str | None = None,
     output_path: str | None = None,
     include_lineage: bool = True,
+    fields: str | None = None,
 ) -> str:
     """Export all entities (or a filtered subset) as structured JSON.
 
@@ -301,13 +298,17 @@ async def export_entities(
         Write to file; if None, return as string.
     include_lineage:
         Include parent/child relationships (default True).
+    fields:
+        Comma-separated field names to include per entity (e.g.
+        'type_id,name,status'). If omitted, all fields returned.
 
     Returns JSON string or file-write confirmation.
     """
     if _db is None:
         return "Error: database not initialized (server not started)"
     return _process_export_entities(
-        _db, entity_type, status, output_path, include_lineage, _artifacts_root
+        _db, entity_type, status, output_path, include_lineage, _artifacts_root,
+        fields=fields,
     )
 
 

@@ -859,12 +859,11 @@ class TestRegisterEntityDualIdentityMessage:
     derived_from: spec:R28, spec:R34
     """
 
-    def test_register_message_contains_uuid_and_type_id(
+    def test_register_message_concise_type_id_only(
         self, db: EntityDatabase,
     ):
-        """_process_register_entity returns message with both UUID and type_id.
-        Anticipate: If message format omits UUID, callers would not get the
-        canonical identifier. If it omits type_id, human-readable context is lost.
+        """_process_register_entity returns concise message with only type_id.
+        derived_from: feature:045-mcp-audit-token-efficiency P1-C3
         """
         # Given a database
         # When registering an entity
@@ -873,22 +872,17 @@ class TestRegisterEntityDualIdentityMessage:
             artifact_path=None, status="active",
             parent_type_id=None, metadata=None,
         )
-        # Then the message contains both UUID and type_id
-        assert "project:p1" in result
-        assert _UUID_V4_SEARCH_RE.search(result), (
-            f"Expected UUID in message, got: {result}"
+        # Then the message contains only type_id, no UUID
+        assert result == "Registered: project:p1"
+        assert not _UUID_V4_SEARCH_RE.search(result), (
+            f"UUID found in message, should be type_id only: {result}"
         )
-        # And the format matches spec R28: "Registered entity: {uuid} ({type_id})"
-        assert "Registered entity:" in result
 
-    def test_register_existing_entity_message_still_dual_identity(
+    def test_register_existing_entity_message_still_concise(
         self, db: EntityDatabase,
     ):
-        """Re-registering shows existing UUID (not a new one).
-        Anticipate: If duplicate registration generates a new UUID and
-        returns it in the message, the displayed UUID wouldn't match
-        the stored UUID.
-        derived_from: spec:AC-15a
+        """Re-registering returns same concise format.
+        derived_from: feature:045-mcp-audit-token-efficiency P1-C3
         """
         # Given an already-registered entity
         first_result = _process_register_entity(
@@ -896,19 +890,15 @@ class TestRegisterEntityDualIdentityMessage:
             artifact_path=None, status=None,
             parent_type_id=None, metadata=None,
         )
-        first_uuid_match = _UUID_V4_SEARCH_RE.search(first_result)
-        assert first_uuid_match
-        first_uuid = first_uuid_match.group()
+        assert first_result == "Registered: feature:f1"
         # When registering again
         second_result = _process_register_entity(
             db, "feature", "f1", "Feature One Updated",
             artifact_path=None, status=None,
             parent_type_id=None, metadata=None,
         )
-        second_uuid_match = _UUID_V4_SEARCH_RE.search(second_result)
-        assert second_uuid_match
-        # Then the same UUID appears in both messages
-        assert second_uuid_match.group() == first_uuid
+        # Then the same concise format with type_id only
+        assert second_result == "Registered: feature:f1"
 
 
 class TestRenderTreeUuidKeying:
@@ -1125,8 +1115,8 @@ class TestProcessExportEntities:
         # ensure_ascii=False means no \u escapes for these chars
         assert "\\u" not in result
 
-    def test_json_indentation(self, db: EntityDatabase):
-        """JSON output uses 2-space indentation."""
+    def test_json_compact_inline(self, db: EntityDatabase):
+        """Inline JSON output uses compact separators (no indent)."""
         db.register_entity("feature", "001", "Feature One", status="active")
         result = _process_export_entities(
             db,
@@ -1136,13 +1126,9 @@ class TestProcessExportEntities:
             include_lineage=True,
             artifacts_root="/tmp",
         )
-        # 2-space indent means lines should start with "  " (2 spaces), not
-        # "    " (4 spaces) at the first nesting level
-        lines = result.split("\n")
-        indented_lines = [l for l in lines if l.startswith("  ") and not l.startswith("    ")]
-        assert len(indented_lines) > 0, "Expected 2-space indented lines"
-        # Also verify no tabs used for indentation
-        assert "\t" not in result
+        # Compact JSON: no newlines, no spaces after separators
+        assert "\n" not in result
+        assert '": ' not in result
 
     def test_include_lineage_forwarded(self, db: EntityDatabase):
         """include_lineage=False is passed through to database method."""
@@ -1430,3 +1416,295 @@ class TestProcessExportEntitiesDeepened:
         parsed = json_mod.loads(result)
         child = [e for e in parsed["entities"] if e["type_id"] == "feature:f1"][0]
         assert child["parent_type_id"] == "project:p1"
+
+
+# ---------------------------------------------------------------------------
+# _process_export_entities fields parameter tests (P1-C1)
+# ---------------------------------------------------------------------------
+
+
+class TestProcessExportEntitiesFields:
+    """TDD tests for the `fields` parameter of _process_export_entities().
+
+    Tests cover: field projection, backward compat (fields=None),
+    and all-invalid-fields error with valid field listing.
+    """
+
+    def test_fields_returns_only_specified_fields(self, db: EntityDatabase):
+        """When fields='type_id,name,status', only those 3 keys appear per entity."""
+        import json as json_mod
+
+        db.register_entity("feature", "001", "Feature One", status="active")
+        db.register_entity("feature", "002", "Feature Two", status="draft")
+        result = _process_export_entities(
+            db,
+            entity_type=None,
+            status=None,
+            output_path=None,
+            include_lineage=True,
+            artifacts_root="/tmp",
+            fields="type_id,name,status",
+        )
+        parsed = json_mod.loads(result)
+        assert parsed["entity_count"] >= 2
+        for entity in parsed["entities"]:
+            assert set(entity.keys()) == {"type_id", "name", "status"}
+
+    def test_fields_none_returns_all_fields(self, db: EntityDatabase):
+        """When fields=None (default), all entity fields are returned (backward compat)."""
+        import json as json_mod
+
+        db.register_entity("feature", "001", "Feature One", status="active")
+        result = _process_export_entities(
+            db,
+            entity_type=None,
+            status=None,
+            output_path=None,
+            include_lineage=True,
+            artifacts_root="/tmp",
+            fields=None,
+        )
+        parsed = json_mod.loads(result)
+        assert len(parsed["entities"]) >= 1
+        entity = parsed["entities"][0]
+        # Must have standard entity fields (not just a subset)
+        assert "uuid" in entity
+        assert "type_id" in entity
+        assert "name" in entity
+        assert "status" in entity
+        assert "entity_type" in entity
+
+    def test_all_invalid_fields_returns_error(self, db: EntityDatabase):
+        """When every field name is invalid, returns error listing valid field names."""
+        db.register_entity("feature", "001", "Feature One", status="active")
+        result = _process_export_entities(
+            db,
+            entity_type=None,
+            status=None,
+            output_path=None,
+            include_lineage=True,
+            artifacts_root="/tmp",
+            fields="bogus,fake,invalid",
+        )
+        assert "Error" in result
+        # Error message should list valid field names
+        assert "type_id" in result
+        assert "name" in result
+        assert "status" in result
+
+    def test_partial_valid_fields_returns_only_valid(self, db: EntityDatabase):
+        """When some fields are valid and some invalid, returns only valid ones (no error)."""
+        import json as json_mod
+
+        db.register_entity("feature", "001", "Feature One", status="active")
+        result = _process_export_entities(
+            db,
+            entity_type=None,
+            status=None,
+            output_path=None,
+            include_lineage=True,
+            artifacts_root="/tmp",
+            fields="type_id,bogus_field,name",
+        )
+        parsed = json_mod.loads(result)
+        for entity in parsed["entities"]:
+            assert set(entity.keys()) == {"type_id", "name"}
+
+    def test_fields_with_whitespace_stripped(self, db: EntityDatabase):
+        """Field names with surrounding whitespace are trimmed."""
+        import json as json_mod
+
+        db.register_entity("feature", "001", "Feature One", status="active")
+        result = _process_export_entities(
+            db,
+            entity_type=None,
+            status=None,
+            output_path=None,
+            include_lineage=True,
+            artifacts_root="/tmp",
+            fields=" type_id , name ",
+        )
+        parsed = json_mod.loads(result)
+        for entity in parsed["entities"]:
+            assert set(entity.keys()) == {"type_id", "name"}
+
+    def test_fields_with_empty_entity_list_returns_normally(self, db: EntityDatabase):
+        """When no entities match, fields param doesn't cause error (empty list)."""
+        import json as json_mod
+
+        # Don't register any entities — export returns empty list
+        result = _process_export_entities(
+            db,
+            entity_type="brainstorm",
+            status=None,
+            output_path=None,
+            include_lineage=True,
+            artifacts_root="/tmp",
+            fields="type_id,name",
+        )
+        parsed = json_mod.loads(result)
+        assert parsed["entities"] == []
+        assert parsed["entity_count"] == 0
+
+    def test_fields_works_with_file_output(self, db: EntityDatabase, tmp_path):
+        """Field projection applies before writing to file."""
+        import json as json_mod
+
+        db.register_entity("feature", "001", "Feature One", status="active")
+        out_file = str(tmp_path / "export.json")
+        result = _process_export_entities(
+            db,
+            entity_type=None,
+            status=None,
+            output_path=out_file,
+            include_lineage=True,
+            artifacts_root=str(tmp_path),
+            fields="type_id,status",
+        )
+        assert "Exported" in result
+        with open(out_file, encoding="utf-8") as f:
+            data = json_mod.load(f)
+        for entity in data["entities"]:
+            assert set(entity.keys()) == {"type_id", "status"}
+
+
+# ---------------------------------------------------------------------------
+# Deepened tests: export_entities fields boundary + adversarial
+# derived_from: spec:AC-1 (field projection), dimension:boundary_values,
+#               dimension:adversarial
+# ---------------------------------------------------------------------------
+
+
+class TestProcessExportEntitiesFieldsDeepened:
+    """Deepened tests for _process_export_entities() fields parameter.
+
+    Covers boundary values (single field, all fields) and adversarial
+    (empty string input). Each test targets a specific failure mode that
+    the TDD tests above do not cover.
+    """
+
+    def test_export_entities_fields_single_field(self, db: EntityDatabase):
+        """Boundary: fields with exactly one valid field name returns only that field.
+        derived_from: spec:AC-1 (field projection), dimension:boundary_values
+
+        Anticipate: If the split/filter logic has an off-by-one or requires
+        a minimum of 2 fields, single-field projection would fail or return
+        empty entities.
+        Challenge: Swapping 'in field_set' to 'not in field_set' would invert
+        which fields appear — this test catches that because only 'name' should
+        appear.
+        """
+        import json as json_mod
+
+        # Given an entity in the database
+        db.register_entity("feature", "sf-001", "Single Field", status="active")
+        # When exporting with exactly one field
+        result = _process_export_entities(
+            db,
+            entity_type=None,
+            status=None,
+            output_path=None,
+            include_lineage=True,
+            artifacts_root="/tmp",
+            fields="name",
+        )
+        parsed = json_mod.loads(result)
+        # Then each entity has exactly one key
+        assert len(parsed["entities"]) >= 1
+        for entity in parsed["entities"]:
+            assert set(entity.keys()) == {"name"}
+            assert entity["name"] != ""
+
+    def test_export_entities_fields_all_valid_fields(self, db: EntityDatabase):
+        """Boundary: requesting every valid field returns the same as fields=None.
+        derived_from: spec:AC-1 (field projection), dimension:boundary_values
+
+        Anticipate: If the field projection drops keys that are present in
+        the raw export (e.g., due to name mismatch between DB columns and
+        JSON keys), some fields would be missing in the projected output.
+        """
+        import json as json_mod
+
+        # Given an entity with known fields
+        db.register_entity("feature", "af-001", "All Fields", status="active")
+        # First get the full set of field names from an unfiltered export
+        unfiltered = json_mod.loads(
+            _process_export_entities(
+                db, entity_type=None, status=None, output_path=None,
+                include_lineage=True, artifacts_root="/tmp", fields=None,
+            )
+        )
+        all_keys = set(unfiltered["entities"][0].keys())
+        all_fields_str = ",".join(sorted(all_keys))
+
+        # When exporting with all valid fields listed explicitly
+        result = _process_export_entities(
+            db,
+            entity_type=None,
+            status=None,
+            output_path=None,
+            include_lineage=True,
+            artifacts_root="/tmp",
+            fields=all_fields_str,
+        )
+        parsed = json_mod.loads(result)
+        # Then every entity has the full set of keys
+        for entity in parsed["entities"]:
+            assert set(entity.keys()) == all_keys
+
+    def test_export_entities_fields_empty_string(self, db: EntityDatabase):
+        """Adversarial: fields='' (empty string) should not crash.
+        derived_from: spec:AC-1 (field projection), dimension:adversarial
+
+        Anticipate: If the code splits '' on ',', it produces [''] which
+        is a set {''}. This is an all-invalid-fields case — it should
+        either return an error or return entities with no projected keys.
+        Bug caught: split('') producing ghost empty-string field names that
+        match nothing, leading to empty entities without an error message.
+        """
+        # Given an entity in the database
+        db.register_entity("feature", "ef-001", "Empty Fields", status="active")
+        # When exporting with empty string fields
+        result = _process_export_entities(
+            db,
+            entity_type=None,
+            status=None,
+            output_path=None,
+            include_lineage=True,
+            artifacts_root="/tmp",
+            fields="",
+        )
+        # Then either an error is returned (preferred) or entities are empty
+        # The implementation treats '' as a field set containing '' which is
+        # all-invalid -> should return error
+        assert "Error" in result
+
+    def test_export_entities_compact_inline_json(self, db: EntityDatabase):
+        """BDD: inline JSON output uses compact separators (no indent).
+        derived_from: spec:AC-1 (compact output), dimension:bdd_scenarios
+
+        Anticipate: If json.dumps uses indent=2 instead of separators=(',',':'),
+        the inline output would contain unnecessary whitespace, wasting tokens.
+        Mutation: changing separators to default would add spaces after : and ,.
+        """
+        import json as json_mod
+
+        # Given an entity in the database
+        db.register_entity("feature", "ci-001", "Compact Inline", status="active")
+        # When exporting inline (no output_path)
+        result = _process_export_entities(
+            db,
+            entity_type=None,
+            status=None,
+            output_path=None,
+            include_lineage=True,
+            artifacts_root="/tmp",
+        )
+        # Then the JSON string uses compact separators
+        assert isinstance(result, str)
+        # Compact JSON: no indentation newlines within entity objects
+        parsed = json_mod.loads(result)
+        assert len(parsed["entities"]) >= 1
+        # Re-encode with compact separators and compare
+        expected_compact = json_mod.dumps(parsed, separators=(",", ":"), ensure_ascii=False)
+        assert result == expected_compact

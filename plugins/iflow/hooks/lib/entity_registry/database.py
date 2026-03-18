@@ -1414,6 +1414,65 @@ class EntityDatabase:
         ).fetchone()
         return dict(result)
 
+    def upsert_workflow_phase(self, type_id: str, **kwargs) -> None:
+        """Insert or update a workflow_phases row atomically.
+
+        Uses INSERT OR IGNORE followed by UPDATE to handle both new and
+        existing rows in a single call. Column names in *kwargs* are
+        validated against an allow-list to prevent SQL injection.
+
+        Parameters
+        ----------
+        type_id:
+            The entity type_id (e.g. ``"feature:my-feat"``).
+        **kwargs:
+            Mutable columns to set. Allowed keys: ``workflow_phase``,
+            ``kanban_column``, ``last_completed_phase``, ``mode``,
+            ``backward_transition_reason``, ``updated_at``.
+
+        Raises
+        ------
+        ValueError
+            If any key in *kwargs* is not in the allow-list.
+        """
+        ALLOWED_COLUMNS = {
+            "workflow_phase",
+            "kanban_column",
+            "last_completed_phase",
+            "mode",
+            "backward_transition_reason",
+            "updated_at",
+        }
+        invalid = set(kwargs) - ALLOWED_COLUMNS
+        if invalid:
+            raise ValueError(f"Invalid workflow_phases columns: {invalid}")
+
+        now = self._now_iso()
+        wf = kwargs.get("workflow_phase")
+        kc = kwargs.get("kanban_column", "backlog")
+
+        self._conn.execute(
+            "INSERT OR IGNORE INTO workflow_phases "
+            "(type_id, workflow_phase, kanban_column, updated_at) "
+            "VALUES (?, ?, ?, ?)",
+            (type_id, wf, kc, now),
+        )
+
+        kwargs["updated_at"] = now
+        set_parts = []
+        params = []
+        for key, value in kwargs.items():
+            set_parts.append(f"{key} = ?")
+            params.append(value)
+        params.append(type_id)
+        self._conn.execute(
+            f"UPDATE workflow_phases SET {', '.join(set_parts)} "
+            f"WHERE type_id = ?",
+            params,
+        )
+
+        self._conn.commit()
+
     def delete_workflow_phase(self, type_id: str) -> None:
         """Delete a workflow_phases row by type_id.
 
