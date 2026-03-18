@@ -412,6 +412,38 @@ build_memory_context() {
     echo "$memory_output"
 }
 
+# Run reconciliation orchestrator: sync entity statuses, brainstorm registry, and KB
+# Runs silently for side effects (DB reconciliation). Does not contribute to full_context.
+run_reconciliation() {
+    local python_cmd="$PLUGIN_ROOT/.venv/bin/python"
+    local result
+    local entity_db="${ENTITY_DB_PATH:-$HOME/.claude/iflow/entities/entities.db}"
+    local memory_db="${MEMORY_DB_PATH:-$HOME/.claude/iflow/memory/memory.db}"
+    local artifacts_root
+    artifacts_root=$(resolve_artifacts_root)
+
+    # Platform-aware timeout (macOS: gtimeout from coreutils, Linux: timeout)
+    local timeout_cmd=""
+    if command -v gtimeout &>/dev/null; then
+        timeout_cmd="gtimeout 5"
+    elif command -v timeout &>/dev/null; then
+        timeout_cmd="timeout 5"
+    fi
+
+    result=$(PYTHONPATH="$SCRIPT_DIR/lib" \
+        $timeout_cmd "$python_cmd" -m reconciliation_orchestrator \
+        --project-root "$PROJECT_ROOT" \
+        --artifacts-root "$artifacts_root" \
+        --entity-db "$entity_db" \
+        --memory-db "$memory_db" \
+        2>/dev/null) || true
+
+    # Timing diagnostics are in the JSON output (elapsed_ms field).
+    # stderr is suppressed to prevent JSON corruption.
+    # For debugging, run the orchestrator manually with --verbose flag
+    # which writes to a log file instead of stderr.
+}
+
 # Main
 main() {
     # Auto-provision config from template if missing (only if .claude/ already exists)
@@ -449,6 +481,8 @@ EOF
 
     local memory_context=""
     memory_context=$(build_memory_context)
+
+    run_reconciliation
 
     local context
     context=$(build_context)

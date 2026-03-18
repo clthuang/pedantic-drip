@@ -71,8 +71,14 @@ AskUserQuestion:
 ### 4. Delete Files
 
 If confirmed:
-- Delete selected files
-- Report: "Deleted 1 file."
+- For each selected file:
+  - Delete the file
+  - Extract filename stem (filename without `.prd.md` extension)
+  - Call update_entity MCP tool:
+    `update_entity(type_id="brainstorm:{filename_stem}", status="archived")`
+  - If MCP call fails or entity not found:
+    Warn "Entity update skipped for {filename_stem}" and continue
+- Report: "Deleted N file(s)."
 
 If cancelled:
 - Report: "Cancelled. No files deleted."

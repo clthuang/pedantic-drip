@@ -131,6 +131,7 @@ Configure via `.claude/iflow.local.md`:
 | `/iflow:create-plan` | Plan implementation (plan.md) |
 | `/iflow:create-tasks` | Break into tasks (tasks.md) |
 | `/iflow:implement` | Write code with TDD and review |
+| `/iflow:abandon-feature` | Transition a feature to abandoned status |
 | `/iflow:finish-feature` | Merge, run retro, cleanup branch (iflow features) |
 | `/iflow:wrap-up` | Wrap up implementation - review, retro, merge or PR |
 

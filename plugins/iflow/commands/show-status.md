@@ -11,17 +11,26 @@ Use these values from session context (injected at session start):
 
 Display a workspace dashboard with current context, open features, and brainstorms.
 
+## Data Source Detection
+
+```
+mcp_available = null  # tri-state: null (untested), true, false
+
+# First MCP call determines data source for the entire invocation.
+# Call export_entities(entity_type="feature") as the probe.
+# If it succeeds → mcp_available = true, use entity registry for all sections.
+# If it fails → mcp_available = false, fall through to filesystem scanning.
+```
+
 ## Phase Resolution Algorithm
 
 <!-- SYNC: phase-resolution-algorithm — canonical copy also in list-features.md, update both identically -->
 
 ```
-mcp_available = null  # tri-state: null (untested), true, false
-
-function resolve_phase(feature_folder_name, meta_json):
+function resolve_phase(feature_folder_name, meta_json_or_entity):
     # Step 1: Skip non-active features
-    if meta_json.status in ("completed", "abandoned", "planned"):
-        return meta_json.status
+    if status in ("completed", "abandoned", "planned"):
+        return status
 
     # Step 2: Try MCP (with fail-fast)
     if mcp_available != false:
@@ -52,8 +61,7 @@ function resolve_phase(feature_folder_name, meta_json):
 **Key behaviors:**
 - `mcp_available` starts as `null` (unknown), becomes `true` on first success, `false` on first failure
 - Once `false`, all subsequent features in the same invocation use artifact-based fallback (AC-8, AC-9)
-- Non-active features bypass MCP entirely — their `.meta.json` status is the display value (AC-6, AC-7)
-- The Step 1 filter and Step 2 MCP call use the same in-memory `.meta.json` data read at invocation start, so no race condition exists between status check and MCP call
+- Non-active features bypass MCP entirely — their status is the display value (AC-6, AC-7)
 
 ## Section 1: Current Context
 
@@ -64,6 +72,21 @@ Gather via git and file inspection:
 3. **Other branches**: Run `git branch` and list all local branches except the current one. Show "None" if only one branch exists.
 
 ## Section 1.5: Project Features
+
+### MCP Path (mcp_available == true)
+
+Use the feature entities already retrieved from `export_entities(entity_type="feature")`.
+
+1. Filter entities where `metadata.project_id` is present and non-null
+2. Group by `metadata.project_id`
+3. For each project_id:
+   a. Call `get_entity(type_id="project:{project_id}")` or resolve project directory via glob `{iflow_artifacts_root}/projects/{project_id}-*/` to get slug
+   b. Display heading: `## Project: {project_id}-{slug}`
+   c. List all features for that project as bullets — include ALL statuses (planned, active, completed, abandoned). For active features: `- {id}-{slug} ({status}, phase: {resolved_phase})` where `{resolved_phase}` comes from the Phase Resolution algorithm (call `get_phase()` per active feature). For non-active features: `- {id}-{slug} ({status})` — omit the phase annotation.
+
+If no project-linked features, omit this section entirely.
+
+### Filesystem Fallback (mcp_available == false)
 
 Scan `{iflow_artifacts_root}/features/` for folders containing `.meta.json` where `project_id` is present and non-null. If the directory does not exist, skip this section entirely.
 
@@ -79,6 +102,22 @@ If no project-linked features, omit this section entirely.
 
 ## Section 2: Open Features
 
+### MCP Path (mcp_available == true)
+
+Use the feature entities already retrieved from `export_entities(entity_type="feature")`.
+
+1. Filter: exclude entities where `status == "completed"` (client-side)
+2. Filter: exclude entities where `metadata.project_id` is present and non-null (shown in Section 1.5)
+3. For each remaining feature:
+   - **ID**: from entity `entity_id`
+   - **Name**: the slug portion of `entity_id`
+   - **Phase**: for active features, call `get_phase(feature_type_id=entity.type_id)`. For non-active (abandoned, planned): use status directly.
+   - **Branch**: from entity `metadata.branch` or construct as `feature/{entity_id}`
+
+If no open features exist, show "None".
+
+### Filesystem Fallback (mcp_available == false)
+
 Scan `{iflow_artifacts_root}/features/` for folders containing `.meta.json` where status is NOT `"completed"` AND `project_id` is either absent or null. This excludes project-linked features (shown in Section 1.5) and completed standalone features. If the directory does not exist, show "None".
 
 For each open feature, show:
@@ -90,6 +129,20 @@ For each open feature, show:
 If no open features exist, show "None".
 
 ## Section 3: Open Brainstorms
+
+### MCP Path (mcp_available == true)
+
+Call `export_entities(entity_type="brainstorm")` to get all brainstorm entities.
+
+1. Filter: exclude entities where `status == "promoted"` (client-side) — AC-12
+2. Filter: exclude entities where `status == "archived"` (client-side)
+3. For each remaining brainstorm:
+   - **Filename**: derive from `entity_id` (append `.prd.md`) or use `artifact_path` basename
+   - **Age**: check `artifact_path` file modification time if file exists on disk. If file does not exist, show "(file missing)".
+
+If no open brainstorms exist, show "None".
+
+### Filesystem Fallback (mcp_available == false)
 
 List files in `{iflow_artifacts_root}/brainstorms/` excluding `.gitkeep`. If the directory does not exist, show "None". For each file, show:
 - Filename
@@ -122,6 +175,7 @@ ID   Name                    Phase        Branch
 20260205-002937-rca-agent.prd.md (1 day ago)
 20260204-secretary-agent.prd.md (2 days ago)
 
+Source: entity-registry
 Next: Run /iflow:design to continue
 ```
 
@@ -139,10 +193,32 @@ None
 ## Open Brainstorms
 20260205-002937-rca-agent.prd.md (1 day ago)
 
+Source: filesystem
 Tip: Run /iflow:create-feature or /iflow:brainstorm to start
 ```
 
 ## Footer Logic
 
+- Add data source line: `Source: entity-registry` when MCP path was used, `Source: filesystem` when fallback was used.
 - If on a feature branch with a detected phase, show: `Next: Run /iflow:{next-command} to continue` where `{next-command}` is the command for the current phase (e.g., design, create-plan, create-tasks, implement).
 - If not on a feature branch, show: `Tip: Run /iflow:create-feature or /iflow:brainstorm to start`
+
+## Execution Summary
+
+```
+1. Section 1 (Current Context): git commands — always filesystem
+2. Probe MCP: call export_entities(entity_type="feature")
+   → success: mcp_available = true, cache result as feature_entities
+   → failure: mcp_available = false
+3. Section 1.5 (Project Features):
+   → MCP: filter feature_entities by metadata.project_id
+   → Fallback: scan features/ directories
+4. Section 2 (Open Features):
+   → MCP: filter feature_entities (exclude completed, exclude project-linked)
+   → Fallback: scan features/ directories
+5. Section 3 (Open Brainstorms):
+   → MCP: call export_entities(entity_type="brainstorm"), filter exclude promoted/archived
+   → Fallback: list brainstorms/ directory files
+6. For active features in Sections 1.5 and 2: call get_phase() per feature (both paths)
+7. Footer: source line + next-command/tip
+```

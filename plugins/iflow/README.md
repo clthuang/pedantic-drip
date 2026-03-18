@@ -56,7 +56,7 @@ flowchart TD
 |------|-------|
 | Skills | 29 |
 | Agents | 28 |
-| Commands | 28 |
+| Commands | 29 |
 | Hooks | 13 |
 | MCP Tools | 25 |
 
@@ -76,6 +76,7 @@ flowchart TD
 | `/iflow:create-plan` | plan.md |
 | `/iflow:create-tasks` | tasks.md |
 | `/iflow:implement` | Code changes |
+| `/iflow:abandon-feature` | Transition a feature to abandoned status |
 | `/iflow:finish-feature` | Merge, retro, cleanup (iflow features) |
 | `/iflow:wrap-up` | Wrap up implementation - review, retro, merge or PR |
 

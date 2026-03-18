@@ -1,0 +1,44 @@
+{
+  "id": "043",
+  "slug": "state-consistency-consolid",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-03-18T04:33:20.131475+00:00",
+  "branch": "feature/043-state-consistency-consolid",
+  "brainstorm_source": "docs/brainstorms/20260318-041527-state-consistency-consolidation.prd.md",
+  "backlog_source": "00038",
+  "lastCompletedPhase": "implement",
+  "phases": {
+    "brainstorm": {
+      "started": "2026-03-18T04:33:20.131384+00:00"
+    },
+    "specify": {
+      "started": "2026-03-18T04:34:17.461926+00:00",
+      "completed": "2026-03-18T04:42:25.532700+00:00",
+      "iterations": 2
+    },
+    "design": {
+      "started": "2026-03-18T04:42:39.934929+00:00",
+      "completed": "2026-03-18T04:57:21.092141+00:00",
+      "iterations": 3
+    },
+    "create-plan": {
+      "started": "2026-03-18T04:57:35.129802+00:00",
+      "completed": "2026-03-18T05:05:16.351550+00:00",
+      "iterations": 2
+    },
+    "create-tasks": {
+      "started": "2026-03-18T05:05:42.546643+00:00",
+      "completed": "2026-03-18T05:12:49.960536+00:00",
+      "iterations": 2
+    },
+    "implement": {
+      "started": "2026-03-18T05:13:25.811021+00:00",
+      "completed": "2026-03-18T05:38:31.698318+00:00",
+      "iterations": 1
+    },
+    "finish": {
+      "started": "2026-03-18T05:38:47.777589+00:00"
+    }
+  }
+}

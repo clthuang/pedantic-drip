@@ -445,6 +445,7 @@ YOLO mode stops and reports to user (does not force through):
 | `commands/create-plan.md` | Auto-chain to create-tasks |
 | `commands/create-tasks.md` | Auto-chain to implement |
 | `commands/implement.md` | Circuit breaker STOP, auto-chain to finish-feature |
+| `commands/abandon-feature.md` | Skip confirmation prompt |
 | `commands/finish-feature.md` | Auto-continue, auto-merge, STOP on conflict |
 | `agents/secretary-reviewer.md` | Validates routing before user sees recommendation |
 | `commands/secretary.md` | Full routing logic (agent and skill discovery, matching with skill fast-paths, recommendation) + orchestrate subcommand + [YOLO_MODE] prefix |
