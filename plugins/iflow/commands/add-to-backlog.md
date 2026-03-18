@@ -48,7 +48,7 @@ Add an item to the centralized backlog at `{iflow_artifacts_root}/backlog.md`.
      name="{title}",
      artifact_path="{iflow_artifacts_root}/backlog.md",
      status="open",
-     metadata='{"description": "{full-description}"}'
+     metadata={"description": "{full-description}"}
    )
    ```
    ```

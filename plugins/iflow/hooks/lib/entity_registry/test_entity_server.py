@@ -193,3 +193,85 @@ async def test_entity_lifecycle_valueerror_caught_by_mcp_decorator(db):
     assert parsed["error"] is True
     assert parsed["error_type"] == "entity_not_found"
     assert "recovery_hint" in parsed
+
+
+# ---------------------------------------------------------------------------
+# Metadata dict coercion tests (feature 046)
+# ---------------------------------------------------------------------------
+
+
+class TestMetadataDictCoercion:
+    """Tests for dict-to-JSON-string coercion in register_entity and update_entity."""
+
+    def test_register_entity_metadata_dict(self, db: EntityDatabase):
+        """AC-1: Dict metadata is accepted and stored as JSON string."""
+        entity_server._db = db
+        import asyncio
+        result = asyncio.get_event_loop().run_until_complete(
+            entity_server.register_entity(
+                entity_type="feature", entity_id="meta-dict-001",
+                name="Dict Test", metadata={"description": "test value"},
+            )
+        )
+        assert "Registered:" in result
+        entity = db.get_entity("feature:meta-dict-001")
+        meta = json.loads(entity["metadata"]) if isinstance(entity["metadata"], str) else entity["metadata"]
+        assert meta["description"] == "test value"
+
+    def test_register_entity_metadata_string(self, db: EntityDatabase):
+        """AC-3: String metadata passthrough unchanged."""
+        entity_server._db = db
+        import asyncio
+        result = asyncio.get_event_loop().run_until_complete(
+            entity_server.register_entity(
+                entity_type="feature", entity_id="meta-str-001",
+                name="String Test", metadata='{"key": "val"}',
+            )
+        )
+        assert "Registered:" in result
+        entity = db.get_entity("feature:meta-str-001")
+        meta = json.loads(entity["metadata"]) if isinstance(entity["metadata"], str) else entity["metadata"]
+        assert meta["key"] == "val"
+
+    def test_register_entity_metadata_none(self, db: EntityDatabase):
+        """AC-4: None metadata stores no metadata."""
+        entity_server._db = db
+        import asyncio
+        result = asyncio.get_event_loop().run_until_complete(
+            entity_server.register_entity(
+                entity_type="feature", entity_id="meta-none-001",
+                name="None Test", metadata=None,
+            )
+        )
+        assert "Registered:" in result
+
+    def test_update_entity_metadata_dict(self, db: EntityDatabase):
+        """AC-2: Dict metadata accepted by update_entity, stored as JSON string."""
+        db.register_entity("feature", "meta-upd-001", "Update Test", status="active")
+        entity_server._db = db
+        import asyncio
+        result = asyncio.get_event_loop().run_until_complete(
+            entity_server.update_entity(
+                type_id="feature:meta-upd-001",
+                metadata={"updated": True},
+            )
+        )
+        assert "Updated:" in result
+        entity = db.get_entity("feature:meta-upd-001")
+        meta = json.loads(entity["metadata"]) if isinstance(entity["metadata"], str) else entity["metadata"]
+        assert meta["updated"] is True
+
+    def test_register_entity_metadata_invalid_json_string(self, db: EntityDatabase):
+        """AC-7: Invalid JSON string handled gracefully by parse_metadata.
+        derived_from: server_helpers:parse_metadata, dimension:delegation
+        """
+        entity_server._db = db
+        import asyncio
+        result = asyncio.get_event_loop().run_until_complete(
+            entity_server.register_entity(
+                entity_type="feature", entity_id="meta-bad-001",
+                name="Bad JSON Test", metadata="{bad json}",
+            )
+        )
+        # Should succeed (parse_metadata returns {"error": "..."} for invalid JSON)
+        assert "Registered:" in result

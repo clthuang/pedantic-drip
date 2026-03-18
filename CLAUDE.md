@@ -135,7 +135,7 @@ bash scripts/release.sh --ci
 - **Knowledge bank:** `docs/knowledge-bank/{patterns,anti-patterns,heuristics}.md` — updated by retrospectives
 - **Global memory store:** `~/.claude/iflow/memory/` — cross-project entries injected at session start
 - **Entity registry DB:** `~/.claude/iflow/entities/entities.db` — cross-project entity lineage (overridable via `ENTITY_DB_PATH` env var)
-- **Entity registry MCP metadata gotcha:** `update_entity` metadata param expects JSON string but parsing is fragile. When updating entity state, prefer updating `.meta.json` directly (source of truth) and skip MCP metadata updates.
+- **Entity registry MCP metadata gotcha:** `register_entity` and `update_entity` accept `metadata` as either a dict or JSON string (dict preferred). Dicts are auto-coerced to JSON string via `json.dumps()` before `parse_metadata`. When updating entity state, prefer updating `.meta.json` directly (source of truth) and skip MCP metadata updates.
 - **Entity table schema gotcha:** The `entities` table has a `uuid TEXT NOT NULL PRIMARY KEY` column. Raw SQL `INSERT` in test helpers must include a uuid value or the insert silently fails with `INSERT OR IGNORE`. Use `import uuid; str(uuid.uuid4())`.
 - **Hook subprocess safety:** Always suppress stderr (`2>/dev/null`) for Python/external calls in hooks to prevent corrupting JSON output
 - **Semantic memory CLI:** Find plugin root first: `PLUGIN_ROOT=$(ls -d ~/.claude/plugins/cache/*/iflow*/*/hooks 2>/dev/null | head -1 | xargs dirname)`, then `PYTHONPATH="$PLUGIN_ROOT/hooks/lib" "$PLUGIN_ROOT/.venv/bin/python" -m semantic_memory.writer`. Fallback (dev workspace): `PYTHONPATH=plugins/iflow/hooks/lib python3 -m semantic_memory.writer`

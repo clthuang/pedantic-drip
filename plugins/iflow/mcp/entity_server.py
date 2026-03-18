@@ -114,7 +114,7 @@ async def register_entity(
     artifact_path: str | None = None,
     status: str | None = None,
     parent_type_id: str | None = None,
-    metadata: str | None = None,
+    metadata: str | dict | None = None,
 ) -> str:
     """Register a new entity in the lineage registry.
 
@@ -134,12 +134,16 @@ async def register_entity(
     parent_type_id:
         Optional type_id of the parent entity (e.g. 'project:my-project').
     metadata:
-        Optional JSON string of additional metadata.
+        Optional metadata — pass a dict (preferred) or a JSON string;
+        dicts are auto-coerced to JSON.
 
     Returns confirmation message or error.
     """
     if _db is None:
         return "Error: database not initialized (server not started)"
+
+    if isinstance(metadata, dict):
+        metadata = json.dumps(metadata)
 
     return _process_register_entity(
         _db, entity_type, entity_id, name,
@@ -221,7 +225,7 @@ async def update_entity(
     name: str | None = None,
     status: str | None = None,
     artifact_path: str | None = None,
-    metadata: str | None = None,
+    metadata: str | dict | None = None,
 ) -> str:
     """Update mutable fields of an existing entity.
 
@@ -236,12 +240,16 @@ async def update_entity(
     artifact_path:
         New artifact_path (if provided).
     metadata:
-        JSON string of metadata to shallow-merge. Empty object '{}' clears.
+        Metadata to shallow-merge — pass a dict (preferred) or a JSON
+        string; dicts are auto-coerced. Empty dict '{}' clears.
 
     Returns confirmation message or error.
     """
     if _db is None:
         return "Error: database not initialized (server not started)"
+
+    if isinstance(metadata, dict):
+        metadata = json.dumps(metadata)
 
     try:
         _db.update_entity(
