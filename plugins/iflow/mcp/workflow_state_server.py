@@ -325,7 +325,9 @@ def _project_meta_json(
     }
 
     # Top-level completed timestamp for terminal statuses (R1/R2/R4)
-    if meta["status"] in ("completed", "abandoned"):
+    # Also trigger on last_completed == "finish" as a defensive fallback
+    # when entity status hasn't propagated yet (e.g., status=None in DB).
+    if meta["status"] in ("completed", "abandoned") or last_completed == "finish":
         finish_completed = phase_timing.get("finish", {}).get("completed")
         meta["completed"] = finish_completed or _iso_now()
 
