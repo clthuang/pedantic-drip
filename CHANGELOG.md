@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.13.10] - 2026-03-19
+
 ### Fixed
 - `show-status` Open Features section now excludes abandoned features (previously only excluded completed features)
 
