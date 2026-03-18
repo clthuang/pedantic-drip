@@ -21,8 +21,7 @@ if _hooks_lib not in (os.path.normpath(p) for p in sys.path):
     sys.path.insert(0, _hooks_lib)
 
 from entity_registry.database import EntityDatabase
-from entity_registry.entity_lifecycle import (  # noqa: F401 — re-export for compat
-    ENTITY_MACHINES,
+from entity_registry.entity_lifecycle import (
     init_entity_workflow as _lib_init_entity_workflow,
     transition_entity_phase as _lib_transition_entity_phase,
 )
@@ -613,12 +612,6 @@ def _process_list_features_by_status(engine: WorkflowStateEngine, status: str) -
 
 
 # ---------------------------------------------------------------------------
-# Reconciliation constants
-# ---------------------------------------------------------------------------
-
-_SUPPORTED_DIRECTIONS = frozenset({"meta_json_to_db"})
-
-
 # ---------------------------------------------------------------------------
 # Reconciliation processing functions
 # ---------------------------------------------------------------------------

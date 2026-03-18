@@ -28,10 +28,9 @@ from workflow_engine.reconciliation import (
     WorkflowMismatch,
 )
 
+from entity_registry.entity_lifecycle import ENTITY_MACHINES
 from workflow_state_server import (
-    ENTITY_MACHINES,
     _NOT_INITIALIZED,
-    _SUPPORTED_DIRECTIONS,
     _atomic_json_write,
     _catch_entity_value_error,
     _iso_now,
@@ -2965,18 +2964,6 @@ class TestReconciliationAdversarial:
     """Adversarial and negative tests for reconciliation MCP tools.
     derived_from: dimension:adversarial
     """
-
-    def test_supported_directions_is_frozenset(self):
-        """_SUPPORTED_DIRECTIONS must be a frozenset (immutable).
-        derived_from: dimension:adversarial (Never/Always: immutability)
-
-        Anticipate: If _SUPPORTED_DIRECTIONS is a regular set, code
-        could accidentally mutate it (e.g., .add("db_to_meta_json")),
-        silently enabling unsupported directions.
-        """
-        assert isinstance(_SUPPORTED_DIRECTIONS, frozenset)
-        assert "meta_json_to_db" in _SUPPORTED_DIRECTIONS
-        assert len(_SUPPORTED_DIRECTIONS) == 1
 
     def test_path_traversal_in_reconcile_check(self, db, tmp_path):
         """Path traversal in feature_type_id is blocked by _validate_feature_type_id.

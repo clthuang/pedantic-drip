@@ -1115,8 +1115,8 @@ class TestProcessExportEntities:
         # ensure_ascii=False means no \u escapes for these chars
         assert "\\u" not in result
 
-    def test_json_indentation(self, db: EntityDatabase):
-        """JSON output uses 2-space indentation."""
+    def test_json_compact_inline(self, db: EntityDatabase):
+        """Inline JSON output uses compact separators (no indent)."""
         db.register_entity("feature", "001", "Feature One", status="active")
         result = _process_export_entities(
             db,
@@ -1126,13 +1126,9 @@ class TestProcessExportEntities:
             include_lineage=True,
             artifacts_root="/tmp",
         )
-        # 2-space indent means lines should start with "  " (2 spaces), not
-        # "    " (4 spaces) at the first nesting level
-        lines = result.split("\n")
-        indented_lines = [l for l in lines if l.startswith("  ") and not l.startswith("    ")]
-        assert len(indented_lines) > 0, "Expected 2-space indented lines"
-        # Also verify no tabs used for indentation
-        assert "\t" not in result
+        # Compact JSON: no newlines, no spaces after separators
+        assert "\n" not in result
+        assert '": ' not in result
 
     def test_include_lineage_forwarded(self, db: EntityDatabase):
         """include_lineage=False is passed through to database method."""

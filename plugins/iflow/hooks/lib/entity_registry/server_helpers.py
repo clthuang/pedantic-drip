@@ -356,7 +356,7 @@ def _process_export_entities(
         except OSError as exc:
             return f"Error writing export: {exc}"
 
-    return json.dumps(data, indent=2, ensure_ascii=False)
+    return json.dumps(data, separators=(",", ":"), ensure_ascii=False)
 
 
 def _process_get_lineage(
