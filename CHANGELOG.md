@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.13.11] - 2026-03-19
+
 ### Changed
 - `show-status` dashboard now displays Open Backlogs section with backlog items from entity registry or filesystem fallback
 
