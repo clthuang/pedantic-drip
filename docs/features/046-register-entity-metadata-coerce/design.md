@@ -43,7 +43,7 @@ Same pattern for `update_entity` (line 224).
 - `register_entity` line 137: `"Optional JSON string of additional metadata."` → `"Optional metadata — pass a dict (preferred) or a JSON string; dicts are auto-coerced to JSON."`
 - `update_entity` line 239: `"JSON string of metadata to shallow-merge."` → `"Metadata to shallow-merge — pass a dict (preferred) or a JSON string; dicts are auto-coerced. Empty dict '{}' clears."`
 
-**Test plan:** Add tests to `test_entity_server.py`:
+**Test plan:** Add tests to `plugins/iflow/hooks/lib/entity_registry/test_entity_server.py`:
 - `test_register_entity_metadata_dict` — pass dict, verify entity registered with JSON string in DB
 - `test_register_entity_metadata_string` — pass JSON string, verify passthrough (regression)
 - `test_register_entity_metadata_none` — pass None, verify no metadata (regression)
