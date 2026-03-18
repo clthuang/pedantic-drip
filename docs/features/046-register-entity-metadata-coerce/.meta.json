@@ -1,0 +1,17 @@
+{
+  "id": "046",
+  "slug": "register-entity-metadata-coerce",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-03-18T13:01:47.840856+00:00",
+  "branch": "feature/046-register-entity-metadata-coerce",
+  "lastCompletedPhase": null,
+  "phases": {
+    "brainstorm": {
+      "started": "2026-03-18T13:01:47.840793+00:00"
+    },
+    "specify": {
+      "started": "2026-03-18T13:02:07.250897+00:00"
+    }
+  }
+}
