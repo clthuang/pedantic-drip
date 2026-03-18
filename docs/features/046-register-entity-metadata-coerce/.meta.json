@@ -2,7 +2,7 @@
   "id": "046",
   "slug": "register-entity-metadata-coerce",
   "mode": "standard",
-  "status": "active",
+  "status": "completed",
   "created": "2026-03-18T13:01:47.840856+00:00",
   "branch": "feature/046-register-entity-metadata-coerce",
   "lastCompletedPhase": null,

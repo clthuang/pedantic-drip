@@ -106,7 +106,7 @@ If no project-linked features, omit this section entirely.
 
 Use the feature entities already retrieved from `export_entities(entity_type="feature")`.
 
-1. Filter: exclude entities where `status == "completed"` (client-side)
+1. Filter: exclude entities where `status == "completed"` or `status == "abandoned"` (client-side)
 2. Filter: exclude entities where `metadata.project_id` is present and non-null (shown in Section 1.5)
 3. For each remaining feature:
    - **ID**: from entity `entity_id`
@@ -118,7 +118,7 @@ If no open features exist, show "None".
 
 ### Filesystem Fallback (mcp_available == false)
 
-Scan `{iflow_artifacts_root}/features/` for folders containing `.meta.json` where status is NOT `"completed"` AND `project_id` is either absent or null. This excludes project-linked features (shown in Section 1.5) and completed standalone features. If the directory does not exist, show "None".
+Scan `{iflow_artifacts_root}/features/` for folders containing `.meta.json` where status is NOT `"completed"` and NOT `"abandoned"`, AND `project_id` is either absent or null. This excludes project-linked features (shown in Section 1.5) and completed standalone features. If the directory does not exist, show "None".
 
 For each open feature, show:
 - **ID**: from `.meta.json`
