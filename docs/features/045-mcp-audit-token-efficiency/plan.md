@@ -45,7 +45,7 @@ Each item follows: (a) update/write tests for new behavior, (b) implement to mak
    - **Files:** `plugins/iflow/mcp/workflow_state_server.py`, `plugins/iflow/mcp/test_workflow_state_server.py`
    - **Impact confirmation:** test_engine.py and transition_gate tests use `completed_phases` from the `FeatureWorkflowState` model object directly (not from `_serialize_state`), so they are NOT affected by this change. Only `test_workflow_state_server.py` assertions on serialized output need updating.
    - **TDD:** (a) Remove `test_completed_phases_tuple_to_list` test class. Update all assertions that check for `completed_phases` or `source` in serialized state dicts — replace with `degraded` check where applicable. (b) Implement `_serialize_state` change. (c) All 276+ workflow state server tests pass.
-   - **Verification:** All tests pass. `grep completed_phases test_workflow_state_server.py` returns zero matches in assertion contexts.
+   - **Verification:** All tests pass. `grep -n 'completed_phases' test_workflow_state_server.py | grep -v 'completed_phases=('` returns zero (filters out fixture constructors, leaving only assertion contexts).
 
 5. **reconcile_status summary mode** — P1-C5
    - **Why this item:** 6k → 20 tokens for health checks.
@@ -93,11 +93,13 @@ Each item follows: (a) update/write tests for new behavior, (b) implement to mak
    - **Why this item:** Moves 180 lines of inline `db._conn` logic to testable library.
    - **Why this order:** Depends on upsert_workflow_phase (item 8).
    - **Deliverable:** `entity_lifecycle.py` with full ENTITY_MACHINES (exact copy from workflow_state_server.py), `init_entity_workflow()`, `transition_entity_phase()`. MCP handlers become thin wrappers with `@_with_error_handling`/`@_catch_entity_value_error` decorators retained. Library functions return `dict`; MCP handlers call `json.dumps()`.
-   - **Pre-implementation check:** `grep ENTITY_MACHINES workflow_state_server.py` to confirm all references are within the two extracted functions. If other references exist, import ENTITY_MACHINES from entity_lifecycle.py.
+   - **Pre-implementation check:** `grep ENTITY_MACHINES workflow_state_server.py` to confirm all references. Test file imports ENTITY_MACHINES at line 32 — must remain importable.
    - **Complexity:** Complex — must preserve exact transition graph, forward/backward semantics, entities.status updates.
-   - **Files:** `plugins/iflow/hooks/lib/entity_registry/entity_lifecycle.py` (new), `plugins/iflow/mcp/workflow_state_server.py` (thin wrapper), new tests, existing tests
-   - **TDD:** (a) Write tests for entity_lifecycle functions: valid transition, invalid transition rejected, forward updates last_completed_phase, backward preserves it, entities.status updated, init idempotent. (b) Implement. (c) All existing 276+ workflow state server tests pass.
-   - **Verification:** New + existing tests pass. Zero `db._conn` in the extracted handlers.
+   - **Files:** `plugins/iflow/hooks/lib/entity_registry/entity_lifecycle.py` (new), `plugins/iflow/mcp/workflow_state_server.py` (thin wrapper + re-export), new tests, existing tests
+   - **Re-export requirement:** After moving ENTITY_MACHINES to entity_lifecycle.py, add `from entity_registry.entity_lifecycle import ENTITY_MACHINES` to workflow_state_server.py to preserve test import compatibility (`test_workflow_state_server.py` imports it at line 32).
+   - **Test strategy:** Existing `_process_*` tests in test_workflow_state_server.py are retained as integration tests (verify MCP-to-library delegation). New unit tests in `test_entity_lifecycle.py` test library functions in isolation.
+   - **TDD:** (a) Write tests for entity_lifecycle functions: valid transition, invalid transition rejected, forward updates last_completed_phase, backward preserves it, entities.status updated, init idempotent. (b) Implement + add re-export. (c) All existing 276+ workflow state server tests pass. Verify: `python -c 'from workflow_state_server import ENTITY_MACHINES'` succeeds.
+   - **Verification:** New + existing tests pass. Zero `db._conn` in the extracted handlers. Re-export works.
 
 ### Stage 6: Library Extraction — Remaining (Independent, parallel)
 
@@ -105,8 +107,9 @@ Each item follows: (a) update/write tests for new behavior, (b) implement to mak
     - **Why this item:** Moves ~230 lines of inline logic to testable library.
     - **Why this order:** Independent — can run parallel with items 9, 11, 12.
     - **Deliverable:** `feature_lifecycle.py` with `init_feature_state`, `init_project_state` (including `features`, `milestones` params), `activate_feature`. Library functions return result dicts including `feature_type_id` and `feature_dir`. MCP handler calls `_project_meta_json(db, engine, result["feature_type_id"])` as post-step using returned values.
-    - **Complexity:** Complex — mechanical extraction of large functions. Preserve idempotent retry, kanban fixup, entity registration, all error paths.
+    - **Complexity:** Complex — mechanical extraction of large functions. Preserve idempotent retry, kanban fixup, entity registration, all error paths. Library signature for init_project_state: `features` and `milestones` are required str params (matching source), not optional with empty defaults.
     - **Files:** `plugins/iflow/hooks/lib/workflow_engine/feature_lifecycle.py` (new), `plugins/iflow/mcp/workflow_state_server.py` (thin wrapper)
+    - **Test strategy:** Existing `_process_*` tests retained as integration tests. New unit tests in `test_feature_lifecycle.py` test library functions in isolation.
     - **TDD:** (a) Write tests for each function covering happy path and error cases. (b) Extract. (c) All existing tests pass.
     - **Verification:** Existing tests pass. init_feature_state creates entity + .meta.json correctly.
 
@@ -120,13 +123,13 @@ Each item follows: (a) update/write tests for new behavior, (b) implement to mak
     - **Verification:** set_parent works identically.
 
 12. **reconcile_apply direction removal** — P2-C5
-    - **Why this item:** Dead surface area.
+    - **Why this item:** Vestigial surface area (only one value supported).
     - **Why this order:** Independent.
-    - **Deliverable:** Remove `direction` from MCP tool signature. Handler hardcodes `"meta_json_to_db"`. Library unchanged.
-    - **Complexity:** Simple
-    - **Files:** `plugins/iflow/mcp/workflow_state_server.py`
-    - **TDD:** (a) Update tests that pass direction param. (b) Remove param. (c) Tests pass.
-    - **Verification:** `reconcile_apply()` works without direction.
+    - **Deliverable:** Remove `direction` from MCP tool signature. Handler hardcodes `"meta_json_to_db"`. Library function keeps its `direction` param. `_SUPPORTED_DIRECTIONS` stays in server for library call validation.
+    - **Complexity:** Medium — dedicated invalid-direction MCP tests (`test_invalid_direction_returns_error` at line 2357, `test_error_invalid_direction` at line 2744) must be removed or relocated to library-level tests. ~10 test call-sites pass `direction=` explicitly and need updating.
+    - **Files:** `plugins/iflow/mcp/workflow_state_server.py`, `test_workflow_state_server.py`
+    - **TDD:** (a) Remove `test_invalid_direction_returns_error` and `test_error_invalid_direction` MCP tests (direction validation moves to library concern). Remove explicit `direction=` kwargs from remaining test call-sites. (b) Remove MCP param, hardcode in handler. (c) Tests pass. Verify: `grep -n 'direction' test_workflow_state_server.py | grep -v '_SUPPORTED\|import'` returns zero MCP-level direction assertions.
+    - **Verification:** All tests pass. Library function still accepts direction param for direct callers.
 
 ## Dependency Graph
 
@@ -141,6 +144,8 @@ Stage 4 → Stage 5 (sequential):
 Stage 6 (parallel, independent of Stages 4-5):
   [10: feature_lifecycle.py]  [11: set_parent]  [12: direction removal]
 ```
+
+**File concurrency constraint:** `workflow_state_server.py` is modified by items 4, 5, 6, 9, 10, 12 — serialize those edits within the file. `entity_server.py` is modified by items 1, 2, 3, 11 — same constraint. Parallel execution is at the stage level, not item level within the same file.
 
 ## Risk Areas
 
