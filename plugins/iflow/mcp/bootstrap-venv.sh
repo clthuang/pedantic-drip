@@ -40,10 +40,9 @@ log_bootstrap_error() {
     local error_type="$2"
     local msg="$3"
     local extra_json="${4:-}"
-    local log_dir="$HOME/.claude/iflow"
     local ts
 
-    mkdir -p "$log_dir" 2>/dev/null || true
+    mkdir -p "$HOME/.claude/iflow" 2>/dev/null || true
     ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
     echo "{\"timestamp\":\"$ts\",\"server\":\"$server_name\",\"error\":\"$error_type\",\"message\":\"$msg\"${extra_json:+,$extra_json}}" >> "$BOOTSTRAP_ERROR_LOG"
@@ -131,11 +130,10 @@ discover_python() {
                 return 0
             fi
         fi
-        # python3 found but version too low — record the found version for the error
-        local found_version="$version"
-    else
-        local found_version="none"
     fi
+
+    # Record what we found (or didn't) for the error message
+    local found_version="${version:-none}"
 
     # All tiers exhausted — failure
     local searched_json="\"/opt/homebrew/bin/python3.{14,13,12}\",\"/usr/local/bin/python3.{14,13,12}\",\"python3 (PATH)\""
