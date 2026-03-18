@@ -4,6 +4,7 @@ Runs all session-start reconciliation tasks in sequence:
   1. entity_status.sync_entity_statuses   — .meta.json → entity DB status sync
   2. brainstorm_registry.sync_brainstorm_entities — brainstorm file registration
   3. kb_import.sync_knowledge_bank         — MarkdownImporter KB sync
+  4. workflow_engine.reconciliation        — .meta.json → DB workflow state sync
 
 Design principles:
   - Fail-open: any task error is captured in `errors` list; exit code is always 0.
@@ -11,7 +12,7 @@ Design principles:
   - DB connections closed in finally block (even on task errors).
 
 Output (stdout): single JSON line with keys:
-  entity_sync, brainstorm_sync, kb_import, elapsed_ms, errors
+  entity_sync, brainstorm_sync, kb_import, workflow_reconcile, elapsed_ms, errors
 """
 import argparse
 import json
@@ -73,6 +74,7 @@ def run(args):
         "entity_sync": None,
         "brainstorm_sync": None,
         "kb_import": None,
+        "workflow_reconcile": None,
         "elapsed_ms": 0,
         "errors": [],
     }
@@ -107,6 +109,24 @@ def run(args):
             )
         except Exception as exc:
             results["errors"].append(f"kb_import: {exc}")
+
+        # Task 4: workflow state reconciliation (.meta.json → DB)
+        # Runs after entity_status sync (Task 1) so entity DB statuses are current.
+        try:
+            from workflow_engine.engine import WorkflowStateEngine
+            from workflow_engine.reconciliation import apply_workflow_reconciliation
+
+            engine = WorkflowStateEngine(entity_db, full_artifacts_path)
+            recon_result = apply_workflow_reconciliation(
+                engine=engine,
+                db=entity_db,
+                artifacts_root=full_artifacts_path,
+            )
+            results["workflow_reconcile"] = recon_result.summary
+        except ImportError as exc:
+            results["errors"].append(f"workflow_reconcile: import skipped: {exc}")
+        except Exception as exc:
+            results["errors"].append(f"workflow_reconcile: {exc}")
 
     except Exception as exc:
         # DB connection failure or other setup error
