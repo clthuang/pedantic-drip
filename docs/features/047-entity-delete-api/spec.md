@@ -28,13 +28,13 @@ The entity registry (`EntityDatabase`) and knowledge bank (`MemoryDatabase`) bot
 
 **Execution order within a single transaction (R1.6):**
 
-1. **R1.4**: Validate existence — `SELECT uuid, rowid, name, entity_id, entity_type, status FROM entities WHERE type_id = ?`. Raise `ValueError` if not found.
+1. **R1.4**: Validate existence — `SELECT uuid, rowid, name, entity_id, entity_type, status, metadata FROM entities WHERE type_id = ?`. Raise `ValueError` if not found. Note: `metadata` is needed to compute `metadata_text` via `flatten_metadata(json.loads(metadata))` for the FTS delete in step 3.
 2. **R1.5**: Reject if entity has children — `SELECT 1 FROM entities WHERE parent_uuid = ? LIMIT 1` (using `parent_uuid` to match existing codebase pattern at database.py:1136). Raise `ValueError("Cannot delete entity with children: {type_id}")` if children exist.
 3. **R1.2**: Delete FTS entry using FTS5 external-content delete syntax: `INSERT INTO entities_fts(entities_fts, rowid, name, entity_id, entity_type, status, metadata_text) VALUES('delete', ?, ?, ?, ?, ?, ?)` with the old row values (follows existing pattern at database.py:936-941).
 4. **R1.3**: Delete workflow_phases row if present — inline SQL `DELETE FROM workflow_phases WHERE type_id = ?` (do NOT call `delete_workflow_phase()` method, as it performs its own commit which would break atomicity).
 5. **R1.1**: Delete the entity row — `DELETE FROM entities WHERE type_id = ?`.
 
-- **R1.6**: All operations above wrapped in `BEGIN IMMEDIATE` / `commit()` with rollback on any exception.
+- **R1.6**: All operations above wrapped in a single transaction with try/except rollback. Use `self._conn.execute("BEGIN IMMEDIATE")` for write lock (intentional departure from existing CRUD patterns — multi-table delete requires stronger isolation to prevent partial writes under concurrent access).
 
 ### R2: MemoryDatabase.delete_entry(entry_id: str) -> None
 
@@ -77,4 +77,4 @@ The entity registry (`EntityDatabase`) and knowledge bank (`MemoryDatabase`) bot
 - **AC-9**: CLI `--action delete` without `--entry-id` exits with code 2 and prints usage to stderr
 - **AC-10**: MCP `delete_entity(type_id="feature:001-test")` returns success JSON
 - **AC-11**: MCP `delete_memory(entry_id="test")` returns success JSON
-- **AC-12**: Given an entity exists, when `delete_entity` is called and an error occurs mid-transaction (e.g., after workflow_phases deletion but before entity deletion), then the entity, FTS entry, and workflow_phases row all remain intact (full rollback).
+- **AC-12**: Given an entity exists, when `delete_entity` is called and an error occurs mid-transaction (e.g., mock `self._conn.execute` to raise after the workflow_phases DELETE but before the entities DELETE), then the entity, FTS entry, and workflow_phases row all remain intact (full rollback).
