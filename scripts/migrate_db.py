@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""migrate_db.py — CLI tool for iflow database migration operations.
+"""migrate_db.py — CLI tool for pd database migration operations.
 
 All subcommands output JSON to stdout. Errors go to stderr.
 Exit 0 on success, 1 on error.
@@ -447,7 +447,7 @@ def build_parser() -> argparse.ArgumentParser:
     """Build the argparse parser with all subcommands."""
     parser = argparse.ArgumentParser(
         prog="migrate_db",
-        description="iflow database migration tool",
+        description="pd database migration tool",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 

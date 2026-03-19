@@ -614,7 +614,7 @@ while IFS= read -r md_file; do
     case "$md_file" in
         */sync-cache.md|*/README*.md|*/plan*.md) continue ;;
     esac
-    # Search for hardcoded plugins/iflow/ paths with 1-line context
+    # Search for hardcoded plugins/pd/ paths with 1-line context
     # Skip lines (or preceding context lines) with fallback/conditional markers
     prev_line=""
     while IFS= read -r match_line; do
@@ -623,7 +623,7 @@ while IFS= read -r md_file; do
             prev_line=""
             continue
         fi
-        if echo "$match_line" | grep -q 'plugins/iflow/' 2>/dev/null; then
+        if echo "$match_line" | grep -q 'plugins/pd/' 2>/dev/null; then
             is_fallback=0
             for check_line in "$match_line" "$prev_line"; do
                 case "$check_line" in
@@ -636,8 +636,8 @@ while IFS= read -r md_file; do
             fi
         fi
         prev_line="$match_line"
-    done < <(grep -B1 'plugins/iflow/' "$md_file" 2>/dev/null || true)
-done < <(find ./plugins/iflow/agents ./plugins/iflow/skills ./plugins/iflow/commands -name "*.md" -type f 2>/dev/null)
+    done < <(grep -B1 'plugins/pd/' "$md_file" 2>/dev/null || true)
+done < <(find ./plugins/pd/agents ./plugins/pd/skills ./plugins/pd/commands -name "*.md" -type f 2>/dev/null)
 if [ $hardcoded_path_errors -eq 0 ]; then
     log_success "No hardcoded plugin paths in component files"
 else
@@ -647,24 +647,24 @@ fi
 # Check for hardcoded artifact paths in component files
 echo "Checking Artifact Path Portability..."
 artifact_path_errors=0
-# Patterns that should use {iflow_artifacts_root} instead of hardcoded docs/
+# Patterns that should use {pd_artifacts_root} instead of hardcoded docs/
 artifact_patterns='docs/features/\|docs/brainstorms/\|docs/projects/\|docs/knowledge-bank/\|docs/backlog\|docs/rca/'
 while IFS= read -r md_file; do
     [ -z "$md_file" ] && continue
     while IFS= read -r match_line; do
         [ -z "$match_line" ] && continue
         # Skip lines that already use the config variable or are in Config Variables section
-        if echo "$match_line" | grep -q 'iflow_artifacts_root\|Config Variables'; then
+        if echo "$match_line" | grep -q 'pd_artifacts_root\|Config Variables'; then
             continue
         fi
         log_error "$md_file: Hardcoded artifact path: $(echo "$match_line" | sed 's/^[[:space:]]*//' | head -c 120)"
         ((artifact_path_errors++)) || true
     done < <(grep -n "$artifact_patterns" "$md_file" 2>/dev/null || true)
-done < <(find ./plugins/iflow/skills -name "SKILL.md" -type f 2>/dev/null; find ./plugins/iflow/commands -name "*.md" -type f 2>/dev/null; find ./plugins/iflow/agents -name "*.md" -type f 2>/dev/null)
+done < <(find ./plugins/pd/skills -name "SKILL.md" -type f 2>/dev/null; find ./plugins/pd/commands -name "*.md" -type f 2>/dev/null; find ./plugins/pd/agents -name "*.md" -type f 2>/dev/null)
 if [ $artifact_path_errors -eq 0 ]; then
     log_success "No hardcoded artifact paths in component files"
 else
-    log_error "Found $artifact_path_errors hardcoded artifact path(s) — use {iflow_artifacts_root} instead"
+    log_error "Found $artifact_path_errors hardcoded artifact path(s) — use {pd_artifacts_root} instead"
 fi
 
 # Check for hardcoded branch targets in component files
@@ -674,17 +674,17 @@ while IFS= read -r md_file; do
     [ -z "$md_file" ] && continue
     while IFS= read -r match_line; do
         [ -z "$match_line" ] && continue
-        if echo "$match_line" | grep -q 'iflow_base_branch\|Config Variables'; then
+        if echo "$match_line" | grep -q 'pd_base_branch\|Config Variables'; then
             continue
         fi
         log_error "$md_file: Hardcoded branch target: $(echo "$match_line" | sed 's/^[[:space:]]*//' | head -c 120)"
         ((branch_target_errors++)) || true
     done < <(grep -n "$branch_patterns" "$md_file" 2>/dev/null || true)
-done < <(find ./plugins/iflow/skills -name "SKILL.md" -type f 2>/dev/null; find ./plugins/iflow/commands -name "*.md" -type f 2>/dev/null)
+done < <(find ./plugins/pd/skills -name "SKILL.md" -type f 2>/dev/null; find ./plugins/pd/commands -name "*.md" -type f 2>/dev/null)
 if [ $branch_target_errors -eq 0 ]; then
     log_success "No hardcoded branch targets in component files"
 else
-    log_error "Found $branch_target_errors hardcoded branch target(s) — use {iflow_base_branch} instead"
+    log_error "Found $branch_target_errors hardcoded branch target(s) — use {pd_base_branch} instead"
 fi
 echo ""
 
@@ -697,7 +697,7 @@ while IFS= read -r cmd_file; do
         log_error "$cmd_file: @include with hardcoded path: $(echo "$match_line" | sed 's/^[[:space:]]*//' | head -c 120)"
         ((at_include_errors++)) || true
     done < <(grep -n '@plugins/' "$cmd_file" 2>/dev/null || true)
-done < <(find ./plugins/iflow/commands -name "*.md" -type f 2>/dev/null)
+done < <(find ./plugins/pd/commands -name "*.md" -type f 2>/dev/null)
 if [ $at_include_errors -eq 0 ]; then
     log_success "No @plugins/ includes in command files"
 else
@@ -708,7 +708,7 @@ echo ""
 # Validate hook ERR trap usage
 echo "Checking Hook ERR Traps..."
 err_trap_missing=0
-for hook_script in plugins/iflow/hooks/*.sh; do
+for hook_script in plugins/pd/hooks/*.sh; do
     [ -f "$hook_script" ] || continue
     basename=$(basename "$hook_script")
     # Skip non-hook scripts that don't source common.sh
@@ -732,11 +732,11 @@ echo ""
 echo "Checking Entry-Point mkdir Guards..."
 mkdir_missing=0
 mkdir_checks=(
-    "plugins/iflow/skills/brainstorming/SKILL.md:mkdir"
-    "plugins/iflow/commands/create-feature.md:mkdir"
-    "plugins/iflow/commands/add-to-backlog.md:mkdir"
-    "plugins/iflow/skills/root-cause-analysis/SKILL.md:mkdir"
-    "plugins/iflow/skills/retrospecting/SKILL.md:mkdir"
+    "plugins/pd/skills/brainstorming/SKILL.md:mkdir"
+    "plugins/pd/commands/create-feature.md:mkdir"
+    "plugins/pd/commands/add-to-backlog.md:mkdir"
+    "plugins/pd/skills/root-cause-analysis/SKILL.md:mkdir"
+    "plugins/pd/skills/retrospecting/SKILL.md:mkdir"
 )
 for check in "${mkdir_checks[@]}"; do
     file="${check%%:*}"
@@ -762,7 +762,7 @@ ADJECTIVE_VIOLATIONS=0
 ADJECTIVE_PATTERN='\b(appropriate|sufficient|robust|thorough|proper|adequate|reasonable)\b'
 # Domain-specific compound exceptions (not violations)
 ADJECTIVE_EXCEPTIONS='(sufficient sample|appropriate statistical test|sufficient data|robust standard error)'
-ADJECTIVE_FILES=$(grep -rli --include="*.md" -E "$ADJECTIVE_PATTERN" plugins/iflow/agents plugins/iflow/skills plugins/iflow/commands 2>/dev/null | grep -v '/references/' || true)
+ADJECTIVE_FILES=$(grep -rli --include="*.md" -E "$ADJECTIVE_PATTERN" plugins/pd/agents plugins/pd/skills plugins/pd/commands 2>/dev/null | grep -v '/references/' || true)
 if [ -n "$ADJECTIVE_FILES" ]; then
     while IFS= read -r file; do
         count=$(grep -ciE "$ADJECTIVE_PATTERN" "$file" 2>/dev/null || true)
@@ -781,7 +781,7 @@ echo ""
 
 # Validate setup script exists
 echo "Checking Setup Scripts..."
-for script in plugins/iflow/scripts/doctor.sh plugins/iflow/scripts/setup.sh; do
+for script in plugins/pd/scripts/doctor.sh plugins/pd/scripts/setup.sh; do
     if [ -f "$script" ]; then
         if [ -x "$script" ]; then
             log_success "$script exists and is executable"

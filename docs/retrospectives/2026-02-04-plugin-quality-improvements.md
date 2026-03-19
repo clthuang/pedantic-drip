@@ -1,11 +1,11 @@
-# Retrospective: iflow-dev Plugin Quality Improvements
+# Retrospective: pd Plugin Quality Improvements
 
 **Date:** 2026-02-04
 **Source:** Learnings from [Anthropic's official plugin-dev repository](https://github.com/anthropics/claude-plugins-official/tree/main/plugins/plugin-dev)
 
 ## Summary
 
-Applied quality improvements to the iflow-dev plugin based on patterns from Anthropic's official plugin-dev guidance. Updated 17 skills, 20 agents, 2 commands, and README documentation.
+Applied quality improvements to the pd plugin based on patterns from Anthropic's official plugin-dev guidance. Updated 17 skills, 20 agents, 2 commands, and README documentation.
 
 ## What Went Well
 

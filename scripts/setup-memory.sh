@@ -44,7 +44,7 @@ while [[ "$PROJECT_ROOT" != "/" ]]; do
 done
 [[ -d "$PROJECT_ROOT/.git" ]] || die "Could not find .git directory above $SCRIPT_DIR"
 
-PLUGIN_DIR="$PROJECT_ROOT/plugins/iflow"
+PLUGIN_DIR="$PROJECT_ROOT/plugins/pd"
 VENV_DIR="$PLUGIN_DIR/.venv"
 
 [[ -f "$PLUGIN_DIR/pyproject.toml" ]] || die "Expected $PLUGIN_DIR/pyproject.toml not found"
@@ -157,17 +157,17 @@ if [[ -z "$PROVIDER_FOUND" ]]; then
     die "No embedding provider found. Set GEMINI_API_KEY, OPENAI_API_KEY, or VOYAGE_API_KEY in .env"
 fi
 
-info "Active provider will be determined by .claude/iflow.local.md config"
+info "Active provider will be determined by .claude/pd.local.md config"
 
 # --- Step 5: Register project -----------------------------------------------
 
 echo -e "\n${BOLD}[5/7] Registering project...${NC}"
 
-IFLOW_DIR="$HOME/.claude/iflow"
-REGISTRY="$IFLOW_DIR/projects.txt"
-GLOBAL_STORE="$IFLOW_DIR/memory"
+PD_DIR="$HOME/.claude/pd"
+REGISTRY="$PD_DIR/projects.txt"
+GLOBAL_STORE="$PD_DIR/memory"
 
-mkdir -p "$IFLOW_DIR/bin" "$GLOBAL_STORE"
+mkdir -p "$PD_DIR/bin" "$GLOBAL_STORE"
 
 # Add project to registry if not already listed
 if [[ -f "$REGISTRY" ]] && grep -qxF "$PROJECT_ROOT" "$REGISTRY"; then
@@ -182,7 +182,7 @@ PROJ_COUNT=$(grep -cvE '^\s*(#|$)' "$REGISTRY" 2>/dev/null || echo "0")
 info "Registered projects: $PROJ_COUNT"
 
 # Create symlink for global access
-SYMLINK_TARGET="$IFLOW_DIR/bin/setup-memory"
+SYMLINK_TARGET="$PD_DIR/bin/setup-memory"
 SCRIPT_REAL="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 # Follow symlinks to get the actual script location
 while [[ -L "$SCRIPT_REAL" ]]; do

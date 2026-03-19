@@ -21,4 +21,4 @@ jobs:
         run: ./validate.sh
 
       - name: Run hook tests
-        run: bash plugins/iflow/hooks/tests/test-hooks.sh
+        run: bash plugins/pd/hooks/tests/test-hooks.sh

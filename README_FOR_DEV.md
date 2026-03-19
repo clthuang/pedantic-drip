@@ -8,7 +8,7 @@ This repo uses a git-flow branching model with automated releases via convention
 |--------|---------|
 | `main` | Stable releases only (tagged versions) |
 | `develop` | Integration branch (default for development) |
-| `feature/*` | Feature branches (created by iflow workflow) |
+| `feature/*` | Feature branches (created by pd workflow) |
 
 ## Single-Plugin Model
 
@@ -19,13 +19,13 @@ One plugin, branch-based separation:
 | `develop` | Active development (dogfood) | X.Y.Z-dev |
 | `main` | Stable releases | X.Y.Z |
 
-All plugin code lives in `plugins/iflow/`. Development happens on `develop`, releases merge to `main` with a version tag.
+All plugin code lives in `plugins/pd/`. Development happens on `develop`, releases merge to `main` with a version tag.
 
 ## Development Workflow
 
 1. Create feature branch from `develop`
 2. Use conventional commits (`feat:`, `fix:`, `BREAKING CHANGE:`)
-3. Merge to `develop` via `/iflow:finish-feature` or PR
+3. Merge to `develop` via `/pd:finish-feature` or PR
 4. Release when ready using the release script
 
 ## Version Bump Logic
@@ -77,8 +77,8 @@ From the develop branch with a clean working tree:
 Clone the repository and install the development plugin:
 
 ```bash
-git clone https://github.com/clthuang/my-ai-setup.git
-cd my-ai-setup
+git clone https://github.com/clthuang/pedantic-drip.git
+cd pedantic-drip
 claude
 ```
 
@@ -86,13 +86,13 @@ In Claude Code:
 
 ```
 /plugin marketplace add .claude-plugin/marketplace.json
-/plugin install iflow@my-local-plugins
+/plugin install pd@my-local-plugins
 ```
 
 After making changes to plugin files, sync the cache:
 
 ```
-/iflow:sync-cache
+/pd:sync-cache
 ```
 
 ## For Public Users
@@ -100,8 +100,8 @@ After making changes to plugin files, sync the cache:
 To install the released version:
 
 ```
-/plugin marketplace add clthuang/my-ai-setup
-/plugin install iflow
+/plugin marketplace add clthuang/pedantic-drip
+/plugin install pd
 ```
 
 ## Key Files
@@ -111,7 +111,7 @@ To install the released version:
 | `scripts/release.sh` | Release automation script |
 | `.github/workflows/release.yml` | CI release workflow |
 | `.claude-plugin/marketplace.json` | Marketplace configuration |
-| `plugins/iflow/.claude-plugin/plugin.json` | Plugin manifest with version |
+| `plugins/pd/.claude-plugin/plugin.json` | Plugin manifest with version |
 
 ---
 
@@ -175,7 +175,7 @@ flowchart TD
     HOOKS -.->|"lifecycle events"| AG
 
     subgraph MEM["Memory · 2 MCP tools"]
-        MCP1[store_memory] --> MB[("memory.db<br/>~/.claude/iflow/memory/")]
+        MCP1[store_memory] --> MB[("memory.db<br/>~/.claude/pd/memory/")]
         MB --> MCP2[search_memory]
     end
 
@@ -183,7 +183,7 @@ flowchart TD
         direction TB
         ET1[register_entity] ~~~ ET2[set_parent] ~~~ ET3[get_entity]
         ET4[get_lineage] ~~~ ET5[update_entity] ~~~ ET6[export_lineage_markdown]
-        ET1 --> EB[("entities.db<br/>~/.claude/iflow/entities/")]
+        ET1 --> EB[("entities.db<br/>~/.claude/pd/entities/")]
         ET4 --> EB
     end
 
@@ -203,7 +203,7 @@ flowchart TD
 
 ## Skills
 
-Skills are instructions Claude follows for specific development practices. Located in `plugins/iflow/skills/{name}/SKILL.md`.
+Skills are instructions Claude follows for specific development practices. Located in `plugins/pd/skills/{name}/SKILL.md`.
 
 ### Workflow Phases
 | Skill | Purpose |
@@ -260,7 +260,7 @@ Skills are instructions Claude follows for specific development practices. Locat
 
 ## Commands
 
-Commands are user-invoked entry points. Located in `plugins/iflow/commands/{name}.md`. See [README.md](README.md) for the full list. Notable utility commands:
+Commands are user-invoked entry points. Located in `plugins/pd/commands/{name}.md`. See [README.md](README.md) for the full list. Notable utility commands:
 
 | Command | Purpose |
 |---------|---------|
@@ -271,7 +271,7 @@ Commands are user-invoked entry points. Located in `plugins/iflow/commands/{name
 
 ## Agents
 
-Agents are isolated subprocesses spawned by the workflow. Located in `plugins/iflow/agents/{name}.md`.
+Agents are isolated subprocesses spawned by the workflow. Located in `plugins/pd/agents/{name}.md`.
 
 **Reviewers (13):**
 - `brainstorm-reviewer` — Reviews brainstorm artifacts with universal + type-specific criteria before promotion
@@ -330,7 +330,7 @@ Hooks execute automatically at lifecycle points.
 | `inject-secretary-context` | SessionStart (startup\|resume\|clear) | Injects available agent/command context for secretary |
 | `start-ui-server` | SessionStart (startup\|resume\|clear) | Auto-starts UI server (Kanban board) in background |
 | `cleanup-sandbox` | (utility) | Cleans up agent_sandbox/ temporary files |
-| `pre-commit-guard` | PreToolUse (Bash) | Branch protection and iflow directory protection |
+| `pre-commit-guard` | PreToolUse (Bash) | Branch protection and pd directory protection |
 | `meta-json-guard` | PreToolUse (Write\|Edit) | Protects .meta.json files from unauthorized modifications |
 | `yolo-guard` | PreToolUse (.*) | Enforces YOLO mode safety boundaries on all tool calls |
 | `post-enter-plan` | PostToolUse (EnterPlanMode) | Injects plan review instructions before approval |
@@ -340,7 +340,7 @@ Hooks execute automatically at lifecycle points.
 
 SessionStart hooks match `startup|resume|clear` only -- they do not fire on `compact` events, preserving context window savings from compaction.
 
-Defined in `plugins/iflow/hooks/hooks.json`.
+Defined in `plugins/pd/hooks/hooks.json`.
 
 ### Hook Protection
 
@@ -394,7 +394,7 @@ The secretary command supports a `[YOLO_MODE]` flag that enables fully autonomou
 
 1. User sets mode: `/secretary mode yolo`
 2. User invokes: `/secretary build X`
-3. Secretary command reads `.claude/iflow.local.md`, detects `activation_mode: yolo`
+3. Secretary command reads `.claude/pd.local.md`, detects `activation_mode: yolo`
 4. Command performs routing inline (discover agents and skills, match patterns, select best route)
 5. YOLO overrides skip clarification, reviewer gate, and user confirmation
 6. Workflow patterns redirect to orchestrate subcommand which chains phases via Skill
@@ -461,20 +461,20 @@ Learnings accumulate in `docs/knowledge-bank/`:
 - **anti-patterns.md** — Things to avoid
 - **heuristics.md** — Decision guides
 
-Updated via `/iflow:retrospect` after feature completion.
+Updated via `/pd:retrospect` after feature completion.
 
 ### Cross-Project Memory
 
-Universal entries are promoted to a global store at `~/.claude/iflow/memory/` during retrospectives. The `session-start` hook injects top entries (project-local + global, deduplicated) into every session.
+Universal entries are promoted to a global store at `~/.claude/pd/memory/` during retrospectives. The `session-start` hook injects top entries (project-local + global, deduplicated) into every session.
 
 **Semantic Retrieval:** Memory uses embedding-based retrieval with cosine similarity and hybrid ranking. SQLite database (`memory.db`) stores embeddings for semantic search. Legacy fallback (observation-count ranking) activates when semantic memory is disabled or no API key is set.
 
-**MCP Tools:** Two MCP tools are exposed via `plugins/iflow/mcp/memory_server.py`:
+**MCP Tools:** Two MCP tools are exposed via `plugins/pd/mcp/memory_server.py`:
 - `store_memory` -- Save a learning (name, description, reasoning, category, references) to long-term memory with automatic embedding generation. Optional `confidence` parameter (high/medium/low, defaults to medium) controls retrieval ranking weight.
 - `search_memory` -- Search long-term memory for relevant learnings using hybrid retrieval (vector similarity + BM25 keyword search)
 
 **Setup:**
-1. Install dependencies: `cd plugins/iflow && uv sync --extra gemini`
+1. Install dependencies: `cd plugins/pd && uv sync --extra gemini`
 2. Add API key to `.env` in project root: `GEMINI_API_KEY=your-key`
 3. Memory is enabled by default — no config changes needed
 
@@ -485,7 +485,7 @@ Without an API key, memory still works via FTS5 keyword search and prominence ra
 - **Ollama (local):** `uv sync --extra ollama`, run `ollama pull nomic-embed-text`, set `memory_embedding_provider: ollama` and `memory_embedding_model: nomic-embed-text` (no API key needed)
 - **Voyage:** `uv sync --extra voyage`, add `VOYAGE_API_KEY=your-key` to `.env`, set `memory_embedding_provider: voyage` and `memory_embedding_model: voyage-3`
 
-**Configuration** (in `.claude/iflow.local.md`):
+**Configuration** (in `.claude/pd.local.md`):
 - `plan_mode_review` — Enable plan review hooks for Claude Code plan mode (default: true)
 - `memory_semantic_enabled` — Enable semantic retrieval (default: true)
 - `memory_embedding_provider` — Provider for embeddings (default: gemini)
@@ -498,11 +498,11 @@ Without an API key, memory still works via FTS5 keyword search and prominence ra
 
 ## Entity Registry
 
-The entity registry tracks the lineage of iflow artifacts (backlog items, brainstorms, projects, features) and their parent-child relationships in a SQLite database.
+The entity registry tracks the lineage of pd artifacts (backlog items, brainstorms, projects, features) and their parent-child relationships in a SQLite database.
 
-**Database:** `~/.claude/iflow/entities/entities.db`
+**Database:** `~/.claude/pd/entities/entities.db`
 
-**MCP Server:** `plugins/iflow/mcp/entity_server.py` (bootstrapped via `plugins/iflow/mcp/run-entity-server.sh`)
+**MCP Server:** `plugins/pd/mcp/entity_server.py` (bootstrapped via `plugins/pd/mcp/run-entity-server.sh`)
 
 **MCP Tools (8):**
 - `register_entity` -- Register a new entity (backlog, brainstorm, project, or feature) with optional parent link and metadata
@@ -514,15 +514,15 @@ The entity registry tracks the lineage of iflow artifacts (backlog items, brains
 - `search_entities` -- Search entities by name, type, status, or metadata
 - `export_entities` -- Export all entities as structured data
 
-**Backfill Scanner:** `plugins/iflow/hooks/lib/entity_registry/backfill.py` scans existing artifact directories (features/, brainstorms/, projects/, backlog.md) and registers entities in topological order (backlog -> brainstorm -> project -> feature). Runs once on first server start; subsequent runs are skipped via a `backfill_complete` metadata marker.
+**Backfill Scanner:** `plugins/pd/hooks/lib/entity_registry/backfill.py` scans existing artifact directories (features/, brainstorms/, projects/, backlog.md) and registers entities in topological order (backlog -> brainstorm -> project -> feature). Runs once on first server start; subsequent runs are skipped via a `backfill_complete` metadata marker.
 
-**Command:** `/iflow:show-lineage` displays the entity lineage tree for a given entity, showing ancestors or descendants with Unicode box-drawing formatting.
+**Command:** `/pd:show-lineage` displays the entity lineage tree for a given entity, showing ancestors or descendants with Unicode box-drawing formatting.
 
 ## Workflow Engine
 
 The workflow engine manages feature lifecycle state, phase transitions, and drift reconciliation via a SQLite-backed state machine.
 
-**MCP Server:** `plugins/iflow/mcp/workflow_state_server.py` (bootstrapped via `plugins/iflow/mcp/run-workflow-server.sh`)
+**MCP Server:** `plugins/pd/mcp/workflow_state_server.py` (bootstrapped via `plugins/pd/mcp/run-workflow-server.sh`)
 
 **MCP Tools (15):**
 - `get_phase` -- Get current workflow phase for a feature
@@ -545,12 +545,12 @@ The workflow engine manages feature lifecycle state, phase transitions, and drif
 
 See [Component Authoring Guide](./docs/dev_guides/component-authoring.md).
 
-All components are created in the `plugins/iflow/` directory:
+All components are created in the `plugins/pd/` directory:
 
-**Skills:** `plugins/iflow/skills/{name}/SKILL.md` — Instructions Claude follows
-**Agents:** `plugins/iflow/agents/{name}.md` — Isolated workers with specific focus
-**Commands:** `plugins/iflow/commands/{name}.md` — User-invocable entry points
-**Hooks:** `plugins/iflow/hooks/` — Lifecycle automation scripts
+**Skills:** `plugins/pd/skills/{name}/SKILL.md` — Instructions Claude follows
+**Agents:** `plugins/pd/agents/{name}.md` — Isolated workers with specific focus
+**Commands:** `plugins/pd/commands/{name}.md` — User-invocable entry points
+**Hooks:** `plugins/pd/hooks/` — Lifecycle automation scripts
 
 ## Validation
 

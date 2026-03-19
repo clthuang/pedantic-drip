@@ -1,10 +1,10 @@
-# iflow Plugin
+# pd Plugin
 
 > A Claude Code plugin that turns ideas into shipped features through structured phases — brainstorm, spec, design, plan, implement — with built-in quality gates, semantic memory, and autonomous operation.
 
 ## What It Does
 
-iflow guides features from idea to merge through proven phases. Every phase has AI reviewers that catch issues before they compound. The plugin learns from retrospectives — memory persists across sessions and projects. It can run fully autonomously (YOLO mode) or step-by-step with user confirmation at each gate. Domain knowledge modules cover game design, crypto/DeFi, and data science.
+pd guides features from idea to merge through proven phases. Every phase has AI reviewers that catch issues before they compound. The plugin learns from retrospectives — memory persists across sessions and projects. It can run fully autonomously (YOLO mode) or step-by-step with user confirmation at each gate. Domain knowledge modules cover game design, crypto/DeFi, and data science.
 
 ## Installation
 
@@ -21,8 +21,8 @@ Optional: `rsync` and `gtimeout` (macOS: `brew install coreutils`).
 ### Install
 
 ```bash
-/plugin marketplace add clthuang/my-ai-setup
-/plugin install iflow@my-local-plugins
+/plugin marketplace add clthuang/pedantic-drip
+/plugin install pd@my-local-plugins
 ```
 
 Core dependencies auto-install on first session — keyword memory works immediately.
@@ -33,7 +33,7 @@ The plugin auto-installs core dependencies on first launch. For semantic search 
 
 ```bash
 # Find your plugin root and run the interactive setup
-bash "$(ls -d ~/.claude/plugins/cache/*/iflow/*/scripts/setup.sh 2>/dev/null | head -1)"
+bash "$(ls -d ~/.claude/plugins/cache/*/pd/*/scripts/setup.sh 2>/dev/null | head -1)"
 ```
 
 The setup walks through provider selection, API key configuration, and project initialization.
@@ -49,7 +49,7 @@ The setup walks through provider selection, API key configuration, and project i
 ### Troubleshooting
 
 ```bash
-bash "$(ls -d ~/.claude/plugins/cache/*/iflow/*/scripts/doctor.sh 2>/dev/null | head -1)"
+bash "$(ls -d ~/.claude/plugins/cache/*/pd/*/scripts/doctor.sh 2>/dev/null | head -1)"
 ```
 
 Read-only health check across 5 categories (system prerequisites, plugin environment, embedding provider, memory system, project context) with OS-specific fix commands.
@@ -58,19 +58,19 @@ Read-only health check across 5 categories (system prerequisites, plugin environ
 
 **Just describe what you need:**
 ```bash
-/iflow:secretary "add email validation to the signup form"
+/pd:secretary "add email validation to the signup form"
 ```
 Secretary routes your request to the right workflow phase or specialist automatically.
 
 **Or start directly:**
 ```bash
-/iflow:brainstorm "your idea here"       # Explore an idea
-/iflow:create-feature "add user auth"    # Build something
+/pd:brainstorm "your idea here"       # Explore an idea
+/pd:create-feature "add user auth"    # Build something
 ```
 
 Then follow the phases:
 ```
-/iflow:specify → /iflow:design → /iflow:create-plan → /iflow:create-tasks → /iflow:implement → /iflow:finish-feature
+/pd:specify → /pd:design → /pd:create-plan → /pd:create-tasks → /pd:implement → /pd:finish-feature
 ```
 
 ## Key Features
@@ -78,9 +78,9 @@ Then follow the phases:
 ### Autonomous Operation (YOLO Mode)
 
 ```bash
-/iflow:secretary mode yolo              # Enable autonomous mode
-/iflow:secretary orchestrate <desc>     # Build end-to-end without pausing
-/iflow:secretary continue               # Resume from last completed phase
+/pd:secretary mode yolo              # Enable autonomous mode
+/pd:secretary orchestrate <desc>     # Build end-to-end without pausing
+/pd:secretary continue               # Resume from last completed phase
 ```
 
 All quality gates (reviewers, phase validators) still run — YOLO mode only bypasses user confirmation at phase transitions. Safety boundaries stop execution on review failures, merge conflicts, or missing prerequisites.
@@ -96,7 +96,7 @@ Two MCP tools persist learnings across sessions:
 | `store_memory` | Save a pattern, anti-pattern, or heuristic to long-term memory |
 | `search_memory` | Search past learnings by topic using semantic similarity |
 
-Memory entries are injected automatically at session start. The global store (`~/.claude/iflow/memory/`) accumulates knowledge across all projects. See [README_FOR_DEV.md](./README_FOR_DEV.md) for configuration.
+Memory entries are injected automatically at session start. The global store (`~/.claude/pd/memory/`) accumulates knowledge across all projects. See [README_FOR_DEV.md](./README_FOR_DEV.md) for configuration.
 
 ### Domain Knowledge
 
@@ -109,13 +109,13 @@ Built-in specialist knowledge for brainstorming and code review:
 
 The plugin auto-starts a local Kanban board at `http://localhost:8718/` on every session start. The board shows all features, brainstorms, backlog items, and projects with their workflow phases and lineage in real time. No manual setup required.
 
-Configure via `.claude/iflow.local.md`:
+Configure via `.claude/pd.local.md`:
 - `ui_server_enabled: false` — disable auto-start
 - `ui_server_port: 8718` — change the port
 
 ### Specialist Teams
 
-`/iflow:create-specialist-team` assembles ephemeral multi-perspective teams for complex tasks that need diverse expertise.
+`/pd:create-specialist-team` assembles ephemeral multi-perspective teams for complex tasks that need diverse expertise.
 
 ## Commands
 
@@ -123,40 +123,40 @@ Configure via `.claude/iflow.local.md`:
 
 | Command | Purpose |
 |---------|---------|
-| `/iflow:brainstorm [topic]` | Explore ideas, produce evidence-backed PRD |
-| `/iflow:create-feature <desc>` | Skip brainstorming, create feature directly |
-| `/iflow:create-project <prd>` | Create project from PRD with AI-driven decomposition into features |
-| `/iflow:specify` | Write requirements (spec.md) |
-| `/iflow:design` | Define architecture (design.md) |
-| `/iflow:create-plan` | Plan implementation (plan.md) |
-| `/iflow:create-tasks` | Break into tasks (tasks.md) |
-| `/iflow:implement` | Write code with TDD and review |
-| `/iflow:abandon-feature` | Transition a feature to abandoned status |
-| `/iflow:finish-feature` | Merge, run retro, cleanup branch (iflow features) |
-| `/iflow:wrap-up` | Wrap up implementation - review, retro, merge or PR |
+| `/pd:brainstorm [topic]` | Explore ideas, produce evidence-backed PRD |
+| `/pd:create-feature <desc>` | Skip brainstorming, create feature directly |
+| `/pd:create-project <prd>` | Create project from PRD with AI-driven decomposition into features |
+| `/pd:specify` | Write requirements (spec.md) |
+| `/pd:design` | Define architecture (design.md) |
+| `/pd:create-plan` | Plan implementation (plan.md) |
+| `/pd:create-tasks` | Break into tasks (tasks.md) |
+| `/pd:implement` | Write code with TDD and review |
+| `/pd:abandon-feature` | Transition a feature to abandoned status |
+| `/pd:finish-feature` | Merge, run retro, cleanup branch (pd features) |
+| `/pd:wrap-up` | Wrap up implementation - review, retro, merge or PR |
 
 ### Utilities
 
 | Command | Purpose |
 |---------|---------|
-| `/iflow:show-lineage` | Display entity lineage tree for the current feature branch or a specified entity |
-| `/iflow:show-status` | See current feature progress |
-| `/iflow:list-features` | List active features and branches |
-| `/iflow:retrospect` | Run retrospective on a feature |
-| `/iflow:add-to-backlog` | Capture ad-hoc ideas and todos |
-| `/iflow:remember` | Capture a learning to long-term memory |
-| `/iflow:cleanup-brainstorms` | Delete old brainstorm scratch files |
-| `/iflow:secretary` | Intelligent task routing to agents and skills (supports YOLO mode with orchestrate subcommand) |
-| `/iflow:create-specialist-team` | Create ephemeral specialist teams for complex tasks |
-| `/iflow:root-cause-analysis` | Investigate bugs systematically |
-| `/iflow:promptimize [file-path or inline text]` | Review a prompt against best practices and return an improved version |
-| `/iflow:refresh-prompt-guidelines` | Scout latest prompt engineering best practices and update the guidelines document |
-| `/iflow:review-ds-analysis <file>` | Review data analysis for statistical pitfalls |
-| `/iflow:review-ds-code <file>` | Review DS Python code for anti-patterns |
-| `/iflow:init-ds-project <name>` | Scaffold a new data science project |
-| `/iflow:generate-docs` | Generate three-tier documentation scaffold or update existing docs |
-| `/iflow:sync-cache` | Sync plugin source files to cache |
-| `/iflow:yolo [on\|off]` | Toggle YOLO autonomous mode on or off |
+| `/pd:show-lineage` | Display entity lineage tree for the current feature branch or a specified entity |
+| `/pd:show-status` | See current feature progress |
+| `/pd:list-features` | List active features and branches |
+| `/pd:retrospect` | Run retrospective on a feature |
+| `/pd:add-to-backlog` | Capture ad-hoc ideas and todos |
+| `/pd:remember` | Capture a learning to long-term memory |
+| `/pd:cleanup-brainstorms` | Delete old brainstorm scratch files |
+| `/pd:secretary` | Intelligent task routing to agents and skills (supports YOLO mode with orchestrate subcommand) |
+| `/pd:create-specialist-team` | Create ephemeral specialist teams for complex tasks |
+| `/pd:root-cause-analysis` | Investigate bugs systematically |
+| `/pd:promptimize [file-path or inline text]` | Review a prompt against best practices and return an improved version |
+| `/pd:refresh-prompt-guidelines` | Scout latest prompt engineering best practices and update the guidelines document |
+| `/pd:review-ds-analysis <file>` | Review data analysis for statistical pitfalls |
+| `/pd:review-ds-code <file>` | Review DS Python code for anti-patterns |
+| `/pd:init-ds-project <name>` | Scaffold a new data science project |
+| `/pd:generate-docs` | Generate three-tier documentation scaffold or update existing docs |
+| `/pd:sync-cache` | Sync plugin source files to cache |
+| `/pd:yolo [on\|off]` | Toggle YOLO autonomous mode on or off |
 
 ## How It Works
 
@@ -218,14 +218,14 @@ Every phase has a skeptic reviewer that challenges assumptions and a gatekeeper 
 
 ```
 docs/
-├── brainstorms/           # From /iflow:brainstorm
-├── features/{id}-{name}/  # From /iflow:create-feature
+├── brainstorms/           # From /pd:brainstorm
+├── features/{id}-{name}/  # From /pd:create-feature
 │   ├── spec.md, design.md, plan.md, tasks.md
 │   └── .meta.json         # Phase tracking
-├── projects/{id}-{name}/  # From /iflow:create-project
+├── projects/{id}-{name}/  # From /pd:create-project
 │   ├── prd.md             # Project PRD
 │   └── roadmap.md         # Dependency graph, milestones
-├── retrospectives/        # From /iflow:retrospect
+├── retrospectives/        # From /pd:retrospect
 └── knowledge-bank/        # Accumulated learnings
 ```
 
@@ -244,7 +244,7 @@ Tasks are organized for parallel execution:
 
 ## Reference
 
-iflow includes 29 skills and 28 agents that run automatically during the workflow. You don't invoke them directly.
+pd includes 29 skills and 28 agents that run automatically during the workflow. You don't invoke them directly.
 
 ### Skills
 
@@ -370,4 +370,4 @@ See [README_FOR_DEV.md](./README_FOR_DEV.md) for:
 - Release workflow
 - Validation
 
-Each project uses `.claude/iflow.local.md` for local settings (artifacts path, merge branch, memory config). See [README_FOR_DEV.md](./README_FOR_DEV.md) for the full configuration reference.
+Each project uses `.claude/pd.local.md` for local settings (artifacts path, merge branch, memory config). See [README_FOR_DEV.md](./README_FOR_DEV.md) for the full configuration reference.
