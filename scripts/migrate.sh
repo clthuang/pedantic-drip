@@ -17,22 +17,22 @@ step() { echo -e "Step $1: $2..." >&2; }
 
 # Path constants
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-IFLOW_DIR="${HOME}/.claude/iflow"
-MEMORY_DIR="${IFLOW_DIR}/memory"
+PD_DIR="${HOME}/.claude/pd"
+MEMORY_DIR="${PD_DIR}/memory"
 MEMORY_DB="${MEMORY_DIR}/memory.db"
-ENTITY_DIR="${IFLOW_DIR}/entities"
+ENTITY_DIR="${PD_DIR}/entities"
 ENTITY_DB="${ENTITY_DB_PATH:-${ENTITY_DIR}/entities.db}"
 MIGRATE_DB="${SCRIPT_DIR}/migrate_db.py"
 
 # Python path resolution
 resolve_python() {
-    local venv_python="${SCRIPT_DIR}/../plugins/iflow/.venv/bin/python"
+    local venv_python="${SCRIPT_DIR}/../plugins/pd/.venv/bin/python"
     if [ -x "$venv_python" ]; then
         echo "$venv_python"; return
     fi
     # Plugin cache (Glob pattern)
     local cache_python
-    cache_python="$(ls ~/.claude/plugins/cache/*/iflow*/*/.venv/bin/python 2>/dev/null | head -1)"
+    cache_python="$(ls ~/.claude/plugins/cache/*/pd*/*/.venv/bin/python 2>/dev/null | head -1)"
     if [ -n "${cache_python:-}" ] && [ -x "$cache_python" ]; then
         echo "$cache_python"; return
     fi
@@ -45,10 +45,10 @@ resolve_python() {
 if [ -n "${PYTHON:-}" ]; then
     # Allow env override for testing
     if ! "$PYTHON" --version >/dev/null 2>&1; then
-        die "Python 3 required for SQLite operations. Install Python or run: plugins/iflow/scripts/setup.sh"
+        die "Python 3 required for SQLite operations. Install Python or run: plugins/pd/scripts/setup.sh"
     fi
 else
-    PYTHON="$(resolve_python)" || die "Python 3 required for SQLite operations. Install Python or run: plugins/iflow/scripts/setup.sh"
+    PYTHON="$(resolve_python)" || die "Python 3 required for SQLite operations. Install Python or run: plugins/pd/scripts/setup.sh"
 fi
 
 # Session detection
@@ -105,10 +105,10 @@ copy_markdown_files() {
 # Plugin version resolution
 resolve_plugin_version() {
     local pjson
-    pjson="$(ls ~/.claude/plugins/cache/*/iflow*/*/plugin.json 2>/dev/null | head -1)"
+    pjson="$(ls ~/.claude/plugins/cache/*/pd*/*/plugin.json 2>/dev/null | head -1)"
     if [ -z "${pjson:-}" ]; then
         # Fallback: dev workspace
-        pjson="${SCRIPT_DIR}/../plugins/iflow/plugin.json"
+        pjson="${SCRIPT_DIR}/../plugins/pd/plugin.json"
     fi
     if [ -f "$pjson" ]; then
         "$PYTHON" -c "import json,sys; print(json.load(open(sys.argv[1]))['version'])" "$pjson"
@@ -119,9 +119,9 @@ resolve_plugin_version() {
 
 # Doctor check per AC-15 and design TD-6
 run_doctor_check() {
-    local doctor="${SCRIPT_DIR}/../plugins/iflow/scripts/doctor.sh"
+    local doctor="${SCRIPT_DIR}/../plugins/pd/scripts/doctor.sh"
     if [ ! -x "$doctor" ]; then
-        doctor="$(ls ~/.claude/plugins/cache/*/iflow*/*/scripts/doctor.sh 2>/dev/null | head -1)"
+        doctor="$(ls ~/.claude/plugins/cache/*/pd*/*/scripts/doctor.sh 2>/dev/null | head -1)"
     fi
     if [ -n "${doctor:-}" ] && [ -x "$doctor" ]; then
         "$doctor" --quiet 2>/dev/null || warn "doctor.sh reported issues (non-fatal)"
@@ -174,8 +174,8 @@ show_help() {
 Usage: migrate.sh {export|import|help}
 
 Commands:
-  export [output-path] [--force]    Export iflow state to a bundle
-  import <bundle-path> [--dry-run] [--force]  Import iflow state from a bundle
+  export [output-path] [--force]    Export pd state to a bundle
+  import <bundle-path> [--dry-run] [--force]  Import pd state from a bundle
   help                               Show this help message
 
 Options:
@@ -185,7 +185,7 @@ Options:
 Examples:
   migrate.sh export
   migrate.sh export ~/my-backup.tar.gz
-  migrate.sh import ~/iflow-export-20260316-025408.tar.gz
+  migrate.sh import ~/pd-export-20260316-025408.tar.gz
   migrate.sh import --dry-run ~/backup.tar.gz
 HELP
 }
@@ -224,7 +224,7 @@ main() {
 export_flow() {
     # Pre-flight: at least one database must exist
     if [ ! -f "$MEMORY_DB" ] && [ ! -f "$ENTITY_DB" ]; then
-        die "No iflow data found. Expected databases at:\n  $MEMORY_DB\n  $ENTITY_DB"
+        die "No pd data found. Expected databases at:\n  $MEMORY_DB\n  $ENTITY_DB"
     fi
 
     # Step 1: Session check
@@ -242,7 +242,7 @@ export_flow() {
     step "2/6" "Creating staging directory"
     local timestamp
     timestamp="$(date +%Y%m%d-%H%M%S)"
-    local staging_name="iflow-export-${timestamp}"
+    local staging_name="pd-export-${timestamp}"
     local staging
     staging="$(mktemp -d)/${staging_name}"
     mkdir -p "$staging"
@@ -296,8 +296,8 @@ export_flow() {
         info "  No markdown files found, skipping"
     fi
 
-    if [ -f "$IFLOW_DIR/projects.txt" ]; then
-        cp "$IFLOW_DIR/projects.txt" "$staging/projects.txt"
+    if [ -f "$PD_DIR/projects.txt" ]; then
+        cp "$PD_DIR/projects.txt" "$staging/projects.txt"
         ok "  projects.txt copied"
     else
         info "  No projects.txt found, skipping"
@@ -310,7 +310,7 @@ export_flow() {
     "$PYTHON" "$MIGRATE_DB" manifest "$staging" --plugin-version "$plugin_version" > /dev/null
 
     # Determine output path
-    local output_path="${1:-${HOME}/iflow-export-${timestamp}.tar.gz}"
+    local output_path="${1:-${HOME}/pd-export-${timestamp}.tar.gz}"
     tar -czf "$output_path" -C "$(dirname "$staging")" "$(basename "$staging")"
     rm -rf "$staging"
 
@@ -365,7 +365,7 @@ import_flow() {
         esac
     done < <(find "$extract_dir" -type f)
 
-    # Find the inner bundle directory (e.g., iflow-export-YYYYMMDD-HHMMSS/)
+    # Find the inner bundle directory (e.g., pd-export-YYYYMMDD-HHMMSS/)
     local bundle_dir
     bundle_dir="$(find "$extract_dir" -maxdepth 1 -mindepth 1 -type d | head -1)"
     if [ -z "$bundle_dir" ]; then
@@ -540,7 +540,7 @@ import_flow() {
     step "7/8" "Copying additional files"
     if [ -f "$bundle_dir/projects.txt" ]; then
         if [ -z "$DRY_RUN" ]; then
-            if copy_file "$bundle_dir/projects.txt" "$IFLOW_DIR/projects.txt"; then
+            if copy_file "$bundle_dir/projects.txt" "$PD_DIR/projects.txt"; then
                 files_summary="projects.txt copied"
                 ok "  Copied projects.txt"
             else

@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+
+{% block title %}Error - pd{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-center p-12">
+    <div class="card bg-base-100 shadow-lg p-8 max-w-lg">
+        <h2 class="text-xl font-bold text-error">{{ error_title }}</h2>
+        <p class="mt-4">{{ error_message }}</p>
+        {% if db_path %}
+        <div class="mt-4 p-3 bg-base-200 rounded text-sm font-mono break-all">
+            {{ db_path }}
+        </div>
+        {% endif %}
+        <div class="mt-6 text-sm text-base-content/60">
+            <p class="font-semibold mb-2">Setup instructions:</p>
+            <ul class="list-disc list-inside space-y-1">
+                <li>Run the entity registry MCP server to initialize the database</li>
+                <li>Or set <code class="font-mono bg-base-200 px-1 rounded">ENTITY_DB_PATH</code> environment variable to point to an existing database</li>
+            </ul>
+        </div>
+    </div>
+</div>
+{% endblock %}

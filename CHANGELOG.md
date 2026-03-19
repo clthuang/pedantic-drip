@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.13.13] - 2026-03-19
+
+### Changed
+- Renamed plugin package `iflow-dev-hooks` → `pd-dev-hooks` in pyproject.toml
+- Updated UI template titles and navbar branding from `iflow` to `pd`
+- Fixed CI workflow path, README install URLs, dev guide header, knowledge-bank, and retrospective references
+- Fixed `.meta.json` brainstorm_source absolute paths from `my-ai-setup` to `pedantic-drip`
+
+### Added
+- `scripts/migrate-from-iflow.sh` — idempotent migration script for machines with old iflow layout
+
 ## [4.13.12] - 2026-03-19
 
 ### Added

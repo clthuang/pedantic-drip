@@ -321,7 +321,7 @@ When a plan-reviewer first flags an intermediate checkpoint as a "suggestion" in
 Planning implementation steps that use external Python libraries (PyYAML, requests, etc.) without verifying they are present in the project venv. The plan compiles syntactically; the test fails at runtime with ModuleNotFoundError — silent until test execution.
 - Observed in: Feature 007, create-plan iter 2 blocker — "PyYAML not in venv dependencies — YAML validation test would fail with ModuleNotFoundError"; resolved by redesigning to stdlib line-by-line string parsing
 - Cost: 1 plan-review blocker; implementation approach redesign required in the same iteration
-- Instead: Plan-reviewer must verify all non-stdlib imports against `plugins/iflow/.venv` installed packages before approving
+- Instead: Plan-reviewer must verify all non-stdlib imports against `plugins/pd/.venv` installed packages before approving
 - Confidence: high
 - Keywords: ["python-dependency", "venv", "pyyaml", "stdlib", "dependency-audit", "plan-review"]
 - Last observed: Feature 007
@@ -469,7 +469,7 @@ When smoke test specifications assume CLI flags exist without verifying against 
 Writing spec statements like "Jinja2 already available in venv" or referencing CDN URLs without verifying against actual project files. These false-certainty claims propagate as design-phase blockers and require explicit correction sections in subsequent artifacts.
 - Observed in: Feature 018, design iter 1 — two blockers both from unverified spec claims: Jinja2 not in venv (spec line 112 "already available"), CDN URL wrong (cdn.tailwindcss.com vs @tailwindcss/browser@4); required "Spec inaccuracies addressed by this design" section and a plan correction task
 - Cost: 2+ design iterations; required explicit spec-correction section in design.md and a correction task in plan
-- Instead: For each external library listed as "available," verify presence in plugins/iflow/.venv/lib. For each CDN URL, verify against an existing sibling file. Annotate "verified against: <file>:<line>".
+- Instead: For each external library listed as "available," verify presence in plugins/pd/.venv/lib. For each CDN URL, verify against an existing sibling file. Annotate "verified against: <file>:<line>".
 - Confidence: high
 - Keywords: ["spec-accuracy", "venv-verification", "cdn-url", "dependency-claims", "false-certainty", "design-blockers"]
 - Last observed: Feature 018

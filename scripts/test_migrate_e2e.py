@@ -33,7 +33,7 @@ MIGRATE_DB = str(SCRIPT_DIR / "migrate_db.py")
 # ============================================================
 
 
-def _setup_iflow_state(
+def _setup_pd_state(
     base_dir: Path,
     *,
     memory_entries: list[dict] | None = None,
@@ -43,13 +43,13 @@ def _setup_iflow_state(
     projects_txt: bool = False,
     embedding_metadata: dict[str, str] | None = None,
 ) -> Path:
-    """Create test iflow state under base_dir/.claude/iflow/.
+    """Create test pd state under base_dir/.claude/pd/.
 
-    Returns the iflow_dir path.
+    Returns the pd_dir path.
     """
-    iflow_dir = base_dir / ".claude" / "iflow"
-    memory_dir = iflow_dir / "memory"
-    entity_dir = iflow_dir / "entities"
+    pd_dir = base_dir / ".claude" / "pd"
+    memory_dir = pd_dir / "memory"
+    entity_dir = pd_dir / "entities"
     memory_dir.mkdir(parents=True, exist_ok=True)
     entity_dir.mkdir(parents=True, exist_ok=True)
 
@@ -82,11 +82,11 @@ def _setup_iflow_state(
             (memory_dir / name).write_text(content)
 
     if projects_txt:
-        (iflow_dir / "projects.txt").write_text(
+        (pd_dir / "projects.txt").write_text(
             "/path/to/project1\n/path/to/project2\n"
         )
 
-    return iflow_dir
+    return pd_dir
 
 
 def _run_migrate(
@@ -136,7 +136,7 @@ class TestExportRoundTrip:
         home = tmp_path / "home"
         home.mkdir()
 
-        _setup_iflow_state(
+        _setup_pd_state(
             home,
             memory_entries=[
                 {"source_hash": f"mem-{i}", "name": f"entry-{i}"} for i in range(3)
@@ -194,13 +194,13 @@ class TestExportRoundTrip:
 
 
 class TestImportFresh:
-    """Import into an empty iflow directory restores all entries."""
+    """Import into an empty pd directory restores all entries."""
 
     def test_import_fresh(self, tmp_path: Path) -> None:
         # Create source state and export
         src_home = tmp_path / "src_home"
         src_home.mkdir()
-        _setup_iflow_state(
+        _setup_pd_state(
             src_home,
             memory_entries=[
                 {"source_hash": f"mem-{i}", "name": f"entry-{i}"} for i in range(4)
@@ -222,30 +222,30 @@ class TestImportFresh:
         result = _run_migrate(src_home, ["export", bundle_path], env_extra=env_extra)
         assert result.returncode == 0, f"Export failed: {result.stderr}"
 
-        # Import into a fresh home with no iflow state
+        # Import into a fresh home with no pd state
         dst_home = tmp_path / "dst_home"
         dst_home.mkdir()
-        (dst_home / ".claude" / "iflow").mkdir(parents=True)
+        (dst_home / ".claude" / "pd").mkdir(parents=True)
 
         result = _run_migrate(dst_home, ["import", bundle_path], env_extra=env_extra)
         assert result.returncode == 0, f"Import failed: {result.stderr}"
 
         # Verify all entries present
-        mem_db = str(dst_home / ".claude" / "iflow" / "memory" / "memory.db")
+        mem_db = str(dst_home / ".claude" / "pd" / "memory" / "memory.db")
         conn = sqlite3.connect(mem_db)
         mem_count = conn.execute("SELECT count(*) FROM entries").fetchone()[0]
         conn.close()
         assert mem_count == 4
 
-        ent_db = str(dst_home / ".claude" / "iflow" / "entities" / "entities.db")
+        ent_db = str(dst_home / ".claude" / "pd" / "entities" / "entities.db")
         conn = sqlite3.connect(ent_db)
         ent_count = conn.execute("SELECT count(*) FROM entities").fetchone()[0]
         conn.close()
         assert ent_count == 3
 
         # Verify markdown and projects.txt restored
-        assert (dst_home / ".claude" / "iflow" / "memory" / "patterns.md").exists()
-        assert (dst_home / ".claude" / "iflow" / "projects.txt").exists()
+        assert (dst_home / ".claude" / "pd" / "memory" / "patterns.md").exists()
+        assert (dst_home / ".claude" / "pd" / "projects.txt").exists()
 
 
 # ============================================================
@@ -260,7 +260,7 @@ class TestImportMerge:
         # Source has entries A, B, C
         src_home = tmp_path / "src_home"
         src_home.mkdir()
-        _setup_iflow_state(
+        _setup_pd_state(
             src_home,
             memory_entries=[
                 {"source_hash": "shared-1", "name": "shared"},
@@ -288,7 +288,7 @@ class TestImportMerge:
         # Destination already has overlapping entries
         dst_home = tmp_path / "dst_home"
         dst_home.mkdir()
-        _setup_iflow_state(
+        _setup_pd_state(
             dst_home,
             memory_entries=[
                 {"source_hash": "shared-1", "name": "shared"},
@@ -308,14 +308,14 @@ class TestImportMerge:
         assert result.returncode == 0, f"Import failed: {result.stderr}"
 
         # Memory: shared-1 + src-only-1 + dst-only-1 = 3 (no duplicates)
-        mem_db = str(dst_home / ".claude" / "iflow" / "memory" / "memory.db")
+        mem_db = str(dst_home / ".claude" / "pd" / "memory" / "memory.db")
         conn = sqlite3.connect(mem_db)
         mem_count = conn.execute("SELECT count(*) FROM entries").fetchone()[0]
         conn.close()
         assert mem_count == 3
 
         # Entities: shared-001 + src-only-001 + dst-only-001 = 3
-        ent_db = str(dst_home / ".claude" / "iflow" / "entities" / "entities.db")
+        ent_db = str(dst_home / ".claude" / "pd" / "entities" / "entities.db")
         conn = sqlite3.connect(ent_db)
         ent_count = conn.execute("SELECT count(*) FROM entities").fetchone()[0]
         conn.close()
@@ -334,7 +334,7 @@ class TestDryRun:
         # Create source and export
         src_home = tmp_path / "src_home"
         src_home.mkdir()
-        _setup_iflow_state(
+        _setup_pd_state(
             src_home,
             memory_entries=[{"source_hash": "m-1", "name": "entry-1"}],
             entities=[{"type_id": "feature:e-001", "name": "Feat1"}],
@@ -350,17 +350,17 @@ class TestDryRun:
         result = _run_migrate(src_home, ["export", bundle_path], env_extra=env_extra)
         assert result.returncode == 0
 
-        # Destination: empty iflow dir
+        # Destination: empty pd dir
         dst_home = tmp_path / "dst_home"
         dst_home.mkdir()
-        (dst_home / ".claude" / "iflow").mkdir(parents=True)
+        (dst_home / ".claude" / "pd").mkdir(parents=True)
 
         # Snapshot filesystem state before
-        iflow_dir = dst_home / ".claude" / "iflow"
+        pd_dir = dst_home / ".claude" / "pd"
         before_files = set()
-        for root, dirs, files in os.walk(str(iflow_dir)):
+        for root, dirs, files in os.walk(str(pd_dir)):
             for f in files:
-                before_files.add(os.path.relpath(os.path.join(root, f), str(iflow_dir)))
+                before_files.add(os.path.relpath(os.path.join(root, f), str(pd_dir)))
 
         result = _run_migrate(
             dst_home, ["import", "--dry-run", bundle_path], env_extra=env_extra
@@ -370,9 +370,9 @@ class TestDryRun:
 
         # Verify no new files created
         after_files = set()
-        for root, dirs, files in os.walk(str(iflow_dir)):
+        for root, dirs, files in os.walk(str(pd_dir)):
             for f in files:
-                after_files.add(os.path.relpath(os.path.join(root, f), str(iflow_dir)))
+                after_files.add(os.path.relpath(os.path.join(root, f), str(pd_dir)))
 
         assert after_files == before_files, (
             f"Dry-run created files: {after_files - before_files}"
@@ -391,7 +391,7 @@ class TestCorruptBundle:
         # Export a valid bundle
         src_home = tmp_path / "src_home"
         src_home.mkdir()
-        _setup_iflow_state(
+        _setup_pd_state(
             src_home,
             memory_entries=[{"source_hash": "m-1", "name": "entry-1"}],
             entities=[{"type_id": "feature:e-001", "name": "Feat1"}],
@@ -427,7 +427,7 @@ class TestCorruptBundle:
         # then die() wraps it as exit 1 with "exit 3" in the message
         dst_home = tmp_path / "dst_home"
         dst_home.mkdir()
-        (dst_home / ".claude" / "iflow").mkdir(parents=True)
+        (dst_home / ".claude" / "pd").mkdir(parents=True)
 
         result = _run_migrate(
             dst_home, ["import", tampered_bundle], env_extra=env_extra
@@ -453,7 +453,7 @@ class TestSessionDetection:
     def test_session_detected_aborts(self, tmp_path: Path) -> None:
         home = tmp_path / "home"
         home.mkdir()
-        _setup_iflow_state(
+        _setup_pd_state(
             home,
             memory_entries=[{"source_hash": "m-1", "name": "entry-1"}],
             entities=[{"type_id": "feature:e-001", "name": "Feat1"}],
@@ -490,7 +490,7 @@ class TestEntityDbPathOverride:
         home.mkdir()
 
         # Create memory state at normal location
-        _setup_iflow_state(
+        _setup_pd_state(
             home,
             memory_entries=[{"source_hash": "m-1", "name": "entry-1"}],
         )
@@ -549,7 +549,7 @@ class TestEmbeddingMismatch:
         # Source with openai embeddings
         src_home = tmp_path / "src_home"
         src_home.mkdir()
-        _setup_iflow_state(
+        _setup_pd_state(
             src_home,
             memory_entries=[{"source_hash": "m-1", "name": "entry-1"}],
             entities=[{"type_id": "feature:e-001", "name": "Feat1"}],
@@ -572,7 +572,7 @@ class TestEmbeddingMismatch:
         # Destination with voyage embeddings
         dst_home = tmp_path / "dst_home"
         dst_home.mkdir()
-        _setup_iflow_state(
+        _setup_pd_state(
             dst_home,
             memory_entries=[{"source_hash": "dst-1", "name": "dst-entry"}],
             embedding_metadata={
@@ -600,7 +600,7 @@ class TestPostImportDoctor:
     def test_post_import_verify_runs(self, tmp_path: Path) -> None:
         src_home = tmp_path / "src_home"
         src_home.mkdir()
-        _setup_iflow_state(
+        _setup_pd_state(
             src_home,
             memory_entries=[{"source_hash": "m-1", "name": "entry-1"}],
             entities=[{"type_id": "feature:e-001", "name": "Feat1"}],
@@ -618,7 +618,7 @@ class TestPostImportDoctor:
 
         dst_home = tmp_path / "dst_home"
         dst_home.mkdir()
-        (dst_home / ".claude" / "iflow").mkdir(parents=True)
+        (dst_home / ".claude" / "pd").mkdir(parents=True)
 
         result = _run_migrate(dst_home, ["import", bundle_path], env_extra=env_extra)
         assert result.returncode == 0, f"Import failed: {result.stderr}"
@@ -643,7 +643,7 @@ class TestFreshMachineEmbedding:
         # Source with embedding metadata
         src_home = tmp_path / "src_home"
         src_home.mkdir()
-        _setup_iflow_state(
+        _setup_pd_state(
             src_home,
             memory_entries=[{"source_hash": "m-1", "name": "entry-1"}],
             entities=[{"type_id": "feature:e-001", "name": "Feat1"}],
@@ -663,10 +663,10 @@ class TestFreshMachineEmbedding:
         result = _run_migrate(src_home, ["export", bundle_path], env_extra=env_extra)
         assert result.returncode == 0
 
-        # Fresh destination — no iflow state at all
+        # Fresh destination — no pd state at all
         dst_home = tmp_path / "dst_home"
         dst_home.mkdir()
-        (dst_home / ".claude" / "iflow").mkdir(parents=True)
+        (dst_home / ".claude" / "pd").mkdir(parents=True)
 
         result = _run_migrate(dst_home, ["import", bundle_path], env_extra=env_extra)
         assert result.returncode == 0, f"Import failed: {result.stderr}"
@@ -691,7 +691,7 @@ class TestUuidGenerationOnMerge:
         src_home.mkdir()
         src_uuid_1 = str(uuid.uuid4())
         src_uuid_2 = str(uuid.uuid4())
-        _setup_iflow_state(
+        _setup_pd_state(
             src_home,
             memory_entries=[{"source_hash": "m-1", "name": "entry-1"}],
             entities=[
@@ -716,7 +716,7 @@ class TestUuidGenerationOnMerge:
         # Destination with different entities (no overlap on type_id)
         dst_home = tmp_path / "dst_home"
         dst_home.mkdir()
-        _setup_iflow_state(
+        _setup_pd_state(
             dst_home,
             memory_entries=[{"source_hash": "dst-1", "name": "dst-entry"}],
             entities=[
@@ -729,7 +729,7 @@ class TestUuidGenerationOnMerge:
         assert result.returncode == 0, f"Import failed: {result.stderr}"
 
         # Verify imported entities have NEW UUIDs
-        ent_db = str(dst_home / ".claude" / "iflow" / "entities" / "entities.db")
+        ent_db = str(dst_home / ".claude" / "pd" / "entities" / "entities.db")
         conn = sqlite3.connect(ent_db)
         rows = conn.execute(
             "SELECT uuid, type_id FROM entities WHERE type_id IN ('feature:src-001', 'feature:src-002')"
@@ -757,7 +757,7 @@ class TestForceOverwrite:
         # Source with markdown
         src_home = tmp_path / "src_home"
         src_home.mkdir()
-        _setup_iflow_state(
+        _setup_pd_state(
             src_home,
             memory_entries=[{"source_hash": "m-1", "name": "entry-1"}],
             entities=[{"type_id": "feature:e-001", "name": "Feat1"}],
@@ -778,7 +778,7 @@ class TestForceOverwrite:
         # Destination with existing markdown (different content)
         dst_home = tmp_path / "dst_home"
         dst_home.mkdir()
-        _setup_iflow_state(
+        _setup_pd_state(
             dst_home,
             memory_entries=[{"source_hash": "dst-1", "name": "dst-entry"}],
             entities=[{"type_id": "feature:dst-001", "name": "DstFeat"}],
@@ -788,7 +788,7 @@ class TestForceOverwrite:
         )
 
         # Verify existing content first
-        dst_patterns = dst_home / ".claude" / "iflow" / "memory" / "patterns.md"
+        dst_patterns = dst_home / ".claude" / "pd" / "memory" / "patterns.md"
         assert "Old Patterns" in dst_patterns.read_text()
 
         # Import WITHOUT --force: markdown should be skipped

@@ -1,15 +1,15 @@
 {
-  "name": "my-local-plugins",
-  "description": "Personal local plugins marketplace (development)",
+  "name": "pedantic-drip-marketplace",
+  "description": "Pedantic Drip plugin marketplace",
   "owner": {
     "name": "clthuang"
   },
   "plugins": [
     {
-      "name": "iflow",
-      "source": "./plugins/iflow",
+      "name": "pd",
+      "source": "./plugins/pd",
       "description": "Structured feature development workflow with skills, agents, and commands for methodical development from ideation to implementation",
-      "version": "4.13.12"
+      "version": "4.13.13"
     }
   ]
 }

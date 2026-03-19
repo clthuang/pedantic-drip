@@ -354,15 +354,15 @@ test_unknown_command_exits_nonzero() {
 
 # --- 10.1: export_flow integration tests ---
 
-# Helper: create a minimal test iflow directory with databases and files
+# Helper: create a minimal test pd directory with databases and files
 setup_export_env() {
     local tmpdir="$1"
 
-    # Create the iflow directory structure under fake HOME
+    # Create the pd directory structure under fake HOME
     local fake_home="$tmpdir/home"
-    local iflow_dir="$fake_home/.claude/iflow"
-    local memory_dir="$iflow_dir/memory"
-    local entity_dir="$iflow_dir/entities"
+    local pd_dir="$fake_home/.claude/pd"
+    local memory_dir="$pd_dir/memory"
+    local entity_dir="$pd_dir/entities"
     mkdir -p "$memory_dir" "$entity_dir"
 
     # Create memory.db with entries table and some rows
@@ -422,8 +422,8 @@ INSERT INTO workflow_phases (type_id, workflow_phase, kanban_column) VALUES ('fe
 SQL
 
     # Create projects.txt
-    echo "/home/user/project-a" > "$iflow_dir/projects.txt"
-    echo "/home/user/project-b" >> "$iflow_dir/projects.txt"
+    echo "/home/user/project-a" > "$pd_dir/projects.txt"
+    echo "/home/user/project-b" >> "$pd_dir/projects.txt"
 
     echo "$fake_home"
 }
@@ -436,8 +436,8 @@ test_export_no_data_exits_1() {
     trap "rm -rf '$tmpdir'" RETURN
 
     local fake_home="$tmpdir/home"
-    mkdir -p "$fake_home/.claude/iflow/memory"
-    mkdir -p "$fake_home/.claude/iflow/entities"
+    mkdir -p "$fake_home/.claude/pd/memory"
+    mkdir -p "$fake_home/.claude/pd/entities"
 
     # Create fake pgrep that returns 1 (no active session)
     cat > "$tmpdir/pgrep" <<'FAKE'
@@ -553,10 +553,10 @@ FAKE
 
     # Find the top-level directory inside the extract
     local bundle_dir
-    bundle_dir="$(ls -d "$extract_dir"/iflow-export-* 2>/dev/null | head -1)"
+    bundle_dir="$(ls -d "$extract_dir"/pd-export-* 2>/dev/null | head -1)"
 
     if [[ -z "$bundle_dir" ]]; then
-        log_fail "No iflow-export-* directory found in tar"
+        log_fail "No pd-export-* directory found in tar"
         return
     fi
 
@@ -634,9 +634,9 @@ FAKE
         return
     fi
 
-    # Check that a file matching ~/iflow-export-*.tar.gz was created
+    # Check that a file matching ~/pd-export-*.tar.gz was created
     local found
-    found="$(ls "$fake_home"/iflow-export-*.tar.gz 2>/dev/null | head -1)"
+    found="$(ls "$fake_home"/pd-export-*.tar.gz 2>/dev/null | head -1)"
     if [[ -n "$found" ]]; then
         log_pass
     else
@@ -652,9 +652,9 @@ test_export_memory_only() {
     trap "rm -rf '$tmpdir'" RETURN
 
     local fake_home="$tmpdir/home"
-    local iflow_dir="$fake_home/.claude/iflow"
-    local memory_dir="$iflow_dir/memory"
-    mkdir -p "$memory_dir" "$iflow_dir/entities"
+    local pd_dir="$fake_home/.claude/pd"
+    local memory_dir="$pd_dir/memory"
+    mkdir -p "$memory_dir" "$pd_dir/entities"
 
     sqlite3 "$memory_dir/memory.db" <<'SQL'
 CREATE TABLE entries (id INTEGER PRIMARY KEY, name TEXT, description TEXT, source_hash TEXT UNIQUE);
@@ -682,7 +682,7 @@ FAKE
     mkdir -p "$extract_dir"
     tar -xzf "$output_path" -C "$extract_dir"
     local bundle_dir
-    bundle_dir="$(ls -d "$extract_dir"/iflow-export-* 2>/dev/null | head -1)"
+    bundle_dir="$(ls -d "$extract_dir"/pd-export-* 2>/dev/null | head -1)"
 
     if [[ -f "$bundle_dir/memory/memory.db" ]] && [[ ! -f "$bundle_dir/entities/entities.db" ]]; then
         log_pass
@@ -730,7 +730,7 @@ test_import_fresh_machine() {
         return
     fi
 
-    # Step 2: Create a fresh empty HOME (no existing iflow data)
+    # Step 2: Create a fresh empty HOME (no existing pd data)
     local fresh_home="$tmpdir/fresh_home"
     mkdir -p "$fresh_home"
 
@@ -756,7 +756,7 @@ FAKE
     local errors=""
 
     # Verify memory.db exists and has entries
-    local mem_db="$fresh_home/.claude/iflow/memory/memory.db"
+    local mem_db="$fresh_home/.claude/pd/memory/memory.db"
     if [[ ! -f "$mem_db" ]]; then
         errors+="memory.db not created; "
     else
@@ -768,7 +768,7 @@ FAKE
     fi
 
     # Verify entities.db exists and has entries
-    local ent_db="$fresh_home/.claude/iflow/entities/entities.db"
+    local ent_db="$fresh_home/.claude/pd/entities/entities.db"
     if [[ ! -f "$ent_db" ]]; then
         errors+="entities.db not created; "
     else
@@ -780,12 +780,12 @@ FAKE
     fi
 
     # Verify markdown files present
-    if [[ ! -f "$fresh_home/.claude/iflow/memory/patterns.md" ]]; then
+    if [[ ! -f "$fresh_home/.claude/pd/memory/patterns.md" ]]; then
         errors+="patterns.md not copied; "
     fi
 
     # Verify projects.txt
-    if [[ ! -f "$fresh_home/.claude/iflow/projects.txt" ]]; then
+    if [[ ! -f "$fresh_home/.claude/pd/projects.txt" ]]; then
         errors+="projects.txt not copied; "
     fi
 
@@ -816,9 +816,9 @@ test_import_merge_overlapping() {
 
     # Step 2: Create destination with partially overlapping state
     local merge_home="$tmpdir/merge_home"
-    local iflow_dir="$merge_home/.claude/iflow"
-    local memory_dir="$iflow_dir/memory"
-    local entity_dir="$iflow_dir/entities"
+    local pd_dir="$merge_home/.claude/pd"
+    local memory_dir="$pd_dir/memory"
+    local entity_dir="$pd_dir/entities"
     mkdir -p "$memory_dir" "$entity_dir"
 
     # Create memory.db with 1 overlapping entry (hash1) and 1 unique entry (hash-local)
@@ -987,7 +987,7 @@ test_active_session_import_exits_2_with_message() {
 
     # Create fresh home for import
     local fresh_home="$tmpdir/fresh_home"
-    mkdir -p "$fresh_home/.claude/iflow/memory" "$fresh_home/.claude/iflow/entities"
+    mkdir -p "$fresh_home/.claude/pd/memory" "$fresh_home/.claude/pd/entities"
 
     # Create fake pgrep that returns 0 (active session)
     local bin_dir="$tmpdir/bin"
@@ -1073,7 +1073,7 @@ test_checksum_mismatch_exits_3() {
     tar -xzf "$bundle_path" -C "$corrupt_dir"
 
     local inner_dir
-    inner_dir="$(ls -d "$corrupt_dir"/iflow-export-* 2>/dev/null | head -1)"
+    inner_dir="$(ls -d "$corrupt_dir"/pd-export-* 2>/dev/null | head -1)"
     if [[ -z "$inner_dir" ]]; then
         log_fail "No inner dir found in bundle"
         return
@@ -1088,7 +1088,7 @@ test_checksum_mismatch_exits_3() {
 
     # Create fresh home and fake pgrep
     local fresh_home="$tmpdir/fresh_home"
-    mkdir -p "$fresh_home/.claude/iflow/memory" "$fresh_home/.claude/iflow/entities"
+    mkdir -p "$fresh_home/.claude/pd/memory" "$fresh_home/.claude/pd/entities"
     local bin_dir="$tmpdir/bin"
     mkdir -p "$bin_dir"
     cat > "$bin_dir/pgrep" <<'FAKE'
@@ -1138,7 +1138,7 @@ test_schema_version_too_new_exits_1() {
     tar -xzf "$bundle_path" -C "$mod_dir"
 
     local inner_dir
-    inner_dir="$(ls -d "$mod_dir"/iflow-export-* 2>/dev/null | head -1)"
+    inner_dir="$(ls -d "$mod_dir"/pd-export-* 2>/dev/null | head -1)"
     if [[ -z "$inner_dir" ]]; then
         log_fail "No inner dir found in bundle"
         return
@@ -1160,7 +1160,7 @@ with open('$inner_dir/manifest.json', 'w') as f:
 
     # Create fresh home and fake pgrep
     local fresh_home="$tmpdir/fresh_home"
-    mkdir -p "$fresh_home/.claude/iflow/memory" "$fresh_home/.claude/iflow/entities"
+    mkdir -p "$fresh_home/.claude/pd/memory" "$fresh_home/.claude/pd/entities"
     local bin_dir="$tmpdir/bin"
     mkdir -p "$bin_dir"
     cat > "$bin_dir/pgrep" <<'FAKE'
@@ -1189,15 +1189,15 @@ FAKE
 # --- 13.6a: No data to export (verify message) ---
 
 test_export_no_data_message() {
-    log_test "export with no data shows 'No iflow data found' message"
+    log_test "export with no data shows 'No pd data found' message"
 
     local tmpdir
     tmpdir="$(mktemp -d)"
     trap "rm -rf '$tmpdir'" RETURN
 
     local fake_home="$tmpdir/home"
-    mkdir -p "$fake_home/.claude/iflow/memory"
-    mkdir -p "$fake_home/.claude/iflow/entities"
+    mkdir -p "$fake_home/.claude/pd/memory"
+    mkdir -p "$fake_home/.claude/pd/entities"
 
     cat > "$tmpdir/pgrep" <<'FAKE'
 #!/usr/bin/env bash
@@ -1215,10 +1215,10 @@ FAKE
         return
     fi
 
-    if echo "$output" | grep -q "No iflow data found"; then
+    if echo "$output" | grep -q "No pd data found"; then
         log_pass
     else
-        log_fail "Expected 'No iflow data found' message, got: $output"
+        log_fail "Expected 'No pd data found' message, got: $output"
     fi
 }
 
@@ -1266,7 +1266,7 @@ test_disk_full_partial_failure() {
 
     # Create fresh home
     local fresh_home="$tmpdir/fresh_home"
-    mkdir -p "$fresh_home/.claude/iflow/memory" "$fresh_home/.claude/iflow/entities"
+    mkdir -p "$fresh_home/.claude/pd/memory" "$fresh_home/.claude/pd/entities"
 
     # Create a fake cp that succeeds first time (memory.db) but fails second time (entities.db)
     local mock_dir="$tmpdir/mockbin"
@@ -1329,13 +1329,13 @@ buf = io.BytesIO()
 with tarfile.open(fileobj=buf, mode='w:gz') as tar:
     # Add a normal manifest.json
     manifest = b'{\"schema_version\": 1, \"files\": {}}'
-    info = tarfile.TarInfo(name='iflow-export-evil/manifest.json')
+    info = tarfile.TarInfo(name='pd-export-evil/manifest.json')
     info.size = len(manifest)
     tar.addfile(info, io.BytesIO(manifest))
 
     # Add a traversal file
     evil_data = b'malicious content'
-    info = tarfile.TarInfo(name='iflow-export-evil/../../../tmp/evil-traversal-test')
+    info = tarfile.TarInfo(name='pd-export-evil/../../../tmp/evil-traversal-test')
     info.size = len(evil_data)
     tar.addfile(info, io.BytesIO(evil_data))
 

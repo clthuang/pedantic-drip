@@ -1,6 +1,6 @@
 # Improvement Items from ECC Comparison
 
-Source: Holistic comparison of iflow vs [everything-claude-code](https://github.com/affaan-m/everything-claude-code)
+Source: Holistic comparison of pd vs [everything-claude-code](https://github.com/affaan-m/everything-claude-code)
 Date: 2026-02-24
 
 ## Implementation Grouping
@@ -16,7 +16,7 @@ Date: 2026-02-24
 ## High Priority
 
 ### 1. Language-specific skills and agents
-**Gap:** ECC covers 6 languages (TypeScript, Python, Go, Java, C++, Swift) with dedicated patterns, testing, and reviewers. iflow is entirely language-agnostic.
+**Gap:** ECC covers 6 languages (TypeScript, Python, Go, Java, C++, Swift) with dedicated patterns, testing, and reviewers. pd is entirely language-agnostic.
 **ECC examples:** `golang-patterns`, `golang-testing`, `python-patterns`, `python-testing`, `go-reviewer`, `python-reviewer`
 **Potential:** Add at minimum: Python patterns, TypeScript/JavaScript patterns, Go patterns.
 **Status:** Not started
@@ -25,13 +25,13 @@ Date: 2026-02-24
 **Approach:**
 - Build an extensible language skill architecture; enable 3 initial profiles
 - Initial languages: SQL (`writing-sql`), DS-Python (`writing-ds-python` — exists, extend), Production-Python (`writing-production-python`)
-- Each language = a skill SKILL.md + optional rules file in `plugins/iflow/rules/`
+- Each language = a skill SKILL.md + optional rules file in `plugins/pd/rules/`
 - Session-start hook detects project type (marker files: `pyproject.toml`, `setup.py`, `*.sql`, `dbt_project.yml`) and injects relevant rules
-- Config override in `.claude/iflow.local.md`: `language_profiles: [sql, ds-python, production-python]`
+- Config override in `.claude/pd.local.md`: `language_profiles: [sql, ds-python, production-python]`
 - Adding a new language later = create skill + rules file + add marker detection (no architectural changes)
 
 ### 2. Code quality hooks (auto-format, type-check)
-**Gap:** ECC auto-runs Prettier on JS/TS edits and `tsc --noEmit` on TypeScript changes via PostToolUse hooks. iflow has zero code quality hooks.
+**Gap:** ECC auto-runs Prettier on JS/TS edits and `tsc --noEmit` on TypeScript changes via PostToolUse hooks. pd has zero code quality hooks.
 **ECC examples:** PostToolUse(Edit) -> Prettier format, TypeScript check, console.log warning
 **Potential:** Add PostToolUse hooks for auto-formatting and type-checking after file edits.
 **Status:** Not started
@@ -46,7 +46,7 @@ Date: 2026-02-24
 - Extensible: adding a new language = adding a detection + formatter case
 
 ### 3. Per-agent model selection
-**Gap:** ECC specifies `model: haiku` for quick agents and `model: opus` for complex ones. iflow dispatches all agents at the same model tier.
+**Gap:** ECC specifies `model: haiku` for quick agents and `model: opus` for complex ones. pd dispatches all agents at the same model tier.
 **ECC examples:** `architect.md` -> `model: opus`, exploration agents -> `model: haiku`
 **Potential:** Add model hints to agent frontmatter. Use haiku for exploration/search, sonnet for implementation, opus for architecture/security review.
 **Status:** Complete
@@ -73,20 +73,20 @@ Date: 2026-02-24
 ## Medium Priority
 
 ### 5. Example project configurations
-**Gap:** ECC provides 5 production-ready CLAUDE.md examples for different stacks (Next.js SaaS, Django API, Go microservice, Rust API). iflow's template is generic.
-**Potential:** Stack-specific templates that seed `.claude/iflow.local.md` with relevant language skills and rules.
+**Gap:** ECC provides 5 production-ready CLAUDE.md examples for different stacks (Next.js SaaS, Django API, Go microservice, Rust API). pd's template is generic.
+**Potential:** Stack-specific templates that seed `.claude/pd.local.md` with relevant language skills and rules.
 **Status:** Not started
 **Decision:** ACCEPT — starter templates for common project types
 **Feature:** D (Cross-Cutting Improvements)
 **Approach:**
-- Create templates in `plugins/iflow/templates/` for initially-supported project types
+- Create templates in `plugins/pd/templates/` for initially-supported project types
 - `config.python-api.local.md` — Production Python API defaults (language_profiles: [production-python])
 - `config.data-science.local.md` — Data science project defaults (language_profiles: [ds-python, sql])
 - `config.data-engineering.local.md` — Data engineering defaults (language_profiles: [production-python, sql])
 - Each template sets: relevant language profiles, domain advisors, review emphasis, project-type-specific settings
 
 ### 6. Automatic learning extraction at session end
-**Gap:** ECC's SessionEnd hook proposes learnings automatically. iflow requires explicit `/remember` or retrospective.
+**Gap:** ECC's SessionEnd hook proposes learnings automatically. pd requires explicit `/remember` or retrospective.
 **Potential:** A lightweight SessionEnd hook that captures obvious patterns to complement the existing memory system.
 **Status:** Not started
 **Decision:** ACCEPT — lightweight SessionEnd reminder
@@ -96,7 +96,7 @@ Date: 2026-02-24
 - No automatic extraction — just a prompt to the user
 
 ### 7. Framework-specific skills
-**Gap:** ECC has Django (4 skills), Spring Boot (4 skills). iflow has none.
+**Gap:** ECC has Django (4 skills), Spring Boot (4 skills). pd has none.
 **Potential:** Add reference knowledge skills for commonly-used frameworks.
 **Status:** Not started
 **Decision:** ACCEPT — aligned with initial language profiles
@@ -109,7 +109,7 @@ Date: 2026-02-24
 - Implement after Item 1's language skills are in place
 
 ### 8. Context window management
-**Gap:** ECC's "strategic compact" hook suggests `/compact` every ~50 tool calls. iflow has no context budget awareness.
+**Gap:** ECC's "strategic compact" hook suggests `/compact` every ~50 tool calls. pd has no context budget awareness.
 **Potential:** A PreToolUse hook that tracks tool call count and suggests compaction.
 **Status:** Not started
 **Decision:** ACCEPT — simple compaction tip in session-start context
@@ -119,13 +119,13 @@ Date: 2026-02-24
 - Lower-effort than ECC's tool-call-counting approach but still provides value
 
 ### 9. Dedicated rules directory
-**Gap:** ECC separates always-active coding standards (rules/) from skills. iflow puts everything in CLAUDE.md, skills, and commands.
+**Gap:** ECC separates always-active coding standards (rules/) from skills. pd puts everything in CLAUDE.md, skills, and commands.
 **Potential:** A `rules/` directory for always-active standards, reducing token overhead (rules load every session; skills load on demand).
 **Status:** Not started
 **Decision:** ACCEPT — merged into Item 1's architecture
 **Feature:** B (Language Ecosystem) — same implementation
 **Approach:**
-- Each language profile includes a rules file in `plugins/iflow/rules/`
+- Each language profile includes a rules file in `plugins/pd/rules/`
 - `rules/common.md` — language-agnostic standards
 - `rules/sql.md`, `rules/ds-python.md`, `rules/production-python.md` — language-specific
 - Session-start hook detects project language and injects relevant rules into context
@@ -133,19 +133,19 @@ Date: 2026-02-24
 ## Low Priority
 
 ### 10. Security scanning tool
-**Gap:** ECC's AgentShield has 102 static analysis rules. iflow has a single security-reviewer agent.
+**Gap:** ECC's AgentShield has 102 static analysis rules. pd has a single security-reviewer agent.
 **Potential:** Add static rule-based scanning alongside the agent-based approach.
 **Status:** Not started
 **Decision:** BACKLOG — significant effort, better as own feature with proper design
 
 ### 11. Cross-platform hooks (Node.js)
-**Gap:** ECC uses Node.js for cross-platform compatibility. iflow hooks are Bash-only.
-**Potential:** Only matters if iflow needs Windows support.
+**Gap:** ECC uses Node.js for cross-platform compatibility. pd hooks are Bash-only.
+**Potential:** Only matters if pd needs Windows support.
 **Status:** Not started
 **Decision:** BACKLOG — scope properly as own feature when Windows users adopt the plugin
 
 ### 12. Multi-model orchestration
-**Gap:** ECC routes to Codex and Gemini alongside Claude. iflow is Claude-only.
+**Gap:** ECC routes to Codex and Gemini alongside Claude. pd is Claude-only.
 **Potential:** Multi-model routing adds complexity for marginal benefit.
 **Status:** Not started
 **Decision:** BACKLOG — significant complexity, needs own design exploration

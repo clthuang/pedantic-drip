@@ -104,7 +104,7 @@ def _dry_run(db_path: str) -> None:
 
 
 def main() -> None:
-    default_db = os.path.expanduser("~/.claude/iflow/entities/entities.db")
+    default_db = os.path.expanduser("~/.claude/pd/entities/entities.db")
     parser = argparse.ArgumentParser(
         description="Fix stale kanban_column values for feature workflow_phases."
     )

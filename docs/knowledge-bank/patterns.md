@@ -61,12 +61,12 @@ Hook JSON output must use correct field names for each hook type.
 ### Pattern: Retroactive Feature Creation as Recovery
 When work is done outside the workflow, recover by creating feature artifacts after the fact.
 - Used in: Feature #008
-- Steps: Create folder + .meta.json, write brainstorm.md/spec.md, create branch, commit, run /iflow:finish
+- Steps: Create folder + .meta.json, write brainstorm.md/spec.md, create branch, commit, run /pd:finish
 - Benefit: Preserves audit trail without discarding completed work
 - Trade-off: Artifacts are reconstructed, not organic; less detailed than if created during work
 
 ### Pattern: Two-Plugin Coexistence
-Maintain separate dev (iflow/) and production (iflow/) plugin directories.
+Maintain separate dev (pd/) and production (pd/) plugin directories.
 - Used in: Feature #012
 - Benefit: Clean releases via copy, no branch-based transformations
 - Protection: Pre-commit hook blocks direct commits to production plugin
@@ -208,7 +208,7 @@ When merging documentation improvements into CLAUDE.md, cross-examine candidate 
 - Observation count: 1
 
 ### Pattern: Directive Specificity via Tooling References
-When writing behavioral guidance in documentation, include explicit tool/command references (e.g., `/iflow:remember`, `systematic-debugging` skill) instead of abstract principles. Concrete references reduce interpretation variance.
+When writing behavioral guidance in documentation, include explicit tool/command references (e.g., `/pd:remember`, `systematic-debugging` skill) instead of abstract principles. Concrete references reduce interpretation variance.
 - Observed in: CLAUDE.md Working Standards section
 - Confidence: medium
 - Last observed: 2026-02-22
@@ -416,7 +416,7 @@ When a manual verification AC exits specify with an unresolved formalization con
 
 ### Pattern: Live-State Verification Evidence Resolves Static Review Stalls in One Iteration
 When a static code reviewer cannot confirm that a live-state gate task was executed, presenting captured evidence (exact command, stdout output, debug-stderr content, restore confirmation) resolves the stall in one iteration without code changes.
-- Observed in: Feature 014, implement iters 1-2 — Task 3.1 evidence (stdout "Invoke /iflow:design", empty debug stderr, restored .meta.json) turned warning into approval
+- Observed in: Feature 014, implement iters 1-2 — Task 3.1 evidence (stdout "Invoke /pd:design", empty debug stderr, restored .meta.json) turned warning into approval
 - Confidence: high
 - Keywords: ["manual-verification", "evidence-provision", "implement-review", "static-review-limit", "gate-task"]
 - Last observed: Feature 014
@@ -487,7 +487,7 @@ When a planned feature's scope is a strict subset of another feature already in 
 - Observation count: 1
 
 ### Pattern: Establish Python Import Root at Spec Time for New Packages
-When a feature introduces a new Python package under plugins/iflow/, annotate all FR import examples with the verified import root at spec time. Confirm which directory sits on PYTHONPATH (`plugins/iflow/` itself, not its parent) and use that as the import base. Add conftest.py with sys.path insertion as a mandatory task 1.x whenever a new package with tests is introduced.
+When a feature introduces a new Python package under plugins/pd/, annotate all FR import examples with the verified import root at spec time. Confirm which directory sits on PYTHONPATH (`plugins/pd/` itself, not its parent) and use that as the import base. Add conftest.py with sys.path insertion as a mandatory task 1.x whenever a new package with tests is introduced.
 - Observed in: Feature 018, multi-phase — import path blocker recurred at design, plan iter 1, task iter 2, and task iter 5; same root cause crossed 4 phase boundaries before conftest.py solution was fully specified
 - Confidence: high
 - Keywords: ["python-imports", "pythonpath", "package-structure", "conftest", "sys-path", "new-package", "spec-annotation"]

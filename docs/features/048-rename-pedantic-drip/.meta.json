@@ -1,0 +1,34 @@
+{
+  "id": "048",
+  "slug": "rename-pedantic-drip",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-03-19T04:42:19.144505+00:00",
+  "branch": "feature/048-rename-pedantic-drip",
+  "backlog_source": "00020",
+  "lastCompletedPhase": "create-tasks",
+  "phases": {
+    "brainstorm": {
+      "started": "2026-03-19T04:42:19.144450+00:00"
+    },
+    "specify": {
+      "started": "2026-03-19T04:43:01.480938+00:00",
+      "completed": "2026-03-19T04:52:04.933310+00:00"
+    },
+    "design": {
+      "started": "2026-03-19T04:52:04.933310+00:00",
+      "completed": "2026-03-19T05:34:43.552780+00:00"
+    },
+    "create-plan": {
+      "started": "2026-03-19T05:34:43.552780+00:00",
+      "completed": "2026-03-19T06:08:43.234788+00:00"
+    },
+    "create-tasks": {
+      "started": "2026-03-19T06:08:43.234788+00:00",
+      "completed": "2026-03-19T06:22:32.832632+00:00"
+    },
+    "implement": {
+      "started": "2026-03-19T06:22:32.832632+00:00"
+    }
+  }
+}

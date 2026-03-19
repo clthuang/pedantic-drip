@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Release script for iflow plugin (single-plugin model)
+# Release script for pd plugin (single-plugin model)
 # Bumps version, merges develop → main, tags release
 
 set -euo pipefail
@@ -21,7 +21,7 @@ success() { echo -e "${GREEN}$1${NC}"; }
 warn() { echo -e "${YELLOW}$1${NC}"; }
 
 # File paths
-PLUGIN_JSON="plugins/iflow/.claude-plugin/plugin.json"
+PLUGIN_JSON="plugins/pd/.claude-plugin/plugin.json"
 MARKETPLACE_JSON=".claude-plugin/marketplace.json"
 
 #############################################
@@ -47,8 +47,8 @@ check_preconditions() {
     fi
 
     # Plugin directory must exist
-    if [[ ! -d "plugins/iflow" ]]; then
-        error "plugins/iflow directory not found."
+    if [[ ! -d "plugins/pd" ]]; then
+        error "plugins/pd directory not found."
     fi
 
     success "Preconditions passed"
@@ -191,14 +191,14 @@ with open('$MARKETPLACE_JSON', 'r') as f:
     data = json.load(f)
 
 for plugin in data['plugins']:
-    if plugin['name'] == 'iflow':
+    if plugin['name'] == 'pd':
         plugin['version'] = '$new_version'
 
 with open('$MARKETPLACE_JSON', 'w') as f:
     json.dump(data, f, indent=2)
     f.write('\n')
 "
-    success "Updated $MARKETPLACE_JSON: iflow=$new_version"
+    success "Updated $MARKETPLACE_JSON: pd=$new_version"
 }
 
 #############################################
@@ -278,7 +278,7 @@ with open('$MARKETPLACE_JSON', 'r') as f:
     data = json.load(f)
 
 for plugin in data['plugins']:
-    if plugin['name'] == 'iflow':
+    if plugin['name'] == 'pd':
         plugin['version'] = '${next_dev_version}'
 
 with open('$MARKETPLACE_JSON', 'w') as f:
@@ -297,7 +297,7 @@ with open('$MARKETPLACE_JSON', 'w') as f:
 #############################################
 
 main() {
-    echo "=== iflow Plugin Release Script ==="
+    echo "=== pd Plugin Release Script ==="
     echo ""
 
     # Check preconditions
@@ -363,8 +363,8 @@ main() {
 
     echo ""
     success "=== Released v$new_version ==="
-    echo "iflow plugin is now at v$new_version on main"
-    echo "iflow plugin is now at v${new_version}-dev on develop"
+    echo "pd plugin is now at v$new_version on main"
+    echo "pd plugin is now at v${new_version}-dev on develop"
 }
 
 main "$@"

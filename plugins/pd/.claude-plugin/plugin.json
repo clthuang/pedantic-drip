@@ -1,0 +1,31 @@
+{
+  "name": "pd",
+  "version": "4.13.13",
+  "description": "Structured feature development workflow with skills, agents, and commands for methodical development from ideation to implementation",
+  "author": {
+    "name": "clthuang"
+  },
+  "license": "MIT",
+  "keywords": [
+    "workflow",
+    "feature-development",
+    "tdd",
+    "debugging",
+    "planning",
+    "implementation"
+  ],
+  "mcpServers": {
+    "memory-server": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/mcp/run-memory-server.sh",
+      "args": []
+    },
+    "entity-registry": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/mcp/run-entity-server.sh",
+      "args": []
+    },
+    "workflow-engine": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/mcp/run-workflow-server.sh",
+      "args": []
+    }
+  }
+}
