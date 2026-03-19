@@ -17,7 +17,7 @@ Display a workspace dashboard with current context, open features, brainstorms, 
 mcp_available = null  # tri-state: null (untested), true, false
 
 # First MCP call determines data source for the entire invocation.
-# Call export_entities(entity_type="feature") as the probe.
+# Call export_entities(entity_type="feature", fields="type_id,entity_id,status,metadata", include_lineage=false) as the probe.
 # If it succeeds → mcp_available = true, use entity registry for all sections.
 # If it fails → mcp_available = false, fall through to filesystem scanning.
 ```
@@ -75,7 +75,7 @@ Gather via git and file inspection:
 
 ### MCP Path (mcp_available == true)
 
-Use the feature entities already retrieved from `export_entities(entity_type="feature")`.
+Use the feature entities already retrieved from `export_entities(...)` (trimmed fields: type_id, entity_id, status, metadata).
 
 1. Filter entities where `metadata.project_id` is present and non-null
 2. Group by `metadata.project_id`
@@ -104,7 +104,7 @@ If no project-linked features, omit this section entirely.
 
 ### MCP Path (mcp_available == true)
 
-Use the feature entities already retrieved from `export_entities(entity_type="feature")`.
+Use the feature entities already retrieved from `export_entities(...)` (trimmed fields: type_id, entity_id, status, metadata).
 
 1. Filter: exclude entities where `status == "completed"` or `status == "abandoned"` (client-side)
 2. Filter: exclude entities where `metadata.project_id` is present and non-null (shown in Section 1.5)
@@ -240,7 +240,7 @@ Tip: Run /iflow:create-feature or /iflow:brainstorm to start
 
 ```
 1. Section 1 (Current Context): git commands — always filesystem
-2. Probe MCP: call export_entities(entity_type="feature")
+2. Probe MCP: call export_entities(entity_type="feature", fields="type_id,entity_id,status,metadata", include_lineage=false)
    → success: mcp_available = true, cache result as feature_entities
    → failure: mcp_available = false
 3. Section 1.5 (Project Features):
