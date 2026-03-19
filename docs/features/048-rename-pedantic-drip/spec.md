@@ -137,7 +137,7 @@ The repository is named `my-ai-setup` (a generic working title) and the plugin i
 - **AC-8**: `gh repo view` shows repository name `pedantic-drip`
 - **AC-9**: `grep -c 'iflow' CLAUDE.md` returns 0
 - **AC-10**: Git remote URL points to `pedantic-drip` repository
-- **AC-11**: All JSON files (plugin.json, marketplace.json, hooks.json, .mcp.json) parse without errors
+- **AC-11**: All modified JSON files (plugin.json, marketplace.json, hooks.json) parse without errors via `python3 -m json.tool`
 - **AC-12**: `grep -ri 'iflow' scripts/` returns zero results (excluding `__pycache__/`)
 
 ## Risk
