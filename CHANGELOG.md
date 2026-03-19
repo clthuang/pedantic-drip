@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.13.16] - 2026-03-19
+
+### Added
+- Entity delete API (`delete_entity` MCP tool) for removing entities from the registry
+
+### Changed
+- Completed plugin rename from `iflow` to `pd` — all remaining stale references resolved
+
 ## [4.13.15] - 2026-03-19
 
 ### Fixed

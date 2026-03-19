@@ -579,3 +579,17 @@ When writing bash scripts that must run on macOS, assume bash 3.2 (Apple ships t
 - Keywords: ["bash", "macos", "portability", "bash-3-2", "associative-arrays", "flock", "mkdir-lock", "find-mmin"]
 - Last observed: Feature 039
 - Observation count: 1
+
+### Budget 10-15% for Rename Straggler Fixes
+For rename-class features, expect a follow-up straggler-fix pass — budget 10-15% extra implementation time for the sweep-and-fix cycle. Automated find-replace tools operate on patterns but miss context-dependent references (URLs, encoded strings, documentation prose). The straggler pass is a predictable phase of rename work.
+- Source: Feature 048-rename-pedantic-drip — 3 commits where the third was entirely straggler fixes across 320 changed files
+- Confidence: high
+- Last observed: Feature #048
+- Observation count: 1
+
+### Recreate Python Venvs After Directory Renames
+Recreate Python venvs after directory renames — venvs contain hardcoded absolute paths in shebangs and pyvenv.cfg that break silently. Moving the parent directory makes the venv appear functional (directory exists) but breaks all tool invocations with cryptic 'interpreter not found' errors.
+- Source: Feature 048-rename-pedantic-drip — venv recreation was an explicit task after plugins/iflow moved to plugins/pd
+- Confidence: high
+- Last observed: Feature #048
+- Observation count: 1

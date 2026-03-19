@@ -564,3 +564,12 @@ Defining per-consumer dependency subsets for a shared resource (venv, DB schema,
 - Keywords: ["shared-resource", "dependency-subset", "bootstrap", "venv", "canonical-list", "partial-state"]
 - Last observed: Feature 039
 - Observation count: 1
+
+### Anti-Pattern: Skipping Stale-Reference Sweep After Bulk Rename
+Declaring a bulk rename complete after the first pass without running a comprehensive stale-reference sweep. Bulk renames via sed/find-replace inevitably miss references in comments, strings, URLs, encoded paths, and generated files.
+- Observed in: Feature 048-rename-pedantic-drip, implementation — required follow-up commit (0158219) to fix remaining stale iflow/my-ai-setup references
+- Cost: Extra commit and review cycle for straggler references
+- Instead: Run a comprehensive grep for ALL old names before declaring rename complete
+- Confidence: high
+- Last observed: Feature #048
+- Observation count: 1
