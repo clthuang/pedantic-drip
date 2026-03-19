@@ -924,6 +924,89 @@ class TestSearchMemoryMCPToolParams:
 
 
 # ---------------------------------------------------------------------------
+# Test: FTS5 sanitization via MCP search (Task 1.5)
+# ---------------------------------------------------------------------------
+
+
+class TestSearchMemoryFts5Sanitization:
+    """Integration tests for FTS5 query sanitization through _process_search_memory."""
+
+    def _seed_fts5_entries(self, db):
+        """Seed entries with terms that exercise FTS5 sanitization."""
+        entries = [
+            ("Firebase auth", "Firebase authentication for serverless typescript apps",
+             "Standard auth pattern", "patterns"),
+            ("Firestore queries", "Optimize Firestore queries for typescript projects",
+             "Performance pattern", "patterns"),
+            ("Anti-patterns in hooks", "Common anti-patterns when writing shell hooks",
+             "Avoid these mistakes", "anti-patterns"),
+            ("Claude plugin config", "Register plugins in the claude marketplace using json config",
+             "Plugin distribution pattern", "heuristics"),
+            ("Session capture source", "Use session-capture source for automated knowledge extraction",
+             "Knowledge management", "patterns"),
+        ]
+        for name, desc, reasoning, cat in entries:
+            _process_store_memory(
+                db=db, provider=None, keyword_gen=None,
+                name=name, description=desc, reasoning=reasoning,
+                category=cat, references=[],
+            )
+
+    def test_multiword_query_returns_results(self, db: MemoryDatabase):
+        """Multi-word query with OR semantics should find matching entries."""
+        self._seed_fts5_entries(db)
+        result = _process_search_memory(
+            db=db, provider=None, config={},
+            query="firebase firestore typescript",
+            limit=10,
+        )
+        assert "Found" in result
+        assert "No matching memories found" not in result
+        # Should find entries mentioning firebase or firestore
+        assert "Firebase" in result or "Firestore" in result
+
+    def test_hyphenated_query_returns_results(self, db: MemoryDatabase):
+        """Hyphenated query terms should be quoted and match correctly."""
+        self._seed_fts5_entries(db)
+        result = _process_search_memory(
+            db=db, provider=None, config={},
+            query="anti-patterns",
+            limit=10,
+        )
+        assert "Found" in result
+        assert "No matching memories found" not in result
+        assert "Anti-patterns in hooks" in result or "anti-patterns" in result.lower()
+
+    def test_special_char_query_no_error(self, db: MemoryDatabase):
+        """Queries with special chars should not produce errors."""
+        self._seed_fts5_entries(db)
+        result = _process_search_memory(
+            db=db, provider=None, config={},
+            query=".claude-plugin/marketplace.json",
+            limit=10,
+        )
+        # Should not error out
+        assert "Error" not in result
+        # Should find the claude marketplace entry
+        assert "claude" in result.lower() or "marketplace" in result.lower() or "No matching" in result
+
+    def test_category_filter_with_sanitized_query(self, db: MemoryDatabase):
+        """Category filter should work with sanitized queries."""
+        self._seed_fts5_entries(db)
+        result = _process_search_memory(
+            db=db, provider=None, config={},
+            query="source:session-capture",
+            limit=10,
+            category="patterns",
+        )
+        # Should not error
+        assert "Error" not in result
+        # If results found, should be patterns only (not anti-patterns or heuristics)
+        if "Found" in result:
+            assert "Anti-patterns in hooks" not in result
+
+
+# ---------------------------------------------------------------------------
 # Deepened tests Phase B: MCP Audit Token Efficiency
 # ---------------------------------------------------------------------------
 

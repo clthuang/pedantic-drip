@@ -2,9 +2,45 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import sqlite3
 import sys
 from typing import Callable
+
+
+# FTS5 metacharacters to strip (everything except intra-word hyphens).
+_FTS5_STRIP_RE = re.compile(r'[./:>#*^~()+"]')
+
+
+def _sanitize_fts5_query(raw: str) -> str:
+    """Sanitize a raw query string for safe FTS5 MATCH usage.
+
+    Pipeline:
+    1. Strip FTS5 metacharacters (. / : # > * ^ ~ ( ) + ")
+    2. Tokenize on whitespace
+    3. Drop empty tokens and standalone-'-' tokens
+    4. Double-quote tokens containing hyphens (phrase match for adjacency)
+    5. Join with OR
+    6. Return empty string if no valid tokens remain
+
+    Examples:
+        >>> _sanitize_fts5_query("firebase firestore typescript")
+        'firebase OR firestore OR typescript'
+        >>> _sanitize_fts5_query("anti-patterns")
+        '"anti-patterns"'
+        >>> _sanitize_fts5_query("source:session-capture")
+        'source OR "session-capture"'
+        >>> _sanitize_fts5_query("...")
+        ''
+    """
+    # Step 1: strip metacharacters
+    cleaned = _FTS5_STRIP_RE.sub(" ", raw)
+    # Step 2-3: tokenize, drop empty and standalone-'-' tokens
+    tokens = [t for t in cleaned.split() if t and t != "-"]
+    # Step 4: quote hyphenated tokens
+    quoted = [f'"{t}"' if "-" in t else t for t in tokens]
+    # Step 5-6: join with OR or return empty
+    return " OR ".join(quoted)
 
 try:
     import numpy as np
@@ -412,6 +448,10 @@ class MemoryDatabase:
         if not self._fts5_available:
             return []
 
+        sanitized = _sanitize_fts5_query(query)
+        if not sanitized:
+            return []
+
         try:
             cur = self._conn.execute(
                 "SELECT e.id, -rank AS score "
@@ -420,11 +460,14 @@ class MemoryDatabase:
                 "WHERE entries_fts MATCH ? "
                 "ORDER BY score DESC "
                 "LIMIT ?",
-                (query, limit),
+                (sanitized, limit),
             )
             return [(row[0], float(row[1])) for row in cur.fetchall()]
-        except sqlite3.OperationalError:
-            # FTS5 MATCH syntax error from special characters in query
+        except sqlite3.OperationalError as e:
+            print(
+                f"semantic_memory: FTS5 error for query {query!r}: {e}",
+                file=sys.stderr,
+            )
             return []
 
     # ------------------------------------------------------------------
