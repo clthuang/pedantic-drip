@@ -17,7 +17,7 @@
 - **Depends on:** Task 1.1
 
 ### Task 2.2: Fix remaining iflow references
-- **Implementation:** Run `grep -ri 'iflow' plugins/pd/ scripts/ validate.sh README.md README_FOR_DEV.md CLAUDE.md .claude/ .claude-plugin/ docs/dev_guides/ docs/backlog.md --include='*.md' --include='*.py' --include='*.sh' --include='*.json' --exclude-dir=__pycache__ --exclude-dir=.venv`. For each match, apply targeted fix. Repeat until zero results.
+- **Implementation:** Run `grep -ri 'iflow' plugins/pd/ scripts/ validate.sh README.md README_FOR_DEV.md CLAUDE.md .claude/ .claude-plugin/ docs/dev_guides/ docs/backlog.md docs/ecc-comparison-improvements.md docs/pd-audit-findings.md --include='*.md' --include='*.py' --include='*.sh' --include='*.json' --exclude-dir=__pycache__ --exclude-dir=.venv`. For each match, apply targeted fix. Repeat until zero results.
 - **Done when:** Grep returns zero results (AC-4, AC-9, AC-12)
 - **Depends on:** Task 2.1
 
