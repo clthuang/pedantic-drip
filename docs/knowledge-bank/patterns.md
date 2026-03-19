@@ -573,3 +573,17 @@ When a bash test suite uses subshells for test isolation, use file-based counter
 - Keywords: ["bash-testing", "subshell", "test-counter", "file-based-counter", "silent-failure"]
 - Last observed: Feature 039
 - Observation count: 1
+
+### Pattern: Ordered Replacement Rules for Bulk Renames
+Use ordered replacement rules for bulk renames to prevent collision (e.g., rename longer/more-specific strings before shorter/substring matches). Without ordering, a rename from `iflow_artifacts` to `pd_artifacts` followed by `iflow` to `pd` would double-replace, producing corrupted output.
+- Observed in: Feature 048-rename-pedantic-drip, design phase — 10 ordered replacement rules prevented substring collision
+- Confidence: high
+- Last observed: Feature #048
+- Observation count: 1
+
+### Pattern: Migration Script for Config/Path Renames
+Include a migration script when renaming configs or paths that external users or other projects reference. Even in private tooling used across multiple projects, without a migration script each project would need manual intervention.
+- Observed in: Feature 048-rename-pedantic-drip, implementation — migrate-from-iflow.sh created for existing users
+- Confidence: high
+- Last observed: Feature #048
+- Observation count: 1
