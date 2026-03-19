@@ -48,7 +48,7 @@ The entity registry (`EntityDatabase`) and knowledge bank (`MemoryDatabase`) bot
 - **R3.2**: Add `--entry-id` argument. Required when `--action delete`.
 - **R3.3**: When `--action delete`: call `db.delete_entry(entry_id)`, print `Deleted memory entry: {entry_id}`
 - **R3.4**: Exit 1 with error message to stderr if entry not found (ValueError)
-- **R3.5**: If `--action delete` without `--entry-id`: argparse exits with code 2 and prints usage to stderr
+- **R3.5**: If `--action delete` without `--entry-id`: post-parse check (`if args.action == "delete" and not args.entry_id: parser.error("--entry-id required for delete")`) — `parser.error()` exits with code 2 and prints usage to stderr
 
 ### R4: MCP delete_entity tool
 
@@ -78,3 +78,4 @@ The entity registry (`EntityDatabase`) and knowledge bank (`MemoryDatabase`) bot
 - **AC-10**: MCP `delete_entity(type_id="feature:001-test")` returns success JSON
 - **AC-11**: MCP `delete_memory(entry_id="test")` returns success JSON
 - **AC-12**: Given an entity exists, when `delete_entity` is called and an error occurs mid-transaction (e.g., mock `self._conn.execute` to raise after the workflow_phases DELETE but before the entities DELETE), then the entity, FTS entry, and workflow_phases row all remain intact (full rollback).
+- **AC-13**: Given entity `feature:002-test` exists with NO workflow_phases row, when `delete_entity("feature:002-test")` is called, then entity and FTS entry are removed and no error is raised.
