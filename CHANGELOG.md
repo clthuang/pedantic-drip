@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `delete_entity` method on EntityDatabase — deletes entity, FTS index, and workflow_phases in a single atomic transaction
+- `delete_entry` method on MemoryDatabase — deletes memory entry (FTS auto-cleaned by trigger)
+- `--action delete --entry-id` CLI option for semantic memory writer
+- `delete_entity` MCP tool on entity-registry server
+- `delete_memory` MCP tool on memory server
+
+### Changed
+- `show-status` MCP probe now uses trimmed fields (`type_id,entity_id,status,metadata`) to reduce token usage
+
 ## [4.13.11] - 2026-03-19
 
 ### Changed
