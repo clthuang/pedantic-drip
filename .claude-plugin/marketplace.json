@@ -1,6 +1,6 @@
 {
-  "name": "my-local-plugins",
-  "description": "Personal local plugins marketplace (development)",
+  "name": "pedantic-drip-marketplace",
+  "description": "Pedantic Drip plugin marketplace",
   "owner": {
     "name": "clthuang"
   },
