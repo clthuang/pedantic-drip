@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.13.14] - 2026-03-19
+
 ### Fixed
 - Memory search (`search_memory` MCP tool) returning no results for all queries — FTS5 query sanitization now uses OR semantics, quotes hyphenated terms, and strips metacharacters
 - FTS5 `OperationalError` silently swallowed — now logged to stderr with query context
