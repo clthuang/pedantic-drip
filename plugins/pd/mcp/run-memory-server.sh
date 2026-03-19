@@ -28,8 +28,13 @@ source "$SCRIPT_DIR/bootstrap-venv.sh"
 bootstrap_venv "$VENV_DIR" "memory-server"
 
 # --- Optional embedding SDK (R6) ---
-# MEMORY_EMBEDDING_PROVIDER may come from .env or MCP server env config
+# MEMORY_EMBEDDING_PROVIDER may come from .env, shell env, or .claude/pd.local.md
 _PROVIDER="${MEMORY_EMBEDDING_PROVIDER:-}"
+if [ -z "$_PROVIDER" ] && [ -f ".claude/pd.local.md" ]; then
+    _PROVIDER=$(grep -E "^memory_embedding_provider:" .claude/pd.local.md 2>/dev/null | head -1 | sed 's/^[^:]*: *//' | tr -d '[:space:]')
+fi
+# Default to gemini (matches Python config.py DEFAULTS)
+_PROVIDER="${_PROVIDER:-gemini}"
 if [ -n "$_PROVIDER" ]; then
     case "$_PROVIDER" in
         gemini)  _PKG="google-genai>=1.0,<2"; _IMPORT="google.genai" ;;
