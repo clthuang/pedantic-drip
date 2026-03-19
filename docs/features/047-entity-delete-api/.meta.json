@@ -1,0 +1,26 @@
+{
+  "id": "047",
+  "slug": "entity-delete-api",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-03-19T04:00:13.431773+00:00",
+  "branch": "feature/047-entity-delete-api",
+  "lastCompletedPhase": "implement",
+  "phases": {
+    "brainstorm": {
+      "started": "2026-03-19T04:00:13.431716+00:00"
+    },
+    "specify": {
+      "started": "2026-03-19T04:00:38.877385+00:00"
+    },
+    "create-tasks": {
+      "started": "2026-03-19T04:19:41.248308+00:00"
+    },
+    "implement": {
+      "started": "2026-03-19T04:22:36.990431+00:00"
+    },
+    "finish": {
+      "started": "2026-03-19T04:33:58.893234+00:00"
+    }
+  }
+}

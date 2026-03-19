@@ -986,3 +986,59 @@ class TestSearchMemoryCategoryFilterBeforeRankingDeepened:
         assert "Found 3" in result, (
             "Pre-ranking filter should provide enough candidates for limit=3"
         )
+
+
+# ---------------------------------------------------------------------------
+# Delete memory MCP tests (feature 047)
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteMemoryMCP:
+    """Tests for MCP delete_memory tool."""
+
+    def test_mcp_delete_memory_success(self, db: MemoryDatabase):
+        """AC-11: delete_memory returns success JSON."""
+        import asyncio
+        import memory_server
+
+        # Store an entry first
+        entry = {
+            "id": "mcp-del-test",
+            "name": "MCP Delete Test",
+            "description": "To be deleted via MCP",
+            "category": "patterns",
+            "source": "manual",
+            "keywords": "[]",
+            "source_project": "/tmp",
+            "source_hash": "0000",
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+        }
+        db.upsert_entry(entry)
+        assert db.get_entry("mcp-del-test") is not None
+
+        # Set module global
+        old_db = memory_server._db
+        memory_server._db = db
+        try:
+            result = asyncio.run(memory_server.delete_memory(entry_id="mcp-del-test"))
+            data = json.loads(result)
+            assert data["result"] == "Deleted memory: mcp-del-test"
+            assert db.get_entry("mcp-del-test") is None
+        finally:
+            memory_server._db = old_db
+
+    def test_mcp_delete_memory_not_found(self, db: MemoryDatabase):
+        """delete_memory returns error JSON when entry not found."""
+        import asyncio
+        import memory_server
+
+        old_db = memory_server._db
+        memory_server._db = db
+        try:
+            result = asyncio.run(memory_server.delete_memory(entry_id="nonexistent"))
+            data = json.loads(result)
+            assert "error" in data
+            assert "not found" in data["error"].lower()
+        finally:
+            memory_server._db = old_db

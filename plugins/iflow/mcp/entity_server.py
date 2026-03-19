@@ -321,6 +321,26 @@ async def export_entities(
 
 
 @mcp.tool()
+async def delete_entity(type_id: str) -> str:
+    """Delete an entity and all associated data (FTS, workflow_phases).
+
+    Parameters
+    ----------
+    type_id:
+        Entity to delete (e.g. 'feature:001-test').
+
+    Returns confirmation JSON or error JSON.
+    """
+    if _db is None:
+        return "Error: database not initialized (server not started)"
+    try:
+        _db.delete_entity(type_id)
+        return json.dumps({"result": f"Deleted: {type_id}"})
+    except Exception as exc:
+        return json.dumps({"error": str(exc)})
+
+
+@mcp.tool()
 async def search_entities(
     query: str,
     entity_type: str | None = None,

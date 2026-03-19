@@ -376,6 +376,26 @@ async def search_memory(
     )
 
 
+@mcp.tool()
+async def delete_memory(entry_id: str) -> str:
+    """Delete a memory entry by ID.
+
+    Parameters
+    ----------
+    entry_id:
+        The entry's unique identifier.
+
+    Returns confirmation JSON or error JSON.
+    """
+    if _db is None:
+        return "Error: database not initialized (server not started)"
+    try:
+        _db.delete_entry(entry_id)
+        return json.dumps({"result": f"Deleted memory: {entry_id}"})
+    except Exception as exc:
+        return json.dumps({"error": str(exc)})
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------

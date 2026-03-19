@@ -342,6 +342,34 @@ class MemoryDatabase:
             return None
         return dict(row)
 
+    def delete_entry(self, entry_id: str) -> None:
+        """Delete a memory entry. FTS cleaned by trigger.
+
+        Parameters
+        ----------
+        entry_id : str
+            The entry's unique identifier.
+
+        Raises
+        ------
+        ValueError
+            If entry does not exist.
+        """
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = self._conn.execute(
+                "SELECT 1 FROM entries WHERE id = ?", (entry_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"Memory entry not found: {entry_id}")
+
+            self._conn.execute("DELETE FROM entries WHERE id = ?", (entry_id,))
+            # FTS cleanup handled by entries_ad AFTER DELETE trigger
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
+
     def get_source_hash(self, entry_id: str) -> str | None:
         """Return the source_hash for an entry, or ``None`` if missing."""
         cur = self._conn.execute(

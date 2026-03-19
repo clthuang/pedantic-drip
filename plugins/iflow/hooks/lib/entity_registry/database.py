@@ -950,6 +950,73 @@ class EntityDatabase:
         self._conn.commit()
 
     # ------------------------------------------------------------------
+    # Delete
+    # ------------------------------------------------------------------
+
+    def delete_entity(self, type_id: str) -> None:
+        """Delete an entity and all associated data (FTS, workflow_phases).
+
+        Parameters
+        ----------
+        type_id : str
+            Entity type_id in format "{entity_type}:{entity_id}".
+
+        Raises
+        ------
+        ValueError
+            If entity does not exist.
+        ValueError
+            If entity has child entities (must delete children first).
+        """
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            # 1. Validate + fetch old values for FTS cleanup
+            row = self._conn.execute(
+                "SELECT uuid, rowid, name, entity_id, entity_type, status, metadata "
+                "FROM entities WHERE type_id = ?", (type_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"Entity not found: {type_id}")
+
+            # 2. Reject if has children
+            child = self._conn.execute(
+                "SELECT 1 FROM entities WHERE parent_uuid = ? LIMIT 1",
+                (row["uuid"],),
+            ).fetchone()
+            if child is not None:
+                raise ValueError(f"Cannot delete entity with children: {type_id}")
+
+            # 3. FTS5 external-content delete (before row deletion)
+            try:
+                metadata_text = flatten_metadata(
+                    json.loads(row["metadata"]) if row["metadata"] else None
+                )
+            except (json.JSONDecodeError, TypeError):
+                metadata_text = ""  # corrupted metadata — use empty for FTS delete
+            self._conn.execute(
+                "INSERT INTO entities_fts(entities_fts, rowid, name, entity_id, "
+                "entity_type, status, metadata_text) "
+                "VALUES('delete', ?, ?, ?, ?, ?, ?)",
+                (row["rowid"], row["name"], row["entity_id"],
+                 row["entity_type"], row["status"] or "", metadata_text),
+            )
+
+            # 4. Delete workflow_phases (FK: must precede entity delete)
+            self._conn.execute(
+                "DELETE FROM workflow_phases WHERE type_id = ?", (type_id,)
+            )
+
+            # 5. Delete entity row
+            self._conn.execute(
+                "DELETE FROM entities WHERE type_id = ?", (type_id,)
+            )
+
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
+
+    # ------------------------------------------------------------------
     # Search
     # ------------------------------------------------------------------
 

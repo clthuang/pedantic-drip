@@ -179,7 +179,7 @@ def main() -> None:
     parser.add_argument(
         "--action",
         required=True,
-        choices=["upsert"],
+        choices=["upsert", "delete"],
         help="Action to perform",
     )
     parser.add_argument(
@@ -196,12 +196,41 @@ def main() -> None:
         help="Path to a file containing entry JSON",
     )
     parser.add_argument(
+        "--entry-id",
+        help="Entry ID (required for --action delete)",
+    )
+    parser.add_argument(
         "--project-root",
         default=os.getcwd(),
         help="Project root for config reading (default: cwd)",
     )
 
     args = parser.parse_args()
+
+    # Post-parse validation: --entry-id required for delete
+    if args.action == "delete" and not args.entry_id:
+        parser.error("--entry-id required for delete")
+
+    # Handle delete action
+    if args.action == "delete":
+        db_path = os.path.join(args.global_store, "memory.db")
+        try:
+            db = MemoryDatabase(db_path)
+        except Exception as exc:
+            print(f"Error opening database: {exc}", file=sys.stderr)
+            sys.exit(2)
+        try:
+            db.delete_entry(args.entry_id)
+            print(f"Deleted memory entry: {args.entry_id}")
+            sys.exit(0)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            sys.exit(1)
+        except Exception as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            sys.exit(2)
+        finally:
+            db.close()
 
     # Read entry from JSON string or file
     if args.entry_json:

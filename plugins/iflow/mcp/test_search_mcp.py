@@ -246,3 +246,40 @@ class TestSearchMCPMutationMindset:
         # Then first result is numbered "1." not "0."
         assert "1." in result
         assert "0." not in result
+
+
+# ---------------------------------------------------------------------------
+# Delete entity MCP tests (feature 047)
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteEntityMCP:
+    """Tests for MCP delete_entity tool."""
+
+    def test_mcp_delete_entity_success(self, mcp_db):
+        """AC-10: delete_entity returns success JSON."""
+        mcp_db.register_entity("feature", "del-mcp", "MCP Delete Test",
+                               status="active")
+        result = _run(entity_server.delete_entity(type_id="feature:del-mcp"))
+        data = json.loads(result)
+        assert data["result"] == "Deleted: feature:del-mcp"
+
+        # Verify entity is gone
+        assert mcp_db.get_entity("feature:del-mcp") is None
+
+    def test_mcp_delete_entity_not_found(self, mcp_db):
+        """delete_entity returns error JSON when entity not found."""
+        result = _run(entity_server.delete_entity(type_id="feature:nonexistent"))
+        data = json.loads(result)
+        assert "error" in data
+        assert "not found" in data["error"].lower()
+
+    def test_mcp_delete_entity_has_children(self, mcp_db):
+        """delete_entity returns error JSON when entity has children."""
+        mcp_db.register_entity("project", "parent-mcp", "Parent MCP")
+        mcp_db.register_entity("feature", "child-mcp", "Child MCP",
+                               parent_type_id="project:parent-mcp")
+        result = _run(entity_server.delete_entity(type_id="project:parent-mcp"))
+        data = json.loads(result)
+        assert "error" in data
+        assert "children" in data["error"].lower()

@@ -999,3 +999,41 @@ class TestUpdateRecall:
 
     def test_empty_list_does_not_error(self, db: MemoryDatabase):
         db.update_recall([], "2026-02-20T12:00:00Z")
+
+
+# ---------------------------------------------------------------------------
+# Delete entry tests
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteEntry:
+    """Tests for MemoryDatabase.delete_entry (feature 047)."""
+
+    def test_delete_entry_not_found(self, db: MemoryDatabase):
+        """AC-5: Deleting a nonexistent entry raises ValueError."""
+        with pytest.raises(ValueError, match="Memory entry not found"):
+            db.delete_entry("nonexistent-id")
+
+    def test_delete_entry_success(self, db: MemoryDatabase):
+        """AC-6: Deleting an entry removes the row and FTS trigger auto-cleans."""
+        entry = _make_entry(id="del-test", name="Delete Me", description="To be deleted")
+        db.upsert_entry(entry)
+        assert db.get_entry("del-test") is not None
+
+        db.delete_entry("del-test")
+
+        assert db.get_entry("del-test") is None
+
+    def test_delete_entry_fts_cleaned(self, db: MemoryDatabase):
+        """AC-7: After delete, FTS search no longer returns the deleted entry."""
+        entry = _make_entry(id="fts-del", name="Unique Searchable Name",
+                           description="A unique description for FTS test")
+        db.upsert_entry(entry)
+        # Confirm FTS finds it before delete
+        results = db.fts5_search("Unique Searchable")
+        assert len(results) > 0
+
+        db.delete_entry("fts-del")
+
+        results = db.fts5_search("Unique Searchable")
+        assert len(results) == 0

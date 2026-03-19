@@ -523,3 +523,70 @@ class TestBuildDbEntry:
         result = _build_db_entry(entry, "test_id", "2026-01-01T00:00:00Z",
                                  project_root="/fallback")
         assert result["source_project"] == "/explicit/project"
+
+
+# ---------------------------------------------------------------------------
+# Test: CLI delete action (feature 047)
+# ---------------------------------------------------------------------------
+
+
+class TestCLIDelete:
+    def test_cli_delete_success(self, global_store, tmp_path):
+        """AC-8: --action delete --entry-id deletes and prints confirmation."""
+        # First create an entry to delete
+        db = MemoryDatabase(os.path.join(global_store, "memory.db"))
+        entry = {
+            "id": "del-me",
+            "name": "Delete Test",
+            "description": "To be deleted",
+            "category": "patterns",
+            "source": "manual",
+            "keywords": "[]",
+            "source_project": "/tmp",
+            "source_hash": "0000",
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+        }
+        db.upsert_entry(entry)
+        assert db.get_entry("del-me") is not None
+        db.close()
+
+        with patch("semantic_memory.writer.create_provider", return_value=None), \
+             patch("semantic_memory.writer.read_config", return_value={}):
+            exit_code, stdout, stderr = _run_main([
+                "--action", "delete",
+                "--entry-id", "del-me",
+                "--global-store", global_store,
+                "--project-root", str(tmp_path),
+            ])
+
+        assert exit_code == 0
+        assert "Deleted memory entry: del-me" in stdout
+
+        # Verify entry is gone from DB
+        db = MemoryDatabase(os.path.join(global_store, "memory.db"))
+        assert db.get_entry("del-me") is None
+        db.close()
+
+    def test_cli_delete_missing_entry_id(self):
+        """AC-9: --action delete without --entry-id exits code 2."""
+        exit_code, stdout, stderr = _run_main([
+            "--action", "delete",
+            "--global-store", "/tmp/fake",
+        ])
+        assert exit_code == 2
+        assert "entry-id" in stderr.lower() or "required" in stderr.lower()
+
+    def test_cli_delete_not_found_exits_1(self, global_store, tmp_path):
+        """Delete of nonexistent entry exits with code 1."""
+        with patch("semantic_memory.writer.create_provider", return_value=None), \
+             patch("semantic_memory.writer.read_config", return_value={}):
+            exit_code, stdout, stderr = _run_main([
+                "--action", "delete",
+                "--entry-id", "nonexistent-id",
+                "--global-store", global_store,
+                "--project-root", str(tmp_path),
+            ])
+
+        assert exit_code == 1
+        assert "not found" in stderr.lower()

@@ -4357,3 +4357,115 @@ class TestUpsertWorkflowPhase:
                 bad_col="x",
                 another_bad="y",
             )
+
+
+# ---------------------------------------------------------------------------
+# Delete entity tests
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteEntity:
+    """Tests for EntityDatabase.delete_entity (feature 047)."""
+
+    def test_delete_entity_not_found(self, db: EntityDatabase):
+        """AC-1: Deleting a nonexistent entity raises ValueError."""
+        with pytest.raises(ValueError, match="Entity not found"):
+            db.delete_entity("feature:999-nonexistent")
+
+    def test_delete_entity_success(self, db: EntityDatabase):
+        """AC-2: Deleting an entity removes entity row, FTS entry, and workflow_phases."""
+        db.register_entity("feature", "001-test", "Test Feature", status="active")
+        db.upsert_workflow_phase("feature:001-test", workflow_phase="design")
+
+        db.delete_entity("feature:001-test")
+
+        # Entity row gone
+        assert db.get_entity("feature:001-test") is None
+        # workflow_phases row gone
+        assert db.get_workflow_phase("feature:001-test") is None
+        # FTS entry gone
+        fts = db._conn.execute(
+            "SELECT * FROM entities_fts WHERE entities_fts MATCH ?",
+            ('"Test Feature"',)
+        ).fetchall()
+        assert len(fts) == 0
+
+    def test_delete_entity_with_children_rejected(self, db: EntityDatabase):
+        """AC-3: Cannot delete entity that has children."""
+        db.register_entity("project", "P001", "Parent Project")
+        db.register_entity(
+            "feature", "child-1", "Child Feature",
+            parent_type_id="project:P001",
+        )
+
+        with pytest.raises(ValueError, match="Cannot delete entity with children"):
+            db.delete_entity("project:P001")
+
+    def test_delete_entity_fts_cleaned(self, db: EntityDatabase):
+        """AC-4: After delete, search_entities no longer returns the entity."""
+        db.register_entity("feature", "fts-test", "Searchable Entity",
+                           status="active")
+        # Confirm searchable before delete
+        results = db.search_entities("Searchable")
+        assert len(results) > 0
+
+        db.delete_entity("feature:fts-test")
+
+        results = db.search_entities("Searchable")
+        assert len(results) == 0
+
+    def test_delete_entity_no_workflow_phases(self, db: EntityDatabase):
+        """AC-13: Deleting entity without workflow_phases does not error."""
+        db.register_entity("feature", "002-test", "No WF Feature", status="active")
+        # No upsert_workflow_phase call — entity has no workflow_phases row
+
+        db.delete_entity("feature:002-test")
+
+        assert db.get_entity("feature:002-test") is None
+
+    def test_delete_entity_rollback_on_error(self, db: EntityDatabase):
+        """AC-12: Transaction rolls back on mid-delete error, preserving all data."""
+        db.register_entity("feature", "rb-test", "Rollback Feature", status="active")
+        db.upsert_workflow_phase("feature:rb-test", workflow_phase="design")
+
+        # Wrap the real connection with a proxy that intercepts execute
+        real_conn = db._conn
+        original_execute = real_conn.execute
+
+        class FailingProxy:
+            """Proxy that delegates to real conn but fails on entity DELETE."""
+            def __getattr__(self, name):
+                return getattr(real_conn, name)
+
+            def execute(self, sql, params=()):
+                if isinstance(sql, str) and sql.strip().startswith("DELETE FROM entities"):
+                    raise RuntimeError("Simulated failure")
+                return original_execute(sql, params)
+
+        db._conn = FailingProxy()
+
+        with pytest.raises(RuntimeError, match="Simulated failure"):
+            db.delete_entity("feature:rb-test")
+
+        # Restore real connection for verification
+        db._conn = real_conn
+
+        # Entity, FTS, and workflow_phases should all remain intact
+        assert db.get_entity("feature:rb-test") is not None
+        assert db.get_workflow_phase("feature:rb-test") is not None
+        results = db.search_entities("Rollback")
+        assert len(results) > 0
+
+    def test_delete_entity_corrupted_metadata_still_deletes(self, db: EntityDatabase):
+        """Corrupted metadata does not prevent deletion — uses empty string for FTS."""
+        db.register_entity("feature", "corrupt-meta", "Corrupt Meta Feature")
+        # Manually corrupt the metadata column
+        db._conn.execute(
+            "UPDATE entities SET metadata = '{bad json' WHERE type_id = ?",
+            ("feature:corrupt-meta",)
+        )
+        db._conn.commit()
+
+        # Should not raise
+        db.delete_entity("feature:corrupt-meta")
+        assert db.get_entity("feature:corrupt-meta") is None
