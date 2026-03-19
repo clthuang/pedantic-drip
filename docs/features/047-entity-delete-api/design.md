@@ -160,7 +160,7 @@ async def delete_entity(type_id: str) -> str:
     try:
         _db.delete_entity(type_id)
         return json.dumps({"result": f"Deleted: {type_id}"})
-    except ValueError as exc:
+    except Exception as exc:
         return json.dumps({"error": str(exc)})
 ```
 
@@ -175,7 +175,7 @@ async def delete_memory(entry_id: str) -> str:
     try:
         _db.delete_entry(entry_id)
         return json.dumps({"result": f"Deleted memory: {entry_id}"})
-    except ValueError as exc:
+    except Exception as exc:
         return json.dumps({"error": str(exc)})
 ```
 
