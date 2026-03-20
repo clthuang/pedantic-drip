@@ -8,6 +8,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
 install_err_trap
 
+# Maintenance mode: bypass guard entirely (AC-3)
+if [[ "${PD_MAINTENANCE:-}" == "1" ]]; then
+    echo '{}'
+    exit 0
+fi
+
 # Read all stdin once
 INPUT=$(cat)
 

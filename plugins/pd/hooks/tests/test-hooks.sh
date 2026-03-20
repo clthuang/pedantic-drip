@@ -2449,6 +2449,82 @@ test_meta_json_guard_stale_sentinel_log() {
     teardown_meta_guard_test
 }
 
+# Test: meta-json-guard maintenance mode allows .meta.json writes (AC-3)
+test_meta_json_guard_maintenance_mode_allows() {
+    log_test "meta-json-guard maintenance mode allows .meta.json write"
+
+    setup_meta_guard_test
+    # Set up valid sentinel so guard would normally deny
+    local sentinel_dir="$META_GUARD_TMPDIR/.claude/plugins/cache/test-org/pd-test/1.0.0/.venv"
+    mkdir -p "$sentinel_dir"
+    local real_python
+    real_python=$(command -v python3)
+    local real_version
+    real_version=$(python3 -c "import sys; print('{0}.{1}'.format(sys.version_info.major, sys.version_info.minor))" 2>/dev/null)
+    echo "$real_python:$real_version" > "$sentinel_dir/.bootstrap-complete"
+
+    local output
+    output=$(echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/041-foo/.meta.json","content":"{}"}}' | PD_MAINTENANCE=1 HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null)
+
+    if [[ "$output" == "{}" ]]; then
+        log_pass
+    else
+        log_fail "Expected {} (allow), got: $output"
+    fi
+
+    teardown_meta_guard_test
+}
+
+# Test: meta-json-guard without maintenance mode still blocks (AC-3 inverse)
+test_meta_json_guard_no_maintenance_blocks() {
+    log_test "meta-json-guard without PD_MAINTENANCE still blocks"
+
+    setup_meta_guard_test
+    local sentinel_dir="$META_GUARD_TMPDIR/.claude/plugins/cache/test-org/pd-test/1.0.0/.venv"
+    mkdir -p "$sentinel_dir"
+    local real_python
+    real_python=$(command -v python3)
+    local real_version
+    real_version=$(python3 -c "import sys; print('{0}.{1}'.format(sys.version_info.major, sys.version_info.minor))" 2>/dev/null)
+    echo "$real_python:$real_version" > "$sentinel_dir/.bootstrap-complete"
+
+    local output
+    output=$(echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/041-foo/.meta.json","content":"{}"}}' | HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null)
+
+    if echo "$output" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['hookSpecificOutput']['permissionDecision'] == 'deny'" 2>/dev/null; then
+        log_pass
+    else
+        log_fail "Expected deny without PD_MAINTENANCE, got: $output"
+    fi
+
+    teardown_meta_guard_test
+}
+
+# Test: meta-json-guard maintenance mode with PD_MAINTENANCE=0 still blocks
+test_meta_json_guard_maintenance_mode_zero_blocks() {
+    log_test "meta-json-guard PD_MAINTENANCE=0 still blocks"
+
+    setup_meta_guard_test
+    local sentinel_dir="$META_GUARD_TMPDIR/.claude/plugins/cache/test-org/pd-test/1.0.0/.venv"
+    mkdir -p "$sentinel_dir"
+    local real_python
+    real_python=$(command -v python3)
+    local real_version
+    real_version=$(python3 -c "import sys; print('{0}.{1}'.format(sys.version_info.major, sys.version_info.minor))" 2>/dev/null)
+    echo "$real_python:$real_version" > "$sentinel_dir/.bootstrap-complete"
+
+    local output
+    output=$(echo '{"tool_name":"Write","tool_input":{"file_path":"docs/features/041-foo/.meta.json","content":"{}"}}' | PD_MAINTENANCE=0 HOME="$META_GUARD_TMPDIR" "${HOOKS_DIR}/meta-json-guard.sh" 2>/dev/null)
+
+    if echo "$output" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['hookSpecificOutput']['permissionDecision'] == 'deny'" 2>/dev/null; then
+        log_pass
+    else
+        log_fail "Expected deny with PD_MAINTENANCE=0, got: $output"
+    fi
+
+    teardown_meta_guard_test
+}
+
 # Test: session-start first-run message appears when .venv missing
 test_session_start_first_run_when_venv_missing() {
     log_test "session-start first-run setup message when .venv missing"
@@ -2621,6 +2697,9 @@ main() {
     test_meta_json_guard_legacy_sentinel_recent
     test_meta_json_guard_legacy_sentinel_stale
     test_meta_json_guard_stale_sentinel_log
+    test_meta_json_guard_maintenance_mode_allows
+    test_meta_json_guard_no_maintenance_blocks
+    test_meta_json_guard_maintenance_mode_zero_blocks
     test_session_start_first_run_when_venv_missing
 
     echo ""
