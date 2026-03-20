@@ -14,7 +14,8 @@
 - **Do:** In `set_parent()` at line ~704, modify the CTE from `anc(uid)` to `anc(uid, depth)`. Seed with `(parent_uuid, 0)`. Add `AND a.depth < 10` to recursive step WHERE clause. No signature change.
 - **Done when:** Both new tests pass. Full `test_database.py` suite passes with zero regressions.
 - **Spec:** AC-1.1
-- **Verify:** `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/entity_registry/test_database.py -v -k "test_set_parent"`
+- **Verify (focused):** `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/entity_registry/test_database.py -v -k "test_set_parent"`
+- **Verify (regression):** `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/entity_registry/test_database.py -v`
 
 ## Phase 2: R2 — Kanban status-awareness (standalone)
 
@@ -38,18 +39,23 @@
   4. Update `_check_single_feature()` line ~279: pass `status=meta.get("status")` to `_derive_expected_kanban()`
   5. Update `_reconcile_single_feature()` line ~326: pass `status=meta.get("status")` (where `meta = report.meta_json`)
 - **Done when:** All 5 new tests pass. Full `test_reconciliation.py` suite passes.
-- **Verify:** `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/workflow_engine/test_reconciliation.py -v -k "kanban"`
+- **Verify (focused):** `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/workflow_engine/test_reconciliation.py -v -k "kanban"`
+- **Verify (regression):** `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/workflow_engine/test_reconciliation.py -v`
 
 ## Phase 3: R3 — Artifact path verification (standalone)
 
-### Task 3.1: Write artifact verification tests + implement
-- **File:** `plugins/pd/hooks/lib/workflow_engine/reconciliation.py`, `test_reconciliation.py`
-- **Note:** Atomic unit — write tests then implement all sub-steps before running.
-- **Do (tests):**
+### Task 3.1a: Write artifact verification tests (red)
+- **File:** `plugins/pd/hooks/lib/workflow_engine/test_reconciliation.py`
+- **Do:** Add 3 tests (will fail until 3.1b implements the field):
   - `test_artifact_missing_flag`: feature with non-existent artifact dir → `report.artifact_missing == True`
   - `test_artifact_missing_no_short_circuit`: missing artifact AND DB drift → `artifact_missing=True` AND `mismatches` non-empty
   - `test_artifact_missing_count_summary`: drift result summary has `artifact_missing_count` key with correct count
-- **Do (implementation):**
+- **Done when:** Tests written. Expected to fail (red phase).
+- **Spec:** AC-3.1–AC-3.4
+
+### Task 3.1b: Implement artifact path verification (green)
+- **File:** `plugins/pd/hooks/lib/workflow_engine/reconciliation.py`
+- **Do:**
   1. Add `artifact_missing: bool = False` field to `WorkflowDriftReport` (after `message`)
   2. Add `artifact_dir: str | None = None` param to `_check_single_feature()`
   3. Add `artifact_missing = artifact_dir is not None and not os.path.exists(artifact_dir)` in function body
@@ -58,20 +64,25 @@
   6. Update `check_workflow_drift()` bulk scan path: same computation per `ftype_id`
   7. In `_build_drift_result()`: add `summary["artifact_missing_count"] = sum(1 for r in reports if r.artifact_missing)` after status loop
 - **Intentional exclusion:** Error-path constructors (lines ~488-496, ~507-513, ~531-539) unchanged — `artifact_missing` defaults to `False`.
-- **Done when:** All 3 new tests pass. Full `test_reconciliation.py` suite passes.
-- **Spec:** AC-3.1–AC-3.4
-- **Verify:** `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/workflow_engine/test_reconciliation.py -v -k "artifact"`
+- **Done when:** All 3 tests from 3.1a pass. Full `test_reconciliation.py` suite passes.
+- **Verify (focused):** `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/workflow_engine/test_reconciliation.py -v -k "artifact"`
+- **Verify (regression):** `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/workflow_engine/test_reconciliation.py -v`
 
 ## Phase 4: R4 — Depth context in reporting (depends on Phase 3)
 
-### Task 4.1: Write depth context tests + implement
-- **File:** `plugins/pd/hooks/lib/workflow_engine/reconciliation.py`, `test_reconciliation.py`
-- **Note:** Atomic unit — write tests then implement. Depends on Task 3.1 (artifact_missing field must exist first).
-- **Do (tests):**
+### Task 4.1a: Write depth context tests (red)
+- **File:** `plugins/pd/hooks/lib/workflow_engine/test_reconciliation.py`
+- **Note:** Depends on Task 3.1b (artifact_missing field must exist first).
+- **Do:** Add 3 tests (will fail until 4.1b implements the fields):
   - `test_drift_report_depth_context`: entity with parent → `report.depth` is int, `report.parent_type_id` is str, `report.message` contains `"depth:"` and `"parent:"`
   - `test_drift_report_root_entity_no_depth`: root entity → `report.depth is None`, `report.parent_type_id is None`, `report.message == ""`
   - `test_drift_report_depth_value_multi_level`: 3-level hierarchy (root→parent→child), drift check on child → `report.depth == 2`
-- **Do (implementation):**
+- **Done when:** Tests written. Expected to fail (red phase).
+- **Spec:** AC-4.1–AC-4.5
+
+### Task 4.1b: Implement depth context reporting (green)
+- **File:** `plugins/pd/hooks/lib/workflow_engine/reconciliation.py`
+- **Do:**
   1. Add `depth: int | None = None` and `parent_type_id: str | None = None` fields to `WorkflowDriftReport` (after `artifact_missing`)
   2. In `_check_single_feature()` success path (before final return):
      - `entity = db.get_entity(feature_type_id)`
@@ -80,9 +91,9 @@
      - Set `msg = f"depth: {depth}, parent: {parent_tid}"` when depth is not None (SET, not append)
   3. Add perf comment: `# Performance: +1 get_entity + conditional get_lineage per feature. OK for <100 features.`
   4. Pass `depth`, `parent_type_id`, `message=msg` to `WorkflowDriftReport` constructor
-- **Done when:** All 3 new tests pass. Full `test_reconciliation.py` suite passes.
-- **Spec:** AC-4.1–AC-4.5
-- **Verify:** `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/workflow_engine/test_reconciliation.py -v -k "depth"`
+- **Done when:** All 3 tests from 4.1a pass. Full `test_reconciliation.py` suite passes.
+- **Verify (focused):** `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/workflow_engine/test_reconciliation.py -v -k "depth"`
+- **Verify (regression):** `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/workflow_engine/test_reconciliation.py -v`
 
 ## Phase 5: Cross-module verification
 
