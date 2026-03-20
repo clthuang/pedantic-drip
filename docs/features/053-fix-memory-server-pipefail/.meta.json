@@ -5,7 +5,7 @@
   "status": "active",
   "created": "2026-03-20T19:05:56.878811+00:00",
   "branch": "feature/053-fix-memory-server-pipefail",
-  "lastCompletedPhase": "specify",
+  "lastCompletedPhase": "design",
   "phases": {
     "brainstorm": {
       "started": "2026-03-20T19:05:56.878481+00:00"
@@ -13,6 +13,10 @@
     "specify": {
       "started": "2026-03-20T19:10:38.111168+00:00",
       "completed": "2026-03-20T19:10:41.660584+00:00",
+      "iterations": 2
+    },
+    "design": {
+      "completed": "2026-03-20T19:14:06.921076+00:00",
       "iterations": 2
     }
   }
