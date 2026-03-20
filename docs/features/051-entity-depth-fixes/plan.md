@@ -54,7 +54,7 @@ R3 and R4 both add fields to `WorkflowDriftReport`. R3 should be done first so R
 
 **Files:** `plugins/pd/hooks/lib/workflow_engine/reconciliation.py`, `plugins/pd/hooks/lib/workflow_engine/test_reconciliation.py`
 
-**TDD note:** Tests in sub-step 1 reference `artifact_missing` field which doesn't exist yet — they will fail to compile until sub-step 2 adds the field. This is expected red-green TDD. Run tests after sub-step 7, not sub-step 1.
+**TDD note:** Sub-steps 1-7 form one atomic unit. Write all tests (sub-step 1), then implement (sub-steps 2-7), then run the suite. Tests reference `artifact_missing` which doesn't exist until sub-step 2 — expected red-green TDD.
 
 **Intentional exclusion:** Error-path and db_only-path `WorkflowDriftReport` constructors in `check_workflow_drift()` (lines 488-496, 507-513, 531-539) are left unchanged — `artifact_missing` defaults to `False`. These paths represent error/edge conditions, not missing artifacts.
 
@@ -107,11 +107,11 @@ Run full test suites for both affected modules to catch any interactions:
 
 ```bash
 plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/entity_registry/ -v
-plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/workflow_engine/test_reconciliation.py -v
+plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/workflow_engine/ -v
 plugins/pd/.venv/bin/python -m pytest plugins/pd/mcp/test_workflow_state_server.py -v
 ```
 
-The full entity_registry suite (710+ tests) catches regressions beyond just `test_database.py`.
+The full entity_registry suite (710+ tests) and full workflow_engine suite (309 tests) catch regressions beyond individual test files, including any unexpected consumers of `WorkflowDriftReport`.
 
 The MCP server tests exercise reconciliation through the MCP layer and will catch any serialization issues with the new dataclass fields.
 
