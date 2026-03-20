@@ -171,11 +171,11 @@ Instead of rigid L1→L2→L3→L4 hierarchy, pd models the organisation as a **
 Each circle is a scope — a team, domain, product area, or cross-cutting concern. Work items relate to circles via **tags** and **lineage**, not a single rigid tree:
 
 ```
-Entity relationships:
-  parent_type_id  → primary lineage (one parent, tree structure)
-  tags[]          → circle membership (many circles, graph structure)
-  blocked_by[]    → dependencies (lateral, within or across circles)
-  contributes_to  → OKR alignment (many-to-many, work items → key results)
+Entity relationships (all via uuid, not type_id):
+  parent_uuid     → primary lineage (one parent, tree structure)
+  entity_tags     → circle membership (many circles, graph structure)
+  entity_deps     → dependencies (lateral, within or across circles)
+  okr_alignment   → OKR alignment (many-to-many, work items → key results)
 ```
 
 - A solo developer has one circle (themselves) operating at L3/L4
@@ -500,45 +500,91 @@ Initiative (L1) — optional strategic container
 
 Every node is a **Work Item** in the entity registry — same schema, same workflow engine, different type and level.
 
+### Two-ID System: System Identity vs Human Identity
+
+pd currently has a `uuid` PRIMARY KEY column that's barely used — everything references `type_id` (a human-readable natural key) instead. This conflates identity with display, making entities un-renamable and cross-references fragile. The fix: **uuid is identity, type_id is display.**
+
+**System ID (uuid) — source of truth:**
+- Generated: UUIDv4 (already exists in schema) or time-ordered ULID/UUIDv7 for sortability
+- Immutable: never changes after creation
+- Carries no meaning: opaque identifier
+- Used for: ALL internal references — parent linkage, junction tables (dependencies, tags, OKR alignment), foreign keys, workflow_phases primary key
+- Never shown to users unless they explicitly ask for it
+
+**Human ID (type_id / entity_id) — display and search:**
+- Format: `{type}:{seq}-{slug}` (standardised across all entity types)
+- `seq`: per-type sequential counter, best-effort ordering, gaps OK
+- `slug`: max 30 chars, lowercase, hyphens, from name/description at creation
+- Mutable: slug can be renamed without breaking any references (uuid is the FK)
+- Used for: CLI display, user references, agent/LLM quick searching, conversation
+- Partial matching: `feature:052` resolves to `feature:052-structured-logging`
+
+**Standardised human ID format (all types):**
+
+| Type | Current format | New format |
+|------|---------------|------------|
+| backlog | `backlog:00008` (5-digit) | `backlog:008-webhook-retry` |
+| brainstorm | `brainstorm:20260309-160000-brainstorm-backlog-...` (40+ chars) | `brainstorm:002-fractal-work-mgmt` |
+| project | `project:P003-observability` (redundant P prefix) | `project:003-observability` |
+| feature | `feature:052-structured-logging` (already clean) | `feature:052-structured-logging` (unchanged) |
+| initiative | (new) | `initiative:001-enterprise-reliability` |
+| objective | (new) | `objective:001-reduce-incidents` |
+| key_result | (new) | `key_result:001-p0-under-two` |
+| task | (new) | `task:001-add-log-fields` |
+
+**How references work:**
+```
+USER TYPES:      "depends on feature:052"
+MCP/SECRETARY:   resolve "feature:052*" → uuid "01JNQX5K8R..."
+ENTITY ENGINE:   stores uuid in entity_dependencies junction table
+DISPLAY:         shows "feature:052-structured-logging" to user
+```
+
+**Migration:** Existing entities retain their current type_ids (no rename). Internal references (parent, blocked_by) migrate from type_id to uuid. New entities use the standardised format. MCP tools accept both uuid and type_id, resolve to uuid internally.
+
 ### Entity Schema Extension
 
 Current entity types: `backlog`, `brainstorm`, `project`, `feature`
 New entity types: `initiative`, `objective`, `key_result`, `task`
 
 Each entity carries:
-- `type` — determines lifecycle template and gate stringency
-- `level` — L1/L2/L3/L4, derived from type
+- `uuid` — **system identity**, immutable, all internal references
+- `type_id` — **human identity**, `{type}:{seq}-{slug}`, display and search
+- `entity_type` — determines lifecycle template and gate stringency
+- `level` — L1/L2/L3/L4, derived from entity_type
 - `lifecycle_phase` — current 5D phase (or existing 7-phase for L3 features)
 - `status` — draft | planned | active | blocked | completed | abandoned
-- `parent_type_id` — primary lineage (one parent)
-- `tags[]` — circle membership (many circles)
-- `blocked_by[]` — sibling dependencies
-- `contributes_to` — OKR alignment (many-to-many)
+- `parent_uuid` — primary lineage (one parent, references uuid)
 - `owner` — person or team responsible
 - `metadata` — flexible JSON for type-specific fields (OKR scores, risk registers, etc.)
+
+Relationship tables (all reference uuid, not type_id):
+- `entity_tags` (entity_uuid, tag) — circle membership
+- `entity_dependencies` (entity_uuid, blocked_by_uuid) — sibling dependencies
+- `entity_okr_alignment` (entity_uuid, key_result_uuid) — OKR alignment
 
 ### Schema Migration Reality
 
 The PRD's data model changes require **destructive migrations** (table rebuild with data copy), not additive changes:
 
-1. **Entity type expansion:** The `entities` table has a CHECK constraint (`entity_type IN ('backlog','brainstorm','project','feature')`) enforced at both SQL and Python levels. Adding `initiative`, `objective`, `key_result`, `task` requires a table-rebuild migration (same pattern as migration 2 and 5 in `database.py`). This also requires updating `VALID_ENTITY_TYPES`, FTS sync code (application-level, not trigger-based — verified), and immutability triggers.
+1. **UUID as primary reference:** Migrate all foreign key references from `type_id` to `uuid`. The `parent_uuid` column already exists in the schema but is underused — make it the canonical parent reference. `parent_type_id` becomes a denormalised display field (updated on rename, not used for joins). `workflow_phases.type_id` gains a companion `workflow_phases.uuid` column as the primary key.
 
-2. **Workflow phase expansion:** The `workflow_phases` table CHECK constraint only allows the 7 feature phases plus brainstorm/backlog lifecycle phases. The 5D phase names (`discover`, `define`, `design`, `deliver`, `debrief`) must be added — another table rebuild.
+2. **Entity type expansion:** Drop the SQL CHECK constraint on `entity_type` in favour of Python-only validation (`_validate_entity_type`). This makes future type additions non-breaking (no table rebuild). Add `initiative`, `objective`, `key_result`, `task` to `VALID_ENTITY_TYPES`. Trade-off: weaker DB-level integrity (raw SQL bypasses Python validation). Mitigated by migration-time consistency audit.
 
-3. **Mode constraint expansion:** The `workflow_phases.mode` CHECK constraint only allows `'standard'` and `'full'`. The ceremony weight system adds `'light'` — another table rebuild. All three CHECK constraint expansions (entity_type, workflow_phase, mode) should be combined into a single migration to minimise rebuilds.
+3. **Workflow phase expansion:** The `workflow_phases` table CHECK constraint only allows the 7 feature phases plus brainstorm/backlog lifecycle phases. The 5D phase names (`discover`, `define`, `design`, `deliver`, `debrief`) must be added — table rebuild. Similarly expand mode CHECK to include `light`. Combine both into a single migration.
 
-4. **Junction tables for relational data:** `tags[]`, `blocked_by[]`, and `contributes_to` require new junction tables from the start (not deferred to "later"):
-   - `entity_tags` (entity_type_id TEXT, tag TEXT) — for circle membership queries
-   - `entity_dependencies` (entity_type_id TEXT, blocked_by_type_id TEXT) — for dependency enforcement and cascade unblock
-   - `entity_okr_alignment` (entity_type_id TEXT, key_result_type_id TEXT) — for OKR rollup queries
+4. **Junction tables:** New tables using uuid as foreign keys:
+   - `entity_tags` (entity_uuid TEXT, tag TEXT) — indexed on both columns
+   - `entity_dependencies` (entity_uuid TEXT, blocked_by_uuid TEXT) — indexed, with cycle detection
+   - `entity_okr_alignment` (entity_uuid TEXT, key_result_uuid TEXT) — indexed
 
-   **Rationale:** Dependency enforcement (blocked_by gates at Deliver) and cascade unblock (completion → find dependents) require efficient indexed lookups. Metadata JSON with json_each() scans are too slow for these critical-path operations and cycle detection. Junction tables must be in Phase 1, not deferred.
+   **Rationale:** Dependency enforcement (blocked_by gates at Deliver) and cascade unblock (completion → find dependents) require efficient indexed lookups. Junction tables from the start, not deferred.
 
-5. **Workflow engine generalisation:** The current `WorkflowStateEngine` is deeply coupled to features: `_extract_slug` hardcodes `features/` path, `_get_existing_artifacts` uses feature-specific `HARD_PREREQUISITES`, `_evaluate_gates` uses feature-specific guard IDs, `complete_phase` validates against the 7-phase `_PHASE_VALUES`, `_iter_meta_jsons` globs `features/*/.meta.json`. This is not refactorable — it requires a new `EntityWorkflowEngine` class (strategy pattern) with type-specific backends. The existing `WorkflowStateEngine` remains frozen for L3 features; new entity types get the new engine. This is phased across implementation.
+5. **Human ID standardisation:** Add a central ID generator that produces `{seq}-{slug}` for all entity types. Per-type sequential counter stored in `_metadata` table (key: `next_seq_{entity_type}`). Existing entities retain their current type_ids. New entities use the standardised format.
 
-6. **Transition gate compatibility with light weight:** Light-weight features (`["specify", "implement", "finish"]`) skip phases that existing HARD_PREREQUISITES and soft prerequisite guards expect. The gate system must be parameterised by the entity's active template — a phase not in the template is not a prerequisite. This requires changes to `_evaluate_gates` and `HARD_PREREQUISITES` lookups.
+6. **Workflow engine generalisation:** The current `WorkflowStateEngine` is deeply coupled to features: `_extract_slug` hardcodes `features/` path, `_get_existing_artifacts` uses feature-specific `HARD_PREREQUISITES`, `_evaluate_gates` uses feature-specific guard IDs, `complete_phase` validates against the 7-phase `_PHASE_VALUES`, `_iter_meta_jsons` globs `features/*/.meta.json`. Requires a new `EntityWorkflowEngine` class (strategy pattern) with type-specific backends. Existing `WorkflowStateEngine` frozen for L3 features. Phased across implementation.
 
-Trade-off on CHECK constraints: consider dropping SQL-level CHECK constraints for entity_type and mode in favour of Python-only validation (`_validate_entity_type`). This makes future type/mode additions non-breaking (no table rebuild). The trade-off: weaker data integrity at the DB layer (raw SQL bypasses Python validation). Recommendation: drop CHECK constraints, add a migration-time consistency audit that verifies all existing data satisfies Python validation rules.
+7. **Transition gate compatibility with light weight:** Light-weight features (`["specify", "implement", "finish"]`) skip phases that existing HARD_PREREQUISITES and soft prerequisite guards expect. Gate system parameterised by entity's active template — a phase not in the template is not a prerequisite.
 
 ### Entity Engine Responsibilities
 
@@ -570,12 +616,18 @@ Fix 6 depth bugs — immediately shippable, no migration risk:
 
 ### Phase 1b: Schema Foundation
 
+Two-ID system:
+- Migrate all internal references from `type_id` to `uuid` (parent linkage, workflow_phases FK)
+- `parent_uuid` becomes canonical parent reference; `parent_type_id` becomes denormalised display field
+- Central ID generator for standardised human IDs (`{seq}-{slug}` per type)
+- MCP tools accept both uuid and type_id, resolve to uuid internally
+
 Destructive migrations (combined into single migration to minimise rebuilds):
 - Drop entity_type CHECK constraint → Python-only validation (future-proof)
 - Expand `VALID_ENTITY_TYPES` to include `initiative`, `objective`, `key_result`, `task`
 - Expand workflow_phase CHECK to include 5D phase names
 - Expand mode CHECK to include `light`
-- Add junction tables: `entity_tags`, `entity_dependencies`, `entity_okr_alignment`
+- Add junction tables (uuid-keyed): `entity_tags`, `entity_dependencies`, `entity_okr_alignment`
 - Update FTS sync code for new entity types
 - Add workflow templates registry with weight-specific templates
 - Parameterise gate evaluation to respect entity's active template (light features skip phases)
