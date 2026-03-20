@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Depth guard on `set_parent()` CTE to prevent unbounded recursion (matches `_lineage_up`/`_lineage_down` pattern)
+- Kanban column derivation now accounts for terminal statuses (`completed`/`abandoned`) in reconciliation drift detection
+- Artifact path verification in reconciliation drift checks (flags missing artifact directories)
+
+### Added
+- Depth and parent context fields on `WorkflowDriftReport` for hierarchy-aware diagnostics
+
 ## [4.13.16] - 2026-03-19
 
 ### Added
