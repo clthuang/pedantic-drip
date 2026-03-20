@@ -24,7 +24,7 @@ pd is a tactical feature development engine. It excels at guiding one feature th
 
 ## Core Insight: Fractal Self-Similarity
 
-Every successful multi-level management framework uses the **same lifecycle at every level** — only scope, cadence, and gate stringency change:
+Every successful multi-level management framework uses the **same lifecycle at every level** — only scope and gate stringency change:
 
 - **Military Mission Command (Auftragstaktik):** Same planning cycle at strategic, operational, and tactical echelons. Give objective + resources, not how-to. (von Moltke/Clausewitz)
 - **Hoshin Kanri:** Three-layer planning with bidirectional "catchball" — not top-down cascade but iterative alignment where each level refines and adjusts. (Toyota)
@@ -55,12 +55,12 @@ pd's existing 7-phase tactical sequence maps naturally:
 
 ### Four Organisational Levels
 
-| Level | Who | Cadence | Work Items | pd Today |
-|-------|-----|---------|-----------|----------|
-| **L1: Strategic** | CEO, CTO, VP, Founders | Quarterly / Annual | Initiatives, Objectives, Key Results | None |
-| **L2: Program** | Directors, EMs, PMs | Monthly / 6-week cycles | Projects, Milestones | Partial (write-once) |
-| **L3: Tactical** | Senior Engineers, Tech Leads | Weekly / Biweekly | Features | Well-served |
-| **L4: Operational** | Engineers, ICs, AI Agents | Daily / Hourly | Tasks | Flat checklist |
+| Level | Who | Work Items | pd Today |
+|-------|-----|-----------|----------|
+| **L1: Strategic** | CEO, CTO, VP, Founders | Initiatives, Objectives, Key Results | None |
+| **L2: Program** | Directors, EMs, PMs | Projects, Milestones | Partial (write-once) |
+| **L3: Tactical** | Senior Engineers, Tech Leads | Features | Well-served |
+| **L4: Operational** | Engineers, ICs, AI Agents | Tasks | Flat checklist |
 
 ### What Each Level Actually Does (Research-Grounded)
 
@@ -75,8 +75,6 @@ pd's existing 7-phase tactical sequence maps naturally:
 - **David Sacks:** CEO Dashboard uses "3x5 rule" — 5 headline numbers + 3 charts. Red metrics for 2 consecutive weeks trigger root-cause analysis. Maximum 3 objectives per team with 3 KRs each.
 
 **Decision framework:** Bezos Type 1/Type 2 — irreversible decisions (one-way doors) require slow deliberation; reversible decisions (two-way doors) should be made fast with ~70% information. Most decisions are Type 2 but organisations mistakenly treat them as Type 1.
-
-**Cadence:** Annual strategic direction → quarterly OKR setting → monthly business reviews → weekly metrics check-ins.
 
 **Artifacts:**
 | Phase | Artifact | Purpose |
@@ -103,13 +101,11 @@ pd's existing 7-phase tactical sequence maps naturally:
 
 **Risk management:** Practical risk register with top 5-10 risks. Each entry: Description, Likelihood (1-5), Impact (1-5), Owner, Mitigation Actions, Status. Reviewed weekly during active projects.
 
-**Cadence:** 6-week cycles (Shape Up pattern) or quarterly roadmap refresh → weekly status + risk triage → daily standups.
-
 **Artifacts:**
 | Phase | Artifact | Purpose |
 |-------|----------|---------|
 | Discover | Feasibility study, user research, PRD | Validate the opportunity |
-| Define | Roadmap, milestone plan, risk register | Plan the program |
+| Define | Milestone plan, risk register | Plan the program |
 | Design | Feature decomposition, dependency graph, architecture decisions | Break into tactical work |
 | Deliver | Milestone tracking, burndown, dependency status, traffic-light updates | Track execution |
 | Debrief | Project retrospective, milestone review, roadmap adjustment | Capture and propagate learnings |
@@ -228,14 +224,19 @@ Objective (L1 work item, type=objective)
 - **Objective score:** Weighted average of KR scores. Weights configurable (default: equal).
 - **Colour coding:** Green (0.7-1.0), Yellow (0.4-0.6), Red (0.0-0.3).
 
-### Cadence
+### Event-Driven OKR Lifecycle (No Fixed Cadence)
 
-| Ceremony | Frequency | Duration | Purpose |
-|----------|-----------|----------|---------|
-| OKR setting | Quarterly | 1-2 weeks | Set objectives and measurable key results |
-| OKR check-in | Weekly | 20 min | Update KR progress, surface blockers |
-| OKR review | Monthly | 45 min | Assess objective health, rebalance |
-| OKR scoring | End of quarter | 1 hour | Score KRs 0.0-1.0, retrospect on cycle |
+Traditional OKR frameworks impose artificial ceremonies (quarterly setting, weekly check-ins, monthly reviews). In an agent-native environment, these are unnecessary coordination overhead — the entity engine provides continuous, real-time state:
+
+**OKR state is always current:** KR scores are derived from child entity completion. When a feature completes, its parent project progress updates, which updates its parent KR score, which updates the objective score. No check-in meeting needed — the entity engine computes this on every completion event.
+
+**OKRs are created when needed:** Not at quarter boundaries, but when strategic intent crystallises. An objective might be created mid-month because a market shift demands it.
+
+**OKRs are scored when complete:** Not at quarter-end, but when all children finish or when the owner decides to score. An objective that delivered early gets scored early. One that's still in flight stays active.
+
+**Time is measured, not targeted:** pd records timestamps on every phase transition (it already does this). Duration is a **performance metric** for retrospectives — "this type of work typically takes X" — not a deadline. Value delivered matters; arbitrary deadlines don't.
+
+**Review happens on state change:** When an OKR score drops below threshold (e.g., child blocked, KR at risk), the entity engine flags it via anomaly propagation. The owner is notified. No scheduled review meeting needed — the system surfaces problems when they occur.
 
 ### Anti-Patterns pd Must Prevent
 
@@ -274,7 +275,6 @@ Each entity carries:
 - `status` — draft | planned | active | blocked | completed | abandoned
 - `parent` — reference to parent work item (existing `parent_type_id`)
 - `blocked_by` — list of sibling type_ids this depends on (in `metadata`)
-- `cadence` — planning cycle this belongs to (Q1-2026, H1-2026, etc.)
 - `owner` — person or team responsible
 - `metadata` — flexible JSON for type-specific fields (OKR scores, risk registers, etc.)
 
@@ -374,7 +374,7 @@ Entity relationships:
 
 ### Why This Matters for pd
 
-The L1/L2/L3/L4 levels still describe the **type of work** (strategic/program/tactical/operational) and determine **gate stringency** and **cadence**. But the organisational structure is a topology:
+The L1/L2/L3/L4 levels still describe the **type of work** (strategic/program/tactical/operational) and determine **gate stringency**. But the organisational structure is a topology:
 
 - A solo developer has one circle (themselves) operating at L3/L4
 - A startup has a few overlapping circles, light L1, active L2/L3/L4
@@ -442,7 +442,7 @@ The secretary doesn't just route — it provides **organisational intelligence**
 - **Circle awareness:** "This touches the security circle. Should I tag the security team?"
 - **Weight recommendation:** "This started as a bug fix but it touches 3 services. Recommend upgrading to standard weight with design review."
 - **Escalation detection:** "This task has been blocked for 5 days. Should I flag it on the parent project?"
-- **Cadence awareness:** "Q2 OKR check-in is next week. Want me to prepare a progress summary?"
+- **Progress awareness:** "Objective 'enterprise reliability' score dropped to 0.4 — KR2 is blocked. Want me to surface the blocker?"
 
 ---
 
@@ -505,7 +505,7 @@ Every work item, regardless of source or level, follows the same pattern:
 pd's existing backlog becomes the **universal inbox** for work that hasn't been triaged into the topology:
 
 - Any circle member can add to backlog: `/pd:add-to-backlog "description"`
-- Secretary triages backlog items at cadence boundaries (weekly, per-cycle)
+- Secretary triages backlog items on demand or when prompted
 - Triage = identify level, weight, circle, and parent → promote to work item
 - Untriaged items remain visible but don't block anything
 
@@ -585,13 +585,15 @@ How work gets initiated at each level and flows through the topology:
 
 ### Trigger Types
 
+All work is event-driven. There are no scheduled ceremonies — the entity engine reacts to state changes in real time.
+
 | Trigger | Description | Example |
 |---------|------------|---------|
-| **Cadence** | Time-based: planning cycle begins | "Q2 starts — set OKRs" |
 | **Decomposition** | Design at one level creates children | "Project design produces features" |
-| **Completion** | Work finishing unblocks dependents | "Feature A done → Feature B unblocks" |
-| **Anomaly** | Debrief surfaces issue, escalates to parent | "Retro finds systemic auth flaw → initiative" |
-| **Ad-hoc** | External input or new discovery | "Customer report → backlog → feature" |
+| **Completion** | Work finishing unblocks dependents and updates parent | "Feature A done → Feature B unblocks, project progress updates" |
+| **Anomaly** | Debrief surfaces issue, escalates to parent | "Retro finds systemic auth flaw → flags parent objective" |
+| **Threshold** | Derived state crosses a boundary | "KR score drops below 0.4 → flag at-risk to objective owner" |
+| **Ad-hoc** | Human or external input | "Customer report → backlog → secretary triages → feature" |
 
 ### How Triggers Flow
 
@@ -604,9 +606,20 @@ How work gets initiated at each level and flows through the topology:
 
 **Anomaly (upward propagation):** When a Debrief phase identifies a systemic issue, it's flagged on the parent entity's metadata. The parent's next Discover phase includes child anomalies. This is Toyota's "andon cord" in organisational form.
 
-**Cadence (time-based):** Strategic and program work is triggered by planning cycles (quarterly OKR setting, 6-week cycle boundaries). pd supports this via `/pd:start-cycle` commands and cadence tags on entities.
+**Threshold (derived state monitoring):** The entity engine continuously derives parent state from children. When a derived metric (OKR score, project progress, traffic light) crosses a threshold, it triggers a notification to the owner. No scheduled review needed — the system surfaces problems as they occur.
 
-**Ad-hoc (backlog inbox):** Work that doesn't fit the current flow goes to backlog. Secretary triages at cadence boundaries or on-demand.
+**Ad-hoc (backlog inbox):** Work that doesn't fit the current flow goes to backlog. Secretary triages on demand.
+
+### Time as Performance Measurement
+
+pd records timestamps on every phase transition and entity state change (it already does this via `phase_timing` in `.meta.json`). Time data serves **retrospective analysis**, not planning:
+
+- **Phase duration:** "Design phases for standard features average 2.3 hours" — useful for understanding capacity, not setting deadlines
+- **Lead time:** "Time from entity creation to completion" — useful for process improvement
+- **Blocked duration:** "This feature was blocked for 4 days" — useful for identifying bottlenecks
+- **Value velocity:** "This circle delivered 3 objectives worth of value this month" — useful for understanding throughput
+
+Time estimates and deadlines are explicitly **not part of the entity model**. Value delivered is the metric that matters.
 
 ---
 
@@ -639,7 +652,7 @@ Transform secretary into organisational router:
 
 Universal work creation flow:
 - 4-step identify → link → register → activate pattern at every level
-- Backlog as organisational inbox with triage at cadence boundaries
+- Backlog as organisational inbox with on-demand triage
 
 ### Phase 3: L4 Operational — Tasks as Work Items
 
@@ -665,10 +678,10 @@ Make projects living entities instead of write-once containers:
 
 Add the strategic layer:
 - **Initiatives** — strategic bets with 5D lifecycle, Amazon-style narrative documents
-- **Objectives** — what we want to achieve this cycle, with cadence tags (Q2-2026)
-- **Key Results** — measurable outcomes with type (target/baseline/milestone/binary), scoring 0.0-1.0
-- OKR cadence management (quarterly by default, configurable)
+- **Objectives** — what we want to achieve, created when strategic intent crystallises
+- **Key Results** — measurable outcomes with type (target/baseline/milestone/binary), scoring 0.0-1.0, scored on completion not calendar
 - OKR anti-pattern detection (output KRs, too many OKRs, activity words)
+- Threshold-based alerting: KR score drops → owner notified automatically
 - Portfolio view: initiative health, OKR progress, cross-circle dependencies
 - Strategic advisors: reuse existing advisory framework at L1
 
