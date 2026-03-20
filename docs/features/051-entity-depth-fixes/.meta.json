@@ -1,0 +1,14 @@
+{
+  "id": "051",
+  "slug": "entity-depth-fixes",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-03-20T06:29:56.768524+00:00",
+  "branch": "feature/051-entity-depth-fixes",
+  "lastCompletedPhase": null,
+  "phases": {
+    "brainstorm": {
+      "started": "2026-03-20T06:29:56.768454+00:00"
+    }
+  }
+}
