@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.13.19] - 2026-03-21
+
+### Fixed
+- Memory server MCP fails to load when `.env` has only some of the expected keys — `set -euo pipefail` + `grep` no-match killed the bootstrap script silently. Added `|| true` to grep pipelines.
+- `create_provider()` in embedding.py silently swallowed all exceptions — now logs specific error to stderr before returning None.
+
 ## [4.13.18] - 2026-03-20
 
 ### Changed

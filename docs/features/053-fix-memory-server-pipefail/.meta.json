@@ -1,0 +1,35 @@
+{
+  "id": "053",
+  "slug": "fix-memory-server-pipefail",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-03-20T19:05:56.878811+00:00",
+  "branch": "feature/053-fix-memory-server-pipefail",
+  "lastCompletedPhase": "implement",
+  "phases": {
+    "brainstorm": {
+      "started": "2026-03-20T19:05:56.878481+00:00"
+    },
+    "specify": {
+      "started": "2026-03-20T19:10:38.111168+00:00",
+      "completed": "2026-03-20T19:10:41.660584+00:00",
+      "iterations": 2
+    },
+    "design": {
+      "completed": "2026-03-20T19:14:06.921076+00:00",
+      "iterations": 2
+    },
+    "create-plan": {
+      "completed": "2026-03-20T19:16:44.116636+00:00",
+      "iterations": 2
+    },
+    "create-tasks": {
+      "completed": "2026-03-20T19:18:48.373363+00:00",
+      "iterations": 2
+    },
+    "implement": {
+      "completed": "2026-03-20T19:21:18.142846+00:00",
+      "iterations": 1
+    }
+  }
+}

@@ -19,7 +19,7 @@ export PYTHONUNBUFFERED=1
 # Supports KEY=value, KEY="value", KEY='value' — not multi-line values
 if [ -f ".env" ]; then
     for _key in GEMINI_API_KEY OPENAI_API_KEY VOYAGE_API_KEY MEMORY_EMBEDDING_PROVIDER; do
-        _val=$(grep -E "^${_key}=" .env 2>/dev/null | head -1 | cut -d= -f2- | sed 's/^["'"'"']//;s/["'"'"']$//')
+        _val=$(grep -E "^${_key}=" .env 2>/dev/null | head -1 | cut -d= -f2- | sed 's/^["'"'"']//;s/["'"'"']$//' || true)
         if [ -n "$_val" ]; then export "$_key=$_val"; fi
     done
 fi
@@ -31,7 +31,7 @@ bootstrap_venv "$VENV_DIR" "memory-server"
 # MEMORY_EMBEDDING_PROVIDER may come from .env, shell env, or .claude/pd.local.md
 _PROVIDER="${MEMORY_EMBEDDING_PROVIDER:-}"
 if [ -z "$_PROVIDER" ] && [ -f ".claude/pd.local.md" ]; then
-    _PROVIDER=$(grep -E "^memory_embedding_provider:" .claude/pd.local.md 2>/dev/null | head -1 | sed 's/^[^:]*: *//' | tr -d '[:space:]')
+    _PROVIDER=$(grep -E "^memory_embedding_provider:" .claude/pd.local.md 2>/dev/null | head -1 | sed 's/^[^:]*: *//' | tr -d '[:space:]' || true)
 fi
 # Default to gemini (matches Python config.py DEFAULTS)
 _PROVIDER="${_PROVIDER:-gemini}"

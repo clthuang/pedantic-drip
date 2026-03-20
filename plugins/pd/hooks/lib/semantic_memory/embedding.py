@@ -5,6 +5,7 @@ Defines the EmbeddingProvider protocol and concrete implementations.
 from __future__ import annotations
 
 import os
+import sys
 from typing import Protocol, runtime_checkable
 
 try:
@@ -708,5 +709,6 @@ def create_provider(config: dict) -> EmbeddingProvider | None:
             return None
 
         return NormalizingWrapper(inner)
-    except Exception:
+    except Exception as exc:
+        print(f"memory-server: create_provider failed for {provider_name}: {exc}", file=sys.stderr)
         return None
