@@ -1,0 +1,15 @@
+{
+  "id": "052",
+  "slug": "reactive-entity-consistency",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-03-20T08:31:09.492601+00:00",
+  "branch": "feature/052-reactive-entity-consistency",
+  "brainstorm_source": "docs/brainstorms/20260320-050414-fractal-work-management.prd.md",
+  "lastCompletedPhase": null,
+  "phases": {
+    "brainstorm": {
+      "started": "2026-03-20T08:31:09.492513+00:00"
+    }
+  }
+}
