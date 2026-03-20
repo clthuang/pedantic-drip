@@ -43,6 +43,7 @@ class WorkflowDriftReport:
     db: dict | None  # {workflow_phase, last_completed_phase, mode, kanban_column}
     mismatches: tuple[WorkflowMismatch, ...]
     message: str = ""  # human-readable context for error/edge cases
+    artifact_missing: bool = False  # R3: artifact dir does not exist on disk
 
 
 @dataclass(frozen=True)
@@ -203,6 +204,7 @@ def _check_single_feature(
     db: EntityDatabase,
     feature_type_id: str,
     meta: dict,
+    artifact_dir: str | None = None,
 ) -> WorkflowDriftReport:
     """Build drift report for one feature given its .meta.json dict and DB state.
 
@@ -211,6 +213,9 @@ def _check_single_feature(
     - state.last_completed_phase -> last_completed_phase
     - state.mode -> mode
     """
+    # R3: Check artifact directory existence
+    artifact_missing = artifact_dir is not None and not os.path.exists(artifact_dir)
+
     # Derive state from meta
     state = engine._derive_state_from_meta(meta, feature_type_id)
     if state is None:
@@ -301,6 +306,7 @@ def _check_single_feature(
         meta_json=meta_dict,
         db=db_dict,
         mismatches=tuple(mismatches),
+        artifact_missing=artifact_missing,
     )
 
 
@@ -493,7 +499,9 @@ def check_workflow_drift(
         meta = _read_single_meta_json(engine, artifacts_root, feature_type_id)
         if meta is not None:
             try:
-                report = _check_single_feature(engine, db, feature_type_id, meta)
+                slug = engine._extract_slug(feature_type_id)
+                artifact_dir = os.path.join(artifacts_root, "features", slug)
+                report = _check_single_feature(engine, db, feature_type_id, meta, artifact_dir=artifact_dir)
                 reports.append(report)
             except Exception as exc:
                 reports.append(WorkflowDriftReport(
@@ -536,7 +544,9 @@ def check_workflow_drift(
         for ftype_id, meta in engine._iter_meta_jsons():
             meta_type_ids.add(ftype_id)
             try:
-                report = _check_single_feature(engine, db, ftype_id, meta)
+                slug = engine._extract_slug(ftype_id)
+                artifact_dir = os.path.join(artifacts_root, "features", slug)
+                report = _check_single_feature(engine, db, ftype_id, meta, artifact_dir=artifact_dir)
                 reports.append(report)
             except Exception as exc:
                 reports.append(WorkflowDriftReport(
@@ -648,6 +658,8 @@ def _build_drift_result(reports: list[WorkflowDriftReport]) -> WorkflowDriftResu
             summary[report.status] += 1
         else:
             summary["error"] += 1
+
+    summary["artifact_missing_count"] = sum(1 for r in reports if r.artifact_missing)
 
     return WorkflowDriftResult(features=tuple(reports), summary=summary)
 

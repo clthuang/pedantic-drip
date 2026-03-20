@@ -737,7 +737,7 @@ class TestCheckWorkflowDrift:
 
         result = check_workflow_drift(engine, db, str(tmp_path))
 
-        expected_keys = {"in_sync", "meta_json_ahead", "db_ahead", "meta_json_only", "db_only", "error"}
+        expected_keys = {"in_sync", "meta_json_ahead", "db_ahead", "meta_json_only", "db_only", "error", "artifact_missing_count"}
         assert set(result.summary.keys()) == expected_keys
         # Empty scan -> all zeros
         for key in expected_keys:
@@ -1945,10 +1945,10 @@ class TestErrorPropagationReconciliation:
         import workflow_engine.reconciliation as recon_mod
         original = recon_mod._check_single_feature
 
-        def selective_check(eng, database, ftype_id, meta):
+        def selective_check(eng, database, ftype_id, meta, **kwargs):
             if "002-bad" in ftype_id:
                 raise RuntimeError("check exploded")
-            return original(eng, database, ftype_id, meta)
+            return original(eng, database, ftype_id, meta, **kwargs)
 
         monkeypatch.setattr(recon_mod, "_check_single_feature", selective_check)
 
@@ -2683,4 +2683,101 @@ class TestKanbanDriftTerminalStatus:
         assert row is not None
         assert row["kanban_column"] == "completed", (
             f"Expected kanban_column='completed' after reconcile, got '{row['kanban_column']}'"
+        )
+
+
+# ===========================================================================
+# Task 3.1a: Artifact path verification tests (R3)
+# ===========================================================================
+
+
+class TestArtifactPathVerification:
+    """Tests for artifact_missing flag on WorkflowDriftReport (AC-3.1--AC-3.4)."""
+
+    def test_artifact_missing_flag(self, tmp_path):
+        """AC-3.1/AC-3.2: feature with non-existent artifact dir -> artifact_missing=True."""
+        db = _make_db()
+        slug = "099-nonexistent"
+        type_id = _register_feature(db, slug)
+        db.create_workflow_phase(
+            type_id,
+            workflow_phase="design",
+            last_completed_phase="specify",
+            mode="standard",
+            kanban_column="wip",
+        )
+        # Create .meta.json but in a DIFFERENT slug dir so the artifact_dir
+        # computed by check_workflow_drift won't match. Actually, we need the
+        # .meta.json to exist for the engine to find it, but the artifact_dir
+        # check is separate. The simplest approach: use _check_single_feature
+        # directly with an explicit non-existent artifact_dir.
+        meta = {
+            "workflow_phase": "design",
+            "last_completed_phase": "specify",
+            "mode": "standard",
+            "status": "active",
+        }
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        nonexistent_dir = str(tmp_path / "features" / slug)
+        # Directory does NOT exist on disk
+
+        report = _check_single_feature(engine, db, type_id, meta, artifact_dir=nonexistent_dir)
+
+        assert report.artifact_missing is True
+
+    def test_artifact_missing_no_short_circuit(self, tmp_path):
+        """AC-3.3/TD-3: missing artifact AND DB drift -> artifact_missing=True AND mismatches non-empty."""
+        db = _make_db()
+        slug = "099-drifted"
+        type_id = _register_feature(db, slug)
+        # DB has older state than meta
+        db.create_workflow_phase(
+            type_id,
+            workflow_phase="specify",
+            last_completed_phase=None,
+            mode="standard",
+            kanban_column="backlog",
+        )
+        # .meta.json is ahead
+        meta = {
+            "workflow_phase": "design",
+            "last_completed_phase": "specify",
+            "mode": "standard",
+            "status": "active",
+        }
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        nonexistent_dir = str(tmp_path / "features" / slug)
+
+        report = _check_single_feature(engine, db, type_id, meta, artifact_dir=nonexistent_dir)
+
+        assert report.artifact_missing is True, "artifact_missing should be True for non-existent dir"
+        assert len(report.mismatches) > 0, "Drift mismatches should still be detected (no short-circuit)"
+
+    def test_artifact_missing_count_summary(self, tmp_path):
+        """AC-3.4: drift result summary has artifact_missing_count key with correct count."""
+        from workflow_engine.reconciliation import _build_drift_result
+
+        # Two reports: one with artifact_missing=True, one without
+        report_missing = WorkflowDriftReport(
+            feature_type_id="feature:099-missing",
+            status="in_sync",
+            meta_json={"workflow_phase": "design", "last_completed_phase": "specify", "mode": "standard", "status": "active"},
+            db={"workflow_phase": "design", "last_completed_phase": "specify", "mode": "standard", "kanban_column": "wip"},
+            mismatches=(),
+            artifact_missing=True,
+        )
+        report_present = WorkflowDriftReport(
+            feature_type_id="feature:099-present",
+            status="in_sync",
+            meta_json={"workflow_phase": "design", "last_completed_phase": "specify", "mode": "standard", "status": "active"},
+            db={"workflow_phase": "design", "last_completed_phase": "specify", "mode": "standard", "kanban_column": "wip"},
+            mismatches=(),
+            artifact_missing=False,
+        )
+
+        result = _build_drift_result([report_missing, report_present])
+
+        assert "artifact_missing_count" in result.summary, "summary must have artifact_missing_count key"
+        assert result.summary["artifact_missing_count"] == 1, (
+            f"Expected 1 artifact_missing, got {result.summary['artifact_missing_count']}"
         )
