@@ -7,7 +7,7 @@
 #### Task 1a.1: Create derive_kanban() function
 - **File:** New `plugins/pd/hooks/lib/workflow_engine/kanban.py`
 - **Do:** Create `PHASE_TO_KANBAN` mapping covering 7-phase + 5D phase names. Implement `derive_kanban(status: str, workflow_phase: str | None) -> str`.
-- **Done when:** Unit tests pass for every (status, phase) combination: active+specify→wip, completed+finish→completed, abandoned+any→abandoned, active+None→backlog, active+discover→wip (5D)
+- **Done when:** Unit tests pass for every (status, phase) combination: active+specify→wip, completed+finish→completed, abandoned+any→abandoned, active+None→backlog, active+discover→backlog (5D), active+deliver→wip (5D), active+debrief→documenting (5D)
 - **Implements:** Plan Step 1a.1, AC-4
 
 #### Task 1a.3: Field validation in init_feature_state
@@ -39,7 +39,7 @@
 #### Task 1a.2a: Audit kanban constant references
 - **Files:** All files referencing `STATUS_TO_KANBAN` or `FEATURE_PHASE_TO_KANBAN`
 - **Do:** Run `grep -rn 'STATUS_TO_KANBAN\|FEATURE_PHASE_TO_KANBAN' plugins/pd/`. List every file and line. Categorize as production vs test. Update `VALID_MODES` in `backfill.py` to include `'light'`.
-- **Done when:** Audit list produced. VALID_MODES updated. No code changes to kanban paths yet (that's 1a.2b).
+- **Done when:** `grep -rn 'STATUS_TO_KANBAN\|FEATURE_PHASE_TO_KANBAN' plugins/pd/` output reviewed and categorized (production vs test files). `VALID_MODES` in `backfill.py` includes `'light'` — verified by grep. No code changes to kanban call sites yet (that's 1a.2b).
 - **Implements:** Plan Step 1a.2 (audit sub-task)
 
 #### Task 1a.2b: Replace kanban-setting code paths with derive_kanban()
@@ -95,7 +95,7 @@
 #### Task 1b.3a: get_entity_by_uuid() and resolve_ref()
 - **File:** `database.py`
 - **Do:** Add `get_entity_by_uuid(uuid)` → returns entity dict or None. Add `resolve_ref(ref)` → uuid lookup, full type_id lookup, partial type_id prefix search. Ambiguous → raises ValueError with candidates.
-- **Done when:** Unit tests: uuid resolve, full type_id, partial match (unique → resolves), partial match (ambiguous → ValueError with candidate list), not found → None.
+- **Done when:** Unit tests: uuid resolve, full type_id, partial match (unique → resolves), partial match (ambiguous → ValueError with candidate list), not found → raises NotFoundError (per design I4).
 - **Depends on:** Task 1b.1
 - **Implements:** Plan Step 1b.3, AC-7
 
@@ -260,7 +260,7 @@
 #### Task 3.3: EntityWorkflowEngine core
 - **File:** New `plugins/pd/hooks/lib/workflow_engine/entity_engine.py`
 - **Do:** Strategy pattern with FeatureBackend (delegates to frozen engine + cascade) and TaskBackend (task mini-lifecycle + cascade). Two-phase commit: Phase A (frozen engine auto-commits) → Phase B (cascade in separate BEGIN IMMEDIATE). Accept `artifacts_root` parameter and pass through to frozen engine.
-- **Done when:** Tests 1-8 from plan Step 3.3 pass. Integration test: light feature → transition to implement → only spec.md required (B6 integration).
+- **Done when:** All pass: (1) feature complete_phase → delegates to frozen engine + cascade fires in separate transaction, (2) task complete_phase → 5D transition + cascade, (3) cascade failure after completion → completion persists + cascade retryable, (4) UUID-to-type_id resolution → correct delegation, (5) degraded mode (DB unhealthy) → cascade skipped, (6) no children → rollup_parent no-op, (7) mixed children (active + abandoned) → abandoned excluded from progress, (8) without notification queue → cascade still works. Integration test: light feature → transition to implement → only spec.md required (B6 integration).
 - **Depends on:** Tasks 3.1, 3.2a, 3.2b
 - **Implements:** Plan Step 3.3 [XC], AC-25
 
@@ -281,7 +281,7 @@
 - **Implements:** Plan Step 3.4, AC-25 (integration)
 
 #### Task 3.5: Agent-executable task query
-- **File:** New MCP tool `query_ready_tasks`
+- **File:** `mcp/workflow_state_server.py` — new MCP tool `query_ready_tasks`
 - **Do:** Query: type=task, status=planned, no blocked_by, parent in implement phase.
 - **Done when:** 3 tasks (A ready, B blocked, C parent not in implement) → returns only A.
 - **Depends on:** Tasks 3.1, 3.2a
@@ -321,7 +321,7 @@
 - **Implements:** Plan Step 4.3, AC-28/29
 
 #### Task 4.4: Orphan guard on abandonment
-- **File:** `entity_engine.py` or `database.py`
+- **File:** `entity_engine.py` (EntityWorkflowEngine — per design D2, cascade/guard logic belongs here, not in EntityDatabase)
 - **Do:** Abandon with active children → blocked unless --cascade. Cascade = abandon all descendants.
 - **Done when:** Abandon project with active features → blocked. With --cascade → all abandoned.
 - **Depends on:** Task 1b.3a
@@ -339,8 +339,8 @@
 
 #### Task 5.1: Initiative and Objective entity lifecycle
 - **File:** `entity_engine.py`
-- **Do:** Register initiative/objective with FiveDBackend. Human-gated transitions.
-- **Done when:** Create initiative → objective as child → both transition through 5D.
+- **Do:** Register initiative/objective entity types with FiveDBackend. **Human-gated = policy, not code gate:** L1 entities use the same FiveDBackend transitions as projects (phase-sequence + blocked_by). The "human approval" constraint is enforced by the secretary prompt (no automated caller auto-advances L1 entities). No code-level gate flag needed — the design's L1 stringency is a caller-side concern, not an engine-side concern.
+- **Done when:** Create initiative → create objective as child → both transition through 5D phases. No automated transition fires without explicit user/secretary invocation.
 - **Depends on:** Task 4.1
 - **Implements:** Plan Step 5.1, AC-31
 
@@ -381,8 +381,8 @@
 
 #### Task 6.1: Anomaly propagation
 - **File:** `entity_engine.py`
-- **Do:** On debrief completion with systemic findings → record anomaly in parent metadata.
-- **Done when:** Feature retro flags issue → parent project metadata includes anomaly entry.
+- **Do:** On debrief phase completion, `EntityWorkflowEngine.complete_phase()` checks `entity.metadata.get("systemic_finding")`. If truthy, records anomaly in parent metadata as `{anomalies: [{description: metadata["systemic_finding"], source_type_id: entity.type_id, timestamp: ISO8601}]}`. Users or the secretary set `systemic_finding` on the entity metadata before completing debrief.
+- **Done when:** Test: set `metadata["systemic_finding"]="auth middleware broken"` on feature entity, call complete_phase(debrief) → parent project metadata includes anomaly entry with description, source_type_id, and timestamp. Without systemic_finding → no anomaly recorded.
 - **Depends on:** Task 3.3
 - **Implements:** Plan Step 6.1, AC-35
 
