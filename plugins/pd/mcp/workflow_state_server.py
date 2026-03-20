@@ -443,6 +443,47 @@ def _process_transition_phase(
     return json.dumps(result)
 
 
+# ---------------------------------------------------------------------------
+# Artifact completeness check (AC-5)
+# ---------------------------------------------------------------------------
+
+# Expected artifacts per mode for finish-phase completeness warning.
+# Light mode deferred to task 1b.10.
+_EXPECTED_ARTIFACTS: dict[str, list[str]] = {
+    "standard": ["spec.md", "tasks.md", "retro.md"],
+    "full": ["spec.md", "design.md", "plan.md", "tasks.md", "retro.md"],
+}
+
+
+def _check_artifact_completeness(
+    db: EntityDatabase,
+    feature_type_id: str,
+) -> list[str]:
+    """Check for missing expected artifacts on finish. Returns list of warnings."""
+    entity = db.get_entity(feature_type_id)
+    if entity is None:
+        return []
+
+    artifact_path = entity.get("artifact_path")
+    if not artifact_path or not os.path.isdir(artifact_path):
+        return []
+
+    # Read mode from workflow_phases table
+    wf = db.get_workflow_phase(feature_type_id)
+    mode = (wf.get("mode") if wf else None) or "standard"
+
+    expected = _EXPECTED_ARTIFACTS.get(mode)
+    if expected is None:
+        return []
+
+    missing = [
+        name for name in expected
+        if not os.path.isfile(os.path.join(artifact_path, name))
+    ]
+
+    return [f"Missing artifact: {name}" for name in missing]
+
+
 @_with_error_handling
 @_catch_value_error
 def _process_complete_phase(
@@ -503,6 +544,14 @@ def _process_complete_phase(
         result["completed_at"] = phase_timing[phase]["completed"]
         if warning:
             result["projection_warning"] = warning
+
+        # Artifact completeness warning on finish (AC-5)
+        if phase == "finish":
+            artifact_warnings = _check_artifact_completeness(
+                db, feature_type_id,
+            )
+            if artifact_warnings:
+                result["artifact_warnings"] = artifact_warnings
 
     return json.dumps(result)
 
@@ -741,21 +790,18 @@ def _process_reconcile_status(
             1 for r in frontmatter_reports if r.status != "in_sync"
         )
         return json.dumps({
-            "healthy": wf_drift == 0 and fm_drift == 0,
+            "healthy": wf_drift == 0,
             "workflow_drift_count": wf_drift,
             "frontmatter_drift_count": fm_drift,
         })
 
     fm_summary = _build_frontmatter_summary(frontmatter_reports)
 
-    # Healthy: both dimensions have all counts except in_sync == 0
+    # Healthy: workflow drift only (frontmatter drift excluded per AC-2)
     wf_healthy = all(
         v == 0 for k, v in workflow_result.summary.items() if k != "in_sync"
     )
-    fm_healthy = all(
-        v == 0 for k, v in fm_summary.items() if k != "in_sync"
-    )
-    healthy = wf_healthy and fm_healthy
+    healthy = wf_healthy
 
     return json.dumps({
         "workflow_drift": {
