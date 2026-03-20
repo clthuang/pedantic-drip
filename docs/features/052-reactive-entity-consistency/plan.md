@@ -113,7 +113,7 @@ Phase 1a ──→ Phase 1b ──→ Phase 2 ──→ Phase 3 ──→ Phase 
 
 ### Step 1b.5: MCP tool ref parameter [M]
 - **File:** `workflow_state_server.py`, `mcp/entity_server.py`
-- **Work:** Add `ref` parameter to existing MCP tools. Resolution: uuid → direct, full type_id → lookup, partial type_id → prefix search. Partial match on mutations → error with candidates.
+- **Work:** Audit all `@mcp_tool` decorators in both files for `type_id` parameters (verify count via grep). Add `ref` parameter to each. Resolution: uuid → direct, full type_id → lookup, partial type_id → prefix search. Partial match on mutations → error with candidates.
 - **Test:** get_entity(ref="feature:052") → resolves. get_entity(ref="feature:05") with 3 matches → error listing all. update_entity(ref="feature:05") → error (ambiguous, mutation).
 - **ACs:** AC-7
 - **Dependencies:** 1b.3
@@ -132,12 +132,26 @@ Phase 1a ──→ Phase 1b ──→ Phase 2 ──→ Phase 3 ──→ Phase 
 - **ACs:** AC-14
 - **Dependencies:** None
 
+### Step 1b.7a: Update backfill.py for uuid-primary parent resolution [M]
+- **File:** `entity_registry/backfill.py`
+- **Work:** Change parent linkage reads to prefer `parent_uuid`, fall back to `parent_type_id`. Dual-read logic per design D3.
+- **Test:** Backfill on entity with `parent_uuid` set → uses uuid. Backfill on legacy entity with only `parent_type_id` → resolves via type_id fallback.
+- **ACs:** AC-7 (partial), NFR-6
+- **Dependencies:** 1b.1, 1b.3
+
 ### Step 1b.8: Gate parameterisation for light weight [M]
 - **File:** `transition_gate/gate.py`, `transition_gate/constants.py`
 - **Work:** `HARD_PREREQUISITES` lookup filters to only phases in active template. If phase not in template → not a prerequisite. Read active template from entity's `(entity_type, mode)` via WEIGHT_TEMPLATES.
 - **Test:** Light feature: implement requires only spec.md (design.md not required). Standard feature: implement requires spec.md + tasks.md (unchanged).
 - **ACs:** AC-15
 - **Dependencies:** 1b.7
+
+### Step 1b.9: Light-mode artifact completeness [S]
+- **File:** `workflow_state_server.py` (`_process_complete_phase`)
+- **Work:** Extend Step 1a.6's artifact check to handle `light` mode. Light features on finish check only `spec.md`. Light tasks have no artifact expectations.
+- **Test:** Complete light feature with spec.md → no warning. Without spec.md → warning. Light task → no artifact check.
+- **ACs:** AC-5 (light mode)
+- **Dependencies:** 1b.1 (mode='light' exists), 1a.6
 
 ---
 
