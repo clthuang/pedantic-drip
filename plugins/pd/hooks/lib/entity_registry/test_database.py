@@ -817,6 +817,42 @@ class TestSetParent:
         with pytest.raises(ValueError, match="[Cc]ircular"):
             db.set_parent("project:a", "feature:d")
 
+    def test_set_parent_depth_guard_11_hops_no_cycle(self, db: EntityDatabase):
+        """An 11-entity chain with no cycle: linking a 12th should succeed.
+
+        The depth guard (max 10 hops) should terminate traversal gracefully
+        without hanging or raising, since there is no cycle within the limit.
+        Covers AC-1.3 and AC-1.4.
+        """
+        # Build chain: e0 <- e1 <- e2 <- ... <- e10 (11 entities, 10 hops)
+        db.register_entity("feature", "e0", "Entity 0")
+        for i in range(1, 11):
+            db.register_entity(
+                "feature", f"e{i}", f"Entity {i}",
+                parent_type_id=f"feature:e{i - 1}",
+            )
+        # Create 12th entity and set its parent to the end of the chain
+        db.register_entity("feature", "e11", "Entity 11")
+        # This must succeed — no cycle, depth guard terminates the CTE
+        result = db.set_parent("feature:e11", "feature:e10")
+        assert result is not None  # returns child_uuid on success
+
+    def test_set_parent_cycle_within_10_hops(self, db: EntityDatabase):
+        """A chain with a cycle at hop 5: set_parent() must raise ValueError.
+
+        Covers AC-1.2.
+        """
+        # Build chain: e0 <- e1 <- e2 <- e3 <- e4 (5 entities, 4 hops)
+        db.register_entity("feature", "e0", "Entity 0")
+        for i in range(1, 5):
+            db.register_entity(
+                "feature", f"e{i}", f"Entity {i}",
+                parent_type_id=f"feature:e{i - 1}",
+            )
+        # Attempt to set e0's parent to e4 -> creates cycle: e0->e4->e3->e2->e1->e0
+        with pytest.raises(ValueError, match="[Cc]ircular"):
+            db.set_parent("feature:e0", "feature:e4")
+
 
 # ---------------------------------------------------------------------------
 # Task 1.10: get_entity tests

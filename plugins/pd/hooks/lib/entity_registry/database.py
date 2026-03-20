@@ -700,15 +700,16 @@ class EntityDatabase:
         if child_uuid == parent_uuid:
             raise ValueError("entity cannot be its own parent")
 
-        # Circular reference detection via UUID-based CTE
+        # Circular reference detection via UUID-based CTE (depth-guarded)
         cur = self._conn.execute(
             """
-            WITH RECURSIVE anc(uid) AS (
-                SELECT parent_uuid FROM entities WHERE uuid = :parent_uuid
+            WITH RECURSIVE anc(uid, depth) AS (
+                SELECT parent_uuid, 0 FROM entities WHERE uuid = :parent_uuid
                 UNION ALL
-                SELECT e.parent_uuid FROM entities e
+                SELECT e.parent_uuid, a.depth + 1 FROM entities e
                 JOIN anc a ON e.uuid = a.uid
                 WHERE e.parent_uuid IS NOT NULL
+                  AND a.depth < 10
             )
             SELECT 1 FROM anc WHERE uid = :child_uuid
             """,
