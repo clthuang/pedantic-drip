@@ -28,26 +28,26 @@ The entity registry enforces a depth guard (AC-14) at 10 hops for lineage traver
 
 **Problem:** `reconciliation.py:175-190` — `_derive_expected_kanban()` maps `workflow_phase` → kanban column but ignores feature `status`. Features with `status="completed"` or `status="abandoned"` that don't have matching phase state get incorrect kanban derivation. The `_check_single_feature()` function reads `meta.get("status")` into the report but never uses it for kanban logic.
 
-**Fix:** Extend `_derive_expected_kanban()` to accept an optional `status` parameter. When `status == "completed"`, return `"completed"` regardless of phase. When `status == "abandoned"`, return `"abandoned"`. Update callers in `_check_single_feature()` and `_reconcile_single_feature()` to pass status through.
+**Fix:** Extend `_derive_expected_kanban()` to accept an optional `status` parameter. When `status == "completed"`, return `"completed"` regardless of phase. When `status == "abandoned"`, return `"abandoned"`. In `_check_single_feature()`, pass `meta.get("status")` (already available at line 223) to `_derive_expected_kanban()`. In `_reconcile_single_feature()`, read `report.meta_json["status"]` and pass to `_derive_expected_kanban()` — no new function parameters needed since status is already in the meta_json dict.
 
 **Acceptance criteria:**
 - AC-2.1: `_derive_expected_kanban(workflow_phase="implement", ..., status="completed")` returns `"completed"`
 - AC-2.2: `_derive_expected_kanban(workflow_phase="implement", ..., status="abandoned")` returns `"abandoned"`
 - AC-2.3: `_derive_expected_kanban(workflow_phase="implement", ..., status="active")` unchanged (existing behavior)
-- AC-2.4: Kanban drift detection correctly identifies stale kanban columns for completed/abandoned features
-- AC-2.5: Reconciliation updates kanban column for status-terminal features
+- AC-2.4: Given a feature with `status="completed"` and DB `kanban_column="wip"`, when `_check_single_feature()` runs, then mismatches includes `WorkflowMismatch(field="kanban_column", meta_json_value="completed", db_value="wip")`
+- AC-2.5: Given a `WorkflowDriftReport` with `status="meta_json_ahead"` where `meta_json["status"]="completed"`, when `_reconcile_single_feature()` runs with `dry_run=False`, then `db.update_workflow_phase()` is called with `kanban_column="completed"`
 
 ### R3: Artifact path verification in entity reconciliation
 
 **Problem:** During entity reconciliation and drift detection (`_check_single_feature()` in `reconciliation.py`), artifact paths referenced in entity records are assumed to exist on disk. Deep hierarchies with missing intermediate artifacts can produce orphaned entity records or misleading drift reports.
 
-**Fix:** Add `os.path.exists()` check on entity artifact paths within `_check_single_feature()` before drift comparison. When an artifact path doesn't exist, flag it in the drift report.
+**Fix:** Add an `artifact_dir` parameter to `_check_single_feature()` (computed by the caller `check_workflow_drift()` as `os.path.join(artifacts_root, "features", slug)`). Check `os.path.exists(artifact_dir)` before drift comparison. When the artifact path doesn't exist, set `artifact_missing=True` on the drift report.
 
 **Acceptance criteria:**
 - AC-3.1: `WorkflowDriftReport` gains an `artifact_missing: bool = False` field
-- AC-3.2: `_check_single_feature()` sets `artifact_missing=True` when the feature's artifact path doesn't exist on disk
+- AC-3.2: `_check_single_feature()` sets `artifact_missing=True` when the feature's artifact directory doesn't exist on disk
 - AC-3.3: Missing artifacts don't cause reconciliation to crash or hang
-- AC-3.4: `WorkflowDriftResult.summary` dict includes `artifact_missing_count` key
+- AC-3.4: `WorkflowDriftResult.summary` dict includes `artifact_missing_count` key, computed as `sum(1 for r in reports if r.artifact_missing)` in `_build_drift_result()`, separate from the status-based counting loop
 
 ### R4: Depth context in reconciliation reporting
 
@@ -58,7 +58,7 @@ The entity registry enforces a depth guard (AC-14) at 10 hops for lineage traver
 **Acceptance criteria:**
 - AC-4.1: `WorkflowDriftReport` includes `depth: int | None = None` field
 - AC-4.2: `WorkflowDriftReport` includes `parent_type_id: str | None = None` field
-- AC-4.3: Human-readable reconciliation output shows depth context for nested entities (e.g., `"depth: 3, parent: project:001-my-project"`)
+- AC-4.3: `WorkflowDriftReport.message` includes depth and parent context for nested entities (e.g., `"depth: 3, parent: project:001-my-project"`)
 - AC-4.4: Fields are None when entity has no parent (root entities)
 - AC-4.5: Existing test constructors of `WorkflowDriftReport` compile without changes (default=None)
 
