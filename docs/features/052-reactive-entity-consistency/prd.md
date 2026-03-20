@@ -187,7 +187,9 @@ Entity relationships:
 
 ## Secretary as Single Entry Point
 
-The secretary agent is pd's **front door** — the single primary entry point for all interaction. Users talk to secretary; secretary handles everything.
+The secretary agent is pd's **front door** — the single primary entry point for all interaction.
+
+**Relationship to existing secretary:** The current secretary (`commands/secretary.md`, ~700 lines) is a routing engine with a 7-step pipeline (DISCOVER→CLARIFY→TRIAGE→MATCH→REVIEW→RECOMMEND→DELEGATE), specialist fast-paths, YOLO orchestration, and maturity scoring. The CREATE/QUERY/CONTINUE modes described below are **extensions to the existing pipeline**, not a replacement. They add organisational intelligence (parent search, circle awareness, weight recommendation) to the TRIAGE and MATCH steps. The existing routing, specialist fast-paths, and YOLO orchestration remain. Phase 2 implementation extends the secretary incrementally: 2a adds entity registry queries to TRIAGE, 2b adds proactive notifications to RECOMMEND, 2c adds weight/escalation intelligence to MATCH.
 
 ### Three Modes
 
@@ -519,15 +521,24 @@ Each entity carries:
 
 The PRD's data model changes require **destructive migrations** (table rebuild with data copy), not additive changes:
 
-1. **Entity type expansion:** The `entities` table has a CHECK constraint (`entity_type IN ('backlog','brainstorm','project','feature')`) enforced at both SQL and Python levels. Adding `initiative`, `objective`, `key_result`, `task` requires a table-rebuild migration (same pattern as migration 2 and 5 in `database.py`). This also requires updating `VALID_ENTITY_TYPES`, FTS triggers, and immutability triggers.
+1. **Entity type expansion:** The `entities` table has a CHECK constraint (`entity_type IN ('backlog','brainstorm','project','feature')`) enforced at both SQL and Python levels. Adding `initiative`, `objective`, `key_result`, `task` requires a table-rebuild migration (same pattern as migration 2 and 5 in `database.py`). This also requires updating `VALID_ENTITY_TYPES`, FTS sync code (application-level, not trigger-based — verified), and immutability triggers.
 
-2. **Workflow phase expansion:** The `workflow_phases` table CHECK constraint only allows the 7 feature phases. The 5D phase names (`discover`, `define`, `design`, `deliver`, `debrief`) must be added — another table rebuild.
+2. **Workflow phase expansion:** The `workflow_phases` table CHECK constraint only allows the 7 feature phases plus brainstorm/backlog lifecycle phases. The 5D phase names (`discover`, `define`, `design`, `deliver`, `debrief`) must be added — another table rebuild.
 
-3. **New relationship fields:** `tags[]`, `blocked_by[]`, and `contributes_to` don't exist in the schema. Options: (a) store as structured JSON in existing `metadata` column (queryable via JSON functions but not indexable), (b) add junction tables (`entity_tags`, `entity_dependencies`, `entity_okr_alignment`) for efficient querying. Initial implementation uses metadata JSON; junction tables added when query performance requires it.
+3. **Mode constraint expansion:** The `workflow_phases.mode` CHECK constraint only allows `'standard'` and `'full'`. The ceremony weight system adds `'light'` — another table rebuild. All three CHECK constraint expansions (entity_type, workflow_phase, mode) should be combined into a single migration to minimise rebuilds.
 
-4. **Workflow engine generalisation:** The current `WorkflowStateEngine` is hardcoded for features (`FeatureWorkflowState`, feature-specific artifact paths, feature-specific gate evaluation). Supporting multiple entity types requires parameterising the engine by entity type — different phase sequences, different artifact expectations, different gate configurations. This is a significant refactor, phased across implementation.
+4. **Junction tables for relational data:** `tags[]`, `blocked_by[]`, and `contributes_to` require new junction tables from the start (not deferred to "later"):
+   - `entity_tags` (entity_type_id TEXT, tag TEXT) — for circle membership queries
+   - `entity_dependencies` (entity_type_id TEXT, blocked_by_type_id TEXT) — for dependency enforcement and cascade unblock
+   - `entity_okr_alignment` (entity_type_id TEXT, key_result_type_id TEXT) — for OKR rollup queries
 
-Consider dropping entity type CHECK constraint in favour of Python-only validation to make future type additions non-breaking.
+   **Rationale:** Dependency enforcement (blocked_by gates at Deliver) and cascade unblock (completion → find dependents) require efficient indexed lookups. Metadata JSON with json_each() scans are too slow for these critical-path operations and cycle detection. Junction tables must be in Phase 1, not deferred.
+
+5. **Workflow engine generalisation:** The current `WorkflowStateEngine` is deeply coupled to features: `_extract_slug` hardcodes `features/` path, `_get_existing_artifacts` uses feature-specific `HARD_PREREQUISITES`, `_evaluate_gates` uses feature-specific guard IDs, `complete_phase` validates against the 7-phase `_PHASE_VALUES`, `_iter_meta_jsons` globs `features/*/.meta.json`. This is not refactorable — it requires a new `EntityWorkflowEngine` class (strategy pattern) with type-specific backends. The existing `WorkflowStateEngine` remains frozen for L3 features; new entity types get the new engine. This is phased across implementation.
+
+6. **Transition gate compatibility with light weight:** Light-weight features (`["specify", "implement", "finish"]`) skip phases that existing HARD_PREREQUISITES and soft prerequisite guards expect. The gate system must be parameterised by the entity's active template — a phase not in the template is not a prerequisite. This requires changes to `_evaluate_gates` and `HARD_PREREQUISITES` lookups.
+
+Trade-off on CHECK constraints: consider dropping SQL-level CHECK constraints for entity_type and mode in favour of Python-only validation (`_validate_entity_type`). This makes future type/mode additions non-breaking (no table rebuild). The trade-off: weaker data integrity at the DB layer (raw SQL bypasses Python validation). Recommendation: drop CHECK constraints, add a migration-time consistency audit that verifies all existing data satisfies Python validation rules.
 
 ### Entity Engine Responsibilities
 
@@ -547,9 +558,9 @@ The entity engine is the **connective tissue** that makes circles coherent:
 
 ## What Changes for pd
 
-### Phase 1: Foundation — Depth Fixes + Core Extensions
+### Phase 1a: Depth Fixes (Zero Schema Changes)
 
-Fix 6 depth bugs (no architectural change, immediate value):
+Fix 6 depth bugs — immediately shippable, no migration risk:
 1. **Field validation** — `init_feature_state()` rejects empty identity fields with ValueError
 2. **Frontmatter health** — remove dead `reconcile_status` frontmatter check
 3. **Maintenance mode** — add `PD_MAINTENANCE=1` bypass to meta-json-guard
@@ -557,11 +568,17 @@ Fix 6 depth bugs (no architectural change, immediate value):
 5. **Artifact completeness** — soft verification warnings on feature finish
 6. **Reconciliation reporting** — surface session-start reconciliation summary
 
-Core extensions:
-- Extend entity type CHECK constraint: add `initiative`, `objective`, `key_result`, `task`
-- Add `tags` and `contributes_to` fields to entity metadata schema
+### Phase 1b: Schema Foundation
+
+Destructive migrations (combined into single migration to minimise rebuilds):
+- Drop entity_type CHECK constraint → Python-only validation (future-proof)
+- Expand `VALID_ENTITY_TYPES` to include `initiative`, `objective`, `key_result`, `task`
+- Expand workflow_phase CHECK to include 5D phase names
+- Expand mode CHECK to include `light`
+- Add junction tables: `entity_tags`, `entity_dependencies`, `entity_okr_alignment`
+- Update FTS sync code for new entity types
 - Add workflow templates registry with weight-specific templates
-- Add ceremony weight system (full/standard/light) to entity creation flow
+- Parameterise gate evaluation to respect entity's active template (light features skip phases)
 
 ### Phase 2: Secretary + Universal Work Creation
 
@@ -620,7 +637,7 @@ Add the strategic layer:
 
 ## What Does NOT Change
 
-- **L3 tactical workflow** — the existing 7-phase feature lifecycle logic is preserved. Phase names, gates, and artifacts remain. Schema migrations change the underlying tables but L3 behaviour is unchanged. All existing tests must pass after each migration.
+- **L3 tactical behaviour** — the existing 7-phase feature lifecycle behaviour is preserved: same phase names, same gates, same artifacts, same test suite passing. Implementation will change (tables rebuilt, engine refactored into `EntityWorkflowEngine` with L3-specific backend), but observable behaviour is identical. "No backward compatibility" (CLAUDE.md) applies to internal implementation; L3 user-facing behaviour is frozen.
 - **Entity lineage model** — same `parent_type_id` mechanism, extended with tags for cross-circle membership
 - **Agent/reviewer architecture** — same dispatch pattern, extended with level-appropriate reviewers
 - **Knowledge bank** — same structure, extended with level and circle tags
@@ -660,9 +677,11 @@ L1/L2 value in pd is **execution tracking and cross-level linkage**, not replaci
 
 **Cascading rollup fan-out:** Completing one entity triggers parent recalculation, which may trigger grandparent recalculation. With large entity graphs, this cascades. Mitigation: use dirty-flag marking — mark parent as "needs recalculation" on child completion, batch-evaluate dirty parents once per interaction boundary (before secretary response or session end), not immediately per child.
 
-**Orphan handling on parent abandonment:** When a parent entity is abandoned, its children need a defined policy: (a) cascade-abandon all descendants, (b) detach children (become standalone), or (c) block abandonment if children are active. Decision: **option (c) by default** — guard prevents abandoning entities with active children. User must explicitly abandon or detach children first. This matches pd's existing guard philosophy.
+**Orphan handling on parent abandonment:** When a parent entity is abandoned, its children need a defined policy. Decision: **guard by default, cascade on explicit request**. Abandoning an entity with active children is blocked unless `--cascade` flag is provided, which cascade-abandons all descendants in a single transaction. This preserves pd's guard philosophy while providing a practical escape hatch for cleanup.
 
 **Concurrency:** SQLite WAL mode with 5s busy timeout handles write serialisation. Cascading triggers (completion → unblock → rollup) involve read-modify-write across rows and must use `BEGIN IMMEDIATE` transactions to prevent stale reads between concurrent sessions.
+
+**Rollup computation model:** Parent state is recomputed **synchronously on child state change** (post-commit in `EntityDatabase`), not via dirty flags. pd is a CLI tool with bounded entity counts — the fan-out concern is premature optimisation. For a 6-level hierarchy with ~100 entities per level, a single completion triggers at most 5 parent recalculations (one per ancestor level). Each recalculation is a simple `SELECT COUNT(*) ... GROUP BY status` query. If performance becomes an issue at scale, dirty-flag batching can be added as an optimisation without changing the API.
 
 | Risk | Probability | Impact | Mitigation |
 |------|------------|--------|------------|
@@ -688,6 +707,8 @@ L1/L2 value in pd is **execution tracking and cross-level linkage**, not replaci
 5. **Cross-topology:** Completing a feature updates parent project. Completing a project updates parent KR. Retro findings propagate to parent.
 6. **Secretary as entry point:** Users can create, query, and continue work through natural language
 7. **Backward compatible:** A developer who ignores L1/L2/L4 sees zero change in their L3 workflow
+8. **Cold-start:** With zero entities, `/pd:create-feature` works identically to current behaviour (no parent linking offered). After creating one project, next `/pd:create-feature` offers parent linking.
+9. **Robustness:** Cycle detection rejects circular `blocked_by` chains. Orphan guard prevents abandoning entity with active children (without `--cascade`). Rollup recomputes within 500ms for graphs up to 1000 entities.
 
 ---
 
