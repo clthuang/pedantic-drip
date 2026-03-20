@@ -27,17 +27,22 @@ Research completed during PRD phase (5 agents on org management, 3 on VSM/agent 
 │   (data layer)       │   │  (lifecycle layer)        │
 │                      │   │                           │
 │  EntityDatabase      │   │  EntityWorkflowEngine     │
+│  (pure data layer)   │   │  (lifecycle + cascade)    │
 │  ├── entities        │   │  ├── get_template()       │
 │  ├── workflow_phases │   │  ├── transition_phase()   │
 │  ├── entity_tags     │   │  ├── complete_phase()     │
-│  ├── entity_deps     │   │  └── backends:            │
-│  ├── entity_okr_aln  │   │      ├── FeatureBackend   │
-│  └── _metadata       │   │      │   (frozen existing │
+│  ├── entity_deps     │   │  │   └── cascade:         │
+│  ├── entity_okr_aln  │   │  │       ├── unblock      │
+│  └── _metadata       │   │  │       ├── rollup       │
+│                      │   │  │       └── notify        │
+│  No hooks — pure     │   │  └── backends:            │
+│  data access only    │   │      ├── FeatureBackend   │
+│                      │   │      │   (frozen existing │
 │                      │   │      │    WorkflowState    │
-│  Post-commit hooks:  │   │      │    Engine)          │
-│  ├── cascade_unblock │   │      ├── FiveDBackend     │
-│  ├── rollup_parent   │   │      │   (L1/L2/L4)       │
-│  └── queue_notif     │   │      └── template_registry│
+│                      │   │      │    Engine)          │
+│                      │   │      ├── FiveDBackend     │
+│                      │   │      │   (L1/L2/L4)       │
+│                      │   │      └── template_registry│
 │                      │   │                           │
 └──────────┬───────────┘   └──────────┬────────────────┘
            │                          │
@@ -101,28 +106,44 @@ class EntityWorkflowEngine:
 
 **Decision rationale:** Wrapping vs forking. Wrapping preserves L3 test compatibility. The feature backend delegates to the frozen engine; 5D backends implement minimal phase-sequence-only transitions (no artifact prerequisites initially).
 
-**D2: Post-Commit Hooks in EntityDatabase** (AC-25, AC-29, AC-34)
-Entity state mutations trigger synchronous post-commit hooks:
+**D2: Cascade Logic Owned by EntityWorkflowEngine, Not EntityDatabase** (AC-25, AC-29, AC-34)
+
+EntityDatabase remains a **pure data layer** — no post-commit hooks, no cascade logic. All cascade operations (unblock, rollup, notification) are orchestrated by `EntityWorkflowEngine.complete_phase()` which wraps the data operations in a single `BEGIN IMMEDIATE` transaction:
 
 ```python
-class EntityDatabase:
-    def update_entity(self, type_id, **kwargs):
-        # ... existing mutation logic ...
-        self._post_commit_hooks(type_id, kwargs)
+class EntityWorkflowEngine:
+    def complete_phase(self, entity_uuid: str, phase: str, **kwargs) -> CompletionResult:
+        with self._db.begin_immediate() as txn:
+            # 1. Complete the phase (delegates to frozen engine for features)
+            entity = self._db.get_entity_by_uuid(entity_uuid)
+            if entity.entity_type == "feature":
+                result = self._feature_engine.complete_phase(entity.type_id, phase)
+            else:
+                result = self._five_d_complete(entity, phase)
 
-    def _post_commit_hooks(self, type_id: str, changes: dict):
-        if "status" in changes and changes["status"] == "completed":
-            self._cascade_unblock(type_id)
-            self._rollup_parent(type_id)
-            self._queue_notification("completion_ripple", type_id)
-        if "status" in changes:
-            self._derive_and_set_kanban(type_id)
+            # 2. Derive kanban (within same transaction)
+            derive_and_set_kanban(self._db, entity.type_id)
+
+            # 3. Cascade unblock (within same transaction)
+            unblocked = self._dep_manager.cascade_unblock(entity.uuid)
+
+            # 4. Rollup parent chain (within same transaction)
+            rollup_parent(self._db, entity.uuid)
+
+        # 5. Queue notifications AFTER commit (filesystem, not DB)
+        self._notification_queue.push(completion_ripple(entity))
+        for uuid in unblocked:
+            self._notification_queue.push(unblock_notification(uuid))
+
+        return CompletionResult(...)
 ```
 
-**Decision rationale:** Synchronous, not async. pd is a CLI tool — bounded entity counts (~100s, not 1000s in practice). Max 5 ancestor rollups per completion. Dirty-flag batching deferred as premature optimisation.
+**Decision rationale:** Single transaction for atomicity — if any cascade step fails, the entire completion rolls back. Notifications queue AFTER commit (filesystem writes can't be rolled back with SQLite). EntityDatabase stays pure — the frozen `WorkflowStateEngine`'s direct `update_entity(status='completed')` call still works but doesn't trigger cascades. Only `EntityWorkflowEngine.complete_phase()` triggers cascades — it is the **single entry point for phase completion** across all entity types.
+
+**Implication for Phase 3:** `cascade_unblock` and `rollup_parent` are introduced in Phase 3 (not Phase 4) because task completion needs them (AC-25). Phase 4 extends them for project lifecycle.
 
 **D3: UUID as Canonical FK, type_id as Display** (AC-7)
-Migration approach for the 266 existing `parent_type_id` references:
+Migration approach for the ~320 existing `parent_type_id` references across ~21 files:
 
 ```
 Phase 1: parent_uuid already exists but is underused
@@ -190,7 +211,7 @@ def derive_kanban(status: str, workflow_phase: str | None) -> str:
         return "completed"
     if status == "blocked":
         return "blocked"
-    if status == "planned"):
+    if status == "planned":
         return "backlog"
     return PHASE_TO_KANBAN.get(workflow_phase, "backlog")
 ```
@@ -394,10 +415,15 @@ ELSE → ask clarification
 ### I1: EntityDatabase Extensions
 
 ```python
-# New methods on EntityDatabase
+# Phase 1b (foundational — needed by EntityWorkflowEngine and ref resolution)
 def get_entity_by_uuid(self, uuid: str) -> Entity | None
-def get_children_by_uuid(self, parent_uuid: str) -> list[Entity]
 def resolve_ref(self, ref: str) -> str  # uuid or type_id → uuid
+def search_by_type_id_prefix(self, prefix: str) -> list[Entity]
+
+# Phase 3 (needed by rollup and task queries)
+def get_children_by_uuid(self, parent_uuid: str) -> list[Entity]
+
+# Phase 6 (needed by circle-aware queries)
 def add_tag(self, entity_uuid: str, tag: str) -> None
 def get_tags(self, entity_uuid: str) -> list[str]
 def query_by_tag(self, tag: str) -> list[Entity]
@@ -499,7 +525,10 @@ def resolve_ref(db: EntityDatabase, ref: str) -> str:
 | Post-commit triggers | Synchronous in EntityDatabase | CLI-scale, bounded fan-out (~5 ancestors max). |
 | UUID adoption | Gradual dual-read migration | 266 parent_type_id references. Big-bang too risky. |
 | CHECK constraints | Drop entity_type CHECK, keep phase/mode CHECK | Entity types change more often than phases. |
-| Notification delivery | File-backed JSONL queue + poll-on-interaction | No daemon. Session-start + secretary queries. |
+| Notification delivery | File-backed JSONL queue + poll-on-interaction | No daemon. Session-start + secretary queries. Scoped by project_root field. |
+| Weight escalation storage | Mode column update + skipped_phases metadata | `workflow_phases.mode` updated; `metadata.skipped_phases` tracks phases absent from original template. |
+| Cascade logic ownership | EntityWorkflowEngine, not EntityDatabase | DB stays pure data layer. Single transaction wraps completion + cascade + rollup. |
+| OKR alignment table | Created Phase 1b, populated Phase 6 | `add_okr_alignment` / `get_okr_alignments` MCP tools deferred to Phase 6. Table exists but empty until then. |
 | Cycle detection | Recursive CTE on junction table | Indexed, depth-limited (20). O(edges) per check. |
 | OKR rollup | parent_uuid lineage, not entity_okr_alignment | Alignment table is for lateral cross-linkage only. |
 | Task promotion | Heading-text fuzzy match, not index | Indices are fragile. Heading text is stable. |
@@ -539,13 +568,14 @@ Phase 2:  Secretary mode detection, entity registry queries in TRIAGE,
           → Secretary becomes organisational router.
 
 Phase 3:  promote_task MCP tool, task entity registration, agent-executable
-          task query, task completion → parent rollup
-          → Tasks become first-class entities.
+          task query, DependencyManager (C4), Progress Rollup Engine (C5),
+          post-completion cascade in EntityWorkflowEngine, task completion
+          → parent rollup
+          → Tasks become first-class entities. Cascade infrastructure added.
 
-Phase 4:  EntityWorkflowEngine with FiveDBackend, project 5D lifecycle,
-          progress derivation, dependency enforcement, cascade unblock,
-          orphan guard
-          → Projects become living entities.
+Phase 4:  FiveDBackend for EntityWorkflowEngine, project 5D lifecycle,
+          dependency enforcement at Deliver gate, orphan guard
+          → Projects become living entities (cascade infra from Phase 3).
 
 Phase 5:  Initiative/objective/key_result entities, OKR scoring logic,
           anti-pattern detection, OKR progress rollup
