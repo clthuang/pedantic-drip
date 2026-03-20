@@ -2203,8 +2203,8 @@ class TestDeriveExpectedKanban:
         assert _derive_expected_kanban("implement", "specify") == "wip"
 
     def test_derive_expected_kanban_unknown_phase(self):
-        """Unknown phase returns None."""
-        assert _derive_expected_kanban("nonexistent", None) is None
+        """Unknown phase falls back to 'backlog' via derive_kanban."""
+        assert _derive_expected_kanban("nonexistent", None) == "backlog"
 
 
 # ===========================================================================
@@ -2408,8 +2408,8 @@ class TestDeriveExpectedKanbanDeepened:
 
         Anticipate: If the special-case check for finish+finish is inverted
         (checking for None instead of 'finish'), this would incorrectly return
-        'completed'. The function should fall through to FEATURE_PHASE_TO_KANBAN
-        lookup which maps finish -> 'documenting'.
+        'completed'. The function should fall through to derive_kanban
+        which maps finish -> 'documenting'.
         derived_from: dimension:boundary_values (finish phase boundary)
         """
         # Given a finish phase with no last_completed_phase (None)
@@ -2431,11 +2431,11 @@ class TestDeriveExpectedKanbanDeepened:
         assert result == "documenting"
 
     def test_derive_expected_kanban_empty_string_phase(self):
-        """Empty string phase returns None (not in FEATURE_PHASE_TO_KANBAN).
+        """Empty string phase returns None (not in PHASE_TO_KANBAN).
 
         Anticipate: If empty string is treated as truthy but not found in map,
-        should return None (from dict.get default). If code uses `if not phase`
-        it would return None via the None path. Either way, None is correct.
+        should return None. If code uses `if not phase` it would return None
+        via the None path. Either way, None is correct.
         derived_from: dimension:boundary_values (empty string edge)
         """
         # Given an empty string phase
@@ -2446,12 +2446,10 @@ class TestDeriveExpectedKanbanDeepened:
     def test_derive_expected_kanban_every_phase_in_sequence(self):
         """Exhaustive check: every phase in PHASE_SEQUENCE maps to correct kanban.
 
-        Anticipate: If any phase is missing from FEATURE_PHASE_TO_KANBAN,
+        Anticipate: If any phase is missing from PHASE_TO_KANBAN,
         this test catches it with a specific assertion per phase.
         derived_from: dimension:boundary_values (exhaustive coverage)
         """
-        from workflow_engine.constants import FEATURE_PHASE_TO_KANBAN
-
         expected_mapping = {
             "brainstorm": "backlog",
             "specify": "backlog",
@@ -2465,7 +2463,7 @@ class TestDeriveExpectedKanbanDeepened:
         for phase, expected_kanban in expected_mapping.items():
             # When we derive expected kanban (with arbitrary last_completed)
             result = _derive_expected_kanban(phase, None)
-            # Then it matches the FEATURE_PHASE_TO_KANBAN mapping
+            # Then it matches the PHASE_TO_KANBAN mapping
             assert result == expected_kanban, (
                 f"Phase '{phase}': expected kanban='{expected_kanban}', got '{result}'"
             )
@@ -2589,7 +2587,7 @@ class TestDeriveExpectedKanbanStatusAwareness:
 
     def test_derive_kanban_active_unchanged(self):
         """AC-2.3: status='active' does not override — uses phase-based lookup."""
-        # implement phase -> 'wip' (from FEATURE_PHASE_TO_KANBAN)
+        # implement phase -> 'wip' (from derive_kanban)
         result_with_status = _derive_expected_kanban(
             workflow_phase="implement",
             last_completed_phase=None,

@@ -4206,9 +4206,10 @@ class TestInitFeatureState:
 
     # -- Kanban column lifecycle tests (AC-6) --------------------------------
 
-    def test_init_feature_state_active_sets_kanban_wip(self, db, tmp_path):
-        """Active feature init must set kanban_column to 'wip'.
-        derived_from: spec:AC-6
+    def test_init_feature_state_active_sets_kanban_from_phase(self, db, tmp_path):
+        """Active feature init sets kanban_column from phase via derive_kanban.
+        Initial phase is brainstorm -> kanban_column = 'backlog'.
+        derived_from: spec:AC-6, feature:052 AC-4
         """
         engine = WorkflowStateEngine(db=db, artifacts_root=str(tmp_path))
 
@@ -4223,7 +4224,7 @@ class TestInitFeatureState:
 
         wp = db.get_workflow_phase("feature:099-test")
         assert wp is not None, "workflow_phase row should exist after init"
-        assert wp["kanban_column"] == "wip"
+        assert wp["kanban_column"] == "backlog"
 
     def test_init_feature_state_planned_sets_kanban_backlog(self, db, tmp_path):
         """Planned feature init must set kanban_column to 'backlog'.
@@ -6079,7 +6080,7 @@ class TestKanbanColumnLifecycleDeepened:
     def test_init_feature_state_completed_status_sets_kanban_completed(self, db, tmp_path):
         """Init with status='completed' should set kanban_column to 'completed'.
 
-        Anticipate: If STATUS_TO_KANBAN is missing the 'completed' key or
+        Anticipate: If derive_kanban doesn't handle 'completed' status or
         the update_workflow_phase call is skipped, kanban stays at default 'backlog'.
         derived_from: spec:AC-6 (init-time kanban from status)
         """
@@ -6104,7 +6105,7 @@ class TestKanbanColumnLifecycleDeepened:
     def test_init_feature_state_abandoned_status_sets_kanban_completed(self, db, tmp_path):
         """Init with status='abandoned' should set kanban_column to 'completed'.
 
-        Anticipate: 'abandoned' maps to 'completed' in STATUS_TO_KANBAN.
+        Anticipate: 'abandoned' maps to 'completed' via derive_kanban.
         If the mapping is missing, kanban would stay at 'backlog'.
         derived_from: spec:AC-6 (init-time kanban from status)
         """
@@ -6131,9 +6132,9 @@ class TestKanbanColumnLifecycleDeepened:
     def test_complete_finish_kanban_is_completed_not_documenting(self, db, tmp_path):
         """Completing finish must set kanban to 'completed', not 'documenting'.
 
-        Anticipate: If complete_phase uses FEATURE_PHASE_TO_KANBAN[state.current_phase]
-        instead of the special-case 'completed' for finish, kanban would be
-        'documenting' (the map value for 'finish').
+        Anticipate: If complete_phase uses derive_kanban with 'active' status
+        instead of 'completed' for finish, kanban would be
+        'documenting' (the phase mapping for 'finish').
         derived_from: dimension:mutation_mindset (arithmetic swap)
         """
         # Given a feature at finish phase with kanban='documenting'
@@ -6161,7 +6162,7 @@ class TestKanbanColumnLifecycleDeepened:
     def test_transition_uses_target_phase_not_current_phase(self, db, tmp_path):
         """Transition kanban must come from the TARGET phase, not the source.
 
-        Anticipate: If code uses current_phase for FEATURE_PHASE_TO_KANBAN lookup
+        Anticipate: If code uses current_phase for derive_kanban lookup
         instead of target_phase, kanban would stay 'backlog' (specify's column)
         instead of becoming 'prioritised' (design's column).
         derived_from: dimension:mutation_mindset (return value mutation)
@@ -6223,6 +6224,88 @@ class TestKanbanColumnLifecycleDeepened:
         assert wp is not None
         assert wp["kanban_column"] == "prioritised", (
             f"Expected 'prioritised' from new current_phase, got '{wp['kanban_column']}'"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Feature 052: derive_kanban integration (AC-4)
+# ---------------------------------------------------------------------------
+
+
+class TestCompletePhaseKanbanMatchesDeriveKanban:
+    """Integration test: complete_phase kanban_column must match derive_kanban output.
+
+    Verifies the single source of truth for kanban derivation after
+    replacing FEATURE_PHASE_TO_KANBAN and STATUS_TO_KANBAN with derive_kanban().
+    derived_from: feature:052, AC-4
+    """
+
+    def _setup_feature(self, db, tmp_path, feat_num, slug, phase, kanban="backlog"):
+        """Helper: register entity + workflow row at given phase."""
+        type_id = f"feature:{feat_num}-{slug}"
+        feat_dir = os.path.join(str(tmp_path), "features", f"{feat_num}-{slug}")
+        os.makedirs(feat_dir, exist_ok=True)
+        db.register_entity(
+            entity_type="feature",
+            entity_id=f"{feat_num}-{slug}",
+            name=slug,
+            artifact_path=feat_dir,
+            status="active",
+            metadata={
+                "id": str(feat_num), "slug": slug, "mode": "standard",
+                "branch": "", "phase_timing": {},
+            },
+        )
+        db.create_workflow_phase(type_id, workflow_phase=phase, kanban_column=kanban)
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        return engine, type_id
+
+    def test_complete_specify_kanban_matches_derive_kanban(self, db, tmp_path):
+        """Completing specify advances to design; kanban must match derive_kanban('active', 'design').
+
+        derived_from: feature:052, AC-4 (single source of truth)
+        """
+        from workflow_engine.kanban import derive_kanban
+
+        engine, type_id = self._setup_feature(
+            db, tmp_path, 400, "dk-specify", "specify", kanban="backlog",
+        )
+
+        result = _process_complete_phase(
+            engine, type_id, "specify",
+            db=db, iterations=None, reviewer_notes=None,
+        )
+        data = json.loads(result)
+        assert data["current_phase"] == "design"
+
+        wp = db.get_workflow_phase(type_id)
+        expected = derive_kanban("active", "design")
+        assert wp["kanban_column"] == expected, (
+            f"Expected kanban '{expected}' from derive_kanban, got '{wp['kanban_column']}'"
+        )
+
+    def test_complete_finish_kanban_matches_derive_kanban(self, db, tmp_path):
+        """Completing finish sets status completed; kanban must match derive_kanban('completed', 'finish').
+
+        derived_from: feature:052, AC-4 (single source of truth)
+        """
+        from workflow_engine.kanban import derive_kanban
+
+        engine, type_id = self._setup_feature(
+            db, tmp_path, 401, "dk-finish", "finish", kanban="documenting",
+        )
+
+        result = _process_complete_phase(
+            engine, type_id, "finish",
+            db=db, iterations=None, reviewer_notes=None,
+        )
+        data = json.loads(result)
+        assert "error" not in data
+
+        wp = db.get_workflow_phase(type_id)
+        expected = derive_kanban("completed", "finish")
+        assert wp["kanban_column"] == expected, (
+            f"Expected kanban '{expected}' from derive_kanban, got '{wp['kanban_column']}'"
         )
 
 

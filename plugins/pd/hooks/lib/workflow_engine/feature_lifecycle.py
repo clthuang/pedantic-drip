@@ -13,18 +13,7 @@ from datetime import datetime, timezone
 
 from entity_registry.database import EntityDatabase
 from workflow_engine.engine import WorkflowStateEngine
-
-
-# ---------------------------------------------------------------------------
-# Status-to-kanban mapping (single source of truth — also imported by workflow_state_server)
-# ---------------------------------------------------------------------------
-
-STATUS_TO_KANBAN: dict[str, str] = {
-    "active": "wip",
-    "planned": "backlog",
-    "completed": "completed",
-    "abandoned": "completed",
-}
+from workflow_engine.kanban import derive_kanban
 
 
 # ---------------------------------------------------------------------------
@@ -170,17 +159,18 @@ def init_feature_state(
             metadata["skipped_phases"] = existing_meta["skipped_phases"]
         db.update_entity(feature_type_id, status=status, metadata=metadata)
 
-    # Fix kanban_column based on status (init-time uses STATUS_TO_KANBAN).
-    init_kanban = STATUS_TO_KANBAN.get(status)
-    if init_kanban:
+    # Fix kanban_column via derive_kanban (phase-aware single source of truth).
+    wf_row = db.get_workflow_phase(feature_type_id)
+    wf_phase = wf_row["workflow_phase"] if wf_row else None
+    init_kanban = derive_kanban(status, wf_phase)
+    try:
+        db.update_workflow_phase(feature_type_id, kanban_column=init_kanban)
+    except ValueError:
+        # Row may not exist if engine initialization failed — create it.
         try:
-            db.update_workflow_phase(feature_type_id, kanban_column=init_kanban)
+            db.create_workflow_phase(feature_type_id, kanban_column=init_kanban)
         except ValueError:
-            # Row may not exist if engine initialization failed — create it.
-            try:
-                db.create_workflow_phase(feature_type_id, kanban_column=init_kanban)
-            except ValueError:
-                pass  # Entity itself may be missing; workflow row cannot be created
+            pass  # Entity itself may be missing; workflow row cannot be created
 
     return {
         "created": True,

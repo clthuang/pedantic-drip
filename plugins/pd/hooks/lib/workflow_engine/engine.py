@@ -22,7 +22,7 @@ from transition_gate import (
 )
 from transition_gate.constants import HARD_PREREQUISITES
 
-from .constants import FEATURE_PHASE_TO_KANBAN
+from .kanban import derive_kanban
 from .models import FeatureWorkflowState, TransitionResponse
 
 # Precomputed constants from immutable sources
@@ -590,7 +590,7 @@ class WorkflowStateEngine:
         try:
             self.db.create_workflow_phase(
                 feature_type_id,
-                kanban_column=FEATURE_PHASE_TO_KANBAN.get(state.current_phase, "backlog"),
+                kanban_column=derive_kanban("active", state.current_phase),
                 workflow_phase=state.current_phase,
                 last_completed_phase=state.last_completed_phase,
                 mode=state.mode,

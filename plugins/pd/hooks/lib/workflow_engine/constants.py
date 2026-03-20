@@ -1,11 +1,5 @@
-"""Constants for the workflow engine package."""
+"""Constants for the workflow engine package.
 
-FEATURE_PHASE_TO_KANBAN: dict[str, str] = {
-    "brainstorm": "backlog",
-    "specify": "backlog",
-    "design": "prioritised",
-    "create-plan": "prioritised",
-    "create-tasks": "prioritised",
-    "implement": "wip",
-    "finish": "documenting",
-}
+FEATURE_PHASE_TO_KANBAN was removed in feature:052 (AC-4).
+Kanban derivation is now centralized in workflow_engine.kanban.derive_kanban().
+"""

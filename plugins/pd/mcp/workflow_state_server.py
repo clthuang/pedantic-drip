@@ -31,10 +31,8 @@ from entity_registry.frontmatter_sync import (
 )
 from semantic_memory.config import read_config
 from transition_gate.models import Severity, TransitionResult
-from workflow_engine.constants import FEATURE_PHASE_TO_KANBAN
 from workflow_engine.engine import WorkflowStateEngine
 from workflow_engine.feature_lifecycle import (
-    STATUS_TO_KANBAN,
     _atomic_json_write,
     _iso_now,
     _validate_feature_type_id,
@@ -42,6 +40,7 @@ from workflow_engine.feature_lifecycle import (
     init_feature_state as _lib_init_feature_state,
     init_project_state as _lib_init_project_state,
 )
+from workflow_engine.kanban import derive_kanban
 from workflow_engine.models import FeatureWorkflowState, TransitionResponse
 from workflow_engine.reconciliation import (
     ReconcileAction,
@@ -427,9 +426,8 @@ def _process_transition_phase(
 
         # Update kanban_column for features based on phase
         if feature_type_id.startswith("feature:"):
-            kanban = FEATURE_PHASE_TO_KANBAN.get(target_phase)
-            if kanban:
-                db.update_workflow_phase(feature_type_id, kanban_column=kanban)
+            kanban = derive_kanban("active", target_phase)
+            db.update_workflow_phase(feature_type_id, kanban_column=kanban)
 
         # Project .meta.json
         warning = _project_meta_json(db, engine, feature_type_id)
@@ -531,12 +529,9 @@ def _process_complete_phase(
 
         # Update kanban_column for features based on completed phase
         if feature_type_id.startswith("feature:"):
-            if phase == "finish":
-                kanban = "completed"
-            else:
-                kanban = FEATURE_PHASE_TO_KANBAN.get(state.current_phase)
-            if kanban:
-                db.update_workflow_phase(feature_type_id, kanban_column=kanban)
+            status = "completed" if phase == "finish" else "active"
+            kanban = derive_kanban(status, state.current_phase)
+            db.update_workflow_phase(feature_type_id, kanban_column=kanban)
 
         # Project .meta.json
         warning = _project_meta_json(db, engine, feature_type_id)

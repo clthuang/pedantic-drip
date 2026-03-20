@@ -4236,7 +4236,7 @@ class TestCompletePhaseFallbackLogsToStderr:
 
 class TestDegradedModeBackfillSetsKanbanFromPhase:
     """Backfill via _hydrate_from_meta_json should derive kanban_column from
-    the current phase using FEATURE_PHASE_TO_KANBAN, not default to 'backlog'.
+    the current phase using derive_kanban, not default to 'backlog'.
 
     derived_from: feature:036, requirement:R8
     """
@@ -4275,7 +4275,7 @@ class TestDegradedModeBackfillSetsKanbanFromPhase:
 class TestDegradedModeBackfillSetsKanbanFromPhaseDeepened:
     """Deepened tests for degraded-mode backfill kanban column derivation.
 
-    Tests additional phases beyond create-plan to ensure FEATURE_PHASE_TO_KANBAN
+    Tests additional phases beyond create-plan to ensure derive_kanban
     is consistently applied during hydration from .meta.json.
 
     derived_from: feature:036, dimension:bdd_scenarios, dimension:boundary_values
@@ -4285,7 +4285,7 @@ class TestDegradedModeBackfillSetsKanbanFromPhaseDeepened:
         """Backfill with last_completed_phase='create-tasks' resolves to
         current_phase='implement' and kanban_column should be 'wip'.
 
-        Anticipate: If FEATURE_PHASE_TO_KANBAN is missing 'implement' or
+        Anticipate: If derive_kanban is missing 'implement' mapping or
         the backfill defaults to 'backlog', this test catches it.
         derived_from: spec:R8 (degraded backfill kanban)
         """
@@ -4316,7 +4316,7 @@ class TestDegradedModeBackfillSetsKanbanFromPhaseDeepened:
 
         Anticipate: If the code maps finish to 'completed' without checking
         last_completed_phase, this test catches it. Backfill should use
-        FEATURE_PHASE_TO_KANBAN which maps finish -> 'documenting'.
+        derive_kanban which maps finish -> 'documenting'.
         derived_from: spec:R8 (degraded backfill kanban)
         """
         # Given: registered entity, no workflow_phases row,

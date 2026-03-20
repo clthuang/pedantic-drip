@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from entity_registry.database import EntityDatabase
 from transition_gate.constants import PHASE_SEQUENCE
 
-from .constants import FEATURE_PHASE_TO_KANBAN
+from .kanban import derive_kanban
 from .engine import WorkflowStateEngine
 
 # Precomputed phase values from immutable PHASE_SEQUENCE (same pattern as engine.py)
@@ -185,20 +185,19 @@ def _derive_expected_kanban(
 ) -> str | None:
     """Derive the expected kanban column from workflow phase.
 
-    Terminal statuses (completed, abandoned) always map to 'completed'
-    kanban column regardless of phase -- both are absorbing states.
+    Delegates to derive_kanban() for consistent kanban derivation.
     Special case: finish phase with finish as last_completed means the
     feature completed all phases -> 'completed' column.
-    Otherwise, look up the phase in FEATURE_PHASE_TO_KANBAN.
-    Returns None for unknown or None phases.
+    Returns None for unknown or None phases (when status is also None).
     """
     if status in _TERMINAL_STATUSES:
         return "completed"
-    if workflow_phase is None:
+    if not workflow_phase:  # None or empty string
         return None
     if workflow_phase == "finish" and last_completed_phase == "finish":
         return "completed"
-    return FEATURE_PHASE_TO_KANBAN.get(workflow_phase)
+    result = derive_kanban(status or "active", workflow_phase)
+    return result
 
 
 def _check_single_feature(

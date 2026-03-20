@@ -1068,13 +1068,13 @@ class TestBrainstormTitleExtraction:
 # ---------------------------------------------------------------------------
 
 from entity_registry.backfill import (
-    STATUS_TO_KANBAN,
     PHASE_SEQUENCE,
     VALID_MODES,
     _derive_next_phase,
     _resolve_meta_path,
     backfill_workflow_phases,
 )
+from workflow_engine.kanban import derive_kanban
 
 
 class TestWorkflowPhaseBackfill:
@@ -1088,24 +1088,24 @@ class TestWorkflowPhaseBackfill:
         db.close()
 
     # -------------------------------------------------------------------
-    # Task 3.1: STATUS_TO_KANBAN mapping
+    # Task 3.1: Kanban derivation (via derive_kanban — replaced STATUS_TO_KANBAN)
     # -------------------------------------------------------------------
 
     def test_status_planned_maps_to_backlog(self):
-        assert STATUS_TO_KANBAN["planned"] == "backlog"
+        assert derive_kanban("planned", None) == "backlog"
 
-    def test_status_active_maps_to_wip(self):
-        assert STATUS_TO_KANBAN["active"] == "wip"
+    def test_status_active_no_phase_maps_to_backlog(self):
+        assert derive_kanban("active", None) == "backlog"
 
     def test_status_completed_maps_to_completed(self):
-        assert STATUS_TO_KANBAN["completed"] == "completed"
+        assert derive_kanban("completed", None) == "completed"
 
     def test_status_abandoned_maps_to_completed(self):
-        assert STATUS_TO_KANBAN["abandoned"] == "completed"
+        assert derive_kanban("abandoned", None) == "completed"
 
-    def test_unmapped_status_not_in_dict(self):
-        """Unmapped statuses like 'draft' should not be in STATUS_TO_KANBAN."""
-        assert "draft" not in STATUS_TO_KANBAN
+    def test_unmapped_status_falls_back_to_backlog(self):
+        """Unmapped statuses like 'draft' fall back to backlog via derive_kanban."""
+        assert derive_kanban("draft", None) == "backlog"
 
     # -------------------------------------------------------------------
     # Task 3.2: _derive_next_phase
@@ -1189,7 +1189,7 @@ class TestWorkflowPhaseBackfill:
 
         wp = db.get_workflow_phase("feature:s1-test")
         assert wp is not None
-        assert wp["kanban_column"] == "wip"  # active -> wip
+        assert wp["kanban_column"] == "prioritised"  # active + design phase -> prioritised
 
     def test_status_from_db_when_no_meta_json(self, tmp_path, db):
         """Entity with no .meta.json and entities.status=completed -> uses completed."""
@@ -1221,7 +1221,7 @@ class TestWorkflowPhaseBackfill:
 
         wp = db.get_workflow_phase("feature:s4-test")
         assert wp is not None
-        assert wp["kanban_column"] == "wip"  # active -> wip (not completed)
+        assert wp["kanban_column"] == "prioritised"  # active + create-plan phase -> prioritised (not completed)
 
     def test_unmapped_status_defaults_to_planned_with_warning(self, tmp_path, db, caplog):
         """Unmapped status (e.g., 'draft') -> default to planned -> backlog, with warning."""
@@ -1258,7 +1258,7 @@ class TestWorkflowPhaseBackfill:
 
         wp = db.get_workflow_phase("feature:f1-active")
         assert wp is not None
-        assert wp["kanban_column"] == "wip"  # active -> wip
+        assert wp["kanban_column"] == "prioritised"  # active + create-plan -> prioritised
         assert wp["workflow_phase"] == "create-plan"  # next after design
         assert wp["last_completed_phase"] == "design"
         assert wp["mode"] == "standard"
@@ -1600,7 +1600,7 @@ class TestWorkflowPhaseBackfill:
 
         wp = db.get_workflow_phase("feature:active-finish")
         assert wp is not None
-        assert wp["kanban_column"] == "wip"  # active -> wip
+        assert wp["kanban_column"] == "documenting"  # active + finish phase -> documenting
         assert wp["workflow_phase"] == "finish"  # terminal: finish -> finish
         assert wp["last_completed_phase"] == "finish"
 
@@ -1630,7 +1630,7 @@ class TestWorkflowPhaseBackfill:
 
         wp = db.get_workflow_phase("feature:active-nolcp")
         assert wp is not None
-        assert wp["kanban_column"] == "wip"  # active -> wip
+        assert wp["kanban_column"] == "backlog"  # active + no phase -> backlog
         assert wp["workflow_phase"] is None  # NULL lastCompletedPhase -> None
         assert wp["last_completed_phase"] is None
 
@@ -1788,18 +1788,20 @@ class TestWorkflowPhaseBackfill:
             "create-plan", "create-tasks", "implement", "finish",
         )
 
-    def test_valid_modes_exactly_two(self):
-        """VALID_MODES must be exactly {'standard', 'full'}.
+    def test_valid_modes_includes_light(self):
+        """VALID_MODES must include 'light' (feature:052 AC-4).
         derived_from: dimension:mutation_mindset, spec:AC-4
         """
-        assert VALID_MODES == frozenset({"standard", "full"})
+        assert VALID_MODES == frozenset({"standard", "full", "light"})
 
-    def test_status_to_kanban_has_exactly_four_entries(self):
-        """STATUS_TO_KANBAN must map exactly 4 statuses.
+    def test_derive_kanban_covers_four_statuses(self):
+        """derive_kanban handles the 4 core statuses correctly.
         derived_from: dimension:mutation_mindset, spec:D-5
         """
-        assert len(STATUS_TO_KANBAN) == 4
-        assert set(STATUS_TO_KANBAN.keys()) == {"planned", "active", "completed", "abandoned"}
+        assert derive_kanban("planned", None) == "backlog"
+        assert derive_kanban("active", None) == "backlog"
+        assert derive_kanban("completed", None) == "completed"
+        assert derive_kanban("abandoned", None) == "completed"
 
     # -------------------------------------------------------------------
     # Phase 4: Brainstorm/backlog phase-aware backfill (Tasks 4.3)
