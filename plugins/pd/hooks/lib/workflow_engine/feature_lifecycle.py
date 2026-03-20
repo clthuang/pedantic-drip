@@ -109,7 +109,19 @@ def init_feature_state(
 
     Returns dict with keys: created, feature_type_id, status, meta_json_path.
     Optionally includes projection_warning (not set here — added by MCP wrapper).
+
+    Raises:
+        ValueError: if feature_id, slug, or branch is None, empty, or whitespace-only.
     """
+    # Field validation — reject None, empty string, whitespace-only
+    for field_name, field_value in [
+        ("feature_id", feature_id),
+        ("slug", slug),
+        ("branch", branch),
+    ]:
+        if field_value is None or not isinstance(field_value, str) or not field_value.strip():
+            raise ValueError(f"invalid_input: {field_name} must be a non-empty string")
+
     feature_type_id = f"feature:{feature_id}-{slug}"
 
     # Validate feature_type_id for path traversal defense

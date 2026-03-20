@@ -197,6 +197,38 @@ class TestInitFeatureState:
                 status="active",
             )
 
+    # -----------------------------------------------------------------------
+    # Field validation: feature_id, slug, branch — 9 tests (3 fields x 3 inputs)
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.parametrize("field_name,overrides", [
+        ("feature_id", {"feature_id": None}),
+        ("feature_id", {"feature_id": ""}),
+        ("feature_id", {"feature_id": "   "}),
+        ("slug", {"slug": None}),
+        ("slug", {"slug": ""}),
+        ("slug", {"slug": "   "}),
+        ("branch", {"branch": None}),
+        ("branch", {"branch": ""}),
+        ("branch", {"branch": "\t\n"}),
+    ])
+    def test_rejects_invalid_field(self, mock_db, mock_engine, tmp_artifacts, feature_dir, field_name, overrides):
+        """init_feature_state rejects None, empty, and whitespace-only values."""
+        defaults = dict(
+            db=mock_db,
+            engine=mock_engine,
+            artifacts_root=tmp_artifacts,
+            feature_dir=feature_dir,
+            feature_id="001",
+            slug="001-my-feature",
+            mode="standard",
+            branch="feature/001",
+            status="active",
+        )
+        defaults.update(overrides)
+        with pytest.raises(ValueError, match=f"invalid_input: {field_name}"):
+            init_feature_state(**defaults)
+
     def test_no_projection_warning_when_none(self, mock_db, mock_engine, tmp_artifacts, feature_dir):
         """projection_warning key absent when no warning."""
         result = init_feature_state(
