@@ -76,17 +76,23 @@ Phase 1a ──→ Phase 1b ──→ Phase 2 ──→ Phase 3 ──→ Phase 
 
 ### Step 1b.1: Schema migration — combined table rebuilds [C]
 - **File:** `scripts/migrate_db.py`, `database.py`
-- **Rollback strategy:** (1) Backup verified by opening + querying backup DB before any destructive operation, (2) all 8 steps within single SQLite transaction (CREATE TABLE and INSERT are transactional; table rebuilds use CREATE new → INSERT → DROP old → RENAME within transaction), (3) if any step fails, transaction rolls back and backup is the recovery path. Explicit `--verify-backup` check before proceeding.
-- **Work:** Single migration (migration 6) combining:
-  1. Drop entity_type CHECK constraint (Python-only validation via `_validate_entity_type`)
-  2. Expand workflow_phase CHECK to include 5D phases
-  3. Expand mode CHECK to include 'light'
-  4. Create `entity_tags` table (entity_uuid, tag) with indexes
-  5. Create `entity_dependencies` table (entity_uuid, blocked_by_uuid) with unique constraint + indexes
-  6. Create `entity_okr_alignment` table (entity_uuid, key_result_uuid) with indexes
-  7. Add `next_seq_{type}` entries to `_metadata` (bootstrap from max existing IDs)
-  8. Add `uuid` column to `workflow_phases`, backfill from entity uuid
-- **Test:** Migration on test DB copy. Row counts match. All type_ids preserved. Backup file exists. All 1100+ existing tests pass.
+- **Rollback strategy:** (1) Backup verified by opening + querying backup DB before any destructive operation, (2) all steps within single SQLite transaction with `PRAGMA foreign_keys=OFF`, (3) if any step fails, transaction rolls back and backup is the recovery path. Explicit `--verify-backup` check before proceeding.
+- **DDL ordering (B3 fix — explicit FK-safe sequence):**
+  1. `PRAGMA foreign_keys=OFF`
+  2. `BEGIN IMMEDIATE`
+  3. Rebuild `entities` table: CREATE `entities_new` (drop entity_type CHECK, keep all columns), INSERT from `entities`, DROP `entities`, ALTER TABLE RENAME `entities_new` TO `entities`, recreate indexes
+  4. Rebuild `workflow_phases` table: CREATE `workflow_phases_new` (expand workflow_phase CHECK to include 5D phases, expand mode CHECK to include 'light', add `uuid TEXT` column), INSERT with uuid backfill via `SELECT e.uuid FROM entities e WHERE e.type_id = workflow_phases.type_id`, DROP `workflow_phases`, ALTER TABLE RENAME `workflow_phases_new` TO `workflow_phases`, recreate indexes. **Note:** `uuid` is an additional indexed column, NOT a PRIMARY KEY change — `type_id` remains PRIMARY KEY for backward compatibility with the frozen engine.
+  5. Rebuild `entities_fts` (virtual table must be rebuilt after base table rename)
+  6. CREATE `entity_tags` table (entity_uuid, tag) with indexes
+  7. CREATE `entity_dependencies` table (entity_uuid, blocked_by_uuid) with unique constraint + indexes
+  8. CREATE `entity_okr_alignment` table (entity_uuid, key_result_uuid) with indexes
+  9. INSERT `next_seq_{type}` entries into `_metadata` (bootstrap from max existing IDs)
+  10. `PRAGMA foreign_key_check` — verify zero FK violations
+  11. Data integrity check: `SELECT type_id FROM entities WHERE parent_type_id IS NOT NULL AND parent_uuid IS NULL` — backfill any orphaned parent_uuid
+  12. `COMMIT`
+  13. `PRAGMA foreign_keys=ON`
+- **Work:** Single migration (migration 6) following the DDL sequence above.
+- **Test:** Migration on test DB copy. Row counts match. All type_ids preserved. Backup file exists. `PRAGMA foreign_key_check` returns zero violations. Zero rows with parent_type_id set but parent_uuid NULL. All 1100+ existing tests pass.
 - **ACs:** AC-9, AC-10, AC-11, AC-12, AC-16
 - **Dependencies:** None (but must be first step in 1b)
 
@@ -141,8 +147,12 @@ Phase 1a ──→ Phase 1b ──→ Phase 2 ──→ Phase 3 ──→ Phase 
 
 ### Step 1b.8: Gate parameterisation for light weight [M]
 - **File:** `transition_gate/gate.py`, `transition_gate/constants.py`
-- **Work:** `HARD_PREREQUISITES` lookup filters to only phases in active template. If phase not in template → not a prerequisite. Read active template from entity's `(entity_type, mode)` via WEIGHT_TEMPLATES.
-- **Test:** Light feature: implement requires only spec.md (design.md not required). Standard feature: implement requires spec.md + tasks.md (unchanged).
+- **B4 fix — frozen engine has no entity context:** The frozen engine's `_evaluate_gates` calls `check_hard_prerequisites(target_phase, existing_artifacts)` with no entity/mode context. Two-layer approach:
+  1. Add optional `active_phases: list[str] | None` parameter to `check_hard_prerequisites()`. When provided, filter `HARD_PREREQUISITES` to only include entries whose phase key is in `active_phases`. When `None` (default), behave exactly as today — full prerequisite check. This is backward-compatible: all existing callers pass no `active_phases` argument.
+  2. In `WorkflowStateEngine._evaluate_gates`, pass `active_phases=None` (unchanged behavior for L3 features via frozen engine).
+  3. `EntityWorkflowEngine` resolves the entity's template via `get_template(entity_type, mode)` → phase list, then calls `check_hard_prerequisites(target_phase, existing_artifacts, active_phases=template_phases)` directly, BEFORE delegating to the frozen engine for features (or instead of it for 5D entities).
+- **Work:** Modify `check_hard_prerequisites` signature. EntityWorkflowEngine's `transition_phase` checks template-filtered prerequisites as its first gate.
+- **Test:** Light feature: implement requires only spec.md (design.md not in template → not a prerequisite). Standard feature: implement requires spec.md + tasks.md (unchanged — `active_phases=None` preserves existing behavior). Direct call with `active_phases=["specify","implement"]` + target "implement" → only spec.md required.
 - **ACs:** AC-15
 - **Dependencies:** 1b.7
 
@@ -214,12 +224,42 @@ Phase 1a ──→ Phase 1b ──→ Phase 2 ──→ Phase 3 ──→ Phase 
 
 ### Step 3.3: EntityWorkflowEngine (minimal, feature + task backends) [C]
 - **File:** New `plugins/pd/hooks/lib/workflow_engine/entity_engine.py`
-- **Work:** Strategy pattern wrapping frozen WorkflowStateEngine. FeatureBackend delegates to frozen engine. TaskBackend handles task mini-lifecycle. `complete_phase()` runs cascade: unblock → rollup (single BEGIN IMMEDIATE transaction). Notification push is **optional** — if NotificationQueue is available (Phase 2 shipped), cascade includes notify; otherwise cascade works without it.
-- **Test:** Feature complete_phase → delegates to frozen engine + triggers cascade. Task complete_phase → 5D transition + cascade. Cascade unblock + rollup in single transaction. Without notification queue → cascade still works.
+- **B1 fix — frozen engine auto-commits internally:** The frozen `WorkflowStateEngine.complete_phase()` calls `db.update_workflow_phase()` and `db.update_entity()`, which both call `self._conn.commit()`. Wrapping in an outer `BEGIN IMMEDIATE` is impossible without modifying `EntityDatabase`'s commit behavior. **Chosen approach: two-phase commit with idempotent cascade.**
+  1. **Phase A (completion):** Delegate to frozen engine (auto-commits). Feature completion is now durable.
+  2. **Phase B (cascade):** In a separate `BEGIN IMMEDIATE` transaction, run: cascade_unblock → rollup_parent → notification push. If cascade fails, completion still stands — cascade is idempotent and retryable.
+  3. **Failure mode:** If process crashes between Phase A and Phase B, next session's reconciliation detects the missing cascade (child completed but parent progress stale) and re-runs it. Add `_pending_cascades` check to `apply_workflow_reconciliation()`.
+  4. **UUID resolution:** EntityWorkflowEngine resolves `entity_uuid` → `type_id` before delegating to the frozen engine (which uses `type_id`). Return type wraps `FeatureWorkflowState` in `CompletionResult` (adds cascade outcomes: unblocked entities, updated parent progress).
+- **Work:** Strategy pattern wrapping frozen WorkflowStateEngine. FeatureBackend delegates to frozen engine then runs cascade. TaskBackend handles task mini-lifecycle with same two-phase pattern. Notification push is **optional** — if NotificationQueue is available (Phase 2 shipped), cascade includes notify; otherwise cascade works without it.
+- **Test:**
+  1. Feature complete_phase → delegates to frozen engine + triggers cascade (separate transaction)
+  2. Task complete_phase → 5D transition + cascade
+  3. Cascade failure after completion → completion persists, cascade retryable
+  4. UUID-to-type_id resolution → correct delegation
+  5. Degraded mode (DB unhealthy) → frozen engine falls back to .meta.json, cascade is skipped
+  6. No children → rollup_parent is a no-op
+  7. Mixed children (active + abandoned) → abandoned excluded from progress
+  8. Without notification queue → cascade still works
 - **ACs:** AC-25
 - **Dependencies:** 3.1, 3.2 (2.3 optional — notifications are non-blocking enhancement)
 
-### Step 3.4: Agent-executable task query [S]
+### Step 3.4: Wire MCP server to EntityWorkflowEngine [M]
+- **File:** `mcp/workflow_state_server.py`
+- **B2 fix — MCP server currently calls frozen engine directly:** `_process_complete_phase` (line 448) takes a `WorkflowStateEngine` and calls `engine.complete_phase()`. Without rewiring, the cascade (unblock, rollup, notification) never fires for features completed via MCP tools — the primary code path.
+- **Work:** Update the following functions in `workflow_state_server.py` to route through `EntityWorkflowEngine` instead of `WorkflowStateEngine`:
+  1. `_process_complete_phase` → call `entity_engine.complete_phase(entity_uuid, phase)` instead of `engine.complete_phase(feature_type_id, phase)`. The entity engine handles frozen-engine delegation internally.
+  2. `_process_transition` → call `entity_engine.transition_phase(entity_uuid, target_phase)` for blocked_by gate checks before delegating to frozen engine.
+  3. Server lifespan: instantiate `EntityWorkflowEngine(frozen_engine, db)` alongside the existing engine. Pass both to MCP tool handlers.
+  4. **Backward compatibility:** Keep the frozen engine accessible for any code paths that don't need cascade (e.g., `get_phase`, `validate_prerequisites` — read-only operations stay on frozen engine).
+- **Test:**
+  1. MCP `complete_phase` for feature → cascade fires (unblock + rollup)
+  2. MCP `complete_phase` for task → task mini-lifecycle + cascade
+  3. MCP `transition_phase` with blocked_by → rejected
+  4. Read-only MCP tools (`get_phase`, `validate_prerequisites`) → still use frozen engine, unaffected
+  5. Existing 272 workflow state server tests pass (no regression)
+- **ACs:** AC-25 (integration)
+- **Dependencies:** 3.3
+
+### Step 3.5: Agent-executable task query [S]
 - **File:** New MCP tool `query_ready_tasks`
 - **Work:** Query: type=task, status=planned, no blocked_by entries, parent in implement phase. Return task list with parent context.
 - **Test:** 3 tasks (A ready, B blocked, C parent not in implement) → returns only A.
