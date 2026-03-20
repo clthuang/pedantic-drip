@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.13.18] - 2026-03-20
+
 ### Changed
 - `/pd:abandon-feature` now offers local branch cleanup after abandoning a feature — prompts in normal mode, auto-deletes in YOLO mode. Uses `git branch -D` since abandoned branches are unmerged.
 
