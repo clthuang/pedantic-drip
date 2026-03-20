@@ -43,7 +43,7 @@ The entity registry enforces a depth guard (AC-14) at 10 hops for lineage traver
 
 **Problem:** During entity reconciliation and drift detection (`_check_single_feature()` in `reconciliation.py`), artifact paths referenced in entity records are assumed to exist on disk. Deep hierarchies with missing intermediate artifacts can produce orphaned entity records or misleading drift reports.
 
-**Fix:** Add an `artifact_dir` parameter to `_check_single_feature()` (computed by the caller `check_workflow_drift()` as `os.path.join(artifacts_root, "features", slug)`). Check `os.path.exists(artifact_dir)` before drift comparison. When the artifact path doesn't exist, set `artifact_missing=True` on the drift report. When `artifact_missing=True`, still perform DB comparison (do not short-circuit) so downstream consumers get both the missing-artifact flag and any drift mismatches.
+**Fix:** Add an `artifact_dir` parameter to `_check_single_feature()` (computed by the caller `check_workflow_drift()` which already receives `artifacts_root` as an existing parameter — see `reconciliation.py:451-454`). Compute as `os.path.join(artifacts_root, "features", slug)`. Check `os.path.exists(artifact_dir)` before drift comparison. When the artifact path doesn't exist, set `artifact_missing=True` on the drift report. When `artifact_missing=True`, still perform DB comparison (do not short-circuit) so downstream consumers get both the missing-artifact flag and any drift mismatches.
 
 **Acceptance criteria:**
 - AC-3.1: `WorkflowDriftReport` gains an `artifact_missing: bool = False` field
