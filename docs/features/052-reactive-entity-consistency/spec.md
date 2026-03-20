@@ -228,7 +228,7 @@ WEIGHT_TEMPLATES = {
 4. Proposes: type, weight, parent linkage, circle tags
 5. On user confirmation, dispatches the appropriate create command with parent linkage
 
-**Mode detection heuristic:** Context overrides keywords. If on a feature branch, default to CONTINUE unless explicitly creating a new entity. Otherwise: action verbs (need, want, build, add, create, fix, set up) → CREATE. Question words (how, what, status, progress, where) → QUERY. Continuation words (next, resume, continue, what's ready) → CONTINUE. If ambiguous after context check → ask for clarification.
+**Mode detection heuristic:** Context overrides keywords. If on a feature branch, default to CONTINUE unless explicitly creating a new entity (e.g., "add a task to track X" → CREATE for task under current feature). Otherwise: action verbs (need, want, build, add, create, fix, set up) → CREATE. Question words (how, what, status, progress, where) → QUERY. Continuation words (next, resume, continue, what's ready) → CONTINUE. If ambiguous after context check → ask for clarification.
 
 **Verification:**
 - Given registry contains `key_result:001-p0-incidents`, When user says "We need better observability", Then secretary proposes type=project, weight=standard, parent_candidate=key_result:001-p0-incidents.
@@ -281,7 +281,7 @@ Notification types with default thresholds (configurable via `pd.local.md`):
 - **Threshold crossed:** OKR score drops below 0.4 (Red zone)
 - **Completion ripple:** any entity completes (always fires)
 - **Anomaly escalation:** retro finding tagged as "systemic" in metadata
-- **Stale work:** no phase transition for >7 days (default `stale_work_days=7`)
+- **Stale work:** no phase transition for >7 days (pd.local.md key: `stale_work_days: 7`, value 0 = disabled)
 
 **Verification:** Complete a feature → notification queued: "Feature X completed. Project Y: 67%." Next secretary query includes the notification. Feature with no transition for 8 days → stale work notification queued.
 
@@ -359,7 +359,9 @@ The existing `WorkflowStateEngine` remains frozen for L3 features.
 - `complete_phase(entity_uuid, phase) → result` — advances to next phase in template, triggers rollup
 - Backend selection: by `entity_type`. L3 features delegate to existing frozen `WorkflowStateEngine`. All other types use 5D backends.
 
-**Detailed design** of per-type gate configuration and artifact prerequisites is deferred to the design phase.
+**Gate contract minimum for non-feature entities:** Each 5D phase transition is permitted if: (a) no active `blocked_by` entries exist (for Deliver phase), (b) the entity is in the immediately prior phase in its active template. Artifact prerequisites for 5D entities are deferred to the design phase — initially, 5D transitions are phase-sequence-only (no artifact checks), unlike L3 features which retain their existing HARD_PREREQUISITES.
+
+**Skipped phases** (from weight escalation): treated as absent for gate evaluation — no artifact prerequisites enforced. HARD_PREREQUISITES for current/future phases filter to active (not skipped) phases only.
 
 **Verification:** Create project. Transition through discover → define → design → deliver → debrief. Each transition validated by EntityWorkflowEngine. Attempt transition to phase not in template → rejected.
 
@@ -431,6 +433,8 @@ Deliver phase mapping by entity type: features = `implement`, 5D entities = `del
 **Binary KR distinction:** Binary KRs with children use all-complete check (1.0 if all children complete, else 0.0). Binary KRs without children require manual score update (0.0 or 1.0, e.g., "Achieved SOC2 certification").
 
 **Un-scored KRs** default to 0.0. Secretary warns "Objective includes N un-scored KRs."
+
+**Rollup source:** OKR scoring uses `parent_uuid` lineage for child-completion rollup. `entity_okr_alignment` is for lateral cross-linkage (a feature contributing to a KR it is not a direct child of) and does not participate in automated rollup.
 
 **Verification:** KR with 3 child features (2 complete, 1 active). milestone score = 2/3 = 0.67. Objective score = weighted avg of KR scores.
 
