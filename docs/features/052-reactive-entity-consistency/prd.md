@@ -1,147 +1,331 @@
-# PRD: Fractal Work Management for Agent-Native Development
+# PRD: Fractal Organisational Management for Agent-Native Development
 
 **Date:** 2026-03-20
-**Status:** Draft (research complete, not yet promoted)
-**Source:** Deep research session analyzing three pillars of organizational engineering for AI-agent-centered development.
+**Status:** Draft
+**Source:** Deep research session + organisational management requirements analysis
+**Supersedes:** Original fractal-work-management brainstorm (vision/research only)
 
 ---
 
 ## Problem Statement
 
-The pd plugin operates at a single level — tactical feature development. But software organizations need management at three levels simultaneously:
+pd is a tactical feature development engine. It excels at guiding one feature through brainstorm-to-finish with AI-reviewed quality gates. But real organisations operate at multiple levels simultaneously, and pd has no presence above or below the feature level:
 
-1. **Strategic** (months): What to build and why — initiatives, projects, roadmaps
-2. **Tactical** (weeks): How to build a specific capability — features with quality gates
-3. **Operational** (hours-days): Execute specific tasks — implementation, testing, review
+### Level 1: Executive/Strategic (C-Suite) — Currently Absent
+- **Vision & mission alignment** — no way to capture or reference strategic direction
+- **Initiative portfolio** — no concept of initiatives that span multiple projects
+- **OKR cascading** — no objectives/key-results framework at any level
+- **Strategic planning horizons** — no quarterly/annual planning cycles
+- **Investment decisions** — no way to evaluate competing bets or track resource allocation
 
-pd excels at level 2 but has no lifecycle at levels 1 or 3. The result:
-- Strategic work (project decomposition) is write-once — roadmaps, milestones, and dependencies are never maintained after creation
-- Operational work (tasks.md) is a flat checklist — no lifecycle, no quality gates, no dependency tracking
-- Cross-level feedback doesn't flow — operational learnings don't trigger strategic reassessment
+### Level 2: Management/Program (Directors, Managers) — Partially Present
+- **Roadmapping** — `roadmap.md` exists but is write-once, never maintained
+- **OKR ownership** — no mechanism to own and track key results
+- **Cross-project coordination** — projects exist but don't interact
+- **Milestone tracking** — milestones are stored in `.meta.json` but never checked or updated
+- **Dependency management** — `depends_on_features` stored but only consumed by YOLO stop hook; transition gates unaware
+- **Risk management** — no risk tracking or escalation
+
+### Level 3: Tactical/Operational (Engineers, ICs) — Well-Served
+- Feature lifecycle: brainstorm → specify → design → plan → tasks → implement → finish
+- 43 transition guards, AI-reviewed quality gates, knowledge bank, retrospectives
+- **Gap:** tasks.md is a flat checklist — no lifecycle, no quality gates, no dependency tracking between tasks
+
+### The Cost of Single-Level Thinking
+- Strategic decisions are made outside pd, context is lost
+- Projects decompose into features but never track progress against milestones
+- Operational learnings (retros) don't propagate to strategic reassessment
+- No way to answer: "Are we on track for Q2 objectives?" or "Which initiatives are blocked?"
+
+---
 
 ## Core Insight: Fractal Self-Similarity
 
-Every successful multi-level framework uses the same lifecycle at every level:
-- **Military**: MDMP at strategic, operational, and tactical echelons — structurally identical planning cycles at different scopes
+Every successful multi-level management framework uses the **same lifecycle at every level** — only scope, cadence, and gate stringency change:
+
+- **Military MDMP**: identical planning cycle at strategic, operational, and tactical echelons
 - **SAFe**: PI Planning is the same ceremony at Team, ART, Solution, and Portfolio levels
-- **Sociocracy 3.0**: Same governance pattern at every nested circle level
-- **OKRs**: A Key Result at level N becomes an Objective at level N+1
+- **OKRs**: a Key Result at level N becomes an Objective at level N+1
+- **Hoshin Kanri**: three-layer planning with bidirectional catchball (strategy ↔ tactics ↔ operations)
 
-The lifecycle is structurally identical. Only scope, cadence, and gate stringency change.
+pd already has the lifecycle engine. The insight is: **don't build three different systems — apply the same engine at every level with level-appropriate configuration.**
 
-## Proposed Universal Lifecycle: 5D
+---
+
+## Solution: Universal Lifecycle Engine
+
+### The 5D Lifecycle
 
 ```
 DISCOVER → DEFINE → DESIGN → DELIVER → DEBRIEF
 ```
 
-| Phase | Strategic | Tactical | Operational |
-|-------|-----------|----------|-------------|
-| **Discover** | Market research, user interviews, competitive analysis | Brainstorm, PRD, evidence gathering | Read context, understand task |
-| **Define** | Shape the bet, scope boundaries, success criteria | Specify, acceptance criteria | Task definition, done-when criteria |
-| **Design** | Architecture, system design, decomposition into tactical items | Component design, interfaces, decomposition into operational tasks | Implementation approach |
-| **Deliver** | Execute via tactical work items | Implement via operational tasks | Write code, run tests |
-| **Debrief** | Strategy review, project retrospective | Feature retro, knowledge bank | Code review, lessons learned |
-
 pd's current 7-phase sequence maps to 5D at the tactical level:
-- `brainstorm` → Discover
-- `specify` → Define
-- `design` + `create-plan` + `create-tasks` → Design (with decomposition)
-- `implement` → Deliver
-- `finish` (retro) → Debrief
+- `brainstorm` → **Discover**
+- `specify` → **Define**
+- `design` + `create-plan` + `create-tasks` → **Design** (with decomposition)
+- `implement` → **Deliver**
+- `finish` (retro) → **Debrief**
 
-## Proposed Data Model: Universal Work Item
+The same 5D lifecycle applies at every organisational level:
+
+| Phase | Executive/Strategic | Management/Program | Tactical/Operational |
+|-------|--------------------|--------------------|---------------------|
+| **Discover** | Market research, competitive analysis, stakeholder interviews, vision setting | User research, feasibility studies, opportunity sizing | Brainstorm, PRD, evidence gathering |
+| **Define** | OKRs, strategic bets, investment thesis, success criteria | Roadmap, milestones, resource plan, risk register | Spec, acceptance criteria |
+| **Design** | Portfolio architecture, initiative decomposition into programs/projects | Project decomposition into features, dependency graphs, milestone sequencing | Component design, interfaces, task breakdown |
+| **Deliver** | Execute via programs/projects, track portfolio health | Execute via features, track milestone progress, manage dependencies | Implement via tasks, write code, run tests |
+| **Debrief** | Strategy review, portfolio retrospective, OKR scoring | Project retrospective, milestone review, roadmap adjustment | Feature retro, knowledge bank, code review |
+
+### Organisational Levels
+
+| Level | Typical Roles | Cadence | Work Items | Current pd Support |
+|-------|--------------|---------|------------|-------------------|
+| **L1: Strategic** | CEO, CTO, VP, Founders | Quarterly/Annual | Initiatives, OKRs | None |
+| **L2: Program** | Directors, Engineering Managers, Product Managers | Monthly/Quarterly | Projects, Epics, Milestones | Partial (projects exist but write-once) |
+| **L3: Tactical** | Senior Engineers, Tech Leads | Weekly/Biweekly | Features | Well-served |
+| **L4: Operational** | Engineers, ICs | Daily/Hourly | Tasks, Subtasks | Flat checklist (tasks.md) |
+
+### Gate Stringency by Level
+
+| Level | Review Model | Gate Rigour | Autonomy |
+|-------|-------------|-------------|----------|
+| **L1: Strategic** | Human-only review, written narratives (Amazon 6-pager pattern) | Highest — every transition requires explicit human approval | Human-driven, AI assists with research and analysis |
+| **L2: Program** | Human review with AI-prepared summaries, risk flags | High — AI prepares but human decides | Human-driven, AI does heavy lifting on decomposition and tracking |
+| **L3: Tactical** | AI review with human approval gates (pd's current model) | Medium — AI reviews, human approves at key gates | AI-driven with human oversight |
+| **L4: Operational** | AI-autonomous with automated verification | Lowest — test pass = done | AI-autonomous |
+
+---
+
+## Data Model: Universal Work Item
+
+### Entity Hierarchy
+
+```
+Initiative (L1)
+  └── Objective (L1)
+        └── Key Result (L1/L2 bridge)
+              └── Project (L2)
+                    └── Feature (L3)
+                          └── Task (L4)
+```
+
+Each node is a **Work Item** — same schema, same lifecycle engine, different `level` and `type`:
 
 ```
 Work Item:
-  level: strategic | tactical | operational
-  lifecycle: 5D phases with level-appropriate gates
-  parent: reference to parent work item (or null)
-  children: list of child work items (created during Design phase)
-  dependencies: sibling work items this is blocked by
-  status: active | blocked | completed | abandoned
+  id: unique identifier
+  type: initiative | objective | key_result | project | feature | task
+  level: L1 | L2 | L3 | L4
+  lifecycle_phase: discover | define | design | deliver | debrief
+  status: draft | planned | active | blocked | completed | abandoned
+  parent: reference to parent work item
+  children: derived from parent references
+  blocked_by: list of sibling work items this depends on
+  owner: person or team responsible
+  cadence: planning cycle this belongs to (Q1-2026, H1-2026, Sprint-42, etc.)
   artifacts: level-appropriate documents
+  metadata: flexible JSON for level-specific fields
 ```
 
-**Decomposition as a lifecycle phase:** "Design" at level N produces child work items at level N+1. This is not a separate "decomposition" step — it's what design means at higher levels.
+### What's New vs What Exists
 
-**Kanban per level:** Each level tracks its own work-in-progress. Strategic kanban tracks initiatives. Tactical kanban tracks features. Operational kanban tracks tasks.
+| Concept | Current State | New State |
+|---------|--------------|-----------|
+| Entity types | 4 fixed: backlog, brainstorm, project, feature | Extended: + initiative, objective, key_result, task |
+| Lifecycle | 7 phases, tactical only | 5D phases at every level via workflow templates |
+| Lineage | parent_type_id (single parent) | Same mechanism, deeper hierarchy (L1→L2→L3→L4) |
+| Milestones | Array in project .meta.json, never updated | First-class work items with own lifecycle |
+| OKRs | Non-existent | Objective + Key Result entity types with scoring |
+| Tasks | Flat markdown checklist | L4 work items with mini-lifecycle |
+| Dependencies | Stored, mostly ignored | Enforced at Deliver gates |
+| Kanban | Single board, 8 columns (3 unused) | Per-level boards, derived from (status, phase) |
 
-**Gate stringency by level:**
-- Strategic: heavy human review, written narratives (Amazon 6-pager pattern)
-- Tactical: AI review with human approval gates (pd's current model)
-- Operational: AI-autonomous with automated verification
+### Level-Specific Artifacts
 
-**Dependency enforcement by level:** Gate checks at the Deliver phase verify prerequisite work items are complete before allowing entry.
+| Level | Discover | Define | Design | Deliver | Debrief |
+|-------|----------|--------|--------|---------|---------|
+| **L1** | Vision doc, market analysis, competitive landscape | OKR sheet, strategic bet thesis, investment memo | Initiative portfolio, program decomposition | Portfolio dashboard, OKR tracking | Strategy review, OKR scoring |
+| **L2** | Feasibility study, user research, PRD | Roadmap, milestone plan, risk register, resource plan | Feature decomposition, dependency graph, architecture decisions | Milestone tracking, burndown, dependency status | Project retro, milestone review |
+| **L3** | Brainstorm PRD | spec.md | design.md, plan.md, tasks.md | implementation-log.md | retro.md |
+| **L4** | Context read | Task definition (from tasks.md) | Implementation approach | Code + tests | Review feedback |
 
-**Feedback propagation:** Debrief at level N triggers re-evaluation of assumptions at level N-1. Operational anomalies surface tactical/strategic assumption failures (double-loop learning).
+### OKR Integration
 
-## Terminology
+OKRs are the **bridge between strategic intent and tactical execution**:
 
-| Old Term | New Term | Why |
-|----------|----------|-----|
-| Project | Strategic Work Item | "Project" overloaded; level makes scope explicit |
-| Feature | Tactical Work Item | "Feature" overloaded; avoids confusion with product features |
-| Task (tasks.md) | Operational Work Item | Elevated from checklist item to first-class lifecycle entity |
-| Phase | Lifecycle Phase | Same 5D phases at every level |
-| Kanban column | Work State | Per-level flow tracking, not a single board |
+```
+Initiative: "Become the leading AI development platform"
+  └── Objective: "Ship enterprise-grade reliability" (Q2-2026)
+        ├── KR1: "Reduce P0 incidents to <2/month" → measured, scored 0.0-1.0
+        │     └── Project: "Observability overhaul"
+        │           ├── Feature: "Structured logging"
+        │           └── Feature: "Alert pipeline"
+        ├── KR2: "99.9% API uptime" → measured, scored 0.0-1.0
+        │     └── Project: "HA infrastructure"
+        └── KR3: "All critical paths have integration tests" → measured, scored 0.0-1.0
+              └── Project: "Test coverage initiative"
+```
 
-Or simply: **"Work Item"** at every level, distinguished by `level` attribute. This is the Azure DevOps / Jira convention — generic but clear.
+**OKR lifecycle:**
+- **Discover:** Research what matters, gather evidence
+- **Define:** Set measurable KRs with baselines and targets
+- **Design:** Decompose KRs into projects/features
+- **Deliver:** Track KR progress as children complete
+- **Debrief:** Score KRs (0.0-1.0), assess objective health, feed into next cycle
+
+**Key Result scoring** is computed from child work item completion:
+- Percentage-based KRs: derived from completed children / total children
+- Metric-based KRs: manually updated or pulled from external data
+- Binary KRs: completed when all children complete
+
+### Cross-Level Feedback Loops
+
+**Upward propagation (Debrief → parent's Discover):**
+- L4 task retro surfaces issues → L3 feature retro aggregates → L2 project retro identifies systemic patterns → L1 strategy review reassesses assumptions
+- Operational anomalies trigger re-evaluation of parent assumptions (double-loop learning)
+
+**Downward propagation (Define → children's constraints):**
+- L1 OKR targets constrain L2 project scope
+- L2 milestones constrain L3 feature deadlines
+- L3 design decisions constrain L4 task implementation
+
+**Lateral propagation (sibling dependencies):**
+- Feature A completes → Feature B unblocked (cascade unblock)
+- KR1 at risk → flag to Objective owner for rebalancing
+
+---
 
 ## What Changes for pd
 
-1. **pd's phase-gated workflow becomes the template** — applied at every level with level-appropriate gates
-2. **Decomposition becomes part of Design** — not a separate skill, but what Design means at higher levels
-3. **tasks.md entries become first-class work items** — with their own mini-lifecycle (discover→define→design→deliver→debrief), not just checkboxes
-4. **Dependencies are enforced at Deliver gates** — not just stored and ignored
-5. **Debrief propagates up** — retrospective findings flow to parent work item's Discover phase
+### Phase 1: Foundation — Depth Fixes + Entity Model Extension
 
-## Relationship to Feature 050
+Fix the 6 depth bugs identified in feature 050 analysis (no architectural change needed):
+1. **Field validation** — `init_feature_state()` rejects empty identity fields
+2. **Frontmatter health** — remove dead `reconcile_status` frontmatter check
+3. **Maintenance mode** — add `PD_MAINTENANCE=1` bypass to meta-json-guard
+4. **Kanban derivation** — implement `derive_kanban()`, replace all independent kanban sets
+5. **Artifact completeness** — soft verification warnings on feature finish
+6. **Reconciliation reporting** — surface session-start reconciliation summary
 
-Feature 050 (Reactive Entity Consistency Engine) attempted to solve 12 gaps by adding breadth capabilities to pd's core. This analysis reveals those gaps split into:
+Extend entity type CHECK constraint: add `initiative`, `objective`, `key_result`, `task`.
 
-**Depth bugs (fix now, no architectural change):**
-- Gap 2: Field validation in `init_feature_state()` — add ValueError for empty identity fields
-- Gap 5: Permanent frontmatter unhealthy — remove dead check from `reconcile_status`
-- Gap 7: Guard blocks maintenance — add `PD_MAINTENANCE=1` bypass
-- Gap 8: Three competing "done" signals — implement `derive_kanban()` consolidation
-- Gap 11: Artifact completeness — add soft verification warnings on finish
-- Gap 12: Silent reconciliation — surface session-start summary
+### Phase 2: Workflow Templates + Operational Level (L4)
 
-**Breadth concerns (addressed by fractal model, not by patching pd):**
-- Gaps 1, 3, 4, 6, 9, 10 — workspace isolation, cascading, ghost entities, workflow templates, memory scoping
+**Workflow templates** replace the single hardcoded phase sequence:
+
+```python
+WORKFLOW_TEMPLATES = {
+    # L1: Strategic
+    "initiative": ["discover", "define", "design", "deliver", "debrief"],
+    "objective":  ["discover", "define", "design", "deliver", "debrief"],
+    "key_result": ["define", "deliver", "debrief"],
+    # L2: Program
+    "project":    ["discover", "define", "design", "deliver", "debrief"],
+    # L3: Tactical (backward compatible with existing 7 phases)
+    "standard":   ["brainstorm", "specify", "design", "create-plan", "create-tasks", "implement", "finish"],
+    "full":       ["brainstorm", "specify", "design", "create-plan", "create-tasks", "implement", "finish"],
+    "bugfix":     ["specify", "create-tasks", "implement", "finish"],
+    "hotfix":     ["implement", "finish"],
+    # L4: Operational
+    "task":       ["define", "deliver", "debrief"],
+}
+```
+
+**L4 tasks become work items:**
+- Each task in tasks.md gets registered as an entity with `type=task`, `parent=feature:{id}`
+- Mini-lifecycle: define (task spec) → deliver (implement) → debrief (review)
+- AI-autonomous execution with automated verification (test pass = done)
+
+### Phase 3: Program Level (L2) — Project Lifecycle
+
+Make projects living entities instead of write-once containers:
+- Projects get their own 5D lifecycle (currently they're created and forgotten)
+- Milestones become checkpoints within the project lifecycle, not just metadata
+- Roadmap.md is regenerated when project state changes
+- Dependency enforcement: feature can't enter Deliver if its `blocked_by` siblings aren't complete
+- Project dashboard: progress against milestones, feature status rollup, risk flags
+
+### Phase 4: Strategic Level (L1) — Initiatives & OKRs
+
+Add the executive layer:
+- **Initiatives** — top-level strategic bets with 5D lifecycle
+- **Objectives** — what we want to achieve this cycle, decompose into Key Results
+- **Key Results** — measurable outcomes, scored 0.0-1.0, decompose into projects/features
+- OKR cadence management (quarterly by default)
+- Portfolio dashboard: initiative health, OKR progress, cross-project dependencies
+- Strategic advisors: reuse existing advisory framework (pre-mortem, opportunity-cost, working-backwards) at L1
+
+### Phase 5: Cross-Level Intelligence
+
+- **Cascade unblock** — completing a work item at any level unblocks dependents
+- **Progress rollup** — parent work item health derived from children status
+- **Anomaly propagation** — debrief findings at level N surface to level N-1
+- **Workspace scoping** — workspace_id column for multi-project isolation
+- **Context-aware secretary** — secretary routes requests to appropriate level based on scope
+
+---
+
+## What Does NOT Change
+
+- **L3 tactical workflow** — the existing 7-phase feature lifecycle is preserved exactly as-is (it maps to 5D but the phase names and gates remain). No breaking changes to existing features.
+- **Entity lineage model** — same parent_type_id mechanism, just deeper hierarchy
+- **Agent/reviewer architecture** — same dispatch pattern, extended with level-appropriate reviewers
+- **Knowledge bank** — same structure, extended with level tags
+- **Plugin portability** — no hardcoded paths, same two-location glob pattern
+
+---
+
+## Risks and Mitigations
+
+| Risk | Probability | Impact | Mitigation |
+|------|------------|--------|------------|
+| Scope creep — trying to build Jira | High | High | Each phase is independently valuable. Phase 1 is pure bugfixes. Phase 2 adds templates. Ship incrementally. |
+| L1/L2 levels unused — solo developer doesn't need executive layer | Medium | Low | L1/L2 are opt-in. Solo developers continue using L3/L4 only. No overhead if unused. |
+| Schema migration breaks existing features | Medium | High | Entity type extension is additive (new CHECK values). L3 workflow templates are backward-compatible. |
+| OKR scoring is noisy without real metrics integration | Medium | Medium | Start with manual scoring + child-completion rollup. External metrics integration is a future phase. |
+| Task-level lifecycle adds friction to simple tasks | Medium | Medium | L4 lifecycle is opt-in. Simple tasks stay as markdown checkboxes. Only promoted tasks get full lifecycle. |
+
+---
+
+## Success Metrics
+
+1. **L3 preserved:** All existing 710+ entity registry, 309 workflow engine, 118 reconciliation tests pass unchanged
+2. **L4 operational:** Tasks from tasks.md can be registered as entities with parent lineage to their feature
+3. **L2 living projects:** Project milestones can be marked complete, roadmap regenerated, feature progress tracked
+4. **L1 OKRs:** Objectives and Key Results can be created, scored, and linked to projects
+5. **Cross-level:** Completing a feature updates its parent project's progress. Completing a project updates its parent KR's score.
+6. **Backward compatible:** A developer who ignores L1/L2/L4 sees zero change in their L3 workflow
+
+---
 
 ## Research Sources
 
-### Organizational Models
+### Organisational Models
 - [Linear Conceptual Model](https://linear.app/docs/conceptual-model) — Initiative → Project → Issue hierarchy
 - [Shape Up](https://basecamp.com/shapeup/1.1-chapter-02) — Shaping as strategic deep work
 - [Amazon Working Backwards](https://workingbackwards.com/concepts/working-backwards-pr-faq-process/) — PR/FAQ as strategic artifact
 - [Shopify GSD](https://www.lennysnewsletter.com/p/how-shopify-builds-product) — Gate reviews as layer boundaries
 - [Hoshin Kanri](https://www.6sigma.us/process-improvement/essential-guide-to-hoshin-kanri/) — Three-layer planning with bidirectional catchball
-- [Sociocracy 3.0 Fractal Organization](https://patterns.sociocracy30.org/fractal-organization.html) — Same governance at every level
-- [Holacracy](https://www.holacracy.org/how-it-works/organizational-structure/) — Nested circles with double-linking
+- [Sociocracy 3.0](https://patterns.sociocracy30.org/fractal-organization.html) — Same governance at every level
 
 ### Fractal/Recursive Patterns
 - [Military MDMP](https://garmonttactical.com/post/military-decision-making-process-mdmp-7-steps-from-intel-to-action.html) — Same planning cycle at every echelon
 - [SAFe Hierarchy](https://www.enov8.com/blog/the-hierarchy-of-safe-scaled-agile-framework-explained/) — PI Planning at every level
-- [OODA Loop](https://en.wikipedia.org/wiki/OODA_loop) — Recursive, not sequential
-- [Double Diamond](https://www.designcouncil.org.uk/our-resources/the-double-diamond/) — Inherently recursive design process
 - [OKR Hierarchy](https://techdocs.broadcom.com/us/en/ca-enterprise-software/valueops/rally/rally-help/planning/objectives-and-key-results-okrs/create-an-okr-hierarchy-in-rally/examples-of-okr-hierarchies.html) — Key Result becomes Objective at next level
+- [Double Diamond](https://www.designcouncil.org.uk/our-resources/the-double-diamond/) — Inherently recursive design process
 
 ### Agent/Harness Engineering
-- [Anthropic: Multi-Agent Research System](https://www.anthropic.com/engineering/multi-agent-research-system) — Orchestrator-worker pattern
-- [Anthropic: Effective Harnesses for Long-Running Agents](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents) — Dual-agent architecture, artifact-first state
-- [Martin Fowler: Humans and Agents](https://martinfowler.com/articles/exploring-gen-ai/humans-and-agents.html) — Humans on the loop, agentic flywheel
-- [Gene Kim: Three Developer Loops](https://itrevolution.com/articles/the-three-developer-loops-a-new-framework-for-ai-assisted-coding/) — Inner/Middle/Outer loop framework
-- [Two Agentic Loops](https://planoai.dev/blog/the-two-agentic-loops-how-to-design-and-scale-agentic-apps) — Goal-directed systems cannot constrain themselves
-- [Harness Engineering Guide](https://www.nxcode.io/resources/news/harness-engineering-complete-guide-ai-agent-codex-2026) — Context + Constraints + Entropy management
+- [Anthropic: Effective Harnesses](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents) — Dual-agent architecture, artifact-first state
 - [Addy Osmani: Agentic Engineering](https://addyosmani.com/blog/agentic-engineering/) — Engineers as composers orchestrating agent ensembles
-- [Devin Performance Review 2025](https://cognition.ai/blog/devin-annual-performance-review-2025) — Bounded tasks with clear specs, parallelization
+- [Gene Kim: Three Developer Loops](https://itrevolution.com/articles/the-three-developer-loops-a-new-framework-for-ai-assisted-coding/) — Inner/Middle/Outer loop framework
 
 ### Codebase Analysis (pd current state)
-- kanban_column: 8 possible values, 5 ever used, 3 dead columns (agent_review, human_review, blocked)
-- Two competing kanban derivation strategies (STATUS_TO_KANBAN vs FEATURE_PHASE_TO_KANBAN) producing contradictory values
-- depends_on_features: stored but only consumed by YOLO stop hook — transition gates unaware
-- Project milestones, roadmap.md: write-once at decomposition, never read back
-- Phase-gated workflow (43 transition guards): load-bearing — everything else is peripheral
+- 4 entity types, 28 skills, 28 agents, 29 commands
+- 43 transition guards, 7-phase sequence (standard/full modes only)
+- kanban: 8 columns defined, 3 unused (agent_review, human_review, blocked)
+- Two competing kanban derivations (STATUS_TO_KANBAN vs FEATURE_PHASE_TO_KANBAN)
+- depends_on_features: stored but only consumed by YOLO stop hook
+- Project milestones: write-once at decomposition, never read back
+- OKR support: non-existent
+- Task lifecycle: non-existent (flat markdown checklist)
