@@ -227,7 +227,9 @@ if entity is not None:
     parent_tid = entity.get("parent_type_id")
     if parent_tid is not None:
         ancestors = db.get_lineage(feature_type_id, direction="up")
-        depth = len(ancestors) if ancestors else None  # None if broken parent ref
+        # len - 1: get_lineage includes self (depth 0), so subtract 1 for tree depth
+        # e.g., [root, parent, self] → depth = 2 (2 ancestor hops)
+        depth = (len(ancestors) - 1) if ancestors else None  # None if broken parent ref
 
 # Set (not append) message — on the success path, message defaults to ""
 msg = ""
@@ -251,5 +253,5 @@ Passed to `WorkflowDriftReport(... message=msg, depth=depth, parent_type_id=pare
 | File | Change |
 |------|--------|
 | `test_database.py` | Add: `test_set_parent_depth_guard_11_hops_no_cycle`, `test_set_parent_cycle_within_10_hops` |
-| `test_reconciliation.py` | Add: `test_derive_kanban_completed_status`, `test_derive_kanban_abandoned_status`, `test_derive_kanban_active_unchanged`, `test_check_feature_kanban_drift_terminal_status`, `test_reconcile_terminal_status_kanban`, `test_artifact_missing_flag`, `test_artifact_missing_no_short_circuit`, `test_artifact_missing_count_summary`, `test_drift_report_depth_context`, `test_drift_report_root_entity_no_depth` |
+| `test_reconciliation.py` | Add: `test_derive_kanban_completed_status`, `test_derive_kanban_abandoned_status`, `test_derive_kanban_active_unchanged`, `test_check_feature_kanban_drift_terminal_status`, `test_reconcile_terminal_status_kanban`, `test_artifact_missing_flag`, `test_artifact_missing_no_short_circuit`, `test_artifact_missing_count_summary`, `test_drift_report_depth_context`, `test_drift_report_root_entity_no_depth`, `test_drift_report_depth_value_multi_level` (3-level hierarchy: root→parent→child, asserts child depth=2) |
 | Existing tests | No changes needed — all new dataclass fields have defaults |
