@@ -2,10 +2,11 @@
   "id": "051",
   "slug": "entity-depth-fixes",
   "mode": "standard",
-  "status": "active",
+  "status": "completed",
   "created": "2026-03-20T06:29:56.768524+00:00",
   "branch": "feature/051-entity-depth-fixes",
-  "lastCompletedPhase": "implement",
+  "completed": "2026-03-20T07:36:22.831254+00:00",
+  "lastCompletedPhase": "finish",
   "phases": {
     "brainstorm": {
       "started": "2026-03-20T06:29:56.768454+00:00"
@@ -30,6 +31,9 @@
     "implement": {
       "completed": "2026-03-20T07:30:25.151575+00:00",
       "iterations": 3
+    },
+    "finish": {
+      "completed": "2026-03-20T07:36:22.831254+00:00"
     }
   }
 }
