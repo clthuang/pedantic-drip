@@ -10,7 +10,7 @@ Backends:
                    (initiative, objective, key_result, project, task)
 
 Implements design D1 (Strategy Pattern), D2 (Cascade in Engine), C3,
-plan Steps 3.3/4.1, AC-25/AC-26/AC-28.
+plan Steps 3.3/4.1/4.3/4.4, AC-25/AC-26/AC-28/AC-29/AC-30.
 """
 from __future__ import annotations
 
@@ -213,9 +213,16 @@ class EntityWorkflowEngine:
                 self._db, entity_uuid
             )
             if blockers:
+                blocker_names = []
+                for b_uuid in blockers:
+                    b_entity = self._db.get_entity_by_uuid(b_uuid)
+                    if b_entity:
+                        blocker_names.append(b_entity["type_id"])
+                    else:
+                        blocker_names.append(b_uuid)
                 raise ValueError(
-                    f"Entity {type_id} is blocked by {len(blockers)} "
-                    f"dependencies. Complete blockers first."
+                    f"Entity {type_id} is blocked by: "
+                    f"{', '.join(blocker_names)}"
                 )
 
         if entity_type == "feature":
@@ -258,6 +265,87 @@ class EntityWorkflowEngine:
             mode=row.get("mode"),
             source="db",
         )
+
+    def abandon_entity(
+        self, entity_uuid: str, *, cascade: bool = False
+    ) -> list[str]:
+        """Abandon an entity, with orphan guard.
+
+        Checks for active children (status not completed/abandoned).
+        If active children exist and cascade is False, raises ValueError
+        listing the active children (orphan guard).
+
+        Parameters
+        ----------
+        entity_uuid:
+            UUID of the entity to abandon.
+        cascade:
+            If True, abandon all active descendants recursively.
+            If False (default), reject if active children exist.
+
+        Returns
+        -------
+        list[str]
+            UUIDs of all entities abandoned (including the target).
+
+        Raises
+        ------
+        ValueError
+            If entity not found, or active children exist and cascade=False.
+        """
+        entity = self._db.get_entity_by_uuid(entity_uuid)
+        if entity is None:
+            raise ValueError(f"Entity not found: {entity_uuid}")
+
+        active_children = self._get_active_children(entity_uuid)
+
+        if active_children and not cascade:
+            child_names = [
+                c["type_id"] for c in active_children
+            ]
+            raise ValueError(
+                f"Cannot abandon {entity['type_id']}: "
+                f"{len(active_children)} active children: "
+                f"{', '.join(child_names)}"
+            )
+
+        abandoned: list[str] = []
+
+        if cascade and active_children:
+            # Walk tree depth-first, abandon all active descendants
+            abandoned = self._abandon_descendants(entity_uuid)
+
+        # Abandon the entity itself
+        self._db.update_entity(entity["type_id"], status="abandoned")
+        abandoned.append(entity_uuid)
+
+        return abandoned
+
+    def _get_active_children(self, parent_uuid: str) -> list[dict]:
+        """Return children that are not completed or abandoned."""
+        children = self._db.get_children_by_uuid(parent_uuid)
+        return [
+            c for c in children
+            if c.get("status") not in ("completed", "abandoned")
+        ]
+
+    def _abandon_descendants(self, parent_uuid: str) -> list[str]:
+        """Recursively abandon all active descendants depth-first.
+
+        Returns list of UUIDs abandoned (excluding the parent itself).
+        """
+        abandoned: list[str] = []
+        children = self._db.get_children_by_uuid(parent_uuid)
+        for child in children:
+            if child.get("status") in ("completed", "abandoned"):
+                continue
+            # Recurse into grandchildren first
+            abandoned.extend(
+                self._abandon_descendants(child["uuid"])
+            )
+            self._db.update_entity(child["type_id"], status="abandoned")
+            abandoned.append(child["uuid"])
+        return abandoned
 
     # ------------------------------------------------------------------
     # Private: Feature backend (delegates to frozen engine)

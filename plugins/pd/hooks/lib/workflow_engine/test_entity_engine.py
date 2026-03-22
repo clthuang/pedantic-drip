@@ -1006,3 +1006,257 @@ class TestFiveDDeliverPhaseMapping:
 
         with pytest.raises(ValueError, match="blocked by"):
             engine.transition_phase(init_uuid, "deliver")
+
+
+# ---------------------------------------------------------------------------
+# Task 4.3: Deliver gate — blocker type_ids in error + end-to-end unblock
+# ---------------------------------------------------------------------------
+
+
+class TestDeliverGateBlockerDetails:
+    """Error message lists actual blocker type_ids (AC-28 detail)."""
+
+    def test_error_lists_blocker_type_ids(self, tmp_path):
+        """Blocked error message includes the blocker's type_id."""
+        db = _make_db()
+        blocker_uuid = _register(
+            db, "feature", "040-blocker-a", "Blocker A"
+        )
+        blocked_uuid = _register(
+            db, "feature", "041-blocked-b", "Blocked B"
+        )
+        _create_meta_json(str(tmp_path), "041-blocked-b")
+        _with_phase(
+            db, "feature:041-blocked-b", "create-tasks", mode="standard"
+        )
+
+        dep_mgr = DependencyManager()
+        dep_mgr.add_dependency(db, blocked_uuid, blocker_uuid)
+
+        engine = _make_engine(db, str(tmp_path))
+
+        with pytest.raises(ValueError, match="feature:040-blocker-a"):
+            engine.transition_phase(blocked_uuid, "implement")
+
+    def test_error_lists_multiple_blocker_type_ids(self, tmp_path):
+        """Multiple blockers are all listed in the error."""
+        db = _make_db()
+        b1_uuid = _register(db, "project", "p040-b1", "Blocker 1")
+        b2_uuid = _register(db, "project", "p041-b2", "Blocker 2")
+        blocked_uuid = _register(
+            db, "project", "p042-blocked", "Blocked"
+        )
+        _with_phase(db, "project:p042-blocked", "design", mode="standard")
+
+        dep_mgr = DependencyManager()
+        dep_mgr.add_dependency(db, blocked_uuid, b1_uuid)
+        dep_mgr.add_dependency(db, blocked_uuid, b2_uuid)
+
+        engine = _make_engine(db, str(tmp_path))
+
+        with pytest.raises(ValueError, match="project:p040-b1"):
+            engine.transition_phase(blocked_uuid, "deliver")
+
+    def test_complete_blocker_then_deliver_succeeds(self, tmp_path):
+        """End-to-end: feature B blocked by A. Complete A → B can implement."""
+        db = _make_db()
+        slug_a = "042-feat-a"
+        slug_b = "043-feat-b"
+        artifacts_root = str(tmp_path)
+        _create_meta_json(artifacts_root, slug_a)
+        _create_meta_json(artifacts_root, slug_b)
+
+        a_uuid = _register(db, "feature", slug_a, "Feature A")
+        b_uuid = _register(db, "feature", slug_b, "Feature B")
+        _with_phase(db, f"feature:{slug_a}", "brainstorm", mode="standard")
+        _with_phase(
+            db, f"feature:{slug_b}", "create-tasks", mode="standard",
+            last_completed_phase="create-plan",
+        )
+
+        dep_mgr = DependencyManager()
+        dep_mgr.add_dependency(db, b_uuid, a_uuid)
+
+        engine = _make_engine(db, artifacts_root)
+
+        # B cannot implement while A is active
+        with pytest.raises(ValueError, match=f"feature:{slug_a}"):
+            engine.transition_phase(b_uuid, "implement")
+
+        # Complete A's brainstorm → cascade_unblock removes the dep
+        engine.complete_phase(a_uuid, "brainstorm")
+
+        # Now B can transition to implement
+        response = engine.transition_phase(b_uuid, "implement")
+        assert isinstance(response, TransitionResponse)
+
+
+# ---------------------------------------------------------------------------
+# Task 4.4: Orphan guard on abandonment (AC-30)
+# ---------------------------------------------------------------------------
+
+
+class TestAbandonEntityOrphanGuard:
+    """abandon_entity blocks when active children exist, unless cascade=True."""
+
+    def test_abandon_no_children_succeeds(self, tmp_path):
+        """Entity with no children can be abandoned."""
+        db = _make_db()
+        uuid = _register(db, "project", "p050-solo", "Solo Project")
+
+        engine = _make_engine(db, str(tmp_path))
+        result = engine.abandon_entity(uuid)
+
+        assert uuid in result
+        entity = db.get_entity_by_uuid(uuid)
+        assert entity["status"] == "abandoned"
+
+    def test_abandon_with_active_children_blocked(self, tmp_path):
+        """Project with active features → abandon blocked."""
+        db = _make_db()
+        proj_uuid = _register(db, "project", "p051-parent", "Parent Proj")
+        child_uuid = _register(
+            db, "feature", "044-child", "Active Child",
+            status="active",
+            parent_type_id="project:p051-parent",
+        )
+
+        engine = _make_engine(db, str(tmp_path))
+
+        with pytest.raises(ValueError, match="active children"):
+            engine.abandon_entity(proj_uuid)
+
+        # Parent still active
+        entity = db.get_entity_by_uuid(proj_uuid)
+        assert entity["status"] == "active"
+
+    def test_abandon_with_completed_children_succeeds(self, tmp_path):
+        """Completed children don't block abandonment."""
+        db = _make_db()
+        proj_uuid = _register(db, "project", "p052-done-kids", "Done Kids")
+        _register(
+            db, "feature", "045-done", "Done Feature",
+            status="completed",
+            parent_type_id="project:p052-done-kids",
+        )
+        _register(
+            db, "feature", "046-abn", "Abandoned Feature",
+            status="abandoned",
+            parent_type_id="project:p052-done-kids",
+        )
+
+        engine = _make_engine(db, str(tmp_path))
+        result = engine.abandon_entity(proj_uuid)
+
+        assert proj_uuid in result
+        entity = db.get_entity_by_uuid(proj_uuid)
+        assert entity["status"] == "abandoned"
+
+    def test_abandon_cascade_abandons_all_descendants(self, tmp_path):
+        """cascade=True → all active descendants abandoned."""
+        db = _make_db()
+        proj_uuid = _register(db, "project", "p053-cascade", "Cascade Proj")
+        feat_uuid = _register(
+            db, "feature", "047-active-feat", "Active Feature",
+            status="active",
+            parent_type_id="project:p053-cascade",
+        )
+        task_uuid = _register(
+            db, "task", "011-active-task", "Active Task",
+            status="active",
+            parent_type_id="feature:047-active-feat",
+        )
+
+        engine = _make_engine(db, str(tmp_path))
+        result = engine.abandon_entity(proj_uuid, cascade=True)
+
+        # All three should be abandoned
+        assert proj_uuid in result
+        assert feat_uuid in result
+        assert task_uuid in result
+        assert len(result) == 3
+
+        for uid in [proj_uuid, feat_uuid, task_uuid]:
+            entity = db.get_entity_by_uuid(uid)
+            assert entity["status"] == "abandoned", (
+                f"{entity['type_id']} should be abandoned"
+            )
+
+    def test_abandon_cascade_skips_completed(self, tmp_path):
+        """cascade=True skips already-completed children."""
+        db = _make_db()
+        proj_uuid = _register(db, "project", "p054-mixed", "Mixed Proj")
+        active_uuid = _register(
+            db, "feature", "048-active", "Active",
+            status="active",
+            parent_type_id="project:p054-mixed",
+        )
+        completed_uuid = _register(
+            db, "feature", "049-done", "Done",
+            status="completed",
+            parent_type_id="project:p054-mixed",
+        )
+
+        engine = _make_engine(db, str(tmp_path))
+        result = engine.abandon_entity(proj_uuid, cascade=True)
+
+        # Active child + parent abandoned
+        assert proj_uuid in result
+        assert active_uuid in result
+        # Completed child not touched
+        assert completed_uuid not in result
+        entity = db.get_entity_by_uuid(completed_uuid)
+        assert entity["status"] == "completed"
+
+    def test_abandon_entity_not_found(self, tmp_path):
+        """Abandon non-existent entity raises ValueError."""
+        db = _make_db()
+        engine = _make_engine(db, str(tmp_path))
+
+        with pytest.raises(ValueError, match="Entity not found"):
+            engine.abandon_entity("nonexistent-uuid")
+
+    def test_abandon_error_lists_active_children_type_ids(self, tmp_path):
+        """Error message lists the active children's type_ids."""
+        db = _make_db()
+        proj_uuid = _register(db, "project", "p055-list", "List Proj")
+        _register(
+            db, "feature", "050-kid1", "Kid 1",
+            status="active",
+            parent_type_id="project:p055-list",
+        )
+        _register(
+            db, "feature", "051-kid2", "Kid 2",
+            status="active",
+            parent_type_id="project:p055-list",
+        )
+
+        engine = _make_engine(db, str(tmp_path))
+
+        with pytest.raises(ValueError, match="feature:050-kid1"):
+            engine.abandon_entity(proj_uuid)
+
+    def test_abandon_cascade_deep_tree(self, tmp_path):
+        """Three-level cascade: initiative → project → feature."""
+        db = _make_db()
+        init_uuid = _register(
+            db, "initiative", "i020-deep", "Deep Initiative"
+        )
+        proj_uuid = _register(
+            db, "project", "p056-deep", "Deep Project",
+            status="active",
+            parent_type_id="initiative:i020-deep",
+        )
+        feat_uuid = _register(
+            db, "feature", "052-deep", "Deep Feature",
+            status="active",
+            parent_type_id="project:p056-deep",
+        )
+
+        engine = _make_engine(db, str(tmp_path))
+        result = engine.abandon_entity(init_uuid, cascade=True)
+
+        assert len(result) == 3
+        for uid in [init_uuid, proj_uuid, feat_uuid]:
+            entity = db.get_entity_by_uuid(uid)
+            assert entity["status"] == "abandoned"
