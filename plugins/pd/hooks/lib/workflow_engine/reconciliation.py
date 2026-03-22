@@ -14,6 +14,7 @@ from transition_gate.constants import PHASE_SEQUENCE
 
 from .kanban import derive_kanban
 from .engine import WorkflowStateEngine
+from .rollup import compute_progress, rollup_parent
 
 # Precomputed phase values from immutable PHASE_SEQUENCE (same pattern as engine.py)
 _PHASE_VALUES: tuple[str, ...] = tuple(p.value for p in PHASE_SEQUENCE)
@@ -512,6 +513,95 @@ def _reconcile_single_feature(
 
 
 # ---------------------------------------------------------------------------
+# Cascade recovery (Task 3.3a)
+# ---------------------------------------------------------------------------
+
+
+def _recover_pending_cascades(db: EntityDatabase) -> int:
+    """Detect and recover missed cascades from two-phase commit failures.
+
+    When Phase A (completion) commits but Phase B (cascade) fails (e.g., crash),
+    completed children will have stale parent progress.  This function detects
+    such mismatches and re-runs rollup_parent + cascade_unblock.
+
+    Detection: For each entity with status=completed and a parent_uuid, compute
+    expected parent progress from children.  Compare with stored progress in
+    parent metadata.  Mismatch = missed cascade.
+
+    Parameters
+    ----------
+    db:
+        Open EntityDatabase instance.
+
+    Returns
+    -------
+    int
+        Number of cascades recovered.
+    """
+    from entity_registry.dependencies import DependencyManager
+
+    # Find all completed entities that have a parent
+    completed = db.list_entities()
+    completed_with_parent = [
+        e for e in completed
+        if e.get("status") == "completed" and e.get("parent_uuid")
+    ]
+
+    if not completed_with_parent:
+        return 0
+
+    recovered = 0
+    dep_mgr = DependencyManager()
+
+    # Group by parent to avoid recomputing the same parent multiple times
+    parents_checked: set[str] = set()
+
+    for entity in completed_with_parent:
+        parent_uuid = entity["parent_uuid"]
+
+        if parent_uuid in parents_checked:
+            continue
+        parents_checked.add(parent_uuid)
+
+        parent = db.get_entity_by_uuid(parent_uuid)
+        if parent is None:
+            continue
+
+        # Compute expected progress
+        expected_progress = compute_progress(db, parent_uuid)
+
+        # Read stored progress from parent metadata
+        raw_metadata = parent.get("metadata")
+        if raw_metadata:
+            metadata = json.loads(raw_metadata) if isinstance(raw_metadata, str) else raw_metadata
+        else:
+            metadata = {}
+
+        stored_progress = metadata.get("progress")
+
+        # Compare: mismatch if no stored progress or different value
+        if stored_progress is not None and abs(stored_progress - expected_progress) < 1e-9:
+            continue  # already correct
+
+        # Mismatch detected — re-run cascade
+        # Re-run rollup for all completed children under this parent
+        for child in completed_with_parent:
+            if child.get("parent_uuid") == parent_uuid:
+                rollup_parent(db, child["uuid"])
+                dep_mgr.cascade_unblock(db, child["uuid"])
+
+        recovered += 1
+
+    if recovered > 0:
+        print(
+            f"reconciliation: Recovered {recovered} missed cascades",
+            file=__import__("sys").stderr,
+        )
+
+    return recovered
+
+
+# ---------------------------------------------------------------------------
 # Public API (Design I2)
 # ---------------------------------------------------------------------------
 
@@ -687,7 +777,15 @@ def apply_workflow_reconciliation(
                 message=str(exc),
             ))
 
-    return _build_reconciliation_result(actions, dry_run)
+    # Task 3.3a: Recover missed cascades from two-phase commit failures
+    cascades_recovered = 0
+    if not dry_run:
+        try:
+            cascades_recovered = _recover_pending_cascades(db)
+        except Exception:
+            pass  # cascade recovery is best-effort
+
+    return _build_reconciliation_result(actions, dry_run, cascades_recovered)
 
 
 # ---------------------------------------------------------------------------
@@ -719,6 +817,7 @@ def _build_drift_result(reports: list[WorkflowDriftReport]) -> WorkflowDriftResu
 def _build_reconciliation_result(
     actions: list[ReconcileAction],
     dry_run: bool,
+    cascades_recovered: int = 0,
 ) -> ReconciliationResult:
     """Build ReconciliationResult with summary counts from actions."""
     summary = {
@@ -728,6 +827,7 @@ def _build_reconciliation_result(
         "error": 0,
         "dry_run": 0,
         "kanban_fixed": 0,
+        "cascades_recovered": cascades_recovered,
     }
     for action in actions:
         if action.action in summary:

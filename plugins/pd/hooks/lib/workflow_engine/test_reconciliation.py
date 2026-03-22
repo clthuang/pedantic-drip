@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import FrozenInstanceError
 
 import pytest
@@ -1210,7 +1211,7 @@ class TestApplyWorkflowReconciliation:
 
         result = apply_workflow_reconciliation(engine, db, str(tmp_path))
 
-        expected_keys = {"reconciled", "created", "skipped", "error", "dry_run", "kanban_fixed"}
+        expected_keys = {"reconciled", "created", "skipped", "error", "dry_run", "kanban_fixed", "cascades_recovered"}
         assert set(result.summary.keys()) == expected_keys
 
     def test_never_raises(self, tmp_path) -> None:
@@ -3015,3 +3016,136 @@ class TestFormatReconciliationSummary:
         summary = {"reconciled": 0, "created": 0, "skipped": 0, "error": 0, "dry_run": 2, "kanban_fixed": 0}
         msg = format_reconciliation_summary(summary)
         assert msg == ""
+
+
+# ---------------------------------------------------------------------------
+# Task 3.3a: Reconciliation cascade recovery tests
+# ---------------------------------------------------------------------------
+
+
+class TestRecoverPendingCascades:
+    """Task 3.3a: _recover_pending_cascades detects and fixes missed cascades."""
+
+    def _setup_parent_child(self, db, tmp_path, *, child_status="completed"):
+        """Helper: create parent feature with one child task.
+
+        Returns (parent_uuid, child_uuid, artifacts_root).
+        """
+        import json as _json
+
+        slug = "020-cascade-parent"
+        artifacts_root = str(tmp_path)
+
+        # Create .meta.json for the parent feature
+        feat_dir = os.path.join(artifacts_root, "features", slug)
+        os.makedirs(feat_dir, exist_ok=True)
+        meta = {
+            "id": "020", "slug": slug, "status": "active",
+            "mode": "standard", "lastCompletedPhase": "brainstorm", "phases": {},
+        }
+        with open(os.path.join(feat_dir, ".meta.json"), "w") as f:
+            _json.dump(meta, f)
+
+        parent_uuid = db.register_entity(
+            entity_type="feature", entity_id=slug,
+            name="Cascade Parent", status="active",
+        )
+        db.create_workflow_phase(
+            f"feature:{slug}", workflow_phase="implement",
+            mode="standard", last_completed_phase="brainstorm",
+        )
+
+        child_uuid = db.register_entity(
+            entity_type="task", entity_id="001-child",
+            name="Child Task", status=child_status,
+            parent_type_id=f"feature:{slug}",
+        )
+        db.create_workflow_phase(
+            "task:001-child", workflow_phase="debrief",
+            mode="standard", last_completed_phase="debrief",
+        )
+
+        return parent_uuid, child_uuid, artifacts_root
+
+    def test_missed_cascade_recovered(self, tmp_path):
+        """Simulated crash: child completed (Phase A) but cascade (Phase B) never ran.
+
+        Parent progress should be stale (no 'progress' in metadata).
+        After reconciliation, parent progress is updated.
+        """
+        from workflow_engine.reconciliation import _recover_pending_cascades
+
+        db = _make_db()
+        parent_uuid, child_uuid, artifacts_root = self._setup_parent_child(
+            db, tmp_path, child_status="completed",
+        )
+
+        # Before recovery: parent has no progress metadata
+        parent = db.get_entity_by_uuid(parent_uuid)
+        raw = parent.get("metadata")
+        meta = json.loads(raw) if isinstance(raw, str) and raw else {}
+        assert "progress" not in meta
+
+        # Run recovery
+        count = _recover_pending_cascades(db)
+
+        assert count >= 1
+
+        # Parent progress now set
+        parent = db.get_entity_by_uuid(parent_uuid)
+        raw = parent.get("metadata")
+        meta = json.loads(raw) if isinstance(raw, str) and raw else {}
+        assert "progress" in meta
+        assert meta["progress"] > 0.0
+
+    def test_no_mismatch_is_noop(self, tmp_path):
+        """When parent progress already matches computed value, no recovery needed."""
+        from workflow_engine.reconciliation import _recover_pending_cascades
+        from workflow_engine.rollup import compute_progress, rollup_parent
+
+        db = _make_db()
+        parent_uuid, child_uuid, artifacts_root = self._setup_parent_child(
+            db, tmp_path, child_status="completed",
+        )
+
+        # Pre-set correct progress via rollup
+        rollup_parent(db, child_uuid)
+
+        # Verify progress is already correct
+        parent = db.get_entity_by_uuid(parent_uuid)
+        raw = parent.get("metadata")
+        meta = json.loads(raw) if isinstance(raw, str) and raw else {}
+        assert "progress" in meta
+
+        # Recovery should find zero mismatches
+        count = _recover_pending_cascades(db)
+        assert count == 0
+
+    def test_already_correct_state_zero_mismatches(self, tmp_path):
+        """No completed children with parents → zero recoveries."""
+        from workflow_engine.reconciliation import _recover_pending_cascades
+
+        db = _make_db()
+
+        # Register a standalone feature with no children
+        db.register_entity(
+            entity_type="feature", entity_id="030-solo",
+            name="Solo Feature", status="active",
+        )
+
+        count = _recover_pending_cascades(db)
+        assert count == 0
+
+    def test_reconciliation_includes_cascade_recovery(self, tmp_path):
+        """apply_workflow_reconciliation runs cascade recovery and includes count."""
+        db = _make_db()
+        parent_uuid, child_uuid, artifacts_root = self._setup_parent_child(
+            db, tmp_path, child_status="completed",
+        )
+
+        engine = WorkflowStateEngine(db, artifacts_root)
+        result = apply_workflow_reconciliation(engine, db, artifacts_root)
+
+        # Summary should include cascade recovery count
+        assert "cascades_recovered" in result.summary
+        assert result.summary["cascades_recovered"] >= 1

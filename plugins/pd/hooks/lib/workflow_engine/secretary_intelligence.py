@@ -61,6 +61,7 @@ _FULL_SIGNALS: list[str] = [
 _EXPANSION_STANDARD_SIGNALS: list[str] = [
     "multiple components", "needs design review", "design review",
     "needs spec", "growing scope", "more involved than expected",
+    "add more", "additional features", "scope change",
 ]
 
 _EXPANSION_FULL_SIGNALS: list[str] = [

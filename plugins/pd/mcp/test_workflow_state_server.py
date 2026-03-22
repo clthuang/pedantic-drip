@@ -2892,7 +2892,7 @@ class TestReconciliationBoundaryValues:
         data = json.loads(result)
         # Then summary has all 5 keys, all zero
         assert "error" not in data
-        expected_keys = {"reconciled", "created", "skipped", "error", "dry_run", "kanban_fixed"}
+        expected_keys = {"reconciled", "created", "skipped", "error", "dry_run", "kanban_fixed", "cascades_recovered"}
         assert set(data["summary"].keys()) == expected_keys
         assert all(v == 0 for v in data["summary"].values())
 

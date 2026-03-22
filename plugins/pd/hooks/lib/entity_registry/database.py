@@ -1042,6 +1042,25 @@ class EntityDatabase:
 
         raise ValueError(f"No entity found matching ref: {ref!r}")
 
+    def get_children_by_uuid(self, parent_uuid: str) -> list[dict]:
+        """Retrieve all entities whose parent_uuid matches.
+
+        Parameters
+        ----------
+        parent_uuid:
+            The UUID of the parent entity.
+
+        Returns
+        -------
+        list[dict]
+            List of child entity dicts.  Empty list if no children found.
+        """
+        rows = self._conn.execute(
+            "SELECT * FROM entities WHERE parent_uuid = ?",
+            (parent_uuid,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     # ------------------------------------------------------------------
     # Prefix search and transaction helpers (Task 1b.3b)
     # ------------------------------------------------------------------

@@ -207,7 +207,7 @@ class TestMetadataDictCoercion:
         """AC-1: Dict metadata is accepted and stored as JSON string."""
         entity_server._db = db
         import asyncio
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             entity_server.register_entity(
                 entity_type="feature", entity_id="meta-dict-001",
                 name="Dict Test", metadata={"description": "test value"},
@@ -222,7 +222,7 @@ class TestMetadataDictCoercion:
         """AC-3: String metadata passthrough unchanged."""
         entity_server._db = db
         import asyncio
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             entity_server.register_entity(
                 entity_type="feature", entity_id="meta-str-001",
                 name="String Test", metadata='{"key": "val"}',
@@ -237,7 +237,7 @@ class TestMetadataDictCoercion:
         """AC-4: None metadata stores no metadata."""
         entity_server._db = db
         import asyncio
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             entity_server.register_entity(
                 entity_type="feature", entity_id="meta-none-001",
                 name="None Test", metadata=None,
@@ -250,7 +250,7 @@ class TestMetadataDictCoercion:
         db.register_entity("feature", "meta-upd-001", "Update Test", status="active")
         entity_server._db = db
         import asyncio
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             entity_server.update_entity(
                 type_id="feature:meta-upd-001",
                 metadata={"updated": True},
@@ -267,7 +267,7 @@ class TestMetadataDictCoercion:
         """
         entity_server._db = db
         import asyncio
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             entity_server.register_entity(
                 entity_type="feature", entity_id="meta-bad-001",
                 name="Bad JSON Test", metadata="{bad json}",
