@@ -12,6 +12,8 @@ import pytest
 
 from workflow_engine.secretary_intelligence import (
     check_duplicates,
+    check_kr_count,
+    detect_activity_kr,
     detect_mode,
     detect_scope_expansion,
     find_parent_candidates,
@@ -413,3 +415,164 @@ class TestDetectScopeExpansion:
     def test_standard_no_expansion_returns_none(self):
         result = detect_scope_expansion("standard", ["normal progress"])
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# detect_activity_kr tests (AC-33)
+# ---------------------------------------------------------------------------
+class TestDetectActivityKr:
+    """Detect activity-word anti-patterns in KR text."""
+
+    def test_launch_triggers_warning(self):
+        """AC-33 verification: 'Launch mobile app' → warning."""
+        result = detect_activity_kr("Launch mobile app")
+        assert result is not None
+        assert "output" in result.lower() or "outcome" in result.lower()
+
+    def test_build_triggers_warning(self):
+        result = detect_activity_kr("Build a new dashboard")
+        assert result is not None
+
+    def test_implement_triggers_warning(self):
+        result = detect_activity_kr("Implement caching layer")
+        assert result is not None
+
+    def test_create_triggers_warning(self):
+        result = detect_activity_kr("Create user onboarding flow")
+        assert result is not None
+
+    def test_deploy_triggers_warning(self):
+        result = detect_activity_kr("Deploy to production")
+        assert result is not None
+
+    def test_migrate_triggers_warning(self):
+        result = detect_activity_kr("Migrate database to PostgreSQL")
+        assert result is not None
+
+    def test_develop_triggers_warning(self):
+        result = detect_activity_kr("Develop mobile app")
+        assert result is not None
+
+    def test_ship_triggers_warning(self):
+        result = detect_activity_kr("Ship v2.0 by Q3")
+        assert result is not None
+
+    def test_release_triggers_warning(self):
+        result = detect_activity_kr("Release the beta version")
+        assert result is not None
+
+    def test_measurable_outcome_no_warning(self):
+        """AC-33 verification: 'Achieve 50K MAU' → no warning."""
+        result = detect_activity_kr("Achieve 50K MAU on mobile")
+        assert result is None
+
+    def test_percentage_outcome_no_warning(self):
+        result = detect_activity_kr("Reduce P0 incidents by 50%")
+        assert result is None
+
+    def test_metric_outcome_no_warning(self):
+        result = detect_activity_kr("Increase API response time to <200ms")
+        assert result is None
+
+    def test_empty_text_no_warning(self):
+        result = detect_activity_kr("")
+        assert result is None
+
+    def test_case_insensitive(self):
+        """Activity words detected regardless of case."""
+        result = detect_activity_kr("LAUNCH the product")
+        assert result is not None
+
+    def test_word_boundary_respected(self):
+        """'relaunch' should not trigger on 'launch' substring."""
+        # 'relaunch' contains 'launch' but is a different word — should still detect
+        # Actually, the task says "activity words" so we check for word boundaries
+        result = detect_activity_kr("Relaunch the platform")
+        # 'relaunch' is not exactly 'launch', but contains it
+        # Per spec, these are word-level checks. 'relaunch' is a different word.
+        # However, the task doesn't specify word-boundary strictness.
+        # We'll implement with word boundaries for precision.
+        # This test verifies the boundary behavior we choose.
+        assert result is None  # 'relaunch' != 'launch'
+
+
+# ---------------------------------------------------------------------------
+# check_kr_count tests (AC-33)
+# ---------------------------------------------------------------------------
+class TestCheckKrCount:
+    """Detect when objective has too many KRs."""
+
+    @pytest.fixture()
+    def db(self, tmp_path):
+        from entity_registry.database import EntityDatabase
+        db_path = str(tmp_path / "test.db")
+        return EntityDatabase(db_path)
+
+    def test_five_krs_no_warning(self, db):
+        """5 KRs is within limit → no warning."""
+        obj_uuid = db.register_entity(
+            entity_type="objective", entity_id="o1",
+            name="Test Objective", status="active")
+        for i in range(5):
+            db.register_entity(
+                entity_type="key_result", entity_id=f"kr{i}",
+                name=f"KR {i}", parent_type_id="objective:o1", status="active")
+
+        result = check_kr_count(db, obj_uuid)
+        assert result is None
+
+    def test_six_krs_triggers_warning(self, db):
+        """AC-33: 6th KR on objective → warning."""
+        obj_uuid = db.register_entity(
+            entity_type="objective", entity_id="o1",
+            name="Test Objective", status="active")
+        for i in range(6):
+            db.register_entity(
+                entity_type="key_result", entity_id=f"kr{i}",
+                name=f"KR {i}", parent_type_id="objective:o1", status="active")
+
+        result = check_kr_count(db, obj_uuid)
+        assert result is not None
+        assert "5" in result  # mentions the recommended max
+
+    def test_seven_krs_triggers_warning(self, db):
+        obj_uuid = db.register_entity(
+            entity_type="objective", entity_id="o1",
+            name="Test Objective", status="active")
+        for i in range(7):
+            db.register_entity(
+                entity_type="key_result", entity_id=f"kr{i}",
+                name=f"KR {i}", parent_type_id="objective:o1", status="active")
+
+        result = check_kr_count(db, obj_uuid)
+        assert result is not None
+
+    def test_zero_krs_no_warning(self, db):
+        obj_uuid = db.register_entity(
+            entity_type="objective", entity_id="o1",
+            name="Test Objective", status="active")
+
+        result = check_kr_count(db, obj_uuid)
+        assert result is None
+
+    def test_nonexistent_objective_no_warning(self, db):
+        result = check_kr_count(db, "00000000-0000-4000-8000-000000000000")
+        assert result is None
+
+    def test_abandoned_krs_excluded_from_count(self, db):
+        """Abandoned KRs should not count toward the limit."""
+        obj_uuid = db.register_entity(
+            entity_type="objective", entity_id="o1",
+            name="Test Objective", status="active")
+        for i in range(5):
+            db.register_entity(
+                entity_type="key_result", entity_id=f"kr{i}",
+                name=f"KR {i}", parent_type_id="objective:o1", status="active")
+        # 6th KR is abandoned — should not count
+        db.register_entity(
+            entity_type="key_result", entity_id="kr-abandoned",
+            name="KR Abandoned", parent_type_id="objective:o1",
+            status="abandoned")
+
+        result = check_kr_count(db, obj_uuid)
+        assert result is None  # only 5 active KRs

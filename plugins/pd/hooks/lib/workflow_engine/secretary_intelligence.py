@@ -270,6 +270,90 @@ def recommend_weight(scope_signals: list[str]) -> str:
     return "standard"
 
 
+# ---------------------------------------------------------------------------
+# OKR anti-pattern detection (AC-33)
+# ---------------------------------------------------------------------------
+_ACTIVITY_WORDS: list[str] = [
+    "launch", "build", "implement", "create", "deploy",
+    "migrate", "develop", "ship", "release",
+]
+
+_ACTIVITY_PATTERN = re.compile(
+    r'\b(' + '|'.join(re.escape(w) for w in _ACTIVITY_WORDS) + r')\b',
+    re.IGNORECASE,
+)
+
+_KR_COUNT_MAX = 5
+
+
+def detect_activity_kr(text: str) -> str | None:
+    """Check KR text for activity-word anti-patterns.
+
+    Activity words indicate the KR describes an output (what to do) rather
+    than an outcome (what to achieve).  Returns a warning message or None.
+
+    Implements AC-33 (OKR Anti-Pattern Detection).
+
+    Parameters
+    ----------
+    text:
+        The key result description text to check.
+
+    Returns
+    -------
+    str | None
+        Warning message if an activity word is found, else None.
+    """
+    if not text or not text.strip():
+        return None
+
+    match = _ACTIVITY_PATTERN.search(text)
+    if match:
+        word = match.group(1)
+        return (
+            f"This looks like an output, not an outcome (found '{word}'). "
+            "Consider reframing as a measurable result."
+        )
+    return None
+
+
+def check_kr_count(db: "EntityDatabase", objective_uuid: str) -> str | None:
+    """Check if an objective has more than the recommended max KR count.
+
+    Only non-abandoned key_result children count toward the limit.
+
+    Implements AC-33 (OKR Anti-Pattern Detection).
+
+    Parameters
+    ----------
+    db:
+        EntityDatabase instance for data access.
+    objective_uuid:
+        UUID of the objective entity to check.
+
+    Returns
+    -------
+    str | None
+        Warning message if KR count exceeds max, else None.
+    """
+    children = db.get_children_by_uuid(objective_uuid)
+    if not children:
+        return None
+
+    active_krs = [
+        c for c in children
+        if c.get("entity_type") == "key_result"
+        and c.get("status") != "abandoned"
+    ]
+
+    if len(active_krs) > _KR_COUNT_MAX:
+        return (
+            f"Objective has {len(active_krs)} KRs. "
+            f"Consider reducing KR count. Recommended max: {_KR_COUNT_MAX}."
+        )
+    return None
+
+
 def detect_scope_expansion(
     current_mode: str,
     signals: list[str],

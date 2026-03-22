@@ -132,6 +132,15 @@ Used by Step 4 (weight recommendation) and Weight Escalation Detection:
 | **→ standard** | multiple components, needs design review, needs spec, growing scope, more involved than expected |
 | **→ full** | cross-team impact, breaking change, architecture change, rewrite, security review, multi-service |
 
+### OKR Anti-Pattern Checks
+
+On KR creation, check for activity-word anti-patterns and KR count limits:
+
+1. **Activity-word check:** If the KR text contains activity verbs (launch, build, implement, create, deploy, migrate, develop, ship, release), warn: "This looks like an output, not an outcome. Consider reframing as a measurable result."
+2. **KR count check:** If the parent objective already has >5 active KRs, warn: "Consider reducing KR count. Recommended max: 5."
+
+These checks use `detect_activity_kr(text)` and `check_kr_count(db, objective_uuid)` from `secretary_intelligence.py`.
+
 ### Entity Type Hierarchy Table
 
 Used by Step 3 (TRIAGE) for parent candidate search:
