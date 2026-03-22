@@ -1181,6 +1181,60 @@ class EntityDatabase:
         return [dict(row) for row in rows]
 
     # ------------------------------------------------------------------
+    # OKR alignment (Task 6.5)
+    # ------------------------------------------------------------------
+
+    def add_okr_alignment(self, entity_uuid: str, key_result_uuid: str) -> None:
+        """Link an entity to a key result for lateral OKR alignment.
+
+        Idempotent (duplicate is ignored via INSERT OR IGNORE).
+
+        Parameters
+        ----------
+        entity_uuid:
+            UUID of the entity to align.
+        key_result_uuid:
+            UUID of the key_result entity to align with.
+        """
+        self._conn.execute(
+            "INSERT OR IGNORE INTO entity_okr_alignment "
+            "(entity_uuid, key_result_uuid) VALUES (?, ?)",
+            (entity_uuid, key_result_uuid),
+        )
+        self._conn.commit()
+
+    def remove_okr_alignment(self, entity_uuid: str, key_result_uuid: str) -> None:
+        """Remove an OKR alignment. Silent if alignment not present."""
+        self._conn.execute(
+            "DELETE FROM entity_okr_alignment "
+            "WHERE entity_uuid = ? AND key_result_uuid = ?",
+            (entity_uuid, key_result_uuid),
+        )
+        self._conn.commit()
+
+    def get_okr_alignments(self, entity_uuid: str) -> list[dict]:
+        """Return all key_result entities aligned to the given entity.
+
+        Parameters
+        ----------
+        entity_uuid:
+            UUID of the entity to query alignments for.
+
+        Returns
+        -------
+        list[dict]
+            List of key_result entity dicts. Empty list if none found.
+        """
+        rows = self._conn.execute(
+            "SELECT e.* FROM entities e "
+            "JOIN entity_okr_alignment eoa ON e.uuid = eoa.key_result_uuid "
+            "WHERE eoa.entity_uuid = ? "
+            "ORDER BY e.name",
+            (entity_uuid,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    # ------------------------------------------------------------------
     # Entity CRUD
     # ------------------------------------------------------------------
 

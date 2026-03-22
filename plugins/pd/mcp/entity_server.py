@@ -607,6 +607,53 @@ async def search_entities(
 
 
 # ---------------------------------------------------------------------------
+# OKR alignment tools (Task 6.5, AC-37 — lateral cross-linkage)
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def add_okr_alignment(entity_ref: str, kr_ref: str) -> str:
+    """Link an entity to a key result for lateral OKR alignment.
+
+    Parameters
+    ----------
+    entity_ref:
+        The entity to align (type_id, UUID, or prefix).
+    kr_ref:
+        The key_result to align with (type_id, UUID, or prefix).
+    """
+    if _db is None:
+        return "Error: database not initialized (server not started)"
+    try:
+        entity_uuid = _db.resolve_ref(entity_ref)
+        kr_uuid = _db.resolve_ref(kr_ref)
+        _db.add_okr_alignment(entity_uuid, kr_uuid)
+        return json.dumps({"result": f"Aligned {entity_ref} to {kr_ref}"})
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)})
+
+
+@mcp.tool()
+async def get_okr_alignments(entity_ref: str) -> str:
+    """Get all key results aligned to an entity.
+
+    Parameters
+    ----------
+    entity_ref:
+        The entity to query (type_id, UUID, or prefix).
+    """
+    if _db is None:
+        return "Error: database not initialized (server not started)"
+    try:
+        entity_uuid = _db.resolve_ref(entity_ref)
+        alignments = _db.get_okr_alignments(entity_uuid)
+        results = [{"type_id": a["type_id"], "name": a["name"], "status": a.get("status")} for a in alignments]
+        return json.dumps({"entity_ref": entity_ref, "alignments": results, "count": len(results)})
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)})
+
+
+# ---------------------------------------------------------------------------
 # OKR helpers — thin wrappers over rollup.py (Step 5.2, AC-32)
 # ---------------------------------------------------------------------------
 

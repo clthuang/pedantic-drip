@@ -4539,3 +4539,112 @@ class TestDeleteEntity:
         # Should not raise
         db.delete_entity("feature:corrupt-meta")
         assert db.get_entity("feature:corrupt-meta") is None
+
+
+# ---------------------------------------------------------------------------
+# OKR alignment CRUD tests (Task 6.5, AC-37)
+# ---------------------------------------------------------------------------
+class TestOkrAlignment:
+    """CRUD operations on entity_okr_alignment junction table."""
+
+    def test_add_okr_alignment_basic(self, db: EntityDatabase):
+        """Link feature to KR -> alignment recorded."""
+        feat_uuid = db.register_entity("feature", "f1", "Feature One", status="active")
+        kr_uuid = db.register_entity("key_result", "kr1", "KR One", status="active")
+
+        db.add_okr_alignment(feat_uuid, kr_uuid)
+        alignments = db.get_okr_alignments(feat_uuid)
+        assert len(alignments) == 1
+        assert alignments[0]["uuid"] == kr_uuid
+
+    def test_add_okr_alignment_idempotent(self, db: EntityDatabase):
+        """Adding same alignment twice doesn't duplicate."""
+        feat_uuid = db.register_entity("feature", "f2", "Feature Two", status="active")
+        kr_uuid = db.register_entity("key_result", "kr2", "KR Two", status="active")
+
+        db.add_okr_alignment(feat_uuid, kr_uuid)
+        db.add_okr_alignment(feat_uuid, kr_uuid)
+        alignments = db.get_okr_alignments(feat_uuid)
+        assert len(alignments) == 1
+
+    def test_add_multiple_alignments(self, db: EntityDatabase):
+        """Entity can align to multiple KRs."""
+        feat_uuid = db.register_entity("feature", "f3", "Feature Three", status="active")
+        kr1_uuid = db.register_entity("key_result", "kr3a", "KR 3A", status="active")
+        kr2_uuid = db.register_entity("key_result", "kr3b", "KR 3B", status="active")
+        kr3_uuid = db.register_entity("key_result", "kr3c", "KR 3C", status="active")
+
+        db.add_okr_alignment(feat_uuid, kr1_uuid)
+        db.add_okr_alignment(feat_uuid, kr2_uuid)
+        db.add_okr_alignment(feat_uuid, kr3_uuid)
+        alignments = db.get_okr_alignments(feat_uuid)
+        assert len(alignments) == 3
+        kr_uuids = {a["uuid"] for a in alignments}
+        assert kr_uuids == {kr1_uuid, kr2_uuid, kr3_uuid}
+
+    def test_remove_okr_alignment(self, db: EntityDatabase):
+        """Remove alignment -> no longer returned."""
+        feat_uuid = db.register_entity("feature", "f4", "Feature Four", status="active")
+        kr_uuid = db.register_entity("key_result", "kr4", "KR Four", status="active")
+
+        db.add_okr_alignment(feat_uuid, kr_uuid)
+        assert len(db.get_okr_alignments(feat_uuid)) == 1
+
+        db.remove_okr_alignment(feat_uuid, kr_uuid)
+        assert len(db.get_okr_alignments(feat_uuid)) == 0
+
+    def test_remove_nonexistent_alignment_silent(self, db: EntityDatabase):
+        """Removing alignment that doesn't exist is a no-op."""
+        feat_uuid = db.register_entity("feature", "f5", "Feature Five", status="active")
+        kr_uuid = db.register_entity("key_result", "kr5", "KR Five", status="active")
+
+        # Should not raise
+        db.remove_okr_alignment(feat_uuid, kr_uuid)
+
+    def test_get_okr_alignments_empty(self, db: EntityDatabase):
+        """Entity with no alignments -> empty list."""
+        feat_uuid = db.register_entity("feature", "f6", "Feature Six", status="active")
+        alignments = db.get_okr_alignments(feat_uuid)
+        assert alignments == []
+
+    def test_get_okr_alignments_returns_entity_dicts(self, db: EntityDatabase):
+        """Returned alignments are full entity dicts with expected keys."""
+        feat_uuid = db.register_entity("feature", "f7", "Feature Seven", status="active")
+        kr_uuid = db.register_entity("key_result", "kr7", "KR Seven", status="active")
+
+        db.add_okr_alignment(feat_uuid, kr_uuid)
+        alignments = db.get_okr_alignments(feat_uuid)
+        assert len(alignments) == 1
+        kr = alignments[0]
+        assert kr["type_id"] == "key_result:kr7"
+        assert kr["name"] == "KR Seven"
+        assert kr["entity_type"] == "key_result"
+
+    def test_lateral_cross_linkage(self, db: EntityDatabase):
+        """Feature can align to KR that is NOT its parent — lateral linkage."""
+        obj_uuid = db.register_entity("objective", "o1", "Objective One", status="active")
+        kr_uuid = db.register_entity(
+            "key_result", "kr-lateral", "KR Lateral",
+            parent_type_id="objective:o1", status="active",
+        )
+        # Feature is NOT a child of the KR
+        feat_uuid = db.register_entity("feature", "f-lateral", "Feature Lateral", status="active")
+
+        db.add_okr_alignment(feat_uuid, kr_uuid)
+        alignments = db.get_okr_alignments(feat_uuid)
+        assert len(alignments) == 1
+        assert alignments[0]["uuid"] == kr_uuid
+
+    def test_remove_partial_alignment(self, db: EntityDatabase):
+        """Remove one alignment, others remain."""
+        feat_uuid = db.register_entity("feature", "f8", "Feature Eight", status="active")
+        kr1_uuid = db.register_entity("key_result", "kr8a", "KR 8A", status="active")
+        kr2_uuid = db.register_entity("key_result", "kr8b", "KR 8B", status="active")
+
+        db.add_okr_alignment(feat_uuid, kr1_uuid)
+        db.add_okr_alignment(feat_uuid, kr2_uuid)
+        db.remove_okr_alignment(feat_uuid, kr1_uuid)
+
+        alignments = db.get_okr_alignments(feat_uuid)
+        assert len(alignments) == 1
+        assert alignments[0]["uuid"] == kr2_uuid
