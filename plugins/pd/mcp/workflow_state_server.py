@@ -32,6 +32,7 @@ from entity_registry.frontmatter_sync import (
 from semantic_memory.config import read_config
 from transition_gate.models import Severity, TransitionResult
 from workflow_engine.engine import WorkflowStateEngine
+from workflow_engine.entity_engine import EntityWorkflowEngine
 from workflow_engine.feature_lifecycle import (
     _atomic_json_write,
     _iso_now,
@@ -45,6 +46,7 @@ from workflow_engine.task_promotion import (
     TaskAlreadyPromotedError,
     TaskNotFoundError,
     promote_task as _lib_promote_task,
+    query_ready_tasks as _lib_query_ready_tasks,
 )
 from workflow_engine.models import FeatureWorkflowState, TransitionResponse
 from workflow_engine.notifications import NotificationQueue
@@ -63,6 +65,7 @@ from mcp.server.fastmcp import FastMCP
 
 _db: EntityDatabase | None = None
 _engine: WorkflowStateEngine | None = None
+_entity_engine: EntityWorkflowEngine | None = None
 _artifacts_root: str = ""
 _project_root: str = ""
 _notification_queue: NotificationQueue | None = None
@@ -75,7 +78,7 @@ _notification_queue: NotificationQueue | None = None
 @asynccontextmanager
 async def lifespan(server):
     """Manage DB connection and engine lifecycle."""
-    global _db, _engine, _artifacts_root, _project_root, _notification_queue
+    global _db, _engine, _entity_engine, _artifacts_root, _project_root, _notification_queue
 
     db_path = os.environ.get(
         "ENTITY_DB_PATH",
@@ -91,6 +94,7 @@ async def lifespan(server):
 
     _engine = WorkflowStateEngine(_db, _artifacts_root)
     _notification_queue = NotificationQueue()
+    _entity_engine = EntityWorkflowEngine(_db, _artifacts_root, _notification_queue)
 
     print(f"workflow-engine: started (db={db_path}, artifacts={_artifacts_root})", file=sys.stderr)
 
@@ -101,6 +105,7 @@ async def lifespan(server):
             _db.close()
             _db = None
         _engine = None
+        _entity_engine = None
         _notification_queue = None
 
 
@@ -405,8 +410,27 @@ def _process_transition_phase(
     yolo_active: bool,
     db: EntityDatabase | None = None,
     skipped_phases: str | None = None,
+    entity_engine: EntityWorkflowEngine | None = None,
 ) -> str:
-    response = engine.transition_phase(feature_type_id, target_phase, yolo_active)
+    # Task 3.4: Check blocked_by via entity engine before transition.
+    # For features, we still delegate to frozen engine for the actual transition
+    # (entity_engine.transition_phase checks blockers then delegates).
+    if entity_engine is not None and db is not None:
+        entity = db.get_entity(feature_type_id)
+        if entity is not None:
+            try:
+                response = entity_engine.transition_phase(entity["uuid"], target_phase)
+            except ValueError as exc:
+                # Blocked or invalid — return as structured error
+                return _make_error(
+                    "invalid_transition",
+                    str(exc),
+                    "Check blocked_by dependencies or current phase",
+                )
+        else:
+            response = engine.transition_phase(feature_type_id, target_phase, yolo_active)
+    else:
+        response = engine.transition_phase(feature_type_id, target_phase, yolo_active)
     transitioned = all(r.allowed for r in response.results)
 
     result: dict = {
@@ -503,12 +527,42 @@ def _process_complete_phase(
     db: EntityDatabase | None = None,
     iterations: int | None = None,
     reviewer_notes: str | None = None,
+    entity_engine: EntityWorkflowEngine | None = None,
 ) -> str:
-    state = engine.complete_phase(feature_type_id, phase)
+    # Task 3.4: Route through EntityWorkflowEngine for cascade support.
+    # If entity_engine is available, use it (handles frozen engine delegation
+    # + cascade internally). Fall back to frozen engine if not wired yet.
+    completion = None
+    if entity_engine is not None and db is not None:
+        entity = db.get_entity(feature_type_id)
+        if entity is not None:
+            completion = entity_engine.complete_phase(entity["uuid"], phase)
+            state = completion.state
+            if state is None:
+                return _make_error(
+                    "completion_failed",
+                    f"Phase completion returned no state for {feature_type_id}",
+                    "Check entity type and phase validity",
+                )
+        else:
+            # Entity not in registry — fall back to frozen engine
+            state = engine.complete_phase(feature_type_id, phase)
+    else:
+        state = engine.complete_phase(feature_type_id, phase)
+
     result = _serialize_state(state)
 
+    # Add cascade info when entity engine was used
+    if completion is not None:
+        if completion.unblocked_uuids:
+            result["unblocked_count"] = len(completion.unblocked_uuids)
+        if completion.parent_progress is not None:
+            result["parent_progress"] = completion.parent_progress
+        if completion.cascade_error:
+            result["cascade_warning"] = completion.cascade_error
+
     if db is not None:
-        # Store timing metadata in entity
+        # Store timing metadata in entity (MCP-layer responsibility)
         entity = db.get_entity(feature_type_id)
         if entity is None:
             return _make_error(
@@ -533,11 +587,9 @@ def _process_complete_phase(
         metadata["phase_timing"] = phase_timing
         metadata["last_completed_phase"] = phase
 
-        # Update entity -- set status to "completed" for terminal phase
-        update_kwargs: dict = {"metadata": metadata}
-        if phase == "finish":
-            update_kwargs["status"] = "completed"
-        db.update_entity(feature_type_id, **update_kwargs)
+        # Update entity metadata (status='completed' handled by entity engine
+        # for features via frozen engine, and for tasks via _task_complete)
+        db.update_entity(feature_type_id, metadata=metadata)
 
         # Update kanban_column for features based on completed phase
         if feature_type_id.startswith("feature:"):
@@ -915,6 +967,7 @@ async def transition_phase(
     return _process_transition_phase(
         _engine, resolved, target_phase, yolo_active,
         db=_db, skipped_phases=skipped_phases,
+        entity_engine=_entity_engine,
     )
 
 
@@ -936,6 +989,7 @@ async def complete_phase(
     return _process_complete_phase(
         _engine, resolved, phase,
         db=_db, iterations=iterations, reviewer_notes=reviewer_notes,
+        entity_engine=_entity_engine,
     )
 
 
@@ -1140,6 +1194,22 @@ async def promote_task(feature_ref: str, task_heading: str) -> str:
         return _make_error(type(exc).__name__, str(exc), "Check heading text or use exact heading from tasks.md")
     except (ValueError, FileNotFoundError) as exc:
         return _make_error("invalid_input", str(exc), "Provide valid feature_ref and ensure tasks.md exists")
+
+
+@mcp.tool()
+async def query_ready_tasks() -> str:
+    """List task entities ready for execution.
+
+    Returns tasks that are: type=task, status=planned, no blocked_by
+    dependencies, and parent entity in implement phase.
+    """
+    if _db is None:
+        return _NOT_INITIALIZED
+    try:
+        tasks = _lib_query_ready_tasks(_db)
+        return json.dumps({"count": len(tasks), "tasks": tasks})
+    except Exception as exc:
+        return _make_error("internal", str(exc), "Report this error")
 
 
 # ---------------------------------------------------------------------------
