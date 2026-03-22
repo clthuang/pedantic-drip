@@ -42,6 +42,7 @@ from workflow_engine.feature_lifecycle import (
 )
 from workflow_engine.kanban import derive_kanban
 from workflow_engine.models import FeatureWorkflowState, TransitionResponse
+from workflow_engine.notifications import NotificationQueue
 from workflow_engine.reconciliation import (
     ReconcileAction,
     WorkflowDriftReport,
@@ -58,6 +59,8 @@ from mcp.server.fastmcp import FastMCP
 _db: EntityDatabase | None = None
 _engine: WorkflowStateEngine | None = None
 _artifacts_root: str = ""
+_project_root: str = ""
+_notification_queue: NotificationQueue | None = None
 
 # ---------------------------------------------------------------------------
 # Lifespan
@@ -67,7 +70,7 @@ _artifacts_root: str = ""
 @asynccontextmanager
 async def lifespan(server):
     """Manage DB connection and engine lifecycle."""
-    global _db, _engine, _artifacts_root
+    global _db, _engine, _artifacts_root, _project_root, _notification_queue
 
     db_path = os.environ.get(
         "ENTITY_DB_PATH",
@@ -77,10 +80,12 @@ async def lifespan(server):
     _db = EntityDatabase(db_path)
 
     project_root = os.environ.get("PROJECT_ROOT", os.getcwd())
+    _project_root = project_root
     config = read_config(project_root)
     _artifacts_root = os.path.join(project_root, str(config.get("artifacts_root", "docs")))
 
     _engine = WorkflowStateEngine(_db, _artifacts_root)
+    _notification_queue = NotificationQueue()
 
     print(f"workflow-engine: started (db={db_path}, artifacts={_artifacts_root})", file=sys.stderr)
 
@@ -91,6 +96,7 @@ async def lifespan(server):
             _db.close()
             _db = None
         _engine = None
+        _notification_queue = None
 
 
 # ---------------------------------------------------------------------------
@@ -1078,6 +1084,39 @@ async def transition_entity_phase(
     except ValueError as exc:
         return _make_error("invalid_ref", str(exc), "Provide a valid type_id or ref")
     return _process_transition_entity_phase(_db, resolved, target_phase)
+
+
+@mcp.tool()
+async def get_notifications(project_root: str | None = None) -> str:
+    """Drain pending notifications for the current project.
+
+    Returns notifications queued by entity state changes (phase completions,
+    threshold crossings, etc.). Drained notifications are removed from the
+    queue so each notification is delivered exactly once.
+    """
+    if _notification_queue is None:
+        return _NOT_INITIALIZED
+    root = project_root or _project_root
+    if not root:
+        return _make_error(
+            "missing_project_root",
+            "No project_root provided and PROJECT_ROOT not set",
+            "Pass project_root or set PROJECT_ROOT env var",
+        )
+    notifications = _notification_queue.drain(project_root=root)
+    return json.dumps({
+        "project_root": root,
+        "count": len(notifications),
+        "notifications": [
+            {
+                "message": n.message,
+                "entity_type_id": n.entity_type_id,
+                "event": n.event,
+                "timestamp": n.timestamp,
+            }
+            for n in notifications
+        ],
+    })
 
 
 # ---------------------------------------------------------------------------
