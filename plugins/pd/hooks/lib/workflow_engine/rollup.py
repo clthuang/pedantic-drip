@@ -250,6 +250,68 @@ def compute_objective_score(db: "EntityDatabase", objective_uuid: str) -> float:
     return score
 
 
+def get_ancestor_progress(
+    db: "EntityDatabase", entity_uuid: str
+) -> list[dict]:
+    """Walk up the parent chain and return pre-computed progress for each ancestor.
+
+    Reads stored ``progress`` and ``traffic_light`` from each ancestor's
+    metadata (no recursive recomputation).  Returns a list ordered from
+    nearest parent (depth=1) to furthest ancestor, capped at ``_MAX_DEPTH``.
+
+    Parameters
+    ----------
+    db:
+        EntityDatabase instance for data access.
+    entity_uuid:
+        UUID of the entity whose ancestor chain to inspect.
+
+    Returns
+    -------
+    list[dict]
+        Each dict has keys: ``type_id``, ``name``, ``progress``,
+        ``traffic_light``, ``depth``.  Returns empty list if entity
+        not found or has no parent.
+
+    Implements Task 6.4, AC-37 (cross-level progress view).
+    """
+    entity = db.get_entity_by_uuid(entity_uuid)
+    if entity is None:
+        return []
+
+    result: list[dict] = []
+    parent_uuid = entity.get("parent_uuid")
+    depth = 0
+
+    while parent_uuid and depth < _MAX_DEPTH:
+        parent = db.get_entity_by_uuid(parent_uuid)
+        if parent is None:
+            break
+
+        depth += 1
+
+        # Read stored progress/traffic_light from metadata
+        raw_meta = parent.get("metadata")
+        if raw_meta and isinstance(raw_meta, str):
+            meta = json.loads(raw_meta)
+        elif isinstance(raw_meta, dict):
+            meta = raw_meta
+        else:
+            meta = {}
+
+        result.append({
+            "type_id": parent["type_id"],
+            "name": parent["name"],
+            "progress": meta.get("progress"),
+            "traffic_light": meta.get("traffic_light"),
+            "depth": depth,
+        })
+
+        parent_uuid = parent.get("parent_uuid")
+
+    return result
+
+
 def rollup_parent(db: "EntityDatabase", child_uuid: str) -> None:
     """Walk up the parent chain and recompute progress for each ancestor.
 

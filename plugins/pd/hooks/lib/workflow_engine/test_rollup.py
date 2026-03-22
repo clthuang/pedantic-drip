@@ -910,3 +910,139 @@ class TestComputeObjectiveScore:
         score = compute_objective_score(db, obj_uuid)
         # Only kr1 counts: 0.8
         assert score == pytest.approx(0.8)
+
+
+# -----------------------------------------------------------------------
+# get_ancestor_progress() — Task 6.4, AC-37
+# -----------------------------------------------------------------------
+
+class TestGetAncestorProgress:
+    """Tests for get_ancestor_progress() — cross-level progress view."""
+
+    def test_no_parent_returns_empty(self, db):
+        """Entity with no parent → empty list."""
+        from workflow_engine.rollup import get_ancestor_progress
+        uuid = _register(db, "feature", "f1", "Feature 1")
+        result = get_ancestor_progress(db, uuid)
+        assert result == []
+
+    def test_single_parent(self, db):
+        """Entity with one parent → single entry."""
+        from workflow_engine.rollup import get_ancestor_progress
+        proj_uuid = _register(db, "project", "p1", "Project 1")
+        db.update_entity("project:p1", metadata={"progress": 0.65, "traffic_light": "YELLOW"})
+        feat_uuid = _register(db, "feature", "f1", "Feature 1",
+                              parent_type_id="project:p1")
+
+        result = get_ancestor_progress(db, feat_uuid)
+        assert len(result) == 1
+        assert result[0]["type_id"] == "project:p1"
+        assert result[0]["name"] == "Project 1"
+        assert result[0]["progress"] == pytest.approx(0.65)
+        assert result[0]["traffic_light"] == "YELLOW"
+        assert result[0]["depth"] == 1
+
+    def test_full_hierarchy(self, db):
+        """initiative → objective → KR → project → feature: returns 4 ancestors."""
+        from workflow_engine.rollup import get_ancestor_progress
+        init_uuid = _register(db, "initiative", "i1", "Initiative Alpha")
+        db.update_entity("initiative:i1", metadata={"progress": 0.5, "traffic_light": "YELLOW"})
+
+        obj_uuid = _register(db, "objective", "o1", "Objective Beta",
+                             parent_type_id="initiative:i1")
+        db.update_entity("objective:o1", metadata={"progress": 0.7, "traffic_light": "GREEN"})
+
+        kr_uuid = _register(db, "key_result", "kr1", "KR Gamma",
+                            parent_type_id="objective:o1")
+        db.update_entity("key_result:kr1", metadata={"progress": 0.3, "traffic_light": "RED"})
+
+        proj_uuid = _register(db, "project", "p1", "Project Delta",
+                              parent_type_id="key_result:kr1")
+        db.update_entity("project:p1", metadata={"progress": 0.85, "traffic_light": "GREEN"})
+
+        feat_uuid = _register(db, "feature", "f1", "Feature Epsilon",
+                              parent_type_id="project:p1")
+
+        result = get_ancestor_progress(db, feat_uuid)
+        assert len(result) == 4
+
+        # Nearest first
+        assert result[0]["type_id"] == "project:p1"
+        assert result[0]["depth"] == 1
+        assert result[0]["progress"] == pytest.approx(0.85)
+
+        assert result[1]["type_id"] == "key_result:kr1"
+        assert result[1]["depth"] == 2
+
+        assert result[2]["type_id"] == "objective:o1"
+        assert result[2]["depth"] == 3
+
+        assert result[3]["type_id"] == "initiative:i1"
+        assert result[3]["depth"] == 4
+        assert result[3]["progress"] == pytest.approx(0.5)
+
+    def test_max_depth_5(self, db):
+        """Chain deeper than 5 → stops at 5 ancestors."""
+        from workflow_engine.rollup import get_ancestor_progress
+        # Build a chain of 7 entities (6 parents above the leaf)
+        prev_type_id = None
+        uuids = []
+        for i in range(7):
+            etype = "project" if i % 2 == 0 else "feature"
+            eid = f"e{i}"
+            uuid = _register(db, etype, eid, f"Entity {i}",
+                             parent_type_id=prev_type_id, status="active")
+            db.update_entity(f"{etype}:{eid}", metadata={"progress": 0.1 * i, "traffic_light": "RED"})
+            prev_type_id = f"{etype}:{eid}"
+            uuids.append(uuid)
+
+        result = get_ancestor_progress(db, uuids[-1])
+        assert len(result) == 5  # max depth
+
+    def test_missing_progress_returns_none(self, db):
+        """Ancestor with no stored progress → progress=None, traffic_light=None."""
+        from workflow_engine.rollup import get_ancestor_progress
+        proj_uuid = _register(db, "project", "p1", "Project 1")
+        # No metadata update → no progress stored
+        feat_uuid = _register(db, "feature", "f1", "Feature 1",
+                              parent_type_id="project:p1")
+
+        result = get_ancestor_progress(db, feat_uuid)
+        assert len(result) == 1
+        assert result[0]["progress"] is None
+        assert result[0]["traffic_light"] is None
+
+    def test_nonexistent_uuid_returns_empty(self, db):
+        """Non-existent entity UUID → empty list."""
+        from workflow_engine.rollup import get_ancestor_progress
+        result = get_ancestor_progress(db, "00000000-0000-4000-8000-000000000000")
+        assert result == []
+
+    def test_full_hierarchy_with_rollup(self, db):
+        """End-to-end: build hierarchy, rollup, then verify ancestor progress view."""
+        from workflow_engine.rollup import get_ancestor_progress
+
+        # Build: initiative → project → feature (completed)
+        init_uuid = _register(db, "initiative", "i1", "Init")
+        proj_uuid = _register(db, "project", "p1", "Proj",
+                              parent_type_id="initiative:i1", status="active")
+        _with_phase(db, "project:p1", "deliver")
+        feat_uuid = _register(db, "feature", "f1", "Feat",
+                              parent_type_id="project:p1", status="completed")
+
+        # Run rollup from leaf to populate stored values
+        rollup_parent(db, feat_uuid)
+
+        # Now check ancestor progress from the feature
+        result = get_ancestor_progress(db, feat_uuid)
+        assert len(result) == 2
+
+        # Project: 1 completed child → 1.0
+        assert result[0]["type_id"] == "project:p1"
+        assert result[0]["progress"] == pytest.approx(1.0)
+        assert result[0]["traffic_light"] == "GREEN"
+
+        # Initiative: 1 active child in deliver → 0.7
+        assert result[1]["type_id"] == "initiative:i1"
+        assert result[1]["progress"] == pytest.approx(0.7)
+        assert result[1]["traffic_light"] == "GREEN"

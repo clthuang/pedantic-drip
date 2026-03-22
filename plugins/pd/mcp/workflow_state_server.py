@@ -49,6 +49,7 @@ from workflow_engine.task_promotion import (
     query_ready_tasks as _lib_query_ready_tasks,
 )
 from workflow_engine.models import FeatureWorkflowState, TransitionResponse
+from workflow_engine.rollup import get_ancestor_progress as _lib_get_ancestor_progress
 from workflow_engine.notifications import NotificationQueue
 from workflow_engine.reconciliation import (
     ReconcileAction,
@@ -1210,6 +1211,25 @@ async def query_ready_tasks() -> str:
     try:
         tasks = _lib_query_ready_tasks(_db)
         return json.dumps({"count": len(tasks), "tasks": tasks})
+    except Exception as exc:
+        return _make_error("internal", str(exc), "Report this error")
+
+
+@mcp.tool()
+async def get_progress_view(entity_ref: str) -> str:
+    """Get cross-level progress view for an entity's ancestor chain.
+
+    Walks up the parent chain and returns pre-computed progress and
+    traffic_light for each ancestor (no recursive recomputation).
+    """
+    if _db is None:
+        return _NOT_INITIALIZED
+    try:
+        entity_uuid = _db.resolve_ref(entity_ref)
+        ancestors = _lib_get_ancestor_progress(_db, entity_uuid)
+        return json.dumps({"ancestors": ancestors, "count": len(ancestors)})
+    except ValueError as exc:
+        return _make_error("invalid_ref", str(exc), "Provide a valid entity ref")
     except Exception as exc:
         return _make_error("internal", str(exc), "Report this error")
 
