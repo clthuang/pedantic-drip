@@ -3280,3 +3280,116 @@ class TestHardPrerequisitesMutation:
         )
         assert result.allowed is False
         assert "design.md" in result.reason
+
+
+# ---------------------------------------------------------------------------
+# Dimension 5b: active_phases filtering (Task 1b.8, AC-15)
+# ---------------------------------------------------------------------------
+
+
+class TestHardPrerequisitesActivePhases:
+    """Tests for check_hard_prerequisites active_phases parameter.
+
+    When active_phases is provided, prerequisites are filtered to only
+    include artifacts produced by phases in the active_phases list.
+    """
+
+    def test_G08_active_phases_light_implement_only_spec_required(self) -> None:
+        """AC-15: Light template [specify, implement] + target implement -> only spec.md required.
+
+        tasks.md is produced by create-tasks, which is NOT in active_phases,
+        so it is excluded from prerequisites.
+        """
+        result = check_hard_prerequisites(
+            phase="implement",
+            existing_artifacts=["spec.md"],
+            active_phases=["specify", "implement"],
+        )
+        assert result.allowed is True
+        assert result.guard_id == "G-08"
+
+    def test_G08_active_phases_light_implement_missing_spec_blocked(self) -> None:
+        """Light template missing spec.md -> still blocked."""
+        result = check_hard_prerequisites(
+            phase="implement",
+            existing_artifacts=[],
+            active_phases=["specify", "implement"],
+        )
+        assert result.allowed is False
+        assert result.guard_id == "G-08"
+        assert "spec.md" in result.reason
+
+    def test_G08_active_phases_none_unchanged_behavior(self) -> None:
+        """active_phases=None -> full prerequisite check (backward-compatible).
+
+        implement requires both spec.md and tasks.md.
+        """
+        result = check_hard_prerequisites(
+            phase="implement",
+            existing_artifacts=["spec.md"],
+            active_phases=None,
+        )
+        assert result.allowed is False
+        assert "tasks.md" in result.reason
+
+    def test_G08_active_phases_none_all_present_passes(self) -> None:
+        """active_phases=None with all artifacts -> passes (unchanged)."""
+        result = check_hard_prerequisites(
+            phase="implement",
+            existing_artifacts=["spec.md", "tasks.md"],
+            active_phases=None,
+        )
+        assert result.allowed is True
+
+    def test_G08_active_phases_full_template_implement_unchanged(self) -> None:
+        """Full template includes all phases -> same as None (all prereqs checked)."""
+        result = check_hard_prerequisites(
+            phase="implement",
+            existing_artifacts=["spec.md"],
+            active_phases=[
+                "brainstorm", "specify", "design",
+                "create-plan", "create-tasks", "implement", "finish",
+            ],
+        )
+        assert result.allowed is False
+        assert "tasks.md" in result.reason
+
+    def test_G08_active_phases_design_without_specify_empty_prereqs(self) -> None:
+        """active_phases=[design] + target design -> spec.md filtered out.
+
+        spec.md is produced by specify, which is NOT in active_phases.
+        """
+        result = check_hard_prerequisites(
+            phase="design",
+            existing_artifacts=[],
+            active_phases=["design"],
+        )
+        assert result.allowed is True
+
+    def test_G08_active_phases_empty_list_all_filtered(self) -> None:
+        """Empty active_phases -> all prerequisites filtered out -> passes."""
+        result = check_hard_prerequisites(
+            phase="implement",
+            existing_artifacts=[],
+            active_phases=[],
+        )
+        assert result.allowed is True
+
+    def test_G08_active_phases_unknown_phase_still_invalid(self) -> None:
+        """Unknown target phase -> invalid input regardless of active_phases."""
+        result = check_hard_prerequisites(
+            phase="nonexistent",
+            existing_artifacts=[],
+            active_phases=["specify"],
+        )
+        assert result.allowed is False
+        assert result.guard_id == "INVALID"
+
+    def test_G08_active_phases_brainstorm_no_prereqs(self) -> None:
+        """Brainstorm has no prerequisites -> active_phases has no effect."""
+        result = check_hard_prerequisites(
+            phase="brainstorm",
+            existing_artifacts=[],
+            active_phases=["brainstorm"],
+        )
+        assert result.allowed is True

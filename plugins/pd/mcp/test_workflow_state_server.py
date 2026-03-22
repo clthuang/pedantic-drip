@@ -6682,9 +6682,8 @@ class TestCheckArtifactCompleteness:
         assert warnings == []
 
     def test_unknown_mode_no_warnings(self, db, tmp_path):
-        """Unknown mode (e.g., light — deferred to 1b.10) produces no warnings.
+        """Truly unknown mode (not standard/full/light) produces no warnings.
 
-        Light mode CHECK constraint doesn't exist yet (AC-11, Phase 1b).
         This test verifies the code path where mode is not in _EXPECTED_ARTIFACTS.
         """
         feat_dir = os.path.join(str(tmp_path), "features", "206-unknown")
@@ -6696,13 +6695,52 @@ class TestCheckArtifactCompleteness:
             artifact_path=feat_dir,
             metadata={"id": "206", "slug": "unknown", "mode": "standard"},
         )
-        # Create with mode=None (not in _EXPECTED_ARTIFACTS when resolved)
-        # The function reads mode from workflow_phases; if NULL, defaults to "standard"
-        # To test unknown mode path, we don't create workflow_phases and monkeypatch
-        # Instead, test _EXPECTED_ARTIFACTS directly: light not in dict → returns None
-        assert _EXPECTED_ARTIFACTS.get("light") is None, (
-            "light mode should not be in _EXPECTED_ARTIFACTS (deferred to 1b.10)"
+        # Verify a truly unknown mode returns None from the dict
+        assert _EXPECTED_ARTIFACTS.get("experimental") is None, (
+            "unknown modes should not be in _EXPECTED_ARTIFACTS"
         )
+
+    def test_light_mode_with_spec_no_warnings(self, db, tmp_path):
+        """Light mode with spec.md present -> no warnings (AC-15, Task 1b.10)."""
+        feat_dir = os.path.join(str(tmp_path), "features", "207-light-ok")
+        os.makedirs(feat_dir, exist_ok=True)
+        with open(os.path.join(feat_dir, "spec.md"), "w") as f:
+            f.write("content")
+
+        db.register_entity(
+            "feature", "207-light-ok", "light-ok",
+            artifact_path=feat_dir,
+            metadata={"id": "207", "slug": "light-ok", "mode": "light"},
+        )
+        db.create_workflow_phase(
+            "feature:207-light-ok", workflow_phase="finish", mode="light",
+        )
+
+        warnings = _check_artifact_completeness(db, "feature:207-light-ok")
+        assert warnings == []
+
+    def test_light_mode_missing_spec_warns(self, db, tmp_path):
+        """Light mode without spec.md -> warning (AC-15, Task 1b.10)."""
+        feat_dir = os.path.join(str(tmp_path), "features", "208-light-nospec")
+        os.makedirs(feat_dir, exist_ok=True)
+        # No spec.md
+
+        db.register_entity(
+            "feature", "208-light-nospec", "light-nospec",
+            artifact_path=feat_dir,
+            metadata={"id": "208", "slug": "light-nospec", "mode": "light"},
+        )
+        db.create_workflow_phase(
+            "feature:208-light-nospec", workflow_phase="finish", mode="light",
+        )
+
+        warnings = _check_artifact_completeness(db, "feature:208-light-nospec")
+        assert len(warnings) == 1
+        assert "spec.md" in warnings[0]
+
+    def test_light_mode_expected_artifacts_entry(self):
+        """Light mode is registered in _EXPECTED_ARTIFACTS with only spec.md."""
+        assert _EXPECTED_ARTIFACTS.get("light") == ["spec.md"]
 
 
 class TestCompletePhaseArtifactWarnings:

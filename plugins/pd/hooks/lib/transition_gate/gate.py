@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from .constants import (
     ARTIFACT_GUARD_MAP,
+    ARTIFACT_PHASE_MAP,
     GUARD_METADATA,
     HARD_PREREQUISITES,
     MIN_ARTIFACT_SIZE,
@@ -137,14 +138,31 @@ def validate_artifact(
 def check_hard_prerequisites(
     phase: str,
     existing_artifacts: list[str],
+    active_phases: list[str] | None = None,
 ) -> TransitionResult:
     """G-08: Maps phase to required artifacts via HARD_PREREQUISITES.
 
     Returns missing artifact list in reason on failure.
+
+    Args:
+        phase: Target phase to check prerequisites for.
+        existing_artifacts: Artifact filenames already present.
+        active_phases: When provided, filter prerequisites to only those
+            produced by phases in this list (using ARTIFACT_PHASE_MAP reverse
+            lookup). When None, full prerequisite check (backward-compatible).
     """
     required = HARD_PREREQUISITES.get(phase)
     if required is None:
         return _invalid_input(f"Unknown phase '{phase}'")
+
+    if active_phases is not None:
+        # Build reverse map: artifact_name -> producing_phase
+        artifact_to_phase = {v: k for k, v in ARTIFACT_PHASE_MAP.items()}
+        # Keep only prerequisites whose producing phase is in active_phases
+        required = [
+            a for a in required
+            if artifact_to_phase.get(a) in active_phases
+        ]
 
     missing = [a for a in required if a not in existing_artifacts]
 
