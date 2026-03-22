@@ -450,6 +450,7 @@ def _process_transition_phase(
 _EXPECTED_ARTIFACTS: dict[str, list[str]] = {
     "standard": ["spec.md", "tasks.md", "retro.md"],
     "full": ["spec.md", "design.md", "plan.md", "tasks.md", "retro.md"],
+    "light": ["spec.md"],
 }
 
 
@@ -818,6 +819,49 @@ def _process_reconcile_status(
 
 
 # ---------------------------------------------------------------------------
+# Ref resolution helper (Task 1b.5)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_ref_to_feature_type_id(
+    db: EntityDatabase,
+    feature_type_id: str | None,
+    ref: str | None,
+) -> str:
+    """Resolve a feature_type_id or ref to a concrete feature_type_id.
+
+    Parameters
+    ----------
+    db:
+        Open EntityDatabase.
+    feature_type_id:
+        Explicit feature_type_id (takes precedence if provided).
+    ref:
+        Flexible reference: UUID, full type_id, or type_id prefix.
+
+    Returns
+    -------
+    str
+        The resolved feature_type_id.
+
+    Raises
+    ------
+    ValueError
+        If neither param provided, ref not found, or ambiguous.
+    """
+    if feature_type_id is not None:
+        return feature_type_id
+    if ref is None:
+        raise ValueError("Either feature_type_id or ref must be provided")
+
+    entity_uuid = db.resolve_ref(ref)
+    entity = db.get_entity_by_uuid(entity_uuid)
+    if entity is None:
+        raise ValueError(f"No entity found matching ref: {ref!r}")
+    return entity["type_id"]
+
+
+# ---------------------------------------------------------------------------
 # MCP tool handlers
 # ---------------------------------------------------------------------------
 
@@ -831,51 +875,73 @@ mcp = FastMCP("workflow-engine", lifespan=lifespan)
 
 
 @mcp.tool()
-async def get_phase(feature_type_id: str) -> str:
+async def get_phase(feature_type_id: str | None = None, ref: str | None = None) -> str:
     """Read the current workflow state for a feature."""
-    if _engine is None:
+    if _engine is None or _db is None:
         return _NOT_INITIALIZED
-    return _process_get_phase(_engine, feature_type_id)
+    try:
+        resolved = _resolve_ref_to_feature_type_id(_db, feature_type_id, ref)
+    except ValueError as exc:
+        return _make_error("invalid_ref", str(exc), "Provide a valid feature_type_id or ref")
+    return _process_get_phase(_engine, resolved)
 
 
 @mcp.tool()
 async def transition_phase(
-    feature_type_id: str,
-    target_phase: str,
+    feature_type_id: str | None = None,
+    target_phase: str = "",
     yolo_active: bool = False,
     skipped_phases: str | None = None,
+    ref: str | None = None,
 ) -> str:
     """Validate and enter a target phase."""
     if _engine is None or _db is None:
         return _NOT_INITIALIZED
+    try:
+        resolved = _resolve_ref_to_feature_type_id(_db, feature_type_id, ref)
+    except ValueError as exc:
+        return _make_error("invalid_ref", str(exc), "Provide a valid feature_type_id or ref")
     return _process_transition_phase(
-        _engine, feature_type_id, target_phase, yolo_active,
+        _engine, resolved, target_phase, yolo_active,
         db=_db, skipped_phases=skipped_phases,
     )
 
 
 @mcp.tool()
 async def complete_phase(
-    feature_type_id: str,
-    phase: str,
+    feature_type_id: str | None = None,
+    phase: str = "",
     iterations: int | None = None,
     reviewer_notes: str | None = None,
+    ref: str | None = None,
 ) -> str:
     """Record a phase as completed and advance to next phase."""
     if _engine is None or _db is None:
         return _NOT_INITIALIZED
+    try:
+        resolved = _resolve_ref_to_feature_type_id(_db, feature_type_id, ref)
+    except ValueError as exc:
+        return _make_error("invalid_ref", str(exc), "Provide a valid feature_type_id or ref")
     return _process_complete_phase(
-        _engine, feature_type_id, phase,
+        _engine, resolved, phase,
         db=_db, iterations=iterations, reviewer_notes=reviewer_notes,
     )
 
 
 @mcp.tool()
-async def validate_prerequisites(feature_type_id: str, target_phase: str) -> str:
+async def validate_prerequisites(
+    feature_type_id: str | None = None,
+    target_phase: str = "",
+    ref: str | None = None,
+) -> str:
     """Dry-run gate evaluation without executing the transition."""
-    if _engine is None:
+    if _engine is None or _db is None:
         return _NOT_INITIALIZED
-    return _process_validate_prerequisites(_engine, feature_type_id, target_phase)
+    try:
+        resolved = _resolve_ref_to_feature_type_id(_db, feature_type_id, ref)
+    except ValueError as exc:
+        return _make_error("invalid_ref", str(exc), "Provide a valid feature_type_id or ref")
+    return _process_validate_prerequisites(_engine, resolved, target_phase)
 
 
 @mcp.tool()
@@ -970,27 +1036,48 @@ async def init_project_state(
 
 
 @mcp.tool()
-async def activate_feature(feature_type_id: str) -> str:
+async def activate_feature(feature_type_id: str | None = None, ref: str | None = None) -> str:
     """Transition a planned feature to active status."""
     if _db is None or _engine is None:
         return _NOT_INITIALIZED
-    return _process_activate_feature(_db, _engine, feature_type_id, _artifacts_root)
+    try:
+        resolved = _resolve_ref_to_feature_type_id(_db, feature_type_id, ref)
+    except ValueError as exc:
+        return _make_error("invalid_ref", str(exc), "Provide a valid feature_type_id or ref")
+    return _process_activate_feature(_db, _engine, resolved, _artifacts_root)
 
 
 @mcp.tool()
-async def init_entity_workflow(type_id: str, workflow_phase: str, kanban_column: str) -> str:
+async def init_entity_workflow(
+    type_id: str | None = None,
+    workflow_phase: str = "",
+    kanban_column: str = "",
+    ref: str | None = None,
+) -> str:
     """Create a workflow_phases row for any entity type."""
     if _db is None:
         return _NOT_INITIALIZED
-    return _process_init_entity_workflow(_db, type_id, workflow_phase, kanban_column)
+    try:
+        resolved = _resolve_ref_to_feature_type_id(_db, type_id, ref)
+    except ValueError as exc:
+        return _make_error("invalid_ref", str(exc), "Provide a valid type_id or ref")
+    return _process_init_entity_workflow(_db, resolved, workflow_phase, kanban_column)
 
 
 @mcp.tool()
-async def transition_entity_phase(type_id: str, target_phase: str) -> str:
+async def transition_entity_phase(
+    type_id: str | None = None,
+    target_phase: str = "",
+    ref: str | None = None,
+) -> str:
     """Transition a brainstorm or backlog entity to a new lifecycle phase."""
     if _db is None:
         return _NOT_INITIALIZED
-    return _process_transition_entity_phase(_db, type_id, target_phase)
+    try:
+        resolved = _resolve_ref_to_feature_type_id(_db, type_id, ref)
+    except ValueError as exc:
+        return _make_error("invalid_ref", str(exc), "Provide a valid type_id or ref")
+    return _process_transition_entity_phase(_db, resolved, target_phase)
 
 
 # ---------------------------------------------------------------------------

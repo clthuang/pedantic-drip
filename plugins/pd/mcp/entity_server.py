@@ -100,6 +100,54 @@ async def lifespan(server):
 
 
 # ---------------------------------------------------------------------------
+# Ref resolution helper (Task 1b.5)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_ref_param(
+    db: EntityDatabase,
+    type_id: str | None,
+    ref: str | None,
+    *,
+    is_mutation: bool = False,
+) -> str:
+    """Resolve a type_id or ref parameter to a concrete type_id.
+
+    Parameters
+    ----------
+    db:
+        Open EntityDatabase.
+    type_id:
+        Explicit type_id (takes precedence if provided).
+    ref:
+        Flexible reference: UUID, full type_id, or type_id prefix.
+    is_mutation:
+        If True, ambiguous prefix matches always error (never guess).
+
+    Returns
+    -------
+    str
+        The resolved type_id.
+
+    Raises
+    ------
+    ValueError
+        If neither param provided, ref not found, or ambiguous.
+    """
+    if type_id is not None:
+        return type_id
+    if ref is None:
+        raise ValueError("Either type_id or ref must be provided")
+
+    # resolve_ref returns a UUID — look up the entity to get type_id
+    entity_uuid = db.resolve_ref(ref)
+    entity = db.get_entity_by_uuid(entity_uuid)
+    if entity is None:
+        raise ValueError(f"No entity found matching ref: {ref!r}")
+    return entity["type_id"]
+
+
+# ---------------------------------------------------------------------------
 # MCP server
 # ---------------------------------------------------------------------------
 
@@ -153,7 +201,12 @@ async def register_entity(
 
 
 @mcp.tool()
-async def set_parent(type_id: str, parent_type_id: str) -> str:
+async def set_parent(
+    type_id: str | None = None,
+    parent_type_id: str | None = None,
+    ref: str | None = None,
+    parent_ref: str | None = None,
+) -> str:
     """Set or change the parent of an entity.
 
     Parameters
@@ -162,32 +215,52 @@ async def set_parent(type_id: str, parent_type_id: str) -> str:
         The entity to update (e.g. 'feature:029-entity-lineage-tracking').
     parent_type_id:
         The new parent entity (e.g. 'project:my-project').
+    ref:
+        Alternative flexible reference for the child entity.
+    parent_ref:
+        Alternative flexible reference for the parent entity.
 
     Returns confirmation message or error.
     """
     if _db is None:
         return "Error: database not initialized (server not started)"
 
-    return _process_set_parent(_db, type_id, parent_type_id)
+    try:
+        resolved_type_id = _resolve_ref_param(_db, type_id, ref, is_mutation=True)
+        resolved_parent = _resolve_ref_param(
+            _db, parent_type_id, parent_ref, is_mutation=True
+        )
+    except ValueError as exc:
+        return f"Error: {exc}"
+
+    return _process_set_parent(_db, resolved_type_id, resolved_parent)
 
 
 @mcp.tool()
-async def get_entity(type_id: str) -> str:
-    """Retrieve a single entity by type_id.
+async def get_entity(type_id: str | None = None, ref: str | None = None) -> str:
+    """Retrieve a single entity by type_id or ref.
 
     Parameters
     ----------
     type_id:
         Entity identifier (e.g. 'feature:029-entity-lineage-tracking').
+    ref:
+        Alternative flexible reference: UUID, full type_id, or type_id prefix.
+        Resolved via db.resolve_ref(). Provide type_id OR ref (not both required).
 
     Returns JSON representation of the entity or not-found message.
     """
     if _db is None:
         return "Error: database not initialized (server not started)"
 
-    entity = _db.get_entity(type_id)
+    try:
+        resolved_type_id = _resolve_ref_param(_db, type_id, ref)
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)})
+
+    entity = _db.get_entity(resolved_type_id)
     if entity is None:
-        return f"Entity not found: {type_id}"
+        return f"Entity not found: {resolved_type_id}"
     for key in ("uuid", "entity_id", "parent_uuid"):
         entity.pop(key, None)
     return json.dumps(entity, separators=(",", ":"))
@@ -195,9 +268,10 @@ async def get_entity(type_id: str) -> str:
 
 @mcp.tool()
 async def get_lineage(
-    type_id: str,
+    type_id: str | None = None,
     direction: str = "up",
     max_depth: int = 10,
+    ref: str | None = None,
 ) -> str:
     """Traverse the entity hierarchy and display as a tree.
 
@@ -210,22 +284,30 @@ async def get_lineage(
         (descendants). Default: 'up'.
     max_depth:
         Maximum levels to traverse (default: 10, AC-14 depth guard).
+    ref:
+        Alternative flexible reference for the starting entity.
 
     Returns formatted tree string or error message.
     """
     if _db is None:
         return "Error: database not initialized (server not started)"
 
-    return _process_get_lineage(_db, type_id, direction, max_depth)
+    try:
+        resolved_type_id = _resolve_ref_param(_db, type_id, ref)
+    except ValueError as exc:
+        return f"Error: {exc}"
+
+    return _process_get_lineage(_db, resolved_type_id, direction, max_depth)
 
 
 @mcp.tool()
 async def update_entity(
-    type_id: str,
+    type_id: str | None = None,
     name: str | None = None,
     status: str | None = None,
     artifact_path: str | None = None,
     metadata: str | dict | None = None,
+    ref: str | None = None,
 ) -> str:
     """Update mutable fields of an existing entity.
 
@@ -242,21 +324,28 @@ async def update_entity(
     metadata:
         Metadata to shallow-merge — pass a dict (preferred) or a JSON
         string; dicts are auto-coerced. Empty dict '{}' clears.
+    ref:
+        Alternative flexible reference. Mutations require exact or unique match.
 
     Returns confirmation message or error.
     """
     if _db is None:
         return "Error: database not initialized (server not started)"
 
+    try:
+        resolved_type_id = _resolve_ref_param(_db, type_id, ref, is_mutation=True)
+    except ValueError as exc:
+        return f"Error: {exc}"
+
     if isinstance(metadata, dict):
         metadata = json.dumps(metadata)
 
     try:
         _db.update_entity(
-            type_id, name=name, status=status,
+            resolved_type_id, name=name, status=status,
             artifact_path=artifact_path, metadata=parse_metadata(metadata),
         )
-        return f"Updated: {type_id}"
+        return f"Updated: {resolved_type_id}"
     except Exception as exc:
         return f"Error updating entity: {exc}"
 
@@ -321,46 +410,56 @@ async def export_entities(
 
 
 @mcp.tool()
-async def delete_entity(type_id: str) -> str:
+async def delete_entity(type_id: str | None = None, ref: str | None = None) -> str:
     """Delete an entity and all associated data (FTS, workflow_phases).
 
     Parameters
     ----------
     type_id:
         Entity to delete (e.g. 'feature:001-test').
+    ref:
+        Alternative flexible reference. Mutations require exact or unique match.
 
     Returns confirmation JSON or error JSON.
     """
     if _db is None:
         return "Error: database not initialized (server not started)"
     try:
-        _db.delete_entity(type_id)
-        return json.dumps({"result": f"Deleted: {type_id}"})
+        resolved_type_id = _resolve_ref_param(_db, type_id, ref, is_mutation=True)
+        _db.delete_entity(resolved_type_id)
+        return json.dumps({"result": f"Deleted: {resolved_type_id}"})
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)})
     except Exception as exc:
         return json.dumps({"error": str(exc)})
 
 
 @mcp.tool()
-async def add_entity_tag(type_id: str, tag: str) -> str:
+async def add_entity_tag(
+    type_id: str | None = None, tag: str = "", ref: str | None = None
+) -> str:
     """Add a tag to an entity.
 
     Parameters
     ----------
     type_id:
-        Entity identifier (type_id or UUID).
+        Entity identifier (type_id).
     tag:
         Tag string (lowercase, hyphens, max 50 chars).
+    ref:
+        Alternative flexible reference for the entity.
 
     Returns confirmation or error.
     """
     if _db is None:
         return "Error: database not initialized (server not started)"
     try:
-        entity = _db.get_entity(type_id)
+        resolved_type_id = _resolve_ref_param(_db, type_id, ref, is_mutation=True)
+        entity = _db.get_entity(resolved_type_id)
         if entity is None:
-            return f"Error: entity not found: {type_id}"
+            return f"Error: entity not found: {resolved_type_id}"
         _db.add_tag(entity["uuid"], tag)
-        return json.dumps({"result": f"Tagged {type_id} with '{tag}'"})
+        return json.dumps({"result": f"Tagged {resolved_type_id} with '{tag}'"})
     except ValueError as exc:
         return json.dumps({"error": str(exc)})
     except Exception as exc:
@@ -368,24 +467,99 @@ async def add_entity_tag(type_id: str, tag: str) -> str:
 
 
 @mcp.tool()
-async def get_entity_tags(type_id: str) -> str:
+async def get_entity_tags(type_id: str | None = None, ref: str | None = None) -> str:
     """Get all tags for an entity.
 
     Parameters
     ----------
     type_id:
-        Entity identifier (type_id or UUID).
+        Entity identifier (type_id).
+    ref:
+        Alternative flexible reference for the entity.
 
     Returns JSON list of tags or error.
     """
     if _db is None:
         return "Error: database not initialized (server not started)"
     try:
-        entity = _db.get_entity(type_id)
+        resolved_type_id = _resolve_ref_param(_db, type_id, ref)
+        entity = _db.get_entity(resolved_type_id)
         if entity is None:
-            return f"Error: entity not found: {type_id}"
+            return f"Error: entity not found: {resolved_type_id}"
         tags = _db.get_tags(entity["uuid"])
-        return json.dumps({"type_id": type_id, "tags": tags})
+        return json.dumps({"type_id": resolved_type_id, "tags": tags})
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)})
+    except Exception as exc:
+        return json.dumps({"error": f"Unexpected error: {exc}"})
+
+
+@mcp.tool()
+async def add_dependency(
+    entity_ref: str,
+    blocked_by_ref: str,
+) -> str:
+    """Add a dependency: entity is blocked by another entity.
+
+    Parameters
+    ----------
+    entity_ref:
+        The entity that is blocked (type_id, UUID, or prefix).
+    blocked_by_ref:
+        The entity that blocks it (type_id, UUID, or prefix).
+
+    Returns confirmation JSON or error JSON.
+    """
+    if _db is None:
+        return "Error: database not initialized (server not started)"
+    try:
+        from entity_registry.dependencies import CycleError, DependencyManager
+
+        entity_uuid = _db.resolve_ref(entity_ref)
+        blocked_by_uuid = _db.resolve_ref(blocked_by_ref)
+        mgr = DependencyManager()
+        mgr.add_dependency(_db, entity_uuid, blocked_by_uuid)
+        return json.dumps({
+            "result": f"Dependency added: {entity_ref} blocked by {blocked_by_ref}"
+        })
+    except CycleError as exc:
+        return json.dumps({"error": f"Cycle detected: {exc}"})
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)})
+    except Exception as exc:
+        return json.dumps({"error": f"Unexpected error: {exc}"})
+
+
+@mcp.tool()
+async def remove_dependency(
+    entity_ref: str,
+    blocked_by_ref: str,
+) -> str:
+    """Remove a dependency between two entities.
+
+    Parameters
+    ----------
+    entity_ref:
+        The entity that was blocked (type_id, UUID, or prefix).
+    blocked_by_ref:
+        The entity that was blocking it (type_id, UUID, or prefix).
+
+    Returns confirmation JSON or error JSON.
+    """
+    if _db is None:
+        return "Error: database not initialized (server not started)"
+    try:
+        from entity_registry.dependencies import DependencyManager
+
+        entity_uuid = _db.resolve_ref(entity_ref)
+        blocked_by_uuid = _db.resolve_ref(blocked_by_ref)
+        mgr = DependencyManager()
+        mgr.remove_dependency(_db, entity_uuid, blocked_by_uuid)
+        return json.dumps({
+            "result": f"Dependency removed: {entity_ref} no longer blocked by {blocked_by_ref}"
+        })
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)})
     except Exception as exc:
         return json.dumps({"error": f"Unexpected error: {exc}"})
 

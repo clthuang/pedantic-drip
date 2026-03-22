@@ -202,11 +202,19 @@ def backfill_workflow_phases(
 
             # Early handling for brainstorm/backlog — skip kanban derivation
             if entity_type in ("brainstorm", "backlog"):
-                # Child-completion override
+                # Child-completion override (D3: prefer parent_uuid, fall back
+                # to parent_type_id for legacy entities without parent_uuid)
+                entity_uuid = entity.get("uuid")
                 children = [
                     e for e in all_entities
-                    if e.get("parent_type_id") == type_id
-                    and e["entity_type"] == "feature"
+                    if e["entity_type"] == "feature"
+                    and (
+                        (entity_uuid and e.get("parent_uuid") == entity_uuid)
+                        or (
+                            not e.get("parent_uuid")
+                            and e.get("parent_type_id") == type_id
+                        )
+                    )
                 ]
                 all_children_completed = children and all(
                     c.get("status") == "completed" for c in children
