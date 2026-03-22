@@ -196,6 +196,60 @@ def compute_okr_score(db: "EntityDatabase", kr_uuid: str) -> float:
     return score
 
 
+def compute_objective_score(db: "EntityDatabase", objective_uuid: str) -> float:
+    """Compute and store the score for an objective entity from its child KR scores.
+
+    The objective score is the weighted average of all non-abandoned child
+    key_result scores (each computed via ``compute_okr_score``).  Non-KR
+    children are ignored.
+
+    Stores score + traffic_light in the objective's metadata.
+
+    Implements AC-34 (OKR Progress Rollup).
+
+    Parameters
+    ----------
+    db:
+        EntityDatabase instance for data access.
+    objective_uuid:
+        UUID of the objective entity to score.
+
+    Returns
+    -------
+    float
+        Score in [0.0, 1.0].  Returns 0.0 if no active KR children.
+    """
+    entity = db.get_entity_by_uuid(objective_uuid)
+    if entity is None:
+        return 0.0
+
+    children = db.get_children_by_uuid(objective_uuid)
+    if not children:
+        return 0.0
+
+    # Filter to key_result children only, exclude abandoned
+    kr_children = [
+        c for c in children
+        if c.get("entity_type") == "key_result"
+        and c.get("status") != "abandoned"
+    ]
+    if not kr_children:
+        return 0.0
+
+    total = 0.0
+    for kr in kr_children:
+        total += compute_okr_score(db, kr["uuid"])
+
+    score = total / len(kr_children)
+    traffic_light = compute_traffic_light(score)
+
+    db.update_entity(
+        entity["type_id"],
+        metadata={"score": score, "traffic_light": traffic_light},
+    )
+    return score
+
+
 def rollup_parent(db: "EntityDatabase", child_uuid: str) -> None:
     """Walk up the parent chain and recompute progress for each ancestor.
 
