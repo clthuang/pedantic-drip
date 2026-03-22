@@ -605,10 +605,24 @@ class TestRegisterEntity:
             db.register_entity("invalid_type", "x", "Bad Type")
 
     def test_all_valid_types(self, db: EntityDatabase):
-        """All four valid types should succeed."""
-        for etype in ("backlog", "brainstorm", "project", "feature"):
+        """All eight valid types should succeed."""
+        for etype in EntityDatabase.VALID_ENTITY_TYPES:
             result = db.register_entity(etype, f"id-{etype}", f"Name {etype}")
             assert _UUID_V4_RE.match(result), f"Expected UUID v4 for {etype}"
+
+    def test_new_entity_types_register_successfully(self, db: EntityDatabase):
+        """New entity types (initiative, objective, key_result, task) register."""
+        new_types = ("initiative", "objective", "key_result", "task")
+        for etype in new_types:
+            uuid_str = db.register_entity(etype, f"001-test-{etype}", f"Test {etype}")
+            assert _UUID_V4_RE.match(uuid_str), f"{etype} should return valid UUID"
+            # Verify entity is queryable
+            row = db._conn.execute(
+                "SELECT entity_type, entity_id FROM entities WHERE uuid = ?",
+                (uuid_str,),
+            ).fetchone()
+            assert row["entity_type"] == etype
+            assert row["entity_id"] == f"001-test-{etype}"
 
     def test_optional_fields(self, db: EntityDatabase):
         """artifact_path, status, parent_type_id, metadata should be optional."""

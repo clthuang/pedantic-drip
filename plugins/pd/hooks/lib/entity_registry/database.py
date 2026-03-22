@@ -6,11 +6,15 @@ import re
 import sqlite3
 import uuid as uuid_mod
 from collections.abc import Callable
+from contextlib import contextmanager
 from datetime import datetime, timezone
 
 _UUID_V4_RE = re.compile(
     r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
 )
+
+# Tag format: lowercase letters, digits, hyphens. 1-50 chars. No leading/trailing hyphens.
+_TAG_RE = re.compile(r'^[a-z0-9](?:[a-z0-9-]{0,48}[a-z0-9])?$')
 
 
 def flatten_metadata(metadata: dict | None) -> str:
@@ -917,7 +921,10 @@ class EntityDatabase:
         in-memory database.
     """
 
-    VALID_ENTITY_TYPES = ("backlog", "brainstorm", "project", "feature")
+    VALID_ENTITY_TYPES = (
+        "backlog", "brainstorm", "project", "feature",
+        "initiative", "objective", "key_result", "task",
+    )
 
     def __init__(self, db_path: str, *, check_same_thread: bool = True) -> None:
         self._conn = sqlite3.connect(db_path, timeout=5.0, check_same_thread=check_same_thread)
@@ -970,6 +977,191 @@ class EntityDatabase:
         return (row["uuid"], row["type_id"])
 
     # ------------------------------------------------------------------
+    # UUID lookup and flexible ref resolution (Task 1b.3a)
+    # ------------------------------------------------------------------
+
+    def get_entity_by_uuid(self, uuid: str) -> dict | None:
+        """Retrieve a single entity by UUID.
+
+        Returns entity dict or None if not found (or input is not a valid UUID).
+        """
+        row = self._conn.execute(
+            "SELECT * FROM entities WHERE uuid = ?", (uuid,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def resolve_ref(self, ref: str) -> str:
+        """Resolve a flexible reference to a single entity UUID.
+
+        Resolution order:
+        1. If ref looks like a UUID (36 chars, has dashes), look up by uuid.
+        2. Try as exact type_id.
+        3. Try as type_id prefix.
+           - Single match: return that uuid.
+           - Multiple matches: raise ValueError with candidate list.
+           - No matches: raise ValueError.
+
+        Parameters
+        ----------
+        ref:
+            UUID string, full type_id, or type_id prefix.
+
+        Returns
+        -------
+        str
+            The resolved entity UUID.
+
+        Raises
+        ------
+        ValueError
+            If ref is ambiguous (multiple prefix matches) or not found.
+        """
+        # 1. Try as UUID
+        if _UUID_V4_RE.match(ref.lower()):
+            entity = self.get_entity_by_uuid(ref.lower())
+            if entity is not None:
+                return entity["uuid"]
+            raise ValueError(f"No entity found matching ref: {ref!r}")
+
+        # 2. Try as exact type_id
+        row = self._conn.execute(
+            "SELECT uuid FROM entities WHERE type_id = ?", (ref,)
+        ).fetchone()
+        if row is not None:
+            return row["uuid"]
+
+        # 3. Try as prefix
+        matches = self.search_by_type_id_prefix(ref)
+        if len(matches) == 1:
+            return matches[0]["uuid"]
+        if len(matches) > 1:
+            candidates = [m["type_id"] for m in matches]
+            raise ValueError(
+                f"Multiple entities match ref {ref!r}: {candidates}"
+            )
+
+        raise ValueError(f"No entity found matching ref: {ref!r}")
+
+    # ------------------------------------------------------------------
+    # Prefix search and transaction helpers (Task 1b.3b)
+    # ------------------------------------------------------------------
+
+    def search_by_type_id_prefix(self, prefix: str) -> list[dict]:
+        """Search for entities whose type_id starts with the given prefix.
+
+        Parameters
+        ----------
+        prefix:
+            The type_id prefix to match (e.g. "feature:05").
+
+        Returns
+        -------
+        list[dict]
+            List of matching entity dicts.
+        """
+        # Use LIKE with escaped prefix for efficient prefix search.
+        # Escape any existing % or _ in the prefix to prevent SQL injection.
+        escaped = prefix.replace("%", "\\%").replace("_", "\\_")
+        rows = self._conn.execute(
+            "SELECT * FROM entities WHERE type_id LIKE ? ESCAPE '\\'",
+            (escaped + "%",),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    @contextmanager
+    def begin_immediate(self):
+        """Context manager that wraps a block in BEGIN IMMEDIATE.
+
+        Commits on success, rolls back on exception. Yields the connection.
+
+        Usage::
+
+            with db.begin_immediate() as conn:
+                conn.execute("UPDATE ...")
+        """
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            yield self._conn
+            self._conn.execute("COMMIT")
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
+
+    # ------------------------------------------------------------------
+    # Entity tagging (Task 1b.9a)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _validate_tag(tag: str) -> None:
+        """Validate tag format: lowercase, hyphens, digits, 1-50 chars."""
+        if not tag or not _TAG_RE.match(tag):
+            raise ValueError(
+                f"Invalid tag {tag!r}: must be 1-50 chars, lowercase "
+                f"letters, digits, and hyphens (no leading/trailing hyphens)"
+            )
+
+    def add_tag(self, entity_uuid: str, tag: str) -> None:
+        """Add a tag to an entity. Idempotent (duplicate is ignored).
+
+        Parameters
+        ----------
+        entity_uuid:
+            UUID of the entity to tag.
+        tag:
+            Tag string (lowercase, hyphens, max 50 chars).
+
+        Raises
+        ------
+        ValueError
+            If tag format is invalid.
+        """
+        self._validate_tag(tag)
+        self._conn.execute(
+            "INSERT OR IGNORE INTO entity_tags (entity_uuid, tag) "
+            "VALUES (?, ?)",
+            (entity_uuid, tag),
+        )
+        self._conn.commit()
+
+    def remove_tag(self, entity_uuid: str, tag: str) -> None:
+        """Remove a tag from an entity. Silent if tag not present."""
+        self._conn.execute(
+            "DELETE FROM entity_tags WHERE entity_uuid = ? AND tag = ?",
+            (entity_uuid, tag),
+        )
+        self._conn.commit()
+
+    def get_tags(self, entity_uuid: str) -> list[str]:
+        """Return all tags for an entity, sorted alphabetically."""
+        rows = self._conn.execute(
+            "SELECT tag FROM entity_tags WHERE entity_uuid = ? ORDER BY tag",
+            (entity_uuid,),
+        ).fetchall()
+        return [row["tag"] for row in rows]
+
+    def query_by_tag(self, tag: str) -> list[dict]:
+        """Return all entities with a given tag, across all types.
+
+        Parameters
+        ----------
+        tag:
+            The tag to query by.
+
+        Returns
+        -------
+        list[dict]
+            List of entity dicts for entities carrying this tag.
+        """
+        rows = self._conn.execute(
+            "SELECT e.* FROM entities e "
+            "JOIN entity_tags et ON e.uuid = et.entity_uuid "
+            "WHERE et.tag = ? "
+            "ORDER BY e.entity_type, e.name",
+            (tag,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    # ------------------------------------------------------------------
     # Entity CRUD
     # ------------------------------------------------------------------
 
@@ -988,7 +1180,8 @@ class EntityDatabase:
         Parameters
         ----------
         entity_type:
-            One of: backlog, brainstorm, project, feature.
+            One of the VALID_ENTITY_TYPES (backlog, brainstorm, project,
+            feature, initiative, objective, key_result, task).
         entity_id:
             Unique identifier within the entity_type namespace.
         name:

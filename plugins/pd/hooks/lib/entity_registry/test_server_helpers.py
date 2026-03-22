@@ -1089,10 +1089,9 @@ class TestProcessExportEntities:
             include_lineage=True,
             artifacts_root="/tmp",
         )
-        assert result == (
-            "Error: Invalid entity_type 'xyz'. "
-            "Must be one of ('backlog', 'brainstorm', 'project', 'feature')"
-        )
+        assert result.startswith("Error: Invalid entity_type 'xyz'. Must be one of ")
+        assert "'backlog'" in result
+        assert "'feature'" in result
 
     def test_json_encoding_utf8(self, db: EntityDatabase):
         """Non-ASCII characters are preserved in JSON output."""
