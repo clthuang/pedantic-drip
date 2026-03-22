@@ -103,6 +103,48 @@ If the request describes modifying, adding to, or extending the plugin system (c
 | 1-2 | **Partially specified** | Brainstorm with light triage (archetype matching, but flag as "refinement needed" not "exploration") |
 | 0 or below | **Exploratory** | Full brainstorm with advisory team (current behavior) |
 
+### Mode Detection Keywords Table
+
+Used by Step 0 (DETECT MODE) for keyword classification:
+
+| Mode | Keywords (first match wins, left-to-right scan) |
+|------|------------------------------------------------|
+| **CREATE** | create, add, build, implement, start, make, new, need, want, fix, set up |
+| **QUERY** | what, how, where, which, list, show, find, status, progress |
+| **CONTINUE** | continue, resume, next, finish |
+
+**Feature branch override:** On `feature/*` or `feat/*` branches, default to CONTINUE unless explicit CREATE intent ("add a task", "create a task") or QUERY intent (question words first) detected.
+
+### Scope Signal Keywords Table
+
+Used by Step 4 (weight recommendation) and Weight Escalation Detection:
+
+| Weight | Signal Keywords |
+|--------|----------------|
+| **light** | quick fix, small, simple, typo, one liner, trivial, minor, tiny, cosmetic |
+| **full** | rewrite, refactor, breaking change, complex, cross-team, architecture, migration, security, multi-service |
+| **standard** | (default — no signals or mixed) |
+
+**Expansion signals** (upgrade triggers during CONTINUE mode):
+
+| Target | Expansion Keywords |
+|--------|-------------------|
+| **→ standard** | multiple components, needs design review, needs spec, growing scope, more involved than expected |
+| **→ full** | cross-team impact, breaking change, architecture change, rewrite, security review, multi-service |
+
+### Entity Type Hierarchy Table
+
+Used by Step 3 (TRIAGE) for parent candidate search:
+
+| Entity Type | Plausible Parent Types |
+|-------------|----------------------|
+| task | feature, project, key_result |
+| feature | project, key_result, objective, initiative |
+| project | key_result, objective, initiative |
+| key_result | objective, initiative |
+| objective | initiative |
+| initiative | (none — top-level) |
+
 ### Confidence Thresholds
 
 - >70%: Strong match, recommend as primary
@@ -367,6 +409,45 @@ Apply the Routing Boundary Directive above.
 
 ---
 
+### Step 0: DETECT MODE
+
+Before routing, determine the user's operating mode: **CREATE**, **CONTINUE**, or **QUERY**. This controls which downstream steps activate.
+
+#### Resolution Order
+
+1. **Context check** — Detect current git branch via `git branch --show-current`.
+   - If on a feature branch (matches `feature/*` or `feat/*`):
+     - Check for explicit CREATE intent: patterns like "add a task", "create a task to track", "new entity" → **CREATE**
+     - Check for explicit QUERY intent: question words (how, what, where, which, list, show, find, status, progress) appearing first → **QUERY**
+     - Otherwise → **CONTINUE** (default when on feature branch)
+   - If NOT on a feature branch → proceed to keyword classification
+
+2. **Keyword classification** — Scan request text left-to-right for first keyword match:
+   - Action verbs: create, add, build, implement, start, make, new, need, want, fix, set up → **CREATE**
+   - Question/status words: what, how, where, which, list, show, find, status, progress → **QUERY**
+   - Continuation words: continue, resume, next, finish → **CONTINUE**
+
+3. **Ambiguous** — If no keywords match after context check, default to **CREATE** (safe default — creation flow includes clarification steps).
+
+#### Mode-Specific Behaviour
+
+| Mode | Effect on Pipeline |
+|------|-------------------|
+| **CREATE** | Run full pipeline. After MATCH, enter Universal Work Creation Flow (identify → link → register → activate). |
+| **CONTINUE** | If on feature branch: extract feature context from `.meta.json`, call `get_phase()` to determine current phase, propose: "Feature {id} is in {phase} phase. Continue?" If not on feature branch: call `search_entities(query="status:active")` to list available work. |
+| **QUERY** | Search entity registry via `search_entities(query="{extracted terms}")`. Present topology-aware results: entity status, lifecycle phase, children progress, blockers. If no results: "No matching entities found." If multiple results: present ranked list with type and status. |
+
+**CONTINUE shortcut:** When mode is CONTINUE and on a feature branch, skip Steps 1-6 and go directly to Step 7 (DELEGATE) with the detected phase command. Present confirmation first (unless YOLO).
+
+**QUERY shortcut:** When mode is QUERY, skip Steps 1-6. Query the entity registry directly:
+1. Extract search terms from the request
+2. Call `search_entities(query="{terms}")` — if entity_type is inferrable from request, pass it as filter
+3. For each result, optionally call `get_entity(ref="{type_id}")` for full detail (phase, children, blockers)
+4. Present results to user. If pending notifications exist (call `get_notifications()`), append them.
+5. Stop (no delegation needed).
+
+---
+
 ### Step 1: DISCOVER
 
 Build an index of available agents and skills:
@@ -456,6 +537,28 @@ AskUserQuestion:
 When the clarified intent suggests building something new (feature request, new capability, add/create), assess problem maturity. If the intent is NOT a feature/build request (e.g., review, investigate, explore), skip triage entirely and proceed to Step 4.
 
 Score the request against the Maturity Signals Table above, then use the Maturity Levels Table to determine the route.
+
+#### Entity Registry Queries (CREATE mode only)
+
+When Step 0 detected **CREATE** mode, query the entity registry before maturity assessment:
+
+1. **Search for parent candidates:**
+   - Infer the entity type from scope signals: company-wide → initiative, multi-feature → project, single deliverable → feature, bounded fix → task (or light feature)
+   - Determine plausible parent types: task parents = [feature, project, key_result]; feature parents = [project, key_result, objective, initiative]; project parents = [key_result, objective, initiative]
+   - For each plausible parent type, call `search_entities(query="{request keywords}", entity_type="{parent_type}")` to find candidates
+   - Present top candidates (max 3) to user: "Found potential parent: {type_id} — {name} ({status})"
+
+2. **Check for duplicates:**
+   - Call `search_entities(query="{entity name/description}")` without type filter
+   - If results overlap with what user is creating → warn: "Potential duplicate: {type_id} — {name}. Continue creating or link to existing?"
+   - Present via AskUserQuestion with options: "Create new", "Link to existing {type_id}", "Cancel"
+
+3. **Propose linkage:**
+   - If parent candidates found and no duplicates → propose: "Link as child of {parent_type_id}?"
+   - If both parent and duplicates found → present both findings for user decision
+   - If neither → proceed as standalone entity (no parent linkage)
+
+Store `parent_candidate`, `entity_type`, and `duplicate_check` results for the Universal Work Creation Flow.
 
 #### When well-specified (skip brainstorm):
 - Set `workflow_match = "pd:create-feature"`
@@ -555,6 +658,22 @@ If no fast-path, workflow, or investigative match:
 
 Apply Confidence Thresholds above to filter results.
 
+#### Weight Recommendation (CREATE mode)
+
+When Step 0 detected **CREATE** mode, recommend a workflow weight based on scope signals extracted from the request and triage context:
+
+**Scope signal extraction:** Collect descriptors from the user's request that indicate scope/complexity:
+- "quick fix", "small", "simple", "typo", "trivial", "minor", "cosmetic" → light signals
+- "rewrite", "refactor", "breaking change", "complex", "cross-team", "architecture", "migration", "security", "multi-service" → full signals
+- No clear signals → standard (default)
+
+**Weight resolution:**
+- Any full signal present → recommend **full** weight
+- Only light signals → recommend **light** weight
+- No signals or mixed → recommend **standard** weight
+
+Store `recommended_weight` for the Universal Work Creation Flow. Present in Step 6 (RECOMMEND): "Recommended weight: {weight} based on scope signals: {list of matched signals}."
+
 #### Complexity Analysis
 
 Apply the Complexity Analysis Table above to assess task complexity for mode recommendation.
@@ -607,6 +726,8 @@ AskUserQuestion:
 ```
 
 Pre-select the recommended mode based on complexity analysis (Standard or Full first in list).
+
+**Notification append:** Before presenting the recommendation, check for pending notifications by calling `get_notifications()`. If notifications exist, append them below the routing recommendation: "Pending notifications: {count} — {summary of first 3}." This ensures the user sees relevant state changes when making routing decisions.
 
 **User Response Handling:**
 - "Accept - Standard" → Proceed with Standard mode delegation
@@ -680,6 +801,153 @@ When no existing agent scores above 50%, run scoping research:
 Route based on the No Suitable Match Routing Table above.
 
 **Fallback:** If specialist team creation fails, offer retry/rephrase/cancel via AskUserQuestion.
+
+---
+
+### CREATE Mode: Universal Work Creation Flow
+
+When Step 0 detected **CREATE** mode and the user has confirmed the routing recommendation, execute this 4-step creation flow. This replaces the default delegation for work creation requests.
+
+#### Step C1: IDENTIFY
+
+Determine the entity attributes:
+
+1. **Entity type** — Infer from scope (already determined in Triage):
+   - Company-wide impact → `initiative`
+   - Multi-feature effort → `project`
+   - Single deliverable → `feature`
+   - Bounded fix / sub-item → `task` (or light `feature`)
+
+2. **Weight** — Use `recommended_weight` from MATCH step (light / standard / full).
+
+3. **Name** — Extract or ask:
+   - If request contains a clear name/title → use it
+   - Otherwise → ask: "What should this be called? (short, descriptive name)"
+
+4. **Tags** — Extract domain/circle tags from context:
+   - Infer from keywords: "auth" → tag `auth`, "frontend" → tag `frontend`
+   - Present inferred tags for confirmation
+
+#### Step C2: LINK
+
+Propose parent linkage using Triage results:
+
+1. If `parent_candidate` was found in Triage:
+   - Call `get_entity(ref="{parent_type_id}")` to confirm parent still exists and is active
+   - Present: "Link as child of {parent_name} ({parent_type_id})?"
+   - If parent has context (phase, progress), display it: "Parent: {parent_type_id} ({phase}, {progress}%)" — this is the Catchball pattern (showing parent intent on creation)
+   - User confirms or selects different parent or standalone
+
+2. If no parent found:
+   - Proceed as standalone (no parent linkage)
+   - Note: "No parent entity found. Creating as standalone {entity_type}."
+
+3. **Backlog triage** — If the request references backlog:
+   - Call `search_entities(query="{description}", entity_type="feature")` filtered to status=open
+   - If backlog item found → propose: "Promote backlog item {type_id} to {entity_type}? This will update its status from open to active."
+   - On confirmation: use `update_entity(type_id="{backlog_type_id}", status="active")` then continue with registration
+
+#### Step C3: REGISTER
+
+Create the entity in the registry:
+
+```
+Call register_entity with:
+  entity_type: "{entity_type}"
+  entity_id: "{generated_id}"  (or let the system generate via central ID generator)
+  name: "{name}"
+  status: "planned"
+  parent_type_id: "{parent_type_id}"  (if linked in C2, otherwise omit)
+  metadata: {
+    "weight": "{recommended_weight}",
+    "tags": ["{tag1}", "{tag2}"],
+    "source": "secretary"
+  }
+```
+
+If tags were identified, call `add_entity_tag(entity_ref="{type_id}", tag="{tag}")` for each.
+
+Report to user: "Registered: {entity_type}:{entity_id} — {name} (weight: {weight}, parent: {parent_type_id or 'none'})"
+
+#### Step C4: ACTIVATE
+
+Transition the entity from planned to active:
+
+1. Call `update_entity(type_id="{type_id}", status="active")`
+2. The workflow engine assigns the template phase sequence based on entity_type and weight
+3. Report: "{entity_type}:{entity_id} activated. First phase: {first_phase}."
+4. Offer to continue: "Start working on {first_phase} now?"
+   - If yes → delegate to the matching phase command (same as CONTINUE mode routing)
+   - If no → stop. Entity is registered and active for later resumption.
+
+**Confirmation gate:** Before C3 (REGISTER), present a summary for user confirmation (unless YOLO):
+
+```
+AskUserQuestion:
+  questions: [{
+    question: "Create this work item?",
+    header: "New {entity_type}",
+    options: [
+      { label: "Create", description: "{name} | weight: {weight} | parent: {parent_or_none}" },
+      { label: "Edit", description: "Change type, weight, parent, or name" },
+      { label: "Cancel", description: "Abort creation" }
+    ],
+    multiSelect: false
+  }]
+```
+
+---
+
+### Weight Escalation Detection
+
+Weight escalation applies during **CONTINUE** mode when the user describes scope expansion. Check for escalation signals whenever processing a CONTINUE request.
+
+#### Detection
+
+Extract scope signals from the user's current request and conversation context. Check for expansion indicators:
+
+**Standard-level signals** (upgrade light → standard):
+- "multiple components", "needs design review", "needs spec", "growing scope", "more involved than expected"
+
+**Full-level signals** (upgrade light/standard → full):
+- "cross-team impact", "breaking change", "architecture change", "rewrite", "security review", "multi-service"
+
+#### Evaluation
+
+1. Determine current weight: call `get_entity(ref="{current_feature_type_id}")` → read `metadata.weight` (or `workflow_phases.mode`)
+2. If current weight is already `full` → no escalation possible, skip
+3. Match signals against the expansion patterns above
+4. If escalation detected → recommend upgrade
+
+#### Recommendation
+
+Present to user:
+
+```
+AskUserQuestion:
+  questions: [{
+    question: "This work is growing beyond {current_weight} weight. Upgrade to {recommended_weight}?",
+    header: "Weight Escalation",
+    options: [
+      { label: "Upgrade to {recommended_weight}", description: "Template expands. Phases before current position marked as skipped." },
+      { label: "Keep {current_weight}", description: "Continue with current template" }
+    ],
+    multiSelect: false
+  }]
+```
+
+#### Execution (on confirmation)
+
+1. Update the entity's mode: call `update_entity(type_id="{type_id}", metadata={"weight": "{new_weight}"})`
+2. Record skipped phases: the phases present in the new template but absent from the original template AND before the current phase position are recorded as `skipped_phases` in metadata:
+   ```
+   update_entity(type_id="{type_id}", metadata={
+     "weight": "{new_weight}",
+     "skipped_phases": ["brainstorm", "design"]  // phases in new template before current position that were not in original
+   })
+   ```
+3. Report: "Weight upgraded from {old} to {new}. Phases {skipped_list} marked as skipped. Continuing from {current_phase}."
+4. The entity continues from its current phase — no new entity created, same uuid.
 
 ---
 
