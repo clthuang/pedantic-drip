@@ -10,13 +10,15 @@ Backends:
                    (initiative, objective, key_result, project, task)
 
 Implements design D1 (Strategy Pattern), D2 (Cascade in Engine), C3,
-plan Steps 3.3/4.1/4.3/4.4, AC-25/AC-26/AC-28/AC-29/AC-30.
+plan Steps 3.3/4.1/4.3/4.4/6.1, AC-25/AC-26/AC-28/AC-29/AC-30/AC-35.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 import sys
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from entity_registry.database import EntityDatabase
 from entity_registry.dependencies import DependencyManager
 
@@ -157,6 +159,9 @@ class EntityWorkflowEngine:
         else:
             try:
                 unblocked, parent_progress = self._run_cascade(entity_uuid)
+                # Anomaly propagation: on terminal phase, check for
+                # systemic_finding and propagate to parent (AC-35 / Task 6.1)
+                self._propagate_anomaly(entity_uuid, entity_type, phase)
             except Exception as exc:
                 cascade_error = str(exc)
                 print(
@@ -634,6 +639,85 @@ class EntityWorkflowEngine:
                         timestamp=now,
                     )
                 )
+
+    # ------------------------------------------------------------------
+    # Private: Anomaly propagation (Task 6.1 / AC-35)
+    # ------------------------------------------------------------------
+
+    def _propagate_anomaly(
+        self, entity_uuid: str, entity_type: str, phase: str
+    ) -> None:
+        """Propagate systemic_finding to parent metadata on terminal phase.
+
+        On terminal phase completion (last phase in the entity's template),
+        checks if entity metadata contains a truthy ``systemic_finding``.
+        If so, appends an anomaly record to the parent entity's metadata
+        ``anomalies`` list.
+
+        No-op if: phase is not terminal, no systemic_finding, or no parent.
+        """
+        # Determine if this phase is terminal for the entity type
+        entity = self._db.get_entity_by_uuid(entity_uuid)
+        if entity is None:
+            return
+
+        weight = self._get_weight(entity["type_id"])
+        try:
+            phases = get_template(entity_type, weight)
+        except KeyError:
+            return  # unknown template — skip
+
+        if phase != phases[-1]:
+            return  # not terminal phase
+
+        # Check for systemic_finding in entity metadata
+        raw_meta = entity.get("metadata")
+        if not raw_meta:
+            return
+        if isinstance(raw_meta, str):
+            meta = json.loads(raw_meta)
+        elif isinstance(raw_meta, dict):
+            meta = raw_meta
+        else:
+            return
+
+        finding = meta.get("systemic_finding")
+        if not finding:
+            return
+
+        # Check for parent
+        parent_uuid = entity.get("parent_uuid")
+        if not parent_uuid:
+            return
+
+        parent = self._db.get_entity_by_uuid(parent_uuid)
+        if parent is None:
+            return
+
+        # Build anomaly record
+        anomaly = {
+            "description": finding,
+            "source_type_id": entity["type_id"],
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+        # Read existing parent anomalies
+        parent_raw_meta = parent.get("metadata")
+        if parent_raw_meta and isinstance(parent_raw_meta, str):
+            parent_meta = json.loads(parent_raw_meta)
+        elif isinstance(parent_raw_meta, dict):
+            parent_meta = parent_raw_meta
+        else:
+            parent_meta = {}
+
+        existing_anomalies = parent_meta.get("anomalies", [])
+        existing_anomalies.append(anomaly)
+
+        # Write back via update_entity (shallow merge)
+        self._db.update_entity(
+            parent["type_id"],
+            metadata={"anomalies": existing_anomalies},
+        )
 
     # ------------------------------------------------------------------
     # Private: helpers

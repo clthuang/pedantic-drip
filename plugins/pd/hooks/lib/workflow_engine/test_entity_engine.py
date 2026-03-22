@@ -1757,3 +1757,158 @@ class TestInitiativeObjectiveAbandon:
         assert obj_uuid in result
         assert db.get_entity_by_uuid(init_uuid)["status"] == "abandoned"
         assert db.get_entity_by_uuid(obj_uuid)["status"] == "abandoned"
+
+
+# ---------------------------------------------------------------------------
+# Task 6.1: Anomaly propagation on debrief completion (AC-35)
+# ---------------------------------------------------------------------------
+
+
+class TestAnomalyPropagation:
+    """On debrief completion, systemic_finding propagates to parent metadata."""
+
+    def test_systemic_finding_propagated_to_parent(self, tmp_path):
+        """Complete debrief with systemic_finding → parent gets anomaly entry."""
+        db = _make_db()
+        proj_uuid = _register(db, "project", "p060-anomaly", "Anomaly Project")
+        _with_phase(db, "project:p060-anomaly", "deliver", mode="standard")
+
+        feat_uuid = _register(
+            db, "feature", "060-finding", "Finding Feature",
+            parent_type_id="project:p060-anomaly",
+        )
+        # Set systemic_finding in entity metadata
+        db.update_entity(
+            "feature:060-finding",
+            metadata={"systemic_finding": "auth middleware broken"},
+        )
+
+        # Feature needs to be in debrief phase to complete it
+        slug = "060-finding"
+        artifacts_root = str(tmp_path)
+        _create_meta_json(artifacts_root, slug, mode="standard",
+                          last_completed_phase="implement")
+        _with_phase(db, f"feature:{slug}", "finish", mode="standard",
+                    last_completed_phase="implement")
+
+        engine = _make_engine(db, artifacts_root)
+        result = engine.complete_phase(feat_uuid, "finish")
+
+        assert result.cascade_error is None
+
+        # Parent metadata should have anomalies list
+        parent = db.get_entity_by_uuid(proj_uuid)
+        parent_meta = json.loads(parent["metadata"])
+        assert "anomalies" in parent_meta
+        anomalies = parent_meta["anomalies"]
+        assert len(anomalies) == 1
+        assert anomalies[0]["description"] == "auth middleware broken"
+        assert anomalies[0]["source_type_id"] == f"feature:{slug}"
+        assert "timestamp" in anomalies[0]
+
+    def test_no_systemic_finding_no_anomaly(self, tmp_path):
+        """Complete debrief without systemic_finding → no anomaly recorded."""
+        db = _make_db()
+        proj_uuid = _register(db, "project", "p061-clean", "Clean Project")
+        _with_phase(db, "project:p061-clean", "deliver", mode="standard")
+
+        feat_uuid = _register(
+            db, "feature", "061-clean", "Clean Feature",
+            parent_type_id="project:p061-clean",
+        )
+
+        slug = "061-clean"
+        artifacts_root = str(tmp_path)
+        _create_meta_json(artifacts_root, slug, mode="standard",
+                          last_completed_phase="implement")
+        _with_phase(db, f"feature:{slug}", "finish", mode="standard",
+                    last_completed_phase="implement")
+
+        engine = _make_engine(db, artifacts_root)
+        result = engine.complete_phase(feat_uuid, "finish")
+
+        assert result.cascade_error is None
+
+        parent = db.get_entity_by_uuid(proj_uuid)
+        parent_meta = json.loads(parent["metadata"]) if parent["metadata"] else {}
+        # anomalies should either not exist or be empty
+        anomalies = parent_meta.get("anomalies", [])
+        assert len(anomalies) == 0
+
+    def test_anomaly_appended_to_existing_anomalies(self, tmp_path):
+        """Second anomaly appends to existing list."""
+        db = _make_db()
+        proj_uuid = _register(db, "project", "p062-multi", "Multi Anomaly")
+        _with_phase(db, "project:p062-multi", "deliver", mode="standard")
+
+        # Pre-seed parent with existing anomaly
+        db.update_entity(
+            "project:p062-multi",
+            metadata={
+                "anomalies": [
+                    {"description": "earlier issue", "source_type_id": "feature:old", "timestamp": "2026-01-01T00:00:00+00:00"},
+                ]
+            },
+        )
+
+        # 5D child with systemic_finding completing debrief
+        task_uuid = _register(
+            db, "task", "012-anomaly", "Anomaly Task",
+            parent_type_id="project:p062-multi",
+        )
+        db.update_entity(
+            "task:012-anomaly",
+            metadata={"systemic_finding": "rate limiter misconfigured"},
+        )
+        _with_phase(db, "task:012-anomaly", "debrief", mode="standard",
+                    last_completed_phase="deliver")
+
+        engine = _make_engine(db, str(tmp_path))
+        result = engine.complete_phase(task_uuid, "debrief")
+
+        assert result.cascade_error is None
+
+        parent = db.get_entity_by_uuid(proj_uuid)
+        parent_meta = json.loads(parent["metadata"])
+        assert len(parent_meta["anomalies"]) == 2
+        assert parent_meta["anomalies"][1]["description"] == "rate limiter misconfigured"
+        assert parent_meta["anomalies"][1]["source_type_id"] == "task:012-anomaly"
+
+    def test_anomaly_not_propagated_on_non_terminal_phase(self, tmp_path):
+        """Systemic finding only checked on terminal phase (debrief/finish)."""
+        db = _make_db()
+        proj_uuid = _register(db, "project", "p063-non-term", "Non Terminal")
+        _with_phase(db, "project:p063-non-term", "deliver", mode="standard")
+
+        task_uuid = _register(
+            db, "task", "013-early", "Early Task",
+            parent_type_id="project:p063-non-term",
+        )
+        db.update_entity(
+            "task:013-early",
+            metadata={"systemic_finding": "should not propagate"},
+        )
+        _with_phase(db, "task:013-early", "define", mode="standard")
+
+        engine = _make_engine(db, str(tmp_path))
+        result = engine.complete_phase(task_uuid, "define")
+
+        parent = db.get_entity_by_uuid(proj_uuid)
+        parent_meta = json.loads(parent["metadata"]) if parent["metadata"] else {}
+        assert parent_meta.get("anomalies", []) == []
+
+    def test_anomaly_propagation_no_parent(self, tmp_path):
+        """Entity with systemic_finding but no parent → no error, no crash."""
+        db = _make_db()
+        task_uuid = _register(db, "task", "014-orphan", "Orphan Task")
+        db.update_entity(
+            "task:014-orphan",
+            metadata={"systemic_finding": "orphan finding"},
+        )
+        _with_phase(db, "task:014-orphan", "debrief", mode="standard",
+                    last_completed_phase="deliver")
+
+        engine = _make_engine(db, str(tmp_path))
+        result = engine.complete_phase(task_uuid, "debrief")
+        # Should complete without error — no parent to propagate to
+        assert result.state is not None
