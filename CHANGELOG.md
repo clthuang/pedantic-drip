@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.13.20] - 2026-03-22
+
 ### Added
 - `derive_kanban()` — unified kanban column derivation replacing scattered STATUS_TO_KANBAN and FEATURE_PHASE_TO_KANBAN constants (AC-4)
 - Schema migration 6 — entity type expansion (initiative, objective, key_result, task), 5D workflow phases, junction tables (entity_tags, entity_dependencies, entity_okr_alignment) (AC-9/10/11/12)
