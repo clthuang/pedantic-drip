@@ -41,6 +41,11 @@ from workflow_engine.feature_lifecycle import (
     init_project_state as _lib_init_project_state,
 )
 from workflow_engine.kanban import derive_kanban
+from workflow_engine.task_promotion import (
+    TaskAlreadyPromotedError,
+    TaskNotFoundError,
+    promote_task as _lib_promote_task,
+)
 from workflow_engine.models import FeatureWorkflowState, TransitionResponse
 from workflow_engine.notifications import NotificationQueue
 from workflow_engine.reconciliation import (
@@ -1117,6 +1122,24 @@ async def get_notifications(project_root: str | None = None) -> str:
             for n in notifications
         ],
     })
+
+
+@mcp.tool()
+async def promote_task(feature_ref: str, task_heading: str) -> str:
+    """Promote a task from tasks.md to a tracked task entity.
+
+    Fuzzy-matches task_heading against headings in tasks.md, creates a task
+    entity with parent=feature, status=planned, and links dependencies.
+    """
+    if _db is None:
+        return _NOT_INITIALIZED
+    try:
+        result = _lib_promote_task(_db, feature_ref, task_heading)
+        return json.dumps(result)
+    except (TaskNotFoundError, TaskAlreadyPromotedError) as exc:
+        return _make_error(type(exc).__name__, str(exc), "Check heading text or use exact heading from tasks.md")
+    except (ValueError, FileNotFoundError) as exc:
+        return _make_error("invalid_input", str(exc), "Provide valid feature_ref and ensure tasks.md exists")
 
 
 # ---------------------------------------------------------------------------
