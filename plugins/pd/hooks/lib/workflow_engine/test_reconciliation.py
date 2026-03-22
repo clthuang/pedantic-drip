@@ -3149,3 +3149,127 @@ class TestRecoverPendingCascades:
         # Summary should include cascade recovery count
         assert "cascades_recovered" in result.summary
         assert result.summary["cascades_recovered"] >= 1
+
+
+# ---------------------------------------------------------------------------
+# Task 3A.1: OKR score reconciliation tests
+# ---------------------------------------------------------------------------
+
+
+class TestOKRScoreReconciliation:
+    """Tests for OKR score drift detection in _recover_pending_cascades."""
+
+    def test_stale_objective_score_updated(self):
+        """Objective with stale score gets recomputed."""
+        from workflow_engine.reconciliation import _recover_pending_cascades
+
+        db = _make_db()
+        # Create objective with stale score
+        obj_uuid = db.register_entity(
+            entity_type="objective", entity_id="obj-stale",
+            name="Stale Objective", metadata={"score": 0.0},
+        )
+        # Add KR child with baseline_target score=1.0 (compute_okr_score reads this)
+        db.register_entity(
+            entity_type="key_result", entity_id="kr-done",
+            name="Done KR", status="active",
+            parent_type_id="objective:obj-stale",
+            metadata={"metric_type": "baseline_target", "score": 1.0},
+        )
+        # Objective score should be 1.0 but stored as 0.0 → mismatch
+        count = _recover_pending_cascades(db)
+        assert count >= 1
+
+        # Verify score was updated
+        obj = db.get_entity_by_uuid(obj_uuid)
+        meta = json.loads(obj["metadata"]) if obj["metadata"] else {}
+        assert meta.get("score") == pytest.approx(1.0)
+
+    def test_correct_objective_score_untouched(self):
+        """Objective with correct score and progress → no recovery."""
+        from workflow_engine.reconciliation import _recover_pending_cascades
+        from workflow_engine.rollup import compute_objective_score, compute_progress
+
+        db = _make_db()
+        obj_uuid = db.register_entity(
+            entity_type="objective", entity_id="obj-correct",
+            name="Correct Objective",
+        )
+        db.register_entity(
+            entity_type="key_result", entity_id="kr-ok",
+            name="OK KR", status="active",
+            parent_type_id="objective:obj-correct",
+            metadata={"metric_type": "baseline_target", "score": 1.0},
+        )
+        # Pre-set correct score AND progress (both checked by reconciliation)
+        expected_score = compute_objective_score(db, obj_uuid)
+        expected_progress = compute_progress(db, obj_uuid)
+        db.update_entity("objective:obj-correct", metadata={
+            "score": expected_score,
+            "progress": expected_progress,
+        })
+
+        count = _recover_pending_cascades(db)
+        assert count == 0
+
+    def test_objective_no_children_no_crash(self):
+        """Objective with no KR children should not crash."""
+        from workflow_engine.reconciliation import _recover_pending_cascades
+
+        db = _make_db()
+        db.register_entity(
+            entity_type="objective", entity_id="obj-empty",
+            name="Empty Objective",
+        )
+        count = _recover_pending_cascades(db)
+        assert count == 0
+
+    def test_missing_score_gets_set(self):
+        """Objective with no stored score but active children gets score set."""
+        from workflow_engine.reconciliation import _recover_pending_cascades
+
+        db = _make_db()
+        obj_uuid = db.register_entity(
+            entity_type="objective", entity_id="obj-noscore",
+            name="No Score Objective",
+        )
+        db.register_entity(
+            entity_type="key_result", entity_id="kr-new",
+            name="New KR", status="active",
+            parent_type_id="objective:obj-noscore",
+        )
+        count = _recover_pending_cascades(db)
+        assert count >= 1
+
+        obj = db.get_entity_by_uuid(obj_uuid)
+        meta = json.loads(obj["metadata"]) if obj["metadata"] else {}
+        assert "score" in meta
+
+    def test_weighted_kr_score_reconciliation(self):
+        """Stale score with weighted KRs gets recomputed correctly."""
+        from workflow_engine.reconciliation import _recover_pending_cascades
+
+        db = _make_db()
+        obj_uuid = db.register_entity(
+            entity_type="objective", entity_id="obj-weighted",
+            name="Weighted Objective", metadata={"score": 0.0},
+        )
+        db.register_entity(
+            entity_type="key_result", entity_id="kr-heavy",
+            name="Heavy KR", status="active",
+            parent_type_id="objective:obj-weighted",
+            metadata={"metric_type": "baseline_target", "score": 1.0, "weight": 3.0},
+        )
+        db.register_entity(
+            entity_type="key_result", entity_id="kr-light",
+            name="Light KR", status="active",
+            parent_type_id="objective:obj-weighted",
+            metadata={"metric_type": "baseline_target", "score": 0.0, "weight": 1.0},
+        )
+        count = _recover_pending_cascades(db)
+        assert count >= 1
+
+        obj = db.get_entity_by_uuid(obj_uuid)
+        meta = json.loads(obj["metadata"]) if obj["metadata"] else {}
+        # (1.0*3.0 + 0.0*1.0) / (3.0+1.0) = 0.75
+        assert meta.get("score") == pytest.approx(0.75)

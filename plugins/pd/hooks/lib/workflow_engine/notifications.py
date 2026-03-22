@@ -82,3 +82,117 @@ class NotificationQueue:
                 fcntl.flock(f, fcntl.LOCK_UN)
 
         return matched
+
+    def drain_filtered(
+        self, project_root: str, event_types: list[str] | None = None
+    ) -> list[Notification]:
+        """Read and remove notifications matching project_root and optional event filter.
+
+        Parameters
+        ----------
+        project_root:
+            Project root to match.
+        event_types:
+            If provided, only return notifications with event in this list.
+            Non-matching events for this project_root are preserved in queue.
+
+        Returns
+        -------
+        list[Notification]
+            Matched + filtered notifications.
+        """
+        if not self._path.exists():
+            return []
+
+        with open(self._path, "r+") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            try:
+                lines = f.readlines()
+                matched: list[Notification] = []
+                remaining: list[str] = []
+
+                for line in lines:
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    data = json.loads(stripped)
+                    if data.get("project_root") == project_root:
+                        if event_types is None or data.get("event") in event_types:
+                            matched.append(Notification(**data))
+                        else:
+                            remaining.append(stripped + "\n")
+                    else:
+                        remaining.append(stripped + "\n")
+
+                f.seek(0)
+                f.writelines(remaining)
+                f.truncate()
+            finally:
+                fcntl.flock(f, fcntl.LOCK_UN)
+
+        return matched
+
+
+def format_human(notifications: list[Notification]) -> str:
+    """Format notifications as human-readable markdown grouped by event type.
+
+    Parameters
+    ----------
+    notifications:
+        List of Notification objects to format.
+
+    Returns
+    -------
+    str
+        Markdown-formatted string with ## headers per event type.
+        Empty string if no notifications.
+    """
+    if not notifications:
+        return ""
+
+    # Group by event type
+    groups: dict[str, list[Notification]] = {}
+    for n in notifications:
+        groups.setdefault(n.event, []).append(n)
+
+    parts: list[str] = []
+    for event_type, notifs in sorted(groups.items()):
+        # Convert event type to title case with spaces
+        header = event_type.replace("_", " ").title()
+        parts.append(f"## {header}")
+        for n in notifs:
+            parts.append(f"- **{n.entity_type_id}**: {n.message} ({n.timestamp})")
+        parts.append("")
+
+    return "\n".join(parts).rstrip()
+
+
+def auto_drain_hook(project_root: str, queue_path: str | None = None) -> str:
+    """Drain all notifications for a project and return formatted output.
+
+    Parameters
+    ----------
+    project_root:
+        Project root to drain notifications for.
+    queue_path:
+        Optional custom queue path. Uses default if None.
+
+    Returns
+    -------
+    str
+        Formatted notification string, or "" if no notifications.
+
+    Notes
+    -----
+    Hook wiring is out of scope — this function is available for future
+    session-start integration.
+    """
+    if queue_path:
+        queue = NotificationQueue(queue_path=queue_path)
+    else:
+        queue = NotificationQueue()
+
+    notifications = queue.drain(project_root)
+    if not notifications:
+        return ""
+    return format_human(notifications)

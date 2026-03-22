@@ -10,11 +10,12 @@ import os
 from dataclasses import dataclass
 
 from entity_registry.database import EntityDatabase
+from entity_registry.metadata import parse_metadata
 from transition_gate.constants import PHASE_SEQUENCE
 
 from .kanban import derive_kanban
 from .engine import WorkflowStateEngine
-from .rollup import compute_progress, rollup_parent
+from .rollup import compute_objective_score, compute_progress, rollup_parent
 
 # Precomputed phase values from immutable PHASE_SEQUENCE (same pattern as engine.py)
 _PHASE_VALUES: tuple[str, ...] = tuple(p.value for p in PHASE_SEQUENCE)
@@ -547,9 +548,6 @@ def _recover_pending_cascades(db: EntityDatabase) -> int:
         if e.get("status") == "completed" and e.get("parent_uuid")
     ]
 
-    if not completed_with_parent:
-        return 0
-
     recovered = 0
     dep_mgr = DependencyManager()
 
@@ -572,10 +570,7 @@ def _recover_pending_cascades(db: EntityDatabase) -> int:
 
         # Read stored progress from parent metadata
         raw_metadata = parent.get("metadata")
-        if raw_metadata:
-            metadata = json.loads(raw_metadata) if isinstance(raw_metadata, str) else raw_metadata
-        else:
-            metadata = {}
+        metadata = parse_metadata(raw_metadata)
 
         stored_progress = metadata.get("progress")
 
@@ -590,6 +585,36 @@ def _recover_pending_cascades(db: EntityDatabase) -> int:
                 rollup_parent(db, child["uuid"])
                 dep_mgr.cascade_unblock(db, child["uuid"])
 
+        recovered += 1
+
+    # Phase 2: OKR score reconciliation for objective entities
+    # Objectives may have stale scores when KR children change status
+    # without triggering parent phase completion.
+    all_entities = db.list_entities()
+    objectives = [
+        e for e in all_entities
+        if e.get("entity_type") == "objective"
+    ]
+    for obj in objectives:
+        obj_uuid = obj["uuid"]
+        children = db.get_children_by_uuid(obj_uuid)
+        if not children:
+            continue
+
+        expected_score = compute_objective_score(db, obj_uuid)
+        raw_meta = obj.get("metadata")
+        meta = parse_metadata(raw_meta)
+        stored_score = meta.get("score")
+
+        if stored_score is not None:
+            try:
+                if abs(float(stored_score) - expected_score) < 1e-9:
+                    continue  # already correct
+            except (ValueError, TypeError):
+                pass  # invalid stored score — recompute
+
+        # Mismatch or missing score — update via metadata merge
+        db.update_entity(obj["type_id"], metadata={"score": expected_score})
         recovered += 1
 
     if recovered > 0:

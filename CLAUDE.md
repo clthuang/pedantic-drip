@@ -78,7 +78,7 @@ bash plugins/pd/mcp/test_run_memory_server.sh
 # Run MCP bootstrap shared library tests (unit + integration, ~2-5 min)
 bash plugins/pd/mcp/test_bootstrap_venv.sh
 
-# Run entity registry tests (database, backfill, server helpers, frontmatter, frontmatter_sync, search — 710+ tests)
+# Run entity registry tests (database, backfill, server helpers, frontmatter, frontmatter_sync, search, metadata — 940+ tests)
 plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/entity_registry/ -v
 
 # Run entity search MCP tool tests
@@ -137,7 +137,9 @@ bash scripts/release.sh --ci
 - **Entity registry DB:** `~/.claude/pd/entities/entities.db` — cross-project entity lineage (overridable via `ENTITY_DB_PATH` env var)
 - **Entity type_id format gotcha:** `type_id` uses colon separator: `"{entity_type}:{entity_id}"` (e.g., `"feature:043-my-feature"`), NOT slash. See `database.py:627`.
 - **Entity registry MCP metadata gotcha:** `register_entity` and `update_entity` accept `metadata` as either a dict or JSON string (dict preferred). Dicts are auto-coerced to JSON string via `json.dumps()` before `parse_metadata`. When updating entity state, prefer updating `.meta.json` directly (source of truth) and skip MCP metadata updates.
+- **Entity metadata parsing:** Always use `from entity_registry.metadata import parse_metadata` — returns `{}` for None/invalid (never returns None). Do NOT use raw `json.loads` on metadata fields. `validate_metadata(entity_type, meta_dict)` returns warning strings for type mismatches.
 - **Entity table schema gotcha:** The `entities` table has a `uuid TEXT NOT NULL PRIMARY KEY` column. Raw SQL `INSERT` in test helpers must include a uuid value or the insert silently fails with `INSERT OR IGNORE`. Use `import uuid; str(uuid.uuid4())`.
+- **Entity DB encapsulation:** Never access `db._conn` directly. Use `db.add_dependency()`, `db.query_dependencies()`, `db.scan_entity_ids()`, `db.is_healthy()`, `db.register_entities_batch()` etc.
 - **Hook subprocess safety:** Always suppress stderr (`2>/dev/null`) for Python/external calls in hooks to prevent corrupting JSON output
 - **Semantic memory CLI:** Find plugin root first: `PLUGIN_ROOT=$(ls -d ~/.claude/plugins/cache/*/pd*/*/hooks 2>/dev/null | head -1 | xargs dirname)`, then `PYTHONPATH="$PLUGIN_ROOT/hooks/lib" "$PLUGIN_ROOT/.venv/bin/python" -m semantic_memory.writer`. Fallback (dev workspace): `PYTHONPATH=plugins/pd/hooks/lib python3 -m semantic_memory.writer`
 

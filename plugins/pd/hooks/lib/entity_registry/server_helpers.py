@@ -9,6 +9,8 @@ import json
 import os
 from collections import defaultdict
 
+from entity_registry.metadata import parse_metadata as _parse_metadata
+
 
 def render_tree(
     entities: list[dict], root_type_id: str, max_depth: int = 50
@@ -75,16 +77,11 @@ def _format_entity_label(entity: dict) -> str:
     label = f'{entity["type_id"]} \u2014 "{entity["name"]}" {paren}'
 
     # AC-5: append depends_on_features annotation when present
-    metadata_str = entity.get("metadata")
-    if metadata_str:
-        try:
-            meta = json.loads(metadata_str)
-            deps = meta.get("depends_on_features")
-            if isinstance(deps, list) and deps:
-                dep_refs = ", ".join(f"feature:{d}" for d in deps)
-                label += f" [depends on: {dep_refs}]"
-        except (json.JSONDecodeError, ValueError, TypeError):
-            pass  # malformed metadata -- skip annotation gracefully
+    meta = _parse_metadata(entity.get("metadata"))
+    deps = meta.get("depends_on_features")
+    if isinstance(deps, list) and deps:
+        dep_refs = ", ".join(f"feature:{d}" for d in deps)
+        label += f" [depends on: {dep_refs}]"
 
     return label
 
@@ -136,26 +133,27 @@ def _render_node(
         )
 
 
-def parse_metadata(metadata_str: str | None) -> dict | None:
-    """Parse a JSON metadata string into a dict.
+def parse_metadata(raw: str | dict | None) -> dict:
+    """Parse raw metadata into a dict. Delegates to entity_registry.metadata.parse_metadata.
 
     Parameters
     ----------
-    metadata_str:
-        JSON string to parse, or None.
+    raw:
+        JSON string, dict, or None.
 
     Returns
     -------
-    dict | None
-        Parsed dict on success, None if input is None,
-        or ``{"error": "<message>"}`` if JSON is invalid.
+    dict
+        Parsed metadata. Returns {} for None input (never returns None).
+        Returns {} for invalid JSON.
+
+    Note
+    ----
+    Behavior change from the old implementation: None input now returns {}
+    instead of None. Callers that checked ``if meta is None`` must use
+    ``if not meta`` instead.
     """
-    if metadata_str is None:
-        return None
-    try:
-        return json.loads(metadata_str)
-    except (json.JSONDecodeError, ValueError) as exc:
-        return {"error": f"Invalid JSON: {exc}"}
+    return _parse_metadata(raw)
 
 
 def resolve_output_path(

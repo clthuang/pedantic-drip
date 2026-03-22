@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `metadata.py` module — centralized metadata parsing (`parse_metadata`) and schema-based validation (`validate_metadata`) replacing 6+ hand-rolled patterns
+- `METADATA_SCHEMAS` — per-entity-type metadata key/type schemas for all 8 entity types with unknown-key warnings
+- Metadata validation wiring — `register_entity` and `update_entity` emit stderr warnings on type mismatches (warn-only, never rejects)
+- DB dependency methods — `add_dependency`, `remove_dependency`, `remove_dependencies_by_blocker`, `query_dependencies`, `check_dependency_cycle` on `EntityDatabase`
+- DB utility methods — `scan_entity_ids`, `is_healthy` on `EntityDatabase`
+- `register_entities_batch` — bulk entity registration in a single transaction (~7x faster than individual calls) with intra-batch parent resolution
+- `compute_objective_score` — weighted KR scoring for objectives (respects optional `weight` metadata, defaults to equal weighting)
+- `create_key_result` MCP tool — convenience tool for creating key results with weight parameter
+- Fuzzy signal matching (`_fuzzy_signal_match`) — three-tier matching (substring, Jaccard with synonyms, difflib typo detection) for secretary intelligence
+- New scope signals — `cross-service`, `compliance`, `performance-critical`, `backward compat` (full); `more complex than thought`, `extra requirements`, `new dependency` (standard expansion); `cross-service`, `compliance-sensitive` (full expansion)
+- `drain_filtered` — event-type-filtered notification drain preserving non-matching events in queue
+- `format_human` — markdown-formatted notification output grouped by event type
+- `auto_drain_hook` — session-start-ready function for automatic notification drain
+- OKR score reconciliation — `_recover_pending_cascades` now detects stale objective scores and recomputes via `compute_objective_score`
+
+### Changed
+- `server_helpers.parse_metadata` now returns `{}` for None input (was `None`) — re-exports from `entity_registry.metadata`
+- Replaced hand-rolled `json.loads(metadata)` patterns in `frontmatter_sync.py`, `reconciliation.py`, `server_helpers.py` with centralized `parse_metadata`
+- Refactored `dependencies.py` — all `db._conn` access replaced with `EntityDatabase` public methods
+- Refactored `id_generator.py`, `task_promotion.py`, `engine.py` — zero direct `_conn` access remaining
+
+### Fixed
+- `update_entity` crash on corrupted metadata JSON — now uses try/except fallback instead of raw `json.loads`
+
 ## [4.13.24] - 2026-03-23
 
 ### Added

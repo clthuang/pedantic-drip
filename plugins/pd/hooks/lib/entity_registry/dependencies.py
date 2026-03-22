@@ -17,10 +17,8 @@ class DependencyManager:
     """Manages entity dependencies (blocked_by relationships).
 
     Uses the entity_dependencies table created in migration 6.
-    Cycle detection via recursive CTE with max depth 20.
+    Cycle detection delegated to EntityDatabase.check_dependency_cycle.
     """
-
-    MAX_DEPTH = 20
 
     def add_dependency(
         self, db: EntityDatabase, entity_uuid: str, blocked_by_uuid: str
@@ -57,51 +55,17 @@ class DependencyManager:
         self._check_cycle(db, entity_uuid, blocked_by_uuid)
 
         # Insert (IGNORE for idempotency on duplicate)
-        db._conn.execute(
-            "INSERT OR IGNORE INTO entity_dependencies "
-            "(entity_uuid, blocked_by_uuid) VALUES (?, ?)",
-            (entity_uuid, blocked_by_uuid),
-        )
-        db._conn.commit()
+        db.add_dependency(entity_uuid, blocked_by_uuid)
 
     def _check_cycle(
         self, db: EntityDatabase, entity_uuid: str, blocked_by_uuid: str
     ) -> None:
         """Check if adding entity_uuid -> blocked_by_uuid creates a cycle.
 
-        Uses a recursive CTE to walk the dependency graph starting from
-        blocked_by_uuid's blockers, checking if we can reach entity_uuid.
-        If so, adding this edge would create a cycle.
-
-        Max traversal depth: 20.
+        Delegates to EntityDatabase.check_dependency_cycle which uses a
+        recursive CTE with max depth 20.
         """
-        # Walk from blocked_by_uuid upward through its blockers.
-        # If entity_uuid is reachable, adding entity_uuid -> blocked_by_uuid
-        # would create a cycle.
-        row = db._conn.execute(
-            """
-            WITH RECURSIVE dep_chain(uid, depth) AS (
-                -- Start: what does blocked_by_uuid depend on?
-                SELECT blocked_by_uuid, 0
-                FROM entity_dependencies
-                WHERE entity_uuid = :blocked_by
-                UNION ALL
-                SELECT ed.blocked_by_uuid, dc.depth + 1
-                FROM entity_dependencies ed
-                JOIN dep_chain dc ON ed.entity_uuid = dc.uid
-                WHERE dc.depth < :max_depth
-            )
-            SELECT 1 FROM dep_chain WHERE uid = :target
-            LIMIT 1
-            """,
-            {
-                "blocked_by": blocked_by_uuid,
-                "target": entity_uuid,
-                "max_depth": self.MAX_DEPTH,
-            },
-        ).fetchone()
-
-        if row is not None:
+        if db.check_dependency_cycle(entity_uuid, blocked_by_uuid):
             raise CycleError(
                 f"Adding dependency would create a cycle: "
                 f"{entity_uuid} -> {blocked_by_uuid} creates a back-edge"
@@ -111,12 +75,7 @@ class DependencyManager:
         self, db: EntityDatabase, entity_uuid: str, blocked_by_uuid: str
     ) -> None:
         """Remove a dependency. No-op if it doesn't exist."""
-        db._conn.execute(
-            "DELETE FROM entity_dependencies "
-            "WHERE entity_uuid = ? AND blocked_by_uuid = ?",
-            (entity_uuid, blocked_by_uuid),
-        )
-        db._conn.commit()
+        db.remove_dependency(entity_uuid, blocked_by_uuid)
 
     def cascade_unblock(
         self, db: EntityDatabase, completed_uuid: str
@@ -127,33 +86,22 @@ class DependencyManager:
         (have zero remaining blockers after this removal).
         """
         # Find all entities that were blocked by the completed entity
-        blocked_rows = db._conn.execute(
-            "SELECT entity_uuid FROM entity_dependencies "
-            "WHERE blocked_by_uuid = ?",
-            (completed_uuid,),
-        ).fetchall()
+        affected_deps = db.query_dependencies(blocked_by_uuid=completed_uuid)
 
-        if not blocked_rows:
+        if not affected_deps:
             return []
 
-        affected_uuids = [row["entity_uuid"] for row in blocked_rows]
+        affected_uuids = [d["entity_uuid"] for d in affected_deps]
 
         # Remove all deps where blocked_by = completed_uuid
-        db._conn.execute(
-            "DELETE FROM entity_dependencies WHERE blocked_by_uuid = ?",
-            (completed_uuid,),
-        )
-        db._conn.commit()
+        db.remove_dependencies_by_blocker(completed_uuid)
 
         # Check which affected entities are now fully unblocked
         # and update their status from 'blocked' to 'planned' (per design C4/AC-29)
         fully_unblocked = []
         for uid in affected_uuids:
-            remaining = db._conn.execute(
-                "SELECT 1 FROM entity_dependencies WHERE entity_uuid = ? LIMIT 1",
-                (uid,),
-            ).fetchone()
-            if remaining is None:
+            remaining = db.query_dependencies(entity_uuid=uid)
+            if not remaining:
                 fully_unblocked.append(uid)
                 # Update status: blocked → planned
                 entity = db.get_entity_by_uuid(uid)
@@ -166,20 +114,10 @@ class DependencyManager:
         self, db: EntityDatabase, entity_uuid: str
     ) -> list[str]:
         """Return UUIDs of entities that block the given entity."""
-        rows = db._conn.execute(
-            "SELECT blocked_by_uuid FROM entity_dependencies "
-            "WHERE entity_uuid = ?",
-            (entity_uuid,),
-        ).fetchall()
-        return [row["blocked_by_uuid"] for row in rows]
+        return [d["blocked_by_uuid"] for d in db.query_dependencies(entity_uuid=entity_uuid)]
 
     def get_dependents(
         self, db: EntityDatabase, entity_uuid: str
     ) -> list[str]:
         """Return UUIDs of entities blocked by the given entity."""
-        rows = db._conn.execute(
-            "SELECT entity_uuid FROM entity_dependencies "
-            "WHERE blocked_by_uuid = ?",
-            (entity_uuid,),
-        ).fetchall()
-        return [row["entity_uuid"] for row in rows]
+        return [d["entity_uuid"] for d in db.query_dependencies(blocked_by_uuid=entity_uuid)]

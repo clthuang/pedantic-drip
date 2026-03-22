@@ -219,27 +219,25 @@ class TestParseMetadata:
         result = parse_metadata("{}")
         assert result == {}
 
-    def test_invalid_json_returns_error_dict(self):
-        """Invalid JSON should return an error dict."""
+    def test_invalid_json_returns_empty_dict(self):
+        """Invalid JSON should return an empty dict (not an error dict)."""
         result = parse_metadata("not valid json")
-        assert isinstance(result, dict)
-        assert "error" in result
+        assert result == {}
 
-    def test_none_passthrough_returns_none(self):
-        """None input should pass through as None."""
+    def test_none_returns_empty_dict(self):
+        """None input should return {} (not None)."""
         result = parse_metadata(None)
-        assert result is None
+        assert result == {}
 
     def test_nested_json(self):
         """Nested JSON objects should parse correctly."""
         result = parse_metadata('{"a": {"b": [1, 2, 3]}}')
         assert result == {"a": {"b": [1, 2, 3]}}
 
-    def test_empty_string_returns_error_dict(self):
-        """Empty string is invalid JSON and should return error dict."""
+    def test_empty_string_returns_empty_dict(self):
+        """Empty string is invalid JSON and should return empty dict."""
         result = parse_metadata("")
-        assert isinstance(result, dict)
-        assert "error" in result
+        assert result == {}
 
 
 # ---------------------------------------------------------------------------
@@ -626,9 +624,8 @@ class TestParseMetadataMalformed:
     def test_malformed_meta_json_handled_gracefully(self):
         # Given malformed JSON string
         result = parse_metadata("{key: invalid}")
-        # Then an error dict is returned, not an exception
-        assert isinstance(result, dict)
-        assert "error" in result
+        # Then an empty dict is returned (not an exception, not an error dict)
+        assert result == {}
 
     def test_meta_json_with_extra_unexpected_fields_accepted(self):
         # Given JSON with unexpected extra fields

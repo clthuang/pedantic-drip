@@ -5,6 +5,7 @@ Implements Plan Step 2.0, AC-17 (CREATE), AC-18 (QUERY), AC-22a (weight escalati
 """
 from __future__ import annotations
 
+import difflib
 import re
 from typing import TYPE_CHECKING
 
@@ -55,6 +56,7 @@ _LIGHT_SIGNALS: list[str] = [
 _FULL_SIGNALS: list[str] = [
     "rewrite", "refactor", "breaking change", "complex", "cross-team",
     "architecture", "migration", "security", "multi-service",
+    "cross-service", "compliance", "performance-critical", "backward compat",
 ]
 
 # Scope expansion signals — indicate work is growing
@@ -62,12 +64,134 @@ _EXPANSION_STANDARD_SIGNALS: list[str] = [
     "multiple components", "needs design review", "design review",
     "needs spec", "growing scope", "more involved than expected",
     "add more", "additional features", "scope change",
+    "more complex than thought", "extra requirements", "new dependency",
 ]
 
 _EXPANSION_FULL_SIGNALS: list[str] = [
     "cross-team impact", "cross-team", "breaking change", "architecture change",
     "architecture", "rewrite", "security review", "multi-service",
+    "cross-service", "compliance-sensitive",
 ]
+
+
+# Synonym groups for semantic matching in signal detection.
+# Each group contains words that should be treated as equivalent.
+_SIGNAL_SYNONYMS: dict[str, str] = {}
+_SYNONYM_GROUPS: list[list[str]] = [
+    ["extra", "additional", "more"],
+    ["functionality", "features", "capabilities"],
+    ["complex", "complicated", "involved"],
+    # Note: "change"/"update"/"modification" deliberately excluded —
+    # too common in benign descriptions, causes false positives.
+    ["requirement", "requirements", "dependency", "dependencies"],
+]
+for _group in _SYNONYM_GROUPS:
+    _canonical = _group[0]
+    for _word in _group:
+        _SIGNAL_SYNONYMS[_word] = _canonical
+
+
+def _expand_synonyms(words: set[str]) -> set[str]:
+    """Expand a word set with canonical synonyms."""
+    expanded = set(words)
+    for w in words:
+        canonical = _SIGNAL_SYNONYMS.get(w)
+        if canonical:
+            expanded.add(canonical)
+            # Also add all synonyms from the same group
+            for group in _SYNONYM_GROUPS:
+                if w in group:
+                    expanded.update(group)
+    return expanded
+
+
+def _fuzzy_signal_match(signal: str, patterns: list[str], cutoff: float = 0.6) -> bool:
+    """Three-tier fuzzy matching for signal detection.
+
+    Tier 1: Substring match (fast path — preserves all existing behavior).
+    Tier 2: Word-overlap Jaccard coefficient (threshold 0.3) with synonym expansion.
+    Tier 3: difflib.get_close_matches on individual words (cutoff 0.6).
+
+    Parameters
+    ----------
+    signal:
+        The input signal string to check.
+    patterns:
+        List of known signal patterns to match against.
+    cutoff:
+        Similarity cutoff for difflib matching (default 0.6).
+
+    Returns
+    -------
+    bool
+        True if the signal matches any pattern.
+    """
+    sl = signal.lower()
+
+    # Tier 1: Substring (preserves all existing behavior)
+    for pattern in patterns:
+        if pattern in sl:
+            return True
+
+    # Tier 2: Word-overlap Jaccard on tokenized words (with synonym expansion)
+    signal_words = set(re.findall(r'[a-z]+', sl))
+    if not signal_words:
+        return False
+
+    expanded_signal = _expand_synonyms(signal_words)
+
+    for pattern in patterns:
+        pattern_words = set(re.findall(r'[a-z]+', pattern.lower()))
+        if not pattern_words:
+            continue
+        expanded_pattern = _expand_synonyms(pattern_words)
+        intersection = expanded_signal & expanded_pattern
+        union = expanded_signal | expanded_pattern
+        # Require ≥2 words in intersection to avoid single-word false positives
+        # (e.g., "trivial change" matching "breaking change" via shared "change")
+        if len(intersection) >= 2 and len(intersection) / len(union) >= 0.3:
+            return True
+
+    # Tier 3: difflib near-matches on individual words
+    # Only match words of similar length (±2 chars) to avoid
+    # spurious matches like "multi" ↔ "multiple" or "compliance" ↔ "components"
+    all_pattern_words = []
+    for pattern in patterns:
+        all_pattern_words.extend(re.findall(r'[a-z]+', pattern.lower()))
+    all_pattern_words = list(set(all_pattern_words))  # deduplicate
+
+    # For each pattern, check if the signal has a near-miss (typo) match
+    # on at least one word AND shares at least one exact word with that pattern.
+    # This catches "archtecture change" matching "architecture change"
+    # (typo on "archtecture" + exact "change") without false-positives
+    # from unrelated signals that happen to share one common word.
+    for pattern in patterns:
+        pattern_words = set(re.findall(r'[a-z]+', pattern.lower()))
+        if not pattern_words:
+            continue
+
+        # Check for at least 1 exact word overlap
+        exact_overlap = signal_words & pattern_words
+        if not exact_overlap:
+            continue
+
+        # Check for at least 1 near-miss (typo) on a different word
+        has_typo_match = False
+        for word in signal_words:
+            if word in exact_overlap:
+                continue  # skip exact matches
+            if len(word) < 5:
+                continue
+            candidates = [pw for pw in pattern_words if abs(len(pw) - len(word)) <= 2 and pw != word]
+            close = difflib.get_close_matches(word, candidates, n=1, cutoff=cutoff)
+            if close:
+                has_typo_match = True
+                break
+
+        if has_typo_match:
+            return True
+
+    return False
 
 
 def detect_mode(request_text: str, context: dict | None) -> str:
@@ -253,15 +377,10 @@ def recommend_weight(scope_signals: list[str]) -> str:
     has_full = False
 
     for signal in scope_signals:
-        sl = signal.lower()
-        for pattern in _FULL_SIGNALS:
-            if pattern in sl:
-                has_full = True
-                break
-        for pattern in _LIGHT_SIGNALS:
-            if pattern in sl:
-                has_light = True
-                break
+        if _fuzzy_signal_match(signal, _FULL_SIGNALS):
+            has_full = True
+        if _fuzzy_signal_match(signal, _LIGHT_SIGNALS):
+            has_light = True
 
     if has_full:
         return "full"
@@ -440,15 +559,10 @@ def detect_scope_expansion(
     has_standard_signal = False
 
     for signal in signals:
-        sl = signal.lower()
-        for pattern in _EXPANSION_FULL_SIGNALS:
-            if pattern in sl:
-                has_full_signal = True
-                break
-        for pattern in _EXPANSION_STANDARD_SIGNALS:
-            if pattern in sl:
-                has_standard_signal = True
-                break
+        if _fuzzy_signal_match(signal, _EXPANSION_FULL_SIGNALS):
+            has_full_signal = True
+        if _fuzzy_signal_match(signal, _EXPANSION_STANDARD_SIGNALS):
+            has_standard_signal = True
 
     if has_full_signal:
         if current_mode in ("light", "standard"):

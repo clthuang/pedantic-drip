@@ -11,6 +11,7 @@ import os
 from dataclasses import dataclass
 
 from entity_registry.database import EntityDatabase
+from entity_registry.metadata import parse_metadata
 from entity_registry.frontmatter import (
     FrontmatterUUIDMismatch,
     build_header,
@@ -119,11 +120,8 @@ def _derive_optional_fields(entity: dict, artifact_type: str) -> dict:
     # project_id: metadata JSON first, then parent_type_id fallback
     project_id = None
     if entity.get("metadata"):
-        try:
-            meta = json.loads(entity["metadata"])
-            project_id = meta.get("project_id") or None
-        except (json.JSONDecodeError, TypeError):
-            pass
+        meta = parse_metadata(entity["metadata"])
+        project_id = meta.get("project_id") or None
     if project_id is None and entity.get("parent_type_id"):
         p_type, _, p_id = entity["parent_type_id"].partition(":")
         if p_type == "project":

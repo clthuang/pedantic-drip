@@ -44,13 +44,9 @@ def _scan_existing_max_seq(db: "EntityDatabase", entity_type: str) -> int:
     Looks at ``entity_id`` values matching ``^\\d{3,}-`` pattern and returns
     the highest numeric prefix found.  Returns 0 if no matching entities exist.
     """
-    rows = db._conn.execute(
-        "SELECT entity_id FROM entities WHERE entity_type = ?",
-        (entity_type,),
-    ).fetchall()
+    entity_ids = db.scan_entity_ids(entity_type)
     max_seq = 0
-    for row in rows:
-        entity_id = row[0]
+    for entity_id in entity_ids:
         match = re.match(r"^(\d+)-", entity_id)
         if match:
             max_seq = max(max_seq, int(match.group(1)))

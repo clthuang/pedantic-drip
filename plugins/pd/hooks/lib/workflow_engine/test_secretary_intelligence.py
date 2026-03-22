@@ -11,6 +11,7 @@ import uuid as uuid_mod
 import pytest
 
 from workflow_engine.secretary_intelligence import (
+    _fuzzy_signal_match,
     check_duplicates,
     check_kr_count,
     detect_activity_kr,
@@ -700,3 +701,89 @@ class TestGetParentContext:
         )
         result = get_parent_context(db, "project:011-boundary")
         assert result["traffic_light"] == "GREEN"
+
+
+# ---------------------------------------------------------------------------
+# Task 2A.1: Fuzzy signal matching tests
+# ---------------------------------------------------------------------------
+class TestFuzzySignalMatch:
+    """Tests for _fuzzy_signal_match function."""
+
+    def test_substring_fast_path(self):
+        """Tier 1: exact substring still works."""
+        assert _fuzzy_signal_match("breaking change detected", ["breaking change"])
+
+    def test_synonym_match_extra_functionality(self):
+        """Plan requirement: 'extra functionality' matches 'additional features'."""
+        assert _fuzzy_signal_match(
+            "we need extra functionality", ["additional features"]
+        )
+
+    def test_typo_match_archtecture(self):
+        """Plan requirement: typo 'archtecture' matches 'architecture'."""
+        assert _fuzzy_signal_match("archtecture change", ["architecture change"])
+
+    def test_no_match_update_docs(self):
+        """Plan requirement: must NOT match unrelated signals."""
+        assert not _fuzzy_signal_match("update docs", ["security review"])
+
+    def test_no_match_simple_task(self):
+        assert not _fuzzy_signal_match("simple task", ["complex system"])
+
+    def test_no_match_add_button(self):
+        assert not _fuzzy_signal_match("add button", ["breaking change"])
+
+    def test_no_match_empty_signal(self):
+        assert not _fuzzy_signal_match("", ["breaking change"])
+
+    def test_no_match_empty_patterns(self):
+        assert not _fuzzy_signal_match("some signal", [])
+
+    def test_case_insensitive(self):
+        assert _fuzzy_signal_match("BREAKING CHANGE", ["breaking change"])
+
+    def test_no_match_short_words_only(self):
+        """Short words alone shouldn't trigger fuzzy match."""
+        assert not _fuzzy_signal_match("a b c", ["x y z"])
+
+    def test_no_match_unrelated_long_words(self):
+        assert not _fuzzy_signal_match("documentation update", ["security review"])
+
+    def test_substring_partial(self):
+        """Substring inside longer text."""
+        assert _fuzzy_signal_match("this is a rewrite of the system", ["rewrite"])
+
+
+# ---------------------------------------------------------------------------
+# Task 2A.2: New signals and fuzzy wiring tests
+# ---------------------------------------------------------------------------
+class TestNewSignals:
+    """Tests for expanded signal lists and fuzzy matching in recommend_weight."""
+
+    def test_cross_service_triggers_full(self):
+        assert recommend_weight(["cross-service impact"]) == "full"
+
+    def test_compliance_triggers_full(self):
+        assert recommend_weight(["compliance review needed"]) == "full"
+
+    def test_performance_critical_triggers_full(self):
+        assert recommend_weight(["performance-critical operation"]) == "full"
+
+    def test_backward_compat_triggers_full(self):
+        assert recommend_weight(["backward compat needed"]) == "full"
+
+    def test_expansion_cross_service_triggers_full(self):
+        result = detect_scope_expansion("light", ["cross-service impact"])
+        assert result == "full"
+
+    def test_expansion_compliance_sensitive_triggers_full(self):
+        result = detect_scope_expansion("standard", ["compliance-sensitive"])
+        assert result == "full"
+
+    def test_expansion_more_complex_triggers_standard(self):
+        result = detect_scope_expansion("light", ["more complex than thought"])
+        assert result == "standard"
+
+    def test_expansion_extra_requirements_triggers_standard(self):
+        result = detect_scope_expansion("light", ["extra requirements found"])
+        assert result == "standard"

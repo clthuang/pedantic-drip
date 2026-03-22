@@ -13,6 +13,8 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+from entity_registry.metadata import parse_metadata
+
 if TYPE_CHECKING:
     from entity_registry.database import EntityDatabase
 
@@ -197,15 +199,16 @@ def compute_okr_score(db: "EntityDatabase", kr_uuid: str) -> float:
 
 
 def compute_objective_score(db: "EntityDatabase", objective_uuid: str) -> float:
-    """Compute and store the score for an objective entity from its child KR scores.
+    """Compute and store the weighted score for an objective from its child KR scores.
 
-    The objective score is the equal-weight average of all non-abandoned child
-    key_result scores (each computed via ``compute_okr_score``).  Non-KR
+    Each non-abandoned key_result child is scored via ``compute_okr_score``.
+    KRs can have an optional ``weight`` in metadata (default 1.0).  The
+    objective score is the weighted average of all KR scores.  Non-KR
     children are ignored.
 
     Stores score + traffic_light in the objective's metadata.
 
-    Implements AC-34 (OKR Progress Rollup).
+    Implements AC-34 (OKR Progress Rollup) with weighted scoring support.
 
     Parameters
     ----------
@@ -217,7 +220,8 @@ def compute_objective_score(db: "EntityDatabase", objective_uuid: str) -> float:
     Returns
     -------
     float
-        Score in [0.0, 1.0].  Returns 0.0 if no active KR children.
+        Weighted score in [0.0, 1.0].  Returns 0.0 if no active KR children
+        or all weights are 0.
     """
     entity = db.get_entity_by_uuid(objective_uuid)
     if entity is None:
@@ -236,11 +240,29 @@ def compute_objective_score(db: "EntityDatabase", objective_uuid: str) -> float:
     if not kr_children:
         return 0.0
 
-    total = 0.0
-    for kr in kr_children:
-        total += compute_okr_score(db, kr["uuid"])
+    weighted_sum = 0.0
+    total_weight = 0.0
 
-    score = total / len(kr_children)
+    for kr in kr_children:
+        # Get weight from metadata (default 1.0)
+        meta = parse_metadata(kr.get("metadata"))
+        weight = meta.get("weight", 1.0)
+        try:
+            weight = float(weight)
+        except (ValueError, TypeError):
+            weight = 1.0
+
+        if weight <= 0:
+            continue  # zero/negative weight excluded
+
+        kr_score = compute_okr_score(db, kr["uuid"])
+        weighted_sum += kr_score * weight
+        total_weight += weight
+
+    if total_weight <= 0:
+        return 0.0
+
+    score = weighted_sum / total_weight
     traffic_light = compute_traffic_light(score)
 
     db.update_entity(

@@ -286,13 +286,7 @@ class WorkflowStateEngine:
         """
         # NOTE: busy_timeout is inherited from EntityDatabase (5s).
         # Accepted product decision -- see design C1 NFR-1 interaction.
-        if self.db._conn is None:
-            return False
-        try:
-            self.db._conn.execute("SELECT 1")
-            return True
-        except sqlite3.Error:
-            return False
+        return self.db.is_healthy()
 
     def _row_to_state(
         self, row: dict, source: str = "db"

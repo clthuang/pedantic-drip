@@ -504,7 +504,7 @@ The entity registry tracks the lineage of pd artifacts (backlog items, brainstor
 
 **MCP Server:** `plugins/pd/mcp/entity_server.py` (bootstrapped via `plugins/pd/mcp/run-entity-server.sh`)
 
-**MCP Tools (8):**
+**MCP Tools (9):**
 - `register_entity` -- Register a new entity (backlog, brainstorm, project, or feature) with optional parent link and metadata
 - `set_parent` -- Set or change the parent of an entity (with circular reference detection)
 - `get_entity` -- Retrieve a single entity by type_id
@@ -513,6 +513,11 @@ The entity registry tracks the lineage of pd artifacts (backlog items, brainstor
 - `export_lineage_markdown` -- Export entity lineage as a markdown tree, optionally writing to a file
 - `search_entities` -- Search entities by name, type, status, or metadata
 - `export_entities` -- Export all entities as structured data
+- `create_key_result` -- Create a key_result entity with parent link, metric_type, and optional weight
+
+**Metadata Module:** `plugins/pd/hooks/lib/entity_registry/metadata.py` — centralized `parse_metadata()` (returns `{}` for None/invalid, never `None`) and `validate_metadata()` (warn-only schema checks per entity type). All entity_registry and workflow_engine modules import from here instead of hand-rolling `json.loads` patterns.
+
+**Batch Registration:** `EntityDatabase.register_entities_batch()` registers multiple entities in a single transaction (~7x faster). Supports intra-batch parent references (parent must appear earlier in the list).
 
 **Backfill Scanner:** `plugins/pd/hooks/lib/entity_registry/backfill.py` scans existing artifact directories (features/, brainstorms/, projects/, backlog.md) and registers entities in topological order (backlog -> brainstorm -> project -> feature). Runs once on first server start; subsequent runs are skipped via a `backfill_complete` metadata marker.
 

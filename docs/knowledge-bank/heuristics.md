@@ -593,3 +593,24 @@ Recreate Python venvs after directory renames — venvs contain hardcoded absolu
 - Confidence: high
 - Last observed: Feature #048
 - Observation count: 1
+
+### Define Negative Test Cases for Fuzzy Matching Before Implementation
+For fuzzy/heuristic matching logic, define explicit negative test cases (must-NOT-match inputs) in the task specification before implementation. Expect at least 2 iteration rounds for threshold tuning even with good negative cases.
+- Source: Feature 052-reactive-entity-consistency, Phase 2A — three corrective iterations needed
+- Confidence: high
+- Last observed: Feature #052
+- Observation count: 1
+
+### Prefer Single-Transaction Batch Operations for Bulk Writes
+When a single-transaction batch approach is feasible, prefer it over individual commits. Batch registration achieved 7x performance improvement over individual entity commits.
+- Source: Feature 052-reactive-entity-consistency, Phase 3B
+- Confidence: high
+- Last observed: Feature #052
+- Observation count: 1
+
+### Gap Remediation Features Should Have Negative Net Line Counts
+Gap remediation features that consolidate scattered patterns typically delete more code than they add. Budget for negative net line counts and treat deletion volume as a quality signal.
+- Source: Feature 052-reactive-entity-consistency — 30 files, +1660/-3267, net -1607 lines
+- Confidence: medium
+- Last observed: Feature #052
+- Observation count: 1

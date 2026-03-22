@@ -4648,3 +4648,264 @@ class TestOkrAlignment:
         alignments = db.get_okr_alignments(feat_uuid)
         assert len(alignments) == 1
         assert alignments[0]["uuid"] == kr2_uuid
+
+
+# ---------------------------------------------------------------------------
+# Task 1B.1: Dependency methods on EntityDatabase
+# ---------------------------------------------------------------------------
+
+
+class TestDependencyMethods:
+    """Tests for add_dependency, remove_dependency, query_dependencies, etc."""
+
+    def _make_two_entities(self, db):
+        uuid_a = db.register_entity("feature", "dep-a", "Feature A")
+        uuid_b = db.register_entity("feature", "dep-b", "Feature B")
+        return uuid_a, uuid_b
+
+    def test_add_and_query_dependency(self, db):
+        a, b = self._make_two_entities(db)
+        db.add_dependency(a, b)
+        deps = db.query_dependencies(entity_uuid=a)
+        assert len(deps) == 1
+        assert deps[0]["entity_uuid"] == a
+        assert deps[0]["blocked_by_uuid"] == b
+
+    def test_add_dependency_idempotent(self, db):
+        a, b = self._make_two_entities(db)
+        db.add_dependency(a, b)
+        db.add_dependency(a, b)  # Should not raise
+        assert len(db.query_dependencies(entity_uuid=a)) == 1
+
+    def test_remove_dependency(self, db):
+        a, b = self._make_two_entities(db)
+        db.add_dependency(a, b)
+        db.remove_dependency(a, b)
+        assert len(db.query_dependencies(entity_uuid=a)) == 0
+
+    def test_remove_nonexistent_noop(self, db):
+        a, b = self._make_two_entities(db)
+        db.remove_dependency(a, b)  # Should not raise
+
+    def test_remove_dependencies_by_blocker(self, db):
+        a, b = self._make_two_entities(db)
+        c = db.register_entity("feature", "dep-c", "Feature C")
+        db.add_dependency(a, b)
+        db.add_dependency(c, b)
+        db.remove_dependencies_by_blocker(b)
+        assert len(db.query_dependencies(blocked_by_uuid=b)) == 0
+
+    def test_query_dependencies_by_blocker(self, db):
+        a, b = self._make_two_entities(db)
+        c = db.register_entity("feature", "dep-c", "Feature C")
+        db.add_dependency(a, b)
+        db.add_dependency(c, b)
+        deps = db.query_dependencies(blocked_by_uuid=b)
+        assert len(deps) == 2
+
+    def test_query_dependencies_no_filter_returns_all(self, db):
+        a, b = self._make_two_entities(db)
+        db.add_dependency(a, b)
+        all_deps = db.query_dependencies()
+        assert len(all_deps) >= 1
+
+    def test_check_dependency_cycle_self(self, db):
+        a, _ = self._make_two_entities(db)
+        assert db.check_dependency_cycle(a, a) is True
+
+    def test_check_dependency_cycle_simple(self, db):
+        a, b = self._make_two_entities(db)
+        c = db.register_entity("feature", "dep-c", "Feature C")
+        # A blocked by B, B blocked by C
+        db.add_dependency(a, b)
+        db.add_dependency(b, c)
+        # Adding C blocked by A would create A->B->C->A
+        assert db.check_dependency_cycle(c, a) is True
+
+    def test_check_dependency_cycle_no_cycle(self, db):
+        a, b = self._make_two_entities(db)
+        c = db.register_entity("feature", "dep-c", "Feature C")
+        db.add_dependency(a, b)
+        # C blocked by A is fine (no cycle)
+        assert db.check_dependency_cycle(c, a) is False
+
+    def test_query_both_filters(self, db):
+        a, b = self._make_two_entities(db)
+        db.add_dependency(a, b)
+        deps = db.query_dependencies(entity_uuid=a, blocked_by_uuid=b)
+        assert len(deps) == 1
+
+
+# ---------------------------------------------------------------------------
+# Task 1B.2: Utility methods on EntityDatabase
+# ---------------------------------------------------------------------------
+
+
+class TestUtilityMethods:
+    """Tests for scan_entity_ids and is_healthy."""
+
+    def test_scan_entity_ids_returns_ids(self, db):
+        db.register_entity("feature", "scan-1", "Feature 1")
+        db.register_entity("feature", "scan-2", "Feature 2")
+        db.register_entity("task", "task-1", "Task 1")
+        ids = db.scan_entity_ids("feature")
+        assert "scan-1" in ids
+        assert "scan-2" in ids
+        assert "task-1" not in ids
+
+    def test_scan_entity_ids_empty(self, db):
+        assert db.scan_entity_ids("feature") == []
+
+    def test_is_healthy_true(self, db):
+        assert db.is_healthy() is True
+
+    def test_is_healthy_false_after_close(self, db):
+        db.close()
+        assert db.is_healthy() is False
+
+
+# ---------------------------------------------------------------------------
+# Task 1A.2: Metadata validation wiring
+# ---------------------------------------------------------------------------
+
+
+class TestMetadataValidationWiring:
+    """Tests that metadata validation warnings are logged on writes."""
+
+    def test_register_entity_warns_bad_type(self, db, capsys):
+        db.register_entity(
+            "key_result", "kr-bad", "Bad KR",
+            metadata={"metric_type": 123},
+        )
+        err = capsys.readouterr().err
+        assert "metadata warning" in err
+
+    def test_register_entity_no_warning_valid(self, db, capsys):
+        db.register_entity(
+            "feature", "f-good", "Good Feature",
+            metadata={"progress": 0.5},
+        )
+        err = capsys.readouterr().err
+        assert "metadata warning" not in err
+
+    def test_update_entity_warns_bad_type(self, db, capsys):
+        db.register_entity("key_result", "kr-upd", "Update KR")
+        _ = capsys.readouterr()  # clear
+        db.update_entity("key_result:kr-upd", metadata={"metric_type": 123})
+        err = capsys.readouterr().err
+        assert "metadata warning" in err
+
+    def test_validation_never_rejects(self, db):
+        """Bad metadata should still be saved — validation is warn-only."""
+        uuid = db.register_entity(
+            "key_result", "kr-still-saved", "Still Saved",
+            metadata={"metric_type": 123},
+        )
+        entity = db.get_entity("key_result:kr-still-saved")
+        assert entity is not None
+        meta = json.loads(entity["metadata"])
+        assert meta["metric_type"] == 123
+
+    def test_register_no_metadata_no_warning(self, db, capsys):
+        db.register_entity("feature", "f-nometa", "No Meta")
+        err = capsys.readouterr().err
+        assert "metadata warning" not in err
+
+
+# ---------------------------------------------------------------------------
+# Task 3B.1: Batch entity registration
+# ---------------------------------------------------------------------------
+
+
+class TestBatchRegistration:
+    """Tests for register_entities_batch."""
+
+    def test_batch_registers_multiple(self, db):
+        entities = [
+            {"entity_type": "feature", "entity_id": "b1", "name": "Batch 1"},
+            {"entity_type": "feature", "entity_id": "b2", "name": "Batch 2"},
+            {"entity_type": "feature", "entity_id": "b3", "name": "Batch 3"},
+        ]
+        uuids = db.register_entities_batch(entities)
+        assert len(uuids) == 3
+        for uid in uuids:
+            assert _UUID_V4_RE.match(uid)
+
+    def test_batch_single_commit(self, db):
+        """100 entities should succeed in batch."""
+        entities = [
+            {"entity_type": "feature", "entity_id": f"bulk-{i:03d}", "name": f"Bulk {i}"}
+            for i in range(100)
+        ]
+        uuids = db.register_entities_batch(entities)
+        assert len(uuids) == 100
+
+    def test_batch_invalid_type_fails_all(self, db):
+        entities = [
+            {"entity_type": "feature", "entity_id": "ok", "name": "OK"},
+            {"entity_type": "invalid_type", "entity_id": "bad", "name": "Bad"},
+        ]
+        with pytest.raises(ValueError, match="Invalid entity_type"):
+            db.register_entities_batch(entities)
+        # None should have been inserted
+        assert db.get_entity("feature:ok") is None
+
+    def test_batch_duplicate_type_id_ignored(self, db):
+        db.register_entity("feature", "dup", "Already Exists")
+        entities = [
+            {"entity_type": "feature", "entity_id": "dup", "name": "Duplicate"},
+            {"entity_type": "feature", "entity_id": "new", "name": "New"},
+        ]
+        uuids = db.register_entities_batch(entities)
+        assert len(uuids) == 2  # Both return UUIDs (existing + new)
+
+    def test_batch_parent_within_batch(self, db):
+        entities = [
+            {"entity_type": "project", "entity_id": "p1", "name": "Project"},
+            {
+                "entity_type": "feature", "entity_id": "f1", "name": "Feature",
+                "parent_type_id": "project:p1",
+            },
+        ]
+        uuids = db.register_entities_batch(entities)
+        assert len(uuids) == 2
+        child = db.get_entity("feature:f1")
+        assert child is not None
+        assert child["parent_type_id"] == "project:p1"
+
+    def test_batch_parent_in_db(self, db):
+        db.register_entity("project", "existing-p", "Existing Project")
+        entities = [
+            {
+                "entity_type": "feature", "entity_id": "f-child", "name": "Child",
+                "parent_type_id": "project:existing-p",
+            },
+        ]
+        uuids = db.register_entities_batch(entities)
+        assert len(uuids) == 1
+
+    def test_batch_empty_list(self, db):
+        assert db.register_entities_batch([]) == []
+
+    def test_batch_with_metadata(self, db):
+        entities = [
+            {
+                "entity_type": "feature", "entity_id": "meta-b", "name": "Meta",
+                "metadata": {"mode": "standard"},
+            },
+        ]
+        uuids = db.register_entities_batch(entities)
+        assert len(uuids) == 1
+        entity = db.get_entity("feature:meta-b")
+        assert entity is not None
+        meta = json.loads(entity["metadata"])
+        assert meta["mode"] == "standard"
+
+    def test_batch_fts_searchable(self, db):
+        """Batch-registered entities should be FTS-searchable."""
+        entities = [
+            {"entity_type": "feature", "entity_id": "fts-batch", "name": "UniqueSearchTerm"},
+        ]
+        db.register_entities_batch(entities)
+        results = db.search_entities("UniqueSearchTerm")
+        assert len(results) >= 1

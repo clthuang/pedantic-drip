@@ -8,7 +8,12 @@ from pathlib import Path
 
 import pytest
 
-from workflow_engine.notifications import Notification, NotificationQueue
+from workflow_engine.notifications import (
+    Notification,
+    NotificationQueue,
+    auto_drain_hook,
+    format_human,
+)
 
 
 @pytest.fixture
@@ -222,3 +227,113 @@ class TestSequentialLocking:
         q = NotificationQueue(queue_path=str(queue_path))
         drained = q.drain(project_root="/projects/shared")
         assert len(drained) == num_workers * pushes_per_worker
+
+
+# ---------------------------------------------------------------------------
+# Task 2C.1: Filtered drain tests
+# ---------------------------------------------------------------------------
+
+
+class TestDrainFiltered:
+    def test_filter_by_event_type(self, queue: NotificationQueue) -> None:
+        queue.push(_make_notification(event="phase_completed", project_root="/p/a"))
+        queue.push(_make_notification(event="phase_completed", project_root="/p/a"))
+        queue.push(_make_notification(event="unblocked", project_root="/p/a"))
+        result = queue.drain_filtered("/p/a", event_types=["phase_completed"])
+        assert len(result) == 2
+        assert all(n.event == "phase_completed" for n in result)
+
+    def test_unmatched_events_preserved(
+        self, queue: NotificationQueue, queue_path: Path
+    ) -> None:
+        queue.push(_make_notification(event="phase_completed", project_root="/p/a"))
+        queue.push(_make_notification(event="unblocked", project_root="/p/a"))
+        queue.drain_filtered("/p/a", event_types=["phase_completed"])
+        # The unblocked notification should still be in the queue
+        remaining = queue.drain("/p/a")
+        assert len(remaining) == 1
+        assert remaining[0].event == "unblocked"
+
+    def test_filter_none_returns_all(self, queue: NotificationQueue) -> None:
+        queue.push(_make_notification(event="phase_completed", project_root="/p/a"))
+        queue.push(_make_notification(event="unblocked", project_root="/p/a"))
+        result = queue.drain_filtered("/p/a", event_types=None)
+        assert len(result) == 2
+
+    def test_filter_no_file(self, queue: NotificationQueue) -> None:
+        result = queue.drain_filtered("/p/nonexistent", event_types=["phase_completed"])
+        assert result == []
+
+    def test_other_project_preserved(self, queue: NotificationQueue) -> None:
+        queue.push(_make_notification(event="phase_completed", project_root="/p/a"))
+        queue.push(_make_notification(event="phase_completed", project_root="/p/b"))
+        result = queue.drain_filtered("/p/a", event_types=["phase_completed"])
+        assert len(result) == 1
+        remaining = queue.drain("/p/b")
+        assert len(remaining) == 1
+
+
+# ---------------------------------------------------------------------------
+# Task 2C.1: format_human tests
+# ---------------------------------------------------------------------------
+
+
+class TestFormatHuman:
+    def test_empty_list(self) -> None:
+        assert format_human([]) == ""
+
+    def test_single_event_type(self) -> None:
+        notifs = [
+            _make_notification(event="phase_completed", message="Phase done"),
+        ]
+        result = format_human(notifs)
+        assert "## Phase Completed" in result
+        assert "Phase done" in result
+
+    def test_multiple_event_types_grouped(self) -> None:
+        notifs = [
+            _make_notification(event="phase_completed", message="P done"),
+            _make_notification(event="unblocked", message="U done"),
+            _make_notification(event="phase_completed", message="P2 done"),
+        ]
+        result = format_human(notifs)
+        assert "## Phase Completed" in result
+        assert "## Unblocked" in result
+
+    def test_entity_type_id_in_output(self) -> None:
+        notifs = [_make_notification(entity_type_id="feature:042-test")]
+        result = format_human(notifs)
+        assert "feature:042-test" in result
+
+
+# ---------------------------------------------------------------------------
+# Task 2C.2: auto_drain_hook tests
+# ---------------------------------------------------------------------------
+
+
+class TestAutoDrainHook:
+    def test_returns_formatted_when_pending(self, queue_path: Path) -> None:
+        q = NotificationQueue(queue_path=str(queue_path))
+        q.push(_make_notification(project_root="/p/a", event="phase_completed"))
+        result = auto_drain_hook("/p/a", queue_path=str(queue_path))
+        assert "Phase Completed" in result
+
+    def test_returns_empty_when_no_notifications(self, queue_path: Path) -> None:
+        result = auto_drain_hook("/p/a", queue_path=str(queue_path))
+        assert result == ""
+
+    def test_drains_queue(self, queue_path: Path) -> None:
+        q = NotificationQueue(queue_path=str(queue_path))
+        q.push(_make_notification(project_root="/p/a"))
+        auto_drain_hook("/p/a", queue_path=str(queue_path))
+        # Should be empty now
+        remaining = q.drain("/p/a")
+        assert remaining == []
+
+    def test_only_drains_matching_project(self, queue_path: Path) -> None:
+        q = NotificationQueue(queue_path=str(queue_path))
+        q.push(_make_notification(project_root="/p/a"))
+        q.push(_make_notification(project_root="/p/b"))
+        auto_drain_hook("/p/a", queue_path=str(queue_path))
+        remaining = q.drain("/p/b")
+        assert len(remaining) == 1

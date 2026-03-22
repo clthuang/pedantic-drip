@@ -587,3 +587,24 @@ Include a migration script when renaming configs or paths that external users or
 - Confidence: high
 - Last observed: Feature #048
 - Observation count: 1
+
+### Pattern: Parallel Agent Groups for Independent Module Implementation
+Use parallel agent groups for independent module implementation. Structure task plans so independent modules (no shared state mutations) are grouped into concurrent phases, with integration/reconciliation tasks in a sequential phase after.
+- Observed in: Feature 052-reactive-entity-consistency, implement phase — Phases 1A/1B and 2A/2B/2C ran concurrently
+- Confidence: high
+- Last observed: Feature #052
+- Observation count: 1
+
+### Pattern: Adversarial QA with Parallel Behavioral-Scenario Agents
+Run adversarial QA with parallel behavioral-scenario agents after implementation. 5 agents running 199 scenario checks caught 3 bugs that unit tests missed, including edge cases around corrupted input and heuristic false positives.
+- Observed in: Feature 052-reactive-entity-consistency, QA phase
+- Confidence: high
+- Last observed: Feature #052
+- Observation count: 1
+
+### Pattern: Centralize Scattered Utility Patterns During Gap Remediation
+Centralize scattered utility patterns into dedicated modules during gap remediation. The metadata.py module replaced 6+ hand-rolled json.loads patterns across the codebase, reducing the net codebase by 1607 lines.
+- Observed in: Feature 052-reactive-entity-consistency, Phase 1A
+- Confidence: high
+- Last observed: Feature #052
+- Observation count: 1

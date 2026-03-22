@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import sys
 import uuid as uuid_mod
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -1278,6 +1279,12 @@ class EntityDatabase:
         now = self._now_iso()
         metadata_json = json.dumps(metadata) if metadata is not None else None
 
+        # Validate metadata if provided
+        if metadata is not None:
+            from entity_registry.metadata import validate_metadata
+            for w in validate_metadata(entity_type, metadata):
+                print(f"metadata warning: {w}", file=sys.stderr)
+
         # Resolve parent_uuid from parent_type_id if provided
         parent_uuid = None
         if parent_type_id is not None:
@@ -1555,13 +1562,27 @@ class EntityDatabase:
                 params.append(None)
             else:
                 # Shallow merge with existing (old_row already has metadata)
-                existing_meta = (
-                    json.loads(old_row["metadata"])
-                    if old_row["metadata"] else {}
-                )
+                # Use try/except to handle corrupted JSON gracefully
+                try:
+                    existing_meta = (
+                        json.loads(old_row["metadata"])
+                        if old_row["metadata"] else {}
+                    )
+                except (json.JSONDecodeError, ValueError):
+                    existing_meta = {}
                 existing_meta.update(metadata)
                 set_parts.append("metadata = ?")
                 params.append(json.dumps(existing_meta))
+
+                # Validate merged metadata
+                entity_row = self._conn.execute(
+                    "SELECT entity_type FROM entities WHERE uuid = ?",
+                    (entity_uuid,),
+                ).fetchone()
+                if entity_row:
+                    from entity_registry.metadata import validate_metadata
+                    for w in validate_metadata(entity_row["entity_type"], existing_meta):
+                        print(f"metadata warning: {w}", file=sys.stderr)
 
         params.append(entity_uuid)
         sql = f"UPDATE entities SET {', '.join(set_parts)} WHERE uuid = ?"
@@ -2277,6 +2298,269 @@ class EntityDatabase:
     def get_schema_version(self) -> int:
         """Return the current schema version (0 if not yet migrated)."""
         return int(self.get_metadata("schema_version") or 0)
+
+    # ------------------------------------------------------------------
+    # Dependency management (encapsulates entity_dependencies table)
+    # ------------------------------------------------------------------
+
+    def add_dependency(self, entity_uuid: str, blocked_by_uuid: str) -> None:
+        """Add a dependency: entity_uuid is blocked by blocked_by_uuid.
+
+        Uses INSERT OR IGNORE for idempotency.
+        """
+        self._conn.execute(
+            "INSERT OR IGNORE INTO entity_dependencies "
+            "(entity_uuid, blocked_by_uuid) VALUES (?, ?)",
+            (entity_uuid, blocked_by_uuid),
+        )
+        self._conn.commit()
+
+    def remove_dependency(self, entity_uuid: str, blocked_by_uuid: str) -> None:
+        """Remove a single dependency. No-op if it doesn't exist."""
+        self._conn.execute(
+            "DELETE FROM entity_dependencies "
+            "WHERE entity_uuid = ? AND blocked_by_uuid = ?",
+            (entity_uuid, blocked_by_uuid),
+        )
+        self._conn.commit()
+
+    def remove_dependencies_by_blocker(self, blocked_by_uuid: str) -> None:
+        """Remove all dependencies where blocked_by_uuid is the blocker."""
+        self._conn.execute(
+            "DELETE FROM entity_dependencies WHERE blocked_by_uuid = ?",
+            (blocked_by_uuid,),
+        )
+        self._conn.commit()
+
+    def query_dependencies(
+        self,
+        entity_uuid: str | None = None,
+        blocked_by_uuid: str | None = None,
+    ) -> list[dict]:
+        """Query dependencies with flexible filtering.
+
+        Parameters
+        ----------
+        entity_uuid:
+            If provided, filter by the blocked entity.
+        blocked_by_uuid:
+            If provided, filter by the blocker entity.
+        Both None returns all dependencies.
+
+        Returns
+        -------
+        list[dict]
+            Each dict has keys: entity_uuid, blocked_by_uuid.
+        """
+        conditions: list[str] = []
+        params: list[str] = []
+        if entity_uuid is not None:
+            conditions.append("entity_uuid = ?")
+            params.append(entity_uuid)
+        if blocked_by_uuid is not None:
+            conditions.append("blocked_by_uuid = ?")
+            params.append(blocked_by_uuid)
+
+        sql = "SELECT entity_uuid, blocked_by_uuid FROM entity_dependencies"
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
+
+        rows = self._conn.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def check_dependency_cycle(
+        self,
+        entity_uuid: str,
+        blocked_by_uuid: str,
+        max_depth: int = 20,
+    ) -> bool:
+        """Check if adding entity_uuid -> blocked_by_uuid would create a cycle.
+
+        Uses a recursive CTE to walk from blocked_by_uuid's blockers
+        looking for entity_uuid.
+
+        Returns
+        -------
+        bool
+            True if a cycle would be created (including self-dependency).
+        """
+        if entity_uuid == blocked_by_uuid:
+            return True
+
+        row = self._conn.execute(
+            """
+            WITH RECURSIVE dep_chain(uid, depth) AS (
+                SELECT blocked_by_uuid, 0
+                FROM entity_dependencies
+                WHERE entity_uuid = :blocked_by
+                UNION ALL
+                SELECT ed.blocked_by_uuid, dc.depth + 1
+                FROM entity_dependencies ed
+                JOIN dep_chain dc ON ed.entity_uuid = dc.uid
+                WHERE dc.depth < :max_depth
+            )
+            SELECT 1 FROM dep_chain WHERE uid = :target
+            LIMIT 1
+            """,
+            {
+                "blocked_by": blocked_by_uuid,
+                "target": entity_uuid,
+                "max_depth": max_depth,
+            },
+        ).fetchone()
+
+        return row is not None
+
+    # ------------------------------------------------------------------
+    # Utility methods
+    # ------------------------------------------------------------------
+
+    def scan_entity_ids(self, entity_type: str) -> list[str]:
+        """Return all entity_id values for the given entity_type.
+
+        Parameters
+        ----------
+        entity_type:
+            The entity type to scan (e.g. "feature", "task").
+
+        Returns
+        -------
+        list[str]
+            List of entity_id strings.
+        """
+        rows = self._conn.execute(
+            "SELECT entity_id FROM entities WHERE entity_type = ?",
+            (entity_type,),
+        ).fetchall()
+        return [row["entity_id"] for row in rows]
+
+    def is_healthy(self) -> bool:
+        """Check if the database connection is alive and usable.
+
+        Returns
+        -------
+        bool
+            True if connection exists and can execute a simple query.
+        """
+        if self._conn is None:
+            return False
+        try:
+            self._conn.execute("SELECT 1")
+            return True
+        except sqlite3.Error:
+            return False
+
+    # ------------------------------------------------------------------
+    # Batch registration
+    # ------------------------------------------------------------------
+
+    def register_entities_batch(self, entities: list[dict]) -> list[str]:
+        """Register multiple entities in a single transaction.
+
+        Parameters
+        ----------
+        entities:
+            List of dicts, each with keys: entity_type, entity_id, name,
+            and optional: artifact_path, status, parent_type_id, metadata.
+
+        Returns
+        -------
+        list[str]
+            UUIDs of all successfully registered entities.
+
+        Notes
+        -----
+        Single-level parent references within batch are supported: a parent
+        must either exist in DB already or appear earlier in the batch list.
+        Multi-level chains within a single batch are NOT supported.
+        Invalid entity_type causes the entire batch to fail (none inserted).
+        Duplicate type_id entries are skipped via INSERT OR IGNORE.
+        """
+        if not entities:
+            return []
+
+        # Validate all entity_types upfront
+        for ent in entities:
+            self._validate_entity_type(ent["entity_type"])
+
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            now = self._now_iso()
+            uuids: list[str] = []
+            # Track batch-local type_id -> uuid for intra-batch parent refs
+            batch_uuids: dict[str, str] = {}
+
+            for ent in entities:
+                entity_type = ent["entity_type"]
+                entity_id = ent["entity_id"]
+                name = ent["name"]
+                type_id = f"{entity_type}:{entity_id}"
+                status = ent.get("status")
+                artifact_path = ent.get("artifact_path")
+                parent_type_id = ent.get("parent_type_id")
+                metadata = ent.get("metadata")
+                metadata_json = json.dumps(metadata) if metadata is not None else None
+
+                # Resolve parent_uuid
+                parent_uuid = None
+                if parent_type_id is not None:
+                    # Check batch-local first, then DB
+                    if parent_type_id in batch_uuids:
+                        parent_uuid = batch_uuids[parent_type_id]
+                    else:
+                        parent_row = self._conn.execute(
+                            "SELECT uuid FROM entities WHERE type_id = ?",
+                            (parent_type_id,),
+                        ).fetchone()
+                        if parent_row is not None:
+                            parent_uuid = parent_row["uuid"]
+
+                entity_uuid = str(uuid_mod.uuid4())
+                cursor = self._conn.execute(
+                    "INSERT OR IGNORE INTO entities "
+                    "(uuid, type_id, entity_type, entity_id, name, status, "
+                    "parent_type_id, parent_uuid, artifact_path, "
+                    "created_at, updated_at, metadata) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (entity_uuid, type_id, entity_type, entity_id, name,
+                     status, parent_type_id, parent_uuid, artifact_path,
+                     now, now, metadata_json),
+                )
+
+                if cursor.rowcount == 1:
+                    # FTS update
+                    row = self._conn.execute(
+                        "SELECT rowid FROM entities WHERE uuid = ?",
+                        (entity_uuid,),
+                    ).fetchone()
+                    metadata_text = flatten_metadata(
+                        json.loads(metadata_json) if metadata_json else None
+                    )
+                    self._conn.execute(
+                        "INSERT INTO entities_fts(rowid, name, entity_id, "
+                        "entity_type, status, metadata_text) "
+                        "VALUES(?, ?, ?, ?, ?, ?)",
+                        (row[0], name, entity_id, entity_type, status or "",
+                         metadata_text),
+                    )
+                    batch_uuids[type_id] = entity_uuid
+                    uuids.append(entity_uuid)
+                else:
+                    # Already existed — fetch existing UUID
+                    existing = self._conn.execute(
+                        "SELECT uuid FROM entities WHERE type_id = ?",
+                        (type_id,),
+                    ).fetchone()
+                    if existing:
+                        batch_uuids[type_id] = existing["uuid"]
+                        uuids.append(existing["uuid"])
+
+            self._conn.commit()
+            return uuids
+
+        except Exception:
+            self._conn.rollback()
+            raise
 
     # ------------------------------------------------------------------
     # Internal helpers

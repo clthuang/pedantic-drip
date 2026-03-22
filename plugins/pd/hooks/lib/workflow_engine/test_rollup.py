@@ -21,6 +21,7 @@ from workflow_engine.rollup import (
     compute_okr_score,
     compute_progress,
     compute_traffic_light,
+    get_ancestor_progress,
     rollup_parent,
 )
 
@@ -921,14 +922,12 @@ class TestGetAncestorProgress:
 
     def test_no_parent_returns_empty(self, db):
         """Entity with no parent → empty list."""
-        from workflow_engine.rollup import get_ancestor_progress
         uuid = _register(db, "feature", "f1", "Feature 1")
         result = get_ancestor_progress(db, uuid)
         assert result == []
 
     def test_single_parent(self, db):
         """Entity with one parent → single entry."""
-        from workflow_engine.rollup import get_ancestor_progress
         proj_uuid = _register(db, "project", "p1", "Project 1")
         db.update_entity("project:p1", metadata={"progress": 0.65, "traffic_light": "YELLOW"})
         feat_uuid = _register(db, "feature", "f1", "Feature 1",
@@ -944,7 +943,6 @@ class TestGetAncestorProgress:
 
     def test_full_hierarchy(self, db):
         """initiative → objective → KR → project → feature: returns 4 ancestors."""
-        from workflow_engine.rollup import get_ancestor_progress
         init_uuid = _register(db, "initiative", "i1", "Initiative Alpha")
         db.update_entity("initiative:i1", metadata={"progress": 0.5, "traffic_light": "YELLOW"})
 
@@ -983,7 +981,6 @@ class TestGetAncestorProgress:
 
     def test_max_depth_5(self, db):
         """Chain deeper than 5 → stops at 5 ancestors."""
-        from workflow_engine.rollup import get_ancestor_progress
         # Build a chain of 7 entities (6 parents above the leaf)
         prev_type_id = None
         uuids = []
@@ -1001,7 +998,6 @@ class TestGetAncestorProgress:
 
     def test_missing_progress_returns_none(self, db):
         """Ancestor with no stored progress → progress=None, traffic_light=None."""
-        from workflow_engine.rollup import get_ancestor_progress
         proj_uuid = _register(db, "project", "p1", "Project 1")
         # No metadata update → no progress stored
         feat_uuid = _register(db, "feature", "f1", "Feature 1",
@@ -1014,14 +1010,11 @@ class TestGetAncestorProgress:
 
     def test_nonexistent_uuid_returns_empty(self, db):
         """Non-existent entity UUID → empty list."""
-        from workflow_engine.rollup import get_ancestor_progress
         result = get_ancestor_progress(db, "00000000-0000-4000-8000-000000000000")
         assert result == []
 
     def test_full_hierarchy_with_rollup(self, db):
         """End-to-end: build hierarchy, rollup, then verify ancestor progress view."""
-        from workflow_engine.rollup import get_ancestor_progress
-
         # Build: initiative → project → feature (completed)
         init_uuid = _register(db, "initiative", "i1", "Init")
         proj_uuid = _register(db, "project", "p1", "Proj",
@@ -1046,3 +1039,79 @@ class TestGetAncestorProgress:
         assert result[1]["type_id"] == "initiative:i1"
         assert result[1]["progress"] == pytest.approx(0.7)
         assert result[1]["traffic_light"] == "GREEN"
+
+
+# ---------------------------------------------------------------------------
+# Weighted objective scoring tests (gap remediation)
+# ---------------------------------------------------------------------------
+
+
+class TestComputeObjectiveScoreWeighted:
+    """Tests for compute_objective_score with weighted KRs."""
+
+    def test_weighted_average(self, db):
+        """KR1(completed, weight=2.0) + KR2(active/no-phase, weight=1.0) → weighted."""
+        obj_uuid = _register(db, "objective", "o1", "Objective 1")
+        _register(db, "key_result", "kr1", "KR 1",
+                  parent_type_id="objective:o1", status="completed",
+                  metadata={"metric_type": "baseline_target", "score": 1.0, "weight": 2.0})
+        _register(db, "key_result", "kr2", "KR 2",
+                  parent_type_id="objective:o1", status="active",
+                  metadata={"metric_type": "baseline_target", "score": 0.0, "weight": 1.0})
+        # KR1 score=1.0 (baseline_target), KR2 score=0.0 (baseline_target)
+        # weighted: (1.0*2.0 + 0.0*1.0) / (2.0+1.0) = 2/3
+        score = compute_objective_score(db, obj_uuid)
+        assert score == pytest.approx(2.0 / 3.0, abs=0.01)
+
+    def test_default_weights_backward_compat(self, db):
+        """No weights → equal average."""
+        obj_uuid = _register(db, "objective", "o2", "Objective 2")
+        _register(db, "key_result", "kr-a", "KR A",
+                  parent_type_id="objective:o2", status="active",
+                  metadata={"metric_type": "baseline_target", "score": 1.0})
+        _register(db, "key_result", "kr-b", "KR B",
+                  parent_type_id="objective:o2", status="active",
+                  metadata={"metric_type": "baseline_target", "score": 0.0})
+        # (1.0 + 0.0) / 2 = 0.5
+        score = compute_objective_score(db, obj_uuid)
+        assert score == pytest.approx(0.5)
+
+    def test_all_weights_zero(self, db):
+        """All KRs weight=0.0 → returns 0.0 (no ZeroDivisionError)."""
+        obj_uuid = _register(db, "objective", "o3", "Objective 3")
+        _register(db, "key_result", "kr-z1", "KR Z1",
+                  parent_type_id="objective:o3", status="completed",
+                  metadata={"metric_type": "baseline_target", "score": 1.0, "weight": 0.0})
+        score = compute_objective_score(db, obj_uuid)
+        assert score == 0.0
+
+    def test_mixed_weights(self, db):
+        """Weight=3 completed + weight=1 zero-score → 0.75."""
+        obj_uuid = _register(db, "objective", "o6", "Objective 6")
+        _register(db, "key_result", "kr-w3", "KR W3",
+                  parent_type_id="objective:o6", status="active",
+                  metadata={"metric_type": "baseline_target", "score": 1.0, "weight": 3.0})
+        _register(db, "key_result", "kr-w1", "KR W1",
+                  parent_type_id="objective:o6", status="active",
+                  metadata={"metric_type": "baseline_target", "score": 0.0, "weight": 1.0})
+        # (1.0*3.0 + 0.0*1.0) / (3.0+1.0) = 0.75
+        score = compute_objective_score(db, obj_uuid)
+        assert score == pytest.approx(0.75)
+
+    def test_invalid_weight_defaults_to_one(self, db):
+        """Non-numeric weight defaults to 1.0."""
+        obj_uuid = _register(db, "objective", "o7", "Objective 7")
+        _register(db, "key_result", "kr-bad-w", "Bad Weight KR",
+                  parent_type_id="objective:o7", status="active",
+                  metadata={"metric_type": "baseline_target", "score": 1.0, "weight": "heavy"})
+        score = compute_objective_score(db, obj_uuid)
+        assert score == pytest.approx(1.0)
+
+    def test_weight_int_accepted(self, db):
+        """Integer weight is accepted and converted to float."""
+        obj_uuid = _register(db, "objective", "o8", "Objective 8")
+        _register(db, "key_result", "kr-int", "Int Weight KR",
+                  parent_type_id="objective:o8", status="active",
+                  metadata={"metric_type": "baseline_target", "score": 1.0, "weight": 2})
+        score = compute_objective_score(db, obj_uuid)
+        assert score == pytest.approx(1.0)

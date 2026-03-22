@@ -663,9 +663,11 @@ async def create_key_result(
     parent_ref: str,
     name: str,
     metric_type: str,
+    weight: float = 1.0,
     entity_id: str | None = None,
+    status: str | None = None,
 ) -> str:
-    """Register a key_result entity with parent linkage and metric_type.
+    """Register a key_result entity with parent linkage, metric_type, and weight.
 
     Parameters
     ----------
@@ -675,8 +677,12 @@ async def create_key_result(
         Human-readable KR name.
     metric_type:
         One of: milestone, binary, baseline_target.
+    weight:
+        Relative weight for weighted scoring (default 1.0).
     entity_id:
         Optional explicit ID; auto-generated if omitted.
+    status:
+        Optional initial status.
     """
     if _db is None:
         return "Error: database not initialized (server not started)"
@@ -690,10 +696,11 @@ async def create_key_result(
             entity_type="key_result",
             entity_id=eid,
             name=name,
+            status=status,
             parent_type_id=parent_type_id,
-            metadata=json.dumps({"metric_type": metric_type}),
+            metadata=json.dumps({"metric_type": metric_type, "weight": weight}),
         )
-        return json.dumps({"uuid": uuid, "type_id": f"key_result:{eid}"})
+        return json.dumps({"uuid": uuid, "type_id": f"key_result:{eid}", "weight": weight})
     except (ValueError, KeyError) as exc:
         return json.dumps({"error": str(exc)})
 

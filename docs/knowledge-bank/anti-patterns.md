@@ -573,3 +573,17 @@ Declaring a bulk rename complete after the first pass without running a comprehe
 - Confidence: high
 - Last observed: Feature #048
 - Observation count: 1
+
+### Anti-Pattern: Broad Synonym Groups in Fuzzy Matching
+Avoid broad synonym groups in fuzzy matching. Synonym pairs like 'change'-'update' are semantically close in natural language but cause false positive matches in entity/signal matching where these are common but distinct domain terms.
+- Observed in: Feature 052-reactive-entity-consistency, Phase 2A — QA found false positives from synonym expansion
+- Confidence: high
+- Last observed: Feature #052
+- Observation count: 1
+
+### Anti-Pattern: Multi-Phase Processing in Single Function with Early Returns
+Avoid multi-phase processing in a single function with early returns. A 'return 0' in reconciliation.py prevented the OKR scoring phase from ever running when no completed children existed, silently skipping downstream logic.
+- Observed in: Feature 052-reactive-entity-consistency, Phase 3A
+- Confidence: medium
+- Last observed: Feature #052
+- Observation count: 1

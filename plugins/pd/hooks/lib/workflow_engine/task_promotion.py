@@ -57,11 +57,7 @@ def query_ready_tasks(db: "EntityDatabase") -> list[dict]:
         task_uuid = task["uuid"]
 
         # Check no blockers
-        blockers = db._conn.execute(
-            "SELECT 1 FROM entity_dependencies WHERE entity_uuid = ? LIMIT 1",
-            (task_uuid,),
-        ).fetchone()
-        if blockers is not None:
+        if db.query_dependencies(entity_uuid=task_uuid):
             continue
 
         # Check parent is in implement phase
