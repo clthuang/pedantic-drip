@@ -341,6 +341,56 @@ async def delete_entity(type_id: str) -> str:
 
 
 @mcp.tool()
+async def add_entity_tag(type_id: str, tag: str) -> str:
+    """Add a tag to an entity.
+
+    Parameters
+    ----------
+    type_id:
+        Entity identifier (type_id or UUID).
+    tag:
+        Tag string (lowercase, hyphens, max 50 chars).
+
+    Returns confirmation or error.
+    """
+    if _db is None:
+        return "Error: database not initialized (server not started)"
+    try:
+        entity = _db.get_entity(type_id)
+        if entity is None:
+            return f"Error: entity not found: {type_id}"
+        _db.add_tag(entity["uuid"], tag)
+        return json.dumps({"result": f"Tagged {type_id} with '{tag}'"})
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)})
+    except Exception as exc:
+        return json.dumps({"error": f"Unexpected error: {exc}"})
+
+
+@mcp.tool()
+async def get_entity_tags(type_id: str) -> str:
+    """Get all tags for an entity.
+
+    Parameters
+    ----------
+    type_id:
+        Entity identifier (type_id or UUID).
+
+    Returns JSON list of tags or error.
+    """
+    if _db is None:
+        return "Error: database not initialized (server not started)"
+    try:
+        entity = _db.get_entity(type_id)
+        if entity is None:
+            return f"Error: entity not found: {type_id}"
+        tags = _db.get_tags(entity["uuid"])
+        return json.dumps({"type_id": type_id, "tags": tags})
+    except Exception as exc:
+        return json.dumps({"error": f"Unexpected error: {exc}"})
+
+
+@mcp.tool()
 async def search_entities(
     query: str,
     entity_type: str | None = None,
