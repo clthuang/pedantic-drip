@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `EntityWorkflowEngine` — strategy-pattern engine wrapping frozen `WorkflowStateEngine` with two-phase commit cascade (AC-25)
+- `promote_task` — core module + MCP tool for promoting tasks.md headings to tracked task entities (AC-23)
+- `rollup_parent` + `compute_progress` — progress rollup with 7-phase and 5D phase weights (AC-25)
+- `query_ready_tasks` — core function + MCP tool returning unblocked tasks with parent in implement phase (AC-24)
+- Reconciliation cascade recovery — detects and fixes missed cascades from two-phase commit crashes (AC-25)
+- `get_children_by_uuid` on EntityDatabase
+
+### Changed
+- MCP `complete_phase` and `transition_phase` now route through `EntityWorkflowEngine` for cascade support
+- `cascade_unblock` now updates entity status from blocked to planned (AC-29)
+
+### Fixed
+- `TestMetadataDictCoercion` cross-test event loop pollution — replaced deprecated `asyncio.get_event_loop()` with `asyncio.run()`
+- Scope expansion signal vocabulary gap — added "add more", "additional features", "scope change"
+
 ## [4.13.21] - 2026-03-22
 
 ### Added
