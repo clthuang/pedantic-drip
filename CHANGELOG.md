@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- FiveDBackend for EntityWorkflowEngine — 5D phase transitions for projects/initiatives/objectives/key_results (AC-26/28)
+- Traffic light progress derivation (RED/YELLOW/GREEN) stored in parent metadata (AC-27)
+- Deliver gate blocked_by enforcement with blocker type_id listing (AC-28/29)
+- Orphan guard on abandonment with cascade support (AC-30)
+- Initiative and Objective entity lifecycle via FiveDBackend (AC-31)
+- Key Result scoring — milestone, binary, baseline_target metric types with `compute_okr_score` (AC-32)
+- OKR objective score — equal-weight average of child KR scores with traffic light (AC-34)
+- OKR anti-pattern detection — activity word warnings, KR count >5 limit (AC-33)
+- `create_key_result` and `update_kr_score` MCP tools with input validation
+
+### Fixed
+- 5D phase-mismatch guard aligned with frozen engine — allows backward re-runs (rework cycles)
+- 5D backward transitions warn instead of blocking (matches feature behavior)
+- Notification project_root properly passed from MCP server
+- `get_state` now derives `completed_phases` from template for non-feature entities
+- `cascade_unblock` exception catching narrowed from broad `Exception` to `(ValueError, KeyError)`
+- Added 'complete' to OKR activity word detection per AC-33
+
 ## [4.13.22] - 2026-03-23
 
 ### Added
