@@ -607,6 +607,72 @@ async def search_entities(
 
 
 # ---------------------------------------------------------------------------
+# OKR helpers — thin wrappers over rollup.py (Step 5.2, AC-32)
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def create_key_result(
+    parent_ref: str,
+    name: str,
+    metric_type: str,
+    entity_id: str | None = None,
+) -> str:
+    """Register a key_result entity with parent linkage and metric_type.
+
+    Parameters
+    ----------
+    parent_ref:
+        Reference (type_id, UUID, or prefix) to the parent objective.
+    name:
+        Human-readable KR name.
+    metric_type:
+        One of: milestone, binary, baseline_target.
+    entity_id:
+        Optional explicit ID; auto-generated if omitted.
+    """
+    if _db is None:
+        return "Error: database not initialized (server not started)"
+    try:
+        parent_type_id = _resolve_ref_param(_db, None, parent_ref, is_mutation=True)
+        eid = entity_id or name.lower().replace(" ", "-")[:30]
+        uuid = _db.register_entity(
+            entity_type="key_result",
+            entity_id=eid,
+            name=name,
+            parent_type_id=parent_type_id,
+            metadata=json.dumps({"metric_type": metric_type}),
+        )
+        return json.dumps({"uuid": uuid, "type_id": f"key_result:{eid}"})
+    except (ValueError, Exception) as exc:
+        return json.dumps({"error": str(exc)})
+
+
+@mcp.tool()
+async def update_kr_score(
+    kr_ref: str,
+    score: float,
+) -> str:
+    """Manually update score for a baseline_target (or binary-no-children) KR.
+
+    Parameters
+    ----------
+    kr_ref:
+        Reference to the key_result entity.
+    score:
+        New score value (0.0-1.0).
+    """
+    if _db is None:
+        return "Error: database not initialized (server not started)"
+    try:
+        resolved = _resolve_ref_param(_db, None, kr_ref, is_mutation=True)
+        _db.update_entity(resolved, metadata={"score": float(score)})
+        return json.dumps({"result": f"Score updated to {score}", "type_id": resolved})
+    except (ValueError, Exception) as exc:
+        return json.dumps({"error": str(exc)})
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
