@@ -759,7 +759,7 @@ class TestMergeEntities:
             "status": "active",
         }])
         create_entity_db(dst_path, entities=[])
-        merge_entities(src_path, dst_path)
+        run_cli("merge-entities", src_path, dst_path)
         dst = sqlite3.connect(dst_path)
         dst.row_factory = sqlite3.Row
         results = dst.execute(
@@ -1374,7 +1374,7 @@ class TestMigration6:
         assert result["pre_entity_count"] == len(entities)
         assert result["post_entity_count"] == len(entities)
         assert result["pre_version"] == 5
-        assert result["post_version"] == 6
+        assert result["post_version"] == 7
 
     # --- Test 2: All type_ids preserved ---
     def test_migration_preserves_type_ids(self, tmp_path: Path) -> None:
@@ -1704,13 +1704,13 @@ class TestMigration6:
         # First migration
         result1 = run_cli("migrate", db_path)
         assert result1["ok"] is True
-        assert result1["post_version"] == 6
+        assert result1["post_version"] == 7
 
         # Second migration — should be no-op
         result2 = run_cli("migrate", db_path)
         assert result2["ok"] is True
-        assert result2["pre_version"] == 6
-        assert result2["post_version"] == 6
+        assert result2["pre_version"] == 7
+        assert result2["post_version"] == 7
 
     # --- Test: orphaned parent_uuid backfill ---
     def test_migration_backfills_orphaned_parent_uuid(self, tmp_path: Path) -> None:
