@@ -417,7 +417,7 @@ def test_merge_entities_fts_searchable(self, tmp_path):
 ### Task 5.1: Run full entity registry test suite
 **Command:** `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/entity_registry/ -v`
 **Plan Step:** 9
-**Depends on:** 1.1, 1.2, 1.3, 4.1, 4.2
+**Depends on:** 1.1, 1.2, 1.3, 2.1, 2.2, 4.1, 4.2
 
 **Done-when:** All 710+ tests pass. Zero failures.
 
