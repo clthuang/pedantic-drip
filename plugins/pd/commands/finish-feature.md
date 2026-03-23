@@ -17,8 +17,9 @@ Use these values from session context (injected at session start):
 
 If `[YOLO_MODE]` is active:
 - Step 2a (tasks incomplete) → auto "Continue anyway"
-- Step 2b (scaffold gate) → auto-select Skip
+- Step 2b (scaffold gate) → auto-select Skip (skip tier scaffolding, still run README/CHANGELOG writer)
 - Step 2b (researcher no_updates_needed + empty affected_tiers) → auto-select Skip
+- Step 2b (docs updates found) → proceed with writer dispatches (no prompt needed)
 - Step 4 (completion decision) → auto "Merge & Release (Recommended)" (or "Merge (Recommended)" if `{pd_release_script}` is not configured)
 - **Git merge failure:** STOP and report. Do NOT attempt to resolve merge conflicts
   autonomously. Output: "YOLO MODE STOPPED: Merge conflict on {pd_base_branch}. Resolve manually,
@@ -106,10 +107,10 @@ AskUserQuestion:
   }]
 ```
 
-If "Skip" or "Defer": Continue to Step 3 (no documentation updates).
+If "Skip" or "Defer": Skip to README/CHANGELOG Writer Dispatch below (bypasses tier scaffolding, researcher, and tier writers — but README/CHANGELOG still updated).
 If "Scaffold": Continue with enriched documentation flow below.
 
-**YOLO override:** Auto-select "Skip" (never auto-scaffold during finish-feature).
+**YOLO override:** Auto-select "Skip" (skip tier scaffolding, still run README/CHANGELOG writer).
 
 <!-- SYNC: enriched-doc-dispatch -->
 #### Pre-Computed Git Timestamps
@@ -243,7 +244,7 @@ Task tool call:
     Update README.md and CHANGELOG.md based on feature changes.
 
     Feature: {id}-{slug}
-    Research findings: {researcher findings}
+    Research findings: {researcher findings, OR if scaffold was skipped: "No researcher findings (scaffold skipped). Use git diff (staged + unstaged) against base branch for context:\n" + git diff output}
 
     README.md:
     - Pay special attention to any drift_detected entries — components that
