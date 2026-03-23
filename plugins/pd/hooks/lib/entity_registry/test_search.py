@@ -11,6 +11,7 @@ from entity_registry.database import (
     _create_fts_index,
     _create_initial_schema,
     _create_workflow_phases_table,
+    _fix_fts_content_mode,
     _migrate_to_uuid_pk,
     flatten_metadata,
 )
@@ -862,3 +863,94 @@ class TestSearchMutationMindset:
             "SELECT rowid FROM entities_fts WHERE entities_fts MATCH 'RowcountMut'"
         ).fetchall()
         assert len(rows) == 1
+
+
+# ---------------------------------------------------------------------------
+# Migration 7 & FTS rebuild tests (Feature 054)
+# ---------------------------------------------------------------------------
+
+
+def test_fts_rebuild_succeeds_on_production_schema(tmp_path):
+    """AC-7: Verify FTS rebuild works on standalone content-bearing table."""
+    db = EntityDatabase(str(tmp_path / "test.db"))
+    db.register_entity(
+        entity_type="feature",
+        entity_id="test-rebuild",
+        name="Rebuild Test Feature",
+        metadata={"key": "value"},
+    )
+    # Rebuild should succeed (was broken before this fix)
+    db._conn.execute("INSERT INTO entities_fts(entities_fts) VALUES('rebuild')")
+    # Integrity check should pass
+    db._conn.execute(
+        "INSERT INTO entities_fts(entities_fts) VALUES('integrity-check')"
+    )
+    # Search should still find the entity after rebuild
+    results = db.search_entities("Rebuild")
+    assert len(results) == 1
+    assert results[0]["entity_id"] == "test-rebuild"
+
+
+def test_migration_7_upgrades_v6_database(tmp_path):
+    """AC-4: Migration 7 upgrades v6 DB with working FTS index."""
+    db_path = tmp_path / "v6.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.executescript("""
+        CREATE TABLE _metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        INSERT INTO _metadata VALUES ('schema_version', '6');
+        CREATE TABLE entities (
+            uuid TEXT NOT NULL PRIMARY KEY, type_id TEXT NOT NULL UNIQUE,
+            entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, name TEXT NOT NULL,
+            status TEXT, parent_type_id TEXT, parent_uuid TEXT, artifact_path TEXT,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL, metadata TEXT
+        );
+        CREATE VIRTUAL TABLE entities_fts USING fts5(
+            name, entity_id, entity_type, status, metadata_text,
+            content='entities', content_rowid='rowid'
+        );
+        CREATE TABLE workflow_phases (
+            type_id TEXT NOT NULL, workflow_phase TEXT, kanban_column TEXT,
+            last_completed_phase TEXT, mode TEXT, backward_transition_reason TEXT,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE entity_tags (
+            type_id TEXT NOT NULL, tag TEXT NOT NULL,
+            PRIMARY KEY (type_id, tag)
+        );
+        CREATE TABLE entity_dependencies (
+            from_type_id TEXT NOT NULL, to_type_id TEXT NOT NULL,
+            dependency_type TEXT NOT NULL DEFAULT 'depends_on',
+            PRIMARY KEY (from_type_id, to_type_id, dependency_type)
+        );
+        CREATE TABLE entity_okr_alignment (
+            type_id TEXT NOT NULL, objective TEXT NOT NULL,
+            key_result TEXT, score REAL,
+            PRIMARY KEY (type_id, objective)
+        );
+        INSERT INTO entities VALUES (
+            'uuid-1', 'feature:test-v6', 'feature', 'test-v6', 'V6 Test Entity',
+            'active', NULL, NULL, NULL, '2026-01-01T00:00:00Z',
+            '2026-01-01T00:00:00Z', NULL
+        );
+    """)
+    # Manually add FTS entry (external-content mode)
+    conn.execute(
+        "INSERT INTO entities_fts(rowid, name, entity_id, entity_type, "
+        "status, metadata_text) VALUES(1, 'V6 Test Entity', 'test-v6', "
+        "'feature', 'active', '')"
+    )
+    conn.commit()
+    conn.close()
+    # Open with EntityDatabase — triggers migration 7
+    db = EntityDatabase(str(db_path))
+    assert db.get_schema_version() == 7
+    # Pre-existing entity is searchable
+    results = db.search_entities("V6")
+    assert len(results) == 1
+    assert results[0]["entity_id"] == "test-v6"
+    # Rebuild succeeds
+    db._conn.execute("INSERT INTO entities_fts(entities_fts) VALUES('rebuild')")
+    # Integrity check passes
+    db._conn.execute(
+        "INSERT INTO entities_fts(entities_fts) VALUES('integrity-check')"
+    )

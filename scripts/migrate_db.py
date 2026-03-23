@@ -21,6 +21,29 @@ from datetime import datetime, timezone
 SUPPORTED_SCHEMA_VERSION = 1
 
 
+def _flatten_metadata(metadata: dict | None) -> str:
+    """Flatten metadata JSON to space-separated leaf values.
+
+    Inlined from entity_registry.database.flatten_metadata (Spec Deviation FR-3).
+    """
+    if metadata is None:
+        return ""
+    parts: list[str] = []
+
+    def _walk(obj):
+        if isinstance(obj, dict):
+            for v in obj.values():
+                _walk(v)
+        elif isinstance(obj, list):
+            for v in obj:
+                _walk(v)
+        elif obj is not None:
+            parts.append(str(obj))
+
+    _walk(metadata)
+    return " ".join(parts)
+
+
 def _file_sha256(path: str) -> str:
     """Compute SHA-256 hex digest of a file."""
     sha = hashlib.sha256()
@@ -341,13 +364,29 @@ def cmd_merge_entities(args: argparse.Namespace) -> None:
                       AND parent_type_id IS NOT NULL
                 """, (tid,))
 
-        # Phase 5: FTS5 rebuild
-        try:
-            dst.execute(
-                "INSERT INTO entities_fts(entities_fts) VALUES('rebuild')"
-            )
-        except sqlite3.OperationalError:
-            pass
+        # Phase 5: FTS5 backfill (clear + re-index all entities)
+        dst.execute("DELETE FROM entities_fts")
+        fts_rows = dst.execute(
+            "SELECT rowid, name, entity_id, entity_type, status, metadata "
+            "FROM entities"
+        ).fetchall()
+        for fts_row in fts_rows:
+            try:
+                meta_text = _flatten_metadata(
+                    json.loads(fts_row[5]) if fts_row[5] else None
+                )
+                dst.execute(
+                    "INSERT INTO entities_fts(rowid, name, entity_id, "
+                    "entity_type, status, metadata_text) "
+                    "VALUES(?, ?, ?, ?, ?, ?)",
+                    (fts_row[0], fts_row[1], fts_row[2], fts_row[3],
+                     fts_row[4] or "", meta_text),
+                )
+            except (sqlite3.OperationalError, json.JSONDecodeError) as exc:
+                print(
+                    f"WARNING: FTS index failed for rowid={fts_row[0]}: {exc}",
+                    file=sys.stderr,
+                )
 
         dst.execute("COMMIT")
     except Exception:

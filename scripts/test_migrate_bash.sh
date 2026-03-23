@@ -876,7 +876,7 @@ CREATE TABLE workflow_phases (
     updated_at TEXT
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS entities_fts USING fts5(
-    name, entity_type, entity_id, status, content=entities, content_rowid=rowid
+    name, entity_id, entity_type, status, metadata_text
 );
 INSERT INTO entities (uuid, type_id, name, entity_type) VALUES ('local-uuid-1', 'feat-001', 'Existing Feature', 'feature');
 INSERT INTO entities (uuid, type_id, name, entity_type) VALUES ('local-uuid-2', 'feat-local', 'Local Feature', 'feature');

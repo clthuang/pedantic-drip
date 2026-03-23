@@ -894,6 +894,39 @@ def _schema_expansion_v6(conn: sqlite3.Connection) -> None:
         )
 
 
+def _fix_fts_content_mode(conn: sqlite3.Connection) -> None:
+    """Migration 7: Remove external-content mode from entities_fts.
+
+    Drops and recreates entities_fts as a standalone content-bearing
+    FTS5 table, then backfills from all existing entities.
+    """
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute("DROP TABLE IF EXISTS entities_fts")
+    try:
+        conn.execute(
+            "CREATE VIRTUAL TABLE entities_fts USING fts5("
+            "name, entity_id, entity_type, status, metadata_text)"
+        )
+    except sqlite3.OperationalError as exc:
+        if "no such module: fts5" in str(exc):
+            raise RuntimeError("FTS5 extension not available") from exc
+        raise
+    rows = conn.execute(
+        "SELECT rowid, name, entity_id, entity_type, status, metadata "
+        "FROM entities"
+    ).fetchall()
+    for row in rows:
+        metadata_text = flatten_metadata(
+            json.loads(row[5]) if row[5] else None
+        )
+        conn.execute(
+            "INSERT INTO entities_fts(rowid, name, entity_id, entity_type, "
+            "status, metadata_text) VALUES(?, ?, ?, ?, ?, ?)",
+            (row[0], row[1], row[2], row[3], row[4] or "", metadata_text),
+        )
+    conn.commit()
+
+
 # Ordered mapping of version -> migration function.
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _create_initial_schema,
@@ -902,6 +935,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     4: _create_fts_index,
     5: _expand_workflow_phase_check,
     6: _schema_expansion_v6,
+    7: _fix_fts_content_mode,
 }
 
 # Sentinel object to distinguish "not provided" from explicit ``None``.
@@ -1504,19 +1538,13 @@ class EntityDatabase:
             "FROM entities WHERE uuid = ?",
             (entity_uuid,),
         ).fetchone()
-        old_meta_text = flatten_metadata(
-            json.loads(old_row["metadata"]) if old_row["metadata"] else None
-        )
         new_meta_text = flatten_metadata(
             json.loads(new_row["metadata"]) if new_row["metadata"] else None
         )
+        # Standalone FTS: use DELETE FROM (not external-content VALUES('delete',...))
+        # INVARIANT: rowid must match entities table rowid
         self._conn.execute(
-            "INSERT INTO entities_fts(entities_fts, rowid, name, entity_id, "
-            "entity_type, status, metadata_text) "
-            "VALUES('delete', ?, ?, ?, ?, ?, ?)",
-            (old_row["rowid"], old_row["name"], old_row["entity_id"],
-             old_row["entity_type"], old_row["status"] or "",
-             old_meta_text),
+            "DELETE FROM entities_fts WHERE rowid = ?", (old_row["rowid"],)
         )
         self._conn.execute(
             "INSERT INTO entities_fts(rowid, name, entity_id, entity_type, "
@@ -1564,19 +1592,10 @@ class EntityDatabase:
             if child is not None:
                 raise ValueError(f"Cannot delete entity with children: {type_id}")
 
-            # 3. FTS5 external-content delete (before row deletion)
-            try:
-                metadata_text = flatten_metadata(
-                    json.loads(row["metadata"]) if row["metadata"] else None
-                )
-            except (json.JSONDecodeError, TypeError):
-                metadata_text = ""  # corrupted metadata — use empty for FTS delete
+            # Standalone FTS: delete by rowid (no old values needed)
+            # INVARIANT: rowid must match entities table rowid
             self._conn.execute(
-                "INSERT INTO entities_fts(entities_fts, rowid, name, entity_id, "
-                "entity_type, status, metadata_text) "
-                "VALUES('delete', ?, ?, ?, ?, ?, ?)",
-                (row["rowid"], row["name"], row["entity_id"],
-                 row["entity_type"], row["status"] or "", metadata_text),
+                "DELETE FROM entities_fts WHERE rowid = ?", (row["rowid"],)
             )
 
             # 4. Delete workflow_phases (FK: must precede entity delete)

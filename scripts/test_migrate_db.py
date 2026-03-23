@@ -325,7 +325,7 @@ def create_entity_db(
             updated_at TEXT NOT NULL
         );
         CREATE VIRTUAL TABLE IF NOT EXISTS entities_fts USING fts5(
-            name, entity_type, entity_id, status, content=entities, content_rowid=rowid
+            name, entity_id, entity_type, status, metadata_text
         );
     """)
     if entities:
@@ -370,7 +370,15 @@ def create_entity_db(
         conn.commit()
     # Build FTS if entities were provided
     if entities:
-        conn.execute("INSERT INTO entities_fts(entities_fts) VALUES('rebuild')")
+        for row in conn.execute(
+            "SELECT rowid, name, entity_id, entity_type, status, metadata "
+            "FROM entities"
+        ).fetchall():
+            conn.execute(
+                "INSERT INTO entities_fts(rowid, name, entity_id, entity_type, "
+                "status, metadata_text) VALUES(?, ?, ?, ?, ?, ?)",
+                (row[0], row[1], row[2], row[3], row[4] or "", row[5] or ""),
+            )
         conn.commit()
     conn.close()
 
@@ -737,6 +745,31 @@ class TestMergeEntities:
         ).fetchall()
         conn.close()
         assert len(rows) == 1
+
+    # --- AC-5: merge_entities FTS searchability ---
+    def test_merge_entities_fts_searchable(self, tmp_path: Path) -> None:
+        """AC-5: Imported entities appear in search results after merge."""
+        src_path = str(tmp_path / "src.db")
+        dst_path = str(tmp_path / "dst.db")
+        create_entity_db(src_path, entities=[{
+            "type_id": "feature:import-test",
+            "entity_type": "feature",
+            "entity_id": "import-test",
+            "name": "TestImport",
+            "status": "active",
+        }])
+        create_entity_db(dst_path, entities=[])
+        merge_entities(src_path, dst_path)
+        dst = sqlite3.connect(dst_path)
+        dst.row_factory = sqlite3.Row
+        results = dst.execute(
+            "SELECT e.* FROM entities_fts "
+            "JOIN entities e ON entities_fts.rowid = e.rowid "
+            "WHERE entities_fts MATCH 'TestImport'",
+        ).fetchall()
+        dst.close()
+        assert len(results) == 1
+        assert results[0]["entity_id"] == "import-test"
 
 
 # ============================================================
@@ -1131,8 +1164,7 @@ def create_v5_entity_db(
         );
 
         CREATE VIRTUAL TABLE entities_fts USING fts5(
-            name, entity_id, entity_type, status, metadata_text,
-            content='entities', content_rowid='rowid'
+            name, entity_id, entity_type, status, metadata_text
         );
 
         -- Triggers
