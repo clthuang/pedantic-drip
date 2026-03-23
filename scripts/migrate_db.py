@@ -645,18 +645,19 @@ def cmd_rebuild_fts(args: argparse.Namespace) -> None:
         _json_out({"ok": False, "error": f"DB not found: {db_path}"})
         sys.exit(1)
 
-    # Step 1: Kill entity_server processes (unless --skip-kill)
+    # Step 1: Kill MCP servers that hold entities.db (unless --skip-kill)
     killed = False
     if not args.skip_kill:
         import subprocess
-        result = subprocess.run(
-            ["pkill", "-f", "entity_server.py"],
-            capture_output=True,
-        )
-        killed = result.returncode == 0
+        import time
+        for server in ("entity_server.py", "workflow_state_server.py"):
+            result = subprocess.run(
+                ["pkill", "-f", server], capture_output=True,
+            )
+            if result.returncode == 0:
+                killed = True
         if killed:
-            import time
-            time.sleep(1)  # Wait for connections to close
+            time.sleep(2)  # Wait for connections to close
 
     # Step 2: Open DB and check FTS table exists
     conn = sqlite3.connect(db_path, timeout=10.0)
