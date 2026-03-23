@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.13.26] - 2026-03-23
+
+### Fixed
+- YOLO scaffold gate in finish-feature now runs README/CHANGELOG writer instead of skipping all documentation when tier directories are missing
+
 ## [4.13.25] - 2026-03-23
 
 ### Added
