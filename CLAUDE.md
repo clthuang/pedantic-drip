@@ -112,6 +112,9 @@ PYTHONPATH="plugins/pd/hooks/lib:plugins/pd" plugins/pd/.venv/bin/python -m pyte
 python3 -m pytest scripts/test_migrate_db.py scripts/test_migrate_e2e.py scripts/test_migrate_deepened.py -v
 bash scripts/test_migrate_bash.sh
 
+# Rebuild FTS index on entities DB (kills MCP servers temporarily, they auto-restart)
+python3 scripts/migrate_db.py rebuild-fts [--skip-kill] [db_path]
+
 # Run hook integration tests
 bash plugins/pd/hooks/tests/test-hooks.sh
 

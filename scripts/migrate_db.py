@@ -638,6 +638,81 @@ def cmd_migrate(args: argparse.Namespace) -> None:
     })
 
 
+def cmd_rebuild_fts(args: argparse.Namespace) -> None:
+    """Kill MCP entity servers, rebuild FTS index, verify integrity."""
+    db_path = args.db_path
+    if not os.path.exists(db_path):
+        _json_out({"ok": False, "error": f"DB not found: {db_path}"})
+        sys.exit(1)
+
+    # Step 1: Kill entity_server processes (unless --skip-kill)
+    killed = False
+    if not args.skip_kill:
+        import subprocess
+        result = subprocess.run(
+            ["pkill", "-f", "entity_server.py"],
+            capture_output=True,
+        )
+        killed = result.returncode == 0
+        if killed:
+            import time
+            time.sleep(1)  # Wait for connections to close
+
+    # Step 2: Open DB and check FTS table exists
+    conn = sqlite3.connect(db_path, timeout=10.0)
+    conn.execute("PRAGMA busy_timeout = 10000")
+    try:
+        fts_exists = conn.execute(
+            "SELECT 1 FROM sqlite_master "
+            "WHERE type='table' AND name='entities_fts'"
+        ).fetchone()
+        if not fts_exists:
+            _json_out({
+                "ok": False,
+                "error": "entities_fts table not found — run migrate first",
+            })
+            sys.exit(1)
+
+        # Step 3: Rebuild
+        conn.execute(
+            "INSERT INTO entities_fts(entities_fts) VALUES('rebuild')"
+        )
+        rebuild_status = "ok"
+
+        # Step 4: Integrity check
+        conn.execute(
+            "INSERT INTO entities_fts(entities_fts) VALUES('integrity-check')"
+        )
+        integrity_status = "ok"
+
+        # Step 5: Count entities vs FTS entries
+        entity_count = conn.execute(
+            "SELECT COUNT(*) FROM entities"
+        ).fetchone()[0]
+        fts_count = conn.execute(
+            "SELECT COUNT(*) FROM entities_fts"
+        ).fetchone()[0]
+
+    except sqlite3.OperationalError as exc:
+        _json_out({"ok": False, "error": str(exc)})
+        sys.exit(1)
+    finally:
+        conn.close()
+
+    ok = rebuild_status == "ok" and integrity_status == "ok"
+    _json_out({
+        "ok": ok,
+        "killed_servers": killed,
+        "entities": entity_count,
+        "fts_entries": fts_count,
+        "parity": entity_count == fts_count,
+        "rebuild": rebuild_status,
+        "integrity": integrity_status,
+    })
+    if not ok:
+        sys.exit(1)
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the argparse parser with all subcommands."""
     parser = argparse.ArgumentParser(
@@ -723,6 +798,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_migrate.add_argument("db_path", help="Path to entities.db")
     p_migrate.add_argument("--dry-run", action="store_true", help="Run migration on a copy, report results, leave original unchanged")
     p_migrate.set_defaults(func=cmd_migrate)
+
+    # rebuild-fts
+    p_rebuild_fts = subparsers.add_parser(
+        "rebuild-fts",
+        help="Kill MCP entity servers, rebuild FTS index, verify integrity",
+    )
+    p_rebuild_fts.add_argument(
+        "db_path",
+        nargs="?",
+        default=os.path.expanduser("~/.claude/pd/entities/entities.db"),
+        help="Path to entities.db (default: ~/.claude/pd/entities/entities.db)",
+    )
+    p_rebuild_fts.add_argument(
+        "--skip-kill",
+        action="store_true",
+        help="Skip killing MCP server processes",
+    )
+    p_rebuild_fts.set_defaults(func=cmd_rebuild_fts)
 
     return parser
 

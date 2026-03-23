@@ -23,6 +23,7 @@ SUBCOMMANDS = [
     "info",
     "check-embeddings",
     "migrate",
+    "rebuild-fts",
 ]
 
 
@@ -57,6 +58,7 @@ SUBCOMMAND_ARGS = [
     ("info", ["manifest.json"]),
     ("check-embeddings", ["manifest.json", "dst-memory.db"]),
     ("migrate", ["entities.db"]),
+    ("rebuild-fts", ["--skip-kill", "test.db"]),
 ]
 
 
@@ -1751,3 +1753,52 @@ class TestMigration6:
         ).fetchone()
         conn.close()
         assert row[0] == parent_uuid
+
+
+# ============================================================
+# rebuild-fts subcommand tests
+# ============================================================
+
+
+class TestRebuildFts:
+    """Tests for the rebuild-fts subcommand."""
+
+    def test_rebuild_fts_succeeds(self, tmp_path: Path) -> None:
+        """rebuild-fts rebuilds FTS and reports parity."""
+        db_path = str(tmp_path / "test.db")
+        create_entity_db(db_path, entities=[
+            {"type_id": "feature:rb-001", "name": "RebuildTest1"},
+            {"type_id": "feature:rb-002", "name": "RebuildTest2"},
+        ])
+        result = run_cli("rebuild-fts", "--skip-kill", db_path)
+        assert result["ok"] is True
+        assert result["rebuild"] == "ok"
+        assert result["integrity"] == "ok"
+        assert result["entities"] == 2
+        assert result["fts_entries"] == 2
+        assert result["parity"] is True
+
+    def test_rebuild_fts_missing_db(self, tmp_path: Path) -> None:
+        """rebuild-fts errors on nonexistent DB."""
+        result = run_cli(
+            "rebuild-fts", "--skip-kill",
+            str(tmp_path / "nope.db"), expect_rc=1,
+        )
+        assert result["ok"] is False
+        assert "not found" in result["error"]
+
+    def test_rebuild_fts_no_fts_table(self, tmp_path: Path) -> None:
+        """rebuild-fts errors when entities_fts table is missing."""
+        db_path = str(tmp_path / "no_fts.db")
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE entities (uuid TEXT PRIMARY KEY)")
+        conn.execute(
+            "CREATE TABLE _metadata (key TEXT PRIMARY KEY, value TEXT)"
+        )
+        conn.commit()
+        conn.close()
+        result = run_cli(
+            "rebuild-fts", "--skip-kill", db_path, expect_rc=1,
+        )
+        assert result["ok"] is False
+        assert "entities_fts" in result["error"]
