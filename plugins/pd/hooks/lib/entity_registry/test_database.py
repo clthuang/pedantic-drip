@@ -322,7 +322,7 @@ class TestMigration2:
 
         # Now open it with EntityDatabase — runs pending migrations (3+)
         db = EntityDatabase(db_path)
-        assert db.get_metadata("schema_version") == "6"
+        assert db.get_metadata("schema_version") == "7"
 
         # Schema should be intact
         cur = db._conn.execute("PRAGMA table_info(entities)")
@@ -553,7 +553,7 @@ class TestMetadata:
         assert db.get_metadata("foo") == "baz"
 
     def test_schema_version_is_5(self, db: EntityDatabase):
-        assert db.get_metadata("schema_version") == "6"
+        assert db.get_metadata("schema_version") == "7"
 
 
 # ---------------------------------------------------------------------------
@@ -2568,7 +2568,7 @@ class TestMigration3:
 
     def test_schema_version_is_5(self, db: EntityDatabase):
         """After all migrations, schema_version should be 5."""
-        assert db.get_metadata("schema_version") == "6"
+        assert db.get_metadata("schema_version") == "7"
 
     # -- Task 1.2: Migration creates indexes and trigger (AC-2) ------------
 
