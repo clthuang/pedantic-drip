@@ -197,7 +197,21 @@ Replace with:
 **Plan Step:** 4c
 **Depends on:** None
 
-Find the FTS CREATE (near line 878) and update to match production schema: add `metadata_text`, remove any `content=` directive.
+Find the FTS CREATE (near line 878):
+```sql
+CREATE VIRTUAL TABLE IF NOT EXISTS entities_fts USING fts5(
+    name, entity_type, entity_id, status, content=entities, content_rowid=rowid
+);
+```
+
+Replace with:
+```sql
+CREATE VIRTUAL TABLE IF NOT EXISTS entities_fts USING fts5(
+    name, entity_id, entity_type, status, metadata_text
+);
+```
+
+Note: column order changes from `name, entity_type, entity_id` to `name, entity_id, entity_type` to match production.
 
 **Done-when:** Bash helper creates FTS matching production schema. `grep "metadata_text" test_migrate_bash.sh` returns a match. No `content=entities` in the FTS CREATE.
 
@@ -349,6 +363,7 @@ def test_migration_7_upgrades_v6_database(tmp_path):
     conn.commit()
     conn.close()
     # Open with EntityDB — triggers migration 7
+    # Ensure import sqlite3 is at top of test_search.py (add if missing)
     db = EntityDB(str(db_path))
     assert db.get_schema_version() == 7
     # Pre-existing entity is searchable
@@ -368,7 +383,7 @@ def test_migration_7_upgrades_v6_database(tmp_path):
 **Plan Step:** 8
 **Depends on:** 2.1, 3.2
 
-Add to the appropriate test class:
+Add to class `TestMergeEntities` (near line 545 in `test_migrate_db.py`):
 ```python
 def test_merge_entities_fts_searchable(self, tmp_path):
     """AC-5: Imported entities appear in search results after merge."""
@@ -402,7 +417,7 @@ def test_merge_entities_fts_searchable(self, tmp_path):
 ### Task 5.1: Run full entity registry test suite
 **Command:** `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/entity_registry/ -v`
 **Plan Step:** 9
-**Depends on:** 1.1, 1.2, 1.3
+**Depends on:** 1.1, 1.2, 1.3, 4.1, 4.2
 
 **Done-when:** All 710+ tests pass. Zero failures.
 
