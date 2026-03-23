@@ -131,7 +131,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS entities_fts USING fts5(
 );
 ```
 
-Also update the FTS backfill INSERT to include `metadata_text` column (use empty string `''` for test entities).
+Also update the FTS backfill INSERT to include `metadata_text` column (use empty string `''` for test entities). **Important:** With standalone FTS (no `content=`), entities are NOT automatically indexed — the helper must explicitly INSERT into `entities_fts` after inserting entities, or FTS MATCH queries will return zero results.
 
 #### 4b: test_migrate_db.py deepened helper (line ~1133)
 
@@ -149,13 +149,15 @@ CREATE VIRTUAL TABLE entities_fts USING fts5(
 );
 ```
 
+**Note:** After removing `content='entities'`, FTS `rebuild` no longer pulls from the entities table — it only re-processes existing FTS content. If any deepened tests rely on rebuild to populate FTS from entities, they need explicit FTS INSERT statements after entity creation. Check deepened test callers for this pattern.
+
 #### 4c: test_migrate_bash.sh (line ~878)
 
 Update the bash test helper's FTS CREATE to match production schema (add `metadata_text`, remove `content=`).
 
 **Done-when:** All three helpers create FTS tables matching production schema. FTS `rebuild` calls in helpers succeed.
 
-**Depends on:** Nothing (test-only changes, but logically pairs with Step 1).
+**Depends on:** Nothing (test-only changes, but logically paired with Step 1 — the helpers should match the production schema that migration 7 creates).
 
 ### Step 5: Fix migrate_db.py FTS backfill (FR-3)
 
@@ -197,7 +199,7 @@ except sqlite3.OperationalError:
     pass
 ```
 
-With:
+With (note: this runs inside the existing BEGIN/COMMIT block at lines ~291/352 — do not add a nested transaction):
 ```python
 # Phase 5: FTS5 backfill (clear + re-index all entities)
 dst.execute("DELETE FROM entities_fts")
@@ -248,7 +250,7 @@ def test_fts_rebuild_succeeds_on_production_schema(tmp_path):
 
 **File:** `plugins/pd/hooks/lib/entity_registry/test_search.py` (or test_database.py)
 
-Create a v6 database (using the test helper pattern), then instantiate `EntityDB()` to trigger migration, and verify:
+Create a v6 database by manually executing SQL matching the v6 schema (entities table, workflow_phases, FTS with `content='entities'`, `_metadata` with `schema_version=6`) and inserting test entities with FTS rows. Then instantiate `EntityDB()` which will auto-run only migration 7, and verify:
 1. `get_schema_version() == 7`
 2. Pre-existing entities are searchable via `search_entities()`
 3. FTS `rebuild` succeeds
