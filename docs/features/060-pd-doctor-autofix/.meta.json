@@ -5,7 +5,7 @@
   "status": "active",
   "created": "2026-03-24T12:51:44.316824+00:00",
   "branch": "feature/060-pd-doctor-autofix",
-  "lastCompletedPhase": "create-plan",
+  "lastCompletedPhase": "create-tasks",
   "phases": {
     "brainstorm": {
       "started": "2026-03-24T11:30:00+00:00",
@@ -28,6 +28,11 @@
       "completed": "2026-03-24T13:00:00+00:00",
       "iterations": 2,
       "reviewerNotes": "[{\"reviewer\": \"plan-reviewer\", \"approved\": true, \"summary\": \"Approved iter 2/5\"}, {\"reviewer\": \"phase-reviewer\", \"approved\": true, \"summary\": \"Approved iter 1/5\"}]"
+    },
+    "create-tasks": {
+      "started": "2026-03-24T13:00:00+00:00",
+      "completed": "2026-03-24T13:05:00+00:00",
+      "iterations": 1
     }
   }
 }
