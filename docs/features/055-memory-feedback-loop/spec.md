@@ -83,9 +83,9 @@ Modify the injector to skip entries below a minimum relevance score and skip inj
 
 1. After ranking, filter entries to those with `final_score > 0.3` (configurable via `memory_relevance_threshold` in pd.local.md, default 0.3)
 2. If fewer than 3 entries meet the threshold, inject those entries (do not pad with low-relevance entries)
-3. If the context query from `collect_context()` contains only project-level description signals (no active feature, no feature branch, no recently changed files), skip injection entirely and return an empty string with a diagnostic note: `"Memory: skipped (no context signals)"`
+3. If the context has no work-specific signals (no active feature, no feature branch, no recently changed files), skip injection entirely and return the string `"Memory: skipped (no context signals)"` as the injection output (replacing the normal memory block).
 
-**Implementation note:** `collect_context()` almost never returns `None` because signal #4 (project-level description from CLAUDE.md/README.md) is always included. The skip condition must therefore check for "weak context" — a context string that lacks feature, branch, and file signals — not just `None`. Modify `collect_context()` to return a `ContextResult` with a `has_work_signals: bool` flag (True when any of signals 1-3, 5, or 6 are present), or add a separate method `has_work_context()` that the injector calls before deciding to inject.
+**Implementation:** Add a `has_work_context() -> bool` method to `RetrievalPipeline` that returns `True` when any of signals 1-3, 5, or 6 from `collect_context()` are present (i.e., anything beyond just the project-level description). The injector calls `pipeline.has_work_context(project_root)` before deciding to run retrieval. This avoids modifying `collect_context()`'s return type.
 
 **Changes to config:** Add `memory_relevance_threshold` to DEFAULTS (default: 0.3).
 
@@ -109,7 +109,7 @@ Change `memory_injection_limit` default from 20 to 15. Update this repo's overri
 ## Acceptance Criteria
 
 ### AC-1: Subagent dispatch prompts include memory enrichment instruction
-Each of the 5 workflow command files contains the pre-dispatch memory enrichment instruction block before every fresh Task dispatch block. Verified by `grep -c "Pre-dispatch memory enrichment" plugins/pd/commands/{specify,design,create-plan,create-tasks,implement}.md` returning a count matching the number of fresh dispatch blocks in each file.
+Each of the 5 workflow command files contains the pre-dispatch memory enrichment instruction block before every fresh Task dispatch block. Verified by `grep -c "Pre-dispatch memory enrichment" plugins/pd/commands/{specify,design,create-plan,create-tasks,implement}.md` returning expected counts: specify.md: 2, design.md: 4, create-plan.md: 2, create-tasks.md: 2, implement.md: 7.
 
 ### AC-2: keywords.py deleted
 `plugins/pd/hooks/lib/semantic_memory/keywords.py` no longer exists. `grep -r "TieredKeywordGenerator\|SkipKeywordGenerator\|KEYWORD_PROMPT" plugins/pd/` returns zero matches (excluding git history and test deletions).
