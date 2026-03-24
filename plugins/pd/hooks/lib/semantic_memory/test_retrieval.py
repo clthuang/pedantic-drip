@@ -812,6 +812,60 @@ class TestCollectContextCustomArtifactsRoot:
         assert "Branch:" not in context  # "release" should be skipped
 
 
+# ---------------------------------------------------------------------------
+# Tests: has_work_context()
+# ---------------------------------------------------------------------------
+
+
+class TestHasWorkContext:
+    """has_work_context() checks for work-specific signals."""
+
+    def _make_pipeline(self, config=None):
+        db = MockDatabase()
+        return RetrievalPipeline(db=db, provider=None, config=config or {})
+
+    def test_has_work_context_true_when_active_feature(self):
+        """Returns True when _find_active_feature returns a valid meta+dir."""
+        pipeline = self._make_pipeline()
+        with mock.patch.object(pipeline, "_find_active_feature", return_value=({"slug": "feat"}, "/path")):
+            assert pipeline.has_work_context("/project") is True
+
+    def test_has_work_context_true_when_feature_branch(self):
+        """Returns True when on a feature branch (no active feature)."""
+        pipeline = self._make_pipeline()
+        with mock.patch.object(pipeline, "_find_active_feature", return_value=(None, None)), \
+             mock.patch.object(pipeline, "_git_branch_name", return_value="feature/foo"), \
+             mock.patch.object(pipeline, "_git_changed_files", return_value=[]), \
+             mock.patch.object(pipeline, "_git_working_tree_files", return_value=[]):
+            assert pipeline.has_work_context("/project") is True
+
+    def test_has_work_context_true_when_changed_files(self):
+        """Returns True when there are recently changed files (no feature, no branch)."""
+        pipeline = self._make_pipeline()
+        with mock.patch.object(pipeline, "_find_active_feature", return_value=(None, None)), \
+             mock.patch.object(pipeline, "_git_branch_name", return_value="main"), \
+             mock.patch.object(pipeline, "_git_changed_files", return_value=["file.py"]):
+            assert pipeline.has_work_context("/project") is True
+
+    def test_has_work_context_false_when_no_signals(self):
+        """Returns False when no active feature, on main branch, no changed files."""
+        pipeline = self._make_pipeline()
+        with mock.patch.object(pipeline, "_find_active_feature", return_value=(None, None)), \
+             mock.patch.object(pipeline, "_git_branch_name", return_value="main"), \
+             mock.patch.object(pipeline, "_git_changed_files", return_value=[]), \
+             mock.patch.object(pipeline, "_git_working_tree_files", return_value=[]):
+            assert pipeline.has_work_context("/project") is False
+
+    def test_has_work_context_short_circuits_on_feature(self):
+        """When active feature found, git helpers should not be called."""
+        pipeline = self._make_pipeline()
+        with mock.patch.object(pipeline, "_find_active_feature", return_value=({"slug": "feat"}, "/path")) as mock_find, \
+             mock.patch.object(pipeline, "_git_branch_name") as mock_branch:
+            result = pipeline.has_work_context("/project")
+            assert result is True
+            mock_branch.assert_not_called()
+
+
 class TestCollectContextWordLimit:
     """collect_context respects the 100-word limit for spec description."""
 

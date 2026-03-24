@@ -205,6 +205,29 @@ def main(argv: list[str] | None = None) -> None:
 
         # Retrieve
         pipeline = RetrievalPipeline(db, provider, config)
+
+        # Skip injection when no work context (FR-4)
+        if not pipeline.has_work_context(project_root):
+            sys.stdout.write('Memory: skipped (no context signals)\n')
+            # Intentionally diverges from write_tracking() — adds skipped_reason field
+            total_count = db.count_entries()
+            tracking = {
+                "timestamp": datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "mode": "semantic",
+                "entries_injected": 0,
+                "total_entries": total_count,
+                "model": model,
+                "skipped_reason": "no_work_context",
+            }
+            tracking_path = os.path.join(global_store, ".last-injection.json")
+            try:
+                with open(tracking_path, "w") as fh:
+                    json.dump(tracking, fh, indent=2)
+                    fh.write("\n")
+            except OSError:
+                pass
+            return
+
         context_query = pipeline.collect_context(project_root)
         result = pipeline.retrieve(context_query)
 
@@ -213,6 +236,10 @@ def main(argv: list[str] | None = None) -> None:
         entries_by_id = {e["id"]: e for e in all_entries}
         engine = RankingEngine(config)
         selected = engine.rank(result, entries_by_id, limit)
+
+        # Relevance threshold filtering (FR-4)
+        threshold = float(config.get("memory_relevance_threshold", 0.3))
+        selected = [e for e in selected if e["final_score"] > threshold]
 
         # Recall tracking
         if selected:

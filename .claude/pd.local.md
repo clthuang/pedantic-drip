@@ -33,7 +33,7 @@ max_concurrent_agents: 5
 # Inject memory entries into session context at start
 memory_injection_enabled: true
 # Max memory entries injected per session
-memory_injection_limit: 50
+memory_injection_limit: 20
 # Enable semantic (vector + keyword) search for memory retrieval
 memory_semantic_enabled: true
 # Weights for memory ranking (must sum to 1.0)

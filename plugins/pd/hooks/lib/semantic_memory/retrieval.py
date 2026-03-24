@@ -130,6 +130,45 @@ class RetrievalPipeline:
         return ". ".join(signals)
 
     # ------------------------------------------------------------------
+    # Work context detection
+    # ------------------------------------------------------------------
+
+    def has_work_context(self, project_root: str) -> bool:
+        """Check whether work-specific context signals are present.
+
+        Returns True when any of signals 1-3, 5, or 6 from
+        collect_context() are present (anything beyond the
+        always-present project description).
+
+        Mirrors collect_context()'s signal checks for consistency.
+        Duplicates some subprocess calls (git branch, git diff) that
+        collect_context() will also make — accepted tradeoff since
+        these are lightweight (~50-100ms total) and only run in the
+        injector path.
+        """
+        meta, feature_dir = self._find_active_feature(project_root)
+        if meta is not None and feature_dir is not None:
+            return True  # Signal 1 (feature slug) present — matches collect_context line 86
+
+        branch = self._git_branch_name(project_root)
+        base_branch = self._config.get("base_branch", "auto")
+        skip_branches = {"main", "master", "develop", "HEAD"}
+        if base_branch not in ("auto", ""):
+            skip_branches.add(base_branch)
+        if branch and branch not in skip_branches:
+            return True  # Signal 5 (non-default branch) present
+
+        committed = self._git_changed_files(project_root)
+        if committed:
+            return True  # Signal 6a present
+
+        working = self._git_working_tree_files(project_root)
+        if working:
+            return True  # Signal 6b present
+
+        return False
+
+    # ------------------------------------------------------------------
     # Retrieval
     # ------------------------------------------------------------------
 

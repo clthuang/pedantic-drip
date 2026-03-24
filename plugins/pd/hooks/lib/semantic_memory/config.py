@@ -26,7 +26,8 @@ DEFAULTS: dict[str, bool | int | float | str] = {
     "memory_embedding_model": "gemini-embedding-001",
     "memory_model_capture_mode": "ask-first",
     "memory_silent_capture_budget": 5,
-    "memory_injection_limit": 20,
+    "memory_injection_limit": 15,
+    "memory_relevance_threshold": 0.3,
 }
 
 # Precompiled regexes for type coercion (applied after space stripping).

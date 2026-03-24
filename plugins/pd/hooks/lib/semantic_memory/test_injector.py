@@ -1,6 +1,8 @@
 """Tests for semantic_memory.injector module."""
 from __future__ import annotations
 
+import json
+import os
 from unittest import mock
 
 from semantic_memory.retrieval_types import CandidateScores, RetrievalResult
@@ -481,3 +483,213 @@ class TestCategoryOrdering:
         assert "### Patterns to Follow" in output
         assert "### Anti-Patterns to Avoid" not in output
         assert "### Heuristics" not in output
+
+
+# ---------------------------------------------------------------------------
+# Tests: Threshold filtering (AC-4)
+# ---------------------------------------------------------------------------
+
+
+class TestThresholdFiltering:
+    """Relevance threshold filters low-scoring entries after ranking."""
+
+    def _run_main_with_ranked(self, ranked, config_overrides=None, tmp_path=None):
+        """Run main() with controlled ranked entries. Returns (mock_db, capsys-like)."""
+        from semantic_memory.injector import main
+
+        config = {
+            "memory_injection_limit": 20,
+            "memory_embedding_model": "test",
+            "memory_relevance_threshold": 0.3,
+        }
+        if config_overrides:
+            config.update(config_overrides)
+
+        mock_db = mock.MagicMock()
+        mock_db.count_entries.return_value = 10
+        mock_db.get_metadata.return_value = "0"
+        mock_db.get_all_entries.return_value = ranked
+
+        mock_result = RetrievalResult(
+            candidates={e["id"]: CandidateScores(vector_score=0.9) for e in ranked},
+            vector_candidate_count=len(ranked),
+            fts5_candidate_count=0,
+            context_query="test query",
+        )
+
+        store = str(tmp_path) if tmp_path else "/tmp/store"
+
+        with mock.patch("semantic_memory.injector.read_config", return_value=config), \
+             mock.patch("semantic_memory.injector.MemoryDatabase", return_value=mock_db), \
+             mock.patch("semantic_memory.injector.create_provider", return_value=None), \
+             mock.patch("semantic_memory.injector.RetrievalPipeline") as mock_pipeline_cls, \
+             mock.patch("semantic_memory.injector.RankingEngine") as mock_ranking_cls, \
+             mock.patch("semantic_memory.injector.MarkdownImporter"):
+
+            mock_pipeline = mock_pipeline_cls.return_value
+            mock_pipeline.collect_context.return_value = "test query"
+            mock_pipeline.retrieve.return_value = mock_result
+            mock_pipeline.has_work_context.return_value = True
+
+            mock_ranking = mock_ranking_cls.return_value
+            mock_ranking.rank.return_value = list(ranked)
+
+            main(["--project-root", "/tmp/test", "--global-store", store])
+
+        return mock_db
+
+    def test_threshold_filter_keeps_high_scores(self, capsys):
+        """Entries with final_score [0.8, 0.5] survive threshold 0.3."""
+        entries = [
+            _make_entry("e1", "High", "patterns", final_score=0.8),
+            _make_entry("e2", "Medium", "patterns", final_score=0.5),
+        ]
+        mock_db = self._run_main_with_ranked(entries)
+        # Both should survive — update_recall should include both
+        mock_db.update_recall.assert_called_once()
+        recalled_ids = mock_db.update_recall.call_args[0][0]
+        assert set(recalled_ids) == {"e1", "e2"}
+
+    def test_threshold_filter_removes_low_scores(self, capsys):
+        """Entries with final_score [0.2, 0.1] removed at threshold 0.3."""
+        entries = [
+            _make_entry("e1", "Low1", "patterns", final_score=0.2),
+            _make_entry("e2", "Low2", "patterns", final_score=0.1),
+        ]
+        mock_db = self._run_main_with_ranked(entries)
+        # Neither should survive — update_recall should NOT be called
+        mock_db.update_recall.assert_not_called()
+
+    def test_threshold_filter_mixed_scores(self, capsys):
+        """Input [0.8, 0.5, 0.2, 0.1], only first two survive."""
+        entries = [
+            _make_entry("e1", "High", "patterns", final_score=0.8),
+            _make_entry("e2", "Medium", "patterns", final_score=0.5),
+            _make_entry("e3", "Low1", "patterns", final_score=0.2),
+            _make_entry("e4", "Low2", "patterns", final_score=0.1),
+        ]
+        mock_db = self._run_main_with_ranked(entries)
+        mock_db.update_recall.assert_called_once()
+        recalled_ids = mock_db.update_recall.call_args[0][0]
+        assert set(recalled_ids) == {"e1", "e2"}
+
+    def test_threshold_filter_all_below(self, capsys):
+        """All entries below threshold -> empty list, no recall."""
+        entries = [
+            _make_entry("e1", "Low1", "patterns", final_score=0.1),
+            _make_entry("e2", "Low2", "patterns", final_score=0.05),
+        ]
+        mock_db = self._run_main_with_ranked(entries)
+        mock_db.update_recall.assert_not_called()
+
+    def test_threshold_filter_recall_not_incremented_for_filtered(self, capsys):
+        """Entries filtered by threshold do NOT have IDs passed to update_recall."""
+        entries = [
+            _make_entry("e1", "Keep", "patterns", final_score=0.8),
+            _make_entry("e2", "Filter", "patterns", final_score=0.1),
+        ]
+        mock_db = self._run_main_with_ranked(entries)
+        mock_db.update_recall.assert_called_once()
+        recalled_ids = mock_db.update_recall.call_args[0][0]
+        assert "e1" in recalled_ids
+        assert "e2" not in recalled_ids
+
+
+# ---------------------------------------------------------------------------
+# Tests: No-context skip (AC-5)
+# ---------------------------------------------------------------------------
+
+
+class TestNoContextSkip:
+    """When no work context signals exist, injection is skipped."""
+
+    def test_no_context_skip_stdout_message(self, capsys, tmp_path):
+        """When has_work_context() returns False, stdout contains skip message."""
+        from semantic_memory.injector import main
+
+        mock_db = mock.MagicMock()
+        mock_db.count_entries.return_value = 10
+
+        store = str(tmp_path / "store")
+        os.makedirs(store, exist_ok=True)
+
+        with mock.patch("semantic_memory.injector.read_config", return_value={"memory_injection_limit": 20, "memory_embedding_model": "test"}), \
+             mock.patch("semantic_memory.injector.MemoryDatabase", return_value=mock_db), \
+             mock.patch("semantic_memory.injector.create_provider", return_value=None), \
+             mock.patch("semantic_memory.injector.RetrievalPipeline") as mock_pipeline_cls, \
+             mock.patch("semantic_memory.injector.RankingEngine"), \
+             mock.patch("semantic_memory.injector.MarkdownImporter"):
+
+            mock_pipeline = mock_pipeline_cls.return_value
+            mock_pipeline.has_work_context.return_value = False
+
+            main(["--project-root", "/tmp/test", "--global-store", store])
+
+        captured = capsys.readouterr()
+        assert "Memory: skipped (no context signals)" in captured.out
+
+    def test_no_context_skip_tracking_file(self, tmp_path):
+        """When skipped, .last-injection.json contains skipped_reason."""
+        from semantic_memory.injector import main
+
+        mock_db = mock.MagicMock()
+        mock_db.count_entries.return_value = 10
+
+        store = str(tmp_path / "store")
+        os.makedirs(store, exist_ok=True)
+
+        with mock.patch("semantic_memory.injector.read_config", return_value={"memory_injection_limit": 20, "memory_embedding_model": "test"}), \
+             mock.patch("semantic_memory.injector.MemoryDatabase", return_value=mock_db), \
+             mock.patch("semantic_memory.injector.create_provider", return_value=None), \
+             mock.patch("semantic_memory.injector.RetrievalPipeline") as mock_pipeline_cls, \
+             mock.patch("semantic_memory.injector.RankingEngine"), \
+             mock.patch("semantic_memory.injector.MarkdownImporter"):
+
+            mock_pipeline = mock_pipeline_cls.return_value
+            mock_pipeline.has_work_context.return_value = False
+
+            main(["--project-root", "/tmp/test", "--global-store", store])
+
+        tracking_path = os.path.join(store, ".last-injection.json")
+        assert os.path.exists(tracking_path)
+        with open(tracking_path) as fh:
+            tracking = json.load(fh)
+        assert tracking["skipped_reason"] == "no_work_context"
+        assert tracking["entries_injected"] == 0
+
+    def test_normal_injection_no_skipped_reason(self, tmp_path):
+        """When has_work_context() returns True, tracking has no skipped_reason."""
+        from semantic_memory.injector import main
+
+        mock_db = mock.MagicMock()
+        mock_db.count_entries.return_value = 10
+        mock_db.get_metadata.return_value = "0"
+        mock_db.get_all_entries.return_value = []
+
+        mock_result = RetrievalResult(context_query="test query")
+
+        store = str(tmp_path / "store")
+        os.makedirs(store, exist_ok=True)
+
+        with mock.patch("semantic_memory.injector.read_config", return_value={"memory_injection_limit": 20, "memory_embedding_model": "test"}), \
+             mock.patch("semantic_memory.injector.MemoryDatabase", return_value=mock_db), \
+             mock.patch("semantic_memory.injector.create_provider", return_value=None), \
+             mock.patch("semantic_memory.injector.RetrievalPipeline") as mock_pipeline_cls, \
+             mock.patch("semantic_memory.injector.RankingEngine") as mock_ranking_cls, \
+             mock.patch("semantic_memory.injector.MarkdownImporter"):
+
+            mock_pipeline = mock_pipeline_cls.return_value
+            mock_pipeline.has_work_context.return_value = True
+            mock_pipeline.collect_context.return_value = "test query"
+            mock_pipeline.retrieve.return_value = mock_result
+
+            mock_ranking = mock_ranking_cls.return_value
+            mock_ranking.rank.return_value = []
+
+            main(["--project-root", "/tmp/test", "--global-store", store])
+
+        tracking_path = os.path.join(store, ".last-injection.json")
+        assert os.path.exists(tracking_path)
+        with open(tracking_path) as fh:
+            tracking = json.load(fh)
+        assert "skipped_reason" not in tracking
