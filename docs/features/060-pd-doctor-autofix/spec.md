@@ -25,34 +25,71 @@ This feature adds: (1) auto-fix logic that applies fix_hints programmatically, (
 
 ### FR-1: Fix Safety Classification
 
-Each `fix_hint` from Phase 1 is classified as `safe` or `manual`:
+Each `fix_hint` from Phase 1 is classified as `safe` or `manual`. Fix_hints not matching any pattern default to `manual` (conservative).
 
-| fix_hint pattern | Classification | Fix action |
-|-----------------|----------------|------------|
-| "Set lastCompletedPhase to..." | safe | Update .meta.json field |
-| "Run reconcile_apply to sync..." | safe | Call `apply_workflow_reconciliation()` |
-| "Run reconcile_apply to create DB entry" | safe | Call `apply_workflow_reconciliation()` |
-| "Update brainstorm entity status to 'promoted'" | safe | `UPDATE entities SET status='promoted' WHERE type_id=...` |
-| "Update entity status to 'promoted'" | safe | Same as above |
-| "Add (promoted -> feature) annotation to backlog.md" | safe | Append annotation to backlog.md row |
-| "Set PRAGMA journal_mode=WAL" | safe | Execute PRAGMA on DB |
-| "Run migration to populate parent_uuid" | safe | Backfill parent_uuid from parent_type_id lookup |
-| "Update parent_uuid to match parent entity's uuid" | safe | Set parent_uuid = lookup(parent_type_id).uuid |
-| "Remove orphaned dependency row" | safe | DELETE FROM entity_dependencies WHERE ... |
-| "Remove orphaned tag row" | safe | DELETE FROM entity_tags WHERE ... |
-| "Remove orphaned workflow_phases row" | safe | DELETE FROM workflow_phases WHERE ... |
-| "Remove self-referential parent_type_id" | safe | UPDATE entities SET parent_type_id=NULL, parent_uuid=NULL WHERE ... |
-| "Rebuild FTS index" | safe | Call `rebuild_fts()` or equivalent |
-| "Run keyword backfill" | manual | Requires LLM — cannot auto-apply |
-| "Run embedding backfill" | manual | Requires API calls — cannot auto-apply |
-| "Kill the process holding the lock" | manual | Dangerous — cannot auto-kill |
-| "Create .meta.json or remove empty directory" | manual | Ambiguous direction |
-| "Register entity or remove stale..." | manual | Ambiguous direction |
-| "Create a new branch for rework" | manual | Requires git operations |
-| "Update feature status to 'completed'..." | manual | Requires user judgment |
-| "Fix JSON syntax in .meta.json" | manual | Cannot auto-fix syntax errors |
-| "Check .claude/pd.local.md for syntax errors" | manual | Cannot auto-fix config |
-| "Break the circular parent reference" | manual | Ambiguous which link to break |
+**Safe fixes** (auto-applicable, idempotent, no ambiguity):
+
+| fix_hint pattern | Fix action |
+|-----------------|------------|
+| "Set lastCompletedPhase to the latest completed phase" | Update .meta.json `lastCompletedPhase` field |
+| "Run reconcile_apply to sync DB from .meta.json" | Call `apply_workflow_reconciliation(feature_type_id=issue.entity)` |
+| "Run reconcile_apply to sync kanban column" | Same — reconcile_apply fixes kanban too |
+| "Run reconcile_apply to create DB entry" | Call `apply_workflow_reconciliation(feature_type_id=issue.entity)` |
+| "Update brainstorm entity status to 'promoted'" | `db.update_entity(type_id, status="promoted")` via EntityDatabase API |
+| "Update entity status to 'promoted'" | Same as above |
+| "Add (promoted -> feature) annotation to backlog.md" | Parse backlog.md, find matching row by ID, append annotation. On parse failure → classify as `failed` (not corrupt file) |
+| "Set PRAGMA journal_mode=WAL on the database" | Execute `PRAGMA journal_mode=WAL` on entity DB |
+| "Set PRAGMA journal_mode=WAL on memory DB" | Execute `PRAGMA journal_mode=WAL` on memory DB |
+| "Run migration to populate parent_uuid" | Lookup parent entity uuid, set `parent_uuid` via `db._conn` direct SQL (EntityDatabase has no public setter for parent_uuid) |
+| "Update parent_uuid to match parent entity's uuid" | Same — lookup + direct SQL update |
+| "Remove orphaned dependency row" | `DELETE FROM entity_dependencies WHERE entity_uuid=? AND blocked_by_uuid=?` |
+| "Remove orphaned tag row" | `DELETE FROM entity_tags WHERE entity_uuid=?` |
+| "Remove orphaned workflow_phases row" | `DELETE FROM workflow_phases WHERE type_id=?` |
+| "Remove self-referential parent_type_id" | `db.update_entity(type_id, parent_type_id=None)` + clear parent_uuid |
+| "Rebuild FTS index: python3 scripts/migrate_db.py rebuild-fts" | `subprocess.run([python_path, "scripts/migrate_db.py", "rebuild-fts", "--skip-kill", db_path])` |
+| "Rebuild FTS index to recreate triggers" | Same subprocess call |
+| "Run migrations to initialize the database" | Construct `EntityDatabase(db_path)` — constructor runs `_migrate()` automatically |
+| "Run migrations to update the database schema" | Same — `EntityDatabase(db_path)` |
+| "Run memory DB migrations" | Import and call memory migration function (from `semantic_memory.migrations`) |
+| "Run memory DB migrations to update schema" | Same |
+| "Run memory DB migrations to create missing tables" | Same |
+| "Update .meta.json from DB state" | Call `apply_workflow_reconciliation(feature_type_id=issue.entity)` (reconcile handles DB→meta sync for db_ahead cases when possible) |
+
+**Manual fixes** (require user judgment, external services, or git):
+
+| fix_hint pattern | Reason |
+|-----------------|--------|
+| "Kill the process holding the lock or wait for it to release" | Dangerous — cannot auto-kill |
+| "Run keyword backfill to populate keywords" | Requires LLM API calls |
+| "Run embedding backfill to populate embeddings" | Requires embedding API calls |
+| "Re-run embedding generation for affected entries" | Requires embedding API |
+| "Set memory_embedding_provider in .claude/pd.local.md" | Config decision requires user input |
+| "Adjust memory_vector_weight, memory_keyword_weight, ..." | Config decision requires user input |
+| "Check weight values in .claude/pd.local.md" | Config decision requires user input |
+| "Check .claude/pd.local.md for syntax errors" | Cannot auto-fix config syntax |
+| "Create .meta.json or remove empty directory" | Ambiguous direction |
+| "Create .meta.json or deregister entity" | Ambiguous direction |
+| "Create .meta.json or remove stale DB entry" | Ambiguous direction |
+| "Register entity or remove stale directory" | Ambiguous direction |
+| "Register entity or remove stale feature directory" | Ambiguous direction |
+| "Register backlog entity or remove annotation" | Ambiguous direction |
+| "Register brainstorm entity or remove stale file" | Ambiguous direction |
+| "Register brainstorm entity or remove stale files" | Ambiguous direction |
+| "Remove stale entity or restore feature directory" | Ambiguous direction |
+| "Update artifact_path or restore the artifact" | Ambiguous direction |
+| "Update brainstorm_source or create the brainstorm file" | Ambiguous direction |
+| "Create a new branch for rework" | Requires git operations |
+| "Create the branch or update .meta.json branch field" | Requires git / user judgment |
+| "Update feature status to 'completed' or create a new branch" | Requires user judgment |
+| "Fix JSON syntax in .meta.json" | Cannot auto-fix syntax errors |
+| "Remove or fix dangling parent_type_id" | Ambiguous — which parent to set? |
+| "Break the circular parent reference" | Ambiguous — which link to break |
+| "Check for excessively deep nesting" | Informational — no fix action |
+| "Check if entity DB is locked or corrupted" | Diagnostic — no fix action |
+| "Create directory '{artifacts_root}' or update config" | Ambiguous direction |
+| "Set {key} to a value between 0.0 and 1.0" | Config decision requires user input |
+
+**Default rule:** Any fix_hint not matching a known pattern → classified as `manual`.
 
 ### FR-2: Fix Engine
 
@@ -84,14 +121,22 @@ def apply_fixes(
 ) -> FixReport:
 ```
 
+**Internal construction:** `apply_fixes()` constructs `EntityDatabase(entities_db_path)` and `WorkflowStateEngine(db, artifacts_root)` internally (same pattern as Phase 1 Check 2). These are used for reconciliation and entity update fixes. All wrapped in try/finally for cleanup.
+
 **Fix application rules:**
 1. Only attempt fixes for issues where `fix_hint is not None`
-2. Classify each fix_hint using pattern matching (FR-1 table)
-3. For `safe` fixes: apply the fix, verify it worked (re-check), record result
-4. For `manual` fixes: record as skipped with `classification="manual"`
-5. If a safe fix fails (exception): record as failed, continue to next fix
-6. Fixes are applied in check order (same as CHECK_ORDER)
-7. After all fixes, return FixReport
+2. Classify each fix_hint using pattern matching (FR-1 tables). Unmatched → `manual`.
+3. For `safe` fixes in non-dry-run: apply the fix, record result
+4. For `safe` fixes in dry-run: record as `FixResult(applied=False, action="dry-run: would {action}")`
+5. For `manual` fixes: record as skipped with `classification="manual"`
+6. If a safe fix fails (exception): record as failed, continue to next fix
+7. Fixes are applied in check order (same as CHECK_ORDER)
+8. After all fixes, return FixReport
+9. **No per-fix re-check** — the CLI's post-fix full diagnostic (FR-3) serves as verification
+
+**Entity updates:** Use `EntityDatabase` public API where possible (`update_entity`, `register_entity`). For fields without public setters (e.g., `parent_uuid`), use direct SQL on the EntityDatabase's connection — document as intentional encapsulation bypass.
+
+**Reconciliation fixes:** Extract `feature_type_id` from `Issue.entity` field and call `apply_workflow_reconciliation(feature_type_id=issue.entity)` per issue for deterministic fix tracking.
 
 **Idempotency:** All safe fixes must be idempotent — running twice produces the same result. This is critical for session-start integration.
 
@@ -125,8 +170,8 @@ Add doctor auto-fix to `plugins/pd/hooks/session-start.sh` after the existing re
 run_doctor_autofix() {
     # Same PLUGIN_ROOT / PYTHONPATH resolution as other Python calls
     $python_cmd -m doctor \
-        --entities-db ~/.claude/pd/entities/entities.db \
-        --memory-db ~/.claude/pd/memory/memory.db \
+        --entities-db "${ENTITY_DB_PATH:-$HOME/.claude/pd/entities/entities.db}" \
+        --memory-db "${MEMORY_DB_PATH:-$HOME/.claude/pd/memory/memory.db}" \
         --project-root "$PROJECT_ROOT" \
         --fix 2>/dev/null
 }
@@ -160,7 +205,7 @@ Update `plugins/pd/commands/doctor.md` to support `--fix` mode:
 ## Acceptance Criteria
 
 ### AC-1: Safe fixes are applied
-Given a DiagnosticReport with issues that have safe fix_hints, when `apply_fixes()` is called, then the fixes are applied and the post-fix diagnostic shows fewer issues.
+Given a DiagnosticReport with issues that have safe fix_hints, when `apply_fixes()` is called, then `fixed_count > 0` and the post-fix diagnostic shows zero issues for the fix_hints that were successfully applied.
 
 ### AC-2: Manual fixes are skipped
 Given issues with manual fix_hints, when `apply_fixes()` is called, then those issues are reported as `skipped` with `classification="manual"`.
@@ -172,7 +217,7 @@ Given `apply_fixes()` is called twice on the same report, then the second call p
 Given `python -m doctor --fix`, then output contains diagnostic, fixes, and post_fix sections.
 
 ### AC-5: --dry-run shows plan without applying
-Given `python -m doctor --fix --dry-run`, then output shows what would be fixed but no changes are made.
+Given `python -m doctor --fix --dry-run`, then output JSON contains fixes section with all `FixResult.applied=false` and `action` prefixed with "dry-run:", and no database or filesystem changes are made. The `post_fix` section is omitted.
 
 ### AC-6: Session-start integration runs silently
 Given a session starts with pd plugin active, then doctor auto-fix runs after reconciliation and produces at most one summary line.
@@ -187,7 +232,11 @@ Given all fix_hints from the 10 Phase 1 checks, then every fix_hint is classifie
 Given a safe fix that raises an exception, then it is recorded as `failed` in FixReport and does not prevent other fixes from running.
 
 ### AC-10: Post-fix diagnostic validates repairs
-Given fixes were applied, then a re-run of diagnostics confirms the issues are resolved (the post_fix report has fewer error/warning issues than the pre-fix report).
+Given fixes were applied, then a re-run of diagnostics confirms the fixed issues are resolved (`post_fix.error_count + post_fix.warning_count <= diagnostic.error_count + diagnostic.warning_count - fixes.fixed_count`).
+
+## Traceability
+
+This spec implements the Phase 2 auto-fix capability deferred in Feature 059 spec (NR-1: "Auto-fix (Phase 2) — this phase is read-only diagnostic only"). Requirements derived from Phase 1 fix_hint patterns in `plugins/pd/hooks/lib/doctor/checks.py`.
 
 ## Dependencies
 
