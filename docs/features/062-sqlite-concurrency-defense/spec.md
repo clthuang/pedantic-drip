@@ -64,7 +64,7 @@ SQLite databases shared across multiple MCP server processes suffer write conten
 - When `cascade_unblock` succeeds but `rollup_parent` would fail under contention
 - Then neither operation commits (both roll back together within Phase B transaction) — partial Phase B states are eliminated by the fix
 - And Phase A completion remains committed (Phase A/B separation preserved)
-- And reconciliation detects complete Phase B failure (both operations rolled back) and recovers on next invocation — no orphaned unblock/rollup state is possible after the fix
+- And if reconciliation already detects stale `blocked_by` entries, complete Phase B failure (both rolled back) is recoverable on next invocation — see verification clause below
 - Verification (read-only): confirm `reconciliation_orchestrator` already detects stale `blocked_by` entries for completed entities and re-triggers cascade. If detection is absent, document the gap as a backlog item — do not implement during this feature.
 
 ### Multi-Step Write Atomicity
