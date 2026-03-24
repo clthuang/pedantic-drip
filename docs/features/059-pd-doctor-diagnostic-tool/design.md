@@ -58,7 +58,7 @@ def check_feature_status(entities_conn, artifacts_root, **_) -> CheckResult:
 
 ### C3: Orchestrator (`__init__.py`)
 
-`run_diagnostics()` opens connections, runs all 10 checks sequentially, assembles `DiagnosticReport`.
+`run_diagnostics()` opens connections, runs all 10 checks sequentially, assembles `DiagnosticReport`. Each check call is wrapped in `try/except` — uncaught exceptions produce a `CheckResult(passed=False, issues=[Issue(severity="error", message=str(exc))])`, ensuring all 10 checks always produce results (AC-1).
 
 ### C4: Command File (`doctor.md`)
 
@@ -80,10 +80,12 @@ Markdown prompt that resolves paths, invokes the Python module via Bash, and for
 
 **Important:** `EntityDatabase.__init__` runs `_migrate()` which acquires a write lock briefly. If the DB is locked by another process, this will wait up to `busy_timeout` (15s for entity DB). Check 8 (DB Readiness) should run FIRST to detect locks before Check 2 tries to construct EntityDatabase.
 
-### TD-3: Check ordering — DB Readiness first
+### TD-3: Check ordering — DB Readiness first, skip-on-lock mechanism
 
-**Decision:** Run Check 8 (DB Readiness) first. If either DB is locked, skip checks that require that DB and report degraded results.
+**Decision:** Run Check 8 (DB Readiness) first. If either DB is locked, skip checks that require that DB.
 **Rationale:** Checks 1-7 and 9 need entity DB. Check 5 needs memory DB. If a DB is locked, attempting to open it wastes 5-15 seconds per check. Better to detect once and skip.
+
+**Skip mechanism:** If Check 8 reports entity DB locked, `run_diagnostics()` creates a sentinel `CheckResult(name=X, passed=False, issues=[Issue(severity="error", message="Skipped: entity DB locked")], elapsed_ms=0)` for each dependent check and does NOT call the check function. `entities_conn` is never passed as `None`. Same pattern for memory DB lock → Check 5 skipped.
 
 ### TD-4: Check function signatures — kwargs for extensibility
 
@@ -172,7 +174,35 @@ class DiagnosticReport:
 
 ```python
 # python -m doctor --entities-db PATH --memory-db PATH --artifacts-root PATH --project-root PATH
-# Outputs JSON DiagnosticReport to stdout
+# Outputs single JSON object to stdout. Exit code 0 always (doctor reports, does not fail).
+# If DB paths are invalid, output contains a single error CheckResult per missing DB.
+```
+
+**JSON output structure** (serialized DiagnosticReport):
+```json
+{
+  "healthy": false,
+  "checks": [
+    {
+      "name": "feature_status",
+      "passed": false,
+      "issues": [
+        {
+          "check": "feature_status",
+          "severity": "error",
+          "entity": "feature:057-memory-phase2-quality",
+          "message": ".meta.json status 'active' != entity DB status 'completed'",
+          "fix_hint": "Update .meta.json status to 'completed'"
+        }
+      ],
+      "elapsed_ms": 12
+    }
+  ],
+  "total_issues": 1,
+  "error_count": 1,
+  "warning_count": 0,
+  "elapsed_ms": 150
+}
 ```
 
 ### I5: Command file — `doctor.md`
