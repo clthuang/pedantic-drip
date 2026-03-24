@@ -150,8 +150,9 @@ New key: `memory_dedup_threshold` (default: `0.90`, type: float).
 
 ### TD-5: Influence lookup — case-insensitive exact match with LIKE fallback
 
-**Decision:** Case-insensitive exact match on entry `name` field, with `LIKE '%{name}%'` fallback if exact match fails.
+**Decision:** Case-insensitive exact match on entry `name` field, with parameterized `LIKE ? ESCAPE '\'` fallback if exact match fails.
 **Rationale:** The orchestrator is instructed to pass the exact entry name from the `## Relevant Engineering Memory` section, so exact match (case-insensitive) is the primary lookup. LIKE fallback handles cases where the orchestrator truncates or slightly modifies the name. The `entry_name` parameter is the name as passed by the orchestrator, not raw agent output — the orchestrator does the output scanning and calls `record_influence` with the matched entry name. This simplifies the matching: no need for 3-word overlap heuristics.
+**SQL safety:** LIKE fallback uses parameterized query (`LIKE ? ESCAPE '\'`) with `%` and `_` characters in `entry_name` escaped before constructing the `%{escaped_name}%` pattern. Prevents SQL wildcard injection from entry names containing special characters.
 
 ### TD-6: Influence recording — synchronous vs. async
 
@@ -251,6 +252,8 @@ def check_duplicate(
 
     Graceful degradation: returns DedupResult(is_duplicate=False, None, 0.0)
     if numpy is unavailable or no entries exist in the database.
+
+    Empty DB guard: if len(ids) == 0, return early before matmul.
     """
 ```
 
@@ -275,6 +278,10 @@ def merge_duplicate(
       last_recalled_at, embedding, created_at, created_timestamp_utc
 
     Returns the updated entry dict (via get_entry after UPDATE).
+
+    FTS5 re-indexing: the UPDATE triggers the existing entries_au AFTER
+    UPDATE trigger, which rebuilds the FTS row automatically. No additional
+    FTS5 work needed.
     """
 ```
 
@@ -325,6 +332,8 @@ def _migration_4(conn: sqlite3.Connection, **_kwargs: object) -> None:
 
 **Post-migration requirement:** Add `"influence_count"` to the `_COLUMNS` list (database.py:246) so that `_ALL_ENTRY_COLS` (used by `get_all_entries()`) includes the new column. `get_entry()` uses `SELECT *` and picks it up automatically.
 
+**Note:** The `MIGRATIONS` dict type annotation (`dict[int, Callable[[Connection], None]]`) is looser than actual usage (runner passes `fts5_available=` kwarg). This is pre-existing — migration 4 follows the same `**_kwargs` pattern as migrations 2 and 3.
+
 ### I6: Updated `_prominence()` — ranking.py
 
 ```python
@@ -349,10 +358,13 @@ def _process_store_memory(params):
     keywords = extract_keywords(name, description, reasoning, category, config)
     keywords_json = json.dumps(keywords)
     # 3. Compute embedding EARLY (moved from step 5, per TD-3)
+    #    Build partial dict for _embed_text_for_entry() (from writer.py)
     embedding_vec = None
     if embedding_provider:
-        embed_text = _build_embed_text(name, description, keywords, reasoning)
-        embedding_vec = embedding_provider.embed([embed_text])[0]
+        partial_entry = {"name": name, "description": description,
+                         "keywords": keywords_json, "reasoning": reasoning}
+        embed_text = _embed_text_for_entry(partial_entry)  # writer.py:103
+        embedding_vec = embedding_provider.embed(embed_text, task_type="document")
     # 4. Check for duplicates (NEW) — uses pre-computed embedding
     if embedding_vec is not None:
         dedup_result = check_duplicate(embedding_vec, db, threshold)
@@ -385,6 +397,13 @@ def _backfill_keywords(db, config):
     Iterates entries where keywords = '[]'.
     For each: extract_keywords() → db.update_keywords().
     Processes in batches of 50 with progress output.
+
+    Note: embedding recomputation after keyword backfill is NOT needed.
+    Keywords affect FTS5 scoring (indexed via triggers) independently of
+    vector similarity. The embedding includes keywords in its text
+    (via _embed_text_for_entry), but re-embedding all 766 entries for
+    marginally different keyword text is not worth the API cost. Embeddings
+    will naturally update when entries are next upserted via store_memory.
     """
 ```
 
