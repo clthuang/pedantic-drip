@@ -26,7 +26,7 @@ session-start.sh     → run_doctor_autofix() [Phase 2 NEW section]
 doctor.md            → updated command [Phase 2 MODIFIED]
 ```
 
-All fixes use **direct SQLite** with `busy_timeout=5000`, same as Phase 1 diagnostics. No MCP dependency.
+Fixes use EntityDatabase/WorkflowStateEngine APIs where possible, with direct SQLite (`busy_timeout=5000`) for fields lacking public setters (parent_uuid, parent_type_id). No MCP dependency.
 
 ---
 
@@ -64,7 +64,9 @@ _SAFE_PATTERNS: list[tuple[str, Callable]] = [
     ("Update brainstorm entity status", _fix_entity_status_promoted),
     ("Update entity status to", _fix_entity_status_promoted),
     ("Add (promoted", _fix_backlog_annotation),
-    ("Set PRAGMA journal_mode=WAL", _fix_wal_mode),
+    ("Set PRAGMA journal_mode=WAL on the database", _fix_wal_entities),
+    ("Set PRAGMA journal_mode=WAL on memory", _fix_wal_memory),
+    ("Update .meta.json from DB state", _fix_reconcile),
     ("Run migration to populate parent_uuid", _fix_parent_uuid),
     ("Update parent_uuid", _fix_parent_uuid),
     ("Remove orphaned dependency", _fix_remove_orphan_dependency),
@@ -97,7 +99,10 @@ class FixContext:
     project_root: str
     db: EntityDatabase | None      # constructed once, shared
     engine: WorkflowStateEngine | None  # constructed once, shared
-    entities_conn: sqlite3.Connection | None  # for direct SQL
+    # entities_conn IS db._conn (intentional encapsulation bypass for direct SQL
+    # on parent_uuid/parent_type_id). NOT a separate connection — avoids write lock
+    # contention. Same for memory_conn.
+    entities_conn: sqlite3.Connection | None
     memory_conn: sqlite3.Connection | None
 ```
 
@@ -110,14 +115,17 @@ Key implementations:
 | `_fix_last_completed_phase` | Read .meta.json, find latest phase with `completed` timestamp, update `lastCompletedPhase`, write back |
 | `_fix_reconcile` | Call `apply_workflow_reconciliation(engine=ctx.engine, db=ctx.db, artifacts_root=ctx.artifacts_root, feature_type_id=issue.entity)` |
 | `_fix_entity_status_promoted` | `ctx.db.update_entity(type_id=issue.entity, status="promoted")` |
-| `_fix_backlog_annotation` | Parse backlog.md, find row by entity ID, append `(promoted → ...)`. On parse failure → raise to mark as failed |
-| `_fix_wal_mode` | `ctx.entities_conn.execute("PRAGMA journal_mode=WAL")` or memory_conn depending on issue.message |
+| `_fix_backlog_annotation` | Path: `{ctx.project_root}/{ctx.artifacts_root}/backlog.md`. Format: markdown table with `\| {id} \|` rows. Extract backlog ID from `issue.entity` (e.g., "backlog:00042" → "00042"). Find row matching `\| 00042 \|`, append ` (promoted → feature:XXX)` to description column. On parse failure → raise |
+| `_fix_wal_entities` | `ctx.entities_conn.execute("PRAGMA journal_mode=WAL")` |
+| `_fix_wal_memory` | `ctx.memory_conn.execute("PRAGMA journal_mode=WAL")` |
 | `_fix_parent_uuid` | Lookup parent entity uuid from `entities` table by `parent_type_id`, UPDATE `parent_uuid` via direct SQL |
 | `_fix_self_referential_parent` | `UPDATE entities SET parent_type_id=NULL, parent_uuid=NULL WHERE type_id=?` via direct SQL |
-| `_fix_remove_orphan_*` | DELETE from respective junction table using IDs from issue.entity/message |
-| `_fix_rebuild_fts` | `subprocess.run([python_path, "scripts/migrate_db.py", "rebuild-fts", "--skip-kill", db_path])` |
+| `_fix_remove_orphan_dependency` | Extract UUIDs from `issue.message` via regex (pattern: `entity_uuid '{uuid}'` or `blocked_by_uuid '{uuid}'`). DELETE matching row from `entity_dependencies`. |
+| `_fix_remove_orphan_tag` | Extract UUID from `issue.message` via regex. DELETE from `entity_tags WHERE entity_uuid=?`. |
+| `_fix_remove_orphan_workflow` | Extract type_id from `issue.message` or `issue.entity`. DELETE from `workflow_phases WHERE type_id=?`. |
+| `_fix_rebuild_fts` | Resolve script path: `os.path.join(ctx.project_root, "scripts", "migrate_db.py")`. If not found, try plugin root. `subprocess.run([sys.executable, script_path, "rebuild-fts", "--skip-kill", db_path])` |
 | `_fix_run_entity_migrations` | Construct `EntityDatabase(ctx.entities_db_path)` — constructor runs `_migrate()`. Close immediately. |
-| `_fix_run_memory_migrations` | Import `semantic_memory.migrations` if available, call migration function. Fallback: subprocess call. |
+| `_fix_run_memory_migrations` | Construct `MemoryDatabase(ctx.memory_db_path)` from `semantic_memory.database` — constructor runs `_migrate()` automatically. Close immediately. Same pattern as entity DB. |
 
 ### C4: Fix Orchestrator (`fixer.py` — apply_fixes)
 
@@ -270,6 +278,16 @@ Single summary line appended to reconciliation output:
 - Fixes applied: `"Doctor: fixed N issues (M remaining)"`
 - Manual needed: `"Doctor: N issues need manual attention"`
 - Error/timeout: silent (swallowed by `|| true`)
+
+---
+
+## Test Strategy
+
+1. **classify_fix unit tests:** Cover all 17 safe patterns + unknown patterns → manual default
+2. **fix_action unit tests:** In-memory SQLite + tmp_path .meta.json fixtures per fix function
+3. **apply_fixes integration:** Pre-built DiagnosticReport with mix of safe/manual/no-hint issues
+4. **CLI tests:** `--fix` produces 3-section JSON, `--dry-run` omits post_fix, default unchanged
+5. **Idempotency test:** `apply_fixes()` called twice → second call has `fixed_count=0`
 
 ---
 
