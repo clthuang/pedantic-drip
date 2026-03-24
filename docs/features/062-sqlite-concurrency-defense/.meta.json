@@ -6,7 +6,7 @@
   "created": "2026-03-24T15:33:49.284915+00:00",
   "branch": "feature/062-sqlite-concurrency-defense",
   "brainstorm_source": "docs/brainstorms/20260324-153947-sqlite-concurrency-defense.prd.md",
-  "lastCompletedPhase": "specify",
+  "lastCompletedPhase": "design",
   "phases": {
     "brainstorm": {
       "started": "2026-03-24T15:33:49.284915+00:00",
@@ -15,6 +15,10 @@
     "specify": {
       "started": "2026-03-24T15:42:00.000000+00:00",
       "completed": "2026-03-25T00:05:00.000000+00:00"
+    },
+    "design": {
+      "started": "2026-03-25T00:06:00.000000+00:00",
+      "completed": "2026-03-25T00:45:00.000000+00:00"
     }
   }
 }
