@@ -86,14 +86,15 @@ All quality gates (reviewers, phase validators) still run — YOLO mode only byp
 
 ### Semantic Memory
 
-Two MCP tools persist learnings across sessions:
+Three MCP tools persist and leverage learnings across sessions:
 
 | Tool | Purpose |
 |------|---------|
 | `store_memory` | Save a pattern, anti-pattern, or heuristic to long-term memory |
 | `search_memory` | Search past learnings by topic using semantic similarity |
+| `record_influence` | Record that a retrieved memory influenced a subagent dispatch, improving future ranking |
 
-Memory entries are injected automatically at session start. The global store (`~/.claude/pd/memory/`) accumulates knowledge across all projects. See [README_FOR_DEV.md](./README_FOR_DEV.md) for configuration.
+Memory entries are injected automatically at session start. Duplicate entries are suppressed at capture time using cosine similarity (configurable via `memory_dedup_threshold`). The global store (`~/.claude/pd/memory/`) accumulates knowledge across all projects. See [README_FOR_DEV.md](./README_FOR_DEV.md) for configuration.
 
 ### Domain Knowledge
 

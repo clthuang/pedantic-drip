@@ -58,7 +58,7 @@ flowchart TD
 | Agents | 28 |
 | Commands | 29 |
 | Hooks | 13 |
-| MCP Tools | 25 |
+| MCP Tools | 26 |
 
 ## Commands
 
@@ -209,6 +209,7 @@ The memory server (`mcp/memory_server.py`) exposes two tools for long-term seman
 |------|---------|
 | `store_memory` | Save a learning (pattern, anti-pattern, or heuristic) to long-term memory |
 | `search_memory` | Search long-term memory for relevant learnings by topic |
+| `record_influence` | Record that a retrieved memory influenced a subagent dispatch, incrementing its ranking weight |
 
 The server is declared in `plugin.json` via `mcpServers` and bootstrapped by `mcp/run-memory-server.sh`. On first session it auto-creates `.venv/` with core deps (`mcp`, `numpy`, `python-dotenv`). For embedding providers, install into the plugin venv:
 

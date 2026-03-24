@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Tiered keyword extraction for memory entries — regex heuristics extract keywords on capture; Gemini LLM fallback used when heuristic yields too few terms, improving future search recall
+- Semantic deduplication at capture time — new memories are compared against recent entries using cosine similarity; entries above the `memory_dedup_threshold` (default 0.90) are suppressed to prevent redundant storage
+- `record_influence` MCP tool — records when a retrieved memory influenced a subagent dispatch, incrementing an influence counter used by memory ranking
+- `backfill-keywords` CLI action on the memory writer — retroactively extracts and stores keywords for existing memory entries that were captured before keyword extraction was available
+- `memory_dedup_threshold` config option (default 0.90) — controls cosine similarity threshold above which a new memory entry is considered a duplicate and suppressed
+- Influence tracking in memory prominence ranking — entries with higher influence counts are ranked more prominently in search results
 - Atomic transaction support (`EntityDatabase.transaction()` context manager) — multi-step DB writes now commit or roll back as a unit, preventing partial state on failure
 - Application-level retry with exponential backoff on 9 write-path MCP functions — transient SQLite lock errors are retried automatically instead of surfacing as failures
 - PID file monitoring for MCP server instances (`~/.claude/pd/run/`) — server lifecycle is now trackable per process
