@@ -5001,3 +5001,53 @@ class TestTransactionContextManager:
             with pytest.raises(RuntimeError, match="Nested transactions not supported"):
                 with db.transaction():
                     pass
+
+
+# ---------------------------------------------------------------------------
+# begin_immediate() bug fix tests (058)
+# ---------------------------------------------------------------------------
+
+
+class TestBeginImmediate:
+    """Tests for begin_immediate() with _in_transaction flag (Bug 2 fix)."""
+
+    def test_begin_immediate_register_entity(self, db):
+        """register_entity inside begin_immediate completes without error (AC-3)."""
+        with db.begin_immediate():
+            db.register_entity("feature", "bi-test", "BI Test")
+
+        row = db._conn.execute(
+            "SELECT * FROM entities WHERE type_id = ?", ("feature:bi-test",)
+        ).fetchone()
+        assert row is not None
+        assert row["name"] == "BI Test"
+
+    def test_begin_immediate_atomicity_rollback(self, db):
+        """register_entity then raise inside begin_immediate rolls back."""
+        with pytest.raises(ValueError, match="deliberate"):
+            with db.begin_immediate():
+                db.register_entity("feature", "bi-rollback", "BI Rollback")
+                raise ValueError("deliberate error")
+
+        row = db._conn.execute(
+            "SELECT * FROM entities WHERE type_id = ?", ("feature:bi-rollback",)
+        ).fetchone()
+        assert row is None
+
+    def test_begin_immediate_nesting_raises_runtime_error(self, db):
+        """Nested begin_immediate() raises RuntimeError."""
+        with db.begin_immediate():
+            with pytest.raises(RuntimeError, match="Nested transactions not supported"):
+                with db.begin_immediate():
+                    pass
+
+    def test_register_entity_outside_transaction_unchanged(self, db):
+        """register_entity outside any transaction works as before (AC-4)."""
+        entity_uuid = db.register_entity("feature", "no-txn", "No Txn")
+        assert entity_uuid is not None
+
+        row = db._conn.execute(
+            "SELECT * FROM entities WHERE type_id = ?", ("feature:no-txn",)
+        ).fetchone()
+        assert row is not None
+        assert row["name"] == "No Txn"

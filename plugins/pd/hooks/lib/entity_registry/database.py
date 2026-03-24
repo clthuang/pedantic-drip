@@ -461,9 +461,14 @@ def _expand_workflow_phase_check(conn: sqlite3.Connection) -> None:
             )
         """)
 
-        # Copy all existing data
+        # Copy all existing data (explicit column list for forward-compat)
         conn.execute(
-            "INSERT INTO workflow_phases_new SELECT * FROM workflow_phases"
+            "INSERT INTO workflow_phases_new "
+            "(type_id, workflow_phase, kanban_column, "
+            "last_completed_phase, mode, backward_transition_reason, updated_at) "
+            "SELECT type_id, workflow_phase, kanban_column, "
+            "last_completed_phase, mode, backward_transition_reason, updated_at "
+            "FROM workflow_phases"
         )
 
         # Drop old table and rename
@@ -1133,19 +1138,30 @@ class EntityDatabase:
         """Context manager that wraps a block in BEGIN IMMEDIATE.
 
         Commits on success, rolls back on exception. Yields the connection.
+        Sets ``_in_transaction`` so that ``_commit()`` calls inside the block
+        are suppressed (matching ``transaction()`` semantics).
 
         Usage::
 
             with db.begin_immediate() as conn:
                 conn.execute("UPDATE ...")
         """
+        if self._in_transaction:
+            raise RuntimeError("Nested transactions not supported")
+        self._conn.commit()  # flush pending implicit transactions
         self._conn.execute("BEGIN IMMEDIATE")
+        self._in_transaction = True
         try:
             yield self._conn
             self._conn.execute("COMMIT")
         except Exception:
-            self._conn.execute("ROLLBACK")
+            try:
+                self._conn.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass
             raise
+        finally:
+            self._in_transaction = False
 
     @contextmanager
     def transaction(self):
