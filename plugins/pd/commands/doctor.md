@@ -27,7 +27,7 @@ if [[ -n "$PLUGIN_ROOT" ]] && [[ -x "$PLUGIN_ROOT/.venv/bin/python" ]]; then
 else
   # Fallback: dev workspace
   if [[ -x "plugins/pd/.venv/bin/python" ]]; then
-    PYTHONPATH=plugins/pd/hooks/lib plugins/pd/.venv/bin/python -m doctor \
+    PYTHONPATH=plugins/pd/hooks/lib plugins/pd/.venv/bin/python -m doctor \ # Fallback (dev workspace)
       --entities-db ~/.claude/pd/entities/entities.db \
       --memory-db ~/.claude/pd/memory/memory.db \
       --artifacts-root {pd_artifacts_root} \
