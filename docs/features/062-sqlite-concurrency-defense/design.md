@@ -162,8 +162,8 @@ For Type B handlers, the pattern is: extract the try-block DB logic into a sync 
 **Dependencies:** C1 (sqlite_retry)
 
 **Handlers to decorate** (already sync `_process_*` functions — same pattern as workflow_state_server):
-1. `_process_store_memory` (line 38) — sync helper, apply `@with_retry("memory")` directly
-2. `_process_record_influence` (line 237) — sync helper, apply `@with_retry("memory")` directly
+1. `_process_store_memory` (line 38) — sync helper, no existing decorators, apply `@with_retry("memory")` directly
+2. `_process_record_influence` (line 237) — sync helper, no existing decorators, apply `@with_retry("memory")` directly
 3. `delete_memory` handler (line 410) — has inline `_db.delete_entry()`, extract to sync `_process_delete_memory` then wrap
 
 **Error conversion:** NOT all memory server async handlers have try/except. `store_memory` (line 314) and `record_influence` (line 451) call their sync helpers directly with NO try/except — only `delete_memory` (line 422) has `except Exception`. Implementation must add `try/except Exception` wrappers to `store_memory` and `record_influence` async handlers to catch exhausted-retry `OperationalError` and return structured error strings.
@@ -271,7 +271,10 @@ def _run_cascade(self, entity_uuid: str) -> tuple[list[str], float | None]:
         unblocked = self._dep_manager.cascade_unblock(self._db, entity_uuid)
         rollup_parent(self._db, entity_uuid)
 
-    # Read-only operations OUTSIDE transaction (no write lock held)
+    # Read-only operations OUTSIDE transaction (no write lock held).
+    # Note: compute_progress may read slightly stale data if another writer
+    # commits between transaction end and this read. This is acceptable —
+    # stale progress self-corrects on the next reconciliation cycle.
     entity = self._db.get_entity_by_uuid(entity_uuid)
     if entity is not None:
         parent_uuid = entity.get("parent_uuid")
