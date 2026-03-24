@@ -390,7 +390,6 @@ class TestAC4McpCaptureRetrieval:
         result_msg = _process_store_memory(
             db=memdb,
             provider=None,
-            keyword_gen=None,
             name="MCP Round Trip Pattern",
             description="Always validate inputs before processing in pipeline stages",
             reasoning="Discovered during integration testing of the MCP server",

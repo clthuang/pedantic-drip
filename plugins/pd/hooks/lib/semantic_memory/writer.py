@@ -73,35 +73,6 @@ def _build_db_entry(entry: dict, entry_id: str, now: str, *, project_root: str =
     }
 
 
-def _merge_keywords(db: MemoryDatabase, entry_id: str, new_keywords: list | None) -> None:
-    """Merge new keywords into an existing entry's keyword list."""
-    if not new_keywords:
-        return
-
-    existing = db.get_entry(entry_id)
-    if existing is None:
-        return
-
-    existing_kw_raw = existing.get("keywords")
-    existing_kw: list[str] = []
-    if existing_kw_raw:
-        try:
-            existing_kw = json.loads(existing_kw_raw)
-        except (json.JSONDecodeError, TypeError):
-            existing_kw = []
-
-    # Merge: add new keywords that aren't already present
-    merged = list(existing_kw)
-    seen = set(existing_kw)
-    for kw in new_keywords:
-        if kw not in seen:
-            merged.append(kw)
-            seen.add(kw)
-
-    if merged != existing_kw:
-        db.update_keywords(entry_id, json.dumps(merged))
-
-
 def _check_provider_migration(
     db: MemoryDatabase,
     config: dict,
@@ -281,19 +252,10 @@ def main() -> None:
         # Check provider migration (TD9)
         _check_provider_migration(db, config, provider)
 
-        # Check if entry already exists (for keyword merging)
-        existing = db.get_entry(entry_id)
-
         # Build and upsert entry
         db_entry = _build_db_entry(entry_data, entry_id, now,
                                    project_root=args.project_root)
         db.upsert_entry(db_entry)
-
-        # Merge keywords if this was an update
-        if existing is not None:
-            new_keywords = entry_data.get("keywords")
-            if isinstance(new_keywords, list):
-                _merge_keywords(db, entry_id, new_keywords)
 
         # Generate embedding for this entry if provider is available
         if provider:

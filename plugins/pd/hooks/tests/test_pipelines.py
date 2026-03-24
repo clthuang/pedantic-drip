@@ -496,10 +496,10 @@ class TestImporterIdempotent:
 
 
 class TestImporterKeywordsNull:
-    """With keyword_gen=None, imported entries have keywords=NULL in DB."""
+    """Imported entries have keywords=NULL in DB."""
 
     def test_keywords_null_after_import(self, importer_no_keywords, memdb, tmp_path):
-        """All imported entries have keywords=None when keyword_gen is None."""
+        """All imported entries have keywords=None."""
         kb_dir = tmp_path / "docs" / "knowledge-bank"
         kb_dir.mkdir(parents=True)
         (kb_dir / "anti-patterns.md").write_text(ANTI_PATTERNS_MD)

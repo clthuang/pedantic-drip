@@ -20,7 +20,6 @@ import pytest
 
 from semantic_memory import content_hash
 from semantic_memory.database import MemoryDatabase
-from semantic_memory.keywords import SkipKeywordGenerator
 
 
 # ---------------------------------------------------------------------------
@@ -70,18 +69,6 @@ class FakeEmbeddingProvider:
         return [self.embed(t, task_type) for t in texts]
 
 
-class FakeKeywordGenerator:
-    """Keyword generator that returns a fixed list."""
-
-    def __init__(self, keywords: list[str] | None = None) -> None:
-        self._keywords = keywords or ["testing", "memory", "patterns"]
-
-    def generate(
-        self, name: str, description: str, reasoning: str, category: str
-    ) -> list[str]:
-        return self._keywords
-
-
 # ---------------------------------------------------------------------------
 # Fixture
 # ---------------------------------------------------------------------------
@@ -113,7 +100,6 @@ class TestValidStoreMemory:
         result = _process_store_memory(
             db=db,
             provider=None,
-            keyword_gen=None,
             name="Test pattern",
             description="Always validate inputs before processing",
             reasoning="Prevents runtime errors from bad data",
@@ -138,7 +124,6 @@ class TestValidStoreMemory:
         _process_store_memory(
             db=db,
             provider=None,
-            keyword_gen=None,
             name="Test",
             description="Source test",
             reasoning="Reason",
@@ -161,7 +146,6 @@ class TestValidationErrors:
         result = _process_store_memory(
             db=db,
             provider=None,
-            keyword_gen=None,
             name="Test",
             description="Desc",
             reasoning="Reason",
@@ -175,7 +159,6 @@ class TestValidationErrors:
         result = _process_store_memory(
             db=db,
             provider=None,
-            keyword_gen=None,
             name="",
             description="Desc",
             reasoning="Reason",
@@ -189,7 +172,6 @@ class TestValidationErrors:
         result = _process_store_memory(
             db=db,
             provider=None,
-            keyword_gen=None,
             name="Test",
             description="",
             reasoning="Reason",
@@ -203,7 +185,6 @@ class TestValidationErrors:
         result = _process_store_memory(
             db=db,
             provider=None,
-            keyword_gen=None,
             name="Test",
             description="Desc",
             reasoning="",
@@ -217,7 +198,6 @@ class TestValidationErrors:
         result = _process_store_memory(
             db=db,
             provider=None,
-            keyword_gen=None,
             name="   ",
             description="Desc",
             reasoning="Reason",
@@ -240,8 +220,7 @@ class TestDuplicateEntry:
             _process_store_memory(
                 db=db,
                 provider=None,
-                keyword_gen=None,
-                name="Dup pattern",
+                    name="Dup pattern",
                 description="Identical description for dedup test",
                 reasoning="Reason",
                 category="patterns",
@@ -263,7 +242,6 @@ class TestConfidence:
         _process_store_memory(
             db=db,
             provider=None,
-            keyword_gen=None,
             name="test",
             description="test description for confidence default",
             reasoning="testing",
@@ -279,7 +257,6 @@ class TestConfidence:
         _process_store_memory(
             db=db,
             provider=None,
-            keyword_gen=None,
             name="test",
             description="test description for low confidence",
             reasoning="testing",
@@ -296,7 +273,6 @@ class TestConfidence:
         result = _process_store_memory(
             db=db,
             provider=None,
-            keyword_gen=None,
             name="test",
             description="test description for invalid confidence",
             reasoning="testing",
@@ -313,7 +289,6 @@ class TestConfidence:
         result = _process_store_memory(
             db=db,
             provider=None,
-            keyword_gen=None,
             name="test",
             description="test description for new entry confidence",
             reasoning="testing",
@@ -330,8 +305,7 @@ class TestConfidence:
             result = _process_store_memory(
                 db=db,
                 provider=None,
-                keyword_gen=None,
-                name="test",
+                    name="test",
                 description=desc,
                 reasoning="testing",
                 category="heuristics",
@@ -343,36 +317,16 @@ class TestConfidence:
 
 
 # ---------------------------------------------------------------------------
-# Test: keywords
+# Test: keywords always stored as empty JSON
 # ---------------------------------------------------------------------------
 
 
 class TestKeywords:
-    def test_keywords_generated_when_keyword_gen_provided(self, db: MemoryDatabase):
-        """Keywords should be stored as JSON array when generator is available."""
-        kw_gen = FakeKeywordGenerator(["testing", "memory", "patterns"])
+    def test_keywords_stored_as_empty_json(self, db: MemoryDatabase):
+        """Keywords should always be '[]' (keyword system removed)."""
         _process_store_memory(
             db=db,
             provider=None,
-            keyword_gen=kw_gen,
-            name="KW test",
-            description="Keyword generation test",
-            reasoning="For keywords",
-            category="heuristics",
-            references=[],
-        )
-        expected_hash = content_hash("Keyword generation test")
-        entry = db.get_entry(expected_hash)
-        assert entry["keywords"] is not None
-        keywords = json.loads(entry["keywords"])
-        assert keywords == ["testing", "memory", "patterns"]
-
-    def test_no_keyword_gen_stores_empty_json_keywords(self, db: MemoryDatabase):
-        """Without a keyword generator, keywords should be '[]'."""
-        _process_store_memory(
-            db=db,
-            provider=None,
-            keyword_gen=None,
             name="No KW",
             description="No keyword gen test",
             reasoning="Reason",
@@ -395,7 +349,6 @@ class TestSourceProject:
         _process_store_memory(
             db=db,
             provider=None,
-            keyword_gen=None,
             name="SP test",
             description="Source project test",
             reasoning="For source project",
@@ -422,7 +375,6 @@ class TestSourceHash:
         _process_store_memory(
             db=db,
             provider=None,
-            keyword_gen=None,
             name="SH test",
             description=desc,
             reasoning="For source hash",
@@ -448,7 +400,6 @@ class TestEmbeddings:
         _process_store_memory(
             db=db,
             provider=provider,
-            keyword_gen=None,
             name="Emb test",
             description="Embedding generation test",
             reasoning="For embedding",
@@ -466,7 +417,6 @@ class TestEmbeddings:
         _process_store_memory(
             db=db,
             provider=None,
-            keyword_gen=None,
             name="No emb",
             description="No embedding test",
             reasoning="Reason",
@@ -490,7 +440,6 @@ class TestEmbeddings:
         _process_store_memory(
             db=db,
             provider=provider,
-            keyword_gen=None,
             name="MyName",
             description="MyDescription",
             reasoning="Reason",
@@ -512,7 +461,6 @@ class TestReferences:
         _process_store_memory(
             db=db,
             provider=None,
-            keyword_gen=None,
             name="Ref test",
             description="References test",
             reasoning="Reason",
@@ -530,7 +478,6 @@ class TestReferences:
         _process_store_memory(
             db=db,
             provider=None,
-            keyword_gen=None,
             name="Empty ref",
             description="Empty references test",
             reasoning="Reason",
@@ -562,7 +509,6 @@ class TestSearchMemory:
         _process_store_memory(
             db=db,
             provider=None,
-            keyword_gen=None,
             name="Hook patterns",
             description="Always suppress stderr in hook subprocesses to prevent JSON corruption",
             reasoning="Hooks output JSON and stderr corrupts the protocol",
@@ -572,7 +518,6 @@ class TestSearchMemory:
         _process_store_memory(
             db=db,
             provider=None,
-            keyword_gen=None,
             name="Testing heuristic",
             description="Run tests before committing to catch regressions early",
             reasoning="Prevents broken commits",
@@ -631,8 +576,7 @@ class TestSearchMemory:
             _process_store_memory(
                 db=db,
                 provider=None,
-                keyword_gen=None,
-                name=f"Pattern {i}",
+                    name=f"Pattern {i}",
                 description=f"Pattern description number {i} about testing workflows",
                 reasoning=f"Reason {i}",
                 category="patterns",
@@ -654,7 +598,6 @@ class TestSearchMemory:
         _process_store_memory(
             db=db,
             provider=None,
-            keyword_gen=None,
             name="Test entry",
             description="Always check permissions before file operations",
             reasoning="Prevents permission-denied errors at runtime",
@@ -752,7 +695,6 @@ def _seed_entries(db):
         _process_store_memory(
             db=db,
             provider=None,
-            keyword_gen=None,
             name=name,
             description=desc,
             reasoning=reasoning,
@@ -787,7 +729,7 @@ class TestSearchMemoryCategoryFilter:
         """A category with no matching entries returns 'No matching', not an error."""
         # Seed only pattern entries
         _process_store_memory(
-            db=db, provider=None, keyword_gen=None,
+            db=db, provider=None,
             name="Only pattern", description="A workflow pattern entry",
             reasoning="Reason", category="patterns", references=[], confidence="high",
         )
@@ -947,7 +889,7 @@ class TestSearchMemoryFts5Sanitization:
         ]
         for name, desc, reasoning, cat in entries:
             _process_store_memory(
-                db=db, provider=None, keyword_gen=None,
+                db=db, provider=None,
                 name=name, description=desc, reasoning=reasoning,
                 category=cat, references=[],
             )
@@ -1038,7 +980,7 @@ class TestSearchMemoryCategoryFilterBeforeRankingDeepened:
         # Given 5 patterns and 5 heuristics entries sharing keyword 'workflow'
         for i in range(5):
             _process_store_memory(
-                db=db, provider=None, keyword_gen=None,
+                db=db, provider=None,
                 name=f"Pattern workflow {i}",
                 description=f"A workflow pattern about testing number {i}",
                 reasoning=f"Pattern reason {i}",
@@ -1046,7 +988,7 @@ class TestSearchMemoryCategoryFilterBeforeRankingDeepened:
             )
         for i in range(5):
             _process_store_memory(
-                db=db, provider=None, keyword_gen=None,
+                db=db, provider=None,
                 name=f"Heuristic workflow {i}",
                 description=f"A workflow heuristic about testing number {i}",
                 reasoning=f"Heuristic reason {i}",

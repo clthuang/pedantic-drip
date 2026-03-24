@@ -22,11 +22,6 @@ from semantic_memory import VALID_CATEGORIES, VALID_CONFIDENCE, content_hash, so
 from semantic_memory.config import read_config
 from semantic_memory.database import MemoryDatabase
 from semantic_memory.embedding import EmbeddingProvider, create_provider
-from semantic_memory.keywords import (
-    KeywordGenerator,
-    SkipKeywordGenerator,
-    TieredKeywordGenerator,
-)
 from semantic_memory.ranking import RankingEngine
 from semantic_memory.retrieval import RetrievalPipeline
 from semantic_memory.writer import _embed_text_for_entry, _process_pending_embeddings
@@ -41,7 +36,6 @@ from mcp.server.fastmcp import FastMCP
 def _process_store_memory(
     db: MemoryDatabase,
     provider: EmbeddingProvider | None,
-    keyword_gen: KeywordGenerator | None,
     name: str,
     description: str,
     reasoning: str,
@@ -79,18 +73,7 @@ def _process_store_memory(
     # -- Source is always 'session-capture' per spec D6 --
     source = "session-capture"
 
-    # -- Generate keywords if keyword_gen available --
-    keywords_json: str = "[]"
-    if keyword_gen is not None:
-        try:
-            kw_list = keyword_gen.generate(name, description, reasoning, category)
-            if kw_list:
-                keywords_json = json.dumps(kw_list)
-        except Exception as exc:
-            print(
-                f"memory-server: keyword generation failed: {exc}",
-                file=sys.stderr,
-            )
+    keywords_json = "[]"
 
     # -- Build entry dict --
     now = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -228,7 +211,6 @@ def _process_search_memory(
 
 _db: MemoryDatabase | None = None
 _provider: EmbeddingProvider | None = None
-_keyword_gen: KeywordGenerator | None = None
 _config: dict = {}
 _project_root: str = ""
 
@@ -240,7 +222,7 @@ _project_root: str = ""
 @asynccontextmanager
 async def lifespan(server):
     """Manage DB connection and providers lifecycle."""
-    global _db, _provider, _keyword_gen, _config, _project_root
+    global _db, _provider, _config, _project_root
 
     global_store = os.path.expanduser("~/.claude/pd/memory")
     os.makedirs(global_store, exist_ok=True)
@@ -263,12 +245,6 @@ async def lifespan(server):
     else:
         print("memory-server: no embedding provider available", file=sys.stderr)
 
-    # Keyword generator: TieredKeywordGenerator if configured, else Skip.
-    try:
-        _keyword_gen = TieredKeywordGenerator(config)
-    except Exception:
-        _keyword_gen = SkipKeywordGenerator()
-
     try:
         yield {}
     finally:
@@ -276,7 +252,6 @@ async def lifespan(server):
             _db.close()
             _db = None
         _provider = None
-        _keyword_gen = None
         _config = {}
 
 
@@ -322,7 +297,6 @@ async def store_memory(
     return _process_store_memory(
         db=_db,
         provider=_provider,
-        keyword_gen=_keyword_gen,
         name=name,
         description=description,
         reasoning=reasoning,
