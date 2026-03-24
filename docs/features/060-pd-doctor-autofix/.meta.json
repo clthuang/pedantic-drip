@@ -1,0 +1,14 @@
+{
+  "id": "060",
+  "slug": "pd-doctor-autofix",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-03-24T12:51:44.316824+00:00",
+  "branch": "feature/060-pd-doctor-autofix",
+  "lastCompletedPhase": null,
+  "phases": {
+    "brainstorm": {
+      "started": "2026-03-24T12:51:44.316789+00:00"
+    }
+  }
+}
