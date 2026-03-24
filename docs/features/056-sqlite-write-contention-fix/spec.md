@@ -82,7 +82,7 @@ if transitioned and db is not None:
     _project_meta_json(db, engine, feature_type_id)
 ```
 
-**Note:** `engine.transition_phase()` and `engine.complete_phase()` use the frozen engine's own DB connection (separate from `EntityDatabase`). These calls happen BEFORE the entity DB writes and are inherently atomic (single UPDATE). The transaction wrapper covers only the entity DB writes that follow.
+**Note:** `WorkflowStateEngine` holds a reference to the SAME `EntityDatabase` instance (`self.db = db` at engine.py:48). It does NOT have its own DB connection. Therefore `engine.transition_phase()` and `engine.complete_phase()` writes go through the same `_commit()` path and MUST be included inside the `db.transaction()` block for true atomicity.
 
 ### FR-2: Retry with exponential backoff for transient errors
 
