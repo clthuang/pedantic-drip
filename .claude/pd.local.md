@@ -40,12 +40,12 @@ memory_semantic_enabled: true
 memory_vector_weight: 0.5
 memory_keyword_weight: 0.2
 memory_prominence_weight: 0.3
-# Embedding provider for semantic search: gemini | openai
+# Minimum relevance score for memory injection (0.0-1.0)
+memory_relevance_threshold: 0.3
+# Embedding provider for semantic search: gemini
 memory_embedding_provider: gemini
 # Model ID for embedding generation
 memory_embedding_model: gemini-embedding-001
-# Keyword extraction provider: auto | gemini | openai
-memory_keyword_provider: auto
 # How model-initiated memory captures are handled: ask-first | silent | disabled
 memory_model_capture_mode: ask-first
 # Max silent captures per session (only applies when capture mode is "silent")
