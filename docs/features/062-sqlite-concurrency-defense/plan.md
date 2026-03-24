@@ -21,12 +21,12 @@ Items with no dependencies.
    - **Files:** `plugins/pd/hooks/lib/semantic_memory/database.py`, `plugins/pd/hooks/lib/workflow_engine/engine.py`
    - **Verification:** Grep across production DB modules (excluding test files and doctor/) confirms no PRAGMA busy_timeout value other than 15000
 
-### Stage 2: Core Implementation
-Items depending on Stage 1.
+### Stage 2: Import Pattern Validation
+Depends on item 1 (shared module).
 
 3. **Workflow state server refactor** — Replace local `_with_retry`/`_is_transient` with imports from shared module
    - **Why this item:** Design C4 — eliminate code duplication, single source of truth for retry logic
-   - **Why this order:** Depends on item 1 (shared module). Must be done before entity/memory server integration to validate the import pattern works.
+   - **Why this order:** Depends on item 1 (shared module). Must be done before entity/memory server integration to validate the import pattern works. Items 4 and 5 from Stage 1 are independent and can run in parallel with this.
    - **Deliverable:** `workflow_state_server.py` imports from `sqlite_retry.py`, local `_with_retry`/`_is_transient` definitions replaced with wrapper/alias
    - **Complexity:** Simple — import + alias, no behavioral change. Verify 9 `@_with_retry()` call sites unchanged.
    - **Files:** `plugins/pd/mcp/workflow_state_server.py`
@@ -53,7 +53,7 @@ Items depending on Stages 1-2.
 
 6. **Entity server retry integration** — Add `@with_retry("entity")` to all 10 write handlers
    - **Why this item:** Design C2, Spec FR-1 — entity server has zero retry coverage
-   - **Why this order:** Depends on item 1 (shared module) and item 4 (validated import pattern)
+   - **Why this order:** Depends on item 1 (shared module) and item 3 (validated import pattern)
    - **Deliverable:** Type A handlers (2 in `server_helpers.py`) decorated directly; Type B handlers (8 inline) extracted to sync `_process_*` functions then decorated. Exception handling broadened for `add_okr_alignment`, `create_key_result`, `update_kr_score` to catch `Exception`.
    - **Complexity:** Medium — 10 handlers, 8 need extraction to sync helpers, 3 need broader exception handling
    - **Files:** `plugins/pd/hooks/lib/entity_registry/server_helpers.py`, `plugins/pd/mcp/entity_server.py`
@@ -61,7 +61,7 @@ Items depending on Stages 1-2.
 
 7. **Memory server retry integration** — Add `@with_retry("memory")` to 3 write handlers
    - **Why this item:** Design C3, Spec FR-2 — memory server has zero retry coverage
-   - **Why this order:** Depends on item 1 (shared module) and item 4 (validated import pattern)
+   - **Why this order:** Depends on item 1 (shared module) and item 3 (validated import pattern)
    - **Deliverable:** `_process_store_memory` and `_process_record_influence` decorated; `delete_memory` inline logic extracted to `_process_delete_memory` then decorated. `store_memory` and `record_influence` async handlers get try/except Exception wrappers. Misleading comment at line 128 corrected.
    - **Complexity:** Simple — 3 handlers, 2 already sync helpers, 1 needs extraction
    - **Files:** `plugins/pd/mcp/memory_server.py`
