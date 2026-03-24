@@ -1,6 +1,7 @@
 """Tests for workflow_state_server processing functions."""
 from __future__ import annotations
 
+import functools
 import json
 import os
 import sqlite3
@@ -6877,3 +6878,348 @@ class TestCompletePhaseArtifactWarnings:
         # But warnings are present
         assert "artifact_warnings" in data
         assert len(data["artifact_warnings"]) == 3  # spec.md, tasks.md, retro.md
+
+
+# ---------------------------------------------------------------------------
+# Task 2.1: Atomic transaction wrapping tests (TDD RED)
+# ---------------------------------------------------------------------------
+
+
+class TestTransitionPhaseAtomicRollback:
+    """AC-3: When db.update_workflow_phase raises inside a transaction,
+    ALL writes (including the prior db.update_entity) must be rolled back."""
+
+    def test_transition_phase_atomic_rollback(self, seeded_engine, db, tmp_path):
+        """Mock db.update_workflow_phase to raise OperationalError after
+        db.update_entity succeeds; assert entity metadata is NOT persisted."""
+        feat_dir = os.path.join(str(tmp_path), "features", "009-test")
+        os.makedirs(feat_dir, exist_ok=True)
+        with open(os.path.join(feat_dir, "spec.md"), "w") as f:
+            f.write("# Spec\n")
+        db.update_entity(
+            "feature:009-test",
+            artifact_path=feat_dir,
+            metadata={"id": "009", "slug": "test", "mode": "standard", "branch": "feature/009-test"},
+        )
+
+        # Snapshot metadata before transition attempt
+        entity_before = db.get_entity("feature:009-test")
+        metadata_before = entity_before["metadata"]
+
+        # Patch update_workflow_phase to raise AFTER update_entity would have run
+        original_update_wf = db.update_workflow_phase
+
+        def exploding_update_wf(*args, **kwargs):
+            raise sqlite3.OperationalError("simulated lock failure")
+
+        db.update_workflow_phase = exploding_update_wf
+
+        try:
+            result = _process_transition_phase(
+                seeded_engine, "feature:009-test", "design", False, db=db,
+            )
+        finally:
+            db.update_workflow_phase = original_update_wf
+
+        # With atomic transactions, the entity metadata should be rolled back
+        # to its pre-transition state (update_entity inside same transaction).
+        entity_after = db.get_entity("feature:009-test")
+        metadata_after = entity_after["metadata"]
+        assert metadata_after == metadata_before, (
+            "Entity metadata was persisted despite update_workflow_phase failure — "
+            "transaction rollback not working"
+        )
+
+    def test_complete_phase_atomic_rollback(self, db, tmp_path):
+        """Same pattern for complete_phase: mock db.update_workflow_phase to
+        raise; assert entity metadata is NOT persisted."""
+        feat_dir = os.path.join(str(tmp_path), "features", "010-comp")
+        os.makedirs(feat_dir, exist_ok=True)
+        with open(os.path.join(feat_dir, ".meta.json"), "w") as f:
+            f.write('{"id": "010", "slug": "comp", "status": "active", "mode": "standard"}')
+
+        db.register_entity(
+            "feature", "010-comp", "Comp Feature", status="active",
+            artifact_path=feat_dir,
+            metadata={"id": "010", "slug": "comp", "mode": "standard", "branch": "feature/010-comp"},
+        )
+        db.create_workflow_phase("feature:010-comp", workflow_phase="specify")
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        # Snapshot metadata before
+        entity_before = db.get_entity("feature:010-comp")
+        metadata_before = entity_before["metadata"]
+
+        # Patch update_workflow_phase to explode
+        original_update_wf = db.update_workflow_phase
+
+        def exploding_update_wf(*args, **kwargs):
+            raise sqlite3.OperationalError("simulated lock failure")
+
+        db.update_workflow_phase = exploding_update_wf
+
+        try:
+            result = _process_complete_phase(
+                engine, "feature:010-comp", "specify", db=db,
+                iterations=None, reviewer_notes=None,
+            )
+        finally:
+            db.update_workflow_phase = original_update_wf
+
+        # With atomic transactions, metadata should be unchanged
+        entity_after = db.get_entity("feature:010-comp")
+        metadata_after = entity_after["metadata"]
+        assert metadata_after == metadata_before, (
+            "Entity metadata was persisted despite update_workflow_phase failure — "
+            "transaction rollback not working (complete_phase)"
+        )
+
+
+class TestTransitionPhaseDegradedInsideTransaction:
+    """AC-3: When engine returns degraded=True inside a transaction,
+    an OperationalError should be raised and the transaction rolled back."""
+
+    def test_transition_phase_degraded_raises_inside_transaction(
+        self, seeded_engine, db, tmp_path, monkeypatch
+    ):
+        feat_dir = os.path.join(str(tmp_path), "features", "009-test")
+        os.makedirs(feat_dir, exist_ok=True)
+        with open(os.path.join(feat_dir, "spec.md"), "w") as f:
+            f.write("# Spec\n")
+        db.update_entity(
+            "feature:009-test",
+            artifact_path=feat_dir,
+            metadata={"id": "009", "slug": "test", "mode": "standard", "branch": "feature/009-test"},
+        )
+
+        # Create a degraded response
+        degraded_response = TransitionResponse(
+            results=[
+                TransitionResult(
+                    allowed=True, reason="OK", severity=Severity.info, guard_id="G-01",
+                )
+            ],
+            degraded=True,
+        )
+        monkeypatch.setattr(
+            seeded_engine, "transition_phase", lambda *a, **kw: degraded_response
+        )
+
+        # Snapshot metadata
+        entity_before = db.get_entity("feature:009-test")
+        metadata_before = entity_before["metadata"]
+
+        result = _process_transition_phase(
+            seeded_engine, "feature:009-test", "design", False, db=db,
+        )
+
+        # With atomic transactions + degraded check, the transaction should be
+        # rolled back and the result should indicate an error.
+        data = json.loads(result)
+        assert data.get("error") is True, (
+            "Degraded response inside transaction should raise OperationalError "
+            "which _with_error_handling converts to an error response"
+        )
+
+        # Metadata should not have been updated
+        entity_after = db.get_entity("feature:009-test")
+        assert entity_after["metadata"] == metadata_before
+
+
+class TestProjectMetaJsonCalledAfterTransaction:
+    """AC-3: _project_meta_json must be called OUTSIDE the transaction
+    (after COMMIT), not inside it."""
+
+    def test_project_meta_json_called_after_transaction(
+        self, seeded_engine, db, tmp_path, monkeypatch
+    ):
+        feat_dir = os.path.join(str(tmp_path), "features", "009-test")
+        os.makedirs(feat_dir, exist_ok=True)
+        with open(os.path.join(feat_dir, "spec.md"), "w") as f:
+            f.write("# Spec\n")
+        db.update_entity(
+            "feature:009-test",
+            artifact_path=feat_dir,
+            metadata={"id": "009", "slug": "test", "mode": "standard", "branch": "feature/009-test"},
+        )
+
+        # Track whether db.transaction() was used AND whether _project_meta_json
+        # was called outside of it. We instrument both db.update_entity (must be
+        # inside transaction) and _project_meta_json (must be outside).
+        transaction_was_used = []
+        update_entity_in_txn = []
+
+        import workflow_state_server
+
+        original_project_meta = workflow_state_server._project_meta_json
+        original_update_entity = db.update_entity
+
+        def tracking_update_entity(*args, **kwargs):
+            in_txn = getattr(db, "_in_transaction", False)
+            update_entity_in_txn.append(in_txn)
+            return original_update_entity(*args, **kwargs)
+
+        def tracking_project_meta(*args, **kwargs):
+            in_txn = getattr(db, "_in_transaction", False)
+            transaction_was_used.append(("_project_meta_json", in_txn))
+            return original_project_meta(*args, **kwargs)
+
+        db.update_entity = tracking_update_entity
+        monkeypatch.setattr(
+            workflow_state_server, "_project_meta_json", tracking_project_meta
+        )
+
+        result = _process_transition_phase(
+            seeded_engine, "feature:009-test", "design", False, db=db,
+        )
+        data = json.loads(result)
+        assert data["transitioned"] is True
+
+        # _project_meta_json must have been called
+        assert len(transaction_was_used) == 1, "_project_meta_json should be called once"
+
+        # db.update_entity must have been called inside a transaction
+        assert any(update_entity_in_txn), (
+            "db.update_entity was NOT called inside a transaction — "
+            "writes must use db.transaction() for atomicity"
+        )
+
+        # _project_meta_json must NOT be called inside the transaction
+        assert transaction_was_used[0][1] is False, (
+            "_project_meta_json was called inside a transaction — "
+            "it must be called AFTER the transaction commits"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Task 2.2: Retry decorator tests (TDD RED)
+# ---------------------------------------------------------------------------
+
+
+# Try to import _with_retry and _is_transient from workflow_state_server.
+# These don't exist yet (TDD RED phase). We define stubs that will cause
+# assertion failures (FAILED, not ERROR) when the tests run.
+try:
+    from workflow_state_server import _with_retry, _is_transient
+except ImportError:
+    # Stubs: _is_transient always returns None (fails bool assertions)
+    # _with_retry returns a pass-through decorator (no retry behavior)
+    def _is_transient(exc):
+        """Stub — always returns None. Will cause assertion failures."""
+        return None
+
+    def _with_retry(max_attempts=3, backoff=(0.1, 0.5, 2.0)):
+        """Stub — no retry logic. Will cause test failures."""
+        def decorator(func):
+            @functools.wraps(func)
+            def wrapper(*args, **kwargs):
+                return func(*args, **kwargs)
+            return wrapper
+        return decorator
+
+
+class TestWithRetryDecorator:
+    """AC-6: _with_retry retries transient errors and propagates permanent ones."""
+
+    def test_retry_succeeds_after_transient_error(self):
+        """Function fails with OperationalError('database is locked') on first
+        call, succeeds on second; assert returns success."""
+        call_count = 0
+
+        @_with_retry(max_attempts=3, backoff=(0.0, 0.0, 0.0))
+        def flaky_fn():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise sqlite3.OperationalError("database is locked")
+            return "success"
+
+        result = flaky_fn()
+        assert result == "success", (
+            f"Expected 'success' after retry, got {result!r}"
+        )
+        assert call_count == 2, (
+            f"Expected 2 calls (1 failure + 1 success), got {call_count}"
+        )
+
+    def test_retry_exhausted_raises(self):
+        """Function fails 3 times with 'database is locked';
+        assert OperationalError propagates after exhaustion."""
+        call_count = 0
+
+        @_with_retry(max_attempts=3, backoff=(0.0, 0.0, 0.0))
+        def always_locked():
+            nonlocal call_count
+            call_count += 1
+            raise sqlite3.OperationalError("database is locked")
+
+        with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+            always_locked()
+
+        assert call_count == 3, (
+            f"Expected 3 attempts before exhaustion, got {call_count}"
+        )
+
+    def test_retry_permanent_error_not_retried(self):
+        """Function fails with IntegrityError; assert raised immediately
+        (no retry)."""
+        call_count = 0
+
+        @_with_retry(max_attempts=3, backoff=(0.0, 0.0, 0.0))
+        def integrity_fail():
+            nonlocal call_count
+            call_count += 1
+            raise sqlite3.IntegrityError("UNIQUE constraint failed")
+
+        with pytest.raises(sqlite3.IntegrityError, match="UNIQUE constraint"):
+            integrity_fail()
+
+        assert call_count == 1, (
+            f"Permanent error should not be retried, but got {call_count} calls"
+        )
+
+    def test_retry_logs_to_stderr(self, capsys):
+        """On retry, stderr contains 'retry 1/3'."""
+        call_count = 0
+
+        @_with_retry(max_attempts=3, backoff=(0.0, 0.0, 0.0))
+        def locked_then_ok():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise sqlite3.OperationalError("database is locked")
+            return "ok"
+
+        locked_then_ok()
+        captured = capsys.readouterr()
+        assert "retry 1/3" in captured.err, (
+            f"Expected 'retry 1/3' in stderr, got: {captured.err!r}"
+        )
+
+
+class TestIsTransient:
+    """AC-5: _is_transient classifies errors correctly."""
+
+    def test_is_transient_locked(self):
+        """'database is locked' -> True"""
+        exc = sqlite3.OperationalError("database is locked")
+        result = _is_transient(exc)
+        assert result is True, (
+            f"Expected True for 'database is locked', got {result!r}"
+        )
+
+    def test_is_transient_table_locked(self):
+        """'database table is locked' -> True"""
+        exc = sqlite3.OperationalError("database table is locked")
+        result = _is_transient(exc)
+        assert result is True, (
+            f"Expected True for 'database table is locked', got {result!r}"
+        )
+
+    def test_is_transient_sql_logic_error(self):
+        """'SQL logic error' -> False"""
+        exc = sqlite3.OperationalError("SQL logic error")
+        result = _is_transient(exc)
+        assert result is False, (
+            f"Expected False for 'SQL logic error', got {result!r}"
+        )
