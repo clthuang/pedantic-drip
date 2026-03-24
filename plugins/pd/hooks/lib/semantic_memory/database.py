@@ -63,7 +63,7 @@ def _create_initial_schema(
     virtual table and three triggers (INSERT/DELETE/UPDATE) to keep
     it in sync.
     """
-    conn.executescript("""
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS entries (
             id                TEXT PRIMARY KEY,
             name              TEXT NOT NULL,
@@ -81,12 +81,14 @@ def _create_initial_schema(
             embedding         BLOB,
             created_at        TEXT NOT NULL,
             updated_at        TEXT NOT NULL
-        );
+        )
+    """)
 
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS _metadata (
             key   TEXT PRIMARY KEY,
             value TEXT NOT NULL
-        );
+        )
     """)
 
     if fts5_available:
@@ -117,21 +119,25 @@ def _create_fts5_objects(conn: sqlite3.Connection) -> None:
         )
     """)
 
-    conn.executescript(f"""
+    conn.execute(f"""
         CREATE TRIGGER IF NOT EXISTS entries_ai AFTER INSERT ON entries BEGIN
             INSERT INTO entries_fts(rowid, name, description, keywords, reasoning)
             VALUES (new.rowid, new.name, new.description,
                     {_KEYWORDS_STRIP},
                     new.reasoning);
-        END;
+        END
+    """)
 
+    conn.execute(f"""
         CREATE TRIGGER IF NOT EXISTS entries_ad AFTER DELETE ON entries BEGIN
             INSERT INTO entries_fts(entries_fts, rowid, name, description, keywords, reasoning)
             VALUES ('delete', old.rowid, old.name, old.description,
                     {_KEYWORDS_STRIP_OLD},
                     old.reasoning);
-        END;
+        END
+    """)
 
+    conn.execute(f"""
         CREATE TRIGGER IF NOT EXISTS entries_au AFTER UPDATE ON entries BEGIN
             INSERT INTO entries_fts(entries_fts, rowid, name, description, keywords, reasoning)
             VALUES ('delete', old.rowid, old.name, old.description,
@@ -141,7 +147,7 @@ def _create_fts5_objects(conn: sqlite3.Connection) -> None:
             VALUES (new.rowid, new.name, new.description,
                     {_KEYWORDS_STRIP},
                     new.reasoning);
-        END;
+        END
     """)
 
 
@@ -150,11 +156,11 @@ def _add_source_hash_and_created_timestamp(
     **_kwargs: object,
 ) -> None:
     """Migration 2: add source_hash and created_timestamp_utc columns."""
-    conn.executescript("""
-        ALTER TABLE entries ADD COLUMN source_hash TEXT;
-        ALTER TABLE entries ADD COLUMN created_timestamp_utc REAL;
-        UPDATE entries SET created_timestamp_utc = CAST(strftime('%s', created_at) AS REAL);
-    """)
+    conn.execute("ALTER TABLE entries ADD COLUMN source_hash TEXT")
+    conn.execute("ALTER TABLE entries ADD COLUMN created_timestamp_utc REAL")
+    conn.execute(
+        "UPDATE entries SET created_timestamp_utc = CAST(strftime('%s', created_at) AS REAL)"
+    )
 
 
 def _enforce_not_null_columns(
@@ -198,7 +204,7 @@ def _enforce_not_null_columns(
         )
 
     # --- Rebuild table with NOT NULL constraints ---
-    conn.executescript("""
+    conn.execute("""
         CREATE TABLE entries_new (
             id                TEXT PRIMARY KEY,
             name              TEXT NOT NULL,
@@ -218,11 +224,18 @@ def _enforce_not_null_columns(
             updated_at        TEXT NOT NULL,
             source_hash       TEXT NOT NULL,
             created_timestamp_utc REAL
-        );
-        INSERT INTO entries_new SELECT * FROM entries;
-        DROP TABLE entries;
-        ALTER TABLE entries_new RENAME TO entries;
+        )
     """)
+    conn.execute("""
+        INSERT INTO entries_new
+        SELECT id, name, description, reasoning, category, keywords, source,
+               source_project, "references", observation_count, confidence,
+               recall_count, last_recalled_at, embedding, created_at, updated_at,
+               source_hash, created_timestamp_utc
+        FROM entries
+    """)
+    conn.execute("DROP TABLE entries")
+    conn.execute("ALTER TABLE entries_new RENAME TO entries")
 
     # --- Recreate FTS5 objects ---
     if fts5_available:
@@ -778,7 +791,17 @@ class MemoryDatabase:
         self._conn.execute("PRAGMA cache_size = -8000")
 
     def _migrate(self) -> None:
-        """Apply any pending schema migrations."""
+        """Apply any pending schema migrations.
+
+        The migration loop is wrapped in ``BEGIN IMMEDIATE`` so that
+        concurrent connections serialise on the write lock before
+        reading ``schema_version``.  This prevents two connections
+        from racing through the same migration simultaneously.
+
+        ``_metadata`` bootstrap (CREATE TABLE IF NOT EXISTS) stays
+        outside the transaction — it is idempotent and SQLite
+        serialises DDL internally.
+        """
         # Bootstrap: ensure _metadata table exists so we can read schema_version.
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS _metadata "
@@ -786,16 +809,22 @@ class MemoryDatabase:
         )
         self._conn.commit()
 
-        current = self.get_schema_version()
-        target = max(MIGRATIONS) if MIGRATIONS else 0
+        # Acquire write lock for entire migration chain.
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            current = self.get_schema_version()
+            target = max(MIGRATIONS) if MIGRATIONS else 0
 
-        for version in range(current + 1, target + 1):
-            migration_fn = MIGRATIONS[version]
-            # Pass fts5_available to migrations that accept it.
-            migration_fn(self._conn, fts5_available=self._fts5_available)
-            self._conn.execute(
-                "INSERT INTO _metadata (key, value) VALUES (?, ?) "
-                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                ("schema_version", str(version)),
-            )
+            for version in range(current + 1, target + 1):
+                migration_fn = MIGRATIONS[version]
+                # Pass fts5_available to migrations that accept it.
+                migration_fn(self._conn, fts5_available=self._fts5_available)
+                self._conn.execute(
+                    "INSERT INTO _metadata (key, value) VALUES (?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    ("schema_version", str(version)),
+                )
             self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise

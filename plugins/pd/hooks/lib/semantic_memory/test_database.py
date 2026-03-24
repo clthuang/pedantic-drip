@@ -1521,3 +1521,131 @@ class TestRecordInfluence:
             "SELECT COUNT(*) FROM influence_log WHERE entry_id = 'e1'"
         ).fetchone()[0]
         assert count == 3
+
+
+# ---------------------------------------------------------------------------
+# Concurrent init / migration atomicity tests (Bug 1 fix)
+# ---------------------------------------------------------------------------
+
+
+class TestConcurrentInit:
+    """6 threads concurrently create MemoryDatabase on the same new DB file.
+
+    All must succeed.  Post-condition: schema_version == target and all
+    expected columns exist.
+    """
+
+    def test_concurrent_init_all_succeed(self, tmp_path, monkeypatch):
+        import threading
+        import time
+
+        db_path = str(tmp_path / "concurrent.db")
+        num_threads = 6
+        barrier = threading.Barrier(num_threads)
+        errors: list[Exception] = []
+        dbs: list[MemoryDatabase] = [None] * num_threads
+
+        # Set busy_timeout BEFORE journal_mode to avoid lock contention
+        # on the WAL pragma when many threads init concurrently.
+        _orig_set_pragmas = MemoryDatabase._set_pragmas
+
+        def _patient_pragmas(self):
+            self._conn.execute("PRAGMA busy_timeout = 60000")
+            _orig_set_pragmas(self)
+
+        monkeypatch.setattr(MemoryDatabase, "_set_pragmas", _patient_pragmas)
+
+        def _init(idx: int) -> None:
+            try:
+                barrier.wait(timeout=5)
+                dbs[idx] = MemoryDatabase(db_path)
+            except Exception as exc:
+                errors.append(exc)
+            finally:
+                # Close in the same thread that created the connection.
+                if dbs[idx] is not None:
+                    dbs[idx].close()
+                    dbs[idx] = None
+
+        threads = [threading.Thread(target=_init, args=(i,)) for i in range(num_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+        # All threads completed without error.
+        assert errors == [], f"Concurrent init errors: {errors}"
+
+        # Verify post-conditions on a fresh connection.
+        from semantic_memory.database import MIGRATIONS
+
+        verify_db = MemoryDatabase(db_path)
+        try:
+            assert verify_db.get_schema_version() == max(MIGRATIONS)
+
+            # All 19 columns must exist.
+            cur = verify_db._conn.execute("PRAGMA table_info(entries)")
+            col_names = {row[1] for row in cur.fetchall()}
+            expected = {
+                "id", "name", "description", "reasoning", "category",
+                "keywords", "source", "source_project", "references",
+                "observation_count", "confidence", "recall_count",
+                "last_recalled_at", "embedding", "created_at", "updated_at",
+                "source_hash", "created_timestamp_utc", "influence_count",
+            }
+            assert expected.issubset(col_names), f"Missing columns: {expected - col_names}"
+        finally:
+            verify_db.close()
+
+
+class TestMigrationAtomicity:
+    """If a migration raises mid-way, schema_version must not increment.
+
+    The next connection retries the failed migration successfully.
+    """
+
+    def test_failed_migration_leaves_version_unchanged(self, tmp_path):
+        from unittest.mock import patch
+        from semantic_memory.database import MIGRATIONS
+
+        db_path = str(tmp_path / "atomic.db")
+        target = max(MIGRATIONS)
+
+        # Create a patched MIGRATIONS dict where the last migration raises.
+        bomb_called = False
+
+        def _bomb(conn, **kwargs):
+            nonlocal bomb_called
+            bomb_called = True
+            raise RuntimeError("simulated migration failure")
+
+        patched = dict(MIGRATIONS)
+        patched[target] = _bomb
+
+        # First attempt: migration should fail.
+        with patch("semantic_memory.database.MIGRATIONS", patched):
+            with pytest.raises(RuntimeError, match="simulated migration failure"):
+                MemoryDatabase(db_path)
+        assert bomb_called
+
+        # Verify schema_version is less than target (the failing migration
+        # and all migrations in its transaction were rolled back).
+        conn = sqlite3.connect(db_path)
+        try:
+            cur = conn.execute(
+                "SELECT value FROM _metadata WHERE key = 'schema_version'"
+            )
+            row = cur.fetchone()
+            stored_version = int(row[0]) if row else 0
+            assert stored_version < target, (
+                f"schema_version should be < {target}, got {stored_version}"
+            )
+        finally:
+            conn.close()
+
+        # Second attempt: with real migrations, should succeed.
+        db = MemoryDatabase(db_path)
+        try:
+            assert db.get_schema_version() == target
+        finally:
+            db.close()
