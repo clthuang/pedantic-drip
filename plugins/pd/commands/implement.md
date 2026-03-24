@@ -59,6 +59,14 @@ Execute the implementing skill which:
 
 ### 5. Code Simplification Phase
 
+**Pre-dispatch memory enrichment:** Before building the dispatch prompt below,
+call `search_memory` with query: "{agent role} {task context} {space-separated file list}",
+limit=5, brief=true, and category="patterns".
+Include non-empty results as:
+
+## Relevant Engineering Memory
+{search_memory results}
+
 Dispatch code-simplifier agent:
 ```
 Task tool call:
@@ -109,6 +117,14 @@ Store the resolved PRD line for reuse below.
 
 **Phase A — Generate test outlines from spec only:**
 
+**Pre-dispatch memory enrichment:** Before building the dispatch prompt below,
+call `search_memory` with query: "{agent role} {task context} {space-separated file list}",
+limit=5, brief=true, and category="anti-patterns".
+Include non-empty results as:
+
+## Relevant Engineering Memory
+{search_memory results}
+
 ```
 Task tool call:
   description: "Generate test outlines from spec"
@@ -156,6 +172,15 @@ files_changed = sorted(set(implementation_files + simplification_files))
 **Fallback if context was compacted:** If the orchestrator no longer holds Step 4/5 data in context (due to conversation compaction), parse `implementation-log.md` directly. Each task section contains a "Files changed" or "files_changed" field with file paths. Match lines that look like file paths (contain `/` and end with a file extension). Validate extracted paths: reject any containing `..`, `%2e`, null bytes, or backslashes; reject paths starting with `/`; only accept relative paths within the project root. Step 5 paths are always a subset of Step 4 paths, so no coverage gap exists.
 
 **Phase B — Write executable tests:**
+
+**Pre-dispatch memory enrichment:** Before building the dispatch prompt below,
+call `search_memory` with query: "{agent role} {task context} {space-separated file list}",
+limit=5, brief=true, and category="anti-patterns".
+Include non-empty results as:
+
+## Relevant Engineering Memory
+{search_memory results}
+
 ```
 Task tool call:
   description: "Write and verify deepened tests"
@@ -266,6 +291,14 @@ Use the PRD line resolved in Step 6 (I8).
 **Dispatch decision for implementation-reviewer:**
 
 **If iteration == 1 OR resume_state["implementation-reviewer"] is missing/empty OR resume_state["implementation-reviewer"].agent_id is null** — use fresh I1-R4 dispatch:
+
+**Pre-dispatch memory enrichment:** Before building the dispatch prompt below,
+call `search_memory` with query: "{agent role} {task context} {space-separated file list}",
+limit=5, brief=true, and category="anti-patterns".
+Include non-empty results as:
+
+## Relevant Engineering Memory
+{search_memory results}
 
 ```
 Task tool call:
@@ -435,6 +468,14 @@ resume_state["implementation-reviewer"].last_commit_sha = {current HEAD SHA}
 
 **If iteration == 1 OR resume_state["code-quality-reviewer"] is missing/empty OR resume_state["code-quality-reviewer"].agent_id is null** — use fresh I1-R4 dispatch:
 
+**Pre-dispatch memory enrichment:** Before building the dispatch prompt below,
+call `search_memory` with query: "{agent role} {task context} {space-separated file list}",
+limit=5, brief=true, and category="anti-patterns".
+Include non-empty results as:
+
+## Relevant Engineering Memory
+{search_memory results}
+
 ```
 Task tool call:
   description: "Review code quality"
@@ -579,6 +620,14 @@ resume_state["code-quality-reviewer"].last_commit_sha = {current HEAD SHA}
 **Dispatch decision for security-reviewer:**
 
 **If iteration == 1 OR resume_state["security-reviewer"] is missing/empty OR resume_state["security-reviewer"].agent_id is null** — use fresh I1-R4 dispatch:
+
+**Pre-dispatch memory enrichment:** Before building the dispatch prompt below,
+call `search_memory` with query: "{agent role} {task context} {space-separated file list}",
+limit=5, brief=true, and category="anti-patterns".
+Include non-empty results as:
+
+## Relevant Engineering Memory
+{search_memory results}
 
 ```
 Task tool call:
@@ -781,6 +830,14 @@ Use the PRD line resolved in Step 6 (I8).
 **Dispatch decision for implementer:**
 
 **If resume_state["implementer"] is missing/empty OR resume_state["implementer"].agent_id is null** — use fresh I7 dispatch:
+
+**Pre-dispatch memory enrichment:** Before building the dispatch prompt below,
+call `search_memory` with query: "{agent role} {task context} {space-separated file list}",
+limit=5, brief=true.
+Include non-empty results as:
+
+## Relevant Engineering Memory
+{search_memory results}
 
 ```
 Task tool call:

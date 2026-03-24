@@ -42,6 +42,14 @@ b. **Invoke spec-reviewer:**
 
    **If iteration == 1 OR resume_state["spec-reviewer"] is missing/empty OR resume_state["spec-reviewer"].agent_id is null** — use fresh I1-R4 dispatch:
 
+   **Pre-dispatch memory enrichment:** Before building the dispatch prompt below,
+   call `search_memory` with query: "{agent role} {task context} {space-separated file list}",
+   limit=5, brief=true, and category="anti-patterns".
+   Include non-empty results as:
+
+   ## Relevant Engineering Memory
+   {search_memory results}
+
    Use the Task tool to spawn spec-reviewer (the skeptic):
    ```
    Task tool call:
@@ -175,6 +183,14 @@ e. **Invoke phase-reviewer:**
    **Dispatch decision for phase-reviewer:**
 
    **If phase_iteration == 1 OR resume_state["phase-reviewer"] is missing/empty OR resume_state["phase-reviewer"].agent_id is null** — use fresh I1-R4 dispatch:
+
+   **Pre-dispatch memory enrichment:** Before building the dispatch prompt below,
+   call `search_memory` with query: "{agent role} {task context} {space-separated file list}",
+   limit=5, brief=true.
+   Include non-empty results as:
+
+   ## Relevant Engineering Memory
+   {search_memory results}
 
    ```
    Task tool call:

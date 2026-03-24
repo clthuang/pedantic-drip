@@ -51,6 +51,14 @@ a. **Mark stage started:**
    ```
 
 b. **Dispatch parallel research agents** (2 agents, within `max_concurrent_agents` budget):
+   **Pre-dispatch memory enrichment:** Before building the dispatch prompt below,
+   call `search_memory` with query: "{agent role} {task context} {space-separated file list}",
+   limit=5, brief=true.
+   Include non-empty results as:
+
+   ## Relevant Engineering Memory
+   {search_memory results}
+
    ```
    Task tool call 1:
      description: "Explore codebase for patterns"
@@ -66,6 +74,14 @@ b. **Dispatch parallel research agents** (2 agents, within `max_concurrent_agent
        - Related utilities
 
        Return JSON: {"findings": [...], "locations": [...]}
+
+   **Pre-dispatch memory enrichment:** Before building the dispatch prompt below,
+   call `search_memory` with query: "{agent role} {task context} {space-separated file list}",
+   limit=5, brief=true.
+   Include non-empty results as:
+
+   ## Relevant Engineering Memory
+   {search_memory results}
 
    Task tool call 2:
      description: "Research external solutions"
@@ -214,6 +230,14 @@ b. **Invoke design-reviewer:**
    **Dispatch decision for design-reviewer:**
 
    **If iteration == 1 OR resume_state["design-reviewer"] is missing/empty OR resume_state["design-reviewer"].agent_id is null** — use fresh I1-R4 dispatch:
+
+   **Pre-dispatch memory enrichment:** Before building the dispatch prompt below,
+   call `search_memory` with query: "{agent role} {task context} {space-separated file list}",
+   limit=5, brief=true, and category="anti-patterns".
+   Include non-empty results as:
+
+   ## Relevant Engineering Memory
+   {search_memory results}
 
    Use the Task tool to spawn design-reviewer (the skeptic):
    ```
@@ -396,6 +420,14 @@ b. **Invoke phase-reviewer:**
    **Dispatch decision for phase-reviewer:**
 
    **If phase_iteration == 1 OR resume_state["phase-reviewer"] is missing/empty OR resume_state["phase-reviewer"].agent_id is null** — use fresh I1-R4 dispatch:
+
+   **Pre-dispatch memory enrichment:** Before building the dispatch prompt below,
+   call `search_memory` with query: "{agent role} {task context} {space-separated file list}",
+   limit=5, brief=true.
+   Include non-empty results as:
+
+   ## Relevant Engineering Memory
+   {search_memory results}
 
    ```
    Task tool call:
