@@ -159,7 +159,7 @@ Change `busy_timeout` from 5000ms to 15000ms in `EntityDatabase.__init__()` (`_s
 `EntityDatabase` has a `transaction()` context manager using `BEGIN IMMEDIATE ... COMMIT/ROLLBACK` with `_in_transaction` flag. Verified by unit test: transaction commits on success, rolls back on exception, internal `_commit()` is suppressed inside transaction.
 
 ### AC-2: Internal commits use _commit() helper
-All `self._conn.commit()` calls in database.py (19 sites) replaced with `self._commit()`. Verified by: `grep -c "self._conn.commit()" plugins/pd/hooks/lib/entity_registry/database.py` returns 0; `grep -c "self._commit()" plugins/pd/hooks/lib/entity_registry/database.py` returns >= 19.
+All `self._conn.commit()` calls in database.py (19 sites) replaced with `self._commit()`. One intentional `self._conn.commit()` remains in `transaction()` (the pre-BEGIN flush). Verified by: `grep -c "self._conn.commit()" plugins/pd/hooks/lib/entity_registry/database.py` returns 1; `grep -c "self._commit()" plugins/pd/hooks/lib/entity_registry/database.py` returns >= 19.
 
 ### AC-3: Transition and complete phase use atomic transactions
 `_process_transition_phase` and `_process_complete_phase` wrap entity DB writes in `db.transaction()`. `_project_meta_json` is called AFTER the transaction block. Verified by unit test: mock `db.update_workflow_phase` to raise OperationalError after `db.update_entity` succeeds; assert entity metadata is NOT persisted (rolled back).
