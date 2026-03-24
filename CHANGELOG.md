@@ -8,13 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Atomic transaction support (`EntityDatabase.transaction()` context manager) — multi-step DB writes now commit or roll back as a unit, preventing partial state on failure
+- Application-level retry with exponential backoff on 9 write-path MCP functions — transient SQLite lock errors are retried automatically instead of surfacing as failures
+- PID file monitoring for MCP server instances (`~/.claude/pd/run/`) — server lifecycle is now trackable per process
 - Memory enrichment in workflow phases — relevant past learnings are now injected into each subagent dispatch (specify, design, create-plan, create-tasks, implement) so context from previous projects informs current work
 - `memory_relevance_threshold` config option (default 0.3) — low-scoring memory entries are filtered before injection, reducing noise
 - Memory injection skips automatically when no relevant work context is detected, avoiding unhelpful entries on unrelated tasks
 - Category-scoped memory retrieval per agent role — reviewers receive anti-patterns, code-simplifier receives patterns, etc.
 
 ### Changed
+- SQLite `busy_timeout` increased from 5 s to 15 s — reduces lock contention errors under concurrent access
 - Default `memory_injection_limit` reduced from 20 to 15 (repo override reduced from 50 to 20) — keeps session context focused
+
+### Fixed
+- Split-commit bug in phase transitions — partial writes can no longer leave the workflow state DB in an inconsistent state
 
 ### Removed
 - OpenAI, Ollama, and Voyage embedding providers — only Gemini is supported for semantic memory; use `none` to disable embeddings
