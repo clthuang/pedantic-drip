@@ -140,6 +140,9 @@ test_injector.py — add tests for no-context skip (AC-5):
 2. Test `.last-injection.json` contains `"skipped_reason": "no_work_context"` when skipped
 3. Test when `has_work_context()` returns True: normal pipeline runs
 
+test_injector.py — add test for recall non-increment (TD-4):
+1. Test that entries filtered by threshold do NOT have their IDs passed to `db.update_recall()`
+
 **Sub-step 3b: Implement (TDD GREEN phase)**
 
 config.py:
@@ -150,8 +153,8 @@ retrieval.py:
    - Note: `base_branch='auto'` adds literal "auto" to skip_branches — this is correct since no real branch is named "auto". The hardcoded set `{'main', 'master', 'develop', 'HEAD'}` covers common base branches. This mirrors `collect_context()`'s handling at its line 106-109.
 
 injector.py:
-1. After pipeline construction (`pipeline = RetrievalPipeline(db, provider, config)`), before `context_query = pipeline.collect_context(project_root)`: add no-context early return block (per design C4 insertion point 2). Import `RetrievalResult` is already present.
-2. After `selected = engine.rank(result, entries_by_id, limit)`, before `if selected:` recall tracking: add threshold filter `selected = [e for e in selected if e["final_score"] > threshold]` (per design C4 insertion point 1).
+1. After pipeline construction (`pipeline = RetrievalPipeline(db, provider, config)`), before `context_query = pipeline.collect_context(project_root)`: add no-context early return block (per design C4 insertion point 2). **IMPORTANT:** This early return MUST be placed inside the existing `try` block (after the pipeline construction line) so that `finally: db.close()` executes on return. The inline tracking write intentionally diverges from `write_tracking()` (adds `skipped_reason`, omits `retrieval` sub-dict) — add a code comment noting this.
+2. After `selected = engine.rank(result, entries_by_id, limit)`, before `if selected:` recall tracking: add threshold filter `selected = [e for e in selected if e["final_score"] > threshold]` (per design C4 insertion point 1). This ensures `db.update_recall()` is NOT called for filtered-out entries (design TD-4).
 
 **Sub-step 3c: Verify (TDD REFACTOR phase)**
 
@@ -255,8 +258,8 @@ plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/semantic_memory/test_
 # Injector tests (covers format_output + NEW threshold/no-context tests)
 plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/semantic_memory/test_injector.py -v
 
-# Retrieval tests (covers has_work_context)
-plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/semantic_memory/test_retrieval.py -v -k "has_work_context"
+# Retrieval tests (full suite — includes has_work_context + existing tests)
+plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/semantic_memory/test_retrieval.py -v
 ```
 
 **Grep verification (AC-1 through AC-7):**
