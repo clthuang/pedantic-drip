@@ -4,9 +4,9 @@
 SQLite databases shared across multiple MCP server processes suffer write contention that causes silent partial commits — entity server and memory server lack retry coverage, cascade operations use split-commit patterns, and busy_timeout values are inconsistent across DB modules.
 
 ## Success Criteria
-- [ ] `_with_retry` decorator with `_is_transient` predicate extracted into shared module at `plugins/pd/hooks/lib/sqlite_retry.py`
-- [ ] Entity server MCP handlers wrapped with `_with_retry` (parity with workflow state server)
-- [ ] Memory server MCP handlers wrapped with `_with_retry` (parity with workflow state server)
+- [ ] `with_retry` decorator with `is_transient` predicate extracted into shared module at `plugins/pd/hooks/lib/sqlite_retry.py` (public API — no underscore prefix)
+- [ ] Entity server MCP handlers wrapped with `with_retry` (parity with workflow state server)
+- [ ] Memory server MCP handlers wrapped with `with_retry` (parity with workflow state server)
 - [ ] `_run_cascade()` Phase B operations (`cascade_unblock` + `rollup_parent`) atomic within a single `transaction()` block
 - [ ] Multi-step writes in `EntityDatabase` that issue sequential `_commit()` calls outside `BEGIN IMMEDIATE` identified and wrapped in `transaction()`
 - [ ] `busy_timeout` standardized to 15000ms across all database modules (entity, memory, workflow)
@@ -16,7 +16,8 @@ SQLite databases shared across multiple MCP server processes suffer write conten
 ## Scope
 
 ### In Scope
-- Extract `_with_retry` and `_is_transient` from `workflow_state_server.py` into `plugins/pd/hooks/lib/sqlite_retry.py` with parameterized server-name log prefix
+- Extract `_with_retry` and `_is_transient` from `workflow_state_server.py` into `plugins/pd/hooks/lib/sqlite_retry.py` as public `with_retry` and `is_transient` with parameterized server-name log prefix
+- Refactor `workflow_state_server.py` to import from `sqlite_retry.py`, removing its local `_with_retry` and `_is_transient` definitions
 - Apply `_with_retry` decorator to all write-path MCP handlers in `entity_server.py`
 - Apply `_with_retry` decorator to all write-path MCP handlers in `memory_server.py`
 - Wrap `cascade_unblock` + `rollup_parent` in `_run_cascade()` in a single `transaction()` block (Phase B atomicity only — Phase A/B separation preserved)
@@ -64,13 +65,14 @@ SQLite databases shared across multiple MCP server processes suffer write conten
 - Then neither operation commits (both roll back together within Phase B transaction) — partial Phase B states are eliminated by the fix
 - And Phase A completion remains committed (Phase A/B separation preserved)
 - And reconciliation detects complete Phase B failure (both operations rolled back) and recovers on next invocation — no orphaned unblock/rollup state is possible after the fix
+- Verification: confirm `reconciliation_orchestrator` already detects stale `blocked_by` entries for completed entities and re-triggers cascade, OR add this detection if missing (not scope creep — verifying an existing assumption)
 
 ### Multi-Step Write Atomicity
 - Given the following `EntityDatabase` methods issue multiple sequential `_commit()` calls outside `BEGIN IMMEDIATE`:
   - `set_parent()` — calls `_commit()` after parent update, then `_commit()` after depth recalculation
   - `register_entity()` — calls `_commit()` after insert, then potentially `_commit()` after FTS sync
   - `update_entity()` — calls `_commit()` after update, then potentially `_commit()` after FTS sync
-  - (Additional methods identified during implementation audit to be added here)
+  - Implementation MUST run `grep -n _commit database.py` and document all multi-step sequences found. The above list is preliminary; the audit result is the authoritative list.
 - When these methods execute under contention
 - Then all sub-operations within each method are atomic (wrapped in `transaction()`)
 - And single-statement writes (e.g., `add_dependency`, `remove_dependency` with one `_commit()`) are NOT wrapped
@@ -81,6 +83,8 @@ SQLite databases shared across multiple MCP server processes suffer write conten
 - When a connection is opened
 - Then `PRAGMA busy_timeout = 15000` is set (previously 5000)
 - And all other database modules continue to use 15000ms
+- And a grep across all DB modules confirms no `busy_timeout` value other than 15000 exists
+- And the stale comment at `workflow_engine/engine.py:287` (claims "busy_timeout is inherited from EntityDatabase (5s)") is corrected to reflect the actual 15s value
 
 ### Concurrent-Write Integration Tests
 - Given a test file using `multiprocessing` to spawn multiple writer processes
@@ -90,6 +94,7 @@ SQLite databases shared across multiple MCP server processes suffer write conten
 - And no `OperationalError: database is locked` propagates as an unhandled error
 - And tests cover both entity DB and memory DB contention scenarios
 - And at least one test verifies that exhausted retries produce a structured error (not raw OperationalError)
+- And a post-test query confirms exactly N*M rows exist in the database (one per write operation), with no duplicates and no missing entries
 
 ## Feasibility Assessment
 
