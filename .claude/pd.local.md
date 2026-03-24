@@ -50,4 +50,6 @@ memory_embedding_model: gemini-embedding-001
 memory_model_capture_mode: ask-first
 # Max silent captures per session (only applies when capture mode is "silent")
 memory_silent_capture_budget: 5
+# Cosine similarity threshold for near-duplicate detection (0.0-1.0)
+memory_dedup_threshold: 0.90
 ---

@@ -28,6 +28,7 @@ DEFAULTS: dict[str, bool | int | float | str] = {
     "memory_silent_capture_budget": 5,
     "memory_injection_limit": 15,
     "memory_relevance_threshold": 0.3,
+    "memory_dedup_threshold": 0.90,
 }
 
 # Precompiled regexes for type coercion (applied after space stripping).
