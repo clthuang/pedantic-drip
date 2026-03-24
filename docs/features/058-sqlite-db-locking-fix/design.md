@@ -59,27 +59,13 @@ Single change to `_expand_workflow_phase_check()`: replace `SELECT *` with expli
 
 ## Technical Decisions
 
-### TD-1: executescript conversion scope
+### TD-1: executescript conversion scope — ALL calls including _create_fts5_objects
 
-**Decision:** Convert ALL `executescript` calls in migrations 1-3 to `execute()`. Do NOT convert `executescript` calls in `_create_fts5_objects` helper — instead, call FTS5 object creation AFTER the migration transaction commits (it was already conditional on FTS5 availability).
+**Decision:** Convert ALL `executescript` calls to `execute()`, including `_create_fts5_objects`. This is required because `_create_fts5_objects` is called from BOTH migration 1 (line 93) AND migration 3 (line 234) — both run inside the outer `BEGIN IMMEDIATE` transaction.
 
-**Rationale:** `_create_fts5_objects` uses f-string interpolation for 3 CREATE TRIGGER statements and a CREATE VIRTUAL TABLE. These are complex DDL statements. Rather than splitting them into 4 separate `execute()` calls with f-strings, keep `_create_fts5_objects` as-is but call it outside the migration transaction. FTS5 creation is idempotent (uses IF NOT EXISTS patterns) and is not critical to migration correctness.
+**Rationale:** `_create_fts5_objects` has a single `executescript` call (line 120) containing 3 CREATE TRIGGER statements with f-string interpolation. Convert to 3 separate `execute()` calls, each with its f-string intact. The function already uses `execute()` for the CREATE VIRTUAL TABLE (line 112), so this is consistent.
 
-**Updated migration flow:**
-```python
-self._conn.execute("BEGIN IMMEDIATE")
-try:
-    # Run migrations (using execute(), not executescript)
-    ...
-    self._conn.commit()
-except:
-    self._conn.rollback()
-    raise
-
-# FTS5 setup runs outside transaction (idempotent, uses executescript)
-if self._fts5_available:
-    _create_fts5_objects(self._conn)
-```
+**Migration 3 also has `INSERT INTO entries_new SELECT * FROM entries` (line 222)** — same `SELECT *` fragility as entity_registry migration 5. Convert to explicit column list (16 columns at migration 3's schema point: the original 16 columns before migration 2 added source_hash and created_timestamp_utc — but migration 3 runs AFTER migration 2, so the table has 18 columns). Use explicit 18-column list.
 
 ### TD-2: begin_immediate nesting guard
 
@@ -99,14 +85,17 @@ if self._fts5_available:
 
 ```python
 def _migrate(self) -> None:
-    # Bootstrap _metadata (idempotent, outside transaction)
+    # Bootstrap _metadata (idempotent, outside transaction).
+    # SQLite serializes DDL; CREATE IF NOT EXISTS is safe under concurrency.
     self._conn.execute(
         "CREATE TABLE IF NOT EXISTS _metadata "
         "(key TEXT PRIMARY KEY, value TEXT NOT NULL)"
     )
     self._conn.commit()
 
-    # Acquire write lock for entire migration chain
+    # Acquire write lock for entire migration chain.
+    # If BEGIN IMMEDIATE times out (busy_timeout=5s), OperationalError
+    # propagates to caller — acceptable, caller should retry.
     self._conn.execute("BEGIN IMMEDIATE")
     try:
         current = self.get_schema_version()
@@ -123,20 +112,19 @@ def _migrate(self) -> None:
     except Exception:
         self._conn.rollback()
         raise
-
-    # FTS5 setup (idempotent, outside transaction)
-    if self._fts5_available:
-        _create_fts5_objects(self._conn)
 ```
+
+No post-transaction FTS5 block needed — `_create_fts5_objects` is converted to `execute()` (TD-1) and runs safely inside the transaction.
 
 ### I2: Updated `_create_initial_schema()` — line 66
 
-Convert `executescript` to sequential `execute()`:
+Convert `executescript` to sequential `execute()`. FTS5 creation stays inside (now uses `execute()` too):
 ```python
-def _create_initial_schema(conn, **_kwargs):
+def _create_initial_schema(conn, *, fts5_available=False, **_kwargs):
     conn.execute("""CREATE TABLE IF NOT EXISTS entries (...)""")
     conn.execute("""CREATE TABLE IF NOT EXISTS _metadata (...)""")
-    # FTS5 objects created separately in _migrate() after transaction
+    if fts5_available:
+        _create_fts5_objects(conn)  # now uses execute(), safe inside transaction
 ```
 
 ### I3: Updated `_add_source_hash_and_created_timestamp()` — line 153
@@ -152,7 +140,7 @@ def _add_source_hash_and_created_timestamp(conn, **_kwargs):
 
 ### I4: Updated `_enforce_not_null_columns()` — line 201
 
-Convert the `executescript` (table rebuild DDL) to sequential `execute()` calls. Each statement in the multi-statement string becomes a separate `execute()` call.
+Convert the `executescript` (table rebuild DDL) to sequential `execute()` calls. Each statement becomes a separate `execute()` call. Additionally, replace `INSERT INTO entries_new SELECT * FROM entries` with explicit 18-column list (all columns at this migration point: id, name, description, reasoning, category, keywords, source, source_project, "references", observation_count, confidence, recall_count, last_recalled_at, embedding, created_at, updated_at, source_hash, created_timestamp_utc).
 
 ### I5: Updated `begin_immediate()` — entity_registry/database.py
 
@@ -161,6 +149,7 @@ Convert the `executescript` (table rebuild DDL) to sequential `execute()` calls.
 def begin_immediate(self):
     if self._in_transaction:
         raise RuntimeError("Nested transactions not supported")
+    self._conn.commit()  # flush pending implicit transactions (matches transaction() pattern)
     self._conn.execute("BEGIN IMMEDIATE")
     self._in_transaction = True
     try:
@@ -193,8 +182,8 @@ FROM workflow_phases
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|-----------|--------|------------|
-| executescript → execute changes migration 1 DDL behavior | Low | Medium | Test schema matches after migration via PRAGMA table_info |
-| FTS5 creation outside transaction fails | Low | Low | FTS5 uses IF NOT EXISTS, is retried on next DB open |
+| executescript → execute changes migration DDL behavior | Low | Medium | Test schema matches after migration via PRAGMA table_info |
+| _create_fts5_objects execute() conversion breaks trigger creation | Low | Medium | 3 triggers become 3 execute() calls with same SQL — mechanical split. Test by verifying FTS5 triggers exist after migration. |
 | begin_immediate nesting guard breaks callers | Low | Low | Only `transaction()` callers nest — they already check. `begin_immediate` callers use raw SQL. |
 
 ---
