@@ -53,7 +53,7 @@ Single change to `begin_immediate()`: set `self._in_transaction = True` before y
 
 **File:** `plugins/pd/hooks/lib/entity_registry/database.py`
 
-Single change to `_expand_workflow_phase_check()`: replace `SELECT *` with explicit 7-column list.
+Single change to `_expand_workflow_phase_check()`: replace `SELECT *` with explicit 7-column list. Migration 6 audited — already uses explicit column lists (lines 682-686), no change required.
 
 ---
 
@@ -192,7 +192,7 @@ FROM workflow_phases
 
 | File | Change Type | Description |
 |------|-------------|-------------|
-| `plugins/pd/hooks/lib/semantic_memory/database.py` | Modify | `_migrate()` wrapped in BEGIN IMMEDIATE; migrations 1-3 converted from executescript to execute; FTS5 creation moved outside transaction |
+| `plugins/pd/hooks/lib/semantic_memory/database.py` | Modify | `_migrate()` wrapped in BEGIN IMMEDIATE; migrations 1-3 and `_create_fts5_objects` converted from executescript to execute(); migration 3 SELECT * replaced with explicit 18-column list |
 | `plugins/pd/hooks/lib/entity_registry/database.py` | Modify | `begin_immediate()` sets `_in_transaction` flag; migration 5 uses explicit column lists |
 | `plugins/pd/hooks/lib/semantic_memory/test_database.py` | Modify | Add concurrent init test, migration atomicity test |
 | `plugins/pd/hooks/lib/entity_registry/test_database.py` | Modify | Add begin_immediate + register_entity test |
