@@ -45,7 +45,7 @@ Each `fix_hint` from Phase 1 is classified as `safe` or `manual`. Fix_hints not 
 | "Remove orphaned dependency row" | `DELETE FROM entity_dependencies WHERE entity_uuid=? AND blocked_by_uuid=?` |
 | "Remove orphaned tag row" | `DELETE FROM entity_tags WHERE entity_uuid=?` |
 | "Remove orphaned workflow_phases row" | `DELETE FROM workflow_phases WHERE type_id=?` |
-| "Remove self-referential parent_type_id" | `db.update_entity(type_id, parent_type_id=None)` + clear parent_uuid |
+| "Remove self-referential parent_type_id" | Direct SQL: `UPDATE entities SET parent_type_id=NULL, parent_uuid=NULL WHERE type_id=?` (intentional encapsulation bypass — EntityDatabase.update_entity lacks parent_type_id param) |
 | "Rebuild FTS index: python3 scripts/migrate_db.py rebuild-fts" | `subprocess.run([python_path, "scripts/migrate_db.py", "rebuild-fts", "--skip-kill", db_path])` |
 | "Rebuild FTS index to recreate triggers" | Same subprocess call |
 | "Run migrations to initialize the database" | Construct `EntityDatabase(db_path)` — constructor runs `_migrate()` automatically |
@@ -88,8 +88,12 @@ Each `fix_hint` from Phase 1 is classified as `safe` or `manual`. Fix_hints not 
 | "Check if entity DB is locked or corrupted" | Diagnostic — no fix action |
 | "Create directory '{artifacts_root}' or update config" | Ambiguous direction |
 | "Set {key} to a value between 0.0 and 1.0" | Config decision requires user input |
+| "Update .meta.json status to '{status}'" | Requires verifying which source of truth is correct |
+| "Run 'git fetch origin {base_branch}'" | Requires git operations |
 
 **Default rule:** Any fix_hint not matching a known pattern → classified as `manual`.
+
+**Pattern matching:** Fix_hints use prefix/substring matching, not exact equality. Dynamic fix_hints with interpolated values (e.g., `"Update .meta.json status to 'completed'"`) are matched by their static prefix (e.g., `startswith("Update .meta.json status to")`).
 
 ### FR-2: Fix Engine
 
@@ -136,7 +140,7 @@ def apply_fixes(
 
 **Entity updates:** Use `EntityDatabase` public API where possible (`update_entity`, `register_entity`). For fields without public setters (e.g., `parent_uuid`), use direct SQL on the EntityDatabase's connection — document as intentional encapsulation bypass.
 
-**Reconciliation fixes:** Extract `feature_type_id` from `Issue.entity` field and call `apply_workflow_reconciliation(feature_type_id=issue.entity)` per issue for deterministic fix tracking.
+**Reconciliation fixes:** Extract `feature_type_id` from `Issue.entity` field and call `apply_workflow_reconciliation(engine=engine, db=db, artifacts_root=artifacts_root, feature_type_id=issue.entity)` per issue for deterministic fix tracking.
 
 **Idempotency:** All safe fixes must be idempotent — running twice produces the same result. This is critical for session-start integration.
 
@@ -232,7 +236,7 @@ Given all fix_hints from the 10 Phase 1 checks, then every fix_hint is classifie
 Given a safe fix that raises an exception, then it is recorded as `failed` in FixReport and does not prevent other fixes from running.
 
 ### AC-10: Post-fix diagnostic validates repairs
-Given fixes were applied, then a re-run of diagnostics confirms the fixed issues are resolved (`post_fix.error_count + post_fix.warning_count <= diagnostic.error_count + diagnostic.warning_count - fixes.fixed_count`).
+Given fixes were applied with `fixed_count > 0`, then a re-run of diagnostics confirms `post_fix.error_count + post_fix.warning_count < diagnostic.error_count + diagnostic.warning_count` (total issues decreased).
 
 ## Traceability
 
