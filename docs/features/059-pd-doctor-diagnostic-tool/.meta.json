@@ -6,10 +6,25 @@
   "created": "2026-03-24T09:37:52.015962+00:00",
   "branch": "feature/059-pd-doctor-diagnostic-tool",
   "brainstorm_source": "docs/brainstorms/20260324-090019-pd-doctor-diagnostic-tool.prd.md",
-  "lastCompletedPhase": null,
+  "lastCompletedPhase": "create-plan",
   "phases": {
     "brainstorm": {
-      "started": "2026-03-24T09:37:52.015652+00:00"
+      "started": "2026-03-24T09:37:52.015652+00:00",
+      "completed": "2026-03-24T09:37:52.015652+00:00"
+    },
+    "specify": {
+      "started": "2026-03-24T09:38:00.000000+00:00",
+      "completed": "2026-03-24T10:00:00.000000+00:00"
+    },
+    "design": {
+      "started": "2026-03-24T10:00:00.000000+00:00",
+      "completed": "2026-03-24T10:35:00.000000+00:00"
+    },
+    "create-plan": {
+      "started": "2026-03-24T10:35:00.000000+00:00",
+      "completed": "2026-03-24T10:38:00.000000+00:00",
+      "iterations": 2,
+      "reviewerNotes": "[{\"reviewer\": \"plan-reviewer\", \"approved\": true, \"summary\": \"Approved iter 2/5\"}, {\"reviewer\": \"phase-reviewer\", \"approved\": true, \"summary\": \"Approved iter 1/5\"}]"
     }
   }
 }
