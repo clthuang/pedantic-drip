@@ -104,15 +104,33 @@ If any data store is unavailable (DB locked, MCP server down), diagnose as much 
 - Report which MCP servers hold locks
 - **Fix:** Suggest killing blocking MCP servers or report the issue
 
+### Check 9: Plugin Cache Cleanup
+- Scan `~/.claude/plugins/cache/{marketplace}/{plugin}/` for multiple version directories
+- Read `~/.claude/plugins/installed_plugins.json` to identify the active version
+- Detect stale cached versions (not the active version)
+- Report disk usage of stale versions
+- **Fix:** Delete stale version directories, preserving only the active version
+
+### Check 10: Outdated MCP Server Detection
+- For each running MCP server process (`entity_server.py`, `memory_server.py`, `workflow_state_server.py`):
+  - Extract the plugin version from its process path (e.g., `/pd/4.13.26/mcp/entity_server.py`)
+  - Compare against the dev workspace source files (if in a plugin dev repo) via checksum
+  - Compare against `installed_plugins.json` active version
+- Detect: MCP servers running from a stale cached version after a sync or plugin update
+- Detect: MCP servers whose source files differ from the dev workspace (code deployed but process not restarted)
+- **Fix:** Kill stale MCP server processes (they auto-restart from current cache on next MCP call); suggest `/reload-plugins` after
+
 ## Success Criteria
 
 | ID | Criterion | Measurement |
 |----|-----------|-------------|
-| SC-1 | Single `/pd:doctor` command produces a health report covering all 8 checks | Report includes pass/fail per check with details |
+| SC-1 | Single `/pd:doctor` command produces a health report covering all 10 checks | Report includes pass/fail per check with details |
 | SC-2 | Auto-fix resolves all fixable issues with user confirmation | Before/after comparison shows 0 remaining drift |
 | SC-3 | Doctor works when MCP servers are unavailable | Falls back to direct SQLite access with busy_timeout |
 | SC-4 | Doctor works on any project using the pd plugin | No hardcoded paths, uses standard plugin resolution |
 | SC-5 | Doctor handles empty/new projects gracefully | No errors on projects with no features/brainstorms/backlogs |
+| SC-6 | Cache cleanup removes only stale versions, never the active one | Active version preserved, stale versions deleted |
+| SC-7 | Outdated MCP detection identifies servers running old code | Reports PID, version, and whether source has changed |
 
 ## Implementation Approach
 
@@ -120,7 +138,7 @@ If any data store is unavailable (DB locked, MCP server down), diagnose as much 
 New command file in `plugins/pd/commands/doctor.md` that orchestrates the diagnostic.
 
 ### Agent: `pd:doctor-agent`
-New agent that reads all data stores, runs the 8 checks, and produces a structured report.
+New agent that reads all data stores, runs the 10 checks, and produces a structured report.
 
 ### Fix Mode
 After the diagnostic report, offer:
@@ -149,6 +167,8 @@ Add fix capabilities per check. User confirmation before each fix category.
 | Auto-fix creates new inconsistencies | Low | High | Validate post-fix by re-running checks |
 | Doctor is slow on large projects | Low | Low | Short-circuit checks when no entities of a type exist |
 | Git operations slow on large repos | Low | Low | Use `--no-walk` and limit to feature branches |
+| Cache cleanup deletes active version | Low | High | Cross-reference installed_plugins.json before any deletion; never delete the version listed there |
+| Killing MCP server causes data loss | Low | Medium | MCP servers are stateless — they reconnect on next call. Only kill after confirming they hold a stale lock. |
 
 ## References
 
