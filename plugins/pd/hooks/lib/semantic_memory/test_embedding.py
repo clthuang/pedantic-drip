@@ -12,9 +12,6 @@ from semantic_memory.embedding import (
     EmbeddingProvider,
     GeminiProvider,
     NormalizingWrapper,
-    OpenAIProvider,
-    OllamaProvider,
-    VoyageProvider,
     create_provider,
 )
 from semantic_memory import EmbeddingError
@@ -80,67 +77,13 @@ def _mock_gemini_embed(mock_genai, values_list: list[list[float]]):
     mock_genai.Client.return_value.models.embed_content.return_value = response
 
 
-def _mock_openai_embed(mock_sdk, values_list: list[list[float]]):
-    """Set up an OpenAI mock to return given embedding values."""
-    data = []
-    for values in values_list:
-        obj = MagicMock()
-        obj.embedding = values
-        data.append(obj)
-    response = MagicMock()
-    response.data = data
-    mock_sdk.OpenAI.return_value.embeddings.create.return_value = response
-
-
-def _mock_ollama_embed(mock_sdk, values_list: list[list[float]]):
-    """Set up an Ollama mock to return given embedding values."""
-    mock_sdk.Client.return_value.embed.return_value = {
-        "embeddings": values_list
-    }
-
-
-def _mock_voyage_embed(mock_sdk, values_list: list[list[float]]):
-    """Set up a Voyage mock to return given embedding values."""
-    result_obj = MagicMock()
-    result_obj.embeddings = values_list
-    mock_sdk.Client.return_value.embed.return_value = result_obj
-
-
 def _make_gemini(mock_genai, mock_types, **kwargs):
     """Create a GeminiProvider with mocks applied."""
     return GeminiProvider(api_key=kwargs.pop("api_key", "key"), **kwargs)
 
 
-def _make_openai(mock_sdk, _unused, **kwargs):
-    """Create an OpenAIProvider with mocks applied."""
-    return OpenAIProvider(api_key=kwargs.pop("api_key", "key"), **kwargs)
-
-
-def _make_ollama(mock_sdk, _unused, **kwargs):
-    """Create an OllamaProvider with mocks applied."""
-    kwargs.pop("api_key", None)
-    return OllamaProvider(**kwargs)
-
-
-def _make_voyage(mock_sdk, _unused, **kwargs):
-    """Create a VoyageProvider with mocks applied."""
-    return VoyageProvider(api_key=kwargs.pop("api_key", "key"), **kwargs)
-
-
 def _fail_gemini_embed(mock_genai, error):
     mock_genai.Client.return_value.models.embed_content.side_effect = error
-
-
-def _fail_openai_embed(mock_sdk, error):
-    mock_sdk.OpenAI.return_value.embeddings.create.side_effect = error
-
-
-def _fail_ollama_embed(mock_sdk, error):
-    mock_sdk.Client.return_value.embed.side_effect = error
-
-
-def _fail_voyage_embed(mock_sdk, error):
-    mock_sdk.Client.return_value.embed.side_effect = error
 
 
 # Provider test configurations: (patches, factory, mock_setup, fail_setup, defaults)
@@ -155,36 +98,6 @@ _PROVIDER_CONFIGS = {
         "batch_error_match": "Gemini batch embedding failed",
         # mock index: which patched arg is the main SDK mock
         "sdk_idx": 1,
-    },
-    "openai": {
-        "patches": ["semantic_memory.embedding.openai_sdk"],
-        "factory": _make_openai,
-        "mock_embed": _mock_openai_embed,
-        "fail_embed": _fail_openai_embed,
-        "defaults": {"model": "text-embedding-3-small", "dimensions": 1536, "provider_name": "openai"},
-        "embed_error_match": "OpenAI embedding failed",
-        "batch_error_match": "OpenAI batch embedding failed",
-        "sdk_idx": 0,
-    },
-    "ollama": {
-        "patches": ["semantic_memory.embedding.ollama_sdk"],
-        "factory": _make_ollama,
-        "mock_embed": _mock_ollama_embed,
-        "fail_embed": _fail_ollama_embed,
-        "defaults": {"model": "nomic-embed-text", "dimensions": 768, "provider_name": "ollama"},
-        "embed_error_match": "Ollama embedding failed",
-        "batch_error_match": "Ollama batch embedding failed",
-        "sdk_idx": 0,
-    },
-    "voyage": {
-        "patches": ["semantic_memory.embedding.voyageai_sdk"],
-        "factory": _make_voyage,
-        "mock_embed": _mock_voyage_embed,
-        "fail_embed": _fail_voyage_embed,
-        "defaults": {"model": "voyage-3", "dimensions": 1024, "provider_name": "voyage"},
-        "embed_error_match": "Voyage embedding failed",
-        "batch_error_match": "Voyage batch embedding failed",
-        "sdk_idx": 0,
     },
 }
 
@@ -414,118 +327,6 @@ class TestGeminiSpecific:
 
 
 # ---------------------------------------------------------------------------
-# OpenAI-specific tests (ignores task_type, SDK missing)
-# ---------------------------------------------------------------------------
-
-
-class TestOpenAISpecific:
-    def test_raises_runtime_error_when_sdk_missing(self):
-        """Should raise RuntimeError when openai SDK is not installed."""
-        with patch("semantic_memory.embedding.openai_sdk", None):
-            with pytest.raises(RuntimeError, match="openai SDK is required"):
-                OpenAIProvider(api_key="key")
-
-    @patch("semantic_memory.embedding.openai_sdk")
-    def test_embed_ignores_task_type(self, mock_sdk):
-        """embed() should accept task_type but not fail on any value."""
-        _mock_openai_embed(mock_sdk, [[0.1]])
-        provider = OpenAIProvider(api_key="key", dimensions=1)
-        provider.embed("test", task_type="document")
-        provider.embed("test", task_type="query")
-        provider.embed("test", task_type="arbitrary")
-
-
-# ---------------------------------------------------------------------------
-# Ollama-specific tests (host config, env host, SDK missing)
-# ---------------------------------------------------------------------------
-
-
-class TestOllamaSpecific:
-    @patch("semantic_memory.embedding.ollama_sdk")
-    def test_creates_client_with_host(self, mock_sdk):
-        """OllamaProvider should pass host to Client when provided."""
-        OllamaProvider(host="http://localhost:11434")
-        mock_sdk.Client.assert_called_once_with(host="http://localhost:11434")
-
-    @patch("semantic_memory.embedding.ollama_sdk")
-    def test_creates_client_with_env_host(self, mock_sdk):
-        """OllamaProvider should use OLLAMA_HOST env var as fallback."""
-        with patch.dict(os.environ, {"OLLAMA_HOST": "http://remote:11434"}):
-            OllamaProvider()
-        mock_sdk.Client.assert_called_once_with(host="http://remote:11434")
-
-    def test_raises_runtime_error_when_sdk_missing(self):
-        """Should raise RuntimeError when ollama SDK is not installed."""
-        with patch("semantic_memory.embedding.ollama_sdk", None):
-            with pytest.raises(RuntimeError, match="ollama SDK is required"):
-                OllamaProvider()
-
-    @patch("semantic_memory.embedding.ollama_sdk")
-    def test_embed_ignores_task_type(self, mock_sdk):
-        """embed() should accept task_type without error."""
-        _mock_ollama_embed(mock_sdk, [[0.1]])
-        provider = OllamaProvider(dimensions=1)
-        provider.embed("test", task_type="document")
-        provider.embed("test", task_type="query")
-
-
-# ---------------------------------------------------------------------------
-# Voyage-specific tests (input_type passthrough, output_dimension, SDK missing)
-# ---------------------------------------------------------------------------
-
-
-class TestVoyageSpecific:
-    def test_raises_runtime_error_when_sdk_missing(self):
-        """Should raise RuntimeError when voyageai SDK is not installed."""
-        with patch("semantic_memory.embedding.voyageai_sdk", None):
-            with pytest.raises(RuntimeError, match="voyageai SDK is required"):
-                VoyageProvider(api_key="key")
-
-    def test_task_type_map_has_query_and_document(self):
-        """TASK_TYPE_MAP should map 'query' and 'document'."""
-        assert VoyageProvider.TASK_TYPE_MAP == {
-            "query": "query",
-            "document": "document",
-        }
-
-    @patch("semantic_memory.embedding.voyageai_sdk")
-    def test_embed_passes_input_type_query(self, mock_sdk):
-        """embed(task_type='query') should pass input_type='query' to Voyage."""
-        _mock_voyage_embed(mock_sdk, [[0.1]])
-        provider = VoyageProvider(api_key="key", dimensions=1)
-        provider.embed("test", task_type="query")
-        call_kwargs = mock_sdk.Client.return_value.embed.call_args
-        assert call_kwargs.kwargs.get("input_type") == "query"
-
-    @patch("semantic_memory.embedding.voyageai_sdk")
-    def test_embed_passes_input_type_document(self, mock_sdk):
-        """embed(task_type='document') should pass input_type='document' to Voyage."""
-        _mock_voyage_embed(mock_sdk, [[0.1]])
-        provider = VoyageProvider(api_key="key", dimensions=1)
-        provider.embed("test", task_type="document")
-        call_kwargs = mock_sdk.Client.return_value.embed.call_args
-        assert call_kwargs.kwargs.get("input_type") == "document"
-
-    @patch("semantic_memory.embedding.voyageai_sdk")
-    def test_embed_passes_output_dimension(self, mock_sdk):
-        """embed() should pass output_dimension to the Voyage API."""
-        _mock_voyage_embed(mock_sdk, [[0.1] * 512])
-        provider = VoyageProvider(api_key="key", dimensions=512)
-        provider.embed("test")
-        call_kwargs = mock_sdk.Client.return_value.embed.call_args
-        assert call_kwargs.kwargs.get("output_dimension") == 512
-
-    @patch("semantic_memory.embedding.voyageai_sdk")
-    def test_embed_batch_default_task_type_is_document(self, mock_sdk):
-        """embed_batch() default task_type should be 'document'."""
-        _mock_voyage_embed(mock_sdk, [[0.1]])
-        provider = VoyageProvider(api_key="key", dimensions=1)
-        provider.embed_batch(["text"])
-        call_kwargs = mock_sdk.Client.return_value.embed.call_args
-        assert call_kwargs.kwargs.get("input_type") == "document"
-
-
-# ---------------------------------------------------------------------------
 # Helper: Fake provider for NormalizingWrapper tests
 # ---------------------------------------------------------------------------
 
@@ -715,73 +516,15 @@ class TestCreateProvider:
         assert result is None
 
     @patch("semantic_memory.embedding._load_dotenv_once")
-    def test_returns_none_for_voyage_without_key(self, _mock_dotenv):
-        """create_provider should return None when VOYAGE_API_KEY is missing."""
-        config = {
-            "memory_embedding_provider": "voyage",
-            "memory_embedding_model": "voyage-3",
-        }
-        env = {k: v for k, v in os.environ.items() if k != "VOYAGE_API_KEY"}
-        with patch.dict(os.environ, env, clear=True):
+    def test_returns_none_for_non_gemini_provider(self, _mock_dotenv):
+        """create_provider should return None for any non-gemini provider name."""
+        for provider_name in ("openai", "ollama", "voyage", "unknown"):
+            config = {
+                "memory_embedding_provider": provider_name,
+                "memory_embedding_model": "some-model",
+            }
             result = create_provider(config)
-        assert result is None
-
-    @patch("semantic_memory.embedding._load_dotenv_once")
-    def test_returns_none_for_openai_without_key(self, _mock_dotenv):
-        """create_provider should return None when OPENAI_API_KEY is missing."""
-        config = {
-            "memory_embedding_provider": "openai",
-            "memory_embedding_model": "text-embedding-3-small",
-        }
-        env = {k: v for k, v in os.environ.items() if k != "OPENAI_API_KEY"}
-        with patch.dict(os.environ, env, clear=True):
-            result = create_provider(config)
-        assert result is None
-
-    @patch("semantic_memory.embedding._load_dotenv_once")
-    @patch("semantic_memory.embedding.OllamaProvider")
-    def test_returns_normalizing_wrapper_for_ollama(self, mock_ollama_cls, _mock_dotenv):
-        """create_provider should return a NormalizingWrapper wrapping OllamaProvider."""
-        mock_ollama_cls.return_value = _FakeProvider()
-        config = {
-            "memory_embedding_provider": "ollama",
-            "memory_embedding_model": "nomic-embed-text",
-        }
-        result = create_provider(config)
-        assert isinstance(result, NormalizingWrapper)
-        mock_ollama_cls.assert_called_once_with(model="nomic-embed-text")
-
-    @patch("semantic_memory.embedding._load_dotenv_once")
-    @patch("semantic_memory.embedding.OpenAIProvider")
-    def test_returns_normalizing_wrapper_for_openai(self, mock_openai_cls, _mock_dotenv):
-        """create_provider should return a NormalizingWrapper wrapping OpenAIProvider."""
-        mock_openai_cls.return_value = _FakeProvider()
-        config = {
-            "memory_embedding_provider": "openai",
-            "memory_embedding_model": "text-embedding-3-small",
-        }
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False):
-            result = create_provider(config)
-        assert isinstance(result, NormalizingWrapper)
-        mock_openai_cls.assert_called_once_with(
-            api_key="test-key", model="text-embedding-3-small"
-        )
-
-    @patch("semantic_memory.embedding._load_dotenv_once")
-    @patch("semantic_memory.embedding.VoyageProvider")
-    def test_returns_normalizing_wrapper_for_voyage(self, mock_voyage_cls, _mock_dotenv):
-        """create_provider should return a NormalizingWrapper wrapping VoyageProvider."""
-        mock_voyage_cls.return_value = _FakeProvider()
-        config = {
-            "memory_embedding_provider": "voyage",
-            "memory_embedding_model": "voyage-3",
-        }
-        with patch.dict(os.environ, {"VOYAGE_API_KEY": "test-key"}, clear=False):
-            result = create_provider(config)
-        assert isinstance(result, NormalizingWrapper)
-        mock_voyage_cls.assert_called_once_with(
-            api_key="test-key", model="voyage-3"
-        )
+            assert result is None, f"Expected None for provider {provider_name!r}"
 
     @patch("semantic_memory.embedding.np", None)
     def test_returns_none_when_numpy_unavailable(self):
@@ -828,7 +571,7 @@ class TestLoadDotenvOnce:
         mock_load = MagicMock()
         # Remove known keys so fast-path doesn't trigger
         env_clean = {k: v for k, v in os.environ.items()
-                     if k not in ("GEMINI_API_KEY", "OPENAI_API_KEY", "VOYAGE_API_KEY")}
+                     if k not in ("GEMINI_API_KEY",)}
         with patch("semantic_memory.embedding.load_dotenv", mock_load):
             with patch.dict(os.environ, env_clean, clear=True):
                 with patch("os.getcwd", return_value=str(tmp_path)):
@@ -855,7 +598,7 @@ class TestLoadDotenvOnce:
 
         mock_load = MagicMock()
         env_clean = {k: v for k, v in os.environ.items()
-                     if k not in ("GEMINI_API_KEY", "OPENAI_API_KEY", "VOYAGE_API_KEY")}
+                     if k not in ("GEMINI_API_KEY",)}
 
         import semantic_memory.embedding as emb_mod
         old_file = emb_mod.__file__
@@ -899,7 +642,7 @@ class TestLoadDotenvOnce:
 
         mock_load = MagicMock()
         env_clean = {k: v for k, v in os.environ.items()
-                     if k not in ("GEMINI_API_KEY", "OPENAI_API_KEY", "VOYAGE_API_KEY")}
+                     if k not in ("GEMINI_API_KEY",)}
 
         import semantic_memory.embedding as emb_mod
         old_file = emb_mod.__file__
