@@ -7,15 +7,15 @@ Feature 060. Extends Phase 1 diagnostic tool (feature 059) with auto-fix capabil
 ## Execution Order (TDD)
 
 ```
-Task 1 (models + tests) → Task 2 (classifier + tests) → Task 3 (fix actions + tests)
-  → Task 4 (fixer orchestrator + tests) → Task 5 (CLI update + tests)
-  → Task 6 (session-start integration) → Task 7 (command file update) → Task 8 (docs)
+Task 1 (models) → Task 2 (fix actions + classifier) → Task 3 (orchestrator)
+  → Task 4 (CLI) → Task 5 (session-start) → Task 6 (command file) → Task 7 (docs)
 ```
 
 ## Tasks
 
 ### Task 1: Data Models
 
+**Why:** Implements design C1 (FixResult, FixReport). Foundation for all other tasks.
 **File:** `plugins/pd/hooks/lib/doctor/models.py` (append)
 **Do:**
 1. Add `FixResult(issue: Issue, applied: bool, action: str, classification: str)` dataclass
@@ -24,58 +24,50 @@ Task 1 (models + tests) → Task 2 (classifier + tests) → Task 3 (fix actions 
 **Tests:** `test_fix_result_to_dict`, `test_fix_report_to_dict`, `test_fix_report_counts`
 **Done when:** 3 tests pass
 
-### Task 2: Fix Classifier
+### Task 2: Fix Actions + Classifier (merged — B1 fix)
 
-**File:** `plugins/pd/hooks/lib/doctor/fixer.py` (new)
+**Why:** Implements design C2 (classifier) + C3 (fix actions). Merged because `classify_fix()` returns `Callable | None` (per design I2), requiring fix functions to exist in the same module.
+**Files:** `plugins/pd/hooks/lib/doctor/fixer.py` (new), `plugins/pd/hooks/lib/doctor/fix_actions.py` (new)
 **Do:**
-1. Define `_SAFE_PATTERNS` list: 17 `(prefix, fix_fn_name)` tuples mapping fix_hint prefixes to fix function names
-2. Implement `classify_fix(fix_hint: str) -> tuple[str, str | None]` — returns `("safe", fn_name)` or `("manual", None)` via `str.startswith()` prefix matching
-3. Default: unmatched → `("manual", None)`
-**Tests:** 17 tests for each safe pattern + `test_unknown_hint_is_manual` + `test_none_hint`
-**Done when:** 19 tests pass
-
-### Task 3: Fix Actions
-
-**File:** `plugins/pd/hooks/lib/doctor/fix_actions.py` (new)
-**Do:**
-1. Define `FixContext` dataclass: `entities_db_path, memory_db_path, artifacts_root, project_root, db (EntityDatabase|None), engine (WorkflowStateEngine|None), entities_conn (=db._conn), memory_conn`
+1. In `fix_actions.py`: Define `FixContext` dataclass with `entities_db_path, memory_db_path, artifacts_root, project_root, db (EntityDatabase|None), engine (WorkflowStateEngine|None), entities_conn (=db._conn, documented bypass), memory_conn (standalone sqlite3.connect with busy_timeout=5000)`
 2. Implement 15 fix functions, each `_fix_X(ctx: FixContext, issue: Issue) -> str`:
-   - `_fix_last_completed_phase`: read .meta.json, find latest completed phase, update lastCompletedPhase, atomic write back
+   - `_fix_last_completed_phase`: read .meta.json, find latest completed phase, update lastCompletedPhase, **atomic write via tempfile + os.replace** (same pattern as feature_lifecycle.py:29)
    - `_fix_reconcile`: `apply_workflow_reconciliation(engine=ctx.engine, db=ctx.db, artifacts_root=ctx.artifacts_root, feature_type_id=issue.entity)`
    - `_fix_entity_status_promoted`: `ctx.db.update_entity(type_id=issue.entity, status="promoted")`
-   - `_fix_backlog_annotation`: parse `{artifacts_root}/backlog.md`, find row by ID from issue.entity, append annotation
+   - `_fix_backlog_annotation`: path is `os.path.join(ctx.project_root, ctx.artifacts_root, "backlog.md")`. Match rows by regex `r'\|\s*{id}\s*\|'` where id extracted from `issue.entity` (e.g., "backlog:00042" → "00042"). Append ` (promoted → feature:XXX)`. On parse failure → raise (recorded as failed, not corrupt file).
    - `_fix_wal_entities`: `ctx.entities_conn.execute("PRAGMA journal_mode=WAL")`
    - `_fix_wal_memory`: `ctx.memory_conn.execute("PRAGMA journal_mode=WAL")`
    - `_fix_parent_uuid`: lookup parent uuid, UPDATE parent_uuid via direct SQL
    - `_fix_self_referential_parent`: `UPDATE entities SET parent_type_id=NULL, parent_uuid=NULL WHERE type_id=?`
-   - `_fix_remove_orphan_dependency`: extract UUIDs from issue.message via regex, DELETE from entity_dependencies
-   - `_fix_remove_orphan_tag`: extract UUID, DELETE from entity_tags
-   - `_fix_remove_orphan_workflow`: extract type_id, DELETE from workflow_phases
-   - `_fix_rebuild_fts`: subprocess to `scripts/migrate_db.py rebuild-fts --skip-kill`
-   - `_fix_run_entity_migrations`: construct `EntityDatabase(path)` (runs _migrate), close
-   - `_fix_run_memory_migrations`: construct `MemoryDatabase(path)` from semantic_memory.database, close
-3. Export `FIX_REGISTRY: dict[str, Callable]` mapping fn_name → function
-**Tests:** One test per fix function (15) + `test_fix_context_shared_connection`
-**Done when:** 16 tests pass
+   - `_fix_remove_orphan_dependency`: extract UUIDs from issue.message via regex `r"'([0-9a-f-]{36})'"`, DELETE from entity_dependencies
+   - `_fix_remove_orphan_tag`: extract UUID via same regex, DELETE from entity_tags
+   - `_fix_remove_orphan_workflow`: extract type_id from issue.entity or issue.message, DELETE from workflow_phases
+   - `_fix_rebuild_fts`: resolve script via `os.path.join(ctx.project_root, "scripts", "migrate_db.py")`, fallback to plugin root. Use `python3` (system, not sys.executable) per CLAUDE.md migration note. Handle FileNotFoundError gracefully.
+   - `_fix_run_entity_migrations`: construct `EntityDatabase(path)` (runs _migrate), `db.close()`
+   - `_fix_run_memory_migrations`: construct `MemoryDatabase(path)` from `semantic_memory.database` (runs _migrate), `db.close()` (verified: close() exists at line 317)
+3. In `fixer.py`: Define `_SAFE_PATTERNS: list[tuple[str, Callable]]` mapping prefixes to actual callable references (design I2 compliant). Implement `classify_fix(fix_hint: str) -> tuple[str, Callable | None]`
+**Tests:** 17 classifier tests + `test_unknown_hint_is_manual` + 15 fix action tests (1 per fn) + 3 extra for complex fns (_fix_backlog_annotation parse failure, _fix_rebuild_fts missing script, _fix_remove_orphan_dependency malformed message) + `test_fix_context_shared_connection`
+**Done when:** 37 tests pass
 
-### Task 4: Fix Orchestrator
+### Task 3: Fix Orchestrator
 
+**Why:** Implements design C4. Depends on Task 2 for classify_fix + fix functions.
 **File:** `plugins/pd/hooks/lib/doctor/fixer.py` (append)
 **Do:**
 1. Implement `apply_fixes(report, entities_db_path, memory_db_path, artifacts_root, project_root, dry_run=False) -> FixReport`
-2. Construct FixContext with EntityDatabase + WorkflowStateEngine in try/finally
-3. entities_conn = db._conn (shared, documented bypass). memory_conn from direct sqlite3.connect.
-4. Iterate report.checks → check.issues, skip if fix_hint is None
-5. classify_fix() → safe/manual. Look up fn in FIX_REGISTRY.
-6. safe + not dry_run: call fn(ctx, issue) in try/except. Success → applied=True. Exception → failed.
-7. safe + dry_run: FixResult(applied=False, action="dry-run: would ...")
-8. manual: FixResult(applied=False, classification="manual")
-9. Assemble FixReport
+2. Construct FixContext: EntityDatabase + WorkflowStateEngine in try/finally. `entities_conn = db._conn` (shared). `memory_conn = sqlite3.connect(memory_db_path)` with `busy_timeout=5000` (standalone — no MemoryDatabase needed for fixes).
+3. Iterate report.checks → check.issues, skip if fix_hint is None
+4. `classify_fix(issue.fix_hint)` → `(classification, fix_fn)`. Returns Callable directly (no registry lookup).
+5. safe + not dry_run: call `fix_fn(ctx, issue)` in try/except. Success → applied=True. Exception → failed.
+6. safe + dry_run: FixResult(applied=False, action="dry-run: would ...")
+7. manual: FixResult(applied=False, classification="manual")
+8. Assemble FixReport
 **Tests:** `test_apply_fixes_safe_applied`, `test_apply_fixes_manual_skipped`, `test_apply_fixes_dry_run`, `test_apply_fixes_idempotent`, `test_apply_fixes_exception_handling`, `test_apply_fixes_no_hint_skipped`, `test_apply_fixes_counts_correct`
 **Done when:** 7 tests pass
 
-### Task 5: CLI Update
+### Task 4: CLI Update
 
+**Why:** Implements design C5. Depends on Task 3 for apply_fixes.
 **File:** `plugins/pd/hooks/lib/doctor/__main__.py` (modify)
 **Do:**
 1. Add `--fix` and `--dry-run` argparse flags
@@ -86,23 +78,25 @@ Task 1 (models + tests) → Task 2 (classifier + tests) → Task 3 (fix actions 
 **Tests:** `test_cli_default_unchanged`, `test_cli_fix_three_sections`, `test_cli_dry_run_no_post_fix`, `test_cli_exit_code_zero_with_fix`
 **Done when:** 4 tests pass
 
-### Task 6: Session-Start Integration
+### Task 5: Session-Start Integration
 
+**Why:** Implements design C6 + spec FR-4. Depends on Task 4 for working CLI --fix mode. This is the highest-risk task — modifies a hook that runs every session.
 **File:** `plugins/pd/hooks/session-start.sh` (modify)
 **Do:**
-1. Add `run_doctor_autofix()` function after `run_reconciliation()` (line ~463)
-2. Use same PLUGIN_ROOT, PYTHONPATH, python_cmd pattern
+1. Add `run_doctor_autofix()` function after `run_reconciliation()` function definition
+2. Use same PLUGIN_ROOT, PYTHONPATH, python_cmd pattern as run_reconciliation
 3. Use env var overrides: `${ENTITY_DB_PATH:-...}`, `${MEMORY_DB_PATH:-...}`
 4. 10s timeout (gtimeout/timeout)
 5. Parse JSON output: extract fixes.fixed_count and post_fix remaining issues
 6. Output single summary line: "Doctor: fixed N issues (M remaining)" or silent if healthy
 7. Wrap in `|| true` for failure tolerance
-8. Call `run_doctor_autofix` after `recon_summary` capture (line ~504)
-**Tests:** Manual — verify session start produces doctor summary line
-**Done when:** Session start shows doctor line when issues exist, silent when healthy
+8. Call `run_doctor_autofix` after `recon_summary` capture
+**Tests:** `bash -n plugins/pd/hooks/session-start.sh` (syntax check). Manual: verify session start produces doctor summary line when issues exist, silent when healthy.
+**Done when:** bash -n passes AND manual verification confirms summary line format matches design I5
 
-### Task 7: Command File Update
+### Task 6: Command File Update
 
+**Why:** Implements design C5 command integration. Depends on Task 4 for CLI flags.
 **File:** `plugins/pd/commands/doctor.md` (modify)
 **Do:**
 1. Add instructions for --fix mode: when user asks to fix, add `--fix` to Bash invocation
@@ -110,8 +104,9 @@ Task 1 (models + tests) → Task 2 (classifier + tests) → Task 3 (fix actions 
 3. List remaining manual fixes with instructions
 **Done when:** Command file has --fix mode instructions
 
-### Task 8: Documentation
+### Task 7: Documentation
 
+**Why:** Completes documentation sync per CLAUDE.md rules.
 **Files:** `README_FOR_DEV.md`, `CLAUDE.md`
 **Do:**
 1. Add `--fix` flag documentation to test command in CLAUDE.md
