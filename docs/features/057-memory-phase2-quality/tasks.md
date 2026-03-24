@@ -52,7 +52,7 @@
 
 #### Task 1.2.2: Implement _tier1_extract
 - **File:** `plugins/pd/hooks/lib/semantic_memory/keywords.py`
-- **Action:** Implement `_tier1_extract(text: str) -> list[str]`. Tokenize (split on whitespace + punctuation), lowercase, filter by `_KEYWORD_RE`, remove `_STOPWORDS`, extract hyphenated multi-word terms, join consecutive capitalized word sequences as hyphenated terms, deduplicate, limit to 10
+- **Action:** Implement `_tier1_extract(text: str) -> list[str]`. Tokenize via `re.split(r"[\s\W]+", text.lower())` (split on whitespace and non-word characters). Filter by `_KEYWORD_RE`, remove `_STOPWORDS`. Extract hyphenated multi-word terms already present in text. Join consecutive capitalized word sequences from original text as hyphenated terms (e.g., "Entity Registry" → "entity-registry"). Deduplicate, limit to 10.
 - **Done:** Function returns 0-10 lowercase keyword strings
 - **Depends on:** 1.2.1
 
@@ -124,8 +124,8 @@
 
 #### Task 2.1.3: Move embedding computation before dedup check
 - **File:** `plugins/pd/mcp/memory_server.py`
-- **Action:** In `_process_store_memory()`, BEFORE the upsert call, compute embedding early: build `partial_entry = {"name": name, "description": description, "keywords": keywords_json, "reasoning": reasoning}`, call `embed_text = _embed_text_for_entry(partial_entry)`, then `embedding_vec = provider.embed(embed_text, task_type="document")` if provider available. Store as `embedding_vec`.
-- **Done:** Embedding computed before upsert when provider is available
+- **Action:** In `_process_store_memory()`, BEFORE the upsert call, compute embedding early: set `embedding_vec = None`. Wrap in `if provider is not None:` guard. Build `partial_entry = {"name": name, "description": description, "keywords": keywords_json, "reasoning": reasoning}`, call `embed_text = _embed_text_for_entry(partial_entry)`, then `embedding_vec = provider.embed(embed_text, task_type="document")`.
+- **Done:** `embedding_vec` is None when no provider, computed vector when provider available
 - **Depends on:** 2.1.2
 
 #### Task 2.1.4: Add dedup check before store
@@ -136,7 +136,7 @@
 
 #### Task 2.1.5: Replace post-upsert embedding with pre-computed
 - **File:** `plugins/pd/mcp/memory_server.py`
-- **Action:** Remove the existing post-upsert embedding block (search for `provider.embed(embed_text, task_type="document")` followed by `db.update_embedding` after `db.upsert_entry()`). Replace with: if `embedding_vec is not None`: `db.update_embedding(entry_id, embedding_vec.tobytes())`. This uses the pre-computed vector from Task 2.1.3.
+- **Action:** Remove the existing post-upsert embedding block (find the `if provider is not None:` block after `db.upsert_entry(entry)` that calls `_embed_text_for_entry(stored)` → `provider.embed(embed_text, task_type="document")` → `db.update_embedding(entry_id, vec.tobytes())` — approximately 12 lines). Replace with: `if embedding_vec is not None: db.update_embedding(entry_id, embedding_vec.tobytes())`. This uses the pre-computed vector from Task 2.1.3.
 - **Done:** Embedding computed once (not twice), stored via update_embedding after upsert
 - **Depends on:** 2.1.4
 
@@ -185,8 +185,9 @@
 
 #### Task 2.3.1: Audit test_ranking.py for hardcoded scores
 - **File:** `plugins/pd/hooks/lib/semantic_memory/test_ranking.py`
-- **Action:** Read file, grep for old weight values (0.3, 0.2) in prominence assertions. Identify all tests that will break when weights change. Document which assertions need updating.
-- **Done:** List of affected test assertions identified
+- **Action:** Run `grep -n "0\.3\|0\.2" plugins/pd/hooks/lib/semantic_memory/test_ranking.py` to find all prominence score float literals. Write a list of each line + assertion that needs updating for the new formula weights.
+- **Verify:** `grep -c "0\.3\|0\.2" plugins/pd/hooks/lib/semantic_memory/test_ranking.py` returns a count
+- **Done:** All prominence score float literals identified by line number
 - **Depends on:** none
 
 #### Task 2.3.2: Add _influence_score helper and update _prominence
