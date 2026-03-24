@@ -16,7 +16,7 @@ Build the three new modules in isolation with full test coverage before touching
 1. Add `"influence_count"` to `_COLUMNS` list in database.py (line 246)
 2. Write `_migration_4()` function (ALTER TABLE + CREATE TABLE influence_log) with `**_kwargs` signature
 3. Add migration 4 to `MIGRATIONS` dict
-4. Write `merge_duplicate()` method on `MemoryDatabase` (use `BEGIN IMMEDIATE` write-lock pattern, same as `upsert_entry()` — read existing keywords, UPDATE, COMMIT)
+4. Write `merge_duplicate()` method on `MemoryDatabase` (use `BEGIN IMMEDIATE` write-lock pattern, same as `upsert_entry()` — read existing keywords, UPDATE, COMMIT). Handle malformed existing keywords JSON with try/except, falling back to empty list.
 5. Write tests in test_database.py:
    - Migration 4 creates column and table
    - Migration 4 is idempotent (re-run safe via schema_version check)
@@ -24,6 +24,7 @@ Build the three new modules in isolation with full test coverage before touching
    - `merge_duplicate()` unions keywords
    - `merge_duplicate()` preserves other fields unchanged
    - `merge_duplicate()` on non-existent ID raises ValueError
+   - `merge_duplicate()` handles malformed existing keywords JSON gracefully
 
 **Files:** `database.py`, `test_database.py`
 **Verify:** `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/semantic_memory/test_database.py -v -k "migration_4 or merge_duplicate"`
@@ -100,7 +101,7 @@ Build the three new modules in isolation with full test coverage before touching
    a. Replace `keywords_json = "[]"` with `extract_keywords()` call
    b. Compute embedding EARLY, BEFORE dedup check (TD-3): build partial dict → `_embed_text_for_entry()` → `provider.embed(embed_text, task_type="document")`
    c. Add dedup check: if `check_duplicate(embedding_vec, db, threshold)` returns duplicate, call `db.merge_duplicate()` and return "Reinforced: ..."
-   d. After dedup passes and entry is upserted, call `db.update_embedding(entry_id, embedding_vec.tobytes())` with the pre-computed vector. Remove the existing post-upsert embedding re-computation block (lines 103-115) — the vector was already computed in step 2b
+   d. After dedup passes and entry is upserted, call `db.update_embedding(entry_id, embedding_vec.tobytes())` with the pre-computed vector. Remove the existing post-upsert embedding re-computation block (lines 103-115) — the vector was already computed in step 2b. Note: two-write approach (upsert + update_embedding) is intentional — upsert_entry() builds the entry dict from params without the embedding field, and update_embedding() is a separate BLOB write. Changing this to single-write would require modifying upsert_entry()'s entry dict construction, which is out of scope.
 4. Update test_memory_server.py:
    - `store_memory` produces non-empty keywords
    - `store_memory` with near-duplicate returns "Reinforced:" message
@@ -148,7 +149,7 @@ Build the three new modules in isolation with full test coverage before touching
 **Depends on:** 1.1 (influence_count column exists in entry dicts)
 
 **Steps:**
-1. **Audit first:** Read test_ranking.py for hardcoded prominence score assertions. If found, those tests need updating as part of this step (weight rebalancing changes ALL scores, even for entries with zero influence).
+1. **Audit first:** Read test_ranking.py and grep for old weight values (0.3, 0.2) to find ALL hardcoded prominence score assertions. Update them to use the new formula. Consider computing expected values from weight constants rather than hardcoding new magic numbers.
 2. Add `_influence_score()` helper method (same pattern as `_recall_frequency()`)
 3. Update `_prominence()` formula: `0.25*obs + 0.15*confidence + 0.25*recency + 0.15*recall + 0.20*influence`
 4. Handle missing `influence_count` key gracefully (default 0 for pre-migration entries)
