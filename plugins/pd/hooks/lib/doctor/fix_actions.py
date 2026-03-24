@@ -85,6 +85,36 @@ def _fix_last_completed_phase(ctx: FixContext, issue: Issue) -> str:
     return f"Set lastCompletedPhase to '{latest_phase}'"
 
 
+def _fix_completed_timestamp(ctx: FixContext, issue: Issue) -> str:
+    """Set top-level 'completed' timestamp from latest phase completion."""
+    if not issue.entity:
+        raise ValueError("No entity on issue")
+    parts = issue.entity.split(":", 1)
+    entity_id = parts[1] if len(parts) > 1 else parts[0]
+
+    meta_path = os.path.join(
+        ctx.project_root, ctx.artifacts_root, "features", entity_id, ".meta.json"
+    )
+    with open(meta_path) as f:
+        meta = json.load(f)
+
+    # Find latest completed timestamp from phases
+    from datetime import datetime, timezone
+    latest = None
+    for phase_data in meta.get("phases", {}).values():
+        if isinstance(phase_data, dict) and "completed" in phase_data:
+            ts = phase_data["completed"]
+            if latest is None or ts > latest:
+                latest = ts
+
+    if latest is None:
+        latest = datetime.now(timezone.utc).isoformat()
+
+    meta["completed"] = latest
+    _atomic_json_write(meta_path, meta)
+    return f"Set completed timestamp to {latest}"
+
+
 def _fix_reconcile(ctx: FixContext, issue: Issue) -> str:
     """Run reconcile_apply for a specific feature."""
     from workflow_engine.reconciliation import apply_workflow_reconciliation

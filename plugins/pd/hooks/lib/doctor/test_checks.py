@@ -117,6 +117,8 @@ def _create_meta_json(
         "lastCompletedPhase": last_completed_phase,
         "phases": {},
     }
+    if status in ("completed", "abandoned"):
+        meta["completed"] = "2026-01-01T00:00:00+00:00"
     (feature_dir / ".meta.json").write_text(json.dumps(meta))
 
 

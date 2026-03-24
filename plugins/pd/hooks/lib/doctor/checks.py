@@ -346,6 +346,23 @@ def check_feature_status(
                 fix_hint="Set lastCompletedPhase to the latest completed phase",
             ))
 
+    # Hardening: status=completed/abandoned but no top-level 'completed' field
+    # This causes validate.sh CI failure
+    for slug, meta in meta_data.items():
+        status = meta.get("status")
+        completed_ts = meta.get("completed")
+        if status in ("completed", "abandoned") and completed_ts is None:
+            issues.append(Issue(
+                check="feature_status",
+                severity="error",
+                entity=f"feature:{slug}",
+                message=(
+                    f"Feature '{slug}' has status '{status}' but "
+                    "no top-level 'completed' timestamp (breaks CI)"
+                ),
+                fix_hint="Set completed timestamp from latest phase completion",
+            ))
+
     elapsed = int((time.monotonic() - start) * 1000)
     passed = not any(i.severity in ("error", "warning") for i in issues)
     return CheckResult(

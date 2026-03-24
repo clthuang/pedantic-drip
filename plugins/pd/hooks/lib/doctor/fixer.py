@@ -12,6 +12,7 @@ from collections.abc import Callable
 from doctor.fix_actions import (
     FixContext,
     _fix_backlog_annotation,
+    _fix_completed_timestamp,
     _fix_entity_status_promoted,
     _fix_last_completed_phase,
     _fix_parent_uuid,
@@ -31,6 +32,7 @@ from doctor.models import DiagnosticReport, FixReport, FixResult, Issue
 # Pattern prefix -> fix function mapping.
 # Order matters: first match wins. More specific prefixes before general ones.
 _SAFE_PATTERNS: list[tuple[str, Callable]] = [
+    ("Set completed timestamp", _fix_completed_timestamp),
     ("Set lastCompletedPhase", _fix_last_completed_phase),
     ("Run reconcile_apply", _fix_reconcile),
     ("Update brainstorm entity status", _fix_entity_status_promoted),
