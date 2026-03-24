@@ -144,6 +144,7 @@ Configure via `.claude/pd.local.md`:
 | `/pd:add-to-backlog` | Capture ad-hoc ideas and todos |
 | `/pd:remember` | Capture a learning to long-term memory |
 | `/pd:cleanup-brainstorms` | Delete old brainstorm scratch files |
+| `/pd:doctor` | Run diagnostic checks on pd workspace health |
 | `/pd:secretary` | Intelligent task routing to agents and skills (supports YOLO mode with orchestrate subcommand) |
 | `/pd:create-specialist-team` | Create ephemeral specialist teams for complex tasks |
 | `/pd:root-cause-analysis` | Investigate bugs systematically |

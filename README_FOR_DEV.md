@@ -268,6 +268,7 @@ Commands are user-invoked entry points. Located in `plugins/pd/commands/{name}.m
 | `promptimize` | Review a plugin prompt against best practices and return an improved version |
 | `refresh-prompt-guidelines` | Scout latest prompt engineering best practices and update the guidelines document |
 | `show-lineage` | Display entity lineage tree for a given entity (ancestors or descendants) |
+| `doctor` | Run 10 data consistency checks across entity DB, memory DB, workflow state, and filesystem |
 
 ## Agents
 
