@@ -108,8 +108,9 @@ PYTHONPATH="plugins/pd/hooks/lib:plugins/pd" plugins/pd/.venv/bin/python -m pyte
 # - test_deepened_app.py: intermittent segfault (SQLite threading)
 # - test_cli.py::test_cli_startup_url_output: fails when port 8718 in use
 
-# Run doctor diagnostic tests (99 tests)
+# Run doctor diagnostic + auto-fix tests (150 tests)
 PYTHONPATH=plugins/pd/hooks/lib plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/doctor/ -v
+# Doctor CLI supports --fix (apply safe fixes) and --fix --dry-run (preview fixes)
 
 # Run migration tool tests (system python3, not plugin venv — 128 tests)
 python3 -m pytest scripts/test_migrate_db.py scripts/test_migrate_e2e.py scripts/test_migrate_deepened.py -v

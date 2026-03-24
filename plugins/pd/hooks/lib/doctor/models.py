@@ -48,3 +48,43 @@ class DiagnosticReport:
     def to_dict(self) -> dict:
         """Serialize to a plain dict (None -> JSON null)."""
         return asdict(self)
+
+
+@dataclass
+class FixResult:
+    """Result of applying (or skipping) a single fix."""
+
+    issue: Issue
+    applied: bool
+    action: str
+    classification: str  # "safe" | "manual"
+
+    def to_dict(self) -> dict:
+        """Serialize to a plain dict."""
+        return {
+            "issue": self.issue.to_dict(),
+            "applied": self.applied,
+            "action": self.action,
+            "classification": self.classification,
+        }
+
+
+@dataclass
+class FixReport:
+    """Aggregate report from fix application."""
+
+    fixed_count: int
+    skipped_count: int
+    failed_count: int
+    results: list[FixResult]
+    elapsed_ms: int
+
+    def to_dict(self) -> dict:
+        """Serialize to a plain dict."""
+        return {
+            "fixed_count": self.fixed_count,
+            "skipped_count": self.skipped_count,
+            "failed_count": self.failed_count,
+            "results": [r.to_dict() for r in self.results],
+            "elapsed_ms": self.elapsed_ms,
+        }

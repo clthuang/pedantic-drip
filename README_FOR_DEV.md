@@ -268,7 +268,7 @@ Commands are user-invoked entry points. Located in `plugins/pd/commands/{name}.m
 | `promptimize` | Review a plugin prompt against best practices and return an improved version |
 | `refresh-prompt-guidelines` | Scout latest prompt engineering best practices and update the guidelines document |
 | `show-lineage` | Display entity lineage tree for a given entity (ancestors or descendants) |
-| `doctor` | Run 10 data consistency checks across entity DB, memory DB, workflow state, and filesystem |
+| `doctor` | Run 10 data consistency checks across entity DB, memory DB, workflow state, and filesystem. Supports `--fix` for auto-repair of safe issues. |
 
 ## Agents
 
@@ -327,7 +327,7 @@ Hooks execute automatically at lifecycle points.
 |------|---------|---------|
 | `sync-cache` | SessionStart (startup\|resume\|clear) | Syncs plugin source to Claude cache |
 | `cleanup-locks` | SessionStart (startup\|resume\|clear) | Removes stale lock files |
-| `session-start` | SessionStart (startup\|resume\|clear) | Injects active feature context and knowledge bank memory |
+| `session-start` | SessionStart (startup\|resume\|clear) | Injects active feature context, knowledge bank memory, and runs doctor auto-fix |
 | `inject-secretary-context` | SessionStart (startup\|resume\|clear) | Injects available agent/command context for secretary |
 | `start-ui-server` | SessionStart (startup\|resume\|clear) | Auto-starts UI server (Kanban board) in background |
 | `cleanup-sandbox` | (utility) | Cleans up agent_sandbox/ temporary files |

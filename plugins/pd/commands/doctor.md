@@ -4,15 +4,23 @@ description: Run diagnostic checks on pd workspace health
 
 # /pd:doctor Command
 
-Run 10 data consistency checks across entity DB, memory DB, workflow state, and filesystem artifacts.
+Run 10 data consistency checks across entity DB, memory DB, workflow state, and filesystem artifacts. Optionally apply safe auto-fixes.
 
 ## Config Variables
 Use these values from session context (injected at session start):
 - `{pd_artifacts_root}` -- root directory for feature artifacts (default: `docs`)
 
+## Modes
+
+- **Diagnostic only** (default): Run checks, report issues with fix_hints
+- **Auto-fix** (when user asks to fix): Add `--fix` flag -- applies safe fixes, re-runs diagnostics to verify
+- **Dry-run**: Add `--fix --dry-run` -- shows what would be fixed without applying
+
 ## Step 1: Run Diagnostics
 
-Run the doctor module via Bash. Use the plugin portability pattern:
+Run the doctor module via Bash. Use the plugin portability pattern.
+
+If the user asks to **fix** issues, add `--fix` to the command. If the user asks for a **dry run**, add `--fix --dry-run`.
 
 ```bash
 # Primary: cached plugin
@@ -34,14 +42,18 @@ else
       --project-root . \
       2>/dev/null
   else
-    echo '{"healthy":false,"checks":[],"total_issues":1,"error_count":1,"warning_count":0,"elapsed_ms":0,"_error":"No pd venv found. Run: cd plugins/pd && uv sync"}'
+    echo '{"diagnostic":{"healthy":false,"checks":[],"total_issues":1,"error_count":1,"warning_count":0,"elapsed_ms":0,"_error":"No pd venv found. Run: cd plugins/pd && uv sync"}}'
   fi
 fi
 ```
 
 ## Step 2: Parse and Format Output
 
-Parse the JSON output from stdout. Format as a summary table:
+The JSON output is wrapped: `{"diagnostic": {...}}` for default mode.
+
+With `--fix`: `{"diagnostic": {...}, "fixes": {...}, "post_fix": {...}}`.
+
+Parse the `diagnostic` key. Format as a summary table:
 
 | Check | Status | Issues |
 |-------|--------|--------|
@@ -61,10 +73,27 @@ For each check that failed (passed=false), show the issues grouped by severity:
 - Warnings second
 - Info last
 
-## Step 3: Summary
+## Step 3: Fix Results (--fix mode only)
+
+If `fixes` key is present in the output:
+
+1. Show fix summary: "Fixed N, skipped M (manual), failed F"
+2. List each applied fix with its action
+3. List failed fixes with error details
+4. List manual fixes that need human attention with their fix_hints
+
+If `post_fix` key is present, show before/after comparison:
+- "Before: E errors, W warnings"
+- "After: E errors, W warnings"
+
+## Step 4: Summary
 
 Report the overall health status:
 - "Workspace healthy" if all checks passed
 - "N issues found (E errors, W warnings)" otherwise
 
-Footer: "Doctor runs after session-start reconciliation. Issues here indicate problems that survived auto-repair."
+If fixes were applied, note: "Re-run `/pd:doctor` to verify current state."
+
+For manual fixes, list each with its fix_hint so the user can take action.
+
+Footer: "Doctor runs automatically at session start. Issues here indicate problems that survived auto-repair."

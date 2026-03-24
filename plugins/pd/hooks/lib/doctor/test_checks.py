@@ -2486,7 +2486,9 @@ class TestCliJsonOutputHas10Checks:
         )
         assert result.returncode == 0
         data = json.loads(result.stdout)
-        assert len(data["checks"]) == 10
+        # Phase 2 wraps output: {"diagnostic": ...}
+        diag = data.get("diagnostic", data)
+        assert len(diag["checks"]) == 10
 
 
 class TestCliExitCodeAlwaysZero:
@@ -2524,14 +2526,16 @@ class TestCliJsonStructureMatchesModel:
             env={**os.environ, "PYTHONPATH": _doctor_lib_path()},
         )
         data = json.loads(result.stdout)
-        assert "healthy" in data
-        assert "checks" in data
-        assert "total_issues" in data
-        assert "error_count" in data
-        assert "warning_count" in data
-        assert "elapsed_ms" in data
+        # Phase 2 wraps output: {"diagnostic": ...}
+        diag = data.get("diagnostic", data)
+        assert "healthy" in diag
+        assert "checks" in diag
+        assert "total_issues" in diag
+        assert "error_count" in diag
+        assert "warning_count" in diag
+        assert "elapsed_ms" in diag
         # Check first check structure
-        check = data["checks"][0]
+        check = diag["checks"][0]
         assert "name" in check
         assert "passed" in check
         assert "issues" in check
@@ -2558,7 +2562,8 @@ class TestCliArtifactsRootCliArgPrecedence:
         )
         assert result.returncode == 0
         data = json.loads(result.stdout)
-        assert len(data["checks"]) == 10
+        diag = data.get("diagnostic", data)
+        assert len(diag["checks"]) == 10
 
 
 class TestCliArtifactsRootConfigFallback:
@@ -2579,7 +2584,8 @@ class TestCliArtifactsRootConfigFallback:
         )
         assert result.returncode == 0
         data = json.loads(result.stdout)
-        assert len(data["checks"]) == 10
+        diag = data.get("diagnostic", data)
+        assert len(diag["checks"]) == 10
 
 
 class TestCliArtifactsRootDefaultDocs:
@@ -2599,7 +2605,8 @@ class TestCliArtifactsRootDefaultDocs:
         )
         assert result.returncode == 0
         data = json.loads(result.stdout)
-        assert len(data["checks"]) == 10
+        diag = data.get("diagnostic", data)
+        assert len(diag["checks"]) == 10
 
 
 class TestCliNoneSerializesAsJsonNull:

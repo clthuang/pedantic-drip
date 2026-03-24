@@ -2,6 +2,8 @@
 
 Usage:
     python -m doctor --entities-db PATH --memory-db PATH --project-root PATH [--artifacts-root PATH]
+    python -m doctor ... --fix          # Apply safe fixes and re-run diagnostics
+    python -m doctor ... --fix --dry-run  # Show what would be fixed without applying
 
 Outputs a single JSON object to stdout. Exit code is always 0.
 """
@@ -36,6 +38,16 @@ def main() -> None:
         default=None,
         help="Path to artifacts root (default: resolved from config or 'docs')",
     )
+    parser.add_argument(
+        "--fix",
+        action="store_true",
+        help="Apply safe fixes after diagnostics",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be fixed without applying (use with --fix)",
+    )
 
     args = parser.parse_args()
 
@@ -58,7 +70,37 @@ def main() -> None:
         project_root=args.project_root,
     )
 
-    print(json.dumps(report.to_dict(), indent=2))
+    if not args.fix:
+        # Default: diagnostic only (backward compatible)
+        output = {"diagnostic": report.to_dict()}
+    else:
+        from doctor.fixer import apply_fixes
+
+        fix_report = apply_fixes(
+            report=report,
+            entities_db_path=args.entities_db,
+            memory_db_path=args.memory_db,
+            artifacts_root=artifacts_root,
+            project_root=args.project_root,
+            dry_run=args.dry_run,
+        )
+
+        output = {
+            "diagnostic": report.to_dict(),
+            "fixes": fix_report.to_dict(),
+        }
+
+        if not args.dry_run:
+            # Re-run diagnostics to verify fixes
+            post_report = run_diagnostics(
+                entities_db_path=args.entities_db,
+                memory_db_path=args.memory_db,
+                artifacts_root=artifacts_root,
+                project_root=args.project_root,
+            )
+            output["post_fix"] = post_report.to_dict()
+
+    print(json.dumps(output, indent=2))
 
 
 if __name__ == "__main__":

@@ -462,6 +462,53 @@ except Exception:
     fi
 }
 
+# Run doctor auto-fix: apply safe fixes for detected issues.
+# Returns single summary line via stdout (empty if healthy).
+run_doctor_autofix() {
+    local python_cmd="$PLUGIN_ROOT/.venv/bin/python"
+    local entity_db="${ENTITY_DB_PATH:-$HOME/.claude/pd/entities/entities.db}"
+    local memory_db="${MEMORY_DB_PATH:-$HOME/.claude/pd/memory/memory.db}"
+    local artifacts_root
+    artifacts_root=$(resolve_artifacts_root)
+
+    # Platform-aware timeout (macOS: gtimeout from coreutils, Linux: timeout)
+    local timeout_cmd=""
+    if command -v gtimeout &>/dev/null; then
+        timeout_cmd="gtimeout 10"
+    elif command -v timeout &>/dev/null; then
+        timeout_cmd="timeout 10"
+    fi
+
+    local result
+    result=$(PYTHONPATH="$SCRIPT_DIR/lib" \
+        $timeout_cmd "$python_cmd" -m doctor \
+        --entities-db "$entity_db" \
+        --memory-db "$memory_db" \
+        --project-root "$PROJECT_ROOT" \
+        --artifacts-root "$artifacts_root" \
+        --fix 2>/dev/null) || true
+
+    if [[ -n "$result" ]]; then
+        python3 -c "
+import json, sys
+try:
+    data = json.loads(sys.argv[1])
+    fixes = data.get('fixes') or {}
+    fixed = fixes.get('fixed_count', 0)
+    post = data.get('post_fix') or {}
+    remaining = post.get('error_count', 0) + post.get('warning_count', 0)
+    if fixed > 0 and remaining > 0:
+        print(f'Doctor: fixed {fixed} issues ({remaining} remaining)')
+    elif fixed > 0:
+        print(f'Doctor: fixed {fixed} issues')
+    elif remaining > 0:
+        print(f'Doctor: {remaining} issues need manual attention')
+except Exception:
+    pass
+" "$result" 2>/dev/null
+    fi
+}
+
 # Main
 main() {
     # Auto-provision config from template if missing (only if .claude/ already exists)
@@ -503,6 +550,9 @@ EOF
     local recon_summary=""
     recon_summary=$(run_reconciliation)
 
+    local doctor_summary=""
+    doctor_summary=$(run_doctor_autofix)
+
     local context
     context=$(build_context)
 
@@ -524,6 +574,14 @@ EOF
             full_context="${full_context}\n\n${recon_summary}"
         else
             full_context="${recon_summary}"
+        fi
+    fi
+    # Doctor auto-fix summary (silent when healthy)
+    if [[ -n "$doctor_summary" ]]; then
+        if [[ -n "$full_context" ]]; then
+            full_context="${full_context}\n\n${doctor_summary}"
+        else
+            full_context="${doctor_summary}"
         fi
     fi
     if [[ -n "$memory_context" ]]; then
