@@ -129,13 +129,29 @@ Wrap entity DB writes in `_process_transition_phase` and `_process_complete_phas
 
 **_process_transition_phase:**
 ```python
-# Move engine call + entity writes into one transaction
-# engine.transition_phase() uses the same db instance (engine.db = db)
+# Both entity_engine and engine paths share the same db instance.
+# Wrap ALL writes (including engine's db.update_workflow_phase) in one transaction.
 if db is not None:
     with db.transaction():
-        response = engine.transition_phase(feature_type_id, target_phase, yolo_active)
-        # ... metadata assembly (reads from response, no separate writes) ...
+        # Dual-path: entity_engine (preferred) or engine (fallback)
+        if entity_engine is not None:
+            entity = db.get_entity(feature_type_id)
+            if entity is not None:
+                response = entity_engine.transition_phase(entity["uuid"], target_phase)
+            else:
+                response = engine.transition_phase(feature_type_id, target_phase, yolo_active)
+        else:
+            response = engine.transition_phase(feature_type_id, target_phase, yolo_active)
+
+        transitioned = all(r.allowed for r in response.results)
+        if response.degraded:
+            # Engine swallowed a sqlite3.Error — treat as transaction failure.
+            # Under BEGIN IMMEDIATE this should be rare (lock already held).
+            raise sqlite3.OperationalError(
+                "engine returned degraded=True inside transaction"
+            )
         if transitioned:
+            # ... metadata assembly (reads from response) ...
             db.update_entity(feature_type_id, metadata=metadata)
             if feature_type_id.startswith("feature:"):
                 kanban = derive_kanban("active", target_phase)
@@ -153,10 +169,15 @@ if transitioned and db is not None:
 entity = db.get_entity(feature_type_id) if db else None
 # ... early return if entity is None ...
 
-# All writes in one transaction
+# All writes in one transaction (same dual-path pattern)
 if db is not None:
     with db.transaction():
-        completion = engine.complete_phase(feature_type_id, phase)
+        if entity_engine is not None:
+            completion = entity_engine.complete_phase(entity["uuid"], phase)
+        else:
+            completion = engine.complete_phase(feature_type_id, phase)
+        if getattr(completion, 'degraded', False) if hasattr(completion, 'degraded') else False:
+            raise sqlite3.OperationalError("engine returned degraded inside transaction")
         # ... metadata assembly from completion ...
         db.update_entity(feature_type_id, metadata=metadata)
         if feature_type_id.startswith("feature:"):
@@ -169,7 +190,19 @@ if db is not None:
     _project_meta_json(db, engine, feature_type_id)
 ```
 
-**entity_server.py exclusion note:** entity_server.py writes (register_entity, update_entity, set_parent, etc.) are single-statement operations that are already atomic via individual `_commit()`. They don't have the multi-step split-commit problem. Retry (FR-2) is not applied to entity_server because it uses a different MCP server process with its own `_with_error_handling` implementation.
+#### Engine Error-Swallowing Interaction
+
+`engine.transition_phase()` and `engine.complete_phase()` have internal `try/except sqlite3.Error` blocks (engine.py lines 99-111 and 174-182) that swallow DB errors and return `degraded=True` instead of re-raising. Inside `db.transaction()`:
+
+1. **Lock contention cannot occur** — `BEGIN IMMEDIATE` already holds the write lock. The engine's `db.update_workflow_phase()` call executes within the held lock. Only rare I/O errors (disk failure, corruption) could trigger the catch.
+2. **If degraded=True inside transaction:** The engine swallowed an error. We raise `sqlite3.OperationalError` to trigger ROLLBACK, preventing partial commits. This is caught by `_with_retry` (which won't retry since it's not a "locked" error) then by `_with_error_handling` (which returns `db_unavailable`).
+3. **Redundant write note:** `engine.transition_phase()` calls `db.update_workflow_phase(workflow_phase=target)` internally, then the MCP handler calls `db.update_workflow_phase(kanban_column=kanban)` separately. These are two different column updates on the same row — not redundant. Both must be inside the transaction.
+
+**`begin_immediate()` ROLLBACK handling:** unchanged (out of scope). Callers use raw SQL and handle their own error recovery.
+
+**entity_engine coverage:** `EntityWorkflowEngine` is initialized with the same `EntityDatabase` instance (workflow_state_server.py lifespan). Its writes also go through `_commit()` and are covered by the transaction.
+
+**entity_server.py exclusion note:** entity_server.py writes (register_entity, update_entity, set_parent, etc.) are single-statement operations already atomic via individual `_commit()`. No multi-step split-commit problem. Retry (FR-2) is not applied because entity_server uses its own MCP server with separate error handling.
 
 ### C4: _with_retry decorator
 
@@ -227,6 +260,8 @@ def _with_retry(max_attempts=3, backoff=(0.1, 0.5, 2.0)):
 ```
 
 **Decorator stacking:** `_with_error_handling` stays as the OUTER decorator on all 15 functions. `_with_retry()` is added as an INNER decorator on the 9 write-path functions only. This means retries happen first; if all retries exhaust, the exception reaches `_with_error_handling` which converts it to a structured MCP error response.
+
+**Retry target:** The primary retry target is `sqlite3.OperationalError("database is locked")` raised by `BEGIN IMMEDIATE` inside `db.transaction()`, which propagates through the `_process_*` function to the retry decorator. Lock errors within the transaction body cannot occur (lock already held).
 
 **Applied to (9 write-path):**
 `_process_transition_phase`, `_process_complete_phase`, `_process_init_feature_state`, `_process_init_project_state`, `_process_activate_feature`, `_process_init_entity_workflow`, `_process_transition_entity_phase`, `_process_reconcile_apply`, `_process_reconcile_frontmatter`
@@ -315,6 +350,7 @@ finally:
 | Pre-BEGIN commit() races with other writers | Low | Low | The commit flushes pending DML; BEGIN IMMEDIATE then acquires lock atomically |
 | Retry+jitter adds 2.6s worst-case latency | Low | Low | Only on transient errors. Normal operations unaffected. |
 | ROLLBACK suppression hides secondary errors | Low | Low | Original exception preserved. Connection auto-rollback on close. |
+| Engine error-swallowing inside transaction prevents rollback | Very Low | Medium | Under BEGIN IMMEDIATE, lock errors can't occur inside the transaction. degraded=True check converts swallowed errors to explicit exceptions. |
 
 ## Interfaces
 
