@@ -234,21 +234,39 @@ def _enforce_not_null_columns(
         conn.execute("INSERT INTO entries_fts(entries_fts) VALUES('rebuild')")
 
 
+def _add_influence_tracking(
+    conn: sqlite3.Connection,
+    **_kwargs: object,
+) -> None:
+    """Migration 4: add influence tracking — influence_count column + influence_log table."""
+    conn.execute("ALTER TABLE entries ADD COLUMN influence_count INTEGER DEFAULT 0")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS influence_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entry_id TEXT NOT NULL,
+            agent_role TEXT NOT NULL,
+            feature_type_id TEXT,
+            timestamp TEXT NOT NULL
+        )
+    """)
+
+
 # Ordered mapping of version -> migration function.
 # Each migration brings the schema from (version - 1) to version.
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _create_initial_schema,
     2: _add_source_hash_and_created_timestamp,
     3: _enforce_not_null_columns,
+    4: _add_influence_tracking,
 }
 
-# All 18 column names in insertion order.
+# All 19 column names in insertion order.
 _COLUMNS = [
     "id", "name", "description", "reasoning", "category",
     "keywords", "source", "source_project", '"references"',
     "observation_count", "confidence", "recall_count",
     "last_recalled_at", "embedding", "created_at", "updated_at",
-    "source_hash", "created_timestamp_utc",
+    "source_hash", "created_timestamp_utc", "influence_count",
 ]
 
 # Columns that use "overwrite if non-null, keep existing if null" on conflict.
@@ -405,6 +423,60 @@ class MemoryDatabase:
         except Exception:
             self._conn.rollback()
             raise
+
+    def merge_duplicate(
+        self,
+        existing_id: str,
+        new_keywords: list[str],
+    ) -> dict:
+        """Merge a near-duplicate into an existing entry.
+
+        Increments observation_count, updates updated_at, unions keywords.
+        Raises ValueError if the entry does not exist.
+        Returns the updated entry dict.
+        """
+        import json
+        from datetime import datetime, timezone
+
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = self._conn.execute(
+                "SELECT * FROM entries WHERE id = ?", (existing_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"Memory entry not found: {existing_id}")
+
+            entry = dict(row)
+
+            # Parse existing keywords with fallback for malformed JSON
+            try:
+                existing_keywords = json.loads(entry.get("keywords") or "[]")
+                if not isinstance(existing_keywords, list):
+                    existing_keywords = []
+            except (json.JSONDecodeError, TypeError):
+                existing_keywords = []
+
+            # Union keywords preserving order (existing first, then new)
+            seen = set(existing_keywords)
+            merged_keywords = list(existing_keywords)
+            for kw in new_keywords:
+                if kw not in seen:
+                    seen.add(kw)
+                    merged_keywords.append(kw)
+
+            now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+            self._conn.execute(
+                "UPDATE entries SET observation_count = observation_count + 1, "
+                "updated_at = ?, keywords = ? WHERE id = ?",
+                (now, json.dumps(merged_keywords), existing_id),
+            )
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
+
+        return self.get_entry(existing_id)
 
     def get_source_hash(self, entry_id: str) -> str | None:
         """Return the source_hash for an entry, or ``None`` if missing."""

@@ -73,13 +73,13 @@ class TestSchemaCreation:
         )
         assert cur.fetchone() is not None
 
-    def test_schema_version_is_3(self, db: MemoryDatabase):
-        assert db.get_schema_version() == 3
+    def test_schema_version_is_4(self, db: MemoryDatabase):
+        assert db.get_schema_version() == 4
 
-    def test_entries_has_18_columns(self, db: MemoryDatabase):
+    def test_entries_has_19_columns(self, db: MemoryDatabase):
         cur = db._conn.execute("PRAGMA table_info(entries)")
         columns = cur.fetchall()
-        assert len(columns) == 18
+        assert len(columns) == 19
 
     def test_entries_column_names(self, db: MemoryDatabase):
         cur = db._conn.execute("PRAGMA table_info(entries)")
@@ -89,7 +89,7 @@ class TestSchemaCreation:
             "keywords", "source", "source_project", "references",
             "observation_count", "confidence", "recall_count",
             "last_recalled_at", "embedding", "created_at", "updated_at",
-            "source_hash", "created_timestamp_utc",
+            "source_hash", "created_timestamp_utc", "influence_count",
         ]
         assert col_names == expected
 
@@ -97,20 +97,20 @@ class TestSchemaCreation:
 class TestMigrationIdempotency:
     def test_opening_twice_does_not_error(self):
         """Opening two MemoryDatabase instances on same in-memory DB should
-        still result in schema_version == 3 (migrations are idempotent)."""
+        still result in schema_version == 4 (migrations are idempotent)."""
         db1 = MemoryDatabase(":memory:")
-        assert db1.get_schema_version() == 3
+        assert db1.get_schema_version() == 4
         db1.close()
 
     def test_schema_version_persists(self, tmp_path):
         """Schema version survives close and reopen."""
         db_path = str(tmp_path / "test.db")
         db1 = MemoryDatabase(db_path)
-        assert db1.get_schema_version() == 3
+        assert db1.get_schema_version() == 4
         db1.close()
 
         db2 = MemoryDatabase(db_path)
-        assert db2.get_schema_version() == 3
+        assert db2.get_schema_version() == 4
         db2.close()
 
 
@@ -172,9 +172,9 @@ class TestMigrationV2Backfill:
         conn.commit()
         conn.close()
 
-        # Reopen with MemoryDatabase to trigger migration v2
+        # Reopen with MemoryDatabase to trigger migrations v2-v4
         db = MemoryDatabase(db_path)
-        assert db.get_schema_version() == 3
+        assert db.get_schema_version() == 4
 
         entry = db.get_entry("test1")
         assert entry is not None
@@ -1185,3 +1185,215 @@ class TestFts5SearchIntegration:
         captured = capsys.readouterr()
         assert "semantic_memory: FTS5 error for query" in captured.err
         assert "test query" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# Migration v4 tests (influence tracking)
+# ---------------------------------------------------------------------------
+
+
+def _create_v3_db(db_path: str) -> sqlite3.Connection:
+    """Create a v3 database manually for migration 4 testing."""
+    conn = sqlite3.connect(db_path)
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS entries (
+            id                TEXT PRIMARY KEY,
+            name              TEXT NOT NULL,
+            description       TEXT NOT NULL,
+            reasoning         TEXT,
+            category          TEXT NOT NULL CHECK(category IN ('anti-patterns', 'patterns', 'heuristics')),
+            keywords          TEXT NOT NULL DEFAULT '[]',
+            source            TEXT NOT NULL CHECK(source IN ('retro', 'session-capture', 'manual', 'import')),
+            source_project    TEXT NOT NULL,
+            "references"      TEXT,
+            observation_count INTEGER DEFAULT 1,
+            confidence        TEXT DEFAULT 'medium' CHECK(confidence IN ('high', 'medium', 'low')),
+            recall_count      INTEGER DEFAULT 0,
+            last_recalled_at  TEXT,
+            embedding         BLOB,
+            created_at        TEXT NOT NULL,
+            updated_at        TEXT NOT NULL,
+            source_hash       TEXT NOT NULL,
+            created_timestamp_utc REAL
+        );
+        CREATE TABLE IF NOT EXISTS _metadata (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+        INSERT INTO _metadata (key, value) VALUES ('schema_version', '3');
+    """)
+    return conn
+
+
+class TestMigration4:
+    """Tests for migration 4: influence_count column + influence_log table."""
+
+    def test_migration_creates_influence_count_column(self, tmp_path):
+        """Migration 4 adds influence_count column to entries table."""
+        db_path = str(tmp_path / "test.db")
+        conn = _create_v3_db(db_path)
+        conn.execute(
+            "INSERT INTO entries (id, name, description, category, source, "
+            "source_project, source_hash, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("e1", "Test", "Desc", "patterns", "manual",
+             "/proj", "hash1234abcd5678", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
+        )
+        conn.commit()
+        conn.close()
+
+        db = MemoryDatabase(db_path)
+        assert db.get_schema_version() == 4
+
+        # Verify influence_count column exists and defaults to 0
+        entry = db.get_entry("e1")
+        assert entry is not None
+        assert entry["influence_count"] == 0
+
+        # Verify column is in PRAGMA table_info
+        cur = db._conn.execute("PRAGMA table_info(entries)")
+        col_names = [row[1] for row in cur.fetchall()]
+        assert "influence_count" in col_names
+        db.close()
+
+    def test_migration_creates_influence_log_table(self, tmp_path):
+        """Migration 4 creates the influence_log table."""
+        db_path = str(tmp_path / "test.db")
+        conn = _create_v3_db(db_path)
+        conn.commit()
+        conn.close()
+
+        db = MemoryDatabase(db_path)
+        cur = db._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='influence_log'"
+        )
+        assert cur.fetchone() is not None
+
+        # Verify table schema
+        cur = db._conn.execute("PRAGMA table_info(influence_log)")
+        col_names = [row[1] for row in cur.fetchall()]
+        assert col_names == ["id", "entry_id", "agent_role", "feature_type_id", "timestamp"]
+        db.close()
+
+    def test_migration_is_idempotent(self, tmp_path):
+        """Opening DB twice after migration 4 does not error (schema_version prevents re-run)."""
+        db_path = str(tmp_path / "test.db")
+        conn = _create_v3_db(db_path)
+        conn.commit()
+        conn.close()
+
+        db1 = MemoryDatabase(db_path)
+        assert db1.get_schema_version() == 4
+        db1.close()
+
+        db2 = MemoryDatabase(db_path)
+        assert db2.get_schema_version() == 4
+        db2.close()
+
+    def test_migration_influence_count_default_zero_on_new_entry(self, db: MemoryDatabase):
+        """New entries get influence_count=0 by default."""
+        db.upsert_entry(_make_entry())
+        entry = db.get_entry("abc123")
+        assert entry["influence_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# merge_duplicate tests
+# ---------------------------------------------------------------------------
+
+
+class TestMergeDuplicate:
+    """Tests for MemoryDatabase.merge_duplicate method."""
+
+    def test_increments_observation_count(self, db: MemoryDatabase):
+        """merge_duplicate should increment observation_count by 1."""
+        db.upsert_entry(_make_entry())
+        assert db.get_entry("abc123")["observation_count"] == 1
+
+        result = db.merge_duplicate("abc123", ["new-keyword"])
+        assert result["observation_count"] == 2
+
+    def test_increments_observation_count_multiple_times(self, db: MemoryDatabase):
+        """Calling merge_duplicate twice increments observation_count to 3."""
+        db.upsert_entry(_make_entry())
+        db.merge_duplicate("abc123", [])
+        result = db.merge_duplicate("abc123", [])
+        assert result["observation_count"] == 3
+
+    def test_unions_keywords(self, db: MemoryDatabase):
+        """merge_duplicate should union existing and new keywords."""
+        db.upsert_entry(_make_entry(keywords=json.dumps(["existing-1", "existing-2"])))
+        result = db.merge_duplicate("abc123", ["existing-1", "new-1", "new-2"])
+        keywords = json.loads(result["keywords"])
+        assert set(keywords) == {"existing-1", "existing-2", "new-1", "new-2"}
+        # Existing keywords should come first (order preserved)
+        assert keywords[:2] == ["existing-1", "existing-2"]
+
+    def test_preserves_other_fields(self, db: MemoryDatabase):
+        """merge_duplicate should not modify name, description, reasoning, etc."""
+        db.upsert_entry(_make_entry(
+            name="Original Name",
+            description="Original Description",
+            reasoning="Original Reasoning",
+            category="patterns",
+            source="manual",
+            confidence="high",
+            source_project="/my/project",
+        ))
+
+        result = db.merge_duplicate("abc123", ["new-kw"])
+
+        assert result["name"] == "Original Name"
+        assert result["description"] == "Original Description"
+        assert result["reasoning"] == "Original Reasoning"
+        assert result["category"] == "patterns"
+        assert result["source"] == "manual"
+        assert result["confidence"] == "high"
+        assert result["source_project"] == "/my/project"
+        assert result["recall_count"] == 0
+        assert result["influence_count"] == 0
+
+    def test_updates_updated_at(self, db: MemoryDatabase):
+        """merge_duplicate should refresh updated_at timestamp."""
+        db.upsert_entry(_make_entry(updated_at="2026-01-01T00:00:00Z"))
+        original = db.get_entry("abc123")
+        assert original["updated_at"] == "2026-01-01T00:00:00Z"
+
+        result = db.merge_duplicate("abc123", [])
+        assert result["updated_at"] != "2026-01-01T00:00:00Z"
+        assert result["updated_at"] > "2026-01-01T00:00:00Z"
+
+    def test_raises_valueerror_for_nonexistent_id(self, db: MemoryDatabase):
+        """merge_duplicate should raise ValueError for non-existent entry ID."""
+        with pytest.raises(ValueError, match="Memory entry not found"):
+            db.merge_duplicate("nonexistent-id", ["kw"])
+
+    def test_handles_malformed_keywords_json(self, db: MemoryDatabase):
+        """merge_duplicate should handle malformed existing keywords JSON gracefully."""
+        db.upsert_entry(_make_entry(keywords="not-valid-json{"))
+        result = db.merge_duplicate("abc123", ["new-kw"])
+        keywords = json.loads(result["keywords"])
+        assert keywords == ["new-kw"]
+
+    def test_handles_empty_keywords(self, db: MemoryDatabase):
+        """merge_duplicate with empty existing keywords and empty new keywords."""
+        db.upsert_entry(_make_entry(keywords="[]"))
+        result = db.merge_duplicate("abc123", [])
+        keywords = json.loads(result["keywords"])
+        assert keywords == []
+
+    def test_handles_non_list_keywords_json(self, db: MemoryDatabase):
+        """merge_duplicate should handle keywords that parse to non-list (e.g. string)."""
+        db.upsert_entry(_make_entry(keywords='"just-a-string"'))
+        result = db.merge_duplicate("abc123", ["new-kw"])
+        keywords = json.loads(result["keywords"])
+        assert keywords == ["new-kw"]
+
+    def test_returns_full_entry_dict(self, db: MemoryDatabase):
+        """merge_duplicate should return a complete entry dict."""
+        db.upsert_entry(_make_entry())
+        result = db.merge_duplicate("abc123", ["kw"])
+        assert "id" in result
+        assert "name" in result
+        assert "description" in result
+        assert "influence_count" in result
