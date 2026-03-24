@@ -45,3 +45,4 @@ agent_sandbox/
 
 # Playwright MCP output
 .playwright-mcp/
+*.db
