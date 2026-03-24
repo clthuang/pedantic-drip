@@ -25,6 +25,7 @@ def _make_entry(
     observation_count: int = 1,
     confidence: str = "medium",
     recall_count: int = 0,
+    influence_count: int = 0,
     updated_at: str | None = None,
 ) -> tuple[str, dict]:
     """Build a (id, entry_dict) pair for use in entries dicts."""
@@ -38,6 +39,7 @@ def _make_entry(
         "observation_count": observation_count,
         "confidence": confidence,
         "recall_count": recall_count,
+        "influence_count": influence_count,
         "updated_at": updated_at,
     }
 
@@ -524,6 +526,10 @@ class TestFinalScoreComputation:
         # Entry "a" should rank first
         assert ranked[0]["id"] == "a"
 
+        # Prominence weights: obs=0.25, confidence=0.15, recency=0.25,
+        #                     recall=0.15, influence=0.20
+        W_OBS, W_CONF, W_REC, W_RECALL, W_INF = 0.25, 0.15, 0.25, 0.15, 0.20
+
         # Manually compute expected score for "a":
         # norm_vector: (0.9-0.1)/(0.9-0.1) = 1.0
         # norm_bm25: (8.0-2.0)/(8.0-2.0) = 1.0
@@ -531,9 +537,10 @@ class TestFinalScoreComputation:
         # confidence: high = 1.0
         # recency: log(1.0+1) = log(2)
         # recall: min(10/10, 1.0) = 1.0
-        # prominence = 0.3*1.0 + 0.2*1.0 + 0.3*log(2) + 0.2*1.0
+        # influence: min(0/10, 1.0) = 0.0  (no influence_count on entry)
         recency_a = math.log(2)
-        prominence_a = 0.3 * 1.0 + 0.2 * 1.0 + 0.3 * recency_a + 0.2 * 1.0
+        prominence_a = (W_OBS * 1.0 + W_CONF * 1.0 + W_REC * recency_a
+                        + W_RECALL * 1.0 + W_INF * 0.0)
         expected_a = 0.5 * 1.0 + 0.2 * 1.0 + 0.3 * prominence_a
         assert abs(ranked[0]["final_score"] - expected_a) < 1e-9
 
@@ -544,9 +551,11 @@ class TestFinalScoreComputation:
         # confidence: low = 1/3
         # recency: log(0.5+1) = log(1.5)
         # recall: min(0/10, 1.0) = 0.0
+        # influence: min(0/10, 1.0) = 0.0
         norm_obs_b = math.log(6) / math.log(11)
         recency_b = math.log(1.5)
-        prominence_b = 0.3 * norm_obs_b + 0.2 * (1 / 3) + 0.3 * recency_b + 0.2 * 0.0
+        prominence_b = (W_OBS * norm_obs_b + W_CONF * (1 / 3) + W_REC * recency_b
+                        + W_RECALL * 0.0 + W_INF * 0.0)
         expected_b = 0.5 * 0.0 + 0.2 * 0.0 + 0.3 * prominence_b
         assert abs(ranked[1]["final_score"] - expected_b) < 1e-9
 
@@ -565,3 +574,98 @@ class TestFinalScoreComputation:
         ranked = engine.rank(result, entries, limit=10)
         assert len(ranked) == 1
         assert ranked[0]["id"] == "a"
+
+
+# ---------------------------------------------------------------------------
+# Influence score
+# ---------------------------------------------------------------------------
+
+
+class TestInfluenceScore:
+    def test_zero_influence(self):
+        engine = RankingEngine(_default_config())
+        entry = {"influence_count": 0}
+        assert engine._influence_score(entry) == 0.0
+
+    def test_five_influence(self):
+        engine = RankingEngine(_default_config())
+        entry = {"influence_count": 5}
+        assert engine._influence_score(entry) == 0.5
+
+    def test_ten_influence_caps_at_one(self):
+        engine = RankingEngine(_default_config())
+        entry = {"influence_count": 10}
+        assert engine._influence_score(entry) == 1.0
+
+    def test_twenty_influence_caps_at_one(self):
+        engine = RankingEngine(_default_config())
+        entry = {"influence_count": 20}
+        assert engine._influence_score(entry) == 1.0
+
+    def test_missing_influence_count_defaults_to_zero(self):
+        engine = RankingEngine(_default_config())
+        entry = {}  # no influence_count key
+        assert engine._influence_score(entry) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Influence affects prominence ranking (AC-9)
+# ---------------------------------------------------------------------------
+
+
+class TestInfluenceInProminence:
+    def test_higher_influence_ranks_higher(self):
+        """Entries with higher influence_count score higher in prominence."""
+        engine = RankingEngine(_default_config())
+        _, entry_high = _make_entry("high", influence_count=10)
+        _, entry_low = _make_entry("low", influence_count=0)
+        entries = {"high": entry_high, "low": entry_low}
+
+        result = RetrievalResult(
+            candidates={
+                "high": CandidateScores(vector_score=0.5, bm25_score=5.0),
+                "low": CandidateScores(vector_score=0.5, bm25_score=5.0),
+            },
+            vector_candidate_count=2,
+            fts5_candidate_count=2,
+        )
+        ranked = engine.rank(result, entries, limit=10, now=_NOW)
+        assert ranked[0]["id"] == "high"
+        assert ranked[0]["final_score"] > ranked[1]["final_score"]
+
+    def test_influence_absent_in_entry_defaults_zero_in_prominence(self):
+        """Entry without influence_count key gets influence=0 in prominence."""
+        engine = RankingEngine(_default_config())
+        # Build entry without influence_count key
+        entry_no_key = {
+            "id": "no_key",
+            "name": "No Key",
+            "description": "desc",
+            "category": "patterns",
+            "observation_count": 1,
+            "confidence": "medium",
+            "recall_count": 0,
+            "updated_at": _NOW_ISO,
+        }
+        # Build entry with explicit influence_count=0
+        _, entry_zero = _make_entry("zero", influence_count=0)
+
+        max_obs = 1
+        p_no_key = engine._prominence(entry_no_key, max_obs, _NOW)
+        p_zero = engine._prominence(entry_zero, max_obs, _NOW)
+        assert abs(p_no_key - p_zero) < 1e-12
+
+    def test_ac9_prominence_ordering_changes_with_influence(self):
+        """AC-9: influence signal changes prominence ordering.
+
+        Two entries identical except for influence_count. The one with
+        higher influence should have higher prominence.
+        """
+        engine = RankingEngine(_default_config())
+        _, entry_a = _make_entry("a", influence_count=0)
+        _, entry_b = _make_entry("b", influence_count=10)
+
+        max_obs = 1
+        p_a = engine._prominence(entry_a, max_obs, _NOW)
+        p_b = engine._prominence(entry_b, max_obs, _NOW)
+        assert p_b > p_a, "Entry with influence_count=10 should have higher prominence"

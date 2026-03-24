@@ -146,6 +146,10 @@ class RankingEngine:
         """Compute recall frequency: ``min(recall_count / 10.0, 1.0)``."""
         return min(recall_count / 10.0, 1.0)
 
+    def _influence_score(self, entry: dict) -> float:
+        """Compute influence score: ``min(influence_count / 10.0, 1.0)``."""
+        return min(entry.get("influence_count", 0) / 10.0, 1.0)
+
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
@@ -208,7 +212,7 @@ class RankingEngine:
     ) -> float:
         """Compute prominence for a single entry.
 
-        ``prominence = 0.3 * norm_obs + 0.2 * confidence + 0.3 * recency + 0.2 * recall``
+        ``prominence = 0.25 * norm_obs + 0.15 * confidence + 0.25 * recency + 0.15 * recall + 0.20 * influence``
         """
         obs_count = entry.get("observation_count", 0)
         norm_obs = math.log(obs_count + 1) / math.log(max_obs + 1) if max_obs > 0 else 0.0
@@ -216,8 +220,9 @@ class RankingEngine:
         confidence = self._confidence_value(entry.get("confidence", "medium"))
         recency = self._recency_decay(entry.get("updated_at", now.isoformat()), now)
         recall = self._recall_frequency(entry.get("recall_count", 0))
+        influence = self._influence_score(entry)
 
-        return 0.3 * norm_obs + 0.2 * confidence + 0.3 * recency + 0.2 * recall
+        return 0.25 * norm_obs + 0.15 * confidence + 0.25 * recency + 0.15 * recall + 0.20 * influence
 
     @staticmethod
     def _balanced_select(scored: list[dict], limit: int) -> list[dict]:
