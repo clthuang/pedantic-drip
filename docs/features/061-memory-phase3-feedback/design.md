@@ -54,27 +54,23 @@ If the review loop completed in 1 iteration AND the reviewer found issues with s
 
 This is a **prompt instruction change only** — no Python code involved.
 
-### C2: Project-Scoped Retrieval (`retrieval.py`)
+### C2: Project-Scoped Retrieval (`retrieval.py` + `retrieval_types.py`)
 
-Modify `RetrievalPipeline.retrieve()` to accept `project: str | None = None`:
+Modify `RetrievalPipeline.retrieve()` to accept and pass through `project`:
 
 ```python
 def retrieve(self, context_query: str | None, project: str | None = None) -> RetrievalResult:
 ```
 
-**When `project` is None:** Existing behavior unchanged.
+**Change is minimal:** `retrieve()` does NOT do any project filtering itself. It simply passes the `project` string through to `RetrievalResult` as metadata. The actual two-tier blend happens in `rank()` (C3), which already has access to the full entries dict with `source_project`.
 
-**When `project` is set:**
-1. Run existing vector + FTS5 retrieval as normal (full candidate set)
-2. After building `candidates` dict, tag each candidate with its `source_project` from the entries table
-3. Split candidates into `project_candidates` (matching source_project) and `universal_candidates` (all)
-4. Return a `RetrievalResult` with an additional `project` field for the ranker to use
+`RetrievalResult` gains: `project: str | None = None` field.
 
-**Alternative considered:** Filter at the DB query level (WHERE source_project = ?). Rejected because vector similarity search operates on the full embedding matrix — filtering before cosine similarity would require a second matrix build. Post-retrieval splitting is simpler and the candidate counts are small (< 1000).
+**Why not filter in retrieve():** retrieve() works with CandidateScores (vector/BM25 scores only) and has no access to entry metadata like `source_project`. The entries dict is loaded by the caller and passed to `rank()`. Filtering in `rank()` is the natural place since it already has both scores and metadata.
 
 ### C3: Two-Tier Blend in Ranker (`ranking.py`)
 
-Modify `RankingEngine.rank()` to handle project-scoped results:
+Modify `RankingEngine.rank()` to handle project-scoped results. **Note:** This supersedes spec FR-2's note that `rank()` needs no changes — the blend logic belongs in rank() per TD-2 rationale.
 
 ```python
 def rank(self, result: RetrievalResult, entries: dict, limit: int) -> list[dict]:
@@ -84,13 +80,14 @@ def rank(self, result: RetrievalResult, entries: dict, limit: int) -> list[dict]
 
 **When `result.project` is set:**
 1. Score all candidates as normal (vector + BM25 + prominence)
-2. Split scored entries: `project_scored` (source_project matches) and `all_scored` (everything)
-3. Select top `limit // 2` from `project_scored`
-4. Select top `limit - len(project_selected)` from `all_scored`, excluding already-selected IDs
+2. Split scored entries using `entries[cid].get("source_project")`: `project_scored` (matches `result.project`) and `all_scored` (everything)
+3. Select top `limit // 2` from `project_scored` via `_balanced_select(project_scored, limit // 2)`
+4. Select top `limit - len(project_selected)` from `all_scored`, excluding already-selected IDs. Universal tier draws from ALL entries (including project ones) — dedup by ID prevents double-counting.
 5. Merge, sort by final_score descending
-6. Apply `_balanced_select()` on the merged set
 
 **Underfill handling:** If project tier has fewer than `limit // 2` entries, fill remainder from universal tier.
+
+**Category balance interaction:** `_balanced_select()` is applied within each tier separately (step 3 for project tier). The merged result preserves both project and category diversity. Category balance takes precedence within each tier but does not override the project/universal split.
 
 ### C4: Recall Dampening (`ranking.py`)
 
@@ -111,7 +108,7 @@ def _recall_frequency(self, recall_count: int, last_recalled_at: str | None = No
     return base * decay
 ```
 
-**Caller update:** `_prominence()` passes `entry.get("last_recalled_at")` and `now` to `_recall_frequency()`.
+**Caller update:** `_prominence()` (line 222) changes from `self._recall_frequency(entry.get("recall_count", 0))` to `self._recall_frequency(entry.get("recall_count", 0), entry.get("last_recalled_at"), now)`. The entry dict from `get_all_entries()` includes `last_recalled_at` (confirmed in `_ALL_ENTRY_COLS`).
 
 ### C5: Injector Project Resolution (`injector.py`)
 
@@ -147,7 +144,7 @@ Pass to `pipeline.retrieve(context_query, project=project_name)`.
 
 ### TD-2: Two-tier blend in ranker, not retrieval
 **Decision:** The blend logic (N/2 project + N/2 universal) lives in `rank()`, not `retrieve()`.
-**Rationale:** Retrieval is signal-agnostic (it produces candidate scores). Ranking is where selection decisions belong. This keeps retrieval clean and the blend logic testable. Note: this supersedes spec FR-2's note that `rank()` needs no changes — the two-tier selection logic belongs in `rank()` for the reasons above.
+**Rationale:** `retrieve()` has no access to entry metadata (source_project) — it only produces CandidateScores. `rank()` receives the full entries dict with source_project, making it the natural place for project-aware selection. `retrieve()` merely passes the project string through RetrievalResult. This supersedes spec FR-2's note that rank() needs no changes.
 
 ### TD-3: Backward-compatible _recall_frequency signature
 **Decision:** Add `last_recalled_at` and `now` as optional kwargs with defaults.
@@ -180,7 +177,7 @@ def _recall_frequency(self, recall_count: int, last_recalled_at: str | None = No
 
 ```python
 def rank(self, result: RetrievalResult, entries: dict, limit: int) -> list[dict]:
-    # If result.project is set, apply two-tier blend
+    # If result.project is set, apply two-tier blend using entries[cid]["source_project"]
 ```
 
 ### I4: `_resolve_project_name()` — new helper in `injector.py`
