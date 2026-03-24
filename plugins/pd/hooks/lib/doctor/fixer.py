@@ -4,6 +4,7 @@ Entry point: apply_fixes() classifies and applies safe fixes from a DiagnosticRe
 """
 from __future__ import annotations
 
+import os
 import sqlite3
 import time
 from collections.abc import Callable
@@ -75,7 +76,7 @@ def apply_fixes(
     Constructs EntityDatabase + WorkflowStateEngine internally.
     All wrapped in try/finally for cleanup.
     """
-    import os
+
 
     start = time.monotonic()
     results: list[FixResult] = []
