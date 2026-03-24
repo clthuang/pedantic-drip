@@ -76,8 +76,6 @@ def apply_fixes(
     Constructs EntityDatabase + WorkflowStateEngine internally.
     All wrapped in try/finally for cleanup.
     """
-
-
     start = time.monotonic()
     results: list[FixResult] = []
     db = None

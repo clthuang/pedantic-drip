@@ -459,11 +459,12 @@ def check_workflow_phase(
                 ))
 
         # Backward transition awareness: check for rework state
-        # Use direct SQLite connection (not db._conn — CLAUDE.md prohibits private access)
+        # Use the shared entities_conn from ctx (passed via kwargs)
+        entities_conn = kwargs.get("entities_conn")
         try:
-            bt_conn = sqlite3.connect(entities_db_path)
-            bt_conn.execute("PRAGMA busy_timeout = 5000")
-            cursor = bt_conn.execute(
+            if entities_conn is None:
+                raise sqlite3.Error("No entities_conn in context")
+            cursor = entities_conn.execute(
                 "SELECT type_id, workflow_phase, last_completed_phase "
                 "FROM workflow_phases"
             )
@@ -491,8 +492,6 @@ def check_workflow_phase(
                         ))
         except sqlite3.Error:
             pass
-        finally:
-            bt_conn.close()
 
     except sqlite3.OperationalError as exc:
         issues.append(Issue(
@@ -1190,33 +1189,37 @@ def check_entity_orphans(
     project_root = kwargs.get("project_root", ".")
     local_entity_ids = kwargs.get("local_entity_ids", set())
 
-    # 1. Entities in DB with no corresponding filesystem artifact
+    # 1. Load all feature entities from DB (single query, reused for steps 1 and 2)
+    db_features: list[tuple] = []  # (type_id, entity_id, artifact_path)
+    db_feature_ids: set[str] = set()
     cross_project_count = 0
     try:
         cursor = entities_conn.execute(
-            "SELECT type_id, entity_type, entity_id, artifact_path "
+            "SELECT type_id, entity_id, artifact_path "
             "FROM entities WHERE entity_type = 'feature'"
         )
-        for row in cursor:
-            type_id, entity_type, entity_id, artifact_path = row
-            feature_dir = os.path.join(artifacts_root, "features", entity_id)
-            if entity_id in local_entity_ids or not local_entity_ids:
-                if not os.path.isdir(feature_dir):
-                    issues.append(Issue(
-                        check="entity_orphans",
-                        severity="warning",
-                        entity=type_id,
-                        message=(
-                            f"Entity '{type_id}' in DB but feature directory "
-                            "not found on disk"
-                        ),
-                        fix_hint="Remove stale entity or restore feature directory",
-                    ))
-            else:
-                if not os.path.isdir(feature_dir):
-                    cross_project_count += 1
+        db_features = list(cursor)
+        db_feature_ids = {row[1] for row in db_features}
     except sqlite3.Error:
         pass
+
+    for type_id, entity_id, artifact_path in db_features:
+        feature_dir = os.path.join(artifacts_root, "features", entity_id)
+        if entity_id in local_entity_ids or not local_entity_ids:
+            if not os.path.isdir(feature_dir):
+                issues.append(Issue(
+                    check="entity_orphans",
+                    severity="warning",
+                    entity=type_id,
+                    message=(
+                        f"Entity '{type_id}' in DB but feature directory "
+                        "not found on disk"
+                    ),
+                    fix_hint="Remove stale entity or restore feature directory",
+                ))
+        else:
+            if not os.path.isdir(feature_dir):
+                cross_project_count += 1
 
     if cross_project_count > 0:
         issues.append(Issue(
@@ -1232,14 +1235,6 @@ def check_entity_orphans(
 
     # 2. Feature directories with .meta.json but no entity in DB
     features_dir = os.path.join(artifacts_root, "features")
-    db_feature_ids: set[str] = set()
-    try:
-        cursor = entities_conn.execute(
-            "SELECT entity_id FROM entities WHERE entity_type = 'feature'"
-        )
-        db_feature_ids = {row[0] for row in cursor}
-    except sqlite3.Error:
-        pass
 
     if os.path.isdir(features_dir):
         for entry in os.listdir(features_dir):

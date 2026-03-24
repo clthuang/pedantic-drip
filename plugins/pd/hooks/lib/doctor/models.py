@@ -60,13 +60,8 @@ class FixResult:
     classification: str  # "safe" | "manual"
 
     def to_dict(self) -> dict:
-        """Serialize to a plain dict."""
-        return {
-            "issue": self.issue.to_dict(),
-            "applied": self.applied,
-            "action": self.action,
-            "classification": self.classification,
-        }
+        """Serialize to a plain dict (None -> JSON null)."""
+        return asdict(self)
 
 
 @dataclass
@@ -80,11 +75,5 @@ class FixReport:
     elapsed_ms: int
 
     def to_dict(self) -> dict:
-        """Serialize to a plain dict."""
-        return {
-            "fixed_count": self.fixed_count,
-            "skipped_count": self.skipped_count,
-            "failed_count": self.failed_count,
-            "results": [r.to_dict() for r in self.results],
-            "elapsed_ms": self.elapsed_ms,
-        }
+        """Serialize to a plain dict (None -> JSON null)."""
+        return asdict(self)

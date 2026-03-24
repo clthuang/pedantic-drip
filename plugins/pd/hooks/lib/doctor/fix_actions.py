@@ -11,10 +11,15 @@ import re
 import sqlite3
 import subprocess
 import sys
-import tempfile
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from doctor.models import Issue
+from workflow_engine.feature_lifecycle import _atomic_json_write
+
+if TYPE_CHECKING:
+    from entity_registry.database import EntityDatabase
+    from workflow_engine.engine import WorkflowStateEngine
 
 
 @dataclass
@@ -25,48 +30,23 @@ class FixContext:
     memory_db_path: str
     artifacts_root: str
     project_root: str
-    db: object  # EntityDatabase | None
-    engine: object  # WorkflowStateEngine | None
-    # entities_conn IS db._conn (intentional encapsulation bypass for direct SQL
-    # on parent_uuid/parent_type_id). NOT a separate connection -- avoids write
-    # lock contention. Same for memory_conn.
+    db: EntityDatabase | None
+    engine: WorkflowStateEngine | None
+    # entities_conn IS db._conn (intentional encapsulation bypass — EntityDatabase
+    # lacks public setters for parent_uuid/parent_type_id).
     entities_conn: sqlite3.Connection | None
     memory_conn: sqlite3.Connection | None
 
 
-def _atomic_json_write(path: str, data: dict) -> None:
-    """Atomic JSON write: NamedTemporaryFile + os.replace()."""
-    tmp_name = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            dir=os.path.dirname(path),
-            suffix=".tmp",
-            delete=False,
-            encoding="utf-8",
-        ) as fd:
-            tmp_name = fd.name
-            json.dump(data, fd, indent=2)
-            fd.write("\n")
-        os.replace(tmp_name, path)
-    except BaseException:
-        if tmp_name is not None:
-            try:
-                os.unlink(tmp_name)
-            except OSError:
-                pass
-        raise
-
-
-# Phase order for lastCompletedPhase resolution
+# Canonical phase sequence — must match transition_gate.constants.PHASE_SEQUENCE
 _PHASE_ORDER = [
-    "ideate",
+    "brainstorm",
     "specify",
     "design",
-    "plan",
+    "create-plan",
+    "create-tasks",
     "implement",
-    "verify",
-    "retro",
+    "finish",
 ]
 
 
@@ -216,7 +196,6 @@ def _fix_parent_uuid(ctx: FixContext, issue: Issue) -> str:
         (parent_uuid, issue.entity),
     )
     ctx.entities_conn.commit()
-    # Start a new transaction for subsequent operations
     return f"Set parent_uuid to {parent_uuid} for {issue.entity}"
 
 

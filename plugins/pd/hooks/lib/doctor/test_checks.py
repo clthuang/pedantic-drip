@@ -788,7 +788,9 @@ class TestBackwardTransition:
             mode="standard", last_completed_phase="design",
         )
 
-        result = check_workflow_phase(db_path, str(tmp_path))
+        conn = sqlite3.connect(db_path)
+        result = check_workflow_phase(db_path, str(tmp_path), entities_conn=conn)
+        conn.close()
         rework_infos = [
             i for i in result.issues
             if i.severity == "info" and "rework" in i.message.lower()
