@@ -96,6 +96,7 @@ When the category filter is `None`, the `category` parameter is omitted from the
 - NOT inserted before `resume:` blocks (resumed dispatches already have memory from initial dispatch)
 - The query is derived from the agent's role + the dispatch context that follows
 - **For loop-based dispatches** (implementer in implement.md): the instruction explicitly references the current task iteration's description and file list from the task definition, not a global query. The template for these reads: `call search_memory with query derived from the current task's description and its file paths`
+- **Out of scope:** Non-workflow command files (secretary.md, wrap-up.md, finish-feature.md, review-ds-code.md, review-ds-analysis.md, etc.) are excluded per spec FR-1 which scopes to the 5 workflow command files only
 
 **Query construction guidance:**
 The query should include the agent's role and the task-specific context. General rule: `{agent role} + {task/feature context} + {relevant file paths}`. Examples:
@@ -214,13 +215,23 @@ selected = [e for e in selected if e["final_score"] > threshold]
 # Skip injection when no work context (FR-4)
 if not pipeline.has_work_context(project_root):
     sys.stdout.write('Memory: skipped (no context signals)\n')
-    write_tracking(
-        global_store=global_store,
-        selected=[],
-        result=RetrievalResult(candidates={}),
-        total_count=db.count_entries(),
-        model=model,
-    )
+    # Write tracking with skipped_reason to distinguish from "ran but found zero"
+    total_count = db.count_entries()
+    tracking = {
+        "timestamp": datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "mode": "semantic",
+        "entries_injected": 0,
+        "total_entries": total_count,
+        "model": model,
+        "skipped_reason": "no_work_context",
+    }
+    tracking_path = os.path.join(global_store, ".last-injection.json")
+    try:
+        with open(tracking_path, "w") as fh:
+            json.dump(tracking, fh, indent=2)
+            fh.write("\n")
+    except OSError:
+        pass
     return
 ```
 
