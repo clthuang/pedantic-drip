@@ -532,7 +532,7 @@ class TestPragmas:
 
     def test_busy_timeout(self, db: EntityDatabase):
         cur = db._conn.execute("PRAGMA busy_timeout")
-        assert cur.fetchone()[0] == 5000
+        assert cur.fetchone()[0] == 15000
 
     def test_cache_size(self, db: EntityDatabase):
         cur = db._conn.execute("PRAGMA cache_size")
@@ -4909,3 +4909,95 @@ class TestBatchRegistration:
         db.register_entities_batch(entities)
         results = db.search_entities("UniqueSearchTerm")
         assert len(results) >= 1
+
+
+# ---------------------------------------------------------------------------
+# _commit() and transaction() tests (Task 1.5)
+# ---------------------------------------------------------------------------
+
+
+class TestCommitHelper:
+    """Tests for EntityDatabase._commit() behaviour."""
+
+    def test_commit_outside_transaction(self, db):
+        """_commit() calls self._conn.commit() when not in a transaction."""
+        # Insert a row via raw SQL (no auto-commit)
+        db._conn.execute(
+            "INSERT INTO entities (uuid, type_id, entity_type, entity_id, name, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+            (str(uuid.uuid4()), "feature:commit-test", "feature", "commit-test", "CommitTest"),
+        )
+        db._commit()
+        # Verify data persisted by opening a second connection
+        conn2 = sqlite3.connect(db._conn.execute("PRAGMA database_list").fetchone()[2])
+        conn2.row_factory = sqlite3.Row
+        row = conn2.execute("SELECT * FROM entities WHERE type_id = ?", ("feature:commit-test",)).fetchone()
+        conn2.close()
+        assert row is not None
+        assert row["name"] == "CommitTest"
+
+    def test_commit_suppressed_inside_transaction(self, db):
+        """Inside transaction(), _commit() is a no-op (does not commit)."""
+        db._conn.commit()  # flush any implicit transaction first
+        db._conn.execute("BEGIN IMMEDIATE")
+        db._in_transaction = True
+        try:
+            db._conn.execute(
+                "INSERT INTO entities (uuid, type_id, entity_type, entity_id, name, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+                (str(uuid.uuid4()), "feature:suppress-test", "feature", "suppress-test", "SuppressTest"),
+            )
+            # _commit() should be a no-op
+            db._commit()
+            # Roll back to prove data was NOT committed
+            db._conn.execute("ROLLBACK")
+        finally:
+            db._in_transaction = False
+
+        row = db._conn.execute(
+            "SELECT * FROM entities WHERE type_id = ?", ("feature:suppress-test",)
+        ).fetchone()
+        assert row is None
+
+
+class TestTransactionContextManager:
+    """Tests for EntityDatabase.transaction() context manager."""
+
+    def test_transaction_commits_on_success(self, db):
+        """Data persisted after transaction context exits normally."""
+        with db.transaction():
+            db._conn.execute(
+                "INSERT INTO entities (uuid, type_id, entity_type, entity_id, name, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+                (str(uuid.uuid4()), "feature:txn-ok", "feature", "txn-ok", "TxnOK"),
+            )
+        # Verify persisted via second connection
+        db_path = db._conn.execute("PRAGMA database_list").fetchone()[2]
+        conn2 = sqlite3.connect(db_path)
+        row = conn2.execute("SELECT name FROM entities WHERE type_id = ?", ("feature:txn-ok",)).fetchone()
+        conn2.close()
+        assert row is not None
+        assert row[0] == "TxnOK"
+
+    def test_transaction_rolls_back_on_exception(self, db):
+        """Data NOT persisted when exception raised inside transaction."""
+        with pytest.raises(ValueError, match="deliberate"):
+            with db.transaction():
+                db._conn.execute(
+                    "INSERT INTO entities (uuid, type_id, entity_type, entity_id, name, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+                    (str(uuid.uuid4()), "feature:txn-fail", "feature", "txn-fail", "TxnFail"),
+                )
+                raise ValueError("deliberate error")
+
+        row = db._conn.execute(
+            "SELECT * FROM entities WHERE type_id = ?", ("feature:txn-fail",)
+        ).fetchone()
+        assert row is None
+
+    def test_transaction_nested_raises_runtime_error(self, db):
+        """Nested transaction() raises RuntimeError."""
+        with db.transaction():
+            with pytest.raises(RuntimeError, match="Nested transactions not supported"):
+                with db.transaction():
+                    pass

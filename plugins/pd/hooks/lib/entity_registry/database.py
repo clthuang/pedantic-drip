@@ -962,6 +962,7 @@ class EntityDatabase:
     )
 
     def __init__(self, db_path: str, *, check_same_thread: bool = True) -> None:
+        self._in_transaction = False
         self._conn = sqlite3.connect(db_path, timeout=5.0, check_same_thread=check_same_thread)
         self._conn.row_factory = sqlite3.Row
         self._set_pragmas()
@@ -974,6 +975,11 @@ class EntityDatabase:
     def close(self) -> None:
         """Close the database connection."""
         self._conn.close()
+
+    def _commit(self):
+        """Commit unless inside an explicit transaction()."""
+        if not self._in_transaction:
+            self._conn.commit()
 
     # ------------------------------------------------------------------
     # Internal: identifier resolution
@@ -1141,6 +1147,29 @@ class EntityDatabase:
             self._conn.execute("ROLLBACK")
             raise
 
+    @contextmanager
+    def transaction(self):
+        """Context manager for atomic multi-step writes.
+        Uses BEGIN IMMEDIATE to acquire write lock upfront.
+        Suppresses _commit() calls inside the block.
+        """
+        if self._in_transaction:
+            raise RuntimeError("Nested transactions not supported")
+        self._conn.commit()  # flush implicit transactions
+        self._conn.execute("BEGIN IMMEDIATE")
+        self._in_transaction = True
+        try:
+            yield
+            self._conn.execute("COMMIT")
+        except Exception:
+            try:
+                self._conn.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass
+            raise
+        finally:
+            self._in_transaction = False
+
     # ------------------------------------------------------------------
     # Entity tagging (Task 1b.9a)
     # ------------------------------------------------------------------
@@ -1175,7 +1204,7 @@ class EntityDatabase:
             "VALUES (?, ?)",
             (entity_uuid, tag),
         )
-        self._conn.commit()
+        self._commit()
 
     def remove_tag(self, entity_uuid: str, tag: str) -> None:
         """Remove a tag from an entity. Silent if tag not present."""
@@ -1183,7 +1212,7 @@ class EntityDatabase:
             "DELETE FROM entity_tags WHERE entity_uuid = ? AND tag = ?",
             (entity_uuid, tag),
         )
-        self._conn.commit()
+        self._commit()
 
     def get_tags(self, entity_uuid: str) -> list[str]:
         """Return all tags for an entity, sorted alphabetically."""
@@ -1236,7 +1265,7 @@ class EntityDatabase:
             "(entity_uuid, key_result_uuid) VALUES (?, ?)",
             (entity_uuid, key_result_uuid),
         )
-        self._conn.commit()
+        self._commit()
 
     def remove_okr_alignment(self, entity_uuid: str, key_result_uuid: str) -> None:
         """Remove an OKR alignment. Silent if alignment not present."""
@@ -1245,7 +1274,7 @@ class EntityDatabase:
             "WHERE entity_uuid = ? AND key_result_uuid = ?",
             (entity_uuid, key_result_uuid),
         )
-        self._conn.commit()
+        self._commit()
 
     def get_okr_alignments(self, entity_uuid: str) -> list[dict]:
         """Return all key_result entities aligned to the given entity.
@@ -1355,7 +1384,7 @@ class EntityDatabase:
                 (row[0], name, entity_id, entity_type, status or "",
                  metadata_text),
             )
-        self._conn.commit()
+        self._commit()
         result = self._conn.execute(
             "SELECT uuid FROM entities WHERE type_id = ?", (type_id,)
         ).fetchone()
@@ -1418,7 +1447,7 @@ class EntityDatabase:
             (parent_type_id_resolved, parent_uuid, self._now_iso(),
              child_uuid),
         )
-        self._conn.commit()
+        self._commit()
         return child_uuid
 
     def get_entity(self, type_id: str) -> dict | None:
@@ -1647,7 +1676,7 @@ class EntityDatabase:
              new_row["entity_type"], new_row["status"] or "",
              new_meta_text),
         )
-        self._conn.commit()
+        self._commit()
 
     # ------------------------------------------------------------------
     # Delete
@@ -1702,7 +1731,7 @@ class EntityDatabase:
                 "DELETE FROM entities WHERE type_id = ?", (type_id,)
             )
 
-            self._conn.commit()
+            self._commit()
         except Exception:
             self._conn.rollback()
             raise
@@ -2059,7 +2088,7 @@ class EntityDatabase:
                  last_completed_phase, mode, backward_transition_reason,
                  now),
             )
-            self._conn.commit()
+            self._commit()
         except sqlite3.IntegrityError as e:
             msg = str(e)
             if "UNIQUE constraint" in msg:
@@ -2160,7 +2189,7 @@ class EntityDatabase:
         )
         try:
             self._conn.execute(sql, params)
-            self._conn.commit()
+            self._commit()
         except sqlite3.IntegrityError as e:
             msg = str(e)
             if "CHECK constraint" in msg:
@@ -2229,7 +2258,7 @@ class EntityDatabase:
             params,
         )
 
-        self._conn.commit()
+        self._commit()
 
     def delete_workflow_phase(self, type_id: str) -> None:
         """Delete a workflow_phases row by type_id.
@@ -2249,7 +2278,7 @@ class EntityDatabase:
         self._conn.execute(
             "DELETE FROM workflow_phases WHERE type_id = ?", (type_id,)
         )
-        self._conn.commit()
+        self._commit()
 
     def list_workflow_phases(
         self,
@@ -2312,7 +2341,7 @@ class EntityDatabase:
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (key, value),
         )
-        self._conn.commit()
+        self._commit()
 
     def get_schema_version(self) -> int:
         """Return the current schema version (0 if not yet migrated)."""
@@ -2332,7 +2361,7 @@ class EntityDatabase:
             "(entity_uuid, blocked_by_uuid) VALUES (?, ?)",
             (entity_uuid, blocked_by_uuid),
         )
-        self._conn.commit()
+        self._commit()
 
     def remove_dependency(self, entity_uuid: str, blocked_by_uuid: str) -> None:
         """Remove a single dependency. No-op if it doesn't exist."""
@@ -2341,7 +2370,7 @@ class EntityDatabase:
             "WHERE entity_uuid = ? AND blocked_by_uuid = ?",
             (entity_uuid, blocked_by_uuid),
         )
-        self._conn.commit()
+        self._commit()
 
     def remove_dependencies_by_blocker(self, blocked_by_uuid: str) -> None:
         """Remove all dependencies where blocked_by_uuid is the blocker."""
@@ -2349,7 +2378,7 @@ class EntityDatabase:
             "DELETE FROM entity_dependencies WHERE blocked_by_uuid = ?",
             (blocked_by_uuid,),
         )
-        self._conn.commit()
+        self._commit()
 
     def query_dependencies(
         self,
@@ -2574,7 +2603,7 @@ class EntityDatabase:
                         batch_uuids[type_id] = existing["uuid"]
                         uuids.append(existing["uuid"])
 
-            self._conn.commit()
+            self._commit()
             return uuids
 
         except Exception:
@@ -2607,7 +2636,7 @@ class EntityDatabase:
         """Set connection-level PRAGMAs for performance and safety."""
         self._conn.execute("PRAGMA journal_mode = WAL")
         self._conn.execute("PRAGMA foreign_keys = ON")
-        self._conn.execute("PRAGMA busy_timeout = 5000")
+        self._conn.execute("PRAGMA busy_timeout = 15000")
         self._conn.execute("PRAGMA cache_size = -8000")
 
     def _migrate(self) -> None:
@@ -2617,7 +2646,7 @@ class EntityDatabase:
             "CREATE TABLE IF NOT EXISTS _metadata "
             "(key TEXT PRIMARY KEY, value TEXT NOT NULL)"
         )
-        self._conn.commit()
+        self._commit()
 
         current = self.get_schema_version()
         target = max(MIGRATIONS)
@@ -2630,4 +2659,4 @@ class EntityDatabase:
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 ("schema_version", str(version)),
             )
-            self._conn.commit()
+            self._commit()

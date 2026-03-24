@@ -66,6 +66,8 @@ from mcp.server.fastmcp import FastMCP
 # Module-level globals (set during lifespan)
 # ---------------------------------------------------------------------------
 
+_PID_DIR = os.path.expanduser("~/.claude/pd/run")
+
 _db: EntityDatabase | None = None
 _engine: WorkflowStateEngine | None = None
 _entity_engine: EntityWorkflowEngine | None = None
@@ -76,6 +78,30 @@ _notification_queue: NotificationQueue | None = None
 # ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
+
+
+def _write_pid(server_name: str) -> str:
+    """Write current PID to a file for monitoring. Returns PID file path."""
+    os.makedirs(_PID_DIR, exist_ok=True)
+    pid_path = os.path.join(_PID_DIR, f"{server_name}.pid")
+    if os.path.isfile(pid_path):
+        try:
+            old_pid = int(open(pid_path).read().strip())
+            os.kill(old_pid, 0)  # Check if alive
+            print(f"Another {server_name} instance running (PID {old_pid})", file=sys.stderr)
+        except (ProcessLookupError, ValueError, OSError):
+            pass  # Stale or unreadable — overwrite
+    with open(pid_path, "w") as f:
+        f.write(str(os.getpid()))
+    return pid_path
+
+
+def _remove_pid(pid_path: str) -> None:
+    """Remove PID file on shutdown."""
+    try:
+        os.remove(pid_path)
+    except OSError:
+        pass
 
 
 @asynccontextmanager
@@ -103,9 +129,11 @@ async def lifespan(server):
 
     print(f"workflow-engine: started (db={db_path}, artifacts={_artifacts_root})", file=sys.stderr)
 
+    pid_path = _write_pid("workflow_state_server")
     try:
         yield {}
     finally:
+        _remove_pid(pid_path)
         if _db is not None:
             _db.close()
             _db = None

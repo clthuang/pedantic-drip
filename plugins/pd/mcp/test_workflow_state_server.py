@@ -7223,3 +7223,70 @@ class TestIsTransient:
         assert result is False, (
             f"Expected False for 'SQL logic error', got {result!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# PID file monitoring tests (Task 3.1 — C6)
+# ---------------------------------------------------------------------------
+
+
+class TestPidFile:
+    """PID file lifecycle: write at startup, remove at shutdown, overwrite stale."""
+
+    def test_pid_file_written_at_startup(self, tmp_path):
+        """_write_pid creates PID file with current process PID."""
+        from workflow_state_server import _write_pid, _remove_pid
+
+        # Override _PID_DIR to use tmp_path
+        import workflow_state_server as wss
+        original_pid_dir = wss._PID_DIR
+        wss._PID_DIR = str(tmp_path)
+        try:
+            pid_path = _write_pid("test_server")
+            assert os.path.isfile(pid_path), "PID file should exist after _write_pid"
+            content = open(pid_path).read().strip()
+            assert content == str(os.getpid()), (
+                f"PID file should contain current PID {os.getpid()}, got {content!r}"
+            )
+        finally:
+            _remove_pid(pid_path)
+            wss._PID_DIR = original_pid_dir
+
+    def test_pid_file_removed_at_shutdown(self, tmp_path):
+        """_remove_pid deletes the PID file."""
+        from workflow_state_server import _write_pid, _remove_pid
+
+        import workflow_state_server as wss
+        original_pid_dir = wss._PID_DIR
+        wss._PID_DIR = str(tmp_path)
+        try:
+            pid_path = _write_pid("test_server")
+            assert os.path.isfile(pid_path), "PID file should exist before removal"
+            _remove_pid(pid_path)
+            assert not os.path.isfile(pid_path), "PID file should not exist after _remove_pid"
+        finally:
+            wss._PID_DIR = original_pid_dir
+
+    def test_stale_pid_file_overwritten(self, tmp_path):
+        """Stale PID file (non-existent process) is overwritten with current PID."""
+        from workflow_state_server import _write_pid, _remove_pid
+
+        import workflow_state_server as wss
+        original_pid_dir = wss._PID_DIR
+        wss._PID_DIR = str(tmp_path)
+        try:
+            # Write a stale PID (use a very high PID unlikely to exist)
+            pid_path = os.path.join(str(tmp_path), "test_server.pid")
+            with open(pid_path, "w") as f:
+                f.write("999999999")
+
+            # _write_pid should overwrite the stale PID
+            result_path = _write_pid("test_server")
+            assert result_path == pid_path
+            content = open(pid_path).read().strip()
+            assert content == str(os.getpid()), (
+                f"Stale PID should be overwritten with current PID {os.getpid()}, got {content!r}"
+            )
+        finally:
+            _remove_pid(pid_path)
+            wss._PID_DIR = original_pid_dir
