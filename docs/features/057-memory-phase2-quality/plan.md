@@ -101,7 +101,7 @@ Build the three new modules in isolation with full test coverage before touching
    a. Replace `keywords_json = "[]"` with `extract_keywords()` call
    b. Compute embedding EARLY, BEFORE dedup check (TD-3): build partial dict → `_embed_text_for_entry()` → `provider.embed(embed_text, task_type="document")`
    c. Add dedup check: if `check_duplicate(embedding_vec, db, threshold)` returns duplicate, call `db.merge_duplicate()` and return "Reinforced: ..."
-   d. After dedup passes and entry is upserted, call `db.update_embedding(entry_id, embedding_vec.tobytes())` with the pre-computed vector. Remove the existing post-upsert embedding re-computation block (lines 103-115) — the vector was already computed in step 2b. Note: two-write approach (upsert + update_embedding) is intentional — upsert_entry() builds the entry dict from params without the embedding field, and update_embedding() is a separate BLOB write. Changing this to single-write would require modifying upsert_entry()'s entry dict construction, which is out of scope.
+   d. After dedup passes and entry is upserted, call `db.update_embedding(entry_id, embedding_vec.tobytes())` with the pre-computed vector. Remove the existing post-upsert embedding block (search for `provider.embed(embed_text, task_type="document")` followed by `db.update_embedding` in `_process_store_memory`) — the vector was already computed in step 2b. Note: two-write approach (upsert + update_embedding) is intentional — upsert_entry() builds the entry dict from params without the embedding field, and update_embedding() is a separate BLOB write.
 4. Update test_memory_server.py:
    - `store_memory` produces non-empty keywords
    - `store_memory` with near-duplicate returns "Reinforced:" message
@@ -183,6 +183,7 @@ Build the three new modules in isolation with full test coverage before touching
    - Backfill processes entries with empty keywords and populates them
    - Backfill skips entries that already have keywords
    - Backfill continues on per-entry failures
+   - CLI dispatch: calling `main()` with `--action backfill-keywords` routes to `_backfill_keywords()`
    - AC-5: `backfill-keywords` processes entries with empty keywords
    - Test DB must use `MemoryDatabase()` (auto-runs migrations including migration 4)
 
@@ -210,17 +211,17 @@ plugins/pd/.venv/bin/python -m pytest plugins/pd/mcp/test_memory_server.py -v
 ## Dependency Graph
 
 ```
-1.1 Database Migration ──┬──► 2.1 Integrate store_memory ──► 3.2 Regression
+1.1 Database Migration ──┬──► 1.3 Dedup ──┐
+                         │                │
+                         ├────────────────┼──► 2.1 Integrate store_memory ──► 3.2 Regression
+                         │                │
+1.2 Keywords ────────────┘────────────────┘
                          │
-1.2 Keywords ────────────┤
-                         │
-1.3 Dedup ───────────────┘
+                         └────────────────────► 3.1 Backfill command
 
 1.1 Database Migration ──┬──► 2.2 record_influence
                          │
                          └──► 2.3 Ranking update
-
-1.2 Keywords ────────────────► 3.1 Backfill command
 
 1.4 Config ──────────────────► 2.1 Integrate store_memory
 ```
