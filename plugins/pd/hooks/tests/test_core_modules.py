@@ -3,7 +3,6 @@
 Covers all Phase 2 modules in a single file:
   - NormalizingWrapper (semantic_memory.embedding)
   - create_provider (semantic_memory.embedding)
-  - Keyword validation (semantic_memory.keywords)
   - Ranking formula (semantic_memory.ranking)
   - Weight redistribution (semantic_memory.ranking)
   - Category-balanced selection (semantic_memory.ranking)
@@ -24,7 +23,6 @@ import pytest
 
 from semantic_memory import EmbeddingError
 from semantic_memory.embedding import NormalizingWrapper, create_provider, EmbeddingProvider
-from semantic_memory.keywords import TieredKeywordGenerator, SkipKeywordGenerator, STOPWORD_LIST
 from semantic_memory.ranking import RankingEngine
 from semantic_memory.retrieval_types import CandidateScores, RetrievalResult
 
@@ -60,22 +58,6 @@ class _FakeEmbeddingProvider:
         self, texts: list[str], task_type: str = "document"
     ) -> list[np.ndarray]:
         return self._batch_result
-
-
-class _FakeKeywordProvider:
-    """A fake keyword provider that returns a pre-configured response."""
-
-    def __init__(self, response: list[str]):
-        self._response = response
-
-    def generate(
-        self,
-        name: str,
-        description: str,
-        reasoning: str,
-        category: str,
-    ) -> list[str]:
-        return self._response
 
 
 _NOW = datetime(2026, 2, 20, 12, 0, 0, tzinfo=timezone.utc)
@@ -299,134 +281,8 @@ class TestCreateProvider:
 
 
 # =========================================================================
-# 3. Keyword validation tests
+# 3. (Keyword validation tests removed — keyword system deleted in 055)
 # =========================================================================
-
-
-class TestKeywordValidation:
-    """Per-keyword filtering: regex validation and stopword rejection."""
-
-    def _make_generator(self) -> TieredKeywordGenerator:
-        config = {"memory_keyword_provider": "off"}
-        return TieredKeywordGenerator(config)
-
-    def test_valid_simple_keyword(self):
-        gen = self._make_generator()
-        assert gen._validate_keyword("sqlite") is True
-
-    def test_valid_hyphenated_keyword(self):
-        gen = self._make_generator()
-        assert gen._validate_keyword("content-hash") is True
-
-    def test_valid_keyword_starting_with_digit(self):
-        gen = self._make_generator()
-        assert gen._validate_keyword("fts5") is True
-        assert gen._validate_keyword("3d-model") is True
-
-    def test_rejects_uppercase(self):
-        gen = self._make_generator()
-        assert gen._validate_keyword("SQLite") is False
-
-    def test_rejects_spaces(self):
-        gen = self._make_generator()
-        assert gen._validate_keyword("content hash") is False
-
-    def test_rejects_underscores(self):
-        gen = self._make_generator()
-        assert gen._validate_keyword("content_hash") is False
-
-    def test_rejects_leading_hyphen(self):
-        gen = self._make_generator()
-        assert gen._validate_keyword("-sqlite") is False
-
-    def test_rejects_empty_string(self):
-        gen = self._make_generator()
-        assert gen._validate_keyword("") is False
-
-    def test_rejects_special_characters(self):
-        gen = self._make_generator()
-        for bad in ['["fts5"]', '"keyword"', "key,word", "key[0]", "foo!"]:
-            assert gen._validate_keyword(bad) is False, f"Should reject: {bad}"
-
-    def test_rejects_all_stopwords(self):
-        """Every word in STOPWORD_LIST should be rejected."""
-        gen = self._make_generator()
-        for stopword in STOPWORD_LIST:
-            assert gen._validate_keyword(stopword) is False, (
-                f"Stopword '{stopword}' was not rejected"
-            )
-
-    def test_stopword_list_has_17_entries(self):
-        assert len(STOPWORD_LIST) == 17
-
-    def test_non_stopwords_accepted(self):
-        gen = self._make_generator()
-        non_stopwords = ["sqlite", "fts5", "parser-error", "retry", "backoff"]
-        for kw in non_stopwords:
-            assert gen._validate_keyword(kw) is True, (
-                f"Non-stopword '{kw}' was incorrectly rejected"
-            )
-
-    def test_regex_pattern_anchored(self):
-        """Regex must match full string, not partial."""
-        gen = self._make_generator()
-        # Valid at start but has trailing space
-        assert gen._validate_keyword("fts5 ") is False
-        # Valid chars but starts with special
-        assert gen._validate_keyword(".fts5") is False
-
-
-class TestKeywordGeneratePipeline:
-    """Full generate() pipeline with fake providers."""
-
-    def _make_generator_with_fake(
-        self, fake_response: list[str]
-    ) -> TieredKeywordGenerator:
-        config = {"memory_keyword_provider": "off"}
-        gen = TieredKeywordGenerator(config)
-        gen._tiers = [_FakeKeywordProvider(fake_response)]
-        return gen
-
-    def test_filters_stopwords_from_results(self):
-        gen = self._make_generator_with_fake(
-            ["sqlite", "code", "development", "fts5", "system", "parser"]
-        )
-        result = gen.generate("Test", "desc", "reasoning", "patterns")
-        assert result == ["sqlite", "fts5", "parser"]
-
-    def test_filters_invalid_format_keywords(self):
-        gen = self._make_generator_with_fake(
-            ["sqlite", "UPPERCASE", "content hash", "fts5", "parser"]
-        )
-        result = gen.generate("Test", "desc", "reasoning", "patterns")
-        assert result == ["sqlite", "fts5", "parser"]
-
-    def test_returns_empty_if_fewer_than_3_valid(self):
-        gen = self._make_generator_with_fake(["sqlite", "fts5"])
-        result = gen.generate("Test", "desc", "reasoning", "patterns")
-        assert result == []
-
-    def test_caps_at_10_keywords(self):
-        keywords = [f"kw{i}" for i in range(15)]
-        gen = self._make_generator_with_fake(keywords)
-        result = gen.generate("Test", "desc", "reasoning", "patterns")
-        assert len(result) == 10
-
-    def test_deduplicates_keywords(self):
-        gen = self._make_generator_with_fake(
-            ["sqlite", "sqlite", "fts5", "fts5", "parser"]
-        )
-        result = gen.generate("Test", "desc", "reasoning", "patterns")
-        assert result == ["sqlite", "fts5", "parser"]
-
-
-class TestSkipKeywordGeneratorConsolidated:
-    """SkipKeywordGenerator always returns an empty list."""
-
-    def test_returns_empty_list(self):
-        gen = SkipKeywordGenerator()
-        result = gen.generate("Test", "desc", "reasoning", "patterns")
-        assert result == []
 
 
 # =========================================================================

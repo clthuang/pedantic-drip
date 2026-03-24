@@ -264,7 +264,7 @@ class TestInjectorRecallTracking:
 
 class TestInjectorEmptyDbImport:
     """When DB has 0 entries, MarkdownImporter.import_all is called
-    with provider=None and keyword_gen=None."""
+    with provider=None."""
 
     def test_import_called_when_db_empty(self):
         from semantic_memory.injector import main as injector_main
@@ -422,7 +422,6 @@ class TestMcpStoreMemory:
         result = _process_store_memory(
             db=mem_db,
             provider=None,
-            keyword_gen=None,
             name="Session Learning",
             description="Learned during a coding session",
             reasoning="Captured automatically",
@@ -450,7 +449,6 @@ class TestMcpInvalidCategory:
         result = _process_store_memory(
             db=mem_db,
             provider=None,
-            keyword_gen=None,
             name="Bad Category Entry",
             description="This should not be stored",
             reasoning="Testing validation",
@@ -471,7 +469,6 @@ class TestMcpEmptyName:
         result = _process_store_memory(
             db=mem_db,
             provider=None,
-            keyword_gen=None,
             name="",
             description="Valid description",
             reasoning="Valid reasoning",
@@ -495,7 +492,6 @@ class TestMcpDuplicateEntry:
         result1 = _process_store_memory(
             db=mem_db,
             provider=None,
-            keyword_gen=None,
             name="Dup Entry",
             description=desc,
             reasoning="First observation",
@@ -508,7 +504,6 @@ class TestMcpDuplicateEntry:
         result2 = _process_store_memory(
             db=mem_db,
             provider=None,
-            keyword_gen=None,
             name="Dup Entry",
             description=desc,
             reasoning="Second observation",

@@ -32,7 +32,6 @@ class TestReadConfigDefaults:
         assert result["memory_prominence_weight"] == 0.3
         assert result["memory_embedding_provider"] == "gemini"
         assert result["memory_embedding_model"] == "gemini-embedding-001"
-        assert result["memory_keyword_provider"] == "auto"
         assert result["memory_injection_limit"] == 20
         assert result["memory_model_capture_mode"] == "ask-first"
         assert result["memory_silent_capture_budget"] == 5
@@ -53,7 +52,6 @@ class TestReadConfigDefaults:
         assert isinstance(result["memory_prominence_weight"], float)
         assert isinstance(result["memory_embedding_provider"], str)
         assert isinstance(result["memory_embedding_model"], str)
-        assert isinstance(result["memory_keyword_provider"], str)
         assert isinstance(result["memory_injection_limit"], int)
 
 

@@ -114,7 +114,6 @@ class TestConfigReaderDefaults:
         assert result["memory_prominence_weight"] == 0.3
         assert result["memory_embedding_provider"] == "gemini"
         assert result["memory_embedding_model"] == "gemini-embedding-001"
-        assert result["memory_keyword_provider"] == "auto"
         assert result["memory_injection_limit"] == 20
 
 
