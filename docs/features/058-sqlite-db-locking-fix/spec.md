@@ -56,7 +56,7 @@ def _migrate(self):
 | 2 | `_add_source_hash_and_created_timestamp` | line 153 (2 ALTER TABLE + 1 UPDATE) |
 | 3 | `_enforce_not_null_columns` | line 201 (table rebuild) |
 
-Each `executescript("""...""")` call should be split into individual `execute()` calls for each SQL statement. This is a mechanical transformation — the SQL statements themselves don't change, only the Python call method.
+Each `executescript("""...""")` call should be split into individual `execute()` calls for each SQL statement. This is a mechanical transformation — the SQL statements themselves don't change, only the Python call method. Note: `_create_fts5_objects` (line 120) contains 3 CREATE TRIGGER statements in a single executescript, each using f-string interpolation with `_KEYWORDS_STRIP` — these become 3 separate `execute()` calls, each with its f-string intact.
 
 **Note:** Migrations 4+ (including the new migration 4 from Feature 057) already use `execute()` and are compatible with the outer transaction.
 
@@ -83,7 +83,10 @@ def begin_immediate(self):
         yield self._conn
         self._conn.execute("COMMIT")
     except Exception:
-        self._conn.execute("ROLLBACK")
+        try:
+            self._conn.execute("ROLLBACK")
+        except sqlite3.Error:
+            pass  # connection may be in bad state
         raise
     finally:
         self._in_transaction = False
@@ -115,6 +118,7 @@ Also audit migration 6 (`_schema_expansion_v6`) for any `SELECT *` usage and app
 - **NR-3:** Fixing the pre-existing `TestSysPathIdempotency` test failure (test ordering artifact, unrelated)
 - **NR-4:** Restructuring EntityDatabase's transaction model wholesale — the existing `_in_transaction` + `_commit()` pattern is sound, just needs `begin_immediate()` to participate
 - **NR-5:** Deprecating `begin_immediate()` in favor of `transaction()` — both serve valid use cases (raw SQL vs. high-level methods)
+- **NR-6:** EntityDatabase `_migrate()` race condition — entity_registry migrations 3-6 each use self-managed `BEGIN IMMEDIATE` internally, so the race window is limited to the migration loop's schema_version check. This is a lower-priority concern since entity DB init is less concurrent than memory DB init (entity DB is opened once per MCP server, not per-hook). Defer to a follow-up if observed in practice.
 
 ## Acceptance Criteria
 
