@@ -5,10 +5,21 @@
   "status": "active",
   "created": "2026-03-24T03:25:50.130688+00:00",
   "branch": "feature/056-sqlite-write-contention-fix",
-  "lastCompletedPhase": null,
+  "lastCompletedPhase": "design",
   "phases": {
     "brainstorm": {
-      "started": "2026-03-24T03:25:50.130645+00:00"
+      "started": "2026-03-24T03:25:50.130645+00:00",
+      "completed": "2026-03-24T03:25:50.130645+00:00"
+    },
+    "specify": {
+      "started": "2026-03-24T03:30:00.000000+00:00",
+      "completed": "2026-03-24T04:00:00.000000+00:00",
+      "iterations": 3
+    },
+    "design": {
+      "started": "2026-03-24T04:00:00.000000+00:00",
+      "completed": "2026-03-24T05:00:00.000000+00:00",
+      "iterations": 3
     }
   }
 }
