@@ -172,7 +172,7 @@
 - **Action:** Add tests: find_entry_by_name exact match; find_entry_by_name LIKE fallback; find_entry_by_name returns None for non-existent; SQL wildcards escaped; increment_influence updates count; log_influence inserts row
 - **Verify:** `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/semantic_memory/test_database.py -v -k "influence or find_entry"`
 - **Done:** All tests pass
-- **Depends on:** 2.2.2
+- **Depends on:** 2.2.1, 2.2.2
 
 #### Task 2.2.5: Write record_influence MCP tool tests
 - **File:** `plugins/pd/mcp/test_memory_server.py`
@@ -242,4 +242,4 @@
 - **Phases:** 3
 - **Parallel groups:** Phase 1 (1.2 + 1.3 parallel after 1.1; 1.4 independent), Phase 2 (2.1 + 2.2 + 2.3 parallel), Phase 3 (3.1 then 3.2)
 - **New files:** 4 (keywords.py, test_keywords.py, dedup.py, test_dedup.py)
-- **Modified files:** 8 (database.py, test_database.py, memory_server.py, test_memory_server.py, ranking.py, test_ranking.py, config.py, writer.py, pd.local.md)
+- **Modified files:** 9 (database.py, test_database.py, memory_server.py, test_memory_server.py, ranking.py, test_ranking.py, config.py, writer.py, pd.local.md)
