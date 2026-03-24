@@ -43,7 +43,10 @@ def transaction(self):
     within update_entity, update_workflow_phase, etc.
     """
     # Commit any implicit transaction first (Python sqlite3 default
-    # isolation_level='' starts implicit transactions on DML)
+    # isolation_level='' starts implicit transactions on DML).
+    # This is a no-op when no implicit transaction is pending.
+    # If it fails due to contention, the exception propagates —
+    # correct since the transaction hasn't started yet (eligible for FR-2 retry).
     self._conn.commit()
     self._conn.execute("BEGIN IMMEDIATE")
     self._in_transaction = True
@@ -66,7 +69,7 @@ def _commit(self):
         self._conn.commit()
 ```
 
-Replace all 25 `self._conn.commit()` call sites in database.py with `self._commit()`. Initialize `self._in_transaction = False` in `__init__`.
+Replace all 19 `self._conn.commit()` call sites in database.py with `self._commit()`. Initialize `self._in_transaction = False` in `__init__` BEFORE `_set_pragmas()` and `_migrate()` are called (so commits during initialization still execute normally since `_in_transaction` is False).
 
 **Usage in workflow_state_server.py:**
 ```python
@@ -102,28 +105,24 @@ Replace the terminal `_with_error_handling` decorator with a retry-aware version
 - Backoff schedule: 100ms, 500ms, 2000ms
 - Total max wait: 2.6 seconds
 
-**Applied to these write-path `_process_*` functions:**
-- `_process_transition_phase`
-- `_process_complete_phase`
-- `_process_init_feature_state`
-- `_process_init_project_state`
-- `_process_init_entity_workflow`
-- `_process_transition_entity_phase`
-- `_process_activate_feature`
-- `_process_reconcile_apply`
-- `_process_reconcile_frontmatter`
-- `_process_promote_task`
-- `_process_query_ready_tasks`
+**Applied to these 9 write-path `_process_*` functions** (verified by grep for db.update/engine.transition/engine.complete/delegate-to-lib calls):
+- `_process_transition_phase` — engine.transition_phase + db.update_entity + db.update_workflow_phase
+- `_process_complete_phase` — engine.complete_phase + db.update_entity + db.update_workflow_phase
+- `_process_init_feature_state` — delegates to _lib_init_feature_state (writes)
+- `_process_init_project_state` — delegates to _lib_init_project_state (writes)
+- `_process_activate_feature` — delegates to _lib_activate_feature (writes)
+- `_process_init_entity_workflow` — delegates to _lib_init_entity_workflow (writes)
+- `_process_transition_entity_phase` — entity_engine.transition_phase (writes)
+- `_process_reconcile_apply` — applies drift fixes (writes)
+- `_process_reconcile_frontmatter` — syncs frontmatter (writes)
 
-**NOT applied to these read-only functions:**
-- `_process_get_phase`
-- `_process_get_progress_view`
-- `_process_get_notifications`
-- `_process_list_features_by_phase`
-- `_process_list_features_by_status`
-- `_process_validate_prerequisites`
-- `_process_reconcile_check`
-- `_process_reconcile_status`
+**NOT applied to these 6 read-only functions:**
+- `_process_get_phase` — read-only, uses engine fallback
+- `_process_validate_prerequisites` — read-only checks
+- `_process_list_features_by_phase` — read-only query
+- `_process_list_features_by_status` — read-only query
+- `_process_reconcile_check` — read-only drift detection
+- `_process_reconcile_status` — read-only status report
 
 ### FR-3: MCP server instance monitoring
 
@@ -160,13 +159,13 @@ Change `busy_timeout` from 5000ms to 15000ms in `EntityDatabase.__init__()` (`_s
 `EntityDatabase` has a `transaction()` context manager using `BEGIN IMMEDIATE ... COMMIT/ROLLBACK` with `_in_transaction` flag. Verified by unit test: transaction commits on success, rolls back on exception, internal `_commit()` is suppressed inside transaction.
 
 ### AC-2: Internal commits use _commit() helper
-All `self._conn.commit()` calls in database.py (25 sites) replaced with `self._commit()`. Verified by: `grep -c "self._conn.commit()" plugins/pd/hooks/lib/entity_registry/database.py` returns 0; `grep -c "self._commit()" plugins/pd/hooks/lib/entity_registry/database.py` returns >= 25.
+All `self._conn.commit()` calls in database.py (19 sites) replaced with `self._commit()`. Verified by: `grep -c "self._conn.commit()" plugins/pd/hooks/lib/entity_registry/database.py` returns 0; `grep -c "self._commit()" plugins/pd/hooks/lib/entity_registry/database.py` returns >= 19.
 
 ### AC-3: Transition and complete phase use atomic transactions
 `_process_transition_phase` and `_process_complete_phase` wrap entity DB writes in `db.transaction()`. `_project_meta_json` is called AFTER the transaction block. Verified by unit test: mock `db.update_workflow_phase` to raise OperationalError after `db.update_entity` succeeds; assert entity metadata is NOT persisted (rolled back).
 
 ### AC-4: Retry decorator applied to write handlers
-`_with_retry` decorator exists. Applied to the 11 write-path functions listed in FR-2. NOT applied to the 8 read-only functions. Verified by: `grep -c "@_with_retry" plugins/pd/mcp/workflow_state_server.py` returns 11.
+`_with_retry` decorator exists. Applied to the 9 write-path functions listed in FR-2. NOT applied to the 6 read-only functions. Verified by: `grep -c "@_with_retry" plugins/pd/mcp/workflow_state_server.py` returns 9.
 
 ### AC-5: Transient error classification works
 `_is_transient(exc)` returns True for "database is locked" and "database table is locked", False for "SQL logic error", "malformed", and IntegrityError. Verified by unit tests.
@@ -175,7 +174,7 @@ All `self._conn.commit()` calls in database.py (25 sites) replaced with `self._c
 Given a function that fails with `OperationalError("database is locked")` on first call and succeeds on second, the retry decorator calls it twice and returns success. Verified by unit test.
 
 ### AC-7: PID file written at startup, removed at shutdown
-MCP server lifespan writes PID file at startup and removes at shutdown. Verified by test.
+MCP server lifespan writes PID file at startup and removes at shutdown. Verified by unit test: mock lifespan context, assert PID file exists with correct PID after startup, assert PID file removed after shutdown context exit.
 
 ### AC-8: busy_timeout increased
 `PRAGMA busy_timeout` set to 15000. Verified by: `grep "busy_timeout" plugins/pd/hooks/lib/entity_registry/database.py` shows 15000.
