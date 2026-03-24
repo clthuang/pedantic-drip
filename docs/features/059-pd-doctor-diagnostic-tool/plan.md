@@ -8,22 +8,6 @@ Three rounds of adversarial review addressed: plan blockers (R1), side effects/r
 
 ---
 
-## Task 0: Project-Scoping Utility
-
-**File:** `plugins/pd/hooks/lib/doctor/checks.py` (helper at top)
-
-**Deliverable:** `_build_local_entity_set(entities_conn, artifacts_root) -> set[str]`
-
-Scans `{artifacts_root}/features/*/` directories to build a set of local feature entity_ids (directory names). Used by Checks 1, 2, 6, 7 to distinguish local entities from cross-project entities in the shared global DB.
-
-Also: `_is_local_entity(entity_id, local_ids) -> bool` — returns True if entity matches a local directory.
-
-**Why:** The entity DB (`~/.claude/pd/entities/entities.db`) is global across all projects but has no `project` column. Without this filter, Checks 1, 2, and 7 produce dozens of false warnings for cross-project entities.
-
-**Verification:** Test with mixed local/cross-project entities → correctly partitions.
-
----
-
 ## Task 1: Data Models
 
 **File:** `plugins/pd/hooks/lib/doctor/models.py` (new)
@@ -42,29 +26,32 @@ PYTHONPATH=plugins/pd/hooks/lib plugins/pd/.venv/bin/python -c "from doctor.mode
 
 ---
 
-## Task 2: Check 8 — DB Readiness
+## Task 2: Check 8 — DB Readiness + Project-Scoping Utility
 
-**File:** `plugins/pd/hooks/lib/doctor/checks.py` (new, first check)
+**File:** `plugins/pd/hooks/lib/doctor/checks.py` (new, first check + utility)
+
+**Helper:** `_build_local_entity_set(artifacts_root) -> set[str]` — scans `{artifacts_root}/features/*/` to build set of local feature entity_ids (directory names). Called once by orchestrator, result added to ctx dict as `local_entity_ids`. Checks access via `**kwargs`. No new parameter in check signatures — uses existing kwargs dispatch pattern from design TD-4.
 
 **Function:** `check_db_readiness(entities_db_path, memory_db_path, **_) -> CheckResult`
 
-**Sub-checks:**
-1. Entity DB: `BEGIN IMMEDIATE` with 2s timeout → **ROLLBACK immediately** after success → error if locked
-2. Memory DB: `BEGIN IMMEDIATE` with 2s timeout → **ROLLBACK immediately** after success → error if locked
-3. Entity DB schema_version == 7 (separate read-only query) → error if wrong
-4. WAL journal mode on both (separate read-only query) → warning if not WAL
+**Sub-checks (each opens dedicated short-lived connections, separate from shared entities_conn/memory_conn):**
+1. Entity DB: open temp connection with `busy_timeout=2000`, `BEGIN IMMEDIATE` → **ROLLBACK immediately** → close → error if locked
+2. Memory DB: same pattern → error if locked
+3. Entity DB schema_version == 7 (separate read-only connection) → error if wrong
+4. WAL journal mode on both (read-only) → warning if not WAL
 
-**Critical:** Each `BEGIN IMMEDIATE` must be followed by immediate `ROLLBACK` to release the write lock within milliseconds. Schema/WAL checks use separate `BEGIN` (shared read) transactions.
+**Critical:** Lock test connections are separate from the shared connections used by other checks. The shared connections retain `busy_timeout=5000` per design.
 
-**Returns:** `CheckResult` with `extras={"entity_db_ok": bool, "memory_db_ok": bool}` — orchestrator reads `extras` to decide which checks to skip. (Memory DB schema_version is checked by Check 5, not duplicated here.)
+**Returns:** `CheckResult` with `extras={"entity_db_ok": bool, "memory_db_ok": bool}` — orchestrator reads `extras` to decide which checks to skip.
 
-**Verification:** Test with valid DBs → passes. Test with locked DB → reports error. Test with wrong schema version → reports error.
+**Verification:** Test with valid DBs → passes. Test with locked DB → reports error. Test with wrong schema version → reports error. Test _build_local_entity_set with mixed dirs → correct set.
 
 ---
 
 ## Task 3: Check 1 — Feature Status
 
-**Function:** `check_feature_status(entities_conn, artifacts_root, local_entity_ids, **_) -> CheckResult`
+**Function:** `check_feature_status(entities_conn, artifacts_root, **kwargs) -> CheckResult`
+Extracts `local_entity_ids = kwargs.get("local_entity_ids", set())` from ctx dict.
 
 **Sub-checks:**
 1. Scan `{artifacts_root}/features/*/.meta.json` — try-parse each, report error if malformed JSON (don't crash)
@@ -185,9 +172,9 @@ PYTHONPATH=plugins/pd/hooks/lib plugins/pd/.venv/bin/python -c "from doctor.mode
 3. `workflow_phases.type_id` references existing entity → error if orphaned
 4. No self-referential parents → error if found
 5. **Hardening:** parent_type_id set but parent_uuid is NULL → error (migration 2 gap)
-6. **Hardening:** Circular parent chains via recursive walk (depth limit 20) → error if cycle
-7. **Hardening:** entity_dependencies rows where entity_uuid or blocked_by_uuid not in entities.uuid → warning
-8. **Hardening:** entity_tags rows where entity_uuid not in entities.uuid → warning
+6. **Hardening:** Circular parent chains via Python-side dict traversal (not recursive CTE) — build parent_map from DB, walk each entity's chain up to depth 20 using a visited set → error if cycle detected. O(n) for n entities.
+7. **Hardening (detection only, not cleanup — justified scope addition):** entity_dependencies rows where entity_uuid or blocked_by_uuid not in entities.uuid → warning. Spec NR-3 defers junction table *cleanup* to Phase 2; detection-only is Phase 1 appropriate since it's a single SQL query with no side effects.
+8. **Hardening (detection only):** entity_tags rows where entity_uuid not in entities.uuid → warning
 
 **Verification:** Test dangling parent → error. Test parent_uuid NULL with parent_type_id → error. Test circular chain → error. Test orphaned dependency row → warning.
 
@@ -215,7 +202,7 @@ PYTHONPATH=plugins/pd/hooks/lib plugins/pd/.venv/bin/python -c "from doctor.mode
 
 **Deliverables:**
 - `run_diagnostics(entities_db_path, memory_db_path, artifacts_root, project_root) -> DiagnosticReport`
-- **Self-resolve config:** Read `read_config(project_root)` to resolve `base_branch` (falling back to `"main"`) and validate `artifacts_root` matches config. No extra params in public API.
+- **Self-resolve config:** Wrap `read_config(project_root)` in try/except — on failure, fall back to `base_branch="main"`. No extra params in public API.
 - **Guard DB paths (C2 fix):** Before `sqlite3.connect()`, check `os.path.isfile(db_path)`. If missing, produce error CheckResult "DB not found at {path}" — do NOT create empty files.
 - `CHECK_ORDER` list defining execution sequence (Check 8 first)
 - Build `local_entity_ids` set via `_build_local_entity_set()` — pass in ctx for Checks 1, 2, 6, 7
@@ -403,18 +390,27 @@ plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/doctor/test_checks.py
 
 ---
 
-## Execution Order
+## Execution Order (TDD — tests alongside each task)
 
 ```
-Task 1 (models)
-  → Task 2 (Check 8: DB Readiness)
-  → Tasks 3-11 (Checks 1-7, 9-10) — sequential, each adds one function to checks.py
-  → Task 12 (orchestrator)
-  → Task 13 (CLI)
-  → Task 14 (tests) — run and iterate until green
+Task 1 (models + model tests: passed_logic, healthy_aggregate, serialization_roundtrip)
+  → Task 2 (Check 8 + _build_local_entity_set + tests: db_lock, schema_version, immediate_rollback, build_local_set)
+  → Task 3 (Check 1 + tests: status_mismatch, malformed_json, null_lastCompletedPhase, cross_project_skip)
+  → Task 4 (Check 2 + tests: drift, backward_transition, kanban_drift, db_only_cross_project)
+  → Task 5 (Check 3 + tests: brainstorm_promotion, entity_deps_fallback, source_missing)
+  → Task 6 (Check 4 + tests: annotated_not_promoted, missing_file)
+  → Task 7 (Check 5 + tests: schema, fts_rowcount, embedding)
+  → Task 8 (Check 6 + tests: base_branch_missing, merged_rework)
+  → Task 9 (Check 7 + tests: orphan_local, cross_project_info, brainstorm_prd)
+  → Task 10 (Check 9 + tests: parent_refs, circular_chain, junction_orphans)
+  → Task 11 (Check 10 + tests: weights_sum, artifacts_root_missing)
+  → Task 12 (orchestrator + tests: 10_checks, skip_logic, exception_isolation, missing_db_no_create)
+  → Task 13 (CLI + tests: json_output, artifacts_root_resolution, exit_code)
   → Task 15 (command file)
   → Task 16 (docs)
 ```
+
+Each task writes implementation + corresponding test scenarios, runs pytest to verify before moving to next task.
 
 ---
 
