@@ -21,12 +21,14 @@ Gaps 2 (ingestion quality), 3a (project filtering), 3c (LLM keywords), 3d (recal
 
 Before each subagent dispatch in workflow command files, the orchestrator must call `search_memory` MCP tool with a query derived from the task description and files being touched, then include the top 3-5 results in the dispatch prompt under a `## Relevant Engineering Memory` section.
 
-**Affected command files (5):**
-- `plugins/pd/commands/specify.md` — spec-reviewer, phase-reviewer dispatches
-- `plugins/pd/commands/design.md` — design-reviewer, phase-reviewer dispatches
-- `plugins/pd/commands/create-plan.md` — plan-reviewer, phase-reviewer dispatches
-- `plugins/pd/commands/create-tasks.md` — task-reviewer, phase-reviewer dispatches
-- `plugins/pd/commands/implement.md` — implementer, code-simplifier, test-deepener, implementation-reviewer, code-quality-reviewer, security-reviewer dispatches
+**Affected command files (5) with fresh dispatch counts:**
+- `plugins/pd/commands/specify.md` — 2 fresh dispatches (spec-reviewer, phase-reviewer)
+- `plugins/pd/commands/design.md` — 4 fresh dispatches (codebase-explorer, internet-researcher, design-reviewer, phase-reviewer)
+- `plugins/pd/commands/create-plan.md` — 2 fresh dispatches (plan-reviewer, phase-reviewer)
+- `plugins/pd/commands/create-tasks.md` — 2 fresh dispatches (task-reviewer, phase-reviewer)
+- `plugins/pd/commands/implement.md` — 7 fresh dispatches (code-simplifier, test-deepener x2, implementation-reviewer, code-quality-reviewer, security-reviewer, implementer)
+
+**Note:** Research agents (codebase-explorer, internet-researcher) also receive memory enrichment — past learnings about codebase patterns and prior art are relevant to their exploration tasks.
 
 **Mechanism:** Each command file's Task dispatch template gains a pre-dispatch instruction block:
 
@@ -41,7 +43,7 @@ and limit=5, brief=true. Include non-empty results as:
 
 This instruction is placed before each `Task tool call:` block. The orchestrator (Claude) interprets it as a prompt instruction and calls the MCP tool.
 
-**Scope boundary:** Only fresh dispatches get the pre-dispatch instruction. Resumed dispatches do not — the memory was already included in the original context. Fresh dispatches are identifiable in command files as the first `Task tool call:` block for each agent role (containing `## Required Artifacts`). Resumed dispatches are the alternative blocks using `resume: {agent_id}` syntax.
+**Scope boundary:** Only fresh dispatches get the pre-dispatch instruction. Resumed dispatches do not — the memory was already included in the original context. Fresh dispatches are identifiable in command files as `Task tool call:` blocks containing `subagent_type:`. Resumed dispatches contain `resume:` instead. Every `subagent_type:` block gets the pre-dispatch instruction.
 
 **All dispatches in implement.md** (including conditional ones like code-simplifier and test-deepener) receive the pre-dispatch instruction. The latency of `search_memory` calls (~100-500ms) is negligible compared to subagent execution time.
 
