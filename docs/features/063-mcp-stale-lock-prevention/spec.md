@@ -8,7 +8,7 @@ Orphaned/stale MCP server processes hold permanent write locks on `~/.claude/pd/
 
 ## Success Criteria
 - [ ] Backfill operations use `db.transaction()` with batched commits of max 20 entities per batch (no raw `db._conn.execute()`)
-- [ ] 3 MCP servers (entity, memory, workflow) have parent-PID watchdog — exit within 15s of parent death
+- [ ] 3 MCP servers (entity, memory, workflow) have parent-PID watchdog — exit within 15s of parent death (10s poll interval + 5s exit overhead)
 - [ ] UI server has max-lifetime watchdog (24h) since it's intentionally detached via `nohup ... & disown`
 - [ ] All 4 server processes write PID files to `~/.claude/pd/run/` with naming: `{entity_server,memory_server,workflow_state_server,ui_server}.pid`
 - [ ] Session-start hook kills orphaned MCP servers (PPID=1) via PID files + lsof fallback
@@ -18,7 +18,7 @@ Orphaned/stale MCP server processes hold permanent write locks on `~/.claude/pd/
 ## Scope
 
 ### In Scope
-- Refactor `backfill.py` to use `db.transaction()` with batched commits instead of raw `db._conn.execute()`
+- Refactor `entity_registry/backfill.py` to use `db.transaction()` with batched commits instead of raw `db._conn.execute()`. Note: `semantic_memory/backfill.py` is out of scope — memory_server does not do startup backfill so the lock risk is lower.
 - Add parent-PID watchdog daemon thread to entity_server, memory_server, workflow_state_server
 - Add max-lifetime watchdog (24h) to UI server (separate from parent-PID — UI server is intentionally detached)
 - Add PID file management to memory_server (missing) and UI server (missing)
@@ -40,13 +40,13 @@ Orphaned/stale MCP server processes hold permanent write locks on `~/.claude/pd/
 - Given `backfill_workflow_phases()` is called during entity server startup
 - When another process holds a write lock on entities.db
 - Then backfill completes with partial success (retries between batches) instead of hanging
-- And no raw `db._conn.execute()` calls remain in `backfill.py` — verified by `grep -n 'db._conn.execute' backfill.py` returning zero matches
+- And no raw `db._conn.execute()` calls remain in `entity_registry/backfill.py` — verified by `grep -n 'db._conn.execute' plugins/pd/hooks/lib/entity_registry/backfill.py` returning zero matches
 - And each batch commits independently with max 20 entities per batch, transaction released between batches (verifiable by code inspection and unit test asserting batch size <= 20)
 
 ### Parent-PID Watchdog (entity, memory, workflow servers)
 - Given an MCP server process whose parent (Claude Code) has terminated
 - When the parent PID changes (orphaned, reparented to PID 1 on macOS/launchd)
-- Then the server detects the change within 10s and exits cleanly via `os._exit(0)`
+- Then the server detects the change within 15s (10s poll interval + overhead) and exits cleanly via `os._exit(0)`
 - And entity_server, memory_server, workflow_state_server all have the watchdog
 - Note: On macOS Darwin 25.x, orphaned processes are reparented to launchd (PID 1). The watchdog checks `os.getppid() != initial_parent_pid`.
 
@@ -61,7 +61,7 @@ Orphaned/stale MCP server processes hold permanent write locks on `~/.claude/pd/
 - Given any server process starts
 - When it writes its PID file to `~/.claude/pd/run/{server_name}.pid`
 - Then the PID file contains the correct process ID
-- And the PID file is removed in the server's finally/cleanup block
+- And the PID file is removed in the server's finally/cleanup block. Note: On unclean termination (SIGKILL), PID files will be stale — this is expected and handled by session-start cleanup (no atexit handlers needed).
 - And PID file naming follows: `entity_server.pid`, `memory_server.pid`, `workflow_state_server.pid`, `ui_server.pid`
 
 ### Session-Start Stale Process Cleanup
@@ -69,7 +69,7 @@ Orphaned/stale MCP server processes hold permanent write locks on `~/.claude/pd/
 - When a new Claude Code session starts (session-start.sh runs)
 - Then orphaned processes (PPID=1) are killed and their PID files removed
 - And non-orphaned processes (PPID matches a live Claude Code parent) are NOT killed
-- And a lsof fallback catches orphaned Python processes without PID files holding entities.db or memory.db
+- And a lsof fallback catches orphaned Python processes without PID files holding entities.db (workflow_state_server shares entities.db, covered by this scan) or memory.db
 - And if lsof is not available, the fallback step is skipped with a stderr warning (PID-file cleanup still operates)
 
 ### Non-Blocking Server Startup (entity_server + workflow_state_server)
@@ -80,11 +80,12 @@ Orphaned/stale MCP server processes hold permanent write locks on `~/.claude/pd/
 - And a background recovery thread retries DB initialization every 30s
 - And recovery occurs on the next successful retry after the lock clears (for testing: mock sleep interval to 1s, verify recovery within 2 poll intervals)
 - Thread safety: CPython GIL guarantees atomic `_db = new_value` pointer swap. If free-threaded Python (PEP 703) is adopted, a `threading.Lock` would be needed.
+- Note: workflow_state_server already uses "degraded" for meta_json_fallback (different meaning). Use a distinct flag name (e.g., `_db_unavailable`) for DB-lock degraded mode to avoid confusion.
 
 ### Doctor Lock Diagnostic Enhancement
 - Given entities.db is write-locked
 - When `pd doctor` runs the `db_readiness` check
-- Then the issue message includes the PID of the lock holder (from `~/.claude/pd/run/*.pid` files and/or lsof)
+- Then the issue message includes the PID of the lock holder (from `~/.claude/pd/run/*.pid` files and/or lsof). If holder PID cannot be determined, message includes "lock holder unknown — check ~/.claude/pd/run/ for stale PID files or run: lsof ~/.claude/pd/entities/entities.db"
 
 ## Feasibility Assessment
 
