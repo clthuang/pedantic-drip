@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.13.23] - 2026-03-25
+
 ### Added
 - MCP servers (entity and workflow state) now start in degraded mode when the SQLite DB is locked and recover automatically once the lock is released — no manual restart required
 - Session start now kills orphaned/stale MCP server processes that hold database write locks, preventing lock contention from a previous session
