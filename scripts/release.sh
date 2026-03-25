@@ -54,6 +54,14 @@ check_preconditions() {
     success "Preconditions passed"
 }
 
+check_tag_not_exists() {
+    local tag="v$1"
+    if git ls-remote --tags origin "$tag" | grep -q "$tag"; then
+        error "Tag '$tag' already exists on remote. Delete it first: git push origin :refs/tags/$tag"
+    fi
+    success "Tag $tag is available"
+}
+
 #############################################
 # CHANGELOG validation
 #############################################
@@ -252,10 +260,9 @@ commit_and_release() {
     git merge develop --no-ff -m "Merge release v$new_version"
     success "Merged develop into main"
 
-    # Create and push tag
+    # Create tag and push main + tag atomically
     git tag "$tag"
-    git push origin main
-    git push origin "$tag"
+    git push --atomic origin main "$tag"
     success "Created and pushed tag $tag"
 
     # Return to develop
@@ -333,6 +340,9 @@ main() {
 
     echo "Release version: $new_version"
     echo ""
+
+    # Verify tag doesn't already exist on remote
+    check_tag_not_exists "$new_version"
 
     # Confirm
     if [[ "$CI_MODE" == "true" ]]; then
