@@ -709,7 +709,12 @@ class TestSearchErrorPropagation:
         db._conn.close()
 
     def test_fts_sync_register_rollback_on_failure(self, tmp_path):
-        """derived_from: dimension:error_propagation — register FTS failure leaves DB consistent."""
+        """derived_from: dimension:error_propagation — register FTS failure leaves DB consistent.
+
+        Since register_entity is wrapped in transaction() (Audit 062),
+        FTS failure triggers ROLLBACK — the entity INSERT is also rolled
+        back, leaving the DB fully consistent (no partial writes).
+        """
         # Given a database where FTS table is dropped after init
         db_path = str(tmp_path / "fts_rollback.db")
         db = EntityDatabase(db_path)
@@ -719,19 +724,21 @@ class TestSearchErrorPropagation:
         # When registering an entity (FTS INSERT will fail)
         with pytest.raises(Exception):
             db.register_entity("feature", "fail-fts", "FailFTS")
-        # Then the entity row exists in entities table (INSERT succeeded
-        # before FTS error) but commit was never called, so the row is
-        # visible on this connection only (uncommitted).
+        # Then the entity row is rolled back (transaction() atomicity)
+        # — no partial writes remain.
         row = db._conn.execute(
             "SELECT * FROM entities WHERE type_id = 'feature:fail-fts'"
         ).fetchone()
-        # Verify: row is present on the same connection (autocommit off,
-        # uncommitted write visible to the writer).
-        assert row is not None, "Entity row should exist (uncommitted) on same connection"
+        assert row is None, "Entity row should be rolled back (transaction atomicity)"
         db.close()
 
     def test_fts_sync_update_rollback_on_failure(self, tmp_path):
-        """derived_from: dimension:error_propagation — update FTS failure."""
+        """derived_from: dimension:error_propagation — update FTS failure.
+
+        Since update_entity is wrapped in transaction() (Audit 062),
+        FTS failure triggers ROLLBACK — the UPDATE is also rolled back,
+        preserving the original name.
+        """
         # Given an entity exists, then FTS table is dropped
         db_path = str(tmp_path / "fts_update_rollback.db")
         db = EntityDatabase(db_path)
@@ -741,17 +748,13 @@ class TestSearchErrorPropagation:
         # When updating the entity (FTS DELETE+INSERT will fail)
         with pytest.raises(Exception):
             db.update_entity("feature:upd-fail", name="NewName")
-        # Then the UPDATE to entities executed before the FTS error, but
-        # commit was never called. The uncommitted write is visible on the
-        # same connection.
+        # Then the UPDATE is rolled back (transaction() atomicity)
+        # — original name is preserved.
         row = db._conn.execute(
             "SELECT name FROM entities WHERE type_id = 'feature:upd-fail'"
         ).fetchone()
         assert row is not None, "Entity row should still exist"
-        # Name may be "NewName" (UPDATE succeeded) or "UpdateFail"
-        # (UPDATE rolled back) depending on Python sqlite3 autocommit
-        # behavior. Either way, the key guarantee is no commit occurred.
-        assert row["name"] in ("UpdateFail", "NewName")
+        assert row["name"] == "UpdateFail", "Name should be unchanged after rollback"
         db.close()
 
 

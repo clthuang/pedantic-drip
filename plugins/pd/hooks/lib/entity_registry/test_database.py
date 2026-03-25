@@ -4995,12 +4995,21 @@ class TestTransactionContextManager:
         ).fetchone()
         assert row is None
 
-    def test_transaction_nested_raises_runtime_error(self, db):
-        """Nested transaction() raises RuntimeError."""
+    def test_transaction_nested_is_reentrant(self, db):
+        """Nested transaction() is re-entrant (no-op inner, outer handles atomicity).
+
+        Changed in Audit 062: transaction() is now re-entrant to support
+        methods like register_entity/update_entity that internally call
+        transaction() but may also be called inside an outer transaction().
+        """
+        db.register_entity("feature", "txn-nest", "Nested")
         with db.transaction():
-            with pytest.raises(RuntimeError, match="Nested transactions not supported"):
-                with db.transaction():
-                    pass
+            with db.transaction():
+                db.update_entity("feature:txn-nest", name="Updated")
+        row = db._conn.execute(
+            "SELECT name FROM entities WHERE type_id = ?", ("feature:txn-nest",)
+        ).fetchone()
+        assert row["name"] == "Updated"
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,13 @@
 """SQLite database layer for the entity registry system."""
+# Audit 062: 20 _commit() call sites found, 3 wrapped in transaction()
+# Wrapped: register_entity (2 writes), update_entity (3 writes),
+#          upsert_workflow_phase (2 writes)
+# Already atomic: delete_entity (BEGIN IMMEDIATE), register_entities_batch (BEGIN IMMEDIATE)
+# Single-statement (skip): add_tag, remove_tag, add_okr_alignment,
+#   remove_okr_alignment, set_parent, insert_workflow_phase,
+#   update_workflow_phase, delete_workflow_phase, set_metadata,
+#   add_dependency, remove_dependency, remove_dependencies_by_blocker
+# Infrastructure (skip): _migrate (2 sites)
 from __future__ import annotations
 
 import json
@@ -1168,9 +1177,12 @@ class EntityDatabase:
         """Context manager for atomic multi-step writes.
         Uses BEGIN IMMEDIATE to acquire write lock upfront.
         Suppresses _commit() calls inside the block.
+        Re-entrant: if already inside a transaction, yields without
+        starting a new one (the outer transaction handles atomicity).
         """
         if self._in_transaction:
-            raise RuntimeError("Nested transactions not supported")
+            yield
+            return
         self._conn.commit()  # flush implicit transactions
         self._conn.execute("BEGIN IMMEDIATE")
         self._in_transaction = True
@@ -1374,33 +1386,35 @@ class EntityDatabase:
             if parent_row is not None:
                 parent_uuid = parent_row["uuid"]
 
+        # Audit 062: 2 write SQL statements — wrapped in transaction() for BEGIN IMMEDIATE
         entity_uuid = str(uuid_mod.uuid4())
-        cursor = self._conn.execute(
-            "INSERT OR IGNORE INTO entities "
-            "(uuid, type_id, entity_type, entity_id, name, status, "
-            "parent_type_id, parent_uuid, artifact_path, "
-            "created_at, updated_at, metadata) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (entity_uuid, type_id, entity_type, entity_id, name, status,
-             parent_type_id, parent_uuid, artifact_path, now, now,
-             metadata_json),
-        )
-        if cursor.rowcount == 1:
-            row = self._conn.execute(
-                "SELECT rowid FROM entities WHERE uuid = ?",
-                (entity_uuid,),
-            ).fetchone()
-            metadata_text = flatten_metadata(
-                json.loads(metadata_json) if metadata_json else None
+        with self.transaction():
+            cursor = self._conn.execute(
+                "INSERT OR IGNORE INTO entities "
+                "(uuid, type_id, entity_type, entity_id, name, status, "
+                "parent_type_id, parent_uuid, artifact_path, "
+                "created_at, updated_at, metadata) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (entity_uuid, type_id, entity_type, entity_id, name, status,
+                 parent_type_id, parent_uuid, artifact_path, now, now,
+                 metadata_json),
             )
-            self._conn.execute(
-                "INSERT INTO entities_fts(rowid, name, entity_id, "
-                "entity_type, status, metadata_text) "
-                "VALUES(?, ?, ?, ?, ?, ?)",
-                (row[0], name, entity_id, entity_type, status or "",
-                 metadata_text),
-            )
-        self._commit()
+            if cursor.rowcount == 1:
+                row = self._conn.execute(
+                    "SELECT rowid FROM entities WHERE uuid = ?",
+                    (entity_uuid,),
+                ).fetchone()
+                metadata_text = flatten_metadata(
+                    json.loads(metadata_json) if metadata_json else None
+                )
+                self._conn.execute(
+                    "INSERT INTO entities_fts(rowid, name, entity_id, "
+                    "entity_type, status, metadata_text) "
+                    "VALUES(?, ?, ?, ?, ?, ?)",
+                    (row[0], name, entity_id, entity_type, status or "",
+                     metadata_text),
+                )
+            self._commit()  # no-op inside transaction(); commit handled by context manager
         result = self._conn.execute(
             "SELECT uuid FROM entities WHERE type_id = ?", (type_id,)
         ).fetchone()
@@ -1663,36 +1677,38 @@ class EntityDatabase:
                     for w in validate_metadata(entity_row["entity_type"], existing_meta):
                         print(f"metadata warning: {w}", file=sys.stderr)
 
+        # Audit 062: 3 write SQL statements — wrapped in transaction() for BEGIN IMMEDIATE
         params.append(entity_uuid)
         sql = f"UPDATE entities SET {', '.join(set_parts)} WHERE uuid = ?"
-        self._conn.execute(sql, params)
+        with self.transaction():
+            self._conn.execute(sql, params)
 
-        # Re-read post-UPDATE values from DB rather than deriving them in
-        # Python. This avoids replicating the metadata-merge logic (None/keep,
-        # {}/clear, dict/shallow-merge) and uses the DB as single source of
-        # truth. If new FTS-indexed fields are added, update both the
-        # old-value SELECT and the FTS insert columns.
-        new_row = self._conn.execute(
-            "SELECT name, entity_id, entity_type, status, metadata "
-            "FROM entities WHERE uuid = ?",
-            (entity_uuid,),
-        ).fetchone()
-        new_meta_text = flatten_metadata(
-            json.loads(new_row["metadata"]) if new_row["metadata"] else None
-        )
-        # Standalone FTS: use DELETE FROM (not external-content VALUES('delete',...))
-        # INVARIANT: rowid must match entities table rowid
-        self._conn.execute(
-            "DELETE FROM entities_fts WHERE rowid = ?", (old_row["rowid"],)
-        )
-        self._conn.execute(
-            "INSERT INTO entities_fts(rowid, name, entity_id, entity_type, "
-            "status, metadata_text) VALUES(?, ?, ?, ?, ?, ?)",
-            (old_row["rowid"], new_row["name"], new_row["entity_id"],
-             new_row["entity_type"], new_row["status"] or "",
-             new_meta_text),
-        )
-        self._commit()
+            # Re-read post-UPDATE values from DB rather than deriving them in
+            # Python. This avoids replicating the metadata-merge logic (None/keep,
+            # {}/clear, dict/shallow-merge) and uses the DB as single source of
+            # truth. If new FTS-indexed fields are added, update both the
+            # old-value SELECT and the FTS insert columns.
+            new_row = self._conn.execute(
+                "SELECT name, entity_id, entity_type, status, metadata "
+                "FROM entities WHERE uuid = ?",
+                (entity_uuid,),
+            ).fetchone()
+            new_meta_text = flatten_metadata(
+                json.loads(new_row["metadata"]) if new_row["metadata"] else None
+            )
+            # Standalone FTS: use DELETE FROM (not external-content VALUES('delete',...))
+            # INVARIANT: rowid must match entities table rowid
+            self._conn.execute(
+                "DELETE FROM entities_fts WHERE rowid = ?", (old_row["rowid"],)
+            )
+            self._conn.execute(
+                "INSERT INTO entities_fts(rowid, name, entity_id, entity_type, "
+                "status, metadata_text) VALUES(?, ?, ?, ?, ?, ?)",
+                (old_row["rowid"], new_row["name"], new_row["entity_id"],
+                 new_row["entity_type"], new_row["status"] or "",
+                 new_meta_text),
+            )
+            self._commit()  # no-op inside transaction(); commit handled by context manager
 
     # ------------------------------------------------------------------
     # Delete
@@ -2250,31 +2266,33 @@ class EntityDatabase:
         if invalid:
             raise ValueError(f"Invalid workflow_phases columns: {invalid}")
 
+        # Audit 062: 2 write SQL statements — wrapped in transaction() for BEGIN IMMEDIATE
         now = self._now_iso()
         wf = kwargs.get("workflow_phase")
         kc = kwargs.get("kanban_column", "backlog")
 
-        self._conn.execute(
-            "INSERT OR IGNORE INTO workflow_phases "
-            "(type_id, workflow_phase, kanban_column, updated_at) "
-            "VALUES (?, ?, ?, ?)",
-            (type_id, wf, kc, now),
-        )
+        with self.transaction():
+            self._conn.execute(
+                "INSERT OR IGNORE INTO workflow_phases "
+                "(type_id, workflow_phase, kanban_column, updated_at) "
+                "VALUES (?, ?, ?, ?)",
+                (type_id, wf, kc, now),
+            )
 
-        kwargs["updated_at"] = now
-        set_parts = []
-        params = []
-        for key, value in kwargs.items():
-            set_parts.append(f"{key} = ?")
-            params.append(value)
-        params.append(type_id)
-        self._conn.execute(
-            f"UPDATE workflow_phases SET {', '.join(set_parts)} "
-            f"WHERE type_id = ?",
-            params,
-        )
+            kwargs["updated_at"] = now
+            set_parts = []
+            params = []
+            for key, value in kwargs.items():
+                set_parts.append(f"{key} = ?")
+                params.append(value)
+            params.append(type_id)
+            self._conn.execute(
+                f"UPDATE workflow_phases SET {', '.join(set_parts)} "
+                f"WHERE type_id = ?",
+                params,
+            )
 
-        self._commit()
+            self._commit()  # no-op inside transaction(); commit handled by context manager
 
     def delete_workflow_phase(self, type_id: str) -> None:
         """Delete a workflow_phases row by type_id.
