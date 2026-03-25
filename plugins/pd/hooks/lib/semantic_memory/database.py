@@ -787,7 +787,9 @@ class MemoryDatabase:
         """Set connection-level PRAGMAs for performance and safety."""
         # busy_timeout MUST be set first — journal_mode=WAL requires a write
         # that can be blocked by concurrent connections during init.
-        self._conn.execute("PRAGMA busy_timeout = 5000")
+        self._conn.execute("PRAGMA busy_timeout = 15000")
+        # Python connect(timeout=...) governs initial connection lock wait;
+        # PRAGMA busy_timeout governs statement-level waits — intentionally different.
         self._conn.execute("PRAGMA journal_mode = WAL")
         self._conn.execute("PRAGMA synchronous = NORMAL")
         self._conn.execute("PRAGMA cache_size = -8000")

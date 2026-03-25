@@ -26,6 +26,7 @@ from entity_registry.server_helpers import (
     parse_metadata,
 )
 from semantic_memory.config import read_config
+from sqlite_retry import with_retry
 
 from mcp.server.fastmcp import FastMCP
 
@@ -173,6 +174,118 @@ def _resolve_ref_param(
     if entity is None:
         raise ValueError(f"No entity found matching ref: {ref!r}")
     return entity["type_id"]
+
+
+# ---------------------------------------------------------------------------
+# Sync DB-logic helpers (Type B handlers — extracted for @with_retry)
+# ---------------------------------------------------------------------------
+
+
+@with_retry("entity-server")
+def _process_update_entity(
+    db: EntityDatabase,
+    resolved_type_id: str,
+    name: str | None,
+    description: str | None,
+    status: str | None,
+    metadata: dict | None,
+) -> str:
+    """Update mutable fields of an existing entity (retryable)."""
+    db.update_entity(
+        resolved_type_id, name=name, status=status,
+        artifact_path=description, metadata=metadata,
+    )
+    return f"Updated: {resolved_type_id}"
+
+
+@with_retry("entity-server")
+def _process_delete_entity(db: EntityDatabase, resolved_type_id: str) -> str:
+    """Delete an entity and all associated data (retryable)."""
+    db.delete_entity(resolved_type_id)
+    return json.dumps({"result": f"Deleted: {resolved_type_id}"})
+
+
+@with_retry("entity-server")
+def _process_add_entity_tag(db: EntityDatabase, resolved_type_id: str, tag: str) -> str:
+    """Add a tag to an entity (retryable)."""
+    entity = db.get_entity(resolved_type_id)
+    if entity is None:
+        return f"Error: entity not found: {resolved_type_id}"
+    db.add_tag(entity["uuid"], tag)
+    return json.dumps({"result": f"Tagged {resolved_type_id} with '{tag}'"})
+
+
+@with_retry("entity-server")
+def _process_add_dependency(
+    db: EntityDatabase,
+    dep_mgr,
+    blocker_uuid: str,
+    blocked_uuid: str,
+    entity_ref: str,
+    blocked_by_ref: str,
+) -> str:
+    """Add a dependency between two entities (retryable)."""
+    dep_mgr.add_dependency(db, blocker_uuid, blocked_uuid)
+    return json.dumps({
+        "result": f"Dependency added: {entity_ref} blocked by {blocked_by_ref}"
+    })
+
+
+@with_retry("entity-server")
+def _process_remove_dependency(
+    db: EntityDatabase,
+    dep_mgr,
+    entity_uuid: str,
+    blocked_by_uuid: str,
+    entity_ref: str,
+    blocked_by_ref: str,
+) -> str:
+    """Remove a dependency between two entities (retryable)."""
+    dep_mgr.remove_dependency(db, entity_uuid, blocked_by_uuid)
+    return json.dumps({
+        "result": f"Dependency removed: {entity_ref} no longer blocked by {blocked_by_ref}"
+    })
+
+
+@with_retry("entity-server")
+def _process_add_okr_alignment(
+    db: EntityDatabase, entity_uuid: str, kr_uuid: str,
+    entity_ref: str, kr_ref: str,
+) -> str:
+    """Link an entity to a key result (retryable)."""
+    db.add_okr_alignment(entity_uuid, kr_uuid)
+    return json.dumps({"result": f"Aligned {entity_ref} to {kr_ref}"})
+
+
+@with_retry("entity-server")
+def _process_create_key_result(
+    db: EntityDatabase,
+    parent_type_id: str,
+    eid: str,
+    name: str,
+    status: str | None,
+    metadata_json: str,
+    weight: float,
+) -> str:
+    """Register a key_result entity with parent linkage (retryable)."""
+    uuid = db.register_entity(
+        entity_type="key_result",
+        entity_id=eid,
+        name=name,
+        status=status,
+        parent_type_id=parent_type_id,
+        metadata=metadata_json,
+    )
+    return json.dumps({"uuid": uuid, "type_id": f"key_result:{eid}", "weight": weight})
+
+
+@with_retry("entity-server")
+def _process_update_kr_score(
+    db: EntityDatabase, resolved_type_id: str, score: float,
+) -> str:
+    """Update score for a key_result entity (retryable)."""
+    db.update_entity(resolved_type_id, metadata={"score": float(score)})
+    return json.dumps({"result": f"Score updated to {score}", "type_id": resolved_type_id})
 
 
 # ---------------------------------------------------------------------------
@@ -369,11 +482,10 @@ async def update_entity(
         metadata = json.dumps(metadata)
 
     try:
-        _db.update_entity(
-            resolved_type_id, name=name, status=status,
-            artifact_path=artifact_path, metadata=parse_metadata(metadata),
+        return _process_update_entity(
+            _db, resolved_type_id, name=name, description=artifact_path,
+            status=status, metadata=parse_metadata(metadata),
         )
-        return f"Updated: {resolved_type_id}"
     except Exception as exc:
         return f"Error updating entity: {exc}"
 
@@ -454,8 +566,7 @@ async def delete_entity(type_id: str | None = None, ref: str | None = None) -> s
         return "Error: database not initialized (server not started)"
     try:
         resolved_type_id = _resolve_ref_param(_db, type_id, ref, is_mutation=True)
-        _db.delete_entity(resolved_type_id)
-        return json.dumps({"result": f"Deleted: {resolved_type_id}"})
+        return _process_delete_entity(_db, resolved_type_id)
     except ValueError as exc:
         return json.dumps({"error": str(exc)})
     except Exception as exc:
@@ -483,11 +594,7 @@ async def add_entity_tag(
         return "Error: database not initialized (server not started)"
     try:
         resolved_type_id = _resolve_ref_param(_db, type_id, ref, is_mutation=True)
-        entity = _db.get_entity(resolved_type_id)
-        if entity is None:
-            return f"Error: entity not found: {resolved_type_id}"
-        _db.add_tag(entity["uuid"], tag)
-        return json.dumps({"result": f"Tagged {resolved_type_id} with '{tag}'"})
+        return _process_add_entity_tag(_db, resolved_type_id, tag)
     except ValueError as exc:
         return json.dumps({"error": str(exc)})
     except Exception as exc:
@@ -546,10 +653,9 @@ async def add_dependency(
         entity_uuid = _db.resolve_ref(entity_ref)
         blocked_by_uuid = _db.resolve_ref(blocked_by_ref)
         mgr = DependencyManager()
-        mgr.add_dependency(_db, entity_uuid, blocked_by_uuid)
-        return json.dumps({
-            "result": f"Dependency added: {entity_ref} blocked by {blocked_by_ref}"
-        })
+        return _process_add_dependency(
+            _db, mgr, entity_uuid, blocked_by_uuid, entity_ref, blocked_by_ref,
+        )
     except CycleError as exc:
         return json.dumps({"error": f"Cycle detected: {exc}"})
     except ValueError as exc:
@@ -582,10 +688,9 @@ async def remove_dependency(
         entity_uuid = _db.resolve_ref(entity_ref)
         blocked_by_uuid = _db.resolve_ref(blocked_by_ref)
         mgr = DependencyManager()
-        mgr.remove_dependency(_db, entity_uuid, blocked_by_uuid)
-        return json.dumps({
-            "result": f"Dependency removed: {entity_ref} no longer blocked by {blocked_by_ref}"
-        })
+        return _process_remove_dependency(
+            _db, mgr, entity_uuid, blocked_by_uuid, entity_ref, blocked_by_ref,
+        )
     except ValueError as exc:
         return json.dumps({"error": str(exc)})
     except Exception as exc:
@@ -655,9 +760,8 @@ async def add_okr_alignment(entity_ref: str, kr_ref: str) -> str:
     try:
         entity_uuid = _db.resolve_ref(entity_ref)
         kr_uuid = _db.resolve_ref(kr_ref)
-        _db.add_okr_alignment(entity_uuid, kr_uuid)
-        return json.dumps({"result": f"Aligned {entity_ref} to {kr_ref}"})
-    except ValueError as exc:
+        return _process_add_okr_alignment(_db, entity_uuid, kr_uuid, entity_ref, kr_ref)
+    except Exception as exc:
         return json.dumps({"error": str(exc)})
 
 
@@ -720,16 +824,11 @@ async def create_key_result(
     try:
         parent_type_id = _resolve_ref_param(_db, None, parent_ref, is_mutation=True)
         eid = entity_id or name.lower().replace(" ", "-")[:30]
-        uuid = _db.register_entity(
-            entity_type="key_result",
-            entity_id=eid,
-            name=name,
-            status=status,
-            parent_type_id=parent_type_id,
-            metadata=json.dumps({"metric_type": metric_type, "weight": weight}),
+        metadata_json = json.dumps({"metric_type": metric_type, "weight": weight})
+        return _process_create_key_result(
+            _db, parent_type_id, eid, name, status, metadata_json, weight,
         )
-        return json.dumps({"uuid": uuid, "type_id": f"key_result:{eid}", "weight": weight})
-    except (ValueError, KeyError) as exc:
+    except Exception as exc:
         return json.dumps({"error": str(exc)})
 
 
@@ -753,9 +852,8 @@ async def update_kr_score(
         return json.dumps({"error": f"Score must be between 0.0 and 1.0, got {score}"})
     try:
         resolved = _resolve_ref_param(_db, None, kr_ref, is_mutation=True)
-        _db.update_entity(resolved, metadata={"score": float(score)})
-        return json.dumps({"result": f"Score updated to {score}", "type_id": resolved})
-    except (ValueError, KeyError) as exc:
+        return _process_update_kr_score(_db, resolved, score)
+    except Exception as exc:
         return json.dumps({"error": str(exc)})
 
 

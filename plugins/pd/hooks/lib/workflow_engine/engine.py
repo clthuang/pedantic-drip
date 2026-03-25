@@ -284,7 +284,7 @@ class WorkflowStateEngine:
 
         Returns True if DB is usable, False otherwise.
         """
-        # NOTE: busy_timeout is inherited from EntityDatabase (5s).
+        # NOTE: busy_timeout is inherited from EntityDatabase (15s).
         # Accepted product decision -- see design C1 NFR-1 interaction.
         return self.db.is_healthy()
 

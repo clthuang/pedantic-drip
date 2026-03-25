@@ -81,6 +81,12 @@ bash plugins/pd/mcp/test_bootstrap_venv.sh
 # Run entity registry tests (database, backfill, server helpers, frontmatter, frontmatter_sync, search, metadata — 940+ tests)
 plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/entity_registry/ -v
 
+# Run sqlite retry unit tests
+plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/test_sqlite_retry.py -v
+
+# Run sqlite retry concurrent-write integration tests
+plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/test_sqlite_retry_integration.py -v
+
 # Run entity search MCP tool tests
 plugins/pd/.venv/bin/python -m pytest plugins/pd/mcp/test_search_mcp.py -v
 

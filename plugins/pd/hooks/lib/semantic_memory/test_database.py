@@ -405,7 +405,7 @@ class TestPragmas:
 
     def test_busy_timeout(self, db: MemoryDatabase):
         cur = db._conn.execute("PRAGMA busy_timeout")
-        assert cur.fetchone()[0] == 5000
+        assert cur.fetchone()[0] == 15000
 
     def test_cache_size(self, db: MemoryDatabase):
         cur = db._conn.execute("PRAGMA cache_size")
