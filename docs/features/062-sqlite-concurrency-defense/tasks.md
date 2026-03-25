@@ -61,7 +61,8 @@ graph TD
   2. Write test for `is_transient()`: OperationalError with "database is locked" returns True
   3. Write test for `is_transient()`: OperationalError with "database IS LOCKED" returns True (case-insensitive)
   4. Write test for `is_transient()`: OperationalError with "no such table" returns False
-  5. Write test for `is_transient()`: non-OperationalError returns False
+  5. Write test for `is_transient()`: OperationalError with "SQL logic error" returns True (stale implicit transaction variant per RCA)
+  6. Write test for `is_transient()`: non-OperationalError returns False
   6. Write test for `with_retry()`: successful call returns result without retry
   7. Write test for `with_retry()`: transient error retries up to max_attempts then re-raises
   8. Write test for `with_retry()`: transient error succeeds on 2nd attempt
@@ -79,7 +80,7 @@ graph TD
 - **Files:** `plugins/pd/hooks/lib/sqlite_retry.py` (new)
 - **Do:**
   1. Create `plugins/pd/hooks/lib/sqlite_retry.py`
-  2. Implement `is_transient(exc)`: return `isinstance(exc, sqlite3.OperationalError) and 'locked' in str(exc).lower()`
+  2. Implement `is_transient(exc)`: `msg = str(exc).lower(); return isinstance(exc, sqlite3.OperationalError) and ('locked' in msg or 'sql logic error' in msg)`. Add comment referencing `docs/rca/20260324-workflow-sql-error.md:69-75` explaining why "sql logic error" is included (stale implicit transaction variant of SQLITE_BUSY).
   3. Implement `with_retry(server_name, max_attempts=3, backoff=(0.1, 0.5, 2.0))` decorator factory
   4. Inside wrapper: catch `sqlite3.OperationalError`, call `is_transient()`, sleep `backoff[min(attempt, len(backoff)-1)] + random.uniform(0, 0.05)`, print warning to stderr with server_name prefix
   5. On exhausted retries: re-raise last exception
@@ -98,8 +99,9 @@ graph TD
   2. In `workflow_engine/engine.py`, fix stale comment at line 287: change "5s" to "15s"
   3. Grep `PRAGMA busy_timeout` across production DB modules (excluding test files and doctor/) — confirm all are 15000
   4. Add comment in `semantic_memory/database.py` after the PRAGMA line: `# Python connect(timeout=...) governs initial connection lock wait; PRAGMA busy_timeout governs statement-level waits — intentionally different.`
-- **Test:** `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/semantic_memory/ -v` — existing tests pass
-- **Done when:** Grep confirms no PRAGMA busy_timeout value other than 15000 in production DB modules; stale comment corrected
+  5. Update `test_busy_timeout` in `semantic_memory/test_database.py:408`: change `assert cur.fetchone()[0] == 5000` to `assert cur.fetchone()[0] == 15000`
+- **Test:** `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/semantic_memory/ -v` — all tests pass including updated `test_busy_timeout`
+- **Done when:** Grep confirms no PRAGMA busy_timeout value other than 15000 in production DB modules; stale comment corrected; `test_busy_timeout` passes with new value
 
 #### Task 1.4: Wrap _run_cascade() Phase B in transaction()
 - **Why:** Plan item 4 / Design C5, I3, Spec FR-3

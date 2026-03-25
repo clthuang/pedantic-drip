@@ -42,7 +42,7 @@ SQLite databases shared across multiple MCP server processes suffer write conten
 - Given `plugins/pd/hooks/lib/sqlite_retry.py` exists
 - When imported by any MCP server
 - Then provides `with_retry(server_name, max_attempts=3, backoff=(0.1, 0.5, 2.0))` decorator (jitter up to 50ms baked into the decorator) and `is_transient(error)` predicate
-- And `is_transient` returns True for `OperationalError` where the message contains "locked" (case-insensitive match)
+- And `is_transient` returns True for `OperationalError` where the message contains "locked" OR "sql logic error" (case-insensitive match) — the "sql logic error" variant occurs under stale implicit transactions per RCA `docs/rca/20260324-workflow-sql-error.md:69-75`
 - And `is_transient` returns False for all other `OperationalError` messages
 - Note: `SQLITE_BUSY_SNAPSHOT` (stale WAL snapshot) is covered because `_with_retry` retries at the MCP handler level, which encompasses the full transaction — each retry starts a fresh transaction with a fresh snapshot, satisfying the PRD's full-transaction-restart requirement
 
