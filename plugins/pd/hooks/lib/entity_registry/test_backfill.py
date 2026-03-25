@@ -1969,3 +1969,70 @@ class TestWorkflowPhaseBackfill:
         wp = db.get_workflow_phase("brainstorm:bs-mixed")
         assert wp is not None
         assert wp["kanban_column"] != "completed"
+
+    # -------------------------------------------------------------------
+    # Task 1.5: Backfill encapsulation & batching verification
+    # -------------------------------------------------------------------
+
+    def test_backfill_no_raw_conn_execute(self):
+        """Verify backfill.py contains no raw db._conn.execute calls."""
+        import inspect
+        import entity_registry.backfill as backfill_mod
+
+        source = inspect.getsource(backfill_mod)
+        violations = [
+            line.strip()
+            for line in source.splitlines()
+            if "db._conn.execute" in line or "db._conn.commit" in line
+            or "db._now_iso" in line
+        ]
+        assert violations == [], (
+            f"Raw db._conn access found in backfill.py:\n"
+            + "\n".join(violations)
+        )
+
+    def test_backfill_batched_transactions(self, tmp_path, db):
+        """Verify backfill_workflow_phases uses batched transactions.
+
+        Creates 25 entities (batch size 20), expects 2 outer batch
+        transactions.  Inner API calls (upsert_workflow_phase) also call
+        transaction() re-entrantly, so we only count top-level entries.
+        """
+        from unittest.mock import patch
+
+        # Register 25 feature entities
+        for i in range(25):
+            db.register_entity("feature", f"batch-f{i:03d}", f"Feature {i}")
+
+        # Instrument db.transaction() to count only top-level calls
+        original_transaction = db.transaction
+        top_level_count = 0
+        depth = 0
+
+        class CountingContextManager:
+            def __init__(self, cm):
+                self._cm = cm
+
+            def __enter__(self):
+                nonlocal top_level_count, depth
+                if depth == 0:
+                    top_level_count += 1
+                depth += 1
+                return self._cm.__enter__()
+
+            def __exit__(self, *args):
+                nonlocal depth
+                depth -= 1
+                return self._cm.__exit__(*args)
+
+        def counting_transaction():
+            return CountingContextManager(original_transaction())
+
+        with patch.object(db, "transaction", counting_transaction):
+            backfill_workflow_phases(db, str(tmp_path))
+
+        # 25 entities / batch size 20 = 2 batches
+        assert top_level_count == 2, (
+            f"Expected 2 top-level batched transactions for 25 entities, "
+            f"got {top_level_count}"
+        )

@@ -38,6 +38,20 @@ _VALID_STATUSES: frozenset[str] = frozenset({"planned", "active", "completed", "
 
 VALID_MODES: frozenset[str] = frozenset({"standard", "full", "light"})
 
+BACKFILL_BATCH_SIZE = 20
+
+
+def _chunked(iterable, size: int):
+    """Yield successive chunks of *size* from *iterable*."""
+    batch: list = []
+    for item in iterable:
+        batch.append(item)
+        if len(batch) == size:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
+
 
 # ---------------------------------------------------------------------------
 # Workflow phase helpers (private)
@@ -142,11 +156,14 @@ def run_backfill(
         scanners[entity_type](db, artifacts_root)
 
     # Fix orphaned NULL workflow_phase values (e.g. abandoned entities)
-    db._conn.execute(
-        "UPDATE workflow_phases SET workflow_phase = 'finish' "
-        "WHERE workflow_phase IS NULL"
-    )
-    db._conn.commit()
+    with db.transaction():
+        all_phases = db.list_workflow_phases()
+        for row in all_phases:
+            if row["workflow_phase"] is None:
+                try:
+                    db.update_workflow_phase(row["type_id"], workflow_phase="finish")
+                except ValueError:
+                    pass  # TOCTOU: row deleted between list and update
 
     # Mark backfill as complete with current version
     db.set_metadata("backfill_complete", "1")
@@ -183,168 +200,154 @@ def backfill_workflow_phases(
     all_entities = db.list_entities()
     entities = [e for e in all_entities if e["entity_type"] != "project"]
 
-    for entity in entities:
-        try:
-            type_id = entity["type_id"]
-            entity_type = entity["entity_type"]
+    for batch in _chunked(entities, BACKFILL_BATCH_SIZE):
+        with db.transaction():
+            for entity in batch:
+                try:
+                    type_id = entity["type_id"]
+                    entity_type = entity["entity_type"]
 
-            # Resolve .meta.json
-            meta_path = _resolve_meta_path(entity, artifacts_root)
-            meta = None
-            if meta_path is not None:
-                meta = _read_json(meta_path)
-                # Distinguish "malformed JSON" from "file not found" (D-9, AC-18)
-                if meta is None and os.path.isfile(meta_path):
-                    logger.warning(
-                        "Malformed JSON in %s for entity %s, using defaults",
-                        meta_path, type_id,
-                    )
+                    # Resolve .meta.json
+                    meta_path = _resolve_meta_path(entity, artifacts_root)
+                    meta = None
+                    if meta_path is not None:
+                        meta = _read_json(meta_path)
+                        # Distinguish "malformed JSON" from "file not found" (D-9, AC-18)
+                        if meta is None and os.path.isfile(meta_path):
+                            logger.warning(
+                                "Malformed JSON in %s for entity %s, using defaults",
+                                meta_path, type_id,
+                            )
 
-            # Early handling for brainstorm/backlog — skip kanban derivation
-            if entity_type in ("brainstorm", "backlog"):
-                # Child-completion override (D3: prefer parent_uuid, fall back
-                # to parent_type_id for legacy entities without parent_uuid)
-                entity_uuid = entity.get("uuid")
-                children = [
-                    e for e in all_entities
-                    if e["entity_type"] == "feature"
-                    and (
-                        (entity_uuid and e.get("parent_uuid") == entity_uuid)
-                        or (
-                            not e.get("parent_uuid")
-                            and e.get("parent_type_id") == type_id
+                    # Early handling for brainstorm/backlog — skip kanban derivation
+                    if entity_type in ("brainstorm", "backlog"):
+                        # Child-completion override (D3: prefer parent_uuid, fall back
+                        # to parent_type_id for legacy entities without parent_uuid)
+                        entity_uuid = entity.get("uuid")
+                        children = [
+                            e for e in all_entities
+                            if e["entity_type"] == "feature"
+                            and (
+                                (entity_uuid and e.get("parent_uuid") == entity_uuid)
+                                or (
+                                    not e.get("parent_uuid")
+                                    and e.get("parent_type_id") == type_id
+                                )
+                            )
+                        ]
+                        all_children_completed = children and all(
+                            c.get("status") == "completed" for c in children
                         )
-                    )
-                ]
-                all_children_completed = children and all(
-                    c.get("status") == "completed" for c in children
-                )
 
-                # Check existing workflow_phases row
-                existing_row = db._conn.execute(
-                    "SELECT workflow_phase FROM workflow_phases WHERE type_id = ?",
-                    (type_id,),
-                ).fetchone()
+                        # Check existing workflow_phases row
+                        existing_row = db.get_workflow_phase(type_id)
 
-                if existing_row and existing_row["workflow_phase"] is not None:
-                    skipped += 1
-                    continue
+                        if existing_row and existing_row["workflow_phase"] is not None:
+                            skipped += 1
+                            continue
 
-                # Derive defaults
-                if entity_type == "brainstorm":
-                    workflow_phase = "draft"
-                    kanban_column = "wip"
-                else:  # backlog
-                    workflow_phase = "open"
-                    kanban_column = "backlog"
+                        # Derive defaults
+                        if entity_type == "brainstorm":
+                            workflow_phase = "draft"
+                            kanban_column = "wip"
+                        else:  # backlog
+                            workflow_phase = "open"
+                            kanban_column = "backlog"
 
-                # Apply child-completion override
-                if all_children_completed:
-                    kanban_column = "completed"
+                        # Apply child-completion override
+                        if all_children_completed:
+                            kanban_column = "completed"
 
-                # Case 3: existing row with NULL phase -> UPDATE
-                if existing_row and existing_row["workflow_phase"] is None:
-                    db._conn.execute(
-                        "UPDATE workflow_phases SET workflow_phase = ?, kanban_column = ?, "
-                        "updated_at = ? WHERE type_id = ?",
-                        (workflow_phase, kanban_column, db._now_iso(), type_id),
-                    )
-                    updated += 1
-                    continue
+                        # Case 3: existing row with NULL phase -> UPDATE
+                        if existing_row and existing_row["workflow_phase"] is None:
+                            db.update_workflow_phase(
+                                type_id,
+                                workflow_phase=workflow_phase,
+                                kanban_column=kanban_column,
+                            )
+                            updated += 1
+                            continue
 
-                # Case 1: no row -> INSERT
-                cursor = db._conn.execute(
-                    "INSERT OR IGNORE INTO workflow_phases "
-                    "(type_id, kanban_column, workflow_phase, "
-                    "last_completed_phase, mode, "
-                    "backward_transition_reason, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (type_id, kanban_column, workflow_phase, None, None, None, db._now_iso()),
-                )
-                if cursor.rowcount > 0:
-                    created += 1
-                else:
-                    skipped += 1  # concurrent insert won the race
-                continue
+                        # Case 1: no row -> INSERT (upsert for idempotency)
+                        db.upsert_workflow_phase(
+                            type_id,
+                            workflow_phase=workflow_phase,
+                            kanban_column=kanban_column,
+                        )
+                        created += 1
+                        continue
 
-            # 3-tier status resolution
-            status = None
-            if meta is not None and "status" in meta:
-                status = meta["status"]
-            if status is None and entity["status"] is not None:
-                status = entity["status"]
-            if status is None:
-                status = "planned"
+                    # 3-tier status resolution
+                    status = None
+                    if meta is not None and "status" in meta:
+                        status = meta["status"]
+                    if status is None and entity["status"] is not None:
+                        status = entity["status"]
+                    if status is None:
+                        status = "planned"
 
-            # Validate status
-            if status not in _VALID_STATUSES:
-                logger.warning(
-                    "Unmapped status %r for entity %s, defaulting to 'planned'",
-                    status, type_id,
-                )
-                status = "planned"
+                    # Validate status
+                    if status not in _VALID_STATUSES:
+                        logger.warning(
+                            "Unmapped status %r for entity %s, defaulting to 'planned'",
+                            status, type_id,
+                        )
+                        status = "planned"
 
-            # Feature-specific: derive workflow_phase, last_completed_phase, mode
-            workflow_phase = None
-            last_completed_phase = None
-            mode = None
-
-            if entity_type == "feature":
-                # last_completed_phase from .meta.json
-                if meta is not None:
-                    last_completed_phase = meta.get("lastCompletedPhase")
-                # Validate last_completed_phase
-                if last_completed_phase is not None and last_completed_phase not in PHASE_SEQUENCE:
-                    logger.warning(
-                        "Unrecognized lastCompletedPhase %r for entity %s, setting to None",
-                        last_completed_phase, type_id,
-                    )
+                    # Feature-specific: derive workflow_phase, last_completed_phase, mode
+                    workflow_phase = None
                     last_completed_phase = None
-
-                # Derive workflow_phase
-                workflow_phase = _derive_next_phase(last_completed_phase)
-
-                # Special case: completed status -> workflow_phase = finish
-                if status == "completed":
-                    workflow_phase = "finish"
-
-                # mode from .meta.json
-                if meta is not None:
-                    mode = meta.get("mode")
-                # Validate mode
-                if mode is not None and mode not in VALID_MODES:
-                    logger.warning(
-                        "Invalid mode %r for entity %s, setting to None",
-                        mode, type_id,
-                    )
                     mode = None
 
-            kanban_column = derive_kanban(status, workflow_phase)
+                    if entity_type == "feature":
+                        # last_completed_phase from .meta.json
+                        if meta is not None:
+                            last_completed_phase = meta.get("lastCompletedPhase")
+                        # Validate last_completed_phase
+                        if last_completed_phase is not None and last_completed_phase not in PHASE_SEQUENCE:
+                            logger.warning(
+                                "Unrecognized lastCompletedPhase %r for entity %s, setting to None",
+                                last_completed_phase, type_id,
+                            )
+                            last_completed_phase = None
 
-            # INSERT OR IGNORE for idempotency (TD-10: bypasses CRUD)
-            insert_sql = (
-                "INSERT OR IGNORE INTO workflow_phases "
-                "(type_id, kanban_column, workflow_phase, "
-                "last_completed_phase, mode, "
-                "backward_transition_reason, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)"
-            )
-            params = (
-                type_id, kanban_column, workflow_phase,
-                last_completed_phase, mode, None, db._now_iso(),
-            )
-            cursor = db._conn.execute(insert_sql, params)
+                        # Derive workflow_phase
+                        workflow_phase = _derive_next_phase(last_completed_phase)
 
-            if cursor.rowcount > 0:
-                created += 1
-            else:
-                skipped += 1
+                        # Special case: completed status -> workflow_phase = finish
+                        if status == "completed":
+                            workflow_phase = "finish"
 
-        except Exception as exc:
-            errors.append(f"Error processing {entity.get('type_id', '?')}: {exc}")
+                        # mode from .meta.json
+                        if meta is not None:
+                            mode = meta.get("mode")
+                        # Validate mode
+                        if mode is not None and mode not in VALID_MODES:
+                            logger.warning(
+                                "Invalid mode %r for entity %s, setting to None",
+                                mode, type_id,
+                            )
+                            mode = None
 
-    # Commit once at end (TD-10: direct connection access for bulk insert)
-    db._conn.commit()
+                    kanban_column = derive_kanban(status, workflow_phase)
+
+                    # Skip if row already exists (idempotent — don't overwrite)
+                    if db.get_workflow_phase(type_id) is not None:
+                        skipped += 1
+                        continue
+
+                    # Upsert for idempotency (INSERT OR IGNORE + UPDATE)
+                    db.upsert_workflow_phase(
+                        type_id,
+                        workflow_phase=workflow_phase,
+                        kanban_column=kanban_column,
+                        last_completed_phase=last_completed_phase,
+                        mode=mode,
+                    )
+                    created += 1
+
+                except Exception as exc:
+                    errors.append(f"Error processing {entity.get('type_id', '?')}: {exc}")
 
     return {"created": created, "updated": updated, "skipped": skipped, "errors": errors}
 
