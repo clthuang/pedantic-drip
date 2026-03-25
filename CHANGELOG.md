@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.13.22] - 2026-03-25
+
 ### Added
 - Shared `sqlite_retry` module (`with_retry` decorator + `is_transient` classifier) for consistent retry coverage across all MCP servers
 - Concurrent-write integration tests validating multi-process SQLite contention handling
