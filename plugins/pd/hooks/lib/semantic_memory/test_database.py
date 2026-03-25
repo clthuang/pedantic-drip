@@ -1399,6 +1399,79 @@ class TestMergeDuplicate:
         assert "influence_count" in result
 
 
+class TestMergeDuplicatePromotion:
+    """Tests for confidence auto-promotion in merge_duplicate()."""
+
+    def _seed_entry(self, db, *, obs_count=2, confidence="low", source="session-capture"):
+        """Seed an entry with specific observation_count, confidence, and source."""
+        entry = _make_entry(
+            id="promo1",
+            confidence=confidence,
+            source=source,
+        )
+        db.upsert_entry(entry)
+        # Set observation_count directly (the upsert starts at 1)
+        if obs_count != 1:
+            db._conn.execute(
+                "UPDATE entries SET observation_count = ? WHERE id = ?",
+                (obs_count, "promo1"),
+            )
+            db._conn.commit()
+
+    def test_merge_duplicate_promotes_low_to_medium(self, db: MemoryDatabase):
+        """When auto_promote=True and obs_count crosses threshold, low -> medium."""
+        self._seed_entry(db, obs_count=2, confidence="low", source="session-capture")
+        config = {"memory_auto_promote": True, "memory_promote_low_threshold": 3}
+        result = db.merge_duplicate("promo1", ["kw"], config=config)
+        assert result["confidence"] == "medium"
+        assert result["observation_count"] == 3
+
+    def test_merge_duplicate_promotes_medium_to_high_retro_only(self, db: MemoryDatabase):
+        """medium -> high requires source=retro and obs_count >= threshold."""
+        self._seed_entry(db, obs_count=4, confidence="medium", source="retro")
+        config = {"memory_auto_promote": True, "memory_promote_medium_threshold": 5}
+        result = db.merge_duplicate("promo1", ["kw"], config=config)
+        assert result["confidence"] == "high"
+        assert result["observation_count"] == 5
+
+    def test_merge_duplicate_no_promote_when_disabled(self, db: MemoryDatabase):
+        """When auto_promote=False (default), confidence stays unchanged."""
+        self._seed_entry(db, obs_count=2, confidence="low", source="session-capture")
+        config = {"memory_auto_promote": False, "memory_promote_low_threshold": 3}
+        result = db.merge_duplicate("promo1", ["kw"], config=config)
+        assert result["confidence"] == "low"
+
+    def test_merge_duplicate_no_promote_import_source(self, db: MemoryDatabase):
+        """source=import entries never promote even when thresholds are met."""
+        self._seed_entry(db, obs_count=2, confidence="low", source="import")
+        config = {"memory_auto_promote": True, "memory_promote_low_threshold": 3}
+        result = db.merge_duplicate("promo1", ["kw"], config=config)
+        assert result["confidence"] == "low"
+
+    def test_merge_duplicate_no_promote_below_threshold(self, db: MemoryDatabase):
+        """obs_count below threshold -> no promotion."""
+        self._seed_entry(db, obs_count=1, confidence="low", source="session-capture")
+        config = {"memory_auto_promote": True, "memory_promote_low_threshold": 3}
+        result = db.merge_duplicate("promo1", ["kw"], config=config)
+        # obs_count is now 2, still below 3
+        assert result["confidence"] == "low"
+        assert result["observation_count"] == 2
+
+    def test_merge_duplicate_already_at_target(self, db: MemoryDatabase):
+        """Entry already at high confidence -> no change."""
+        self._seed_entry(db, obs_count=10, confidence="high", source="retro")
+        config = {"memory_auto_promote": True, "memory_promote_low_threshold": 3, "memory_promote_medium_threshold": 5}
+        result = db.merge_duplicate("promo1", ["kw"], config=config)
+        assert result["confidence"] == "high"
+
+    def test_merge_duplicate_medium_no_promote_non_retro(self, db: MemoryDatabase):
+        """medium -> high requires source=retro; session-capture stays medium."""
+        self._seed_entry(db, obs_count=4, confidence="medium", source="session-capture")
+        config = {"memory_auto_promote": True, "memory_promote_medium_threshold": 5}
+        result = db.merge_duplicate("promo1", ["kw"], config=config)
+        assert result["confidence"] == "medium"
+
+
 # ---------------------------------------------------------------------------
 # Test: find_entry_by_name (Task 2.2.1)
 # ---------------------------------------------------------------------------

@@ -1412,3 +1412,91 @@ class TestStoreMemoryDedupIntegration:
 
         entry_after = db.get_entry(first_id)
         assert entry_after["observation_count"] == 2
+
+
+class TestStoreMemoryDedupPromotion:
+    """Integration test: dedup merge triggers confidence auto-promotion."""
+
+    def test_store_memory_dedup_triggers_promotion(self, db: MemoryDatabase):
+        """Storing a duplicate with auto_promote=True should promote confidence."""
+        provider = SimilarVectorProvider()
+
+        # Store initial entry (low confidence)
+        result1 = _process_store_memory(
+            db=db,
+            provider=provider,
+            name="Always validate hook inputs",
+            description="Validate all inputs in hook functions before processing to prevent errors",
+            reasoning="Prevents runtime errors from bad data",
+            category="patterns",
+            references=[],
+            confidence="low",
+        )
+        assert result1.startswith("Stored:")
+
+        first_id = content_hash(
+            "Validate all inputs in hook functions before processing to prevent errors"
+        )
+
+        # Set observation_count to 2 so next merge brings it to 3 (threshold)
+        db._conn.execute(
+            "UPDATE entries SET observation_count = 2 WHERE id = ?", (first_id,)
+        )
+        db._conn.commit()
+
+        entry_before = db.get_entry(first_id)
+        assert entry_before["confidence"] == "low"
+        assert entry_before["observation_count"] == 2
+
+        # Store near-duplicate with promotion config
+        config_with_promote = {
+            "memory_auto_promote": True,
+            "memory_promote_low_threshold": 3,
+            "memory_dedup_threshold": 0.90,
+        }
+        result2 = _process_store_memory(
+            db=db,
+            provider=provider,
+            name="Validate hook function inputs",
+            description="Hook functions should validate all inputs before executing to avoid failures",
+            reasoning="Prevents crashes from malformed input",
+            category="patterns",
+            references=[],
+            config=config_with_promote,
+        )
+        assert "Reinforced:" in result2
+
+        entry_after = db.get_entry(first_id)
+        assert entry_after["observation_count"] == 3
+        assert entry_after["confidence"] == "medium"
+
+
+class TestRecordInfluenceLatency:
+    """NFR-2: record_influence calls must complete in <100ms."""
+
+    def test_record_influence_latency(self, db: MemoryDatabase):
+        """Each record_influence call should complete in under 100ms."""
+        import time
+
+        # Seed an entry
+        entry = {
+            "id": "latency-test",
+            "name": "Latency test pattern",
+            "description": "Test description for latency measurement",
+            "category": "patterns",
+            "source": "manual",
+            "keywords": "[]",
+            "source_project": "/tmp",
+            "source_hash": "0000",
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+        }
+        db.upsert_entry(entry)
+
+        for i in range(10):
+            start = time.perf_counter()
+            db.record_influence("latency-test", f"agent-{i}", f"feature:{i:03d}")
+            elapsed = time.perf_counter() - start
+            assert elapsed < 0.1, (
+                f"record_influence call {i} took {elapsed:.4f}s, exceeds 100ms budget"
+            )

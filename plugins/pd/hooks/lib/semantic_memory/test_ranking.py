@@ -672,6 +672,29 @@ class TestInfluenceInProminence:
         assert p_b > p_a, "Entry with influence_count=10 should have higher prominence"
 
 
+class TestRecallCountAffectsRanking:
+    """REQ-6: entries with non-zero recall_count should rank higher (all else equal)."""
+
+    def test_recall_count_affects_ranking(self):
+        """Entry with recall_count > 0 ranks higher than recall_count = 0."""
+        engine = RankingEngine(_default_config())
+        _, entry_high = _make_entry("high", recall_count=5)
+        _, entry_low = _make_entry("low", recall_count=0)
+        entries = {"high": entry_high, "low": entry_low}
+
+        result = RetrievalResult(
+            candidates={
+                "high": CandidateScores(vector_score=0.5, bm25_score=5.0),
+                "low": CandidateScores(vector_score=0.5, bm25_score=5.0),
+            },
+            vector_candidate_count=2,
+            fts5_candidate_count=2,
+        )
+        ranked = engine.rank(result, entries, limit=10, now=_NOW)
+        assert ranked[0]["id"] == "high"
+        assert ranked[0]["final_score"] > ranked[1]["final_score"]
+
+
 # ---------------------------------------------------------------------------
 # Recall dampening with time decay (Feature 061)
 # ---------------------------------------------------------------------------
