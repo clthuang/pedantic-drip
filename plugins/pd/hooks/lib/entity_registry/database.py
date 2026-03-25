@@ -1146,6 +1146,12 @@ class EntityDatabase:
     def begin_immediate(self):
         """Context manager that wraps a block in BEGIN IMMEDIATE.
 
+        .. deprecated:: Use ``transaction()`` instead for new code.
+            ``transaction()`` supports re-entrancy (safe for nested calls),
+            while this method raises RuntimeError on nesting. Specifically:
+            - ``transaction()`` inside ``begin_immediate()`` works (re-entrant no-op)
+            - ``begin_immediate()`` inside ``transaction()`` raises RuntimeError
+
         Commits on success, rolls back on exception. Yields the connection.
         Sets ``_in_transaction`` so that ``_commit()`` calls inside the block
         are suppressed (matching ``transaction()`` semantics).

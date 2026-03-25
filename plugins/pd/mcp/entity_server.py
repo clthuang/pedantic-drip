@@ -181,7 +181,7 @@ def _resolve_ref_param(
 # ---------------------------------------------------------------------------
 
 
-@with_retry("entity-server")
+@with_retry("entity")
 def _process_update_entity(
     db: EntityDatabase,
     resolved_type_id: str,
@@ -198,14 +198,14 @@ def _process_update_entity(
     return f"Updated: {resolved_type_id}"
 
 
-@with_retry("entity-server")
+@with_retry("entity")
 def _process_delete_entity(db: EntityDatabase, resolved_type_id: str) -> str:
     """Delete an entity and all associated data (retryable)."""
     db.delete_entity(resolved_type_id)
     return json.dumps({"result": f"Deleted: {resolved_type_id}"})
 
 
-@with_retry("entity-server")
+@with_retry("entity")
 def _process_add_entity_tag(db: EntityDatabase, resolved_type_id: str, tag: str) -> str:
     """Add a tag to an entity (retryable)."""
     entity = db.get_entity(resolved_type_id)
@@ -215,7 +215,7 @@ def _process_add_entity_tag(db: EntityDatabase, resolved_type_id: str, tag: str)
     return json.dumps({"result": f"Tagged {resolved_type_id} with '{tag}'"})
 
 
-@with_retry("entity-server")
+@with_retry("entity")
 def _process_add_dependency(
     db: EntityDatabase,
     dep_mgr,
@@ -231,7 +231,7 @@ def _process_add_dependency(
     })
 
 
-@with_retry("entity-server")
+@with_retry("entity")
 def _process_remove_dependency(
     db: EntityDatabase,
     dep_mgr,
@@ -247,7 +247,7 @@ def _process_remove_dependency(
     })
 
 
-@with_retry("entity-server")
+@with_retry("entity")
 def _process_add_okr_alignment(
     db: EntityDatabase, entity_uuid: str, kr_uuid: str,
     entity_ref: str, kr_ref: str,
@@ -257,7 +257,7 @@ def _process_add_okr_alignment(
     return json.dumps({"result": f"Aligned {entity_ref} to {kr_ref}"})
 
 
-@with_retry("entity-server")
+@with_retry("entity")
 def _process_create_key_result(
     db: EntityDatabase,
     parent_type_id: str,
@@ -279,7 +279,7 @@ def _process_create_key_result(
     return json.dumps({"uuid": uuid, "type_id": f"key_result:{eid}", "weight": weight})
 
 
-@with_retry("entity-server")
+@with_retry("entity")
 def _process_update_kr_score(
     db: EntityDatabase, resolved_type_id: str, score: float,
 ) -> str:
