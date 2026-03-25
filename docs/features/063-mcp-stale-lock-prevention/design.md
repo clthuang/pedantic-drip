@@ -98,7 +98,7 @@ Consolidates duplicated PID management from entity_server and workflow_state_ser
 **Design decisions:**
 - `os._exit(0)` instead of `sys.exit()` — avoids hanging on MCP event loop cleanup in daemon threads
 - Daemon threads (`thread.daemon = True`) — don't prevent process exit
-- No `atexit` handler for PID cleanup — unreliable on SIGKILL; session-start cleanup handles stale files
+- No `atexit` handler for PID cleanup on MCP servers (which use `os._exit`) — unreliable on SIGKILL; session-start cleanup handles stale files. Exception: UI server uses `atexit` as best-effort since uvicorn handles SIGTERM gracefully
 - No external dependencies (psutil) — `os.getppid()` is sufficient on macOS where orphans always get PPID=1
 
 #### 2. Backfill Refactoring (MODIFY — `entity_registry/backfill.py`)
@@ -107,7 +107,7 @@ Replace all `db._conn.execute()` / `db._conn.commit()` calls with `db.transactio
 
 Three distinct refactoring targets:
 
-**`run_backfill()` (lines 145-149):** Bulk UPDATE setting `workflow_phase = 'finish'` for all NULL rows. This is a one-shot migration fix, not repeated lock-holding. Wrap in `db.transaction()` but keep as raw SQL since there's no public API for "update all rows matching a condition". Alternatively, query affected type_ids via `db.list_workflow_phases(workflow_phase=None)` then call `db.update_workflow_phase()` per row — but the bulk UPDATE is simpler and acceptable here since it's a single fast statement.
+**`run_backfill()` (lines 145-149):** Bulk UPDATE setting `workflow_phase = 'finish'` for all NULL rows. To satisfy the spec's zero `db._conn.execute()` grep requirement, replace with: query all workflow phases via `db.list_workflow_phases()`, filter client-side for `workflow_phase is None`, then call `db.update_workflow_phase(type_id, workflow_phase='finish')` per row inside `db.transaction()`. Slightly less efficient than bulk SQL but eliminates the last raw SQL call and keeps the spec acceptance criteria honest.
 
 **`backfill_workflow_phases()` read (line 224):** Replace `db._conn.execute("SELECT ...")` with `db.get_workflow_phase(type_id)` to eliminate the raw SQL read. This is needed because the spec's acceptance criteria greps for zero `db._conn.execute()` calls.
 
@@ -353,14 +353,14 @@ _recovery_thread: threading.Thread | None = None
 def _init_db_with_retry(
     db_path: str,
     max_retries: int = 3,
-    backoff_base: float = 2.0,
+    backoff_seconds: float = 2.0,
 ) -> EntityDatabase | None:
     """Attempt DB initialization with retries.
 
     Args:
         db_path: Path to SQLite database
         max_retries: Number of retry attempts
-        backoff_base: Base seconds for exponential backoff
+        backoff_seconds: Flat delay between retries (2s each, not exponential)
 
     Returns:
         EntityDatabase instance, or None if all retries failed
@@ -422,16 +422,12 @@ def backfill_workflow_phases_batched(db: EntityDatabase, entities: list, batch_s
                                              last_completed_phase=..., mode=...)
 
 # Pattern used in run_backfill() (line 145-149):
-# Bulk UPDATE for NULL workflow_phases — acceptable as raw SQL within transaction
-# since no public API exists for bulk conditional updates
+# Replace bulk UPDATE with public API to satisfy spec grep requirement
 with db.transaction():
-    db._conn.execute(
-        "UPDATE workflow_phases SET workflow_phase = 'finish' "
-        "WHERE workflow_phase IS NULL"
-    )
-# Note: this is the ONLY remaining db._conn usage in backfill.py.
-# Spec acceptance criteria grep should scope to backfill_workflow_phases() or
-# accept this single bulk migration statement.
+    all_phases = db.list_workflow_phases()
+    for row in all_phases:
+        if row["workflow_phase"] is None:
+            db.update_workflow_phase(row["type_id"], workflow_phase="finish")
 ```
 
 ### Session-Start Cleanup Interface
