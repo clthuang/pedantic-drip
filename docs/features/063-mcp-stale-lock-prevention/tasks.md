@@ -168,7 +168,7 @@ Note: run_backfill operates on a small set (only rows with workflow_phase IS NUL
 
 ### Task 2.3: Add PID management + watchdog to memory_server
 
-**Status:** pending
+**Status:** done
 **Files:** `plugins/pd/mcp/memory_server.py` (MODIFY)
 **Dependencies:** Task 1.1
 **Parallel group:** B
@@ -186,7 +186,7 @@ Note: run_backfill operates on a small set (only rows with workflow_phase IS NUL
 
 ### Task 2.4: Add PID management + lifetime watchdog to UI server
 
-**Status:** pending
+**Status:** done
 **Files:** `plugins/pd/ui/__main__.py` (MODIFY)
 **Dependencies:** Task 1.1
 **Parallel group:** B

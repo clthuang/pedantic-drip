@@ -29,6 +29,7 @@ from semantic_memory.keywords import extract_keywords
 from semantic_memory.writer import _embed_text_for_entry, _process_pending_embeddings
 
 from sqlite_retry import with_retry
+from server_lifecycle import write_pid, remove_pid, start_parent_watchdog
 
 from mcp.server.fastmcp import FastMCP
 
@@ -293,6 +294,9 @@ async def lifespan(server):
     """Manage DB connection and providers lifecycle."""
     global _db, _provider, _config, _project_root
 
+    write_pid("memory_server")
+    start_parent_watchdog()
+
     global_store = os.path.expanduser("~/.claude/pd/memory")
     os.makedirs(global_store, exist_ok=True)
 
@@ -317,6 +321,7 @@ async def lifespan(server):
     try:
         yield {}
     finally:
+        remove_pid("memory_server")
         if _db is not None:
             _db.close()
             _db = None
