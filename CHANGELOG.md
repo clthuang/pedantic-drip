@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `release.sh` now checks for stale remote tags before releasing and uses atomic push to prevent non-atomic releases
+
 ## [4.13.24] - 2026-03-26
 
 ### Added
