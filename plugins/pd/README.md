@@ -202,6 +202,8 @@ The `/pd:implement` command uses three reviewers in an iterative loop (up to 5 i
 
 ## MCP Tools
 
+All four MCP servers (memory, entity registry, workflow engine, UI) share a common lifecycle layer (`mcp/server_lifecycle.py`) that manages PID files, parent-PID watchdog, and session-lifetime watchdog. Orphaned server processes from previous sessions are cleaned up at session start.
+
 ### Memory Server
 
 The memory server (`mcp/memory_server.py`) exposes two tools for long-term semantic memory:
@@ -233,7 +235,7 @@ The entity registry server (`mcp/entity_server.py`) exposes eight tools for enti
 | `search_entities` | Search entities by name, type, status, or metadata |
 | `export_entities` | Export all entities as structured data |
 
-The server is bootstrapped by `mcp/run-entity-server.sh` and declared in `plugin.json` via `mcpServers`.
+The server is bootstrapped by `mcp/run-entity-server.sh` and declared in `plugin.json` via `mcpServers`. If the entity DB is locked at startup, the server starts in degraded mode and recovers automatically once the lock is released.
 
 ### Workflow Engine Server
 
@@ -257,7 +259,7 @@ The workflow engine server (`mcp/workflow_state_server.py`) exposes fifteen tool
 | `init_entity_workflow` | Initialize entity workflow tracking |
 | `transition_entity_phase` | Transition an entity to a new workflow phase |
 
-The server is bootstrapped by `mcp/run-workflow-server.sh` and declared in `plugin.json` via `mcpServers`.
+The server is bootstrapped by `mcp/run-workflow-server.sh` and declared in `plugin.json` via `mcpServers`. Like the entity server, it starts in degraded mode if the workflow state DB is locked and recovers automatically.
 
 ## Setup
 
