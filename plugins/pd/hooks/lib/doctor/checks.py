@@ -32,6 +32,77 @@ def _build_local_entity_set(artifacts_root: str) -> set[str]:
     }
 
 
+def _identify_lock_holders(db_path: str) -> list[str]:
+    """Identify processes potentially holding the DB lock.
+
+    Checks:
+    1. PID files in ~/.claude/pd/run/
+    2. lsof on db_path (if available)
+
+    Returns list of holder descriptions, empty if none found.
+    """
+    holders: list[str] = []
+    seen_pids: set[int] = set()
+
+    # 1. Scan PID files
+    pid_dir = os.path.expanduser("~/.claude/pd/run")
+    if os.path.isdir(pid_dir):
+        for pid_file in glob.glob(os.path.join(pid_dir, "*.pid")):
+            try:
+                with open(pid_file) as f:
+                    pid = int(f.read().strip())
+            except (ValueError, OSError):
+                continue
+
+            try:
+                os.kill(pid, 0)  # Check if alive
+            except OSError:
+                continue
+
+            seen_pids.add(pid)
+
+            # Get PPID
+            ppid_str = "unknown"
+            try:
+                result = subprocess.run(
+                    ["ps", "-o", "ppid=", "-p", str(pid)],
+                    capture_output=True, text=True, timeout=5,
+                )
+                ppid_str = result.stdout.strip()
+            except Exception:
+                pass
+
+            server_name = os.path.basename(pid_file).replace(".pid", "")
+            orphan_label = ", orphaned" if ppid_str == "1" else ""
+            holders.append(
+                f"PID {pid} ({server_name}, PPID={ppid_str}{orphan_label})"
+            )
+
+    # 2. lsof fallback
+    try:
+        result = subprocess.run(
+            ["lsof", db_path],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0 and result.stdout:
+            for line in result.stdout.strip().splitlines()[1:]:
+                parts = line.split()
+                if len(parts) >= 2:
+                    try:
+                        pid = int(parts[1])
+                    except ValueError:
+                        continue
+                    if pid in seen_pids:
+                        continue
+                    seen_pids.add(pid)
+                    proc_name = parts[0] if parts else "unknown"
+                    holders.append(f"PID {pid} ({proc_name}, via lsof)")
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    return holders
+
+
 def _test_db_lock(db_path: str, label: str) -> Issue | None:
     """Try BEGIN IMMEDIATE on a dedicated short-lived connection.
 
@@ -47,11 +118,20 @@ def _test_db_lock(db_path: str, label: str) -> Issue | None:
         return None
     except sqlite3.OperationalError as exc:
         if "locked" in str(exc).lower() or "busy" in str(exc).lower():
+            holders = _identify_lock_holders(db_path)
+            if holders:
+                holder_info = "; ".join(holders)
+                msg = f"{label} is locked by {holder_info}: {exc}"
+            else:
+                msg = (
+                    f"{label} is locked: {exc} "
+                    "— lock holder unknown, check ~/.claude/pd/run/"
+                )
             return Issue(
                 check="db_readiness",
                 severity="error",
                 entity=None,
-                message=f"{label} is locked: {exc}",
+                message=msg,
                 fix_hint="Kill the process holding the lock or wait for it to release",
             )
         return Issue(

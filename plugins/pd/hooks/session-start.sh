@@ -163,6 +163,60 @@ check_branch_mismatch() {
     return 1  # Match
 }
 
+# Clean up stale/orphaned MCP server processes via PID files + lsof fallback.
+# Called BEFORE doctor autofix and MCP health check to release DB locks early.
+cleanup_stale_mcp_servers() {
+    local pid_dir="$HOME/.claude/pd/run"
+    [[ -d "$pid_dir" ]] || return 0
+    for pid_file in "$pid_dir"/*.pid; do
+        [[ -f "$pid_file" ]] || continue
+        local pid
+        pid=$(cat "$pid_file" 2>/dev/null)
+        # Invalid/empty PID file — remove it
+        if [[ -z "$pid" ]] || ! [[ "$pid" =~ ^[0-9]+$ ]]; then
+            rm -f "$pid_file" 2>/dev/null
+            continue
+        fi
+        # Process not running — remove stale PID file
+        if ! kill -0 "$pid" 2>/dev/null; then
+            rm -f "$pid_file" 2>/dev/null
+            continue
+        fi
+        # Verify it's a Python process
+        local comm
+        comm=$(ps -o comm= -p "$pid" 2>/dev/null)
+        echo "$comm" | grep -iq python 2>/dev/null || continue
+        # Check if orphaned (PPID=1)
+        local ppid
+        ppid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+        [[ "$ppid" == "1" ]] || continue
+        # Kill orphan: SIGTERM, wait 5s, SIGKILL if still alive
+        kill -TERM "$pid" 2>/dev/null
+        sleep 5
+        kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
+        rm -f "$pid_file" 2>/dev/null
+    done
+    # lsof fallback: find Python processes with PPID=1 holding DB files
+    if command -v lsof >/dev/null 2>&1; then
+        local db_files=""
+        [[ -f "$HOME/.claude/pd/entities/entities.db" ]] && db_files="$HOME/.claude/pd/entities/entities.db"
+        [[ -f "$HOME/.claude/pd/memory/memory.db" ]] && db_files="$db_files $HOME/.claude/pd/memory/memory.db"
+        if [[ -n "$db_files" ]]; then
+            lsof $db_files 2>/dev/null | awk 'NR>1{print $2}' | sort -u | while read -r lpid; do
+                local lppid
+                lppid=$(ps -o ppid= -p "$lpid" 2>/dev/null | tr -d ' ')
+                [[ "$lppid" == "1" ]] || continue
+                local lcomm
+                lcomm=$(ps -o comm= -p "$lpid" 2>/dev/null)
+                echo "$lcomm" | grep -iq python 2>/dev/null || continue
+                kill -TERM "$lpid" 2>/dev/null
+                sleep 5
+                kill -0 "$lpid" 2>/dev/null && kill -9 "$lpid" 2>/dev/null
+            done
+        fi
+    fi
+}
+
 # Check MCP bootstrap error log for recent failures.
 # Reads ~/.claude/pd/mcp-bootstrap-errors.log for entries < 10 minutes old.
 # Returns warning text via stdout, or empty string.
@@ -533,6 +587,9 @@ main() {
 EOF
         exit 0
     fi
+
+    # Clean up stale/orphaned MCP servers before health checks (feature 063)
+    cleanup_stale_mcp_servers
 
     # Check MCP health before building context (R4: surface bootstrap failures early)
     local mcp_warning=""

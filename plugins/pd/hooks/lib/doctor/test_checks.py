@@ -2634,3 +2634,139 @@ class TestCliNoneSerializesAsJsonNull:
         # The JSON should be well-formed
         json.loads(raw)
         assert result.returncode == 0
+
+
+# ---------------------------------------------------------------------------
+# Lock Holder Identification Tests (feature 063)
+# ---------------------------------------------------------------------------
+
+
+class TestLockHolderIdentifiedViaPidFile:
+    """_identify_lock_holders returns holder info from PID files."""
+
+    def test_lock_holder_identified_via_pid_file(self, tmp_path, monkeypatch):
+        from doctor.checks import _identify_lock_holders
+
+        # Create a mock PID dir with a PID file
+        pid_dir = tmp_path / "run"
+        pid_dir.mkdir()
+        pid_file = pid_dir / "entity_server.pid"
+        pid_file.write_text("12345")
+
+        # Redirect expanduser to use our tmp dir
+        orig_expanduser = os.path.expanduser
+
+        def mock_expanduser(p):
+            if p == "~/.claude/pd/run":
+                return str(pid_dir)
+            return orig_expanduser(p)
+
+        monkeypatch.setattr("os.path.expanduser", mock_expanduser)
+
+        # Mock os.kill to succeed (process alive)
+        orig_kill = os.kill
+
+        def mock_kill(pid, sig):
+            if pid == 12345 and sig == 0:
+                return None
+            return orig_kill(pid, sig)
+
+        monkeypatch.setattr("os.kill", mock_kill)
+
+        # Mock subprocess.run for ps and lsof
+        orig_sub_run = subprocess.run
+
+        def mock_sub_run(cmd, **kwargs):
+            if cmd[0] == "ps" and "12345" in cmd:
+                result = type("Result", (), {
+                    "stdout": "    1\n",
+                    "stderr": "",
+                    "returncode": 0,
+                })()
+                return result
+            if cmd[0] == "lsof":
+                raise FileNotFoundError("no lsof")
+            return orig_sub_run(cmd, **kwargs)
+
+        monkeypatch.setattr("subprocess.run", mock_sub_run)
+
+        holders = _identify_lock_holders("/fake/db.path")
+        assert len(holders) == 1
+        assert "12345" in holders[0]
+        assert "entity_server" in holders[0]
+        assert "orphaned" in holders[0]
+
+
+class TestLockHolderIdentifiedViaLsof:
+    """_identify_lock_holders returns holder info from lsof fallback."""
+
+    def test_lock_holder_identified_via_lsof(self, tmp_path, monkeypatch):
+        from doctor.checks import _identify_lock_holders
+
+        # Empty PID dir (no PID files)
+        pid_dir = tmp_path / "run"
+        pid_dir.mkdir()
+
+        orig_expanduser = os.path.expanduser
+
+        def mock_expanduser(p):
+            if p == "~/.claude/pd/run":
+                return str(pid_dir)
+            return orig_expanduser(p)
+
+        monkeypatch.setattr("os.path.expanduser", mock_expanduser)
+
+        # Mock subprocess.run for lsof
+        orig_sub_run = subprocess.run
+
+        def mock_sub_run(cmd, **kwargs):
+            if cmd[0] == "lsof":
+                result = type("Result", (), {
+                    "stdout": (
+                        "COMMAND  PID  USER  FD  TYPE DEVICE SIZE/OFF NODE NAME\n"
+                        "python3  9876 user  3u  REG  1,5  32768 123 /fake/db.path\n"
+                    ),
+                    "stderr": "",
+                    "returncode": 0,
+                })()
+                return result
+            return orig_sub_run(cmd, **kwargs)
+
+        monkeypatch.setattr("subprocess.run", mock_sub_run)
+
+        holders = _identify_lock_holders("/fake/db.path")
+        assert len(holders) == 1
+        assert "9876" in holders[0]
+        assert "python3" in holders[0]
+        assert "lsof" in holders[0]
+
+
+class TestLockHolderUnknownFallback:
+    """_identify_lock_holders returns empty list when no holders found."""
+
+    def test_lock_holder_unknown_fallback(self, tmp_path, monkeypatch):
+        from doctor.checks import _identify_lock_holders
+
+        # Empty PID dir
+        pid_dir = tmp_path / "run"
+        pid_dir.mkdir()
+
+        orig_expanduser = os.path.expanduser
+
+        def mock_expanduser(p):
+            if p == "~/.claude/pd/run":
+                return str(pid_dir)
+            return orig_expanduser(p)
+
+        monkeypatch.setattr("os.path.expanduser", mock_expanduser)
+
+        # Mock lsof as unavailable
+        def mock_sub_run(cmd, **kwargs):
+            if cmd[0] == "lsof":
+                raise FileNotFoundError("lsof not found")
+            return subprocess.run(cmd, **kwargs)
+
+        monkeypatch.setattr("subprocess.run", mock_sub_run)
+
+        holders = _identify_lock_holders("/fake/db.path")
+        assert holders == []
