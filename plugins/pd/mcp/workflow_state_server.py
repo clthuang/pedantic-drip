@@ -8,10 +8,8 @@ from __future__ import annotations
 import functools
 import json
 import os
-import random
 import sqlite3
 import sys
-import time
 from contextlib import asynccontextmanager
 
 # Make workflow_engine, transition_gate, entity_registry, semantic_memory
@@ -19,6 +17,8 @@ from contextlib import asynccontextmanager
 _hooks_lib = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "hooks", "lib"))
 if _hooks_lib not in (os.path.normpath(p) for p in sys.path):
     sys.path.insert(0, _hooks_lib)
+
+from sqlite_retry import with_retry, is_transient
 
 from entity_registry.database import EntityDatabase
 from entity_registry.entity_lifecycle import (
@@ -421,13 +421,13 @@ def _catch_entity_value_error(func):
     return wrapper
 
 
-def _is_transient(exc: sqlite3.Error) -> bool:
-    """Return True if the error is a transient lock contention error."""
-    return "locked" in str(exc).lower()
+_is_transient = is_transient
 
 
-def _with_retry(max_attempts=3, backoff=(0.1, 0.5, 2.0)):
+def _with_retry(**kwargs):
     """Retry decorator for transient SQLite write errors.
+
+    Delegates to shared sqlite_retry.with_retry with server_name="workflow-state".
 
     Applied INSIDE _with_error_handling so retries happen before
     the error is converted to a terminal MCP response.
@@ -438,29 +438,7 @@ def _with_retry(max_attempts=3, backoff=(0.1, 0.5, 2.0)):
       @_catch_value_error      <- inner: converts ValueError to structured error
       def _process_foo(...)
     """
-    def decorator(func):
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            last_exc = None
-            for attempt in range(max_attempts):
-                try:
-                    return func(*args, **kwargs)
-                except sqlite3.OperationalError as exc:
-                    if not _is_transient(exc):
-                        raise
-                    last_exc = exc
-                    if attempt < max_attempts - 1:
-                        delay = backoff[min(attempt, len(backoff) - 1)]
-                        jitter = random.uniform(0, 0.05)
-                        print(
-                            f"workflow-state: retry {attempt+1}/{max_attempts} "
-                            f"after {exc} (sleeping {delay:.1f}s)",
-                            file=sys.stderr,
-                        )
-                        time.sleep(delay + jitter)
-            raise last_exc  # Exhausted — propagates to _with_error_handling
-        return wrapper
-    return decorator
+    return with_retry("workflow-state", **kwargs)
 
 
 @_with_error_handling
