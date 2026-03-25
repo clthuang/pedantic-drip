@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.0.0] - 2026-03-25
+
 ### Added
 - Project-scoped memory search — `search_memory` and session injection now filter by project with two-tier blend
 - Recall dampening with 14-day time decay — stale frequently-recalled entries lose ranking advantage
