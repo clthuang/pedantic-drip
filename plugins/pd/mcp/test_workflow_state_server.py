@@ -7231,62 +7231,130 @@ class TestIsTransient:
 
 
 class TestPidFile:
-    """PID file lifecycle: write at startup, remove at shutdown, overwrite stale."""
+    """PID file lifecycle: write at startup, remove at shutdown, overwrite stale.
+
+    Tests use server_lifecycle module (shared infrastructure).
+    """
 
     def test_pid_file_written_at_startup(self, tmp_path):
-        """_write_pid creates PID file with current process PID."""
-        from workflow_state_server import _write_pid, _remove_pid
+        """write_pid creates PID file with current process PID."""
+        import server_lifecycle as sl
 
-        # Override _PID_DIR to use tmp_path
-        import workflow_state_server as wss
-        original_pid_dir = wss._PID_DIR
-        wss._PID_DIR = str(tmp_path)
+        original_pid_dir = sl.PID_DIR
+        sl.PID_DIR = tmp_path
         try:
-            pid_path = _write_pid("test_server")
-            assert os.path.isfile(pid_path), "PID file should exist after _write_pid"
-            content = open(pid_path).read().strip()
+            pid_path = sl.write_pid("test_server")
+            assert pid_path.is_file(), "PID file should exist after write_pid"
+            content = pid_path.read_text().strip()
             assert content == str(os.getpid()), (
                 f"PID file should contain current PID {os.getpid()}, got {content!r}"
             )
         finally:
-            _remove_pid(pid_path)
-            wss._PID_DIR = original_pid_dir
+            sl.remove_pid("test_server")
+            sl.PID_DIR = original_pid_dir
 
     def test_pid_file_removed_at_shutdown(self, tmp_path):
-        """_remove_pid deletes the PID file."""
-        from workflow_state_server import _write_pid, _remove_pid
+        """remove_pid deletes the PID file."""
+        import server_lifecycle as sl
 
-        import workflow_state_server as wss
-        original_pid_dir = wss._PID_DIR
-        wss._PID_DIR = str(tmp_path)
+        original_pid_dir = sl.PID_DIR
+        sl.PID_DIR = tmp_path
         try:
-            pid_path = _write_pid("test_server")
-            assert os.path.isfile(pid_path), "PID file should exist before removal"
-            _remove_pid(pid_path)
-            assert not os.path.isfile(pid_path), "PID file should not exist after _remove_pid"
+            pid_path = sl.write_pid("test_server")
+            assert pid_path.is_file(), "PID file should exist before removal"
+            sl.remove_pid("test_server")
+            assert not pid_path.is_file(), "PID file should not exist after remove_pid"
         finally:
-            wss._PID_DIR = original_pid_dir
+            sl.PID_DIR = original_pid_dir
 
     def test_stale_pid_file_overwritten(self, tmp_path):
         """Stale PID file (non-existent process) is overwritten with current PID."""
-        from workflow_state_server import _write_pid, _remove_pid
+        import server_lifecycle as sl
 
-        import workflow_state_server as wss
-        original_pid_dir = wss._PID_DIR
-        wss._PID_DIR = str(tmp_path)
+        original_pid_dir = sl.PID_DIR
+        sl.PID_DIR = tmp_path
         try:
             # Write a stale PID (use a very high PID unlikely to exist)
-            pid_path = os.path.join(str(tmp_path), "test_server.pid")
-            with open(pid_path, "w") as f:
-                f.write("999999999")
+            pid_path = tmp_path / "test_server.pid"
+            pid_path.write_text("999999999")
 
-            # _write_pid should overwrite the stale PID
-            result_path = _write_pid("test_server")
+            # write_pid should overwrite the stale PID
+            result_path = sl.write_pid("test_server")
             assert result_path == pid_path
-            content = open(pid_path).read().strip()
+            content = pid_path.read_text().strip()
             assert content == str(os.getpid()), (
                 f"Stale PID should be overwritten with current PID {os.getpid()}, got {content!r}"
             )
         finally:
-            _remove_pid(pid_path)
-            wss._PID_DIR = original_pid_dir
+            sl.remove_pid("test_server")
+            sl.PID_DIR = original_pid_dir
+
+
+# ---------------------------------------------------------------------------
+# Degraded mode tests (Task 3.3)
+# ---------------------------------------------------------------------------
+
+
+class TestDegradedMode:
+    """Degraded mode: DB unavailable on startup, tools return error, recovery thread."""
+
+    def test_degraded_mode_on_db_lock(self):
+        """_init_db_with_retry returns None when DB is locked."""
+        import workflow_state_server as wss
+        from unittest.mock import patch
+
+        with patch.object(
+            wss, "EntityDatabase",
+            side_effect=sqlite3.OperationalError("database is locked"),
+        ):
+            result = wss._init_db_with_retry("/fake/path.db", max_retries=2, backoff_seconds=0.01)
+        assert result is None, "Should return None when all retries fail"
+
+    def test_degraded_tool_returns_error(self):
+        """Tool handlers return structured error when _db_unavailable is True."""
+        import workflow_state_server as wss
+
+        original = wss._db_unavailable
+        wss._db_unavailable = True
+        try:
+            result = wss._check_db_available()
+            assert result is not None, "_check_db_available should return error string"
+            parsed = json.loads(result)
+            assert parsed["error"] == "database temporarily unavailable"
+        finally:
+            wss._db_unavailable = original
+
+    def test_recovery_thread_recovers(self, tmp_path):
+        """Recovery thread sets _db_unavailable=False after successful DB init."""
+        import workflow_state_server as wss
+        from unittest.mock import patch, MagicMock
+
+        db_path = str(tmp_path / "test.db")
+
+        # Save originals
+        orig_db = wss._db
+        orig_unavailable = wss._db_unavailable
+
+        call_count = 0
+        mock_db = MagicMock()
+
+        def fake_db_init(path):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise sqlite3.OperationalError("database is locked")
+            return mock_db
+
+        wss._db = None
+        wss._db_unavailable = True
+
+        try:
+            with patch.object(wss, "EntityDatabase", side_effect=fake_db_init):
+                thread = wss._start_recovery_thread(db_path, poll_interval=0.05)
+                thread.join(timeout=2.0)
+                assert not thread.is_alive(), "Recovery thread should exit after success"
+                assert wss._db_unavailable is False, "Should recover"
+                assert wss._db is mock_db, "_db should be set to new instance"
+        finally:
+            wss._db = orig_db
+            wss._db_unavailable = orig_unavailable

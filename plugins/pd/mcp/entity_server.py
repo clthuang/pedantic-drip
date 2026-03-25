@@ -6,8 +6,12 @@ Runs as a subprocess via stdio transport.  Never print to stdout
 from __future__ import annotations
 
 import json
+import logging
 import os
+import sqlite3
 import sys
+import threading
+import time
 from contextlib import asynccontextmanager
 
 # Make entity_registry and semantic_memory importable from hooks/lib/.
@@ -29,51 +33,92 @@ from semantic_memory.config import read_config
 from sqlite_retry import with_retry
 
 from mcp.server.fastmcp import FastMCP
+from server_lifecycle import write_pid, remove_pid, start_parent_watchdog
 
 # ---------------------------------------------------------------------------
 # Module-level globals (set during lifespan)
 # ---------------------------------------------------------------------------
 
-_PID_DIR = os.path.expanduser("~/.claude/pd/run")
-
 _db: EntityDatabase | None = None
+_db_unavailable: bool = False
+_recovery_thread: threading.Thread | None = None
 _config: dict = {}
 _project_root: str = ""
 _artifacts_root: str = ""
+
+_logger = logging.getLogger("entity_server")
+
+
+# ---------------------------------------------------------------------------
+# Degraded mode helpers
+# ---------------------------------------------------------------------------
+
+
+def _init_db_with_retry(
+    db_path: str,
+    max_retries: int = 3,
+    backoff_seconds: float = 2.0,
+) -> EntityDatabase | None:
+    """Attempt DB initialization with retries.
+
+    Returns EntityDatabase instance, or None if all retries failed.
+    """
+    for attempt in range(max_retries):
+        try:
+            return EntityDatabase(db_path)
+        except sqlite3.OperationalError:
+            if attempt < max_retries - 1:
+                time.sleep(backoff_seconds)
+    return None
+
+
+def _start_recovery_thread(
+    db_path: str,
+    poll_interval: float = 30.0,
+) -> threading.Thread:
+    """Start daemon thread that retries DB initialization.
+
+    On success: sets global _db, clears _db_unavailable.
+    Thread exits after successful recovery.
+    """
+    global _db, _db_unavailable
+
+    def _recover():
+        global _db, _db_unavailable
+        while True:
+            time.sleep(poll_interval)
+            try:
+                new_db = EntityDatabase(db_path)
+                _db = new_db
+                _db_unavailable = False
+                _logger.info(
+                    "DB recovered — backfill skipped, will run on next restart"
+                )
+                return
+            except sqlite3.OperationalError:
+                continue
+
+    thread = threading.Thread(target=_recover, name="db-recovery", daemon=True)
+    thread.start()
+    return thread
+
+
+def _check_db_available():
+    """Return error dict if DB is unavailable, else None."""
+    if _db_unavailable:
+        return {"error": "database temporarily unavailable"}
+    return None
+
 
 # ---------------------------------------------------------------------------
 # Lifespan handler
 # ---------------------------------------------------------------------------
 
 
-def _write_pid(server_name: str) -> str:
-    """Write current PID to a file for monitoring. Returns PID file path."""
-    os.makedirs(_PID_DIR, exist_ok=True)
-    pid_path = os.path.join(_PID_DIR, f"{server_name}.pid")
-    if os.path.isfile(pid_path):
-        try:
-            old_pid = int(open(pid_path).read().strip())
-            os.kill(old_pid, 0)  # Check if alive
-            print(f"Another {server_name} instance running (PID {old_pid})", file=sys.stderr)
-        except (ProcessLookupError, ValueError, OSError):
-            pass  # Stale or unreadable — overwrite
-    with open(pid_path, "w") as f:
-        f.write(str(os.getpid()))
-    return pid_path
-
-
-def _remove_pid(pid_path: str) -> None:
-    """Remove PID file on shutdown."""
-    try:
-        os.remove(pid_path)
-    except OSError:
-        pass
-
-
 @asynccontextmanager
 async def lifespan(server):
     """Manage DB connection and backfill lifecycle."""
-    global _db, _config, _project_root, _artifacts_root
+    global _db, _db_unavailable, _recovery_thread, _config, _project_root, _artifacts_root
 
     # Determine DB path (env override for testing, else global store).
     db_path = os.environ.get(
@@ -82,46 +127,55 @@ async def lifespan(server):
     )
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
 
-    _db = EntityDatabase(db_path)
+    write_pid("entity_server")
+    start_parent_watchdog()
 
-    # Read config from the project root.
-    project_root = os.environ.get("PROJECT_ROOT", os.getcwd())
-    _project_root = project_root
-    config = read_config(project_root)
-    _config = config
-    _artifacts_root = os.path.join(project_root, str(config.get("artifacts_root", "docs")))
+    _db = _init_db_with_retry(db_path)
+    if _db is None:
+        _db_unavailable = True
+        _recovery_thread = _start_recovery_thread(db_path)
+        print(
+            "entity-server: started in DEGRADED mode (DB locked)",
+            file=sys.stderr,
+        )
+    else:
+        # Read config from the project root.
+        project_root = os.environ.get("PROJECT_ROOT", os.getcwd())
+        _project_root = project_root
+        config = read_config(project_root)
+        _config = config
+        _artifacts_root = os.path.join(project_root, str(config.get("artifacts_root", "docs")))
 
-    # Backfill existing artifacts (idempotency guard inside run_backfill).
-    try:
-        run_backfill(_db, _artifacts_root)
-    except Exception as exc:
-        print(f"entity-server: backfill failed: {exc}", file=sys.stderr)
+        # Backfill existing artifacts (idempotency guard inside run_backfill).
+        try:
+            run_backfill(_db, _artifacts_root)
+        except Exception as exc:
+            print(f"entity-server: backfill failed: {exc}", file=sys.stderr)
 
-    # Always run workflow_phases backfill (has its own INSERT OR IGNORE idempotency).
-    # Called OUTSIDE the backfill_complete guard so newly registered entities
-    # get workflow_phases rows on every startup.
-    try:
-        from entity_registry.backfill import backfill_workflow_phases
+        # Always run workflow_phases backfill (has its own INSERT OR IGNORE idempotency).
+        # Called OUTSIDE the backfill_complete guard so newly registered entities
+        # get workflow_phases rows on every startup.
+        try:
+            from entity_registry.backfill import backfill_workflow_phases
 
-        result = backfill_workflow_phases(_db, _artifacts_root)
-        if result["created"] > 0:
-            print(
-                f"entity-server: workflow_phases backfill created {result['created']} rows",
-                file=sys.stderr,
-            )
-    except Exception as exc:
-        print(f"entity-server: workflow_phases backfill failed: {exc}", file=sys.stderr)
+            result = backfill_workflow_phases(_db, _artifacts_root)
+            if result["created"] > 0:
+                print(
+                    f"entity-server: workflow_phases backfill created {result['created']} rows",
+                    file=sys.stderr,
+                )
+        except Exception as exc:
+            print(f"entity-server: workflow_phases backfill failed: {exc}", file=sys.stderr)
 
-    print(
-        f"entity-server: started (db={db_path}, artifacts={_artifacts_root})",
-        file=sys.stderr,
-    )
+        print(
+            f"entity-server: started (db={db_path}, artifacts={_artifacts_root})",
+            file=sys.stderr,
+        )
 
-    pid_path = _write_pid("entity_server")
     try:
         yield {}
     finally:
-        _remove_pid(pid_path)
+        remove_pid("entity_server")
         if _db is not None:
             _db.close()
             _db = None
@@ -328,6 +382,9 @@ async def register_entity(
 
     Returns confirmation message or error.
     """
+    err = _check_db_available()
+    if err:
+        return json.dumps(err)
     if _db is None:
         return "Error: database not initialized (server not started)"
 
@@ -363,6 +420,9 @@ async def set_parent(
 
     Returns confirmation message or error.
     """
+    err = _check_db_available()
+    if err:
+        return json.dumps(err)
     if _db is None:
         return "Error: database not initialized (server not started)"
 
@@ -391,6 +451,9 @@ async def get_entity(type_id: str | None = None, ref: str | None = None) -> str:
 
     Returns JSON representation of the entity or not-found message.
     """
+    err = _check_db_available()
+    if err:
+        return json.dumps(err)
     if _db is None:
         return "Error: database not initialized (server not started)"
 
@@ -430,6 +493,9 @@ async def get_lineage(
 
     Returns formatted tree string or error message.
     """
+    err = _check_db_available()
+    if err:
+        return json.dumps(err)
     if _db is None:
         return "Error: database not initialized (server not started)"
 
@@ -470,6 +536,9 @@ async def update_entity(
 
     Returns confirmation message or error.
     """
+    err = _check_db_available()
+    if err:
+        return json.dumps(err)
     if _db is None:
         return "Error: database not initialized (server not started)"
 
@@ -509,6 +578,9 @@ async def export_lineage_markdown(
 
     Returns markdown string or file-write confirmation.
     """
+    err = _check_db_available()
+    if err:
+        return json.dumps(err)
     if _db is None:
         return "Error: database not initialized (server not started)"
 
@@ -541,6 +613,9 @@ async def export_entities(
 
     Returns JSON string or file-write confirmation.
     """
+    err = _check_db_available()
+    if err:
+        return json.dumps(err)
     if _db is None:
         return "Error: database not initialized (server not started)"
     return _process_export_entities(
@@ -562,6 +637,9 @@ async def delete_entity(type_id: str | None = None, ref: str | None = None) -> s
 
     Returns confirmation JSON or error JSON.
     """
+    err = _check_db_available()
+    if err:
+        return json.dumps(err)
     if _db is None:
         return "Error: database not initialized (server not started)"
     try:
@@ -590,6 +668,9 @@ async def add_entity_tag(
 
     Returns confirmation or error.
     """
+    err = _check_db_available()
+    if err:
+        return json.dumps(err)
     if _db is None:
         return "Error: database not initialized (server not started)"
     try:
@@ -614,6 +695,9 @@ async def get_entity_tags(type_id: str | None = None, ref: str | None = None) ->
 
     Returns JSON list of tags or error.
     """
+    err = _check_db_available()
+    if err:
+        return json.dumps(err)
     if _db is None:
         return "Error: database not initialized (server not started)"
     try:
@@ -645,6 +729,9 @@ async def add_dependency(
 
     Returns confirmation JSON or error JSON.
     """
+    err = _check_db_available()
+    if err:
+        return json.dumps(err)
     if _db is None:
         return "Error: database not initialized (server not started)"
     try:
@@ -680,6 +767,9 @@ async def remove_dependency(
 
     Returns confirmation JSON or error JSON.
     """
+    err = _check_db_available()
+    if err:
+        return json.dumps(err)
     if _db is None:
         return "Error: database not initialized (server not started)"
     try:
@@ -716,6 +806,9 @@ async def search_entities(
 
     Returns formatted search results or error message.
     """
+    err = _check_db_available()
+    if err:
+        return json.dumps(err)
     if _db is None:
         return "Error: database not initialized (server not started)"
 
@@ -755,6 +848,9 @@ async def add_okr_alignment(entity_ref: str, kr_ref: str) -> str:
     kr_ref:
         The key_result to align with (type_id, UUID, or prefix).
     """
+    err = _check_db_available()
+    if err:
+        return json.dumps(err)
     if _db is None:
         return "Error: database not initialized (server not started)"
     try:
@@ -774,6 +870,9 @@ async def get_okr_alignments(entity_ref: str) -> str:
     entity_ref:
         The entity to query (type_id, UUID, or prefix).
     """
+    err = _check_db_available()
+    if err:
+        return json.dumps(err)
     if _db is None:
         return "Error: database not initialized (server not started)"
     try:
@@ -816,6 +915,9 @@ async def create_key_result(
     status:
         Optional initial status.
     """
+    err = _check_db_available()
+    if err:
+        return json.dumps(err)
     if _db is None:
         return "Error: database not initialized (server not started)"
     _VALID_METRIC_TYPES = ("milestone", "binary", "baseline_target", "target", "baseline")
@@ -846,6 +948,9 @@ async def update_kr_score(
     score:
         New score value (0.0-1.0).
     """
+    err = _check_db_available()
+    if err:
+        return json.dumps(err)
     if _db is None:
         return "Error: database not initialized (server not started)"
     if not (0.0 <= score <= 1.0):

@@ -10,6 +10,8 @@ import json
 import os
 import sqlite3
 import sys
+import threading
+import time
 from contextlib import asynccontextmanager
 
 # Make workflow_engine, transition_gate, entity_registry, semantic_memory
@@ -18,6 +20,7 @@ _hooks_lib = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "hoo
 if _hooks_lib not in (os.path.normpath(p) for p in sys.path):
     sys.path.insert(0, _hooks_lib)
 
+from server_lifecycle import write_pid, remove_pid, start_parent_watchdog
 from sqlite_retry import with_retry, is_transient
 
 from entity_registry.database import EntityDatabase
@@ -66,9 +69,9 @@ from mcp.server.fastmcp import FastMCP
 # Module-level globals (set during lifespan)
 # ---------------------------------------------------------------------------
 
-_PID_DIR = os.path.expanduser("~/.claude/pd/run")
-
 _db: EntityDatabase | None = None
+_db_unavailable: bool = False
+_recovery_thread: threading.Thread | None = None
 _engine: WorkflowStateEngine | None = None
 _entity_engine: EntityWorkflowEngine | None = None
 _artifacts_root: str = ""
@@ -76,64 +79,112 @@ _project_root: str = ""
 _notification_queue: NotificationQueue | None = None
 
 # ---------------------------------------------------------------------------
-# Lifespan
+# Degraded mode helpers
 # ---------------------------------------------------------------------------
 
 
-def _write_pid(server_name: str) -> str:
-    """Write current PID to a file for monitoring. Returns PID file path."""
-    os.makedirs(_PID_DIR, exist_ok=True)
-    pid_path = os.path.join(_PID_DIR, f"{server_name}.pid")
-    if os.path.isfile(pid_path):
+def _init_db_with_retry(
+    db_path: str,
+    max_retries: int = 3,
+    backoff_seconds: float = 2.0,
+) -> EntityDatabase | None:
+    """Attempt DB initialization with retries.
+
+    Returns EntityDatabase instance, or None if all retries failed.
+    """
+    for attempt in range(max_retries):
         try:
-            old_pid = int(open(pid_path).read().strip())
-            os.kill(old_pid, 0)  # Check if alive
-            print(f"Another {server_name} instance running (PID {old_pid})", file=sys.stderr)
-        except (ProcessLookupError, ValueError, OSError):
-            pass  # Stale or unreadable — overwrite
-    with open(pid_path, "w") as f:
-        f.write(str(os.getpid()))
-    return pid_path
+            return EntityDatabase(db_path)
+        except sqlite3.OperationalError:
+            if attempt < max_retries - 1:
+                time.sleep(backoff_seconds)
+    return None
 
 
-def _remove_pid(pid_path: str) -> None:
-    """Remove PID file on shutdown."""
-    try:
-        os.remove(pid_path)
-    except OSError:
-        pass
+def _start_recovery_thread(
+    db_path: str,
+    poll_interval: float = 30.0,
+) -> threading.Thread:
+    """Start daemon thread that retries DB initialization.
+
+    On success: sets _db to new instance, clears _db_unavailable.
+    Thread exits after successful recovery.
+    """
+    global _db, _db_unavailable, _engine, _entity_engine, _notification_queue, _project_root, _artifacts_root
+
+    def _recover():
+        global _db, _db_unavailable, _engine, _entity_engine, _notification_queue, _project_root, _artifacts_root
+        while True:
+            time.sleep(poll_interval)
+            try:
+                new_db = EntityDatabase(db_path)
+                # Initialize engine and related objects
+                project_root = os.environ.get("PROJECT_ROOT", os.getcwd())
+                _project_root = project_root
+                config = read_config(project_root)
+                _artifacts_root = os.path.join(project_root, str(config.get("artifacts_root", "docs")))
+                _engine = WorkflowStateEngine(new_db, _artifacts_root)
+                _notification_queue = NotificationQueue()
+                _entity_engine = EntityWorkflowEngine(
+                    new_db, _artifacts_root, _notification_queue, project_root=_project_root
+                )
+                _db = new_db
+                _db_unavailable = False
+                print("workflow-engine: DB recovered", file=sys.stderr)
+                return
+            except sqlite3.OperationalError:
+                continue
+
+    thread = threading.Thread(target=_recover, name="db-recovery", daemon=True)
+    thread.start()
+    return thread
+
+
+def _check_db_available() -> str | None:
+    """Return error JSON if DB is unavailable, else None."""
+    if _db_unavailable:
+        return json.dumps({"error": "database temporarily unavailable"})
+    return None
 
 
 @asynccontextmanager
 async def lifespan(server):
     """Manage DB connection and engine lifecycle."""
-    global _db, _engine, _entity_engine, _artifacts_root, _project_root, _notification_queue
+    global _db, _db_unavailable, _recovery_thread
+    global _engine, _entity_engine, _artifacts_root, _project_root, _notification_queue
+
+    write_pid("workflow_state_server")
+    start_parent_watchdog()
 
     db_path = os.environ.get(
         "ENTITY_DB_PATH",
         os.path.expanduser("~/.claude/pd/entities/entities.db"),
     )
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    _db = EntityDatabase(db_path)
 
-    project_root = os.environ.get("PROJECT_ROOT", os.getcwd())
-    _project_root = project_root
-    config = read_config(project_root)
-    _artifacts_root = os.path.join(project_root, str(config.get("artifacts_root", "docs")))
+    _db = _init_db_with_retry(db_path)
+    if _db is None:
+        _db_unavailable = True
+        _recovery_thread = _start_recovery_thread(db_path)
+        print("workflow-engine: started in degraded mode (DB unavailable)", file=sys.stderr)
+    else:
+        project_root = os.environ.get("PROJECT_ROOT", os.getcwd())
+        _project_root = project_root
+        config = read_config(project_root)
+        _artifacts_root = os.path.join(project_root, str(config.get("artifacts_root", "docs")))
 
-    _engine = WorkflowStateEngine(_db, _artifacts_root)
-    _notification_queue = NotificationQueue()
-    _entity_engine = EntityWorkflowEngine(
-        _db, _artifacts_root, _notification_queue, project_root=_project_root
-    )
+        _engine = WorkflowStateEngine(_db, _artifacts_root)
+        _notification_queue = NotificationQueue()
+        _entity_engine = EntityWorkflowEngine(
+            _db, _artifacts_root, _notification_queue, project_root=_project_root
+        )
 
-    print(f"workflow-engine: started (db={db_path}, artifacts={_artifacts_root})", file=sys.stderr)
+        print(f"workflow-engine: started (db={db_path}, artifacts={_artifacts_root})", file=sys.stderr)
 
-    pid_path = _write_pid("workflow_state_server")
     try:
         yield {}
     finally:
-        _remove_pid(pid_path)
+        remove_pid("workflow_state_server")
         if _db is not None:
             _db.close()
             _db = None
@@ -1045,6 +1096,9 @@ mcp = FastMCP("workflow-engine", lifespan=lifespan)
 @mcp.tool()
 async def get_phase(feature_type_id: str | None = None, ref: str | None = None) -> str:
     """Read the current workflow state for a feature."""
+    err = _check_db_available()
+    if err:
+        return err
     if _engine is None or _db is None:
         return _NOT_INITIALIZED
     try:
@@ -1063,6 +1117,9 @@ async def transition_phase(
     ref: str | None = None,
 ) -> str:
     """Validate and enter a target phase."""
+    err = _check_db_available()
+    if err:
+        return err
     if _engine is None or _db is None:
         return _NOT_INITIALIZED
     try:
@@ -1085,6 +1142,9 @@ async def complete_phase(
     ref: str | None = None,
 ) -> str:
     """Record a phase as completed and advance to next phase."""
+    err = _check_db_available()
+    if err:
+        return err
     if _engine is None or _db is None:
         return _NOT_INITIALIZED
     try:
@@ -1105,6 +1165,9 @@ async def validate_prerequisites(
     ref: str | None = None,
 ) -> str:
     """Dry-run gate evaluation without executing the transition."""
+    err = _check_db_available()
+    if err:
+        return err
     if _engine is None or _db is None:
         return _NOT_INITIALIZED
     try:
@@ -1117,6 +1180,9 @@ async def validate_prerequisites(
 @mcp.tool()
 async def list_features_by_phase(phase: str) -> str:
     """All features currently in a given workflow phase."""
+    err = _check_db_available()
+    if err:
+        return err
     if _engine is None:
         return _NOT_INITIALIZED
     return _process_list_features_by_phase(_engine, phase)
@@ -1125,6 +1191,9 @@ async def list_features_by_phase(phase: str) -> str:
 @mcp.tool()
 async def list_features_by_status(status: str) -> str:
     """All features with a given entity status."""
+    err = _check_db_available()
+    if err:
+        return err
     if _engine is None:
         return _NOT_INITIALIZED
     return _process_list_features_by_status(_engine, status)
@@ -1133,6 +1202,9 @@ async def list_features_by_status(status: str) -> str:
 @mcp.tool()
 async def reconcile_check(feature_type_id: str | None = None) -> str:
     """Compare .meta.json workflow state against DB for drift detection."""
+    err = _check_db_available()
+    if err:
+        return err
     if _engine is None or _db is None:
         return _NOT_INITIALIZED
     return _process_reconcile_check(_engine, _db, _artifacts_root, feature_type_id)
@@ -1144,6 +1216,9 @@ async def reconcile_apply(
     dry_run: bool = False,
 ) -> str:
     """Sync .meta.json workflow state to DB for features where .meta.json is ahead."""
+    err = _check_db_available()
+    if err:
+        return err
     if _engine is None or _db is None:
         return _NOT_INITIALIZED
     return _process_reconcile_apply(
@@ -1154,6 +1229,9 @@ async def reconcile_apply(
 @mcp.tool()
 async def reconcile_frontmatter(feature_type_id: str | None = None) -> str:
     """Check frontmatter headers against DB entity records for drift."""
+    err = _check_db_available()
+    if err:
+        return err
     if _db is None:
         return _NOT_INITIALIZED
     return _process_reconcile_frontmatter(_db, _artifacts_root, feature_type_id)
@@ -1162,6 +1240,9 @@ async def reconcile_frontmatter(feature_type_id: str | None = None) -> str:
 @mcp.tool()
 async def reconcile_status(summary_only: bool = False) -> str:
     """Unified health report across workflow state and frontmatter drift."""
+    err = _check_db_available()
+    if err:
+        return err
     if _engine is None or _db is None:
         return _NOT_INITIALIZED
     return _process_reconcile_status(_engine, _db, _artifacts_root, summary_only=summary_only)
@@ -1179,6 +1260,9 @@ async def init_feature_state(
     status: str = "active",
 ) -> str:
     """Create initial feature state in DB and write feature .meta.json."""
+    err = _check_db_available()
+    if err:
+        return err
     if _db is None:
         return _NOT_INITIALIZED
     return _process_init_feature_state(
@@ -1198,6 +1282,9 @@ async def init_project_state(
     brainstorm_source: str | None = None,
 ) -> str:
     """Create initial project state in DB and write project .meta.json."""
+    err = _check_db_available()
+    if err:
+        return err
     if _db is None:
         return _NOT_INITIALIZED
     return _process_init_project_state(
@@ -1208,6 +1295,9 @@ async def init_project_state(
 @mcp.tool()
 async def activate_feature(feature_type_id: str | None = None, ref: str | None = None) -> str:
     """Transition a planned feature to active status."""
+    err = _check_db_available()
+    if err:
+        return err
     if _db is None or _engine is None:
         return _NOT_INITIALIZED
     try:
@@ -1225,6 +1315,9 @@ async def init_entity_workflow(
     ref: str | None = None,
 ) -> str:
     """Create a workflow_phases row for any entity type."""
+    err = _check_db_available()
+    if err:
+        return err
     if _db is None:
         return _NOT_INITIALIZED
     try:
@@ -1241,6 +1334,9 @@ async def transition_entity_phase(
     ref: str | None = None,
 ) -> str:
     """Transition a brainstorm or backlog entity to a new lifecycle phase."""
+    err = _check_db_available()
+    if err:
+        return err
     if _db is None:
         return _NOT_INITIALIZED
     try:
@@ -1258,6 +1354,9 @@ async def get_notifications(project_root: str | None = None) -> str:
     threshold crossings, etc.). Drained notifications are removed from the
     queue so each notification is delivered exactly once.
     """
+    err = _check_db_available()
+    if err:
+        return err
     if _notification_queue is None:
         return _NOT_INITIALIZED
     root = project_root or _project_root
@@ -1290,6 +1389,9 @@ async def promote_task(feature_ref: str, task_heading: str) -> str:
     Fuzzy-matches task_heading against headings in tasks.md, creates a task
     entity with parent=feature, status=planned, and links dependencies.
     """
+    err = _check_db_available()
+    if err:
+        return err
     if _db is None:
         return _NOT_INITIALIZED
     try:
@@ -1308,6 +1410,9 @@ async def query_ready_tasks() -> str:
     Returns tasks that are: type=task, status=planned, no blocked_by
     dependencies, and parent entity in implement phase.
     """
+    err = _check_db_available()
+    if err:
+        return err
     if _db is None:
         return _NOT_INITIALIZED
     try:
@@ -1324,6 +1429,9 @@ async def get_progress_view(entity_ref: str) -> str:
     Walks up the parent chain and returns pre-computed progress and
     traffic_light for each ancestor (no recursive recomputation).
     """
+    err = _check_db_available()
+    if err:
+        return err
     if _db is None:
         return _NOT_INITIALIZED
     try:
