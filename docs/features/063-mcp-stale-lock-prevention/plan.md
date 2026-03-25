@@ -41,7 +41,7 @@ The plan follows a bottom-up dependency order: shared library first, then consum
 **Work:**
 - `run_backfill()` lines 145-149: Replace bulk `db._conn.execute("UPDATE ...")` + `db._conn.commit()` with `db.list_workflow_phases()` → client-side filter for `workflow_phase is None` → `db.update_workflow_phase()` per row inside `db.transaction()`. Wrap each `update_workflow_phase()` in `try/except ValueError` to handle TOCTOU race where a row is deleted between list and update (acceptable given typical entity counts of 50-200)
 - `backfill_workflow_phases()` line 224: Replace `db._conn.execute("SELECT ...")` with `db.get_workflow_phase(type_id)`
-- `backfill_workflow_phases()` lines 247-336: Replace all `db._conn.execute()` write calls with `db.upsert_workflow_phase()` (for inserts) and `db.update_workflow_phase()` (for NULL-phase updates)
+- `backfill_workflow_phases()` lines 247-336: Replace all `db._conn.execute()` write calls with `db.upsert_workflow_phase()` (for inserts) and `db.update_workflow_phase()` (for NULL-phase updates). Note: `upsert_workflow_phase()` auto-sets `updated_at` internally (verified in database.py:2276). Omitting `backward_transition_reason` from kwargs leaves column unchanged on UPDATE or uses column default (NULL) on INSERT — both match current behavior
 - `backfill_workflow_phases()` line 347: Remove `db._conn.commit()` — transactions handle commits
 - Add `_chunked()` helper function for batching
 - Wrap entity processing in batches of 20 inside `db.transaction()` blocks
@@ -111,7 +111,7 @@ The plan follows a bottom-up dependency order: shared library first, then consum
 **Files:** `plugins/pd/ui/__main__.py` (MODIFY)
 
 **Work:**
-- Import `server_lifecycle` using sys.path manipulation (same pattern as hooks_lib imports in entity_server.py — add `plugins/pd/mcp/` to sys.path before import): `from server_lifecycle import write_pid, remove_pid, start_lifetime_watchdog`
+- Import `server_lifecycle` using sys.path manipulation: `sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'mcp'))` then `from server_lifecycle import write_pid, remove_pid, start_lifetime_watchdog`
 - In `main()` before `uvicorn.run()`: call `write_pid("ui_server")`, `start_lifetime_watchdog(86400)`
 - Register `atexit.register(remove_pid, "ui_server")` for best-effort cleanup
 - Note: no parent watchdog (UI server is intentionally detached via `nohup ... & disown`)
@@ -135,7 +135,7 @@ The plan follows a bottom-up dependency order: shared library first, then consum
 - Modify `lifespan()` to use `_init_db_with_retry()` instead of direct `EntityDatabase()` call
 - On init failure: set `_db = None`, `_db_unavailable = True`, start recovery thread
 - Add `_db_unavailable` guard to ALL tool handlers — implement as a helper function `_check_db_available()` that raises/returns error, called at the top of each handler. This reduces risk of missing a handler. Enumerate all handlers that need the guard (register_entity, update_entity, get_entity, search_entities, get_lineage, export_entities, add_dependency, etc.)
-- Recovery thread: on success, set `_db = new_db`, `_db_unavailable = False`, thread exits
+- Recovery thread: on success, set `_db = new_db`, `_db_unavailable = False`, thread exits. Recovery initializes DB only (no backfill) — backfill runs on next full server restart. This avoids re-introducing the hang risk that degraded mode mitigates
 
 **Tests (TDD) in `test_entity_server_degraded.py`:**
 - `test_degraded_mode_on_db_lock` — mock EntityDatabase to raise OperationalError, verify server starts with `_db_unavailable = True`
@@ -172,7 +172,7 @@ The plan follows a bottom-up dependency order: shared library first, then consum
 **Work:**
 - Implement `cleanup_stale_mcp_servers()` function:
   - Early return if `~/.claude/pd/run/` doesn't exist
-  - PID file scan: read PID, check `kill -0`, verify process is Python via `ps -o comm= -p $pid` (contains 'python' or 'Python'), check PPID via `ps -o ppid=`
+  - PID file scan: read PID, check `kill -0`, verify process is Python via `ps -o comm= -p $pid 2>/dev/null | grep -iq python` (handles Python, python3, python3.12 etc.), check PPID via `ps -o ppid=`. If comm doesn't match Python, skip — lsof fallback will catch it
   - Orphaned (PPID=1 + Python process): `kill -TERM`, `sleep 5`, `kill -9` if needed, `rm` PID file
   - Not running: `rm` stale PID file
   - Alive with real parent: skip
