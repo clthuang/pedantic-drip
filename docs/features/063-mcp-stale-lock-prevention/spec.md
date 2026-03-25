@@ -69,18 +69,24 @@ Orphaned/stale MCP server processes hold permanent write locks on `~/.claude/pd/
 - When a new Claude Code session starts (session-start.sh runs)
 - Then orphaned processes (PPID=1) are killed and their PID files removed
 - And non-orphaned processes (PPID matches a live Claude Code parent) are NOT killed
-- And a lsof fallback catches orphaned Python processes without PID files holding entities.db (workflow_state_server shares entities.db, covered by this scan) or memory.db
+- And a lsof fallback kills any Python process holding entities.db or memory.db whose PPID=1, regardless of PID file presence (workflow_state_server shares entities.db, covered by this scan)
 - And if lsof is not available, the fallback step is skipped with a stderr warning (PID-file cleanup still operates)
 
 ### Non-Blocking Server Startup (entity_server + workflow_state_server)
 - Given the entities.db write lock is held by another process
 - When entity_server or workflow_state_server starts and cannot initialize EntityDatabase after 3 retries (2s backoff each)
 - Then the server starts in degraded mode — tools are registered and visible in Claude Code
-- And write tools return `{"error": "database temporarily unavailable"}` (structured JSON, not crash)
+- And write tools return `{"error": "database temporarily unavailable"}` (structured JSON, not crash). All tools that call EntityDatabase write methods (register_entity, update_entity, delete_entity, add_dependency, etc.) return the error. Read-only tools (get_entity, search_entities, get_lineage) that don't require `_db` write access may still operate if the connection exists for reads, or return the same error if `_db is None`.
 - And a background recovery thread retries DB initialization every 30s
 - And recovery occurs on the next successful retry after the lock clears (for testing: mock sleep interval to 1s, verify recovery within 2 poll intervals)
 - Thread safety: CPython GIL guarantees atomic `_db = new_value` pointer swap. If free-threaded Python (PEP 703) is adopted, a `threading.Lock` would be needed.
 - Note: workflow_state_server already uses "degraded" for meta_json_fallback (different meaning). Use a distinct flag name (e.g., `_db_unavailable`) for DB-lock degraded mode to avoid confusion.
+
+### Shared Server Lifecycle Module
+- Given `plugins/pd/mcp/server_lifecycle.py` exists
+- When imported by any of the 4 servers
+- Then `start_parent_watchdog()`, `start_lifetime_watchdog()`, `write_pid()`, `remove_pid()` are each callable
+- And each function has at least one unit test
 
 ### Doctor Lock Diagnostic Enhancement
 - Given entities.db is write-locked
