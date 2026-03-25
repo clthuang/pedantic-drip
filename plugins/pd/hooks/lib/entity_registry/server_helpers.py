@@ -7,9 +7,11 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 from collections import defaultdict
 
 from entity_registry.metadata import parse_metadata as _parse_metadata
+from sqlite_retry import with_retry
 
 
 def render_tree(
@@ -189,6 +191,7 @@ def resolve_output_path(
     return resolved
 
 
+@with_retry("entity")
 def _process_register_entity(
     db,
     entity_type: str,
@@ -238,6 +241,8 @@ def _process_register_entity(
         )
         type_id = f"{entity_type}:{entity_id}"
         return f"Registered: {type_id}"
+    except sqlite3.OperationalError:
+        raise
     except Exception as exc:
         return f"Error registering entity: {exc}"
 
@@ -397,6 +402,7 @@ def _process_get_lineage(
         return f"Error retrieving lineage: {exc}"
 
 
+@with_retry("entity")
 def _process_set_parent(db, type_id: str, parent_type_id: str) -> str:
     """Set or change the parent of an entity.
 
@@ -417,5 +423,7 @@ def _process_set_parent(db, type_id: str, parent_type_id: str) -> str:
     try:
         db.set_parent(type_id, parent_type_id)
         return f"Parent set: {type_id} → {parent_type_id}"
+    except sqlite3.OperationalError:
+        raise
     except Exception as exc:
         return f"Error setting parent: {exc}"
