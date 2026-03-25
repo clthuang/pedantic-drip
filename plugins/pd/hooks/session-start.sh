@@ -440,11 +440,14 @@ build_memory_context() {
     local memory_output=""
     local max_retries=3
     local attempt=0
-    if [[ "$semantic_enabled" == "true" ]]; then
-        # Semantic memory: embedding-based retrieval with FTS5 keyword search
-        # stderr suppressed: injector.py errors must not corrupt hook JSON output
+    if [[ "$semantic_enabled" == "false" ]]; then
+        # [DEPRECATED] Legacy memory: markdown-based with observation count sorting
+        # This path will be removed next release. Set memory_semantic_enabled=true (default) to use semantic injection.
+        deprecation_warning="[DEPRECATED] memory_semantic_enabled=false — legacy memory.py injection will be removed next release."
+        echo "$deprecation_warning"
+        # stderr suppressed: memory.py errors must not corrupt hook JSON output
         while (( attempt < max_retries )); do
-            memory_output=$(PYTHONPATH="${SCRIPT_DIR}/lib" $timeout_cmd "$python_cmd" -m semantic_memory.injector \
+            memory_output=$($timeout_cmd $python_cmd "${SCRIPT_DIR}/lib/memory.py" \
                 --project-root "$PROJECT_ROOT" \
                 --limit "$limit" \
                 --global-store "$HOME/.claude/pd/memory" 2>/dev/null) && break
@@ -452,10 +455,10 @@ build_memory_context() {
             (( attempt++ ))
         done
     else
-        # Legacy memory: markdown-based with observation count sorting
-        # stderr suppressed: memory.py errors must not corrupt hook JSON output
+        # Semantic memory: embedding-based retrieval with FTS5 keyword search (default)
+        # stderr suppressed: injector.py errors must not corrupt hook JSON output
         while (( attempt < max_retries )); do
-            memory_output=$($timeout_cmd $python_cmd "${SCRIPT_DIR}/lib/memory.py" \
+            memory_output=$(PYTHONPATH="${SCRIPT_DIR}/lib" $timeout_cmd "$python_cmd" -m semantic_memory.injector \
                 --project-root "$PROJECT_ROOT" \
                 --limit "$limit" \
                 --global-store "$HOME/.claude/pd/memory" 2>/dev/null) && break

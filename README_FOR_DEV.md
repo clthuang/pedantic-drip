@@ -470,9 +470,10 @@ Universal entries are promoted to a global store at `~/.claude/pd/memory/` durin
 
 **Semantic Retrieval:** Memory uses embedding-based retrieval with cosine similarity and hybrid ranking. SQLite database (`memory.db`) stores embeddings for semantic search. Legacy fallback (observation-count ranking) activates when semantic memory is disabled or no API key is set.
 
-**MCP Tools:** Two MCP tools are exposed via `plugins/pd/mcp/memory_server.py`:
+**MCP Tools:** Three MCP tools are exposed via `plugins/pd/mcp/memory_server.py`:
 - `store_memory` -- Save a learning (name, description, reasoning, category, references) to long-term memory with automatic embedding generation. Optional `confidence` parameter (high/medium/low, defaults to medium) controls retrieval ranking weight.
 - `search_memory` -- Search long-term memory for relevant learnings using hybrid retrieval (vector similarity + BM25 keyword search)
+- `record_influence` -- Record that a retrieved memory influenced a subagent dispatch, incrementing an influence counter used by memory ranking
 
 **Setup:**
 1. Install dependencies: `cd plugins/pd && uv sync --extra gemini`
@@ -480,11 +481,6 @@ Universal entries are promoted to a global store at `~/.claude/pd/memory/` durin
 3. Memory is enabled by default — no config changes needed
 
 Without an API key, memory still works via FTS5 keyword search and prominence ranking (no vector search).
-
-**Alternative Providers:**
-- **OpenAI:** `uv sync --extra openai`, add `OPENAI_API_KEY=your-key` to `.env`, set `memory_embedding_provider: openai` and `memory_embedding_model: text-embedding-3-small`
-- **Ollama (local):** `uv sync --extra ollama`, run `ollama pull nomic-embed-text`, set `memory_embedding_provider: ollama` and `memory_embedding_model: nomic-embed-text` (no API key needed)
-- **Voyage:** `uv sync --extra voyage`, add `VOYAGE_API_KEY=your-key` to `.env`, set `memory_embedding_provider: voyage` and `memory_embedding_model: voyage-3`
 
 **Configuration** (in `.claude/pd.local.md`):
 - `plan_mode_review` — Enable plan review hooks for Claude Code plan mode (default: true)
@@ -495,6 +491,9 @@ Without an API key, memory still works via FTS5 keyword search and prominence ra
 - `memory_silent_capture_budget` — Max silent captures per session before switching to ask-first (default: 5)
 - `memory_injection_enabled` — Enable memory injection at session start (default: true)
 - `memory_injection_limit` — Max entries to inject per session (default: 20)
+- `memory_auto_promote` — Enable automatic confidence promotion when duplicate evidence exceeds threshold (default: false)
+- `memory_promote_low_threshold` — Evidence count threshold for promoting low→medium confidence (default: 3)
+- `memory_promote_medium_threshold` — Evidence count threshold for promoting medium→high confidence (default: 5)
 - `max_concurrent_agents` — Max parallel Task dispatches across skills and commands (default: 5)
 
 ## Entity Registry

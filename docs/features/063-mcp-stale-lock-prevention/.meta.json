@@ -2,10 +2,11 @@
   "id": "063",
   "slug": "mcp-stale-lock-prevention",
   "mode": "standard",
-  "status": "active",
+  "status": "completed",
   "created": "2026-03-25T05:23:19.755458+00:00",
   "branch": "feature/063-mcp-stale-lock-prevention",
-  "lastCompletedPhase": "implement",
+  "completed": "2026-03-25T06:50:13.730187+00:00",
+  "lastCompletedPhase": "finish",
   "phases": {
     "brainstorm": {
       "started": "2026-03-25T05:23:19.755168+00:00"
@@ -35,7 +36,8 @@
       "iterations": 1
     },
     "finish": {
-      "started": "2026-03-25T06:41:28.769487+00:00"
+      "started": "2026-03-25T06:41:28.769487+00:00",
+      "completed": "2026-03-25T06:50:13.730187+00:00"
     }
   }
 }

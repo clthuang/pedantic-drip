@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.13.24] - 2026-03-26
+
+### Added
+- Memory search results are now embedded directly inside subagent Task prompt fields across all 5 workflow commands (specify, design, create-plan, create-tasks, implement) — past learnings are available to the subagent as part of its context rather than as a preamble outside the Task block
+- Post-dispatch influence tracking — all 5 workflow commands call `record_influence` after each dispatch to improve future memory ranking based on what was actually used
+- `memory_auto_promote` config option — enables automatic confidence promotion in `merge_duplicate()` when duplicate evidence exceeds the configured threshold (default: off)
+- `memory_promote_low_threshold` and `memory_promote_medium_threshold` config options — control the evidence thresholds for auto-promoting low→medium and medium→high confidence entries
+- `backfill-keywords` CLI action — retroactively extracts and stores keywords for existing memory entries; new entries start at 0% empty (was 97% empty before this run)
+- `test-deprecation-warning.sh` and `test-memory-pattern.sh` — integration tests for the legacy memory injection deprecation path and memory pattern embedding behavior
+
+### Changed
+- Legacy `memory.py` session injection path deprecated — replaced by MCP-based injection with a 1-release escape hatch before removal
+
 ## [4.13.23] - 2026-03-25
 
 ### Added

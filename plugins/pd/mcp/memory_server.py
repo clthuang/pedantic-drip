@@ -107,7 +107,7 @@ def _process_store_memory(
     if embedding_vec is not None:
         dedup_result = check_duplicate(embedding_vec, db, threshold)
         if dedup_result.is_duplicate:
-            merged = db.merge_duplicate(dedup_result.existing_entry_id, keywords)
+            merged = db.merge_duplicate(dedup_result.existing_entry_id, keywords, config=cfg)
             return f"Reinforced: {merged['name']} (observation #{merged['observation_count']})"
 
     # -- Build entry dict --

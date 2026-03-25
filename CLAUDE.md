@@ -128,6 +128,12 @@ python3 scripts/migrate_db.py rebuild-fts [--skip-kill] [db_path]
 # Run hook integration tests
 bash plugins/pd/hooks/tests/test-hooks.sh
 
+# Run memory deprecation warning tests (legacy injection path escape hatch)
+bash plugins/pd/hooks/tests/test-deprecation-warning.sh
+
+# Run memory pattern embedding tests
+bash plugins/pd/hooks/tests/test-memory-pattern.sh
+
 # Release (bumps version, merges develop→main, tags)
 # Uses --ci for non-interactive; BUMP_OVERRIDE=patch|minor|major to force bump type
 bash scripts/release.sh --ci

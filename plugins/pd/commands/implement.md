@@ -62,10 +62,8 @@ Execute the implementing skill which:
 **Pre-dispatch memory enrichment:** Before building the dispatch prompt below,
 call `search_memory` with query: "{agent role} {task context} {space-separated file list}",
 limit=5, brief=true, and category="patterns".
-Include non-empty results as:
-
-## Relevant Engineering Memory
-{search_memory results}
+Store the returned entry names for post-dispatch influence tracking.
+Include non-empty results inside the prompt below.
 
 Dispatch code-simplifier agent:
 ```
@@ -93,9 +91,22 @@ Task tool call:
     - Verbose patterns
 
     Return your assessment as JSON with simplifications array.
+
+    ## Relevant Engineering Memory
+    {search_memory results from the pre-dispatch call above}
 ```
 
 **Fallback detection (I9):** After receiving the code-simplifier's response, search for "Files read:" pattern. If not found, log `LAZY-LOAD-WARNING: code-simplifier did not confirm artifact reads` to `.review-history.md`. Proceed regardless.
+
+**Post-dispatch influence tracking:**
+If search_memory returned entries before this dispatch:
+  For each entry name in the stored list:
+    If entry name appears as a case-insensitive exact substring in the subagent's output:
+      call record_influence(entry_name=<name>, agent_role="code-simplifier",
+        feature_type_id=<current feature type_id from .meta.json>)
+  If no entries matched: no action (valid — not all memories will be referenced)
+  If record_influence fails: warn "Influence tracking failed: {error}", continue
+  If .meta.json missing or type_id unresolvable: skip influence recording with warning
 
 If simplifications found:
 - Apply approved simplifications
@@ -120,10 +131,8 @@ Store the resolved PRD line for reuse below.
 **Pre-dispatch memory enrichment:** Before building the dispatch prompt below,
 call `search_memory` with query: "{agent role} {task context} {space-separated file list}",
 limit=5, brief=true, and category="anti-patterns".
-Include non-empty results as:
-
-## Relevant Engineering Memory
-{search_memory results}
+Store the returned entry names for post-dispatch influence tracking.
+Include non-empty results inside the prompt below.
 
 ```
 Task tool call:
@@ -148,9 +157,22 @@ Task tool call:
     Generate Given/When/Then test outlines for all applicable dimensions.
     Return as structured JSON with dimension, scenario name, given/when/then text,
     and derived_from reference to spec criterion.
+
+    ## Relevant Engineering Memory
+    {search_memory results from the pre-dispatch call above}
 ```
 
 **Fallback detection (I9):** After receiving the test-deepener Phase A response, search for "Files read:" pattern. If not found, log `LAZY-LOAD-WARNING: test-deepener did not confirm artifact reads` to `.review-history.md`. Proceed regardless.
+
+**Post-dispatch influence tracking:**
+If search_memory returned entries before this dispatch:
+  For each entry name in the stored list:
+    If entry name appears as a case-insensitive exact substring in the subagent's output:
+      call record_influence(entry_name=<name>, agent_role="test-deepener",
+        feature_type_id=<current feature type_id from .meta.json>)
+  If no entries matched: no action (valid — not all memories will be referenced)
+  If record_influence fails: warn "Influence tracking failed: {error}", continue
+  If .meta.json missing or type_id unresolvable: skip influence recording with warning
 
 **Phase A validation:** If `outlines` array is empty, log warning: "Test deepening Phase A returned no outlines — skipping test deepening" and proceed to Step 7.
 
@@ -176,10 +198,8 @@ files_changed = sorted(set(implementation_files + simplification_files))
 **Pre-dispatch memory enrichment:** Before building the dispatch prompt below,
 call `search_memory` with query: "{agent role} {task context} {space-separated file list}",
 limit=5, brief=true, and category="anti-patterns".
-Include non-empty results as:
-
-## Relevant Engineering Memory
-{search_memory results}
+Store the returned entry names for post-dispatch influence tracking.
+Include non-empty results inside the prompt below.
 
 ```
 Task tool call:
@@ -204,7 +224,20 @@ Task tool call:
     Step 2: Skip scenarios already covered by existing TDD tests.
 
     Step 3: Write executable tests, run the suite, and report.
+
+    ## Relevant Engineering Memory
+    {search_memory results from the pre-dispatch call above}
 ```
+
+**Post-dispatch influence tracking:**
+If search_memory returned entries before this dispatch:
+  For each entry name in the stored list:
+    If entry name appears as a case-insensitive exact substring in the subagent's output:
+      call record_influence(entry_name=<name>, agent_role="test-deepener",
+        feature_type_id=<current feature type_id from .meta.json>)
+  If no entries matched: no action (valid — not all memories will be referenced)
+  If record_influence fails: warn "Influence tracking failed: {error}", continue
+  If .meta.json missing or type_id unresolvable: skip influence recording with warning
 
 **Divergence control flow:**
 
@@ -295,10 +328,8 @@ Use the PRD line resolved in Step 6 (I8).
 **Pre-dispatch memory enrichment:** Before building the dispatch prompt below,
 call `search_memory` with query: "{agent role} {task context} {space-separated file list}",
 limit=5, brief=true, and category="anti-patterns".
-Include non-empty results as:
-
-## Relevant Engineering Memory
-{search_memory results}
+Store the returned entry names for post-dispatch influence tracking.
+Include non-empty results inside the prompt below.
 
 ```
 Task tool call:
@@ -339,6 +370,9 @@ Task tool call:
 
     ## Implementation files
     {list of files with code}
+
+    ## Relevant Engineering Memory
+    {search_memory results from the pre-dispatch call above}
 ```
 
 After fresh dispatch: capture the `agent_id` from the Task tool result. Record the character count of the prompt above as `prompt_length`. Capture current HEAD SHA via `Bash: git rev-parse HEAD`. Store in resume_state:
@@ -462,6 +496,16 @@ resume_state["implementation-reviewer"].last_commit_sha = {current HEAD SHA}
 
 **Fallback detection (I9):** After receiving the implementation-reviewer's response, search for "Files read:" pattern. If not found, log `LAZY-LOAD-WARNING: implementation-reviewer did not confirm artifact reads` to `.review-history.md`. Proceed regardless. Note: Resumed dispatches (I2/I2-FV templates) do not include Required Artifacts, so "Files read:" may not appear — only apply I9 detection to fresh dispatches.
 
+**Post-dispatch influence tracking:**
+If search_memory returned entries before this dispatch:
+  For each entry name in the stored list:
+    If entry name appears as a case-insensitive exact substring in the subagent's output:
+      call record_influence(entry_name=<name>, agent_role="implementation-reviewer",
+        feature_type_id=<current feature type_id from .meta.json>)
+  If no entries matched: no action (valid — not all memories will be referenced)
+  If record_influence fails: warn "Influence tracking failed: {error}", continue
+  If .meta.json missing or type_id unresolvable: skip influence recording with warning
+
 **7b. Code Quality Review:**
 
 **Dispatch decision for code-quality-reviewer:**
@@ -471,10 +515,8 @@ resume_state["implementation-reviewer"].last_commit_sha = {current HEAD SHA}
 **Pre-dispatch memory enrichment:** Before building the dispatch prompt below,
 call `search_memory` with query: "{agent role} {task context} {space-separated file list}",
 limit=5, brief=true, and category="anti-patterns".
-Include non-empty results as:
-
-## Relevant Engineering Memory
-{search_memory results}
+Store the returned entry names for post-dispatch influence tracking.
+Include non-empty results inside the prompt below.
 
 ```
 Task tool call:
@@ -506,6 +548,9 @@ Task tool call:
 
     ## Files changed
     {list of files}
+
+    ## Relevant Engineering Memory
+    {search_memory results from the pre-dispatch call above}
 ```
 
 After fresh dispatch: capture the `agent_id` from the Task tool result. Record the character count of the prompt above as `prompt_length`. Capture current HEAD SHA via `Bash: git rev-parse HEAD`. Store in resume_state:
@@ -615,6 +660,16 @@ resume_state["code-quality-reviewer"].last_commit_sha = {current HEAD SHA}
 
 **Fallback detection (I9):** After receiving the code-quality-reviewer's response, search for "Files read:" pattern. If not found, log `LAZY-LOAD-WARNING: code-quality-reviewer did not confirm artifact reads` to `.review-history.md`. Proceed regardless. Note: Resumed dispatches (I2/I2-FV templates) do not include Required Artifacts, so "Files read:" may not appear — only apply I9 detection to fresh dispatches.
 
+**Post-dispatch influence tracking:**
+If search_memory returned entries before this dispatch:
+  For each entry name in the stored list:
+    If entry name appears as a case-insensitive exact substring in the subagent's output:
+      call record_influence(entry_name=<name>, agent_role="code-quality-reviewer",
+        feature_type_id=<current feature type_id from .meta.json>)
+  If no entries matched: no action (valid — not all memories will be referenced)
+  If record_influence fails: warn "Influence tracking failed: {error}", continue
+  If .meta.json missing or type_id unresolvable: skip influence recording with warning
+
 **7c. Security Review:**
 
 **Dispatch decision for security-reviewer:**
@@ -624,10 +679,8 @@ resume_state["code-quality-reviewer"].last_commit_sha = {current HEAD SHA}
 **Pre-dispatch memory enrichment:** Before building the dispatch prompt below,
 call `search_memory` with query: "{agent role} {task context} {space-separated file list}",
 limit=5, brief=true, and category="anti-patterns".
-Include non-empty results as:
-
-## Relevant Engineering Memory
-{search_memory results}
+Store the returned entry names for post-dispatch influence tracking.
+Include non-empty results inside the prompt below.
 
 ```
 Task tool call:
@@ -658,6 +711,9 @@ Task tool call:
 
     ## Files changed
     {list of files}
+
+    ## Relevant Engineering Memory
+    {search_memory results from the pre-dispatch call above}
 ```
 
 After fresh dispatch: capture the `agent_id` from the Task tool result. Record the character count of the prompt above as `prompt_length`. Capture current HEAD SHA via `Bash: git rev-parse HEAD`. Store in resume_state:
@@ -767,6 +823,16 @@ resume_state["security-reviewer"].last_commit_sha = {current HEAD SHA}
 
 **Fallback detection (I9):** After receiving the security-reviewer's response, search for "Files read:" pattern. If not found, log `LAZY-LOAD-WARNING: security-reviewer did not confirm artifact reads` to `.review-history.md`. Proceed regardless. Note: Resumed dispatches (I2/I2-FV templates) do not include Required Artifacts, so "Files read:" may not appear — only apply I9 detection to fresh dispatches.
 
+**Post-dispatch influence tracking:**
+If search_memory returned entries before this dispatch:
+  For each entry name in the stored list:
+    If entry name appears as a case-insensitive exact substring in the subagent's output:
+      call record_influence(entry_name=<name>, agent_role="security-reviewer",
+        feature_type_id=<current feature type_id from .meta.json>)
+  If no entries matched: no action (valid — not all memories will be referenced)
+  If record_influence fails: warn "Influence tracking failed: {error}", continue
+  If .meta.json missing or type_id unresolvable: skip influence recording with warning
+
 **7d. Selective Dispatch Logic:**
 
 Determine which reviewers to dispatch this iteration:
@@ -834,10 +900,8 @@ Use the PRD line resolved in Step 6 (I8).
 **Pre-dispatch memory enrichment:** Before building the dispatch prompt below,
 call `search_memory` with query: "{agent role} {task context} {space-separated file list}",
 limit=5, brief=true.
-Include non-empty results as:
-
-## Relevant Engineering Memory
-{search_memory results}
+Store the returned entry names for post-dispatch influence tracking.
+Include non-empty results inside the prompt below.
 
 ```
 Task tool call:
@@ -863,6 +927,9 @@ Task tool call:
     {consolidated issue list from reviewers with reviewer_status == "failed"}
 
     After fixing, return summary of changes made.
+
+    ## Relevant Engineering Memory
+    {search_memory results from the pre-dispatch call above}
 ```
 
 After fresh dispatch: capture the `agent_id` from the Task tool result. Record the character count of the prompt above as `prompt_length`. Store in resume_state:
@@ -917,6 +984,16 @@ resume_state["implementer"].last_iteration = {iteration}
 **Context compaction detection**: Before attempting I7 resume, if `resume_state["implementer"]` was previously populated but `agent_id` is now null or missing (due to context compaction), treat as fresh I7 dispatch. Log: `RESUME-FALLBACK: implementer iteration {iteration} — agent_id lost (context compaction)`.
 
 **Fallback detection (I9):** After receiving the implementer's response, search for "Files read:" pattern. If not found, log `LAZY-LOAD-WARNING: implementer did not confirm artifact reads` to `.review-history.md`. Proceed regardless. Note: Resumed dispatches (I7 resumed template) do not include Required Artifacts, so "Files read:" may not appear — only apply I9 detection to fresh dispatches.
+
+**Post-dispatch influence tracking:**
+If search_memory returned entries before this dispatch:
+  For each entry name in the stored list:
+    If entry name appears as a case-insensitive exact substring in the subagent's output:
+      call record_influence(entry_name=<name>, agent_role="implementer",
+        feature_type_id=<current feature type_id from .meta.json>)
+  If no entries matched: no action (valid — not all memories will be referenced)
+  If record_influence fails: warn "Influence tracking failed: {error}", continue
+  If .meta.json missing or type_id unresolvable: skip influence recording with warning
 
 **7e-commit. Per-iteration git commit after implementer fixes:**
 

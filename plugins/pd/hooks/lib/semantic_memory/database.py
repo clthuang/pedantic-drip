@@ -443,12 +443,15 @@ class MemoryDatabase:
         self,
         existing_id: str,
         new_keywords: list[str],
+        config: dict | None = None,
     ) -> dict:
         """Merge a near-duplicate into an existing entry.
 
         Increments observation_count, updates updated_at, unions keywords.
+        If config['memory_auto_promote'] is True, checks promotion thresholds
+        and upgrades confidence if criteria are met.
         Raises ValueError if the entry does not exist.
-        Returns the updated entry dict.
+        Returns the updated entry dict (includes new confidence if promoted).
         """
         self._conn.execute("BEGIN IMMEDIATE")
         try:
@@ -483,6 +486,29 @@ class MemoryDatabase:
                 "updated_at = ?, keywords = ? WHERE id = ?",
                 (now, json.dumps(merged_keywords), existing_id),
             )
+
+            # Confidence auto-promotion (inside same BEGIN IMMEDIATE transaction)
+            if config and config.get("memory_auto_promote"):
+                new_count = entry["observation_count"] + 1
+                conf = entry["confidence"]
+                src = entry.get("source", "")
+
+                if src != "import":
+                    low_thresh = config.get("memory_promote_low_threshold", 3)
+                    med_thresh = config.get("memory_promote_medium_threshold", 5)
+
+                    new_conf = None
+                    if conf == "low" and new_count >= low_thresh:
+                        new_conf = "medium"
+                    elif conf == "medium" and new_count >= med_thresh and src == "retro":
+                        new_conf = "high"
+
+                    if new_conf:
+                        self._conn.execute(
+                            "UPDATE entries SET confidence = ? WHERE id = ?",
+                            (new_conf, existing_id),
+                        )
+
             self._conn.commit()
         except Exception:
             self._conn.rollback()

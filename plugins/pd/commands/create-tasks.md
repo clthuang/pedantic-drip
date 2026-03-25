@@ -51,10 +51,8 @@ b. **Invoke task-reviewer:**
    **Pre-dispatch memory enrichment:** Before building the dispatch prompt below,
    call `search_memory` with query: "{agent role} {task context} {space-separated file list}",
    limit=5, brief=true, and category="anti-patterns".
-   Include non-empty results as:
-
-   ## Relevant Engineering Memory
-   {search_memory results}
+   Store the returned entry names for post-dispatch influence tracking.
+   Include non-empty results inside the prompt below.
 
    Use the Task tool:
    ```
@@ -89,6 +87,9 @@ b. **Invoke task-reviewer:**
 
        ## Tasks (what you're reviewing)
        {content of tasks.md}
+
+       ## Relevant Engineering Memory
+       {search_memory results from the pre-dispatch call above}
    ```
    After fresh dispatch: capture the `agent_id` from the Task tool result. Record the character count of the prompt above as `prompt_length`. Capture current HEAD SHA via `Bash: git rev-parse HEAD`. Store in resume_state:
    ```
@@ -167,6 +168,16 @@ c. **Parse response:** Extract the `approved` field from reviewer's JSON respons
 
    **Fallback detection (I9):** Search the agent's response for "Files read:" pattern. If not found, log `LAZY-LOAD-WARNING: task-reviewer did not confirm artifact reads` to `.review-history.md`. Proceed regardless. Note: Resumed dispatches (I2 template) do not include Required Artifacts, so "Files read:" may not appear — only apply I9 detection to fresh dispatches.
 
+   **Post-dispatch influence tracking:**
+   If search_memory returned entries before this dispatch:
+     For each entry name in the stored list:
+       If entry name appears as a case-insensitive exact substring in the subagent's output:
+         call record_influence(entry_name=<name>, agent_role="task-reviewer",
+           feature_type_id=<current feature type_id from .meta.json>)
+     If no entries matched: no action (valid — not all memories will be referenced)
+     If record_influence fails: warn "Influence tracking failed: {error}", continue
+     If .meta.json missing or type_id unresolvable: skip influence recording with warning
+
 d. **Branch on result (strict threshold):**
    - **PASS:** `approved: true` AND zero issues with severity "blocker" or "warning"
    - **FAIL:** `approved: false` OR any issue has severity "blocker" or "warning"
@@ -212,10 +223,8 @@ After Step 1 completes, invoke phase-reviewer:
 **Pre-dispatch memory enrichment:** Before building the dispatch prompt below,
 call `search_memory` with query: "{agent role} {task context} {space-separated file list}",
 limit=5, brief=true.
-Include non-empty results as:
-
-## Relevant Engineering Memory
-{search_memory results}
+Store the returned entry names for post-dispatch influence tracking.
+Include non-empty results inside the prompt below.
 
 ```
 Task tool call:
@@ -251,6 +260,9 @@ Task tool call:
     - Unresolved issues: {list of remaining blocker/warning descriptions, or "none"}
 
     This is phase-review iteration {phase_iteration}/5.
+
+    ## Relevant Engineering Memory
+    {search_memory results from the pre-dispatch call above}
 ```
 
    After fresh dispatch: capture the `agent_id` from the Task tool result. Record the character count of the prompt above as `prompt_length`. Capture current HEAD SHA via `Bash: git rev-parse HEAD`. Store in resume_state:
@@ -326,6 +338,16 @@ Task tool call:
    **Context compaction detection**: Before attempting resume, if `resume_state["phase-reviewer"]` was previously populated but `agent_id` is now null or missing (due to context compaction), treat as fresh I1-R4 dispatch. Log: `RESUME-FALLBACK: phase-reviewer iteration {phase_iteration} — agent_id lost (context compaction)`.
 
 **Fallback detection (I9):** Search the agent's response for "Files read:" pattern. If not found, log `LAZY-LOAD-WARNING: phase-reviewer did not confirm artifact reads` to `.review-history.md`. Proceed regardless. Note: Resumed dispatches (I2 template) do not include Required Artifacts, so "Files read:" may not appear — only apply I9 detection to fresh dispatches.
+
+**Post-dispatch influence tracking:**
+If search_memory returned entries before this dispatch:
+  For each entry name in the stored list:
+    If entry name appears as a case-insensitive exact substring in the subagent's output:
+      call record_influence(entry_name=<name>, agent_role="phase-reviewer",
+        feature_type_id=<current feature type_id from .meta.json>)
+  If no entries matched: no action (valid — not all memories will be referenced)
+  If record_influence fails: warn "Influence tracking failed: {error}", continue
+  If .meta.json missing or type_id unresolvable: skip influence recording with warning
 
 **Branch on result (strict threshold):**
 - **PASS:** `approved: true` AND zero issues with severity "blocker" or "warning"

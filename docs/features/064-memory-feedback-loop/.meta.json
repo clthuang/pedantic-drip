@@ -1,0 +1,40 @@
+{
+  "id": "064",
+  "slug": "memory-feedback-loop",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-03-25T16:49:31.762841+00:00",
+  "branch": "feature/064-memory-feedback-loop",
+  "brainstorm_source": "docs/brainstorms/20260326-003039-memory-system-overhaul.prd.md",
+  "lastCompletedPhase": "implement",
+  "phases": {
+    "brainstorm": {
+      "started": "2026-03-25T16:49:31.762768+00:00"
+    },
+    "specify": {
+      "started": "2026-03-25T16:50:20.425977+00:00",
+      "completed": "2026-03-25T17:01:36.684714+00:00",
+      "iterations": 2
+    },
+    "design": {
+      "started": "2026-03-25T17:02:03.072859+00:00",
+      "completed": "2026-03-25T17:14:22.545743+00:00",
+      "iterations": 2
+    },
+    "create-plan": {
+      "started": "2026-03-25T17:14:41.689946+00:00",
+      "completed": "2026-03-25T17:21:41.812645+00:00",
+      "iterations": 2
+    },
+    "create-tasks": {
+      "started": "2026-03-25T17:24:09.780269+00:00",
+      "completed": "2026-03-25T17:29:32.861111+00:00",
+      "iterations": 2
+    },
+    "implement": {
+      "started": "2026-03-25T17:36:26.083575+00:00",
+      "completed": "2026-03-25T17:54:07.394819+00:00",
+      "iterations": 1
+    }
+  }
+}
