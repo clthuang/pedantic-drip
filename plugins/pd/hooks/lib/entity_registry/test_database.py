@@ -6026,3 +6026,90 @@ class TestUpsertWorkflowPhaseProject:
                 "feature:wp2", project_id="__other__",
                 workflow_phase="design",
             )
+
+
+# ---------------------------------------------------------------------------
+# TestCascadeOnComplete — T1.1: event-driven cascade on update_entity
+# ---------------------------------------------------------------------------
+
+
+class TestCascadeOnComplete:
+    """update_entity(status='completed') triggers cascade_unblock."""
+
+    def test_completed_triggers_cascade(self, db):
+        """Completing a blocker removes the edge and promotes blocked entity."""
+        uuid_a = db.register_entity(
+            "feature", "cas-a", "Blocked Entity", status="blocked",
+            project_id="__unknown__",
+        )
+        uuid_b = db.register_entity(
+            "feature", "cas-b", "Blocker Entity", status="active",
+            project_id="__unknown__",
+        )
+        db.add_dependency(uuid_a, uuid_b)  # A blocked_by B
+
+        # Complete B — should cascade: remove edge, promote A blocked→planned
+        db.update_entity("feature:cas-b", status="completed")
+
+        # Edge should be gone
+        deps = db.query_dependencies(entity_uuid=uuid_a)
+        assert len(deps) == 0, f"Expected edge removed, got {deps}"
+
+        # A should be promoted to planned
+        entity_a = db.get_entity_by_uuid(uuid_a)
+        assert entity_a["status"] == "planned"
+
+    def test_non_completed_status_no_cascade(self, db):
+        """Non-completed status (e.g., 'active') does not trigger cascade."""
+        uuid_a = db.register_entity(
+            "feature", "ncas-a", "Blocked Entity", status="blocked",
+            project_id="__unknown__",
+        )
+        uuid_b = db.register_entity(
+            "feature", "ncas-b", "Blocker Entity", status="planned",
+            project_id="__unknown__",
+        )
+        db.add_dependency(uuid_a, uuid_b)
+
+        db.update_entity("feature:ncas-b", status="active")
+
+        # Edge should still exist
+        deps = db.query_dependencies(entity_uuid=uuid_a)
+        assert len(deps) == 1
+
+        # A should still be blocked
+        entity_a = db.get_entity_by_uuid(uuid_a)
+        assert entity_a["status"] == "blocked"
+
+    def test_no_dependents_no_error(self, db):
+        """Completing entity with no dependents is a no-op, no error."""
+        uuid_a = db.register_entity(
+            "feature", "nodep-a", "Solo Entity", status="active",
+            project_id="__unknown__",
+        )
+        # No dependencies added — should not raise
+        db.update_entity("feature:nodep-a", status="completed")
+
+        entity_a = db.get_entity_by_uuid(uuid_a)
+        assert entity_a["status"] == "completed"
+
+    def test_complete_twice_idempotent(self, db):
+        """Completing same entity twice does not error (idempotent)."""
+        uuid_a = db.register_entity(
+            "feature", "idem-a", "Blocked Entity", status="blocked",
+            project_id="__unknown__",
+        )
+        uuid_b = db.register_entity(
+            "feature", "idem-b", "Blocker Entity", status="active",
+            project_id="__unknown__",
+        )
+        db.add_dependency(uuid_a, uuid_b)
+
+        db.update_entity("feature:idem-b", status="completed")
+        # Second completion — should not raise
+        db.update_entity("feature:idem-b", status="completed")
+
+        deps = db.query_dependencies(entity_uuid=uuid_a)
+        assert len(deps) == 0
+        entity_a = db.get_entity_by_uuid(uuid_a)
+        assert entity_a["status"] == "planned"

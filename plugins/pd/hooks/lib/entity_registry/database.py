@@ -2099,6 +2099,17 @@ class EntityDatabase:
             )
             self._commit()  # no-op inside transaction(); commit handled by context manager
 
+        # Cascade unblock: when an entity is completed, remove it from all
+        # blocked_by lists and promote fully-unblocked dependents.
+        # Placed AFTER transaction exits (TD-1) to avoid nested transactions.
+        # Fail-open: Layers 2 (reconciliation) and 3 (doctor) catch stale edges.
+        if status == "completed":
+            try:
+                from entity_registry.dependencies import DependencyManager
+                DependencyManager().cascade_unblock(self, entity_uuid)
+            except Exception:
+                pass  # fail-open: Layers 2+3 catch stale edges
+
         # Re-attribution (TD-8): move entity to a different project
         if new_project_id is not None:
             self._conn.commit()  # flush any implicit transaction

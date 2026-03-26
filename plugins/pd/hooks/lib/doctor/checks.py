@@ -1760,6 +1760,53 @@ def check_referential_integrity(
 
 
 # ---------------------------------------------------------------------------
+# Check 11: Stale Dependencies
+# ---------------------------------------------------------------------------
+
+
+def check_stale_dependencies(
+    entities_conn: sqlite3.Connection, **_
+) -> CheckResult:
+    """Check 11: Stale Dependencies.
+
+    Detect blocked_by edges pointing to completed entities.
+    These edges should have been cleaned up by cascade_unblock.
+    """
+    start = time.monotonic()
+    issues: list[Issue] = []
+
+    try:
+        cursor = entities_conn.execute(
+            "SELECT ed.entity_uuid, ed.blocked_by_uuid, e_blocker.type_id AS blocker_type_id "
+            "FROM entity_dependencies ed "
+            "JOIN entities e_blocker ON ed.blocked_by_uuid = e_blocker.uuid "
+            "WHERE e_blocker.status = 'completed'"
+        )
+        for row in cursor:
+            entity_uuid, blocked_by_uuid, blocker_type_id = row
+            issues.append(Issue(
+                check="stale_dependencies",
+                severity="warning",
+                entity=None,
+                message=(
+                    f"Stale blocked_by edge: entity '{entity_uuid}' "
+                    f"blocked by completed '{blocked_by_uuid}' ({blocker_type_id})"
+                ),
+                fix_hint=f"Remove stale dependency on completed '{blocker_type_id}'",
+            ))
+    except sqlite3.Error:
+        pass
+
+    elapsed = int((time.monotonic() - start) * 1000)
+    return CheckResult(
+        name="stale_dependencies",
+        passed=len(issues) == 0,
+        issues=issues,
+        elapsed_ms=elapsed,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Check 10: Configuration Validity
 # ---------------------------------------------------------------------------
 

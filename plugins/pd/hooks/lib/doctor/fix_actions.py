@@ -362,3 +362,18 @@ def _fix_project_attribution(ctx: FixContext, issue: Issue) -> str:
     project_id = detect_project_id(ctx.project_root)
     count = ctx.db.backfill_project_ids(ctx.project_root, project_id)
     return f"Backfilled project_id for {count} entities (project={project_id})"
+
+
+def _fix_stale_dependency(ctx: FixContext, issue: Issue) -> str:
+    """Remove stale dependency on a completed blocker via cascade_unblock."""
+    if ctx.db is None:
+        raise ValueError("No entity database")
+    uuids = re.findall(r"'([0-9a-f-]{36})'", issue.message)
+    if len(uuids) < 2:
+        raise ValueError(f"Cannot extract UUIDs from: {issue.message}")
+    blocked_by_uuid = uuids[1]
+    from entity_registry.dependencies import DependencyManager
+    result = DependencyManager().cascade_unblock(ctx.db, blocked_by_uuid)
+    if result:
+        return f"Removed stale dependency on {blocked_by_uuid}, unblocked {len(result)} entities"
+    return f"Stale dependency on {blocked_by_uuid} already cleaned"

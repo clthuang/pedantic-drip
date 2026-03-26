@@ -25,6 +25,7 @@ from doctor.fix_actions import (
     _fix_run_entity_migrations,
     _fix_run_memory_migrations,
     _fix_self_referential_parent,
+    _fix_stale_dependency,
     _fix_wal_entities,
     _fix_wal_memory,
 )
@@ -52,6 +53,7 @@ _SAFE_PATTERNS: list[tuple[str, Callable]] = [
     ("Run migrations to", _fix_run_entity_migrations),
     ("Run memory DB migrations", _fix_run_memory_migrations),
     ("Backfill project_id for", _fix_project_attribution),
+    ("Remove stale dependency", _fix_stale_dependency),
 ]
 
 

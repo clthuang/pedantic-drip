@@ -12,7 +12,7 @@ Design principles:
   - DB connections closed in finally block (even on task errors).
 
 Output (stdout): single JSON line with keys:
-  entity_sync, brainstorm_sync, kb_import, workflow_reconcile, elapsed_ms, errors
+  entity_sync, brainstorm_sync, kb_import, workflow_reconcile, dependency_cleanup, elapsed_ms, errors
 """
 import argparse
 import json
@@ -76,6 +76,7 @@ def run(args):
         "brainstorm_sync": None,
         "kb_import": None,
         "workflow_reconcile": None,
+        "dependency_cleanup": None,
         "elapsed_ms": 0,
         "errors": [],
     }
@@ -130,6 +131,15 @@ def run(args):
             results["errors"].append(f"workflow_reconcile: import skipped: {exc}")
         except Exception as exc:
             results["errors"].append(f"workflow_reconcile: {exc}")
+
+        # Task 5: dependency freshness cleanup
+        try:
+            from reconciliation_orchestrator import dependency_freshness
+            result = dependency_freshness.cleanup_stale_dependencies(entity_db)
+            results["dependency_cleanup"] = result
+        except Exception as exc:
+            results["errors"].append(f"dependency_freshness: {exc}")
+            results["dependency_cleanup"] = 0
 
     except Exception as exc:
         # DB connection failure or other setup error

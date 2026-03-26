@@ -2178,10 +2178,10 @@ class TestCheck10MissingConfigFileUsesDefaults:
 # ===========================================================================
 
 
-class TestOrchestratorReportHas10Checks:
-    """Orchestrator: report always has 11 checks."""
+class TestOrchestratorReportHas12Checks:
+    """Orchestrator: report always has 12 checks."""
 
-    def test_report_has_10_checks(self, tmp_path):
+    def test_report_has_12_checks(self, tmp_path):
         from doctor import run_diagnostics
 
         db_path = _make_db(tmp_path)
@@ -2189,13 +2189,13 @@ class TestOrchestratorReportHas10Checks:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 11
+        assert len(report.checks) == 12
 
 
 class TestOrchestratorReportEvenWhenLocked:
-    """Orchestrator: 11 checks even when DB is locked."""
+    """Orchestrator: 12 checks even when DB is locked."""
 
-    def test_report_10_checks_even_when_locked(self, tmp_path):
+    def test_report_12_checks_even_when_locked(self, tmp_path):
         from doctor import run_diagnostics
 
         db_path = _make_db(tmp_path)
@@ -2207,7 +2207,7 @@ class TestOrchestratorReportEvenWhenLocked:
         blocker.execute("BEGIN IMMEDIATE")
         try:
             report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-            assert len(report.checks) == 11
+            assert len(report.checks) == 12
         finally:
             blocker.rollback()
             blocker.close()
@@ -2320,7 +2320,7 @@ class TestOrchestratorPerCheckExceptionIsolation:
         # The orchestrator wraps each check in try/except
         # Even if a check raises, we still get 10 results
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 11
+        assert len(report.checks) == 12
 
 
 class TestOrchestratorMissingDbFile:
@@ -2336,7 +2336,7 @@ class TestOrchestratorMissingDbFile:
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
         assert not os.path.exists(db_path)
         assert not os.path.exists(mem_path)
-        assert len(report.checks) == 11
+        assert len(report.checks) == 12
 
 
 class TestOrchestratorBaseBranchFromConfig:
@@ -2353,7 +2353,7 @@ class TestOrchestratorBaseBranchFromConfig:
         (config_dir / "pd.local.md").write_text("base_branch: develop\n")
 
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 11
+        assert len(report.checks) == 12
 
 
 class TestOrchestratorBaseBranchDefaultMain:
@@ -2367,7 +2367,7 @@ class TestOrchestratorBaseBranchDefaultMain:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 11
+        assert len(report.checks) == 12
 
 
 class TestOrchestratorCheck8RunsFirst:
@@ -2400,7 +2400,7 @@ class TestOrchestratorBothDbsLocked:
         blocker2.execute("BEGIN IMMEDIATE")
         try:
             report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-            assert len(report.checks) == 11
+            assert len(report.checks) == 12
             assert report.healthy is False
         finally:
             blocker1.rollback()
@@ -2420,7 +2420,7 @@ class TestOrchestratorFreshProjectEmpty:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 11
+        assert len(report.checks) == 12
         assert report.elapsed_ms >= 0
 
 
@@ -2436,7 +2436,7 @@ class TestOrchestratorWorksWithoutMcp:
 
         # No MCP servers running -- should still work
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 11
+        assert len(report.checks) == 12
 
 
 class TestOrchestratorConnectionsClosedOnSuccess:
@@ -2450,7 +2450,7 @@ class TestOrchestratorConnectionsClosedOnSuccess:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 11
+        assert len(report.checks) == 12
 
         # Verify we can acquire write locks (connections were closed)
         conn = sqlite3.connect(db_path, timeout=1.0)
@@ -2517,7 +2517,7 @@ class TestCliJsonOutputHas10Checks:
         data = json.loads(result.stdout)
         # Phase 2 wraps output: {"diagnostic": ...}
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 11
+        assert len(diag["checks"]) == 12
 
 
 class TestCliExitCodeAlwaysZero:
@@ -2592,7 +2592,7 @@ class TestCliArtifactsRootCliArgPrecedence:
         assert result.returncode == 0
         data = json.loads(result.stdout)
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 11
+        assert len(diag["checks"]) == 12
 
 
 class TestCliArtifactsRootConfigFallback:
@@ -2614,7 +2614,7 @@ class TestCliArtifactsRootConfigFallback:
         assert result.returncode == 0
         data = json.loads(result.stdout)
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 11
+        assert len(diag["checks"]) == 12
 
 
 class TestCliArtifactsRootDefaultDocs:
@@ -2635,7 +2635,7 @@ class TestCliArtifactsRootDefaultDocs:
         assert result.returncode == 0
         data = json.loads(result.stdout)
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 11
+        assert len(diag["checks"]) == 12
 
 
 class TestCliNoneSerializesAsJsonNull:
@@ -2795,3 +2795,95 @@ class TestLockHolderUnknownFallback:
 
         holders = _identify_lock_holders("/fake/db.path")
         assert holders == []
+
+
+# ---------------------------------------------------------------------------
+# Check 11: Stale Dependencies
+# ---------------------------------------------------------------------------
+
+
+class TestCheck11StaleDependencyDetected:
+    """check_stale_dependencies detects edges to completed blockers."""
+
+    def test_stale_dependency_detected(self, tmp_path):
+        import uuid as uuid_mod
+        from doctor.checks import check_stale_dependencies
+
+        db_path = _make_db(tmp_path)
+        uuid_blocked = str(uuid_mod.uuid4())
+        uuid_blocker = str(uuid_mod.uuid4())
+
+        # Register blocker as completed
+        _register_entity_with_uuid(
+            db_path, "feature:blocker", "feature", "blocker",
+            uuid_val=uuid_blocker,
+        )
+        # Register blocked entity
+        _register_entity_with_uuid(
+            db_path, "feature:blocked", "feature", "blocked",
+            uuid_val=uuid_blocked,
+        )
+
+        # Set blocker to completed
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            "UPDATE entities SET status = 'completed' WHERE uuid = ?",
+            (uuid_blocker,),
+        )
+        # Add stale dependency edge
+        conn.execute(
+            "INSERT INTO entity_dependencies (entity_uuid, blocked_by_uuid) VALUES (?, ?)",
+            (uuid_blocked, uuid_blocker),
+        )
+        conn.commit()
+        conn.close()
+
+        conn = _entities_conn(db_path)
+        try:
+            result = check_stale_dependencies(entities_conn=conn)
+            assert result.name == "stale_dependencies"
+            assert not result.passed
+            assert len(result.issues) == 1
+            issue = result.issues[0]
+            assert "Stale blocked_by edge" in issue.message
+            assert uuid_blocked in issue.message
+            assert uuid_blocker in issue.message
+            assert "Remove stale dependency" in issue.fix_hint
+        finally:
+            conn.close()
+
+
+class TestCheck11CleanDependenciesPass:
+    """check_stale_dependencies passes when no stale edges exist."""
+
+    def test_clean_dependencies_pass(self, tmp_path):
+        import uuid as uuid_mod
+        from doctor.checks import check_stale_dependencies
+
+        db_path = _make_db(tmp_path)
+        uuid_a = str(uuid_mod.uuid4())
+        uuid_b = str(uuid_mod.uuid4())
+
+        _register_entity_with_uuid(
+            db_path, "feature:a", "feature", "a", uuid_val=uuid_a,
+        )
+        _register_entity_with_uuid(
+            db_path, "feature:b", "feature", "b", uuid_val=uuid_b,
+        )
+
+        # Add dependency where blocker is NOT completed (status=active)
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            "INSERT INTO entity_dependencies (entity_uuid, blocked_by_uuid) VALUES (?, ?)",
+            (uuid_a, uuid_b),
+        )
+        conn.commit()
+        conn.close()
+
+        conn = _entities_conn(db_path)
+        try:
+            result = check_stale_dependencies(entities_conn=conn)
+            assert result.passed
+            assert len(result.issues) == 0
+        finally:
+            conn.close()

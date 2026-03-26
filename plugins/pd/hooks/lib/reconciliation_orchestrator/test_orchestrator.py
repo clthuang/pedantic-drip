@@ -96,6 +96,7 @@ class TestFullRunOutputsValidJson:
         assert "entity_sync" in data, f"Missing 'entity_sync' key in: {data}"
         assert "brainstorm_sync" in data, f"Missing 'brainstorm_sync' key in: {data}"
         assert "kb_import" in data, f"Missing 'kb_import' key in: {data}"
+        assert "dependency_cleanup" in data, f"Missing 'dependency_cleanup' key in: {data}"
         assert "elapsed_ms" in data, f"Missing 'elapsed_ms' key in: {data}"
         assert "errors" in data, f"Missing 'errors' key in: {data}"
 

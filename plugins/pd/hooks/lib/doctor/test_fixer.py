@@ -1061,3 +1061,52 @@ class TestCLI:
         """Exit code is always 0."""
         result = self._run_doctor(tmp_path, "--fix")
         assert result.returncode == 0
+
+
+class TestFixStaleDependency:
+    """_fix_stale_dependency removes stale edge and promotes blocked entity."""
+
+    def test_fix_stale_dependency_removes_edge_and_promotes(self, tmp_path):
+        from entity_registry.database import EntityDatabase
+        from doctor.fix_actions import FixContext, _fix_stale_dependency
+
+        db_path = str(tmp_path / "entities.db")
+        db = EntityDatabase(db_path)
+
+        uuid_blocked = db.register_entity(
+            "feature", "stale-blocked", "Blocked Entity",
+            status="blocked", project_id="__unknown__",
+        )
+        uuid_blocker = db.register_entity(
+            "feature", "stale-blocker", "Completed Blocker",
+            status="completed", project_id="__unknown__",
+        )
+        db.add_dependency(uuid_blocked, uuid_blocker)
+
+        ctx = FixContext(
+            entities_db_path=db_path, memory_db_path="",
+            artifacts_root="", project_root="",
+            db=db, engine=None, entities_conn=None, memory_conn=None,
+        )
+        issue = Issue(
+            check="stale_dependencies", severity="warning", entity=None,
+            message=(
+                f"Stale blocked_by edge: entity '{uuid_blocked}' "
+                f"blocked by completed '{uuid_blocker}' (feature:stale-blocker)"
+            ),
+            fix_hint="Remove stale dependency on completed 'feature:stale-blocker'",
+        )
+
+        action = _fix_stale_dependency(ctx, issue)
+        assert uuid_blocker in action
+        assert "unblocked 1" in action
+
+        # Edge should be gone
+        deps = db.query_dependencies(entity_uuid=uuid_blocked)
+        assert len(deps) == 0
+
+        # Blocked entity should be promoted to planned
+        entity = db.get_entity_by_uuid(uuid_blocked)
+        assert entity["status"] == "planned"
+
+        db.close()

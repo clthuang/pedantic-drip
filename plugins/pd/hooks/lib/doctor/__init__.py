@@ -1,6 +1,6 @@
 """pd:doctor diagnostic module.
 
-Entry point: run_diagnostics() runs all 10 checks and returns a DiagnosticReport.
+Entry point: run_diagnostics() runs all 12 checks and returns a DiagnosticReport.
 """
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from doctor.checks import (
     check_memory_health,
     check_project_attribution,
     check_referential_integrity,
+    check_stale_dependencies,
     check_workflow_phase,
 )
 from doctor.models import CheckResult, DiagnosticReport, Issue
@@ -36,6 +37,7 @@ CHECK_ORDER = [
     check_branch_consistency,
     check_entity_orphans,
     check_referential_integrity,
+    check_stale_dependencies,
     check_project_attribution,
     check_config_validity,
 ]
@@ -49,6 +51,7 @@ _ENTITY_DB_CHECKS = {
     "check_branch_consistency",
     "check_entity_orphans",
     "check_referential_integrity",
+    "check_stale_dependencies",
     "check_project_attribution",
 }
 
