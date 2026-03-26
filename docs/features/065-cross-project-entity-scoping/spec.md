@@ -101,7 +101,7 @@ Self-managed transaction following the established pattern in `_schema_expansion
 3. CREATE TABLE `projects` (FR-2 DDL from PRD)
 4. CREATE TABLE `sequences` (FR-4 DDL from PRD)
 5. CREATE TABLE `entities_new` (FR-3 target DDL from PRD — includes `project_id TEXT NOT NULL DEFAULT '__unknown__'`, `UNIQUE(project_id, type_id)`, `parent_type_id TEXT` without FK constraint)
-6. INSERT INTO `entities_new` SELECT with `'__unknown__'` as project_id for ALL existing entities. **Rationale:** existing `metadata.project_id` values are project entity IDs (e.g., `"P001"`) — NOT the 12-char hex SHA format that `detect_project_id()` produces. Using `json_extract` would create format-mismatched project_ids that never match the detected ID. Instead, all existing entities start as `'__unknown__'` and the artifact-path backfill at MCP startup claims them with the correct 12-char SHA.
+6. INSERT INTO `entities_new` SELECT with `'__unknown__'` as project_id for ALL existing entities. **Deviation from PRD FR-1:** existing `metadata.project_id` values are project entity IDs (e.g., `"P001"`) — NOT the 12-char hex SHA format that `detect_project_id()` produces. Using `json_extract` would create format-mismatched project_ids that never match the detected ID. Instead, all existing entities start as `'__unknown__'` and the artifact-path backfill at MCP startup claims them with the correct 12-char SHA.
 7. DROP TABLE `entities` / ALTER TABLE `entities_new` RENAME TO `entities`
 8. Recreate 9 triggers (8 existing + `enforce_immutable_project_id`)
 9. Recreate all indexes + `idx_project_id`, `idx_project_entity_type`
@@ -130,6 +130,8 @@ Self-managed transaction following the established pattern in `_schema_expansion
 
 #### FS-3.1: `EntityDatabase` method changes
 
+**Convention:** DB methods use `None` for all-projects queries. MCP tools use `"*"` string, converted to `None` at the MCP handler layer (see FS-4.2 sentinel mapping).
+
 | Method | `project_id` param | Behavior |
 |--------|-------------------|----------|
 | `register_entity` | Required `str` | Stored in column; no default at DB layer. **Idempotency change:** `INSERT OR IGNORE` now deduplicates on `(project_id, type_id)` — same type_id in different project creates new entity. Post-insert UUID lookup: `WHERE type_id = ? AND project_id = ?`. **Parent resolution:** `parent_type_id` lookup at database.py:1388-1391 must add `AND project_id = ?` filter (parents assumed in same project). |
@@ -150,9 +152,14 @@ Self-managed transaction following the established pattern in `_schema_expansion
 
 **Unchanged methods** (operate on UUID only, no type_id lookup): `get_entity_by_uuid`, `get_children_by_uuid`, tag methods (`add_tag`, `remove_tag`, `get_tags`, `query_by_tag`), dependency methods (`add_dependency`, `remove_dependency`, `query_dependencies`), OKR methods.
 
-**Note on workflow phase methods:** `create_workflow_phase`, `get_workflow_phase`, `update_workflow_phase`, `upsert_workflow_phase`, `delete_workflow_phase`, `list_workflow_phases` all use `WHERE type_id = ?` on the `workflow_phases` table. Post-migration, type_id is no longer globally unique. However, workflow phase methods are always called after entity resolution (the caller already has a resolved type_id from a specific project context). The `workflow_phases` table does not need a `project_id` column because: (1) its `type_id` references the entities table, and after FR-3 the duplicate type_ids across projects will have different workflow_phase rows naturally, (2) workflow phase operations are always preceded by entity resolution that provides the correct type_id within project scope. **Safeguard:** Add `project_id` parameter to `upsert_workflow_phase` to scope the initial entity existence check, but the workflow_phases table itself does not gain a project_id column.
+**Note on workflow phase methods:** `create_workflow_phase`, `get_workflow_phase`, `update_workflow_phase`, `upsert_workflow_phase`, `delete_workflow_phase`, `list_workflow_phases` all use `WHERE type_id = ?` on the `workflow_phases` table. Post-migration, type_id is no longer globally unique. **Design trade-off:** The `workflow_phases` table does not gain a `project_id` column. This is safe IF all callers resolve entities to a project-scoped type_id before calling workflow methods. **Critical safeguard:** Add `project_id` parameter to `upsert_workflow_phase` to scope the initial entity existence check — this is NOT optional, it is required to prevent cross-project type_id collisions in workflow_phases. **Known risk:** If any caller bypasses entity resolution and passes an ambiguous type_id, workflow phases could leak across projects. Mitigated by: all MCP tool handlers resolve via `_resolve_identifier(type_id, _project_id)` before calling workflow methods.
 
 **Note on `update_entity` re-attribution:** For changing an entity's project_id, `update_entity` must bypass the `enforce_immutable_project_id` trigger. Mechanism: DELETE + re-INSERT within a single `BEGIN IMMEDIATE` transaction. Steps: (1) read full entity row + related data (workflow_phases, tags, dependencies, OKR alignments), (2) DELETE entity (cascade: explicitly delete workflow_phases, tags, dependencies, OKR rows for this UUID first since there are no ON DELETE CASCADE constraints), (3) re-INSERT entity with new project_id preserving UUID, (4) re-INSERT all related data. Add `new_project_id: str | None = None` parameter for explicit re-attribution.
+
+**Re-attribution Acceptance Criteria:**
+- [ ] AC-3.3.1: `update_entity` with `new_project_id` preserves UUID, all tags, dependencies, workflow_phases, and OKR alignments
+- [ ] AC-3.3.2: Re-attribution is atomic — failure at any step rolls back all changes
+- [ ] AC-3.3.3: Re-attribution updates the entity's project_id in the composite UNIQUE constraint
 
 #### FS-3.2: `_resolve_identifier` project-scoped resolution
 
@@ -289,6 +296,7 @@ New method on `EntityDatabase`:
 | Concurrent MCP servers claim same entity | First writer wins (`WHERE project_id='__unknown__'` guard) |
 | `_resolve_identifier` ambiguous type_id | Raise `ValueError` with project list |
 | `register_entity` called without project_id at DB layer | Error — project_id is required |
+| Entity with NULL `artifact_path` | Remains `'__unknown__'` — cannot be claimed by artifact-path backfill. Reported by doctor `check_project_attribution`. Manual re-attribution via `update_entity(new_project_id=...)`. |
 
 ## Testing Requirements
 
