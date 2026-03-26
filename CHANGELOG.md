@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Project scoping for the global entity registry — each entity is now associated with the project it was created in, enabling cross-project isolation and per-project entity queries
+- `list_projects` MCP tool — lists all projects registered in the entity DB with their git metadata
+- All entity MCP tools now accept an optional `project_id` parameter for cross-project entity lookup
+- `add-to-backlog` now uses DB-backed sequential IDs — IDs are assigned from the `sequences` table rather than parsed from the backlog file, eliminating race conditions and file-parse fragility
+- Doctor `check_project_attribution` check — detects entities missing project attribution and auto-backfills them with `--fix`
+
+### Changed
+- Entity DB schema migrated to version 8: new `project_id` column on entities, new `projects` table (git-aware registry), new `sequences` table for project-scoped sequential ID generation, and a `UNIQUE(project_id, type_id)` composite constraint replacing the former uniqueness constraint
+
 ## [4.13.25] - 2026-03-26
 
 ### Fixed
