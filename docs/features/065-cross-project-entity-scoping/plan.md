@@ -34,7 +34,7 @@
 - `_add_project_scoping(conn)` — self-managed transaction following `_schema_expansion_v6` pattern
 - 14-step DDL sequence: FK off, BEGIN IMMEDIATE, CREATE projects/sequences/entities_new, data copy with `'__unknown__'`, DROP+RENAME, 9 triggers, 6 indexes, counter migration, FTS rebuild, version update, COMMIT, FK on
 - Register in `MIGRATIONS` dict as key `8`
-- **Checkpoint:** After migration tests pass, back up real DB before proceeding to Phase 3. No automated downgrade path exists.
+- **Checkpoint:** After migration tests pass, back up real DB before proceeding to Phase 3: `cp ~/.claude/pd/entities/entities.db ~/.claude/pd/entities/entities.db.pre-migration-8.bak`. No automated downgrade path exists.
 
 ### 2.2 Write `next_sequence_value()` method
 **File:** `plugins/pd/hooks/lib/entity_registry/database.py`
@@ -160,7 +160,7 @@
 **Depends on:** Phase 3 (DB methods with project_id)
 **Verification:**
 ```
-plugins/pd/.venv/bin/python -m pytest plugins/pd/mcp/test_search_mcp.py plugins/pd/mcp/test_workflow_state_server.py -v
+plugins/pd/.venv/bin/python -m pytest plugins/pd/mcp/test_search_mcp.py plugins/pd/mcp/test_workflow_state_server.py plugins/pd/mcp/test_export_entities.py -v
 ```
 
 ## Phase 5: Consumer Updates (depends on Phase 4)
@@ -255,7 +255,7 @@ Group D — other:
 - Doctor: schema version, attribution warnings, auto-fix (~5 tests)
 - Backfill: project_id pass-through (~3 tests)
 - ~48 new tests + ~100+ existing tests requiring project_id signature updates
-- **Bulk update strategy:** Introduce `TEST_PROJECT_ID = '__test__'` constant in a shared test helper. Update test DB fixtures to inject default project_id. This minimizes per-call-site changes. Migration tests in Phase 2 written alongside implementation (DDL discovery needs make strict test-first impractical for migrations).
+- **Bulk update strategy:** Introduce `TEST_PROJECT_ID = '__test__'` constant in `plugins/pd/hooks/lib/entity_registry/test_helpers.py` (existing file or create if needed). Update test DB fixtures to inject default project_id. This minimizes per-call-site changes. Migration tests in Phase 2 written alongside implementation (DDL discovery needs make strict test-first impractical for migrations).
 
 **Depends on:** Phase 4 (MCP tools with project_id for add-to-backlog)
 
