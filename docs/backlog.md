@@ -12,7 +12,7 @@
 | 00020 | 2026-02-27T13:53:55Z | Consider renaming the plugin/repository to `pedantic-drips` for the public MIT open-source release to highlight the adversarial reviewing nature of the workflow. (promoted → feature:048-rename-pedantic-drip) |
 | 00024 | 2026-02-27T22:26:00+08:00 | Add `remove_entry` method to the entity registry and ensure each entity has a status attribute. Currently there is no delete/remove API on `EntityDatabase`, and the `status` field is optional with no default — consider enforcing a default status on registration. |
 | 00026 | 2026-02-27T22:51:54+0800 | Add feature subfiles into the entity DB to facilitate referencing entry IDs for future lazy-loading designs. |
-| 00027 | 2026-03-01T12:00:00+08:00 | Simplify secretary by removing aware and orchestrate mode. Autonomy is fully controlled by yolo config. |
+| 00027 | 2026-03-01T12:00:00+08:00 | Simplify secretary by removing aware and orchestrate mode. Autonomy is fully controlled by yolo config. (promoted → feature:068-simplify-secretary-modes) |
 | 00028 | 2026-03-01T15:00:00+08:00 | Add software-architect, product-manager, devops-infrastructure advisors and add restructuring-a-system archetype to brainstorming references. |
 | 00029 | 2026-03-01T16:00:00+08:00 | Remove project lifetime soft constraint from create-project and decomposing skill. It provides weak signal — decomposition quality should be driven by PRD scope and requirements, not a vague time horizon. |
 | 00030 | 2026-03-01T08:36:34Z | Fix register_entity MCP tool to correctly process metadata parameter with JSON objects (e.g. `{"depends_on_features": []}`) — currently rejects dict input due to Pydantic string_type validation. (closed: fixed in feature 046-register-entity-metadata-coerce) |
