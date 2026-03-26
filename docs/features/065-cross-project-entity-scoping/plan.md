@@ -34,6 +34,7 @@
 - `_add_project_scoping(conn)` — self-managed transaction following `_schema_expansion_v6` pattern
 - 14-step DDL sequence: FK off, BEGIN IMMEDIATE, CREATE projects/sequences/entities_new, data copy with `'__unknown__'`, DROP+RENAME, 9 triggers, 6 indexes, counter migration, FTS rebuild, version update, COMMIT, FK on
 - Register in `MIGRATIONS` dict as key `8`
+- **Checkpoint:** After migration tests pass, back up real DB before proceeding to Phase 3. No automated downgrade path exists.
 
 ### 2.2 Write `next_sequence_value()` method
 **File:** `plugins/pd/hooks/lib/entity_registry/database.py`
@@ -171,7 +172,7 @@ plugins/pd/.venv/bin/python -m pytest plugins/pd/mcp/test_search_mcp.py plugins/
 
 - Bump `_BACKFILL_VERSION` to `"3"`
 - `run_backfill(db, artifacts_root, project_id)` — add project_id param, pass to all register_entity calls
-- `backfill_workflow_phases(db, artifacts_root, project_id)` — add project_id param, pass to upsert_workflow_phase calls at lines ~272 and ~340
+- `backfill_workflow_phases(db, artifacts_root, project_id)` — add project_id param, pass to upsert_workflow_phase calls at lines ~272 and ~340. Note: design I-8 says "unchanged signature" but this plan supersedes — upsert_workflow_phase requires project_id per TD-4.
 
 ### 5.2 Update reconciliation_orchestrator
 **Why:** reconciliation calls register_entity/update_entity which now require project_id
@@ -244,6 +245,7 @@ Group C — reconciliation/workflow test files:
 - `workflow_engine/test_secretary_intelligence.py`
 - `workflow_engine/test_task_promotion.py`
 - `workflow_engine/test_rollup.py`
+- `workflow_engine/test_engine.py`
 
 Group D — other:
 - `semantic_memory/test_keywords.py`
@@ -253,6 +255,7 @@ Group D — other:
 - Doctor: schema version, attribution warnings, auto-fix (~5 tests)
 - Backfill: project_id pass-through (~3 tests)
 - ~48 new tests + ~100+ existing tests requiring project_id signature updates
+- **Bulk update strategy:** Introduce `TEST_PROJECT_ID = '__test__'` constant in a shared test helper. Update test DB fixtures to inject default project_id. This minimizes per-call-site changes. Migration tests in Phase 2 written alongside implementation (DDL discovery needs make strict test-first impractical for migrations).
 
 **Depends on:** Phase 4 (MCP tools with project_id for add-to-backlog)
 
