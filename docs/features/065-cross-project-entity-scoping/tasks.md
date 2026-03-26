@@ -25,7 +25,7 @@
 ### T1.3: Write detect_project_id tests
 - **File:** `test_project_identity.py`
 - **Plan ref:** 1.1
-- **AC:** 7 tests pass: root commit returns 12-char hex, shallow clone falls back to HEAD, no-git falls back to abs path hash, ENTITY_PROJECT_ID env var overrides, lru_cache hit on second call with same args, multiple root commits takes first, timeout falls to next fallback
+- **AC:** 7 tests pass: root commit returns 12-char hex, shallow clone falls back to HEAD, no-git falls back to abs path hash, ENTITY_PROJECT_ID env var overrides, lru_cache hit on second call with same args, multiple root commits takes first, timeout (monkeypatch subprocess.run to raise TimeoutExpired) falls to next fallback
 - **Depends on:** none
 
 ### T1.4: Implement detect_project_id
@@ -82,11 +82,17 @@
 - **AC:** All T2.4 tests pass. Bootstrap regex `^\d+` on entity_ids. Read-increment-write atomic in transaction.
 - **Depends on:** T2.4
 
-### T2.6: Write id_generator tests and update generate_entity_id
-- **File:** `id_generator.py`, `test_id_generator.py`
+### T2.6a: Write generate_entity_id tests
+- **File:** `plugins/pd/hooks/lib/entity_registry/test_id_generator.py`
 - **Plan ref:** 2.3
-- **AC:** (a) generate_entity_id requires project_id param, (b) uses next_sequence_value instead of _metadata, (c) _scan_existing_max_seq deleted, (d) 2 new tests pass
+- **AC:** 2 tests: (a) generate_entity_id(db, "backlog", "test", project_id="__test__") returns "001-test" using next_sequence_value, (b) _scan_existing_max_seq function no longer exists (ImportError). Use real in-memory DB with migration 8 applied via `EntityDatabase(":memory:")`.
 - **Depends on:** T2.5
+
+### T2.6b: Update generate_entity_id implementation
+- **File:** `plugins/pd/hooks/lib/entity_registry/id_generator.py`
+- **Plan ref:** 2.3
+- **AC:** (a) project_id required param, (b) calls db.next_sequence_value, (c) _scan_existing_max_seq deleted. All T2.6a tests pass.
+- **Depends on:** T2.6a
 
 **Verify Phase 2:** `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/entity_registry/test_database.py -v -k "migration_8 or sequence" && plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/entity_registry/test_id_generator.py -v`
 
@@ -121,13 +127,13 @@
 ### T3.5: Update query methods with project_id
 - **File:** `database.py`
 - **Plan ref:** 3.3
-- **AC:** list_entities, search_entities, export_entities_json, export_lineage_markdown, scan_entity_ids all accept optional project_id. None=all projects, string=filter. Tests verify filtering.
+- **AC:** 5 tests in `test_database.py`: one per method (list_entities, search_entities, export_entities_json, export_lineage_markdown, scan_entity_ids). Each test: register two entities under different project_ids (`TEST_PROJECT_ID` and `'__other__'`), assert passing `project_id=TEST_PROJECT_ID` returns only the test entity, passing `project_id=None` returns both. Verify: `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/entity_registry/test_database.py -v -k "project_scoped_query"`
 - **Depends on:** T2.3 (migration)
 
 ### T3.6: Update set_parent with project_id
 - **File:** `database.py`
 - **Plan ref:** 3.4
-- **AC:** project_id passed to _resolve_identifier for both type_id args.
+- **AC:** 1 test in `test_database.py`: register two entities with same type_id under different project_ids. Call set_parent with project_id=TEST_PROJECT_ID and assert only the test entity's parent is set. Verify: `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/entity_registry/test_database.py -v -k "set_parent_project"`
 - **Depends on:** T3.1
 
 ### T3.7: Update delete_entity with project_id and extended cascade
@@ -157,7 +163,7 @@
 ### T4.1: Update entity_server startup with project_id detection
 - **File:** `plugins/pd/mcp/entity_server.py`
 - **Plan ref:** 4.1
-- **AC:** (a) _project_id and _git_info module globals added, (b) lifespan() calls detect_project_id, (c) _upsert_project using ON CONFLICT DO UPDATE (preserves created_at), (d) _backfill_project_ids with LIKE escaping, (e) _resolve_ref_param passes _project_id
+- **AC:** (a) _project_id and _git_info module globals added, (b) lifespan() calls detect_project_id, (c) _upsert_project using ON CONFLICT DO UPDATE (preserves created_at), (d) _backfill_project_ids with LIKE escaping + log count, (e) _resolve_ref_param passes _project_id. 2 tests in `test_entity_server.py`: (1) monkeypatch detect_project_id → "abc123def456", assert _project_id set after lifespan; (2) pre-populate DB with __unknown__ entity matching project_root, call _backfill_project_ids, assert entity claimed. Verify: `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/entity_registry/test_entity_server.py -v -k "startup"`
 - **Depends on:** T1.6, T3.1
 
 ### T4.2: Update register_entity MCP tool with project_id and auto_id
@@ -185,9 +191,9 @@
 - **Depends on:** T4.1
 
 ### T4.6: Update server_helpers with project_id
-- **File:** `server_helpers.py`
+- **File:** `plugins/pd/hooks/lib/entity_registry/server_helpers.py`
 - **Plan ref:** 4.3
-- **AC:** _process_register_entity adds project_id + auto_id. _process_export_entities adds project_id.
+- **AC:** _process_register_entity adds project_id + auto_id. _process_export_entities adds project_id. Done when: `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/entity_registry/test_server_helpers.py -v` passes.
 - **Depends on:** T3.3, T3.5
 
 ### T4.7: Update workflow_state_server with project_id
@@ -217,7 +223,7 @@
 ### T5.3: Update add-to-backlog command
 - **File:** `plugins/pd/commands/add-to-backlog.md`
 - **Plan ref:** 5.3
-- **AC:** File-parsing ID logic removed. Uses register_entity with auto_id=true.
+- **AC:** File-parsing ID logic removed. Uses register_entity with auto_id=true, no entity_id. Verify: `grep -n "max_id\|int(.*split\|next_id\|00001" plugins/pd/commands/add-to-backlog.md` returns no matches. Confirm `auto_id` and `register_entity` appear.
 - **Depends on:** T4.2
 
 ### T5.4: Update doctor checks
@@ -227,15 +233,16 @@
 - **Depends on:** T2.3, T4.1
 
 ### T5.5: Update source files with project_id plumbing
-- **File:** `workflow_engine/feature_lifecycle.py`, `workflow_engine/task_promotion.py`
+- **File:** `plugins/pd/hooks/lib/workflow_engine/feature_lifecycle.py`, `plugins/pd/hooks/lib/workflow_engine/task_promotion.py`
 - **Plan ref:** 5.5
-- **AC:** All register_entity calls in these files include project_id parameter.
+- **AC:** Grep for register_entity calls in both files. Thread project_id from caller — if callers don't have it, add project_id param to top-level function and derive via detect_project_id(). Done when: `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/workflow_engine/test_feature_lifecycle.py plugins/pd/hooks/lib/workflow_engine/test_task_promotion.py -v` passes.
 - **Depends on:** T3.3
 
 ### T5.6: Create TEST_PROJECT_ID helper and update Group B test files
-- **File:** `test_helpers.py` + 14 test files listed in plan 5.5 Group B
+- **File:** Create `plugins/pd/hooks/lib/entity_registry/test_helpers.py` with `TEST_PROJECT_ID = '__test__'`.
+- **Group B files (14):** `test_backfill.py`, `test_backfill_parent_uuid.py`, `test_frontmatter_sync.py`, `test_frontmatter.py`, `test_search.py`, `test_server_helpers.py`, `test_entity_server.py`, `test_entity_lifecycle.py`, `test_ref_resolution.py`, `test_id_generator.py`, `test_dependencies.py`, `test_database_052.py`, `doctor/test_checks.py`, `doctor/test_fixer.py`
 - **Plan ref:** 5.5
-- **AC:** TEST_PROJECT_ID='__test__' constant. All register_entity/register_entities_batch calls in Group B files use it. All tests pass.
+- **AC:** (a) test_helpers.py exists with TEST_PROJECT_ID constant, (b) all register_entity/register_entities_batch calls in Group B files import and use TEST_PROJECT_ID, (c) capture baseline before changes: `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/entity_registry/ -v --tb=no -q 2>&1 | tail -5`. Done when same command shows no NEW failures.
 - **Depends on:** T3.3, T3.4
 
 ### T5.7: Update Group C test files (reconciliation/workflow)
