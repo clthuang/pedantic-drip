@@ -1376,7 +1376,7 @@ class TestMigration6:
         assert result["pre_entity_count"] == len(entities)
         assert result["post_entity_count"] == len(entities)
         assert result["pre_version"] == 5
-        assert result["post_version"] == 7
+        assert result["post_version"] == 8
 
     # --- Test 2: All type_ids preserved ---
     def test_migration_preserves_type_ids(self, tmp_path: Path) -> None:
@@ -1601,17 +1601,18 @@ class TestMigration6:
         run_cli("migrate", db_path)
 
         conn = sqlite3.connect(db_path)
+        # Migration 8 moves next_seq_* from _metadata to sequences table.
         # feature has IDs 042-logging and 043-metrics -> max seq should be 43
         feature_seq = conn.execute(
-            "SELECT value FROM _metadata WHERE key = 'next_seq_feature'"
+            "SELECT next_val FROM sequences WHERE entity_type = 'feature'"
         ).fetchone()
         # project has 001-infra -> max seq 1
         project_seq = conn.execute(
-            "SELECT value FROM _metadata WHERE key = 'next_seq_project'"
+            "SELECT next_val FROM sequences WHERE entity_type = 'project'"
         ).fetchone()
         # brainstorm has 005-ideas -> max seq 5
         brainstorm_seq = conn.execute(
-            "SELECT value FROM _metadata WHERE key = 'next_seq_brainstorm'"
+            "SELECT next_val FROM sequences WHERE entity_type = 'brainstorm'"
         ).fetchone()
         conn.close()
 
@@ -1700,19 +1701,19 @@ class TestMigration6:
 
     # --- Test: already at v6 is a no-op ---
     def test_migration_idempotent(self, tmp_path: Path) -> None:
-        """Running migrate on an already-v6 DB is a no-op."""
+        """Running migrate on an already-migrated DB is a no-op."""
         db_path, _, _ = self._make_test_db(tmp_path)
 
-        # First migration
+        # First migration (runs through v8)
         result1 = run_cli("migrate", db_path)
         assert result1["ok"] is True
-        assert result1["post_version"] == 7
+        assert result1["post_version"] == 8
 
         # Second migration — should be no-op
         result2 = run_cli("migrate", db_path)
         assert result2["ok"] is True
-        assert result2["pre_version"] == 7
-        assert result2["post_version"] == 7
+        assert result2["pre_version"] == 8
+        assert result2["post_version"] == 8
 
     # --- Test: orphaned parent_uuid backfill ---
     def test_migration_backfills_orphaned_parent_uuid(self, tmp_path: Path) -> None:
