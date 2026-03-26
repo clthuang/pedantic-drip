@@ -109,7 +109,7 @@ The `project_id` concept already exists in the codebase as a **metadata-level fi
 ## Requirements
 
 ### Functional
-- FR-1: Promote `project_id` from metadata JSON to a first-class `project_id TEXT NOT NULL DEFAULT '__unknown__'` column on `entities` table. Migration must backfill from existing `metadata` JSON `project_id` values where present. Sentinel value `'__unknown__'` used instead of NULL to preserve UNIQUE enforcement.
+- FR-1: Promote `project_id` from metadata JSON to a first-class `project_id TEXT NOT NULL DEFAULT '__unknown__'` column on `entities` table. Migration sets ALL existing entities to `'__unknown__'` (NOT json_extract — existing metadata.project_id values are project entity IDs like "P001", not the 12-char hex SHA format that detect_project_id() produces). Artifact-path backfill at MCP startup progressively claims entities with correct SHA-based project_id. Sentinel value `'__unknown__'` used instead of NULL to preserve UNIQUE enforcement.
 - FR-2: Add `projects` table — git-aware project registry, auto-populated at MCP server startup:
   ```sql
   CREATE TABLE projects (
@@ -227,8 +227,8 @@ The `project_id` concept already exists in the codebase as a **metadata-level fi
 
 | Entity Category | Pre-Migration | Post-Migration project_id | Migration Action |
 |----------------|---------------|--------------------------|-----------------|
-| Feature with `metadata.project_id = "P001"` | project_id only in JSON blob | `"P001"` | `json_extract(metadata, '$.project_id')` |
-| Feature with parent `project:P001` but no metadata project_id | project_id derivable from parent | `"__unknown__"` | Backfill misses — claimed by artifact-path heuristic at next startup |
+| Feature with `metadata.project_id = "P001"` | project_id only in JSON blob (format: project entity ID) | `"__unknown__"` | All existing entities get `'__unknown__'` — format mismatch with 12-char SHA. Claimed by artifact-path backfill at startup. |
+| Feature with parent `project:P001` but no metadata project_id | project_id derivable from parent | `"__unknown__"` | Claimed by artifact-path heuristic at next startup |
 | Backlog from current project | No project_id anywhere | `"__unknown__"` | Claimed by artifact-path heuristic at startup |
 | Backlog from other project (e.g., cast-below) | No project_id, different artifact_path | `"__unknown__"` | Claimed when cast-below's MCP server starts |
 | Brainstorm entity | No project_id | `"__unknown__"` | Claimed by artifact-path heuristic |

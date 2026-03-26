@@ -154,14 +154,13 @@ Self-managed transaction following the established pattern in `_schema_expansion
 
 **Note on workflow phase methods:** `create_workflow_phase`, `get_workflow_phase`, `update_workflow_phase`, `upsert_workflow_phase`, `delete_workflow_phase`, `list_workflow_phases` all use `WHERE type_id = ?` on the `workflow_phases` table. Post-migration, type_id is no longer globally unique. **Design trade-off:** The `workflow_phases` table does not gain a `project_id` column. This is safe IF all callers resolve entities to a project-scoped type_id before calling workflow methods. **Critical safeguard:** Add `project_id` parameter to `upsert_workflow_phase` to scope the initial entity existence check — this is NOT optional, it is required to prevent cross-project type_id collisions in workflow_phases. **Known risk:** If any caller bypasses entity resolution and passes an ambiguous type_id, workflow phases could leak across projects. Mitigated by: all MCP tool handlers resolve via `_resolve_identifier(type_id, _project_id)` before calling workflow methods. **Method-by-method disposition:** `create_workflow_phase`, `get_workflow_phase`, `update_workflow_phase`, `delete_workflow_phase`, `list_workflow_phases` — no signature change needed. Callers must resolve type_id to a project-scoped value before calling. `upsert_workflow_phase` — add `project_id` parameter (required for entity existence check).
 
-**Note on `update_entity` re-attribution:** For changing an entity's project_id, `update_entity` must bypass the `enforce_immutable_project_id` trigger. Mechanism: DELETE + re-INSERT within a single `BEGIN IMMEDIATE` transaction. Steps: (1) read full entity row + related data (workflow_phases, tags, dependencies, OKR alignments), (2) DELETE entity (cascade: explicitly delete workflow_phases, tags, dependencies, OKR rows for this UUID first since there are no ON DELETE CASCADE constraints), (3) re-INSERT entity with new project_id preserving UUID, (4) re-INSERT all related data. Add `new_project_id: str | None = None` parameter for explicit re-attribution.
-
-**Re-attribution read step:** Before deletion, read all related data using existing methods: `get_workflow_phase(type_id)`, `get_tags(uuid)`, `query_dependencies(entity_uuid=uuid)`, `get_okr_alignments(uuid)` — all exist in the current API (database.py:2145, 1251, 2423, 1313).
+**Note on `update_entity` re-attribution:** For changing an entity's project_id, `update_entity` uses trigger-drop approach within `BEGIN IMMEDIATE`: (1) DROP TRIGGER enforce_immutable_project_id, (2) UPDATE entities SET project_id = ? WHERE uuid = ?, (3) FTS sync (DELETE + INSERT by rowid), (4) CREATE TRIGGER enforce_immutable_project_id. DDL within transactions is valid in SQLite. Add `new_project_id: str | None = None` parameter.
 
 **Re-attribution Acceptance Criteria:**
-- [ ] AC-3.3.1: `update_entity` with `new_project_id` preserves UUID, all tags, dependencies, workflow_phases, and OKR alignments
-- [ ] AC-3.3.2: Re-attribution is atomic — failure at any step rolls back all changes
+- [ ] AC-3.3.1: `update_entity` with `new_project_id` preserves UUID, all tags, dependencies, workflow_phases, and OKR alignments (no data loss)
+- [ ] AC-3.3.2: Re-attribution is atomic — failure at any step rolls back (trigger restored)
 - [ ] AC-3.3.3: Re-attribution updates the entity's project_id in the composite UNIQUE constraint
+- [ ] AC-3.3.4: FTS entry is updated after re-attribution (entity remains searchable)
 
 #### FS-3.2: `_resolve_identifier` project-scoped resolution
 

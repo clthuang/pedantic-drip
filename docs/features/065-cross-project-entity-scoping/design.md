@@ -98,6 +98,7 @@ lifespan():
 **Decision:** Do NOT use `json_extract(metadata, '$.project_id')` during migration.
 **Rationale:** Existing metadata.project_id values are project entity IDs (e.g., `"P001"`) — a different format from the 12-char hex SHA that `detect_project_id()` produces. Using them would create format-mismatched project_ids that never match.
 **Consequence:** All entities start as `'__unknown__'`. Artifact-path backfill at each MCP startup progressively claims them with correct SHA-based project_id.
+**PRD Update Required:** PRD FR-1 and Migration Row States table still reference json_extract. PRD must be updated to match this decision (spec supersedes).
 
 ### TD-2: parent_type_id FK dropped, parent_uuid FK retained
 **Decision:** Remove `REFERENCES entities(type_id)` on parent_type_id column.
@@ -120,6 +121,20 @@ lifespan():
 **Decision:** Fix pre-existing cascade gap: delete_entity must also clean up entity_tags, entity_dependencies, entity_okr_alignment rows by UUID before deleting the entity.
 **Rationale:** Discovered during codebase research — junction table rows are orphaned by current delete_entity. This is a bug fix bundled with the feature.
 
+### TD-8: Re-attribution uses trigger-drop, not DELETE+re-INSERT
+**Decision:** Re-attribution (`update_entity` with `new_project_id`) temporarily drops and recreates the `enforce_immutable_project_id` trigger within a `BEGIN IMMEDIATE` transaction:
+```sql
+BEGIN IMMEDIATE;
+DROP TRIGGER enforce_immutable_project_id;
+UPDATE entities SET project_id = ? WHERE uuid = ?;
+-- FTS sync: DELETE + INSERT by rowid (standard pattern from update_entity)
+CREATE TRIGGER enforce_immutable_project_id
+    BEFORE UPDATE OF project_id ON entities
+    BEGIN SELECT RAISE(ABORT, 'project_id is immutable — use re-attribution API'); END;
+COMMIT;
+```
+**Rationale:** 3 statements vs ~12 for DELETE+re-INSERT cascade. No risk of losing related data (tags, deps, OKR, workflow_phases). DDL within transactions is valid in SQLite and already used by the migration itself. FTS sync uses the same DELETE+INSERT-by-rowid pattern as regular `update_entity`.
+
 ### TD-7: Shallow clone detection
 **Decision:** Add `git rev-parse --is-shallow-repository` check before `rev-list`. If shallow, skip directly to HEAD SHA fallback.
 **Rationale:** Shallow clone's `rev-list --max-parents=0 HEAD` returns grafted boundary commit (wrong SHA). Detecting shallow state avoids silently returning the wrong project_id.
@@ -133,6 +148,8 @@ lifespan():
 | `__unknown__` entities accumulate | Incorrect queries | Medium | Progressive artifact-path backfill; doctor check warns |
 | Concurrent MCP servers race on backfill | Double-claim | Low | `WHERE project_id='__unknown__'` guard ensures first-writer-wins |
 | Workflow phases leak across projects | Wrong phase data | Low | upsert_workflow_phase project_id check (TD-4) |
+| FTS queries scan all projects then filter | Slow search | Low | At current scale (<1000 entities, <10 projects) negligible. If scale grows, project_id can be added to FTS content for direct filtering. |
+| lru_cache(maxsize=1) thrash on mixed args | Cache miss | Low | Contract: detect_project_id MUST be called with same working_dir per-process. MCP servers call once at startup. |
 
 ## Interfaces
 
@@ -191,8 +208,10 @@ def _resolve_identifier(self, identifier: str,
     """UUID → unchanged. type_id → filter by project_id if provided,
     else return if globally unique, raise ambiguity error if not."""
 
-def resolve_ref(self, ref: str, is_mutation: bool = False,
-                project_id: str | None = None) -> tuple[str, str]:
+def resolve_ref(self, ref: str,
+                project_id: str | None = None) -> str:
+    """Returns UUID (str). Three resolution paths: UUID lookup, exact type_id,
+    prefix search — all gain project_id filtering. Return type unchanged from current."""
 
 def search_by_type_id_prefix(self, prefix: str,
                               project_id: str | None = None) -> list[dict]:
@@ -217,16 +236,20 @@ def scan_entity_ids(self, entity_type: str,
 def set_parent(self, type_id: str, parent_type_id: str,
                project_id: str | None = None) -> dict:
 
-def update_entity(self, type_id: str, name=_UNSET, status=_UNSET,
-                  artifact_path=_UNSET, metadata=_UNSET,
+def update_entity(self, type_id: str,
+                  name: str | None = None, status: str | None = None,
+                  artifact_path: str | None = None, metadata: dict | None = None,
                   project_id: str | None = None,
-                  new_project_id: str | None = None) -> dict:
-    """new_project_id triggers re-attribution: DELETE+re-INSERT preserving UUID."""
+                  new_project_id: str | None = None) -> None:
+    """Signature matches current source (None defaults, None return).
+    Only project_id and new_project_id are new parameters.
+    new_project_id triggers re-attribution via trigger-drop approach (TD-8)."""
 
 def delete_entity(self, type_id: str,
-                  project_id: str | None = None) -> dict:
-    """Extended cascade: entity_tags, entity_dependencies, entity_okr_alignment,
-    workflow_phases, entities_fts, entities."""
+                  project_id: str | None = None) -> None:
+    """Return type unchanged (None). Extended cascade: entity_tags,
+    entity_dependencies, entity_okr_alignment, workflow_phases,
+    entities_fts, entities."""
 
 def upsert_workflow_phase(self, type_id: str, project_id: str, **kwargs):
     """project_id REQUIRED for entity existence check."""
@@ -279,10 +302,17 @@ async def list_projects() -> list[dict]:
 def _upsert_project(db, info: GitProjectInfo) -> None:
     """INSERT OR REPLACE into projects table."""
 
+def _upsert_project(db, info: GitProjectInfo) -> None:
+    """INSERT INTO projects (...) VALUES (...) ON CONFLICT(project_id) DO UPDATE SET
+    name=excluded.name, remote_url=excluded.remote_url, ...
+    (omits created_at from UPDATE SET to preserve original creation time)."""
+
 def _backfill_project_ids(db, project_root: str, project_id: str) -> int:
     """UPDATE entities SET project_id=? WHERE project_id='__unknown__'
     AND artifact_path LIKE escaped_root || '%' ESCAPE '\\'.
-    Returns count of claimed entities."""
+    Returns count of claimed entities.
+    Note: entities with NULL artifact_path cannot be claimed — they remain
+    '__unknown__' and are reported by doctor check_project_attribution."""
 ```
 
 ### I-5: `server_helpers.py` Changed Functions
@@ -419,13 +449,26 @@ _BACKFILL_VERSION = "3"  # v3: project_id scoping
 # Changed signature
 def run_backfill(db: EntityDatabase, artifacts_root: str,
                  project_id: str) -> None:
-    """project_id passed to all register_entity calls."""
+    """project_id passed to all register_entity calls.
+    Existing backfill guard: backfill_complete='1' AND backfill_version >= _BACKFILL_VERSION.
+    Bumping to '3' triggers re-backfill because '2' < '3' (string comparison).
+    Confirmed: backfill.py:144-146 checks both flags together."""
 
 def backfill_workflow_phases(db: EntityDatabase, artifacts_root: str) -> dict:
     """Unchanged signature — workflow_phases don't need project_id."""
 ```
 
-### I-8: `doctor/checks.py` Changes
+### I-8: `workflow_state_server.py` Startup
+
+```python
+# workflow_state_server resolves _project_id via detect_project_id() at startup
+# but does NOT run _upsert_project or _backfill_project_ids.
+# Entity_server owns project registration and backfill.
+# Query results may include '__unknown__' entities until entity_server's backfill runs.
+_project_id: str = ""  # resolved in lifespan, same pattern as entity_server
+```
+
+### I-9: `doctor/checks.py` Changes
 
 ```python
 ENTITY_SCHEMA_VERSION = 8  # bumped from 7
