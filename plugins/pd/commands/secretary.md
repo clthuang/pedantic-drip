@@ -39,7 +39,7 @@ Before running semantic matching, check against known specialist patterns:
 | "review" + ("plan" / "implementation plan") | pd:plan-reviewer | 95% |
 | "review" + ("data" / "analysis" / "statistical" / "methodology") | pd:ds-analysis-reviewer | 95% |
 | "review" + ("notebook" / "pandas" / "sklearn" / "DS code") | pd:ds-code-reviewer | 95% |
-| "simplify" / "reduce complexity" / "clean up code" | pd:code-simplifier | 95% |
+| "simplify" / "reduce complexity" / "clean up code" | Skill: `simplify` (native CC) | 95% |
 | "explore" + ("codebase" / "code" / "patterns" / "how does") | pd:codebase-explorer | 95% |
 | "deepen tests" / "add edge case tests" / "test deepening" | pd:test-deepener | 95% |
 

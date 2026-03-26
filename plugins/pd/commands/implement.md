@@ -59,59 +59,19 @@ Execute the implementing skill which:
 
 ### 5. Code Simplification Phase
 
-**Pre-dispatch memory enrichment:** Before building the dispatch prompt below,
-call `search_memory` with query: "{agent role} {task context} {space-separated file list}",
-limit=5, brief=true, and category="patterns".
-Store the returned entry names for post-dispatch influence tracking.
-Include non-empty results inside the prompt below.
+Invoke Claude Code's native `/simplify` skill to review recently changed code for unnecessary complexity:
 
-Dispatch code-simplifier agent:
 ```
-Task tool call:
-  description: "Simplify implementation"
-  subagent_type: pd:code-simplifier
-  model: sonnet
-  prompt: |
-    Review the implementation for unnecessary complexity.
-
-    Feature: {feature name}
-
-    ## Required Artifacts
-    You MUST read the following files before beginning your review.
-    After reading, confirm: "Files read: {name} ({N} lines), ..." in a single line.
-    - Design: {feature_path}/design.md
-
-    ## Files changed
-    {list of files created/modified}
-
-    Look for:
-    - Unnecessary abstractions
-    - Dead code
-    - Over-engineering
-    - Verbose patterns
-
-    Return your assessment as JSON with simplifications array.
-
-    ## Relevant Engineering Memory
-    {search_memory results from the pre-dispatch call above}
+Skill tool call:
+  skill: "simplify"
 ```
 
-**Fallback detection (I9):** After receiving the code-simplifier's response, search for "Files read:" pattern. If not found, log `LAZY-LOAD-WARNING: code-simplifier did not confirm artifact reads` to `.review-history.md`. Proceed regardless.
+The native skill has full conversation context (files changed, implementation decisions) and handles:
+- Reviewing changed code for unnecessary abstractions, dead code, over-engineering, verbose patterns
+- Applying approved simplifications
+- Verifying tests still pass
 
-**Post-dispatch influence tracking:**
-If search_memory returned entries before this dispatch:
-  For each entry name in the stored list:
-    If entry name appears as a case-insensitive exact substring in the subagent's output:
-      call record_influence(entry_name=<name>, agent_role="code-simplifier",
-        feature_type_id=<current feature type_id from .meta.json>)
-  If no entries matched: no action (valid — not all memories will be referenced)
-  If record_influence fails: warn "Influence tracking failed: {error}", continue
-  If .meta.json missing or type_id unresolvable: skip influence recording with warning
-
-If simplifications found:
-- Apply approved simplifications
-- Verify tests still pass
-- Return to main agent
+No pre-dispatch memory enrichment or post-dispatch influence tracking needed — the native skill operates within the main conversation context.
 
 ### 6. Test Deepening Phase
 
