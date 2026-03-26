@@ -13,7 +13,7 @@
 
 - After `with self.transaction()` block exits, before re-attribution block
 - `if status == "completed":` → lazy import DependencyManager → `cascade_unblock(self, entity_uuid)`
-- Wrapped in try/except (fail-open: pass on error)
+- Wrapped in try/except (fail-open: log to stderr, then continue). `except Exception as exc: print(f"cascade_unblock failed: {exc}", file=sys.stderr)`
 - Reuse existing `entity_uuid` variable (no additional lookup)
 
 **Tests:** 4 tests in `test_database.py`:
@@ -46,9 +46,9 @@
 - Call `DependencyManager().cascade_unblock(ctx.db, blocked_by_uuid)`
 - Wired into _SAFE_PATTERNS in `fixer.py` with prefix "Remove stale dependency"
 
-**Tests:** 3 tests:
-- `doctor/test_checks.py`: stale edge detected as warning, clean state passes
-- `doctor/test_fixer.py`: fix removes edge and promotes dependent
+**Tests:** 3 tests across 2 files:
+- `doctor/test_checks.py`: 2 tests — stale edge detected as warning, clean state passes
+- `doctor/test_fixer.py`: 1 test — fix removes edge and promotes dependent
 
 **Verification:** `PYTHONPATH=plugins/pd/hooks/lib plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/doctor/ -v -k "stale"`
 
@@ -68,10 +68,13 @@
 **Design ref:** I-5
 **Why:** Task 5 registration.
 
+- Initialize `"dependency_cleanup": None` in results dict (line ~74) alongside other keys
 - Inside outer try block, after Task 4, before except
-- Own try/except (fail-open)
-- Result key: "dependency_cleanup"
-- Update module docstring
+- Own try/except (fail-open): success sets integer count, failure sets 0
+- Update module docstring to include dependency_cleanup key
+- **Update test_orchestrator.py**: check for new `dependency_cleanup` key in output assertions
+
+**Note on spec/design divergence:** Spec FS-4 says "same SQL query as FR-1" but design I-4 uses public API (query_dependencies + get_entity_by_uuid). Follow design I-4 (public API) per NFR-3.
 
 **Tests:** 1 test in `reconciliation_orchestrator/test_dependency_freshness.py` (new):
 - Given stale edge, cleanup returns 1, edge removed, dependent promoted
