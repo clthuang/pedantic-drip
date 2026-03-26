@@ -1,0 +1,15 @@
+{
+  "id": "066",
+  "slug": "stale-dependency-cleanup",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-03-26T17:26:40.172768+00:00",
+  "branch": "feature/066-stale-dependency-cleanup",
+  "brainstorm_source": "docs/brainstorms/20260327-002434-stale-dependency-cleanup.prd.md",
+  "lastCompletedPhase": null,
+  "phases": {
+    "brainstorm": {
+      "started": "2026-03-26T17:26:40.169296+00:00"
+    }
+  }
+}
