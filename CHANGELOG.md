@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Event-driven dependency cascade — `update_entity(status="completed")` automatically unblocks dependents at DB layer
+- Doctor `check_stale_dependencies` check with `--fix` auto-repair for stale `blocked_by` edges
+- Reconciliation task `dependency_freshness` — cleans stale dependency edges at session start
+
 ## [4.14.0] - 2026-03-26
 
 ### Added
