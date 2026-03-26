@@ -55,9 +55,16 @@ Layer 3 (Audit): doctor/checks.py check_stale_dependencies
 ```python
 # In update_entity(), AFTER the transaction block exits, BEFORE re-attribution:
 if status == "completed":
-    from entity_registry.dependencies import DependencyManager
-    DependencyManager().cascade_unblock(self, entity_uuid)
+    try:
+        from entity_registry.dependencies import DependencyManager
+        DependencyManager().cascade_unblock(self, entity_uuid)
+    except Exception:
+        pass  # fail-open: Layers 2+3 catch stale edges at next session start
 ```
+
+**Error suppression:** Cascade failures are swallowed to avoid surprising callers who successfully completed the entity. The three-layer defense ensures Layers 2 (reconciliation) and 3 (doctor) will catch any missed edges.
+
+**Re-attribution ordering:** Cascade fires before re-attribution. Safe because cascade uses UUIDs (project-independent), so re-attribution order is irrelevant.
 
 ### I-2: `doctor/checks.py` — `check_stale_dependencies`
 
@@ -71,6 +78,7 @@ def check_stale_dependencies(*, entities_conn, **kwargs) -> CheckResult:
     # Each row → Issue(severity="warning",
     #   message=f"Stale blocked_by edge: entity '{entity_uuid}' blocked by completed '{blocked_by_uuid}' ({blocker_type_id})",
     #   fix_hint=f"Remove stale dependency on completed '{blocker_type_id}'")
+    # return CheckResult(name="stale_dependencies", passed=len(issues)==0, issues=issues, elapsed_ms=...)
 ```
 
 ### I-3: `doctor/fix_actions.py` — `_fix_stale_dependency`
@@ -84,8 +92,10 @@ def _fix_stale_dependency(ctx, issue) -> str:
         raise ValueError(f"Cannot extract UUIDs from: {issue.message}")
     blocked_by_uuid = uuids[1]  # second UUID is the blocker
     from entity_registry.dependencies import DependencyManager
-    DependencyManager().cascade_unblock(ctx.db, blocked_by_uuid)
-    return f"Removed stale dependency on {blocked_by_uuid}"
+    result = DependencyManager().cascade_unblock(ctx.db, blocked_by_uuid)
+    if result:
+        return f"Removed stale dependency on {blocked_by_uuid}, unblocked {len(result)} entities"
+    return f"Stale dependency on {blocked_by_uuid} already cleaned"
 ```
 
 ### I-4: `reconciliation_orchestrator/dependency_freshness.py`
@@ -93,12 +103,28 @@ def _fix_stale_dependency(ctx, issue) -> str:
 ```python
 def cleanup_stale_dependencies(db: EntityDatabase) -> int:
     """Remove stale blocked_by edges and promote unblocked dependents.
-    Returns count of unique completed blocker UUIDs processed."""
-    # Same SQL as I-2
-    # Deduplicate to unique blocker UUIDs
-    # For each: DependencyManager().cascade_unblock(db, uuid)
-    # Return len(unique_blocker_uuids)
+    Returns count of unique completed blocker UUIDs processed.
+
+    Uses public API only (no db._conn) per NFR-3:
+    1. query_dependencies() to get all edges
+    2. get_entity_by_uuid() to check each blocker's status
+    3. cascade_unblock() for completed blockers
+    """
+    all_edges = db.query_dependencies()  # returns all edges
+    # Collect unique blocker UUIDs where blocker is completed
+    stale_blockers = set()
+    for edge in all_edges:
+        blocker = db.get_entity_by_uuid(edge["blocked_by_uuid"])
+        if blocker and blocker.get("status") == "completed":
+            stale_blockers.add(edge["blocked_by_uuid"])
+    # Cascade each
+    dep_mgr = DependencyManager()
+    for uuid in stale_blockers:
+        dep_mgr.cascade_unblock(db, uuid)
+    return len(stale_blockers)
 ```
+
+**Note:** This is N+1 queries but entity_dependencies typically has <50 rows total. The doctor check (I-2) uses raw SQL on `entities_conn` because doctor checks receive raw connections by convention.
 
 ### I-5: Wiring
 
