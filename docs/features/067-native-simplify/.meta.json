@@ -2,11 +2,11 @@
   "id": "067",
   "slug": "native-simplify",
   "mode": "standard",
-  "status": "active",
+  "status": "completed",
   "created": "2026-03-26T18:29:24.536445+00:00",
   "branch": "feature/067-native-simplify",
   "brainstorm_source": "docs/brainstorms/20260327-015000-native-simplify.prd.md",
-  "lastCompletedPhase": "implement",
+  "lastCompletedPhase": "finish",
   "phases": {
     "brainstorm": {
       "started": "2026-03-26T18:30:59.419966+00:00",

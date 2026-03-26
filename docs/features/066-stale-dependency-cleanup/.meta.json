@@ -2,11 +2,12 @@
   "id": "066",
   "slug": "stale-dependency-cleanup",
   "mode": "standard",
-  "status": "active",
+  "status": "completed",
   "created": "2026-03-26T17:26:40.172768+00:00",
   "branch": "feature/066-stale-dependency-cleanup",
+  "completed": "2026-03-26T17:53:54.917439+00:00",
   "brainstorm_source": "docs/brainstorms/20260327-002434-stale-dependency-cleanup.prd.md",
-  "lastCompletedPhase": "implement",
+  "lastCompletedPhase": "finish",
   "phases": {
     "brainstorm": {
       "started": "2026-03-26T17:28:06.819899+00:00",
@@ -31,6 +32,9 @@
     "implement": {
       "completed": "2026-03-26T17:52:04.046392+00:00",
       "iterations": 1
+    },
+    "finish": {
+      "completed": "2026-03-26T17:53:54.917439+00:00"
     }
   }
 }
