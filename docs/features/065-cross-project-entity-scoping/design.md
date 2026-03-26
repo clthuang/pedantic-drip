@@ -336,7 +336,7 @@ def _process_export_entities(db, entity_type, status, ...,
     """Passes project_id to db.export_entities_json()."""
 ```
 
-### I-6: Migration 8 DDL (Exact SQL)
+### I-7: Migration 8 DDL (Exact SQL)
 
 ```sql
 -- Step 3: projects table
@@ -449,7 +449,7 @@ INSERT INTO _metadata (key, value) VALUES ('schema_version', '8')
     ON CONFLICT(key) DO UPDATE SET value = '8';
 ```
 
-### I-7: `backfill.py` Changes
+### I-8: `backfill.py` Changes
 
 ```python
 # Bump version
@@ -467,7 +467,7 @@ def backfill_workflow_phases(db: EntityDatabase, artifacts_root: str) -> dict:
     """Unchanged signature — workflow_phases don't need project_id."""
 ```
 
-### I-8: `workflow_state_server.py` Startup
+### I-9: `workflow_state_server.py` Startup
 
 ```python
 # workflow_state_server resolves _project_id via detect_project_id() at startup
@@ -477,7 +477,7 @@ def backfill_workflow_phases(db: EntityDatabase, artifacts_root: str) -> dict:
 _project_id: str = ""  # resolved in lifespan, same pattern as entity_server
 ```
 
-### I-9: `doctor/checks.py` Changes
+### I-10: `doctor/checks.py` Changes
 
 ```python
 ENTITY_SCHEMA_VERSION = 8  # bumped from 7
