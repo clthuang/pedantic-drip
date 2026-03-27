@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Reviewer fresh dispatches no longer embed full artifact content — reviewers read files via Read tool, reducing prompt size by 50-80%
+
 ## [4.14.3] - 2026-03-27
 
 ### Removed
