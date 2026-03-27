@@ -159,6 +159,7 @@ bash scripts/release.sh --ci
 - **Entity metadata parsing:** Always use `from entity_registry.metadata import parse_metadata` — returns `{}` for None/invalid (never returns None). Do NOT use raw `json.loads` on metadata fields. `validate_metadata(entity_type, meta_dict)` returns warning strings for type mismatches.
 - **Entity table schema gotcha:** The `entities` table has a `uuid TEXT NOT NULL PRIMARY KEY` column. Raw SQL `INSERT` in test helpers must include a uuid value or the insert silently fails with `INSERT OR IGNORE`. Use `import uuid; str(uuid.uuid4())`.
 - **Entity DB encapsulation:** Never access `db._conn` directly. Use `db.add_dependency()`, `db.query_dependencies()`, `db.scan_entity_ids()`, `db.is_healthy()`, `db.register_entities_batch()` etc.
+- **Entity state machine gotcha:** `ENTITY_MACHINES` in `entity_lifecycle.py` has assertions in TWO test files: `test_entity_lifecycle.py` and `test_workflow_state_server.py` (deepened tests). Update both when changing transitions.
 - **Hook subprocess safety:** Always suppress stderr (`2>/dev/null`) for Python/external calls in hooks to prevent corrupting JSON output
 - **Semantic memory CLI:** Find plugin root first: `PLUGIN_ROOT=$(ls -d ~/.claude/plugins/cache/*/pd*/*/hooks 2>/dev/null | head -1 | xargs dirname)`, then `PYTHONPATH="$PLUGIN_ROOT/hooks/lib" "$PLUGIN_ROOT/.venv/bin/python" -m semantic_memory.writer`. Fallback (dev workspace): `PYTHONPATH=plugins/pd/hooks/lib python3 -m semantic_memory.writer`
 
