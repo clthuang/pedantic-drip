@@ -5325,7 +5325,7 @@ class TestEntityMachines:
         brainstorm = ENTITY_MACHINES["brainstorm"]
         transitions = brainstorm["transitions"]
         assert set(transitions.keys()) == {"draft", "reviewing"}
-        assert set(transitions["draft"]) == {"reviewing", "abandoned"}
+        assert set(transitions["draft"]) == {"reviewing", "promoted", "abandoned"}
         assert set(transitions["reviewing"]) == {"promoted", "draft", "abandoned"}
 
     def test_entity_machines_backlog_transitions(self):
@@ -5883,23 +5883,23 @@ class TestTransitionEntityPhaseDeepened:
         # Then it returns an error pointing to init_entity_workflow
         assert result["error"] is True
 
-    def test_brainstorm_draft_to_promoted_is_invalid(self, db):
-        """Draft cannot skip directly to promoted (must go through reviewing).
+    def test_brainstorm_draft_to_promoted_is_valid(self, db):
+        """Draft can go directly to promoted (for direct feature creation).
         derived_from: spec:AC-4, dimension:mutation_mindset
 
-        Anticipate: If the transition map incorrectly includes
-        draft->promoted, users could skip the review step.
-        Mutation: adding 'promoted' to draft's target list would break this.
+        Brainstorms created via --prd flag skip reviewing, so draft->promoted
+        must be valid to support programmatic promotion during feature creation.
         """
         # Given a brainstorm in draft
         self._seed_entity_with_workflow(db, "brainstorm", "skip-1", "draft", "wip")
-        # When trying to skip to promoted
+        # When promoting directly
         result = json.loads(
             _process_transition_entity_phase(db, "brainstorm:skip-1", "promoted")
         )
-        # Then it's rejected
-        assert result["error"] is True
-        assert result["error_type"] == "invalid_transition"
+        # Then it succeeds
+        assert result["transitioned"] is True
+        assert result["to_phase"] == "promoted"
+        assert result["kanban_column"] == "completed"
 
 
 class TestErrorDecoratorDeepened:

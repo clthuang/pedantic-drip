@@ -18,7 +18,7 @@ from entity_registry.database import EntityDatabase
 ENTITY_MACHINES: dict[str, dict] = {
     "brainstorm": {
         "transitions": {
-            "draft": ["reviewing", "abandoned"],
+            "draft": ["reviewing", "promoted", "abandoned"],
             "reviewing": ["promoted", "draft", "abandoned"],
         },
         "columns": {
@@ -29,6 +29,7 @@ ENTITY_MACHINES: dict[str, dict] = {
         },
         "forward": {
             ("draft", "reviewing"),
+            ("draft", "promoted"),
             ("reviewing", "promoted"),
             ("reviewing", "abandoned"),
             ("draft", "abandoned"),

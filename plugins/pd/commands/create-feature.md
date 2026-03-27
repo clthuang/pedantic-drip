@@ -186,6 +186,17 @@ set_parent(
 )
 ```
 
+### 2b. Promote Brainstorm Entity (if brainstorm_source found)
+
+After registering the brainstorm entity, promote it so it no longer appears as "open":
+```
+update_entity(
+  type_id="brainstorm:{filename-stem}",
+  status="promoted"
+)
+```
+If the call fails, warn `"Brainstorm promotion failed: {error}"` but do NOT block feature creation. This is a belt-and-suspenders measure — `init_feature_state` also promotes the brainstorm programmatically.
+
 ### 3. Register Feature Entity
 
 Derive the parent_type_id:

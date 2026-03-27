@@ -942,6 +942,86 @@ class TestCheck3BrainstormShouldBePromoted:
             conn.close()
 
 
+class TestCheck3BrainstormActiveFeature:
+    """Check 3: brainstorm referenced by active feature → warning."""
+
+    def test_check3_brainstorm_referenced_by_active_feature(self, tmp_path):
+        from doctor.checks import check_brainstorm_status
+
+        db_path = _make_db(tmp_path)
+        _register_brainstorm(db_path, "bs-active-001", status="draft")
+
+        # Create an active feature that references this brainstorm
+        feature_dir = tmp_path / "features" / "070-active-feat"
+        feature_dir.mkdir(parents=True)
+        meta = {
+            "id": "070",
+            "slug": "active-feat",
+            "status": "active",
+            "brainstorm_source": "bs-active-001",
+        }
+        (feature_dir / ".meta.json").write_text(json.dumps(meta))
+
+        # Create brainstorm dir so file check passes
+        (tmp_path / "brainstorms").mkdir(exist_ok=True)
+        (tmp_path / "brainstorms" / "bs-active-001").mkdir(exist_ok=True)
+
+        conn = _entities_conn(db_path)
+        try:
+            result = check_brainstorm_status(conn, str(tmp_path))
+            assert result.passed is False
+            warnings = [i for i in result.issues if i.severity == "warning"]
+            promotion_warnings = [w for w in warnings if "promoted" in w.message]
+            assert len(promotion_warnings) >= 1, (
+                f"Active feature should trigger promotion warning, got: "
+                f"{[i.message for i in result.issues]}"
+            )
+        finally:
+            conn.close()
+
+    def test_check3_promoted_brainstorm_not_flagged(self, tmp_path):
+        from doctor.checks import check_brainstorm_status
+
+        db_path = _make_db(tmp_path)
+        _register_brainstorm(db_path, "bs-promoted-001", status="promoted")
+
+        feature_dir = tmp_path / "features" / "071-done-feat"
+        feature_dir.mkdir(parents=True)
+        meta = {
+            "id": "071",
+            "slug": "done-feat",
+            "status": "active",
+            "brainstorm_source": "bs-promoted-001",
+        }
+        (feature_dir / ".meta.json").write_text(json.dumps(meta))
+
+        conn = _entities_conn(db_path)
+        try:
+            result = check_brainstorm_status(conn, str(tmp_path))
+            # promoted brainstorm should NOT be flagged
+            promotion_warnings = [i for i in result.issues if "promoted" in i.message]
+            assert len(promotion_warnings) == 0
+        finally:
+            conn.close()
+
+    def test_check3_no_feature_reference_not_flagged(self, tmp_path):
+        from doctor.checks import check_brainstorm_status
+
+        db_path = _make_db(tmp_path)
+        _register_brainstorm(db_path, "bs-orphan", status="draft")
+
+        # No features reference this brainstorm
+        (tmp_path / "features").mkdir(exist_ok=True)
+
+        conn = _entities_conn(db_path)
+        try:
+            result = check_brainstorm_status(conn, str(tmp_path))
+            promotion_warnings = [i for i in result.issues if "promoted" in i.message]
+            assert len(promotion_warnings) == 0
+        finally:
+            conn.close()
+
+
 class TestCheck3EntityDepsFallback:
     """Check 3: fallback to entity_dependencies for promotion detection."""
 

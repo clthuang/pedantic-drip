@@ -246,6 +246,151 @@ class TestInitFeatureState:
 
 
 # ===========================================================================
+# _promote_brainstorm (via init_feature_state)
+# ===========================================================================
+
+class TestPromoteBrainstorm:
+    """Tests for brainstorm promotion when creating a feature."""
+
+    def test_promotes_brainstorm_in_draft(self, mock_db, mock_engine, tmp_artifacts, feature_dir):
+        """Brainstorm entity in draft status gets promoted."""
+        # _promote_brainstorm calls get_entity first, then init_feature_state calls it for the feature.
+        mock_db.get_entity.side_effect = [
+            {"status": "draft", "entity_type": "brainstorm"},  # brainstorm lookup
+            None,   # feature lookup
+        ]
+        mock_db.get_workflow_phase.return_value = {"workflow_phase": "draft", "kanban_column": "wip"}
+
+        init_feature_state(
+            db=mock_db, engine=mock_engine, artifacts_root=tmp_artifacts,
+            feature_dir=feature_dir, feature_id="001", slug="001-my-feature",
+            mode="standard", branch="feature/001",
+            brainstorm_source="docs/brainstorms/20260327-test.prd.md",
+            status="active",
+        )
+
+        # Verify brainstorm was promoted
+        update_calls = [c for c in mock_db.update_entity.call_args_list
+                        if c[0][0] == "brainstorm:20260327-test"]
+        assert len(update_calls) == 1
+        assert update_calls[0][1]["status"] == "promoted"
+
+        # Verify workflow_phase updated
+        wf_calls = [c for c in mock_db.update_workflow_phase.call_args_list
+                    if c[0][0] == "brainstorm:20260327-test"]
+        assert len(wf_calls) == 1
+        assert wf_calls[0][1]["workflow_phase"] == "promoted"
+        assert wf_calls[0][1]["kanban_column"] == "completed"
+
+    def test_skips_already_promoted_brainstorm(self, mock_db, mock_engine, tmp_artifacts, feature_dir):
+        """No update when brainstorm is already promoted."""
+        mock_db.get_entity.side_effect = [
+            {"status": "promoted", "entity_type": "brainstorm"},  # brainstorm
+            None,  # feature lookup
+        ]
+
+        init_feature_state(
+            db=mock_db, engine=mock_engine, artifacts_root=tmp_artifacts,
+            feature_dir=feature_dir, feature_id="001", slug="001-my-feature",
+            mode="standard", branch="feature/001",
+            brainstorm_source="docs/brainstorms/20260327-test.prd.md",
+            status="active",
+        )
+
+        # update_entity should not be called for brainstorm
+        update_calls = [c for c in mock_db.update_entity.call_args_list
+                        if len(c[0]) > 0 and c[0][0] == "brainstorm:20260327-test"]
+        assert len(update_calls) == 0
+
+    def test_handles_nonexistent_brainstorm(self, mock_db, mock_engine, tmp_artifacts, feature_dir):
+        """No error when brainstorm entity doesn't exist in registry."""
+        mock_db.get_entity.return_value = None  # brainstorm missing, feature missing
+
+        result = init_feature_state(
+            db=mock_db, engine=mock_engine, artifacts_root=tmp_artifacts,
+            feature_dir=feature_dir, feature_id="001", slug="001-my-feature",
+            mode="standard", branch="feature/001",
+            brainstorm_source="docs/brainstorms/20260327-test.prd.md",
+            status="active",
+        )
+
+        assert result["created"] is True
+
+    def test_no_promotion_without_brainstorm_source(self, mock_db, mock_engine, tmp_artifacts, feature_dir):
+        """No promotion attempt when brainstorm_source is None."""
+        mock_db.get_entity.return_value = None
+
+        init_feature_state(
+            db=mock_db, engine=mock_engine, artifacts_root=tmp_artifacts,
+            feature_dir=feature_dir, feature_id="001", slug="001-my-feature",
+            mode="standard", branch="feature/001",
+            status="active",
+        )
+
+        # Only the feature register_entity call, no brainstorm lookups beyond feature
+        assert mock_db.get_entity.call_count == 1
+
+    def test_stem_extraction_full_path(self, mock_db, mock_engine, tmp_artifacts, feature_dir):
+        """Stem extracted correctly from full path with .prd.md suffix."""
+        mock_db.get_entity.side_effect = [
+            {"status": "draft", "entity_type": "brainstorm"},  # brainstorm
+            None,  # feature
+        ]
+        mock_db.get_workflow_phase.return_value = None  # no workflow row
+
+        init_feature_state(
+            db=mock_db, engine=mock_engine, artifacts_root=tmp_artifacts,
+            feature_dir=feature_dir, feature_id="001", slug="001-my-feature",
+            mode="standard", branch="feature/001",
+            brainstorm_source="docs/brainstorms/20260327-040000-my-brainstorm.prd.md",
+            status="active",
+        )
+
+        update_calls = [c for c in mock_db.update_entity.call_args_list
+                        if len(c[0]) > 0 and c[0][0] == "brainstorm:20260327-040000-my-brainstorm"]
+        assert len(update_calls) == 1
+
+    def test_handles_missing_workflow_row(self, mock_db, mock_engine, tmp_artifacts, feature_dir):
+        """Promotes entity status even when no workflow_phases row exists."""
+        mock_db.get_entity.side_effect = [
+            {"status": "reviewing", "entity_type": "brainstorm"},  # brainstorm
+            None,  # feature
+        ]
+        mock_db.get_workflow_phase.return_value = None  # no workflow row
+
+        init_feature_state(
+            db=mock_db, engine=mock_engine, artifacts_root=tmp_artifacts,
+            feature_dir=feature_dir, feature_id="001", slug="001-my-feature",
+            mode="standard", branch="feature/001",
+            brainstorm_source="docs/brainstorms/20260327-test.prd.md",
+            status="active",
+        )
+
+        # Entity status updated but workflow_phase update skipped
+        update_calls = [c for c in mock_db.update_entity.call_args_list
+                        if len(c[0]) > 0 and c[0][0] == "brainstorm:20260327-test"]
+        assert len(update_calls) == 1
+        assert mock_db.update_workflow_phase.call_count == 1  # only the feature kanban update
+
+    def test_db_error_does_not_block_feature_creation(self, mock_db, mock_engine, tmp_artifacts, feature_dir):
+        """Database errors during brainstorm promotion are silently swallowed."""
+        mock_db.get_entity.side_effect = [
+            Exception("DB locked"),  # brainstorm lookup fails (in _promote_brainstorm)
+            None,  # feature lookup (after _promote_brainstorm catches the exception)
+        ]
+
+        result = init_feature_state(
+            db=mock_db, engine=mock_engine, artifacts_root=tmp_artifacts,
+            feature_dir=feature_dir, feature_id="001", slug="001-my-feature",
+            mode="standard", branch="feature/001",
+            brainstorm_source="docs/brainstorms/20260327-test.prd.md",
+            status="active",
+        )
+
+        assert result["created"] is True
+
+
+# ===========================================================================
 # init_project_state
 # ===========================================================================
 
