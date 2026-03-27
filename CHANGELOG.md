@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.14.5] - 2026-03-27
+
 ### Changed
 - Brainstorm entities are automatically promoted to `promoted` status when a feature is created from them — prevents brainstorms from appearing as open/unresolved after promotion
 - Doctor brainstorm status check now detects brainstorms linked to active features (previously only checked completed features)
