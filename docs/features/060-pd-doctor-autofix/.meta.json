@@ -40,5 +40,6 @@
       "iterations": 2,
       "reviewerNotes": "[{\"reviewer\": \"implementation-reviewer\", \"approved\": true, \"summary\": \"Approved iter 2/5 \\u2014 dry-run bug fixed\"}, {\"reviewer\": \"code-quality-reviewer\", \"approved\": true, \"summary\": \"Approved iter 2/5 \\u2014 same bug + import fix\"}, {\"reviewer\": \"security-reviewer\", \"approved\": true, \"summary\": \"Approved iter 1/5 \\u2014 no critical vulns\"}]"
     }
-  }
+  },
+  "completed": "2026-03-24T14:00:00+00:00"
 }
