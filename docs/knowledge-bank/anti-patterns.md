@@ -587,3 +587,10 @@ Avoid multi-phase processing in a single function with early returns. A 'return 
 - Confidence: medium
 - Last observed: Feature #052
 - Observation count: 1
+
+### Anti-Pattern: Feature Name Surviving a Scope Pivot
+When investigation reveals the actual problem is unrelated to the feature's original PRD, leaving the feature slug, branch name, and artifact directory unchanged permanently mislabels the work. Future searches by topic produce false positives and false negatives.
+- Observed in: Feature #069 — named "reviewer-token-efficiency" but delivered brainstorm promotion fix
+- Confidence: high
+- Last observed: Feature #069
+- Observation count: 1

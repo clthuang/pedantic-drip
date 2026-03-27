@@ -608,3 +608,10 @@ Centralize scattered utility patterns into dedicated modules during gap remediat
 - Confidence: high
 - Last observed: Feature #052
 - Observation count: 1
+
+### Pattern: Cross-Referencing Entity Fields for Gap Detection
+When investigating missing or stale entity state, compare entity registry records against feature `.meta.json` `brainstorm_source` fields (or equivalent cross-references) to surface entries that exist in one store but not the other. This data-first approach locates gaps without requiring code reading.
+- Observed in: Feature #069 — 13 stale brainstorm entities identified before any code was inspected
+- Confidence: high
+- Last observed: Feature #069
+- Observation count: 1

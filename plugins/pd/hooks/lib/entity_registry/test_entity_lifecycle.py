@@ -179,10 +179,12 @@ class TestTransitionEntityPhase:
         assert result["kanban_column"] == "prioritised"
 
     def test_invalid_transition_rejected(self, db):
+        """promoted is a terminal state — cannot transition out of it."""
         type_id = _create_brainstorm(db)
         init_entity_workflow(db, type_id, "draft", "wip")
+        transition_entity_phase(db, type_id, "promoted")
         with pytest.raises(ValueError, match="invalid_transition.*cannot transition"):
-            transition_entity_phase(db, type_id, "promoted")
+            transition_entity_phase(db, type_id, "draft")
 
     def test_forward_transition_updates_last_completed_phase(self, db):
         type_id = _create_brainstorm(db)
@@ -243,6 +245,20 @@ class TestTransitionEntityPhase:
         # last_completed_phase should be "reviewing"
         row = db.get_workflow_phase(type_id)
         assert row["last_completed_phase"] == "reviewing"
+
+    def test_draft_to_promoted_direct(self, db):
+        """draft -> promoted is valid (skip reviewing for direct feature creation)."""
+        type_id = _create_brainstorm(db)
+        init_entity_workflow(db, type_id, "draft", "wip")
+        result = transition_entity_phase(db, type_id, "promoted")
+        assert result["transitioned"] is True
+        assert result["from_phase"] == "draft"
+        assert result["to_phase"] == "promoted"
+        assert result["kanban_column"] == "completed"
+        row = db.get_workflow_phase(type_id)
+        assert row["last_completed_phase"] == "draft"
+        entity = db.get_entity(type_id)
+        assert entity["status"] == "promoted"
 
     def test_full_lifecycle_backlog_open_to_promoted(self, db):
         """Full forward path: open -> triaged -> promoted."""

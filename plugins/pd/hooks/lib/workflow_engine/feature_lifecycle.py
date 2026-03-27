@@ -77,6 +77,32 @@ def _validate_feature_type_id(feature_type_id: str, artifacts_root: str) -> str:
     return slug
 
 
+def _promote_brainstorm(db: EntityDatabase, brainstorm_source: str) -> None:
+    """Best-effort promotion of brainstorm entity when feature is created.
+
+    Extracts the brainstorm stem from the source path and updates the entity
+    status to 'promoted'. Also updates the workflow_phases row if it exists.
+    Silently ignores all errors — feature creation must not be blocked.
+    """
+    stem = os.path.basename(brainstorm_source)
+    if stem.endswith(".prd.md"):
+        stem = stem[: -len(".prd.md")]
+    type_id = f"brainstorm:{stem}"
+    try:
+        entity = db.get_entity(type_id)
+        if entity and entity.get("status") != "promoted":
+            db.update_entity(type_id, status="promoted")
+            wf = db.get_workflow_phase(type_id)
+            if wf:
+                db.update_workflow_phase(
+                    type_id,
+                    workflow_phase="promoted",
+                    kanban_column="completed",
+                )
+    except Exception:
+        pass  # Best-effort — don't block feature creation
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -127,6 +153,7 @@ def init_feature_state(
     }
     if brainstorm_source:
         metadata["brainstorm_source"] = brainstorm_source
+        _promote_brainstorm(db, brainstorm_source)
     if backlog_source:
         metadata["backlog_source"] = backlog_source
 

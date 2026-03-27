@@ -614,3 +614,10 @@ Gap remediation features that consolidate scattered patterns typically delete mo
 - Confidence: medium
 - Last observed: Feature #052
 - Observation count: 1
+
+### Entity Lifecycle Fixes Require 4 Layers
+When fixing entity lifecycle behavior, verify all four layers: (1) state machine transitions in `entity_lifecycle.py`, (2) lifecycle helper code, (3) prompt/command instructions, (4) doctor diagnostic checks. Missing any layer leaves silent drift.
+- Source: Feature #069 — all 4 layers updated in one pass, 0 regressions, 13 stale entities corrected
+- Confidence: high
+- Last observed: Feature #069
+- Observation count: 1

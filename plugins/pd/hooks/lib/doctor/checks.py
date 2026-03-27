@@ -691,7 +691,7 @@ def check_brainstorm_status(
                             ))
 
                     feature_status = meta.get("status", "")
-                    if feature_status in ("completed", "finished"):
+                    if feature_status in ("active", "completed", "finished"):
                         brainstorm_refs.setdefault(bs_source, []).append(entry)
             except (json.JSONDecodeError, ValueError):
                 continue

@@ -38,5 +38,6 @@
       "iterations": 2,
       "reviewerNotes": "[{\"reviewer\": \"implementation-reviewer\", \"approved\": true, \"summary\": \"Approved iter 2/5 \\u2014 3 blockers fixed (entity_dependencies columns)\"}, {\"reviewer\": \"code-quality-reviewer\", \"approved\": true, \"summary\": \"Approved iter 1/5 \\u2014 3 non-blocking warnings\"}, {\"reviewer\": \"security-reviewer\", \"approved\": true, \"summary\": \"Approved iter 1/5 \\u2014 no critical/high vulns\"}]"
     }
-  }
+  },
+  "completed": "2026-03-24T11:30:00.000000+00:00"
 }
