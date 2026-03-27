@@ -254,6 +254,7 @@ b. **Invoke design-reviewer:**
        After reading, confirm: "Files read: {name} ({N} lines), ..." in a single line.
        {resolved PRD line from I8}
        - Spec: {feature_path}/spec.md
+       - Design: {feature_path}/design.md
 
        Return your assessment as JSON:
        {
@@ -267,9 +268,6 @@ b. **Invoke design-reviewer:**
          }],
          "summary": "..."
        }
-
-       ## Design (what we're reviewing)
-       {content of design.md}
 
        ## Iteration Context
        This is iteration {n} of {max}.

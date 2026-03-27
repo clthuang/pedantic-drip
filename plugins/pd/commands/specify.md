@@ -64,6 +64,7 @@ b. **Invoke spec-reviewer:**
        You MUST read the following files before beginning your review.
        After reading, confirm: "Files read: {name} ({N} lines), ..." in a single line.
        {resolved PRD line from I8}
+       - Spec: {feature_path}/spec.md
 
        Return your assessment as JSON:
        {
@@ -71,9 +72,6 @@ b. **Invoke spec-reviewer:**
          "issues": [{"severity": "blocker|warning|suggestion", "category": "...", "description": "...", "location": "...", "suggestion": "..."}],
          "summary": "..."
        }
-
-       ## Spec (what you're reviewing)
-       {content of spec.md}
 
        ## Iteration Context
        This is iteration {n} of {max}.

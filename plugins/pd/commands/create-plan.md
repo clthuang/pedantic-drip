@@ -70,11 +70,9 @@ b. **Invoke plan-reviewer:**
        {resolved PRD line from I8}
        - Spec: {feature_path}/spec.md
        - Design: {feature_path}/design.md
+       - Plan: {feature_path}/plan.md
 
        Return JSON: {"approved": bool, "issues": [{"severity": "blocker|warning|suggestion", "description": "...", "location": "...", "suggestion": "..."}], "summary": "..."}
-
-       ## Plan (what you're reviewing)
-       {content of plan.md}
 
        ## Relevant Engineering Memory
        {search_memory results from the pre-dispatch call above}

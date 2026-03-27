@@ -70,6 +70,7 @@ b. **Invoke task-reviewer:**
        - Spec: {feature_path}/spec.md
        - Design: {feature_path}/design.md
        - Plan: {feature_path}/plan.md
+       - Tasks: {feature_path}/tasks.md
 
        Validate:
        1. Plan fidelity - every plan item has tasks
@@ -84,9 +85,6 @@ b. **Invoke task-reviewer:**
          "issues": [{"severity": "blocker|warning|suggestion", "task": "...", "description": "...", "suggestion": "..."}],
          "summary": "..."
        }
-
-       ## Tasks (what you're reviewing)
-       {content of tasks.md}
 
        ## Relevant Engineering Memory
        {search_memory results from the pre-dispatch call above}

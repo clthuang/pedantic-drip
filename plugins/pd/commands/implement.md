@@ -328,8 +328,8 @@ Task tool call:
       "summary": "..."
     }
 
-    ## Implementation files
-    {list of files with code}
+    ## Implementation Files
+    {newline-separated list of file paths}
 
     ## Relevant Engineering Memory
     {search_memory results from the pre-dispatch call above}
@@ -488,6 +488,7 @@ Task tool call:
 
     ## Required Artifacts
     You MUST read the following files before beginning your review.
+    Also read implementation files listed below as needed.
     After reading, confirm: "Files read: {name} ({N} lines), ..." in a single line.
     - Design: {feature_path}/design.md
     - Spec: {feature_path}/spec.md
@@ -506,8 +507,8 @@ Task tool call:
       "summary": "..."
     }
 
-    ## Files changed
-    {list of files}
+    ## Implementation Files
+    {newline-separated list of file paths}
 
     ## Relevant Engineering Memory
     {search_memory results from the pre-dispatch call above}
@@ -652,6 +653,7 @@ Task tool call:
 
     ## Required Artifacts
     You MUST read the following files before beginning your review.
+    Also read implementation files listed below as needed.
     After reading, confirm: "Files read: {name} ({N} lines), ..." in a single line.
     - Design: {feature_path}/design.md
     - Spec: {feature_path}/spec.md
@@ -669,8 +671,8 @@ Task tool call:
       "summary": "..."
     }
 
-    ## Files changed
-    {list of files}
+    ## Implementation Files
+    {newline-separated list of file paths}
 
     ## Relevant Engineering Memory
     {search_memory results from the pre-dispatch call above}
