@@ -6,13 +6,15 @@
   "created": "2026-03-30T18:49:54.635096+00:00",
   "branch": "feature/070-phase-transition-summary",
   "backlog_source": "00049",
-  "lastCompletedPhase": null,
+  "lastCompletedPhase": "specify",
   "phases": {
     "brainstorm": {
       "started": "2026-03-30T18:49:54.634544+00:00"
     },
     "specify": {
-      "started": "2026-03-30T18:51:24.614561+00:00"
+      "started": "2026-03-30T18:51:24.614561+00:00",
+      "completed": "2026-03-30T19:03:08.093417+00:00",
+      "iterations": 3
     }
   }
 }
