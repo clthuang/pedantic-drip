@@ -75,7 +75,7 @@ Parameters:
 - `phaseName` (string): Phase name for commit message and summary header. Unchanged.
 - `artifacts[]` (string[]): File paths for git staging. Unchanged. When empty, Step 1 (Auto-Commit) still runs (commits .meta.json and .review-history.md only).
 - `iterations` (integer): Combined review loop counter at exit. New. For single-reviewer phases: the loop counter value. For dual-reviewer phases (specify, design): `step1_iterations + phase_iterations` (e.g., 2 spec-reviewer + 1 phase-reviewer = 3). For reset cases ("Fix and rerun"): counter from the final run only.
-- `capReached` (boolean): Whether any reviewer stage hit its max iteration limit. New. The command file sets this to `true` if any stage exited at `iteration == max` without approval. This decouples cap detection from the iterations count.
+- `capReached` (boolean): Whether any reviewer stage hit its max iteration limit. New. The command file sets this to `true` if any stage exited at `iteration == max` without approval. This decouples cap detection from the iterations count. **Note:** This parameter was added during design review to fix a spec ambiguity where `iterations == max` cannot reliably detect cap-reached in dual-reviewer phases (combined count can equal max without any cap). The spec's `iterations == max` rule is replaced by this explicit boolean.
 - `reviewerNotes[]` (object[]): Unresolved reviewer issues. New. Each object:
   ```
   {
@@ -96,10 +96,10 @@ Artifacts: {file1}, {file2}
 
 Where:
 - `outcome` decision table (first match wins):
-  1. `capReached == true` → "Review cap reached"
-  2. `iterations == 1` AND `reviewerNotes` empty → "Approved on first pass"
-  3. `iterations > 1` AND `reviewerNotes` empty → "Approved after {N} iterations"
-  4. `reviewerNotes` non-empty → "Approved with notes"
+  1. `capReached == true` → "Review cap reached."
+  2. `iterations == 1` AND `reviewerNotes` empty → "Approved on first pass."
+  3. `iterations > 1` AND `reviewerNotes` empty → "Approved after {N} iterations."
+  4. `reviewerNotes` non-empty → "Approved with notes."
 
 - `feedback_section` (when `reviewerNotes` non-empty):
   ```
@@ -125,7 +125,7 @@ Where:
 | design.md | `commitAndComplete("design", ["design.md"])` | `commitAndComplete("design", ["design.md"], iteration + phase_iteration, capReached, reviewerNotes)` |
 | create-plan.md | `commitAndComplete("create-plan", ["plan.md"])` | `commitAndComplete("create-plan", ["plan.md"], iteration, capReached, reviewerNotes)` |
 | create-tasks.md | `commitAndComplete("create-tasks", ["tasks.md"])` | `commitAndComplete("create-tasks", ["tasks.md"], iteration, capReached, reviewerNotes)` |
-| implement.md | State update step only | Full `commitAndComplete("implement", [], iteration, capReached, reviewerNotes)` — empty artifacts[] causes Step 1 to commit only .meta.json/.review-history.md |
+| implement.md | State update step only | Full `commitAndComplete("implement", [], iteration, capReached, reviewerNotes)` — empty artifacts[] causes Step 1 to commit .meta.json/.review-history.md accumulated during review loop; Step 2 then updates .meta.json again via MCP (acceptable — captures pre-completion state) |
 
 **Iteration counter computation:**
 - Single-reviewer phases (create-plan, create-tasks, implement): `iterations = iteration` (the loop counter)
@@ -155,7 +155,8 @@ Before calling `commitAndComplete()`:
      Use only phase-reviewer's final issues[]
 4. For implement (3 concurrent reviewers):
      Merge all 3 reviewers' final issues[] into a single array.
-     Apply step 2 filter. Deduplicate by description similarity.
+     Apply step 2 filter. Deduplicate: if two issues describe the same
+     concern about the same code, keep only the higher-severity one.
 ```
 
 ## Risks
