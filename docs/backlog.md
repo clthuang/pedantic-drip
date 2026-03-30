@@ -31,5 +31,5 @@
 | 00046 | 2026-03-24T15:34:00Z | Add brainstorm review cycle to brainstorm (already implemented — Stage 4/5 in brainstorming skill) |
 | 00047 | 2026-03-25T02:00:00Z | reconciliation_orchestrator does not detect stale blocked_by entries for completed entities — Phase B complete-failure recovery unverified. Discovered during feature 062 Task 1.4 cascade atomicity fix. (promoted → feature:066-stale-dependency-cleanup) |
 | 00048 | 2026-03-26T02:10:00Z | release.sh: add pre-push tag existence check (git ls-remote --tags) before pushing main, to prevent non-atomic releases when stale tags exist on remote (fixed: auto-increment in CI mode) |
-| 00049 | 2026-03-27T03:10:00Z | Between phase transition when asking users' decision, it should show a summary of the phase including summary of the remaining reviewer feedback |
+| 00049 | 2026-03-27T03:10:00Z | Between phase transition when asking users' decision, it should show a summary of the phase including summary of the remaining reviewer feedback (promoted → feature:070-phase-transition-summary) |
 | 00050 | 2026-03-27T03:40:00Z | Add lightweight pre-push git hook that validates .meta.json consistency (status=completed requires completed timestamp). No DB queries — pure filesystem JSON check. Prevents CI failures from incomplete manual status fixes. (closed: implemented as PreToolUse Bash hook) |

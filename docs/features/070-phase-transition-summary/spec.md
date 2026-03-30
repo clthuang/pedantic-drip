@@ -18,7 +18,7 @@ The `commitAndComplete()` function in workflow-transitions SKILL.md currently ac
 commitAndComplete(phaseName, artifacts[], iterations, reviewerNotes[])
 ```
 
-- `iterations` (integer): The review loop counter at phase completion. For phases with two review stages (specify, design), this is the combined total across both stages (e.g., 2 spec-reviewer iterations + 1 phase-reviewer iteration = 3). For phases where the user triggers a counter reset (e.g., specify's "Fix and rerun reviews"), use the counter value from the final run only.
+- `iterations` (integer): The review loop counter at phase completion. For phases with two review stages (specify, design), this is the combined total across both stages (e.g., 2 spec-reviewer iterations + 1 phase-reviewer iteration = 3). For phases where the user triggers a counter reset (e.g., specify's "Fix and rerun reviews"), each retry resets the local iteration counter to 1; the value passed to `commitAndComplete()` is whatever the counter holds when the final retry loop exits.
 - `reviewerNotes[]` (array of objects): Unresolved issues from the final reviewer iteration. Each object has shape: `{"severity": "warning|suggestion", "description": "..."}`. Command files construct this from the final reviewer JSON response's `issues[]` array, filtering to non-blocker items that were not addressed.
 
 The current `commitAndComplete` Step 2 already passes placeholder iteration/reviewer_notes values to `complete_phase` MCP. This change replaces those with caller-provided values, ensuring the MCP receives accurate data from the review loop.
@@ -77,7 +77,7 @@ For phases with one review stage (create-plan, create-tasks, implement): use tha
 - **AC-1**: All five command files pass `iterations` and `reviewerNotes[]` to `commitAndComplete()`
 - **AC-2**: Phase completion shows iteration count and reviewer outcome in the summary block before the AskUserQuestion prompt
 - **AC-3**: When `iterations == 1` and `reviewerNotes` is empty, summary shows "Approved on first pass." and "All reviewer issues resolved."
-- **AC-4**: When review cap is reached (`iterations == max`), header shows "Review cap reached." and feedback section header is "Unresolved issues carried forward:" with listed items
+- **AC-4**: When review cap is reached (`iterations == max`), header shows "Review cap reached.", feedback section header is "Unresolved issues carried forward:", and blocker-severity items from the final reviewer response are included in the listed items
 - **AC-5**: When unresolved warnings/suggestions exist, they are listed with `[W]`/`[S]` prefixes
 - **AC-6**: Summary is generated in `commitAndComplete()` Step 3 — individual command files do NOT duplicate summary logic
 - **AC-7**: Existing AskUserQuestion options remain unchanged — summary is additive
