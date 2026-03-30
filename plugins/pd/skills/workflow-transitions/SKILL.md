@@ -155,9 +155,16 @@ If `project_id` is present:
 
 When constructing reviewer prompts and the feature has no local `prd.md`, use the project PRD from the `## Project Context` section above. If neither local `prd.md` nor project context exists, use `"None — feature created without brainstorm"` as the PRD slot value.
 
-## commitAndComplete(phaseName, artifacts[])
+## commitAndComplete(phaseName, artifacts[], iterations, capReached, reviewerNotes[])
 
 Execute after phase work and reviews are done.
+
+**Parameters:**
+- `phaseName` (string): Phase name for commit message and summary header.
+- `artifacts[]` (string[]): File paths for git staging. When empty, Step 1 commits only .meta.json and .review-history.md.
+- `iterations` (integer): Combined review loop counter at exit. For single-stage phases: the loop counter. For dual-stage phases (specify, design, create-plan, create-tasks): `step1_iterations + phase_iterations`. For reset cases ("Fix and rerun"): counter from the final run only.
+- `capReached` (boolean): Whether any reviewer stage hit its max iteration limit without approval.
+- `reviewerNotes[]` (object[]): Unresolved reviewer issues. Each object: `{"severity": "blocker"|"warning"|"suggestion", "description": "..."}`.
 
 ### Step 1: Auto-Commit
 
@@ -185,6 +192,7 @@ git push
 ```
 
 **Error handling:**
+- On nothing to commit (git commit output contains "nothing to commit"): Treat as success — skip to Step 2. This handles the implement phase where review-loop commits may have already staged .meta.json/.review-history.md.
 - On commit failure: Display error, do NOT mark phase completed, allow retry
 - On push failure: Commit succeeds locally, warn user with "Run: git push" instruction, mark phase completed
 
@@ -198,8 +206,8 @@ Call `complete_phase` MCP tool to record the phase completion, timing data, and 
    complete_phase(
      feature_type_id="feature:{id}-{slug}",
      phase="{phaseName}",
-     iterations={count},
-     reviewer_notes='["any unresolved concerns"]'
+     iterations={iterations},
+     reviewer_notes='{JSON array of reviewerNotes[].map(n => n.description)}'
    )
    ```
    The tool stores `completed` timestamp, `iterations`, `reviewerNotes`, and `lastCompletedPhase` in the DB and projects the updated `.meta.json`. The `completed_at` field in the response contains the completion timestamp.
@@ -208,3 +216,30 @@ Call `complete_phase` MCP tool to record the phase completion, timing data, and 
    output `Note: Workflow DB sync skipped — {reason}. State will reconcile on next reconcile_apply run.`
    where `{reason}` is a brief description (e.g., "MCP tool unavailable", "phase mismatch", "feature not found").
    Do NOT block — proceed regardless.
+
+### Step 3: Phase Summary
+
+Output a plain-text summary block (max 12 lines) before returning control to the calling command's AskUserQuestion prompt.
+
+**Outcome decision table** (evaluate top to bottom, first match wins):
+1. `capReached == true` → outcome = "Review cap reached."
+2. `iterations == 1` AND `reviewerNotes` is empty → outcome = "Approved on first pass."
+3. `iterations > 1` AND `reviewerNotes` is empty → outcome = "Approved after {iterations} iterations."
+4. `reviewerNotes` is non-empty → outcome = "Approved with notes."
+
+**Output format:**
+
+```
+{PhaseName} complete ({iterations} iteration(s)). {outcome}
+Artifacts: {comma-separated artifact filenames}
+{feedback_section}
+```
+
+- **Artifacts line:** Derived from `artifacts[]` parameter. Omit this line entirely when `artifacts[]` is empty.
+- **Feedback section (when `reviewerNotes[]` is non-empty):**
+  - Normal header: `"Remaining feedback ({W} warnings, {S} suggestions):"`
+  - Cap-reached header: `"Unresolved issues carried forward:"`
+  - List items sorted by severity (warnings first, then suggestions). Blocker-severity items (present only when capReached) display with `[W]` prefix.
+  - Each item: `"  [W] {description}"` or `"  [S] {description}"` — truncate description at 100 characters.
+  - Show at most 5 items. If more than 5: append `"  ...and {N} more"`
+- **Feedback section (when `reviewerNotes[]` is empty):** `"All reviewer issues resolved."`

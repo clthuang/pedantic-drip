@@ -1075,7 +1075,17 @@ If the review loop completed in 1 iteration AND the reviewer found issues with s
 
 ### 8. Update State on Completion
 
-Follow the state update step from `commitAndComplete("implement", [])` in the **workflow-transitions** skill. Implementation does not auto-commit artifacts (code is committed during implementation).
+**Construct reviewerNotes before committing:**
+```
+capReached = (iteration == 5 at exit without approval)
+Merge all 3 reviewers' (implementation-reviewer, code-quality-reviewer, security-reviewer) final issues[] into one array.
+If any reviewer response lacks .issues[] or is not valid JSON: skip that reviewer's issues.
+If capReached: reviewerNotes = merged issues[].map(i => {severity: i.severity, description: i.description})
+Else: reviewerNotes = merged issues[].filter(i => i.severity in ["warning", "suggestion"]).map(i => {severity: i.severity, description: i.description})
+Deduplicate: if two issues reference the same file/function AND have overlapping keywords in descriptions, keep only the higher-severity one. When uncertain, keep both.
+```
+
+Follow `commitAndComplete("implement", [], iteration, capReached, reviewerNotes)` from the **workflow-transitions** skill.
 
 ### 9. Completion Message
 

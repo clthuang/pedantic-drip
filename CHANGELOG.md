@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.14.7] - 2026-03-31
+
+### Added
+- Phase completion summary displayed before each phase transition prompt — shows iteration count, reviewer outcome (approved on first pass / after N iterations / review cap reached / approved with notes), artifacts produced, and any remaining reviewer feedback with `[W]`/`[S]` severity prefixes
+
 ## [4.14.6] - 2026-03-31
 
 ### Fixed

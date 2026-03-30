@@ -407,7 +407,15 @@ If the review loop completed in 1 iteration AND the reviewer found issues with s
 
 ### 5b. Auto-Commit and Update State
 
-Follow `commitAndComplete("create-tasks", ["tasks.md"])` from the **workflow-transitions** skill.
+**Construct reviewerNotes before committing:**
+```
+capReached = (iteration == 5 at Step 1 exit without approval) OR (phase_iteration == 5 at Step 2 exit without approval)
+If phase-reviewer response lacks .issues[] or is not valid JSON: reviewerNotes = []
+Else if capReached: reviewerNotes = phase-reviewer's final issues[].map(i => {severity: i.severity, description: i.description})
+Else: reviewerNotes = phase-reviewer's final issues[].filter(i => i.severity in ["warning", "suggestion"]).map(i => {severity: i.severity, description: i.description})
+```
+
+Follow `commitAndComplete("create-tasks", ["tasks.md"], iteration + phase_iteration, capReached, reviewerNotes)` from the **workflow-transitions** skill.
 
 Create-tasks additionally records taskReview and chainReview sub-objects in the phase state.
 

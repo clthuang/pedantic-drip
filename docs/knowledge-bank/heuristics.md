@@ -621,3 +621,17 @@ When fixing entity lifecycle behavior, verify all four layers: (1) state machine
 - Confidence: high
 - Last observed: Feature #069
 - Observation count: 1
+
+### Worked Examples Per Caller Type for Signature Extension Specs
+When speccing a function signature extension that aggregates data across multiple caller types, include one worked example per caller type showing exact parameter values. For aggregated counters, show the arithmetic explicitly.
+- Source: Feature #070 — specify phase required 3 iterations on signature assumptions that worked examples would have preempted
+- Confidence: high
+- Last observed: Feature #070
+- Observation count: 1
+
+### Enumerate Caller Configurations for Decision Rules on Counted Values
+Decision rules based on counted values (caps, thresholds) should be verified against all caller configurations at spec time. Dual-reviewer phases with combined counters are a known edge case for cap-detection rules.
+- Source: Feature #070 — 'iterations == max' unreliable for dual-reviewer phases; design review caught it
+- Confidence: medium
+- Last observed: Feature #070
+- Observation count: 1

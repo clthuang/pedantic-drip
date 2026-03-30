@@ -2,11 +2,12 @@
   "id": "069",
   "slug": "reviewer-token-efficiency",
   "mode": "standard",
-  "status": "active",
+  "status": "completed",
   "created": "2026-03-27T03:03:22.727787+00:00",
   "branch": "feature/069-reviewer-token-efficiency",
+  "completed": "2026-03-27T08:36:41.390305+00:00",
   "brainstorm_source": "docs/brainstorms/20260327-040000-reviewer-token-efficiency.prd.md",
-  "lastCompletedPhase": "implement",
+  "lastCompletedPhase": "finish",
   "phases": {
     "brainstorm": {
       "started": "2026-03-27T03:04:15.613994+00:00",
@@ -27,6 +28,9 @@
     "implement": {
       "completed": "2026-03-27T03:09:27.809360+00:00",
       "iterations": 1
+    },
+    "finish": {
+      "completed": "2026-03-27T08:36:41.390305+00:00"
     }
   }
 }

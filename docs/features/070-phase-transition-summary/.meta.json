@@ -1,0 +1,36 @@
+{
+  "id": "070",
+  "slug": "phase-transition-summary",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-03-30T18:49:54.635096+00:00",
+  "branch": "feature/070-phase-transition-summary",
+  "backlog_source": "00049",
+  "lastCompletedPhase": "implement",
+  "phases": {
+    "brainstorm": {
+      "started": "2026-03-30T18:49:54.634544+00:00"
+    },
+    "specify": {
+      "started": "2026-03-30T18:51:24.614561+00:00",
+      "completed": "2026-03-30T19:03:08.093417+00:00",
+      "iterations": 3
+    },
+    "design": {
+      "completed": "2026-03-30T19:12:35.511016+00:00",
+      "iterations": 2
+    },
+    "create-plan": {
+      "completed": "2026-03-30T19:22:13.273163+00:00",
+      "iterations": 3
+    },
+    "create-tasks": {
+      "completed": "2026-03-30T19:26:23.194267+00:00",
+      "iterations": 1
+    },
+    "implement": {
+      "completed": "2026-03-30T19:30:23.422756+00:00",
+      "iterations": 1
+    }
+  }
+}

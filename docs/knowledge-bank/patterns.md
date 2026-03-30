@@ -615,3 +615,17 @@ When investigating missing or stale entity state, compare entity registry record
 - Confidence: high
 - Last observed: Feature #069
 - Observation count: 1
+
+### Pattern: Thorough Pre-Implementation Phases for Markdown-Only Features
+For features modifying exclusively markdown artifacts (SKILL.md, command .md files), thorough pre-implementation phase reviews (10+ iterations across specify/design/plan) correlate with single-pass implementation approval from all concurrent reviewers.
+- Observed in: Feature #070 — 10 pre-implementation iterations, 1-iteration implement approved by all 3 reviewers in ~4 min
+- Confidence: high
+- Last observed: Feature #070
+- Observation count: 1
+
+### Pattern: Explicit Boolean Over Derived Rule for Cap Detection
+When design review surfaces a spec rule that does not hold under all caller configurations, fix it by adding an explicit parameter rather than patching the rule. For iteration cap detection, an explicit capReached boolean decouples "did we hit the cap" from "how many iterations ran."
+- Observed in: Feature #070 — capReached boolean added during design review to fix 'iterations == max' ambiguity for dual-reviewer phases
+- Confidence: high
+- Last observed: Feature #070
+- Observation count: 1

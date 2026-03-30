@@ -594,3 +594,11 @@ When investigation reveals the actual problem is unrelated to the feature's orig
 - Confidence: high
 - Last observed: Feature #069
 - Observation count: 1
+
+### Anti-Pattern: Reviewer Agent Names From Memory in Plan
+Naming reviewer agents in plan.md from memory or from spec/design prose rather than verifying against actual agent dispatch names in command files. Every incorrect name creates a preventable plan review blocker.
+- Observed in: Features #021, #022, #025, #070
+- Instead: Before finalizing plan.md, grep the relevant command files for reviewer dispatch lines and verify all agent names match
+- Confidence: high
+- Last observed: Feature #070
+- Observation count: 4

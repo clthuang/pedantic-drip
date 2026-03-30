@@ -269,7 +269,7 @@ pd includes 29 skills and 28 agents that run automatically during the workflow. 
 | reviewing-artifacts | Comprehensive quality criteria for PRD, spec, design, plan, and tasks |
 | implementing-with-tdd | Enforces RED-GREEN-REFACTOR cycle with rationalization prevention |
 | workflow-state | Defines phase sequence and validates transitions |
-| workflow-transitions | Shared workflow boilerplate for phase commands (validation, branch check, commit, state update) |
+| workflow-transitions | Shared workflow boilerplate for phase commands (validation, branch check, commit, state update, phase summary display) |
 
 #### Investigation
 
