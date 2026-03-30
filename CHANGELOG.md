@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Backlog items annotated with `(promoted →)`, `(closed:)`, `(fixed:)`, or `(already implemented)` now have their entity status correctly synced during backfill — previously these items remained in `open` status regardless of annotation
+- Doctor `check_backlog_status` now detects items annotated as closed, fixed, or already-implemented that still carry an incorrect entity status, and auto-repairs them with `--fix`
+
 ## [4.14.5] - 2026-03-27
 
 ### Changed
