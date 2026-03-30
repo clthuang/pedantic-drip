@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `register_entity` now applies `parent_type_id` when re-registering an entity that previously had no parent — the prior INSERT OR IGNORE silently dropped the parent linkage
+- `finish-feature` Step 6a now commits `.meta.json` after `complete_phase("finish")` — previously the file was left unstaged and excluded from the feature's final commit
+
 ## [4.14.7] - 2026-03-31
 
 ### Added
