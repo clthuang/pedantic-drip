@@ -1213,6 +1213,80 @@ class TestCheck4EmptyBacklog:
             conn.close()
 
 
+class TestCheck4ClosedAnnotation:
+    """Check 4: backlog annotated as closed but entity status not dropped → warning."""
+
+    def test_check4_closed_annotation_stale_status(self, tmp_path):
+        from doctor.checks import check_backlog_status
+
+        db_path = _make_db(tmp_path)
+        _register_backlog(db_path, "00012", status="active")
+
+        backlog_md = (
+            "| ID | Timestamp | Description |\n"
+            "|----|-----------|-------------|\n"
+            "| 00012 | 2026-02-17 | fix something (closed: upstream limitation) |\n"
+        )
+        (tmp_path / "backlog.md").write_text(backlog_md)
+
+        conn = _entities_conn(db_path)
+        try:
+            result = check_backlog_status(conn, str(tmp_path))
+            assert result.passed is False
+            warnings = [i for i in result.issues if i.severity == "warning"]
+            closed_warnings = [w for w in warnings if "closed" in w.message]
+            assert len(closed_warnings) >= 1
+            assert "dropped" in closed_warnings[0].fix_hint
+        finally:
+            conn.close()
+
+    def test_check4_closed_annotation_correct_status(self, tmp_path):
+        from doctor.checks import check_backlog_status
+
+        db_path = _make_db(tmp_path)
+        _register_backlog(db_path, "00012", status="dropped")
+
+        backlog_md = (
+            "| ID | Timestamp | Description |\n"
+            "|----|-----------|-------------|\n"
+            "| 00012 | 2026-02-17 | fix something (closed: upstream limitation) |\n"
+        )
+        (tmp_path / "backlog.md").write_text(backlog_md)
+
+        conn = _entities_conn(db_path)
+        try:
+            result = check_backlog_status(conn, str(tmp_path))
+            closed_warnings = [
+                i for i in result.issues
+                if i.severity == "warning" and "closed" in i.message
+            ]
+            assert len(closed_warnings) == 0
+        finally:
+            conn.close()
+
+    def test_check4_fixed_annotation_stale_status(self, tmp_path):
+        from doctor.checks import check_backlog_status
+
+        db_path = _make_db(tmp_path)
+        _register_backlog(db_path, "00048", status="active")
+
+        backlog_md = (
+            "| ID | Timestamp | Description |\n"
+            "|----|-----------|-------------|\n"
+            "| 00048 | 2026-03-26 | add check (fixed: auto-increment in CI) |\n"
+        )
+        (tmp_path / "backlog.md").write_text(backlog_md)
+
+        conn = _entities_conn(db_path)
+        try:
+            result = check_backlog_status(conn, str(tmp_path))
+            assert result.passed is False
+            warnings = [i for i in result.issues if i.severity == "warning"]
+            assert len(warnings) >= 1
+        finally:
+            conn.close()
+
+
 # ===========================================================================
 # Task 3.1: Check 5 (Memory Health)
 # ===========================================================================

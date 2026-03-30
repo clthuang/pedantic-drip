@@ -796,10 +796,15 @@ def check_backlog_status(
         promoted_pattern = re.compile(
             r"\(promoted\s*(?:→|->)\s*([^)]*)\)", re.IGNORECASE
         )
+        # Match lines with (closed: ...), (fixed: ...), (already implemented ...)
+        closed_pattern = re.compile(
+            r"\((?:closed|fixed|already implemented)[:\s—]", re.IGNORECASE
+        )
         # Also try to extract backlog ID from the line
         # Backlog lines typically have an ID like BL-001 or a number
         id_pattern = re.compile(r"(?:BL-?)?(\d+)", re.IGNORECASE)
 
+        closed_ids: set[str] = set()
         for line in content.splitlines():
             match = promoted_pattern.search(line)
             if match:
@@ -808,10 +813,14 @@ def check_backlog_status(
                 if id_match:
                     backlog_id = id_match.group(0)
                     annotated_ids.add(backlog_id)
+            elif closed_pattern.search(line):
+                id_match = id_pattern.search(line)
+                if id_match:
+                    closed_ids.add(id_match.group(0))
     except (OSError, IOError):
         pass
 
-    if not annotated_ids and not content.strip():
+    if not annotated_ids and not closed_ids and not content.strip():
         # Empty backlog — passes
         elapsed = int((time.monotonic() - start) * 1000)
         return CheckResult(
@@ -852,6 +861,29 @@ def check_backlog_status(
                     ),
                     fix_hint="Register backlog entity or remove annotation",
                 ))
+        except sqlite3.Error:
+            pass
+
+    # Cross-ref closed IDs with entity DB — expect status="dropped"
+    for backlog_id in closed_ids:
+        type_id = f"backlog:{backlog_id}"
+        try:
+            row = entities_conn.execute(
+                "SELECT status FROM entities WHERE type_id = ?", (type_id,)
+            ).fetchone()
+            if row:
+                db_status = row[0] or ""
+                if db_status != "dropped":
+                    issues.append(Issue(
+                        check="backlog_status",
+                        severity="warning",
+                        entity=type_id,
+                        message=(
+                            f"Backlog '{backlog_id}' annotated as closed in "
+                            f"backlog.md but entity status is '{db_status}'"
+                        ),
+                        fix_hint="Update entity status to 'dropped'",
+                    ))
         except sqlite3.Error:
             pass
 

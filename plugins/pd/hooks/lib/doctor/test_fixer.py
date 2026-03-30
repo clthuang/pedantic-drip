@@ -284,6 +284,20 @@ class TestClassifyFix:
         cls, fn = classify_fix("Update entity status to 'promoted'")
         assert cls == "safe"
 
+    def test_update_entity_status_dropped(self):
+        from doctor.fixer import classify_fix
+        cls, fn = classify_fix("Update entity status to 'dropped'")
+        assert cls == "safe"
+        assert fn.__name__ == "_fix_entity_status_dropped"
+
+    def test_dropped_routes_to_dropped_not_promoted(self):
+        """Ensure prefix ordering routes dropped and promoted to correct functions."""
+        from doctor.fixer import classify_fix
+        _, fn_dropped = classify_fix("Update entity status to 'dropped'")
+        _, fn_promoted = classify_fix("Update entity status to 'promoted'")
+        assert fn_dropped.__name__ == "_fix_entity_status_dropped"
+        assert fn_promoted.__name__ == "_fix_entity_status_promoted"
+
     def test_add_promoted_annotation(self):
         from doctor.fixer import classify_fix
         cls, fn = classify_fix("Add (promoted -> feature) annotation to backlog.md")
