@@ -162,6 +162,15 @@ register_entity(
 )
 ```
 
+Then promote the backlog entity (`register_entity` uses INSERT OR IGNORE, so `status="promoted"` is silently dropped when the entity already exists — this `update_entity` call is the corrective write):
+```
+update_entity(
+  type_id="backlog:{backlog_source id}",
+  status="promoted"
+)
+```
+If the call fails, warn but do NOT block feature creation.
+
 ### 2. Register Brainstorm Entity (if brainstorm_source found)
 
 If `brainstorm_source` was set (i.e., `--prd` was provided):

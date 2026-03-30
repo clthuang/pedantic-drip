@@ -140,7 +140,7 @@ def run_backfill(
     # Backfill version tracks schema changes that require re-scanning
     # (e.g., name enrichment logic). Bump _BACKFILL_VERSION when scan
     # logic changes to trigger a one-time re-scan on existing DBs.
-    _BACKFILL_VERSION = "3"  # v3: project_id scoping
+    _BACKFILL_VERSION = "4"  # v4: backlog status sync from annotations
 
     current_version = db.get_metadata("backfill_version") or "0"
     if db.get_metadata("backfill_complete") == "1" and current_version >= _BACKFILL_VERSION:
@@ -413,6 +413,34 @@ def _scan_backlog(db: EntityDatabase, artifacts_root: str, project_id: str = "__
             name=title,
             metadata={"description": description},
         )
+
+        # Derive status from backlog.md annotations (paired write pattern)
+        existing = db.get_entity(f"backlog:{item_id}")
+        existing_status = (existing or {}).get("status") or ""
+        if existing_status not in ("promoted", "dropped"):
+            derived_status = None
+            desc_lower = description.lower()
+            if "(promoted" in desc_lower:
+                derived_status = "promoted"
+            elif any(
+                marker in desc_lower
+                for marker in ["(closed:", "(fixed:", "(already implemented"]
+            ):
+                derived_status = "dropped"
+
+            if derived_status:
+                db.update_entity(
+                    type_id=f"backlog:{item_id}",
+                    status=derived_status,
+                    project_id=project_id,
+                )
+                wf = db.get_workflow_phase(f"backlog:{item_id}")
+                if wf:
+                    db.update_workflow_phase(
+                        f"backlog:{item_id}",
+                        workflow_phase=derived_status,
+                        kanban_column="completed",
+                    )
 
 
 def _scan_brainstorms(db: EntityDatabase, artifacts_root: str, project_id: str = "__unknown__") -> None:

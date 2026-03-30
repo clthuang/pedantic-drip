@@ -139,6 +139,14 @@ def _fix_entity_status_promoted(ctx: FixContext, issue: Issue) -> str:
     return f"Updated {issue.entity} status to 'promoted'"
 
 
+def _fix_entity_status_dropped(ctx: FixContext, issue: Issue) -> str:
+    """Update entity status to 'dropped'."""
+    if not ctx.db or not issue.entity:
+        raise ValueError("No DB or entity on issue")
+    ctx.db.update_entity(type_id=issue.entity, status="dropped")
+    return f"Updated {issue.entity} status to 'dropped'"
+
+
 def _fix_backlog_annotation(ctx: FixContext, issue: Issue) -> str:
     """Add (promoted -> feature) annotation to backlog.md."""
     if not issue.entity:
