@@ -1,7 +1,7 @@
 ---
 name: secretary-reviewer
 description: Validates secretary routing recommendations before presenting to user. Use when (1) secretary command needs routing validation, (2) user says 'check routing', (3) user says 'validate agent match'.
-model: haiku
+model: opus
 tools: [Read, Glob, Grep]
 color: blue
 ---

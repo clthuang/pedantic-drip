@@ -236,7 +236,7 @@ AskUserQuestion:
 ## Config Variables
 Use these values from session context (injected at session start):
 - `{pd_artifacts_root}` — root directory for feature artifacts (default: `docs`)
-- `{pd_reviewer_model}` — model to use for the secretary reviewer gate (default: `haiku`, overridable for local proxy users)
+- `{pd_reviewer_model}` — model to use for the secretary reviewer gate (default: `opus`, overridable for local proxy users)
 
 ## Subcommand Routing
 
