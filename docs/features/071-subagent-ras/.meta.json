@@ -6,13 +6,15 @@
   "created": "2026-03-31T07:48:33.756259+00:00",
   "branch": "feature/071-subagent-ras",
   "brainstorm_source": "docs/brainstorms/20260331-074435-subagent-ras.prd.md",
-  "lastCompletedPhase": null,
+  "lastCompletedPhase": "specify",
   "phases": {
     "brainstorm": {
       "started": "2026-03-31T07:48:33.754759+00:00"
     },
     "specify": {
-      "started": "2026-03-31T07:49:12.290712+00:00"
+      "started": "2026-03-31T07:49:12.290712+00:00",
+      "completed": "2026-03-31T07:54:37.336018+00:00",
+      "iterations": 2
     }
   }
 }

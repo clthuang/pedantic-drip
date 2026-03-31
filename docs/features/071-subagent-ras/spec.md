@@ -83,7 +83,7 @@ Confidence: {high|medium|low}
 - {file paths, URLs, entity queries}
 ```
 
-All section headers (## Research Summary, ### Executive Summary, ### Key Findings, ### Contradictions & Gaps, ### Recommendations, ### Sources) must be present in order. Sections may be empty if no relevant content (e.g., "No contradictions found.").
+All section headers (## Research Summary, ### Executive Summary, ### Key Findings, ### Contradictions & Gaps, ### Recommendations, ### Sources) must be present in order on successful synthesis. Sections may be empty if no relevant content (e.g., "No contradictions found."). In fallback mode (synthesizer failure), a different header set applies — see R5.
 
 ### R4: Query Reformulation
 
