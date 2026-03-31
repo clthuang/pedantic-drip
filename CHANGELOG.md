@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Upgraded secretary-reviewer agent from haiku to opus for more accurate routing decisions at the highest-uncertainty stage of the pipeline
+
 ## [4.14.8] - 2026-03-31
 
 ### Fixed
