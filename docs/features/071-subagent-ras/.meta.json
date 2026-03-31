@@ -2,11 +2,12 @@
   "id": "071",
   "slug": "subagent-ras",
   "mode": "standard",
-  "status": "active",
+  "status": "completed",
   "created": "2026-03-31T07:48:33.756259+00:00",
   "branch": "feature/071-subagent-ras",
+  "completed": "2026-03-31T15:23:23.545696+00:00",
   "brainstorm_source": "docs/brainstorms/20260331-074435-subagent-ras.prd.md",
-  "lastCompletedPhase": "implement",
+  "lastCompletedPhase": "finish",
   "phases": {
     "brainstorm": {
       "started": "2026-03-31T07:48:33.754759+00:00"
@@ -31,6 +32,9 @@
     "implement": {
       "completed": "2026-03-31T15:19:12.116911+00:00",
       "iterations": 1
+    },
+    "finish": {
+      "completed": "2026-03-31T15:23:23.545696+00:00"
     }
   }
 }
