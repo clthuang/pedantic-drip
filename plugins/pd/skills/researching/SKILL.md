@@ -87,8 +87,8 @@ Run concurrently with agent dispatches:
 1. `git branch --show-current` — if on `feature/*`, read `.meta.json` for feature context
 2. `search_entities(query="{keywords from query}")` MCP — extract top 3 results. If MCP unavailable, skip.
 3. `git log --oneline -10` — recent commits
-4. Read `docs/backlog.md` — extract open items (not marked closed/promoted)
-5. Glob `docs/brainstorms/*.prd.md` — extract first heading from each
+4. Read `{pd_artifacts_root}/backlog.md` — extract open items (not marked closed/promoted)
+5. Glob `{pd_artifacts_root}/brainstorms/*.prd.md` — extract first heading from each
 
 Assemble into a text block for the synthesizer.
 
