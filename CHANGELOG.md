@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `/pd:subagent-ras` command — research, analyze, and summarize any topic using parallel agents (codebase-explorer + internet-researcher), with synthesis via ras-synthesizer producing a structured decision-ready summary
+
 ## [4.14.9] - 2026-03-31
 
 ### Changed
