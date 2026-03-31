@@ -154,6 +154,7 @@ Configure via `.claude/pd.local.md`:
 | `/pd:review-ds-code <file>` | Review DS Python code for anti-patterns |
 | `/pd:init-ds-project <name>` | Scaffold a new data science project |
 | `/pd:generate-docs` | Generate three-tier documentation scaffold or update existing docs |
+| `/pd:subagent-ras` | Research, analyze, and summarize any topic using parallel agents |
 | `/pd:sync-cache` | Sync plugin source files to cache |
 | `/pd:yolo [on\|off]` | Toggle YOLO autonomous mode on or off |
 
@@ -243,7 +244,7 @@ Tasks are organized for parallel execution:
 
 ## Reference
 
-pd includes 29 skills and 28 agents that run automatically during the workflow. You don't invoke them directly.
+pd includes 30 skills and 29 agents that run automatically during the workflow. You don't invoke them directly.
 
 ### Skills
 
@@ -277,6 +278,12 @@ pd includes 29 skills and 28 agents that run automatically during the workflow. 
 |-------|---------|
 | systematic-debugging | Guides four-phase root cause investigation |
 | root-cause-analysis | Structured 6-phase process for finding ALL contributing causes |
+
+#### Research & Synthesis
+
+| Skill | Purpose |
+|-------|---------|
+| researching | Orchestrates parallel research, analysis, and synthesis into decision-ready summaries |
 
 #### Domain Knowledge
 
@@ -335,6 +342,7 @@ pd includes 29 skills and 28 agents that run automatically during the workflow. 
 | generic-worker | General-purpose implementation agent for mixed-domain tasks |
 | documentation-writer | Writes and updates documentation based on research findings |
 | code-simplifier | Identifies unnecessary complexity and suggests simplifications |
+| ras-synthesizer | Synthesizes multi-source research findings into thematic analysis with confidence calibration |
 | test-deepener | Systematically deepens test coverage after TDD scaffolding with spec-driven adversarial testing |
 
 #### Advisory

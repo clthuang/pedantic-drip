@@ -149,10 +149,10 @@ flowchart TD
     SK --> WORKFLOW
     SK --> AG
 
-    subgraph AG["Agents · 28 subagents"]
+    subgraph AG["Agents · 29 subagents"]
         direction TB
         A1["Reviewers (13)<br/>spec, design, plan, impl,<br/>security, code-quality, ..."]
-        A2["Workers (6)<br/>implementer, code-simplifier,<br/>test-deepener, ..."]
+        A2["Workers (7)<br/>implementer, code-simplifier,<br/>ras-synthesizer, test-deepener, ..."]
         A3["Researchers (5)<br/>codebase-explorer,<br/>investigation-agent, ..."]
         A4["Advisory (1) · Orchestration (3)"]
     end
@@ -233,6 +233,11 @@ Skills are instructions Claude follows for specific development practices. Locat
 | `systematic-debugging` | Guides four-phase root cause investigation |
 | `root-cause-analysis` | Structured 6-phase process for finding ALL contributing causes |
 
+### Research & Synthesis
+| Skill | Purpose |
+|-------|---------|
+| `researching` | Orchestrates parallel research, analysis, and synthesis into decision-ready summaries |
+
 ### Domain Knowledge
 | Skill | Purpose |
 |-------|---------|
@@ -265,6 +270,7 @@ Commands are user-invoked entry points. Located in `plugins/pd/commands/{name}.m
 | Command | Purpose |
 |---------|---------|
 | `generate-docs` | Generate three-tier documentation scaffold or update existing docs |
+| `subagent-ras` | Research, analyze, and summarize any topic using parallel agents |
 | `promptimize` | Review a plugin prompt against best practices and return an improved version |
 | `refresh-prompt-guidelines` | Scout latest prompt engineering best practices and update the guidelines document |
 | `show-lineage` | Display entity lineage tree for a given entity (ancestors or descendants) |
@@ -295,6 +301,7 @@ Agents are isolated subprocesses spawned by the workflow. Located in `plugins/pd
 - `generic-worker` — General-purpose implementation agent for mixed-domain tasks
 - `documentation-writer` — Writes and updates documentation based on research findings
 - `code-simplifier` — Identifies unnecessary complexity and suggests simplifications
+- `ras-synthesizer` — Synthesizes multi-source research findings into thematic analysis with confidence calibration
 - `test-deepener` — Systematically deepens test coverage after TDD scaffolding with spec-driven adversarial testing
 
 **Advisory (1):**

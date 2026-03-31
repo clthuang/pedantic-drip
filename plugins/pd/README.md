@@ -54,9 +54,9 @@ flowchart TD
 
 | Type | Count |
 |------|-------|
-| Skills | 29 |
-| Agents | 28 |
-| Commands | 30 |
+| Skills | 30 |
+| Agents | 29 |
+| Commands | 31 |
 | Hooks | 13 |
 | MCP Tools | 26 |
 
@@ -101,6 +101,7 @@ flowchart TD
 | `/pd:review-ds-analysis <file>` | Review data analysis for statistical pitfalls |
 | `/pd:review-ds-code <file>` | Review DS Python code for anti-patterns |
 | `/pd:generate-docs` | Generate three-tier documentation scaffold or update existing docs |
+| `/pd:subagent-ras` | Research, analyze, and summarize any topic using parallel agents |
 | `/pd:remember` | Capture a learning to long-term memory for future session recall |
 | `/pd:yolo [on\|off]` | Toggle YOLO autonomous mode |
 
@@ -191,6 +192,7 @@ The `/pd:implement` command uses three reviewers in an iterative loop (up to 5 i
 | prd-reviewer | Critical review of PRD drafts |
 | project-decomposer | Decomposes project PRD into ordered features with dependencies |
 | project-decomposition-reviewer | Validates project decomposition quality |
+| ras-synthesizer | Synthesizes multi-source research findings into thematic analysis with confidence calibration |
 | rca-investigator | Finds all root causes through 6-phase systematic investigation |
 | retro-facilitator | Runs data-driven AORTA retrospective with full intermediate context |
 | secretary-reviewer | Validates secretary routing recommendations |
