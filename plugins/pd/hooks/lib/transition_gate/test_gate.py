@@ -291,7 +291,7 @@ class TestPhaseSequence:
     """PHASE_SEQUENCE and COMMAND_PHASES constants."""
 
     def test_phase_sequence_length(self) -> None:
-        assert len(PHASE_SEQUENCE) == 7
+        assert len(PHASE_SEQUENCE) == 6
 
     def test_phase_sequence_all_phases_present(self) -> None:
         """Every Phase enum value appears in PHASE_SEQUENCE."""
@@ -327,7 +327,7 @@ class TestPrerequisiteAndArtifactMaps:
     """HARD_PREREQUISITES, ARTIFACT_PHASE_MAP, ARTIFACT_GUARD_MAP."""
 
     def test_hard_prerequisites_seven_entries(self) -> None:
-        assert len(HARD_PREREQUISITES) == 7
+        assert len(HARD_PREREQUISITES) == 6
 
     def test_hard_prerequisites_brainstorm_empty(self) -> None:
         assert HARD_PREREQUISITES["brainstorm"] == []
@@ -433,7 +433,7 @@ class TestGuardMetadataIntegrity:
             assert phase in phase_set, f"Phase {phase} missing from PHASE_SEQUENCE"
 
     def test_integrity_phase_sequence_length_seven(self) -> None:
-        assert len(PHASE_SEQUENCE) == 7
+        assert len(PHASE_SEQUENCE) == 6
 
     def test_integrity_metadata_structure(self) -> None:
         """Every guard metadata entry has required keys with correct types."""
