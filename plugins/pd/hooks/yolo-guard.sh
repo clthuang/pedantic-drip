@@ -59,6 +59,7 @@ SAFETY_KEYWORDS = [
     'merge conflict',
     'YOLO MODE STOPPED',
     'pre-merge validation failed',
+    'relevance verification failed',
 ]
 
 try:

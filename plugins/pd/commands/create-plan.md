@@ -530,8 +530,43 @@ Else: reviewerNotes = phase-reviewer's final issues[].filter(i => i.severity in 
 
 Follow `commitAndComplete("create-plan", ["plan.md", "tasks.md"], iteration, capReached, reviewerNotes)` from the **workflow-transitions** skill.
 
-# Relevance gate dispatch point (T16.1 will add the actual dispatch here)
-# After commitAndComplete, before auto-chain to implement
+### Relevance Gate (Pre-Implementation Coherence Check)
+
+After commitAndComplete succeeds, before auto-chaining to implement:
+
+**Pre-dispatch memory enrichment:** call `search_memory` with query: "relevance-verifier artifact coherence spec design plan tasks", limit=5, brief=true, category="anti-patterns".
+
+Dispatch relevance-verifier:
+```
+Task tool call:
+  description: "Pre-implementation relevance verification"
+  subagent_type: pd:relevance-verifier
+  model: opus
+  prompt: |
+    Verify the full artifact chain is coherent before implementation.
+
+    ## Required Artifacts
+    Read these files:
+    - Spec: {feature_path}/spec.md
+    - Design: {feature_path}/design.md
+    - Plan: {feature_path}/plan.md
+    - Tasks: {feature_path}/tasks.md
+
+    Run all 4 checks: coverage, completeness, testability, coherence.
+
+    Return JSON with pass/fail per check, gaps, and optional backward_to.
+
+    ## Relevant Engineering Memory
+    {search_memory results}
+```
+
+**Handle result:**
+- If `pass == true`: proceed to auto-chain (/pd:implement)
+- If `pass == false` AND `backward_to` exists:
+  - Invoke `handleReviewerResponse()` with the gate's response (triggers backward travel)
+- If `pass == false` AND no `backward_to`:
+  - In YOLO mode: output message containing "relevance verification failed" (safety keyword triggers halt)
+  - In interactive mode: present results, user decides
 
 ### 6. Completion Message
 

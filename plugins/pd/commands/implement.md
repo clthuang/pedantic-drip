@@ -241,9 +241,16 @@ After Phase B completes, check `spec_divergences` in the output:
 
 **Error handling:** If Phase A or Phase B agent dispatch fails (tool error, timeout, or agent crash), log the error and proceed to Step 7. Test deepening is additive — failure should not block the review phase.
 
-### 7. Review Phase (Automated Iteration Loop)
+### 7. Review Phase (3-Level Sequential Verification)
 
-Maximum 5 iterations (total, including the final validation round). Loop continues until ALL reviewers approve or cap is reached.
+Maximum 5 iterations (total, shared across all levels, including the final validation round). Loop continues until ALL reviewers approve or cap is reached.
+
+**3-Level Structure:**
+- **Level 1: Task-Level Verification** -- implementation-reviewer validates each task's DoD against implementation
+- **Level 2: Spec-Level Verification** -- relevance-verifier validates each spec AC is satisfied by the implementation
+- **Level 3: Standards-Level Verification** -- code-quality-reviewer + security-reviewer for engineering standards
+
+Dispatch order is Level 1 -> Level 2 -> Level 3 (sequential, not parallel). Level 1/2 failures may trigger backward travel via handleReviewerResponse. Level 3 failures use the existing fix-and-iterate pattern (no backward travel).
 
 **Reviewer State Tracking:**
 
@@ -252,6 +259,7 @@ Before entering the iteration loop, initialize per-reviewer status:
 ```
 reviewer_status = {
   "implementation": "pending",
+  "relevance": "pending",
   "quality": "pending",
   "security": "pending"
 }
@@ -262,7 +270,7 @@ Values: `pending` (not yet reviewed), `passed`, `failed`.
 
 **Resume state initialization:**
 
-Initialize `resume_state = {}` at the start of the review loop. This dict tracks per-role agent context for resume across iterations. Keys: `"implementation-reviewer"`, `"code-quality-reviewer"`, `"security-reviewer"`, `"implementer"`. Each entry: `{ agent_id, iteration1_prompt_length, last_iteration, last_commit_sha }`.
+Initialize `resume_state = {}` at the start of the review loop. This dict tracks per-role agent context for resume across iterations. Keys: `"implementation-reviewer"`, `"relevance-verifier"`, `"code-quality-reviewer"`, `"security-reviewer"`, `"implementer"`. Each entry: `{ agent_id, iteration1_prompt_length, last_iteration, last_commit_sha }`.
 
 ```
 resume_state = {}
@@ -271,13 +279,13 @@ fix_summaries = []
 
 The `fix_summaries` list accumulates implementer fix summaries across iterations (used by I2-FV final validation template to show consolidated changes since a reviewer's last review).
 
-**Iteration 1:** Always dispatch all 3 reviewers (full scope).
+**Iteration 1:** Always dispatch all 4 reviewers (full scope, sequentially by level).
 **Iterations 2+:** Only dispatch reviewers where `reviewer_status == "failed"`. Skip reviewers where `reviewer_status == "passed"`.
-**Final validation:** When all reviewers have individually passed, dispatch all 3 again for a mandatory full regression check.
+**Final validation:** When all reviewers have individually passed, dispatch all 4 again for a mandatory full regression check.
 
-Execute review cycle with three reviewers:
+Execute review cycle with 3-level sequential verification:
 
-**7a. Implementation Review (4-Level Validation):**
+**7a. Level 1: Task-Level Verification (Implementation Review):**
 
 Use the PRD line resolved in Step 6 (I8).
 
@@ -466,7 +474,167 @@ If search_memory returned entries before this dispatch:
   If record_influence fails: warn "Influence tracking failed: {error}", continue
   If .meta.json missing or type_id unresolvable: skip influence recording with warning
 
-**7b. Code Quality Review:**
+**7a2. Level 2: Spec-Level Verification (Relevance Check):**
+
+**Dispatch decision for relevance-verifier:**
+
+**If iteration == 1 OR resume_state["relevance-verifier"] is missing/empty OR resume_state["relevance-verifier"].agent_id is null** -- use fresh I1-R4 dispatch:
+
+**Pre-dispatch memory enrichment:** Before building the dispatch prompt below,
+call `search_memory` with query: "relevance-verifier spec compliance artifact coherence",
+limit=5, brief=true, and category="anti-patterns".
+Store the returned entry names for post-dispatch influence tracking.
+Include non-empty results inside the prompt below.
+
+```
+Task tool call:
+  description: "Verify spec compliance"
+  subagent_type: pd:relevance-verifier
+  model: opus
+  prompt: |
+    Verify the implementation satisfies spec acceptance criteria.
+
+    ## Required Artifacts
+    You MUST read the following files before beginning your review.
+    After reading, confirm: "Files read: {name} ({N} lines), ..." in a single line.
+    - Spec: {feature_path}/spec.md
+    - Design: {feature_path}/design.md
+    - Plan: {feature_path}/plan.md
+    - Tasks: {feature_path}/tasks.md
+
+    ## Implementation Files
+    {complete list of all files assigned to this implementation task}
+
+    For each spec AC, verify it is satisfied by the implementation.
+    Use deterministic checks where possible (run tests if configured).
+
+    Run all 4 checks: coverage, completeness, testability, coherence.
+
+    Return JSON with pass/fail per check, gaps, and optional backward_to.
+
+    ## Relevant Engineering Memory
+    {search_memory results from the pre-dispatch call above}
+```
+After fresh dispatch: capture the `agent_id` from the Task tool result. Record the character count of the prompt above as `prompt_length`. Capture current HEAD SHA via `Bash: git rev-parse HEAD`. Store in resume_state:
+```
+resume_state["relevance-verifier"] = {
+  "agent_id": {agent_id from Task result},
+  "iteration1_prompt_length": {prompt_length} (only set on iteration 1; preserved on subsequent fresh dispatches),
+  "last_iteration": {iteration},
+  "last_commit_sha": {HEAD SHA}
+}
+```
+If this is not iteration 1 (fresh dispatch due to fallback/reset), preserve the original `iteration1_prompt_length` from the first fresh dispatch of this loop if available; otherwise set it from this dispatch's prompt length.
+
+**If iteration >= 2 AND this reviewer failed (status "failed") AND resume_state["relevance-verifier"] exists with non-null agent_id** -- attempt I2 resumed dispatch:
+
+First, compute the delta between the last reviewed commit and current HEAD:
+```
+Bash: git diff {resume_state["relevance-verifier"].last_commit_sha} HEAD --stat
+Bash: git diff {resume_state["relevance-verifier"].last_commit_sha} HEAD
+```
+Capture as `delta_stat` and `delta_content`.
+
+**Delta size guard**: If `len(delta_content)` > 50% of `resume_state["relevance-verifier"].iteration1_prompt_length`, the delta is too large -- fall back to fresh I1-R4 dispatch (same template as iteration 1 above, with iteration context added). Reset `resume_state["relevance-verifier"]`.
+
+**If delta is within threshold**, attempt resumed dispatch:
+```
+Task tool call:
+  resume: {resume_state["relevance-verifier"].agent_id}
+  prompt: |
+    You already have the upstream artifacts and the previous implementation state
+    in context from your prior review.
+
+    The following changes were made to address your previous issues:
+
+    ## Delta
+    {delta_content from git diff}
+
+    ## Fix Summary
+    {summary of revisions made to address the reviewer's issues}
+
+    Review the changes above. Assess whether your previous issues are resolved
+    and check for new issues introduced by the fixes.
+
+    This is iteration {iteration} of {max}.
+
+    Return JSON with pass/fail per check, gaps, and optional backward_to.
+```
+
+**If resume succeeds**: Update resume_state:
+```
+resume_state["relevance-verifier"].agent_id = {agent_id from resumed Task result}
+resume_state["relevance-verifier"].last_iteration = {iteration}
+resume_state["relevance-verifier"].last_commit_sha = {current HEAD SHA}
+```
+
+**If resume fails** (Task tool returns an error): I3 fallback -- fresh I1-R4 dispatch (same template as iteration 1, with additional line in prompt: `"(Fresh dispatch -- prior review session unavailable.)"` and previous issues appended). Log to `.review-history.md`: `RESUME-FALLBACK: relevance-verifier iteration {iteration} -- {error summary}`. Reset `resume_state["relevance-verifier"]` with the new fresh dispatch's agent_id.
+
+**If is_final_validation AND this reviewer previously passed (status "passed")** -- attempt I2-FV resumed dispatch:
+
+No delta size guard for final validation. Compute the diff between the reviewer's last review commit and current HEAD:
+```
+Bash: git diff {resume_state["relevance-verifier"].last_commit_sha} HEAD --stat
+Bash: git diff {resume_state["relevance-verifier"].last_commit_sha} HEAD
+```
+```
+Task tool call:
+  resume: {resume_state["relevance-verifier"].agent_id}
+  prompt: |
+    You already have the upstream artifacts and the implementation state
+    in context from your prior review at iteration {resume_state["relevance-verifier"].last_iteration}.
+
+    Since your last review, the following fixes were applied to address
+    issues from other reviewers:
+
+    ## Changes Since Your Last Review
+    {delta_stat}
+
+    ## Full Diff
+    {delta_content}
+
+    ## Fix Summaries (consolidated)
+    {fix_summaries entries since this reviewer's last_iteration}
+
+    Re-verify all 4 checks with these changes in mind. Confirm your
+    previous approval still holds, or flag new issues introduced by
+    the fixes.
+
+    This is iteration {iteration} (final validation round).
+
+    Return JSON with pass/fail per check, gaps, and optional backward_to.
+```
+
+**If I2-FV resume succeeds**: Update resume_state:
+```
+resume_state["relevance-verifier"].agent_id = {agent_id from resumed Task result}
+resume_state["relevance-verifier"].last_iteration = {iteration}
+resume_state["relevance-verifier"].last_commit_sha = {current HEAD SHA}
+```
+
+**If I2-FV resume fails**: I3 fallback -- fresh I1-R4 dispatch (same template as iteration 1, with `"(Fresh dispatch -- prior review session unavailable.)"` annotation). Log: `RESUME-FALLBACK: relevance-verifier iteration {iteration} -- {error summary}`. Reset `resume_state["relevance-verifier"]`.
+
+**Context compaction detection**: Before attempting any resume (I2 or I2-FV), if `resume_state["relevance-verifier"]` was previously populated but `agent_id` is now null or missing (due to context compaction), treat as fresh I1-R4 dispatch. Log: `RESUME-FALLBACK: relevance-verifier iteration {iteration} -- agent_id lost (context compaction)`.
+
+**Fallback detection (I9):** After receiving the relevance-verifier's response, search for "Files read:" pattern. If not found, log `LAZY-LOAD-WARNING: relevance-verifier did not confirm artifact reads` to `.review-history.md`. Proceed regardless. Note: Resumed dispatches (I2/I2-FV templates) do not include Required Artifacts, so "Files read:" may not appear -- only apply I9 detection to fresh dispatches.
+
+**Post-dispatch influence tracking:**
+If search_memory returned entries before this dispatch:
+  For each entry name in the stored list:
+    If entry name appears as a case-insensitive exact substring in the subagent's output:
+      call record_influence(entry_name=<name>, agent_role="relevance-verifier",
+        feature_type_id=<current feature type_id from .meta.json>)
+  If no entries matched: no action (valid -- not all memories will be referenced)
+  If record_influence fails: warn "Influence tracking failed: {error}", continue
+  If .meta.json missing or type_id unresolvable: skip influence recording with warning
+
+**Handle relevance-verifier result:**
+- Apply strict threshold: **PASS** = `pass: true` with zero gaps across all checks. **FAIL** = `pass: false` OR any check has gaps.
+- Update `reviewer_status["relevance"]` based on result.
+- If FAIL AND `backward_to` exists in response: invoke `handleReviewerResponse()` with the gate's response (triggers backward travel). Do not proceed to Level 3.
+- If FAIL AND no `backward_to`: treat as standard reviewer failure (dispatch implementer to fix, then re-review).
+
+**7b. Level 3: Standards-Level Verification -- Code Quality Review:**
 
 **Dispatch decision for code-quality-reviewer:**
 
@@ -631,7 +799,7 @@ If search_memory returned entries before this dispatch:
   If record_influence fails: warn "Influence tracking failed: {error}", continue
   If .meta.json missing or type_id unresolvable: skip influence recording with warning
 
-**7c. Security Review:**
+**7c. Level 3: Standards-Level Verification -- Security Review:**
 
 **Dispatch decision for security-reviewer:**
 
@@ -801,14 +969,15 @@ Determine which reviewers to dispatch this iteration:
 
 ```
 IF iteration == 1:
-  → Dispatch all 3 reviewers (7a + 7b + 7c)
+  → Dispatch all 4 reviewers sequentially by level (7a → 7a2 → 7b + 7c)
 
 ELIF is_final_validation:
-  → Dispatch all 3 reviewers (7a + 7b + 7c) — full regression check
+  → Dispatch all 4 reviewers sequentially by level (7a → 7a2 → 7b + 7c) — full regression check
 
 ELSE (intermediate iteration):
   → Only dispatch reviewers where reviewer_status == "failed"
   → Skip reviewers where reviewer_status == "passed"
+  → Maintain level order: Level 1 before Level 2 before Level 3
 ```
 
 **7e. Collect Results and Update State:**
@@ -1008,13 +1177,18 @@ AskUserQuestion:
 ```markdown
 ## Iteration {n} - {ISO timestamp} {final_validation_tag}
 
-**Implementation Review:** {Approved / Issues found / Skipped (passed iter {m})}
-  - Level 1 (Tasks): {pass/fail}
-  - Level 2 (Spec): {pass/fail}
-  - Level 3 (Design): {pass/fail}
-  - Level 4 (PRD): {pass/fail}
-**Quality Review:** {Approved / Issues found / Skipped (passed iter {m})}
-**Security Review:** {Approved / Issues found / Skipped (passed iter {m})}
+**Level 1 — Implementation Review:** {Approved / Issues found / Skipped (passed iter {m})}
+  - Task Completeness: {pass/fail}
+  - Spec Compliance: {pass/fail}
+  - Design Alignment: {pass/fail}
+  - PRD Delivery: {pass/fail}
+**Level 2 — Relevance Verification:** {Approved / Issues found / Skipped (passed iter {m})}
+  - Coverage: {pass/fail}
+  - Completeness: {pass/fail}
+  - Testability: {pass/fail}
+  - Coherence: {pass/fail}
+**Level 3 — Quality Review:** {Approved / Issues found / Skipped (passed iter {m})}
+**Level 3 — Security Review:** {Approved / Issues found / Skipped (passed iter {m})}
 
 **Issues:**
 - [{severity}] [{level}] {reviewer}: {description} (at: {location})
@@ -1033,7 +1207,7 @@ Where `{final_validation_tag}` is `[FINAL VALIDATION]` when the iteration is a m
 **Trigger:** Only execute if the review loop ran 2+ iterations. If all three reviewers approved on first pass, skip — no review learnings to capture.
 
 **Process:**
-1. Read `.review-history.md` entries for THIS phase only (implementation-reviewer, code-quality-reviewer, and security-reviewer entries)
+1. Read `.review-history.md` entries for THIS phase only (implementation-reviewer, relevance-verifier, code-quality-reviewer, and security-reviewer entries)
 2. Group issues by description similarity (same category, overlapping file patterns)
 3. Identify issues that appeared in 2+ iterations — these are recurring patterns
 
@@ -1078,7 +1252,7 @@ If the review loop completed in 1 iteration AND the reviewer found issues with s
 **Construct reviewerNotes before committing:**
 ```
 capReached = (iteration == 5 at exit without approval)
-Merge all 3 reviewers' (implementation-reviewer, code-quality-reviewer, security-reviewer) final issues[] into one array.
+Merge all 4 reviewers' (implementation-reviewer, relevance-verifier, code-quality-reviewer, security-reviewer) final issues[] into one array.
 If any reviewer response lacks .issues[] or is not valid JSON: skip that reviewer's issues.
 If capReached: reviewerNotes = merged issues[].map(i => {severity: i.severity, description: i.description})
 Else: reviewerNotes = merged issues[].filter(i => i.severity in ["warning", "suggestion"]).map(i => {severity: i.severity, description: i.description})
@@ -1099,7 +1273,7 @@ AskUserQuestion:
     "options": [
       {"label": "Continue to /pd:finish-feature (Recommended)", "description": "Complete the feature"},
       {"label": "Review implementation first", "description": "Inspect the code before finishing"},
-      {"label": "Fix and rerun reviews", "description": "Apply fixes then rerun the 3-reviewer review cycle"}
+      {"label": "Fix and rerun reviews", "description": "Apply fixes then rerun the 3-level review cycle"}
     ],
     "multiSelect": false
   }]
