@@ -68,7 +68,7 @@ pd's workflow is forward-only with no mechanism to route work back to the upstre
 - `/pd:taskify` integration with external task systems
 - Adaptive reviewer iteration budgets
 - Extracting metadata JSON blob into structured DB tables (backlog #00051)
-- Automated git rollback on backward travel
+- Automated git rollback on backward travel. Note: backward travel phases create new commits (standard phase behavior). Existing commits from prior forward runs are not amended or reverted. Git history accumulates naturally.
 
 ## Acceptance Criteria
 
@@ -87,6 +87,7 @@ pd's workflow is forward-only with no mechanism to route work back to the upstre
 - And it stores `backward_return_target` in entity metadata (the phase that initiated backward travel)
 - And it invokes the target phase command (e.g., `/pd:specify`) with the backward context file present
 - And the target phase reads `.backward-context.json` and includes its contents as additional input alongside existing artifacts
+- And when the target is `brainstorm`, the phase runs in clarification mode (skipping research stages — already completed). backward_context indicates this is a refinement, not a fresh brainstorm.
 
 #### AC-A3: Forward Re-Run After Fix
 - Given the upstream phase (specify) completes after a backward travel fix
