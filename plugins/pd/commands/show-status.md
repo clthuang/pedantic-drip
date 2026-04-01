@@ -50,7 +50,7 @@ function resolve_phase(feature_folder_name, meta_json_or_entity):
         "spec.md": "specify",
         "design.md": "design",
         "plan.md": "create-plan",
-        "tasks.md": "create-tasks"
+        "tasks.md": "create-plan"
     }
     for artifact, phase in ARTIFACT_TO_PHASE.items():
         if artifact missing in feature directory:
@@ -233,7 +233,7 @@ Tip: Run /pd:create-feature or /pd:brainstorm to start
 ## Footer Logic
 
 - Add data source line: `Source: entity-registry` when MCP path was used, `Source: filesystem` when fallback was used.
-- If on a feature branch with a detected phase, show: `Next: Run /pd:{next-command} to continue` where `{next-command}` is the command for the current phase (e.g., design, create-plan, create-tasks, implement).
+- If on a feature branch with a detected phase, show: `Next: Run /pd:{next-command} to continue` where `{next-command}` is the command for the current phase (e.g., design, create-plan, implement).
 - If not on a feature branch, show: `Tip: Run /pd:create-feature or /pd:brainstorm to start`
 
 ## Execution Summary

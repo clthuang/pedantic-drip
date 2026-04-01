@@ -11,7 +11,7 @@ Execute the implementation plan with a structured per-task dispatch approach.
 ## Prerequisites
 
 - If `tasks.md` exists: Read for task list
-- If not: "No tasks found. Run /pd:create-tasks first, or describe what to implement."
+- If not: "No tasks found. Run /pd:create-plan first, or describe what to implement."
 
 ## Related Skills
 

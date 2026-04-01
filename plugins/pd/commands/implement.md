@@ -41,10 +41,10 @@ Stop execution. Do not proceed.
 ```
 BLOCKED: Valid tasks.md required before implementation.
 
-{Level 1}: tasks.md not found. Run /pd:create-tasks first.
-{Level 2}: tasks.md appears empty or stub. Run /pd:create-tasks to complete it.
-{Level 3}: tasks.md missing markdown structure. Run /pd:create-tasks to fix.
-{Level 4}: tasks.md missing required sections (Phase or Task). Run /pd:create-tasks to add them.
+{Level 1}: tasks.md not found. Run /pd:create-plan first.
+{Level 2}: tasks.md appears empty or stub. Run /pd:create-plan to complete it.
+{Level 3}: tasks.md missing markdown structure. Run /pd:create-plan to fix.
+{Level 4}: tasks.md missing required sections (Phase or Task). Run /pd:create-plan to add them.
 ```
 Stop execution. Do not proceed.
 

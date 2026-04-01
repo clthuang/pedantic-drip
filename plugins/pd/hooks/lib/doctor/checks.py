@@ -302,7 +302,7 @@ def check_db_readiness(
 # Phase sequence values for backward-transition detection (Check 2)
 _PHASE_VALUES = [
     "brainstorm", "specify", "design", "create-plan",
-    "create-tasks", "implement", "finish",
+    "implement", "finish",
 ]
 
 

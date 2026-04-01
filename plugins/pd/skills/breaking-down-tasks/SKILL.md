@@ -1,6 +1,6 @@
 ---
 name: breaking-down-tasks
-description: Breaks plans into small, actionable tasks with dependency tracking. Use when the user says 'break down the plan', 'create tasks', 'split into tasks', or 'generate task list'.
+description: Breaks plans into small, actionable tasks with dependency tracking. Use when the user says 'break down the plan', 'create tasks', 'split into tasks', or 'generate task list'. Now part of the create-plan phase.
 ---
 
 # Task Breakdown Phase

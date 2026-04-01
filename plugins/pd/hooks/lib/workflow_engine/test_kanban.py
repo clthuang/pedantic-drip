@@ -9,10 +9,10 @@ from .kanban import PHASE_TO_KANBAN, derive_kanban
 class TestPhaseToKanbanMapping:
     """Verify the PHASE_TO_KANBAN dict covers all expected phases."""
 
-    def test_seven_phase_keys_present(self) -> None:
+    def test_six_phase_keys_present(self) -> None:
         expected = {
             "brainstorm", "specify", "design",
-            "create-plan", "create-tasks", "implement", "finish",
+            "create-plan", "implement", "finish",
         }
         assert expected.issubset(PHASE_TO_KANBAN.keys())
 
@@ -77,9 +77,6 @@ class TestDeriveKanban:
 
     def test_active_create_plan(self) -> None:
         assert derive_kanban("active", "create-plan") == "prioritised"
-
-    def test_active_create_tasks(self) -> None:
-        assert derive_kanban("active", "create-tasks") == "prioritised"
 
     def test_active_implement(self) -> None:
         assert derive_kanban("active", "implement") == "wip"

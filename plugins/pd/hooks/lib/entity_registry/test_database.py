@@ -327,7 +327,7 @@ class TestMigration2:
 
         # Now open it with EntityDatabase — runs pending migrations (3+)
         db = EntityDatabase(db_path)
-        assert db.get_metadata("schema_version") == "8"
+        assert db.get_metadata("schema_version") == "9"
 
         # Schema should be intact
         cur = db._conn.execute("PRAGMA table_info(entities)")
@@ -560,8 +560,8 @@ class TestMetadata:
         db.set_metadata("foo", "baz")
         assert db.get_metadata("foo") == "baz"
 
-    def test_schema_version_is_8(self, db: EntityDatabase):
-        assert db.get_metadata("schema_version") == "8"
+    def test_schema_version_is_9(self, db: EntityDatabase):
+        assert db.get_metadata("schema_version") == "9"
 
 
 # ---------------------------------------------------------------------------
@@ -2490,7 +2490,7 @@ class TestMigrationIdempotency:
         entity = db2.get_entity("project:p1")
         assert entity is not None
         assert entity["uuid"] == p1_uuid
-        assert db2.get_metadata("schema_version") == "8"
+        assert db2.get_metadata("schema_version") == "9"
         db2.close()
 
 
@@ -2684,9 +2684,9 @@ class TestMigration3:
         fk_columns = [fk[3] for fk in fk_rows]
         assert "type_id" not in fk_columns
 
-    def test_schema_version_is_8(self, db: EntityDatabase):
-        """After all migrations, schema_version should be 8."""
-        assert db.get_metadata("schema_version") == "8"
+    def test_schema_version_is_9(self, db: EntityDatabase):
+        """After all migrations, schema_version should be 9."""
+        assert db.get_metadata("schema_version") == "9"
 
     # -- Task 1.2: Migration creates indexes and trigger (AC-2) ------------
 
@@ -2810,7 +2810,7 @@ class TestMigration3:
         """All valid workflow_phase enum values should be accepted."""
         valid_phases = [
             "brainstorm", "specify", "design",
-            "create-plan", "create-tasks", "implement", "finish",
+            "create-plan", "implement", "finish",
         ]
         for i, phase in enumerate(valid_phases):
             entity_id = f"vwp-{i}"
@@ -2871,10 +2871,10 @@ class TestMigration3:
     # -- Task 1.4: Fresh DB migration safety (AC-3) ------------------------
 
     def test_fresh_db_has_all_migrations(self, tmp_path):
-        """A brand-new EntityDatabase should run all 8 migrations."""
+        """A brand-new EntityDatabase should run all 9 migrations."""
         fresh_db = EntityDatabase(str(tmp_path / "fresh.db"))
         try:
-            assert fresh_db.get_metadata("schema_version") == "8"
+            assert fresh_db.get_metadata("schema_version") == "9"
         finally:
             fresh_db.close()
 
@@ -3542,13 +3542,13 @@ class TestCreateWorkflowPhaseAllEnumValuesViaAPI:
     derived_from: dimension:boundary_values, spec:AC-4
     """
 
-    def test_all_seven_workflow_phases_accepted_via_create(
+    def test_all_six_workflow_phases_accepted_via_create(
         self, db: EntityDatabase,
     ):
-        # Given all 7 valid workflow_phase values
+        # Given all 6 valid workflow_phase values (create-tasks removed in 073)
         valid_phases = [
             "brainstorm", "specify", "design",
-            "create-plan", "create-tasks", "implement", "finish",
+            "create-plan", "implement", "finish",
         ]
         # When creating workflow phases for each
         for i, phase in enumerate(valid_phases):
@@ -3608,14 +3608,14 @@ class TestUpdateWorkflowPhaseAllFieldsSimultaneously:
             "feature:all-fields",
             kanban_column="wip",
             workflow_phase="implement",
-            last_completed_phase="create-tasks",
+            last_completed_phase="create-plan",
             mode="full",
             backward_transition_reason="rolled back from finish",
         )
         # Then all 5 are updated
         assert result["kanban_column"] == "wip"
         assert result["workflow_phase"] == "implement"
-        assert result["last_completed_phase"] == "create-tasks"
+        assert result["last_completed_phase"] == "create-plan"
         assert result["mode"] == "full"
         assert result["backward_transition_reason"] == "rolled back from finish"
         # And type_id is unchanged (immutable)
@@ -4301,7 +4301,7 @@ class TestMigration5:
         new phase values are accepted."""
         db = EntityDatabase(str(tmp_path / "m5-idem.db"))
         try:
-            assert db.get_schema_version() == 8
+            assert db.get_schema_version() == 9
 
             # Verify all new phase values are accepted
             new_phases = [
@@ -4429,17 +4429,17 @@ class TestMigration5Deepened:
         assert count == 3
 
     def test_migration_5_existing_feature_phases_still_work(self, db: EntityDatabase):
-        """All 7 original feature phases still accepted after migration 5.
+        """All 6 feature phases accepted after migration 9 (create-tasks removed).
         derived_from: spec:AC-2, dimension:mutation_mindset
 
         Anticipate: If migration replaced the CHECK list instead of extending
-        it, the 7 original feature phases would be rejected.
+        it, the 6 feature phases would be rejected.
         Mutation: swapping the complete list would break these.
         """
-        # Given a fresh DB at schema v5
+        # Given a fresh DB at schema v9
         feature_phases = [
             "brainstorm", "specify", "design", "create-plan",
-            "create-tasks", "implement", "finish",
+            "implement", "finish",
         ]
         for i, phase in enumerate(feature_phases):
             eid = f"fp-{i}"
@@ -4452,12 +4452,12 @@ class TestMigration5Deepened:
                 (f"feature:{eid}", phase, now),
             )
         db._conn.commit()
-        # Then all 7 rows exist
+        # Then all 6 rows exist
         count = db._conn.execute(
             "SELECT COUNT(*) FROM workflow_phases "
             "WHERE type_id LIKE 'feature:fp-%'"
         ).fetchone()[0]
-        assert count == 7
+        assert count == 6
 
 
 class TestUpsertWorkflowPhase:
@@ -5587,7 +5587,7 @@ class TestMigration8Data:
             db2 = EntityDatabase(db_path)
             v2 = db2.get_schema_version()
             db2.close()
-            assert v1 == v2 == 8
+            assert v1 == v2 == 9
 
     def test_migration_8_schema_version_set_to_8(self):
         """Schema version is 8 after migration."""

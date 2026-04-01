@@ -494,9 +494,9 @@ class TestWithoutNotificationQueue:
 
 
 class TestLightFeatureIntegration:
-    """Light-weight feature: brainstorm+design+create-plan+create-tasks
-    are skipped. Only specify→implement→finish. Transition to implement
-    requires only spec.md (B6 integration)."""
+    """Light-weight feature: brainstorm+design+create-plan are skipped.
+    Only specify→implement→finish. Transition to implement requires
+    only spec.md (B6 integration)."""
 
     def test_light_feature_specify_to_implement(self, tmp_path):
         db = _make_db()
@@ -620,7 +620,7 @@ class TestTransitionPhase:
         blocker_uuid = _register(db, "feature", "027-blocker", "Blocker")
         blocked_uuid = _register(db, "feature", slug, "Blocked")
         _with_phase(
-            db, f"feature:{slug}", "create-tasks", mode="standard"
+            db, f"feature:{slug}", "create-plan", mode="standard"
         )
 
         dep_mgr = DependencyManager()
@@ -888,7 +888,7 @@ class TestFiveDDeliverBlockedBy:
             db, "feature", slug_blocked, "Feature Blocked"
         )
         _with_phase(
-            db, f"feature:{slug_blocked}", "create-tasks", mode="standard"
+            db, f"feature:{slug_blocked}", "create-plan", mode="standard"
         )
 
         dep_mgr = DependencyManager()
@@ -1032,7 +1032,7 @@ class TestDeliverGateBlockerDetails:
         )
         _create_meta_json(str(tmp_path), "041-blocked-b")
         _with_phase(
-            db, "feature:041-blocked-b", "create-tasks", mode="standard"
+            db, "feature:041-blocked-b", "create-plan", mode="standard"
         )
 
         dep_mgr = DependencyManager()
@@ -1075,7 +1075,7 @@ class TestDeliverGateBlockerDetails:
         b_uuid = _register(db, "feature", slug_b, "Feature B")
         _with_phase(db, f"feature:{slug_a}", "brainstorm", mode="standard")
         _with_phase(
-            db, f"feature:{slug_b}", "create-tasks", mode="standard",
+            db, f"feature:{slug_b}", "create-plan", mode="standard",
             last_completed_phase="create-plan",
         )
 

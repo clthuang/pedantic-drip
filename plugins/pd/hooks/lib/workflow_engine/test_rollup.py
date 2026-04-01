@@ -67,7 +67,7 @@ class TestPhaseWeightsConstants:
     def test_phase_weights_7_keys(self):
         expected = {
             "brainstorm", "specify", "design", "create-plan",
-            "create-tasks", "implement", "finish",
+            "implement", "finish",
         }
         assert set(PHASE_WEIGHTS_7.keys()) == expected
 
@@ -81,7 +81,7 @@ class TestPhaseWeightsConstants:
     def test_phase_weights_7_monotonic(self):
         """Progress values should be non-decreasing through the lifecycle."""
         phases = ["brainstorm", "specify", "design", "create-plan",
-                  "create-tasks", "implement", "finish"]
+                  "implement", "finish"]
         values = [PHASE_WEIGHTS_7[p] for p in phases]
         for i in range(1, len(values)):
             assert values[i] >= values[i - 1], (

@@ -166,7 +166,7 @@ class TestHelpers:
         result = engine._derive_completed_phases("finish")
         expected = tuple(p.value for p in PHASE_SEQUENCE)
         assert result == expected
-        assert len(result) == 7
+        assert len(result) == 6
 
     def test_derive_completed_phases_unknown(self) -> None:
         engine = WorkflowStateEngine(_make_db(), "/tmp")
@@ -890,11 +890,12 @@ class TestBatchQueries:
 # ===========================================================================
 
 # Artifact produced by each phase (used for creating files after completion).
-_PHASE_ARTIFACT: dict[str, str] = {
-    "specify": "spec.md",
-    "design": "design.md",
-    "create-plan": "plan.md",
-    "create-tasks": "tasks.md",
+# Artifacts produced by each phase (used for creating files after completion).
+# create-plan produces both plan.md and tasks.md (create-tasks merged in 073).
+_PHASE_ARTIFACTS: dict[str, list[str]] = {
+    "specify": ["spec.md"],
+    "design": ["design.md"],
+    "create-plan": ["plan.md", "tasks.md"],
 }
 
 
@@ -973,8 +974,7 @@ class TestIntegration:
             state = engine.complete_phase(type_id, phase_value)
 
             # Create artifact produced by this phase (if any)
-            artifact = _PHASE_ARTIFACT.get(phase_value)
-            if artifact:
+            for artifact in _PHASE_ARTIFACTS.get(phase_value, []):
                 (feature_dir / artifact).write_text(f"# {phase_value}")
 
         # Verify final state
@@ -1091,7 +1091,7 @@ class TestIntegration:
 
         Feature has .meta.json with lastCompletedPhase='design' but no DB
         row. get_state hydrates (source='meta_json'). Then transition to
-        create-tasks succeeds using hydrated state.
+        implement succeeds using hydrated state.
         """
         db = EntityDatabase(":memory:")
         slug = "008-hydrate-transition"
@@ -1509,7 +1509,7 @@ class TestDeepenedMutationMindset:
         causing drift between workflow_phases and entities tables.
         derived_from: dimension:mutation_mindset (line deletion)
         """
-        # Given a feature at implement with create-tasks completed
+        # Given a feature at implement with create-plan completed
         engine, db, type_id = _setup_engine(
             tmp_path,
             workflow_phase="finish",
@@ -1675,7 +1675,7 @@ class TestDeepenedMutationMindset:
         assert state is not None
         assert state.last_completed_phase == "finish"
         assert state.current_phase == "finish"
-        assert len(state.completed_phases) == 7  # all phases
+        assert len(state.completed_phases) == 6  # all phases
 
     def test_terminal_phase_next_returns_none_triggers_fallback(
         self, tmp_path
@@ -1971,7 +1971,7 @@ class TestDeriveStateFromMeta:
         assert state is not None
         assert state.last_completed_phase == "finish"
         assert state.current_phase == "finish"
-        assert len(state.completed_phases) == 7  # all phases
+        assert len(state.completed_phases) == 6  # all phases
 
     def test_unknown_status(self, tmp_path) -> None:
         """Unknown status (planned, abandoned, etc.) -> workflow_phase=None."""
@@ -2374,7 +2374,7 @@ class TestWriteMetaJsonFallback:
             last_completed_phase="implement",
             completed_phases=(
                 "brainstorm", "specify", "design",
-                "create-plan", "create-tasks", "implement",
+                "create-plan", "implement",
             ),
             mode="standard",
             source="meta_json_fallback",
@@ -4290,7 +4290,7 @@ class TestDegradedModeBackfillSetsKanbanFromPhaseDeepened:
     """
 
     def test_degraded_backfill_implement_phase_sets_wip(self, tmp_path) -> None:
-        """Backfill with last_completed_phase='create-tasks' resolves to
+        """Backfill with last_completed_phase='create-plan' resolves to
         current_phase='implement' and kanban_column should be 'wip'.
 
         Anticipate: If derive_kanban is missing 'implement' mapping or
@@ -4298,13 +4298,13 @@ class TestDegradedModeBackfillSetsKanbanFromPhaseDeepened:
         derived_from: spec:R8 (degraded backfill kanban)
         """
         # Given: registered entity, no workflow_phases row,
-        # .meta.json with last_completed_phase="create-tasks"
+        # .meta.json with last_completed_phase="create-plan"
         db = _make_db()
         slug = "036-backfill-impl"
         type_id = _register_feature(db, slug)
         _create_meta_json(
             tmp_path, slug, status="active",
-            last_completed_phase="create-tasks",
+            last_completed_phase="create-plan",
         )
         engine = WorkflowStateEngine(db, str(tmp_path))
 

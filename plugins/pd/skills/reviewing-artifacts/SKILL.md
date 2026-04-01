@@ -250,14 +250,14 @@ When phase-reviewer validates artifact transitions, apply the matching checklist
 3. Mark issues as blocker/warning/suggestion
 4. Summarize: "Can plan phase proceed with this design?"
 
-### plan.md → tasks.md (create-plan → create-tasks)
+### plan.md + tasks.md → implementation (create-plan → implement)
 
 1. Apply "Plan Quality Criteria" checklist
 2. Focus on: Dependency accuracy, Design coverage, TDD compliance
 3. Mark issues as blocker/warning/suggestion
-4. Summarize: "Can tasks phase proceed with this plan?"
+4. Summarize: "Can implementation proceed with this plan?"
 
-### tasks.md → implementation (create-tasks → implement)
+### tasks.md → implementation (create-plan → implement)
 
 1. Apply "Tasks Quality Criteria" checklist
 2. Focus on: Task size, Executability, Testability

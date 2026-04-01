@@ -234,8 +234,8 @@ try:
 except Exception:
     phase_map = {
         'null': 'specify', 'brainstorm': 'specify', 'specify': 'design',
-        'design': 'create-plan', 'create-plan': 'create-tasks',
-        'create-tasks': 'implement', 'implement': 'finish',
+        'design': 'create-plan', 'create-plan': 'implement',
+        'implement': 'finish',
     }
     print(phase_map.get('${LAST_COMPLETED_PHASE}', ''))
 " 2>/dev/null)

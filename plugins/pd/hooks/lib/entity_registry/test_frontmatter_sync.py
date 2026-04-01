@@ -1218,7 +1218,7 @@ class TestBoundaryValues:
             "spec": "specify",
             "design": "design",
             "plan": "create-plan",
-            "tasks": "create-tasks",
+            "tasks": "create-plan",
             "retro": "finish",
             "prd": "brainstorm",
         }

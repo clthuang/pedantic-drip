@@ -1388,7 +1388,7 @@ class TestWorkflowPhaseBackfill:
         feat_dir.mkdir(parents=True)
         (feat_dir / ".meta.json").write_text(json.dumps({
             "status": "abandoned",
-            "lastCompletedPhase": "create-tasks",
+            "lastCompletedPhase": "create-plan",
             "mode": "full",
         }))
 
@@ -1400,8 +1400,8 @@ class TestWorkflowPhaseBackfill:
         wp = db.get_workflow_phase("feature:f4-abandoned")
         assert wp is not None
         assert wp["kanban_column"] == "completed"  # abandoned -> completed
-        assert wp["workflow_phase"] == "implement"  # next after create-tasks
-        assert wp["last_completed_phase"] == "create-tasks"
+        assert wp["workflow_phase"] == "implement"  # next after create-plan
+        assert wp["last_completed_phase"] == "create-plan"
         assert wp["mode"] == "full"
 
     # -------------------------------------------------------------------
@@ -1853,36 +1853,30 @@ class TestWorkflowPhaseBackfill:
         """
         assert _derive_next_phase("brainstorm") == "specify"
 
-    def test_derive_next_phase_create_plan_returns_create_tasks(self):
-        """create-plan -> create-tasks (hyphenated phase names).
+    def test_derive_next_phase_create_plan_returns_implement(self):
+        """create-plan -> implement (create-tasks removed in feature 073).
 
         Anticipate: If phase sequence matching uses partial string match
-        instead of exact, "create-plan" might match "create-tasks" or vice versa.
+        instead of exact, "create-plan" might match incorrectly.
         derived_from: dimension:boundary_values
         """
-        assert _derive_next_phase("create-plan") == "create-tasks"
-
-    def test_derive_next_phase_create_tasks_returns_implement(self):
-        """create-tasks -> implement.
-        derived_from: dimension:boundary_values
-        """
-        assert _derive_next_phase("create-tasks") == "implement"
+        assert _derive_next_phase("create-plan") == "implement"
 
     # -------------------------------------------------------------------
     # Deepened: PHASE_SEQUENCE and VALID_MODES constants
     # -------------------------------------------------------------------
 
-    def test_phase_sequence_has_exactly_seven_elements(self):
-        """PHASE_SEQUENCE must have exactly 7 elements matching spec.
+    def test_phase_sequence_has_exactly_six_elements(self):
+        """PHASE_SEQUENCE must have exactly 6 elements (create-tasks removed in 073).
 
         Anticipate: If a phase is accidentally added or removed, the
         derive_next_phase logic and CHECK constraints would silently diverge.
         derived_from: dimension:mutation_mindset, spec:D-5
         """
-        assert len(PHASE_SEQUENCE) == 7
+        assert len(PHASE_SEQUENCE) == 6
         assert PHASE_SEQUENCE == (
             "brainstorm", "specify", "design",
-            "create-plan", "create-tasks", "implement", "finish",
+            "create-plan", "implement", "finish",
         )
 
     def test_valid_modes_includes_light(self):

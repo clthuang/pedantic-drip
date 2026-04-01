@@ -22,7 +22,6 @@ PHASE_COLORS = {
     "specify": "badge-secondary",
     "design": "badge-accent",
     "create-plan": "badge-warning",
-    "create-tasks": "badge-warning",
     "implement": "badge-primary",
     "finish": "badge-success",
     # Brainstorm lifecycle phases

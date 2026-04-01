@@ -278,9 +278,8 @@ class TestPhaseIndex:
             "specify": 1,
             "design": 2,
             "create-plan": 3,
-            "create-tasks": 4,
-            "implement": 5,
-            "finish": 6,
+            "implement": 4,
+            "finish": 5,
         }
         for phase, idx in expected.items():
             assert _phase_index(phase) == idx, f"_phase_index({phase!r}) != {idx}"
@@ -1283,7 +1282,7 @@ class TestIntegrationFullCycle:
         )
         _create_meta_json(
             tmp_path, "003-another-ahead", status="active",
-            last_completed_phase="create-tasks", mode="full"
+            last_completed_phase="create-plan", mode="full"
         )
 
         engine = WorkflowStateEngine(db, str(tmp_path))
@@ -1420,7 +1419,7 @@ class TestIntegrationFullCycle:
         # db_only (workflow_phases row, no .meta.json)
         type_id4 = _register_feature(db, "004-db-only")
         db.create_workflow_phase(
-            type_id4, workflow_phase="implement", last_completed_phase="create-tasks", mode="standard"
+            type_id4, workflow_phase="implement", last_completed_phase="create-plan", mode="standard"
         )
 
         engine = WorkflowStateEngine(db, str(tmp_path))
@@ -1474,7 +1473,7 @@ class TestPhaseIndexBoundary:
         assert result == 0
 
     def test_last_phase_returns_max_index(self) -> None:
-        """Last phase in PHASE_SEQUENCE returns index 6.
+        """Last phase in PHASE_SEQUENCE returns index 5.
         derived_from: spec:R8 (phase comparison algorithm)
 
         Anticipate: If _PHASE_VALUES tuple is truncated or reordered,
@@ -1483,8 +1482,8 @@ class TestPhaseIndexBoundary:
         # Given the last phase is "finish"
         # When querying its index
         result = _phase_index("finish")
-        # Then it returns exactly 6 (7 phases, 0-indexed)
-        assert result == 6
+        # Then it returns exactly 5 (6 phases, 0-indexed)
+        assert result == 5
 
     def test_second_phase_returns_one(self) -> None:
         """Second phase returns min+1 = 1.
@@ -1500,17 +1499,17 @@ class TestPhaseIndexBoundary:
         assert result == 1
 
     def test_penultimate_phase_returns_max_minus_one(self) -> None:
-        """Penultimate phase returns max-1 = 5.
+        """Penultimate phase returns max-1 = 4.
         derived_from: dimension:boundary_values (max-1)
 
-        Anticipate: "implement" at index 5 is critical for boundary
-        comparisons against "finish" at index 6.
+        Anticipate: "implement" at index 4 is critical for boundary
+        comparisons against "finish" at index 5.
         """
         # Given the penultimate phase is "implement"
         # When querying its index
         result = _phase_index("implement")
-        # Then it returns 5
-        assert result == 5
+        # Then it returns 4
+        assert result == 4
 
     def test_empty_string_returns_minus_one(self) -> None:
         """Empty string is treated as unknown -> -1.
@@ -1564,8 +1563,8 @@ class TestComparePhasesAdjacentBoundary:
         equal last_completed always returns "in_sync" even with
         different workflow_phases.
         """
-        # Given both last_completed="design" (2), meta wp="create-tasks" (4), db wp="create-plan" (3)
-        result = _compare_phases("design", "create-tasks", "design", "create-plan")
+        # Given both last_completed="design" (2), meta wp="implement" (4), db wp="create-plan" (3)
+        result = _compare_phases("design", "implement", "design", "create-plan")
         assert result == "meta_json_ahead"
 
 
@@ -2231,7 +2230,7 @@ class TestKanbanDriftDetection:
             tmp_path,
             slug="010-test",
             workflow_phase="implement",
-            last_completed_phase="create-tasks",
+            last_completed_phase="create-plan",
             mode="standard",
         )
         # DB has kanban_column="backlog" (default from create_workflow_phase),
@@ -2244,9 +2243,9 @@ class TestKanbanDriftDetection:
                 "specify": {"completed": "2026-01-02T00:00:00"},
                 "design": {"completed": "2026-01-03T00:00:00"},
                 "create-plan": {"completed": "2026-01-04T00:00:00"},
-                "create-tasks": {"completed": "2026-01-05T00:00:00"},
+                "create-plan": {"completed": "2026-01-05T00:00:00"},
             },
-            "lastCompletedPhase": "create-tasks",
+            "lastCompletedPhase": "create-plan",
         }
 
         report = _check_single_feature(engine, db, type_id, meta)
@@ -2272,7 +2271,7 @@ class TestKanbanDriftDetection:
         db.create_workflow_phase(
             type_id,
             workflow_phase="implement",
-            last_completed_phase="create-tasks",
+            last_completed_phase="create-plan",
             mode="standard",
         )
         # Fix kanban to match expected value
@@ -2287,9 +2286,9 @@ class TestKanbanDriftDetection:
                 "specify": {"completed": "2026-01-02T00:00:00"},
                 "design": {"completed": "2026-01-03T00:00:00"},
                 "create-plan": {"completed": "2026-01-04T00:00:00"},
-                "create-tasks": {"completed": "2026-01-05T00:00:00"},
+                "create-plan": {"completed": "2026-01-05T00:00:00"},
             },
-            "lastCompletedPhase": "create-tasks",
+            "lastCompletedPhase": "create-plan",
         }
 
         report = _check_single_feature(engine, db, type_id, meta)
@@ -2313,7 +2312,7 @@ class TestKanbanReconciliation:
             tmp_path,
             slug="010-test",
             workflow_phase="implement",
-            last_completed_phase="create-tasks",
+            last_completed_phase="create-plan",
             mode="standard",
         )
         # DB has kanban_column="backlog" (default)
@@ -2323,13 +2322,13 @@ class TestKanbanReconciliation:
             status="meta_json_ahead",
             meta_json={
                 "workflow_phase": "implement",
-                "last_completed_phase": "create-tasks",
+                "last_completed_phase": "create-plan",
                 "mode": "standard",
                 "status": "active",
             },
             db={
                 "workflow_phase": "implement",
-                "last_completed_phase": "create-tasks",
+                "last_completed_phase": "create-plan",
                 "mode": "standard",
                 "kanban_column": "backlog",
             },
@@ -2360,7 +2359,7 @@ class TestKanbanReconciliation:
             tmp_path,
             slug="010-test",
             workflow_phase="implement",
-            last_completed_phase="create-tasks",
+            last_completed_phase="create-plan",
             mode="standard",
         )
         # DB has kanban_column="backlog" (default)
@@ -2370,13 +2369,13 @@ class TestKanbanReconciliation:
             status="meta_json_ahead",
             meta_json={
                 "workflow_phase": "nonexistent",
-                "last_completed_phase": "create-tasks",
+                "last_completed_phase": "create-plan",
                 "mode": "standard",
                 "status": "active",
             },
             db={
                 "workflow_phase": "implement",
-                "last_completed_phase": "create-tasks",
+                "last_completed_phase": "create-plan",
                 "mode": "standard",
                 "kanban_column": "backlog",
             },
@@ -2461,7 +2460,6 @@ class TestDeriveExpectedKanbanDeepened:
             "specify": "backlog",
             "design": "prioritised",
             "create-plan": "prioritised",
-            "create-tasks": "prioritised",
             "implement": "wip",
             "finish": "documenting",
         }
@@ -2621,7 +2619,7 @@ class TestKanbanDriftTerminalStatus:
             tmp_path,
             slug="051-terminal",
             workflow_phase="implement",
-            last_completed_phase="create-tasks",
+            last_completed_phase="create-plan",
             mode="standard",
             kanban_column="wip",
         )
@@ -2629,7 +2627,7 @@ class TestKanbanDriftTerminalStatus:
         meta = {
             "status": "completed",
             "mode": "standard",
-            "lastCompletedPhase": "create-tasks",
+            "lastCompletedPhase": "create-plan",
         }
 
         report = _check_single_feature(engine, db, type_id, meta)
@@ -2652,7 +2650,7 @@ class TestKanbanDriftTerminalStatus:
             tmp_path,
             slug="051-terminal-recon",
             workflow_phase="implement",
-            last_completed_phase="create-tasks",
+            last_completed_phase="create-plan",
             mode="standard",
             kanban_column="wip",
         )
@@ -2662,13 +2660,13 @@ class TestKanbanDriftTerminalStatus:
             status="meta_json_ahead",
             meta_json={
                 "workflow_phase": "implement",
-                "last_completed_phase": "create-tasks",
+                "last_completed_phase": "create-plan",
                 "mode": "standard",
                 "status": "completed",
             },
             db={
                 "workflow_phase": "implement",
-                "last_completed_phase": "create-tasks",
+                "last_completed_phase": "create-plan",
                 "mode": "standard",
                 "kanban_column": "wip",
             },

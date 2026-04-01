@@ -44,7 +44,6 @@ _PHASE_ORDER = [
     "specify",
     "design",
     "create-plan",
-    "create-tasks",
     "implement",
     "finish",
 ]

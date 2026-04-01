@@ -1102,9 +1102,9 @@ class TestFts5SearchIntegration:
             ("e-antipatterns", "Common anti-patterns in hooks",
              "Avoid anti-patterns when writing shell hooks for git workflows",
              "anti-patterns", '["anti-patterns", "hooks", "git"]'),
-            ("e-createtasks", "Task creation with create-tasks",
-             "Use create-tasks workflow for structured task generation",
-             "heuristics", '["create-tasks", "workflow"]'),
+            ("e-createplan", "Task creation with create-plan",
+             "Use create-plan workflow for structured task generation",
+             "heuristics", '["create-plan", "workflow"]'),
             ("e-gitflow", "Git-flow branching strategy",
              "Follow git-flow for release management and feature branches",
              "patterns", '["git-flow", "branching", "release"]'),
@@ -1153,9 +1153,9 @@ class TestFts5SearchIntegration:
     def test_fts5_multi_hyphenated_search(self, db: MemoryDatabase):
         """AC-2.2: Multiple hyphenated terms return matches for both."""
         self._seed_entries(db)
-        results = db.fts5_search("create-tasks git-flow")
+        results = db.fts5_search("create-plan git-flow")
         ids = [r[0] for r in results]
-        assert "e-createtasks" in ids
+        assert "e-createplan" in ids
         assert "e-gitflow" in ids
 
     def test_fts5_special_char_query(self, db: MemoryDatabase):

@@ -381,7 +381,7 @@ Follow `commitAndComplete("create-plan", ["plan.md"], iteration + phase_iteratio
 Output: "Plan complete."
 
 **YOLO Mode:** If `[YOLO_MODE]` is active, skip the AskUserQuestion and directly invoke
-`/pd:create-tasks` with `[YOLO_MODE]` in args.
+`/pd:implement` with `[YOLO_MODE]` in args.
 
 ```
 AskUserQuestion:
@@ -389,7 +389,7 @@ AskUserQuestion:
     "question": "Plan complete. Continue to next phase?",
     "header": "Next Step",
     "options": [
-      {"label": "Continue to /pd:create-tasks (Recommended)", "description": "Break plan into actionable tasks"},
+      {"label": "Continue to /pd:implement (Recommended)", "description": "Begin implementing the plan"},
       {"label": "Review plan.md first", "description": "Inspect the plan before continuing"},
       {"label": "Fix and rerun reviews", "description": "Apply fixes then rerun Step 1 + Step 2 review cycle"}
     ],
@@ -397,8 +397,8 @@ AskUserQuestion:
   }]
 ```
 
-If "Continue to /pd:create-tasks (Recommended)": Invoke `/pd:create-tasks`
-If "Review plan.md first": Show "Plan at {path}/plan.md. Run /pd:create-tasks when ready." → STOP
+If "Continue to /pd:implement (Recommended)": Invoke `/pd:implement`
+If "Review plan.md first": Show "Plan at {path}/plan.md. Run /pd:implement when ready." → STOP
 If "Fix and rerun reviews": Ask user what needs fixing (plain text via AskUserQuestion with free-text), apply the requested changes to plan.md, then reset `resume_state = {}` (clear all entries — the user has made manual edits outside the review loop, so prior agent contexts are stale) and return to Step 4 (Step 1 plan-reviewer) with iteration counters reset to 0.
 
 ## Config Variables

@@ -81,7 +81,7 @@ Use this table to assess what each artifact must contain. For PRD and spec revie
 | specify | spec.md | **Design needs:** Apply Spec Quality Criteria from reviewing-artifacts skill |
 | design | design.md | **Plan needs:** Apply Design Quality Criteria from reviewing-artifacts skill |
 | create-plan | plan.md | **Tasks needs:** Apply Plan Quality Criteria from reviewing-artifacts skill |
-| create-tasks | tasks.md | **Implement needs:** Apply Tasks Quality Criteria from reviewing-artifacts skill |
+| create-plan | plan.md + tasks.md | **Implement needs:** Apply Plan Quality Criteria + Tasks Quality Criteria from reviewing-artifacts skill |
 | implement | code | **Finish needs:** All tasks addressed, tests exist/pass, no obvious issues |
 
 ## Hardened Persona

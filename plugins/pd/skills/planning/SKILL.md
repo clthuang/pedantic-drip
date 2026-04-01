@@ -132,4 +132,4 @@ Items depending on Stage 2.
 ## Completion
 
 "Plan complete. Saved to plan.md."
-"Run /pd:show-status to check, or /pd:create-tasks to break into actionable items."
+"Run /pd:show-status to check, or /pd:implement to begin implementation."

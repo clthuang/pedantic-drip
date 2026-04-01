@@ -30,7 +30,7 @@ BACKLOG_MARKER_PATTERN_2 = r"\*\*Backlog Item:\*\*\s*(\d{5})"
 
 PHASE_SEQUENCE: tuple[str, ...] = (
     "brainstorm", "specify", "design", "create-plan",
-    "create-tasks", "implement", "finish",
+    "implement", "finish",
 )
 
 # Valid statuses for kanban derivation (used for validation only)

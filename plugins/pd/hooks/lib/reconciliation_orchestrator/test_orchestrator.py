@@ -533,13 +533,13 @@ class TestWorkflowReconcileAppliesDrift:
 
         _make_memory_db(memory_db_path)
 
-        # Write .meta.json with lastCompletedPhase="create-tasks" → derived phase "implement"
+        # Write .meta.json with lastCompletedPhase="create-plan" → derived phase "implement"
         # This is ahead of DB's "specify", creating drift
         feature_dir = tmp_path / "docs" / "features" / "099-drift-test"
         feature_dir.mkdir(parents=True)
         (feature_dir / ".meta.json").write_text(json.dumps({
             "status": "active",
-            "lastCompletedPhase": "create-tasks",
+            "lastCompletedPhase": "create-plan",
         }))
 
         result = _run_cli(

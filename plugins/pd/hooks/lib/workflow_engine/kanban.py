@@ -11,7 +11,6 @@ PHASE_TO_KANBAN: dict[str, str] = {
     "specify": "backlog",
     "design": "prioritised",
     "create-plan": "prioritised",
-    "create-tasks": "prioritised",
     "implement": "wip",
     "finish": "documenting",
     # 5D phases (L1/L2/L4)

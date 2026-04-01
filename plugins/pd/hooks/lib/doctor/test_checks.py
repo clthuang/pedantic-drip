@@ -81,6 +81,7 @@ def _make_db(tmp_path, name: str = "entities.db") -> str:
             last_completed_phase TEXT,
             mode               TEXT,
             kanban_column      TEXT DEFAULT 'backlog',
+            backward_transition_reason TEXT,
             created_at         TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
         );
@@ -671,7 +672,7 @@ class TestCheck1CrossProjectEntity:
 
 
 def _setup_workflow_feature(db_path, slug, *, wp="design", lcp="specify",
-                            mode="standard", kanban="in-progress"):
+                            mode="standard", kanban="wip"):
     """Register a feature and add workflow_phases entry."""
     import uuid as uuid_mod
 
@@ -729,7 +730,7 @@ class TestCheck2MetaJsonAhead:
         # DB says specify, meta says design (ahead)
         _setup_workflow_feature(
             db_path, "001-alpha", wp="specify", lcp="brainstorm",
-            mode="standard", kanban="in-progress",
+            mode="standard", kanban="wip",
         )
         _create_meta_json(
             tmp_path, "001-alpha", status="active",
@@ -755,7 +756,7 @@ class TestCheck2DbAhead:
         # DB says design completed, meta says brainstorm
         _setup_workflow_feature(
             db_path, "001-alpha", wp="create-plan", lcp="design",
-            mode="standard", kanban="in-progress",
+            mode="standard", kanban="wip",
         )
         _create_meta_json(
             tmp_path, "001-alpha", status="active",
@@ -808,7 +809,7 @@ class TestBackwardTransition:
         # Feature where workflow_phase < last_completed_phase (rework)
         _setup_workflow_feature(
             db_path, "001-alpha", wp="specify", lcp="design",
-            mode="standard", kanban="in-progress",
+            mode="standard", kanban="wip",
         )
         _create_meta_json(
             tmp_path, "001-alpha", status="active",
@@ -842,12 +843,12 @@ class TestCheck2CrossProjectDbOnly:
         # Feature in DB+workflow but no .meta.json and not local
         _setup_workflow_feature(
             db_path, "099-remote", wp="design", lcp="specify",
-            mode="standard", kanban="in-progress",
+            mode="standard", kanban="wip",
         )
         # Local feature that's in sync
         _setup_workflow_feature(
             db_path, "001-alpha", wp="design", lcp="specify",
-            mode="standard", kanban="in-progress",
+            mode="standard", kanban="wip",
         )
         _create_meta_json(
             tmp_path, "001-alpha", status="active",

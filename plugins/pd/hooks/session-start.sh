@@ -136,7 +136,7 @@ get_next_command() {
         "specifying") echo "/specify" ;;
         "designing") echo "/design" ;;
         "creating-plan") echo "/create-plan" ;;
-        "creating-tasks") echo "/create-tasks" ;;
+        "creating-tasks") echo "/implement" ;;
         "implementing") echo "/implement" ;;
         *) echo "/finish-feature" ;;
     esac
@@ -371,7 +371,7 @@ else:
     fi
 
     # Always include workflow overview
-    context+="\nAvailable commands: /brainstorm → /specify → /design → /create-plan → /create-tasks → /implement → /finish-feature (/create-feature, /create-project as alternatives)"
+    context+="\nAvailable commands: /brainstorm → /specify → /design → /create-plan → /implement → /finish-feature (/create-feature, /create-project as alternatives)"
     context+="\nTip: Use /remember <learning> to capture insights, or use the store_memory MCP tool directly."
     context+="\nMemory capture mode: $(read_local_md_field "$PROJECT_ROOT/.claude/pd.local.md" "memory_model_capture_mode" "ask-first")"
     context+="\nMemory silent capture budget: $(read_local_md_field "$PROJECT_ROOT/.claude/pd.local.md" "memory_silent_capture_budget" "5")"

@@ -69,8 +69,7 @@ def compute_next_phase_fallback(last_completed_phase: str) -> str:
         "brainstorm": "specify",
         "specify": "design",
         "design": "create-plan",
-        "create-plan": "create-tasks",
-        "create-tasks": "implement",
+        "create-plan": "implement",
         "implement": "finish",
     }
     return phase_map.get(last_completed_phase, "")
@@ -153,24 +152,14 @@ class TestPhaseTransitionMappings:
         # Then next phase is "create-plan"
         assert result == "create-plan"
 
-    def test_create_plan_maps_to_create_tasks(self):
-        """Given lastCompletedPhase="create-plan", next phase is "create-tasks".
+    def test_create_plan_maps_to_implement(self):
+        """Given lastCompletedPhase="create-plan", next phase is "implement".
         derived_from: spec:FR-1"""
         # Given a feature that completed create-plan
         state = _make_state(last_completed_phase="create-plan")
         # When computing next phase
         result = compute_next_phase_engine_path(state, "create-plan")
-        # Then next phase is "create-tasks"
-        assert result == "create-tasks"
-
-    def test_create_tasks_maps_to_implement(self):
-        """Given lastCompletedPhase="create-tasks", next phase is "implement".
-        derived_from: spec:FR-1"""
-        # Given a feature that completed create-tasks
-        state = _make_state(last_completed_phase="create-tasks")
-        # When computing next phase
-        result = compute_next_phase_engine_path(state, "create-tasks")
-        # Then next phase is "implement"
+        # Then next phase is "implement" (create-plan now includes task breakdown)
         assert result == "implement"
 
     def test_implement_maps_to_finish(self):
@@ -266,12 +255,12 @@ class TestBlockMessageContent:
 class TestBoundaryPhaseSequence:
     """Boundary conditions on PHASE_SEQUENCE indexing."""
 
-    def test_phase_sequence_has_7_phases(self):
-        """PHASE_SEQUENCE must have exactly 7 phases.
+    def test_phase_sequence_has_6_phases(self):
+        """PHASE_SEQUENCE must have exactly 6 phases.
         derived_from: dimension:boundary"""
         # Given the canonical PHASE_SEQUENCE
-        # Then it has exactly 7 phases
-        assert len(PHASE_SEQUENCE) == 7
+        # Then it has exactly 6 phases
+        assert len(PHASE_SEQUENCE) == 6
 
     def test_first_phase_is_brainstorm_index_0(self):
         """PHASE_SEQUENCE[0] is brainstorm.
@@ -301,7 +290,7 @@ class TestBoundaryPhaseSequence:
 
     def test_penultimate_phase_is_implement(self):
         """PHASE_SEQUENCE[-2] is implement -- last phase with a successor.
-        Boundary: implement at idx 5, len-1 = 6, so 5 < 6 is True (has next).
+        Boundary: implement at idx 4, len-1 = 5, so 4 < 5 is True (has next).
         derived_from: dimension:boundary"""
         # Given the canonical PHASE_SEQUENCE
         # Then second-to-last is implement
@@ -319,7 +308,7 @@ class TestBoundaryPhaseSequence:
         assert result != "brainstorm"
 
     def test_finish_boundary_idx_equals_len_minus_1(self):
-        """finish is at idx 6, len(_PHASE_VALUES)-1 = 6, so idx < len-1 is False.
+        """finish is at idx 5, len(_PHASE_VALUES)-1 = 5, so idx < len-1 is False.
         Mutation: changing < to <= would produce an IndexError for finish.
         derived_from: dimension:boundary"""
         # Given finish is the last phase
@@ -451,7 +440,7 @@ class TestFallbackParity:
         # Given all phases that appear in the fallback phase_map
         test_phases = [
             "null", "brainstorm", "specify", "design",
-            "create-plan", "create-tasks", "implement",
+            "create-plan", "implement",
         ]
         for phase in test_phases:
             # When computing via both paths
@@ -499,8 +488,7 @@ class TestFallbackParity:
             "brainstorm": "specify",
             "specify": "design",
             "design": "create-plan",
-            "create-plan": "create-tasks",
-            "create-tasks": "implement",
+            "create-plan": "implement",
             "implement": "finish",
         }
         # Then 'finish' is not a key
@@ -576,16 +564,16 @@ class TestMutationMindset:
                 break
             visited.append(next_phase)
             current = next_phase
-        # Then we visit all 7 phases
+        # Then we visit all 6 phases
         expected = ["brainstorm", "specify", "design", "create-plan",
-                     "create-tasks", "implement", "finish"]
+                     "implement", "finish"]
         assert visited == expected
 
     def test_implement_successor_is_finish_not_empty(self):
         """Mutation: if the boundary check was wrong, implement could return "".
-        implement is at index 5, len-1 = 6, so 5 < 6 is True.
+        implement is at index 4, len-1 = 5, so 4 < 5 is True.
         derived_from: dimension:mutation (boundary shift)"""
-        # Given implement at index 5
+        # Given implement at index 4
         implement_idx = _PHASE_VALUES.index("implement")
         # Then it has a successor (idx < len - 1)
         assert implement_idx < len(_PHASE_VALUES) - 1

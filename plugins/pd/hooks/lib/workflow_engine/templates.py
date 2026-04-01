@@ -9,7 +9,7 @@ from __future__ import annotations
 # Canonical 7-phase feature sequence (string values, not Phase enums)
 FEATURE_7_PHASE: list[str] = [
     "brainstorm", "specify", "design", "create-plan",
-    "create-tasks", "implement", "finish",
+    "implement", "finish",
 ]
 
 # 5D lifecycle phases (Level 1/2/4 entities)

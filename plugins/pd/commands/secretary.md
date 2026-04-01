@@ -322,7 +322,7 @@ Call `get_phase(feature_type_id)`. Parse the JSON response object.
   (or `pd:finish-feature` when `current_phase` is `finish`).
 - If `current_phase` is null: the feature is between phases. Use `last_completed_phase`
   to determine the next phase from the canonical sequence:
-  brainstorm → specify → design → create-plan → create-tasks → implement → finish.
+  brainstorm → specify → design → create-plan → implement → finish.
   Route to the command for that next phase.
 If MCP unavailable, fall back to `.meta.json` `lastCompletedPhase` (camelCase)
 and apply the same canonical-sequence logic.
@@ -348,7 +348,7 @@ The existing command chaining and YOLO overrides handle everything from here. Ea
 The chain breaks and reports to user when:
 - **Circuit breaker**: 5 review iterations without approval in implementation
 - **Git merge conflict**: Cannot auto-resolve in /finish-feature
-- **Hard prerequisite failure**: Missing design.md (blocks create-plan), plan.md (blocks create-tasks), spec.md or tasks.md (blocks implement)
+- **Hard prerequisite failure**: Missing design.md (blocks create-plan), spec.md or tasks.md (blocks implement)
 - **Pre-merge validation failure**: 3 fix attempts exhausted
 
 These are handled by the individual commands. The orchestrator does NOT need to catch them — the Skill invocation naturally surfaces them.
@@ -577,7 +577,7 @@ When a workflow pattern is detected (feature request, "build X", "implement X", 
        (or `pd:finish-feature` when `current_phase` is `finish`).
      - If `current_phase` is null: the feature is between phases. Use `last_completed_phase`
        to determine the next phase from the canonical sequence:
-       brainstorm → specify → design → create-plan → create-tasks → implement → finish.
+       brainstorm → specify → design → create-plan → implement → finish.
        Route to the command for that next phase.
      If MCP unavailable, fall back to `.meta.json` `lastCompletedPhase` (camelCase)
      and apply the same canonical-sequence logic.

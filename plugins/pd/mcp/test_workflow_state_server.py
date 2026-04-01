@@ -2236,7 +2236,7 @@ class TestProcessReconcileCheck:
                     "specify": {"status": "completed"},
                     "design": {"status": "completed"},
                     "create-plan": {"status": "completed"},
-                    "create-tasks": {"status": "completed"},
+                    "create-plan": {"status": "completed"},
                     "implement": {"status": "completed"},
                 },
             }, f)
@@ -2319,7 +2319,7 @@ class TestProcessReconcileApply:
                     "specify": {"status": "completed"},
                     "design": {"status": "completed"},
                     "create-plan": {"status": "completed"},
-                    "create-tasks": {"status": "completed"},
+                    "create-plan": {"status": "completed"},
                     "implement": {"status": "completed"},
                 },
             }, f)
@@ -2550,7 +2550,7 @@ class TestProcessReconcileStatus:
                     "specify": {"status": "completed"},
                     "design": {"status": "completed"},
                     "create-plan": {"status": "completed"},
-                    "create-tasks": {"status": "completed"},
+                    "create-plan": {"status": "completed"},
                     "implement": {"status": "completed"},
                 },
             }, f)
@@ -2630,7 +2630,7 @@ class TestProcessReconcileStatus:
                     "specify": {"status": "completed"},
                     "design": {"status": "completed"},
                     "create-plan": {"status": "completed"},
-                    "create-tasks": {"status": "completed"},
+                    "create-plan": {"status": "completed"},
                     "implement": {"status": "completed"},
                 },
             }, f)
@@ -2707,7 +2707,7 @@ class TestReconciliationEndToEnd:
         """
         features = [
             ("011-e2e-a", "brainstorm", "implement"),
-            ("011-e2e-b", "design", "create-tasks"),
+            ("011-e2e-b", "design", "create-plan"),
         ]
         for slug, db_last, meta_last in features:
             db.register_entity("feature", slug, f"E2E {slug}", status="active", project_id="__unknown__")
@@ -3084,7 +3084,7 @@ class TestReconciliationAdversarial:
                     "specify": {"status": "completed"},
                     "design": {"status": "completed"},
                     "create-plan": {"status": "completed"},
-                    "create-tasks": {"status": "completed"},
+                    "create-plan": {"status": "completed"},
                     "implement": {"status": "completed"},
                 },
             }, f)
@@ -3278,7 +3278,7 @@ class TestReconciliationMutationMindset:
                     "specify": {"status": "completed"},
                     "design": {"status": "completed"},
                     "create-plan": {"status": "completed"},
-                    "create-tasks": {"status": "completed"},
+                    "create-plan": {"status": "completed"},
                     "implement": {"status": "completed"},
                 },
             }, f)

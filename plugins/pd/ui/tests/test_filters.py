@@ -73,7 +73,7 @@ class TestColorMaps:
         expected = {
             # Feature phases
             "brainstorm", "specify", "design",
-            "create-plan", "create-tasks", "implement", "finish",
+            "create-plan", "implement", "finish",
             # Brainstorm lifecycle phases
             "draft", "reviewing", "promoted", "abandoned",
             # Backlog lifecycle phases

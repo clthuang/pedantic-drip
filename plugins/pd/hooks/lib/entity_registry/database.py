@@ -1241,6 +1241,138 @@ def _add_project_scoping(conn: sqlite3.Connection) -> None:
         conn.execute("PRAGMA foreign_keys = ON")
 
 
+def _migration_9_remove_create_tasks(conn: sqlite3.Connection) -> None:
+    """Migration 9: Remove 'create-tasks' from workflow_phases CHECK constraints.
+
+    Feature 073 merges create-tasks into create-plan. This migration:
+    1. Rebuilds workflow_phases table with updated CHECK constraints
+       (6 feature phases instead of 7).
+    2. Migrates existing rows: create-tasks -> create-plan.
+
+    Self-managed transaction (BEGIN IMMEDIATE / COMMIT / ROLLBACK).
+    The outer _migrate() performs a second schema_version upsert + commit
+    after this function returns.
+    """
+    # OUTSIDE try — PRAGMA cannot run inside transaction
+    conn.execute("PRAGMA foreign_keys = OFF")
+    fk_status = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+    if fk_status != 0:
+        raise RuntimeError(
+            "PRAGMA foreign_keys = OFF did not take effect — aborting migration"
+        )
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        # Pre-migration FK check
+        fk_violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if fk_violations:
+            raise RuntimeError(
+                f"FK violations found before migration: {fk_violations}"
+            )
+
+        # Migrate data BEFORE rebuilding table (while old CHECK still allows create-tasks)
+        conn.execute(
+            "UPDATE workflow_phases SET workflow_phase = 'create-plan' "
+            "WHERE workflow_phase = 'create-tasks'"
+        )
+        conn.execute(
+            "UPDATE workflow_phases SET last_completed_phase = 'create-plan' "
+            "WHERE last_completed_phase = 'create-tasks'"
+        )
+
+        # Recreate workflow_phases with updated CHECK constraints (no create-tasks)
+        conn.execute("""
+            CREATE TABLE workflow_phases_new (
+                type_id                    TEXT PRIMARY KEY,
+                workflow_phase             TEXT CHECK(workflow_phase IN (
+                                               'brainstorm','specify','design',
+                                               'create-plan','implement','finish',
+                                               'draft','reviewing','promoted','abandoned',
+                                               'open','triaged','dropped',
+                                               'discover','define','deliver','debrief'
+                                           ) OR workflow_phase IS NULL),
+                kanban_column              TEXT NOT NULL DEFAULT 'backlog'
+                                           CHECK(kanban_column IN (
+                                               'backlog','prioritised','wip',
+                                               'agent_review','human_review',
+                                               'blocked','documenting','completed'
+                                           )),
+                last_completed_phase       TEXT CHECK(last_completed_phase IN (
+                                               'brainstorm','specify','design',
+                                               'create-plan','implement','finish',
+                                               'draft','reviewing','promoted','abandoned',
+                                               'open','triaged','dropped',
+                                               'discover','define','deliver','debrief'
+                                           ) OR last_completed_phase IS NULL),
+                mode                       TEXT CHECK(mode IN (
+                                               'standard', 'full', 'light'
+                                           ) OR mode IS NULL),
+                backward_transition_reason TEXT,
+                updated_at                 TEXT NOT NULL,
+                uuid                       TEXT
+            )
+        """)
+
+        # Copy all existing data
+        conn.execute(
+            "INSERT INTO workflow_phases_new "
+            "(type_id, workflow_phase, kanban_column, last_completed_phase, "
+            "mode, backward_transition_reason, updated_at, uuid) "
+            "SELECT type_id, workflow_phase, kanban_column, last_completed_phase, "
+            "mode, backward_transition_reason, updated_at, uuid "
+            "FROM workflow_phases"
+        )
+
+        # Drop old table and rename
+        conn.execute("DROP TABLE workflow_phases")
+        conn.execute("PRAGMA legacy_alter_table = OFF")
+        conn.execute(
+            "ALTER TABLE workflow_phases_new RENAME TO workflow_phases"
+        )
+
+        # Recreate trigger
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS enforce_immutable_wp_type_id
+            BEFORE UPDATE OF type_id ON workflow_phases
+            BEGIN
+                SELECT RAISE(ABORT, 'workflow_phases.type_id is immutable');
+            END
+        """)
+
+        # Recreate indexes
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_wp_kanban_column "
+            "ON workflow_phases(kanban_column)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_wp_workflow_phase "
+            "ON workflow_phases(workflow_phase)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_wp_uuid "
+            "ON workflow_phases(uuid)"
+        )
+
+        # Update schema_version inside transaction (atomic with DDL)
+        conn.execute(
+            "INSERT INTO _metadata(key, value) VALUES('schema_version', '9') "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        # Re-enable FKs — runs on both success and failure
+        conn.execute("PRAGMA foreign_keys = ON")
+
+    # Post-migration FK check — outside try, after commit
+    post_violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+    if post_violations:
+        raise RuntimeError(
+            f"FK violations after migration: {post_violations}"
+        )
+
+
 # Ordered mapping of version -> migration function.
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _create_initial_schema,
@@ -1251,6 +1383,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     6: _schema_expansion_v6,
     7: _fix_fts_content_mode,
     8: _add_project_scoping,
+    9: _migration_9_remove_create_tasks,
 }
 
 # Sentinel object to distinguish "not provided" from explicit ``None``.

@@ -74,7 +74,7 @@ flowchart TD
 | `/pd:specify [--feature=ID]` | spec.md |
 | `/pd:design` | design.md (4-stage workflow) |
 | `/pd:create-plan` | plan.md |
-| `/pd:create-tasks` | tasks.md |
+| `/pd:create-tasks` | _(deprecated — use create-plan)_ |
 | `/pd:implement` | Code changes |
 | `/pd:abandon-feature` | Transition a feature to abandoned status |
 | `/pd:finish-feature` | Merge, retro, cleanup (pd features) |
@@ -155,7 +155,7 @@ Stage 2: PHASE-REVIEWER (Execution Readiness)
     │   • Can an engineer break this into tasks?
     │   • Are all design items covered?
     ↓
-[User Prompt: Run /create-tasks?]
+[User Prompt: Run /implement?]
 ```
 
 ### Implementation Review

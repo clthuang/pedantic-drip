@@ -46,7 +46,7 @@ function resolve_phase(feature_folder_name, meta_json):
         "spec.md": "specify",
         "design.md": "design",
         "plan.md": "create-plan",
-        "tasks.md": "create-tasks"
+        "tasks.md": "create-plan"
     }
     for artifact, phase in ARTIFACT_TO_PHASE.items():
         if artifact missing in feature directory:

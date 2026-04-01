@@ -9,7 +9,7 @@ description: Shared workflow boilerplate for phase commands. Use when a command 
 Use these values from session context (injected at session start):
 - `{pd_artifacts_root}` — root directory for feature artifacts (default: `docs`)
 
-Shared procedures used by all phase commands (specify, design, create-plan, create-tasks, implement, finish). Commands reference these procedures instead of inlining identical boilerplate.
+Shared procedures used by all phase commands (specify, design, create-plan, implement, finish). Commands reference these procedures instead of inlining identical boilerplate.
 
 ## YOLO Mode Overrides
 
@@ -162,7 +162,7 @@ Execute after phase work and reviews are done.
 **Parameters:**
 - `phaseName` (string): Phase name for commit message and summary header.
 - `artifacts[]` (string[]): File paths for git staging. When empty, Step 1 commits only .meta.json and .review-history.md.
-- `iterations` (integer): Combined review loop counter at exit. For single-stage phases: the loop counter. For dual-stage phases (specify, design, create-plan, create-tasks): `step1_iterations + phase_iterations`. For reset cases ("Fix and rerun"): counter from the final run only.
+- `iterations` (integer): Combined review loop counter at exit. For single-stage phases: the loop counter. For dual-stage phases (specify, design, create-plan): `step1_iterations + phase_iterations`. For reset cases ("Fix and rerun"): counter from the final run only.
 - `capReached` (boolean): Whether any reviewer stage hit its max iteration limit without approval.
 - `reviewerNotes[]` (object[]): Unresolved reviewer issues. Each object: `{"severity": "blocker"|"warning"|"suggestion", "description": "..."}`.
 

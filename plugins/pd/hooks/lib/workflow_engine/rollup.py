@@ -27,7 +27,6 @@ PHASE_WEIGHTS_7: dict[str, float] = {
     "specify": 0.1,
     "design": 0.3,
     "create-plan": 0.3,
-    "create-tasks": 0.3,
     "implement": 0.7,
     "finish": 0.9,
 }

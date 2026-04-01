@@ -83,6 +83,7 @@ def _make_db(tmp_path, name: str = "entities.db") -> str:
             last_completed_phase TEXT,
             mode               TEXT,
             kanban_column      TEXT DEFAULT 'backlog',
+            backward_transition_reason TEXT,
             created_at         TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
         );
