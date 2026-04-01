@@ -25,14 +25,13 @@ echo "=== Test 1: Memory section inside prompt: blocks ==="
 # appears AFTER a "prompt: |" line and BEFORE the closing ``` of that code block.
 # Strategy: extract code blocks containing "prompt: |" and check they also contain the memory heading.
 
-COMMAND_FILES=("specify.md" "design.md" "create-plan.md" "create-tasks.md" "implement.md")
+COMMAND_FILES=("specify.md" "design.md" "create-plan.md" "implement.md")
 
 get_expected_count() {
     case "$1" in
         specify.md)     echo 2 ;;
         design.md)      echo 2 ;;
         create-plan.md) echo 2 ;;
-        create-tasks.md) echo 2 ;;
         implement.md)   echo 7 ;;
         *)              echo 0 ;;
     esac

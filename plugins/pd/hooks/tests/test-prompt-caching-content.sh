@@ -3,7 +3,7 @@
 # Run: bash plugins/pd/hooks/tests/test-prompt-caching-content.sh
 #
 # Tests verify:
-# - resume_state initialization and structure in all 5 command files
+# - resume_state initialization and structure in all 4 command files
 # - I1-R4 fresh dispatch vs I2 resumed dispatch template correctness
 # - Delta size guard (>50%) triggers fresh fallback
 # - RESUME-FALLBACK marker format and placement
@@ -59,23 +59,20 @@ PLUGIN_DIR="${PROJECT_ROOT}/plugins/pd"
 SPECIFY_CMD="${PLUGIN_DIR}/commands/specify.md"
 DESIGN_CMD="${PLUGIN_DIR}/commands/design.md"
 CREATE_PLAN_CMD="${PLUGIN_DIR}/commands/create-plan.md"
-CREATE_TASKS_CMD="${PLUGIN_DIR}/commands/create-tasks.md"
 IMPLEMENT_CMD="${PLUGIN_DIR}/commands/implement.md"
 
 ALL_CMD_FILES=(
     "$SPECIFY_CMD"
     "$DESIGN_CMD"
     "$CREATE_PLAN_CMD"
-    "$CREATE_TASKS_CMD"
     "$IMPLEMENT_CMD"
 )
 
-# The 4 pre-implement command files (2-stage reviewer loops)
+# The 3 pre-implement command files (2-stage reviewer loops)
 PRE_IMPL_CMD_FILES=(
     "$SPECIFY_CMD"
     "$DESIGN_CMD"
     "$CREATE_PLAN_CMD"
-    "$CREATE_TASKS_CMD"
 )
 
 
@@ -87,7 +84,7 @@ PRE_IMPL_CMD_FILES=(
 test_iteration1_dispatches_fresh_with_full_context() {
     log_test "All commands: iteration 1 uses fresh I1-R4 dispatch (iteration == 1 condition)"
 
-    # Given all 5 command files
+    # Given all 4 command files
     # When we check that iteration == 1 triggers fresh dispatch
     local missing=0
     for file in "${ALL_CMD_FILES[@]}"; do
@@ -108,7 +105,7 @@ test_iteration1_dispatches_fresh_with_full_context() {
 test_iteration2_uses_resume_with_delta_only() {
     log_test "All commands: iteration >= 2 uses resume: with stored agent_id"
 
-    # Given all 5 command files
+    # Given all 4 command files
     # When we check for the iteration >= 2 resume condition
     local missing=0
     for file in "${ALL_CMD_FILES[@]}"; do
@@ -129,7 +126,7 @@ test_iteration2_uses_resume_with_delta_only() {
 test_resumed_prompt_omits_required_artifacts() {
     log_test "All commands: I2 resumed template does NOT contain Required Artifacts"
 
-    # Given all 5 command files
+    # Given all 4 command files
     # When we search for Required Artifacts within the I2 template blocks
     # The I2 template starts with "You already have the upstream artifacts"
     # and ends with the JSON return schema. It must NOT contain "## Required Artifacts"
@@ -153,7 +150,7 @@ test_resumed_prompt_omits_required_artifacts() {
 test_resumed_prompt_contains_context_directive() {
     log_test "All commands: I2 resumed template starts with 'You already have the upstream artifacts'"
 
-    # Given all 5 command files
+    # Given all 4 command files
     # When we search for the context directive in resumed prompts
     local missing=0
     for file in "${ALL_CMD_FILES[@]}"; do
@@ -212,7 +209,7 @@ test_implement_delta_uses_git_diff_with_stat() {
 test_delta_size_guard_triggers_fresh_dispatch() {
     log_test "All commands: delta > 50% falls back to fresh I1-R4 dispatch"
 
-    # Given all 5 command files
+    # Given all 4 command files
     # When we check for the 50% delta size guard
     local missing=0
     for file in "${ALL_CMD_FILES[@]}"; do
@@ -232,7 +229,7 @@ test_delta_size_guard_triggers_fresh_dispatch() {
 test_resume_failure_falls_back_to_i3_fresh_dispatch() {
     log_test "All commands: resume failure triggers I3 fallback with RESUME-FALLBACK log"
 
-    # Given all 5 command files
+    # Given all 4 command files
     # When we check for RESUME-FALLBACK logging on resume failure
     local missing=0
     for file in "${ALL_CMD_FILES[@]}"; do
@@ -252,7 +249,7 @@ test_resume_failure_falls_back_to_i3_fresh_dispatch() {
 test_resume_fallback_marker_format() {
     log_test "All commands: RESUME-FALLBACK format includes role, iteration, and error"
 
-    # Given all 5 command files
+    # Given all 4 command files
     # When we check the RESUME-FALLBACK pattern format
     local missing=0
     for file in "${ALL_CMD_FILES[@]}"; do
@@ -346,7 +343,7 @@ test_implementer_fix_iteration2_resumes_with_new_issues() {
 test_resume_state_persists_across_iterations() {
     log_test "All commands: resume_state stores agent_id, iteration1_prompt_length, last_iteration, last_commit_sha"
 
-    # Given all 5 command files
+    # Given all 4 command files
     # When we check for the 4 required resume_state fields
     local missing=0
     for file in "${ALL_CMD_FILES[@]}"; do
@@ -371,7 +368,7 @@ test_resume_state_persists_across_iterations() {
 test_annotations_removed_after_implementation() {
     log_test "Zero 'Fresh dispatch per iteration' annotation matches in changed files"
 
-    # Given all 5 command files
+    # Given all 4 command files
     # When we search for the deprecated annotation
     local violations=0
     for file in "${ALL_CMD_FILES[@]}"; do
@@ -412,7 +409,7 @@ test_no_change_to_review_approval_logic() {
 test_resume_state_reset_on_rerun() {
     log_test "All commands: 'Fix and rerun' resets resume_state = {}"
 
-    # Given all 5 command files
+    # Given all 4 command files
     # When we check for resume_state reset in the Fix and rerun path
     local missing=0
     for file in "${ALL_CMD_FILES[@]}"; do
@@ -541,7 +538,7 @@ test_r4_canonical_skeleton_ordering_phase_reviewer() {
 test_delta_exactly_at_50_percent_threshold() {
     log_test "All commands: delta guard uses '> 50%' (strict greater than, not >=)"
 
-    # Given all 5 command files
+    # Given all 4 command files
     # When we check the delta size guard wording
     # The spec says "> 50%", meaning exactly 50% should still use resume (not trigger fresh)
     local correct=0
@@ -569,7 +566,7 @@ test_delta_exactly_at_50_percent_threshold() {
 test_iteration_number_boundary_1_fresh() {
     log_test "All commands: iteration == 1 explicitly triggers fresh dispatch (boundary)"
 
-    # Given all 5 command files
+    # Given all 4 command files
     # When we check for "iteration == 1" condition in dispatch decision
     local found=0
     for file in "${ALL_CMD_FILES[@]}"; do
@@ -579,10 +576,10 @@ test_iteration_number_boundary_1_fresh() {
         fi
     done
     # Then all files have this boundary condition
-    if [[ "$found" -eq 5 ]]; then
+    if [[ "$found" -eq 4 ]]; then
         log_pass
     else
-        log_fail "Only $found/5 files have 'iteration == 1' boundary condition"
+        log_fail "Only $found/4 files have 'iteration == 1' boundary condition"
     fi
 }
 
@@ -590,7 +587,7 @@ test_iteration_number_boundary_1_fresh() {
 test_iteration_number_boundary_2_resume() {
     log_test "All commands: iteration >= 2 is the threshold for resume attempt"
 
-    # Given all 5 command files
+    # Given all 4 command files
     # When we check for "iteration >= 2" condition
     local found=0
     for file in "${ALL_CMD_FILES[@]}"; do
@@ -600,10 +597,10 @@ test_iteration_number_boundary_2_resume() {
         fi
     done
     # Then all files have this boundary condition
-    if [[ "$found" -eq 5 ]]; then
+    if [[ "$found" -eq 4 ]]; then
         log_pass
     else
-        log_fail "Only $found/5 files have 'iteration >= 2' boundary condition"
+        log_fail "Only $found/4 files have 'iteration >= 2' boundary condition"
     fi
 }
 
@@ -669,9 +666,9 @@ test_no_changes_outcome_triggers_fresh_dispatch() {
 
 # derived_from: dimension:boundary (total RESUME-FALLBACK markers across all files)
 test_resume_fallback_count_across_all_files() {
-    log_test "RESUME-FALLBACK appears in all 5 command files"
+    log_test "RESUME-FALLBACK appears in all 4 command files"
 
-    # Given all 5 command files
+    # Given all 4 command files
     local found=0
     for file in "${ALL_CMD_FILES[@]}"; do
         [[ ! -f "$file" ]] && continue
@@ -679,11 +676,11 @@ test_resume_fallback_count_across_all_files() {
             ((found++)) || true
         fi
     done
-    # Then all 5 files mention it
-    if [[ "$found" -eq 5 ]]; then
+    # Then all 4 files mention it
+    if [[ "$found" -eq 4 ]]; then
         log_pass
     else
-        log_fail "Only $found/5 files contain RESUME-FALLBACK"
+        log_fail "Only $found/4 files contain RESUME-FALLBACK"
     fi
 }
 
@@ -696,7 +693,7 @@ test_resume_fallback_count_across_all_files() {
 test_resume_with_invalid_agent_id_fallback() {
     log_test "All commands: resume failure (invalid agent_id) triggers I3 fallback"
 
-    # Given all 5 command files
+    # Given all 4 command files
     # When we check for "resume fails" -> fallback pattern
     local missing=0
     for file in "${ALL_CMD_FILES[@]}"; do
@@ -717,7 +714,7 @@ test_resume_with_invalid_agent_id_fallback() {
 test_resume_after_context_compaction_loses_agent_id() {
     log_test "All commands: context compaction detection triggers fresh dispatch + RESUME-FALLBACK log"
 
-    # Given all 5 command files
+    # Given all 4 command files
     # When we check for context compaction detection
     local missing=0
     for file in "${ALL_CMD_FILES[@]}"; do
@@ -823,7 +820,7 @@ test_no_changes_does_not_use_i3_fallback() {
 test_resume_error_produces_informative_fallback_log() {
     log_test "All commands: RESUME-FALLBACK includes role name, iteration number, and error summary"
 
-    # Given all 5 command files
+    # Given all 4 command files
     # When we check for the complete RESUME-FALLBACK pattern
     local missing=0
     for file in "${ALL_CMD_FILES[@]}"; do
@@ -845,7 +842,7 @@ test_resume_error_produces_informative_fallback_log() {
 test_i3_fallback_includes_fresh_dispatch_notice() {
     log_test "All commands: I3 fallback includes 'Fresh dispatch' notice text"
 
-    # Given all 5 command files
+    # Given all 4 command files
     # When we check for the I3 fallback notice
     local missing=0
     for file in "${ALL_CMD_FILES[@]}"; do
@@ -865,7 +862,7 @@ test_i3_fallback_includes_fresh_dispatch_notice() {
 test_i3_fallback_includes_previous_issues() {
     log_test "All commands: I3 fallback template includes previous issues"
 
-    # Given all 5 command files
+    # Given all 4 command files
     # When we check for "previous issues included" in the I3 fallback description
     local missing=0
     for file in "${ALL_CMD_FILES[@]}"; do
@@ -885,7 +882,7 @@ test_i3_fallback_includes_previous_issues() {
 test_resume_state_reset_after_fresh_fallback() {
     log_test "All commands: I3 fallback resets resume_state with new fresh dispatch's agent_id"
 
-    # Given all 5 command files
+    # Given all 4 command files
     # When we check for "Reset resume_state" near the I3 fallback
     local missing=0
     for file in "${ALL_CMD_FILES[@]}"; do
@@ -905,7 +902,7 @@ test_resume_state_reset_after_fresh_fallback() {
 test_fallback_logging_writes_to_review_history() {
     log_test "All commands: RESUME-FALLBACK is logged to '.review-history.md'"
 
-    # Given all 5 command files
+    # Given all 4 command files
     # When we check that RESUME-FALLBACK mentions .review-history.md
     local missing=0
     for file in "${ALL_CMD_FILES[@]}"; do
@@ -930,7 +927,7 @@ test_fallback_logging_writes_to_review_history() {
 test_delta_guard_comparison_operator_correctness() {
     log_test "All commands: delta guard uses '>' not '>=' (mutation: swap > to >= would pass wrongly)"
 
-    # Given all 5 command files
+    # Given all 4 command files
     # When we check for ">= 50%" (which would be a bug)
     local violations=0
     for file in "${ALL_CMD_FILES[@]}"; do
@@ -951,7 +948,7 @@ test_delta_guard_comparison_operator_correctness() {
 test_iteration_check_uses_correct_threshold() {
     log_test "All commands: resume uses 'iteration >= 2' (mutation: changing to >= 1 would break)"
 
-    # Given all 5 command files
+    # Given all 4 command files
     # When we check there is no "iteration >= 1" for resume dispatch
     local violations=0
     for file in "${ALL_CMD_FILES[@]}"; do
@@ -973,7 +970,7 @@ test_iteration_check_uses_correct_threshold() {
 test_resume_state_agent_id_is_actually_used_in_dispatch() {
     log_test "All commands: resume: field references resume_state agent_id (not a literal)"
 
-    # Given all 5 command files
+    # Given all 4 command files
     # When we check that resume: contains {resume_state...agent_id}
     local missing=0
     for file in "${ALL_CMD_FILES[@]}"; do
@@ -993,7 +990,7 @@ test_resume_state_agent_id_is_actually_used_in_dispatch() {
 test_resume_vs_fresh_dispatch_uses_correct_template() {
     log_test "All commands: I2 template for resume contains 'Delta' section, I1-R4 for fresh"
 
-    # Given all 5 command files
+    # Given all 4 command files
     # When we check that resumed templates contain ## Delta
     local missing=0
     for file in "${ALL_CMD_FILES[@]}"; do
@@ -1013,7 +1010,7 @@ test_resume_vs_fresh_dispatch_uses_correct_template() {
 test_resume_template_has_fix_summary_section() {
     log_test "All commands: resumed template contains '## Fix Summary' section"
 
-    # Given all 5 command files
+    # Given all 4 command files
     # When we check for Fix Summary in resumed templates
     local missing=0
     for file in "${ALL_CMD_FILES[@]}"; do
@@ -1031,22 +1028,21 @@ test_resume_template_has_fix_summary_section() {
 
 # derived_from: dimension:mutation-exact-count (total RESUME-FALLBACK count pins the exact number of fallback sites)
 test_resume_fallback_count_per_file() {
-    log_test "RESUME-FALLBACK count: specify(2+) design(2+) plan(2+) tasks(2+) implement(4+)"
+    log_test "RESUME-FALLBACK count: specify(2+) design(2+) plan(2+) implement(4+)"
 
-    # Given all 5 command files
+    # Given all 4 command files
     # Each file has at least 2 reviewer roles, each producing at least 1 RESUME-FALLBACK
     # implement.md has 4 roles (impl/quality/security/implementer)
-    local s_count d_count p_count t_count i_count
+    local s_count d_count p_count i_count
     s_count=$(grep -c 'RESUME-FALLBACK' "$SPECIFY_CMD" || true)
     d_count=$(grep -c 'RESUME-FALLBACK' "$DESIGN_CMD" || true)
     p_count=$(grep -c 'RESUME-FALLBACK' "$CREATE_PLAN_CMD" || true)
-    t_count=$(grep -c 'RESUME-FALLBACK' "$CREATE_TASKS_CMD" || true)
     i_count=$(grep -c 'RESUME-FALLBACK' "$IMPLEMENT_CMD" || true)
     if [[ "$s_count" -ge 2 ]] && [[ "$d_count" -ge 2 ]] && [[ "$p_count" -ge 2 ]] && \
-       [[ "$t_count" -ge 2 ]] && [[ "$i_count" -ge 4 ]]; then
+       [[ "$i_count" -ge 4 ]]; then
         log_pass
     else
-        log_fail "RESUME-FALLBACK counts: specify=$s_count design=$d_count plan=$p_count tasks=$t_count implement=$i_count"
+        log_fail "RESUME-FALLBACK counts: specify=$s_count design=$d_count plan=$p_count implement=$i_count"
     fi
 }
 
@@ -1054,7 +1050,7 @@ test_resume_fallback_count_per_file() {
 test_i9_detection_skipped_for_resumed_dispatches() {
     log_test "All commands: I9 (LAZY-LOAD-WARNING) only applies to fresh dispatches, not resumed"
 
-    # Given all 5 command files
+    # Given all 4 command files
     # When we check for the exemption text
     local found=0
     for file in "${ALL_CMD_FILES[@]}"; do
@@ -1063,12 +1059,12 @@ test_i9_detection_skipped_for_resumed_dispatches() {
             ((found++)) || true
         fi
     done
-    # Then all 5 files have the exemption
+    # Then all 4 files have the exemption
     # Note: implement.md has it per-reviewer, but at least one mention suffices
-    if [[ "$found" -eq 5 ]]; then
+    if [[ "$found" -eq 4 ]]; then
         log_pass
     else
-        log_fail "Only $found/5 files exempt resumed dispatches from I9 detection"
+        log_fail "Only $found/4 files exempt resumed dispatches from I9 detection"
     fi
 }
 
@@ -1076,7 +1072,7 @@ test_i9_detection_skipped_for_resumed_dispatches() {
 test_nfr1_resumed_prompts_shorter_than_fresh() {
     log_test "All commands: I2 templates are structurally shorter (no Required Artifacts, no rubric)"
 
-    # Given all 5 command files
+    # Given all 4 command files
     # The I2 template omits: Required Artifacts, rubric, and full content
     # Verify by checking that "You already have the upstream" blocks do NOT contain "## Required Artifacts"
     local violations=0
