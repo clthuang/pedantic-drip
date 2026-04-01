@@ -67,7 +67,7 @@ Secretary routes your request to the right workflow phase or specialist automati
 
 Then follow the phases:
 ```
-/pd:specify → /pd:design → /pd:create-plan → /pd:create-tasks → /pd:implement → /pd:finish-feature
+/pd:specify → /pd:design → /pd:create-plan → /pd:implement → /pd:finish-feature
 ```
 
 ## Key Features
@@ -126,8 +126,7 @@ Configure via `.claude/pd.local.md`:
 | `/pd:create-project <prd>` | Create project from PRD with AI-driven decomposition into features |
 | `/pd:specify` | Write requirements (spec.md) |
 | `/pd:design` | Define architecture (design.md) |
-| `/pd:create-plan` | Plan implementation (plan.md) |
-| `/pd:create-tasks` | Break into tasks (tasks.md) |
+| `/pd:create-plan` | Plan implementation and tasks (plan.md + tasks.md) |
 | `/pd:implement` | Write code with TDD and review |
 | `/pd:abandon-feature` | Transition a feature to abandoned status |
 | `/pd:finish-feature` | Merge, run retro, cleanup branch (pd features) |
@@ -153,6 +152,7 @@ Configure via `.claude/pd.local.md`:
 | `/pd:review-ds-analysis <file>` | Review data analysis for statistical pitfalls |
 | `/pd:review-ds-code <file>` | Review DS Python code for anti-patterns |
 | `/pd:init-ds-project <name>` | Scaffold a new data science project |
+| `/pd:taskify` | Break any existing plan into tasks (standalone; use when tasks.md needs regeneration) |
 | `/pd:generate-docs` | Generate three-tier documentation scaffold or update existing docs |
 | `/pd:subagent-ras` | Research, analyze, and summarize any topic using parallel agents |
 | `/pd:sync-cache` | Sync plugin source files to cache |
@@ -244,7 +244,7 @@ Tasks are organized for parallel execution:
 
 ## Reference
 
-pd includes 30 skills and 29 agents that run automatically during the workflow. You don't invoke them directly.
+pd includes 30 skills and 30 agents that run automatically during the workflow. You don't invoke them directly.
 
 ### Skills
 
@@ -343,6 +343,7 @@ pd includes 30 skills and 29 agents that run automatically during the workflow. 
 | documentation-writer | Writes and updates documentation based on research findings |
 | code-simplifier | Identifies unnecessary complexity and suggests simplifications |
 | ras-synthesizer | Synthesizes multi-source research findings into thematic analysis with confidence calibration |
+| relevance-verifier | Verifies coherence across the full artifact chain (spec→design→plan→tasks) before implementation |
 | test-deepener | Systematically deepens test coverage after TDD scaffolding with spec-driven adversarial testing |
 
 #### Advisory

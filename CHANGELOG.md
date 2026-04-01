@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `/pd:taskify` command — standalone task breakdown; breaks any existing plan.md into tasks.md without running the full create-plan flow
+- `relevance-verifier` agent — pre-implementation coherence check that validates the full artifact chain (spec→design→plan→tasks) before implementation begins; runs as part of the 360 QA verification sequence
+- Backward travel system — reviewers can now send work back to an earlier phase (e.g., design back to spec) when fundamental issues are detected, not just reject the current artifact
+- 360 QA — three-level sequential verification during implement: task-level compliance, spec-level alignment, and standards-level quality; each level must pass before the next runs
+- Relevance gate in YOLO mode — coherence check between artifact chain and implementation scope runs automatically before implementation starts in autonomous mode
+
+### Changed
+- `/pd:create-plan` now produces both plan.md and tasks.md in a single 6-phase sequence — `create-tasks` is no longer a separate workflow step
+- Workflow phase sequence reduced from 7 phases to 6: specify → design → plan (includes tasks) → implement → finish
+
+### Removed
+- `/pd:create-tasks` as a standalone workflow phase — functionality merged into `/pd:create-plan`; command file retained as deprecated stub for backward compatibility
+
 ## [4.14.10] - 2026-03-31
 
 ### Added

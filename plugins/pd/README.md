@@ -55,8 +55,8 @@ flowchart TD
 | Type | Count |
 |------|-------|
 | Skills | 30 |
-| Agents | 29 |
-| Commands | 31 |
+| Agents | 30 |
+| Commands | 32 |
 | Hooks | 13 |
 | MCP Tools | 26 |
 
@@ -74,7 +74,8 @@ flowchart TD
 | `/pd:specify [--feature=ID]` | spec.md |
 | `/pd:design` | design.md (4-stage workflow) |
 | `/pd:create-plan` | plan.md |
-| `/pd:create-tasks` | _(deprecated — use create-plan)_ |
+| `/pd:create-tasks` | _(deprecated — merged into create-plan)_ |
+| `/pd:taskify` | Break any existing plan into tasks (standalone regeneration) |
 | `/pd:implement` | Code changes |
 | `/pd:abandon-feature` | Transition a feature to abandoned status |
 | `/pd:finish-feature` | Merge, retro, cleanup (pd features) |
