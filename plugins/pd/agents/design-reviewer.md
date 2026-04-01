@@ -73,6 +73,27 @@ Return structured feedback:
 
 **Approval rule:** `approved: true` only when zero blockers.
 
+### Optional Backward Travel (include only when root cause is upstream)
+
+If you determine a blocker's root cause is in an upstream artifact (not the current phase's artifact), include these optional fields in the response JSON:
+
+```json
+{
+  "backward_to": "specify",
+  "backward_reason": "Brief explanation of why the upstream phase needs revision",
+  "backward_context": {
+    "source_phase": "design",
+    "target_phase": "specify",
+    "findings": [
+      {"artifact": "spec.md", "section": "AC-2", "issue": "Not testable", "suggestion": "Define measurable threshold"}
+    ],
+    "downstream_impact": "Design component C cannot define interface without clearer spec AC-2"
+  }
+}
+```
+
+Only include `backward_to` when the root cause is genuinely in an upstream artifact -- not when the current artifact simply needs revision. `backward_to` must name a phase earlier than the current phase.
+
 ## What You MUST Challenge
 
 ### Completeness

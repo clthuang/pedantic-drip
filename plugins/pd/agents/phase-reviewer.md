@@ -71,6 +71,27 @@ Return structured feedback:
 
 **Critical:** Every issue MUST include a `suggestion` field with constructive guidance.
 
+### Optional Backward Travel (include only when root cause is upstream)
+
+If you determine a blocker's root cause is in an upstream artifact (not the current phase's artifact), include these optional fields in the response JSON:
+
+```json
+{
+  "backward_to": "specify",
+  "backward_reason": "Brief explanation of why the upstream phase needs revision",
+  "backward_context": {
+    "source_phase": "create-plan",
+    "target_phase": "specify",
+    "findings": [
+      {"artifact": "spec.md", "section": "AC-2", "issue": "Not testable", "suggestion": "Define measurable threshold"}
+    ],
+    "downstream_impact": "Task T3 DoD cannot be verified without clearer spec AC-2"
+  }
+}
+```
+
+Only include `backward_to` when the root cause is genuinely in an upstream artifact -- not when the current artifact simply needs revision. `backward_to` must name a phase earlier than the current phase.
+
 ## Next Phase Expectations
 
 Use this table to assess what each artifact must contain. For PRD and spec reviews, apply the detailed criteria from the **reviewing-artifacts** skill.

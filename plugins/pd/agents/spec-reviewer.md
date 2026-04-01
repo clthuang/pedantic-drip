@@ -74,6 +74,27 @@ Return structured feedback:
 
 **Critical:** Every issue MUST include a `suggestion` field with constructive guidance on how to fix it.
 
+### Optional Backward Travel (include only when root cause is upstream)
+
+If you determine a blocker's root cause is in an upstream artifact (not the current phase's artifact), include these optional fields in the response JSON:
+
+```json
+{
+  "backward_to": "brainstorm",
+  "backward_reason": "Brief explanation of why the upstream phase needs revision",
+  "backward_context": {
+    "source_phase": "specify",
+    "target_phase": "brainstorm",
+    "findings": [
+      {"artifact": "prd.md", "section": "Goal-2", "issue": "Contradicts stated constraint", "suggestion": "Clarify whether X or Y is the intended behavior"}
+    ],
+    "downstream_impact": "Spec AC-3 cannot be written without resolving the PRD contradiction"
+  }
+}
+```
+
+Only include `backward_to` when the root cause is genuinely in an upstream artifact -- not when the current artifact simply needs revision. `backward_to` must name a phase earlier than the current phase.
+
 ## What You MUST Challenge
 
 ### Testability

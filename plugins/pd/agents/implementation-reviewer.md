@@ -173,6 +173,27 @@ For each deliverable in PRD:
 }
 ```
 
+### Optional Backward Travel (include only when root cause is upstream)
+
+If you determine a blocker's root cause is in an upstream artifact (not the current phase's artifact), include these optional fields in the response JSON:
+
+```json
+{
+  "backward_to": "design",
+  "backward_reason": "Brief explanation of why the upstream phase needs revision",
+  "backward_context": {
+    "source_phase": "implement",
+    "target_phase": "design",
+    "findings": [
+      {"artifact": "design.md", "section": "Component A interface", "issue": "Contract incompatible with actual API", "suggestion": "Update interface to accept stream instead of buffer"}
+    ],
+    "downstream_impact": "Implementation cannot satisfy spec R3 with the current design interface"
+  }
+}
+```
+
+Only include `backward_to` when the root cause is genuinely in an upstream artifact -- not when the current artifact simply needs revision. `backward_to` must name a phase earlier than the current phase.
+
 ### Severity Levels
 
 | Level | Meaning | Blocks Approval? |

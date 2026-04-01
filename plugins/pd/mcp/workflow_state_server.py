@@ -380,6 +380,13 @@ def _project_meta_json(
     if metadata.get("skipped_phases"):
         meta["skippedPhases"] = metadata["skipped_phases"]
 
+    # Backward travel fields (feature 073)
+    if metadata.get("backward_context"):
+        meta["backward_context"] = metadata["backward_context"]
+    if metadata.get("backward_return_target"):
+        meta["backward_return_target"] = metadata["backward_return_target"]
+    # backward_history is audit-only — stays in DB, not projected to .meta.json
+
     # Atomic write (fail-open)
     try:
         _atomic_json_write(meta_path, meta)

@@ -68,6 +68,32 @@ AskUserQuestion:
 If "Continue": Pass skipped phases to `transition_phase` via `skipped_phases` parameter (see workflow-state skill), then proceed.
 If "Stop": Stop execution.
 
+### Step 1b: Backward Context Injection
+
+After Step 1 completes, check for backward travel context:
+
+1. Read .meta.json (already read in Step 1)
+2. If `backward_context` field exists in .meta.json:
+   a. Format as markdown block:
+      ```
+      ## Backward Travel Context
+      This phase is being re-run because a downstream reviewer identified
+      issues rooted here.
+
+      **Source:** {backward_context.source_phase} reviewer
+      **Findings:**
+      {for each finding in backward_context.findings:
+        - [{finding.artifact}] {finding.section}: {finding.issue}
+          Suggestion: {finding.suggestion}}
+      **Downstream Impact:** {backward_context.downstream_impact}
+
+      Address these findings in this phase's artifact revision.
+      ```
+   b. Prepend this block to the phase's prompt context (before any skill invocation)
+   c. If backward_to targets "brainstorm": add "Run in clarification mode — research stages already completed. Focus on refining the identified issue."
+3. If `backward_context` does NOT exist: normal flow (no injection)
+4. After the phase completes successfully: clear `backward_context` from entity metadata via `update_entity(type_id, metadata={"backward_context": null})`
+
 ### Step 2: Check Branch
 
 If feature has a branch defined in `.meta.json`:
@@ -219,6 +245,8 @@ Call `complete_phase` MCP tool to record the phase completion, timing data, and 
 
 ### Step 3: Phase Summary
 
+> **Note:** Before generating the Phase Summary, run handleReviewerResponse (see below) to determine if the reviewer recommended backward travel. If handleReviewerResponse returns "backward", skip commitAndComplete entirely and transition to the backward target phase instead.
+
 Output a plain-text summary block (max 12 lines) before returning control to the calling command's AskUserQuestion prompt.
 
 **Outcome decision table** (evaluate top to bottom, first match wins):
@@ -243,3 +271,72 @@ Artifacts: {comma-separated artifact filenames}
   - Each item: `"  [W] {description}"` or `"  [S] {description}"` — truncate description at 100 characters.
   - Show at most 5 items. If more than 5: append `"  ...and {N} more"`
 - **Feedback section (when `reviewerNotes[]` is empty):** `"All reviewer issues resolved."`
+
+### Step 3b: Forward Re-Run Check
+
+After Step 3 (Phase Summary) completes:
+
+1. Read entity metadata for `backward_return_target`
+2. If `backward_return_target` exists AND `backward_return_target != current_phase`:
+   a. Determine `next_phase` = phase after `current_phase` in PHASE_SEQUENCE
+   b. Clear `backward_context` from entity metadata (already consumed by this phase)
+   c. Output: "Forward re-run: {current_phase} → {next_phase} (returning to {backward_return_target})"
+   d. Continue to /pd:{next_phase} [YOLO_MODE] — reuses the existing YOLO auto-chain mechanism
+3. If `backward_return_target == current_phase`:
+   a. Clear `backward_return_target` from entity metadata via `update_entity(type_id, metadata={"backward_return_target": null})`
+   b. Output: "Reached backward return target. Resuming normal flow."
+   c. Proceed to normal completion (standard auto-chain to next phase)
+4. If `backward_return_target` does NOT exist:
+   Normal flow (standard auto-chain)
+
+## handleReviewerResponse
+
+**Purpose:** Process a reviewer's response, handling backward travel if recommended. This is a shared procedure called by all phase commands after parsing a reviewer's response.
+
+**Input:** reviewer_response (parsed JSON), feature_type_id, current_phase
+**Output:** action = "approve" | "iterate" | "backward"
+
+**Logic:**
+
+1. If `reviewer_response.backward_to` exists:
+   a. Validate `backward_to` is a valid phase earlier than `current_phase` in PHASE_SEQUENCE
+   b. Store `backward_context` in entity metadata via `update_entity` MCP:
+      ```
+      update_entity(type_id=feature_type_id, metadata={
+        "backward_context": reviewer_response.backward_context,
+        "backward_return_target": current_phase
+      })
+      ```
+   c. Update `backward_transition_reason` in workflow_phases (existing DB column):
+      ```
+      transition_phase(feature_type_id, reviewer_response.backward_to)
+      ```
+   d. Append to `backward_history` array in entity metadata:
+      ```
+      update_entity(type_id=feature_type_id, metadata={
+        "backward_history": [...existing, {
+          "source_phase": current_phase,
+          "target_phase": reviewer_response.backward_to,
+          "reason": reviewer_response.backward_reason,
+          "timestamp": ISO_NOW,
+          "issue_count": len(reviewer_response.issues)
+        }]
+      })
+      ```
+   e. **Ping-pong detection:**
+      - Read `backward_history` from entity metadata
+      - Filter entries with same (source_phase, target_phase) pair
+      - If >= 2 previous entries exist AND current issue_count >= most recent previous entry's issue_count:
+        - Ping-pong detected
+        - YOLO: force approve with warnings, log "ping-pong detected, forcing forward"
+        - Interactive: prompt "Same issues recurring. Force approve or continue?"
+        - Return "approve"
+   f. YOLO mode: output "Continue to /pd:{backward_to} [YOLO_MODE]"
+      Interactive: prompt "Reviewer recommends going back to {backward_to}. Proceed?"
+   g. Return "backward"
+
+2. If `reviewer_response.approved == true` AND zero issues with severity "blocker" or "warning":
+   Return "approve"
+
+3. Else:
+   Return "iterate"
