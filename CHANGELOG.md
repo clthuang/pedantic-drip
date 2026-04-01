@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.14.11] - 2026-04-02
+
 ### Added
 - `/pd:taskify` command — standalone task breakdown; breaks any existing plan.md into tasks.md without running the full create-plan flow
 - `relevance-verifier` agent — pre-implementation coherence check that validates the full artifact chain (spec→design→plan→tasks) before implementation begins; runs as part of the 360 QA verification sequence
