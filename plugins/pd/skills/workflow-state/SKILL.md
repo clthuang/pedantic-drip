@@ -16,7 +16,7 @@ Manage feature workflow state and validate phase transitions.
 The canonical workflow order:
 
 ```
-brainstorm → specify → design → create-plan → create-tasks → implement → finish
+brainstorm → specify → design → create-plan → implement → finish
 ```
 
 ### Planned→Active Transition

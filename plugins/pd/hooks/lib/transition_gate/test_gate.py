@@ -294,8 +294,9 @@ class TestPhaseSequence:
         assert len(PHASE_SEQUENCE) == 6
 
     def test_phase_sequence_all_phases_present(self) -> None:
-        """Every Phase enum value appears in PHASE_SEQUENCE."""
-        assert set(PHASE_SEQUENCE) == set(Phase)
+        """Every PHASE_SEQUENCE value is a valid Phase enum member."""
+        for phase in PHASE_SEQUENCE:
+            assert phase in Phase
 
     def test_phase_sequence_canonical_order(self) -> None:
         assert PHASE_SEQUENCE == (
@@ -303,7 +304,6 @@ class TestPhaseSequence:
             Phase.specify,
             Phase.design,
             Phase.create_plan,
-            Phase.create_tasks,
             Phase.implement,
             Phase.finish,
         )
@@ -315,7 +315,7 @@ class TestPhaseSequence:
         assert Phase.brainstorm not in COMMAND_PHASES
 
     def test_command_phases_length(self) -> None:
-        assert len(COMMAND_PHASES) == 6
+        assert len(COMMAND_PHASES) == 5
 
 
 # ---------------------------------------------------------------------------
@@ -341,23 +341,20 @@ class TestPrerequisiteAndArtifactMaps:
     def test_hard_prerequisites_create_plan(self) -> None:
         assert HARD_PREREQUISITES["create-plan"] == ["spec.md", "design.md"]
 
-    def test_hard_prerequisites_create_tasks(self) -> None:
-        assert HARD_PREREQUISITES["create-tasks"] == ["spec.md", "design.md", "plan.md"]
-
     def test_hard_prerequisites_implement(self) -> None:
         assert HARD_PREREQUISITES["implement"] == ["spec.md", "tasks.md"]
 
     def test_hard_prerequisites_finish_empty(self) -> None:
         assert HARD_PREREQUISITES["finish"] == []
 
-    def test_artifact_phase_map_five_entries(self) -> None:
-        assert len(ARTIFACT_PHASE_MAP) == 5
+    def test_artifact_phase_map_six_entries(self) -> None:
+        assert len(ARTIFACT_PHASE_MAP) == 6
 
     def test_artifact_phase_map_brainstorm(self) -> None:
-        assert ARTIFACT_PHASE_MAP["brainstorm"] == "prd.md"
+        assert ARTIFACT_PHASE_MAP["brainstorm"] == ["prd.md"]
 
     def test_artifact_phase_map_specify(self) -> None:
-        assert ARTIFACT_PHASE_MAP["specify"] == "spec.md"
+        assert ARTIFACT_PHASE_MAP["specify"] == ["spec.md"]
 
     def test_artifact_guard_map_two_entries(self) -> None:
         assert len(ARTIFACT_GUARD_MAP) == 2
@@ -389,11 +386,11 @@ class TestServiceAndPhaseGuardMaps:
     def test_phase_guard_map_review_quality_specify(self) -> None:
         assert PHASE_GUARD_MAP["review_quality"]["specify"] == "G-46"
 
-    def test_phase_guard_map_review_quality_five_phases(self) -> None:
-        assert len(PHASE_GUARD_MAP["review_quality"]) == 5
+    def test_phase_guard_map_review_quality_four_phases(self) -> None:
+        assert len(PHASE_GUARD_MAP["review_quality"]) == 4
 
-    def test_phase_guard_map_phase_handoff_four_phases(self) -> None:
-        assert len(PHASE_GUARD_MAP["phase_handoff"]) == 4
+    def test_phase_guard_map_phase_handoff_three_phases(self) -> None:
+        assert len(PHASE_GUARD_MAP["phase_handoff"]) == 3
 
     def test_phase_guard_map_phase_handoff_no_implement(self) -> None:
         assert "implement" not in PHASE_GUARD_MAP["phase_handoff"]
@@ -426,11 +423,10 @@ class TestGuardMetadataIntegrity:
     def test_integrity_expected_guard_ids_count(self) -> None:
         assert len(EXPECTED_GUARD_IDS) == 43
 
-    def test_integrity_all_phases_in_sequence(self) -> None:
-        """Every Phase enum value is present in PHASE_SEQUENCE."""
-        phase_set = set(PHASE_SEQUENCE)
-        for phase in Phase:
-            assert phase in phase_set, f"Phase {phase} missing from PHASE_SEQUENCE"
+    def test_integrity_all_sequence_phases_in_enum(self) -> None:
+        """Every PHASE_SEQUENCE value is a valid Phase enum member."""
+        for phase in PHASE_SEQUENCE:
+            assert phase in Phase, f"Phase {phase} not in Phase enum"
 
     def test_integrity_phase_sequence_length_seven(self) -> None:
         assert len(PHASE_SEQUENCE) == 6
@@ -669,9 +665,9 @@ class TestPhaseIndex:
         assert _phase_index("nonexistent") == -1
 
     def test_phase_index_first_and_last(self) -> None:
-        """First phase returns 0, last returns 6."""
+        """First phase returns 0, last returns 5."""
         assert _phase_index("brainstorm") == 0
-        assert _phase_index("finish") == 6
+        assert _phase_index("finish") == 5
 
 
 # ---------------------------------------------------------------------------
@@ -1390,29 +1386,17 @@ class TestReviewQualityGate:
         assert result.allowed is False
         assert result.guard_id == "G-34"
 
-    def test_G36_review_quality_create_tasks_pass(self) -> None:
-        """G-36: create-tasks review approved -> allowed."""
-        result = review_quality_gate(
-            phase="create-tasks",
-            iteration=1,
-            max_iterations=5,
-            reviewer_approved=True,
-            has_blockers_or_warnings=False,
-        )
-        assert result.allowed is True
-        assert result.guard_id == "G-36"
+    def test_G36_metadata_exists_create_plan(self) -> None:
+        """G-36: Guard metadata exists and targets create-plan (merged from create-tasks)."""
+        meta = GUARD_METADATA["G-36"]
+        assert meta["enforcement"] == Enforcement.hard_block
+        assert meta["affected_phases"] == ["create-plan"]
 
-    def test_G36_review_quality_create_tasks_fail(self) -> None:
-        """G-36: create-tasks review not approved -> blocked."""
-        result = review_quality_gate(
-            phase="create-tasks",
-            iteration=2,
-            max_iterations=5,
-            reviewer_approved=False,
-            has_blockers_or_warnings=True,
-        )
-        assert result.allowed is False
-        assert result.guard_id == "G-36"
+    def test_G37_metadata_exists_create_plan(self) -> None:
+        """G-37: Guard metadata exists and targets create-plan (merged from create-tasks)."""
+        meta = GUARD_METADATA["G-37"]
+        assert meta["enforcement"] == Enforcement.hard_block
+        assert meta["affected_phases"] == ["create-plan"]
 
     def test_G38_review_quality_design_pass(self) -> None:
         """G-38: design review approved -> allowed."""
@@ -1526,30 +1510,6 @@ class TestPhaseHandoffGate:
         )
         assert result.allowed is False
         assert result.guard_id == "G-35"
-
-    def test_G37_phase_handoff_create_tasks_pass(self) -> None:
-        """G-37: create-tasks handoff approved -> allowed."""
-        result = phase_handoff_gate(
-            phase="create-tasks",
-            iteration=1,
-            max_iterations=5,
-            reviewer_approved=True,
-            has_blockers_or_warnings=False,
-        )
-        assert result.allowed is True
-        assert result.guard_id == "G-37"
-
-    def test_G37_phase_handoff_create_tasks_fail(self) -> None:
-        """G-37: create-tasks handoff not approved -> blocked."""
-        result = phase_handoff_gate(
-            phase="create-tasks",
-            iteration=2,
-            max_iterations=5,
-            reviewer_approved=False,
-            has_blockers_or_warnings=True,
-        )
-        assert result.allowed is False
-        assert result.guard_id == "G-37"
 
     def test_G39_phase_handoff_design_pass(self) -> None:
         """G-39: design handoff approved -> allowed."""
@@ -2450,10 +2410,10 @@ class TestSoftPrerequisitesBoundary:
             completed_phases=[],
         )
         assert result.severity == Severity.warn
-        # All 5 phases before implement should be mentioned in reason
+        # All 4 phases before implement should be mentioned in reason
         # Phase enum str() produces "Phase.brainstorm" etc., so check for
         # the phase value portion in any format
-        for phase_val in ["brainstorm", "specify", "design", "create-plan", "create-tasks"]:
+        for phase_val in ["brainstorm", "specify", "design", "create-plan"]:
             assert phase_val in result.reason, (
                 f"Missing '{phase_val}' in reason: {result.reason}"
             )
@@ -2810,13 +2770,13 @@ class TestPhaseHandoffGateAdversarial:
         assert result.allowed is False
         assert result.guard_id == "G-35"
 
-    def test_G37_phase_handoff_cap_overrides_blockers(self) -> None:
-        """G-37: At cap with blockers -> warn (cap reached).
+    def test_G35_phase_handoff_cap_overrides_blockers(self) -> None:
+        """G-35: At cap with blockers -> warn (cap reached).
 
         Anticipate: Cap reached always produces warn, regardless of state.
         """
         result = phase_handoff_gate(
-            phase="create-tasks",
+            phase="create-plan",
             iteration=5,
             max_iterations=5,
             reviewer_approved=False,
@@ -2824,7 +2784,7 @@ class TestPhaseHandoffGateAdversarial:
         )
         assert result.allowed is True
         assert result.severity == Severity.warn
-        assert result.guard_id == "G-37"
+        assert result.guard_id == "G-35"
 
 
 # ---------------------------------------------------------------------------

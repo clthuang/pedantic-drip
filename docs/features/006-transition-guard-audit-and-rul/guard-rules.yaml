@@ -10,7 +10,7 @@
 #   enforcement_mechanism: code | markdown | convention
 #   yolo_behavior: auto-select | hard-stop | skip | unchanged
 #   consolidation_target: transition_gate | hook | deprecated
-#   affected_phases: specify | design | create-plan | create-tasks | implement | finish
+#   affected_phases: specify | design | create-plan | implement | finish
 #
 # Duplicate clusters (7 clusters, 27 guards involved):
 #   1. Hard prerequisite definition + per-command checks: G-02, G-03, G-04, G-05, G-06, G-08
@@ -43,7 +43,6 @@
     - "specify"
     - "design"
     - "create-plan"
-    - "create-tasks"
     - "implement"
     - "finish"
   yolo_behavior: "unchanged"
@@ -65,7 +64,6 @@
   enforcement_mechanism: "markdown"
   affected_phases:
     - "create-plan"
-    - "create-tasks"
     - "implement"
   yolo_behavior: "unchanged"
   consolidation_target: "transition_gate"
@@ -119,7 +117,7 @@
   enforcement: "hard-block"
   enforcement_mechanism: "markdown"
   affected_phases:
-    - "create-tasks"
+    - "create-plan"
   yolo_behavior: "unchanged"
   consolidation_target: "transition_gate"
   duplicates:
@@ -210,7 +208,6 @@
   enforcement_mechanism: "markdown"
   affected_phases:
     - "create-plan"
-    - "create-tasks"
     - "implement"
   yolo_behavior: "unchanged"
   consolidation_target: "transition_gate"
@@ -261,7 +258,6 @@
     - "specify"
     - "design"
     - "create-plan"
-    - "create-tasks"
     - "implement"
     - "finish"
   yolo_behavior: "unchanged"
@@ -286,7 +282,6 @@
     - "specify"
     - "design"
     - "create-plan"
-    - "create-tasks"
     - "implement"
     - "finish"
   yolo_behavior: "auto-select"
@@ -311,7 +306,6 @@
     - "specify"
     - "design"
     - "create-plan"
-    - "create-tasks"
     - "implement"
     - "finish"
   yolo_behavior: "unchanged"
@@ -433,7 +427,6 @@
     - "specify"
     - "design"
     - "create-plan"
-    - "create-tasks"
     - "implement"
     - "finish"
   yolo_behavior: "auto-select"
@@ -464,7 +457,6 @@
     - "specify"
     - "design"
     - "create-plan"
-    - "create-tasks"
     - "implement"
     - "finish"
   yolo_behavior: "auto-select"
@@ -489,7 +481,6 @@
     - "specify"
     - "design"
     - "create-plan"
-    - "create-tasks"
     - "implement"
     - "finish"
   yolo_behavior: "unchanged"
@@ -519,7 +510,6 @@
     - "specify"
     - "design"
     - "create-plan"
-    - "create-tasks"
     - "implement"
     - "finish"
   yolo_behavior: "unchanged"
@@ -549,7 +539,6 @@
     - "specify"
     - "design"
     - "create-plan"
-    - "create-tasks"
     - "implement"
     - "finish"
   yolo_behavior: "hard-stop"
@@ -582,7 +571,6 @@
     - "specify"
     - "design"
     - "create-plan"
-    - "create-tasks"
     - "implement"
     - "finish"
   yolo_behavior: "auto-select"
@@ -614,7 +602,6 @@
     - "specify"
     - "design"
     - "create-plan"
-    - "create-tasks"
     - "implement"
     - "finish"
   yolo_behavior: "auto-select"
@@ -639,7 +626,6 @@
     - "specify"
     - "design"
     - "create-plan"
-    - "create-tasks"
     - "implement"
     - "finish"
   yolo_behavior: "auto-select"
@@ -669,7 +655,6 @@
     - "specify"
     - "design"
     - "create-plan"
-    - "create-tasks"
     - "implement"
     - "finish"
   yolo_behavior: "auto-select"
@@ -699,7 +684,6 @@
     - "specify"
     - "design"
     - "create-plan"
-    - "create-tasks"
     - "implement"
     - "finish"
   yolo_behavior: "unchanged"
@@ -906,29 +890,29 @@
   enforcement: "hard-block"
   enforcement_mechanism: "markdown"
   affected_phases:
-    - "create-tasks"
+    - "create-plan"
   yolo_behavior: "unchanged"
   consolidation_target: "transition_gate"
   consolidation_notes: >
-    Encode as review_quality_gate(phase='create-tasks', reviewer='task-reviewer', max_iterations=5) in transition_gate.py. Same pattern as G-34.
+    Encode as review_quality_gate(phase='create-plan', reviewer='task-reviewer', max_iterations=5) in transition_gate.py. Same pattern as G-34. (Merged from create-tasks in feature 073.)
 - id: "G-37"
-  name: "Create-tasks phase handoff review gate"
+  name: "Create-plan phase handoff review gate"
   category: "review-quality"
   description: >
-    Phase-reviewer loop with max 5 iterations. Validates tasks are ready for the implement phase.
+    Phase-reviewer loop with max 5 iterations. Validates plan and tasks are ready for the implement phase.
   source_files:
     - file: "plugins/iflow/commands/create-tasks.md"
       lines: "190-325"
       anchor: "Phase Handoff Review"
-  trigger: "Create-tasks primary review (G-36) passes"
+  trigger: "Create-plan primary review (G-36) passes"
   enforcement: "hard-block"
   enforcement_mechanism: "markdown"
   affected_phases:
-    - "create-tasks"
+    - "create-plan"
   yolo_behavior: "unchanged"
   consolidation_target: "transition_gate"
   consolidation_notes: >
-    Encode as phase_handoff_gate(phase='create-tasks', reviewer='phase-reviewer', max_iterations=5) in transition_gate.py. Same pattern as G-35.
+    Encode as phase_handoff_gate(phase='create-plan', reviewer='phase-reviewer', max_iterations=5) in transition_gate.py. Same pattern as G-35. (Merged from create-tasks in feature 073.)
 - id: "G-38"
   name: "Design review quality gate"
   category: "review-quality"
@@ -1015,7 +999,6 @@
   enforcement_mechanism: "code"
   affected_phases:
     - "create-plan"
-    - "create-tasks"
     - "implement"
   yolo_behavior: "skip"
   consolidation_target: "hook"
@@ -1035,7 +1018,6 @@
   enforcement_mechanism: "code"
   affected_phases:
     - "create-plan"
-    - "create-tasks"
     - "implement"
   yolo_behavior: "unchanged"
   consolidation_target: "hook"
@@ -1055,7 +1037,6 @@
   enforcement_mechanism: "code"
   affected_phases:
     - "create-plan"
-    - "create-tasks"
     - "implement"
   yolo_behavior: "unchanged"
   consolidation_target: "hook"
@@ -1077,7 +1058,6 @@
     - "specify"
     - "design"
     - "create-plan"
-    - "create-tasks"
     - "implement"
     - "finish"
   yolo_behavior: "skip"
@@ -1177,7 +1157,6 @@
     - "specify"
     - "design"
     - "create-plan"
-    - "create-tasks"
     - "implement"
     - "finish"
   yolo_behavior: "auto-select"
@@ -1200,7 +1179,6 @@
     - "specify"
     - "design"
     - "create-plan"
-    - "create-tasks"
     - "implement"
     - "finish"
   yolo_behavior: "unchanged"
@@ -1273,7 +1251,6 @@
     - "specify"
     - "design"
     - "create-plan"
-    - "create-tasks"
     - "implement"
     - "finish"
   yolo_behavior: "auto-select"
@@ -1296,7 +1273,6 @@
     - "specify"
     - "design"
     - "create-plan"
-    - "create-tasks"
     - "implement"
     - "finish"
   yolo_behavior: "hard-stop"
@@ -1319,7 +1295,6 @@
     - "specify"
     - "design"
     - "create-plan"
-    - "create-tasks"
     - "implement"
     - "finish"
   yolo_behavior: "unchanged"
@@ -1342,7 +1317,6 @@
     - "specify"
     - "design"
     - "create-plan"
-    - "create-tasks"
     - "implement"
     - "finish"
   yolo_behavior: "hard-stop"
@@ -1365,7 +1339,6 @@
     - "specify"
     - "design"
     - "create-plan"
-    - "create-tasks"
     - "implement"
     - "finish"
   yolo_behavior: "hard-stop"
@@ -1388,7 +1361,6 @@
     - "specify"
     - "design"
     - "create-plan"
-    - "create-tasks"
     - "implement"
     - "finish"
   yolo_behavior: "hard-stop"
@@ -1411,7 +1383,6 @@
     - "specify"
     - "design"
     - "create-plan"
-    - "create-tasks"
     - "implement"
     - "finish"
   yolo_behavior: "unchanged"
