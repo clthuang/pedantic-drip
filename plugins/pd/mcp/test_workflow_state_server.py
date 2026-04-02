@@ -4017,6 +4017,385 @@ class TestProjectMetaJson:
         assert result is not None
         assert isinstance(result, str)
 
+    # -- Feature 075: phase_summaries projection tests --
+
+    def test_phase_summaries_projected_when_present(self, db, tmp_path):
+        """AC-3: phase_summaries in metadata appears in .meta.json."""
+        feature_dir = os.path.join(str(tmp_path), "features", "075-ps-present")
+        os.makedirs(feature_dir, exist_ok=True)
+
+        summaries = [
+            {"phase": "specify", "timestamp": "2026-04-02T08:00:00Z", "outcome": "Done"},
+            {"phase": "design", "timestamp": "2026-04-02T09:00:00Z", "outcome": "Done"},
+        ]
+        metadata = {
+            "id": "075", "slug": "ps-present", "mode": "standard",
+            "branch": "feature/075-ps-present", "phase_timing": {},
+            "phase_summaries": summaries,
+        }
+        db.register_entity(
+            "feature", "075-ps-present", "ps-present",
+            artifact_path=feature_dir, status="active",
+            metadata=metadata, project_id="__unknown__",
+        )
+
+        result = _project_meta_json(db, None, "feature:075-ps-present", feature_dir)
+        assert result is None
+
+        with open(os.path.join(feature_dir, ".meta.json")) as f:
+            meta = json.load(f)
+        assert "phase_summaries" in meta
+        assert len(meta["phase_summaries"]) == 2
+        assert meta["phase_summaries"][0]["phase"] == "specify"
+        assert meta["phase_summaries"][1]["phase"] == "design"
+
+    def test_phase_summaries_absent_when_not_in_metadata(self, db, tmp_path):
+        """AC-10: no phase_summaries key in .meta.json when absent from metadata."""
+        feature_dir = os.path.join(str(tmp_path), "features", "075-ps-absent")
+        os.makedirs(feature_dir, exist_ok=True)
+
+        metadata = {
+            "id": "075", "slug": "ps-absent", "mode": "standard",
+            "branch": "feature/075-ps-absent", "phase_timing": {},
+        }
+        db.register_entity(
+            "feature", "075-ps-absent", "ps-absent",
+            artifact_path=feature_dir, status="active",
+            metadata=metadata, project_id="__unknown__",
+        )
+
+        result = _project_meta_json(db, None, "feature:075-ps-absent", feature_dir)
+        assert result is None
+
+        with open(os.path.join(feature_dir, ".meta.json")) as f:
+            meta = json.load(f)
+        assert "phase_summaries" not in meta
+
+    def test_phase_summaries_empty_list_not_projected(self, db, tmp_path):
+        """Empty phase_summaries list is not projected (matches backward_context pattern)."""
+        feature_dir = os.path.join(str(tmp_path), "features", "075-ps-empty")
+        os.makedirs(feature_dir, exist_ok=True)
+
+        metadata = {
+            "id": "075", "slug": "ps-empty", "mode": "standard",
+            "branch": "feature/075-ps-empty", "phase_timing": {},
+            "phase_summaries": [],
+        }
+        db.register_entity(
+            "feature", "075-ps-empty", "ps-empty",
+            artifact_path=feature_dir, status="active",
+            metadata=metadata, project_id="__unknown__",
+        )
+
+        result = _project_meta_json(db, None, "feature:075-ps-empty", feature_dir)
+        assert result is None
+
+        with open(os.path.join(feature_dir, ".meta.json")) as f:
+            meta = json.load(f)
+        assert "phase_summaries" not in meta
+
+    def test_phase_summaries_append_preserves_prior_entries(self, db, tmp_path):
+        """AC-1: update_entity with phase_summaries appends, preserving prior entries."""
+        feature_dir = os.path.join(str(tmp_path), "features", "075-ps-append")
+        os.makedirs(feature_dir, exist_ok=True)
+
+        entry1 = {"phase": "specify", "timestamp": "2026-04-02T08:00:00Z", "outcome": "Done"}
+        metadata = {
+            "id": "075", "slug": "ps-append", "mode": "standard",
+            "branch": "feature/075-ps-append", "phase_timing": {},
+            "phase_summaries": [entry1],
+        }
+        db.register_entity(
+            "feature", "075-ps-append", "ps-append",
+            artifact_path=feature_dir, status="active",
+            metadata=metadata, project_id="__unknown__",
+        )
+
+        # Append second entry via update_entity (simulating commitAndComplete Step 3a)
+        entry2 = {"phase": "design", "timestamp": "2026-04-02T09:00:00Z", "outcome": "Approved"}
+        db.update_entity("feature:075-ps-append", metadata={"phase_summaries": [entry1, entry2]})
+
+        # Project and verify
+        result = _project_meta_json(db, None, "feature:075-ps-append", feature_dir)
+        assert result is None
+
+        with open(os.path.join(feature_dir, ".meta.json")) as f:
+            meta = json.load(f)
+        assert len(meta["phase_summaries"]) == 2
+        assert meta["phase_summaries"][0]["phase"] == "specify"
+        assert meta["phase_summaries"][1]["phase"] == "design"
+
+    def test_phase_summaries_coexists_with_other_metadata(self, db, tmp_path):
+        """phase_summaries update preserves other metadata keys (shallow merge)."""
+        feature_dir = os.path.join(str(tmp_path), "features", "075-ps-merge")
+        os.makedirs(feature_dir, exist_ok=True)
+
+        metadata = {
+            "id": "075", "slug": "ps-merge", "mode": "standard",
+            "branch": "feature/075-ps-merge", "phase_timing": {},
+            "backward_context": {"source_phase": "design"},
+        }
+        db.register_entity(
+            "feature", "075-ps-merge", "ps-merge",
+            artifact_path=feature_dir, status="active",
+            metadata=metadata, project_id="__unknown__",
+        )
+
+        # Add phase_summaries via update_entity
+        entry = {"phase": "specify", "timestamp": "2026-04-02T08:00:00Z", "outcome": "Done"}
+        db.update_entity("feature:075-ps-merge", metadata={"phase_summaries": [entry]})
+
+        # Project and verify both fields present
+        result = _project_meta_json(db, None, "feature:075-ps-merge", feature_dir)
+        assert result is None
+
+        with open(os.path.join(feature_dir, ".meta.json")) as f:
+            meta = json.load(f)
+        assert "phase_summaries" in meta
+        assert "backward_context" in meta
+        assert meta["backward_context"]["source_phase"] == "design"
+
+    # -- Feature 075: deepened tests --
+
+    def test_all_seven_schema_fields_preserved_through_projection(self, db, tmp_path):
+        """AC-7: all 7 schema fields in a phase_summaries entry survive projection.
+        derived_from: spec:AC-7 (schema completeness)"""
+        # Given a phase_summaries entry with all 7 spec-defined fields
+        feature_dir = os.path.join(str(tmp_path), "features", "075-ps-7fields")
+        os.makedirs(feature_dir, exist_ok=True)
+
+        full_entry = {
+            "phase": "specify",
+            "timestamp": "2026-04-02T08:00:00Z",
+            "outcome": "Specification complete (3 iterations).",
+            "artifacts_produced": ["spec.md"],
+            "key_decisions": "Chose update_entity over new complete_phase param.",
+            "reviewer_feedback_summary": "LGTM after AC-3 gap fix.",
+            "rework_trigger": None,
+        }
+        metadata = {
+            "id": "075", "slug": "ps-7fields", "mode": "standard",
+            "branch": "feature/075-ps-7fields", "phase_timing": {},
+            "phase_summaries": [full_entry],
+        }
+        db.register_entity(
+            "feature", "075-ps-7fields", "ps-7fields",
+            artifact_path=feature_dir, status="active",
+            metadata=metadata, project_id="__unknown__",
+        )
+
+        # When _project_meta_json writes .meta.json
+        result = _project_meta_json(db, None, "feature:075-ps-7fields", feature_dir)
+        assert result is None
+
+        # Then all 7 fields are present and match input values
+        with open(os.path.join(feature_dir, ".meta.json")) as f:
+            meta = json.load(f)
+        projected = meta["phase_summaries"][0]
+        assert projected["phase"] == "specify"
+        assert projected["timestamp"] == "2026-04-02T08:00:00Z"
+        assert projected["outcome"] == "Specification complete (3 iterations)."
+        assert projected["artifacts_produced"] == ["spec.md"]
+        assert projected["key_decisions"] == "Chose update_entity over new complete_phase param."
+        assert projected["reviewer_feedback_summary"] == "LGTM after AC-3 gap fix."
+        assert projected["rework_trigger"] is None
+
+    def test_multiple_entries_same_phase_stored_not_trimmed(self, db, tmp_path):
+        """AC-9 storage: multiple entries for same phase are all stored (trimming is injection-time only).
+        derived_from: spec:AC-9 (storage vs injection trimming)"""
+        # Given 4 phase_summaries entries all for the same phase (4 rework cycles)
+        feature_dir = os.path.join(str(tmp_path), "features", "075-ps-multi")
+        os.makedirs(feature_dir, exist_ok=True)
+
+        entries = [
+            {"phase": "specify", "timestamp": f"2026-04-0{i}T08:00:00Z", "outcome": f"Iteration {i}"}
+            for i in range(1, 5)
+        ]
+        metadata = {
+            "id": "075", "slug": "ps-multi", "mode": "standard",
+            "branch": "feature/075-ps-multi", "phase_timing": {},
+            "phase_summaries": entries,
+        }
+        db.register_entity(
+            "feature", "075-ps-multi", "ps-multi",
+            artifact_path=feature_dir, status="active",
+            metadata=metadata, project_id="__unknown__",
+        )
+
+        # When projected
+        result = _project_meta_json(db, None, "feature:075-ps-multi", feature_dir)
+        assert result is None
+
+        # Then all 4 entries are in .meta.json (storage is not trimmed)
+        with open(os.path.join(feature_dir, ".meta.json")) as f:
+            meta = json.load(f)
+        assert len(meta["phase_summaries"]) == 4
+        assert meta["phase_summaries"][0]["outcome"] == "Iteration 1"
+        assert meta["phase_summaries"][3]["outcome"] == "Iteration 4"
+
+    def test_null_phase_summaries_omitted_from_projection(self, db, tmp_path):
+        """Null phase_summaries in metadata is omitted from .meta.json (truthy guard).
+        derived_from: dimension:adversarial (null handling)"""
+        # Given metadata with phase_summaries explicitly set to None
+        feature_dir = os.path.join(str(tmp_path), "features", "075-ps-null")
+        os.makedirs(feature_dir, exist_ok=True)
+
+        metadata = {
+            "id": "075", "slug": "ps-null", "mode": "standard",
+            "branch": "feature/075-ps-null", "phase_timing": {},
+            "phase_summaries": None,
+        }
+        db.register_entity(
+            "feature", "075-ps-null", "ps-null",
+            artifact_path=feature_dir, status="active",
+            metadata=metadata, project_id="__unknown__",
+        )
+
+        # When projected
+        result = _project_meta_json(db, None, "feature:075-ps-null", feature_dir)
+        assert result is None
+
+        # Then phase_summaries is not in .meta.json (None is falsy)
+        with open(os.path.join(feature_dir, ".meta.json")) as f:
+            meta = json.load(f)
+        assert "phase_summaries" not in meta
+
+    def test_phase_summaries_string_type_not_projected(self, db, tmp_path):
+        """Wrong type (string) for phase_summaries still projects (truthy string passes guard).
+        derived_from: dimension:adversarial (wrong type handling)
+
+        Anticipate: if metadata.get('phase_summaries') is a non-empty string,
+        it's truthy and would be projected as-is. This tests that behavior —
+        the projection does not validate types, it just passes through."""
+        feature_dir = os.path.join(str(tmp_path), "features", "075-ps-strtype")
+        os.makedirs(feature_dir, exist_ok=True)
+
+        metadata = {
+            "id": "075", "slug": "ps-strtype", "mode": "standard",
+            "branch": "feature/075-ps-strtype", "phase_timing": {},
+            "phase_summaries": "not a list",
+        }
+        db.register_entity(
+            "feature", "075-ps-strtype", "ps-strtype",
+            artifact_path=feature_dir, status="active",
+            metadata=metadata, project_id="__unknown__",
+        )
+
+        # When projected
+        result = _project_meta_json(db, None, "feature:075-ps-strtype", feature_dir)
+        assert result is None
+
+        # Then the string is projected as-is (projection is pass-through, no type guard)
+        with open(os.path.join(feature_dir, ".meta.json")) as f:
+            meta = json.load(f)
+        assert meta["phase_summaries"] == "not a list"
+
+    def test_entry_with_missing_fields_projected_as_is(self, db, tmp_path):
+        """Entry with missing schema fields is projected as-is (pass-through).
+        derived_from: dimension:mutation_mindset (line deletion operator — no field filtering)"""
+        # Given a phase_summaries entry with only 2 of 7 fields
+        feature_dir = os.path.join(str(tmp_path), "features", "075-ps-partial")
+        os.makedirs(feature_dir, exist_ok=True)
+
+        partial_entry = {"phase": "specify", "outcome": "Done"}
+        metadata = {
+            "id": "075", "slug": "ps-partial", "mode": "standard",
+            "branch": "feature/075-ps-partial", "phase_timing": {},
+            "phase_summaries": [partial_entry],
+        }
+        db.register_entity(
+            "feature", "075-ps-partial", "ps-partial",
+            artifact_path=feature_dir, status="active",
+            metadata=metadata, project_id="__unknown__",
+        )
+
+        # When projected
+        result = _project_meta_json(db, None, "feature:075-ps-partial", feature_dir)
+        assert result is None
+
+        # Then the partial entry is projected with exactly those 2 fields (no padding, no removal)
+        with open(os.path.join(feature_dir, ".meta.json")) as f:
+            meta = json.load(f)
+        projected = meta["phase_summaries"][0]
+        assert projected == {"phase": "specify", "outcome": "Done"}
+        assert "timestamp" not in projected
+        assert "artifacts_produced" not in projected
+
+    def test_empty_list_overwrite_risk_via_update_entity(self, db, tmp_path):
+        """dimension:mutation_mindset — update_entity with phase_summaries=[] overwrites existing.
+        derived_from: dimension:mutation_mindset (empty list overwrite risk)
+
+        Anticipate: shallow merge means {'phase_summaries': []} replaces the
+        existing list. This is a data-loss risk if commitAndComplete accidentally
+        passes [] instead of the full accumulated list."""
+        feature_dir = os.path.join(str(tmp_path), "features", "075-ps-overwrite")
+        os.makedirs(feature_dir, exist_ok=True)
+
+        # Given entity with existing phase_summaries
+        entry = {"phase": "specify", "timestamp": "2026-04-02T08:00:00Z", "outcome": "Done"}
+        metadata = {
+            "id": "075", "slug": "ps-overwrite", "mode": "standard",
+            "branch": "feature/075-ps-overwrite", "phase_timing": {},
+            "phase_summaries": [entry],
+        }
+        db.register_entity(
+            "feature", "075-ps-overwrite", "ps-overwrite",
+            artifact_path=feature_dir, status="active",
+            metadata=metadata, project_id="__unknown__",
+        )
+
+        # When update_entity is called with empty list (simulating a bug)
+        db.update_entity("feature:075-ps-overwrite", metadata={"phase_summaries": []})
+
+        # Then the existing entry is overwritten (shallow merge replaces the key)
+        result = _project_meta_json(db, None, "feature:075-ps-overwrite", feature_dir)
+        assert result is None
+
+        with open(os.path.join(feature_dir, ".meta.json")) as f:
+            meta = json.load(f)
+        # Empty list is falsy — phase_summaries should NOT be in .meta.json
+        assert "phase_summaries" not in meta
+
+    def test_projection_does_not_mutate_source_metadata(self, db, tmp_path):
+        """dimension:mutation_mindset — projection creates independent copy, not reference.
+        derived_from: dimension:mutation_mindset (reference copy vs value copy)
+
+        Anticipate: if projection shares a reference to the metadata list,
+        downstream mutations to the projected JSON could corrupt the DB cache."""
+        feature_dir = os.path.join(str(tmp_path), "features", "075-ps-refcopy")
+        os.makedirs(feature_dir, exist_ok=True)
+
+        original_entry = {"phase": "specify", "timestamp": "2026-04-02T08:00:00Z", "outcome": "Done"}
+        summaries = [original_entry]
+        metadata = {
+            "id": "075", "slug": "ps-refcopy", "mode": "standard",
+            "branch": "feature/075-ps-refcopy", "phase_timing": {},
+            "phase_summaries": summaries,
+        }
+        db.register_entity(
+            "feature", "075-ps-refcopy", "ps-refcopy",
+            artifact_path=feature_dir, status="active",
+            metadata=metadata, project_id="__unknown__",
+        )
+
+        # When projected
+        result = _project_meta_json(db, None, "feature:075-ps-refcopy", feature_dir)
+        assert result is None
+
+        # Then read the .meta.json and mutate the projected data
+        with open(os.path.join(feature_dir, ".meta.json")) as f:
+            meta = json.load(f)
+        meta["phase_summaries"][0]["phase"] = "MUTATED"
+
+        # Re-project — original DB metadata should be unchanged
+        result2 = _project_meta_json(db, None, "feature:075-ps-refcopy", feature_dir)
+        assert result2 is None
+
+        with open(os.path.join(feature_dir, ".meta.json")) as f:
+            meta2 = json.load(f)
+        # The re-projected data should still have the original value
+        assert meta2["phase_summaries"][0]["phase"] == "specify"
+
 
 # ---------------------------------------------------------------------------
 # T4.1: init_feature_state tests
