@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.14.15] - 2026-04-03
+
 ### Added
 - `store_memory` MCP tool now accepts an optional `source` parameter — callers can tag where a memory originated (e.g., `retrospective`, `implementation`, `review`) for traceability
 - `record_influence_by_content` MCP tool — records memory influence using embedding similarity against stored content rather than requiring a memory ID; input text is chunked into paragraphs and matched independently
