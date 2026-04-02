@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `store_memory` MCP tool now accepts an optional `source` parameter — callers can tag where a memory originated (e.g., `retrospective`, `implementation`, `review`) for traceability
+- `record_influence_by_content` MCP tool — records memory influence using embedding similarity against stored content rather than requiring a memory ID; input text is chunked into paragraphs and matched independently
+- Constitution category import — entries tagged with the `constitution` category in the knowledge bank are now searchable via `search_memory` alongside regular learnings
+- Tier 1 quality gates on `store_memory` — entries shorter than a configurable minimum length are rejected at capture time; near-duplicate entries (above cosine similarity threshold) are also rejected before storage
+- `reviewer_feedback_summary` field in Phase Context blocks — backward transitions now include a concise summary of the reviewer's feedback, giving the receiving phase agent a tighter signal on what to fix
+
+### Changed
+- Memory ranking weight for `influence` score redistributed from 0.20 to 0.05 — reduces over-promotion of frequently cited entries relative to recency and semantic relevance
+- Review learnings threshold lowered to 1+ iterations — retrospectives now capture implementation learnings after a single review cycle rather than requiring multiple iterations
+- Injection limit for memory entries at session start aligned with `max_memories` config — previously the limit was applied inconsistently across injection paths
+- `source` field on memory entries validated against an allowlist — unrecognised source values are rejected at write time to keep provenance tags consistent
+- All 14 influence tracking call sites migrated to use embedding-similarity matching — influence is now recorded based on content relevance rather than exact ID lookup
+
 ## [4.14.14] - 2026-04-03
 
 ### Added
