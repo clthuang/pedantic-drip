@@ -106,14 +106,19 @@ def sync_entity_statuses(db, full_artifacts_path, project_id="__unknown__",
         "registered": 0, "deleted": 0, "warnings": [],
     }
 
-    helpers_results = [
-        _sync_meta_json_entities(db, full_artifacts_path, "features", "feature", project_id),
-        _sync_meta_json_entities(db, full_artifacts_path, "projects", "project", project_id),
-        _sync_brainstorm_entities(db, full_artifacts_path, artifacts_root, project_root, project_id),
-        _sync_backlog_entities(db, full_artifacts_path, artifacts_root, project_id),
+    helpers = [
+        ("features", lambda: _sync_meta_json_entities(db, full_artifacts_path, "features", "feature", project_id)),
+        ("projects", lambda: _sync_meta_json_entities(db, full_artifacts_path, "projects", "project", project_id)),
+        ("brainstorms", lambda: _sync_brainstorm_entities(db, full_artifacts_path, artifacts_root, project_root, project_id)),
+        ("backlogs", lambda: _sync_backlog_entities(db, full_artifacts_path, artifacts_root, project_id)),
     ]
 
-    for hr in helpers_results:
+    for name, helper in helpers:
+        try:
+            hr = helper()
+        except Exception as exc:
+            results["warnings"].append(f"{name}: {exc}")
+            continue
         for key in ("updated", "skipped", "archived", "registered", "deleted"):
             results[key] += hr.get(key, 0)
         results["warnings"].extend(hr.get("warnings", []))
@@ -173,8 +178,11 @@ def _sync_brainstorm_entities(
             continue
         if not entity.get("artifact_path"):
             continue
-        db.update_entity(entity["type_id"], status="archived", project_id=project_id)
-        results["archived"] += 1
+        try:
+            db.update_entity(entity["type_id"], status="archived", project_id=project_id)
+            results["archived"] += 1
+        except ValueError:
+            pass  # entity disappeared between list and update, skip
 
     return results
 
