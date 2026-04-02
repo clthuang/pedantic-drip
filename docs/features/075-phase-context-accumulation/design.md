@@ -147,12 +147,9 @@ STEP 3a: Store Phase Summary (best-effort)
    }
 
 2. Apply 2000-char cap:
-   serialized = JSON.stringify(summary_dict)
-   if len(serialized) > 2000:
-     truncate reviewer_feedback_summary to fit (min 100 chars, append "...")
-     if still > 2000: truncate key_decisions to fit (min 100 chars, append "...")
-     if still > 2000: remove tail entries from artifacts_produced
-     if still > 2000: truncate outcome (append "...")
+   Keep each text field under 300 chars. If the total serialized JSON exceeds 2000 chars,
+   truncate reviewer_feedback_summary and key_decisions further, appending "...".
+   The precise 4-level cascade is simplified for reliable LLM execution.
 
 3. Read existing phase_summaries from .meta.json:
    existing = .meta.json.phase_summaries or []
@@ -165,6 +162,9 @@ STEP 3a: Store Phase Summary (best-effort)
      type_id = feature_type_id,
      metadata = {"phase_summaries": updated}
    )
+   Pass ONLY {"phase_summaries": updated_list} as the metadata parameter. Do NOT
+   include other metadata fields — update_entity performs a shallow merge and
+   preserves all other keys automatically.
 
 6. Error handling:
    If update_entity fails (MCP error, timeout, invalid response):
@@ -201,6 +201,8 @@ is_backward_transition(phaseName, meta_json):
 ```
 
 **Rationale:** If `phase_timing[target_phase]` has a `completed` timestamp, that phase was previously completed. Re-entering it is a backward transition (or a re-run of an already-completed phase). This covers both reviewer-initiated backward travel (`backward_to`) and user-initiated re-runs.
+
+**Note:** .meta.json projects phase_timing as 'phases' (see `_project_meta_json` line 377). Detection reads from .meta.json, hence uses the 'phases' key.
 
 **Note:** This detection is independent of `backward_context` presence. A phase can be re-entered without `backward_context` (e.g., user manually runs `/pd:specify` on a feature that already completed specify). The injection still triggers because the phase was previously completed (AC-4 note).
 
@@ -255,9 +257,10 @@ for phase in trimmed_summaries:
 **{phase}** ({timestamp}): {outcome}
   Key decisions: {key_decisions}
   Artifacts: {comma-separated artifacts_produced}
+  Rework trigger: {rework_trigger}  ← only if non-null
 ```
 
-The `reviewer_feedback_summary` and `rework_trigger` fields are omitted from injection to save tokens. They are preserved in storage for audit.
+The `reviewer_feedback_summary` field is omitted from injection to save tokens (it is preserved in storage for audit). The `rework_trigger` field is included when non-null as it is typically one sentence and provides critical rework provenance.
 
 ### I6: Reviewer Prompt Injection Format (4 command files)
 
@@ -270,6 +273,22 @@ Same `## Phase Context` block as I5, inserted into reviewer dispatch prompts.
 **Conditional:** Only injected when `is_backward_transition(phaseName, meta_json)` is true. On forward transitions, the section is omitted entirely.
 
 **Construction:** The command file reads `.meta.json` (already loaded by validateAndSetup Step 1) and formats the block using the same logic as I5.
+
+**Concrete template text for command file injection (example for specify.md spec-reviewer dispatch):**
+
+```
+**Phase Context injection (backward transitions only):**
+If .meta.json `phases[current_phase]` has a `completed` timestamp (indicating re-entry into a completed phase):
+1. Read `backward_context` and `phase_summaries` from .meta.json
+2. Construct `## Phase Context` block per I5 format
+3. Include this block in the reviewer dispatch prompt after `## Relevant Engineering Memory`
+
+If no `completed` timestamp for current phase: skip injection entirely.
+```
+
+All reviewer dispatch templates in the 4 command files use this same instruction pattern, substituting the relevant phase name.
+
+**Note:** The dispatch count per file is based on reviewer-specific dispatches only. Non-reviewer dispatches (e.g., implementer, test-deepener) do not receive phase context injection.
 
 **Affected dispatch templates:**
 
@@ -324,6 +343,8 @@ Same `## Phase Context` block as I5, inserted into reviewer dispatch prompts.
 
 **Rationale:** Avoids two overlapping context blocks at the same injection point. A single `## Phase Context` heading with clear sub-sections provides provenance without confusion (PRD strategic analysis recommendation, prd.md:209).
 
+**Note:** The existing backward_context clearing behavior (Step 1b item 4: clear backward_context via update_entity after phase completion) is unchanged. Only the injection format (items 1-2) is modified.
+
 ## Risks & Mitigations
 
 | Risk | Likelihood | Impact | Mitigation |
@@ -334,6 +355,7 @@ Same `## Phase Context` block as I5, inserted into reviewer dispatch prompts.
 | Backward transition detection false positive (user re-runs completed phase intentionally) | Low | Low | Injection is informational, not blocking. Having prior context available is helpful even for intentional re-runs. |
 | ## Phase Context block consumes too many prompt tokens | Medium | Medium | Injection trims to last 2 per phase. `reviewer_feedback_summary` and `rework_trigger` omitted from injection format. Total injection typically under 500 tokens. |
 | Race condition: .meta.json read in Step 3a sees stale data | Low | Low | After Step 2, `_project_meta_json` writes updated .meta.json (workflow_state_server.py:751). Step 3a reads from LLM conversation context (loaded at phase start). Worst case: existing_summaries is one projection behind, but the append still succeeds. |
+| Concurrent phase_summaries modification | N/A | N/A | Not possible in normal workflow — only one phase runs per feature at a time. Reconciliation does not touch phase_summaries. The stale-read risk is theoretical only. |
 | Reviewer prompt template changes break resumed dispatch delta sizing | Low | Medium | The `## Phase Context` section is added to fresh dispatch templates only. Resumed dispatches use deltas of artifact changes, not template changes. Template additions only affect `iteration1_prompt_length` baseline. |
 
 ## Dependencies
