@@ -75,6 +75,7 @@ pd's memory system has the right architecture (hybrid retrieval, multi-factor ra
 - And entries matched by embedding have their `influence_count` incremented
 - Note: The 0.70 threshold needs calibration — see Feasibility Assessment. If calibration shows 0.70 is too noisy, increase to 0.80.
 - Note: When embedding provider is unavailable, skip embedding-based influence attribution and log a warning. Do not fall back to name matching (the old behavior is being replaced, not kept as fallback).
+- Note: If pre-implementation calibration of the threshold cannot be completed, use 0.80 as the conservative default.
 - **Affected locations (14 total):** All post-dispatch influence tracking blocks across 4 command files: specify.md (2), design.md (2), create-plan.md (3), implement.md (7 — test-deepener A/B, implementation-reviewer, relevance-verifier, code-quality-reviewer, security-reviewer, implementer)
 
 ### AC-5: Minimum description length gate
@@ -118,7 +119,7 @@ pd's memory system has the right architecture (hybrid retrieval, multi-factor ra
 - When Phase Context injection builds the `### Prior Phase Summaries` block
 - Then each summary entry includes a `Reviewer feedback: {reviewer_feedback_summary}` line
 - And the line is omitted when `reviewer_feedback_summary` is null or empty
-- Note: The existing comment in SKILL.md Step 1b ("reviewer_feedback_summary is omitted from injection to save tokens") must be updated to reflect the new behavior: included during backward travel, still omitted during forward travel.
+- Note: The existing comment in SKILL.md Step 1b ("reviewer_feedback_summary is omitted from injection to save tokens") must be updated to reflect the new behavior: included during backward travel, still omitted during forward travel. Backward travel is detected by `phases[phaseName].completed` existence in .meta.json — the existing Step 1b conditional already distinguishes this path.
 
 ### AC-11: Zero behavior change for features without memory entries
 - Given a project with no memory.db entries
@@ -162,7 +163,7 @@ record_influence_by_content(
 # Returns: list of entry names that matched + their similarity scores
 ```
 
-The existing `record_influence(entry_name, agent_role, feature_type_id)` tool is retained for backward compatibility but all command-file dispatches migrate to `record_influence_by_content`. Deprecation of `record_influence` is deferred.
+The existing `record_influence(entry_name, agent_role, feature_type_id)` tool is retained for backward compatibility but all command-file dispatches migrate to `record_influence_by_content`. No new call sites for `record_influence` should be introduced by this feature. Deprecation scheduling is deferred.
 
 ### Influence tracking — command file change (14 locations)
 ```markdown
