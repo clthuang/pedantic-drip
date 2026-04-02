@@ -387,6 +387,10 @@ def _project_meta_json(
         meta["backward_return_target"] = metadata["backward_return_target"]
     # backward_history is audit-only — stays in DB, not projected to .meta.json
 
+    # Phase summaries (feature 075)
+    if metadata.get("phase_summaries"):
+        meta["phase_summaries"] = metadata["phase_summaries"]
+
     # Atomic write (fail-open)
     try:
         _atomic_json_write(meta_path, meta)

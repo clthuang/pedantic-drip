@@ -42,6 +42,10 @@ METADATA_SCHEMAS: dict[str, dict[str, type | tuple[type, ...]]] = {
         "depends_on_features": list,
         "project_id": str,
         "weight": str,
+        "phase_summaries": list,
+        "backward_context": dict,
+        "backward_return_target": str,
+        "backward_history": list,
     },
     "project": {
         "id": str,

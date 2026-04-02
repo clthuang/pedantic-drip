@@ -68,31 +68,53 @@ AskUserQuestion:
 If "Continue": Pass skipped phases to `transition_phase` via `skipped_phases` parameter (see workflow-state skill), then proceed.
 If "Stop": Stop execution.
 
-### Step 1b: Backward Context Injection
+### Step 1b: Phase Context Injection
 
-After Step 1 completes, check for backward travel context:
+After Step 1 completes, check for backward transition and phase context:
 
-1. Read .meta.json (already read in Step 1)
-2. If `backward_context` field exists in .meta.json:
-   a. Format as markdown block:
-      ```
-      ## Backward Travel Context
-      This phase is being re-run because a downstream reviewer identified
-      issues rooted here.
+**Backward transition detection:** Check if `phases[phaseName].completed` exists in .meta.json (loaded in Step 1). If it does, this is a backward transition (re-entry into a completed phase). This detection is independent of `backward_context` presence — it covers both reviewer-initiated rework and user-initiated re-runs.
 
-      **Source:** {backward_context.source_phase} reviewer
-      **Findings:**
-      {for each finding in backward_context.findings:
-        - [{finding.artifact}] {finding.section}: {finding.issue}
-          Suggestion: {finding.suggestion}}
-      **Downstream Impact:** {backward_context.downstream_impact}
+**If backward transition detected:**
 
-      Address these findings in this phase's artifact revision.
-      ```
-   b. Prepend this block to the phase's prompt context (before any skill invocation)
-   c. If backward_to targets "brainstorm": add "Run in clarification mode — research stages already completed. Focus on refining the identified issue."
-3. If `backward_context` does NOT exist: normal flow (no injection)
-4. After the phase completes successfully: clear `backward_context` from entity metadata via `update_entity(type_id, metadata={"backward_context": null})`
+1. Read `backward_context` and `phase_summaries` from .meta.json (already loaded in Step 1)
+
+2. **Trim phase_summaries for display (AC-9):** Group entries by phase name. Keep only the last 2 entries per phase (by list position — append order). All entries remain in metadata storage; trimming is display-only.
+
+3. **Construct `## Phase Context` block** with conditional sub-sections:
+
+   ```
+   ## Phase Context
+   ### Reviewer Referral
+   **Source:** {backward_context.source_phase} reviewer
+   **Findings:**
+   {for each finding in backward_context.findings:
+     - [{finding.artifact}] {finding.section}: {finding.issue}
+       Suggestion: {finding.suggestion}}
+   **Downstream Impact:** {backward_context.downstream_impact}
+
+   Address these findings in this phase's artifact revision.
+
+   ### Prior Phase Summaries
+   **{phase}** ({timestamp}): {outcome}
+     Key decisions: {key_decisions}
+     Artifacts: {comma-separated artifacts_produced}
+     Rework trigger: {rework_trigger}  ← only if non-null
+   ```
+
+   **Conditional sections:**
+   - `### Reviewer Referral`: only present when `backward_context` exists in .meta.json
+   - `### Prior Phase Summaries`: only present when `phase_summaries` has entries
+   - If both are absent: no `## Phase Context` block at all
+   - If only one is present: `## Phase Context` heading still used, with only the relevant sub-section
+   - `reviewer_feedback_summary` is omitted from injection to save tokens (preserved in storage for audit)
+
+4. Prepend the `## Phase Context` block to the phase's prompt context (before any skill invocation)
+
+5. If backward_to targets "brainstorm": add "Run in clarification mode — research stages already completed. Focus on refining the identified issue."
+
+**If NOT a backward transition:** No `## Phase Context` block is generated (AC-5). Normal flow continues.
+
+**After the phase completes successfully:** Clear `backward_context` from entity metadata via `update_entity(type_id, metadata={"backward_context": null})`
 
 ### Step 2: Check Branch
 
@@ -271,6 +293,59 @@ Artifacts: {comma-separated artifact filenames}
   - Each item: `"  [W] {description}"` or `"  [S] {description}"` — truncate description at 100 characters.
   - Show at most 5 items. If more than 5: append `"  ...and {N} more"`
 - **Feedback section (when `reviewerNotes[]` is empty):** `"All reviewer issues resolved."`
+
+### Step 3a: Store Phase Summary (best-effort)
+
+After outputting the Phase Summary text in Step 3, construct a structured summary dict and persist it via `update_entity`. This summary enables downstream phases to access prior phase context during rework cycles.
+
+**1. Construct summary dict from Step 3 output:**
+
+```
+summary_dict = {
+  "phase": phaseName,
+  "timestamp": current UTC ISO 8601 timestamp (matching _iso_now() format, e.g. "2026-04-02T08:00:00Z"),
+  "outcome": outcome string from Step 3 decision table,
+  "artifacts_produced": [basename(f) for f in artifacts[]],
+  "key_decisions": <free-text paragraph summarizing key choices made during this phase — 300 chars max>,
+  "reviewer_feedback_summary": <brief summary of reviewer feedback across iterations — 300 chars max>,
+  "rework_trigger": <if backward_context existed at phase start (from Step 1b), summarize it in one sentence; else null>
+}
+```
+
+**2. Apply 2000-char cap:**
+
+Keep each text field under 300 chars. If the total serialized JSON exceeds 2000 chars, truncate in this order:
+1. `reviewer_feedback_summary` (min 100 chars), appending "..."
+2. `key_decisions` (min 100 chars), appending "..."
+3. `artifacts_produced` — remove tail entries
+4. `outcome` — truncate with "..."
+
+**3. Read existing phase_summaries and append:**
+
+Read `phase_summaries` from `.meta.json` (loaded by validateAndSetup Step 1 at phase start — available in conversation context; no re-read needed due to single-writer guarantee per feature).
+
+```
+existing = .meta.json.phase_summaries or []
+updated = existing + [summary_dict]
+```
+
+**4. Call update_entity:**
+
+```
+update_entity(
+  type_id = feature_type_id,
+  metadata = {"phase_summaries": updated}
+)
+```
+
+Pass ONLY `{"phase_summaries": updated}` as the metadata parameter. Do NOT include other metadata fields — `update_entity` performs a shallow merge and preserves all other keys automatically.
+
+**5. Error handling:**
+
+If `update_entity` fails (MCP error, timeout, invalid response):
+- Log warning: "Phase summary storage failed: {error}"
+- Do NOT block — proceed to Step 3b regardless.
+- Phase completion already succeeded in Step 2.
 
 ### Step 3b: Forward Re-Run Check
 

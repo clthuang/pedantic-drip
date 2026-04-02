@@ -80,6 +80,13 @@ b. **Reviewer 1 — Invoke plan-reviewer:**
 
        ## Relevant Engineering Memory
        {search_memory results from the pre-dispatch call above}
+
+       ## Phase Context (backward transitions only)
+       If .meta.json `phases[current_phase]` has a `completed` timestamp (indicating re-entry into a completed phase):
+       1. Read `backward_context` and `phase_summaries` from .meta.json
+       2. Construct `## Phase Context` block per workflow-transitions SKILL.md Step 1b format
+       3. Include this block here
+       If no `completed` timestamp for current phase: skip injection entirely.
    ```
    After fresh dispatch: capture the `agent_id` from the Task tool result. Record the character count of the prompt above as `prompt_length`. Capture current HEAD SHA via `Bash: git rev-parse HEAD`. Store in resume_state:
    ```
@@ -225,6 +232,13 @@ e2. **Invoke task-reviewer:**
 
        ## Relevant Engineering Memory
        {search_memory results from the pre-dispatch call above}
+
+       ## Phase Context (backward transitions only)
+       If .meta.json `phases[current_phase]` has a `completed` timestamp (indicating re-entry into a completed phase):
+       1. Read `backward_context` and `phase_summaries` from .meta.json
+       2. Construct `## Phase Context` block per workflow-transitions SKILL.md Step 1b format
+       3. Include this block here
+       If no `completed` timestamp for current phase: skip injection entirely.
    ```
    After fresh dispatch: capture the `agent_id` from the Task tool result. Record the character count of the prompt above as `prompt_length`. Capture current HEAD SHA via `Bash: git rev-parse HEAD`. Store in resume_state:
    ```
@@ -376,6 +390,13 @@ e5. **Invoke phase-reviewer:**
 
        ## Relevant Engineering Memory
        {search_memory results from the pre-dispatch call above}
+
+       ## Phase Context (backward transitions only)
+       If .meta.json `phases[current_phase]` has a `completed` timestamp (indicating re-entry into a completed phase):
+       1. Read `backward_context` and `phase_summaries` from .meta.json
+       2. Construct `## Phase Context` block per workflow-transitions SKILL.md Step 1b format
+       3. Include this block here
+       If no `completed` timestamp for current phase: skip injection entirely.
    ```
 
    After fresh dispatch: capture the `agent_id` from the Task tool result. Record the character count of the prompt above as `prompt_length`. Capture current HEAD SHA via `Bash: git rev-parse HEAD`. Store in resume_state:

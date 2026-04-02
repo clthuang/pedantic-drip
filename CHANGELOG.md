@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.14.13] - 2026-04-02
+
+### Changed
+- Backward phase transitions now inject a `## Phase Context` block into the destination phase's prompt — contains summaries of all prior phases and the reviewer's referral reason, so the receiving phase agent has full context on what was tried and why work was sent back
+
 ## [4.14.12] - 2026-04-02
 
 ### Added

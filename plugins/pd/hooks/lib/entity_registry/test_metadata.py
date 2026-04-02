@@ -131,3 +131,65 @@ class TestValidateMetadata:
         """progress is valid for any entity type with a schema."""
         for etype in METADATA_SCHEMAS:
             assert validate_metadata(etype, {"progress": 0.5}) == []
+
+    def test_phase_summaries_list_no_warnings(self):
+        """phase_summaries: list should produce no warnings for feature type (AC-11)."""
+        meta = {
+            "phase_summaries": [
+                {
+                    "phase": "specify",
+                    "timestamp": "2026-04-02T08:00:00Z",
+                    "outcome": "Done",
+                    "artifacts_produced": ["spec.md"],
+                    "key_decisions": "Chose X",
+                    "reviewer_feedback_summary": "LGTM",
+                    "rework_trigger": None,
+                }
+            ]
+        }
+        assert validate_metadata("feature", meta) == []
+
+    def test_backward_context_dict_no_warnings(self):
+        """backward_context: dict should produce no warnings for feature type."""
+        meta = {"backward_context": {"source_phase": "design", "findings": []}}
+        assert validate_metadata("feature", meta) == []
+
+    def test_backward_return_target_str_no_warnings(self):
+        """backward_return_target: str should produce no warnings."""
+        assert validate_metadata("feature", {"backward_return_target": "specify"}) == []
+
+    def test_backward_history_list_no_warnings(self):
+        """backward_history: list should produce no warnings."""
+        assert validate_metadata("feature", {"backward_history": []}) == []
+
+    # -- Feature 075: deepened tests --
+
+    def test_phase_summaries_wrong_type_string_warns(self):
+        """dimension:adversarial — phase_summaries as string triggers type warning.
+        derived_from: AC-11 (schema validation)"""
+        # Given validate_metadata expects phase_summaries to be a list
+        # When called with a string value instead
+        warnings = validate_metadata("feature", {"phase_summaries": "not a list"})
+        # Then a type-mismatch warning is produced
+        assert len(warnings) == 1
+        assert "expected list" in warnings[0]
+        assert "got str" in warnings[0]
+
+    def test_phase_summaries_wrong_type_dict_warns(self):
+        """dimension:adversarial — phase_summaries as dict triggers type warning.
+        derived_from: AC-11 (schema validation)"""
+        # Given validate_metadata expects phase_summaries to be a list
+        # When called with a dict value instead
+        warnings = validate_metadata("feature", {"phase_summaries": {"phase": "specify"}})
+        # Then a type-mismatch warning is produced
+        assert len(warnings) == 1
+        assert "expected list" in warnings[0]
+        assert "got dict" in warnings[0]
+
+    def test_phase_summaries_wrong_type_int_warns(self):
+        """dimension:adversarial — phase_summaries as int triggers type warning.
+        derived_from: AC-11 (schema validation)"""
+        warnings = validate_metadata("feature", {"phase_summaries": 42})
+        assert len(warnings) == 1
+        assert "expected list" in warnings[0]
+        assert "got int" in warnings[0]

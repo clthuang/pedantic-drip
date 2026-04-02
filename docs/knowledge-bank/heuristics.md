@@ -635,3 +635,17 @@ Decision rules based on counted values (caps, thresholds) should be verified aga
 - Confidence: medium
 - Last observed: Feature #070
 - Observation count: 1
+
+### Specify Effort Calibration for Instruction-First Features
+For features where the primary implementation surface is LLM instruction text (SKILL.md + command file templates, <=10 Python lines), target 2 specify iterations maximum. Specify should establish behavioral contracts and enumerate injection sites — not implementation-level precision.
+- Source: Feature 075 — specify phase (3 iterations) vs implement complexity (8 Python lines, first-pass approval)
+- Confidence: medium
+- Last observed: Feature #075
+- Observation count: 1
+
+### Identical Injection Block Cross-Reference Threshold
+When the same verbatim content block appears in 5+ command files, replace it with a cross-reference to the canonical location. Below 5, inline reproduction is acceptable. At 10+ copies, template changes require updating all sites with no automated enforcement.
+- Source: Feature 075 — code-quality-reviewer flagged 10 identical injection blocks across 4 command files
+- Confidence: medium
+- Last observed: Feature #075
+- Observation count: 1

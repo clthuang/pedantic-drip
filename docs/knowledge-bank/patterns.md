@@ -629,3 +629,10 @@ When design review surfaces a spec rule that does not hold under all caller conf
 - Confidence: high
 - Last observed: Feature #070
 - Observation count: 1
+
+### Pattern: First-Pass Implementation Approval on LLM-Instruction-First Features
+When a feature's primary deliverable is LLM prompt instructions (SKILL.md sections, command file templates) rather than algorithmic code, and Python changes are minimal schema additions (<=10 lines), all four implementation reviewers can approve on the first pass with zero blockers. The low implementation complexity removes the typical blocker surface area.
+- Observed in: Feature 075 — 4/4 reviewers approved iter 1; 7 suggestions, 0 blockers; 8 Python lines, +98 SKILL.md lines, +70 command template lines
+- Confidence: medium
+- Last observed: Feature #075
+- Observation count: 1
