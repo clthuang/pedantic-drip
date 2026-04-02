@@ -3,6 +3,12 @@ import json
 import os
 import re
 
+# Feature/project valid statuses
+STATUS_MAP = {"active", "completed", "abandoned", "planned", "promoted"}
+
+# Brainstorm statuses that should not be re-archived
+TERMINAL_STATUSES = {"promoted", "abandoned", "archived"}
+
 # Backlog row parsing constants
 BACKLOG_ROW_RE = re.compile(r'^\|\s*(\d{5})\s*\|[^|]*\|(.+)\|')
 CLOSED_RE = re.compile(r'\((?:closed|already implemented)[:\s\u2014]')
@@ -25,7 +31,6 @@ def _sync_meta_json_entities(db, full_artifacts_path, subdir, entity_type, proje
     Returns:
         {"updated": int, "skipped": int, "archived": int, "warnings": list[str]}
     """
-    STATUS_MAP = {"active", "completed", "abandoned", "planned", "promoted"}
     results = {"updated": 0, "skipped": 0, "archived": 0, "warnings": []}
 
     scan_dir = os.path.join(full_artifacts_path, subdir)
@@ -100,7 +105,6 @@ def sync_entity_statuses(db, full_artifacts_path, project_id="__unknown__",
         "registered": 0, "deleted": 0, "warnings": [],
     }
 
-    # Call all 4 helpers in order
     helpers_results = [
         _sync_meta_json_entities(db, full_artifacts_path, "features", "feature", project_id),
         _sync_meta_json_entities(db, full_artifacts_path, "projects", "project", project_id),
@@ -117,24 +121,16 @@ def sync_entity_statuses(db, full_artifacts_path, project_id="__unknown__",
 
 
 def _sync_brainstorm_entities(
-    db, full_artifacts_path, artifacts_root, project_root, project_id="__unknown__"
+    db, full_artifacts_path, artifacts_root, project_root, project_id
 ):
     """Scan brainstorms/ for .prd.md files; register new ones; archive missing ones.
 
     Part 1: Register unregistered .prd.md files as brainstorm entities.
     Part 2: Archive non-terminal brainstorm entities whose artifact file no longer exists (AC-9).
 
-    Args:
-        db: EntityDatabase instance.
-        full_artifacts_path: Absolute path to artifacts root (e.g., /project/docs).
-        artifacts_root: Relative artifacts sub-path for stored artifact_path (e.g., "docs").
-        project_root: Absolute project root for resolving artifact_path to absolute.
-        project_id: Project identifier for entity registration.
-
     Returns:
         {"registered": int, "archived": int, "skipped": int}
     """
-    TERMINAL_STATUSES = {"promoted", "abandoned", "archived"}
     results = {"registered": 0, "archived": 0, "skipped": 0}
     brainstorms_dir = os.path.join(full_artifacts_path, "brainstorms")
 
@@ -167,30 +163,24 @@ def _sync_brainstorm_entities(
         )
         results["registered"] += 1
 
-    # Part 2: detect missing files for non-terminal brainstorm entities (AC-9)
+    # Part 2: archive non-terminal brainstorm entities whose file is missing (AC-9)
     entities = db.list_entities(entity_type="brainstorm", project_id=project_id)
     for entity in entities:
         if entity["entity_id"] in seen_on_disk:
-            continue  # file exists on disk, skip
-
-        status = entity.get("status", "")
-        if status in TERMINAL_STATUSES:
             continue
-
-        rel_path = entity.get("artifact_path", "")
-        if not rel_path:
+        if entity.get("status", "") in TERMINAL_STATUSES:
             continue
-
-        abs_path = os.path.join(project_root, rel_path)
-        if not os.path.isfile(abs_path):
-            type_id = f"brainstorm:{entity['entity_id']}"
-            db.update_entity(type_id, status="archived", project_id=project_id)
-            results["archived"] += 1
+        if not entity.get("artifact_path"):
+            continue
+        db.update_entity(
+            f"brainstorm:{entity['entity_id']}", status="archived", project_id=project_id
+        )
+        results["archived"] += 1
 
     return results
 
 
-def _cleanup_junk_backlogs(db, project_id):
+def _cleanup_junk_backlogs(db, entities):
     """Delete backlog entities whose entity_id is not a valid 5-digit ID.
 
     Returns:
@@ -198,19 +188,18 @@ def _cleanup_junk_backlogs(db, project_id):
     """
     deleted = 0
     warnings = []
-    entities = db.list_entities(entity_type="backlog", project_id=project_id)
     for entity in entities:
         entity_id = entity["type_id"].split(":", 1)[1]
         if not JUNK_ID_RE.match(entity_id):
             try:
-                db.delete_entity(entity["type_id"], project_id=project_id)
+                db.delete_entity(entity["type_id"])
                 deleted += 1
             except ValueError as e:
                 warnings.append(f"Cannot delete backlog:{entity_id}: {e}")
     return deleted, warnings
 
 
-def _dedup_backlogs(db, project_id):
+def _dedup_backlogs(db, entities):
     """Remove duplicate backlog entities sharing the same (entity_id, project_id).
 
     For duplicates, keeps the entity with a non-null status and deletes the other.
@@ -218,8 +207,6 @@ def _dedup_backlogs(db, project_id):
     Returns:
         Count of entities deleted.
     """
-    entities = db.list_entities(entity_type="backlog", project_id=project_id)
-    # Group by entity_id
     groups = {}
     for entity in entities:
         entity_id = entity["type_id"].split(":", 1)[1]
@@ -257,19 +244,27 @@ def _sync_backlog_entities(db, full_artifacts_path, artifacts_root, project_id):
     """
     results = {"updated": 0, "skipped": 0, "registered": 0, "deleted": 0, "warnings": []}
 
-    # Step 1: cleanup junk backlog IDs
-    junk_deleted, junk_warnings = _cleanup_junk_backlogs(db, project_id)
+    all_backlogs = db.list_entities(entity_type="backlog", project_id=project_id)
+
+    junk_deleted, junk_warnings = _cleanup_junk_backlogs(db, all_backlogs)
     results["deleted"] += junk_deleted
     results["warnings"].extend(junk_warnings)
 
-    # Step 2: dedup
-    dedup_deleted = _dedup_backlogs(db, project_id)
+    # Re-fetch after junk cleanup since entities were deleted
+    remaining = db.list_entities(entity_type="backlog", project_id=project_id)
+
+    dedup_deleted = _dedup_backlogs(db, remaining)
     results["deleted"] += dedup_deleted
 
-    # Step 3: parse backlog.md and sync
     backlog_path = os.path.join(full_artifacts_path, "backlog.md")
     if not os.path.isfile(backlog_path):
         return results
+
+    # Pre-fetch existing backlogs for O(1) lookup during parse
+    existing_map = {
+        e["type_id"]: e
+        for e in db.list_entities(entity_type="backlog", project_id=project_id)
+    }
 
     with open(backlog_path) as f:
         lines = f.readlines()
@@ -282,7 +277,6 @@ def _sync_backlog_entities(db, full_artifacts_path, artifacts_root, project_id):
         entity_id = m.group(1)
         description = m.group(2).strip()
 
-        # Detect status from markers
         if CLOSED_RE.search(description):
             status = "dropped"
         elif PROMOTED_RE.search(description):
@@ -292,12 +286,10 @@ def _sync_backlog_entities(db, full_artifacts_path, artifacts_root, project_id):
         else:
             status = "open"
 
-        # Strip status markers from name
-        name = NAME_STRIP_RE.sub("", description).strip()
-        name = name[:200]
+        name = NAME_STRIP_RE.sub("", description).strip()[:200]
 
         type_id = f"backlog:{entity_id}"
-        existing = db.get_entity(type_id)
+        existing = existing_map.get(type_id)
 
         if existing is None:
             db.register_entity(

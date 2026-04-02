@@ -1,10 +1,4 @@
-"""Unit tests for reconciliation_orchestrator.entity_status.sync_entity_statuses.
-
-TDD: tests written before implementation. All tests should fail with ImportError
-until entity_status.py is created.
-
-Fixtures use temp directories and in-memory EntityDatabase for isolation.
-"""
+"""Unit tests for reconciliation_orchestrator.entity_status — sync functions."""
 import json
 import os
 import tempfile
@@ -245,7 +239,7 @@ class TestProjectsScanned:
 
 
 # ---------------------------------------------------------------------------
-# _sync_brainstorm_entities tests (TDD RED — function does not exist yet)
+# _sync_brainstorm_entities tests
 # ---------------------------------------------------------------------------
 
 
@@ -371,11 +365,11 @@ def write_backlog_md(tmp_path, rows: list[tuple[str, str, str]]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Backlog sync tests (TDD RED — _sync_backlog_entities does not exist yet)
+# Backlog sync tests
 # ---------------------------------------------------------------------------
 
 class TestSyncBacklogEntities:
-    """Tests for _sync_backlog_entities(). Will fail with AttributeError until implemented."""
+    """Tests for _sync_backlog_entities()."""
 
     def test_closed_status_mapped_to_dropped(self, tmp_path):
         """Task 1.2: (closed: not needed) marker maps to dropped status."""
