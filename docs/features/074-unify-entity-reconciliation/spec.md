@@ -32,6 +32,7 @@ Return dict gains `registered` count (for new brainstorms/backlogs): `{"updated"
 | backlog.md marker | DB status | Rationale |
 |---|---|---|
 | `(closed:` any reason including "merged into") | `dropped` | All closures map to dropped — "merged into" is a closure variant, not a promotion |
+| `(already implemented` | `dropped` | Standalone variant of closure — aligned with `doctor/checks.py` regex |
 | `(promoted →` | `promoted` | Explicitly promoted to feature/project |
 | `(fixed:` | `dropped` | Fix applied — same as closure |
 | No marker | `open` | Default for items without status text |
@@ -106,7 +107,7 @@ These statuses must be added to backlog entity validation. The existing feature 
 ### AC-9: Brainstorm missing file detection
 - Given a brainstorm entity exists in the DB but its `.prd.md` file no longer exists
 - When brainstorm sync runs
-- Then the brainstorm entity status is set to `"archived"` (file deleted — could be promotion, cleanup, or manual removal; "archived" is the safe generic status)
+- Then the brainstorm entity status is set to `"archived"` (file deleted — could be promotion, cleanup, or manual removal; "archived" is the safe generic status) (Note: "archived" is outside brainstorm ENTITY_MACHINES which uses draft/reviewing/promoted/abandoned — this matches AC-8's bypass pattern where reconciliation uses db.update_entity directly, not the workflow phase transition API.)
 
 ### AC-10: Zero regression for feature/project sync
 - Given existing features and projects with `.meta.json` files

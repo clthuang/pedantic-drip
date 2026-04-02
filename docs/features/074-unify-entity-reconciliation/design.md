@@ -24,7 +24,7 @@ The only new code is backlog parsing from `backlog.md` and junk cleanup. Everyth
 ## Architecture Overview
 
 ```
-sync_entity_statuses(db, full_artifacts_path, project_id, artifacts_root)
+sync_entity_statuses(db, full_artifacts_path, project_id, artifacts_root, project_root)
   │
   ├── _sync_meta_json_entities(db, full_artifacts_path, "features", "feature", project_id)
   │     └── existing logic from entity_status.py (unchanged)
@@ -32,10 +32,10 @@ sync_entity_statuses(db, full_artifacts_path, project_id, artifacts_root)
   ├── _sync_meta_json_entities(db, full_artifacts_path, "projects", "project", project_id)
   │     └── existing logic from entity_status.py (unchanged)
   │
-  ├── _sync_brainstorm_entities(db, full_artifacts_path, artifacts_root, project_id)
+  ├── _sync_brainstorm_entities(db, full_artifacts_path, artifacts_root, project_root, project_id)
   │     └── existing logic from brainstorm_registry.py + new missing-file detection
   │
-  └── _sync_backlog_entities(db, full_artifacts_path, project_id)
+  └── _sync_backlog_entities(db, full_artifacts_path, artifacts_root, project_id)
         └── NEW: parse backlog.md, detect status markers, sync to DB
 ```
 
@@ -73,8 +73,13 @@ def sync_entity_statuses(
     full_artifacts_path: str,
     project_id: str = "__unknown__",
     artifacts_root: str = "docs",  # NEW — relative path for artifact_path storage
+    project_root: str = "",  # NEW — absolute path to project root for artifact_path resolution
 ) -> dict:
     """Scan all entity types and sync statuses to entity registry.
+    
+    Args:
+        project_root: Absolute path to project root. If empty, derived from
+                      full_artifacts_path by stripping artifacts_root suffix.
     
     Returns:
         {"updated": int, "skipped": int, "archived": int, 
@@ -88,15 +93,17 @@ def sync_entity_statuses(
 def _sync_backlog_entities(
     db: EntityDatabase,
     full_artifacts_path: str,
+    artifacts_root: str,
     project_id: str,
 ) -> dict:
     """Parse backlog.md and sync backlog entities.
     
     Status mapping:
-        (closed: *)     → "dropped"
-        (promoted → *)  → "promoted"  
-        (fixed: *)      → "dropped"
-        no marker       → "open"
+        (closed: *)             → "dropped"
+        (already implemented *) → "dropped"
+        (promoted → *)          → "promoted"  
+        (fixed: *)              → "dropped"
+        no marker               → "open"
     
     Also:
         - Deletes junk entities (non ^[0-9]{5}$ IDs)
@@ -113,8 +120,8 @@ def _sync_backlog_entities(
 import re
 
 BACKLOG_ROW_RE = re.compile(r'^\|\s*(\d{5})\s*\|[^|]*\|(.+)\|')
-CLOSED_RE = re.compile(r'\(closed:')
-PROMOTED_RE = re.compile(r'\(promoted\s*→')
+CLOSED_RE = re.compile(r'\((?:closed|already implemented)[:\s—]')
+PROMOTED_RE = re.compile(r'\(promoted\s*(?:→|->)')
 FIXED_RE = re.compile(r'\(fixed:')
 JUNK_ID_RE = re.compile(r'^[0-9]{5}$')
 
@@ -126,8 +133,9 @@ for line in backlog_md_lines:
     description = match.group(2).strip()
     
     # Detect status from description text
+    # Aligned with doctor/checks.py:796 regex patterns (most comprehensive)
     if CLOSED_RE.search(description):
-        status = "dropped"
+        status = "dropped"  # covers (closed: ...) and (already implemented ...)
     elif PROMOTED_RE.search(description):
         status = "promoted"
     elif FIXED_RE.search(description):
@@ -172,6 +180,7 @@ def _sync_brainstorm_entities(
     db: EntityDatabase,
     full_artifacts_path: str,
     artifacts_root: str,
+    project_root: str,
     project_id: str,
 ) -> dict:
     """Scan brainstorms/ for .prd.md files; register new, detect missing.
@@ -180,6 +189,10 @@ def _sync_brainstorm_entities(
     1. Scan brainstorms/ dir for .prd.md files → register any not in DB (existing logic)
     2. Scan DB for brainstorm entities → check if artifact_path file still exists
        If missing → update status to "archived" (NEW)
+    
+    Args:
+        project_root: Absolute path to project root (e.g., /Users/terry/projects/pedantic-drip).
+                      Used for resolving artifact_path to absolute path in missing-file detection.
     
     Returns: {"registered": int, "archived": int, "skipped": int}
     """
@@ -210,7 +223,7 @@ def _sync_brainstorm_entities(
         if entity.get("status") in ("promoted", "abandoned", "archived"):
             continue  # already terminal
         artifact = entity.get("artifact_path", "")
-        full_path = os.path.join(full_artifacts_path, "..", artifact) if artifact else ""
+        full_path = os.path.join(project_root, artifact) if artifact else ""
         if artifact and not os.path.isfile(full_path):
             db.update_entity(entity["type_id"], status="archived", project_id=project_id)
             results["archived"] += 1
@@ -221,16 +234,20 @@ def _sync_brainstorm_entities(
 ### I3: Junk cleanup logic
 
 ```python
-def _cleanup_junk_backlogs(db: EntityDatabase, project_id: str) -> int:
-    """Delete backlog entities with non-5-digit IDs. Returns count deleted."""
+def _cleanup_junk_backlogs(db: EntityDatabase, project_id: str) -> tuple[int, list[str]]:
+    """Delete backlog entities with non-5-digit IDs. Returns (count deleted, warnings)."""
     deleted = 0
+    warnings = []
     all_backlogs = db.list_entities(entity_type="backlog", project_id=project_id)
     for entity in all_backlogs:
         entity_id = entity["type_id"].split(":", 1)[1] if ":" in entity["type_id"] else ""
         if not JUNK_ID_RE.match(entity_id):
-            db.delete_entity(entity["type_id"])
-            deleted += 1
-    return deleted
+            try:
+                db.delete_entity(entity["type_id"])
+                deleted += 1
+            except ValueError as e:
+                warnings.append(f"Cannot delete junk backlog {entity['type_id']}: {e}")
+    return deleted, warnings
 ```
 
 ### I4: Deduplication logic
