@@ -18,7 +18,7 @@ if _hooks_lib not in (os.path.normpath(p) for p in sys.path):
 
 # Smoke test: ensure the package is importable at startup.
 import semantic_memory  # noqa: F401
-from semantic_memory import VALID_CATEGORIES, VALID_CONFIDENCE, content_hash, source_hash
+from semantic_memory import VALID_CATEGORIES, VALID_CONFIDENCE, VALID_SOURCES, content_hash, source_hash
 from semantic_memory.config import read_config
 from semantic_memory.database import MemoryDatabase
 from semantic_memory.embedding import EmbeddingProvider, create_provider
@@ -80,6 +80,11 @@ def _process_store_memory(
         return (
             f"Error: invalid confidence '{confidence}'. "
             f"Must be one of: {', '.join(sorted(VALID_CONFIDENCE))}"
+        )
+    if source not in VALID_SOURCES:
+        return (
+            f"Error: invalid source '{source}'. "
+            f"Must be one of: {', '.join(sorted(VALID_SOURCES))}"
         )
 
     # -- Tier 1 gate: minimum description length --
@@ -304,6 +309,8 @@ def _process_record_influence_by_content(
     if not injected_entry_names:
         return json.dumps({"matched": [], "skipped": 0})
 
+    threshold = max(0.01, min(1.0, threshold))
+
     if provider is None:
         return json.dumps({
             "matched": [], "skipped": len(injected_entry_names),
@@ -344,9 +351,13 @@ def _process_record_influence_by_content(
             skipped += 1
             continue
 
-        entry_emb = np.frombuffer(entry["embedding"], dtype=np.float32)
-        # Embeddings are pre-normalized by NormalizingWrapper, so dot product = cosine similarity
-        max_sim = max(float(np.dot(chunk_emb, entry_emb)) for chunk_emb in chunk_embeddings)
+        try:
+            entry_emb = np.frombuffer(entry["embedding"], dtype=np.float32)
+            # Embeddings are pre-normalized by NormalizingWrapper, so dot product = cosine similarity
+            max_sim = max(float(np.dot(chunk_emb, entry_emb)) for chunk_emb in chunk_embeddings)
+        except (ValueError, TypeError):
+            skipped += 1
+            continue
 
         if max_sim >= threshold:
             db.record_influence(entry["id"], agent_role, feature_type_id)

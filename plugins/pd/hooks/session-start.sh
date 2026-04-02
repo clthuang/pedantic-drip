@@ -419,7 +419,7 @@ build_memory_context() {
 
     local limit
     limit=$(read_local_md_field "$config_file" "memory_injection_limit" "15")
-    [[ "$limit" =~ ^-?[0-9]+$ ]] || limit="15"
+    [[ "$limit" =~ ^[0-9]+$ ]] || limit="15"
 
     local semantic_enabled
     semantic_enabled=$(read_local_md_field "$config_file" "memory_semantic_enabled" "true")

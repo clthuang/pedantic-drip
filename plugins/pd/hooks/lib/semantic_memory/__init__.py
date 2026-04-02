@@ -7,6 +7,7 @@ __version__ = "0.1.0"
 
 VALID_CATEGORIES = frozenset({"anti-patterns", "patterns", "heuristics", "constitution"})
 VALID_CONFIDENCE = frozenset({"high", "medium", "low"})
+VALID_SOURCES = frozenset({"retro", "session-capture", "manual", "import"})
 
 
 class EmbeddingError(Exception):
