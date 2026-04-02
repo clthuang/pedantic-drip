@@ -191,7 +191,10 @@ def _process_store_memory(db, name, description, reasoning, category, references
     return f"Stored: {name}"
 ```
 
-**Note:** The two `check_duplicate` calls can share the same embedding vector and candidate list. The 0.95 check rejects entries with different names; the 0.90 check merges entries with similar content (regardless of name). They are sequential, not alternatives.
+**Notes:**
+- The two `check_duplicate` calls share the same embedding vector. The implementer should extract the scores array from the first call and pass it to the second (add an optional `precomputed_scores` param to `check_duplicate`) to avoid double-scanning. If the DB is small (<1000 entries), two calls is acceptable.
+- The 0.95 near-duplicate threshold is hardcoded (not configurable). The 0.90 merge threshold MUST continue reading from `cfg.get('memory_dedup_threshold', 0.90)` to preserve existing config override capability.
+- The constitution write-protection check (`if category == "constitution": return rejection`) goes after the existing `VALID_CATEGORIES` check (which now includes 'constitution') but before content hash computation — approximately line 75 in current code.
 
 ### I3: record_influence_by_content MCP — New Tool
 
@@ -214,6 +217,8 @@ async def record_influence_by_content(
 6. Return JSON: `{"matched": [{"name": "...", "similarity": 0.xx}], "skipped": N}`
 
 **Why chunking:** A full document embedding averages across all topics, diluting any single entry's signal. Per-paragraph chunking preserves topic-specific signal: if one paragraph discusses the same concept as a memory entry, the chunk-level similarity will be high even if the overall document embedding is weak. This addresses the document-vs-paragraph granularity mismatch.
+
+**Chunk filter:** Skip chunks shorter than 20 chars before computing embeddings (same threshold as store_memory min-length gate). This filters out headings, blank lines, and degenerate fragments.
 
 **Cost note:** With ~5 injected entries and ~5 chunks per output, this is ~5 embedding calls per dispatch (chunks) + 0 (entries already have stored embeddings). At 14 dispatches per feature, that's ~70 embedding calls total — negligible cost.
 
