@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Knowledge bank entries from features 074 and 075 retrospectives — vocabulary resolution patterns, pseudocode-depth design, atomic commit boundaries, entity registry gotcha checklist
+
 ## [4.14.13] - 2026-04-02
 
 ### Changed
