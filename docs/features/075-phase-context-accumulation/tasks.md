@@ -50,7 +50,7 @@ Run tests from Task 2.1 — expect both pass.
 **Change:** After existing Step 3 (Phase Summary output) and before existing Step 3b (Forward Re-Run Check), insert a new `### Step 3a: Store Phase Summary (best-effort)` section. Start with the purpose statement: construct a structured summary dict from Step 3 output and persist it via update_entity.
 **Time:** 5 min
 **Done:** Step 3a heading exists between Step 3 and Step 3b
-**Depends on:** Tasks 1.2, 2.2
+**Depends on:** none
 
 ### Task 3.2: Define summary dict schema in Step 3a
 **File:** `plugins/pd/skills/workflow-transitions/SKILL.md`
@@ -87,11 +87,11 @@ Run tests from Task 2.1 — expect both pass.
 **Done:** Complete Step 3a with construction, truncation, storage, and error handling
 **Depends on:** Task 3.3
 
-### Task 4.1: Verify update_entity supports phase_summaries append (C2)
-**File:** N/A — verification task
-**Change:** Confirm that `update_entity` MCP correctly performs shallow merge on metadata, preserving existing keys when only `{"phase_summaries": [...]}` is passed. Review `database.py` update_entity implementation. If existing tests cover this, document the test names. If not, add a test in Task 7.3.
+### Task 4.1: Confirm update_entity shallow-merge test coverage (C2)
+**File:** `plugins/pd/mcp/test_workflow_state_server.py`
+**Change:** Run `grep -n 'update_entity.*metadata' plugins/pd/mcp/test_workflow_state_server.py` to check if a shallow-merge test already exists. If found, record the test name in this task's notes. If not found, write a test: register entity with `metadata={'a': 1}`, call `update_entity` with `metadata={'b': 2}`, assert entity metadata has both keys `a` and `b`. Done when shallow-merge test confirmed or written.
 **Time:** 5 min
-**Done:** Shallow merge behavior confirmed or tested
+**Done:** Shallow-merge test confirmed (test name noted) or new test written and passing
 **Depends on:** Tasks 1.2, 2.2
 
 ## Stage 3: Summary Injection
@@ -117,19 +117,26 @@ Run tests from Task 2.1 — expect both pass.
 **Done:** Trimming logic documented in Step 1b
 **Depends on:** Task 5.1
 
-### Task 5.3: Define unified ## Phase Context block format in Step 1b (TD-7, I5)
+### Task 5.3a: Enumerate all Backward Travel Context references (TD-7)
+**File:** N/A — enumeration task
+**Change:** Run `grep -rn "Backward Travel Context" plugins/pd/` and record every file and line number that references the old heading. This list drives Task 5.3b.
+**Time:** 5 min
+**Done:** Full list of references captured (file paths + line numbers noted)
+**Depends on:** Task 5.2
+
+### Task 5.3b: Replace Backward Travel Context with unified ## Phase Context format in SKILL.md (TD-7, I5)
 **File:** `plugins/pd/skills/workflow-transitions/SKILL.md`
-**Pre-implementation:** Run `grep -rn 'Backward Travel Context' plugins/pd/` to find all references. Update all found references as part of this task.
-**Change:** Replace existing standalone `## Backward Travel Context` block with unified `## Phase Context` format:
+**Change:** Using the reference list from Task 5.3a, replace the standalone `## Backward Travel Context` block in Step 1b with the unified `## Phase Context` format:
 - `### Reviewer Referral` sub-section: existing backward_context content (only if backward_context exists)
 - `### Prior Phase Summaries` sub-section: formatted summaries (only if phase_summaries has entries)
 - If both absent: no `## Phase Context` block at all
 - Per-entry format: `**{phase}** ({timestamp}): {outcome}` with key_decisions, artifacts, and rework_trigger (if non-null)
 - `reviewer_feedback_summary` omitted from injection to save tokens
 - Existing backward_context clearing behavior (Step 1b item 4) is unchanged
-**Time:** 15 min
-**Done:** Unified ## Phase Context format replaces standalone ## Backward Travel Context
-**Depends on:** Task 5.2
+- Update any remaining references found in 5.3a
+**Time:** 10 min
+**Done:** `grep -rn "Backward Travel Context" plugins/pd/` returns no matches; new `## Phase Context` format is present in SKILL.md Step 1b
+**Depends on:** Task 5.3a
 
 ### Task 6.1: Update specify.md — add Phase Context to reviewer dispatches (C5)
 **File:** `plugins/pd/commands/specify.md`
@@ -138,31 +145,37 @@ Run tests from Task 2.1 — expect both pass.
 - If yes: read backward_context and phase_summaries, construct `## Phase Context` block per I5 format
 - Insert after `## Relevant Engineering Memory`, before review instructions / Return JSON block
 - If no completed timestamp: skip injection entirely
-- After all 6.x tasks complete: verify with `grep -rn '## Phase Context' plugins/pd/commands/` that all dispatches listed in design.md I6 table are updated.
 **Time:** 10 min
 **Done:** Both reviewer dispatches in specify.md include conditional Phase Context
-**Depends on:** Tasks 5.1-5.3
+**Depends on:** Tasks 5.1-5.3b
 
 ### Task 6.2: Update design.md — add Phase Context to reviewer dispatches (C5)
 **File:** `plugins/pd/commands/design.md`
 **Change:** Same injection template as Task 6.1, applied to design-reviewer and phase-reviewer dispatch prompts.
 **Time:** 10 min
 **Done:** Both reviewer dispatches in design.md include conditional Phase Context
-**Depends on:** Tasks 5.1-5.3
+**Depends on:** Tasks 5.1-5.3b
 
 ### Task 6.3: Update create-plan.md — add Phase Context to reviewer dispatches (C5)
 **File:** `plugins/pd/commands/create-plan.md`
 **Change:** Same injection template as Task 6.1, applied to plan-reviewer, task-reviewer, and combined-reviewer dispatch prompts.
 **Time:** 10 min
 **Done:** All 3 reviewer dispatches in create-plan.md include conditional Phase Context
-**Depends on:** Tasks 5.1-5.3
+**Depends on:** Tasks 5.1-5.3b
 
 ### Task 6.4: Update implement.md — add Phase Context to reviewer dispatches (C5)
 **File:** `plugins/pd/commands/implement.md`
 **Change:** Same injection template as Task 6.1, applied to relevance-verifier, code-reviewer, and integration-reviewer dispatch prompts.
 **Time:** 10 min
 **Done:** All 3 reviewer dispatches in implement.md include conditional Phase Context
-**Depends on:** Tasks 5.1-5.3
+**Depends on:** Tasks 5.1-5.3b
+
+### Task 6.5: Verify Phase Context injection blocks present in all command files
+**File:** N/A — verification task
+**Change:** Run `grep -c '## Phase Context' plugins/pd/commands/specify.md plugins/pd/commands/design.md plugins/pd/commands/create-plan.md plugins/pd/commands/implement.md`. Verify output shows non-zero counts for all four files (specify: 2, design: 2, create-plan: 3, implement: 3 — matching the dispatch counts in design.md I6 table).
+**Time:** 5 min
+**Done:** All four command files report expected match counts; no file shows 0
+**Depends on:** Tasks 6.1, 6.2, 6.3, 6.4
 
 ## Stage 4: Testing & Verification
 
@@ -173,12 +186,12 @@ Run tests from Task 2.1 — expect both pass.
 **Done:** Test passes, append behavior confirmed
 **Depends on:** Tasks 1.2, 2.2
 
-### Task 7.2: Write test for summary storage failure non-blocking (AC-2)
-**File:** `plugins/pd/mcp/test_workflow_state_server.py`
-**Change:** Test that if update_entity fails when storing phase_summaries, the phase completion (from Step 2) is not affected. This is inherently true since Step 2 complete_phase and Step 3a update_entity are separate calls, but add a test documenting the decoupling.
-**Time:** 10 min
-**Done:** Test passes, decoupling confirmed
-**Depends on:** Tasks 1.2, 2.2
+### Task 7.2: Verify Step 3a error-handling prose in SKILL.md (AC-2)
+**File:** `plugins/pd/skills/workflow-transitions/SKILL.md`
+**Change:** After Task 3.4 is complete, run `grep -n 'Phase summary storage failed' plugins/pd/skills/workflow-transitions/SKILL.md`. This verifies that the try/except equivalent prose and warning message text are present in the Step 3a instructions (the LLM-readable instructions, not Python code).
+**Time:** 5 min
+**Done:** `grep` returns at least one match — the warning text "Phase summary storage failed:" is present in SKILL.md Step 3a
+**Depends on:** Task 3.4
 
 ### Task 7.3: Write test for zero behavior change without summaries (AC-10)
 **File:** `plugins/pd/mcp/test_workflow_state_server.py`
@@ -211,11 +224,15 @@ plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/transition_gate/ -v
 ```
 1.1 → 1.2  (TDD: test first, then schema change)
 2.1 → 2.2  (TDD: test first, then projection)
-1.2 + 2.2 → 3.1 → 3.2 → 3.3 → 3.4 → 4.1
-Items 1.x, 2.x, and 3.x can run in parallel (different files, no code dependencies)
+Tasks 1.x, 2.x, and 3.x can run in parallel (different files, no code dependencies)
+3.1 → 3.2 → 3.3 → 3.4
+1.2 + 2.2 → 4.1
+3.4 → 7.2  (7.2 verifies Step 3a warning text is present)
 Real constraint: 2.2 before 5.1 (injection reads projected phase_summaries)
-3.4 → 5.1 → 5.2 → 5.3
-5.3 → 6.1, 6.2, 6.3, 6.4  (parallel)
+3.4 → 5.1 → 5.2 → 5.3a → 5.3b
+5.3b → 6.1, 6.2, 6.3, 6.4  (parallel)
+6.1 + 6.2 + 6.3 + 6.4 → 6.5
+1.2 + 2.2 → 7.1
 All implementation → 7.1, 7.2, 7.3 → 8.1
 ```
 
@@ -225,6 +242,6 @@ All implementation → 7.1, 7.2, 7.3 → 8.1
 |-------|-------|-----------|------|
 | Stage 1: Infrastructure | 1.1, 1.2, 2.1, 2.2 | 25 min | TDD: tests first, then Python code |
 | Stage 2: Generation | 3.1-3.4, 4.1 | 35 min | SKILL.md instructions + verification |
-| Stage 3: Injection | 5.1-5.3, 6.1-6.4 | 70 min | SKILL.md + command file instructions |
+| Stage 3: Injection | 5.1-5.2, 5.3a, 5.3b, 6.1-6.5 | 80 min | SKILL.md + command file instructions + verification |
 | Stage 4: Testing | 7.1-7.3, 8.1 | 30 min | Integration tests + regression |
-| **Total** | **18 tasks** | **~2.5 hours** | |
+| **Total** | **21 tasks** | **~2.8 hours** | |
