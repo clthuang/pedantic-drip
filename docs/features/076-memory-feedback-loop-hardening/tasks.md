@@ -203,7 +203,8 @@ All → 5.1 (regression)
 4.8-4.11 → 5.2 (verification)
 
 Parallel groups:
-- Stage 1 tasks (1.1-1.8) and Stage 2 (2.1-2.2) and Stage 3 (3.1-3.3) can run in parallel
+- Stage 1 tasks 1.1-1.5, 1.7-1.8 and Stage 2 (2.1-2.2) and Stage 3 (3.1-3.3) can run in parallel
+- Task 1.6 depends on 3.2 — must run after 3.2 completes (cross-stage dependency)
 - Stage 4 tasks (4.1-4.5) are independent of each other
 - Stage 4 tasks (4.6-4.7) depend on 1.2; (4.8-4.11) depend on 2.2
 ```
