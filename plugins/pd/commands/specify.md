@@ -386,7 +386,7 @@ If the review loop completed in 1 iteration AND the reviewer found issues with s
      - `description`: issue description + the suggestion that resolved it
      - `reasoning`: "Single-iteration blocker catch in feature {id} specify phase"
      - `category`: inferred from issue type (same mapping as recurring patterns above)
-     - `confidence`: "medium"
+     - `confidence`: "low"
      - `references`: ["feature/{id}-{slug}"]
 
 **Circuit breaker capture:** If review loop hit max iterations (cap reached) in either step, also capture a single entry:
