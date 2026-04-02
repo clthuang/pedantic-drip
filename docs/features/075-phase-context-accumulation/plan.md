@@ -11,16 +11,22 @@
 **Item 1: C6 — Schema Registration (metadata.py)**
 Add `"phase_summaries": list` to `METADATA_SCHEMAS['feature']` in metadata.py (after line 44, within the feature dict). This prevents `validate_metadata` from producing schema-mismatch warnings when phase_summaries is present (AC-11).
 
+Also add `backward_context: dict`, `backward_return_target: str`, `backward_history: list` to `METADATA_SCHEMAS['feature']` to eliminate pre-existing schema warnings (opportunistic fix).
+
 - File: `plugins/pd/hooks/lib/entity_registry/metadata.py`
-- Change: 1 line addition to METADATA_SCHEMAS['feature'] dict
-- Test: Write test asserting `validate_metadata("feature", {"phase_summaries": [...]})` produces no warnings
+- TDD steps:
+  1. Write test asserting `validate_metadata("feature", {"phase_summaries": [...]})` produces no warnings (test fails — key not in schema yet)
+  2. Add `"phase_summaries": list` (and backward_* keys) to METADATA_SCHEMAS['feature'] dict
+  3. Verify test passes
 
 **Item 2: C3 — Summary Projection (_project_meta_json)**
 Add `phase_summaries` projection to `_project_meta_json()` in workflow_state_server.py, following the backward_context pattern at lines 383-388. Insert after line 388, before the atomic write at line 390.
 
 - File: `plugins/pd/mcp/workflow_state_server.py`
-- Change: 3 lines (comment + conditional projection)
-- Test: Write test asserting `_project_meta_json` includes `phase_summaries` in output when present in entity metadata, and omits it when absent (AC-3, AC-10)
+- TDD steps:
+  1. Write test asserting `_project_meta_json` includes `phase_summaries` in output when present in entity metadata, and omits it when absent (AC-3, AC-10) (test fails — projection not implemented yet)
+  2. Add 3 lines (comment + conditional projection) to `_project_meta_json`
+  3. Verify test passes
 
 ### Stage 2: Summary Generation (SKILL.md instructions)
 
@@ -50,6 +56,7 @@ Enhance validateAndSetup Step 1b in `SKILL.md` to:
 
 - File: `plugins/pd/skills/workflow-transitions/SKILL.md`
 - Change: Replace/enhance Step 1b backward context handling (~40-50 lines)
+- Pre-implementation: `grep -rn 'Backward Travel Context' plugins/pd/` to find all references. Update all found references as part of this item.
 - No Python code changes — LLM prompt instructions
 
 **Item 6: C5 — Reviewer Prompt Injection (4 command files)**
@@ -57,16 +64,15 @@ Update 4 command files to include `## Phase Context` section in reviewer dispatc
 
 - Files: `plugins/pd/commands/specify.md`, `design.md`, `create-plan.md`, `implement.md`
 - Change: Add conditional injection template to each reviewer dispatch (10 total dispatches across 4 files per design I6 table)
+- Use the injection template from design I6. For each dispatch listed in design.md I6 table, insert after `## Relevant Engineering Memory`. Verify with grep that all dispatches are updated.
 - No Python code changes — LLM prompt instructions
 
 ### Stage 4: Testing & Verification
 
-**Item 7: Tests for Python Code Changes**
-Write tests for the two Python code changes (C3, C6) plus integration tests for the MCP-mediated storage flow:
-- Test `validate_metadata` accepts `phase_summaries` without warnings (AC-11)
-- Test `_project_meta_json` projects `phase_summaries` correctly (AC-3)
-- Test `_project_meta_json` omits `phase_summaries` when absent (AC-10)
+**Item 7: Integration Tests for MCP-Mediated Storage Flow**
+Unit tests for C6 (schema) and C3 (projection) are written in Items 1 and 2 (TDD). This item covers integration tests only:
 - Integration test: `update_entity` appends to `phase_summaries` list (AC-1)
+- Integration test: `update_entity` failure does not block phase completion (AC-2)
 - Integration test: features without summaries have zero behavior change (AC-10)
 
 **Item 8: Full Regression Suite**
@@ -79,16 +85,18 @@ Run complete test suites to verify no regressions:
 ## Dependency Graph
 
 ```
-Item 1 (schema) ──────┐
-                       ├──> Item 3 (generation) ──> Item 5 (injection) ──> Item 6 (reviewer prompts)
-Item 2 (projection) ──┘                         ──> Item 4 (storage verification)
-                                                                           │
-Items 1-6 ──> Item 7 (tests) ──> Item 8 (regression)
+Item 1 (schema) ────┐
+Item 2 (projection) ├──> Item 4 (storage verification)
+                    │
+Item 3 (generation) ┼──> Item 5 (injection) ──> Item 6 (reviewer prompts)
+                    │
+Items 1-6 ──────────┴──> Item 7 (integration tests) ──> Item 8 (regression)
 ```
 
-Items 1 and 2 are independent of each other and can be done in parallel.
-Items 3 and 4 depend on Items 1+2 (infrastructure must exist before generation).
-Item 5 depends on Items 3+4 (generation before injection).
+Items 1, 2, and 3 are independent of each other (different files, no code dependencies) and can be done in parallel.
+The real ordering constraint is: Item 2 must complete before Item 5 (injection reads projected phase_summaries from .meta.json).
+Item 4 depends on Items 1+2 (infrastructure must exist before verification).
+Item 5 depends on Items 3+4 (generation and storage before injection).
 Item 6 depends on Item 5 (injection logic defined before reviewer prompts reference it).
 Item 7 depends on all implementation items.
 Item 8 depends on Item 7.
@@ -102,6 +110,8 @@ Item 8 depends on Item 7.
 3. **Unified ## Phase Context replacing ## Backward Travel Context** — Must not break existing backward_context injection behavior. Mitigation: TD-7 specifies the existing content is preserved under `### Reviewer Referral` sub-section; only the heading changes.
 
 4. **Reviewer dispatch template count** — 10 dispatches across 4 files is a broad surface area. Mitigation: Use identical injection template text across all dispatches; mechanical insertion.
+
+5. **Stale .meta.json read in Step 3a** — Single-writer guarantee: only one phase runs per feature at a time (design.md:358). The stale-read risk is theoretical only. Step 3a instructions should explicitly note: "Read phase_summaries from .meta.json loaded at phase start — no re-read needed due to single-writer guarantee per feature."
 
 ## Testing Strategy
 
