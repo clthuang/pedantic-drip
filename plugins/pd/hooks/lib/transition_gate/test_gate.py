@@ -790,7 +790,7 @@ class TestArtifactValidation:
     def test_G04_validate_artifact_fail_no_headers(self) -> None:
         """G-04: No headers -> blocked."""
         result = validate_artifact(
-            phase="create-tasks",
+            phase="create-plan",
             artifact_name="design.md",
             artifact_path_exists=True,
             artifact_size=200,
@@ -804,7 +804,7 @@ class TestArtifactValidation:
     def test_G04_validate_artifact_pass_has_headers(self) -> None:
         """G-04: Has headers (all levels pass) -> allowed."""
         result = validate_artifact(
-            phase="create-tasks",
+            phase="create-plan",
             artifact_name="design.md",
             artifact_path_exists=True,
             artifact_size=200,
@@ -2071,7 +2071,7 @@ class TestArtifactValidationLevelOrdering:
         # Given a failing artifact validation
         # When validate_artifact is called
         result = validate_artifact(
-            phase="create-tasks",
+            phase="create-plan",
             artifact_name="design.md",
             artifact_path_exists=False,
             artifact_size=0,
@@ -2081,7 +2081,7 @@ class TestArtifactValidationLevelOrdering:
         # Then reason contains "BLOCKED", artifact name, and phase
         assert "BLOCKED" in result.reason
         assert "design.md" in result.reason
-        assert "create-tasks" in result.reason
+        assert "create-plan" in result.reason
 
 
 # ---------------------------------------------------------------------------

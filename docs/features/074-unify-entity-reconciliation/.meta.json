@@ -1,0 +1,33 @@
+{
+  "id": "074",
+  "slug": "unify-entity-reconciliation",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-04-01T21:04:57.969443+00:00",
+  "branch": "feature/074-unify-entity-reconciliation",
+  "lastCompletedPhase": "implement",
+  "phases": {
+    "brainstorm": {
+      "started": "2026-04-01T21:04:57.968858+00:00"
+    },
+    "specify": {
+      "started": "2026-04-01T21:05:14.587084+00:00",
+      "completed": "2026-04-01T21:12:43.220483+00:00",
+      "iterations": 3
+    },
+    "design": {
+      "started": "2026-04-01T21:13:04.515225+00:00",
+      "completed": "2026-04-01T21:19:52.289082+00:00",
+      "iterations": 3
+    },
+    "create-plan": {
+      "started": "2026-04-01T21:20:14.326175+00:00",
+      "completed": "2026-04-02T06:04:27.472441+00:00",
+      "iterations": 4
+    },
+    "implement": {
+      "completed": "2026-04-02T06:39:00.126261+00:00",
+      "iterations": 2
+    }
+  }
+}

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.14.12] - 2026-04-02
+
+### Added
+- Backlog entity sync — backlog items are now registered in the entity registry with status derived from inline annotations (`closed`, `promoted`, `fixed`, `already implemented`); previously backlog items were invisible to lineage and Kanban
+- Brainstorm missing-file detection — brainstorm entities whose `.prd.md` file no longer exists are automatically archived during reconciliation
+
+### Changed
+- Entity reconciliation is now a single unified pass covering features, projects, brainstorms, and backlogs — one failure in any entity type no longer blocks the others from syncing
+
 ## [4.14.11] - 2026-04-02
 
 ### Added

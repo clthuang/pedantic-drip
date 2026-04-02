@@ -136,8 +136,8 @@ _ENTITY_DB_CHECKS = {..., "check_stale_dependencies"}
 # doctor/fixer.py — add to _SAFE_PATTERNS
 _SAFE_PATTERNS = [..., ("Remove stale dependency", _fix_stale_dependency)]
 
-# reconciliation_orchestrator/__main__.py — add Task 5
-# Inside outer try block, after Task 4, before except:
+# reconciliation_orchestrator/__main__.py — Task 4 (dependency freshness cleanup)
+# Inside outer try block, after Task 3 (workflow reconcile), before except:
 try:
     result = dependency_freshness.cleanup_stale_dependencies(entity_db)
     results["dependency_cleanup"] = result

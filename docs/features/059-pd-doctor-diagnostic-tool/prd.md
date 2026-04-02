@@ -30,8 +30,7 @@ In a single session, we encountered all of these:
 | `reconcile_frontmatter` | Frontmatter headers | Only entity_uuid/type_id fields |
 | `reconcile_status` | Combined health summary | Read-only, no auto-fix |
 | `reconciliation_orchestrator` | Session-start sync | Silent fail-open, no reporting |
-| `entity_status.sync` | .meta.json→entity status | Features/projects only, not brainstorms/backlogs |
-| `brainstorm_registry.sync` | Register new brainstorms | No status drift detection |
+| `entity_status.sync` | .meta.json + backlog.md + brainstorms → entity status | Unified: all 4 entity types (features, projects, brainstorms, backlogs) |
 
 **Gap:** No single tool crosses all stores, detects all drift types, and auto-fixes with user confirmation.
 

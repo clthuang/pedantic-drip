@@ -93,12 +93,11 @@ class TestFullRunOutputsValidJson:
 
         data = json.loads(output)
 
-        assert "entity_sync" in data, f"Missing 'entity_sync' key in: {data}"
-        assert "brainstorm_sync" in data, f"Missing 'brainstorm_sync' key in: {data}"
-        assert "kb_import" in data, f"Missing 'kb_import' key in: {data}"
-        assert "dependency_cleanup" in data, f"Missing 'dependency_cleanup' key in: {data}"
-        assert "elapsed_ms" in data, f"Missing 'elapsed_ms' key in: {data}"
-        assert "errors" in data, f"Missing 'errors' key in: {data}"
+        expected_keys = {"entity_sync", "kb_import", "workflow_reconcile",
+                         "dependency_cleanup", "elapsed_ms", "errors"}
+        assert set(data.keys()) == expected_keys, (
+            f"Expected keys {expected_keys}, got {set(data.keys())}"
+        )
 
         assert isinstance(data["elapsed_ms"], (int, float))
         assert isinstance(data["errors"], list)
@@ -125,11 +124,6 @@ class TestFullRunOutputsValidJson:
         feature_dir.mkdir(parents=True)
         (feature_dir / ".meta.json").write_text(json.dumps({"status": "active"}))
 
-        # Write a brainstorm file
-        brainstorms_dir = tmp_path / "docs" / "brainstorms"
-        brainstorms_dir.mkdir(parents=True)
-        (brainstorms_dir / "20260101-120000-idea.prd.md").write_text("# Idea\n\nContent.")
-
         result = _run_cli(
             project_root=str(tmp_path),
             artifacts_root="docs",
@@ -140,7 +134,8 @@ class TestFullRunOutputsValidJson:
         assert result.returncode == 0
         data = json.loads(result.stdout.strip())
         assert data["entity_sync"]["skipped"] >= 1  # matching status → skipped
-        assert data["brainstorm_sync"]["registered"] == 1  # new brainstorm
+        assert "registered" in data["entity_sync"]
+        assert "deleted" in data["entity_sync"]
         assert data["errors"] == []
 
 
@@ -148,7 +143,7 @@ class TestPerTaskErrorIsolation:
     """test_per_task_error_isolation: one task raises → others still run, error captured."""
 
     def test_entity_status_error_isolated(self, tmp_path):
-        """If entity_status.sync_entity_statuses raises, brainstorm and kb tasks still run."""
+        """If entity_status.sync_entity_statuses raises, kb and other tasks still run."""
         entity_db_path = str(tmp_path / "entities.db")
         memory_db_path = str(tmp_path / "memory.db")
         _make_entity_db(entity_db_path)
@@ -187,8 +182,7 @@ class TestPerTaskErrorIsolation:
             assert data["entity_sync"] is None or "error" in str(data.get("errors", [])), (
                 f"Expected entity_sync error captured; got: {data}"
             )
-            # brainstorm and kb tasks should still have run (keys present with results)
-            assert "brainstorm_sync" in data
+            # kb and other tasks should still have run (keys present with results)
             assert "kb_import" in data
             assert len(data["errors"]) >= 1
             assert "entity_status" in data["errors"][0].lower() or "forced" in data["errors"][0].lower()
@@ -229,7 +223,6 @@ class TestPerTaskErrorIsolation:
 
         assert data["kb_import"] is None or len(data["errors"]) >= 1
         assert "entity_sync" in data
-        assert "brainstorm_sync" in data
         # At least one error captured
         assert len(data["errors"]) >= 1
 
@@ -593,9 +586,8 @@ class TestWorkflowReconcileErrorIsolation:
 
             data = json.loads("".join(written_chunks))
 
-        # Other 3 tasks should still have results
+        # Other tasks should still have results
         assert "entity_sync" in data
-        assert "brainstorm_sync" in data
         assert "kb_import" in data
         # workflow_reconcile should be None (error before assignment)
         assert data["workflow_reconcile"] is None

@@ -13,7 +13,7 @@ doc_tiers: user-guide,dev-guide,technical
 
 # Workflow — automation and review
 # Fully autonomous mode — auto-selects at prompts, chains phases end-to-end
-yolo_mode: true
+yolo_mode: false
 # Max AskUserQuestion blocks YOLO guard will auto-answer before stopping
 yolo_max_stop_blocks: 50
 # API usage limit ($). 0 = unlimited. Pauses YOLO when reached

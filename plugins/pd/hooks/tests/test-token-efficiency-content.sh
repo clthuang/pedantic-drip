@@ -9,7 +9,7 @@
 # - Mandatory-read language ("You MUST read") and confirmation directive ("Files read:")
 # - I8 PRD resolution completeness (3-step logic at every site)
 # - I9 Fallback detection (LAZY-LOAD-WARNING) at every dispatch site
-# - resume: pattern present in all 5 command files (reviewer loops use resume on iteration 2+)
+# - resume: pattern present in all 4 command files (reviewer loops use resume on iteration 2+)
 # - Stage 0 research agents remain untouched (no Required Artifacts injected)
 # - review-target not in Required Artifacts blocks
 # - Implementation file lists stay inline (not in Required Artifacts)
@@ -56,7 +56,6 @@ PLUGIN_DIR="${PROJECT_ROOT}/plugins/pd"
 SPECIFY_CMD="${PLUGIN_DIR}/commands/specify.md"
 DESIGN_CMD="${PLUGIN_DIR}/commands/design.md"
 CREATE_PLAN_CMD="${PLUGIN_DIR}/commands/create-plan.md"
-CREATE_TASKS_CMD="${PLUGIN_DIR}/commands/create-tasks.md"
 IMPLEMENT_CMD="${PLUGIN_DIR}/commands/implement.md"
 IMPLEMENTING_SKILL="${PLUGIN_DIR}/skills/implementing/SKILL.md"
 
@@ -65,7 +64,6 @@ COMMAND_FILES=(
     "$SPECIFY_CMD"
     "$DESIGN_CMD"
     "$CREATE_PLAN_CMD"
-    "$CREATE_TASKS_CMD"
     "$IMPLEMENT_CMD"
 )
 
@@ -135,18 +133,6 @@ test_create_plan_review_target_stays_inline() {
         log_pass
     else
         log_fail "Review-target {content of plan.md} missing"
-    fi
-}
-
-# derived_from: spec:R2 (tasks review-target stays inline)
-test_create_tasks_review_target_stays_inline() {
-    log_test "create-tasks.md: tasks review-target stays inline (not in Required Artifacts)"
-
-    if [[ ! -f "$CREATE_TASKS_CMD" ]]; then log_fail "File not found"; return; fi
-    if grep -q '{content of tasks.md}' "$CREATE_TASKS_CMD"; then
-        log_pass
-    else
-        log_fail "Review-target {content of tasks.md} missing"
     fi
 }
 
@@ -361,45 +347,6 @@ test_create_plan_phase_reviewer_artifact_count() {
     fi
 }
 
-# derived_from: spec:R3 (create-tasks.md: task-reviewer gets PRD+Spec+Design+Plan=4)
-test_create_tasks_reviewer_artifact_count() {
-    log_test "create-tasks.md: task-reviewer Required Artifacts has PRD + Spec + Design + Plan"
-
-    if [[ ! -f "$CREATE_TASKS_CMD" ]]; then log_fail "File not found"; return; fi
-    local ra_block
-    ra_block=$(awk '/## Required Artifacts/{n++} n==1{print} n==2{exit}' "$CREATE_TASKS_CMD")
-    local has_prd has_spec has_design has_plan
-    has_prd=$(echo "$ra_block" | grep -c 'PRD\|resolved PRD' || true)
-    has_spec=$(echo "$ra_block" | grep -c 'Spec:' || true)
-    has_design=$(echo "$ra_block" | grep -c 'Design:' || true)
-    has_plan=$(echo "$ra_block" | grep -c 'Plan:' || true)
-    if [[ "$has_prd" -ge 1 ]] && [[ "$has_spec" -ge 1 ]] && [[ "$has_design" -ge 1 ]] && [[ "$has_plan" -ge 1 ]]; then
-        log_pass
-    else
-        log_fail "task-reviewer missing: PRD=$has_prd Spec=$has_spec Design=$has_design Plan=$has_plan"
-    fi
-}
-
-# derived_from: spec:R3 (create-tasks.md: phase-reviewer gets PRD+Spec+Design+Plan+Tasks=5)
-test_create_tasks_phase_reviewer_artifact_count() {
-    log_test "create-tasks.md: phase-reviewer Required Artifacts has PRD + Spec + Design + Plan + Tasks"
-
-    if [[ ! -f "$CREATE_TASKS_CMD" ]]; then log_fail "File not found"; return; fi
-    local ra_block
-    ra_block=$(awk '/## Required Artifacts/{n++} n==2{print} n==3{exit}' "$CREATE_TASKS_CMD")
-    local has_prd has_spec has_design has_plan has_tasks
-    has_prd=$(echo "$ra_block" | grep -c 'PRD\|resolved PRD' || true)
-    has_spec=$(echo "$ra_block" | grep -c 'Spec:' || true)
-    has_design=$(echo "$ra_block" | grep -c 'Design:' || true)
-    has_plan=$(echo "$ra_block" | grep -c 'Plan:' || true)
-    has_tasks=$(echo "$ra_block" | grep -c 'Tasks:' || true)
-    if [[ "$has_prd" -ge 1 ]] && [[ "$has_spec" -ge 1 ]] && [[ "$has_design" -ge 1 ]] && [[ "$has_plan" -ge 1 ]] && [[ "$has_tasks" -ge 1 ]]; then
-        log_pass
-    else
-        log_fail "phase-reviewer missing: PRD=$has_prd Spec=$has_spec Design=$has_design Plan=$has_plan Tasks=$has_tasks"
-    fi
-}
-
 # derived_from: spec:R3 (implement.md: code-simplifier gets Design=1 in Required Artifacts)
 test_implement_code_simplifier_artifact_count() {
     log_test "implement.md: code-simplifier Required Artifacts has Design only (1 artifact)"
@@ -534,28 +481,25 @@ test_implementing_skill_implementer_artifact_count() {
 # Dimension 2: Boundary Values — artifact count ranges
 # ============================================================
 
-# derived_from: dimension:boundary (escalating artifact count: specify=1, design=2, plan=3, tasks=4, implement=5)
+# derived_from: dimension:boundary (escalating artifact count: specify=2, design=3, plan=4)
 test_escalating_artifact_counts_across_phases() {
-    log_test "Phase-reviewer artifact count escalates: specify(2) < design(3) < plan(4) < tasks(5)"
+    log_test "Phase-reviewer artifact count escalates: specify(2) < design(3) < plan(4)"
 
     # Count artifact references in each phase-reviewer block
     # Use grep -e to avoid leading dash in pattern being parsed as option
-    local specify_count design_count plan_count tasks_count
+    local specify_count design_count plan_count
     # specify phase-reviewer: PRD + Spec = 2
     specify_count=$(awk '/Validate this spec is ready/,/Return your assessment/' "$SPECIFY_CMD" | grep -cE -e 'Spec:|Design:|Plan:|Tasks:|resolved PRD' || true)
     # design phase-reviewer: PRD + Spec + Design = 3
     design_count=$(awk '/Validate this design is ready/,/Return your assessment/' "$DESIGN_CMD" | grep -cE -e 'Spec:|Design:|Plan:|Tasks:|resolved PRD' || true)
     # plan phase-reviewer: PRD + Spec + Design + Plan = 4
     plan_count=$(awk '/Validate this plan is ready/,/Return JSON/' "$CREATE_PLAN_CMD" | grep -cE -e 'Spec:|Design:|Plan:|Tasks:|resolved PRD' || true)
-    # tasks phase-reviewer: PRD + Spec + Design + Plan + Tasks = 5
-    tasks_count=$(awk '/Validate this task breakdown is ready/,/Return your assessment/' "$CREATE_TASKS_CMD" | grep -cE -e 'Spec:|Design:|Plan:|Tasks:|resolved PRD' || true)
 
     if [[ "$specify_count" -lt "$design_count" ]] && \
-       [[ "$design_count" -lt "$plan_count" ]] && \
-       [[ "$plan_count" -lt "$tasks_count" ]]; then
+       [[ "$design_count" -lt "$plan_count" ]]; then
         log_pass
     else
-        log_fail "Not escalating: specify=$specify_count design=$design_count plan=$plan_count tasks=$tasks_count"
+        log_fail "Not escalating: specify=$specify_count design=$design_count plan=$plan_count"
     fi
 }
 
@@ -570,11 +514,11 @@ test_total_required_artifacts_block_count() {
         count=$(grep -c '## Required Artifacts' "$file" || true)
         total=$((total + count))
     done
-    # Expected: specify(2) + design(2) + plan(2) + tasks(2) + implement(6) + skill(1) = 15
-    if [[ "$total" -ge 15 ]]; then
+    # Expected: specify(2) + design(2) + plan(2) + implement(6) + skill(1) = 13
+    if [[ "$total" -ge 13 ]]; then
         log_pass
     else
-        log_fail "Expected >= 15 Required Artifacts blocks, found $total"
+        log_fail "Expected >= 13 Required Artifacts blocks, found $total"
     fi
 }
 
@@ -793,7 +737,7 @@ test_i8_prd_resolution_present_in_all_commands() {
     log_test "I8 PRD resolution (brainstorm_source) present in all per-phase command files"
 
     local missing=0
-    local commands=("$SPECIFY_CMD" "$DESIGN_CMD" "$CREATE_PLAN_CMD" "$CREATE_TASKS_CMD" "$IMPLEMENT_CMD")
+    local commands=("$SPECIFY_CMD" "$DESIGN_CMD" "$CREATE_PLAN_CMD" "$IMPLEMENT_CMD")
     for file in "${commands[@]}"; do
         [[ ! -f "$file" ]] && continue
         if ! grep -q 'brainstorm_source' "$file"; then
@@ -814,9 +758,9 @@ test_i8_prd_resolution_present_in_all_commands() {
 
 # derived_from: dimension:mutation-line-deletion (resume: present in all reviewer loops)
 test_resume_in_all_reviewer_loops() {
-    log_test "'resume:' present in all 5 command files (reviewer loops use resume on iteration 2+)"
+    log_test "'resume:' present in all 4 command files (reviewer loops use resume on iteration 2+)"
 
-    local all_cmd_files=("$SPECIFY_CMD" "$DESIGN_CMD" "$CREATE_PLAN_CMD" "$CREATE_TASKS_CMD" "$IMPLEMENT_CMD")
+    local all_cmd_files=("$SPECIFY_CMD" "$DESIGN_CMD" "$CREATE_PLAN_CMD" "$IMPLEMENT_CMD")
     local missing=0
     local missing_files=()
     for file in "${all_cmd_files[@]}"; do
@@ -886,23 +830,6 @@ test_json_schema_before_artifact_content() {
             ((failures++)) || true
         elif [[ "$schema_line" -ge "$content_line" ]]; then
             echo "  DETAIL: create-plan.md: '\"approved\"' at line $schema_line >= '## Plan (what' at line $content_line" >&2
-            ((failures++)) || true
-        fi
-    fi
-
-    # create-tasks.md: "approved" must appear before "## Tasks (what"
-    if [[ -f "$CREATE_TASKS_CMD" ]]; then
-        local schema_line content_line
-        schema_line=$(grep -n '"approved"' "$CREATE_TASKS_CMD" | head -1 | cut -d: -f1)
-        content_line=$(grep -n '## Tasks (what' "$CREATE_TASKS_CMD" | head -1 | cut -d: -f1)
-        if [[ -z "$schema_line" ]]; then
-            echo "  DETAIL: create-tasks.md: no '\"approved\"' found" >&2
-            ((failures++)) || true
-        elif [[ -z "$content_line" ]]; then
-            echo "  DETAIL: create-tasks.md: no '## Tasks (what' found" >&2
-            ((failures++)) || true
-        elif [[ "$schema_line" -ge "$content_line" ]]; then
-            echo "  DETAIL: create-tasks.md: '\"approved\"' at line $schema_line >= '## Tasks (what' at line $content_line" >&2
             ((failures++)) || true
         fi
     fi
@@ -1079,8 +1006,6 @@ main() {
     test_specify_review_target_stays_inline
     test_design_review_target_stays_inline
     test_create_plan_review_target_stays_inline
-    test_create_tasks_review_target_stays_inline
-
     # Required Artifacts structural checks
     test_all_changed_files_have_required_artifacts
     test_mandatory_read_language_at_every_ra_block
@@ -1094,8 +1019,6 @@ main() {
     test_design_phase_reviewer_artifact_count
     test_create_plan_reviewer_artifact_count
     test_create_plan_phase_reviewer_artifact_count
-    test_create_tasks_reviewer_artifact_count
-    test_create_tasks_phase_reviewer_artifact_count
     test_implement_code_simplifier_artifact_count
     test_implement_quality_reviewer_artifact_count
     test_implement_security_reviewer_artifact_count
