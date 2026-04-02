@@ -165,12 +165,13 @@ c. **Parse response:** Extract the `approved` field from reviewer's JSON respons
 
    **Post-dispatch influence tracking:**
    If search_memory returned entries before this dispatch:
-     For each entry name in the stored list:
-       If entry name appears as a case-insensitive exact substring in the subagent's output:
-         call record_influence(entry_name=<name>, agent_role="spec-reviewer",
-           feature_type_id=<current feature type_id from .meta.json>)
-     If no entries matched: no action (valid — not all memories will be referenced)
-     If record_influence fails: warn "Influence tracking failed: {error}", continue
+     call record_influence_by_content(
+       subagent_output_text=<full agent output text>,
+       injected_entry_names=<list of entry names from search_memory results>,
+       agent_role="spec-reviewer",
+       feature_type_id=<current feature type_id from .meta.json>,
+       threshold=0.70)
+     If record_influence_by_content fails: warn "Influence tracking failed: {error}", continue
      If .meta.json missing or type_id unresolvable: skip influence recording with warning
 
 d. **Branch on result (strict threshold):**
@@ -325,12 +326,13 @@ e. **Invoke phase-reviewer:**
 
    **Post-dispatch influence tracking:**
    If search_memory returned entries before this dispatch:
-     For each entry name in the stored list:
-       If entry name appears as a case-insensitive exact substring in the subagent's output:
-         call record_influence(entry_name=<name>, agent_role="phase-reviewer",
-           feature_type_id=<current feature type_id from .meta.json>)
-     If no entries matched: no action (valid — not all memories will be referenced)
-     If record_influence fails: warn "Influence tracking failed: {error}", continue
+     call record_influence_by_content(
+       subagent_output_text=<full agent output text>,
+       injected_entry_names=<list of entry names from search_memory results>,
+       agent_role="phase-reviewer",
+       feature_type_id=<current feature type_id from .meta.json>,
+       threshold=0.70)
+     If record_influence_by_content fails: warn "Influence tracking failed: {error}", continue
      If .meta.json missing or type_id unresolvable: skip influence recording with warning
 
 f. **Branch on result (strict threshold):**
@@ -350,9 +352,13 @@ g. **Complete phase:** Proceed to auto-commit, then update state.
 
 ### 4a. Capture Review Learnings (Automatic)
 
-**Trigger:** Only execute if the review loop ran 2+ iterations (across Step 1 and/or Step 2 combined). If approved on first pass in both stages, skip — no review learnings to capture.
+**Trigger:** Execute after any review iteration that found blocker or warning issues.
 
-**Process:**
+**Two-path capture:**
+- **IF exactly 1 iteration with blockers found and fixed:** Store each blocker directly via `store_memory` with `confidence="low"` (single observation, not a confirmed pattern). Budget: max 2 entries.
+- **IF 2+ iterations:** Use recurring-pattern grouping logic below. Budget: max 3 entries.
+
+**Process (for 2+ iterations):**
 1. Read `.review-history.md` entries for THIS phase only (spec-reviewer and phase-reviewer entries)
 2. Group issues by description similarity (same category, overlapping file patterns)
 3. Identify issues that appeared in 2+ iterations — these are recurring patterns
@@ -380,7 +386,7 @@ If the review loop completed in 1 iteration AND the reviewer found issues with s
      - `description`: issue description + the suggestion that resolved it
      - `reasoning`: "Single-iteration blocker catch in feature {id} specify phase"
      - `category`: inferred from issue type (same mapping as recurring patterns above)
-     - `confidence`: "medium"
+     - `confidence`: "low"
      - `references`: ["feature/{id}-{slug}"]
 
 **Circuit breaker capture:** If review loop hit max iterations (cap reached) in either step, also capture a single entry:

@@ -239,7 +239,7 @@ class RankingEngine:
     ) -> float:
         """Compute prominence for a single entry.
 
-        ``prominence = 0.25 * norm_obs + 0.15 * confidence + 0.25 * recency + 0.15 * recall + 0.20 * influence``
+        ``prominence = 0.30 * norm_obs + 0.15 * confidence + 0.35 * recency + 0.15 * recall + 0.05 * influence``
         """
         obs_count = entry.get("observation_count", 0)
         norm_obs = math.log(obs_count + 1) / math.log(max_obs + 1) if max_obs > 0 else 0.0
@@ -249,7 +249,7 @@ class RankingEngine:
         recall = self._recall_frequency(entry.get("recall_count", 0), entry.get("last_recalled_at"), now)
         influence = self._influence_score(entry)
 
-        return 0.25 * norm_obs + 0.15 * confidence + 0.25 * recency + 0.15 * recall + 0.20 * influence
+        return 0.30 * norm_obs + 0.15 * confidence + 0.35 * recency + 0.15 * recall + 0.05 * influence
 
     def _project_blend(
         self,

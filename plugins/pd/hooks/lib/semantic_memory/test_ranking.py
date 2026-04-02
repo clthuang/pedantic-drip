@@ -526,9 +526,9 @@ class TestFinalScoreComputation:
         # Entry "a" should rank first
         assert ranked[0]["id"] == "a"
 
-        # Prominence weights: obs=0.25, confidence=0.15, recency=0.25,
-        #                     recall=0.15, influence=0.20
-        W_OBS, W_CONF, W_REC, W_RECALL, W_INF = 0.25, 0.15, 0.25, 0.15, 0.20
+        # Prominence weights: obs=0.30, confidence=0.15, recency=0.35,
+        #                     recall=0.15, influence=0.05
+        W_OBS, W_CONF, W_REC, W_RECALL, W_INF = 0.30, 0.15, 0.35, 0.15, 0.05
 
         # Manually compute expected score for "a":
         # norm_vector: (0.9-0.1)/(0.9-0.1) = 1.0

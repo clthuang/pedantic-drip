@@ -23,6 +23,7 @@ CATEGORIES = [
     ("anti-patterns.md", "anti-patterns"),
     ("patterns.md", "patterns"),
     ("heuristics.md", "heuristics"),
+    ("constitution.md", "constitution"),
 ]
 
 

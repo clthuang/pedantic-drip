@@ -2,10 +2,11 @@
   "id": "074",
   "slug": "unify-entity-reconciliation",
   "mode": "standard",
-  "status": "active",
+  "status": "completed",
   "created": "2026-04-01T21:04:57.969443+00:00",
   "branch": "feature/074-unify-entity-reconciliation",
-  "lastCompletedPhase": "implement",
+  "completed": "2026-04-02T16:47:02.582953+00:00",
+  "lastCompletedPhase": "finish",
   "phases": {
     "brainstorm": {
       "started": "2026-04-01T21:04:57.968858+00:00"
@@ -28,6 +29,9 @@
     "implement": {
       "completed": "2026-04-02T06:39:00.126261+00:00",
       "iterations": 2
+    },
+    "finish": {
+      "completed": "2026-04-02T16:47:02.582953+00:00"
     }
   }
 }

@@ -1,0 +1,33 @@
+{
+  "id": "076",
+  "slug": "memory-feedback-loop-hardening",
+  "mode": "full",
+  "status": "active",
+  "created": "2026-04-02T16:50:36.803890+00:00",
+  "branch": "feature/076-memory-feedback-loop-hardening",
+  "lastCompletedPhase": "implement",
+  "phases": {
+    "brainstorm": {
+      "started": "2026-04-02T16:50:36.803695+00:00"
+    },
+    "specify": {
+      "started": "2026-04-02T16:51:19.030039+00:00",
+      "completed": "2026-04-02T17:00:05.502272+00:00",
+      "iterations": 3
+    },
+    "design": {
+      "started": "2026-04-02T17:02:44.088688+00:00",
+      "completed": "2026-04-02T17:13:26.995809+00:00",
+      "iterations": 3
+    },
+    "create-plan": {
+      "started": "2026-04-02T17:14:27.060700+00:00",
+      "completed": "2026-04-02T17:24:48.524051+00:00",
+      "iterations": 2
+    },
+    "implement": {
+      "completed": "2026-04-02T17:46:19.191737+00:00",
+      "iterations": 2
+    }
+  }
+}

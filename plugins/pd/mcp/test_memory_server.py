@@ -119,20 +119,36 @@ class TestValidStoreMemory:
         assert json.loads(entry["references"]) == ["file.py:42"]
         assert entry["observation_count"] == 1
 
-    def test_source_is_session_capture(self, db: MemoryDatabase):
-        """Source must be 'session-capture' per spec D6."""
+    def test_source_defaults_to_session_capture(self, db: MemoryDatabase):
+        """Source defaults to 'session-capture' when not specified."""
         _process_store_memory(
             db=db,
             provider=None,
             name="Test",
-            description="Source test",
+            description="Source test description text",
             reasoning="Reason",
             category="patterns",
             references=[],
         )
-        expected_hash = content_hash("Source test")
+        expected_hash = content_hash("Source test description text")
         entry = db.get_entry(expected_hash)
         assert entry["source"] == "session-capture"
+
+    def test_source_parameter_passthrough(self, db: MemoryDatabase):
+        """Source parameter passes through to DB entry."""
+        _process_store_memory(
+            db=db,
+            provider=None,
+            name="Retro Learning Test",
+            description="A retro learning about testing patterns",
+            reasoning="Reason",
+            category="patterns",
+            references=[],
+            source="retro",
+        )
+        expected_hash = content_hash("A retro learning about testing patterns")
+        entry = db.get_entry(expected_hash)
+        assert entry["source"] == "retro"
 
 
 # ---------------------------------------------------------------------------
@@ -354,13 +370,13 @@ class TestSourceProject:
             db=db,
             provider=None,
             name="SP test",
-            description="Source project test",
+            description="Source project test for verification",
             reasoning="For source project",
             category="patterns",
             references=[],
             source_project="/my/project",
         )
-        expected_hash = content_hash("Source project test")
+        expected_hash = content_hash("Source project test for verification")
         entry = db.get_entry(expected_hash)
         assert entry["source_project"] == "/my/project"
 
@@ -422,12 +438,12 @@ class TestEmbeddings:
             db=db,
             provider=None,
             name="No emb",
-            description="No embedding test",
+            description="No embedding test description here",
             reasoning="Reason",
             category="patterns",
             references=[],
         )
-        expected_hash = content_hash("No embedding test")
+        expected_hash = content_hash("No embedding test description here")
         entry = db.get_entry(expected_hash)
         assert entry["embedding"] is None
 
@@ -445,7 +461,7 @@ class TestEmbeddings:
             db=db,
             provider=provider,
             name="MyName",
-            description="MyDescription",
+            description="MyDescription that is long enough for min gate",
             reasoning="Reason",
             category="patterns",
             references=[],
@@ -466,12 +482,12 @@ class TestReferences:
             db=db,
             provider=None,
             name="Ref test",
-            description="References test",
+            description="References test for JSON array storage",
             reasoning="Reason",
             category="patterns",
             references=["file1.py:10", "file2.py:20"],
         )
-        expected_hash = content_hash("References test")
+        expected_hash = content_hash("References test for JSON array storage")
         entry = db.get_entry(expected_hash)
         assert entry["references"] is not None
         refs = json.loads(entry["references"])
@@ -1296,8 +1312,8 @@ class TestStoreMemoryKeywordIntegration:
 class TestStoreMemoryDedupIntegration:
     """Integration tests for semantic dedup in store_memory."""
 
-    def test_near_duplicate_returns_reinforced(self, db: MemoryDatabase):
-        """Storing a near-duplicate should return 'Reinforced:' message."""
+    def test_near_duplicate_same_name_returns_reinforced(self, db: MemoryDatabase):
+        """Storing a near-duplicate with same name should merge (Reinforced)."""
         provider = SimilarVectorProvider()
 
         # Store first entry
@@ -1312,11 +1328,11 @@ class TestStoreMemoryDedupIntegration:
         )
         assert result1.startswith("Stored:")
 
-        # Store near-duplicate (same vector direction due to SimilarVectorProvider)
+        # Store near-duplicate with SAME name (passes 0.95 gate, hits 0.90 merge)
         result2 = _process_store_memory(
             db=db,
             provider=provider,
-            name="Validate hook function inputs",
+            name="Always validate hook inputs",
             description="Hook functions should validate all inputs before executing to avoid failures",
             reasoning="Prevents crashes from malformed input",
             category="patterns",
@@ -1324,6 +1340,31 @@ class TestStoreMemoryDedupIntegration:
         )
         assert "Reinforced:" in result2
         assert "observation #" in result2
+
+    def test_near_duplicate_different_name_rejected(self, db: MemoryDatabase):
+        """Near-duplicate with different name should be rejected by 0.95 gate."""
+        provider = SimilarVectorProvider()
+
+        _process_store_memory(
+            db=db,
+            provider=provider,
+            name="Always validate hook inputs",
+            description="Validate all inputs in hook functions before processing to prevent errors",
+            reasoning="Prevents runtime errors from bad data",
+            category="patterns",
+            references=[],
+        )
+
+        result2 = _process_store_memory(
+            db=db,
+            provider=provider,
+            name="Different name for same concept",
+            description="Hook functions should validate all inputs before executing to avoid failures",
+            reasoning="Prevents crashes from malformed input",
+            category="patterns",
+            references=[],
+        )
+        assert "Entry rejected: near-duplicate" in result2
 
     def test_unique_entry_returns_stored(self, db: MemoryDatabase):
         """Storing a unique entry (no embedding match) should return 'Stored:'."""
@@ -1399,11 +1440,11 @@ class TestStoreMemoryDedupIntegration:
         entry_before = db.get_entry(first_id)
         assert entry_before["observation_count"] == 1
 
-        # Store near-duplicate
+        # Store near-duplicate with same name (falls through 0.95 gate to 0.90 merge)
         _process_store_memory(
             db=db,
             provider=provider,
-            name="Validate hook function inputs",
+            name="Always validate hook inputs",
             description="Hook functions should validate all inputs before executing to avoid failures",
             reasoning="Prevents crashes from malformed input",
             category="patterns",
@@ -1457,7 +1498,7 @@ class TestStoreMemoryDedupPromotion:
         result2 = _process_store_memory(
             db=db,
             provider=provider,
-            name="Validate hook function inputs",
+            name="Always validate hook inputs",
             description="Hook functions should validate all inputs before executing to avoid failures",
             reasoning="Prevents crashes from malformed input",
             category="patterns",

@@ -32,6 +32,7 @@ Save a learning, pattern, or heuristic to the global memory store so future sess
    - `category` — one of `patterns`, `anti-patterns`, `heuristics`
    - `references` — `[]`
    - `confidence` — `"low"`
+   - `source` — `"manual"`
 
 7. **If the MCP tool is unavailable, fall back to Bash.** Escape any special characters (quotes, backslashes, dollar signs) in the user input before embedding in the JSON string, then run:
    ```bash

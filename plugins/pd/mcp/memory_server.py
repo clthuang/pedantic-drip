@@ -18,7 +18,7 @@ if _hooks_lib not in (os.path.normpath(p) for p in sys.path):
 
 # Smoke test: ensure the package is importable at startup.
 import semantic_memory  # noqa: F401
-from semantic_memory import VALID_CATEGORIES, VALID_CONFIDENCE, content_hash, source_hash
+from semantic_memory import VALID_CATEGORIES, VALID_CONFIDENCE, VALID_SOURCES, content_hash, source_hash
 from semantic_memory.config import read_config
 from semantic_memory.database import MemoryDatabase
 from semantic_memory.embedding import EmbeddingProvider, create_provider
@@ -26,6 +26,11 @@ from semantic_memory.ranking import RankingEngine
 from semantic_memory.retrieval import RetrievalPipeline
 from semantic_memory.dedup import check_duplicate
 from semantic_memory.keywords import extract_keywords
+
+try:
+    import numpy as np
+except ImportError:
+    np = None  # type: ignore[assignment]
 from semantic_memory.writer import _embed_text_for_entry, _process_pending_embeddings
 
 from sqlite_retry import with_retry
@@ -48,6 +53,7 @@ def _process_store_memory(
     category: str,
     references: list[str],
     confidence: str = "medium",
+    source: str = "session-capture",
     source_project: str = "",
     config: dict | None = None,
 ) -> str:
@@ -68,17 +74,25 @@ def _process_store_memory(
             f"Error: invalid category '{category}'. "
             f"Must be one of: {', '.join(sorted(VALID_CATEGORIES))}"
         )
+    if category == "constitution":
+        return "Entry rejected: constitution entries are import-only (edit docs/knowledge-bank/constitution.md directly)"
     if confidence not in VALID_CONFIDENCE:
         return (
             f"Error: invalid confidence '{confidence}'. "
             f"Must be one of: {', '.join(sorted(VALID_CONFIDENCE))}"
         )
+    if source not in VALID_SOURCES:
+        return (
+            f"Error: invalid source '{source}'. "
+            f"Must be one of: {', '.join(sorted(VALID_SOURCES))}"
+        )
+
+    # -- Tier 1 gate: minimum description length --
+    if len(description) < 20:
+        return "Entry rejected: description too short (min 20 chars)"
 
     # -- Compute content hash (id) --
     entry_id = content_hash(description)
-
-    # -- Source is always 'session-capture' per spec D6 --
-    source = "session-capture"
 
     keywords = extract_keywords(name, description, reasoning, category)
     keywords_json = json.dumps(keywords)
@@ -101,8 +115,19 @@ def _process_store_memory(
                 file=sys.stderr,
             )
 
-    # -- Dedup check (before store) --
+    # -- Tier 1 gate: near-duplicate rejection (0.95, stricter than dedup merge) --
     cfg = config or {}
+    if embedding_vec is not None:
+        neardupe_result = check_duplicate(embedding_vec, db, threshold=0.95)
+        if neardupe_result.is_duplicate:
+            matched_entry = db.get_entry(neardupe_result.existing_entry_id)
+            matched_name = matched_entry["name"] if matched_entry else "unknown"
+            if matched_name != name:
+                return f"Entry rejected: near-duplicate of existing entry '{matched_name}'"
+    else:
+        print("memory-server: near-duplicate check skipped: embedding provider unavailable", file=sys.stderr)
+
+    # -- Dedup merge check (0.90, existing behavior) --
     threshold = cfg.get("memory_dedup_threshold", 0.90)
     if embedding_vec is not None:
         dedup_result = check_duplicate(embedding_vec, db, threshold)
@@ -218,6 +243,7 @@ def _process_search_memory(
         "anti-patterns": "Anti-Pattern",
         "patterns": "Pattern",
         "heuristics": "Heuristic",
+        "constitution": "Core Principle",
     }
 
     lines = [f"Found {len(selected)} relevant memories:\n"]
@@ -257,6 +283,96 @@ def _process_record_influence(
 
     db.record_influence(entry["id"], agent_role, feature_type_id)
     return f"Recorded influence: {entry_name} by {agent_role}"
+
+
+# ---------------------------------------------------------------------------
+# Influence-by-content processing function (testable without MCP)
+# ---------------------------------------------------------------------------
+
+
+@with_retry("memory")
+def _process_record_influence_by_content(
+    db: MemoryDatabase,
+    provider: EmbeddingProvider | None,
+    subagent_output_text: str,
+    injected_entry_names: list[str],
+    agent_role: str,
+    feature_type_id: str | None = None,
+    threshold: float = 0.70,
+) -> str:
+    """Record influence using embedding similarity instead of name matching.
+
+    Chunks the output by paragraph, computes per-chunk embeddings, and
+    compares against stored entry embeddings. Records influence for entries
+    where max chunk similarity >= threshold.
+    """
+
+    if not injected_entry_names:
+        return json.dumps({"matched": [], "skipped": 0})
+
+    threshold = max(0.01, min(1.0, threshold))
+
+    if np is None:
+        return json.dumps({
+            "matched": [], "skipped": len(injected_entry_names),
+            "warning": "numpy unavailable",
+        })
+
+    if provider is None:
+        return json.dumps({
+            "matched": [], "skipped": len(injected_entry_names),
+            "warning": "embedding provider unavailable",
+        })
+
+    # Truncate to last 2000 chars (conclusion/summary typically at end)
+    text = subagent_output_text
+    if len(text) > 2000:
+        text = text[-2000:]
+
+    # Chunk by paragraph, filter short chunks
+    chunks = [c.strip() for c in text.split("\n\n") if len(c.strip()) >= 20]
+    if not chunks:
+        return json.dumps({"matched": [], "skipped": len(injected_entry_names), "warning": "no valid chunks"})
+
+    # Compute embeddings for each chunk
+    chunk_embeddings = []
+    for chunk in chunks:
+        try:
+            emb = provider.embed(chunk, task_type="query")
+            chunk_embeddings.append(emb)
+        except Exception:
+            continue
+
+    if not chunk_embeddings:
+        return json.dumps({
+            "matched": [], "skipped": len(injected_entry_names),
+            "warning": "chunk embedding failed",
+        })
+
+    # Compare against each injected entry
+    matched = []
+    skipped = 0
+    for entry_name in injected_entry_names:
+        entry = db.find_entry_by_name(entry_name)
+        if entry is None or entry.get("embedding") is None:
+            skipped += 1
+            continue
+
+        try:
+            entry_emb = np.frombuffer(entry["embedding"], dtype=np.float32)
+            # Embeddings are pre-normalized by NormalizingWrapper, so dot product = cosine similarity
+            max_sim = max(float(np.dot(chunk_emb, entry_emb)) for chunk_emb in chunk_embeddings)
+        except (ValueError, TypeError):
+            skipped += 1
+            continue
+
+        if max_sim >= threshold:
+            db.record_influence(entry["id"], agent_role, feature_type_id)
+            matched.append({"name": entry_name, "similarity": round(max_sim, 3)})
+        else:
+            skipped += 1
+
+    return json.dumps({"matched": matched, "skipped": skipped})
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +460,7 @@ async def store_memory(
     category: str,
     references: list[str] | None = None,
     confidence: str = "medium",
+    source: str = "session-capture",
 ) -> str:
     """Save a learning to long-term memory.
 
@@ -356,12 +473,15 @@ async def store_memory(
     reasoning:
         Why this learning matters or how it was discovered.
     category:
-        One of: anti-patterns, patterns, heuristics.
+        One of: anti-patterns, patterns, heuristics, constitution.
     references:
         Optional list of file paths or URLs related to this learning.
     confidence:
         Confidence level for this learning. One of: high, medium, low.
         Default: medium.
+    source:
+        Source of this learning. One of: retro, session-capture, manual.
+        Default: session-capture.
 
     Returns confirmation message or error.
     """
@@ -378,6 +498,7 @@ async def store_memory(
             category=category,
             references=references if references is not None else [],
             confidence=confidence,
+            source=source,
             source_project=_project_root,
             config=_config,
         )
@@ -484,6 +605,51 @@ async def record_influence(
             entry_name=entry_name,
             agent_role=agent_role,
             feature_type_id=feature_type_id,
+        )
+    except Exception as exc:
+        return json.dumps({"error": str(exc)})
+
+
+@mcp.tool()
+async def record_influence_by_content(
+    subagent_output_text: str,
+    injected_entry_names: list[str],
+    agent_role: str,
+    feature_type_id: str | None = None,
+    threshold: float = 0.70,
+) -> str:
+    """Record influence by comparing subagent output against injected memory entries.
+
+    Uses embedding cosine similarity instead of verbatim name matching.
+    Chunks the output by paragraph and takes the max similarity per entry.
+
+    Parameters
+    ----------
+    subagent_output_text:
+        Full text output from the subagent.
+    injected_entry_names:
+        Names of memory entries that were injected into the subagent prompt.
+    agent_role:
+        Role of the agent (e.g., 'spec-reviewer').
+    feature_type_id:
+        Current feature context. Optional.
+    threshold:
+        Cosine similarity threshold for attribution. Default: 0.70.
+
+    Returns JSON with matched entries and their similarity scores.
+    """
+    if _db is None:
+        return json.dumps({"matched": [], "skipped": len(injected_entry_names), "warning": "database not initialized"})
+
+    try:
+        return _process_record_influence_by_content(
+            db=_db,
+            provider=_provider,
+            subagent_output_text=subagent_output_text,
+            injected_entry_names=injected_entry_names,
+            agent_role=agent_role,
+            feature_type_id=feature_type_id,
+            threshold=threshold,
         )
     except Exception as exc:
         return json.dumps({"error": str(exc)})

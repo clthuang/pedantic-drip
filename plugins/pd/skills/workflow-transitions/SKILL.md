@@ -98,6 +98,7 @@ After Step 1 completes, check for backward transition and phase context:
    **{phase}** ({timestamp}): {outcome}
      Key decisions: {key_decisions}
      Artifacts: {comma-separated artifacts_produced}
+     Reviewer feedback: {reviewer_feedback_summary}  ← only if non-null/non-empty
      Rework trigger: {rework_trigger}  ← only if non-null
    ```
 
@@ -106,7 +107,7 @@ After Step 1 completes, check for backward transition and phase context:
    - `### Prior Phase Summaries`: only present when `phase_summaries` has entries
    - If both are absent: no `## Phase Context` block at all
    - If only one is present: `## Phase Context` heading still used, with only the relevant sub-section
-   - `reviewer_feedback_summary` is omitted from injection to save tokens (preserved in storage for audit)
+   - `reviewer_feedback_summary` is included during backward travel Phase Context injection, omitted during forward travel
 
 4. Prepend the `## Phase Context` block to the phase's prompt context (before any skill invocation)
 

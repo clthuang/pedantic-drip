@@ -220,6 +220,7 @@ Call `store_memory` MCP tool with:
 - `category` — one of `patterns`, `anti-patterns`, `heuristics`
 - `references` — `["{provenance}"]`
 - `confidence` — confidence from agent (or `"medium"`)
+- `source` — `"retro"`
 
 Track each entry's name in a local list for verification in Step 3b.
 

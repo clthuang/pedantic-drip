@@ -126,12 +126,13 @@ Task tool call:
 
 **Post-dispatch influence tracking:**
 If search_memory returned entries before this dispatch:
-  For each entry name in the stored list:
-    If entry name appears as a case-insensitive exact substring in the subagent's output:
-      call record_influence(entry_name=<name>, agent_role="test-deepener",
-        feature_type_id=<current feature type_id from .meta.json>)
-  If no entries matched: no action (valid — not all memories will be referenced)
-  If record_influence fails: warn "Influence tracking failed: {error}", continue
+  call record_influence_by_content(
+    subagent_output_text=<full agent output text>,
+    injected_entry_names=<list of entry names from search_memory results>,
+    agent_role="test-deepener",
+    feature_type_id=<current feature type_id from .meta.json>,
+    threshold=0.70)
+  If record_influence_by_content fails: warn "Influence tracking failed: {error}", continue
   If .meta.json missing or type_id unresolvable: skip influence recording with warning
 
 **Phase A validation:** If `outlines` array is empty, log warning: "Test deepening Phase A returned no outlines — skipping test deepening" and proceed to Step 7.
@@ -191,12 +192,13 @@ Task tool call:
 
 **Post-dispatch influence tracking:**
 If search_memory returned entries before this dispatch:
-  For each entry name in the stored list:
-    If entry name appears as a case-insensitive exact substring in the subagent's output:
-      call record_influence(entry_name=<name>, agent_role="test-deepener",
-        feature_type_id=<current feature type_id from .meta.json>)
-  If no entries matched: no action (valid — not all memories will be referenced)
-  If record_influence fails: warn "Influence tracking failed: {error}", continue
+  call record_influence_by_content(
+    subagent_output_text=<full agent output text>,
+    injected_entry_names=<list of entry names from search_memory results>,
+    agent_role="test-deepener",
+    feature_type_id=<current feature type_id from .meta.json>,
+    threshold=0.70)
+  If record_influence_by_content fails: warn "Influence tracking failed: {error}", continue
   If .meta.json missing or type_id unresolvable: skip influence recording with warning
 
 **Divergence control flow:**
@@ -466,12 +468,13 @@ resume_state["implementation-reviewer"].last_commit_sha = {current HEAD SHA}
 
 **Post-dispatch influence tracking:**
 If search_memory returned entries before this dispatch:
-  For each entry name in the stored list:
-    If entry name appears as a case-insensitive exact substring in the subagent's output:
-      call record_influence(entry_name=<name>, agent_role="implementation-reviewer",
-        feature_type_id=<current feature type_id from .meta.json>)
-  If no entries matched: no action (valid — not all memories will be referenced)
-  If record_influence fails: warn "Influence tracking failed: {error}", continue
+  call record_influence_by_content(
+    subagent_output_text=<full agent output text>,
+    injected_entry_names=<list of entry names from search_memory results>,
+    agent_role="implementation-reviewer",
+    feature_type_id=<current feature type_id from .meta.json>,
+    threshold=0.70)
+  If record_influence_by_content fails: warn "Influence tracking failed: {error}", continue
   If .meta.json missing or type_id unresolvable: skip influence recording with warning
 
 **7a2. Level 2: Spec-Level Verification (Relevance Check):**
@@ -627,12 +630,13 @@ resume_state["relevance-verifier"].last_commit_sha = {current HEAD SHA}
 
 **Post-dispatch influence tracking:**
 If search_memory returned entries before this dispatch:
-  For each entry name in the stored list:
-    If entry name appears as a case-insensitive exact substring in the subagent's output:
-      call record_influence(entry_name=<name>, agent_role="relevance-verifier",
-        feature_type_id=<current feature type_id from .meta.json>)
-  If no entries matched: no action (valid -- not all memories will be referenced)
-  If record_influence fails: warn "Influence tracking failed: {error}", continue
+  call record_influence_by_content(
+    subagent_output_text=<full agent output text>,
+    injected_entry_names=<list of entry names from search_memory results>,
+    agent_role="relevance-verifier",
+    feature_type_id=<current feature type_id from .meta.json>,
+    threshold=0.70)
+  If record_influence_by_content fails: warn "Influence tracking failed: {error}", continue
   If .meta.json missing or type_id unresolvable: skip influence recording with warning
 
 **Handle relevance-verifier result:**
@@ -805,12 +809,13 @@ resume_state["code-quality-reviewer"].last_commit_sha = {current HEAD SHA}
 
 **Post-dispatch influence tracking:**
 If search_memory returned entries before this dispatch:
-  For each entry name in the stored list:
-    If entry name appears as a case-insensitive exact substring in the subagent's output:
-      call record_influence(entry_name=<name>, agent_role="code-quality-reviewer",
-        feature_type_id=<current feature type_id from .meta.json>)
-  If no entries matched: no action (valid — not all memories will be referenced)
-  If record_influence fails: warn "Influence tracking failed: {error}", continue
+  call record_influence_by_content(
+    subagent_output_text=<full agent output text>,
+    injected_entry_names=<list of entry names from search_memory results>,
+    agent_role="code-quality-reviewer",
+    feature_type_id=<current feature type_id from .meta.json>,
+    threshold=0.70)
+  If record_influence_by_content fails: warn "Influence tracking failed: {error}", continue
   If .meta.json missing or type_id unresolvable: skip influence recording with warning
 
 **7c. Level 3: Standards-Level Verification -- Security Review:**
@@ -976,12 +981,13 @@ resume_state["security-reviewer"].last_commit_sha = {current HEAD SHA}
 
 **Post-dispatch influence tracking:**
 If search_memory returned entries before this dispatch:
-  For each entry name in the stored list:
-    If entry name appears as a case-insensitive exact substring in the subagent's output:
-      call record_influence(entry_name=<name>, agent_role="security-reviewer",
-        feature_type_id=<current feature type_id from .meta.json>)
-  If no entries matched: no action (valid — not all memories will be referenced)
-  If record_influence fails: warn "Influence tracking failed: {error}", continue
+  call record_influence_by_content(
+    subagent_output_text=<full agent output text>,
+    injected_entry_names=<list of entry names from search_memory results>,
+    agent_role="security-reviewer",
+    feature_type_id=<current feature type_id from .meta.json>,
+    threshold=0.70)
+  If record_influence_by_content fails: warn "Influence tracking failed: {error}", continue
   If .meta.json missing or type_id unresolvable: skip influence recording with warning
 
 **7d. Selective Dispatch Logic:**
@@ -1139,12 +1145,13 @@ resume_state["implementer"].last_iteration = {iteration}
 
 **Post-dispatch influence tracking:**
 If search_memory returned entries before this dispatch:
-  For each entry name in the stored list:
-    If entry name appears as a case-insensitive exact substring in the subagent's output:
-      call record_influence(entry_name=<name>, agent_role="implementer",
-        feature_type_id=<current feature type_id from .meta.json>)
-  If no entries matched: no action (valid — not all memories will be referenced)
-  If record_influence fails: warn "Influence tracking failed: {error}", continue
+  call record_influence_by_content(
+    subagent_output_text=<full agent output text>,
+    injected_entry_names=<list of entry names from search_memory results>,
+    agent_role="implementer",
+    feature_type_id=<current feature type_id from .meta.json>,
+    threshold=0.70)
+  If record_influence_by_content fails: warn "Influence tracking failed: {error}", continue
   If .meta.json missing or type_id unresolvable: skip influence recording with warning
 
 **7e-commit. Per-iteration git commit after implementer fixes:**
@@ -1225,9 +1232,13 @@ Where `{final_validation_tag}` is `[FINAL VALIDATION]` when the iteration is a m
 
 ### 7f. Capture Review Learnings (Automatic)
 
-**Trigger:** Only execute if the review loop ran 2+ iterations. If all three reviewers approved on first pass, skip — no review learnings to capture.
+**Trigger:** Execute after any review iteration that found blocker or warning issues.
 
-**Process:**
+**Two-path capture:**
+- **IF exactly 1 iteration with blockers found and fixed:** Store each blocker directly via `store_memory` with `confidence="low"` (single observation, not a confirmed pattern). Budget: max 2 entries.
+- **IF 2+ iterations:** Use recurring-pattern grouping logic below. Budget: max 3 entries.
+
+**Process (for 2+ iterations):**
 1. Read `.review-history.md` entries for THIS phase only (implementation-reviewer, relevance-verifier, code-quality-reviewer, and security-reviewer entries)
 2. Group issues by description similarity (same category, overlapping file patterns)
 3. Identify issues that appeared in 2+ iterations — these are recurring patterns
@@ -1255,7 +1266,7 @@ If the review loop completed in 1 iteration AND the reviewer found issues with s
      - `description`: issue description + the suggestion that resolved it
      - `reasoning`: "Single-iteration blocker catch in feature {id} implement phase"
      - `category`: inferred from issue type (same mapping as recurring patterns above)
-     - `confidence`: "medium"
+     - `confidence`: "low"
      - `references`: ["feature/{id}-{slug}"]
 
 **Circuit breaker capture:** If review loop hit max iterations (cap reached), also capture a single entry:
