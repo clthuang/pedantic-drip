@@ -67,7 +67,7 @@ When an entity completes, `cascade_unblock()` in Phase B removes its `blocked_by
   3. Instantiate `dep_mgr = DependencyManager()`
   4. For each, call `dep_mgr.cascade_unblock(db, uuid)`
   5. Return count of cleaned edges
-  Runs at session start as Task 5 in the orchestrator, after workflow reconciliation (Task 4). Must be placed inside the existing try block in `__main__.py:run()`, between Task 4 and the except clause. Result key: `"dependency_cleanup"` (integer count of cleaned edges).
+  Runs at session start as Task 4 in the orchestrator, after workflow reconciliation (Task 3). Must be placed inside the existing try block in `__main__.py:run()`, between Task 3 and the except clause. Result key: `"dependency_cleanup"` (integer count of cleaned edges).
 
 - FR-5: Event-driven cascade — make `cascade_unblock` fire automatically when an entity's status changes to `completed`, rather than relying on callers to invoke it explicitly.
   **Mechanism:** Add a post-status-change hook inside `EntityDatabase.update_entity()`. When `status` is being set to `completed`:

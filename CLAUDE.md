@@ -99,6 +99,9 @@ plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/transition_gate/ -v
 # Run workflow engine tests (state engine, hydration, transitions, degradation — 309 tests)
 plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/workflow_engine/ -v
 
+# Run reconciliation orchestrator tests (entity sync, backlog parsing, brainstorm archive — 62 tests)
+plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/reconciliation_orchestrator/ -v
+
 # Run reconciliation module tests (drift detection, apply, frontmatter sync — 118 tests)
 plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/workflow_engine/test_reconciliation.py -v
 
