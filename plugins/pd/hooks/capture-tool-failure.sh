@@ -1,22 +1,21 @@
 #!/usr/bin/env bash
-# PostToolUse hook: Capture tool failures as anti-pattern learnings
-# Event: PostToolUse (fires on ALL tool calls — must detect failures from output)
+# Capture tool failures as anti-pattern learnings
+# Handles TWO events with different schemas:
+#
+# 1. PostToolUse (fires on ALL tool calls — detect failures via heuristic)
+#    Registered in: .claude/settings.local.json (plugin hooks.json doesn't fire for built-in tools)
+#    Schema (empirically confirmed 2026-04-07):
+#    { "hook_event_name": "PostToolUse", "tool_name": "Bash",
+#      "tool_input": {"command": "..."}, "tool_response": {"stdout": "...", "stderr": "..."} }
+#
+# 2. PostToolUseFailure (fires ONLY on tool-level failures — no heuristic needed)
+#    Registered in: both hooks.json and .claude/settings.local.json (defense-in-depth)
+#    Schema (from CC docs, not yet empirically confirmed):
+#    { "hook_event_name": "PostToolUseFailure", "tool_name": "Edit",
+#      "tool_input": {"file_path": "..."}, "error": "String to replace not found" }
+#
 # Matcher: Bash|Edit|Write
 # Output: {} (empty JSON, non-blocking)
-#
-# Verified stdin schema (PostToolUse, empirically confirmed 2026-04-07):
-# {
-#   "hook_event_name": "PostToolUse",
-#   "tool_name": "Bash",
-#   "tool_input": {"command": "...", "description": "..."},
-#   "tool_response": {"stdout": "...", "stderr": "...", "interrupted": false},
-#   "tool_use_id": "...",
-#   "session_id": "...",
-#   "cwd": "..."
-# }
-# For Edit: tool_input has file_path, old_string, new_string
-# For Write: tool_input has file_path, content
-# Edit/Write failures: tool_response contains error text (e.g., "String to replace not found")
 
 set -euo pipefail
 
@@ -37,59 +36,71 @@ if [[ "$CAPTURE_MODE" == "off" ]]; then
 fi
 
 # Parse JSON with system python3
-# For PostToolUse, we need to detect failures from tool_response content
+# Handles both PostToolUse (heuristic failure detection) and PostToolUseFailure (direct)
 PARSED=$(echo "$INPUT" | python3 -c "
 import json, sys
 try:
     data = json.load(sys.stdin)
+    event_name = data.get('hook_event_name', '')
     tool_name = data.get('tool_name', '')
     tool_input = data.get('tool_input', {})
-    tool_response = data.get('tool_response', {})
 
     # Extract command/path based on tool_name
     if tool_name == 'Bash':
         subject = tool_input.get('command', '')
-        # Combine stdout + stderr for error detection
-        stdout = tool_response.get('stdout', '') if isinstance(tool_response, dict) else str(tool_response)
-        stderr = tool_response.get('stderr', '') if isinstance(tool_response, dict) else ''
-        error_text = (stderr + ' ' + stdout).strip() if stderr else stdout
     elif tool_name in ('Edit', 'Write'):
         subject = tool_input.get('file_path', '')
-        # Edit/Write failures come as string responses with error text
-        if isinstance(tool_response, dict):
-            error_text = tool_response.get('stderr', '') or tool_response.get('stdout', '')
-        else:
-            error_text = str(tool_response)
     else:
         subject = ''
-        error_text = ''
 
-    # Detect if this is actually a failure
-    is_failure = False
-    error_indicators = [
-        'No such file', 'not found', 'ENOENT', 'FileNotFoundError',
-        'Permission denied', 'EACCES', 'Operation not permitted',
-        'SyntaxError', 'unexpected token', 'parse error',
-        'ModuleNotFoundError', 'Cannot find module', 'ImportError', 'not installed',
-        'not compatible', 'version mismatch', 'unsupported', 'deprecated',
-        'command not found', 'Error:', 'error:', 'FATAL', 'fatal:',
-        'Traceback (most recent call last)', 'Exception:',
-        'not found in file', 'not unique', 'Is a directory'
-    ]
-    for indicator in error_indicators:
-        if indicator in error_text:
-            is_failure = True
-            break
+    # Branch on event type for error extraction
+    if event_name == 'PostToolUseFailure':
+        # Direct failure event — error field exists, no heuristic needed
+        error_text = data.get('error', '')
+        is_failure = True
+    else:
+        # PostToolUse — detect failures from tool_response content
+        tool_response = data.get('tool_response', {})
+        if tool_name == 'Bash':
+            stdout = tool_response.get('stdout', '') if isinstance(tool_response, dict) else str(tool_response)
+            stderr = tool_response.get('stderr', '') if isinstance(tool_response, dict) else ''
+            error_text = (stderr + ' ' + stdout).strip() if stderr else stdout
+        elif tool_name in ('Edit', 'Write'):
+            if isinstance(tool_response, dict):
+                error_text = tool_response.get('stderr', '') or tool_response.get('stdout', '')
+            else:
+                error_text = str(tool_response)
+        else:
+            error_text = ''
+
+        # Heuristic failure detection for PostToolUse
+        is_failure = False
+        error_indicators = [
+            'No such file', 'not found', 'ENOENT', 'FileNotFoundError',
+            'Permission denied', 'EACCES', 'Operation not permitted',
+            'SyntaxError', 'unexpected token', 'parse error',
+            'ModuleNotFoundError', 'Cannot find module', 'ImportError', 'not installed',
+            'not compatible', 'version mismatch', 'unsupported', 'deprecated',
+            'command not found', 'Error:', 'error:', 'FATAL', 'fatal:',
+            'Traceback (most recent call last)', 'Exception:',
+            'not found in file', 'not unique', 'Is a directory'
+        ]
+        for indicator in error_indicators:
+            if indicator in error_text:
+                is_failure = True
+                break
 
     print(tool_name)
     print(subject.replace(chr(10), ' ')[:500])
     print(error_text.replace(chr(10), ' ')[:500])
     print('1' if is_failure else '0')
+    print(event_name)
 except Exception:
     print('')
     print('')
     print('')
     print('0')
+    print('')
 " 2>/dev/null) || { echo '{}'; exit 0; }
 
 # Split parsed output into variables
@@ -97,6 +108,7 @@ TOOL_NAME=$(echo "$PARSED" | sed -n '1p')
 SUBJECT=$(echo "$PARSED" | sed -n '2p')
 ERROR_MSG=$(echo "$PARSED" | sed -n '3p')
 IS_FAILURE=$(echo "$PARSED" | sed -n '4p')
+EVENT_NAME=$(echo "$PARSED" | sed -n '5p')
 
 # If parsing failed or not a failure, exit
 if [[ -z "$TOOL_NAME" || "$IS_FAILURE" != "1" ]]; then
@@ -184,7 +196,7 @@ for meta in glob.glob(os.path.join(features_dir, '*/.meta.json')):
 " 2>/dev/null) || true
 fi
 
-ENTRY_REASONING="Automatic capture from PostToolUse hook"
+ENTRY_REASONING="Automatic capture from ${EVENT_NAME:-PostToolUse} hook"
 if [[ -n "$ACTIVE_FEATURE" ]]; then
     ENTRY_REASONING="${ENTRY_REASONING} in feature ${ACTIVE_FEATURE}"
 fi

@@ -114,6 +114,18 @@
         ]
       }
     ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/capture-tool-failure.sh",
+            "async": true
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

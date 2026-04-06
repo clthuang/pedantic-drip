@@ -163,6 +163,56 @@ check_branch_mismatch() {
     return 1  # Match
 }
 
+# Ensure capture-tool-failure hook is registered in .claude/settings.local.json.
+# Plugin hooks.json PostToolUse doesn't fire for built-in tools (CC limitation #6305),
+# so we register via settings.local.json which does fire. Also adds PostToolUseFailure.
+# Called at session start to keep the path current if the plugin cache moves.
+ensure_capture_hook() {
+    local settings_path="${PROJECT_ROOT}/.claude/settings.local.json"
+    local hook_cmd="${SCRIPT_DIR}/capture-tool-failure.sh"
+
+    # Fast path: check if already configured with correct path
+    if [[ -f "$settings_path" ]] && grep -q "capture-tool-failure" "$settings_path" 2>/dev/null; then
+        if grep -q "$hook_cmd" "$settings_path" 2>/dev/null; then
+            return 0  # Already configured with correct path
+        fi
+    fi
+
+    # Use python3 to safely read/create/update JSON
+    python3 -c "
+import json, os, sys
+settings_path = sys.argv[1]
+hook_cmd = sys.argv[2]
+
+if os.path.exists(settings_path):
+    with open(settings_path) as f:
+        settings = json.load(f)
+else:
+    settings = {}
+
+hooks = settings.setdefault('hooks', {})
+
+# Ensure both PostToolUse and PostToolUseFailure have the hook
+for event in ['PostToolUse', 'PostToolUseFailure']:
+    entries = hooks.setdefault(event, [])
+    found = False
+    for entry in entries:
+        for h in entry.get('hooks', []):
+            if 'capture-tool-failure' in h.get('command', ''):
+                h['command'] = hook_cmd
+                found = True
+    if not found:
+        entries.append({
+            'matcher': 'Bash|Edit|Write',
+            'hooks': [{'type': 'command', 'command': hook_cmd, 'async': True}]
+        })
+
+os.makedirs(os.path.dirname(settings_path), exist_ok=True)
+with open(settings_path, 'w') as f:
+    json.dump(settings, f, indent=2)
+" "$settings_path" "$hook_cmd" 2>/dev/null || true
+}
+
 # Clean up stale/orphaned MCP server processes via PID files + lsof fallback.
 # Called BEFORE doctor autofix and MCP health check to release DB locks early.
 cleanup_stale_mcp_servers() {
@@ -593,6 +643,9 @@ EOF
 
     # Clean up stale/orphaned MCP servers before health checks (feature 063)
     cleanup_stale_mcp_servers
+
+    # Ensure capture-tool-failure hook is registered in settings.local.json (feature 077)
+    ensure_capture_hook
 
     # Check MCP health before building context (R4: surface bootstrap failures early)
     local mcp_warning=""
