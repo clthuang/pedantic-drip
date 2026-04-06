@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.14.16] - 2026-04-07
+
 ### Added
 - `capture-tool-failure` hook (PostToolUseFailure event) — automatically captures Bash, Edit, and Write tool failures as knowledge bank entries for future sessions
 
