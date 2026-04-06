@@ -66,6 +66,9 @@ python3 scripts/migrate_db.py rebuild-fts [--skip-kill] [db_path]
 # Run hook integration tests
 bash plugins/pd/hooks/tests/test-hooks.sh
 
+# Run capture-tool-failure hook tests (PostToolUseFailure — 11 tests)
+bash plugins/pd/hooks/tests/test-capture-tool-failure.sh
+
 # Run memory deprecation warning tests (legacy injection path escape hatch)
 bash plugins/pd/hooks/tests/test-deprecation-warning.sh
 

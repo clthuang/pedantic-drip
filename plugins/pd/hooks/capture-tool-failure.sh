@@ -135,15 +135,16 @@ done
 ACTIVE_FEATURE=""
 FEATURES_DIR="${PROJECT_ROOT}/docs/features"
 if [[ -d "$FEATURES_DIR" ]]; then
-    ACTIVE_FEATURE=$(python3 -c "
+    ACTIVE_FEATURE=$(CTF_FEATURES_DIR="$FEATURES_DIR" python3 -c "
 import json, os, glob
-for meta in glob.glob(os.path.join('$FEATURES_DIR', '*/.meta.json')):
+features_dir = os.environ['CTF_FEATURES_DIR']
+for meta in glob.glob(os.path.join(features_dir, '*/.meta.json')):
     try:
         d = json.load(open(meta))
         if d.get('status') in ('active', 'in-progress'):
             print(os.path.basename(os.path.dirname(meta)))
             break
-    except: pass
+    except Exception: pass
 " 2>/dev/null) || true
 fi
 
