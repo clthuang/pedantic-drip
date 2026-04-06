@@ -57,7 +57,7 @@ flowchart TD
 | Skills | 30 |
 | Agents | 30 |
 | Commands | 32 |
-| Hooks | 13 |
+| Hooks | 14 |
 | MCP Tools | 26 |
 
 ## Commands
@@ -161,7 +161,7 @@ Stage 2: PHASE-REVIEWER (Execution Readiness)
 
 ### Implementation Review
 
-The `/pd:implement` command uses three reviewers in an iterative loop (up to 5 iterations). Only reviewers that failed re-run in intermediate iterations — passing reviewers are skipped. When all three have individually passed, a mandatory final validation round runs all three regardless to confirm end-to-end correctness.
+The `/pd:implement` command uses three reviewers in an iterative loop (up to 3 iterations). Only reviewers that failed re-run in intermediate iterations — passing reviewers are skipped. When all three have individually passed, a mandatory final validation round runs all three regardless to confirm end-to-end correctness.
 
 | Reviewer | Focus | Validation |
 |----------|-------|------------|

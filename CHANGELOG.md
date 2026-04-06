@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `capture-tool-failure` hook (PostToolUseFailure event) — automatically captures Bash, Edit, and Write tool failures as knowledge bank entries for future sessions
+
+### Changed
+- Reviewer iteration cap in `/pd:implement` reduced from 5 to 3 — tighter review cycles prevent runaway iteration loops
+- `capturing-learnings` skill now handles only user corrections; tool failure capture is delegated to the new `capture-tool-failure` hook
+
 ## [4.14.15] - 2026-04-03
 
 ### Added
