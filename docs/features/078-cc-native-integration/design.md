@@ -8,7 +8,7 @@
 - Researching skill parallel dispatch: `researching/SKILL.md:27-78` — Phase 1 dispatches 2 Task calls in same message (codebase-explorer + internet-researcher). Phase 2 dispatches synthesizer after Phase 1 completes.
 - Session-start config injection: `session-start.sh:429-432` — reads `max_concurrent_agents` from `pd.local.md`, validates as integer, injects into session context.
 - Graceful degradation pattern: `capture-tool-failure.sh` — wraps all operations in `|| { echo '{}'; exit 0; }` fallback. `yolo-guard.sh` — fast path exits silently for non-matching tools.
-- Entity DB connection: `database.py` — opens with WAL mode by default (`PRAGMA journal_mode=WAL`), provides `is_healthy()` check.
+- Entity DB connection: `database.py` — opens with WAL mode AND `busy_timeout=15000` (15 seconds) by default (line 3505-3506). Provides `is_healthy()` check. The 15s busy_timeout means SQLite internally waits up to 15s before returning SQLITE_BUSY — any additional retry logic should account for this existing configuration.
 
 ### External Research
 - **CRITICAL:** `isolation: worktree` is **silently ignored for plugin-defined subagent_type values** (CC Issues #33045, #37030). pd's `pd:implementer` is plugin-defined → inline `isolation: worktree` will NOT create worktrees. Bug filed late March 2026, no fix documented.
@@ -104,13 +104,13 @@
 ```
 # Phase 1: Create worktrees manually
 for task in batch:
-    git worktree add .claude/worktrees/task-{N} -b worktree-{feature_id}-task-{N}
+    git worktree add .pd-worktrees/task-{N} -b worktree-{feature_id}-task-{N}
 
 # Phase 2: Dispatch agents with worktree-aware prompts
 for task in batch:
     dispatch(task, prompt_prefix="""
         IMPORTANT: Work ONLY in the worktree directory:
-        {absolute_path}/.claude/worktrees/task-{N}/
+        {absolute_path}/.pd-worktrees/task-{N}/
         Use absolute paths for ALL file operations (Read, Edit, Write, Glob, Grep).
         Use `cd {worktree_path}` before any Bash commands.
         Do NOT modify files in the main working directory.
@@ -120,12 +120,18 @@ for task in batch:
 for task in batch:
     git checkout feature/{id}-{slug}
     git merge worktree-{feature_id}-task-{N}
-    git worktree remove .claude/worktrees/task-{N}
+    git worktree remove .pd-worktrees/task-{N}
 ```
+
+**Worktree directory:** `.pd-worktrees/` at project root (NOT inside `.claude/` which is typically gitignored). Add `.pd-worktrees/` to `.gitignore` during Phase 1 if not already present. Create directory with `mkdir -p .pd-worktrees/`.
 
 **Branch naming:** `worktree-{feature_id}-task-{N}` (e.g., `worktree-078-task-3`).
 
 **Post-merge cleanup:** `git worktree remove <path>` after successful merge. On failure, leave worktree for debugging.
+
+**SQLite concurrency strategy:** Rely on existing `busy_timeout=15000` (15s) in `database.py` for short contention. If SQLITE_BUSY persists beyond busy_timeout, retry the full DB operation twice more with 5s delays between attempts. If still failing after 3 total attempts (including the initial 15s wait), trigger full-serial fallback for remaining tasks. The spike (C4) must validate whether busy_timeout alone is sufficient under the actual worktree topology.
+
+**Complexity estimate:** Manual worktree approach adds ~150-200 lines to implementing/SKILL.md (worktree creation, path injection, merge orchestration, validation, cleanup, fallback logic). This is justified per NFR-3 because: (a) it's a workaround for a CC bug (#33045), not architectural complexity; (b) when CC fixes the bug, ~120 of those lines can be removed, leaving only the merge orchestration; (c) the alternative (no parallelism) leaves a documented capability gap.
 
 **Alternative (if CC fixes #33045):** Switch to inline `isolation: "worktree"` on Agent tool calls. The manual workaround is a bridge until the CC bug is resolved. Track CC Issue #33045 for status.
 
@@ -134,8 +140,22 @@ for task in batch:
 | Failure Type | Detection Point | Fallback Scope | Behavior |
 |---|---|---|---|
 | Worktree creation (`git worktree add` non-zero) | At dispatch time | Per-task | That task dispatches without isolation; others continue in worktrees |
-| SQLite BUSY after 3 retries | During/after agent execution | Full batch | Remaining tasks in current and future batches dispatch serially (no worktree) |
-| Merge conflict | At merge time | Halt | Surface conflict details, prompt user, halt further merges |
+| Agent writes outside worktree (post-agent `git diff --name-only` detects changes in main tree) | Phase 3 pre-merge validation | Per-task | Flag task for manual review; do not merge worktree branch |
+| SQLite BUSY after busy_timeout (existing 15s) exhausted | During agent execution | Full batch | Remaining tasks in current and future batches dispatch serially (no worktree) |
+| Merge conflict | At merge time | Halt | Surface conflict details, document recovery path, halt further merges |
+
+**Merge conflict recovery:** After user resolves conflict and commits, re-run `/pd:implement` which detects remaining un-merged worktree branches (via `git worktree list`) and continues the merge sequence from the next unmerged task.
+
+**Post-agent worktree validation** (Phase 3, before merge):
+```bash
+# Check main tree for unexpected modifications
+main_changes=$(git diff --name-only)
+if [[ -n "$main_changes" ]]; then
+    echo "WARNING: Agent modified files outside worktree: $main_changes"
+    echo "Skipping merge for task {N}. Manual review required."
+    # Do NOT merge this worktree branch
+fi
+```
 
 ### TD-3: .meta.json Write Isolation
 
@@ -198,7 +218,7 @@ Task:
 # Phase 1: Create worktrees (Bash tool, before agent dispatch)
 Bash: |
   for N in {task_numbers}; do
-    git worktree add .claude/worktrees/task-$N -b worktree-{feature_id}-task-$N
+    git worktree add .pd-worktrees/task-$N -b worktree-{feature_id}-task-$N
   done
 
 # Phase 2: Dispatch agents (multiple Agent calls in single message)
@@ -208,7 +228,7 @@ Agent:
   model: opus
   prompt: |
     WORKTREE INSTRUCTIONS:
-    Work ONLY in: {abs_project_root}/.claude/worktrees/task-{N}/
+    Work ONLY in: {abs_project_root}/.pd-worktrees/task-{N}/
     Use absolute paths for ALL Read, Edit, Write, Glob, Grep operations.
     Run `cd {worktree_path}` before any Bash commands.
     Do NOT modify files outside your worktree directory.
@@ -220,7 +240,7 @@ Agent:
 Bash: |
   for N in {task_numbers_in_order}; do
     git merge worktree-{feature_id}-task-$N || { echo "CONFLICT on task $N"; exit 1; }
-    git worktree remove .claude/worktrees/task-$N
+    git worktree remove .pd-worktrees/task-$N
   done
 ```
 
