@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.14.17] - 2026-04-12
+
 ### Fixed
 - `pre-push-guard` hook no longer emits spurious JSON on every Bash call — eliminates "Hook output JSON validation failed" errors that appeared in sessions when push-guard checks ran against unrelated tool calls
 
