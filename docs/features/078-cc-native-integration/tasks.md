@@ -15,9 +15,10 @@
   - **DoD:** Script reports success rate, retry count, wall-clock time. Results written to `docs/features/078-cc-native-integration/spike-results.md`
   - **File:** `plugins/pd/hooks/tests/test-sqlite-concurrency.sh`, `docs/features/078-cc-native-integration/spike-results.md`
 
-- [ ] T0.4: Agent path compliance spike — dispatch test agent with worktree path directive
-  - **DoD:** Dispatch an agent with "Work ONLY in {worktree_path}" prompt directive; verify agent only modifies files within worktree (check `git rev-parse HEAD` unchanged on main, `git diff --name-only` empty on main). Document result in spike-results.md.
-  - **Note:** If agent does not comply, the entire worktree approach is blocked. SHA-based validation (TD-2) is detection, not prevention.
+- [ ] T0.4: Agent path compliance spike — manual test with documented procedure
+  - **Procedure:** (1) Create temp feature dir and worktree: `git worktree add .pd-worktrees/spike-test -b spike-test`. (2) Record SHA: `BEFORE=$(git rev-parse HEAD)`. (3) In a CC session, dispatch an Agent with prompt: "Work ONLY in {abs_path}/.pd-worktrees/spike-test/. Use absolute paths for ALL Read/Edit/Write/Glob/Grep. Create a file called spike-marker.txt with content 'hello'." (4) After agent completes: `git rev-parse HEAD` must equal `$BEFORE`; `git diff --name-only` must be empty; `.pd-worktrees/spike-test/spike-marker.txt` must exist. (5) Cleanup: `git worktree remove .pd-worktrees/spike-test`.
+  - **DoD:** Results recorded in `spike-results.md`: agent path compliance = pass/fail + evidence (git commands output).
+  - **Note:** Manual test (~30 min). If agent does not comply, worktree approach is blocked.
 
 ## Task Group 1: Behavioral Regression Tests Baseline (C3-a)
 *Depends on: nothing | Blocks: Group 2*
@@ -31,8 +32,9 @@
   - **File:** `plugins/pd/hooks/tests/test-workflow-regression.sh`
 
 - [ ] T1.3: Test .meta.json state after complete_phase
-  - **DoD:** Test calls complete_phase MCP, asserts .meta.json has status=completed and non-null completed timestamp
+  - **DoD:** Test calls workflow state server's complete_phase via Python library: `plugins/pd/.venv/bin/python -c "from workflow_state.server import complete_phase_impl; ..."` (bypasses MCP, calls underlying function directly). Asserts .meta.json has status=completed and non-null completed timestamp.
   - **File:** `plugins/pd/hooks/tests/test-workflow-regression.sh`
+  - **Note:** All regression tests use plugin venv Python directly, not MCP server calls. This matches existing test patterns.
 
 - [ ] T1.4: Test phase transition guards (valid + invalid)
   - **DoD:** Test asserts transition_phase(target=design) succeeds after specify; transition_phase(target=implement) fails before design
@@ -89,8 +91,8 @@
   - **File:** `plugins/pd/skills/implementing/SKILL.md`
 
 - [ ] T2.11: Add orphaned worktree cleanup to doctor health checks
-  - **DoD:** Doctor check scans `.pd-worktrees/`, prunes worktrees not associated with active implementing session
-  - **File:** `plugins/pd/commands/doctor.md` or `plugins/pd/hooks/lib/doctor/`
+  - **DoD:** New check function in `plugins/pd/hooks/lib/doctor/checks.py`: scans `.pd-worktrees/` directory, cross-references with `git worktree list`, returns issues for orphaned worktrees. Doctor output includes "stale_worktrees" check.
+  - **File:** `plugins/pd/hooks/lib/doctor/checks.py`
 
 ## Task Group 2-post: Regression Validation
 *Depends on: Group 2*
@@ -102,7 +104,8 @@
 *Depends on: nothing (independent)*
 
 - [ ] T3.1: Bundle security-review.md template from anthropics/claude-code-security-review
-  - **DoD:** `plugins/pd/references/security-review.md` exists with upstream content
+  - **Retrieval:** `curl -o plugins/pd/references/security-review.md https://raw.githubusercontent.com/anthropics/claude-code-security-review/main/.claude/commands/security-review.md`
+  - **DoD:** File exists at `plugins/pd/references/security-review.md` with SHA comment on line 1: `<!-- Source: anthropics/claude-code-security-review @ {commit-SHA} -->`
   - **File:** `plugins/pd/references/security-review.md`
 
 - [ ] T3.2: Add doctor health check for `.claude/commands/security-review.md`
@@ -121,7 +124,8 @@
 *Depends on: nothing (independent stretch)*
 
 - [ ] T4.1: Spike — test context: fork with a minimal skill
-  - **DoD:** Create a test skill with `context: fork` frontmatter, verify it executes in isolated context and returns results
+  - **Procedure:** (1) Create `plugins/pd/skills/test-fork/SKILL.md` with frontmatter `---\nname: test-fork\ncontext: fork\nagent: general-purpose\n---\nOutput the string FORK_VERIFIED.` (2) In a CC session, invoke the skill. (3) Verify main conversation receives "FORK_VERIFIED" output. (4) Clean up test skill after verification.
+  - **DoD:** spike-results.md records: context:fork = pass (output received) or fail (empty/error). Test skill deleted after verification.
 
 - [ ] T4.2: Verify MCP server access from forked context
   - **DoD:** Forked skill successfully calls search_memory and register_entity, or documents that MCP is inaccessible
