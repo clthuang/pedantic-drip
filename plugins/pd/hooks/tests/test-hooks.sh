@@ -241,6 +241,70 @@ test_pre_commit_guard_from_subdirectory() {
     cd "${PROJECT_ROOT}"
 }
 
+# --- pre-push-guard.sh tests ---
+
+# Test: pre-push-guard.sh allows non-push commands
+test_pre_push_guard_allows_non_push() {
+    log_test "pre-push-guard.sh allows non-push commands"
+
+    cd "${PROJECT_ROOT}"
+    local output
+    output=$(echo '{"tool_name": "Bash", "tool_input": {"command": "ls -la"}}' | "${HOOKS_DIR}/pre-push-guard.sh" 2>/dev/null)
+
+    if echo "$output" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d == {}" 2>/dev/null; then
+        log_pass
+    else
+        log_fail "Should return empty JSON for non-push, got: $output"
+    fi
+}
+
+# Test: pre-push-guard.sh allows clean push
+test_pre_push_guard_allows_clean_push() {
+    log_test "pre-push-guard.sh allows clean git push"
+
+    cd "${PROJECT_ROOT}"
+    local output
+    output=$(echo '{"tool_name": "Bash", "tool_input": {"command": "git push origin develop"}}' | "${HOOKS_DIR}/pre-push-guard.sh" 2>/dev/null)
+
+    if echo "$output" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d == {}" 2>/dev/null; then
+        log_pass
+    else
+        log_fail "Should return empty JSON for clean push, got: $output"
+    fi
+}
+
+# Test: pre-push-guard.sh blocks push with broken .meta.json
+test_pre_push_guard_blocks_broken_meta() {
+    log_test "pre-push-guard.sh blocks push with broken .meta.json"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    git init "$tmpdir" >/dev/null 2>&1
+    mkdir -p "$tmpdir/docs/features/099-broken-feature"
+    cat > "$tmpdir/docs/features/099-broken-feature/.meta.json" << 'META'
+{"id":"099","slug":"broken-feature","status":"completed"}
+META
+
+    cd "$tmpdir"
+    local output
+    output=$(echo '{"tool_name": "Bash", "tool_input": {"command": "git push origin main"}}' | "${HOOKS_DIR}/pre-push-guard.sh" 2>/dev/null)
+
+    if echo "$output" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+hso = d['hookSpecificOutput']
+assert hso['permissionDecision'] == 'deny', f'expected deny, got {hso[\"permissionDecision\"]}'
+assert 'BLOCKED' in hso['permissionDecisionReason'], 'reason should contain BLOCKED'
+" 2>/dev/null; then
+        log_pass
+    else
+        log_fail "Should deny push with broken .meta.json, got: $output"
+    fi
+
+    cd "${PROJECT_ROOT}"
+    rm -rf "$tmpdir"
+}
+
 # Test 12: sync-cache.sh produces valid JSON
 test_sync_cache_json() {
     log_test "sync-cache.sh produces valid JSON"
@@ -2577,6 +2641,9 @@ main() {
     test_pre_commit_guard_allows_non_git
     test_pre_commit_guard_warns_main
     test_pre_commit_guard_from_subdirectory
+    test_pre_push_guard_allows_non_push
+    test_pre_push_guard_allows_clean_push
+    test_pre_push_guard_blocks_broken_meta
     test_sync_cache_json
     test_sync_cache_missing_source
 

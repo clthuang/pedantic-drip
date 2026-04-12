@@ -13,10 +13,10 @@ PROJECT_ROOT="$(detect_project_root)"
 INPUT=$(cat)
 
 # Only intercept Bash tool calls containing "git push"
-COMMAND=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('input',{}).get('command',''))" 2>/dev/null || echo "")
+COMMAND=$(echo "$INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('tool_input',{}).get('command',''))" 2>/dev/null || echo "")
 
 if [[ "$COMMAND" != *"git push"* ]]; then
-    echo '{"decision":"allow"}'
+    echo '{}'
     exit 0
 fi
 
@@ -48,8 +48,17 @@ if [[ ${#ERRORS[@]} -gt 0 ]]; then
         MSG+="  - $err\n"
     done
     MSG+="\nFix: run pd:doctor --fix or use complete_phase MCP tool."
-    echo "{\"decision\":\"block\",\"reason\":\"$(echo -e "$MSG" | sed 's/"/\\"/g' | tr '\n' ' ')\"}" 2>/dev/null
+    ESCAPED=$(escape_json "$(echo -e "$MSG" | tr '\n' ' ')")
+    cat <<EOF
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "deny",
+    "permissionDecisionReason": "${ESCAPED}"
+  }
+}
+EOF
     exit 0
 fi
 
-echo '{"decision":"allow"}'
+echo '{}'
