@@ -133,6 +133,12 @@ for task in batch:
 
 **Complexity estimate:** Manual worktree approach adds ~150-200 lines to implementing/SKILL.md (worktree creation, path injection, merge orchestration, validation, cleanup, fallback logic). This is justified per NFR-3 because: (a) it's a workaround for a CC bug (#33045), not architectural complexity; (b) when CC fixes the bug, ~120 of those lines can be removed, leaving only the merge orchestration; (c) the alternative (no parallelism) leaves a documented capability gap.
 
+**Orphaned worktree cleanup:** Add to doctor health checks: scan `.pd-worktrees/` for directories, cross-reference with `git worktree list`. Prune any worktrees not associated with an active implementing session. Also runs at session-start via existing doctor hook.
+
+**Worktree resume on re-entry:** On Step 2 entry, check `git worktree list` for branches matching `worktree-{feature_id}-task-*`. If found, skip worktree creation for those tasks and proceed directly to Phase 3 merge sequence. This handles recovery after merge conflicts or session interruption.
+
+**SQLite fallback detection:** Agents report SQLite BUSY failures in their task reports (collected in Step 2c completion output). After each batch, orchestrator inspects reports. If any agent reports persistent SQLite failures, remaining batches switch to serial dispatch without worktree isolation.
+
 **Alternative (if CC fixes #33045):** Switch to inline `isolation: "worktree"` on Agent tool calls. The manual workaround is a bridge until the CC bug is resolved. Track CC Issue #33045 for status.
 
 ### TD-2: Two-Tier Fallback Strategy
@@ -148,12 +154,21 @@ for task in batch:
 
 **Post-agent worktree validation** (Phase 3, before merge):
 ```bash
-# Check main tree for unexpected modifications
-main_changes=$(git diff --name-only)
-if [[ -n "$main_changes" ]]; then
-    echo "WARNING: Agent modified files outside worktree: $main_changes"
-    echo "Skipping merge for task {N}. Manual review required."
-    # Do NOT merge this worktree branch
+# Record feature branch HEAD before dispatching agents (Phase 1)
+MAIN_SHA=$(git rev-parse HEAD)
+
+# After all agents complete (Phase 3), verify no commits on feature branch
+CURRENT_SHA=$(git rev-parse HEAD)
+if [[ "$CURRENT_SHA" != "$MAIN_SHA" ]]; then
+    echo "WARNING: Agent(s) committed to feature branch outside worktrees"
+    echo "Unexpected commits: $(git log --oneline ${MAIN_SHA}..HEAD)"
+    echo "Manual review required before merging worktree branches."
+    HALT
+fi
+# Also check for uncommitted changes
+if [[ -n "$(git diff --name-only)" ]]; then
+    echo "WARNING: Uncommitted changes in main tree after agent execution"
+    git checkout -- .  # discard stray uncommitted writes
 fi
 ```
 
@@ -185,7 +200,7 @@ After all discovered project checks pass:
 4. If the command is not found or fails: output "security-review not available, skipping" and proceed.
 ```
 
-**Note:** This requires the project to have the security-review command installed. pd could auto-detect and scaffold it during session-start, or document it as a prerequisite.
+**Deployment approach:** Document as a one-time manual setup prerequisite. Add a doctor health check (`security_review_available`) that warns if `.claude/commands/security-review.md` is missing: "security-review command not installed — run `cp <template> .claude/commands/` for pre-merge security scanning." This avoids pd managing files in `.claude/commands/` while ensuring visibility. pd bundles the template at `plugins/pd/references/security-review.md` for easy copying.
 
 ### TD-5: Graceful Degradation Pattern (Universal)
 
