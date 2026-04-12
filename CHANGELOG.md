@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `specifying` skill now separates Happy Paths from Error & Boundary Cases in spec template, with optional Truth Tables for complex branching
+- `spec-reviewer` relaxes Truth Table mandate from hard blocker to optional recommendation
+- `reviewing-artifacts` accepts legacy spec format alongside new Happy/Error structure for backward compatibility
+- `breaking-down-tasks` replaces time-based sizing (5-15 min) with single-responsibility verification, adds Global Subagent Context header, and caps sequential chains at 15 tasks while allowing unlimited parallel scaling
+- `task-reviewer` challenge patterns updated for subagent context verification, structural DoD validation, and dependency-aware batch limits
+- Task count ceiling (3-50) removed across all reviewing agents to support uncapped agentic throughput
+
 ## [4.14.17] - 2026-04-12
 
 ### Fixed
