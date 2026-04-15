@@ -1,9 +1,9 @@
 ---
-last-updated: 2026-04-02T10:30:00Z
-source-feature: 075-phase-context-accumulation
+last-updated: 2026-04-15T00:00:00Z
+source-feature: 078-cc-native-integration
 ---
 
-<!-- AUTO-GENERATED: START - source: 075-phase-context-accumulation -->
+<!-- AUTO-GENERATED: START - source: 078-cc-native-integration -->
 
 # Getting Started
 
@@ -119,6 +119,15 @@ bash plugins/pd/mcp/test_run_memory_server.sh
 bash plugins/pd/mcp/test_bootstrap_venv.sh      # ~2-5 min
 bash plugins/pd/mcp/test_entity_server.sh
 bash plugins/pd/mcp/test_run_workflow_server.sh
+```
+
+### Feature 078 integration tests
+
+```bash
+bash plugins/pd/hooks/tests/test-sqlite-concurrency.sh    # parallel entity-write spike
+bash plugins/pd/hooks/tests/test-workflow-regression.sh   # workflow behavioral baseline
+bash plugins/pd/hooks/tests/test-worktree-dispatch.sh     # git worktree mechanics
+bash plugins/pd/hooks/tests/test-cc-native-integration.sh # SKILL.md prose contracts + config parsing
 ```
 
 ### Migration tests (system Python, not venv)

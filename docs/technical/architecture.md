@@ -1,9 +1,9 @@
 ---
-last-updated: 2026-04-02T00:00:00Z
-source-feature: codebase-analysis
+last-updated: 2026-04-15T00:00:00Z
+source-feature: 078-cc-native-integration
 ---
 
-<!-- AUTO-GENERATED: START - source: codebase-analysis -->
+<!-- AUTO-GENERATED: START - source: 078-cc-native-integration -->
 
 # Architecture
 
@@ -173,6 +173,33 @@ validateAndSetup Step 1b (backward transition detected)
 ```
 
 Constraints: max 2000 chars per entry (serialized JSON). Truncation order: `reviewer_feedback_summary` → `key_decisions` → `artifacts_produced` → `outcome`.
+
+## Implementing Skill — Parallel Dispatch (Feature 078)
+
+`plugins/pd/skills/implementing/SKILL.md` Step 2 uses a three-phase worktree dispatch model replacing the previous serial loop.
+
+### Dispatch Phases
+
+**Phase 1 — Worktree setup:** For each task in the current batch, create an isolated git worktree under `.pd-worktrees/` (gitignored) on a branch named `worktree-{feature_id}-task-{N}` (e.g., `worktree-078-task-3`). Record the feature branch HEAD SHA before any agent dispatch.
+
+**Phase 2 — Parallel agent dispatch:** Dispatch up to `max_concurrent_agents` implementer agents simultaneously. Each agent receives an absolute-path directive prepended to its prompt, restricting all file operations to its worktree directory. Agents must not write to `.meta.json` — the orchestrating skill is the sole writer (see `.meta.json` write isolation invariant).
+
+**Phase 3 — SHA validation, sequential merge, cleanup:** Before merging, verify the feature branch HEAD SHA has not changed (guards against agents writing outside their worktrees). Merge each worktree branch into the feature branch in task order. On success, remove the worktree with `git worktree remove`. On merge conflict, surface the conflict details and halt — re-run `/pd:implement` after resolving to resume from the first un-merged worktree branch.
+
+**Note on `isolation: worktree`:** The inline `isolation: worktree` parameter is silently ignored for plugin-defined `subagent_type` values (CC Issue #33045). pd uses the manual worktree approach as a workaround until this is resolved upstream.
+
+### Fallback Strategy
+
+| Failure | Scope | Behavior |
+|---------|-------|----------|
+| `git worktree add` fails | Per-task | That task dispatches without isolation; other tasks continue in worktrees |
+| Agent commits outside worktree (SHA mismatch detected in Phase 3) | Per-task | Halt; flag for manual review before merging |
+| SQLite BUSY persists beyond `busy_timeout` (15s) | Full batch | Remaining tasks in current and subsequent batches switch to serial dispatch |
+| Merge conflict | Halt | Surface details; user resolves; re-run `/pd:implement` to resume |
+
+**Orphaned worktree cleanup:** The doctor `check_stale_worktrees` check scans `.pd-worktrees/` and cross-references `git worktree list`. Worktrees not associated with an active implementing session are pruned. Also runs at session start via the existing doctor hook.
+
+**Resume on re-entry:** On Step 2 entry, `git worktree list` is scanned for branches matching `worktree-{feature_id}-task-*`. Existing worktrees skip Phase 1 creation and proceed directly to Phase 3 merge.
 
 ## Hooks
 
