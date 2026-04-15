@@ -32,7 +32,7 @@ def _make_db(tmp_path, name: str = "entities.db") -> str:
             key   TEXT PRIMARY KEY,
             value TEXT NOT NULL
         );
-        INSERT OR REPLACE INTO _metadata(key, value) VALUES('schema_version', '8');
+        INSERT OR REPLACE INTO _metadata(key, value) VALUES('schema_version', '9');
 
         CREATE TABLE IF NOT EXISTS entities (
             uuid        TEXT NOT NULL PRIMARY KEY,

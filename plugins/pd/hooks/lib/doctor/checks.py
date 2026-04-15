@@ -12,7 +12,7 @@ import time
 from doctor.models import CheckResult, Issue
 
 # Expected schema versions
-ENTITY_SCHEMA_VERSION = 8
+ENTITY_SCHEMA_VERSION = 9
 MEMORY_SCHEMA_VERSION = 4
 
 
