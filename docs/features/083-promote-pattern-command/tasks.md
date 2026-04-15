@@ -6,23 +6,23 @@
 
 ## Stage 1: Python Scaffolding
 
-### Task 1.1: Package skeleton (init files + types.py, NO KBEntry)
-**File:** `plugins/pd/hooks/lib/pattern_promotion/__init__.py`, `plugins/pd/hooks/lib/pattern_promotion/__main__.py`, `plugins/pd/hooks/lib/pattern_promotion/types.py`
-**Change:** Create empty `__init__.py`. Create `__main__.py` with argparse scaffold (5 subcommands as stubs). Create `types.py` with `FileEdit`, `DiffPlan`, `Result` dataclasses per design I-6/I-7. **Do NOT add KBEntry here** — per design C-3 it belongs to kb_parser.py.
-**Done:** `plugins/pd/.venv/bin/python -m pattern_promotion --help` prints 5 subcommands; `pytest plugins/pd/hooks/lib/pattern_promotion/test_types.py` green (round-trip via dataclasses.asdict + json.dumps).
+### Task 1.1: types.py round-trip tests [TDD: red]
+**File:** `plugins/pd/hooks/lib/pattern_promotion/test_types.py`
+**Change:** Tests asserting `FileEdit`, `DiffPlan`, `Result` round-trip via `dataclasses.asdict` + `json.dumps` with `Path` fields coerced to `str`. At this point types.py does not exist — tests fail on ImportError.
+**Done:** Test file exists; `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/pattern_promotion/test_types.py -v` fails with ImportError (red phase).
 **Depends on:** none
 
-### Task 1.2: types.py round-trip tests [TDD]
-**File:** `plugins/pd/hooks/lib/pattern_promotion/test_types.py`
-**Change:** Tests asserting `FileEdit`, `DiffPlan`, `Result` round-trip via `dataclasses.asdict` + `json.dumps` with `Path` fields coerced to `str`.
-**Done:** Tests pass against Task 1.1's types.py.
+### Task 1.2: Package skeleton + types.py implementation [TDD: green]
+**File:** `plugins/pd/hooks/lib/pattern_promotion/__init__.py`, `plugins/pd/hooks/lib/pattern_promotion/__main__.py`, `plugins/pd/hooks/lib/pattern_promotion/types.py`
+**Change:** Create empty `__init__.py`. Create `__main__.py` with argparse scaffold (5 subcommands as stubs). Create `types.py` with `FileEdit`, `DiffPlan`, `Result` dataclasses per design I-6/I-7. **Do NOT add KBEntry here** — per design C-3 it belongs to kb_parser.py.
+**Done:** `plugins/pd/.venv/bin/python -m pattern_promotion --help` prints 5 subcommands; Task 1.1 tests green.
 **Depends on:** Task 1.1
 
 ### Task 1.3: kb_parser tests [TDD: red phase]
 **File:** `plugins/pd/hooks/lib/pattern_promotion/test_kb_parser.py`
 **Change:** Pytest fixtures with sample markdown (anti-patterns, heuristics, patterns, constitution). Tests: (a) below-threshold excluded, (b) `- Promoted:` excluded, (c) constitution.md excluded, (d) `Observation count: N` parsed when present, (e) distinct `Feature #NNN` counted when field absent, (f) line_range captured correctly.
 **Done:** Tests written; fail with ImportError (KBEntry not yet in kb_parser.py).
-**Depends on:** Task 1.1
+**Depends on:** Task 1.2
 
 ### Task 1.4: kb_parser implementation (incl. KBEntry dataclass) [TDD: green]
 **File:** `plugins/pd/hooks/lib/pattern_promotion/kb_parser.py`
@@ -46,12 +46,12 @@
 **File:** `plugins/pd/hooks/lib/pattern_promotion/inventory.py`, `plugins/pd/hooks/lib/pattern_promotion/test_inventory.py`
 **Change:** `list_skills`, `list_agents`, `list_commands`. Tests use fixture directories.
 **Done:** Tests green against fixtures; additionally `plugins/pd/.venv/bin/python -c "from pattern_promotion.inventory import list_skills; assert len(list_skills()) > 0"` against real repo.
-**Depends on:** Task 1.1
+**Depends on:** Task 1.2
 
 ### Task 1.8: Config wiring — `memory_promote_min_observations` default resolution
-**File:** `plugins/pd/hooks/lib/pattern_promotion/__main__.py`
-**Change:** In `enumerate` subcommand, if `--min-observations` not explicitly passed, read `memory_promote_min_observations` from `.claude/pd.local.md` via existing `common.sh`-style resolution OR inline minimal YAML parse. Default to 3 if field absent.
-**Done:** Test: `enumerate` with no `--min-observations` flag uses config value; with flag overrides.
+**File:** `plugins/pd/hooks/lib/pattern_promotion/__main__.py`, `plugins/pd/hooks/lib/pattern_promotion/test_cli_integration.py`
+**Change:** In `enumerate` subcommand, if `--min-observations` not explicitly passed, read `memory_promote_min_observations` from `.claude/pd.local.md`. Use inline minimal YAML parse (grep for the field, strip; no external dep). Default to 3 if field absent or file missing.
+**Done:** Add 2 test cases to `test_cli_integration.py` (`-k min_observations`): (a) create tmp dir with `.claude/pd.local.md` containing `memory_promote_min_observations: 5`; assert enumerate with no `--min-observations` uses 5; (b) assert `--min-observations 2` overrides to 2. Run: `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/pattern_promotion/test_cli_integration.py -k min_observations -v` green.
 **Depends on:** Task 1.4
 
 ## Stage 2: Per-Target Generators
@@ -60,7 +60,7 @@
 **File:** `plugins/pd/hooks/lib/pattern_promotion/generators/__init__.py`
 **Change:** Empty init file.
 **Done:** `plugins/pd/.venv/bin/python -c "import pattern_promotion.generators; print('ok')"` succeeds.
-**Depends on:** Task 1.1
+**Depends on:** Task 1.2
 
 ### Task 2.2a: generators/hook validate_feasibility tests [TDD]
 **File:** `plugins/pd/hooks/lib/pattern_promotion/generators/test_hook.py`
@@ -82,29 +82,29 @@
 
 ### Task 2.4: generators/skill tests + implementation
 **File:** `plugins/pd/hooks/lib/pattern_promotion/generators/skill.py`, `test_skill.py`
-**Change:** Tests: validate_target_meta rejects unknown skill/non-existent heading; accepts valid. Generate produces single FileEdit modifying target SKILL.md; insertion preserves surrounding content; marker comment inserted.
-**Done:** Tests green.
+**Change:** Tests: validate_target_meta rejects unknown skill/non-existent heading; accepts valid. Generate produces single FileEdit modifying target SKILL.md; insertion preserves surrounding content; **marker comment `# Promoted: <entry-name>` inserted in generated block per TD-8**.
+**Done:** `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/pattern_promotion/generators/test_skill.py -v` green.
 **Depends on:** Task 2.1, Task 1.4
 
 ### Task 2.5: generators/agent tests + implementation
 **File:** `plugins/pd/hooks/lib/pattern_promotion/generators/agent.py`, `test_agent.py`
-**Change:** Parallel to skill. Target pool `plugins/pd/agents/`; common sections "Checks", "Process", "Validation Criteria".
-**Done:** Tests green.
+**Change:** Parallel to skill. Target pool `plugins/pd/agents/`; common sections "Checks", "Process", "Validation Criteria". **Marker comment `# Promoted: <entry-name>` inserted in generated block per TD-8.**
+**Done:** `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/pattern_promotion/generators/test_agent.py -v` green.
 **Depends on:** Task 2.1, Task 1.4
 
 ### Task 2.6: generators/command tests + implementation
 **File:** `plugins/pd/hooks/lib/pattern_promotion/generators/command.py`, `test_command.py`
-**Change:** Parallel to skill. `target_meta.step_id` targeting `### Step Xa` headings.
-**Done:** Tests green.
+**Change:** Parallel to skill. `target_meta.step_id` targeting `### Step Xa` headings. **Marker comment `# Promoted: <entry-name>` inserted in generated block per TD-8.**
+**Done:** `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/pattern_promotion/generators/test_command.py -v` green.
 **Depends on:** Task 2.1, Task 1.4
 
 ## Stage 3: Apply Orchestrator
 
 ### Task 3.1: apply.py Stage 1 + happy path tests [TDD]
 **File:** `plugins/pd/hooks/lib/pattern_promotion/test_apply.py`
-**Change:** Tests: (a) Stage 1 file-existence pre-flight, (b) Stage 1 JSON-validity check (hooks.json parse), (c) Stage 1 partial-run collision grep per TD-8, (d) happy-path full Stages 1-4 with synthetic DiffPlan (2 FileEdits: create + modify), (e) stage-boundary log lines emitted to stderr.
+**Change:** Tests: (a) Stage 1 file-existence pre-flight, (b) Stage 1 JSON-validity check (hooks.json parse), (c) Stage 1 partial-run collision grep per TD-8, (d) happy-path full Stages 1-4 with synthetic DiffPlan (2 FileEdits: create + modify) — **construct synthetic DiffPlan using FileEdit + DiffPlan dataclasses from types.py directly; do not call any generator**, (e) stage-boundary log lines emitted to stderr.
 **Done:** Tests written; fail.
-**Depends on:** Task 1.4, Task 2.3 (for DiffPlan fixture shape)
+**Depends on:** Task 1.4 (types.py + kb_parser for KBEntry)
 
 ### Task 3.2: apply.py Stages 1-4 happy path implementation [TDD: green]
 **File:** `plugins/pd/hooks/lib/pattern_promotion/apply.py`
@@ -130,10 +130,10 @@
 **Done:** Integration test green.
 **Depends on:** Task 3.4
 
-### Task 3.6: mark CLI subcommand — Stage 5 KB marker
-**File:** `plugins/pd/hooks/lib/pattern_promotion/__main__.py`, `plugins/pd/hooks/lib/pattern_promotion/kb_parser.py`
-**Change:** Wire `mark --kb-file --entry-name --target-type --target-path` → `kb_parser.mark_entry(...)`. Append `- Promoted: {target_type}:{repo-relative path}` at insertion point (after `- Confidence:` OR before next sibling heading OR EOF per design FR-5 Stage 5).
-**Done:** Integration test: synthetic KB file gets marker appended at correct position.
+### Task 3.6: mark CLI subcommand tests + implementation
+**File:** `plugins/pd/hooks/lib/pattern_promotion/__main__.py`, `plugins/pd/hooks/lib/pattern_promotion/test_cli_integration.py`
+**Change:** Wire `mark --kb-file --entry-name --target-type --target-path` subcommand in `__main__.py` — **delegates to `kb_parser.mark_entry()` from Task 1.4; do NOT re-implement insertion logic**. Tests cover: (a) insertion after `- Confidence:` line, (b) insertion before next sibling heading when no Confidence, (c) insertion at EOF when last entry, (d) marker format `- Promoted: {target_type}:{repo-relative path}` correctness.
+**Done:** `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/pattern_promotion/test_cli_integration.py -k mark -v` green.
 **Depends on:** Task 1.4
 
 ## Stage 4a: CLI Subcommands + Integration Tests
@@ -158,9 +158,9 @@
 
 ### Task 4a.4: `apply` subcommand
 **File:** `plugins/pd/hooks/lib/pattern_promotion/__main__.py`
-**Change:** `apply --sandbox <dir> --entry-name <name>`. Reads diff_plan.json, calls `apply.apply()`, writes apply_result.json.
-**Done:** Integration test: apply executes 5-stage flow on fixture.
-**Depends on:** Task 3.4, Task 3.5, Task 3.6
+**Change:** `apply --sandbox <dir> --entry-name <name>`. Reads diff_plan.json, calls `apply.apply()`, writes apply_result.json. Does NOT invoke `mark` subcommand — that is a separate skill step.
+**Done:** Integration test: apply executes 5-stage flow on fixture (Stages 1-4; Stage 5 is separate `mark` subcommand).
+**Depends on:** Task 3.4, Task 3.5
 
 ### Task 4a.5: CLI integration tests — Subprocess Serialization Contract
 **File:** `plugins/pd/hooks/lib/pattern_promotion/test_cli_integration.py`
@@ -173,19 +173,19 @@
 ### Task 4b.1: SKILL.md skeleton + Steps 1-2 (enumerate + classify)
 **File:** `plugins/pd/skills/promoting-patterns/SKILL.md`
 **Change:** File structure with YAML frontmatter. Stale-sandbox sweep at start. Step 1: invoke enumerate subcommand, AskUserQuestion for entry selection (list + Other + cancel). Step 2: invoke classify subcommand; if `winner=null`, inline LLM fallback with constrained prompt + closed-enum validation; FR-2d user-override AskUserQuestion.
-**Done:** Fixture run exercises Steps 1-2; entries.json + scores.json produced correctly.
+**Done:** Verification: `plugins/pd/.venv/bin/python -m pattern_promotion enumerate --sandbox /tmp/test_sb --kb-dir plugins/pd/hooks/lib/pattern_promotion/tests/fixtures/kb_fixture && test -s /tmp/test_sb/entries.json` exits 0 AND `plugins/pd/.venv/bin/python -m pattern_promotion classify --sandbox /tmp/test_sb --entry-name <fixture-entry> && test -s /tmp/test_sb/scores.json` exits 0. `./validate.sh` green on the skill file.
 **Depends on:** Task 4a.5
 
 ### Task 4b.2: SKILL.md Step 3 (per-target generation)
 **File:** `plugins/pd/skills/promoting-patterns/SKILL.md`
 **Change:** Step 3 per target: Top-3 LLM call with constrained prompt + pool from inventory; AskUserQuestion (3 + Other + cancel); section-ID LLM; invoke generate subcommand. Handle `status="need-input"` with re-ask.
-**Done:** Fixture run produces diff_plan.json for one target type.
+**Done:** Verification: `plugins/pd/.venv/bin/python -m pattern_promotion generate --sandbox /tmp/test_sb --entry-name <fixture-entry> --target-type skill --target-meta-file plugins/pd/hooks/lib/pattern_promotion/tests/fixtures/skill_target_meta.json && python3 -m json.tool /tmp/test_sb/diff_plan.json` exits 0.
 **Depends on:** Task 4b.1
 
 ### Task 4b.3: SKILL.md Steps 4-5 (approval + apply + mark)
 **File:** `plugins/pd/skills/promoting-patterns/SKILL.md`
 **Change:** Step 4: render diff → 4-option AskUserQuestion (apply/edit-content/change-target/cancel); on edit-content capture full replacement content. Step 5: invoke apply then mark subcommands sequentially. Error handling per spec table. Stale-sandbox cleanup.
-**Done:** Full skill runs end-to-end on fixture; `validate.sh` green on skill file.
+**Done:** `./validate.sh` green on skill file; `grep -c AskUserQuestion plugins/pd/skills/promoting-patterns/SKILL.md` returns ≥4 (entry select, target confirm, approval gate, classify override).
 **Depends on:** Task 4b.2
 
 ## Stage 4c: Command File + Config + Docs Sync
@@ -243,9 +243,9 @@
 **Depends on:** Task 5.1
 
 ### Task 5.5: Negative tests (DETERMINISTIC scenario c)
-**File:** `docs/features/083-promote-pattern-command/spike-results.md`
-**Change:** (a) HUMAN: attempt CLAUDE.md override via `change-target` → verify rejection. (b) HUMAN: re-run on already-promoted entry → verify rejection. (c) **DETERMINISTIC: directly invoke `python -m pattern_promotion apply` with hand-crafted diff_plan.json containing a hook target whose test-{slug}.sh is designed to fail (both positive and negative exit 0).** Verify Stage 4 rollback fires — no LLM reliance.
-**Done:** All 3 scenarios documented with expected behavior observed.
+**File:** `docs/features/083-promote-pattern-command/spike-results.md`, `plugins/pd/hooks/lib/pattern_promotion/tests/fixtures/failing_hook_diff_plan.json`
+**Change:** (a) HUMAN: attempt CLAUDE.md override via `change-target` → verify rejection. (b) HUMAN: re-run on already-promoted entry → verify rejection. (c) **DETERMINISTIC: create fixture at `plugins/pd/hooks/lib/pattern_promotion/tests/fixtures/failing_hook_diff_plan.json` — minimal DiffPlan whose test-{slug}.sh is designed to fail (both positive and negative exit 0, i.e., hook never blocks regardless of input). Directly invoke `python -m pattern_promotion apply --sandbox /tmp/neg_sb --diff-plan-file <fixture>`. Verify Stage 4 rollback fires and exit code non-zero — no LLM reliance.
+**Done:** All 3 scenarios documented in spike-results.md; fixture committed; scenario (c) reproducible from fixture path.
 **Depends on:** Task 5.2
 
 ### Task 5.6: Token cost measurement + test-hooks.sh green
