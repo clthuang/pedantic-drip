@@ -2,10 +2,11 @@
   "id": "079",
   "slug": "fts5-backfill-and-trigger-sync",
   "mode": "standard",
-  "status": "active",
+  "status": "completed",
   "created": "2026-04-15T14:37:05.910653+00:00",
   "branch": "feature/079-fts5-backfill-and-trigger-sync",
-  "lastCompletedPhase": "implement",
+  "completed": "2026-04-15T15:36:41.518635+00:00",
+  "lastCompletedPhase": "finish",
   "phases": {
     "specify": {
       "started": "2026-04-15T15:24:22.386598+00:00",
@@ -23,6 +24,10 @@
     "implement": {
       "completed": "2026-04-15T15:32:16.122923+00:00",
       "iterations": 1
+    },
+    "finish": {
+      "completed": "2026-04-15T15:36:41.518635+00:00",
+      "iterations": 0
     }
   }
 }
