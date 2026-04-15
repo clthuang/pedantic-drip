@@ -626,3 +626,24 @@ Deferring task checkbox updates to post-implementation instead of ticking each c
 - Confidence: medium
 - Last observed: Feature #074
 - Observation count: 1
+
+### Anti-Pattern: tasks.md must use ### Task N.M heading format
+Writing tasks.md in a format other than the implementing skill's '### Task N.M:' heading convention. Bullet-list formats ('- [ ] TN.M:') don't match the parser regex /^(#{3,4})\s+Task\s+(\d+(?:\.\d+)*):?\s*(.+)$/ and force mid-implement rewrite.
+- Observed in: feature/078-cc-native-integration (209-line tasks.md rewritten mid-implement)
+- Confidence: high
+- Last observed: Feature #078
+- Observation count: 1
+
+### Anti-Pattern: Direct reviewer dispatches skip review-history flow
+Direct reviewer dispatches (Task subagent_type: *-reviewer) that bypass the standard review-history-writing flow leave no qualitative trail for retrospectives and degrade AORTA 'R' analysis to 'no data'.
+- Observed in: feature/078-cc-native-integration (.review-history.md not generated)
+- Confidence: high
+- Last observed: Feature #078
+- Observation count: 1
+
+### Anti-Pattern: Final-validation should not count against iteration cap
+Workflows whose final-validation round counts against the same iteration cap as remediation rounds create a design where the legitimate completion path triggers the circuit breaker.
+- Observed in: feature/078-cc-native-integration (implement iter 3 skipped pragmatically)
+- Confidence: medium
+- Last observed: Feature #078
+- Observation count: 1
