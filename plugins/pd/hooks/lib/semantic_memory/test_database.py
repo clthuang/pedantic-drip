@@ -74,7 +74,7 @@ class TestSchemaCreation:
         assert cur.fetchone() is not None
 
     def test_schema_version_is_4(self, db: MemoryDatabase):
-        assert db.get_schema_version() == 4
+        assert db.get_schema_version() == 5
 
     def test_entries_has_19_columns(self, db: MemoryDatabase):
         cur = db._conn.execute("PRAGMA table_info(entries)")
@@ -97,20 +97,20 @@ class TestSchemaCreation:
 class TestMigrationIdempotency:
     def test_opening_twice_does_not_error(self):
         """Opening two MemoryDatabase instances on same in-memory DB should
-        still result in schema_version == 4 (migrations are idempotent)."""
+        still result in schema_version == 5 (migrations are idempotent)."""
         db1 = MemoryDatabase(":memory:")
-        assert db1.get_schema_version() == 4
+        assert db1.get_schema_version() == 5
         db1.close()
 
     def test_schema_version_persists(self, tmp_path):
         """Schema version survives close and reopen."""
         db_path = str(tmp_path / "test.db")
         db1 = MemoryDatabase(db_path)
-        assert db1.get_schema_version() == 4
+        assert db1.get_schema_version() == 5
         db1.close()
 
         db2 = MemoryDatabase(db_path)
-        assert db2.get_schema_version() == 4
+        assert db2.get_schema_version() == 5
         db2.close()
 
 
@@ -174,7 +174,7 @@ class TestMigrationV2Backfill:
 
         # Reopen with MemoryDatabase to trigger migrations v2-v4
         db = MemoryDatabase(db_path)
-        assert db.get_schema_version() == 4
+        assert db.get_schema_version() == 5
 
         entry = db.get_entry("test1")
         assert entry is not None
@@ -1243,7 +1243,7 @@ class TestMigration4:
         conn.close()
 
         db = MemoryDatabase(db_path)
-        assert db.get_schema_version() == 4
+        assert db.get_schema_version() == 5
 
         # Verify influence_count column exists and defaults to 0
         entry = db.get_entry("e1")
@@ -1283,11 +1283,11 @@ class TestMigration4:
         conn.close()
 
         db1 = MemoryDatabase(db_path)
-        assert db1.get_schema_version() == 4
+        assert db1.get_schema_version() == 5
         db1.close()
 
         db2 = MemoryDatabase(db_path)
-        assert db2.get_schema_version() == 4
+        assert db2.get_schema_version() == 5
         db2.close()
 
     def test_migration_influence_count_default_zero_on_new_entry(self, db: MemoryDatabase):
@@ -1720,5 +1720,99 @@ class TestMigrationAtomicity:
         db = MemoryDatabase(db_path)
         try:
             assert db.get_schema_version() == target
+        finally:
+            db.close()
+
+
+class TestMigration5FTS5Rebuild:
+    """Migration 5 repopulates entries_fts for DBs that missed the v3 rebuild."""
+
+    def test_migration_repopulates_empty_fts5(self, tmp_path):
+        db_path = str(tmp_path / "t.db")
+        db = MemoryDatabase(db_path)
+        try:
+            db.upsert_entry(_make_entry(name="test-entry-for-fts", description="Memory flywheel fts5 backfill verification", keywords=json.dumps(["fts5"]), source_project="P002", id="id-" + "test-entry-for-fts".replace(chr(34), "")[:20].replace(" ", "-")))
+            # Drop the virtual table entirely to simulate a DB that never had FTS5 populated.
+            db._conn.execute("DROP TABLE IF EXISTS entries_fts")
+            db._conn.commit()
+
+            from semantic_memory.database import _rebuild_fts5_index
+            _rebuild_fts5_index(db._conn, fts5_available=True)
+            db._conn.commit()
+
+            entries_count = db.count_entries()
+            fts_count = db._conn.execute("SELECT COUNT(*) FROM entries_fts").fetchone()[0]
+            assert fts_count == entries_count
+        finally:
+            db.close()
+
+    def test_migration_is_idempotent(self, tmp_path):
+        db_path = str(tmp_path / "t.db")
+        db = MemoryDatabase(db_path)
+        try:
+            db.upsert_entry(_make_entry(name="idem-test", description="idempotent rebuild check", keywords=json.dumps([]), source_project="P", id="id-" + "idem-test".replace(chr(34), "")[:20].replace(" ", "-")))
+            from semantic_memory.database import _rebuild_fts5_index
+            _rebuild_fts5_index(db._conn, fts5_available=True)
+            db._conn.commit()
+            count_after_first = db._conn.execute("SELECT COUNT(*) FROM entries_fts").fetchone()[0]
+            _rebuild_fts5_index(db._conn, fts5_available=True)
+            db._conn.commit()
+            count_after_second = db._conn.execute("SELECT COUNT(*) FROM entries_fts").fetchone()[0]
+            assert count_after_first == count_after_second == db.count_entries()
+        finally:
+            db.close()
+
+    def test_fts5_unavailable_is_noop(self, tmp_path):
+        db_path = str(tmp_path / "t.db")
+        db = MemoryDatabase(db_path)
+        try:
+            from semantic_memory.database import _rebuild_fts5_index
+            _rebuild_fts5_index(db._conn, fts5_available=False)
+        finally:
+            db.close()
+
+
+class TestFTS5TriggerSync:
+    """Triggers keep entries_fts in sync with entries for insert/update/delete."""
+
+    def test_insert_trigger_populates_fts(self, tmp_path):
+        db_path = str(tmp_path / "t.db")
+        db = MemoryDatabase(db_path)
+        try:
+            if not db._fts5_available:
+                pytest.skip("FTS5 not available")
+            db.upsert_entry(_make_entry(name="trigger-insert-test", description="unique-marker-abracadabra influence wiring", keywords=json.dumps(["trigger"]), source_project="P", id="id-" + "trigger-insert-test".replace(chr(34), "")[:20].replace(" ", "-")))
+            results = db.fts5_search("abracadabra", limit=10)
+            assert len(results) >= 1
+        finally:
+            db.close()
+
+    def test_update_trigger_reindexes(self, tmp_path):
+        db_path = str(tmp_path / "t.db")
+        db = MemoryDatabase(db_path)
+        try:
+            if not db._fts5_available:
+                pytest.skip("FTS5 not available")
+            entry = _make_entry(name="trigger-update-test", description="original-token zebra", keywords=json.dumps([]), source_project="P", id="id-" + "trigger-update-test".replace(chr(34), "")[:20].replace(" ", "-"))
+            db.upsert_entry(entry)
+            entry["description"] = "modified-token yak"
+            db.upsert_entry(entry)
+            assert len(db.fts5_search("yak", limit=10)) >= 1
+            assert len(db.fts5_search("zebra", limit=10)) == 0
+        finally:
+            db.close()
+
+    def test_delete_trigger_removes_from_fts(self, tmp_path):
+        db_path = str(tmp_path / "t.db")
+        db = MemoryDatabase(db_path)
+        try:
+            if not db._fts5_available:
+                pytest.skip("FTS5 not available")
+            entry = _make_entry(name="trigger-delete-test", description="doomed-token quasar", keywords=json.dumps([]), source_project="P", id="id-" + "trigger-delete-test".replace(chr(34), "")[:20].replace(" ", "-"))
+            db.upsert_entry(entry)
+            assert len(db.fts5_search("quasar", limit=10)) >= 1
+            db._conn.execute("DELETE FROM entries WHERE id = ?", (entry["id"],))
+            db._conn.commit()
+            assert len(db.fts5_search("quasar", limit=10)) == 0
         finally:
             db.close()
