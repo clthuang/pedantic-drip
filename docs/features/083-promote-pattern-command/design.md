@@ -74,6 +74,7 @@ Skill markdown invokes Python helpers via `Bash` tool subprocess. Contract:
    - `apply_result.json` — apply orchestrator outcome
 3. **Skill reads sandbox files via `Read` tool**, parses JSON, branches on contents.
 4. **Exit codes**: 0 on success/need-input, non-zero on error. Stderr captures stack traces and warning logs.
+5. **Serialization**: `DiffPlan`, `FileEdit`, `KBEntry`, `Result` are serialized via `dataclasses.asdict()` + `json.dumps()`, with `Path` fields coerced to `str(path)` before serialization. This is the single source of truth for all subprocess payloads.
 5. **Cleanup**: skill `rm -rf` the sandbox dir on completion (success OR cancel) — not on `error` (leave for debugging).
 
 Example skill markdown step:
@@ -119,14 +120,19 @@ Provides candidate pools for FR-3-{skill,agent,command} Top-3 selection:
 Skill markdown reads these and feeds Top-3 LLM prompt with the appropriate pool. Output bounded (~30 names → ~500 tokens).
 
 ### C-6: Per-target generators — new `plugins/pd/hooks/lib/pattern_promotion/generators/`
-Four modules, each exposing `generate(entry, target_meta) -> DiffPlan`:
+Four modules, each exposing `generate(entry, target_meta) -> DiffPlan`.
+**Note:** `validate_feasibility` (hook) and `validate_target_meta` (skill/agent/command) are NOT exposed as separate CLI subcommands. They are called internally at the start of each generator's `generate()` and return via the `generate` subcommand's `status="need-input"` path if the target_meta is malformed. This keeps the CLI surface minimal (5 subcommands total).
+
+Modules:
 - `hook.py` — `target_meta = {feasibility: {event, tools[], check_kind, check_expression}}`. Generates `.sh` + `hooks.json` patch + test stub. Plus `validate_feasibility(feasibility) -> bool` for FR-3-hook step 1 schema check (rejects empty `tools`, unknown enums).
 - `skill.py` — `target_meta = {skill_name, section_heading, insertion_mode}`. Plus `validate_target_meta(target_meta) -> bool` (heading exists in target file).
 - `agent.py` — `target_meta = {agent_name, section_heading, insertion_mode}`. Same validator.
 - `command.py` — `target_meta = {command_name, step_id, insertion_mode}`. Same validator.
 
 ### C-7: Apply orchestrator — new `plugins/pd/hooks/lib/pattern_promotion/apply.py`
-Single function `apply(entry, diff_plan, target_type) -> Result` running 5 stages with stage-boundary progress logs to stderr (visible to skill via stderr capture in Bash). Handles snapshot/rollback/baseline-delta-validate.
+Single function `apply(entry, diff_plan, target_type) -> Result` running **Stages 1-4** with stage-boundary progress logs to stderr (visible to skill via stderr capture in Bash). Handles snapshot/rollback/baseline-delta-validate/hook-test-execution.
+
+**Stage 5 (KB marker) is delegated to the separate `mark` CLI subcommand**, invoked by the skill after `apply` returns success. Rationale: separation keeps apply.py rollback boundary clean (target files) vs. the KB marker (metadata); also enables direct testing of Stage 5 via `mark` subcommand without needing a full apply run. The skill invokes `apply` then `mark` sequentially; if `apply` succeeds but `mark` fails, skill logs the KB-marker write failure and instructs user to manually annotate.
 
 ### C-8: CLI entrypoint — new `plugins/pd/hooks/lib/pattern_promotion/__main__.py`
 Subcommands: `enumerate`, `classify`, `generate`, `apply`, `mark`. Each takes `--sandbox <dir>` and optional flags. Used by skill markdown via subprocess; also enables direct unit/integration testing without the skill layer.
