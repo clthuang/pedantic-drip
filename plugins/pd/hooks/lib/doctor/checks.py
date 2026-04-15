@@ -1984,3 +1984,146 @@ def check_config_validity(project_root: str, **kwargs) -> CheckResult:
         issues=issues,
         elapsed_ms=elapsed,
     )
+
+
+# ---------------------------------------------------------------------------
+# Check: Stale Worktrees
+# ---------------------------------------------------------------------------
+
+
+def _parse_git_worktree_list(output: str) -> list[str]:
+    """Parse `git worktree list --porcelain` output, returning worktree paths.
+
+    Porcelain format emits `worktree <path>` lines separated by blank lines.
+    Returns absolute paths as reported by git.
+    """
+    paths: list[str] = []
+    for line in output.splitlines():
+        if line.startswith("worktree "):
+            paths.append(line[len("worktree "):].strip())
+    return paths
+
+
+def check_stale_worktrees(project_root: str, **kwargs) -> CheckResult:
+    """Check: stale/orphaned worktrees under `.pd-worktrees/`.
+
+    Detects two orphan conditions:
+    1. Filesystem orphan: directory exists under `.pd-worktrees/` but
+       `git worktree list` does NOT report it (admin record gone, dir remains).
+    2. Git admin orphan: `git worktree list` reports a worktree under
+       `.pd-worktrees/` but the directory does not exist on disk.
+
+    Skipped silently if `.pd-worktrees/` is absent (no orphans possible) or
+    if `git worktree list` cannot be executed (e.g., not a git repo).
+
+    Severity: warning — orphaned worktrees waste disk but don't break workflows.
+    """
+    start = time.monotonic()
+    issues: list[Issue] = []
+
+    worktrees_dir = os.path.join(project_root, ".pd-worktrees")
+    if not os.path.isdir(worktrees_dir):
+        # No .pd-worktrees/ → no orphans possible; skip silently.
+        elapsed = int((time.monotonic() - start) * 1000)
+        return CheckResult(
+            name="stale_worktrees",
+            passed=True,
+            issues=[],
+            elapsed_ms=elapsed,
+        )
+
+    # Enumerate directory entries (filesystem view).
+    fs_entries: set[str] = set()
+    try:
+        for entry in os.listdir(worktrees_dir):
+            full = os.path.join(worktrees_dir, entry)
+            if os.path.isdir(full):
+                fs_entries.add(os.path.realpath(full))
+    except OSError as exc:
+        issues.append(Issue(
+            check="stale_worktrees",
+            severity="warning",
+            entity=None,
+            message=f"Cannot read .pd-worktrees/: {exc}",
+            fix_hint=None,
+        ))
+        elapsed = int((time.monotonic() - start) * 1000)
+        return CheckResult(
+            name="stale_worktrees",
+            passed=False,
+            issues=issues,
+            elapsed_ms=elapsed,
+        )
+
+    # Query git worktree list (admin view).
+    git_paths: set[str] | None = None
+    try:
+        result = subprocess.run(
+            ["git", "-C", project_root, "worktree", "list", "--porcelain"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            git_paths = {
+                os.path.realpath(p)
+                for p in _parse_git_worktree_list(result.stdout)
+            }
+        else:
+            # Non-zero exit (e.g., not a git repo) → skip silently.
+            git_paths = None
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        git_paths = None
+
+    if git_paths is None:
+        # Cannot reconcile without git admin view — skip silently.
+        elapsed = int((time.monotonic() - start) * 1000)
+        return CheckResult(
+            name="stale_worktrees",
+            passed=True,
+            issues=[],
+            elapsed_ms=elapsed,
+        )
+
+    # Restrict git_paths to those under .pd-worktrees/ for the admin-orphan
+    # comparison (other worktrees outside .pd-worktrees/ are not our concern).
+    worktrees_dir_real = os.path.realpath(worktrees_dir)
+    git_pd_paths = {
+        p for p in git_paths
+        if p == worktrees_dir_real or p.startswith(worktrees_dir_real + os.sep)
+    }
+
+    # Filesystem orphans: dir exists on disk, but no git admin record.
+    for fs_path in sorted(fs_entries - git_pd_paths):
+        rel = os.path.relpath(fs_path, project_root)
+        issues.append(Issue(
+            check="stale_worktrees",
+            severity="warning",
+            entity=None,
+            message=(
+                f"Orphaned worktree directory (no git admin record): {rel}"
+            ),
+            fix_hint=f"rm -rf {rel}",
+        ))
+
+    # Git admin orphans: git has a record, but directory is missing.
+    for git_path in sorted(git_pd_paths - fs_entries):
+        rel = os.path.relpath(git_path, project_root)
+        issues.append(Issue(
+            check="stale_worktrees",
+            severity="warning",
+            entity=None,
+            message=(
+                f"Orphaned git worktree record (directory missing): {rel}"
+            ),
+            fix_hint=(
+                f"git worktree prune  # or: git worktree remove --force {rel}"
+            ),
+        ))
+
+    elapsed = int((time.monotonic() - start) * 1000)
+    passed = len(issues) == 0
+    return CheckResult(
+        name="stale_worktrees",
+        passed=passed,
+        issues=issues,
+        elapsed_ms=elapsed,
+    )

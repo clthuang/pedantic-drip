@@ -4,7 +4,7 @@ description: Run diagnostic checks on pd workspace health
 
 # /pd:doctor Command
 
-Run 13 data consistency checks across entity DB, memory DB, workflow state, and filesystem artifacts. Optionally apply safe auto-fixes.
+Run 14 data consistency checks across entity DB, memory DB, workflow state, and filesystem artifacts. Optionally apply safe auto-fixes.
 
 ## Config Variables
 Use these values from session context (injected at session start):
@@ -68,6 +68,7 @@ Parse the `diagnostic` key. Format as a summary table:
 | referential_integrity | PASS/FAIL | N issues |
 | config_validity | PASS/FAIL | N issues |
 | security_review_command | PASS/FAIL | N issues |
+| stale_worktrees | PASS/FAIL | N issues |
 
 For each check that failed (passed=false), show the issues grouped by severity:
 - Errors first (with fix_hint if available)
