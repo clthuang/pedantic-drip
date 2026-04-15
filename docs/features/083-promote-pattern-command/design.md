@@ -9,172 +9,200 @@ project: P002-memory-flywheel
 ## Prior Art (Step 0 — abbreviated, YOLO)
 
 Skipped formal research dispatch — the codebase was mapped during prior P002 investigations:
-- **KB markdown parsers exist** in `plugins/pd/hooks/lib/semantic_memory/importer.py` (parses anti-patterns/heuristics/patterns) — reusable rather than rewriting parsing.
-- **Hook registration pattern** is in `plugins/pd/hooks/hooks.json` + `.sh` files following established conventions (validated by feature 078's checks).
-- **Slash-command pattern** is markdown files under `plugins/pd/commands/{name}.md`, similar in shape to `/pd:remember`, `/pd:add-to-backlog`.
-- **AskUserQuestion gating** is the canonical user-interaction pattern across all commands (per CLAUDE.md User Input Standards).
-- **Existing skills count:** 30+ under `plugins/pd/skills/` — confirms FR-3-skill needs Top-3 LLM filter (full list is unwieldy).
+- **KB markdown parser exists** at `plugins/pd/hooks/lib/semantic_memory/importer.py:117` as `_parse_markdown_entries` — **private method, returns upsert-shaped dicts (no line ranges, no Promoted-marker handling)**. Cannot be cleanly reused without refactor; this design instead introduces a separate parser tailored to FR-1's needs.
+- **Hook registration pattern** is in `plugins/pd/hooks/hooks.json` + `.sh` files following established conventions.
+- **Slash-command pattern** is markdown files under `plugins/pd/commands/{name}.md`.
+- **Skill-backed command precedent** is `/pd:retrospect` → `pd:retrospecting` (multi-stage stateful workflow with LLM calls + approval). Counter-example `/pd:remember` is single-shot inline.
+- **Subprocess Python precedent** is `retrospecting/SKILL.md:231` — but only for write-only stores; this design extends the pattern to structured returns.
 
 ## Architecture Overview
 
-A **slash command** (`/pd:promote-pattern`) backed by an **optional supporting skill** (`pd:promoting-patterns`) that holds the deeper procedural logic. Command file is the entrypoint per pd convention; skill carries reusable steps.
+A **slash command** (`/pd:promote-pattern`) backed by a **supporting skill** (`pd:promoting-patterns`) that holds the multi-stage workflow logic. Command file is the entrypoint per pd convention; skill carries reusable steps. Python helpers under `plugins/pd/hooks/lib/pattern_promotion/` provide deterministic operations.
 
 ```
 User → /pd:promote-pattern [name?]
          ↓
-       commands/promote-pattern.md  (entrypoint, ~150 lines)
+       commands/promote-pattern.md  (entrypoint, ~50 lines)
          ↓ (Skill dispatch)
        skills/promoting-patterns/SKILL.md  (logic core, ~250 lines)
          ↓
-       ┌─ Step 1: Enumerate KB (parser + filter)
-       ├─ Step 2: Classify target (regex score → LLM fallback → user)
-       ├─ Step 3: Generate diff (per-target generator)
-       ├─ Step 4: Approval gate (AskUserQuestion + edit-content path)
-       └─ Step 5: Apply (5-stage atomic write)
+       ┌─ Step 1: Enumerate KB        → pattern_promotion/kb_parser.py
+       ├─ Step 2: Classify target     → classifier.py + (optional) inline LLM
+       ├─ Step 3: Generate diff       → generators/{hook,skill,agent,command}.py
+       ├─ Step 4: Approval gate       → AskUserQuestion + edit-content path
+       └─ Step 5: Apply (5-stage)     → apply.py
 ```
+
+## Pipeline Stage Ownership
+
+Maps every spec FR-1..FR-6 sub-step to its executor (resolves design-reviewer Blocker 1):
+
+| Spec sub-step | Owner | Notes |
+|---|---|---|
+| FR-1 enumeration | `pattern_promotion/kb_parser.py::enumerate_qualifying_entries` | Pure Python; tests independent of skill |
+| FR-1 listing UX (AskUserQuestion / substring match / disambiguation) | **skill markdown** | Reads enumerator's JSON; chooses display path |
+| FR-2a keyword scoring | `pattern_promotion/classifier.py::classify_keywords` | Pure Python; deterministic |
+| FR-2b tie-break decision | `pattern_promotion/classifier.py::decide_target` | Pure Python; returns winner-or-None |
+| FR-2c LLM fallback | **skill markdown** (inline orchestrator reasoning) | Constrained prompt; output validated against closed enum (FR-2c) |
+| FR-2d user override | **skill markdown** (AskUserQuestion) | CLAUDE.md never offered |
+| FR-3-hook step 1 (feasibility gate) | **skill markdown** (inline LLM call) | Output validated by `pattern_promotion/generators/hook.py::validate_feasibility` |
+| FR-3-hook step 2 (skeleton generation) | `pattern_promotion/generators/hook.py::generate` | Pure Python templates |
+| FR-3-hook step 3 (slug collision) | `pattern_promotion/generators/hook.py::generate` | Auto-suffix |
+| FR-3-{skill,agent,command} step 1 (Top-3 LLM) | **skill markdown** (inline LLM) | Pool list provided by `pattern_promotion/inventory.py::list_targets(target_type)` |
+| FR-3-{skill,agent,command} step 2 (AskUserQuestion select) | **skill markdown** | Top-3 + Other + cancel |
+| FR-3-{skill,agent,command} step 3 (section/step ID + re-ask) | **skill markdown** (inline LLM, max 1 re-ask) | Output validated by `generators/{skill,agent,command}.py::validate_target_meta` (heading/step exists) |
+| FR-3-{skill,agent,command} step 4 (patch generation) | `pattern_promotion/generators/{skill,agent,command}.py::generate` | Pure Python |
+| FR-4 approval gate | **skill markdown** (AskUserQuestion + edit-content capture) | DiffPlan rendered for preview |
+| FR-5 stages 1-5 | `pattern_promotion/apply.py::apply` | Single Python entrypoint; all 5 stages atomic; emits stage progress |
+| FR-6 CLAUDE.md exclusion | LLM prompts (FR-2c) + AskUserQuestion options (FR-2d) | Never reaches generator |
+
+Skill markdown is the orchestrator; Python is the deterministic core. **Every LLM call is in skill markdown; every deterministic operation is in Python.**
+
+## Subprocess Serialization Contract (resolves design-reviewer Blocker 2)
+
+Skill markdown invokes Python helpers via `Bash` tool subprocess. Contract:
+
+1. **Compact status JSON on stdout** — every helper emits a single JSON object on its last line of stdout. Fields:
+   - `status`: `"ok"` | `"error"` | `"need-input"`
+   - `data_path`: optional path to a sandbox file containing the bulky artifact (DiffPlan, parsed entries list, etc.)
+   - `summary`: human-readable one-line summary
+   - `error`: optional error message (when `status="error"`)
+2. **Bulky artifacts written to `agent_sandbox/{date}/promote-pattern-{ts}/`** — sandbox dir per command invocation. Files:
+   - `entries.json` — output of enumerate
+   - `scores.json` — classifier output
+   - `diff_plan.json` — generator output (full file contents in JSON-encoded strings)
+   - `apply_result.json` — apply orchestrator outcome
+3. **Skill reads sandbox files via `Read` tool**, parses JSON, branches on contents.
+4. **Exit codes**: 0 on success/need-input, non-zero on error. Stderr captures stack traces and warning logs.
+5. **Cleanup**: skill `rm -rf` the sandbox dir on completion (success OR cancel) — not on `error` (leave for debugging).
+
+Example skill markdown step:
+```bash
+SANDBOX=$(mktemp -d agent_sandbox/$(date +%Y-%m-%d)/promote-pattern-XXXXXX)
+plugins/pd/.venv/bin/python -m pattern_promotion enumerate --sandbox "$SANDBOX" --kb-dir docs/knowledge-bank
+# → stdout: {"status":"ok","data_path":"<SANDBOX>/entries.json","summary":"7 qualifying entries"}
+```
+Then skill `Read`s `entries.json` and continues.
 
 ## Components
 
 ### C-1: Command entrypoint — `plugins/pd/commands/promote-pattern.md`
-Markdown command file following the convention of `remember.md` / `add-to-backlog.md`. Receives optional `<entry-name>` argument. Dispatches the `pd:promoting-patterns` skill with parsed args. Handles top-level arg parsing, --help, validation of args.
+~50 lines. Receives optional `<entry-name>` argument. Validates `--help`. Dispatches the `pd:promoting-patterns` skill with parsed args.
 
 ### C-2: Logic skill — `plugins/pd/skills/promoting-patterns/SKILL.md`
-Procedural skill containing the FR-1..FR-6 step-by-step. Markdown-driven (no Python module needed for the skill itself — the orchestrating LLM follows the steps). References the helper modules below for deterministic operations.
+~250 lines. Markdown-driven orchestrator. Contains step-by-step instructions (FR-1..FR-6) including the LLM-driven steps (Top-3 selection, classification fallback, section identification). All LLM calls in skill markdown follow the **constrained-prompt + validate-output-against-schema** pattern.
 
-### C-3: KB parser helper — extends `plugins/pd/hooks/lib/semantic_memory/importer.py`
-Add a function `enumerate_qualifying_entries(kb_dir, min_observations) -> list[KBEntry]`:
-- Reuses existing markdown parsing in `importer.py` (don't rewrite).
-- Adds the `effective_observation_count` normalization from FR-1 (Observation count field OR distinct Feature # count).
-- Filters by `confidence='high'` for files that have it; by observation count threshold for all.
-- Excludes entries containing `- Promoted: ` line.
+### C-3: KB parser — new `plugins/pd/hooks/lib/pattern_promotion/kb_parser.py`
+**Standalone parser** — does not extend `semantic_memory/importer.py` (private method, wrong return shape, no line ranges). Implements:
+- `enumerate_qualifying_entries(kb_dir, min_observations) -> list[KBEntry]`
+- `KBEntry` dataclass: `name, description, confidence, effective_observation_count, category, file_path, line_range`
+- Marker detection: skips entries containing `- Promoted: ` line.
+- `effective_observation_count` per FR-1 normalization (Observation count field OR distinct Feature # count OR 0).
 
-`KBEntry` dataclass fields: `name`, `description`, `confidence`, `effective_observation_count`, `category` (anti-pattern/heuristic/pattern), `file_path`, `line_range`.
+The existing `importer._parse_markdown_entries` is unchanged. **No coupling between import flow and promote-pattern flow** — both can evolve independently.
 
-### C-4: Classifier helper — new `plugins/pd/hooks/lib/promote_pattern/classifier.py`
-Pure-Python module:
-- `classify_keywords(entry: KBEntry) -> dict[str, int]` — returns `{hook: int, skill: int, agent: int, command: int}` score map per FR-2a regex table (Python `re` flavor, IGNORECASE).
-- Constants for the 4 keyword tables (single source of truth for FR-2a rows).
-- `decide_target(scores: dict) -> Literal['hook', 'skill', 'agent', 'command'] | None` — returns winner if strictly highest; None if tied or all-zero (caller invokes LLM fallback).
+### C-4: Classifier — new `plugins/pd/hooks/lib/pattern_promotion/classifier.py`
+- `KEYWORD_PATTERNS: dict[str, list[re.Pattern]]` — single source of truth for FR-2a regex tables; compiled at module load with `re.IGNORECASE`.
+- `classify_keywords(entry: KBEntry) -> dict[str, int]`
+- `decide_target(scores: dict) -> Optional[str]` — strict-highest winner or None.
 
-The skill (C-2) calls these via `plugins/pd/.venv/bin/python -m promote_pattern.classifier ...` (subprocess — same pattern as semantic_memory tooling).
+### C-5: Inventory helper — new `plugins/pd/hooks/lib/pattern_promotion/inventory.py`
+Provides candidate pools for FR-3-{skill,agent,command} Top-3 selection:
+- `list_skills() -> list[str]` — skill directory names under `plugins/pd/skills/`
+- `list_agents() -> list[str]` — agent file basenames under `plugins/pd/agents/`
+- `list_commands() -> list[str]` — command file basenames under `plugins/pd/commands/`
 
-### C-5: Per-target diff generators — new `plugins/pd/hooks/lib/promote_pattern/generators/`
-Four generator modules:
-- `hook.py` — generates the `.sh` skeleton + `hooks.json` patch + test stub from feasibility-gate output. Validates JSON post-patch. Closed-enum tools array enforced.
-- `skill.py` — applies append-to-section patch to a target SKILL.md. Section-locator helper.
-- `agent.py` — same shape as skill but for `plugins/pd/agents/{name}.md`.
-- `command.py` — same shape but for `plugins/pd/commands/{name}.md`, with step-id targeting.
+Skill markdown reads these and feeds Top-3 LLM prompt with the appropriate pool. Output bounded (~30 names → ~500 tokens).
 
-Each generator exposes a single function: `generate(entry: KBEntry, target_meta: dict) -> DiffPlan` where `DiffPlan` is a list of `FileEdit` records: `{path, action, before, after}`.
+### C-6: Per-target generators — new `plugins/pd/hooks/lib/pattern_promotion/generators/`
+Four modules, each exposing `generate(entry, target_meta) -> DiffPlan`:
+- `hook.py` — `target_meta = {feasibility: {event, tools[], check_kind, check_expression}}`. Generates `.sh` + `hooks.json` patch + test stub. Plus `validate_feasibility(feasibility) -> bool` for FR-3-hook step 1 schema check (rejects empty `tools`, unknown enums).
+- `skill.py` — `target_meta = {skill_name, section_heading, insertion_mode}`. Plus `validate_target_meta(target_meta) -> bool` (heading exists in target file).
+- `agent.py` — `target_meta = {agent_name, section_heading, insertion_mode}`. Same validator.
+- `command.py` — `target_meta = {command_name, step_id, insertion_mode}`. Same validator.
 
-### C-6: 5-stage apply orchestrator — new `plugins/pd/hooks/lib/promote_pattern/apply.py`
-Implements FR-5 staging:
-- `pre_flight(diff_plan) -> bool` — Stage 1 validation
-- `snapshot(diff_plan) -> dict[path, content]` — Stage 2
-- `write(diff_plan) -> None` — Stage 3 (with rollback closure capturing snapshot)
-- `validate_baseline_delta(snapshot) -> bool` — Stage 4 (runs validate.sh before+after)
-- `mark_kb(entry, target_path, target_type) -> None` — Stage 5
+### C-7: Apply orchestrator — new `plugins/pd/hooks/lib/pattern_promotion/apply.py`
+Single function `apply(entry, diff_plan, target_type) -> Result` running 5 stages with stage-boundary progress logs to stderr (visible to skill via stderr capture in Bash). Handles snapshot/rollback/baseline-delta-validate.
 
-Wraps in a single `apply(entry, diff_plan, target_type) -> Result` function. On any stage failure, restores from snapshot and returns `Result(success=False, reason=...)`.
+### C-8: CLI entrypoint — new `plugins/pd/hooks/lib/pattern_promotion/__main__.py`
+Subcommands: `enumerate`, `classify`, `generate`, `apply`, `mark`. Each takes `--sandbox <dir>` and optional flags. Used by skill markdown via subprocess; also enables direct unit/integration testing without the skill layer.
 
-### C-7: Config field — `.claude/pd.local.md` template
-Add `memory_promote_min_observations: 3` to the `# Memory` block. Read by C-3 enumerator. Documented in the template comment.
+### C-9: Config field — `.claude/pd.local.md` template
+`memory_promote_min_observations: 3` under `# Memory` block.
 
 ## Technical Decisions
 
-### TD-1: Skill-as-logic, command-as-entry
-Following `/pd:retrospect` / `pd:retrospecting` pattern: command is thin (arg parsing + dispatch); skill carries the workflow. Keeps the command markdown small (~150 lines) and the skill testable independently.
+### TD-1: Skill-as-logic, command-as-entry — **criterion explicit**
+**Criterion:** A pd command warrants a backing skill when the workflow has (a) >1 LLM call in sequence, (b) stateful approval loops, OR (c) rollback semantics. `/pd:promote-pattern` has all three; `/pd:remember` has none.
 
-### TD-2: Reuse semantic_memory.importer for KB parsing
-**Why:** Existing parser handles markdown structure correctly; rewriting risks divergence. **Risk:** importer is currently used only for `import` flow — extending it must not break that flow. Mitigation: add the new function alongside existing ones; existing callers untouched; tests for both new and old paths.
+### TD-2: New parser, not importer reuse
+Original plan to extend `semantic_memory/importer.py` was rejected after design review: the existing parser is private (`_parse_markdown_entries`), returns DB-upsert-shaped dicts without line ranges, and has no Promoted-marker awareness. Standalone `pattern_promotion/kb_parser.py` is cleaner. **Acknowledged tradeoff:** small parsing-logic duplication. **Mitigation:** if a future feature needs a unified parser, extract a shared module then; YAGNI now.
 
-### TD-3: Subprocess Python calls from skill markdown
-The orchestrating LLM in the skill markdown invokes Python helpers via `plugins/pd/.venv/bin/python -m promote_pattern.classifier` etc. **Why:** keeps deterministic logic in pure Python (testable, fast, no LLM cost), while skill markdown handles user interaction + orchestration. **Alternative considered:** putting all logic in Python and command markdown just calls one entrypoint. Rejected because user interaction (AskUserQuestion) is markdown-driven.
+### TD-3: Subprocess Python via sandbox-file artifacts + stdout status JSON
+Per the Subprocess Serialization Contract above. Helpers emit compact status JSON on stdout; bulky outputs go to `agent_sandbox/.../promote-pattern-{ts}/`. Skill `Read`s sandbox files. Exit code 0 = success or need-input; non-zero = error. Stderr for diagnostics.
 
-### TD-4: LLM fallback uses inline orchestrator call (no MCP)
-For FR-2c classification + FR-3-{hook,skill,agent,command} LLM steps, the skill markdown asks the orchestrating Claude directly (inline reasoning), not via MCP or subagent. **Why:** ≤2000 token budget per attempt is tight; Task subagent dispatch has substantial overhead. Inline reasoning is fast and stays within the orchestrator's existing context. **Risk:** orchestrator's classification could drift over sessions. Mitigation: validation of LLM output against closed enum (FR-2c).
+### TD-4: Inline LLM for classification + Top-3 + section ID
+Skill markdown invokes the orchestrating LLM directly for FR-2c, FR-3-* Top-3, and FR-3-* section identification. **Mitigation against context pollution (per design-reviewer warning):** every LLM step has (a) a constrained prompt enumerating valid output schema, (b) validation of LLM output against closed enum or file-existence check, (c) at most one re-ask, (d) **FR-2d user override is the explicit safety net** — user always sees and can override classification before any write.
 
 ### TD-5: Baseline-delta validation via validate.sh
-FR-5 Stage 4 captures `validate.sh` output before and after writes. **Why:** project already has validate.sh; reuse rather than build new validator. **Risk:** validate.sh is slower than a targeted check (~2-5s on this repo). Mitigation: NFR-4 budget allows up to 30s — well within current.
+Captures `validate.sh` output immediately after Stage 2 (snapshot) and again after Stage 3 (write). Rollback only on NEW errors.
 
-### TD-6: KB marker is line-level, not structured
-Marker is a `- Promoted: {target_type}:{repo-relative path}` markdown bullet. **Why:** matches existing `- Confidence:`, `- Used in:` line conventions; survives markdown re-parsing trivially. **Alternative:** YAML frontmatter per entry. Rejected because anti-patterns.md / heuristics.md / patterns.md don't use frontmatter per-entry.
+### TD-6: KB marker is line-level
+`- Promoted: {target_type}:{repo-relative path}` markdown bullet. Survives re-parsing.
 
-### TD-7: Hook feasibility gate restricted to mechanical checks
-FR-3-hook step 1 explicitly returns `infeasible` for rules that cannot be expressed as regex/JSON-field checks on tool input. **Why:** PreToolUse can't observe arbitrary semantic conditions (e.g., "test code respects encapsulation" requires AST analysis). Forcing such patterns to fall through to skill/agent target prevents shipping hooks that silently never fire.
+### TD-7: Hook feasibility gate is LLM + post-generation positive/negative test execution
+**Strengthened per design-reviewer warning:** after generating a hook, Stage 4 executes the generated `test-{slug}.sh` with both positive (should-block) and negative (should-pass) crafted inputs. If exit codes don't differentiate (both pass or both block), Stage 4 fails → rollback. This forces feasibility honesty: an LLM-claimed-feasible hook that doesn't actually work cannot ship.
 
-### TD-8: No transaction wrapper
-FR-5 5-stage apply uses in-memory snapshot + manual rollback rather than git stash/restore or transactional FS. **Why:** simpler, no external dependency; all writes are within `plugins/pd/`, not destructive at scale. **Risk:** if process is killed mid-Stage-3, partial state remains. Mitigation: documented in error table; user re-runs command (idempotency from FR-5 marker).
+### TD-8: In-memory snapshot rollback (no transaction wrapper)
+Documented limitation: SIGINT between Stage 3 and Stage 5 leaves target files written without KB marker. Mitigation: Stage 1 pre-flight scans for existing files matching the intended hook slug pattern AND containing a comment header referencing the KB entry name; if found, abort with "possible prior partial run, manual check required". Skill/agent/command targets are file-modify (not file-create), so SIGINT after Stage 3 leaves the file modified — re-run finds the entry already promoted (because Stage 3 ran), but no marker, surfaces the `change-target` confusion. Documented in error table.
 
 ## Risks
 
 | Risk | Likelihood | Severity | Mitigation |
 |---|---|---|---|
-| KB parser drift between import flow and promote-pattern flow | Medium | Medium | Tests for both; shared parser code |
-| LLM classification drift over time | Medium | Low | Closed-enum validation; user override always available |
-| `hooks.json` schema evolves (new fields) | Low | Medium | Parse + emit using existing JSON tooling; validate post-patch |
-| Mid-flight process termination | Low | Low | Re-run is safe (FR-5 marker idempotency) |
-| `validate.sh` baseline-delta has false positives (e.g., timing-sensitive checks) | Low | Medium | Compare error count + categories; document in error table; allow manual override on next iteration |
-| Skill discovery list (C-2 input to LLM Top-3) becomes noisy as skills grow | Medium | Low | Cap at 30 in initial prompt; if exceeded, pre-filter by keyword overlap |
-| User edit-content corrupts markdown structure | Medium | Low | Stage 4 validate.sh catches structural errors; rollback restores |
+| LLM classification drift across sessions | Medium | Low | FR-2d user override always available (TD-4) |
+| `hooks.json` schema evolves | Low | Medium | Validate JSON post-patch (Stage 4); use existing JSON tooling |
+| Mid-flight SIGINT (Stage 3-5) | Low | Low | Stage 1 collision check (TD-8); user re-runs |
+| `validate.sh` baseline-delta false positive (timing-sensitive checks) | Low | Medium | Compare error count + categories |
+| Skill discovery list bloat (>30 skills) | Low | Low | Cap at 30; pre-filter by keyword overlap |
+| User edit-content corrupts markdown structure | Medium | Low | Stage 4 catches; rollback restores |
+| LLM-claimed-feasible hook that doesn't fire | Medium | Medium | TD-7: positive/negative test execution at Stage 4 |
+| Sandbox dir not cleaned after error | Low | Low | Documented; leaves debugging artifacts intentionally |
 
 ## Interfaces
 
 ### I-1: `enumerate_qualifying_entries(kb_dir: Path, min_observations: int) -> list[KBEntry]`
-**Module:** `plugins/pd/hooks/lib/semantic_memory/importer.py` (extension)
-**Signature:**
+**Module:** `plugins/pd/hooks/lib/pattern_promotion/kb_parser.py`
 ```python
 def enumerate_qualifying_entries(
     kb_dir: Path,
     min_observations: int = 3,
 ) -> list[KBEntry]:
-    """Return KB entries meeting promotion criteria.
-
-    Filters: confidence='high' (where field exists), observation count >= threshold,
-    no existing 'Promoted:' marker. Excludes constitution.md.
-    """
+    """Return KB entries meeting promotion criteria. Excludes constitution.md
+    and entries already containing '- Promoted:' marker."""
 ```
 
 ### I-2: `classify_keywords(entry: KBEntry) -> dict[str, int]`
-**Module:** `plugins/pd/hooks/lib/promote_pattern/classifier.py`
-```python
-def classify_keywords(entry: KBEntry) -> dict[Literal['hook','skill','agent','command'], int]:
-    """Return regex-match score per target. Uses Python re with IGNORECASE."""
-```
+**Module:** `plugins/pd/hooks/lib/pattern_promotion/classifier.py`
 
-### I-3: `decide_target(scores: dict) -> Optional[str]`
-```python
-def decide_target(scores: dict) -> Optional[Literal['hook','skill','agent','command']]:
-    """Return winner if strictly highest score; None if tied or all-zero."""
-```
+### I-3: `decide_target(scores: dict) -> Optional[Literal['hook','skill','agent','command']]`
+**Module:** Same as I-2.
 
-### I-4: `generate_hook(entry: KBEntry, feasibility: dict) -> DiffPlan`
-**Module:** `plugins/pd/hooks/lib/promote_pattern/generators/hook.py`
-```python
-def generate_hook(entry: KBEntry, feasibility: dict) -> DiffPlan:
-    """Produce DiffPlan with .sh + hooks.json patch + test file.
+### I-4: `list_targets(target_type) -> list[str]` (and per-type variants)
+**Module:** `plugins/pd/hooks/lib/pattern_promotion/inventory.py`
 
-    feasibility schema: {event, tools[], check_kind, check_expression}
-    """
-```
+### I-5: `generate(entry: KBEntry, target_meta: dict) -> DiffPlan` (per generator)
+**Modules:** `plugins/pd/hooks/lib/pattern_promotion/generators/{hook,skill,agent,command}.py`
 
-Same shape for `generate_skill`, `generate_agent`, `generate_command` with target-specific second argument (e.g., `target_meta` carrying section heading + insertion mode).
+`target_meta` schemas:
+- **hook:** `{feasibility: {event: str, tools: list[str], check_kind: str, check_expression: str}}`
+- **skill:** `{skill_name: str, section_heading: str, insertion_mode: Literal['append-to-list','new-paragraph-after-heading']}`
+- **agent:** Same as skill but `agent_name`.
+- **command:** `{command_name: str, step_id: str, insertion_mode: ...}`
 
-### I-5: `apply(entry, diff_plan, target_type) -> Result`
-**Module:** `plugins/pd/hooks/lib/promote_pattern/apply.py`
-```python
-@dataclass
-class Result:
-    success: bool
-    target_path: Optional[Path]  # repo-relative
-    reason: Optional[str]        # on failure
-    rolled_back: bool
+Each generator also exports `validate_target_meta(target_meta) -> bool` for FR-3 step 3 validation.
 
-def apply(entry: KBEntry, diff_plan: DiffPlan, target_type: str) -> Result:
-    """Run 5-stage apply: pre-flight → snapshot → write → validate → mark KB."""
-```
-
-### I-6: `DiffPlan` and `FileEdit` dataclasses
+### I-6: `DiffPlan` and `FileEdit` dataclasses (with ordering contract)
 ```python
 @dataclass
 class FileEdit:
@@ -182,45 +210,82 @@ class FileEdit:
     action: Literal['create', 'modify']
     before: Optional[str]        # None for create
     after: str
+    write_order: int             # lower = earlier; ties broken by path
 
 @dataclass
 class DiffPlan:
-    edits: list[FileEdit]
+    edits: list[FileEdit]        # sorted by write_order ascending
     target_type: Literal['hook', 'skill', 'agent', 'command']
-    target_path: Path            # primary target file (for KB marker)
+    target_path: Path            # primary target file (for KB marker); for hook=the .sh, for skill/agent/command=the modified file
+
+# Hook target write_order: .sh=0, test-.sh=1, hooks.json=2 (must be last)
+# Single-file targets: write_order=0
 ```
+Rollback per FileEdit: `modify` → restore `before`; `create` → unlink.
 
-### I-7: Config field
-**File:** `.claude/pd.local.md` template
-**Field:** `memory_promote_min_observations: 3` under `# Memory` block. Read by `enumerate_qualifying_entries`.
+### I-7: `apply(entry, diff_plan, target_type) -> Result`
+**Module:** `plugins/pd/hooks/lib/pattern_promotion/apply.py`
+```python
+@dataclass
+class Result:
+    success: bool
+    target_path: Optional[Path]  # repo-relative
+    reason: Optional[str]
+    rolled_back: bool
+    stage_completed: int         # 0-5; for diagnostics
+```
+Emits stage-boundary log lines to stderr: `[promote-pattern] Stage N: <name>` so skill can show progress.
 
-### I-8: Command argument shape
-**Command:** `/pd:promote-pattern [<entry-name-substring>]`
-- No arg: enumerate + AskUserQuestion select
-- One arg: substring match against entry headings; multiple matches → disambiguate; zero matches → error
-- `--help`: show usage
+### I-8: CLI subcommands
+**Module:** `plugins/pd/hooks/lib/pattern_promotion/__main__.py`
+- `enumerate --sandbox <dir> --kb-dir <path> [--min-observations N]`
+- `classify --sandbox <dir> --entry-name <name>`
+- `generate --sandbox <dir> --entry-name <name> --target-type <type> --target-meta-file <path>`
+- `apply --sandbox <dir> --entry-name <name>`
+- `mark --kb-file <path> --entry-name <name> --target-type <type> --target-path <path>`
+
+All subcommands write JSON status to stdout per Subprocess Serialization Contract.
+
+### I-9: Config field
+`.claude/pd.local.md` template gains `memory_promote_min_observations: 3`.
+
+### I-10: Command argument shape
+`/pd:promote-pattern [<entry-name-substring>]` or `/pd:promote-pattern --help`.
 
 ## Out of Scope (Design)
 
-- **Backporting promotion for existing constitution.md entries** — constitution is hard rule already, no promotion target exists.
-- **Cross-project promotion** — only operates on current project's `docs/knowledge-bank/`.
-- **Reverse promotion (un-promote)** — manual KB edit suffices; no command surface.
-- **Auto-promotion daemon** — explicitly out of scope per spec.
+- **Backporting promotion for constitution.md entries** — already hard rules.
+- **Cross-project promotion** — only current `docs/knowledge-bank/`.
+- **Reverse promotion (un-promote)** — manual KB edit.
+- **Auto-promotion daemon** — explicit per spec.
+- **Refactoring `_parse_markdown_entries` to public API** (TD-2) — separate cleanup if/when needed.
+- **Sandbox cleanup on error** — leave for debugging.
 
 ## Component Dependencies
 
 ```
 promote-pattern.md (command)
   └── promoting-patterns/SKILL.md (skill)
-        ├── importer.py::enumerate_qualifying_entries (extended)
-        ├── promote_pattern/classifier.py
-        ├── promote_pattern/generators/{hook,skill,agent,command}.py
-        └── promote_pattern/apply.py
-              └── invokes ./validate.sh (subprocess)
+        ├── pattern_promotion/__main__ enumerate → kb_parser.py
+        ├── pattern_promotion/__main__ classify  → classifier.py
+        ├── pattern_promotion/__main__ generate  → generators/{hook,skill,agent,command}.py
+        ├── pattern_promotion/__main__ apply     → apply.py
+        │     ├── (Stage 4) ./validate.sh
+        │     └── (TD-7 hook target) test-{slug}.sh execution
+        └── pattern_promotion/__main__ mark      → kb_parser.py marker append
 ```
 
-## Testing Strategy (preview for create-plan phase)
+## Testing Strategy
 
-- **Unit:** `classifier.py` (regex scoring), `enumerate_qualifying_entries` (filter logic), each generator (deterministic templates)
-- **Integration:** `apply.py` 5-stage flow with synthetic DiffPlan (snapshot, write, fake validate failure → rollback verification)
-- **End-to-end (manual per Acceptance Evidence):** promote real KB pattern to each of {hook, skill, agent}; verify KB marker, target file, validate.sh pass
+- **Unit (pytest, direct import — no skill layer):**
+  - `kb_parser.py`: marker exclusion, observation_count normalization, line range capture
+  - `classifier.py`: regex scoring (positive + negative cases per FR-2a row), tie-break logic
+  - `inventory.py`: directory scan correctness
+  - Each `generators/*.py`: deterministic output for canonical inputs; `validate_*` helpers
+  - `apply.py`: 5-stage flow with synthetic DiffPlan; mock validate.sh for baseline-delta; SIGINT simulation
+- **Integration (pytest with `__main__.py` CLI):**
+  - End-to-end CLI invocations against fixture KB dirs
+  - Sandbox file roundtrip
+- **Manual end-to-end (Acceptance Evidence, per spec):**
+  - Promote real KB pattern to each of {hook, skill, agent}; confirm marker, target file, validate.sh
+  - TD-7 verification: feasible hook actually fires; infeasible hook is rejected
