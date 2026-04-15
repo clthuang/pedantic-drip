@@ -237,10 +237,12 @@ Tasks with `worktree_mode=false` have no worktree branch to merge — their chan
 **4. Worktree cleanup.** After each successful merge, remove the corresponding worktree:
 
 ```bash
+# Do NOT pass --quiet — unsupported on git 2.50+ (observed on Apple Git-155).
+# Redirect stderr with 2>/dev/null to suppress noise.
 git worktree remove ".pd-worktrees/task-{N}" 2>/dev/null
 ```
 
-Do NOT pass `--quiet` to `git worktree remove` — it is unsupported on git 2.50+ (observed on Apple Git-155). Redirect stderr with `2>/dev/null` if you want to suppress noise. Failed merges leave their worktree on disk intentionally so the user can inspect it; only successful merges trigger removal.
+Failed merges leave their worktree on disk intentionally so the user can inspect it; only successful merges trigger removal.
 
 After a successful merge, update `MAIN_SHA` to the new feature-branch HEAD so the next batch's Phase 3 stray-commit detection uses a current baseline:
 
@@ -265,7 +267,11 @@ MAIN_SHA=$(git rev-parse HEAD)
 
 #### Step 2g: Proceed to next batch
 
-After Phase 3 completes for the current batch, move to the next batch. If `SERIAL_FALLBACK=true`, every remaining batch dispatches with `worktree_mode=false` for all tasks (skipping Phase 1 and the merge step of Phase 3 entirely; agents write directly to the feature branch in task-document order, one at a time).
+After Phase 3 completes for the current batch, move to the next batch. If `SERIAL_FALLBACK=true`, every remaining batch dispatches with `worktree_mode=false` for all tasks (skipping Phase 1 and the merge step of Phase 3 entirely; agents write directly to the feature branch in task-document order, one at a time). After each serially dispatched agent completes, refresh `MAIN_SHA` so stray-commit detection in subsequent serial tasks uses a current baseline (agents intentionally commit in-tree in serial mode — without refreshing, a later task would see those intended commits as "stray"):
+
+```bash
+MAIN_SHA=$(git rev-parse HEAD)
+```
 
 ### Step 3: Return Results
 

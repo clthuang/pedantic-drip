@@ -348,13 +348,28 @@ ${line}"
 
 # Build CronCreate instruction block when doctor_schedule is configured.
 # Returns empty string if unset/empty or config file missing. Never fails.
+#
+# Security (OWASP LLM01): doctor_schedule is user-controlled config interpolated
+# into an emitted CronCreate instruction. Validate against a strict cron-charset
+# allowlist BEFORE emission so a crafted value cannot escape the quoted string
+# and inject additional tool arguments. Allowed: digits, `* / , -`, spaces, or
+# the `@hourly|daily|weekly|monthly|yearly` shortcuts. Invalid values are
+# dropped with a suppressed-stderr warning (stderr is redirected to /dev/null
+# by callers to avoid corrupting JSON hook output).
 build_cron_schedule_context() {
     local config_file="${PROJECT_ROOT}/.claude/pd.local.md"
     [[ -f "$config_file" ]] || return 0
-    grep -q '^doctor_schedule:' "$config_file" 2>/dev/null || return 0
     local schedule
     schedule=$(read_local_md_field "$config_file" "doctor_schedule" "" 1) || schedule=""
     if [[ -z "$schedule" ]]; then
+        return 0
+    fi
+
+    # Strict allowlist: digits, `*`, `/`, `,`, `-`, spaces, OR a cron shortcut.
+    # This blocks quote characters, brackets, equals-signs, commas-as-arg-seps,
+    # and newlines that could escape the CronCreate(schedule="...") string.
+    if [[ ! "$schedule" =~ ^([0-9*/,\ -]+|@(hourly|daily|weekly|monthly|yearly))$ ]]; then
+        echo "WARNING: doctor_schedule value rejected (invalid cron syntax): ${schedule}" >&2
         return 0
     fi
 

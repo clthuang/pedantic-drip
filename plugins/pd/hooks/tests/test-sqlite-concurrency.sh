@@ -277,18 +277,21 @@ PYINIT
     done
 
     # Authoritative check: query the DB directly for row count.
+    # Use a standalone sqlite3 connection (NOT EntityDatabase._conn) so the
+    # verification step does not couple to EntityDatabase internals — per
+    # CLAUDE.md "Entity DB encapsulation" rule.
     local db_count
     db_count=$("$PD_PYTHON" - <<PYCOUNT
-import sys
-sys.path.insert(0, "${PD_PYTHONPATH}")
-from entity_registry.database import EntityDatabase
-db = EntityDatabase("${shared_db}")
-row = db._conn.execute(
-    "SELECT COUNT(*) FROM entities WHERE project_id = ?",
-    ("test-078-sqlite-concurrency",),
-).fetchone()
-print(row[0])
-db.close()
+import sqlite3
+conn = sqlite3.connect("${shared_db}")
+try:
+    row = conn.execute(
+        "SELECT COUNT(*) FROM entities WHERE project_id = ?",
+        ("test-078-sqlite-concurrency",),
+    ).fetchone()
+    print(row[0])
+finally:
+    conn.close()
 PYCOUNT
 )
 
