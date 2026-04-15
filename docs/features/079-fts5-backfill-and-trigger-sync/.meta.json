@@ -2,9 +2,27 @@
   "id": "079",
   "slug": "fts5-backfill-and-trigger-sync",
   "mode": "standard",
-  "status": "planned",
+  "status": "active",
   "created": "2026-04-15T14:37:05.910653+00:00",
   "branch": "feature/079-fts5-backfill-and-trigger-sync",
-  "lastCompletedPhase": null,
-  "phases": {}
+  "lastCompletedPhase": "implement",
+  "phases": {
+    "specify": {
+      "started": "2026-04-15T15:24:22.386598+00:00",
+      "completed": "2026-04-15T15:32:06.404971+00:00",
+      "iterations": 0
+    },
+    "design": {
+      "completed": "2026-04-15T15:32:11.356692+00:00",
+      "iterations": 0
+    },
+    "create-plan": {
+      "completed": "2026-04-15T15:32:12.002818+00:00",
+      "iterations": 0
+    },
+    "implement": {
+      "completed": "2026-04-15T15:32:16.122923+00:00",
+      "iterations": 1
+    }
+  }
 }

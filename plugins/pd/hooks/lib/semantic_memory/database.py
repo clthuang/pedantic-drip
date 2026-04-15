@@ -268,11 +268,32 @@ def _add_influence_tracking(
 
 # Ordered mapping of version -> migration function.
 # Each migration brings the schema from (version - 1) to version.
+def _rebuild_fts5_index(
+    conn: sqlite3.Connection,
+    *,
+    fts5_available: bool = False,
+    **_kwargs: object,
+) -> None:
+    """Migration 5: repopulate entries_fts for DBs that missed the rebuild.
+
+    Some DBs reached v4 with entries_fts empty because the v3 rebuild
+    ran before entries were imported. Re-issuing the FTS5 `rebuild`
+    command is idempotent — if entries_fts already matches entries,
+    the command is a no-op apart from rewriting the same rows.
+    """
+    if not fts5_available:
+        return
+    # Ensure the virtual table + triggers exist (safe on already-migrated DBs).
+    _create_fts5_objects(conn)
+    conn.execute("INSERT INTO entries_fts(entries_fts) VALUES('rebuild')")
+
+
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _create_initial_schema,
     2: _add_source_hash_and_created_timestamp,
     3: _enforce_not_null_columns,
     4: _add_influence_tracking,
+    5: _rebuild_fts5_index,
 }
 
 # All 19 column names in insertion order.
