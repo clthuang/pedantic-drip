@@ -78,11 +78,15 @@ Skill markdown invokes Python helpers via `Bash` tool subprocess. Contract:
 
 Example skill markdown step:
 ```bash
-SANDBOX=$(mktemp -d agent_sandbox/$(date +%Y-%m-%d)/promote-pattern-XXXXXX)
+DATE_DIR="agent_sandbox/$(date +%Y-%m-%d)"
+mkdir -p "$DATE_DIR"
+SANDBOX=$(mktemp -d "$DATE_DIR/promote-pattern-XXXXXX")
 plugins/pd/.venv/bin/python -m pattern_promotion enumerate --sandbox "$SANDBOX" --kb-dir docs/knowledge-bank
 # → stdout: {"status":"ok","data_path":"<SANDBOX>/entries.json","summary":"7 qualifying entries"}
 ```
 Then skill `Read`s `entries.json` and continues.
+
+**Stale-sandbox opportunistic cleanup:** skill markdown runs `find agent_sandbox -type d -name 'promote-pattern-*' -mtime +7 -exec rm -rf {} +` near invocation start to sweep stale sandboxes from prior runs that failed to clean up. This removes reliance on markdown-level try/finally discipline for the normal cleanup path.
 
 ## Components
 
@@ -151,10 +155,14 @@ Captures `validate.sh` output immediately after Stage 2 (snapshot) and again aft
 `- Promoted: {target_type}:{repo-relative path}` markdown bullet. Survives re-parsing.
 
 ### TD-7: Hook feasibility gate is LLM + post-generation positive/negative test execution
-**Strengthened per design-reviewer warning:** after generating a hook, Stage 4 executes the generated `test-{slug}.sh` with both positive (should-block) and negative (should-pass) crafted inputs. If exit codes don't differentiate (both pass or both block), Stage 4 fails → rollback. This forces feasibility honesty: an LLM-claimed-feasible hook that doesn't actually work cannot ship.
+**Strengthened per design-reviewer warning:** the generated `test-{slug}.sh` contains two invocations internally — one positive (input that should be blocked by the hook) and one negative (input that should pass). The script exits non-zero if either case produces the wrong verdict. Stage 4 runs the test script once; non-zero exit → rollback. This forces feasibility honesty: an LLM-claimed-feasible hook that doesn't distinguish must fail its own test.
 
 ### TD-8: In-memory snapshot rollback (no transaction wrapper)
-Documented limitation: SIGINT between Stage 3 and Stage 5 leaves target files written without KB marker. Mitigation: Stage 1 pre-flight scans for existing files matching the intended hook slug pattern AND containing a comment header referencing the KB entry name; if found, abort with "possible prior partial run, manual check required". Skill/agent/command targets are file-modify (not file-create), so SIGINT after Stage 3 leaves the file modified — re-run finds the entry already promoted (because Stage 3 ran), but no marker, surfaces the `change-target` confusion. Documented in error table.
+Documented limitation: SIGINT between Stage 3 and Stage 5 leaves target files written without KB marker.
+
+**Hook-target partial-run detection:** every generated hook `.sh` emits a leading comment header `# Promoted from KB entry: {entry_name}` (added by `hook.py::generate`). Stage 1 pre-flight scans `plugins/pd/hooks/*.sh` for this exact comment line matching the current entry's name; if any file contains the marker comment, abort with "possible prior partial run from {file}, manual check required". This resolves the slug auto-suffix drift concern.
+
+Skill/agent/command targets are file-modify (not file-create). SIGINT after Stage 3 leaves the file modified; re-run re-enumerates the entry (no KB marker yet) and on re-apply the diff may produce a conflicting insertion. Mitigation: skill/agent/command generators include a `# Promoted: <entry-name>` marker comment in the appended block; Stage 1 pre-flight detects the marker and aborts. Documented in error table.
 
 ## Risks
 
@@ -240,7 +248,7 @@ Emits stage-boundary log lines to stderr: `[promote-pattern] Stage N: <name>` so
 **Module:** `plugins/pd/hooks/lib/pattern_promotion/__main__.py`
 - `enumerate --sandbox <dir> --kb-dir <path> [--min-observations N]`
 - `classify --sandbox <dir> --entry-name <name>`
-- `generate --sandbox <dir> --entry-name <name> --target-type <type> --target-meta-file <path>`
+- `generate --sandbox <dir> --entry-name <name> --target-type <type> --target-meta-file <path>` — pre-checks target_meta schema via the generator's `validate_target_meta` / `validate_feasibility`; returns `status="need-input"` with explanation if malformed (avoids separate validate-feasibility subcommand)
 - `apply --sandbox <dir> --entry-name <name>`
 - `mark --kb-file <path> --entry-name <name> --target-type <type> --target-path <path>`
 
