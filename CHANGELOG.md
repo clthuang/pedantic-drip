@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.14.19] - 2026-04-15
+
 ### Added
 - `doctor_schedule` config field in `.claude/pd.local.md` — schedules automatic doctor health checks via CronCreate on session start
 - Worktree parallel dispatch in `/pd:implement` — tasks now run in parallel via git worktrees (`.pd-worktrees/`); falls back to per-task serial on worktree failure, full-serial on SQLite BUSY, and halts on merge conflict
