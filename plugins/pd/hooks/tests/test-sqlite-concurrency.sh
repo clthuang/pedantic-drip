@@ -6,8 +6,11 @@
 # SQLite DB under WAL mode + busy_timeout=15000. Asserts that all 30 rows
 # land in the DB and reports wall-clock time, retry count, and success rate.
 #
-# Task 0.1 added the harness; Task 0.2 adds the parallel-write test. Metrics
-# are printed to stdout only — writing a structured results file is T0.3.
+# Task 0.1 added the harness; Task 0.2 added the parallel-write test.
+# Task 0.3 improves metric precision (sub-second wall-clock via python3) and
+# emits a single-line machine-parseable JSON summary prefixed with
+# "METRICS_JSON: " that downstream tooling can `grep`/`jq` out of the log.
+# A human-readable "metrics:" line is still printed for operator convenience.
 #
 # Usage: bash plugins/pd/hooks/tests/test-sqlite-concurrency.sh
 
@@ -236,7 +239,9 @@ PYINIT
     local -a worker_pids=()
     local -a worker_out=()
     local wall_start wall_end wall_elapsed
-    wall_start=$(date +%s)
+    # macOS `date` lacks %N; use python3 for monotonic sub-second timing so
+    # wall_clock metrics are meaningful on contended-but-fast runs (<1s).
+    wall_start=$("$PD_PYTHON" -c 'import time; print(repr(time.monotonic()))')
 
     for i in $(seq 1 "$NUM_WORKTREES"); do
         local wt="${WORKTREE_DIRS[$((i-1))]}"
@@ -259,24 +264,26 @@ PYINIT
         fi
     done
 
-    wall_end=$(date +%s)
-    wall_elapsed=$((wall_end - wall_start))
+    wall_end=$("$PD_PYTHON" -c 'import time; print(repr(time.monotonic()))')
+    wall_elapsed=$("$PD_PYTHON" -c "print(f'{${wall_end} - ${wall_start}:.3f}')")
 
     # Aggregate per-proc summaries.
-    local total_written=0 total_retries=0 total_errors=0
+    local total_written=0 total_retries=0 total_errors=0 max_elapsed="0.000"
     for out in "${worker_out[@]}"; do
         if [[ ! -s "$out" ]]; then
             log_info "missing worker output: $out (stderr: $(cat "${out}.err" 2>/dev/null || true))"
             continue
         fi
-        local line written retries errs
+        local line written retries errs elapsed
         line=$(cat "$out")
         written=$("$PD_PYTHON" -c "import json,sys; print(json.loads(sys.argv[1])['written'])" "$line")
         retries=$("$PD_PYTHON" -c "import json,sys; print(json.loads(sys.argv[1])['retries'])" "$line")
         errs=$("$PD_PYTHON" -c "import json,sys; print(len(json.loads(sys.argv[1])['errors']))" "$line")
+        elapsed=$("$PD_PYTHON" -c "import json,sys; print(json.loads(sys.argv[1])['elapsed_s'])" "$line")
         total_written=$((total_written + written))
         total_retries=$((total_retries + retries))
         total_errors=$((total_errors + errs))
+        max_elapsed=$("$PD_PYTHON" -c "print(f'{max(${max_elapsed}, ${elapsed}):.3f}')")
         log_info "worker output: $line"
     done
 
@@ -304,8 +311,31 @@ PYCOUNT
     fi
 
     echo "  metrics: rows_in_db=${db_count} expected=${TOTAL_EXPECTED} retries=${total_retries} " \
-         "worker_errors=${total_errors} failed_procs=${failed_procs} wall_clock=${wall_elapsed}s " \
+         "worker_errors=${total_errors} failed_procs=${failed_procs} " \
+         "wall_clock=${wall_elapsed}s max_proc_elapsed=${max_elapsed}s " \
          "success_rate=${success_rate}%"
+
+    # Machine-parseable single-line summary. Grep for "METRICS_JSON: " and
+    # pipe to `jq` for downstream tooling / results documentation.
+    local metrics_json
+    metrics_json=$("$PD_PYTHON" - <<PYJSON
+import json
+print(json.dumps({
+    "test": "parallel_entity_writes",
+    "num_worktrees": ${NUM_WORKTREES},
+    "entities_per_proc": ${ENTITIES_PER_PROC},
+    "expected_rows": ${TOTAL_EXPECTED},
+    "rows_in_db": ${db_count},
+    "retries": ${total_retries},
+    "worker_errors": ${total_errors},
+    "failed_procs": ${failed_procs},
+    "wall_clock_s": ${wall_elapsed},
+    "max_proc_elapsed_s": ${max_elapsed},
+    "success_rate_pct": ${success_rate},
+}))
+PYJSON
+)
+    echo "METRICS_JSON: ${metrics_json}"
 
     if [[ "$db_count" -ne "$TOTAL_EXPECTED" ]]; then
         log_fail "expected ${TOTAL_EXPECTED} rows in DB, got ${db_count} (retries=${total_retries}, errors=${total_errors})"
@@ -325,7 +355,7 @@ PYCOUNT
 
 # --- Main ---
 main() {
-    echo "Running test-sqlite-concurrency.sh (T0.2: parallel entity writes)"
+    echo "Running test-sqlite-concurrency.sh (T0.3: parallel entity writes + metrics)"
     echo "Temp dir:  $TMPDIR_TEST"
     echo "Python:    $PD_PYTHON"
     echo "PYTHONPATH: $PD_PYTHONPATH"

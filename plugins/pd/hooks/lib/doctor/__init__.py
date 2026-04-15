@@ -1,6 +1,6 @@
 """pd:doctor diagnostic module.
 
-Entry point: run_diagnostics() runs all 12 checks and returns a DiagnosticReport.
+Entry point: run_diagnostics() runs all 13 checks and returns a DiagnosticReport.
 """
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from doctor.checks import (
     check_memory_health,
     check_project_attribution,
     check_referential_integrity,
+    check_security_review_command,
     check_stale_dependencies,
     check_workflow_phase,
 )
@@ -40,6 +41,7 @@ CHECK_ORDER = [
     check_stale_dependencies,
     check_project_attribution,
     check_config_validity,
+    check_security_review_command,
 ]
 
 # Checks that require entity DB

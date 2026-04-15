@@ -2333,10 +2333,10 @@ class TestCheck10MissingConfigFileUsesDefaults:
 # ===========================================================================
 
 
-class TestOrchestratorReportHas12Checks:
-    """Orchestrator: report always has 12 checks."""
+class TestOrchestratorReportHas13Checks:
+    """Orchestrator: report always has 13 checks."""
 
-    def test_report_has_12_checks(self, tmp_path):
+    def test_report_has_13_checks(self, tmp_path):
         from doctor import run_diagnostics
 
         db_path = _make_db(tmp_path)
@@ -2344,13 +2344,13 @@ class TestOrchestratorReportHas12Checks:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 12
+        assert len(report.checks) == 13
 
 
 class TestOrchestratorReportEvenWhenLocked:
-    """Orchestrator: 12 checks even when DB is locked."""
+    """Orchestrator: 13 checks even when DB is locked."""
 
-    def test_report_12_checks_even_when_locked(self, tmp_path):
+    def test_report_13_checks_even_when_locked(self, tmp_path):
         from doctor import run_diagnostics
 
         db_path = _make_db(tmp_path)
@@ -2362,7 +2362,7 @@ class TestOrchestratorReportEvenWhenLocked:
         blocker.execute("BEGIN IMMEDIATE")
         try:
             report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-            assert len(report.checks) == 12
+            assert len(report.checks) == 13
         finally:
             blocker.rollback()
             blocker.close()
@@ -2475,7 +2475,7 @@ class TestOrchestratorPerCheckExceptionIsolation:
         # The orchestrator wraps each check in try/except
         # Even if a check raises, we still get 10 results
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 12
+        assert len(report.checks) == 13
 
 
 class TestOrchestratorMissingDbFile:
@@ -2491,7 +2491,7 @@ class TestOrchestratorMissingDbFile:
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
         assert not os.path.exists(db_path)
         assert not os.path.exists(mem_path)
-        assert len(report.checks) == 12
+        assert len(report.checks) == 13
 
 
 class TestOrchestratorBaseBranchFromConfig:
@@ -2508,7 +2508,7 @@ class TestOrchestratorBaseBranchFromConfig:
         (config_dir / "pd.local.md").write_text("base_branch: develop\n")
 
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 12
+        assert len(report.checks) == 13
 
 
 class TestOrchestratorBaseBranchDefaultMain:
@@ -2522,7 +2522,7 @@ class TestOrchestratorBaseBranchDefaultMain:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 12
+        assert len(report.checks) == 13
 
 
 class TestOrchestratorCheck8RunsFirst:
@@ -2555,7 +2555,7 @@ class TestOrchestratorBothDbsLocked:
         blocker2.execute("BEGIN IMMEDIATE")
         try:
             report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-            assert len(report.checks) == 12
+            assert len(report.checks) == 13
             assert report.healthy is False
         finally:
             blocker1.rollback()
@@ -2575,7 +2575,7 @@ class TestOrchestratorFreshProjectEmpty:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 12
+        assert len(report.checks) == 13
         assert report.elapsed_ms >= 0
 
 
@@ -2591,7 +2591,7 @@ class TestOrchestratorWorksWithoutMcp:
 
         # No MCP servers running -- should still work
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 12
+        assert len(report.checks) == 13
 
 
 class TestOrchestratorConnectionsClosedOnSuccess:
@@ -2605,7 +2605,7 @@ class TestOrchestratorConnectionsClosedOnSuccess:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 12
+        assert len(report.checks) == 13
 
         # Verify we can acquire write locks (connections were closed)
         conn = sqlite3.connect(db_path, timeout=1.0)
@@ -2651,10 +2651,10 @@ def _doctor_lib_path():
     )
 
 
-class TestCliJsonOutputHas10Checks:
+class TestCliJsonOutputHas13Checks:
     """CLI: JSON output contains 11 checks."""
 
-    def test_cli_json_output_has_10_checks(self, tmp_path):
+    def test_cli_json_output_has_13_checks(self, tmp_path):
         db_path = _make_db(tmp_path)
         mem_path = _make_memory_db(tmp_path)
         (tmp_path / "docs").mkdir(exist_ok=True)
@@ -2672,7 +2672,7 @@ class TestCliJsonOutputHas10Checks:
         data = json.loads(result.stdout)
         # Phase 2 wraps output: {"diagnostic": ...}
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 12
+        assert len(diag["checks"]) == 13
 
 
 class TestCliExitCodeAlwaysZero:
@@ -2747,7 +2747,7 @@ class TestCliArtifactsRootCliArgPrecedence:
         assert result.returncode == 0
         data = json.loads(result.stdout)
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 12
+        assert len(diag["checks"]) == 13
 
 
 class TestCliArtifactsRootConfigFallback:
@@ -2769,7 +2769,7 @@ class TestCliArtifactsRootConfigFallback:
         assert result.returncode == 0
         data = json.loads(result.stdout)
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 12
+        assert len(diag["checks"]) == 13
 
 
 class TestCliArtifactsRootDefaultDocs:
@@ -2790,7 +2790,7 @@ class TestCliArtifactsRootDefaultDocs:
         assert result.returncode == 0
         data = json.loads(result.stdout)
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 12
+        assert len(diag["checks"]) == 13
 
 
 class TestCliNoneSerializesAsJsonNull:
@@ -3042,3 +3042,62 @@ class TestCheck11CleanDependenciesPass:
             assert len(result.issues) == 0
         finally:
             conn.close()
+
+
+# ===========================================================================
+# Check: security-review command installation
+# ===========================================================================
+
+
+class TestCheckSecurityReviewCommandMissing:
+    """security-review command missing -> warning."""
+
+    def test_missing_command_warns(self, tmp_path):
+        from doctor.checks import check_security_review_command
+
+        # No .claude/commands/security-review.md created
+        result = check_security_review_command(str(tmp_path))
+
+        assert result.name == "security_review_command"
+        assert not result.passed
+        warnings = [i for i in result.issues if i.severity == "warning"]
+        assert len(warnings) == 1
+        assert "security-review" in warnings[0].message.lower()
+        assert warnings[0].fix_hint is not None
+
+
+class TestCheckSecurityReviewCommandPresent:
+    """security-review command present -> no issues."""
+
+    def test_present_command_passes(self, tmp_path):
+        from doctor.checks import check_security_review_command
+
+        commands_dir = tmp_path / ".claude" / "commands"
+        commands_dir.mkdir(parents=True)
+        (commands_dir / "security-review.md").write_text("# security review\n")
+
+        result = check_security_review_command(str(tmp_path))
+
+        assert result.name == "security_review_command"
+        assert result.passed
+        assert len(result.issues) == 0
+
+
+class TestCheckSecurityReviewCommandAcceptsKwargs:
+    """Check tolerates extra kwargs (dispatched via ctx dict)."""
+
+    def test_accepts_extra_kwargs(self, tmp_path):
+        from doctor.checks import check_security_review_command
+
+        commands_dir = tmp_path / ".claude" / "commands"
+        commands_dir.mkdir(parents=True)
+        (commands_dir / "security-review.md").write_text("stub\n")
+
+        # Should accept and ignore arbitrary kwargs from run_diagnostics ctx
+        result = check_security_review_command(
+            project_root=str(tmp_path),
+            entities_conn=None,
+            artifacts_root="docs",
+            base_branch="main",
+        )
+        assert result.passed

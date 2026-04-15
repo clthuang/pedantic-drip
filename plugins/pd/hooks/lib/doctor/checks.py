@@ -1843,6 +1843,43 @@ def check_stale_dependencies(
 # ---------------------------------------------------------------------------
 
 
+def check_security_review_command(project_root: str, **kwargs) -> CheckResult:
+    """Check: security-review command installation.
+
+    Warns if `.claude/commands/security-review.md` is missing in the project.
+    Used by finish-feature / wrap-up pre-merge security scanning (FR-2).
+    The command is a complementary CC native check — missing file is not
+    a blocker, just a warning so the user knows pre-merge scanning is skipped.
+    """
+    start = time.monotonic()
+    issues: list[Issue] = []
+
+    command_path = os.path.join(
+        project_root, ".claude", "commands", "security-review.md"
+    )
+    if not os.path.isfile(command_path):
+        issues.append(Issue(
+            check="security_review_command",
+            severity="warning",
+            entity=None,
+            message="security-review command not installed",
+            fix_hint=(
+                "Copy plugins/pd/references/security-review.md to "
+                ".claude/commands/security-review.md to enable pre-merge "
+                "security scanning"
+            ),
+        ))
+
+    elapsed = int((time.monotonic() - start) * 1000)
+    passed = len(issues) == 0
+    return CheckResult(
+        name="security_review_command",
+        passed=passed,
+        issues=issues,
+        elapsed_ms=elapsed,
+    )
+
+
 def check_config_validity(project_root: str, **kwargs) -> CheckResult:
     """Check 10: Configuration Validity.
 
