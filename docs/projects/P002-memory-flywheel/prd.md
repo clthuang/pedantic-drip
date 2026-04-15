@@ -46,14 +46,16 @@ The pd plugin's memory system has more shipped capability than the original PRD 
 - [x] **FTS5 (079):** ✅ shipped — `entries=973`, `entries_fts=973`, schema v5, 411/411 tests pass.
 - [ ] **Confidence decay (082):** scheduled or session-start-triggered job demotes confidence for entries unobserved for >N days; tested; respects existing promotion path.
 - [ ] **Mid-session refresh (081):** orchestrator's working memory refreshes at phase boundaries (post-`complete_phase` or pre-`Skill` dispatch); bounded token cost (≤500 tokens per refresh).
-- [ ] **Promote-pattern (083):** `/pd:promote-pattern` accepts a pattern name/ID, classifies into CLAUDE.md target, produces diff for review, applies on approval. At least 1 high-confidence pattern promoted in manual test.
+- [ ] **Promote-pattern (083):** `/pd:promote-pattern` accepts a pattern name/ID, classifies into one of {hook, skill, agent, command}, produces target-appropriate diff for review, applies on approval. CLAUDE.md is explicitly NOT a target (accumulation anti-pattern). At least 1 high-confidence pattern promoted to each target type (hook, skill, agent) in manual test; command promotion optional.
 
 ## Out of Scope (revised, expanded)
 
-- Full 3-target promote (skill/hook/CLAUDE.md) — MVP is CLAUDE.md only; skill/hook targets are follow-up
+- CLAUDE.md as promotion target (anti-pattern: accumulation clogs the file, reduces signal-to-noise, token inflation per session)
 - Cross-project influence ranking (separate concern)
 - Influence weight rebalancing within `_prominence()` formula (separate spec exercise)
 - Embedding model migration (`gemini-embedding-001` stays)
+- Multi-target promotion in one invocation (MVP: one pattern → one target per run)
+- Auto-promotion (no human-in-the-loop); MVP is diff-preview + AskUserQuestion approval
 
 ## Revised Feature Decomposition
 
@@ -62,7 +64,7 @@ Same 5 IDs (preserve audit trail), renamed scopes:
 - **080** Influence tuning + diagnostics (was: "wiring")
 - **081** Orchestrator mid-session refresh (was: "any mid-session refresh")
 - **082** Confidence decay job (was: full recall + decay + promotion; recall and promotion are already done)
-- **083** `/pd:promote-pattern` MVP, CLAUDE.md target only (was: classify into all 3 targets)
+- **083** `/pd:promote-pattern` MVP, targets = {hook, skill, agent, command}. CLAUDE.md explicitly excluded as target (accumulation anti-pattern).
 
 Dependency order unchanged: 080 informs 082 tuning; 083 unchanged.
 
@@ -73,4 +75,4 @@ Dependency order unchanged: 080 informs 082 tuning; 083 unchanged.
 | 080 | Add `--debug-influence` mode to retrieval; emit per-dispatch hit-rate; expose `memory_influence_threshold` and `memory_influence_weight` config; lower threshold default to 0.55. | `memory_server.py:614` (record_influence_by_content), `ranking.py:176` (_influence_score), `pd.local.md` template | Low |
 | 081 | Add `refresh_memory_context` instruction emitter to `complete_phase` MCP response (or PostToolUse hook on Skill dispatch). Reuse 17-site pre-dispatch enrichment pattern. | `mcp/workflow_state_server.py` complete_phase tool, optional new hook | Low-Medium |
 | 082 | New `decay_confidence(db, config)` in writer.py or maintenance.py. Daily-style demotion when `last_recalled_at < now - N days`. New SessionStart trigger. Tests. | `semantic_memory/writer.py` or new `maintenance.py`, `session-start.sh` trigger, tests | Medium |
-| 083 | New `/pd:promote-pattern` slash command. Read KB entries (filter: confidence=high, observation_count≥3), present selection, classify target=CLAUDE.md (other targets out of scope), produce diff, apply on approve. | `plugins/pd/commands/promote-pattern.md`, optional `plugins/pd/skills/promoting-patterns/SKILL.md` | Medium |
+| 083 | New `/pd:promote-pattern` slash command. Read KB entries (filter: confidence=high, observation_count≥3), present selection, classify target ∈ {hook, skill, agent, command}, produce target-appropriate diff, apply on approve. Mark pattern `promoted: {target_type}:{target_path}` in KB markdown. Target classification: keyword heuristic (e.g. `PreToolUse`/`on Edit`→hook; `reviewer`→agent; gerund (`implementing`, `creating`)→skill) → LLM fallback for ambiguous → user override. CLAUDE.md explicitly excluded. | `plugins/pd/commands/promote-pattern.md`, `plugins/pd/skills/promoting-patterns/SKILL.md`, target-type generators (hook template, skill-patch, agent-patch, command-patch) | Medium-High |
