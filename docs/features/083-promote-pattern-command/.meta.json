@@ -1,10 +1,14 @@
 {
-  "id": "083",
-  "slug": "promote-pattern-command",
+  "id": "",
+  "slug": "",
   "mode": "standard",
-  "status": "planned",
+  "status": "active",
   "created": "2026-04-15T14:37:11.008846+00:00",
-  "branch": "feature/083-promote-pattern-command",
+  "branch": "",
   "lastCompletedPhase": null,
-  "phases": {}
+  "phases": {
+    "specify": {
+      "started": "2026-04-15T16:27:21.148762+00:00"
+    }
+  }
 }

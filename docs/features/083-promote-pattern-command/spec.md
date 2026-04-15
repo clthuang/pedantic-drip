@@ -65,7 +65,7 @@ Tokenize the entry's name + description. For each target, count token matches:
 | **skill** | gerund forms matching existing skill names: `implementing`, `creating`, `brainstorming`, `specifying`, `designing`, `planning`, `retrospecting`, `researching`, `simplifying`, `wrap-up`, `finishing`, `decomposing`, `breaking-down`, `committing`, `debugging`, `dispatching` (+ generic `procedure`, `steps`, `workflow`) |
 | **command** | `/[a-z][a-z-]+ command`, `when user runs`, `invokes /pd:`, `slash command` |
 
-Score = number of distinct matched tokens per target.
+Each row's entries are **regex patterns matched case-insensitively** against the concatenated entry name + description. A target's score is the count of **distinct patterns** (rows) that matched at least once (not total match occurrences).
 
 #### FR-2b: Tie-break / fallback
 
@@ -107,18 +107,18 @@ Hooks are restricted to **mechanically-enforceable rules** that PreToolUse/PostT
 
 Steps:
 1. **Feasibility gate:** LLM call (≤200 prompt tokens, ≤100 response tokens) returns one of:
-   - `feasible` + `event: {PreToolUse|PostToolUse}` + `tool: {Edit|Bash|Write|Read|Glob|...}` + `check_kind: {file_path_regex|content_regex|json_field|composite}` + `check_expression: {literal pattern or JSON path}`
+   - `feasible` + `event ∈ {PreToolUse, PostToolUse}` + `tools: [array of one or more tool names from closed enum {Edit, Bash, Write, Read, Glob, Grep, MultiEdit, NotebookEdit, WebFetch, WebSearch, Task, Skill}]` + `check_kind ∈ {file_path_regex, content_regex, json_field, composite}` + `check_expression: literal pattern or JSON path`. Output is validated against the schema; free-form strings in `tools` or unknown enum values trigger one re-ask, then user-pick on second failure.
    - `infeasible` + `reason` → command displays reason, offers `change-target` (skill is usually the right alternative for non-mechanical guidance)
 2. **Skeleton generation:** deterministic template (no LLM) using the feasibility output. Generates:
    - `plugins/pd/hooks/{slug}.sh` — bash script reading hook stdin JSON, applying the check, exiting 0 (allow) or non-zero (block) with stderr explanation
-   - `hooks.json` patch — register the hook on `event` for `tool`. Validates resulting JSON.
+   - `hooks.json` patch — register the hook on `event` for **each** tool in the `tools` array (one matcher per tool). Validates resulting JSON before write.
    - `plugins/pd/hooks/tests/test-{slug}.sh` — happy + sad case tests with mock JSON input
 3. **Slug collision:** if `plugins/pd/hooks/{slug}.sh` exists, auto-suffix `-2`, `-3`, etc.
 
 #### FR-3-skill: Skill target
 
 1. **Top-3 selection:** LLM call (≤300 prompt tokens, ≤120 response tokens) returns up to 3 candidate skills with one-line reasoning each, ranked. Input: pattern text + sorted list of existing skill names (no descriptions; skill names alone are <500 tokens for ~30 skills).
-2. **AskUserQuestion:** present top 3 + `Other (enter skill path)` + `cancel`. If user picks `Other`, accept a free-text path; validate it exists under `plugins/pd/skills/`.
+2. **AskUserQuestion:** present top 3 + `Other (enter skill name)` + `cancel`. If user picks `Other`, accept a free-text **skill directory name** (e.g., `creating-tests`, not a path); validate `plugins/pd/skills/{input}/SKILL.md` exists. Same convention for FR-3-agent (agent file basename, e.g., `code-reviewer`) and FR-3-command (command file basename, e.g., `wrap-up`).
 3. **Section identification:** LLM call (≤400 prompt tokens incl. truncated SKILL.md, ≤80 response tokens) returns target section heading and insertion mode (`append-to-list` | `new-paragraph-after-heading`). Validate the heading exists in the file; if not, re-ask once; if still not found, abort with error.
 4. **Patch generation:** deterministic — read the file, locate the heading, perform the insertion, produce a unified diff for preview.
 
@@ -159,10 +159,18 @@ Strict ordering for atomicity:
 - If any write fails → restore from Stage 2 snapshot (overwrite modified files with original content; `unlink` newly created files); abort with reason.
 
 **Stage 4: Post-write validation:**
-- For hooks: re-parse `hooks.json`. For all targets: run `./validate.sh`. If validation fails → restore from snapshot; abort.
+- **Baseline-delta validation** to avoid rolling back on pre-existing project errors:
+  1. Capture `validate.sh` output **before** Stage 3 (snapshot baseline error count + categories).
+  2. Re-run `validate.sh` after Stage 3 writes.
+  3. Rollback only if **new** errors appear (current count > baseline count, OR new error categories not in baseline).
+- For hooks specifically: also re-parse `hooks.json` and run any `plugins/pd/hooks/tests/test-{slug}.sh` generated in FR-3-hook step 2.
+- Validation timing: `./validate.sh` typically runs in <5s on this repo; if Stage 4 exceeds 30s, surface a warning.
 
 **Stage 5: KB marker** (always last):
-- Re-read the KB file (in case parallel edits happened), append `- Promoted: {target_type}:{absolute target file path}` immediately after the entry's `- Confidence:` line (or at the end of the entry block if no Confidence line).
+- Re-read the KB file (in case parallel edits happened).
+- **Entry block definition:** from the entry's heading (e.g., `### Pattern: Name`) up to the next sibling heading at the same level, OR to EOF if no further sibling exists.
+- Insertion position: immediately after the entry's `- Confidence:` line if present; otherwise on a new line **immediately before the next sibling heading** (or at EOF if last entry). Never break adjacent entries.
+- Marker line: `- Promoted: {target_type}:{absolute target file path}`
 - If the marker write fails → log warning, leave target files in place (they are the actual value), instruct user to manually annotate the KB entry.
 
 Rollback responsibility ends at Stage 5: target files are the source of truth for whether promotion happened. The KB marker is metadata for future enumeration.
@@ -197,13 +205,10 @@ Rollback responsibility ends at Stage 5: target files are the source of truth fo
 **And** FR-3-skill section ID returns "Step 2: Per-Task Dispatch Loop" + `append-to-list`.
 **And** patch generated; user selects `apply`; Stage 1-5 succeed; SKILL.md updated; KB entry marked.
 
-### HP-3: Tie triggers LLM fallback; user overrides
+### HP-3: All-zero scoring triggers LLM fallback; user overrides
 
-**Given** entry "Validates implementation against full requirements chain" (matches both `validates`→agent and no clear hook/skill/command tokens — actually this scores agent=2 unambiguously, so let's pick a real tie).
-**Given** entry "Implementing reviewer that validates artifacts" (scores: skill=1 from `implementing`, agent=2 from `reviewer`+`validates` → agent wins, no tie).
-**Given** to construct a true tie, entry "Reviewer implementing the validation step" (skill=1 from `implementing`, agent=2 from `reviewer`+`validates` → still agent wins).
-**Therefore** ties are rare in practice; HP-3 scenario uses **all-zero** instead: entry "Keep feedback loops short" with no token matches.
-**When** user runs the command.
+**Given** `heuristics.md` contains entry "Keep feedback loops short" (Confidence=high, Observation count=3, no `Promoted:` line, description: "Tighten iteration-to-feedback latency wherever possible.") — no tokens in any FR-2a row match.
+**When** user runs `/pd:promote-pattern "feedback loops"`.
 **Then** FR-2a scores: all 0; FR-2b triggers FR-2c LLM fallback.
 **And** LLM returns `skill` with reasoning "general guidance about workflow tempo, fits a skill amendment".
 **And** FR-2d shows classification; user picks `change-target`.
@@ -250,21 +255,32 @@ No changes to existing semantic_memory module, ranking, retrieval, or KB schema.
 Re-running `/pd:promote-pattern` must not surface previously-promoted entries (FR-1 exclusion clause + FR-5 marker).
 
 ### NFR-3: Bounded LLM cost
-Per invocation total budget: **≤2,000 LLM tokens** across:
+Per **classification attempt** budget: **≤2,000 LLM tokens** across:
 - FR-2c classification fallback (≤380 tokens, only if scoring is tied or all-zero)
 - FR-3-hook feasibility gate (≤300 tokens)
 - FR-3-{skill,agent,command} top-3 selection (≤420 tokens)
 - FR-3-{skill,agent,command} section/step identification (≤480 tokens)
 - Re-asks on validation failure (≤300 tokens reserve)
-- Diff rendering is **deterministic string assembly, no LLM call**, not counted in budget.
 
-If invocation requires more, command warns and asks user to confirm continuing (token-cost transparency).
+**Change-target carry-over:** A `change-target` decision (FR-2d, or after FR-3-hook infeasibility) starts a NEW classification attempt with its own ≤2,000 token budget. Hard cap: **2 classification attempts per invocation** (the original + at most one change-target). After 2 attempts, command surfaces "max attempts reached" and exits.
+
+Diff rendering is **deterministic string assembly, no LLM call**, not counted in budget.
+
+If a single invocation requires >2,000 tokens within one attempt (e.g., due to many re-asks), command warns and asks user to confirm continuing.
 
 ### NFR-4: Diff transparency
 Generated diffs presented per-file in the AskUserQuestion preview. Reader should be able to comprehend in <60 seconds for typical patches (single-file, <50 lines added).
 
 ### NFR-5: Threshold calibration
-`memory_promote_min_observations` defaults to 3 with override in `.claude/pd.local.md`. Acceptance Evidence requires running enumeration once against current KB and reporting count; if count is 0 or >20, threshold is revised before marking complete.
+
+`memory_promote_min_observations` defaults to 3 with override in `.claude/pd.local.md`.
+
+**Two distinct calibration moments:**
+
+- **Acceptance gate (one-time):** Acceptance Evidence step 1 runs enumeration against current KB. If count is 0 or >20, threshold is revised in `.claude/pd.local.md` before marking complete.
+- **Runtime (every invocation):** FR-1 zero-result path emits a clear instruction:
+  `"No KB entries qualify (threshold={N}, qualifying count=0). To lower threshold, edit memory_promote_min_observations in .claude/pd.local.md (current: {N})."`
+  No in-command threshold-mutation prompt — keeps the command stateless and forces deliberate config edits.
 
 ## Out of Scope
 
