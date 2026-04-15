@@ -1,0 +1,10 @@
+{
+  "id": "083",
+  "slug": "promote-pattern-command",
+  "mode": "standard",
+  "status": "planned",
+  "created": "2026-04-15T14:37:11.008846+00:00",
+  "branch": "feature/083-promote-pattern-command",
+  "lastCompletedPhase": null,
+  "phases": {}
+}

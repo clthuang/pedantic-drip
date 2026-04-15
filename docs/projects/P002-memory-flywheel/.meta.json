@@ -1,0 +1,42 @@
+{
+  "id": "P002",
+  "slug": "memory-flywheel",
+  "status": "active",
+  "created": "2026-04-15T14:38:17.819546+00:00",
+  "features": [
+    "079-fts5-backfill-and-trigger-sync",
+    "080-influence-wiring",
+    "081-mid-session-memory-refresh-hoo",
+    "082-recall-tracking-and-confidence",
+    "083-promote-pattern-command"
+  ],
+  "milestones": [
+    {
+      "id": "M1",
+      "name": "Foundation",
+      "status": "active",
+      "features": [
+        "079-fts5-backfill-and-trigger-sync",
+        "080-influence-wiring",
+        "081-mid-session-memory-refresh-hoo"
+      ]
+    },
+    {
+      "id": "M2",
+      "name": "Signal Accumulation",
+      "status": "planned",
+      "features": [
+        "082-recall-tracking-and-confidence"
+      ]
+    },
+    {
+      "id": "M3",
+      "name": "Codification",
+      "status": "planned",
+      "features": [
+        "083-promote-pattern-command"
+      ]
+    }
+  ],
+  "brainstorm_source": "docs/brainstorms/20260415-100000-memory-flywheel.prd.md"
+}
