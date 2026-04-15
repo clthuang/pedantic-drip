@@ -2333,10 +2333,10 @@ class TestCheck10MissingConfigFileUsesDefaults:
 # ===========================================================================
 
 
-class TestOrchestratorReportHas12Checks:
-    """Orchestrator: report always has 12 checks."""
+class TestOrchestratorReportHas14Checks:
+    """Orchestrator: report always has 14 checks."""
 
-    def test_report_has_12_checks(self, tmp_path):
+    def test_report_has_14_checks(self, tmp_path):
         from doctor import run_diagnostics
 
         db_path = _make_db(tmp_path)
@@ -2344,13 +2344,13 @@ class TestOrchestratorReportHas12Checks:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 12
+        assert len(report.checks) == 14
 
 
 class TestOrchestratorReportEvenWhenLocked:
-    """Orchestrator: 12 checks even when DB is locked."""
+    """Orchestrator: 14 checks even when DB is locked."""
 
-    def test_report_12_checks_even_when_locked(self, tmp_path):
+    def test_report_14_checks_even_when_locked(self, tmp_path):
         from doctor import run_diagnostics
 
         db_path = _make_db(tmp_path)
@@ -2362,7 +2362,7 @@ class TestOrchestratorReportEvenWhenLocked:
         blocker.execute("BEGIN IMMEDIATE")
         try:
             report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-            assert len(report.checks) == 12
+            assert len(report.checks) == 14
         finally:
             blocker.rollback()
             blocker.close()
@@ -2475,7 +2475,7 @@ class TestOrchestratorPerCheckExceptionIsolation:
         # The orchestrator wraps each check in try/except
         # Even if a check raises, we still get 10 results
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 12
+        assert len(report.checks) == 14
 
 
 class TestOrchestratorMissingDbFile:
@@ -2491,7 +2491,7 @@ class TestOrchestratorMissingDbFile:
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
         assert not os.path.exists(db_path)
         assert not os.path.exists(mem_path)
-        assert len(report.checks) == 12
+        assert len(report.checks) == 14
 
 
 class TestOrchestratorBaseBranchFromConfig:
@@ -2508,7 +2508,7 @@ class TestOrchestratorBaseBranchFromConfig:
         (config_dir / "pd.local.md").write_text("base_branch: develop\n")
 
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 12
+        assert len(report.checks) == 14
 
 
 class TestOrchestratorBaseBranchDefaultMain:
@@ -2522,7 +2522,7 @@ class TestOrchestratorBaseBranchDefaultMain:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 12
+        assert len(report.checks) == 14
 
 
 class TestOrchestratorCheck8RunsFirst:
@@ -2555,7 +2555,7 @@ class TestOrchestratorBothDbsLocked:
         blocker2.execute("BEGIN IMMEDIATE")
         try:
             report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-            assert len(report.checks) == 12
+            assert len(report.checks) == 14
             assert report.healthy is False
         finally:
             blocker1.rollback()
@@ -2575,7 +2575,7 @@ class TestOrchestratorFreshProjectEmpty:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 12
+        assert len(report.checks) == 14
         assert report.elapsed_ms >= 0
 
 
@@ -2591,7 +2591,7 @@ class TestOrchestratorWorksWithoutMcp:
 
         # No MCP servers running -- should still work
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 12
+        assert len(report.checks) == 14
 
 
 class TestOrchestratorConnectionsClosedOnSuccess:
@@ -2605,7 +2605,7 @@ class TestOrchestratorConnectionsClosedOnSuccess:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 12
+        assert len(report.checks) == 14
 
         # Verify we can acquire write locks (connections were closed)
         conn = sqlite3.connect(db_path, timeout=1.0)
@@ -2651,10 +2651,10 @@ def _doctor_lib_path():
     )
 
 
-class TestCliJsonOutputHas10Checks:
+class TestCliJsonOutputHas14Checks:
     """CLI: JSON output contains 11 checks."""
 
-    def test_cli_json_output_has_10_checks(self, tmp_path):
+    def test_cli_json_output_has_14_checks(self, tmp_path):
         db_path = _make_db(tmp_path)
         mem_path = _make_memory_db(tmp_path)
         (tmp_path / "docs").mkdir(exist_ok=True)
@@ -2672,7 +2672,7 @@ class TestCliJsonOutputHas10Checks:
         data = json.loads(result.stdout)
         # Phase 2 wraps output: {"diagnostic": ...}
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 12
+        assert len(diag["checks"]) == 14
 
 
 class TestCliExitCodeAlwaysZero:
@@ -2747,7 +2747,7 @@ class TestCliArtifactsRootCliArgPrecedence:
         assert result.returncode == 0
         data = json.loads(result.stdout)
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 12
+        assert len(diag["checks"]) == 14
 
 
 class TestCliArtifactsRootConfigFallback:
@@ -2769,7 +2769,7 @@ class TestCliArtifactsRootConfigFallback:
         assert result.returncode == 0
         data = json.loads(result.stdout)
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 12
+        assert len(diag["checks"]) == 14
 
 
 class TestCliArtifactsRootDefaultDocs:
@@ -2790,7 +2790,7 @@ class TestCliArtifactsRootDefaultDocs:
         assert result.returncode == 0
         data = json.loads(result.stdout)
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 12
+        assert len(diag["checks"]) == 14
 
 
 class TestCliNoneSerializesAsJsonNull:
@@ -3042,3 +3042,294 @@ class TestCheck11CleanDependenciesPass:
             assert len(result.issues) == 0
         finally:
             conn.close()
+
+
+# ===========================================================================
+# Check: security-review command installation
+# ===========================================================================
+
+
+class TestCheckSecurityReviewCommandMissing:
+    """security-review command missing -> warning."""
+
+    def test_missing_command_warns(self, tmp_path):
+        from doctor.checks import check_security_review_command
+
+        # No .claude/commands/security-review.md created
+        result = check_security_review_command(str(tmp_path))
+
+        assert result.name == "security_review_command"
+        assert not result.passed
+        warnings = [i for i in result.issues if i.severity == "warning"]
+        assert len(warnings) == 1
+        assert "security-review" in warnings[0].message.lower()
+        assert warnings[0].fix_hint is not None
+
+
+class TestCheckSecurityReviewCommandPresent:
+    """security-review command present -> no issues."""
+
+    def test_present_command_passes(self, tmp_path):
+        from doctor.checks import check_security_review_command
+
+        commands_dir = tmp_path / ".claude" / "commands"
+        commands_dir.mkdir(parents=True)
+        (commands_dir / "security-review.md").write_text("# security review\n")
+
+        result = check_security_review_command(str(tmp_path))
+
+        assert result.name == "security_review_command"
+        assert result.passed
+        assert len(result.issues) == 0
+
+
+class TestCheckSecurityReviewCommandAcceptsKwargs:
+    """Check tolerates extra kwargs (dispatched via ctx dict)."""
+
+    def test_accepts_extra_kwargs(self, tmp_path):
+        from doctor.checks import check_security_review_command
+
+        commands_dir = tmp_path / ".claude" / "commands"
+        commands_dir.mkdir(parents=True)
+        (commands_dir / "security-review.md").write_text("stub\n")
+
+        # Should accept and ignore arbitrary kwargs from run_diagnostics ctx
+        result = check_security_review_command(
+            project_root=str(tmp_path),
+            entities_conn=None,
+            artifacts_root="docs",
+            base_branch="main",
+        )
+        assert result.passed
+
+
+# ===========================================================================
+# Check: stale/orphaned worktrees under .pd-worktrees/
+# ===========================================================================
+
+
+def _init_git_repo(path) -> None:
+    """Initialize a minimal git repo with one commit at `path`."""
+    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    subprocess.run(
+        ["git", "-C", str(path), "config", "user.email", "t@example.com"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(path), "config", "user.name", "Test"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(path), "config", "commit.gpgsign", "false"],
+        check=True,
+    )
+    (path / "README.md").write_text("seed\n")
+    subprocess.run(["git", "-C", str(path), "add", "README.md"], check=True)
+    subprocess.run(
+        ["git", "-C", str(path), "commit", "-q", "-m", "seed"],
+        check=True,
+    )
+
+
+class TestCheckStaleWorktreesNoDirectory:
+    """No .pd-worktrees/ directory -> pass silently."""
+
+    def test_missing_dir_passes(self, tmp_path):
+        from doctor.checks import check_stale_worktrees
+
+        result = check_stale_worktrees(project_root=str(tmp_path))
+
+        assert result.name == "stale_worktrees"
+        assert result.passed
+        assert result.issues == []
+
+
+class TestCheckStaleWorktreesClean:
+    """All worktree dirs tracked by git -> no orphans."""
+
+    def test_clean_worktrees_pass(self, tmp_path):
+        from doctor.checks import check_stale_worktrees
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        # Create a real worktree via git
+        worktrees_dir = repo / ".pd-worktrees"
+        worktrees_dir.mkdir()
+        task_path = worktrees_dir / "task-1"
+        subprocess.run(
+            ["git", "-C", str(repo), "worktree", "add", "-q",
+             str(task_path), "-b", "worktree-test-task-1"],
+            check=True,
+        )
+
+        result = check_stale_worktrees(project_root=str(repo))
+
+        assert result.name == "stale_worktrees"
+        assert result.passed, f"unexpected issues: {result.issues}"
+        assert result.issues == []
+
+
+class TestCheckStaleWorktreesFilesystemOrphan:
+    """Directory present without git admin record -> warning."""
+
+    def test_filesystem_orphan_warns(self, tmp_path):
+        from doctor.checks import check_stale_worktrees
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        # Create a .pd-worktrees/task-orphan dir without running git worktree add
+        worktrees_dir = repo / ".pd-worktrees"
+        worktrees_dir.mkdir()
+        (worktrees_dir / "task-orphan").mkdir()
+
+        result = check_stale_worktrees(project_root=str(repo))
+
+        assert result.name == "stale_worktrees"
+        assert not result.passed
+        warnings = [i for i in result.issues if i.severity == "warning"]
+        assert len(warnings) == 1
+        assert "task-orphan" in warnings[0].message
+        assert "no git admin record" in warnings[0].message.lower()
+        assert "rm -rf" in (warnings[0].fix_hint or "")
+
+
+class TestCheckStaleWorktreesGitAdminOrphan:
+    """Git admin record present without directory on disk -> warning."""
+
+    def test_git_admin_orphan_warns(self, tmp_path):
+        from doctor.checks import check_stale_worktrees
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        # Create a worktree, then delete the directory (without git cleanup)
+        worktrees_dir = repo / ".pd-worktrees"
+        worktrees_dir.mkdir()
+        task_path = worktrees_dir / "task-ghost"
+        subprocess.run(
+            ["git", "-C", str(repo), "worktree", "add", "-q",
+             str(task_path), "-b", "worktree-test-task-ghost"],
+            check=True,
+        )
+        # Remove only the directory — leave the git admin record dangling.
+        import shutil
+        shutil.rmtree(task_path)
+
+        result = check_stale_worktrees(project_root=str(repo))
+
+        assert result.name == "stale_worktrees"
+        assert not result.passed
+        warnings = [i for i in result.issues if i.severity == "warning"]
+        assert len(warnings) == 1
+        assert "task-ghost" in warnings[0].message
+        assert "directory missing" in warnings[0].message.lower()
+        assert "git worktree prune" in (warnings[0].fix_hint or "")
+
+
+class TestCheckStaleWorktreesNotAGitRepo:
+    """Non-git-repo with .pd-worktrees/ -> skip silently (pass)."""
+
+    def test_non_git_repo_skips(self, tmp_path):
+        from doctor.checks import check_stale_worktrees
+
+        # No git init; just create the directory
+        (tmp_path / ".pd-worktrees").mkdir()
+        (tmp_path / ".pd-worktrees" / "task-1").mkdir()
+
+        result = check_stale_worktrees(project_root=str(tmp_path))
+
+        # git worktree list fails in a non-repo → skip silently
+        assert result.name == "stale_worktrees"
+        assert result.passed
+        assert result.issues == []
+
+
+class TestCheckStaleWorktreesAcceptsKwargs:
+    """Check tolerates extra kwargs (dispatched via ctx dict)."""
+
+    def test_accepts_extra_kwargs(self, tmp_path):
+        from doctor.checks import check_stale_worktrees
+
+        result = check_stale_worktrees(
+            project_root=str(tmp_path),
+            entities_conn=None,
+            artifacts_root="docs",
+            base_branch="main",
+        )
+        assert result.passed
+
+
+class TestCheckStaleWorktreesEmptyDirectory:
+    """Empty .pd-worktrees/ directory -> pass, no orphan warnings (boundary: N=0 entries)."""
+
+    def test_empty_worktrees_dir_passes(self, tmp_path):
+        # Given a git repo with an empty .pd-worktrees/ directory
+        from doctor.checks import check_stale_worktrees
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+        (repo / ".pd-worktrees").mkdir()
+
+        # When the stale_worktrees check runs
+        result = check_stale_worktrees(project_root=str(repo))
+
+        # Then it passes silently with no issues (no children to inspect)
+        assert result.name == "stale_worktrees"
+        assert result.passed, f"unexpected issues: {result.issues}"
+        assert result.issues == []
+
+
+class TestCheckStaleWorktreesNonDirectoryEntry:
+    """Plain file under .pd-worktrees/ is NOT a worktree candidate; do not crash or flag."""
+
+    def test_plain_file_entry_does_not_crash(self, tmp_path):
+        # Given a .pd-worktrees/ containing a stray regular file (not a dir)
+        from doctor.checks import check_stale_worktrees
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+        worktrees_dir = repo / ".pd-worktrees"
+        worktrees_dir.mkdir()
+        (worktrees_dir / "README.txt").write_text("not a worktree\n")
+
+        # When the stale_worktrees check runs
+        result = check_stale_worktrees(project_root=str(repo))
+
+        # Then the check returns cleanly — a stray file is neither an orphan nor a tracked worktree
+        assert result.name == "stale_worktrees"
+        # Must not error out; non-dir entries are simply ignored
+        assert all(i.severity != "error" for i in result.issues)
+
+
+class TestCheckStaleWorktreesMultipleOrphans:
+    """Multiple filesystem orphans -> one warning per orphan (Zero/One/Many heuristic)."""
+
+    def test_two_orphans_produce_two_warnings(self, tmp_path):
+        # Given two orphan directories under .pd-worktrees/
+        from doctor.checks import check_stale_worktrees
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+        worktrees_dir = repo / ".pd-worktrees"
+        worktrees_dir.mkdir()
+        (worktrees_dir / "task-a").mkdir()
+        (worktrees_dir / "task-b").mkdir()
+
+        # When the check runs
+        result = check_stale_worktrees(project_root=str(repo))
+
+        # Then two distinct warnings are surfaced
+        assert not result.passed
+        warnings = [i for i in result.issues if i.severity == "warning"]
+        assert len(warnings) == 2
+        messages = " ".join(w.message for w in warnings)
+        assert "task-a" in messages
+        assert "task-b" in messages

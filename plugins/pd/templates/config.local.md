@@ -26,6 +26,8 @@ yolo_usage_cooldown: 18000
 plan_mode_review: true
 # Max parallel Task (subagent) dispatches per batch
 max_concurrent_agents: 5
+# Cron expression for scheduled doctor runs (desktop tier only). Empty to disable. Example: '0 */4 * * *' runs every 4 hours.
+doctor_schedule:
 
 # Memory — cross-session learning injection
 # Inject memory entries into session context at start

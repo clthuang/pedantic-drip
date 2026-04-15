@@ -43,6 +43,9 @@ venv/
 # Agent sandbox (temporary investigation files)
 agent_sandbox/
 
+# pd parallel-dispatch worktrees (auto-managed)
+.pd-worktrees/
+
 # Playwright MCP output
 .playwright-mcp/
 *.db

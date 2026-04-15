@@ -1,9 +1,9 @@
 ---
-last-updated: 2026-04-02T10:30:00Z
-source-feature: 075-phase-context-accumulation
+last-updated: 2026-04-15T00:00:00Z
+source-feature: 078-cc-native-integration
 ---
 
-<!-- AUTO-GENERATED: START - source: 075-phase-context-accumulation -->
+<!-- AUTO-GENERATED: START - source: 078-cc-native-integration -->
 
 # Architecture Overview
 
@@ -135,7 +135,7 @@ Located under `plugins/pd/hooks/lib/`:
 | `transition_gate/` | Gate functions, constants, and transition models |
 | `semantic_memory/` | Embedding generation, memory store, retrieval ranking |
 | `reconciliation_orchestrator/` | Entity sync, backlog parsing, brainstorm archive |
-| `doctor/` | 10 data consistency checks with auto-fix support |
+| `doctor/` | 14 data consistency checks with auto-fix support |
 
 Use `uv add` to add dependencies — never `pip install`. Run tests with `plugins/pd/.venv/bin/python -m pytest`.
 

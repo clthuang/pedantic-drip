@@ -276,6 +276,28 @@ Commands are user-invoked entry points. Located in `plugins/pd/commands/{name}.m
 | `show-lineage` | Display entity lineage tree for a given entity (ancestors or descendants) |
 | `doctor` | Run 10 data consistency checks across entity DB, memory DB, workflow state, and filesystem. Supports `--fix` for auto-repair of safe issues. |
 
+### Scheduled Doctor Runs
+
+The `doctor` command can be scheduled to run automatically via Claude Code's native `CronCreate` tool. Configure in `.claude/pd.local.md`:
+
+```yaml
+# Cron expression for scheduled doctor runs (desktop tier only). Empty to disable.
+doctor_schedule: "0 */4 * * *"   # Every 4 hours
+```
+
+**Behavior:**
+- When `doctor_schedule` is non-empty, `session-start` emits a `CronCreate` instruction that schedules `/pd:doctor` at the configured cadence.
+- When `doctor_schedule` is empty (default), no scheduling instruction is emitted — doctor runs only at session start and on explicit invocation.
+
+**Prerequisites:**
+- Requires the `CronCreate` tool, which is available only on the **desktop scheduling tier** (local file access). Cloud-tier Claude Code sessions lack the filesystem access doctor needs.
+- If `CronCreate` is unavailable (e.g., `CLAUDE_CODE_DISABLE_CRON=1` or the tool is not exposed), the scheduling instruction is skipped silently and doctor continues to run only at session start.
+
+**Example cron expressions:**
+- `"0 */4 * * *"` — every 4 hours
+- `"0 9 * * *"` — once daily at 09:00
+- `"0 9 * * 1-5"` — weekday mornings at 09:00
+
 ## Agents
 
 Agents are isolated subprocesses spawned by the workflow. Located in `plugins/pd/agents/{name}.md`.

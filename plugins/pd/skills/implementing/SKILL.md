@@ -34,9 +34,15 @@ For complex implementations:
 
 ### Step 2: Per-Task Dispatch Loop
 
-For each task (in document order, top to bottom):
+Step 2 dispatches implementer agents in batches of up to `max_concurrent_agents`, each in its own git worktree, then merges the worktree branches into the feature branch in task-document order. The structure is three phases per batch:
 
-**a. Prepare context**
+- **Phase 1: Worktree setup** — resume detection, then create one worktree per task (with per-task fallback on failure)
+- **Phase 2: Parallel agent dispatch** — issue all agent Task calls in a single message with worktree-aware prompts
+- **Phase 3: Post-agent validation + sequential merge + cleanup** — SHA check, halt-on-conflict merge, worktree removal
+
+If a batch surfaces SQLite BUSY errors, all remaining batches fall back to serial, no-worktree dispatch (see Phase 3 below).
+
+#### Step 2a: Prepare context (per task, shared across both dispatch modes)
 
 **Parse traceability references** from the task's `**Why:**` or `**Source:**` field value:
 
@@ -97,13 +103,70 @@ If `project_id` is present (non-null):
 
 **Graceful degradation:** Project dir not found: skip block. `roadmap.md` missing: omit priority line. `depends_on_features` absent: omit dependencies line. Any individual dependency glob fails: skip that dependency, continue with others.
 
-**b. Dispatch implementer agent**
+#### Step 2b: Batch planning and entry-time resume detection
+
+1. Compute the list of unchecked tasks in document order.
+2. Record the feature branch HEAD SHA once, before any worktrees are created:
+   ```bash
+   FEATURE_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+   MAIN_SHA=$(git rev-parse HEAD)
+   ```
+   This SHA is the pre-dispatch checkpoint used by Phase 3 stray-commit detection.
+3. Initialize `SERIAL_FALLBACK=false`. This flag promotes all remaining batches to serial, no-worktree dispatch after a SQLite BUSY report (see Step 2e Phase 3).
+4. Ensure `.pd-worktrees/` is present in the project's `.gitignore`. If missing, append it and commit on the feature branch before dispatching.
+5. **Resume detection:** List existing worktree branches for this feature:
+   ```bash
+   EXISTING=$(git worktree list --porcelain | awk '/^branch / { print $2 }' | sed 's|^refs/heads/||' | grep "^worktree-{feature_id}-task-")
+   ```
+   For each task, if `worktree-{feature_id}-task-{N}` is present in `EXISTING`, mark the task as `resume=true`. Phase 1 will skip creation for resume tasks; Phase 2 will skip dispatch for resume tasks (their work is already on disk in the worktree); Phase 3 merges them in task order alongside freshly dispatched tasks.
+6. Chunk the remaining tasks into batches of size `min(len(remaining_tasks), max_concurrent_agents)`. Process batches sequentially; within each batch, run Phase 1 → Phase 2 → Phase 3 before starting the next batch.
+
+#### Step 2c: Phase 1 — Worktree setup (per batch)
+
+If `SERIAL_FALLBACK=true`, skip this phase entirely and jump to Step 2d with `worktree_mode=false` for every task in the batch.
+
+For each task in the batch (in task-document order):
+
+1. If the task is marked `resume=true`, skip creation — the worktree is already on disk. Record its path as `.pd-worktrees/task-{N}` and continue to the next task.
+2. Otherwise, attempt creation:
+   ```bash
+   git worktree add ".pd-worktrees/task-{N}" -b "worktree-{feature_id}-task-{N}"
+   ```
+3. **Per-task fallback on failure:** If the command exits non-zero, that task drops to no-worktree dispatch for this batch only; other tasks in the batch continue with their worktrees. **Critical branch-leak cleanup:** Per `plugins/pd/hooks/tests/test-worktree-dispatch.sh` test 4(a), `git worktree add -b BRANCH PATH` on git 2.50+ creates `BRANCH` before validating `PATH`, so a failed add can leave an orphaned branch behind. Before recording the fallback, run:
+   ```bash
+   git branch -D "worktree-{feature_id}-task-{N}" 2>/dev/null || true
+   ```
+   Without this cleanup, a retry (or Phase 3 merge) would hit a duplicate-branch error on the next attempt. Flag the task with `worktree_mode=false` and `worktree_path=null`; surface a warning like "Worktree creation failed for task {N}; dispatching without isolation."
+
+After Phase 1, each task in the batch carries one of three states:
+- `worktree_mode=true, resume=false, worktree_path=.pd-worktrees/task-{N}` — fresh worktree created
+- `worktree_mode=true, resume=true,  worktree_path=.pd-worktrees/task-{N}` — existing worktree reused, skip dispatch
+- `worktree_mode=false, worktree_path=null` — per-task fallback, dispatch without isolation
+
+#### Step 2d: Phase 2 — Parallel agent dispatch (per batch)
+
+Dispatch every task in the batch whose state is NOT `resume=true` **in a single message**, issuing one Task tool call per task so CC runs them concurrently. This replaces the previous serial loop.
+
+Concurrency is capped at `max_concurrent_agents` by construction, since each batch is sized to that limit.
+
+**Prompt template (worktree mode, `worktree_mode=true`):**
 
 ```
 Task tool call:
   subagent_type: pd:implementer
   model: opus
   prompt: |
+    ## Worktree Instructions (MANDATORY)
+    You are working in an isolated git worktree. Absolute worktree path:
+      {abs_project_root}/.pd-worktrees/task-{N}/
+
+    Rules:
+    - Use ABSOLUTE paths for every Read, Edit, Write, Glob, and Grep call. Relative paths resolve against the orchestrator's cwd, not your worktree.
+    - Before ANY Bash command, run: `cd {abs_project_root}/.pd-worktrees/task-{N}`
+    - Do NOT modify files outside your worktree directory.
+    - Do NOT modify `.meta.json` anywhere. The orchestrating skill is the sole writer; worktree agents that touch `.meta.json` will have their changes discarded.
+    - If an entity DB write fails repeatedly with "database is locked" / SQLITE_BUSY, surface the failure verbatim in your report under a **Concerns** line so the orchestrator can trigger full-serial fallback for remaining batches.
+
     {task description with done-when criteria}
 
     {## Project Context block, if prepared above — omit entirely if not project-linked}
@@ -121,22 +184,73 @@ Task tool call:
     {plan.md scoped sections via extractSection()}
 ```
 
-**Fallback detection (I9):** After receiving the agent's response, search for "Files read:" pattern. If not found, log `LAZY-LOAD-WARNING: implementer did not confirm artifact reads` to `.review-history.md`. Proceed regardless — this is observational only.
+**Prompt template (no-worktree fallback, `worktree_mode=false`):** identical to the worktree template except the `## Worktree Instructions` block is replaced with:
 
-**c. Collect report**
+```
+## Isolation Notice
+Worktree isolation was not available for this task (per-task fallback or full-serial fallback). Work in the main project tree. Do NOT modify `.meta.json` — the orchestrating skill is the sole writer.
+```
 
-Extract from the agent's text response:
-- **Files changed** — required
-- **Decisions** — optional, default "none"
-- **Deviations** — optional, default "none"
-- **Concerns** — optional, default "none"
+**Dispatch protocol:**
 
-Use substring match (case-insensitive) for field headers.
+- Emit all Task calls in a single assistant message (the same pattern the researching skill uses for Phase 1 parallel dispatch). CC runs them concurrently up to the platform limit.
+- Skip dispatch for any task with `resume=true` — its commits are already on its worktree branch from a prior interrupted run.
+- Wait for all dispatched agents to return before starting Phase 3.
 
-**d. Append implementation-log.md entry**
+**Fallback detection (I9):** For each returned report, search for "Files read:" pattern. If not found, log `LAZY-LOAD-WARNING: implementer did not confirm artifact reads` to `.review-history.md`. Proceed regardless — this is observational only.
 
-Write to `implementation-log.md` in the active feature directory.
-Create with `# Implementation Log` header if this is the first task.
+#### Step 2e: Phase 3 — Validation, merge, cleanup (per batch)
+
+**1. Stray-commit detection.** Immediately after agents return, re-read the feature branch HEAD:
+
+```bash
+CURRENT_SHA=$(git rev-parse HEAD)
+```
+
+- If `CURRENT_SHA == MAIN_SHA` **and** `git diff --name-only` is empty, proceed to the merge step.
+- If `CURRENT_SHA != MAIN_SHA`, one or more agents committed directly to the feature branch in violation of the worktree directive. Halt Step 2 and surface:
+  ```
+  WARNING: Agent(s) committed to feature branch outside worktrees
+  Unexpected commits: $(git log --oneline ${MAIN_SHA}..HEAD)
+  Manual review required before merging worktree branches.
+  ```
+  Do NOT attempt merges — stop and return to the user with these details so they can review/revert before re-entry.
+- If HEAD is unchanged but `git diff --name-only` shows uncommitted writes in the main tree, discard them with `git checkout -- .` and continue (stray writes without commits are safe to drop; commits are not).
+
+**2. Collect reports + detect SQLite BUSY.** For each returned agent report, extract the standard fields (Files changed, Decisions, Deviations, Concerns) using case-insensitive substring match on the field headers. Scan the entire report (not just the Concerns field) for the substrings `SQLITE_BUSY` or `database is locked`. If any report matches, set `SERIAL_FALLBACK=true` — this promotes all future batches (starting with the next one) to no-worktree serial dispatch. The current batch still finishes its Phase 3 merge sequence; the fallback takes effect on the next batch only.
+
+**3. Sequential merge with halt-on-conflict.** Ensure the current branch is the feature branch (`git checkout {FEATURE_BRANCH}` if needed). Then, for each task in the batch **in task-document order** (including resumed tasks, excluding tasks whose state is `worktree_mode=false`):
+
+```bash
+git merge --no-ff "worktree-{feature_id}-task-{N}" -m "merge task {N}: {title}"
+```
+
+If the merge exits non-zero (merge conflict), halt the merge sequence immediately:
+
+- Do NOT attempt merges for subsequent tasks in the batch — conflict resolution may alter the tree in ways that change downstream merges.
+- Do NOT remove any worktrees; the failed task's worktree stays on disk for debugging and resume.
+- Surface to the user: the conflicting task number, the conflicted paths (`git diff --name-only --diff-filter=U`), the unmerged branch name, and a recovery instruction: "Resolve the conflict, commit, then re-run `/pd:implement` — Step 2 resume detection will pick up from the next unmerged worktree branch."
+- Return from Step 2 with the halt state; do not run Step 3.
+
+Tasks with `worktree_mode=false` have no worktree branch to merge — their changes are already on the feature branch (written directly by the fallback-dispatched agent).
+
+**4. Worktree cleanup.** After each successful merge, remove the corresponding worktree:
+
+```bash
+# Do NOT pass --quiet — unsupported on git 2.50+ (observed on Apple Git-155).
+# Redirect stderr with 2>/dev/null to suppress noise.
+git worktree remove ".pd-worktrees/task-{N}" 2>/dev/null
+```
+
+Failed merges leave their worktree on disk intentionally so the user can inspect it; only successful merges trigger removal.
+
+After a successful merge, update `MAIN_SHA` to the new feature-branch HEAD so the next batch's Phase 3 stray-commit detection uses a current baseline:
+
+```bash
+MAIN_SHA=$(git rev-parse HEAD)
+```
+
+**5. Append implementation-log.md entries.** For each task in batch order, write to `implementation-log.md` in the active feature directory. Create the file with `# Implementation Log` header on the first task:
 
 ```markdown
 ## Task {number}: {title}
@@ -146,12 +260,18 @@ Create with `# Implementation Log` header if this is the first task.
 - **Concerns:** {from report, or "none"}
 ```
 
-**e. Error handling per task**
+#### Step 2f: Per-task error handling
 
-- **Dispatch failure (AC-20):** Log the error, then ask the user whether to retry or skip via AskUserQuestion.
-- **Malformed report (AC-21):** Write a partial log entry with whatever fields are available, then proceed to the next task.
+- **Dispatch failure (AC-20):** Log the error, then ask the user whether to retry or skip via AskUserQuestion. If the user skips, leave any created worktree on disk (resume detection will pick it up on re-entry).
+- **Malformed report (AC-21):** Write a partial log entry with whatever fields are available; still run Phase 3 validation and merge for that task — report quality does not affect branch state.
 
-**f. Proceed to next task**
+#### Step 2g: Proceed to next batch
+
+After Phase 3 completes for the current batch, move to the next batch. If `SERIAL_FALLBACK=true`, every remaining batch dispatches with `worktree_mode=false` for all tasks (skipping Phase 1 and the merge step of Phase 3 entirely; agents write directly to the feature branch in task-document order, one at a time). After each serially dispatched agent completes, refresh `MAIN_SHA` so stray-commit detection in subsequent serial tasks uses a current baseline (agents intentionally commit in-tree in serial mode — without refreshing, a later task would see those intended commits as "stray"):
+
+```bash
+MAIN_SHA=$(git rev-parse HEAD)
+```
 
 ### Step 3: Return Results
 

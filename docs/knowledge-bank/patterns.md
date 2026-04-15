@@ -657,3 +657,24 @@ Specifying atomic commit boundaries and task dependency graphs explicitly in the
 - Confidence: high
 - Last observed: Feature #074
 - Observation count: 1
+
+### Pattern: Bundle same-file tasks into single implementer dispatch
+When N tasks all modify the same target file, dispatch them as a single implementer agent rather than parallel agents. Parallel dispatches on one file produce merge conflicts that cost more than the serialization loses.
+- Observed in: feature/078-cc-native-integration (T2.2-T2.10 bundled onto implementing/SKILL.md)
+- Confidence: high
+- Last observed: Feature #078
+- Observation count: 1
+
+### Pattern: Allowlist user-config in LLM Tool-arg templates
+Any user-config value interpolated into an LLM Tool-arg template (e.g., Tool(arg="<user-value>")) must pass an allowlist regex before emission and carry a dedicated injection test. Allowlist, not blocklist.
+- Observed in: feature/078-cc-native-integration (doctor_schedule OWASP LLM01)
+- Confidence: high
+- Last observed: Feature #078
+- Observation count: 1
+
+### Pattern: Inline-fix trivial doc gaps from relevance-verifier
+Trivial documentation gaps flagged by relevance-verifier (e.g., a missing one-sentence AC) can be resolved inline in the current phase rather than triggering backward travel to specify. Reserve backward travel for structural gaps.
+- Observed in: feature/078-cc-native-integration (REQ-2 .worktreeinclude fixed inline)
+- Confidence: medium
+- Last observed: Feature #078
+- Observation count: 1

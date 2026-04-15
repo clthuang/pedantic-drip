@@ -49,7 +49,7 @@ The setup walks through provider selection, API key configuration, and project i
 bash "$(ls -d ~/.claude/plugins/cache/*/pd/*/scripts/doctor.sh 2>/dev/null | head -1)"
 ```
 
-Read-only health check across 5 categories (system prerequisites, plugin environment, embedding provider, memory system, project context) with OS-specific fix commands.
+Read-only health check across 5 categories (system prerequisites, plugin environment, embedding provider, memory system, project context) with OS-specific fix commands. Runs 14 checks including security-review command presence and stale worktree detection.
 
 ## Quick Start
 
@@ -143,7 +143,7 @@ Configure via `.claude/pd.local.md`:
 | `/pd:add-to-backlog` | Capture ad-hoc ideas and todos |
 | `/pd:remember` | Capture a learning to long-term memory |
 | `/pd:cleanup-brainstorms` | Delete old brainstorm scratch files |
-| `/pd:doctor` | Run diagnostic checks on pd workspace health |
+| `/pd:doctor` | Run 14 diagnostic checks on pd workspace health (incl. security-review command and stale worktrees) |
 | `/pd:secretary` | Intelligent task routing to agents and skills (supports YOLO mode with orchestrate subcommand) |
 | `/pd:create-specialist-team` | Create ephemeral specialist teams for complex tasks |
 | `/pd:root-cause-analysis` | Investigate bugs systematically |

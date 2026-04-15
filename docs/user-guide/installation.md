@@ -1,9 +1,9 @@
 ---
-last-updated: 2026-04-02T00:00:00Z
-source-feature: 075-phase-context-accumulation
+last-updated: 2026-04-15T00:00:00Z
+source-feature: 078-cc-native-integration
 ---
 
-<!-- AUTO-GENERATED: START - source: 075-phase-context-accumulation -->
+<!-- AUTO-GENERATED: START - source: 078-cc-native-integration -->
 # Installation
 
 ## Prerequisites
@@ -49,7 +49,10 @@ artifacts_root: docs          # where features/, brainstorms/ live (default: doc
 base_branch: develop          # merge target branch (default: auto-detected)
 ui_server_enabled: true       # Kanban board auto-start (default: true)
 ui_server_port: 8718          # Kanban board port (default: 8718)
+doctor_schedule: ""           # cron expression for scheduled doctor runs, e.g. "0 */4 * * *" (default: disabled)
 ```
+
+When `doctor_schedule` is set, pd emits a CronCreate instruction at session start to schedule `/pd:doctor` on the given interval. Leave empty to disable scheduled checks (the doctor still runs automatically at session start).
 
 ## Verify Installation
 

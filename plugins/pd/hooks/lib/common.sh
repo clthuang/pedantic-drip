@@ -86,15 +86,27 @@ escape_json() {
 }
 
 # Read a YAML frontmatter field from a .local.md file
-# Usage: read_local_md_field "$file" "field_name" "default_value"
+# Usage: read_local_md_field "$file" "field_name" "default_value" [preserve_spaces]
+# When preserve_spaces=1, trims only leading/trailing whitespace and surrounding
+# quotes instead of stripping all whitespace (needed for values like cron exprs).
 read_local_md_field() {
-    local file="$1" field="$2" default="${3:-}"
+    local file="$1" field="$2" default="${3:-}" preserve_spaces="${4:-0}"
     if [[ ! -f "$file" ]]; then
         echo "$default"
         return
     fi
     local value
-    value=$(grep "^${field}:" "$file" 2>/dev/null | head -1 | sed 's/^[^:]*: *//' | tr -d ' ' || echo "")
+    if [[ "$preserve_spaces" == "1" ]]; then
+        value=$(grep "^${field}:" "$file" 2>/dev/null \
+            | head -1 \
+            | sed -e 's/^[^:]*://' \
+                  -e 's/^[[:space:]]*//' \
+                  -e 's/[[:space:]]*$//' \
+                  -e 's/^"\(.*\)"$/\1/' \
+                  -e "s/^'\(.*\)'\$/\1/" || echo "")
+    else
+        value=$(grep "^${field}:" "$file" 2>/dev/null | head -1 | sed 's/^[^:]*: *//' | tr -d ' ' || echo "")
+    fi
     if [[ -z "$value" || "$value" == "null" ]]; then
         echo "$default"
     else

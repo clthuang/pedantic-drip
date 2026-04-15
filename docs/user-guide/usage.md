@@ -1,9 +1,9 @@
 ---
-last-updated: 2026-04-02T00:00:00Z
-source-feature: 075-phase-context-accumulation
+last-updated: 2026-04-15T00:00:00Z
+source-feature: 078-cc-native-integration
 ---
 
-<!-- AUTO-GENERATED: START - source: 075-phase-context-accumulation -->
+<!-- AUTO-GENERATED: START - source: 078-cc-native-integration -->
 # Usage
 
 ## Quick Start
@@ -34,6 +34,10 @@ Features move through phases in sequence. After creating a feature, advance phas
 ```
 
 Each phase runs a reviewer before closing. If the reviewer finds issues, it sends the feature back with referral notes.
+
+**`/pd:implement` — parallel task execution:** Tasks are dispatched in parallel using git worktrees (created under `.pd-worktrees/`, gitignored). If worktree creation fails for a specific task, that task runs without isolation. If SQLite contention is detected, remaining tasks fall back to serial execution. Merge conflicts halt the process and surface details for manual resolution.
+
+**`/pd:finish-feature` — security review:** After pre-merge checks pass, pd runs `/security-review` if the command is available in `.claude/commands/`. Critical or high-severity findings block the merge. If the command is not installed, this step is skipped with a warning.
 
 ### Phase Context on Rework
 

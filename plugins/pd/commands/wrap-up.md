@@ -343,6 +343,52 @@ Fix these issues manually, then run /pd:wrap-up again.
 
 Do NOT proceed to Create PR or Merge & Release if validation is failing.
 
+### Step 5a-bis: Security Review (CC Native)
+
+After all discovered project checks pass (or when none are discovered), run CC's native `/security-review` as a complementary defense-in-depth check on the pending changes. This does NOT replace pd's security-reviewer agent in the implement review loop — it is an additional gate specifically for pre-merge.
+
+**Availability check:**
+
+1. Check whether `.claude/commands/security-review.md` exists in the project root.
+2. If **not present**: log the following warning and skip this step without blocking the merge:
+
+   ```
+   security-review not available, skipping pre-merge security scan.
+   To enable: copy the bundled template to .claude/commands/security-review.md.
+   Template location: `plugins/pd/references/security-review.md` (dev workspace) or
+   the equivalent `~/.claude/plugins/cache/*/pd*/*/references/security-review.md`.
+   ```
+
+   Then proceed to the selected option below. Do NOT enter the auto-fix loop for a missing command.
+
+3. If **present**: proceed to invocation.
+
+**Invocation:**
+
+Instruct the orchestrating agent to run `/security-review` to analyze the pending changes for security vulnerabilities.
+
+**Result handling:**
+
+- If `/security-review` returns with no critical/high findings → proceed to the selected option below.
+- If `/security-review` reports critical or high severity findings → treat as a pre-merge validation failure equivalent to a failed check in Step 5a:
+  - Attempt to fix the flagged issues automatically.
+  - Commit fixes: `git add -A && git commit -m "fix: address security-review findings"`.
+  - Re-run `/security-review` (counts as an attempt under the same 3-attempt cap as Step 5a).
+  - If still failing after 3 attempts, STOP and inform the user:
+
+    ```
+    /security-review reported unresolved findings after 3 attempts.
+
+    Remaining findings:
+    - {finding summary}
+
+    Address these issues manually, then run /pd:wrap-up again.
+    ```
+
+- If invocation fails for any other reason (command errors, agent cannot locate the command at runtime, etc.) → log "security-review invocation failed, skipping" and proceed to the selected option. Do NOT block the merge on invocation errors; a missing or broken command is a degradation, not a vulnerability signal.
+
+Do NOT proceed to Create PR or Merge & Release if `/security-review` is failing with unresolved critical/high findings. A skipped security-review (unavailable or invocation error) does NOT block the merge.
+
 ### If "Create PR":
 
 ```bash

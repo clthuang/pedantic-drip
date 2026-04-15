@@ -194,7 +194,7 @@ Quality criteria and review checklists for workflow artifacts.
 ### 3. Testability
 
 - [ ] Every task has a concrete verification command (test for logic, localized file check for structure)
-- [ ] Structural checks verify validity AND resolved exports/imports (not just syntax)
+- [ ] Structural checks verify validity AND required exports/imports resolve (not just syntax)
 - [ ] "Done when" is binary (yes/no)
 - [ ] Test can run independently
 - [ ] No "looks good" criteria

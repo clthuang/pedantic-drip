@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `doctor_schedule` config field in `.claude/pd.local.md` — schedules automatic doctor health checks via CronCreate on session start
+- Worktree parallel dispatch in `/pd:implement` — tasks now run in parallel via git worktrees (`.pd-worktrees/`); falls back to per-task serial on worktree failure, full-serial on SQLite BUSY, and halts on merge conflict
+- `/security-review` pre-merge step in `/pd:finish-feature` and `/pd:wrap-up` — runs security review before merge; skipped gracefully when the command is unavailable
+- Two new doctor checks: `check_security_review_command` (warns if `.claude/commands/security-review.md` is missing) and `check_stale_worktrees` (detects orphaned `.pd-worktrees/` entries)
+- Bundled `plugins/pd/references/security-review.md` reference from upstream `anthropics/claude-code-security-review`
+
+### Changed
+- Doctor check count increased from 12 to 14
+
 ## [4.14.18] - 2026-04-12
 
 ### Changed

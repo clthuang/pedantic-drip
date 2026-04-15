@@ -90,7 +90,7 @@ flowchart TD
 | `/pd:retrospect` | Capture learnings |
 | `/pd:add-to-backlog <idea>` | Capture ideas for later |
 | `/pd:cleanup-brainstorms` | Delete old scratch files |
-| `/pd:doctor` | Run diagnostic checks on pd workspace health |
+| `/pd:doctor` | Run 14 diagnostic checks on pd workspace health (incl. security-review command and stale worktrees) |
 | `/pd:sync-cache` | Reload plugin after changes |
 | `/pd:secretary` | Intelligent task routing to commands, agents, and skills |
 | `/pd:root-cause-analysis` | Investigate bugs and failures to find all root causes |

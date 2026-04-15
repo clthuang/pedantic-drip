@@ -663,3 +663,24 @@ Before writing any entity registry or reconciliation code, read ENTITY_MACHINES 
 - Confidence: high
 - Last observed: Feature #074
 - Observation count: 1
+
+### Heuristic: Test code respects same encapsulation as production
+Test code must respect the same encapsulation boundaries as production code. If a wrapper exists (e.g., db.query_dependencies()), tests use the wrapper; they don't reach into db._conn even for 'just a test'.
+- Source: feature/078-cc-native-integration (test-sqlite-concurrency.sh accessed db._conn)
+- Confidence: high
+- Last observed: Feature #078
+- Observation count: 1
+
+### Heuristic: Manual spikes documented as PR-time gates
+Manual verification spikes (tasks that cannot be agent-verified, e.g., cross-machine behavior, CLI interactive flows) should be documented as PR-time gates in spike-results.md and surfaced in finish-feature output, not silently deferred.
+- Source: feature/078-cc-native-integration (T0.4 + T4.1 documented as blocked-manual)
+- Confidence: high
+- Last observed: Feature #078
+- Observation count: 1
+
+### Heuristic: Capture deferred reviewer suggestions to backlog
+When reviewer dispatch produces deferred suggestions, those suggestions should be captured in the backlog (/pd:add-to-backlog) at complete_phase time, not left in review summaries. Otherwise they rot invisibly.
+- Source: feature/078-cc-native-integration (6 deferred suggestions not backlogged)
+- Confidence: medium
+- Last observed: Feature #078
+- Observation count: 1
