@@ -146,6 +146,14 @@ Each task is 5-15 minutes of focused work. Parallel groups marked with `[PARALLE
 
 ## Phase 3: decay_confidence public function + CLI (TDD)
 
+Phase 3 is split into sub-stages to keep the sequential chain under the 15-task-per-stage cap:
+- **Phase 3a (Tasks 3.1-3.7):** TDD red→green core for `decay_confidence` implementation + basic tier tests.
+- **Phase 3b (Tasks 3.8-3.24):** Acceptance-test coverage sweep (mostly [red → green via existing impl]).
+
+The serialization rule (no parallel dispatch) applies to ALL Phase 3 tasks (3a + 3b share test_maintenance.py). Phase 3b starts after Phase 3a completes.
+
+### Phase 3a: Core implementation
+
 - [ ] **3.1** Write AC-1, AC-2, AC-3 tests in `test_maintenance.py` (basic tier transitions) [TDD red].
   - AC-1: seed 1 high stale entry, invoke decay with thresholds, assert demoted to medium + counters correct.
   - AC-2: same with medium → low.
@@ -183,6 +191,10 @@ Each task is 5-15 minutes of focused work. Parallel groups marked with `[PARALLE
   - Per I-1 pseudocode: NFR-3 flag check first; type-check `now`; resolve 3 config ints via `_resolve_int_config`; semantic-coupling warning dedup; compute cutoffs; call `_select_candidates`; non-dry-run: call `db.batch_demote` for each tier; dry-run: populate counts without UPDATE; elapsed_ms; emit diagnostic if debug flag; return.
   - Done: Tasks 3.1-3.6 tests pass.
   - Size: 15 min. `requires: 3.6`
+
+### Phase 3b: Acceptance-test coverage sweep
+
+Starts after Phase 3a (Tasks 3.1-3.7) completes. All tests below exercise already-implemented behavior via `[red → green via existing impl]` — red tests land with minimal or no new production code.
 
 - [ ] **3.8** Write AC-10 intra-tick idempotency test [TDD red → green via existing guard].
   - Seed 3 candidates, invoke twice with same `now=NOW`. 1st call: expected demotions. 2nd call: `demoted_* == 0`, `skipped_floor==1` for already-demoted-to-low.
@@ -316,9 +328,9 @@ Each task is 5-15 minutes of focused work. Parallel groups marked with `[PARALLE
   - Size: 2-45 min depending on hit count (see size-split gate above).
   - `requires: 6.1`
 
-- [ ] **6.3** Run hook-tests before Phase 4b to confirm baseline still passes.
-  - Action: `bash plugins/pd/hooks/tests/test-hooks.sh` → count passing tests ≥ `test_hooks_before_082`. This verifies that Phase 4a's new `test-memory-decay-session-start.sh` is NOT in the runner list yet (it shouldn't be — see Task 4.2 test-hooks.sh discovery note).
-  - Done: baseline re-verified; no regression from Phase 6 edits.
+- [ ] **6.3** Run hook-tests before Phase 4b to confirm no regression from Phase 6 edits.
+  - Action: `bash plugins/pd/hooks/tests/test-hooks.sh` → count PRE-EXISTING passing tests ≥ `test_hooks_before_082`. **Expected state at this point:** Tasks 4.1 + 4.2 have already added 2 inline test functions (`test_memory_decay_session_start`, `test_memory_decay_missing_module`) that are currently RED (they will fail until Phase 4b wires `run_memory_decay`). So `TESTS_RUN == test_hooks_before_082 + 2`, `TESTS_FAILED == 2` (the new AC-21/22), `TESTS_PASSED == test_hooks_before_082` (or higher if Phase 6 did not need to remediate). **Do NOT debug these 2 failures** — they go green in Task 4.6 after Phase 4b lands.
+  - Done: baseline re-verified; the only failures are the 2 new AC-21/22 tests; no pre-existing test regressed.
   - Size: 5 min. `requires: 6.2`
 
 ### Phase 4b: Land the session-start wiring (tests go green)
