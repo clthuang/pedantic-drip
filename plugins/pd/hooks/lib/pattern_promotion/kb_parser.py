@@ -69,11 +69,13 @@ def _strip_heading_prefix(heading: str) -> str:
     return heading
 
 
-def _parse_file(path: Path) -> list[KBEntry]:
+def _parse_file(path: Path) -> tuple[list[KBEntry], set[str]]:
     """Parse a single KB markdown file into KBEntry objects.
 
     Category is taken from the filename stem (heuristics, patterns, anti-patterns).
-    Returns unfiltered entries — caller decides on thresholds.
+    Returns `(entries, promoted_names)` — `promoted_names` holds the raw
+    heading of each entry already carrying a `- Promoted:` marker. Callers
+    use this set to filter idempotent re-runs without mutating KBEntry.
     """
     category = _category_from_filename(path.name)
     text = path.read_text(encoding="utf-8")
@@ -82,6 +84,7 @@ def _parse_file(path: Path) -> list[KBEntry]:
     lines = text_stripped.splitlines()
 
     entries: list[KBEntry] = []
+    promoted_names: set[str] = set()
     # Find all h3 lines and their spans
     h3_positions: list[tuple[int, str]] = []
     for idx, ln in enumerate(lines):
@@ -116,10 +119,10 @@ def _parse_file(path: Path) -> list[KBEntry]:
         # Parse metadata
         obs_field: int | None = None
         confidence: str = "n/a"
-        has_promoted = False
+        marker_seen = False
         for ml in meta_lines:
             if _PROMOTED_RE.match(ml):
-                has_promoted = True
+                marker_seen = True
                 continue
             m = _OBS_COUNT_RE.match(ml)
             if m:
@@ -142,15 +145,9 @@ def _parse_file(path: Path) -> list[KBEntry]:
                     feature_ids.add(match.group(1))
             effective = len(feature_ids)
 
-        name = _strip_heading_prefix(heading)
-        # Keep the original heading (with prefix) so mark_entry can match it
-        # but expose name stripped for UI. Store full heading via description?
-        # Tests expect the heading-as-written. Use the raw heading.
-        # Pattern entries have "Pattern: X" in heading; tests check both forms.
-        # Tests: `Pattern: Qualifying Pattern` (raw heading) AND
-        #        `High-Confidence Qualifying Heuristic` (stripped).
-        # The stripped name for heuristic has no prefix to strip, and
-        # patterns file retains "Pattern: ..." in tests. So use the raw heading.
+        # KBEntry.name stores the raw heading (including any
+        # `Pattern: ` / `Anti-Pattern: ` / `Heuristic: ` prefix) so
+        # `mark_entry` can match it against the on-disk heading line.
         entries.append(
             KBEntry(
                 name=heading,
@@ -162,13 +159,10 @@ def _parse_file(path: Path) -> list[KBEntry]:
                 line_range=(line_idx + 1, end_idx),
             )
         )
-        # Annotate promoted via description marker channel: skip later
-        if has_promoted:
-            # Tag via sentinel so filter step drops it. Use a private attr
-            # on the dataclass instance (dataclasses allow setattr on instances).
-            object.__setattr__(entries[-1], "_promoted", True)
+        if marker_seen:
+            promoted_names.add(heading)
 
-    return entries
+    return entries, promoted_names
 
 
 def enumerate_qualifying_entries(
@@ -184,9 +178,9 @@ def enumerate_qualifying_entries(
             continue
         if path.name in EXCLUDED_FILES:
             continue
-        file_entries = _parse_file(path)
+        file_entries, promoted_names = _parse_file(path)
         for e in file_entries:
-            if getattr(e, "_promoted", False):
+            if e.name in promoted_names:
                 continue
             if e.effective_observation_count < min_observations:
                 continue

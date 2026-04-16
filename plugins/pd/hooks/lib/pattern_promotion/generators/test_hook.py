@@ -133,6 +133,37 @@ class TestValidateFeasibility:
         ok, reason = hook.validate_feasibility(bad)
         assert ok is False
 
+    def test_rejects_backtick_in_check_expression(self):
+        """Backtick enables command substitution in bash double-quotes."""
+        bad = dict(VALID_FEASIBILITY)
+        bad["check_expression"] = "a.b`whoami`"
+        ok, reason = hook.validate_feasibility(bad)
+        assert ok is False
+        assert reason is not None
+        assert "`" in reason or "forbidden" in reason.lower()
+
+    def test_rejects_dollar_paren_in_check_expression(self):
+        """$( enables command substitution in bash double-quotes."""
+        bad = dict(VALID_FEASIBILITY)
+        bad["check_expression"] = "a.b$(whoami)"
+        ok, reason = hook.validate_feasibility(bad)
+        assert ok is False
+        assert reason is not None
+        assert "forbidden" in reason.lower()
+
+    def test_rejects_newline_in_check_expression(self):
+        """Newlines can break out of single-line template contexts."""
+        bad = dict(VALID_FEASIBILITY)
+        bad["check_expression"] = "a.b\nextra"
+        ok, reason = hook.validate_feasibility(bad)
+        assert ok is False
+
+    def test_rejects_null_byte_in_check_expression(self):
+        bad = dict(VALID_FEASIBILITY)
+        bad["check_expression"] = "a.b\x00rest"
+        ok, reason = hook.validate_feasibility(bad)
+        assert ok is False
+
 
 # ---------------------------------------------------------------------------
 # generate
@@ -356,3 +387,114 @@ class TestGenerate:
         entry = _entry()
         with pytest.raises(ValueError):
             hook.generate(entry, {}, plugin_root=plugin_root)
+
+
+# ---------------------------------------------------------------------------
+# Shell-injection hardening
+# ---------------------------------------------------------------------------
+
+
+class TestShellInjectionHardening:
+    """Ensure user-controlled strings can't break out of shell script contexts."""
+
+    def test_entry_name_injection_is_escaped_in_sh(self, plugin_root: Path):
+        """A malicious entry name must not break out of the echo double-quote."""
+        # Hostile entry name containing characters that are special inside
+        # bash double-quoted strings: ", $, `, \. If not escaped, this would
+        # close the echo string and inject commands.
+        malicious = 'My Pattern"; rm -rf ~; echo "'
+        entry = _entry(malicious)
+        plan = hook.generate(
+            entry,
+            {"feasibility": VALID_FEASIBILITY},
+            plugin_root=plugin_root,
+        )
+        sh = sorted(plan.edits, key=lambda e: e.write_order)[0]
+        # We only require safety on the EXECUTABLE lines. Comment lines
+        # starting with `#` are never evaluated by bash even if they contain
+        # literal `"; rm -rf ~;` text. The at-risk line is the echo inside
+        # the `if` block that interpolates entry_name into a double-quoted
+        # string.
+        code_lines = [
+            ln for ln in sh.after.splitlines()
+            if ln.strip() and not ln.lstrip().startswith("#")
+        ]
+        code = "\n".join(code_lines)
+        # The exact break-out sequence `"; rm -rf ~; echo "` must not appear
+        # in any executable line — if it did, the echo would close and a
+        # separate `rm` command would execute.
+        assert '"; rm -rf ~; echo "' not in code, (
+            "entry_name shell-break sequence was not escaped in code lines"
+        )
+        # Double-quote inside entry_name must be backslash-escaped.
+        assert '\\"' in code, (
+            "expected backslash-escaped double-quote from entry_name sanitization"
+        )
+
+    def test_entry_name_with_backtick_is_escaped(self, plugin_root: Path):
+        """Backticks would trigger command substitution inside double quotes."""
+        entry = _entry("Inject`whoami`pattern")
+        plan = hook.generate(
+            entry,
+            {"feasibility": VALID_FEASIBILITY},
+            plugin_root=plugin_root,
+        )
+        sh = sorted(plan.edits, key=lambda e: e.write_order)[0]
+        body = sh.after
+        # An un-escaped backtick inside a bash double-quoted string triggers
+        # command substitution. We require the generator to have escaped the
+        # backtick (prefix with backslash).
+        # Every backtick occurrence in the body that's adjacent to the
+        # injected token must be preceded by a backslash.
+        assert "\\`whoami\\`" in body, (
+            "backtick must be backslash-escaped when inside a double-quoted "
+            "echo line"
+        )
+
+    def test_entry_name_with_newline_is_flattened(self, plugin_root: Path):
+        """Newlines in entry_name must not break comment lines into code."""
+        entry = _entry("Pattern with\nnewline\nbad")
+        plan = hook.generate(
+            entry,
+            {"feasibility": VALID_FEASIBILITY},
+            plugin_root=plugin_root,
+        )
+        sh = sorted(plan.edits, key=lambda e: e.write_order)[0]
+        lines = sh.after.splitlines()
+        # The TD-8 marker must appear on EXACTLY ONE line — newlines must
+        # not have escaped the comment context.
+        td8_lines = [i for i, ln in enumerate(lines) if "Promoted from KB entry" in ln]
+        assert len(td8_lines) == 1
+
+    def test_json_field_extractor_with_single_quote_is_escaped(
+        self, plugin_root: Path
+    ):
+        """Single quotes in the jq path must be escaped for single-quoted embedding."""
+        feas = dict(VALID_FEASIBILITY)
+        feas["check_kind"] = "json_field"
+        # jq doesn't actually allow a bare single quote in a path, but the
+        # generator must still defend — splicing a raw apostrophe into a
+        # single-quoted shell literal closes it.
+        feas["check_expression"] = ".tool_input.field_with'apostrophe"
+        entry = _entry()
+        plan = hook.generate(
+            entry,
+            {"feasibility": feas},
+            plugin_root=plugin_root,
+        )
+        sh = sorted(plan.edits, key=lambda e: e.write_order)[0]
+        body = sh.after
+        # The single-quote escape technique transforms ' into '\''
+        assert "'\\''" in body, "single-quote escape pattern missing"
+        # And the raw expression should not appear unescaped between two
+        # surviving single quotes (which would break out).
+        assert "field_with'apostrophe" not in body
+
+    def test_backtick_in_check_expression_rejected_at_validation(self):
+        """Belt-and-suspenders: validator rejects backtick injection."""
+        bad = dict(VALID_FEASIBILITY)
+        bad["check_kind"] = "json_field"
+        bad["check_expression"] = ".a.b`whoami`"
+        ok, reason = hook.validate_feasibility(bad)
+        assert ok is False
+        assert reason is not None

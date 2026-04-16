@@ -485,6 +485,14 @@ def _cmd_apply(args: argparse.Namespace) -> int:
     except (FileNotFoundError, ValueError) as exc:
         # entries.json is optional for apply if we have enough context —
         # construct a minimal KBEntry from the --entry-name alone.
+        # Warn on stderr so operators can distinguish an expected fallback
+        # from a silent mis-wiring of the sandbox path.
+        print(
+            f"[promote-pattern] entries.json not found at "
+            f"{sandbox / 'entries.json'}, using minimal entry for "
+            f"{args.entry_name!r} ({exc})",
+            file=sys.stderr,
+        )
         entries = []
 
     entry_dict = _find_entry(entries, args.entry_name)

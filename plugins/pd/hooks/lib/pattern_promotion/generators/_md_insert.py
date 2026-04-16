@@ -18,6 +18,61 @@ InsertionMode = Literal["append-to-list", "new-paragraph-after-heading"]
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 
+# Cap on description length when embedding into a target markdown file.
+# Keeps promoted blocks compact and prevents unbounded prompt-injection
+# payloads from corrupting future Claude sessions that read the target.
+_MAX_DESCRIPTION_CHARS = 500
+
+
+def _sanitize_description(text: str) -> str:
+    """Neutralize markdown structural characters and cap length.
+
+    KB `description` fields are author-controlled free text that gets
+    embedded into target SKILL/agent/command markdown files. A malicious
+    or careless description can contain:
+      - leading `#` on a line — becomes a spurious heading
+      - `---` alone on a line — becomes a frontmatter / thematic break
+      - triple-backtick code fences — swallow surrounding content
+    Any of these can corrupt target file structure and inject unintended
+    instructions into Claude sessions that later read the file.
+
+    This helper:
+      - replaces triple-backtick fences with a safe inline marker
+      - escapes leading `#` on each line with a zero-width-safe backslash
+      - escapes leading `---` / `===` on each line
+      - caps length at _MAX_DESCRIPTION_CHARS (truncate + "...")
+    It runs BEFORE the newline-flattening step, so per-line structural
+    patterns are detectable.
+    """
+    if not text:
+        return ""
+
+    # Neutralize triple-backtick code fences anywhere in the text. We
+    # replace with a distinct marker rather than escaping because code
+    # fences affect markdown parsing regardless of leading whitespace.
+    safe = text.replace("```", "'''")
+
+    # Escape structural patterns at line starts.
+    out_lines: list[str] = []
+    for line in safe.splitlines():
+        stripped_leading = line.lstrip()
+        indent = line[: len(line) - len(stripped_leading)]
+        if stripped_leading.startswith("#"):
+            # Escape the hash so it renders literally instead of becoming
+            # a heading when the description happens to land at a line start.
+            out_lines.append(f"{indent}\\{stripped_leading}")
+        elif stripped_leading.startswith("---") or stripped_leading.startswith("==="):
+            # Escape frontmatter / setext-heading delimiters.
+            out_lines.append(f"{indent}\\{stripped_leading}")
+        else:
+            out_lines.append(line)
+    safe = "\n".join(out_lines)
+
+    if len(safe) > _MAX_DESCRIPTION_CHARS:
+        # Leave room for the trailing ellipsis within the cap.
+        safe = safe[: _MAX_DESCRIPTION_CHARS - 3] + "..."
+    return safe
+
 
 def find_heading_line(text: str, heading: str) -> int | None:
     """Return 0-indexed line of the first exact-match heading, else None.
@@ -58,7 +113,10 @@ def section_span(text: str, heading_line_idx: int) -> tuple[int, int]:
 
 def _render_block(entry_name: str, description: str, mode: InsertionMode) -> list[str]:
     """Return the list of lines (no trailing newline) to insert."""
-    desc = (description or "").strip().replace("\n", " ")
+    # Sanitize BEFORE newline-flattening so per-line structural patterns
+    # (leading `#`, `---`, ```) can still be detected and escaped.
+    sanitized = _sanitize_description(description or "")
+    desc = sanitized.strip().replace("\n", " ")
     marker = f"<!-- Promoted: {entry_name} -->"
     if mode == "append-to-list":
         # Single bullet that combines the entry name and description so the
