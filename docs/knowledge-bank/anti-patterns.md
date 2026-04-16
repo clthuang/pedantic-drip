@@ -672,3 +672,19 @@ Changing a function's parameter default has zero production effect on callers th
 - Confidence: high
 - Last observed: Feature #080
 - Observation count: 1
+
+### Anti-Pattern: Same-Name-Different-Type Shared Globals Across MCP Subprocesses
+In a multi-MCP-subprocess architecture (e.g., separate memory_server and workflow_state_server stdio processes), a variable like `db` or `_config` may mean different things in each subprocess. `db` can be `EntityDatabase` in one and `MemoryDatabase` in another. Silent type confusion at an integration point is a real risk when features cross subprocess boundaries.
+- Observed in: feature/081-mid-session-memory-refresh-hoo (design iter 1 claimed `db` in `_process_complete_phase` could be passed to `refresh_memory_digest`; actually `db` was EntityDatabase but refresh needed MemoryDatabase)
+- Fix: when a design references a common global name (`db`, `_provider`, `_config`) that exists in multiple files, verify the name in the target file's scope resolves to the expected type. Design-reviewer should drop into source files to confirm.
+- Confidence: high
+- Last observed: Feature #081
+- Observation count: 1
+
+### Anti-Pattern: New Response-Field Insertion Before Existing-Test Audit
+Adding a new key to an MCP tool response shape breaks existing tests that assert exact-dict equality on that response. If the plan inserts the field (Phase 4) before remediating the tests (Phase 6), the integration phase breaks mid-execution.
+- Observed in: feature/081-mid-session-memory-refresh-hoo (plan-reviewer iter 1 caught ordering bug; fixed by interleaving Phase 6 between Task 4.4 red tests and Task 4.5 gate insertion)
+- Fix: when introducing a new response-shape field, plan-reviewer must verify existing-test remediation is sequenced BEFORE the integration phase that enables the field. The defensive sequencing costs nothing if no tests break.
+- Confidence: high
+- Last observed: Feature #081
+- Observation count: 1

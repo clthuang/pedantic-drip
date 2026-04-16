@@ -710,3 +710,11 @@ When adding diagnostics, metrics, or notifications to an `@with_retry`-decorated
 - Confidence: medium
 - Last observed: Feature #080
 - Observation count: 1
+
+### Pattern: Structural Parity via Shared Function Extraction
+When two code paths must produce identical outputs on identical inputs (e.g., two MCP callers invoking the same ranking pipeline), extract a shared function they both invoke rather than relying on caller-discipline to keep them in sync. Parity becomes a compile-time property, not a review-time one.
+- Observed in: feature/081-mid-session-memory-refresh-hoo (TD-1 revised — extracted `hybrid_retrieve()` from `_process_search_memory` so both `memory_server` and `refresh_memory_digest` call the same function)
+- Benefit: a future regression in one caller cannot silently diverge from the other; test the function once, both paths inherit correctness
+- Confidence: high
+- Last observed: Feature #081
+- Observation count: 1

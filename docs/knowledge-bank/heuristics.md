@@ -716,3 +716,11 @@ When adding per-field type validation (bool rejection, numeric coercion, warning
 - Confidence: medium
 - Last observed: Feature #080
 - Observation count: 1
+
+### Heuristic: Separate Entity-Registry Terminal Semantics From Workflow Terminal Semantics
+Existing helpers like `entity_registry._derive_next_phase('finish') == 'finish'` are valid for state-machine entity tracking (finish is terminal, stays finish). They are semantically WRONG for content-retrieval queries where "what comes after finish?" should be empty. When building a new feature that needs next-phase semantics, prefer an inline mapping over importing the entity-registry helper.
+- Observed in: feature/081-mid-session-memory-refresh-hoo (spec FR-2 inline `_NEXT_PHASE` dict with explicit `finish → ""`)
+- Benefit: avoids subtle query-construction bugs; terminal behavior is localized to the consumer
+- Confidence: medium
+- Last observed: Feature #081
+- Observation count: 1

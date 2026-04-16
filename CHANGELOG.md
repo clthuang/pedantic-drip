@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `memory_refresh_enabled` (default true) + `memory_refresh_limit` (default 5) config fields. At each `complete_phase` MCP call, the orchestrator now receives a compact memory digest (top-K medium/high-confidence entries relevant to the next phase) as a new `memory_refresh` field in the response. Eliminates session-start staleness for long multi-phase features.
+- `memory_refresh` diagnostic event appended to `~/.claude/pd/memory/influence-debug.log` when `memory_influence_debug: true` (reuses 080's log file and debug flag).
+
+### Changed
+- `_process_search_memory` internal refactor: retrieval + ranking extracted into a shared `hybrid_retrieve()` helper so `memory_server` and the new workflow-state-side refresh path share the exact same ranking pipeline (no drift possible).
+
 ## [4.15.2] - 2026-04-16
 
 ### Fixed
