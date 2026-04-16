@@ -589,8 +589,9 @@ def _main():
         parser.print_usage()
         sys.exit(0)
 
-    # Resolve project-root → config path → open DB.
-    project_root = Path(args.project_root) if args.project_root else Path.cwd()
+    # Resolve project-root → config path → open DB. .resolve() normalizes to
+    # absolute path + resolves symlinks, matching spec FR-9's validation contract.
+    project_root = Path(args.project_root).resolve() if args.project_root else Path.cwd().resolve()
     if not project_root.is_dir():
         sys.exit(1)  # no stdout — session-start sees empty summary → silent
 
@@ -606,6 +607,8 @@ def _main():
         sys.exit(0)
 
     db_path = str(Path.home() / ".claude" / "pd" / "memory" / "memory.db")
+    # CLI intentionally does not expose `--busy-timeout-ms`; the kwarg is
+    # test-scaffolding-only per TD-6 / NFR-5 item 2. Production always uses default 15000.
     db = MemoryDatabase(db_path)  # WAL mode via constructor (FR-5 prerequisite)
 
     try:
@@ -746,6 +749,9 @@ run_memory_decay() {
     local python_cmd="$PLUGIN_ROOT/.venv/bin/python"
     [[ -x "$python_cmd" ]] || python_cmd="python3"
 
+    # 10s budget = 5000ms AC-24 Python wall-clock ceiling + subprocess startup
+    # overhead + BEGIN IMMEDIATE busy-wait margin. See spec FR-4 for authoritative
+    # justification and cross-reference to AC-20b concurrent-writer tests.
     local timeout_cmd=""
     if command -v gtimeout &>/dev/null; then
         timeout_cmd="gtimeout 10"
@@ -873,7 +879,8 @@ All three are text-only additions (spec FR-3 / AC-25 / AC-26). See spec for exac
 - `memory_decay_enabled: false` default: absolute no-op for existing operators who don't opt in.
 - `MemoryDatabase.__init__` kwarg-only additions: existing callers unaffected.
 - `MemoryDatabase.batch_demote` is a new public method: no existing callers.
-- `session-start.sh` main() reorder: `run_reconciliation` and `run_doctor_autofix` positions relative to `build_memory_context` change (build goes first now). No external caller depends on the order; hook output shape unchanged.
+- `session-start.sh` main() reorder: `run_reconciliation` and `run_doctor_autofix` positions relative to `build_memory_context` change (build goes first now). **Dependency verification (done during design):** `recon_summary` and `doctor_summary` outputs of both functions are captured into string variables used ONLY by the later display-prepend chain (session-start.sh:724-747). Neither value feeds back into `build_memory_context`, `build_context`, or any earlier block. Reorder is therefore safe. Confirmed via grep in design review iter-3: no shared-variable dependency exists between the three subprocess invocations.
+- `MemoryDatabase` exception-safety (done during design): constructor at database.py:322-327 assigns `self._conn` FIRST via `sqlite3.connect(db_path, timeout=5.0)`, then runs `_set_pragmas` / `_detect_fts5` / `_migrate`. If any step after `_conn` assignment raises, the connection is already set, so `db.close()` (called in `_main`'s `finally` clause) is safe. The ONLY way `close` fails is if `sqlite3.connect` itself raises (e.g., file permission error), in which case `MemoryDatabase(db_path)` never returns and the `finally` block is never entered. **I-6 therefore needs no additional try/except around construction** — the Python lexical scope guarantees that `db` is bound only if `MemoryDatabase(...)` succeeded.
 - Config file: new fields are additive; omitting them retains prior behavior.
 
 ### Observability
