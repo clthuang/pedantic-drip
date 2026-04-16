@@ -7782,3 +7782,178 @@ class TestDegradedMode:
         finally:
             wss._db = orig_db
             wss._db_unavailable = orig_unavailable
+
+
+# ---------------------------------------------------------------------------
+# Feature 081: complete_phase memory_refresh digest integration tests
+# derived_from: spec:AC-1, AC-2, AC-5
+# ---------------------------------------------------------------------------
+
+
+class TestCompletePhaseMemoryRefresh:
+    """Integration tests for the memory_refresh field injected into
+    complete_phase responses by the 4-part gate in _process_complete_phase.
+
+    Mocks refresh_memory_digest via monkeypatch.setattr on the
+    workflow_state_server module (that's where the gate calls into it).
+    Config is mutated via setattr (NOT setitem) because lifespan re-assigns
+    the _config module global — setitem on the pre-swap dict would not be
+    visible after lifespan runs.
+    """
+
+    def _seed(self, db, tmp_path, slug="081-refresh-test"):
+        """Seed a feature ready for complete_phase('specify')."""
+        feat_dir = os.path.join(str(tmp_path), "features", slug)
+        os.makedirs(feat_dir, exist_ok=True)
+        with open(os.path.join(feat_dir, ".meta.json"), "w") as f:
+            f.write(
+                '{"id": "' + slug.split("-", 1)[0] + '", "slug": "'
+                + slug.split("-", 1)[1] + '", "status": "active", "mode": "standard"}'
+            )
+        db.register_entity(
+            "feature", slug, "Refresh Test", status="active",
+            artifact_path=feat_dir,
+            metadata={
+                "id": slug.split("-", 1)[0],
+                "slug": slug.split("-", 1)[1],
+                "mode": "standard",
+                "branch": "",
+                "phase_timing": {},
+            },
+            project_id="__unknown__",
+        )
+        db.create_workflow_phase(f"feature:{slug}", workflow_phase="specify")
+        return WorkflowStateEngine(db, str(tmp_path))
+
+    def test_ac1_enabled_returns_digest(self, db, tmp_path, monkeypatch):
+        """AC-1: with flag enabled and a helper returning a digest, the
+        field appears in the complete_phase response equal to the helper's
+        return value."""
+        import workflow_state_server
+
+        engine = self._seed(db, tmp_path)
+
+        monkeypatch.setattr(
+            workflow_state_server, "_config",
+            {"memory_refresh_enabled": True, "memory_refresh_limit": 5},
+        )
+        # Gate also requires _memory_db truthy; _provider can be anything
+        # because the real helper is mocked out.
+        monkeypatch.setattr(workflow_state_server, "_memory_db", object())
+        monkeypatch.setattr(workflow_state_server, "_provider", object())
+
+        digest = {
+            "query": "refresh-test design",
+            "count": 2,
+            "entries": [
+                {"name": "A", "category": "patterns", "description": "alpha"},
+                {"name": "B", "category": "heuristics", "description": "beta"},
+            ],
+        }
+        monkeypatch.setattr(
+            workflow_state_server, "refresh_memory_digest",
+            lambda *a, **kw: digest,
+        )
+
+        result = _process_complete_phase(
+            engine, "feature:081-refresh-test", "specify",
+            db=db, iterations=None, reviewer_notes=None,
+        )
+        data = json.loads(result)
+        assert "memory_refresh" in data, (
+            f"memory_refresh field missing from response: {data}"
+        )
+        assert data["memory_refresh"] == digest
+
+    def test_ac2_disabled_flag_no_refresh(self, db, tmp_path, monkeypatch):
+        """AC-2: memory_refresh_enabled=false → field absent and helper
+        not invoked. Pre-gate this passes trivially (no call); post-gate
+        it still passes because the flag short-circuits. Acts as regression
+        guard for the disable path."""
+        import workflow_state_server
+
+        engine = self._seed(db, tmp_path, slug="082-disabled-test")
+
+        monkeypatch.setattr(
+            workflow_state_server, "_config",
+            {"memory_refresh_enabled": False, "memory_refresh_limit": 5},
+        )
+        monkeypatch.setattr(workflow_state_server, "_memory_db", object())
+        monkeypatch.setattr(workflow_state_server, "_provider", object())
+
+        call_count = {"n": 0}
+
+        def exploding_refresh(*a, **kw):
+            call_count["n"] += 1
+            raise AssertionError(
+                "refresh_memory_digest must NOT be called when disabled"
+            )
+
+        monkeypatch.setattr(
+            workflow_state_server, "refresh_memory_digest", exploding_refresh,
+        )
+
+        result = _process_complete_phase(
+            engine, "feature:082-disabled-test", "specify",
+            db=db, iterations=None, reviewer_notes=None,
+        )
+        data = json.loads(result)
+        assert "memory_refresh" not in data, (
+            f"memory_refresh should be absent when disabled; got {data}"
+        )
+        assert call_count["n"] == 0
+
+    def test_ac5_limit_clamp_above_max(self, db, tmp_path, monkeypatch):
+        """AC-5: limit=100 clamped to 20, limit=0 clamped to 1, limit=True
+        rejected → default 5.  Asserts the limit actually passed to
+        refresh_memory_digest (positional arg index 3)."""
+        import workflow_state_server
+
+        cases = [
+            (100, 20),  # clamped to max
+            (0, 1),     # clamped to min
+            (True, 5),  # bool rejected → default
+        ]
+        for i, (configured, expected) in enumerate(cases):
+            # Fresh seeded feature per case (avoids "already completed" races).
+            slug = f"09{i}-clamp-test"
+            fresh_db = EntityDatabase(":memory:")
+            engine = self._seed(fresh_db, tmp_path / f"case_{i}", slug=slug)
+
+            # Reset dedup set so warned-field state from a prior case doesn't
+            # suppress an expected warning in this case.
+            import semantic_memory.refresh as refresh
+            monkeypatch.setattr(refresh, "_refresh_warned_fields", set())
+
+            monkeypatch.setattr(
+                workflow_state_server, "_config",
+                {"memory_refresh_enabled": True, "memory_refresh_limit": configured},
+            )
+            monkeypatch.setattr(workflow_state_server, "_memory_db", object())
+            monkeypatch.setattr(workflow_state_server, "_provider", object())
+
+            captured = {}
+
+            def spy(*args, **kwargs):
+                captured["args"] = args
+                captured["kwargs"] = kwargs
+                return {"query": "q", "count": 1, "entries": [
+                    {"name": "X", "category": "patterns", "description": "d"}
+                ]}
+
+            monkeypatch.setattr(
+                workflow_state_server, "refresh_memory_digest", spy,
+            )
+
+            _process_complete_phase(
+                engine, f"feature:{slug}", "specify",
+                db=fresh_db, iterations=None, reviewer_notes=None,
+            )
+            assert "args" in captured, (
+                f"refresh_memory_digest was not called for case limit={configured!r}"
+            )
+            # signature: (db, provider, query, limit, *, config, ...)
+            assert captured["args"][3] == expected, (
+                f"limit={configured!r} should have clamped to {expected}, "
+                f"got {captured['args'][3]}"
+            )

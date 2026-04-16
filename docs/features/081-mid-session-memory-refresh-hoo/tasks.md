@@ -398,7 +398,7 @@ memory_refresh_limit: 5
 **File:** (verification only)
 **Change:** After Phase 4 complete, run `PYTHONPATH=plugins/pd/hooks/lib plugins/pd/.venv/bin/python -m pytest plugins/pd/mcp/test_workflow_state_server.py -v`. Confirm pass count ≥ `workflow_state_tests_before_081 + 3_new_081_tests` (3 from Task 4.4).
 **Done:** All green.
-**Depends on:** Task 4.7 (all Phase 4 complete)
+**Depends on:** Task 4.6 (all Phase 4 complete; Task 4.7 was merged into Task 4.3)
 
 ## Phase 7: Final verification
 

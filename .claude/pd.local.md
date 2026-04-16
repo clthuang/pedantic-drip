@@ -61,4 +61,10 @@ memory_influence_threshold: 0.55
 memory_influence_weight: 0.05
 # emit per-dispatch hit-rate diagnostics to ~/.claude/pd/memory/influence-debug.log
 memory_influence_debug: true
+# inject memory digest into complete_phase responses so orchestrator sees fresh
+# entries at phase boundaries; disable to revert to session-start-only memory
+memory_refresh_enabled: true
+# max memory entries in per-phase refresh digest; clamped to [1, 20]; each
+# entry description capped at 240 chars
+memory_refresh_limit: 5
 ---
