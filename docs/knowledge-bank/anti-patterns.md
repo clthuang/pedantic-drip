@@ -600,6 +600,7 @@ Naming reviewer agents in plan.md from memory or from spec/design prose rather t
 - Observed in: Features #021, #022, #025, #070
 - Instead: Before finalizing plan.md, grep the relevant command files for reviewer dispatch lines and verify all agent names match
 - Confidence: high
+- Promoted: agent:plugins/pd/agents/plan-reviewer.md
 - Last observed: Feature #070
 - Observation count: 4
 

@@ -165,6 +165,10 @@ Only include `backward_to` when the root cause is genuinely in an upstream artif
 
 ### Reasoning Verification
 
+<!-- Promoted: Anti-Pattern: Reviewer Agent Names From Memory in Plan -->
+**Promoted guidance:** Anti-Pattern: Reviewer Agent Names From Memory in Plan — Naming reviewer agents in plan.md from memory or from spec/design prose rather than verifying against actual agent dispatch names in command files. Every incorrect name creates a preventable plan review blocker.
+
+
 - [ ] Every item has "Why this item"
 - [ ] Every item has "Why this order"
 - [ ] Rationales reference design/dependencies
