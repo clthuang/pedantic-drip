@@ -2623,6 +2623,133 @@ TMPL
     rm -rf "$tmpdir" "$fake_home"
 }
 
+# --- Feature 082: Confidence-decay session-start integration tests ---
+
+# Test: session-start.sh invokes run_memory_decay and surfaces "Decay:" summary (AC-21)
+test_memory_decay_session_start() {
+    log_test "session-start invokes memory decay and surfaces Decay summary (AC-21)"
+
+    local tmp_home
+    tmp_home=$(mktemp -d)
+    # Cleanup isolated HOME on function exit (success OR failure)
+    trap 'rm -rf "$tmp_home"' RETURN
+
+    # Provision pd.local.md with decay enabled + default thresholds
+    mkdir -p "$tmp_home/.claude"
+    cat > "$tmp_home/.claude/pd.local.md" << 'PDCFG'
+---
+memory_decay_enabled: true
+memory_decay_high_threshold_days: 30
+memory_decay_medium_threshold_days: 60
+memory_decay_grace_period_days: 14
+memory_decay_dry_run: false
+---
+PDCFG
+
+    # Seed memory.db with 2 stale high-confidence entries inside the isolated HOME.
+    # source="manual" (NOT "import" — AC-7 excludes imports from decay).
+    # last_recalled_at = now - 31 days → one day past default high threshold (30).
+    HOME="$tmp_home" PYTHONPATH="${HOOKS_DIR}/lib" "${HOOKS_DIR}/../.venv/bin/python" -c '
+from pathlib import Path
+from datetime import datetime, timezone, timedelta
+import json
+from semantic_memory.database import MemoryDatabase
+
+db_path = Path.home() / ".claude/pd/memory/memory.db"
+db_path.parent.mkdir(parents=True, exist_ok=True)
+db = MemoryDatabase(str(db_path))
+now = datetime.now(timezone.utc)
+stale = (now - timedelta(days=31)).isoformat()
+for i in range(2):
+    db.upsert_entry({
+        "id": f"seed-{i}",
+        "name": f"seed-{i}",
+        "description": "test",
+        "category": "patterns",
+        "keywords": json.dumps(["k"]),
+        "source": "manual",
+        "source_project": "test-proj",
+        "source_hash": f"seed-hash-{i}",
+        "observation_count": 1,
+        "confidence": "high",
+        "recall_count": 1,
+        "last_recalled_at": stale,
+        "created_at": stale,
+        "updated_at": stale,
+        "references": json.dumps([]),
+        "reasoning": "test",
+    })
+db.close()
+' 2>/dev/null || { log_fail "Seed step failed"; return; }
+
+    # Invoke session-start.sh with isolated HOME + PWD=$tmp_home so detect_project_root
+    # resolves to tmp_home (fallback when no .git marker found), which makes session-start
+    # pass --project-root=$tmp_home to the decay CLI — picking up the seeded config.
+    local output exit_code=0
+    output=$(cd "$tmp_home" && HOME="$tmp_home" bash "${HOOKS_DIR}/session-start.sh" < /dev/null 2>/dev/null) || exit_code=$?
+
+    if [[ $exit_code -ne 0 ]]; then
+        log_fail "session-start.sh exited non-zero: $exit_code"
+        return
+    fi
+
+    # Verify JSON parseable and additionalContext contains the ASCII decay summary.
+    if echo "$output" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+ctx = d.get('hookSpecificOutput', {}).get('additionalContext', '')
+assert 'Decay: demoted high->medium' in ctx, f'expected decay summary in ctx, got: {ctx[:300]}'
+" 2>/dev/null; then
+        log_pass
+    else
+        log_fail "Decay summary not surfaced in additionalContext. Output: ${output:0:400}"
+    fi
+}
+
+# Test: session-start.sh is resilient when maintenance.py is missing (AC-22)
+test_memory_decay_missing_module() {
+    log_test "session-start resilient when maintenance.py is missing (AC-22)"
+
+    local tmp_home
+    tmp_home=$(mktemp -d)
+    local maint_py="${HOOKS_DIR}/lib/semantic_memory/maintenance.py"
+    local maint_bak="${maint_py}.bak"
+
+    # CRITICAL: install trap BEFORE rename so restoration happens on any failure.
+    trap 'mv "'"$maint_bak"'" "'"$maint_py"'" 2>/dev/null || true; rm -rf "'"$tmp_home"'"' RETURN
+
+    # Minimal config — enables decay so the CLI *would* run if module existed.
+    mkdir -p "$tmp_home/.claude"
+    cat > "$tmp_home/.claude/pd.local.md" << 'PDCFG'
+---
+memory_decay_enabled: true
+---
+PDCFG
+
+    # Simulate missing module.
+    mv "$maint_py" "$maint_bak" || { log_fail "Failed to rename maintenance.py"; return; }
+
+    local output exit_code=0
+    output=$(cd "$tmp_home" && HOME="$tmp_home" bash "${HOOKS_DIR}/session-start.sh" < /dev/null 2>/dev/null) || exit_code=$?
+
+    if [[ $exit_code -ne 0 ]]; then
+        log_fail "session-start.sh exited non-zero (hook crashed): $exit_code"
+        return
+    fi
+
+    # JSON well-formed and additionalContext lacks "Decay:" marker (CLI silently failed).
+    if echo "$output" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+ctx = d.get('hookSpecificOutput', {}).get('additionalContext', '')
+assert 'Decay:' not in ctx, f'expected NO decay summary when module missing, got: {ctx[:300]}'
+" 2>/dev/null; then
+        log_pass
+    else
+        log_fail "Decay summary unexpectedly present or JSON malformed. Output: ${output:0:400}"
+    fi
+}
+
 # Run all tests
 main() {
     echo "=========================================="
@@ -2766,6 +2893,13 @@ main() {
     test_meta_json_guard_no_maintenance_blocks
     test_meta_json_guard_maintenance_mode_zero_blocks
     test_session_start_first_run_when_venv_missing
+
+    echo ""
+    echo "--- Feature 082: Confidence-decay Session-Start Integration ---"
+    echo ""
+
+    test_memory_decay_session_start
+    test_memory_decay_missing_module
 
     echo ""
     echo "--- Path Portability Tests ---"

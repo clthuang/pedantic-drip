@@ -123,3 +123,79 @@ Files modified:
 ### Performance (AC-24)
 
 Local pytest -s print line: `[AC-24 local] elapsed_ms=<varies>` — test hard-fails at `elapsed_ms >= 5000`. Actual local elapsed_ms ~150-250ms on dev hardware (10k rows, in-memory DB). Well under spec's 500ms local target and 5000ms CI ceiling. Phase 7.4 will capture EXPLAIN QUERY PLAN evidence.
+
+---
+
+## Phase 4a + 6 + 4b + 5 + 7 — 2026-04-16
+
+### Phase 4a (Tasks 4.1-4.2) — session-start integration tests (inline)
+
+Added 2 inline `test_*` bash functions to `plugins/pd/hooks/tests/test-hooks.sh`:
+
+- `test_memory_decay_session_start` (AC-21) — isolated `$tmp_home` with RETURN-trap cleanup; provisions `.claude/pd.local.md` with `memory_decay_enabled: true` + 4 threshold fields; seeds 2 high+stale entries via `upsert_entry`; invokes `cd "$tmp_home" && HOME="$tmp_home" bash session-start.sh`; asserts `"Decay: demoted high->medium"` in `additionalContext`.
+- `test_memory_decay_missing_module` (AC-22) — installs `trap 'mv maintenance.py.bak maintenance.py; rm -rf tmp_home' RETURN` BEFORE rename; verifies hook exits 0, JSON well-formed, `additionalContext` lacks `"Decay:"` marker.
+
+Both call sites added to `main()` under a new `--- Feature 082: Confidence-decay Session-Start Integration ---` section.
+
+**Seed-schema fix:** task spec proposed `source="store_memory"` but DB CHECK constraint only allows `(retro, session-capture, manual, import)`. Used `source="manual"` (still not `"import"`, so AC-7 exclusion rule is not triggered). Also added required NOT-NULL columns `source_project` and `source_hash`.
+
+**cd-to-tmp_home fix:** session-start.sh uses `detect_project_root` which walks up from PWD looking for `.git`. When invoked from pedantic-drip root with `HOME="$tmp_home"`, PROJECT_ROOT resolves to pedantic-drip, so maintenance CLI reads the repo's `.claude/pd.local.md` (which has decay disabled) and short-circuits. Fix: wrap invocation in `(cd "$tmp_home" && ...)` so `detect_project_root` falls back to PWD (tmp_home), which is where the seeded config lives.
+
+After Phase 4a: 102/103 passing — AC-21 RED (decay not wired), AC-22 GREEN (module-missing no-op matches a state where decay isn't wired either). Pre-existing 101 untouched.
+
+### Phase 6 (Tasks 6.1-6.3) — audit + remediate
+
+- **6.1 grep:** 20 hits in `/plugins/pd/hooks/tests/` for `additionalContext|full_context|recon_summary|doctor_summary|memory_context`. Manual filter:
+  - `test-enriched-docs-content.sh`: asserts `pd_doc_tiers: ...` substring — NOT ordering.
+  - `test-deprecation-warning.sh`: checks ordering WITHIN `build_memory_context()` function body — not affected by decay insertion.
+  - `test-prompt-caching-content.sh`: test name `test_iteration1_dispatches_fresh_with_full_context` — unrelated to session-start.
+  - `test-hooks.sh`: all `pd_artifacts_root`/`pd_base_branch` substring assertions — NOT ordering.
+  - `test-hooks.sh:2614`: first-run test — substring check on `"Setup required"`, not ordering.
+  - The 6 grep-hits from lines 2694–2742 are my Phase 4a additions.
+- **6.2 remediation:** 0 ordering-asserting tests → no-op per Task 6.2 size-split gate (0 hits branch).
+- **6.3 re-run:** 102/103 (unchanged from end of Phase 4a). No regression from Phase 6.
+
+### Phase 4b (Tasks 4.3-4.6) — session-start.sh wiring
+
+- **4.3 `run_memory_decay()` function** added before `# Main` comment. Platform-aware `timeout_cmd` (gtimeout/timeout/empty), Python resolution (venv preferred, python3 fallback), `PYTHONPATH="${SCRIPT_DIR}/lib"`, invocation `$timeout_cmd "$python_cmd" -m semantic_memory.maintenance --decay --project-root "$PROJECT_ROOT" 2>/dev/null || true`. Stdout passthrough to caller.
+- **4.4 main() reorder** — inserted `local decay_summary=""; decay_summary=$(run_memory_decay)` immediately BEFORE `memory_context=$(build_memory_context)`. Per spec TD-5, decay must run before memory context so injection uses post-decay values. `run_reconciliation` and `run_doctor_autofix` preserved in their existing positions (run after `build_memory_context`).
+- **4.5 display-prepend block** for `$decay_summary` — placed BETWEEN existing `doctor_summary` block and `cron_schedule_context` block, matching the established conditional-prepend pattern.
+- **4.6 test run:** 103/103 passing (= baseline 101 + 2 new). AC-21 + AC-22 both GREEN. No regressions.
+
+### Phase 5 (Tasks 5.1-5.4) — config + docs
+
+- **5.1** appended 5 `memory_decay_*` fields with per-field comments to `plugins/pd/templates/config.local.md` between `memory_refresh_limit` and `# UI Server` section.
+- **5.2** appended same 5 fields to `.claude/pd.local.md` after `memory_refresh_limit`.
+- **5.3** appended 5 bullet lines to `README_FOR_DEV.md` memory config table after `memory_refresh_limit` row.
+- **5.4 verification:**
+  - `grep -c "^memory_decay_" plugins/pd/templates/config.local.md` → 5 ✓
+  - `grep -c "^memory_decay_" .claude/pd.local.md` → 5 ✓
+  - `grep -c "memory_decay_" README_FOR_DEV.md` → 5 ✓
+
+### Phase 7 (Tasks 7.1-7.5) — final verification
+
+- **7.1 pytest:** 516 passed in 4.78s (baseline `memory_tests_before_082=453`; +63 new — comfortably above ≥ +30 target).
+- **7.2 test-hooks.sh:** 103/103 passed (baseline 101 + 2 new).
+- **7.3 validate.sh:** 0 errors, 4 warnings (= `validate_warnings_before_082=4`). AC-27: `git diff main -- plugins/pd/mcp/` returns 0 lines → no new MCP tools.
+- **7.4 EXPLAIN QUERY PLAN:** written to `agent_sandbox/082-eqp.txt`. Plan = `SCAN entries` (full table scan, expected per R-6). elapsed_ms = 36 on 10k seeded rows. Well under 500ms local target and 5000ms CI ceiling. R-6 follow-up gate (>300ms) NOT tripped — index not needed at current scale.
+- **7.5 cleanup:** removed `agent_sandbox/082-baselines.txt` + `082-impacted-tests.txt`; preserved `082-eqp.txt` for retrospective.
+
+### Session-start integration summary
+
+Final session-start.sh main() invocation order for memory subsystems:
+```
+cleanup_stale_mcp_servers
+ensure_capture_hook
+check_mcp_health
+(first_run detection)
+build_cron_schedule_context
+decay_summary=$(run_memory_decay)     # NEW (feature 082)
+memory_context=$(build_memory_context)
+recon_summary=$(run_reconciliation)
+doctor_summary=$(run_doctor_autofix)
+```
+
+Display-prepend order (when all non-empty):
+```
+mcp_warning → first_run_warning → recon_summary → doctor_summary → decay_summary (NEW) → cron_schedule_context → memory_context → context
+```

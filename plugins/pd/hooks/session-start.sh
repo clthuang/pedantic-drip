@@ -653,6 +653,38 @@ except Exception:
     fi
 }
 
+# Run memory confidence-decay maintenance pass (feature 082).
+# Invokes `python -m semantic_memory.maintenance --decay` with the project root.
+# Returns the summary line via stdout (empty when disabled, dry-run with no
+# changes, module missing, or DB error).  Must NEVER crash session-start.
+#
+# Timeout budget: 10s ceiling.  Decay touches the whole entries table when
+# seeded; matches run_doctor_autofix's budget (vs run_reconciliation's 5s).
+# Internal NFR-2 ceiling is 5000ms (AC-24); 10s leaves margin for subprocess
+# startup + BEGIN IMMEDIATE busy-wait (per spec FR-5 writer-contention note).
+run_memory_decay() {
+    # Platform-aware timeout (macOS: gtimeout from coreutils, Linux: timeout)
+    local timeout_cmd=""
+    if command -v gtimeout &>/dev/null; then
+        timeout_cmd="gtimeout 10"
+    elif command -v timeout &>/dev/null; then
+        timeout_cmd="timeout 10"
+    fi
+
+    # Resolve Python: prefer venv, fall back to system python3
+    local python_cmd="python3"
+    if [[ -x "${PLUGIN_ROOT}/.venv/bin/python" ]]; then
+        python_cmd="${PLUGIN_ROOT}/.venv/bin/python"
+    fi
+
+    # stderr suppressed: maintenance.py errors must not corrupt hook JSON output.
+    # `|| true` belt-and-suspenders on top of FR-8 / I-1 internal exception-swallowing.
+    PYTHONPATH="${SCRIPT_DIR}/lib" $timeout_cmd "$python_cmd" -m semantic_memory.maintenance \
+        --decay \
+        --project-root "$PROJECT_ROOT" \
+        2>/dev/null || true
+}
+
 # Main
 main() {
     # Auto-provision config from template if missing (only if .claude/ already exists)
@@ -697,6 +729,11 @@ EOF
     local cron_schedule_context=""
     cron_schedule_context=$(build_cron_schedule_context) || cron_schedule_context=""
 
+    # Feature 082: decay confidence BEFORE build_memory_context so memory
+    # injection uses post-decay confidence values (per spec TD-5 / FR-4).
+    local decay_summary=""
+    decay_summary=$(run_memory_decay)
+
     local memory_context=""
     memory_context=$(build_memory_context)
 
@@ -735,6 +772,14 @@ EOF
             full_context="${full_context}\n\n${doctor_summary}"
         else
             full_context="${doctor_summary}"
+        fi
+    fi
+    # Feature 082: confidence-decay summary (silent when disabled / no changes)
+    if [[ -n "$decay_summary" ]]; then
+        if [[ -n "$full_context" ]]; then
+            full_context="${full_context}\n\n${decay_summary}"
+        else
+            full_context="${decay_summary}"
         fi
     fi
     # Scheduled doctor CronCreate instruction (silent when doctor_schedule unset)

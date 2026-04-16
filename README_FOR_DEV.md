@@ -530,6 +530,11 @@ Without an API key, memory still works via FTS5 keyword search and prominence ra
 - `memory_influence_debug` — Emit per-dispatch hit-rate diagnostics to `~/.claude/pd/memory/influence-debug.log` (default: false)
 - `memory_refresh_enabled` — Inject memory digest into complete_phase MCP response at phase boundaries (default: true)
 - `memory_refresh_limit` — Max entries in per-phase refresh digest (default: 5; clamped to [1, 20])
+- `memory_decay_enabled` — Enable tiered confidence decay on session-start; opt-in, zero overhead when disabled (default: false)
+- `memory_decay_high_threshold_days` — Days without recall before high → medium; clamped to [1, 365] (default: 30)
+- `memory_decay_medium_threshold_days` — Days without recall before medium → low; clamped to [1, 365]; SHOULD be ≥ `memory_decay_high_threshold_days` (default: 60)
+- `memory_decay_grace_period_days` — Days after created_at before a never-recalled entry is eligible for decay; clamped to [0, 365] (default: 14)
+- `memory_decay_dry_run` — Report what would be demoted without modifying the DB; useful for measuring impact before enabling (default: false)
 - `max_concurrent_agents` — Max parallel Task dispatches across skills and commands (default: 5)
 
 ## Entity Registry

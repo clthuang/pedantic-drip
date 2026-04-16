@@ -65,6 +65,16 @@ memory_refresh_enabled: true
 # max memory entries in per-phase refresh digest; clamped to [1, 20]; each
 # entry description capped at 240 chars
 memory_refresh_limit: 5
+# enable tiered confidence decay on session-start; set to true to opt in
+memory_decay_enabled: false
+# days without recall before high → medium; clamped to [1, 365]
+memory_decay_high_threshold_days: 30
+# days without recall before medium → low; clamped to [1, 365]; SHOULD be ≥ memory_decay_high_threshold_days, otherwise medium decays faster than high (allowed but warned)
+memory_decay_medium_threshold_days: 60
+# days after created_at before a never-recalled entry becomes eligible; clamped to [0, 365]
+memory_decay_grace_period_days: 14
+# when true, report what would be demoted without modifying the DB; useful for measuring impact before enabling
+memory_decay_dry_run: false
 
 # UI Server — Kanban board
 # Auto-start UI server on session start
