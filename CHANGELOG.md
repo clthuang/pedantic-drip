@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `/pd:promote-pattern` command and `promoting-patterns` skill — converts a high-confidence knowledge-bank entry into an enforceable hook, skill, agent, or command. Keyword-scored target classification with bounded LLM fallback; atomic 5-stage apply with rollback and baseline-delta validation; idempotent KB marker prevents re-promotion.
+- `pattern_promotion` Python package under `plugins/pd/hooks/lib/` — deterministic helpers (`enumerate`, `classify`, `generate`, `apply`, `mark` CLI subcommands) with 146 tests covering KB parsing, classifier regex tables, per-target generators (hook/skill/agent/command), apply rollback scenarios, and CLI serialization contract.
+- `memory_promote_min_observations` config field (default: `3`) in `.claude/pd.local.md` — threshold for qualifying a KB entry for promotion.
+
 ## [4.14.19] - 2026-04-15
 
 ### Added

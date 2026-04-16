@@ -262,6 +262,7 @@ Skills are instructions Claude follows for specific development practices. Locat
 | `writing-skills` | Applies TDD approach to skill documentation |
 | `detecting-kanban` | Detects Vibe-Kanban and provides TodoWrite fallback |
 | `capturing-learnings` | Guides model-initiated learning capture with configurable modes |
+| `promoting-patterns` | Orchestrates /pd:promote-pattern — enumerate, classify (keyword + LLM fallback), generate per-target diff, approve, atomic apply with rollback, KB marker |
 
 ## Commands
 
@@ -523,6 +524,7 @@ Without an API key, memory still works via FTS5 keyword search and prominence ra
 - `memory_auto_promote` — Enable automatic confidence promotion when duplicate evidence exceeds threshold (default: false)
 - `memory_promote_low_threshold` — Evidence count threshold for promoting low→medium confidence (default: 3)
 - `memory_promote_medium_threshold` — Evidence count threshold for promoting medium→high confidence (default: 5)
+- `memory_promote_min_observations` — Min observation count a KB entry needs to qualify for `/pd:promote-pattern` (default: 3)
 - `max_concurrent_agents` — Max parallel Task dispatches across skills and commands (default: 5)
 
 ## Entity Registry

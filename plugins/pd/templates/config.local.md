@@ -50,6 +50,9 @@ memory_keyword_provider: auto
 memory_model_capture_mode: ask-first
 # Max silent captures per session (only applies when capture mode is "silent")
 memory_silent_capture_budget: 5
+# Minimum observation count a KB entry must have to qualify for /pd:promote-pattern.
+# Raise if enumeration floods (>20 entries); lower if no entries qualify (0 entries).
+memory_promote_min_observations: 3
 
 # UI Server — Kanban board
 # Auto-start UI server on session start

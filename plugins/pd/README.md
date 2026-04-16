@@ -54,9 +54,9 @@ flowchart TD
 
 | Type | Count |
 |------|-------|
-| Skills | 30 |
-| Agents | 30 |
-| Commands | 32 |
+| Skills | 31 |
+| Agents | 29 |
+| Commands | 33 |
 | Hooks | 14 |
 | MCP Tools | 26 |
 
@@ -104,6 +104,7 @@ flowchart TD
 | `/pd:generate-docs` | Generate three-tier documentation scaffold or update existing docs |
 | `/pd:subagent-ras` | Research, analyze, and summarize any topic using parallel agents |
 | `/pd:remember` | Capture a learning to long-term memory for future session recall |
+| `/pd:promote-pattern [<entry-substring>]` | Promote a high-confidence KB pattern to an enforceable hook, skill, agent, or command (backed by the `promoting-patterns` skill) |
 | `/pd:yolo [on\|off]` | Toggle YOLO autonomous mode |
 
 ## Review System

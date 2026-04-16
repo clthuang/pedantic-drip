@@ -794,6 +794,34 @@ for script in plugins/pd/scripts/doctor.sh plugins/pd/scripts/setup.sh; do
 done
 echo ""
 
+# Validate pattern_promotion Python package (pytest + importability)
+echo "Checking pattern_promotion Python Package..."
+PP_DIR="plugins/pd/hooks/lib/pattern_promotion"
+PP_PY="plugins/pd/.venv/bin/python"
+if [ -d "$PP_DIR" ]; then
+    if [ -x "$PP_PY" ]; then
+        # Import health check (fast, no test discovery cost)
+        if PYTHONPATH="plugins/pd/hooks/lib" "$PP_PY" -c "import pattern_promotion; import pattern_promotion.kb_parser; import pattern_promotion.classifier; import pattern_promotion.apply; import pattern_promotion.generators.hook; import pattern_promotion.generators.skill; import pattern_promotion.generators.agent; import pattern_promotion.generators.command" 2>/dev/null; then
+            log_success "pattern_promotion package imports cleanly"
+        else
+            log_error "pattern_promotion package fails to import"
+        fi
+
+        # Full pytest run (deterministic, <5s)
+        if PYTHONPATH="plugins/pd/hooks/lib" "$PP_PY" -m pytest "$PP_DIR" -q --tb=line > /tmp/pp-tests-output.txt 2>&1; then
+            log_success "pattern_promotion pytest suite passed ($(grep -oE '[0-9]+ passed' /tmp/pp-tests-output.txt | head -1))"
+        else
+            log_error "pattern_promotion pytest suite failed"
+            tail -20 /tmp/pp-tests-output.txt
+        fi
+    else
+        log_warning "$PP_PY not found — skipping pattern_promotion checks (run plugins/pd/scripts/setup.sh)"
+    fi
+else
+    log_info "pattern_promotion package not found — skipping"
+fi
+echo ""
+
 # Summary
 echo "=========================================="
 echo "Validation Complete"

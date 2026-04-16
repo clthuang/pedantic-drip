@@ -96,6 +96,19 @@ Example of what gets injected:
 /pd:remember "always validate empty inputs before processing"
 ```
 
+### Promote a Pattern to an Enforceable Rule
+
+Once a knowledge-bank entry accumulates enough observations (default threshold: 3), `/pd:promote-pattern` converts it into a hook, skill, agent, or command so the rule is enforced automatically on the next session:
+
+```bash
+/pd:promote-pattern                    # Interactive — lists qualifying entries
+/pd:promote-pattern "relative paths"   # Filter to entries matching the substring
+```
+
+The command dispatches the `promoting-patterns` skill, which orchestrates an enumerate → classify → generate-diff → approve → atomic-apply flow. Classification uses deterministic keyword scoring with an LLM fallback when keywords tie or miss; the user can always override the target. CLAUDE.md is never offered as a target. On apply, writes are atomic with rollback on any validation failure, and the KB entry gains a `- Promoted: ...` line so re-runs skip it.
+
+Configure the qualifying threshold via `memory_promote_min_observations` in `.claude/pd.local.md` (default: `3`).
+
 ## Autonomous Mode (YOLO)
 
 To run the workflow without manual confirmation at each phase gate:
@@ -123,6 +136,7 @@ For larger initiatives with multiple features:
 |---------|-------------|
 | `/pd:add-to-backlog <idea>` | Capture an idea without starting a feature |
 | `/pd:retrospect` | Run a retrospective on a completed feature |
+| `/pd:promote-pattern [<substring>]` | Promote a high-confidence KB entry to an enforceable hook, skill, agent, or command |
 | `/pd:show-lineage` | Display entity relationships for the current feature |
 | `/pd:doctor` | Check workspace health |
 | `/pd:cleanup-brainstorms` | Delete old brainstorm scratch files |

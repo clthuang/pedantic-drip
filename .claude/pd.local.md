@@ -52,4 +52,7 @@ memory_model_capture_mode: ask-first
 memory_silent_capture_budget: 5
 # Cosine similarity threshold for near-duplicate detection (0.0-1.0)
 memory_dedup_threshold: 0.90
+# Minimum observation count a KB entry must have to qualify for /pd:promote-pattern.
+# Raise if enumeration floods (>20 entries); lower if no entries qualify (0 entries).
+memory_promote_min_observations: 3
 ---

@@ -142,6 +142,7 @@ Configure via `.claude/pd.local.md`:
 | `/pd:retrospect` | Run retrospective on a feature |
 | `/pd:add-to-backlog` | Capture ad-hoc ideas and todos |
 | `/pd:remember` | Capture a learning to long-term memory |
+| `/pd:promote-pattern [<entry-substring>]` | Promote a high-confidence KB pattern to an enforceable hook, skill, agent, or command |
 | `/pd:cleanup-brainstorms` | Delete old brainstorm scratch files |
 | `/pd:doctor` | Run 14 diagnostic checks on pd workspace health (incl. security-review command and stale worktrees) |
 | `/pd:secretary` | Intelligent task routing to agents and skills (supports YOLO mode with orchestrate subcommand) |
@@ -244,7 +245,7 @@ Tasks are organized for parallel execution:
 
 ## Reference
 
-pd includes 30 skills and 30 agents that run automatically during the workflow. You don't invoke them directly.
+pd includes 31 skills and 29 agents that run automatically during the workflow. You don't invoke them directly.
 
 ### Skills
 
@@ -312,6 +313,7 @@ pd includes 30 skills and 30 agents that run automatically during the workflow. 
 | writing-skills | Applies TDD approach to skill documentation |
 | detecting-kanban | Detects Vibe-Kanban and provides TodoWrite fallback |
 | capturing-learnings | Guides model-initiated learning capture with configurable modes |
+| promoting-patterns | Orchestrates /pd:promote-pattern flow — enumerates qualifying KB entries, classifies target, generates diff, gates approval, applies atomic writes |
 
 ### Agents
 
