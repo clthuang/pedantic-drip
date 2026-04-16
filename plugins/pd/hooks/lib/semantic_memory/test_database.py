@@ -1816,3 +1816,325 @@ class TestFTS5TriggerSync:
             assert len(db.fts5_search("quasar", limit=10)) == 0
         finally:
             db.close()
+
+
+# ---------------------------------------------------------------------------
+# Feature 082 — busy_timeout_ms kwarg + batch_demote
+# ---------------------------------------------------------------------------
+
+
+class TestBusyTimeoutKwarg:
+    """Task 2.1 / 2.2 — public accessor `get_busy_timeout_ms()` avoids
+    the `db._conn` direct-access anti-pattern while verifying the kwarg
+    was stored + forwarded to `_set_pragmas`.
+    """
+
+    def test_default_is_fifteen_thousand(self):
+        db = MemoryDatabase(":memory:")
+        try:
+            assert db.get_busy_timeout_ms() == 15000
+        finally:
+            db.close()
+
+    def test_override_via_kwarg(self):
+        db = MemoryDatabase(":memory:", busy_timeout_ms=1000)
+        try:
+            assert db.get_busy_timeout_ms() == 1000
+        finally:
+            db.close()
+
+
+# ---------------------------------------------------------------------------
+# Helpers for batch_demote tests
+# ---------------------------------------------------------------------------
+
+
+def _seed_entry_for_demote(
+    db: MemoryDatabase,
+    *,
+    entry_id: str,
+    confidence: str = "high",
+    updated_at: str = "2020-01-01T00:00:00+00:00",
+):
+    """Raw INSERT to bypass upsert_entry (which always writes its own
+    timestamps). Allows tests to seed stale `updated_at` so that the
+    `updated_at < ?` guard in batch_demote triggers on fresh `now_iso`.
+    """
+    db._conn.execute(
+        "INSERT INTO entries (id, name, description, category, keywords, "
+        "source, source_project, source_hash, confidence, recall_count, "
+        "last_recalled_at, created_at, updated_at, observation_count) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            entry_id,
+            f"name-{entry_id}",
+            "desc",
+            "patterns",
+            json.dumps(["k"]),
+            "session-capture",
+            "/tmp/test-project",
+            "0" * 16,
+            confidence,
+            0,
+            None,
+            "2020-01-01T00:00:00+00:00",
+            updated_at,
+            1,
+        ),
+    )
+    db._conn.commit()
+
+
+def _get_confidence(db: MemoryDatabase, entry_id: str) -> str:
+    cur = db._conn.execute(
+        "SELECT confidence FROM entries WHERE id = ?", (entry_id,)
+    )
+    return cur.fetchone()["confidence"]
+
+
+def _get_updated_at(db: MemoryDatabase, entry_id: str) -> str:
+    cur = db._conn.execute(
+        "SELECT updated_at FROM entries WHERE id = ?", (entry_id,)
+    )
+    return cur.fetchone()["updated_at"]
+
+
+class TestBatchDemote:
+    """Task 2.3 / 2.4 — design I-7 (BEGIN IMMEDIATE, 500-ids chunking,
+    `updated_at < ?` guard for intra-tick idempotency).
+    """
+
+    NOW_ISO = "2026-04-16T12:00:00+00:00"
+
+    def test_empty_ids_returns_zero_no_sql(self):
+        db = MemoryDatabase(":memory:")
+        try:
+            result = db.batch_demote([], "medium", self.NOW_ISO)
+            assert result == 0
+        finally:
+            db.close()
+
+    def test_value_error_on_invalid_new_confidence(self):
+        db = MemoryDatabase(":memory:")
+        try:
+            _seed_entry_for_demote(db, entry_id="e1", confidence="high")
+            with pytest.raises(ValueError, match="extreme"):
+                db.batch_demote(["e1"], "extreme", self.NOW_ISO)
+        finally:
+            db.close()
+
+    def test_single_chunk_under_five_hundred_ids(self):
+        db = MemoryDatabase(":memory:")
+        try:
+            ids = [f"e{i}" for i in range(100)]
+            for eid in ids:
+                _seed_entry_for_demote(db, entry_id=eid, confidence="high")
+            result = db.batch_demote(ids, "medium", self.NOW_ISO)
+            assert result == 100
+            for eid in ids:
+                assert _get_confidence(db, eid) == "medium"
+        finally:
+            db.close()
+
+    def test_multi_chunk_six_hundred_ids(self):
+        db = MemoryDatabase(":memory:")
+        try:
+            ids = [f"e{i}" for i in range(600)]
+            for eid in ids:
+                _seed_entry_for_demote(db, entry_id=eid, confidence="high")
+            result = db.batch_demote(ids, "medium", self.NOW_ISO)
+            assert result == 600
+            for eid in ids:
+                assert _get_confidence(db, eid) == "medium"
+        finally:
+            db.close()
+
+    def test_intra_tick_guard_blocks_second_call(self):
+        db = MemoryDatabase(":memory:")
+        try:
+            _seed_entry_for_demote(db, entry_id="e1", confidence="high")
+            first = db.batch_demote(["e1"], "medium", self.NOW_ISO)
+            assert first == 1
+            assert _get_confidence(db, "e1") == "medium"
+            # Second call with SAME now_iso: updated_at == now_iso so
+            # `updated_at < ?` is False; row is NOT updated.
+            second = db.batch_demote(["e1"], "low", self.NOW_ISO)
+            assert second == 0
+            assert _get_confidence(db, "e1") == "medium"
+        finally:
+            db.close()
+
+    def test_rowcount_sum_across_chunks(self):
+        db = MemoryDatabase(":memory:")
+        try:
+            # 501 ids = 2 chunks (500 + 1). Confirm sum is returned,
+            # not just the last chunk's rowcount.
+            ids = [f"e{i}" for i in range(501)]
+            for eid in ids:
+                _seed_entry_for_demote(db, entry_id=eid, confidence="high")
+            result = db.batch_demote(ids, "medium", self.NOW_ISO)
+            assert result == 501
+        finally:
+            db.close()
+
+
+class TestExecuteChunkSeam:
+    """Task 2.5 — monkeypatch `_execute_chunk` to fail on 2nd call;
+    assert rollback of all prior chunks (no partial UPDATE visible).
+    """
+
+    NOW_ISO = "2026-04-16T12:00:00+00:00"
+
+    def test_partial_failure_rolls_back_first_chunk(self, monkeypatch):
+        db = MemoryDatabase(":memory:")
+        try:
+            # 2000 ids → 4 chunks (500/500/500/500). Fail on 2nd chunk.
+            ids = [f"e{i}" for i in range(2000)]
+            for eid in ids:
+                _seed_entry_for_demote(db, entry_id=eid, confidence="high")
+
+            call_count = {"n": 0}
+            original = MemoryDatabase._execute_chunk
+
+            def fake(self, chunk_ids, new_confidence, now_iso):
+                call_count["n"] += 1
+                if call_count["n"] == 2:
+                    raise sqlite3.OperationalError("simulated chunk-2 failure")
+                return original(self, chunk_ids, new_confidence, now_iso)
+
+            monkeypatch.setattr(MemoryDatabase, "_execute_chunk", fake)
+
+            with pytest.raises(sqlite3.OperationalError, match="simulated"):
+                db.batch_demote(ids, "medium", self.NOW_ISO)
+
+            # All 2000 rows must still be at original "high" confidence —
+            # the first chunk's UPDATE was rolled back.
+            for eid in ids:
+                assert _get_confidence(db, eid) == "high", (
+                    f"{eid} was not rolled back"
+                )
+        finally:
+            db.close()
+
+
+# ---------------------------------------------------------------------------
+# AC-20b concurrent-writer tests
+# ---------------------------------------------------------------------------
+
+
+class TestConcurrentWriters:
+    """Tasks 2.6 / 2.7 — AC-20b-1 (success) and AC-20b-2 (timeout).
+
+    Uses busy_timeout_ms=1000 to keep timing deterministic. File-backed
+    SQLite is required (WAL requires disk) so tests use `tmp_path`.
+    """
+
+    NOW_ISO = "2026-04-16T12:00:00+00:00"
+
+    def test_ac_20b_1_concurrent_writer_success(self, tmp_path):
+        import threading
+        import time as _time
+
+        db_path = str(tmp_path / "decay-success.db")
+
+        seed_db = MemoryDatabase(db_path, busy_timeout_ms=1000)
+        _seed_entry_for_demote(seed_db, entry_id="e1", confidence="high")
+        seed_db.close()
+
+        db_b = MemoryDatabase(db_path, busy_timeout_ms=1000)
+        a_lock_acquired = threading.Event()
+
+        def thread_a():
+            # Open db_a INSIDE the thread so the sqlite3.Connection lives
+            # in the thread that uses it (sqlite3 default: same-thread only).
+            db_a = MemoryDatabase(db_path, busy_timeout_ms=1000)
+            try:
+                db_a._conn.execute("BEGIN IMMEDIATE")
+                try:
+                    db_a._conn.execute(
+                        "INSERT INTO entries (id, name, description, category, "
+                        "keywords, source, source_project, source_hash, "
+                        "confidence, recall_count, last_recalled_at, created_at, "
+                        "updated_at, observation_count) "
+                        "VALUES ('a-insert', 'n', 'd', 'patterns', '[]', "
+                        "'session-capture', '/tmp/p', '0000000000000000', "
+                        "'medium', 0, NULL, ?, ?, 1)",
+                        (self.NOW_ISO, self.NOW_ISO),
+                    )
+                    a_lock_acquired.set()
+                    _time.sleep(0.1)  # hold lock briefly
+                    db_a._conn.commit()
+                except Exception:
+                    db_a._conn.rollback()
+                    raise
+            finally:
+                db_a.close()
+
+        try:
+            t = threading.Thread(target=thread_a)
+            t.start()
+            a_lock_acquired.wait(timeout=5.0)
+            # B waits out A's 100ms hold within the 1000ms busy-timeout budget.
+            rows = db_b.batch_demote(["e1"], "medium", self.NOW_ISO)
+            t.join()
+            assert rows == 1
+            assert _get_confidence(db_b, "e1") == "medium"
+            # A's INSERT is visible on db_b after join.
+            cur = db_b._conn.execute(
+                "SELECT id FROM entries WHERE id = 'a-insert'"
+            )
+            assert cur.fetchone() is not None
+        finally:
+            db_b.close()
+
+    def test_ac_20b_2_concurrent_writer_timeout(self, tmp_path):
+        import threading
+        import time as _time
+
+        db_path = str(tmp_path / "decay-timeout.db")
+
+        seed_db = MemoryDatabase(db_path, busy_timeout_ms=1000)
+        _seed_entry_for_demote(seed_db, entry_id="e1", confidence="high")
+        _seed_entry_for_demote(seed_db, entry_id="e2", confidence="high")
+        seed_db.close()
+
+        db_b = MemoryDatabase(db_path, busy_timeout_ms=1000)
+        a_lock_acquired = threading.Event()
+
+        def thread_a():
+            db_a = MemoryDatabase(db_path, busy_timeout_ms=1000)
+            try:
+                db_a._conn.execute("BEGIN IMMEDIATE")
+                try:
+                    db_a._conn.execute(
+                        "INSERT INTO entries (id, name, description, category, "
+                        "keywords, source, source_project, source_hash, "
+                        "confidence, recall_count, last_recalled_at, created_at, "
+                        "updated_at, observation_count) "
+                        "VALUES ('a-long', 'n', 'd', 'patterns', '[]', "
+                        "'session-capture', '/tmp/p', '0000000000000000', "
+                        "'medium', 0, NULL, ?, ?, 1)",
+                        (self.NOW_ISO, self.NOW_ISO),
+                    )
+                    a_lock_acquired.set()
+                    _time.sleep(2.0)  # exceed B's busy_timeout_ms=1000
+                    db_a._conn.commit()
+                except Exception:
+                    db_a._conn.rollback()
+                    raise
+            finally:
+                db_a.close()
+
+        try:
+            t = threading.Thread(target=thread_a)
+            t.start()
+            a_lock_acquired.wait(timeout=5.0)
+            with pytest.raises(sqlite3.OperationalError):
+                db_b.batch_demote(["e1", "e2"], "medium", self.NOW_ISO)
+            t.join()
+            # Verification SELECTs after A has committed and B has raised.
+            # Neither e1 nor e2 was demoted (B rolled back on timeout).
+            assert _get_confidence(db_b, "e1") == "high"
+            assert _get_confidence(db_b, "e2") == "high"
+        finally:
+            db_b.close()

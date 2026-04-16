@@ -319,12 +319,29 @@ class MemoryDatabase:
         in-memory database.
     """
 
-    def __init__(self, db_path: str) -> None:
+    def __init__(self, db_path: str, *, busy_timeout_ms: int = 15000) -> None:
+        """Open DB with WAL mode and configurable busy_timeout.
+
+        ``busy_timeout_ms`` is test scaffolding per spec NFR-5 item 2 —
+        production callers MUST use the default (15000). Tests pass 1000
+        for AC-20b-1/2 deterministic timing. Not a user-facing feature;
+        not surfaced in config.
+        """
+        self._busy_timeout_ms = int(busy_timeout_ms)
         self._conn = sqlite3.connect(db_path, timeout=5.0)
         self._conn.row_factory = sqlite3.Row
         self._set_pragmas()
         self._fts5_available = self._detect_fts5()
         self._migrate()
+
+    def get_busy_timeout_ms(self) -> int:
+        """Return the busy_timeout_ms applied to this connection.
+
+        Public accessor introduced by Feature 082 so tests verify the
+        kwarg without accessing ``self._conn`` directly (engineering
+        memory anti-pattern).
+        """
+        return self._busy_timeout_ms
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -781,6 +798,93 @@ class MemoryDatabase:
         self._conn.commit()
 
     # ------------------------------------------------------------------
+    # Confidence decay (Feature 082)
+    # ------------------------------------------------------------------
+
+    def batch_demote(
+        self,
+        ids: list[str],
+        new_confidence: str,
+        now_iso: str,
+    ) -> int:
+        """Demote ``ids`` to ``new_confidence``, setting ``updated_at = now_iso``.
+
+        Chunks the UPDATE at 500 ids per statement, all within one
+        ``BEGIN IMMEDIATE`` transaction (atomic across chunks — spec FR-5).
+
+        Returns the sum of rowcounts across chunks. May be less than
+        ``len(ids)`` if some rows fail the ``updated_at < ?`` guard
+        (back-to-back invocations within the same logical tick).
+
+        Parameters
+        ----------
+        ids:
+            Entry IDs to demote. Caller is responsible for de-dupe —
+            ``decay_confidence`` sources ids from the ``entries.id``
+            PRIMARY KEY so duplicates cannot occur in the production path.
+        new_confidence:
+            Target tier — must be ``'medium'`` or ``'low'``.
+            Raises ``ValueError`` otherwise.
+        now_iso:
+            Timestamp written to ``updated_at``; also used as the guard
+            threshold (only rows with ``updated_at < now_iso`` are updated).
+
+        Notes
+        -----
+        Atomicity: Python's sqlite3 default ``isolation_level=""`` means
+        the library issues an implicit BEGIN before DML — but once we
+        issue an EXPLICIT ``BEGIN IMMEDIATE`` first, subsequent UPDATEs
+        run inside THAT transaction. Mirrors the ``merge_duplicate``
+        pattern at database.py:463-538. Cross-chunk rollback is
+        guaranteed.
+
+        Empty-ids contract: returns 0 with no SQL issued.
+        """
+        if not ids:
+            return 0
+        if new_confidence not in ("medium", "low"):
+            raise ValueError(f"invalid new_confidence: {new_confidence!r}")
+
+        CHUNK_SIZE = 500
+        rows_affected = 0
+
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            for i in range(0, len(ids), CHUNK_SIZE):
+                chunk = ids[i : i + CHUNK_SIZE]
+                rows_affected += self._execute_chunk(
+                    chunk, new_confidence, now_iso
+                )
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
+        return rows_affected
+
+    def _execute_chunk(
+        self,
+        ids: list[str],
+        new_confidence: str,
+        now_iso: str,
+    ) -> int:
+        """Execute one chunked UPDATE. Private — called only by batch_demote.
+
+        Test seam for AC-32: tests monkeypatch this method to inject
+        chunk-level failure (see ``TestExecuteChunkSeam``).
+        """
+        placeholders = ", ".join(["?"] * len(ids))
+        sql = (
+            f"UPDATE entries "
+            f"SET confidence = ?, updated_at = ? "
+            f"WHERE id IN ({placeholders}) "
+            f"  AND (updated_at IS NULL OR updated_at < ?)"
+        )
+        cursor = self._conn.execute(
+            sql, (new_confidence, now_iso, *ids, now_iso)
+        )
+        return cursor.rowcount
+
+    # ------------------------------------------------------------------
     # Metadata helpers
     # ------------------------------------------------------------------
 
@@ -834,7 +938,9 @@ class MemoryDatabase:
         """Set connection-level PRAGMAs for performance and safety."""
         # busy_timeout MUST be set first — journal_mode=WAL requires a write
         # that can be blocked by concurrent connections during init.
-        self._conn.execute("PRAGMA busy_timeout = 15000")
+        # Value sourced from self._busy_timeout_ms (Feature 082 kwarg) so
+        # tests can drop to 1000ms for deterministic concurrent-writer timing.
+        self._conn.execute(f"PRAGMA busy_timeout = {self._busy_timeout_ms}")
         # Python connect(timeout=...) governs initial connection lock wait;
         # PRAGMA busy_timeout governs statement-level waits — intentionally different.
         self._conn.execute("PRAGMA journal_mode = WAL")
