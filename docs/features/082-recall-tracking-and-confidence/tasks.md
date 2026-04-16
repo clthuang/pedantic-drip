@@ -216,7 +216,7 @@ Starts after Phase 3a (Tasks 3.1-3.7) completes. All tests below exercise alread
   - AC-12: `high_threshold_days=True` → default 30 + warning; `enabled=True` → True (bool is correct type here).
   - AC-13: `"thirty"` → default 30 + warning.
   - Done: 3-5 tests pass.
-  - Size: 10 min. `requires: 3.7`
+  - Size: 10 min. `requires: 3.10`
 
 - [ ] **3.12** Write AC-14 semantic-coupling warning test [TDD red → green].
   - Config `high=60, medium=30` (inverted). Invoke twice. Assert: 1st call emits 1 stderr warning matching `\[memory-decay\].*medium_threshold_days.*<.*high_threshold_days`. 2nd call: zero new warnings (dedup via `_decay_config_warned`).
@@ -269,20 +269,29 @@ Starts after Phase 3a (Tasks 3.1-3.7) completes. All tests below exercise alread
   - Done: 1 test passes.
   - Size: 15 min. `requires: 3.20, 2.5`
 
-- [ ] **3.22** Implement CLI `_main()` in `maintenance.py` [TDD green-first for structure].
-  - Per I-6: argparse for `--decay`, `--project-root`, `--dry-run`. Resolve project-root via `Path(args.project_root).resolve() if args.project_root else Path.cwd().resolve()`. Validate `is_dir()`. Read config via `read_config(str(project_root))`. NFR-3 enabled-check short-circuits BEFORE `MemoryDatabase(db_path)`. Finally close. `if __name__ == "__main__": _main()`.
-  - Done: module imports cleanly, `python -m semantic_memory.maintenance` prints usage.
+- [ ] **3.22** Write AC-30 decay → refresh end-to-end integration test [TDD red → green via existing refresh_memory_digest].
+  - Seed 1 medium entry with `last_recalled_at = now - 61 days` (stale past `memory_decay_medium_threshold_days: 60`). Seed 5 fresh medium/high entries with matching keywords to a test feature slug. Invoke `decay_confidence(db, config, now=NOW)` — stale entry demoted to low. Invoke 081's `refresh_memory_digest(db, provider, query, limit, *, config=..., feature_type_id=..., completed_phase=...)` per the signature at `plugins/pd/hooks/lib/semantic_memory/refresh.py:273-282`. Use `_FixedSimilarityProvider` (either imported from `test_memory_server.py` or defined inline in test_maintenance.py) so query matching is deterministic. Assert: (a) stale entry confidence is 'low'; (b) stale entry's `name` is NOT in `digest["entries"]`; (c) all 5 fresh entries' names ARE in `digest["entries"]`.
+  - Done: 1 test passes.
   - Size: 15 min. `requires: 3.21`
 
-- [ ] **3.23** Write AC-29 CLI dry-run override test [TDD red → green].
-  - Subprocess invocation: `python -m semantic_memory.maintenance --decay --dry-run --project-root <tmp>` with config `memory_decay_dry_run: false`. Assert CLI reports dry-run (summary contains "(dry-run)"), DB unchanged.
-  - Done: 1 test passes.
+### Phase 3c: CLI implementation and tests
+
+Starts after Phase 3b completes (Task 3.22). Shares test_maintenance.py with 3a/3b; serialization rule applies.
+
+- [ ] **3.23** Implement CLI `_main()` in `maintenance.py` [TDD green-first for structure].
+  - Per I-6: argparse for `--decay`, `--project-root`, `--dry-run`. Resolve project-root via `Path(args.project_root).resolve() if args.project_root else Path.cwd().resolve()`. Validate `is_dir()`. Read config via `read_config(str(project_root))`. NFR-3 enabled-check short-circuits BEFORE `MemoryDatabase(db_path)`. Finally close. `if __name__ == "__main__": _main()`.
+  - Done: module imports cleanly, `python -m semantic_memory.maintenance` prints usage.
   - Size: 15 min. `requires: 3.22`
 
-- [ ] **3.24** Write NFR-3 process-level zero-overhead test [TDD red → green].
-  - Subprocess invocation on fresh dir with isolated HOME. **Isolation contract:** `env={"HOME": str(tmp_path), "PYTHONPATH": "plugins/pd/hooks/lib"}` passed to `subprocess.run`. Config `memory_decay_enabled: false` in `tmp_path / ".claude/pd.local.md"`. Invoke `python -m semantic_memory.maintenance --decay --project-root <tmp>`. Assert `(tmp_path / ".claude/pd/memory/memory.db").exists() == False` — the CLI short-circuit before DB open prevented file creation. Isolating HOME via env override is mandatory so the test does NOT assert on the user's real `~/.claude/pd/memory/memory.db`.
+- [ ] **3.24** Write AC-29 CLI dry-run override test [TDD red → green].
+  - Subprocess invocation: `python -m semantic_memory.maintenance --decay --dry-run --project-root <tmp>` with config `memory_decay_dry_run: false`. Assert CLI reports dry-run (summary contains "(dry-run)"), DB unchanged.
   - Done: 1 test passes.
   - Size: 15 min. `requires: 3.23`
+
+- [ ] **3.25** Write NFR-3 process-level zero-overhead test [TDD red → green].
+  - Subprocess invocation on fresh dir with isolated HOME. **Isolation contract:** `env={"HOME": str(tmp_path), "PYTHONPATH": "plugins/pd/hooks/lib"}` passed to `subprocess.run`. Config `memory_decay_enabled: false` in `tmp_path / ".claude/pd.local.md"`. Invoke `python -m semantic_memory.maintenance --decay --project-root <tmp>`. Assert `(tmp_path / ".claude/pd/memory/memory.db").exists() == False` — the CLI short-circuit before DB open prevented file creation. Isolating HOME via env override is mandatory so the test does NOT assert on the user's real `~/.claude/pd/memory/memory.db`.
+  - Done: 1 test passes.
+  - Size: 15 min. `requires: 3.24`
 
 ---
 
@@ -302,7 +311,7 @@ Starts after Phase 3a (Tasks 3.1-3.7) completes. All tests below exercise alread
     - Increment `TESTS_RUN` + `TESTS_PASSED` on success; call `log_fail` on failure per existing conventions.
   - Add call to `test_memory_decay_session_start` inside `test-hooks.sh`'s `main()` block alongside the existing test calls.
   - Done: 1 new inline test function + 1 call site added; test currently fails because run_memory_decay not yet implemented.
-  - Size: 20 min. `requires: 3.22`
+  - Size: 20 min. `requires: 3.23`
 
 - [ ] **4.2** Add inline `test_memory_decay_missing_module` function for AC-22 [TDD red].
   - Similar structure to Task 4.1 but simulates missing module.
@@ -322,7 +331,7 @@ Starts after Phase 3a (Tasks 3.1-3.7) completes. All tests below exercise alread
   - Size: 10 min. `requires: 0.3, 4.2`
 
 - [ ] **6.2** For each impacted test identified in Task 6.1, apply remediation.
-  - **Size-split gate:** If Task 6.1 identified 0 hits → Task 6.2 is a 2-min no-op (document `"Phase 6 audit found 0 impacted tests"` in baselines file and move on). If Task 6.1 identified ≥1 and ≤3 hits → apply remediation inline within this single task (15-45 min total). **If Task 6.1 identified ≥4 hits → HALT and split into one task per test (6.2a, 6.2b, ...) BEFORE proceeding** to stay within the 5-15 min per-task size convention.
+  - **Size-split gate (bounded inline):** If Task 6.1 identified 0 hits → Task 6.2 is a 2-min no-op (document `"Phase 6 audit found 0 impacted tests"` in baselines file and move on). If Task 6.1 identified 1-5 hits → apply remediation inline within this single task (15-75 min total; capped at 5 tests because the Phase 0 audit's expected range is 0-5 per R-6 estimate). If the count unexpectedly exceeds 10, capture the full list in `082-impacted-tests.txt` and emit a stderr warning `"Phase 6 remediation list exceeds expected range (N > 10)"` for operator review — but continue remediating sequentially within this task (do NOT halt; bounded inline remediation is the authoritative path).
   - Remediation pattern per test: (a) if test asserts exact section ordering in additionalContext → update to be robust to new decay section (test existence, not order, OR add decay section to expected); (b) if test writes config for session-start → no change needed (default `memory_decay_enabled: false` means decay silently no-ops).
   - Done: all impacted tests updated (0 edits if grep returned no ordering-assertions); OR sub-tasks 6.2a/b/c... spawned if count ≥4.
   - Size: 2-45 min depending on hit count (see size-split gate above).
@@ -389,17 +398,18 @@ Starts after Phase 3a (Tasks 3.1-3.7) completes. All tests below exercise alread
 - [ ] **7.1** Run full semantic_memory test suite.
   - `PYTHONPATH=plugins/pd/hooks/lib plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/semantic_memory/ -v`. Must pass; count ≥ `memory_tests_before_082` + ~30.
   - Done: all green.
-  - Size: 5 min. `requires: 2.7, 3.24, 4.6, 5.4` (explicit dep on 2.7 ensures concurrent-writer tests pass; others are transitively guaranteed).
+  - Size: 5 min. `requires: 2.7, 3.25, 4.6, 5.4` (explicit dep on 2.7 ensures concurrent-writer tests pass; others are transitively guaranteed).
 
 - [ ] **7.2** Run hook-tests.
   - `bash plugins/pd/hooks/tests/test-hooks.sh`. Must report ≥ `test_hooks_before_082` passing.
   - Done: all green.
   - Size: 5 min. `requires: 7.1`
 
-- [ ] **7.3** Run validate.sh.
+- [ ] **7.3** Run validate.sh + AC-27 verification.
   - `./validate.sh`. 0 errors; warning count ≤ `validate_warnings_before_082`.
-  - Done: clean.
-  - Size: 5 min. `requires: 7.2`
+  - **AC-27 check:** verify no new MCP tools were introduced. `grep -rn "@mcp.tool\|@mcp_tool\|def .*tool.*:\|FastMCP" plugins/pd/mcp/` — count must match pre-082 baseline. Alternatively, git diff against main: `git diff main -- plugins/pd/mcp/ | grep -E '^[+].*def (complete_phase|get_phase|...)'` returns 0 new tool definitions. Additive scope per NFR-1 is confined to maintenance.py + database.py + session-start.sh; MCP surface is unchanged.
+  - Done: clean; AC-27 confirmed.
+  - Size: 10 min. `requires: 7.2`
 
 - [ ] **7.4** Capture `EXPLAIN QUERY PLAN` evidence per R-6.
   - Open memory.db with 10k seeded rows, run `EXPLAIN QUERY PLAN <I-2 SELECT>`, record plan output + actual `elapsed_ms` from AC-24 test in `agent_sandbox/082-eqp.txt`. **Distinct from 082-baselines.txt** — this file is intentionally NOT deleted in Task 7.6; the retrospective command (in /pd:finish-feature) reads it and incorporates into retro.md "Performance" section. After retrospective runs, operator may manually delete `082-eqp.txt`.
