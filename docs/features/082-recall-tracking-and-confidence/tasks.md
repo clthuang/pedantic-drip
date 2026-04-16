@@ -105,13 +105,14 @@ Each task is 5-15 minutes of focused work. Parallel groups marked with `[PARALLE
 ## Phase 2: database.py additions (TDD)
 
 - [ ] **2.1** Write `TestBusyTimeoutKwarg` tests in `test_database.py` [TDD red].
-  - Cases: (a) default `MemoryDatabase(':memory:')` → `db._conn.execute('PRAGMA busy_timeout').fetchone()[0] == 15000`; (b) override `MemoryDatabase(':memory:', busy_timeout_ms=1000)` → same query returns 1000.
-  - Done: 2 red tests.
+  - **Public accessor contract (avoids `db._conn` anti-pattern):** Tasks 2.1/2.2 introduce a trivial public accessor `MemoryDatabase.get_busy_timeout_ms(self) -> int` that returns `self._busy_timeout_ms`. Tests assert on this public accessor, NOT on `db._conn.execute('PRAGMA busy_timeout')`. This respects engineering memory's "never access `db._conn` directly" anti-pattern while verifying the kwarg was applied.
+  - Cases: (a) default `MemoryDatabase(':memory:').get_busy_timeout_ms() == 15000`; (b) override `MemoryDatabase(':memory:', busy_timeout_ms=1000).get_busy_timeout_ms() == 1000`.
+  - Done: 2 red tests (fail because `get_busy_timeout_ms` not yet on MemoryDatabase).
   - Size: 10 min. `requires: 1.1`
 
-- [ ] **2.2** Extend `MemoryDatabase.__init__` and `_set_pragmas` [TDD green].
-  - Add `*, busy_timeout_ms: int = 15000` kwarg; store `self._busy_timeout_ms = int(busy_timeout_ms)`; modify `_set_pragmas` line 837 from hardcoded `15000` literal to `{self._busy_timeout_ms}`. Preserve PRAGMA ordering, `row_factory`, `_detect_fts5`, `_migrate` unchanged.
-  - Done: Task 2.1 tests pass; existing test_database.py tests still pass.
+- [ ] **2.2** Extend `MemoryDatabase.__init__`, add public accessor, and `_set_pragmas` [TDD green].
+  - Add `*, busy_timeout_ms: int = 15000` kwarg to `__init__`; store `self._busy_timeout_ms = int(busy_timeout_ms)`; modify `_set_pragmas` to read from `self._busy_timeout_ms` instead of hardcoded literal. Preserve PRAGMA ordering, `row_factory`, `_detect_fts5`, `_migrate` unchanged. Also add public accessor method `def get_busy_timeout_ms(self) -> int: return self._busy_timeout_ms`.
+  - Done: Task 2.1 tests pass via the public accessor; existing test_database.py tests still pass.
   - Size: 10 min. `requires: 2.1`
 
 - [ ] **2.3** Write `TestBatchDemote` tests [TDD red].
@@ -235,7 +236,7 @@ Each task is 5-15 minutes of focused work. Parallel groups marked with `[PARALLE
   - Size: 10 min. `requires: 3.15`
 
 - [ ] **3.17** Write AC-20 DB error test [TDD red → green].
-  - Monkeypatch `MemoryDatabase.batch_demote` to raise `sqlite3.OperationalError('mock')`. Invoke decay. Assert: no exception propagates, return dict has `"error"` key, 1 stderr warning (dedup via `_decay_error_warned`), `demoted_*` counts 0.
+  - Monkeypatch `MemoryDatabase.batch_demote` to raise `sqlite3.OperationalError('mock')` (MUST be `sqlite3.OperationalError` — a subclass of `sqlite3.Error` — because the design I-1 `except sqlite3.Error` clause catches sqlite3 subclasses but NOT generic `Exception`/`ValueError`. Using `Exception()` in the mock would silently escape the except and crash decay_confidence, falsely passing the test by raising). Invoke decay. Assert: no exception propagates, return dict has `"error"` key containing 'mock', 1 stderr warning matching `\[memory-decay\]` (dedup via `_decay_error_warned`), `demoted_*` counts 0.
   - Done: 1 test passes.
   - Size: 10 min. `requires: 3.16`
 
@@ -280,15 +281,28 @@ Each task is 5-15 minutes of focused work. Parallel groups marked with `[PARALLE
 
 ### Phase 4a: Write integration tests FIRST (TDD red)
 
-- [ ] **4.1** Create `plugins/pd/hooks/tests/test-memory-decay-session-start.sh` with AC-21 test [TDD red].
-  - Set up isolated tmp HOME with seeded memory.db + config `memory_decay_enabled: true`. Run `bash plugins/pd/hooks/session-start.sh` piping the standard hook input. Assert exit 0, JSON parseable via `python3 -c 'import sys, json; json.load(sys.stdin)'`, `additionalContext` contains ASCII `"Decay: demoted high->medium"` substring.
-  - Done: 1 test, currently fails (run_memory_decay not yet added to session-start.sh).
-  - Size: 15 min. `requires: 3.22`
+**Integration pattern:** `test-hooks.sh` is a monolithic runner with ~119 inline `test_*` bash functions called from its own `main()` block. External `test-*.sh` files in the same directory are NOT sourced by test-hooks.sh. Tasks 4.1 + 4.2 therefore add INLINE test functions directly to `test-hooks.sh`, matching the precedent established by existing tests like `test_session_start_json`.
 
-- [ ] **4.2** Add AC-22 missing-module tolerance test to same file [TDD red].
-  - Temporarily rename `maintenance.py → maintenance.py.bak`. **Cleanup contract:** test MUST install a bash `trap 'mv "$PLUGIN_ROOT/hooks/lib/semantic_memory/maintenance.py.bak" "$PLUGIN_ROOT/hooks/lib/semantic_memory/maintenance.py" 2>/dev/null || true' EXIT` BEFORE the rename so the restore happens even if the test assertion fails mid-execution. Run session-start.sh. Assert exit 0, JSON well-formed, `additionalContext` does NOT contain "Decay:" line.
-  - **Test-hooks.sh discovery:** the new file `test-memory-decay-session-start.sh` MUST NOT be wired into the test-hooks.sh runner yet. Create as standalone invokable script; Task 4.8 adds it to the runner only after Phase 4b lands green. Until then, invoke directly via `bash plugins/pd/hooks/tests/test-memory-decay-session-start.sh` for Phase 4a red verification.
-  - Done: 2 tests in the standalone bash file; test-hooks.sh runner list unchanged.
+- [ ] **4.1** Add inline `test_memory_decay_session_start` function to `plugins/pd/hooks/tests/test-hooks.sh` for AC-21 [TDD red].
+  - Add a new bash function following the existing `test_session_start_json`-style pattern. Contents:
+    - `tmp_home=$(mktemp -d)` + `trap 'rm -rf "$tmp_home"' RETURN` for cleanup.
+    - Create `$tmp_home/.claude/pd.local.md` with `memory_decay_enabled: true` and the 4 threshold fields.
+    - Seed memory.db: `HOME="$tmp_home" PYTHONPATH="$PLUGIN_ROOT/hooks/lib" "$PLUGIN_ROOT/.venv/bin/python" -c 'from semantic_memory.database import MemoryDatabase; db = MemoryDatabase(str(Path.home() / ".claude/pd/memory/memory.db")); ... seed 2 stale high entries ...'`.
+    - Invoke: `HOME="$tmp_home" bash "$PLUGIN_ROOT/hooks/session-start.sh" < /dev/null`.
+    - Assert: `jq -e '.hookSpecificOutput.additionalContext | contains("Decay: demoted high->medium")' <<< "$output"`.
+    - Increment `TESTS_RUN` + `TESTS_PASSED` on success; call `log_fail` on failure per existing conventions.
+  - Add call to `test_memory_decay_session_start` inside `test-hooks.sh`'s `main()` block alongside the existing test calls.
+  - Done: 1 new inline test function + 1 call site added; test currently fails because run_memory_decay not yet implemented.
+  - Size: 20 min. `requires: 3.22`
+
+- [ ] **4.2** Add inline `test_memory_decay_missing_module` function for AC-22 [TDD red].
+  - Similar structure to Task 4.1 but simulates missing module.
+  - **Cleanup contract (critical):** install `trap 'mv "$PLUGIN_ROOT/hooks/lib/semantic_memory/maintenance.py.bak" "$PLUGIN_ROOT/hooks/lib/semantic_memory/maintenance.py" 2>/dev/null || true; rm -rf "$tmp_home"' RETURN` BEFORE the rename so restoration happens even on assertion failure.
+  - Rename `maintenance.py → maintenance.py.bak`.
+  - Invoke session-start.sh with isolated HOME.
+  - Assert: exit 0, JSON well-formed, `additionalContext` does NOT contain "Decay:" substring.
+  - Add call to `test_memory_decay_missing_module` in `main()`.
+  - Done: 1 new inline test function + 1 call site; maintenance.py.bak rename restored on all exit paths.
   - Size: 15 min. `requires: 4.1`
 
 ### Phase 6: Existing-test audit + remediation (interleaves between Phase 4a and Phase 4b)
@@ -327,15 +341,10 @@ Each task is 5-15 minutes of focused work. Parallel groups marked with `[PARALLE
   - Done: block present in the right position relative to neighboring blocks.
   - Size: 10 min. `requires: 4.4`
 
-- [ ] **4.6** Run AC-21 + AC-22 bash tests; confirm green.
-  - Action: `bash plugins/pd/hooks/tests/test-memory-decay-session-start.sh` → both tests pass.
-  - Done: Phase 4a tests go green.
+- [ ] **4.6** Run full `test-hooks.sh` and confirm AC-21 + AC-22 go green.
+  - Action: `bash plugins/pd/hooks/tests/test-hooks.sh` → pass count is exactly `test_hooks_before_082 + 2` (Tasks 4.1 + 4.2 added 2 inline test functions + call sites, so TESTS_RUN increments by 2).
+  - Done: Phase 4a tests go green; no existing tests regressed.
   - Size: 5 min. `requires: 4.5`
-
-- [ ] **4.7** Wire new bash test into `test-hooks.sh` runner.
-  - Edit `plugins/pd/hooks/tests/test-hooks.sh` to include `test-memory-decay-session-start.sh` in the runner list (match the pattern used for the existing test files). Re-run `bash plugins/pd/hooks/tests/test-hooks.sh` — pass count should be `test_hooks_before_082 + 2` (AC-21 + AC-22) or `+N` depending on how the bash file reports.
-  - Done: runner includes the new test file; pass count is elevated by the AC-21/22 tests.
-  - Size: 10 min. `requires: 4.6`
 
 ---
 

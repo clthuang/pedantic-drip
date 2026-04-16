@@ -181,13 +181,15 @@ Phase 7: Final verification (full test suite, validate.sh, test-hooks.sh, EXPLAI
 **New files:**
 - `plugins/pd/hooks/lib/semantic_memory/maintenance.py` — new module (~200 LOC production + CLI).
 - `plugins/pd/hooks/lib/semantic_memory/test_maintenance.py` — new test file (~450 LOC).
-- `plugins/pd/hooks/tests/test-memory-decay-session-start.sh` — new bash test (AC-21 + AC-22).
-- `agent_sandbox/082-baselines.txt` — temp file, deleted in Task 7.6 on success.
+- `agent_sandbox/082-baselines.txt` — temp file, deleted in Task 7.5 on success.
+- `agent_sandbox/082-impacted-tests.txt` — temp file (Phase 6 audit output), deleted in Task 7.5.
+- `agent_sandbox/082-eqp.txt` — EQP + perf evidence, preserved for retrospective.
 
 **Edited files:**
-- `plugins/pd/hooks/lib/semantic_memory/database.py` — `+batch_demote` (~30 LOC), `+_execute_chunk` (~10 LOC), `+busy_timeout_ms` kwarg on `__init__` (~3 LOC change to `_set_pragmas`).
+- `plugins/pd/hooks/lib/semantic_memory/database.py` — `+batch_demote` (~30 LOC), `+_execute_chunk` (~10 LOC), `+busy_timeout_ms` kwarg on `__init__` + `+get_busy_timeout_ms()` public accessor (~5 LOC change to `_set_pragmas` + accessor).
 - `plugins/pd/hooks/lib/semantic_memory/test_database.py` — new test classes `TestBusyTimeoutKwarg` + `TestBatchDemote` + `TestExecuteChunkSeam` + concurrent-writer tests.
-- `plugins/pd/hooks/session-start.sh` — `+run_memory_decay` function (~25 LOC), reorder main() line 701 (1-line insert), display-prepend block (~6 LOC).
+- `plugins/pd/hooks/session-start.sh` — `+run_memory_decay` function (~25 LOC), reorder main() (1-line insert before build_memory_context), display-prepend block (~6 LOC).
+- `plugins/pd/hooks/tests/test-hooks.sh` — `+test_memory_decay_session_start` inline function (AC-21) + `+test_memory_decay_missing_module` inline function (AC-22) + 2 new call sites in main(). Matches existing inline-test pattern.
 - `plugins/pd/templates/config.local.md` — +5 field lines.
 - `.claude/pd.local.md` — +5 field lines.
 - `README_FOR_DEV.md` — +5 memory-config table rows.
