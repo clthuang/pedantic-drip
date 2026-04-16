@@ -678,3 +678,27 @@ Trivial documentation gaps flagged by relevance-verifier (e.g., a missing one-se
 - Confidence: medium
 - Last observed: Feature #078
 - Observation count: 1
+
+### Pattern: Subprocess Serialization Contract for LLM-Orchestrated Python Tools
+For LLM skills that orchestrate Python CLI helpers, use compact status JSON on stdout + bulky artifacts in a sandbox directory. Skill reads sandbox via Read tool; exit code 0 = ok/need-input, non-zero = error. Cleanup on success, preserve on error.
+- Observed in: feature/083-promote-pattern-command (design Subprocess Serialization Contract)
+- Benefit: separates LLM reasoning (compact JSON) from bulky data (sandbox files); stable re-prompt exit-code contract
+- Confidence: high
+- Last observed: Feature #083
+- Observation count: 1
+
+### Pattern: TD-8 Partial-Run Collision Markers for Atomic-Write Flows
+Every generated artifact in a multi-file atomic-write flow carries a scannable provenance comment (e.g., `# Promoted from KB entry: X`). Pre-flight scan rejects writes when marker already exists, surfacing manual-recovery guidance instead of compounding corruption on SIGINT-class failures.
+- Observed in: feature/083-promote-pattern-command (TD-8 marker in hook/skill/agent/command generators)
+- Benefit: cheap defense against partial-run corruption; cheaper than transactional rollback infrastructure
+- Confidence: high
+- Last observed: Feature #083
+- Observation count: 1
+
+### Pattern: Adversarial Implementation Review Catches Self-Reported Deferrals
+Implementation-reviewer runs as a separate dispatch (not self-review) and re-validates each phase's spec FR coverage independently of the implementer's own "Deviations" section. Implementer's self-report is biased toward "shipped" framing; an adversarial reviewer reading the spec cold catches deferrals that leak past phase-gate.
+- Observed in: feature/083-promote-pattern-command (FR-5 Stage 4 baseline-delta; deferred by implementer, flagged as BLOCKER by reviewer)
+- Benefit: prevents silent deferrals from crossing phase boundaries
+- Confidence: high
+- Last observed: Feature #083
+- Observation count: 1

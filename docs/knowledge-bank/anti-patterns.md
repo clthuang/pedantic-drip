@@ -647,3 +647,19 @@ Workflows whose final-validation round counts against the same iteration cap as 
 - Confidence: medium
 - Last observed: Feature #078
 - Observation count: 1
+
+### Anti-Pattern: Unsanitized Interpolation of LLM/User Input Into Generated Shell Scripts
+Splicing an LLM-provided or user-provided string (KB entry name, description, jq path) directly into bash templates without escape produces shell-injection primitives. Command substitution (backticks, `$()`), quote break-out (unescaped `"`), and newline-injection (CR/LF in comment lines) are all live attack surfaces.
+- Observed in: feature/083-promote-pattern-command (generators/hook.py `_render_hook_sh` and `_render_test_sh`)
+- Fix: denylist at validation layer (reject forbidden chars before render) + quote-aware escapes at render layer (both single-quote and double-quote escape helpers)
+- Confidence: high
+- Last observed: Feature #083
+- Observation count: 1
+
+### Anti-Pattern: Unsanitized Interpolation of LLM/User Input Into Markdown Consumed by Future LLM Sessions
+Raw description text spliced into SKILL.md / agent.md / command.md can smuggle triple-backtick code fences (swallowing target content), leading `#` headings (injecting fake sections), and `---` / `===` structural delimiters (forging frontmatter or setext headings). Future Claude sessions reading the file may execute the injected instruction as authoritative guidance.
+- Observed in: feature/083-promote-pattern-command (generators/_md_insert.py `_render_block`)
+- Fix: `_sanitize_description` with fence replacement (` ``` ` → `'''`), backslash-escape of leading `#`/`---`/`===` per line, and hard length cap (e.g., 500 chars)
+- Confidence: high
+- Last observed: Feature #083
+- Observation count: 1

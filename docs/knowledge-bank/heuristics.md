@@ -684,3 +684,27 @@ When reviewer dispatch produces deferred suggestions, those suggestions should b
 - Confidence: medium
 - Last observed: Feature #078
 - Observation count: 1
+
+### Heuristic: Pipeline Stage Ownership Table for LLM-vs-Python Boundary
+During design, map every FR sub-step to a named executor (skill markdown OR specific Python module function). Rule of thumb: every LLM call lives in skill markdown, every deterministic operation lives in Python. Write the table in design.md so implementers and reviewers both reference it.
+- Observed in: feature/083-promote-pattern-command (design Pipeline Stage Ownership table)
+- Benefit: converts ambiguous integration risk into a reviewable design artifact; zero "who owns this step?" discoveries during implementation
+- Confidence: high
+- Last observed: Feature #083
+- Observation count: 1
+
+### Heuristic: Skill-Backing Criterion for pd Commands
+A pd command warrants a backing skill (not inline markdown) when the workflow has (a) >1 LLM call in sequence, (b) stateful approval loops, OR (c) rollback semantics. Apply all three as an OR — any one qualifies. `/pd:promote-pattern` has all three; `/pd:remember` has none.
+- Observed in: feature/083-promote-pattern-command (design TD-1)
+- Benefit: concrete criterion ends the "inline-or-skill?" re-argument every command
+- Confidence: high
+- Last observed: Feature #083
+- Observation count: 1
+
+### Heuristic: Baseline-Delta Validation Avoids Rolling Back on Pre-Existing Errors
+For atomic-write flows gated by a slow validator (validate.sh, linters, type-checkers), capture baseline error count + categories immediately after snapshot (before any writes), compare post-write, and rollback only on NEW errors or NEW categories. Prevents inheritance-of-blame where the flow refuses to ship because the repo was already warning-noisy.
+- Observed in: feature/083-promote-pattern-command (FR-5 Stage 4 implementation in apply.py)
+- Benefit: isolates the contribution of the current change from ambient noise without lowering the bar
+- Confidence: medium
+- Last observed: Feature #083
+- Observation count: 1
