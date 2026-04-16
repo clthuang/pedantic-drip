@@ -1,10 +1,16 @@
 {
-  "id": "082",
-  "slug": "recall-tracking-and-confidence",
+  "id": "",
+  "slug": "",
   "mode": "standard",
-  "status": "planned",
+  "status": "active",
   "created": "2026-04-15T14:37:10.215694+00:00",
-  "branch": "feature/082-recall-tracking-and-confidence",
-  "lastCompletedPhase": null,
-  "phases": {}
+  "branch": "",
+  "lastCompletedPhase": "specify",
+  "phases": {
+    "specify": {
+      "started": "2026-04-16T10:10:41.852182+00:00",
+      "completed": "2026-04-16T10:38:15.262632+00:00",
+      "iterations": 7
+    }
+  }
 }

@@ -140,7 +140,7 @@ The prepend position in `full_context` is **after `doctor_summary`, before `cron
 Contract (matches existing `run_reconciliation` / `run_doctor_autofix` idioms at session-start.sh:561-654):
 
 - Resolve Python: prefer `"$PLUGIN_ROOT/.venv/bin/python"`; fall back to `python3` if the venv is missing.
-- Resolve timeout via platform-aware detection (copy the existing pattern from `run_reconciliation`:570-575): set `timeout_cmd="gtimeout 5"` if `gtimeout` is in PATH, else `timeout_cmd="timeout 5"` if `timeout` is in PATH, else empty string (no timeout wrapper — rare case, decay still runs; an extreme staleness scan on a pathological DB is the only way this matters).
+- Resolve timeout via platform-aware detection (copy the existing pattern from `run_doctor_autofix`:618-624, which uses 10s — decay processes larger tables than reconciliation and matches doctor's cadence): set `timeout_cmd="gtimeout 10"` if `gtimeout` is in PATH, else `timeout_cmd="timeout 10"` if `timeout` is in PATH, else empty string (no timeout wrapper — rare case, decay still runs; an extreme staleness scan on a pathological DB is the only way this matters). The 10s budget allows 5000ms internal (AC-24 CI ceiling) + subprocess startup + BEGIN IMMEDIATE busy-wait with margin.
 - Invocation:
   ```bash
   PYTHONPATH="${SCRIPT_DIR}/lib" $timeout_cmd "$python_cmd" -m semantic_memory.maintenance \

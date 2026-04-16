@@ -159,6 +159,9 @@
 
 **Non-responsibilities:**
 - No CLAUDE.md or `plugins/pd/README.md` edits (spec Out of Scope).
+- **NOT added to `config.py:DEFAULTS`.** Decay fields live ONLY in `_resolve_int_config` / `config.get()` call sites inside `maintenance.py`. This matches 081's precedent (`memory_refresh_*` fields are also not in DEFAULTS); keeps `config.py` small and pushes defaults to the point of consumption (consistent with the bool-reject + clamp pattern). Documented as an explicit design choice here so future implementers don't assume DEFAULTS needs updating.
+
+**Schema-version compatibility:** Decay operates ONLY on the `entries.confidence` and `entries.updated_at` columns, both of which exist from migration 1 onward. No schema-version gate is required; `batch_demote` works at any migration level ≥1. This confirms NFR-1 "no migration."
 
 **Sizing:** 5 lines per config file, 5 lines in README_FOR_DEV.md. Pure text.
 
@@ -368,6 +371,12 @@ def decay_confidence(db, config, *, now=None):
             sys.stderr.write(f"[memory-decay] DB error during decay: {e}\n")
             _decay_error_warned = True
         return {**_zero_diag(dry_run=dry_run), "error": str(e)}
+    # NOTE: `batch_demote` raises ValueError for invalid new_confidence (I-7).
+    # Decay_confidence only ever passes 'medium' or 'low' — if ValueError fires,
+    # it indicates a bug in decay_confidence itself, NOT a user-facing failure.
+    # We intentionally let it propagate (tests catch it; production should crash
+    # early). FR-8's "never propagate" invariant applies to config/DB/IO errors,
+    # not programming bugs.
 
     diag["elapsed_ms"] = int((time.perf_counter() - t0) * 1000)
 
@@ -496,10 +505,14 @@ def _emit_decay_diagnostic(diag: dict) -> None:
         "dry_run": diag["dry_run"],
     })
     try:
+        # mkdir MUST be inside try/except so both "parent is a file" errors and
+        # "path is a directory" errors (when monkeypatched per AC-19) are caught.
+        # IOError is an alias of OSError in Python 3; IsADirectoryError / PermissionError /
+        # FileNotFoundError are all OSError subclasses and thus all caught here.
         INFLUENCE_DEBUG_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
         with INFLUENCE_DEBUG_LOG_PATH.open("a") as f:
             f.write(line + "\n")
-    except (IOError, OSError) as e:
+    except OSError as e:
         global _decay_log_warned
         if not _decay_log_warned:
             sys.stderr.write(f"[memory-decay] log write failed: {e}\n")
@@ -555,9 +568,16 @@ def _main():
     if not project_root.is_dir():
         sys.exit(1)  # no stdout — session-start sees empty summary → silent
 
-    config = read_config(project_root / ".claude" / "pd.local.md")  # existing helper
+    # read_config takes the project root directory (str), not a file path.
+    # Signature verified at config.py:61: read_config(project_root: str) -> dict.
+    config = read_config(str(project_root))
     if args.dry_run:
         config["memory_decay_dry_run"] = True
+
+    # NFR-3 zero-overhead at the PROCESS level: short-circuit BEFORE opening the DB
+    # so a fresh-system session-start never creates memory.db purely for decay.
+    if not config.get("memory_decay_enabled", False):
+        sys.exit(0)
 
     db_path = str(Path.home() / ".claude" / "pd" / "memory" / "memory.db")
     db = MemoryDatabase(db_path)  # WAL mode via constructor (FR-5 prerequisite)
@@ -583,20 +603,33 @@ if __name__ == "__main__":
 # plugins/pd/hooks/lib/semantic_memory/database.py (additions)
 
 class MemoryDatabase:
-    def __init__(self, db_path: str, *, busy_timeout_ms: int = 15000):
+    # Existing __init__ at database.py:322-327 is preserved end-to-end with ONE
+    # additive kwarg + ONE additional line; no existing lifecycle steps removed.
+    def __init__(self, db_path: str, *, busy_timeout_ms: int = 15000) -> None:
         """Open DB with WAL mode and configurable busy_timeout.
 
         busy_timeout_ms is test scaffolding per spec NFR-5 item 2 — production
-        callers MUST use the default (15000). A non-default value is accepted
-        for deterministic timing tests (AC-20b-1 / AC-20b-2) but is NOT a
-        user-facing feature.
+        callers MUST use the default (15000). Tests pass 1000 for AC-20b-1/2
+        deterministic timing. Not a user-facing feature; not surfaced in config.
         """
-        self._db_path = db_path
-        self._conn = sqlite3.connect(db_path, ...)
-        self._conn.execute(f"PRAGMA busy_timeout = {int(busy_timeout_ms)}")
-        self._conn.execute("PRAGMA journal_mode = WAL")
-        self._conn.execute("PRAGMA synchronous = NORMAL")
-        # ... (rest unchanged from existing __init__)
+        self._busy_timeout_ms = int(busy_timeout_ms)
+        self._conn = sqlite3.connect(db_path, timeout=5.0)
+        self._conn.row_factory = sqlite3.Row
+        self._set_pragmas()                          # reads self._busy_timeout_ms (see diff below)
+        self._fts5_available = self._detect_fts5()   # UNCHANGED
+        self._migrate()                              # UNCHANGED
+
+    def _set_pragmas(self) -> None:
+        """Set connection-level PRAGMAs. Minimal diff from database.py:833-842:
+
+        Replace the hardcoded literal:
+            self._conn.execute("PRAGMA busy_timeout = 15000")
+        With:
+            self._conn.execute(f"PRAGMA busy_timeout = {self._busy_timeout_ms}")
+        All other PRAGMA lines (journal_mode=WAL, synchronous=NORMAL, cache_size=-8000)
+        and their ORDERING are preserved verbatim. busy_timeout MUST still be set FIRST
+        per the existing comment at database.py:835-837.
+        """
 
     def batch_demote(
         self,
@@ -614,6 +647,19 @@ class MemoryDatabase:
         Returns sum of rowcounts across chunks (may be less than len(ids) if
         some rows fail the `updated_at < ?` guard, e.g., back-to-back
         invocations within the same logical tick per FR-5).
+
+        **Atomicity note (AC-32):** Python's sqlite3 default `isolation_level=""`
+        means Python issues implicit BEGIN before DML statements. Since this
+        method issues an EXPLICIT `BEGIN IMMEDIATE` first, subsequent UPDATEs
+        run inside THAT transaction (Python's implicit BEGIN is suppressed
+        because a transaction is already open). This is the exact pattern
+        proven by `merge_duplicate` at database.py:463-538 — the identical
+        BEGIN IMMEDIATE / try-commit / except-rollback-raise structure with
+        multiple UPDATEs inside. Cross-chunk rollback is guaranteed: if
+        chunk 2 raises, `self._conn.rollback()` reverts ALL prior chunks
+        because they all happened inside the single BEGIN IMMEDIATE.
+        AC-32's partial-failure test hooks `_execute_chunk` on the second
+        invocation and asserts no partial UPDATE is visible afterward.
         """
         if not ids:
             return 0
@@ -739,17 +785,25 @@ import pytest
 from semantic_memory import maintenance  # module-level import for setattr
 
 @pytest.fixture(autouse=True)
-def reset_decay_state(monkeypatch):
+def reset_decay_state(monkeypatch, tmp_path):
     """Reset all module-globals per spec FR-8a 'Test reset semantics'.
 
     MUST use monkeypatch.setattr (not `from maintenance import ...` +
     reassign) because bool is immutable and `from X import Y` creates a
     local binding to the same object, not a live reference.
+
+    Also redirects INFLUENCE_DEBUG_LOG_PATH to a per-test tmp_path so tests
+    that enable memory_influence_debug don't pollute the real
+    ~/.claude/pd/memory/influence-debug.log (spec AC-17 'per-test isolation'
+    intent). Tests that need a specific path (e.g., AC-19 pointing at a
+    directory) override inside the test body.
     """
     monkeypatch.setattr(maintenance, "_decay_warned_fields", set())
     monkeypatch.setattr(maintenance, "_decay_config_warned", False)
     monkeypatch.setattr(maintenance, "_decay_log_warned", False)
     monkeypatch.setattr(maintenance, "_decay_error_warned", False)
+    monkeypatch.setattr(maintenance, "INFLUENCE_DEBUG_LOG_PATH",
+                        tmp_path / "influence-debug.log")
     yield
     # monkeypatch auto-restores on teardown
 ```
