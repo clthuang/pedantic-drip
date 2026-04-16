@@ -702,3 +702,11 @@ Implementation-reviewer runs as a separate dispatch (not self-review) and re-val
 - Confidence: high
 - Last observed: Feature #083
 - Observation count: 1
+
+### Pattern: Wrapper-Side Emission Outside @with_retry
+When adding diagnostics, metrics, or notifications to an `@with_retry`-decorated helper, emit from the outer wrapper (not the helper body) so retries don't double-log and early-return paths are still covered.
+- Observed in: feature/080-influence-wiring (MCP wrapper `record_influence_by_content` emits diagnostic after `_process_record_influence_by_content` returns, outside the retry boundary)
+- Benefit: exactly-once semantics per outer call regardless of retry count; covers all terminal paths of the helper
+- Confidence: medium
+- Last observed: Feature #080
+- Observation count: 1

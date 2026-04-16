@@ -708,3 +708,11 @@ For atomic-write flows gated by a slow validator (validate.sh, linters, type-che
 - Confidence: medium
 - Last observed: Feature #083
 - Observation count: 1
+
+### Heuristic: Point-of-Consumption Config Coercion
+When adding per-field type validation (bool rejection, numeric coercion, warnings) to config-driven fields, add it at the consumer site (e.g., inside `Ranker.__init__`, inside MCP helper) — NOT in the shared `read_config`/`_coerce` path.
+- Observed in: feature/080-influence-wiring (TD-3 explicitly rules out modifying `config.py`; point-of-consumption helpers `_resolve_float_config` in memory_server.py + `_resolve_weight` in ranking.py handle it)
+- Benefit: scopes the change to the feature; preserves existing tolerant-parse behavior for all other consumers; avoids blast radius
+- Confidence: medium
+- Last observed: Feature #080
+- Observation count: 1

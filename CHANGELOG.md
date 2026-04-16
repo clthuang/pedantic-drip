@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Three `memory_influence_*` config fields in `.claude/pd.local.md` (and template): `memory_influence_threshold` (default 0.55), `memory_influence_weight` (default 0.05), `memory_influence_debug` (default false). Expose ranking-engine influence tuning that was previously hardcoded.
+- Opt-in per-dispatch influence hit-rate diagnostics written to `~/.claude/pd/memory/influence-debug.log` (one JSON line per `record_influence_by_content` call). Enables measuring whether injected memory entries actually influence subagent output.
+
+### Changed
+- `record_influence_by_content` default cosine similarity threshold lowered from 0.70 → 0.55 to widen the match window. All 14 command-file callers migrated to let the new default take effect.
+- `RankingEngine._prominence` coefficient for influence now config-driven (was hardcoded `0.05`); behavior unchanged at default.
+
 ## [4.15.0] - 2026-04-16
 
 ### Added
