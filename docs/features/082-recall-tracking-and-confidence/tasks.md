@@ -212,11 +212,13 @@ Starts after Phase 3a (Tasks 3.1-3.7) completes. All tests below exercise alread
   - Size: 15 min. `requires: 3.9`
 
 - [ ] **3.11** Write AC-11, AC-12, AC-13 config coercion tests [TDD red → green via existing `_resolve_int_config`].
-  - AC-11: `high_threshold_days=0 → 1 + warning regex match`; `=500 → 365 + warning`.
-  - AC-12: `high_threshold_days=True` → default 30 + warning; `enabled=True` → True (bool is correct type here).
-  - AC-13: `"thirty"` → default 30 + warning.
-  - Done: 3-5 tests pass.
-  - Size: 10 min. `requires: 3.10`
+  - AC-11a: `memory_decay_high_threshold_days=0` → clamped to 1 + stderr warning matching `\[memory-decay\].*memory_decay_high_threshold_days`.
+  - AC-11b: `memory_decay_high_threshold_days=500` → clamped to 365 + warning.
+  - AC-11c: `memory_decay_grace_period_days=-5` → clamped to 0 + warning matching `\[memory-decay\].*memory_decay_grace_period_days`. (Covers the grace-period clamp branch explicitly per spec AC-11.)
+  - AC-12: `memory_decay_high_threshold_days=True` → default 30 + warning; `memory_decay_enabled=True` → True (bool is correct type here).
+  - AC-13: `memory_decay_high_threshold_days="thirty"` → default 30 + warning.
+  - Done: 5-6 tests pass.
+  - Size: 15 min. `requires: 3.10`
 
 - [ ] **3.12** Write AC-14 semantic-coupling warning test [TDD red → green].
   - Config `high=60, medium=30` (inverted). Invoke twice. Assert: 1st call emits 1 stderr warning matching `\[memory-decay\].*medium_threshold_days.*<.*high_threshold_days`. 2nd call: zero new warnings (dedup via `_decay_config_warned`).
@@ -305,7 +307,7 @@ Starts after Phase 3b completes (Task 3.22). Shares test_maintenance.py with 3a/
   - Add a new bash function following the existing `test_session_start_json`-style pattern. Contents:
     - `tmp_home=$(mktemp -d)` + `trap 'rm -rf "$tmp_home"' RETURN` for cleanup.
     - Create `$tmp_home/.claude/pd.local.md` with `memory_decay_enabled: true` and the 4 threshold fields.
-    - Seed memory.db: `HOME="$tmp_home" PYTHONPATH="$PLUGIN_ROOT/hooks/lib" "$PLUGIN_ROOT/.venv/bin/python" -c 'from semantic_memory.database import MemoryDatabase; db = MemoryDatabase(str(Path.home() / ".claude/pd/memory/memory.db")); ... seed 2 stale high entries ...'`.
+    - Seed memory.db: `HOME="$tmp_home" PYTHONPATH="${HOOKS_DIR}/lib" "${HOOKS_DIR}/../.venv/bin/python" -c 'from pathlib import Path; from datetime import datetime, timezone, timedelta; import json; from semantic_memory.database import MemoryDatabase; db_path = Path.home() / ".claude/pd/memory/memory.db"; db_path.parent.mkdir(parents=True, exist_ok=True); db = MemoryDatabase(str(db_path)); now = datetime.now(timezone.utc); stale = (now - timedelta(days=31)).isoformat(); [db.upsert_entry({"id": f"seed-{i}", "name": f"seed-{i}", "description": "test", "category": "patterns", "keywords": json.dumps(["k"]), "source": "store_memory", "observation_count": 1, "confidence": "high", "recall_count": 1, "last_recalled_at": stale, "created_at": stale, "updated_at": stale, "references": json.dumps([]), "reasoning": "test"}) for i in range(2)]; db.close()'`. Use `last_recalled_at = now - 31 days` (one day past `memory_decay_high_threshold_days: 30` default), `source="store_memory"` (not `"import"` — import would be excluded by spec AC-7). Matches AC-1 seeding conventions from Task 3.1 at a bash level.
     - Invoke: `HOME="$tmp_home" bash "$PLUGIN_ROOT/hooks/session-start.sh" < /dev/null`.
     - Assert: `jq -e '.hookSpecificOutput.additionalContext | contains("Decay: demoted high->medium")' <<< "$output"`.
     - Increment `TESTS_RUN` + `TESTS_PASSED` on success; call `log_fail` on failure per existing conventions.
@@ -333,7 +335,7 @@ Starts after Phase 3b completes (Task 3.22). Shares test_maintenance.py with 3a/
 - [ ] **6.2** For each impacted test identified in Task 6.1, apply remediation.
   - **Size-split gate (bounded inline):** If Task 6.1 identified 0 hits → Task 6.2 is a 2-min no-op (document `"Phase 6 audit found 0 impacted tests"` in baselines file and move on). If Task 6.1 identified 1-5 hits → apply remediation inline within this single task (15-75 min total; capped at 5 tests because the Phase 0 audit's expected range is 0-5 per R-6 estimate). If the count unexpectedly exceeds 10, capture the full list in `082-impacted-tests.txt` and emit a stderr warning `"Phase 6 remediation list exceeds expected range (N > 10)"` for operator review — but continue remediating sequentially within this task (do NOT halt; bounded inline remediation is the authoritative path).
   - Remediation pattern per test: (a) if test asserts exact section ordering in additionalContext → update to be robust to new decay section (test existence, not order, OR add decay section to expected); (b) if test writes config for session-start → no change needed (default `memory_decay_enabled: false` means decay silently no-ops).
-  - Done: all impacted tests updated (0 edits if grep returned no ordering-assertions); OR sub-tasks 6.2a/b/c... spawned if count ≥4.
+  - Done: all impacted tests updated (0 edits if grep returned no ordering-assertions; 1-5 handled inline sequentially; >10 logs warning but continues sequentially — no sub-task spawning needed).
   - Size: 2-45 min depending on hit count (see size-split gate above).
   - `requires: 6.1`
 
