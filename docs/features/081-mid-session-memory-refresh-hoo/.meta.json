@@ -2,10 +2,11 @@
   "id": "",
   "slug": "",
   "mode": "standard",
-  "status": "active",
+  "status": "completed",
   "created": "2026-04-15T14:37:08.574259+00:00",
   "branch": "",
-  "lastCompletedPhase": "implement",
+  "completed": "2026-04-16T10:02:14.756463+00:00",
+  "lastCompletedPhase": "finish",
   "phases": {
     "specify": {
       "started": "2026-04-16T09:06:14.578605+00:00",
@@ -23,6 +24,9 @@
     "implement": {
       "completed": "2026-04-16T09:59:07.937299+00:00",
       "iterations": 1
+    },
+    "finish": {
+      "completed": "2026-04-16T10:02:14.756463+00:00"
     }
   }
 }
