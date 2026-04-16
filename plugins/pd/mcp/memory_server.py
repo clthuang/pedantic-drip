@@ -23,8 +23,7 @@ from semantic_memory import VALID_CATEGORIES, VALID_CONFIDENCE, VALID_SOURCES, c
 from semantic_memory.config import read_config
 from semantic_memory.database import MemoryDatabase
 from semantic_memory.embedding import EmbeddingProvider, create_provider
-from semantic_memory.ranking import RankingEngine
-from semantic_memory.retrieval import RetrievalPipeline
+from semantic_memory.refresh import hybrid_retrieve
 from semantic_memory.dedup import check_duplicate
 from semantic_memory.keywords import extract_keywords
 
@@ -215,19 +214,19 @@ def _process_search_memory(
     if not query or not query.strip():
         return "Error: query must be non-empty"
 
-    pipeline = RetrievalPipeline(db, provider, config)
-    result = pipeline.retrieve(query.strip(), project=project)
-
-    all_entries = db.get_all_entries()
-
-    # Category filter BEFORE ranking — narrows candidates
-    if category:
-        all_entries = [e for e in all_entries if e.get("category") == category]
-
-    entries_by_id = {e["id"]: e for e in all_entries}
-
-    engine = RankingEngine(config)
-    selected = engine.rank(result, entries_by_id, limit)
+    # Feature 081 (TD-1): delegate to the shared hybrid_retrieve helper so
+    # ranking parity with refresh_memory_digest is structural, not
+    # coincidental.  The helper preserves pre-rank category filtering and
+    # project-scoped blending via keyword-only parameters.
+    selected = hybrid_retrieve(
+        db,
+        provider,
+        config,
+        query.strip(),
+        limit,
+        project=project,
+        category=category,
+    )
 
     if not selected:
         return "No matching memories found."

@@ -528,6 +528,8 @@ Without an API key, memory still works via FTS5 keyword search and prominence ra
 - `memory_influence_threshold` — Cosine similarity threshold for influence matching (default: 0.55)
 - `memory_influence_weight` — Coefficient for influence in ranking prominence (default: 0.05)
 - `memory_influence_debug` — Emit per-dispatch hit-rate diagnostics to `~/.claude/pd/memory/influence-debug.log` (default: false)
+- `memory_refresh_enabled` — Inject memory digest into complete_phase MCP response at phase boundaries (default: true)
+- `memory_refresh_limit` — Max entries in per-phase refresh digest (default: 5; clamped to [1, 20])
 - `max_concurrent_agents` — Max parallel Task dispatches across skills and commands (default: 5)
 
 ## Entity Registry

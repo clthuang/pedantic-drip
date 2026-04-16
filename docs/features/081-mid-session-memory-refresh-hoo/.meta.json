@@ -1,10 +1,28 @@
 {
-  "id": "081",
-  "slug": "mid-session-memory-refresh-hoo",
+  "id": "",
+  "slug": "",
   "mode": "standard",
-  "status": "planned",
+  "status": "active",
   "created": "2026-04-15T14:37:08.574259+00:00",
-  "branch": "feature/081-mid-session-memory-refresh-hoo",
-  "lastCompletedPhase": null,
-  "phases": {}
+  "branch": "",
+  "lastCompletedPhase": "implement",
+  "phases": {
+    "specify": {
+      "started": "2026-04-16T09:06:14.578605+00:00",
+      "completed": "2026-04-16T09:06:32.571678+00:00",
+      "iterations": 3
+    },
+    "design": {
+      "completed": "2026-04-16T09:19:20.726259+00:00",
+      "iterations": 3
+    },
+    "create-plan": {
+      "completed": "2026-04-16T09:33:31.085324+00:00",
+      "iterations": 2
+    },
+    "implement": {
+      "completed": "2026-04-16T09:59:07.937299+00:00",
+      "iterations": 1
+    }
+  }
 }
