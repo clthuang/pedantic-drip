@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.15.3] - 2026-04-16
+
 ### Added
 - `memory_refresh_enabled` (default true) + `memory_refresh_limit` (default 5) config fields. At each `complete_phase` MCP call, the orchestrator now receives a compact memory digest (top-K medium/high-confidence entries relevant to the next phase) as a new `memory_refresh` field in the response. Eliminates session-start staleness for long multi-phase features.
 - `memory_refresh` diagnostic event appended to `~/.claude/pd/memory/influence-debug.log` when `memory_influence_debug: true` (reuses 080's log file and debug flag).
