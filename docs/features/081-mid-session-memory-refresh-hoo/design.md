@@ -303,6 +303,8 @@ from semantic_memory.refresh import (
 
 ### I-1: `refresh_memory_digest`
 
+**NOTE:** Tasks.md Task 3.2 defines the authoritative signature for this function, including `feature_type_id: str | None = None` and `completed_phase: str | None = None` kwargs required for FR-6 diagnostic forwarding. The signature below predates that decision; refer to tasks.md for the canonical form.
+
 ```python
 def refresh_memory_digest(
     db: MemoryDatabase,
@@ -311,6 +313,8 @@ def refresh_memory_digest(
     limit: int,
     *,
     config: dict,
+    feature_type_id: str | None = None,  # per tasks.md Task 3.2
+    completed_phase: str | None = None,   # per tasks.md Task 3.2
 ) -> dict | None:
     """Return a compact memory digest for the given query.
 
