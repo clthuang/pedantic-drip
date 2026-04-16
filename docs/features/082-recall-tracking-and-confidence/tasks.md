@@ -25,10 +25,11 @@ Each task is 5-15 minutes of focused work. Parallel groups marked with `[PARALLE
   - Done: baselines file exists with `validate_warnings_before_082=N`.
   - Size: 5 min.
 
-- [ ] **0.2** Capture pytest counts for semantic_memory and hook tests.
-  - Action: `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/semantic_memory/ --collect-only -q 2>&1 | tail -3` → append `memory_tests_before_082=N` line. Same for `bash plugins/pd/hooks/tests/test-hooks.sh` count → `test_hooks_before_082=101`.
-  - Done: baselines file has both counts.
-  - Size: 5 min. `[PARALLEL: phase-0]` `requires: 0.1`
+- [ ] **0.2** Capture pytest counts for semantic_memory and hook tests from LIVE runs (no hardcoded values).
+  - Action 1: `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/semantic_memory/ --collect-only -q 2>&1 | tail -3` → parse the collected count and append `memory_tests_before_082=N` line.
+  - Action 2: `bash plugins/pd/hooks/tests/test-hooks.sh 2>&1 | grep -E 'TESTS_PASSED|passed' | tail -1` → parse the reported pass count and append `test_hooks_before_082=M` line. DO NOT hardcode; capture whatever the current live count is. (081 shipped with ~101; exact count may have drifted with other features.)
+  - Done: baselines file has both counts captured from live runs.
+  - Size: 10 min. `[PARALLEL: phase-0]` `requires: 0.1`
 
 - [ ] **0.3** Grep for session-start ordering assertions in hook tests.
   - Action: `grep -rn 'run_reconciliation\|run_doctor_autofix\|build_memory_context\|additionalContext' plugins/pd/hooks/tests/ >> agent_sandbox/082-baselines.txt`. Head the file with `# Phase 0 audit — tests that may be impacted by session-start main() reorder`.
@@ -125,25 +126,21 @@ Each task is 5-15 minutes of focused work. Parallel groups marked with `[PARALLE
   - Done: Task 2.3 tests pass.
   - Size: 15 min. `requires: 2.3`
 
-- [ ] **2.5** Write `TestExecuteChunkSeam` test [TDD red].
+- [ ] **2.5** Write `TestExecuteChunkSeam` test [TDD red → green].
   - Monkeypatch `MemoryDatabase._execute_chunk` with side_effect counter raising `sqlite3.OperationalError` on 2nd call. Invoke `batch_demote` with 2000 ids. Assert: all 2000 still at original confidence (transaction rolled back), exception propagates from batch_demote.
-  - Done: 1 red test.
+  - Because Task 2.4 already implemented `_execute_chunk` as the chunking seam, this test passes as soon as it is written (no additional impl work required). [red → green] semantics apply — the red is momentary (until test runs against the existing impl) and the green is "the existing impl makes this pass."
+  - Done: 1 test passes against the Task 2.4 implementation.
   - Size: 10 min. `requires: 2.4`
 
-- [ ] **2.6** Verify `_execute_chunk` is the chunking seam — no impl work needed if Task 2.4 structured it correctly [TDD green].
-  - Action: re-run Task 2.5 — should pass since Task 2.4 already uses `_execute_chunk` for each chunk.
-  - Done: Task 2.5 test passes.
-  - Size: 5 min. `requires: 2.5`
-
-- [ ] **2.7** Write AC-20b-1 concurrent-writer-success test [TDD red → green via busy_timeout_ms=1000].
+- [ ] **2.6** Write AC-20b-1 concurrent-writer-success test [TDD red → green via busy_timeout_ms=1000].
   - Two MemoryDatabase connections with `busy_timeout_ms=1000`. A-thread: `BEGIN IMMEDIATE; INSERT (dummy row); time.sleep(0.1); COMMIT`. B invokes `batch_demote` directly (not decay_confidence — focus on DB seam). Assert: decay succeeds, A's INSERT visible post-join.
   - Done: 1 test passes.
   - Size: 15 min. `requires: 2.4`
 
-- [ ] **2.8** Write AC-20b-2 concurrent-writer-timeout test [TDD red → green via busy_timeout_ms=1000].
+- [ ] **2.7** Write AC-20b-2 concurrent-writer-timeout test [TDD red → green via busy_timeout_ms=1000].
   - Same setup with `time.sleep(2.0)` before COMMIT. A.join() THEN verification SELECTs. B's batch_demote catches `sqlite3.OperationalError`. Assert per I-1 error-handling: no partial UPDATE visible on either connection.
   - Done: 1 test passes.
-  - Size: 15 min. `requires: 2.7`
+  - Size: 15 min. `requires: 2.6`
 
 ---
 
@@ -313,9 +310,10 @@ Each task is 5-15 minutes of focused work. Parallel groups marked with `[PARALLE
   - Size: 10 min. `requires: 0.3, 4.2`
 
 - [ ] **6.2** For each impacted test identified in Task 6.1, apply remediation.
-  - For each: (a) if test asserts exact section ordering in additionalContext → update to be robust to new decay section (test existence, not order, OR add decay section to expected); (b) if test writes config for session-start → no change needed (default `memory_decay_enabled: false` means decay silently no-ops).
-  - Done: all impacted tests updated (0 edits if grep returned no ordering-assertions).
-  - Size: 5-15 min per impacted test (variable; may be 0 min if Task 6.1 found no hits).
+  - **Size-split gate:** If Task 6.1 identified 0 hits → Task 6.2 is a 2-min no-op (document `"Phase 6 audit found 0 impacted tests"` in baselines file and move on). If Task 6.1 identified ≥1 and ≤3 hits → apply remediation inline within this single task (15-45 min total). **If Task 6.1 identified ≥4 hits → HALT and split into one task per test (6.2a, 6.2b, ...) BEFORE proceeding** to stay within the 5-15 min per-task size convention.
+  - Remediation pattern per test: (a) if test asserts exact section ordering in additionalContext → update to be robust to new decay section (test existence, not order, OR add decay section to expected); (b) if test writes config for session-start → no change needed (default `memory_decay_enabled: false` means decay silently no-ops).
+  - Done: all impacted tests updated (0 edits if grep returned no ordering-assertions); OR sub-tasks 6.2a/b/c... spawned if count ≥4.
+  - Size: 2-45 min depending on hit count (see size-split gate above).
   - `requires: 6.1`
 
 - [ ] **6.3** Run hook-tests before Phase 4b to confirm baseline still passes.
@@ -379,7 +377,7 @@ Each task is 5-15 minutes of focused work. Parallel groups marked with `[PARALLE
 - [ ] **7.1** Run full semantic_memory test suite.
   - `PYTHONPATH=plugins/pd/hooks/lib plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/semantic_memory/ -v`. Must pass; count ≥ `memory_tests_before_082` + ~30.
   - Done: all green.
-  - Size: 5 min. `requires: 3.24, 4.6, 5.4`
+  - Size: 5 min. `requires: 2.7, 3.24, 4.6, 5.4` (explicit dep on 2.7 ensures concurrent-writer tests pass; others are transitively guaranteed).
 
 - [ ] **7.2** Run hook-tests.
   - `bash plugins/pd/hooks/tests/test-hooks.sh`. Must report ≥ `test_hooks_before_082` passing.
