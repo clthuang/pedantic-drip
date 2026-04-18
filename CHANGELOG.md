@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.15.6] - 2026-04-18
+
 ### Fixed
 - Migration 10 backfill: non-dict `phase_timing` values no longer crash the entire migration (type guard added)
 - Migration 10 backfill: `skipped_phases` stored as string no longer produces char-by-char garbage rows (type guard added)
