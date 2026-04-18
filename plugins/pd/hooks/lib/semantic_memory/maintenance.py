@@ -118,7 +118,14 @@ def _resolve_int_config(
 
     if clamp is not None:
         lo, hi = clamp
-        value = max(lo, min(hi, value))
+        clamped = max(lo, min(hi, value))
+        if clamped != value and key not in warned:
+            sys.stderr.write(
+                f"[memory-decay] config field {key!r} value {value} "
+                f"out of range [{lo}, {hi}]; clamped to {clamped}\n"
+            )
+            warned.add(key)
+        value = clamped
     return value
 
 
@@ -260,7 +267,7 @@ def _select_candidates(
         "floor_count": floor_count,
         "import_count": import_count,
         "grace_count": grace_count,
-        "scanned_total": len(rows),
+        "scanned_total": len(rows) - import_count,
     }
 
 
@@ -310,6 +317,11 @@ def decay_confidence(
         raise TypeError(
             f"now must be datetime, got {type(now).__name__}"
         )
+    # Normalize to UTC to prevent false-positive demotions from SQLite's
+    # lexicographic string comparison on ISO-8601 timestamps with different
+    # timezone offsets (adversarial QA finding #1).
+    if now.tzinfo is not None:
+        now = now.astimezone(timezone.utc)
 
     # Resolve config via shared helper (bool-reject + clamp + dedup-warn).
     high_days = _resolve_int_config(
