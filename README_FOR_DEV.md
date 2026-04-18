@@ -570,10 +570,10 @@ The workflow engine manages feature lifecycle state, phase transitions, and drif
 
 **MCP Server:** `plugins/pd/mcp/workflow_state_server.py` (bootstrapped via `plugins/pd/mcp/run-workflow-server.sh`)
 
-**MCP Tools (15):**
+**MCP Tools (17):**
 - `get_phase` -- Get current workflow phase for a feature
-- `transition_phase` -- Transition a feature to the next workflow phase
-- `complete_phase` -- Mark the current phase as complete
+- `transition_phase` -- Transition a feature to the next workflow phase (dual-writes to `phase_events`)
+- `complete_phase` -- Mark the current phase as complete (dual-writes to `phase_events`)
 - `validate_prerequisites` -- Check if prerequisites are met for a target phase
 - `list_features_by_phase` -- List all features currently in a given phase
 - `list_features_by_status` -- List all features with a given status
@@ -586,6 +586,10 @@ The workflow engine manages feature lifecycle state, phase transitions, and drif
 - `activate_feature` -- Activate a planned feature for development
 - `init_entity_workflow` -- Initialize entity workflow tracking
 - `transition_entity_phase` -- Transition an entity to a new workflow phase
+- `record_backward_event` -- Record a backward phase transition event for analytics
+- `query_phase_analytics` -- Query structured phase execution data (phase_duration, iteration_summary, backward_frequency, raw_events)
+
+**Phase Events Table:** `phase_events` (migration 10) stores structured workflow execution data as an append-only event log. Every `transition_phase` and `complete_phase` call dual-writes to both the metadata JSON blob and this table. Use `query_phase_analytics` MCP tool to query cross-feature analytics (phase durations, review iteration counts, backward transition frequency).
 
 ## Creating Components
 
