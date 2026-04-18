@@ -102,7 +102,7 @@ Each task is 5-15 minutes. All tasks within a phase are serialized (shared test 
   - Per design I-7. 4 query types. Z-normalization: `.replace("Z", "+00:00")` before `fromisoformat()`.
   - `_compute_durations`: group by (type_id, phase), sort by timestamp, pair Nth started with Nth completed.
   - Done: AC-11/11b/12/13/14/15 tests pass. All existing workflow tests pass (AC-17).
-  - Size: 15 min. `requires: 2.5`
+  - Size: 15 min. `requires: 2.6`
 
 ---
 
@@ -111,7 +111,7 @@ Each task is 5-15 minutes. All tasks within a phase are serialized (shared test 
 - [ ] **3.1** Update `README_FOR_DEV.md` (AC-20).
   - Add brief note about `phase_events` table and `query_phase_analytics` tool after the entity registry section.
   - Done: `grep -c "phase_events" README_FOR_DEV.md` ≥ 1.
-  - Size: 5 min. `requires: 2.6`
+  - Size: 5 min. `requires: 2.7`
 
 - [ ] **3.2** Run full test suites.
   - Entity registry: `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/entity_registry/ -v` → all green, count ≥ baseline + ~10.
@@ -131,7 +131,7 @@ Each task is 5-15 minutes. All tasks within a phase are serialized (shared test 
 
 ## Summary
 
-**Task count:** 15 tasks across 4 phases.
+**Task count:** 16 tasks across 4 phases.
 **Estimated total:** ~3-4 hours of focused implementation.
 **Serialization:** all tasks within each phase are serial (shared test files).
 **AC coverage:** AC-1..AC-20 + AC-11b all assigned to tasks.
