@@ -2,11 +2,12 @@
   "id": "084",
   "slug": "structured-execution-data",
   "mode": "full",
-  "status": "active",
+  "status": "completed",
   "created": "2026-04-18T05:55:56.026930+00:00",
   "branch": "feature/084-structured-execution-data",
+  "completed": "2026-04-18T06:44:03.555647+00:00",
   "backlog_source": "00051",
-  "lastCompletedPhase": "implement",
+  "lastCompletedPhase": "finish",
   "phases": {
     "brainstorm": {
       "started": "2026-04-18T05:55:56.026781+00:00"
@@ -28,6 +29,9 @@
     "implement": {
       "completed": "2026-04-18T06:41:35.406377+00:00",
       "iterations": 1
+    },
+    "finish": {
+      "completed": "2026-04-18T06:44:03.555647+00:00"
     }
   }
 }
