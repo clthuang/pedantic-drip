@@ -61,3 +61,11 @@
 - **#00077** AC-22 test covers file-missing only; not SyntaxError/ImportError in maintenance.py. Shell guard (`|| true + 2>/dev/null`) handles all uniformly. Low priority.
 - **#00078** `_select_candidates` accesses `db._conn` directly for read query. Add public `MemoryDatabase.scan_decay_candidates()` method if the encapsulation norm is elevated.
 - **#00079** `updated_at IS NULL` guard in `_execute_chunk` SQL is dead code — schema enforces NOT NULL on `updated_at`. Defensive; harmless. Remove if cleanliness preferred.
+
+## From Feature 084 QA (2026-04-18)
+
+- **#00080** `__unknown__` project_id sentinel from `record_backward_event` default pollutes unfiltered analytics queries. Consider requiring project_id or adding exclude-unknown filter option.
+- **#00081** Unknown `query_type` in `query_phase_analytics` returns non-standard error JSON (missing `results`/`query_type` fields). Callers that destructure `result["results"]` get KeyError.
+- **#00082** Missing negative tests: CHECK constraint rejection for invalid event_type/source, empty query results, backfill with zero entities. All covered by defensive code but no explicit tests.
+- **#00083** `_compute_durations` silently drops timestamp pairs with mixed tz-aware/naive datetimes. Acceptable (try/except is defensive) but silent data loss in analytics.
+- **#00084** AC-16 only tests transition_phase failure resilience, not complete_phase. Both have try/except but different update_entity ordering.
