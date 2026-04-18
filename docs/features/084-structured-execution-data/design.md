@@ -243,7 +243,7 @@ def _migration_10_phase_events(conn: sqlite3.Connection) -> None:
                      bh.get("reason"), bh.get("target_phase"), now),
                 )
 
-        conn.execute("INSERT OR REPLACE INTO _metadata (key, value) VALUES ('schema_version', '10')")
+        conn.execute("INSERT INTO _metadata(key, value) VALUES('schema_version', '10') ON CONFLICT(key) DO UPDATE SET value = excluded.value")
         conn.commit()
     except Exception:
         conn.rollback()
@@ -321,10 +321,15 @@ def query_phase_events(
 ### I-4: Dual-write in `_process_transition_phase`
 
 ```python
-# Inside _process_transition_phase, AFTER metadata update, INSIDE db.transaction():
-ts = _iso_now()  # capture ONCE — reuse for metadata dict AND INSERT
-
-# ... existing metadata update uses ts ...
+# Inside _process_transition_phase, INSIDE db.transaction():
+# MODIFICATION REQUIRED: refactor existing line 617 from:
+#   phase_timing[target_phase]["started"] = _iso_now()
+# TO:
+#   ts = _iso_now()
+#   phase_timing[target_phase]["started"] = ts
+# This captures the timestamp ONCE for reuse in both metadata AND INSERT.
+ts = _iso_now()
+# ... existing metadata update uses ts (refactored, not a second call) ...
 
 # Dual-write to phase_events (NFR-3: failure MUST NOT break transition)
 try:
@@ -351,10 +356,14 @@ except Exception as e:
 ### I-5: Dual-write in `_process_complete_phase`
 
 ```python
-# Inside _process_complete_phase, AFTER metadata update, INSIDE transaction:
-ts = _iso_now()  # capture ONCE
-
-# ... existing metadata update uses ts ...
+# Inside _process_complete_phase, INSIDE transaction:
+# MODIFICATION REQUIRED: refactor existing line 763 from:
+#   phase_timing[phase]["completed"] = _iso_now()
+# TO:
+#   ts = _iso_now()
+#   phase_timing[phase]["completed"] = ts
+ts = _iso_now()
+# ... existing metadata update uses ts (refactored) ...
 
 try:
     db.insert_phase_event(
@@ -379,22 +388,23 @@ async def record_backward_event(
     source_phase: str,
     target_phase: str,
     reason: str = "",
+    project_id: str = "__unknown__",
 ) -> str:
     """Record a backward phase transition event for analytics.
 
     Called by workflow-transitions skill AFTER transition_phase completes
     a backward transition. Not called by _process_transition_phase directly
     (which has no backward awareness per TD-5).
-    """
-    entity = db.get_entity(type_id)
-    if not entity:
-        return json.dumps({"error": f"Entity not found: {type_id}"})
 
+    project_id is accepted as a parameter (the skill layer has it in scope)
+    rather than resolved via db.get_entity — ensures the event can be
+    recorded even if the entity was deleted between transition and recording.
+    """
     ts = _iso_now()
     try:
         db.insert_phase_event(
             type_id=type_id,
-            project_id=entity.get("project_id", "__unknown__"),
+            project_id=project_id,
             phase=source_phase,        # phase being DEPARTED
             event_type="backward",
             timestamp=ts,
@@ -484,8 +494,14 @@ def _compute_durations(started: list[dict], completed: list[dict]) -> list[dict]
         c_list = sorted(groups_c.get(key, []), key=lambda x: x["timestamp"])
         for s, c in zip(s_list, c_list):
             try:
-                s_dt = datetime.fromisoformat(s["timestamp"])
-                c_dt = datetime.fromisoformat(c["timestamp"])
+                # Normalize 'Z' suffix to '+00:00' for Python <3.11 compat.
+                # Backfill uses strftime("%Y-%m-%dT%H:%M:%SZ") → 'Z' suffix.
+                # Live events use _iso_now() → '+00:00' suffix. Both valid
+                # ISO-8601 but fromisoformat() only handles 'Z' in Python 3.11+.
+                s_ts = s["timestamp"].replace("Z", "+00:00") if s["timestamp"] else ""
+                c_ts = c["timestamp"].replace("Z", "+00:00") if c["timestamp"] else ""
+                s_dt = datetime.fromisoformat(s_ts)
+                c_dt = datetime.fromisoformat(c_ts)
                 dur = (c_dt - s_dt).total_seconds()
                 results.append({
                     "type_id": key[0], "phase": key[1],
