@@ -81,7 +81,13 @@ Each task is 5-15 minutes. All tasks within a phase are serialized (shared test 
   - Done: AC-7 test passes.
   - Size: 10 min. `requires: 2.3`
 
-- [ ] **2.5** Write `query_phase_analytics` tests [TDD red].
+- [ ] **2.5** Wire `record_backward_event` into workflow-transitions skill.
+  - Edit `plugins/pd/skills/workflow-transitions/SKILL.md`: in the backward-transition handler (after calling `transition_phase` and `update_entity` for backward_history), add instruction for the orchestrator to call `record_backward_event(type_id, source_phase, target_phase, reason, project_id)`.
+  - The skill already has all these values in scope from the reviewer response parsing.
+  - Done: skill file updated; `grep -c "record_backward_event" plugins/pd/skills/workflow-transitions/SKILL.md` returns ≥1.
+  - Size: 10 min. `requires: 2.4`
+
+- [ ] **2.6** Write `query_phase_analytics` tests [TDD red].
   - `TestQueryPhaseAnalytics`:
     - AC-11: seed events with known timestamps, call `phase_duration` → correct duration_seconds.
     - AC-11b: seed 2 started + 2 completed for same feature+phase (s1<c1<s2<c2). Call phase_duration → 2 rows with correct pairing.
@@ -92,7 +98,7 @@ Each task is 5-15 minutes. All tasks within a phase are serialized (shared test 
   - Done: 6 red tests.
   - Size: 15 min. `requires: 2.4`
 
-- [ ] **2.6** Implement `query_phase_analytics` + `_compute_durations` [TDD green].
+- [ ] **2.7** Implement `query_phase_analytics` + `_compute_durations` [TDD green].
   - Per design I-7. 4 query types. Z-normalization: `.replace("Z", "+00:00")` before `fromisoformat()`.
   - `_compute_durations`: group by (type_id, phase), sort by timestamp, pair Nth started with Nth completed.
   - Done: AC-11/11b/12/13/14/15 tests pass. All existing workflow tests pass (AC-17).
@@ -125,7 +131,7 @@ Each task is 5-15 minutes. All tasks within a phase are serialized (shared test 
 
 ## Summary
 
-**Task count:** 14 tasks across 4 phases.
+**Task count:** 15 tasks across 4 phases.
 **Estimated total:** ~3-4 hours of focused implementation.
 **Serialization:** all tasks within each phase are serial (shared test files).
 **AC coverage:** AC-1..AC-20 + AC-11b all assigned to tasks.

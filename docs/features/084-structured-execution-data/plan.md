@@ -87,6 +87,7 @@ Phase 3: Docs + final verification
 - `plugins/pd/hooks/lib/entity_registry/test_database.py` OR new `test_phase_events.py` — migration + insert + query tests
 - `plugins/pd/mcp/workflow_state_server.py` — dual-write + 2 new MCP tools + helper
 - `plugins/pd/mcp/test_workflow_state_server.py` — dual-write + MCP tool tests
+- `plugins/pd/skills/workflow-transitions/SKILL.md` — add `record_backward_event` call after backward transition
 - `README_FOR_DEV.md` — brief note
 
 **Test delta:** ≥15 new tests covering AC-1 through AC-20 + AC-11b.
