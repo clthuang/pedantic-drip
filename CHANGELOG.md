@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Migration 10 backfill: non-dict `phase_timing` values no longer crash the entire migration (type guard added)
+- Migration 10 backfill: `skipped_phases` stored as string no longer produces char-by-char garbage rows (type guard added)
+- Migration 10: uses `CREATE TABLE IF NOT EXISTS` for crash recovery on partial re-runs
+- `query_phase_analytics` iteration_summary: events with `iterations=0` no longer silently dropped (falsy check fixed to `is not None`)
+- `query_phase_events` limit: negative values no longer bypass the 500-row safety cap
+
 ## [4.15.5] - 2026-04-18
 
 ### Added
