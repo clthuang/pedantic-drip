@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.15.5] - 2026-04-18
+
+### Added
+- Structured workflow execution data — new `phase_events` table (migration 10) records every phase transition as an immutable event. Enables cross-feature analytics without JSON parsing.
+- Two new MCP tools: `record_backward_event` for tracking backward phase transitions, `query_phase_analytics` for querying phase durations, iteration summaries, backward frequency, and raw events.
+- Automatic backfill of historical phase_timing data from existing entities on first migration.
+
 ## [4.15.4] - 2026-04-18
 
 ### Added

@@ -399,7 +399,20 @@ After Step 3 (Phase Summary) completes:
         }]
       })
       ```
-   e. **Ping-pong detection:**
+   e. **Record backward event for analytics:**
+      After updating backward_history, call `record_backward_event` to record the backward transition in the phase_events table:
+      ```
+      record_backward_event(
+        type_id=feature_type_id,
+        source_phase=current_phase,
+        target_phase=reviewer_response.backward_to,
+        reason=reviewer_response.backward_reason,
+        project_id=project_id
+      )
+      ```
+      If the call fails, log a warning and continue (analytics are best-effort).
+
+   f. **Ping-pong detection:**
       - Read `backward_history` from entity metadata
       - Filter entries with same (source_phase, target_phase) pair
       - If >= 2 previous entries exist AND current issue_count >= most recent previous entry's issue_count:
@@ -407,9 +420,9 @@ After Step 3 (Phase Summary) completes:
         - YOLO: force approve with warnings, log "ping-pong detected, forcing forward"
         - Interactive: prompt "Same issues recurring. Force approve or continue?"
         - Return "approve"
-   f. YOLO mode: output "Continue to /pd:{backward_to} [YOLO_MODE]"
+   g. YOLO mode: output "Continue to /pd:{backward_to} [YOLO_MODE]"
       Interactive: prompt "Reviewer recommends going back to {backward_to}. Proceed?"
-   g. Return "backward"
+   h. Return "backward"
 
 2. If `reviewer_response.approved == true` AND zero issues with severity "blocker" or "warning":
    Return "approve"

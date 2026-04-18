@@ -327,7 +327,7 @@ class TestMigration2:
 
         # Now open it with EntityDatabase — runs pending migrations (3+)
         db = EntityDatabase(db_path)
-        assert db.get_metadata("schema_version") == "9"
+        assert db.get_metadata("schema_version") == "10"
 
         # Schema should be intact
         cur = db._conn.execute("PRAGMA table_info(entities)")
@@ -519,6 +519,9 @@ class TestIndexes:
             "idx_et_tag",
             "idx_parent_type_id",
             "idx_parent_uuid",
+            "idx_pe_lookup",
+            "idx_pe_project",
+            "idx_pe_timestamp",
             "idx_project_entity_type",
             "idx_project_id",
             "idx_status",
@@ -560,8 +563,8 @@ class TestMetadata:
         db.set_metadata("foo", "baz")
         assert db.get_metadata("foo") == "baz"
 
-    def test_schema_version_is_9(self, db: EntityDatabase):
-        assert db.get_metadata("schema_version") == "9"
+    def test_schema_version_is_10(self, db: EntityDatabase):
+        assert db.get_metadata("schema_version") == "10"
 
 
 # ---------------------------------------------------------------------------
@@ -2490,7 +2493,7 @@ class TestMigrationIdempotency:
         entity = db2.get_entity("project:p1")
         assert entity is not None
         assert entity["uuid"] == p1_uuid
-        assert db2.get_metadata("schema_version") == "9"
+        assert db2.get_metadata("schema_version") == "10"
         db2.close()
 
 
@@ -2684,9 +2687,9 @@ class TestMigration3:
         fk_columns = [fk[3] for fk in fk_rows]
         assert "type_id" not in fk_columns
 
-    def test_schema_version_is_9(self, db: EntityDatabase):
-        """After all migrations, schema_version should be 9."""
-        assert db.get_metadata("schema_version") == "9"
+    def test_schema_version_is_10(self, db: EntityDatabase):
+        """After all migrations, schema_version should be 10."""
+        assert db.get_metadata("schema_version") == "10"
 
     # -- Task 1.2: Migration creates indexes and trigger (AC-2) ------------
 
@@ -2871,10 +2874,10 @@ class TestMigration3:
     # -- Task 1.4: Fresh DB migration safety (AC-3) ------------------------
 
     def test_fresh_db_has_all_migrations(self, tmp_path):
-        """A brand-new EntityDatabase should run all 9 migrations."""
+        """A brand-new EntityDatabase should run all 10 migrations."""
         fresh_db = EntityDatabase(str(tmp_path / "fresh.db"))
         try:
-            assert fresh_db.get_metadata("schema_version") == "9"
+            assert fresh_db.get_metadata("schema_version") == "10"
         finally:
             fresh_db.close()
 
@@ -4301,7 +4304,7 @@ class TestMigration5:
         new phase values are accepted."""
         db = EntityDatabase(str(tmp_path / "m5-idem.db"))
         try:
-            assert db.get_schema_version() == 9
+            assert db.get_schema_version() == 10
 
             # Verify all new phase values are accepted
             new_phases = [
@@ -5587,7 +5590,7 @@ class TestMigration8Data:
             db2 = EntityDatabase(db_path)
             v2 = db2.get_schema_version()
             db2.close()
-            assert v1 == v2 == 9
+            assert v1 == v2 == 10
 
     def test_migration_8_schema_version_set_to_8(self):
         """Schema version is 8 after migration."""

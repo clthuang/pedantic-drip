@@ -614,14 +614,37 @@ def _process_transition_phase(
 
                 phase_timing = metadata.get("phase_timing", {})
                 phase_timing.setdefault(target_phase, {})
-                phase_timing[target_phase]["started"] = _iso_now()
+                ts = _iso_now()
+                phase_timing[target_phase]["started"] = ts
                 metadata["phase_timing"] = phase_timing
 
                 # Store skipped phases if provided
+                skipped_list: list[str] = []
                 if skipped_phases:
-                    metadata["skipped_phases"] = json.loads(skipped_phases)
+                    skipped_list = json.loads(skipped_phases)
+                    metadata["skipped_phases"] = skipped_list
 
                 db.update_entity(feature_type_id, metadata=metadata)
+
+                # Dual-write to phase_events (NFR-3: failure MUST NOT break transition)
+                try:
+                    db.insert_phase_event(
+                        type_id=feature_type_id,
+                        project_id=entity.get("project_id", "__unknown__"),
+                        phase=target_phase,
+                        event_type="started",
+                        timestamp=ts,
+                    )
+                    for skipped in skipped_list:
+                        db.insert_phase_event(
+                            type_id=feature_type_id,
+                            project_id=entity.get("project_id", "__unknown__"),
+                            phase=skipped,
+                            event_type="skipped",
+                            timestamp=ts,
+                        )
+                except Exception as e:
+                    print(f"[workflow-state] phase_events INSERT failed: {e}", file=sys.stderr)
 
                 # Update kanban_column for features based on phase
                 if feature_type_id.startswith("feature:"):
@@ -760,13 +783,28 @@ def _process_complete_phase(
 
             phase_timing = metadata.get("phase_timing", {})
             phase_timing.setdefault(phase, {})
-            phase_timing[phase]["completed"] = _iso_now()
+            ts = _iso_now()
+            phase_timing[phase]["completed"] = ts
             if iterations is not None:
                 phase_timing[phase]["iterations"] = iterations
             if reviewer_notes:
                 phase_timing[phase]["reviewerNotes"] = json.loads(reviewer_notes)
             metadata["phase_timing"] = phase_timing
             metadata["last_completed_phase"] = phase
+
+            # Dual-write to phase_events (NFR-3: failure MUST NOT break completion)
+            try:
+                db.insert_phase_event(
+                    type_id=feature_type_id,
+                    project_id=entity.get("project_id", "__unknown__"),
+                    phase=phase,
+                    event_type="completed",
+                    timestamp=ts,
+                    iterations=iterations,
+                    reviewer_notes=json.dumps(json.loads(reviewer_notes)) if reviewer_notes else None,
+                )
+            except Exception as e:
+                print(f"[workflow-state] phase_events INSERT failed: {e}", file=sys.stderr)
 
             # Update entity metadata (status='completed' handled by entity engine
             # for features via frozen engine, and for tasks via _task_complete)
@@ -1566,6 +1604,172 @@ async def get_progress_view(entity_ref: str) -> str:
         return _make_error("invalid_ref", str(exc), "Provide a valid entity ref")
     except Exception as exc:
         return _make_error("internal", str(exc), "Report this error")
+
+
+# ---------------------------------------------------------------------------
+# Feature 084: Phase event analytics
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def record_backward_event(
+    type_id: str,
+    source_phase: str,
+    target_phase: str,
+    reason: str = "",
+    project_id: str = "__unknown__",
+) -> str:
+    """Record a backward phase transition event for analytics.
+
+    Called by workflow-transitions skill AFTER transition_phase completes
+    a backward transition. project_id is accepted as a parameter (the skill
+    layer has it in scope) rather than resolved via db.get_entity.
+    """
+    if _db is None:
+        return _NOT_INITIALIZED
+    ts = _iso_now()
+    try:
+        _db.insert_phase_event(
+            type_id=type_id,
+            project_id=project_id,
+            phase=source_phase,
+            event_type="backward",
+            timestamp=ts,
+            backward_reason=reason,
+            backward_target=target_phase,
+        )
+    except Exception as e:
+        print(f"[workflow-state] backward event INSERT failed: {e}", file=sys.stderr)
+        return json.dumps({"error": str(e)})
+
+    return json.dumps({
+        "recorded": True,
+        "type_id": type_id,
+        "source_phase": source_phase,
+        "target_phase": target_phase,
+    })
+
+
+@mcp.tool()
+async def query_phase_analytics(
+    query_type: str,
+    feature_type_id: str | None = None,
+    project_id: str | None = None,
+    phase: str | None = None,
+    limit: int = 50,
+) -> str:
+    """Query structured phase execution data for analytics.
+
+    query_type: 'phase_duration' | 'iteration_summary' | 'backward_frequency' | 'raw_events'
+    """
+    if _db is None:
+        return _NOT_INITIALIZED
+
+    if query_type == "phase_duration":
+        started = _db.query_phase_events(
+            type_id=feature_type_id, project_id=project_id,
+            phase=phase, event_type="started", limit=500,
+        )
+        completed = _db.query_phase_events(
+            type_id=feature_type_id, project_id=project_id,
+            phase=phase, event_type="completed", limit=500,
+        )
+        results = _compute_durations(started, completed)
+        return json.dumps({
+            "query_type": "phase_duration",
+            "results": results[:limit],
+            "total": len(results),
+        })
+
+    elif query_type == "iteration_summary":
+        events = _db.query_phase_events(
+            type_id=feature_type_id, project_id=project_id,
+            phase=phase, event_type="completed", limit=limit,
+        )
+        results = [
+            {
+                "type_id": e["type_id"],
+                "phase": e["phase"],
+                "iterations": e["iterations"],
+                "timestamp": e["timestamp"],
+            }
+            for e in events if e.get("iterations")
+        ]
+        results.sort(key=lambda x: x["iterations"] or 0, reverse=True)
+        return json.dumps({
+            "query_type": "iteration_summary",
+            "results": results,
+            "total": len(results),
+        })
+
+    elif query_type == "backward_frequency":
+        events = _db.query_phase_events(
+            type_id=feature_type_id, project_id=project_id,
+            event_type="backward", limit=500,
+        )
+        freq: dict[str, int] = {}
+        for e in events:
+            freq[e["phase"]] = freq.get(e["phase"], 0) + 1
+        results = sorted(
+            [{"phase": p, "backward_count": c} for p, c in freq.items()],
+            key=lambda x: x["backward_count"], reverse=True,
+        )
+        return json.dumps({
+            "query_type": "backward_frequency",
+            "results": results,
+            "total": len(results),
+        })
+
+    elif query_type == "raw_events":
+        events = _db.query_phase_events(
+            type_id=feature_type_id, project_id=project_id,
+            phase=phase, limit=limit,
+        )
+        return json.dumps({
+            "query_type": "raw_events",
+            "results": events,
+            "total": len(events),
+        })
+
+    return json.dumps({"error": f"Unknown query_type: {query_type}"})
+
+
+def _compute_durations(
+    started: list[dict], completed: list[dict],
+) -> list[dict]:
+    """Pair Nth started with Nth completed for each (type_id, phase)."""
+    from collections import defaultdict
+    from datetime import datetime
+
+    groups_s: dict[tuple, list] = defaultdict(list)
+    groups_c: dict[tuple, list] = defaultdict(list)
+    for e in started:
+        groups_s[(e["type_id"], e["phase"])].append(e)
+    for e in completed:
+        groups_c[(e["type_id"], e["phase"])].append(e)
+
+    results = []
+    for key in groups_s:
+        s_list = sorted(groups_s[key], key=lambda x: x["timestamp"])
+        c_list = sorted(groups_c.get(key, []), key=lambda x: x["timestamp"])
+        for s, c in zip(s_list, c_list):
+            try:
+                s_ts = s["timestamp"].replace("Z", "+00:00") if s["timestamp"] else ""
+                c_ts = c["timestamp"].replace("Z", "+00:00") if c["timestamp"] else ""
+                s_dt = datetime.fromisoformat(s_ts)
+                c_dt = datetime.fromisoformat(c_ts)
+                dur = (c_dt - s_dt).total_seconds()
+                results.append({
+                    "type_id": key[0],
+                    "phase": key[1],
+                    "started": s["timestamp"],
+                    "completed": c["timestamp"],
+                    "duration_seconds": dur,
+                })
+            except (ValueError, TypeError):
+                continue
+    results.sort(key=lambda x: x["duration_seconds"], reverse=True)
+    return results
 
 
 # ---------------------------------------------------------------------------

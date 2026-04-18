@@ -2649,7 +2649,10 @@ PDCFG
     # Seed memory.db with 2 stale high-confidence entries inside the isolated HOME.
     # source="manual" (NOT "import" — AC-7 excludes imports from decay).
     # last_recalled_at = now - 31 days → one day past default high threshold (30).
-    HOME="$tmp_home" PYTHONPATH="${HOOKS_DIR}/lib" "${HOOKS_DIR}/../.venv/bin/python" -c '
+    # Use venv python if available, fall back to system python3 (CI has no venv).
+    local seed_python="${HOOKS_DIR}/../.venv/bin/python"
+    [[ -x "$seed_python" ]] || seed_python="python3"
+    HOME="$tmp_home" PYTHONPATH="${HOOKS_DIR}/lib" "$seed_python" -c '
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 import json

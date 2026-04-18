@@ -1373,6 +1373,123 @@ def _migration_9_remove_create_tasks(conn: sqlite3.Connection) -> None:
         )
 
 
+def _migration_10_phase_events(conn: sqlite3.Connection) -> None:
+    """Create phase_events table + composite indexes + backfill from metadata."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute("""
+            CREATE TABLE phase_events (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                type_id         TEXT NOT NULL,
+                project_id      TEXT NOT NULL,
+                phase           TEXT NOT NULL,
+                event_type      TEXT NOT NULL CHECK(event_type IN (
+                    'started', 'completed', 'skipped', 'backward'
+                )),
+                timestamp       TEXT NOT NULL,
+                iterations      INTEGER,
+                reviewer_notes  TEXT,
+                backward_reason TEXT,
+                backward_target TEXT,
+                source          TEXT NOT NULL DEFAULT 'live' CHECK(
+                    source IN ('live', 'backfill')
+                ),
+                created_at      TEXT NOT NULL
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX idx_pe_lookup ON phase_events(type_id, phase, event_type)"
+        )
+        conn.execute(
+            "CREATE INDEX idx_pe_project ON phase_events(project_id, event_type)"
+        )
+        conn.execute(
+            "CREATE INDEX idx_pe_timestamp ON phase_events(timestamp)"
+        )
+
+        # Backfill from existing metadata
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        rows = conn.execute(
+            "SELECT type_id, project_id, metadata, created_at "
+            "FROM entities WHERE metadata IS NOT NULL"
+        ).fetchall()
+
+        for row in rows:
+            type_id, project_id, meta_str, created_at = (
+                row[0], row[1], row[2], row[3],
+            )
+            try:
+                meta = json.loads(meta_str)
+            except (json.JSONDecodeError, TypeError):
+                print(
+                    f"[entity-registry] migration 10: skipping malformed "
+                    f"metadata for {type_id}",
+                    file=sys.stderr,
+                )
+                continue
+
+            phase_timing = meta.get("phase_timing", {})
+            for phase, timing in phase_timing.items():
+                if timing.get("started"):
+                    conn.execute(
+                        "INSERT INTO phase_events "
+                        "(type_id, project_id, phase, event_type, timestamp, "
+                        "source, created_at) "
+                        "VALUES (?, ?, ?, 'started', ?, 'backfill', ?)",
+                        (type_id, project_id, phase, timing["started"], now),
+                    )
+                if timing.get("completed"):
+                    conn.execute(
+                        "INSERT INTO phase_events "
+                        "(type_id, project_id, phase, event_type, timestamp, "
+                        "iterations, reviewer_notes, source, created_at) "
+                        "VALUES (?, ?, ?, 'completed', ?, ?, ?, 'backfill', ?)",
+                        (
+                            type_id, project_id, phase,
+                            timing["completed"],
+                            timing.get("iterations"),
+                            json.dumps(timing.get("reviewerNotes"))
+                            if timing.get("reviewerNotes") else None,
+                            now,
+                        ),
+                    )
+
+            for skipped in meta.get("skipped_phases", []):
+                conn.execute(
+                    "INSERT INTO phase_events "
+                    "(type_id, project_id, phase, event_type, timestamp, "
+                    "source, created_at) "
+                    "VALUES (?, ?, ?, 'skipped', ?, 'backfill', ?)",
+                    (type_id, project_id, skipped, created_at or now, now),
+                )
+
+            for bh in meta.get("backward_history", []):
+                conn.execute(
+                    "INSERT INTO phase_events "
+                    "(type_id, project_id, phase, event_type, timestamp, "
+                    "backward_reason, backward_target, source, created_at) "
+                    "VALUES (?, ?, ?, 'backward', ?, ?, ?, 'backfill', ?)",
+                    (
+                        type_id, project_id,
+                        bh.get("source_phase", "unknown"),
+                        bh.get("timestamp", now),
+                        bh.get("reason"),
+                        bh.get("target_phase"),
+                        now,
+                    ),
+                )
+
+        conn.execute(
+            "INSERT INTO _metadata(key, value) "
+            "VALUES('schema_version', '10') "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
 # Ordered mapping of version -> migration function.
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _create_initial_schema,
@@ -1384,6 +1501,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     7: _fix_fts_content_mode,
     8: _add_project_scoping,
     9: _migration_9_remove_create_tasks,
+    10: _migration_10_phase_events,
 }
 
 # Sentinel object to distinguish "not provided" from explicit ``None``.
@@ -2794,6 +2912,73 @@ class EntityDatabase:
             },
             "entities": entities,
         }
+
+    # ------------------------------------------------------------------
+    # Phase Events (append-only analytics log)
+    # ------------------------------------------------------------------
+
+    def insert_phase_event(
+        self,
+        *,
+        type_id: str,
+        project_id: str,
+        phase: str,
+        event_type: str,
+        timestamp: str,
+        iterations: int | None = None,
+        reviewer_notes: str | None = None,
+        backward_reason: str | None = None,
+        backward_target: str | None = None,
+        source: str = "live",
+    ) -> None:
+        """Insert a phase event record into the append-only event log."""
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self._conn.execute(
+            "INSERT INTO phase_events "
+            "(type_id, project_id, phase, event_type, timestamp, iterations, "
+            "reviewer_notes, backward_reason, backward_target, source, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                type_id, project_id, phase, event_type, timestamp,
+                iterations, reviewer_notes, backward_reason, backward_target,
+                source, now,
+            ),
+        )
+        self._commit()
+
+    def query_phase_events(
+        self,
+        *,
+        type_id: str | None = None,
+        project_id: str | None = None,
+        phase: str | None = None,
+        event_type: str | None = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        """Query phase events with optional filters. All filters optional."""
+        conditions: list[str] = []
+        params: list = []
+        if type_id:
+            conditions.append("type_id = ?")
+            params.append(type_id)
+        if project_id:
+            conditions.append("project_id = ?")
+            params.append(project_id)
+        if phase:
+            conditions.append("phase = ?")
+            params.append(phase)
+        if event_type:
+            conditions.append("event_type = ?")
+            params.append(event_type)
+
+        where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+        params.append(min(limit, 500))
+
+        rows = self._conn.execute(
+            f"SELECT * FROM phase_events{where} ORDER BY timestamp DESC LIMIT ?",
+            params,
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------
     # Workflow Phase CRUD

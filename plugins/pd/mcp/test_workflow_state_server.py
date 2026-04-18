@@ -7957,3 +7957,340 @@ class TestCompletePhaseMemoryRefresh:
                 f"limit={configured!r} should have clamped to {expected}, "
                 f"got {captured['args'][3]}"
             )
+
+
+# ---------------------------------------------------------------------------
+# Feature 084: Phase Events Dual-Write Tests
+# ---------------------------------------------------------------------------
+
+
+class TestPhaseEventsDualWrite:
+    """AC-4, AC-5, AC-6, AC-16, AC-19."""
+
+    @pytest.fixture
+    def fresh_setup(self, tmp_path):
+        """Provide db + engine with a feature at brainstorm phase."""
+        db = EntityDatabase(":memory:")
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        db.register_entity(
+            "feature", "dw-001", "Dual Write Test",
+            status="active", project_id="test-proj",
+        )
+        db.create_workflow_phase("feature:dw-001", workflow_phase="brainstorm")
+        feat_dir = os.path.join(str(tmp_path), "features", "dw-001")
+        os.makedirs(feat_dir, exist_ok=True)
+        with open(os.path.join(feat_dir, ".meta.json"), "w") as f:
+            f.write('{"id": "dw", "slug": "001", "status": "active", "mode": "standard"}')
+        return db, engine
+
+    def test_ac4_transition_phase_inserts_started_event(self, fresh_setup, tmp_path):
+        """AC-4: transition_phase inserts a started event."""
+        db, engine = fresh_setup
+        result = _process_transition_phase(
+            engine, "feature:dw-001", "specify", False,
+            db=db,
+        )
+        data = json.loads(result)
+        assert data.get("transitioned") is True
+
+        events = db.query_phase_events(
+            type_id="feature:dw-001", phase="specify", event_type="started",
+        )
+        assert len(events) == 1
+        assert events[0]["source"] == "live"
+
+    def test_ac5_complete_phase_inserts_completed_event(self, fresh_setup, tmp_path):
+        """AC-5: complete_phase inserts a completed event with iterations."""
+        db, engine = fresh_setup
+        result = _process_complete_phase(
+            engine, "feature:dw-001", "brainstorm",
+            db=db, iterations=3, reviewer_notes=None,
+        )
+        data = json.loads(result)
+        assert "error" not in data
+
+        events = db.query_phase_events(
+            type_id="feature:dw-001", phase="brainstorm", event_type="completed",
+        )
+        assert len(events) == 1
+        assert events[0]["iterations"] == 3
+        assert events[0]["source"] == "live"
+
+    def test_ac6_skipped_phases_inserts_skipped_events(self, fresh_setup, tmp_path):
+        """AC-6: transition_phase with skipped_phases inserts skipped events."""
+        db, engine = fresh_setup
+        # Use yolo to bypass G-08 prerequisite check for design
+        result = _process_transition_phase(
+            engine, "feature:dw-001", "specify", True,
+            db=db, skipped_phases='["brainstorm"]',
+        )
+        data = json.loads(result)
+        assert data.get("transitioned") is True
+
+        events = db.query_phase_events(
+            type_id="feature:dw-001", event_type="skipped",
+        )
+        assert len(events) == 1
+        assert events[0]["phase"] == "brainstorm"
+
+    def test_ac16_insert_failure_does_not_break_transition(self, fresh_setup, monkeypatch, capsys):
+        """AC-16: insert_phase_event failure doesn't break transition."""
+        db, engine = fresh_setup
+
+        def raise_on_insert(**kwargs):
+            raise RuntimeError("simulated INSERT failure")
+
+        monkeypatch.setattr(db, "insert_phase_event", raise_on_insert)
+
+        result = _process_transition_phase(
+            engine, "feature:dw-001", "specify", False,
+            db=db,
+        )
+        data = json.loads(result)
+        assert data.get("transitioned") is True
+
+        # Metadata should still be updated
+        entity = db.get_entity("feature:dw-001")
+        metadata = json.loads(entity["metadata"])
+        assert "specify" in metadata.get("phase_timing", {})
+
+        # stderr should have warning
+        captured = capsys.readouterr()
+        assert "phase_events INSERT failed" in captured.err
+
+    def test_ac19_metadata_still_has_phase_timing(self, fresh_setup, tmp_path):
+        """AC-19: after complete_phase, metadata still contains phase_timing."""
+        db, engine = fresh_setup
+        _process_complete_phase(
+            engine, "feature:dw-001", "brainstorm",
+            db=db, iterations=2, reviewer_notes=None,
+        )
+        entity = db.get_entity("feature:dw-001")
+        metadata = json.loads(entity["metadata"])
+        assert "phase_timing" in metadata
+        assert "brainstorm" in metadata["phase_timing"]
+        assert "completed" in metadata["phase_timing"]["brainstorm"]
+
+
+class TestRecordBackwardEvent:
+    """AC-7."""
+
+    def test_ac7_record_backward_event(self):
+        """AC-7: record_backward_event inserts backward event."""
+        import asyncio
+        import workflow_state_server
+
+        db = EntityDatabase(":memory:")
+        old_db = workflow_state_server._db
+        workflow_state_server._db = db
+
+        try:
+            result_str = asyncio.run(
+                workflow_state_server.record_backward_event(
+                    type_id="feature:test",
+                    source_phase="design",
+                    target_phase="specify",
+                    reason="scope gap",
+                    project_id="test-proj",
+                )
+            )
+            result = json.loads(result_str)
+            assert result.get("recorded") is True
+
+            events = db.query_phase_events(
+                type_id="feature:test", event_type="backward",
+            )
+            assert len(events) == 1
+            assert events[0]["phase"] == "design"
+            assert events[0]["backward_target"] == "specify"
+            assert events[0]["backward_reason"] == "scope gap"
+        finally:
+            workflow_state_server._db = old_db
+            db.close()
+
+
+class TestQueryPhaseAnalytics:
+    """AC-11, AC-11b, AC-12, AC-13, AC-14, AC-15."""
+
+    @pytest.fixture
+    def analytics_db(self):
+        """DB seeded with events for analytics testing."""
+        import workflow_state_server
+
+        db = EntityDatabase(":memory:")
+
+        # Seed events with known timestamps
+        # Feature A - brainstorm: 1 hour
+        db.insert_phase_event(
+            type_id="feature:a-001", project_id="P001",
+            phase="brainstorm", event_type="started",
+            timestamp="2026-01-01T10:00:00Z",
+        )
+        db.insert_phase_event(
+            type_id="feature:a-001", project_id="P001",
+            phase="brainstorm", event_type="completed",
+            timestamp="2026-01-01T11:00:00Z",
+            iterations=2,
+        )
+        # Feature A - specify: 2 hours
+        db.insert_phase_event(
+            type_id="feature:a-001", project_id="P001",
+            phase="specify", event_type="started",
+            timestamp="2026-01-01T12:00:00Z",
+        )
+        db.insert_phase_event(
+            type_id="feature:a-001", project_id="P001",
+            phase="specify", event_type="completed",
+            timestamp="2026-01-01T14:00:00Z",
+            iterations=4,
+        )
+        # Feature A - specify SECOND cycle (re-entry): 30 min
+        db.insert_phase_event(
+            type_id="feature:a-001", project_id="P001",
+            phase="specify", event_type="started",
+            timestamp="2026-01-02T10:00:00Z",
+        )
+        db.insert_phase_event(
+            type_id="feature:a-001", project_id="P001",
+            phase="specify", event_type="completed",
+            timestamp="2026-01-02T10:30:00Z",
+            iterations=1,
+        )
+        # Feature B - P002 project
+        db.insert_phase_event(
+            type_id="feature:b-002", project_id="P002",
+            phase="brainstorm", event_type="started",
+            timestamp="2026-01-03T10:00:00Z",
+        )
+        db.insert_phase_event(
+            type_id="feature:b-002", project_id="P002",
+            phase="brainstorm", event_type="completed",
+            timestamp="2026-01-03T12:00:00Z",
+            iterations=3,
+        )
+        # Backward events
+        db.insert_phase_event(
+            type_id="feature:a-001", project_id="P001",
+            phase="design", event_type="backward",
+            timestamp="2026-01-01T15:00:00Z",
+            backward_reason="scope gap", backward_target="specify",
+        )
+        db.insert_phase_event(
+            type_id="feature:a-001", project_id="P001",
+            phase="design", event_type="backward",
+            timestamp="2026-01-02T15:00:00Z",
+            backward_reason="another gap", backward_target="specify",
+        )
+        db.insert_phase_event(
+            type_id="feature:b-002", project_id="P002",
+            phase="specify", event_type="backward",
+            timestamp="2026-01-03T15:00:00Z",
+            backward_reason="missing req", backward_target="brainstorm",
+        )
+
+        old_db = workflow_state_server._db
+        workflow_state_server._db = db
+        yield db
+        workflow_state_server._db = old_db
+        db.close()
+
+    def test_ac11_phase_duration(self, analytics_db):
+        """AC-11: phase_duration returns correct duration_seconds."""
+        import asyncio
+        import workflow_state_server
+
+        result_str = asyncio.run(
+            workflow_state_server.query_phase_analytics(
+                query_type="phase_duration",
+                feature_type_id="feature:a-001",
+                phase="brainstorm",
+            )
+        )
+        result = json.loads(result_str)
+        assert result["query_type"] == "phase_duration"
+        assert len(result["results"]) == 1
+        assert result["results"][0]["duration_seconds"] == 3600.0  # 1 hour
+
+    def test_ac11b_multi_cycle_duration(self, analytics_db):
+        """AC-11b: multiple started/completed pairs paired correctly."""
+        import asyncio
+        import workflow_state_server
+
+        result_str = asyncio.run(
+            workflow_state_server.query_phase_analytics(
+                query_type="phase_duration",
+                feature_type_id="feature:a-001",
+                phase="specify",
+            )
+        )
+        result = json.loads(result_str)
+        assert len(result["results"]) == 2
+        # Sorted by duration descending
+        durations = [r["duration_seconds"] for r in result["results"]]
+        assert durations == sorted(durations, reverse=True)
+        # First cycle: 2 hours = 7200s, second cycle: 30 min = 1800s
+        assert 7200.0 in durations
+        assert 1800.0 in durations
+
+    def test_ac12_iteration_summary(self, analytics_db):
+        """AC-12: iteration_summary returns iterations sorted descending."""
+        import asyncio
+        import workflow_state_server
+
+        result_str = asyncio.run(
+            workflow_state_server.query_phase_analytics(
+                query_type="iteration_summary",
+            )
+        )
+        result = json.loads(result_str)
+        assert result["query_type"] == "iteration_summary"
+        iterations = [r["iterations"] for r in result["results"]]
+        assert iterations == sorted(iterations, reverse=True)
+        assert len(iterations) > 0
+
+    def test_ac13_backward_frequency(self, analytics_db):
+        """AC-13: backward_frequency returns per-phase counts."""
+        import asyncio
+        import workflow_state_server
+
+        result_str = asyncio.run(
+            workflow_state_server.query_phase_analytics(
+                query_type="backward_frequency",
+            )
+        )
+        result = json.loads(result_str)
+        assert result["query_type"] == "backward_frequency"
+        freq = {r["phase"]: r["backward_count"] for r in result["results"]}
+        assert freq["design"] == 2
+        assert freq["specify"] == 1
+
+    def test_ac14_raw_events_limit(self, analytics_db):
+        """AC-14: raw_events with limit returns at most limit rows."""
+        import asyncio
+        import workflow_state_server
+
+        result_str = asyncio.run(
+            workflow_state_server.query_phase_analytics(
+                query_type="raw_events",
+                limit=3,
+            )
+        )
+        result = json.loads(result_str)
+        assert result["query_type"] == "raw_events"
+        assert len(result["results"]) <= 3
+
+    def test_ac15_project_id_filter(self, analytics_db):
+        """AC-15: project_id filter returns only matching project."""
+        import asyncio
+        import workflow_state_server
+
+        result_str = asyncio.run(
+            workflow_state_server.query_phase_analytics(
+                query_type="raw_events",
+                project_id="P002",
+                limit=50,
+            )
+        )
+        result = json.loads(result_str)
+        assert all(r["project_id"] == "P002" for r in result["results"])
+        assert len(result["results"]) > 0
