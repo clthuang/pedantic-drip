@@ -1693,7 +1693,7 @@ async def query_phase_analytics(
                 "iterations": e["iterations"],
                 "timestamp": e["timestamp"],
             }
-            for e in events if e.get("iterations")
+            for e in events if e.get("iterations") is not None
         ]
         results.sort(key=lambda x: x["iterations"] or 0, reverse=True)
         return json.dumps({

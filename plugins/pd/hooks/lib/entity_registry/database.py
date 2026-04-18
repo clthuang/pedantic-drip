@@ -1378,7 +1378,7 @@ def _migration_10_phase_events(conn: sqlite3.Connection) -> None:
     conn.execute("BEGIN IMMEDIATE")
     try:
         conn.execute("""
-            CREATE TABLE phase_events (
+            CREATE TABLE IF NOT EXISTS phase_events (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
                 type_id         TEXT NOT NULL,
                 project_id      TEXT NOT NULL,
@@ -1398,13 +1398,13 @@ def _migration_10_phase_events(conn: sqlite3.Connection) -> None:
             )
         """)
         conn.execute(
-            "CREATE INDEX idx_pe_lookup ON phase_events(type_id, phase, event_type)"
+            "CREATE INDEX IF NOT EXISTS idx_pe_lookup ON phase_events(type_id, phase, event_type)"
         )
         conn.execute(
-            "CREATE INDEX idx_pe_project ON phase_events(project_id, event_type)"
+            "CREATE INDEX IF NOT EXISTS idx_pe_project ON phase_events(project_id, event_type)"
         )
         conn.execute(
-            "CREATE INDEX idx_pe_timestamp ON phase_events(timestamp)"
+            "CREATE INDEX IF NOT EXISTS idx_pe_timestamp ON phase_events(timestamp)"
         )
 
         # Backfill from existing metadata
@@ -1429,7 +1429,11 @@ def _migration_10_phase_events(conn: sqlite3.Connection) -> None:
                 continue
 
             phase_timing = meta.get("phase_timing", {})
+            if not isinstance(phase_timing, dict):
+                phase_timing = {}
             for phase, timing in phase_timing.items():
+                if not isinstance(timing, dict):
+                    continue
                 if timing.get("started"):
                     conn.execute(
                         "INSERT INTO phase_events "
@@ -1454,7 +1458,10 @@ def _migration_10_phase_events(conn: sqlite3.Connection) -> None:
                         ),
                     )
 
-            for skipped in meta.get("skipped_phases", []):
+            skipped_list = meta.get("skipped_phases", [])
+            if not isinstance(skipped_list, list):
+                skipped_list = []
+            for skipped in skipped_list:
                 conn.execute(
                     "INSERT INTO phase_events "
                     "(type_id, project_id, phase, event_type, timestamp, "
@@ -2972,7 +2979,7 @@ class EntityDatabase:
             params.append(event_type)
 
         where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
-        params.append(min(limit, 500))
+        params.append(min(max(limit, 1), 500))
 
         rows = self._conn.execute(
             f"SELECT * FROM phase_events{where} ORDER BY timestamp DESC LIMIT ?",
