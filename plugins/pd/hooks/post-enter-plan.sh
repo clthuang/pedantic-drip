@@ -45,6 +45,7 @@ escaped=$(escape_json "$context")
 cat <<EOF
 {
   "hookSpecificOutput": {
+    "hookEventName": "PostToolUse",
     "additionalContext": "${escaped}"
   }
 }

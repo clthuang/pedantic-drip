@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.15.7] - 2026-04-19
+
+### Fixed
+- Hook validation errors: added missing `hookEventName` field to `post-enter-plan.sh` and `post-exit-plan.sh` (latent bug surfaced by Claude Code enforcement change)
+
 ## [4.15.6] - 2026-04-18
 
 ### Fixed
