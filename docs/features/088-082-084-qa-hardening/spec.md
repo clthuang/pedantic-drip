@@ -86,7 +86,7 @@ All 43 findings from #00095–#00137. Spec organizes them into 9 Functional Requ
 
 **Findings covered:** #00124, #00134
 
-**FR-5.1 (from #00124):** `_process_transition_phase` (`workflow_state_server.py:629-647`) and `_process_complete_phase` (`:796-807`) MUST move the `insert_phase_event` call OUTSIDE the `with db.transaction():` block. The phase_events INSERT MUST run AFTER the main transaction commits, with its own try/except. On failure, the handler MUST (a) emit stderr warning `[workflow-state] phase_events dual-write failed for {type_id}:{phase}: {type(exc).__name__}: {summary}` and (b) include `phase_events_write_failed: true` in the response metadata dict. `entity.get('project_id') or '__unknown__'` MUST be used instead of the `entity.get('project_id', '__unknown__')` pattern (which does not apply the default when the key exists with `None` value).
+**FR-5.1 (from #00124):** `_process_transition_phase` (`workflow_state_server.py:629-647`) and `_process_complete_phase` (`:796-807`) MUST move the `insert_phase_event` call OUTSIDE the `with db.transaction():` block. The phase_events INSERT MUST run AFTER the main transaction commits, with its own try/except. On failure, the handler MUST (a) emit stderr warning `[workflow-state] phase_events dual-write failed for {type_id}:{phase}: {type(exc).__name__}: {summary}` where `{summary}` is `str(exc)[:200]` (truncated single-line repr), and (b) include `phase_events_write_failed: true` in the response metadata dict. `entity.get('project_id') or '__unknown__'` MUST be used instead of the `entity.get('project_id', '__unknown__')` pattern (which does not apply the default when the key exists with `None` value).
 
 **FR-5.2 (from #00134):** `plugins/pd/hooks/lib/entity_registry/database.py::insert_phase_event` MUST honor spec 084 FR-3 ("participates in existing transaction when called from within one"). Implementation: guard `self._commit()` with `if not self._conn.in_transaction` (the sqlite3 Connection attribute). When `in_transaction` is True (an outer transaction is active), the INSERT must NOT auto-commit — the outer transaction's boundary takes over. This is the standard pysqlite3 detection mechanism.
 
@@ -199,10 +199,11 @@ Each finding ID maps to one AC. ACs below are grouped by FR. Test files referenc
 - **AC-3 (FR-1.3, #00112):** Test with plugin venv renamed / deleted: `run_memory_decay` exits cleanly (no decay run) rather than using `$PATH`-resolved `python3`. `grep -n "^PATH=" plugins/pd/hooks/session-start.sh` finds the sanitization line.
 - **AC-4 (FR-2.1, #00117):** Seed two entities in different `project_id`s. Call `query_phase_analytics()` without `project_id` from project A context. Result MUST contain only project-A events. Call again with `project_id="*"`. Result MUST contain both projects.
 - **AC-5 (FR-2.2, #00118):** Two concurrent threads, each opening its own DB connection at `schema_version=9`, call `_migration_10_phase_events` simultaneously (aligned via `threading.Barrier`). Final `phase_events` row count MUST equal a control single-threaded run's count. Test tolerates either implementation path (BEGIN IMMEDIATE re-check OR UNIQUE index + `INSERT OR IGNORE`).
-- **AC-6 (FR-2.3, #00119):** `record_backward_event(type_id="feature:nonexistent-xyz", ...)` MUST return error JSON (not insert). `record_backward_event(type_id=real, reason="x" * 3000)` MUST truncate reason to 2000 chars.
+- **AC-6 (FR-2.3, #00119):** `record_backward_event(type_id="feature:nonexistent-xyz", ...)` MUST return error JSON (not insert). `record_backward_event(type_id=real, reason="x" * 3000)` MUST truncate reason to 500 chars (matches FR-2.3 harmonized cap).
 - **AC-7 (FR-2.4, #00125):** `_process_complete_phase(..., reviewer_notes="x" * 20000)` MUST return error JSON rejecting the oversized payload.
 - **AC-8 (FR-2.5, #00126):** `record_backward_event` error response MUST match `{error: True, error_type: str, message: str, recovery_hint: str}` shape.
 - **AC-9 (FR-2.6, #00127):** Test: seed an entity with `metadata.phase_timing.design.started = "not-a-date"`. Run `_migration_10_phase_events`. Row MUST be skipped; stderr warning emitted; no unparseable timestamp in phase_events table.
+- **AC-9b (FR-2.6, #00127 truncation):** Seed an entity with `metadata.backward_history = [{"reason": "x" * 800, "target": "y" * 800, "timestamp": "2026-04-01T00:00:00Z"}]`. Run `_migration_10_phase_events`. Resulting `phase_events.backward_reason` and `backward_target` MUST have `length() == 500` (truncated). Original `entities.metadata` blob unchanged.
 
 ### Correctness ACs
 
@@ -261,7 +262,7 @@ Each finding ID maps to one AC. ACs below are grouped by FR. Test files referenc
   - `test_empty_db_returns_all_zeros_with_no_error`: run `decay_confidence` on empty DB; return dict has `scanned=0, demoted_*=0, skipped_*=0, error` key absent.
   - `test_nan_infinity_and_negative_zero_threshold_values_fall_back_to_default`: pass `memory_decay_high_threshold_days=float('nan')` and `float('inf')`; assert default (30) used and stderr warning emitted.
   - `test_sqlite_error_during_select_phase_returns_error_dict`: monkeypatch `db._conn.execute` for SELECT path to raise `sqlite3.OperationalError('disk I/O error')`; assert return dict has `error` key, demoted counts 0.
-  - `test_session_start_decay_timeout_does_not_block_hook`: stub the maintenance CLI with `time.sleep(30)`; run `bash session-start.sh` with `gtimeout 5`; assert exit code 0, script completes in < 10s, no 'Decay:' line in JSON additionalContext.
+  - `test_session_start_decay_timeout_does_not_block_hook`: stub the maintenance CLI with `time.sleep(30)`; run `bash session-start.sh` with timeout enforced via `subprocess.run(..., timeout=5)` from the pytest wrapper (portable Python-side enforcement); assert `TimeoutExpired` NOT raised on the hook wrapper (hook itself honored its internal timeout budget and returned early), exit code 0, script completes in < 10s wall time, no 'Decay:' line in JSON additionalContext.
 - **AC-41 (FR-10.8, #00131):** Strengthened `test_ac19_metadata_still_has_phase_timing` includes both `iterations == 2` and `reviewerNotes` assertions.
 - **AC-42 (FR-10.9, #00135):** `reconcile_check` returns a drift entry for metadata-vs-phase_events mismatch; test seeds the mismatch and asserts.
 - **AC-42b (FR-10.9, #00135):** After `reconcile_check` reports drift, `reconcile_apply` MUST NOT modify `phase_events` table rows. Assert: post-apply `phase_events` row count equals pre-apply count; stderr warning emitted via capsys.
@@ -290,7 +291,7 @@ Each finding ID maps to one AC. ACs below are grouped by FR. Test files referenc
 - **TD-6:** FR-10.7 mandates exactly the 4 enumerated tests (boundary-empty-DB, NaN/Inf config, sqlite-error-during-select, session-start-timeout). FR-10.10 mandates exactly the 6 enumerated tests. Any remaining sub-items from #00116 or #00136 listed in the original QA report are PRE-DEFERRED to backlog item #00138 ("082/084 remaining test-gap sub-items, deferred from feature 088"), which MUST be added to docs/backlog.md before the implement phase concludes. This prevents silent scope reduction.
 - **TD-7:** FR-6.7 extracts duplicated helpers to `_config_utils.py`. Despite being a refactor, this is accepted as hardening because the duplication was the ROOT CAUSE of finding #00098 (silent divergence between `maintenance.py` and `refresh.py`). Keeping two copies risks the same bug re-emerging.
 - **TD-8:** `agent_sandbox/082-eqp.txt` is acknowledged as non-ephemeral evidence. CLAUDE.md's "temporary files" description is aspirational; retro evidence files persist. A follow-up backlog item may migrate them to `docs/features/{feature}/evidence/` but that is out of scope here.
-- **TD-9:** AC count may exceed finding count when a single finding requires multiple ACs (e.g., #00096 split to AC-11 + AC-34b, #00135 split to AC-42 + AC-42b). Final AC count at implementation start: 46 (AC-1 through AC-44 plus AC-34b, AC-42b). Success Criteria #1 updated accordingly.
+- **TD-9:** AC count may exceed finding count when a single finding requires multiple ACs (e.g., #00096 split to AC-11 + AC-34b, #00135 split to AC-42 + AC-42b, #00127 split to AC-9 + AC-9b). Final AC count at implementation start: 47 (AC-1 through AC-44 plus AC-9b, AC-34b, AC-42b). Success Criteria #1 updated accordingly.
 
 ## Dependencies
 
@@ -302,7 +303,7 @@ Each finding ID maps to one AC. ACs below are grouped by FR. Test files referenc
 ## Success Criteria
 
 Feature 088 is complete when:
-1. All 46 ACs pass (AC-1 through AC-44 plus AC-34b and AC-42b). Verify count via `grep -cE "^- \*\*AC-[0-9]+[a-z]?" docs/features/088-082-084-qa-hardening/spec.md` equals 46.
+1. All 47 ACs pass (AC-1 through AC-44 plus AC-9b, AC-34b, AC-42b). Verify count via `grep -cE "^- \*\*AC-[0-9]+[a-z]?" docs/features/088-082-084-qa-hardening/spec.md` equals 47.
 2. `NFR-1` through `NFR-5` are satisfied.
 3. Retro.md for feature 088 captures lessons (including the "adversarial parallel review surfaces 43 findings in ~15 min" meta-learning).
 4. Retro.md for feature 084 exists (FR-11.1).
