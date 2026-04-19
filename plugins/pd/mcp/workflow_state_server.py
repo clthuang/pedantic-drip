@@ -1617,36 +1617,67 @@ async def record_backward_event(
     source_phase: str,
     target_phase: str,
     reason: str = "",
-    project_id: str = "__unknown__",
 ) -> str:
     """Record a backward phase transition event for analytics.
 
     Called by workflow-transitions skill AFTER transition_phase completes
-    a backward transition. project_id is accepted as a parameter (the skill
-    layer has it in scope) rather than resolved via db.get_entity.
+    a backward transition. `project_id` is resolved server-side from the
+    entity record (feature 088 FR-2.3) — callers MUST NOT pass it.
+
+    FR-2.3 validation: rejects unknown `type_id`; caps `reason` and
+    `target_phase` at 500 chars. FR-2.5: sqlite failures return the
+    standard `_make_error` shape (never raw `str(e)`).
     """
+    err = _check_db_available()
+    if err:
+        return err
     if _db is None:
         return _NOT_INITIALIZED
+
+    # FR-2.3 (a): reject unknown type_id.
+    entity = _db.get_entity(type_id)
+    if not entity:
+        return _make_error(
+            "entity_not_found",
+            f"Entity {type_id} not found",
+            "Verify type_id matches an existing entity",
+        )
+
+    # FR-2.3 (b): resolve project_id server-side from entity record.
+    resolved_project_id = entity.get("project_id") or "__unknown__"
+
+    # FR-2.3 (c) + FR-2.6 harmonized: cap reason and target at 500 chars.
+    reason_capped = (reason or "")[:500]
+    target_capped = (target_phase or "")[:500]
+
     ts = _iso_now()
     try:
         _db.insert_phase_event(
             type_id=type_id,
-            project_id=project_id,
+            project_id=resolved_project_id,
             phase=source_phase,
             event_type="backward",
             timestamp=ts,
-            backward_reason=reason,
-            backward_target=target_phase,
+            backward_reason=reason_capped,
+            backward_target=target_capped,
         )
-    except Exception as e:
-        print(f"[workflow-state] backward event INSERT failed: {e}", file=sys.stderr)
-        return json.dumps({"error": str(e)})
+    except sqlite3.Error as e:
+        print(
+            f"[workflow-state] backward event INSERT failed: "
+            f"{type(e).__name__}: {str(e)[:200]}",
+            file=sys.stderr,
+        )
+        return _make_error(
+            "insert_failed",
+            f"{type(e).__name__}: {str(e)[:200]}",
+            "Check type_id validity",
+        )
 
     return json.dumps({
         "recorded": True,
         "type_id": type_id,
         "source_phase": source_phase,
-        "target_phase": target_phase,
+        "target_phase": target_capped,
     })
 
 
@@ -1661,17 +1692,28 @@ async def query_phase_analytics(
     """Query structured phase execution data for analytics.
 
     query_type: 'phase_duration' | 'iteration_summary' | 'backward_frequency' | 'raw_events'
+
+    Cross-project isolation (feature 088, FR-2.1): by default, results are
+    scoped to the current project (`_project_id`). Pass `project_id="*"` to
+    opt into a cross-project query; pass a literal `project_id` string to
+    scope to a specific project other than the current one.
     """
+    err = _check_db_available()
+    if err:
+        return err
     if _db is None:
         return _NOT_INITIALIZED
 
+    # FR-2.1: default to current project; "*" means opt into cross-project.
+    resolved_project_id = None if project_id == "*" else (project_id or _project_id)
+
     if query_type == "phase_duration":
         started = _db.query_phase_events(
-            type_id=feature_type_id, project_id=project_id,
+            type_id=feature_type_id, project_id=resolved_project_id,
             phase=phase, event_type="started", limit=500,
         )
         completed = _db.query_phase_events(
-            type_id=feature_type_id, project_id=project_id,
+            type_id=feature_type_id, project_id=resolved_project_id,
             phase=phase, event_type="completed", limit=500,
         )
         results = _compute_durations(started, completed)
@@ -1683,7 +1725,7 @@ async def query_phase_analytics(
 
     elif query_type == "iteration_summary":
         events = _db.query_phase_events(
-            type_id=feature_type_id, project_id=project_id,
+            type_id=feature_type_id, project_id=resolved_project_id,
             phase=phase, event_type="completed", limit=limit,
         )
         results = [
@@ -1704,7 +1746,7 @@ async def query_phase_analytics(
 
     elif query_type == "backward_frequency":
         events = _db.query_phase_events(
-            type_id=feature_type_id, project_id=project_id,
+            type_id=feature_type_id, project_id=resolved_project_id,
             event_type="backward", limit=500,
         )
         freq: dict[str, int] = {}
@@ -1722,7 +1764,7 @@ async def query_phase_analytics(
 
     elif query_type == "raw_events":
         events = _db.query_phase_events(
-            type_id=feature_type_id, project_id=project_id,
+            type_id=feature_type_id, project_id=resolved_project_id,
             phase=phase, limit=limit,
         )
         return json.dumps({

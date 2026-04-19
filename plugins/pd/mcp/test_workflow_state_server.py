@@ -8081,6 +8081,11 @@ class TestRecordBackwardEvent:
         import workflow_state_server
 
         db = EntityDatabase(":memory:")
+        # Feature 088 FR-2.3: entity must exist; project_id resolved server-side.
+        db.register_entity(
+            "feature", "test", "Test",
+            status="active", project_id="P001",
+        )
         old_db = workflow_state_server._db
         workflow_state_server._db = db
 
@@ -8103,6 +8108,8 @@ class TestRecordBackwardEvent:
             assert events[0]["phase"] == "design"
             assert events[0]["backward_target"] == "specify"
             assert events[0]["backward_reason"] == "scope gap"
+            # FR-2.3 (b): project_id resolved from entity record
+            assert events[0]["project_id"] == "P001"
         finally:
             workflow_state_server._db = old_db
             db.close()
@@ -8293,3 +8300,198 @@ class TestQueryPhaseAnalytics:
         result = json.loads(result_str)
         assert all(r["project_id"] == "P002" for r in result["results"])
         assert len(result["results"]) > 0
+
+
+# ---------------------------------------------------------------------------
+# Feature 088 Bundle D: cross-project isolation + record_backward_event hardening
+# ---------------------------------------------------------------------------
+
+
+class TestFeature088BundleD:
+    """Feature 088 Bundle D: cross-project scoping, degraded-mode, validation."""
+
+    def test_query_phase_analytics_degraded_mode(self):
+        """AC-17 part 1: query_phase_analytics returns _make_error shape when degraded."""
+        import asyncio
+        import workflow_state_server as wss
+
+        orig_unavailable = wss._db_unavailable
+        wss._db_unavailable = True
+        try:
+            result_str = asyncio.run(
+                wss.query_phase_analytics(query_type="raw_events")
+            )
+            result = json.loads(result_str)
+            # _check_db_available returns legacy {"error": ...} shape; we accept that
+            # as the standard degraded-mode response (matches sibling tools at
+            # :1217-1220 etc.).
+            assert "error" in result
+        finally:
+            wss._db_unavailable = orig_unavailable
+
+    def test_query_phase_analytics_scopes_to_current_project_by_default(self, tmp_path):
+        """AC-4: default call returns only current-project rows; project_id='*' opts in."""
+        import asyncio
+        import workflow_state_server as wss
+
+        db = EntityDatabase(":memory:")
+        # Seed two projects.
+        db.insert_phase_event(
+            type_id="feature:a-001", project_id="ProjA",
+            phase="design", event_type="started",
+            timestamp="2026-04-01T10:00:00Z",
+        )
+        db.insert_phase_event(
+            type_id="feature:a-001", project_id="ProjA",
+            phase="design", event_type="completed",
+            timestamp="2026-04-01T11:00:00Z",
+            iterations=1,
+        )
+        db.insert_phase_event(
+            type_id="feature:b-002", project_id="ProjB",
+            phase="design", event_type="started",
+            timestamp="2026-04-02T10:00:00Z",
+        )
+        db.insert_phase_event(
+            type_id="feature:b-002", project_id="ProjB",
+            phase="design", event_type="completed",
+            timestamp="2026-04-02T11:00:00Z",
+            iterations=1,
+        )
+
+        orig_db = wss._db
+        orig_pid = wss._project_id
+        wss._db = db
+        wss._project_id = "ProjA"
+        try:
+            # Default (no project_id): only ProjA rows.
+            default_result = json.loads(asyncio.run(
+                wss.query_phase_analytics(query_type="raw_events", limit=50)
+            ))
+            default_projects = {r["project_id"] for r in default_result["results"]}
+            assert default_projects == {"ProjA"}, (
+                f"Default call must return only current project rows, got {default_projects}"
+            )
+
+            # project_id="*": both projects.
+            star_result = json.loads(asyncio.run(
+                wss.query_phase_analytics(
+                    query_type="raw_events", project_id="*", limit=50,
+                )
+            ))
+            star_projects = {r["project_id"] for r in star_result["results"]}
+            assert star_projects == {"ProjA", "ProjB"}, (
+                f"Wildcard call must return all projects, got {star_projects}"
+            )
+        finally:
+            wss._db = orig_db
+            wss._project_id = orig_pid
+            db.close()
+
+    def test_record_backward_event_degraded_mode(self):
+        """AC-17 part 2: record_backward_event returns _make_error shape when degraded."""
+        import asyncio
+        import workflow_state_server as wss
+
+        orig_unavailable = wss._db_unavailable
+        wss._db_unavailable = True
+        try:
+            result_str = asyncio.run(
+                wss.record_backward_event(
+                    type_id="feature:whatever",
+                    source_phase="design",
+                    target_phase="specify",
+                )
+            )
+            result = json.loads(result_str)
+            assert "error" in result
+        finally:
+            wss._db_unavailable = orig_unavailable
+
+    def test_record_backward_event_rejects_unknown_type_id(self):
+        """AC-6: unknown type_id returns entity_not_found error (not insert)."""
+        import asyncio
+        import workflow_state_server as wss
+
+        db = EntityDatabase(":memory:")
+        orig_db = wss._db
+        wss._db = db
+        try:
+            result_str = asyncio.run(
+                wss.record_backward_event(
+                    type_id="feature:nonexistent-xyz",
+                    source_phase="design",
+                    target_phase="specify",
+                    reason="test",
+                )
+            )
+            result = json.loads(result_str)
+            assert result.get("error") is True
+            assert result.get("error_type") == "entity_not_found"
+            # No row inserted
+            rows = db.query_phase_events(type_id="feature:nonexistent-xyz")
+            assert rows == []
+        finally:
+            wss._db = orig_db
+            db.close()
+
+    def test_record_backward_event_error_shape_matches_make_error(self):
+        """AC-8: error response has {error, error_type, message, recovery_hint}."""
+        import asyncio
+        import workflow_state_server as wss
+
+        db = EntityDatabase(":memory:")
+        orig_db = wss._db
+        wss._db = db
+        try:
+            result_str = asyncio.run(
+                wss.record_backward_event(
+                    type_id="feature:nonexistent",
+                    source_phase="design",
+                    target_phase="specify",
+                )
+            )
+            result = json.loads(result_str)
+            assert result["error"] is True
+            assert isinstance(result["error_type"], str)
+            assert isinstance(result["message"], str)
+            assert isinstance(result["recovery_hint"], str)
+        finally:
+            wss._db = orig_db
+            db.close()
+
+    def test_record_backward_event_truncates_reason_at_500(self):
+        """AC-6: reason is truncated to 500 chars before INSERT."""
+        import asyncio
+        import workflow_state_server as wss
+
+        db = EntityDatabase(":memory:")
+        db.register_entity(
+            "feature", "trunc-001", "Trunc",
+            status="active", project_id="P001",
+        )
+        orig_db = wss._db
+        wss._db = db
+        try:
+            long_reason = "x" * 3000
+            long_target = "y" * 3000
+            result_str = asyncio.run(
+                wss.record_backward_event(
+                    type_id="feature:trunc-001",
+                    source_phase="design",
+                    target_phase=long_target,
+                    reason=long_reason,
+                )
+            )
+            result = json.loads(result_str)
+            assert result.get("recorded") is True
+
+            rows = db.query_phase_events(
+                type_id="feature:trunc-001", event_type="backward",
+            )
+            assert len(rows) == 1
+            assert len(rows[0]["backward_reason"]) == 500
+            assert len(rows[0]["backward_target"]) == 500
+        finally:
+            wss._db = orig_db
+            db.close()
