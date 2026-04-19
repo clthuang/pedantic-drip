@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.15.11] - 2026-04-19
+
 ### Added
 - **Shared `emit_hook_json` helper** in `plugins/pd/hooks/lib/common.sh` — guarantees every `hookSpecificOutput` block includes the CC-required `hookEventName` field. Hook authors should prefer this over hand-rolled JSON emission.
 - **`cleanup-stale-versions.sh` SessionStart hook** — deletes cached `pd/X.Y.Z/` directories that don't match the active version in `~/.claude/plugins/installed_plugins.json`. Silent no-op when no stale dirs exist. Prevents long-running sessions from picking up pre-fix hook scripts.
