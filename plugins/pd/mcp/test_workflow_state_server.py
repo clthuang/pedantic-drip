@@ -3191,7 +3191,12 @@ class TestReconcilePhaseEventsDrift:
     def test_reconcile_check_reports_phase_events_drift(self, db, tmp_path):
         """AC-42: reconcile_check returns a phase_events_drift entry for
         metadata.phase_timing.{phase}.completed with no matching phase_events
-        row (event_type='completed')."""
+        row (event_type='completed').
+
+        Feature 089 FR-2.1 / AC-8 (#00146) extended detection to also cover
+        ``started``; the seed data has both a ``started`` and ``completed``
+        timestamp with no events, so both kinds surface here.
+        """
         slug = "088-l-check"
         type_id = self._seed_feature_with_phase_timing_drift(db, tmp_path, slug)
 
@@ -3203,9 +3208,10 @@ class TestReconcilePhaseEventsDrift:
         assert "phase_events_drift" in data
         drift = data["phase_events_drift"]
         assert isinstance(drift, list)
-        assert len(drift) == 1
-        entry = drift[0]
-        assert entry["kind"] == "phase_events_missing_completed"
+        # Find the completed-drift entry among potentially multiple kinds.
+        completed = [e for e in drift if e["kind"] == "phase_events_missing_completed"]
+        assert len(completed) == 1
+        entry = completed[0]
         assert entry["type_id"] == type_id
         assert entry["phase"] == "design"
         assert entry["metadata_completed_at"] == "2026-04-19T00:00:00Z"
@@ -3255,6 +3261,241 @@ class TestReconcilePhaseEventsDrift:
         # (c) response has phase_events_drift_count >= 1
         assert "phase_events_drift_count" in data
         assert data["phase_events_drift_count"] >= 1
+
+
+# ===========================================================================
+# Feature 089 Bundle B — Detection correctness (FR-2, ACs 8/9/10, #00146/00150/00151)
+# ===========================================================================
+
+
+class TestFeature089BundleBDetection:
+    """Feature 089 Bundle B: extended drift detection + bulk query + project_id helper.
+
+    AC-8  (FR-2.1, #00146): drift detection covers started + skipped events.
+    AC-9  (FR-2.2, #00150): bulk query eliminates the N+1 pattern.
+    AC-10 (FR-2.3, #00151): ``_resolve_project_id`` distinguishes None from ''.
+    """
+
+    def _seed_entity_with_full_metadata_drift(self, db, tmp_path, slug):
+        """Seed an entity with ``phase_timing.design.started`` (no row),
+        ``phase_timing.specify.completed`` (with a row), and
+        ``skipped_phases=['brainstorm']`` (no row). Returns type_id.
+        """
+        type_id = f"feature:{slug}"
+        db.register_entity(
+            "feature", slug, f"B1 {slug}",
+            status="active", project_id="__unknown__",
+        )
+        db.create_workflow_phase(
+            type_id,
+            workflow_phase="design",
+            last_completed_phase="specify",
+            mode="standard",
+        )
+        feat_dir = os.path.join(str(tmp_path), "features", slug)
+        os.makedirs(feat_dir, exist_ok=True)
+        with open(os.path.join(feat_dir, ".meta.json"), "w") as f:
+            json.dump({
+                "id": slug.split("-", 1)[0],
+                "slug": slug,
+                "status": "active",
+                "mode": "standard",
+            }, f)
+
+        # Seed a phase_events row for specify:completed so we can verify it
+        # is NOT flagged as drift (negative control for the detector).
+        db.insert_phase_event(
+            type_id=type_id, project_id="__unknown__", phase="specify",
+            event_type="completed", timestamp="2026-03-31T00:00:00Z",
+            source="live",
+        )
+
+        existing = db.get_entity(type_id)
+        meta = json.loads(existing["metadata"]) if existing["metadata"] else {}
+        meta["phase_timing"] = {
+            # Missing: started event row for design.
+            "design": {
+                "started": "2026-04-01T00:00:00Z",
+            },
+            # Present: completed event row already inserted above.
+            "specify": {
+                "completed": "2026-03-31T00:00:00Z",
+            },
+        }
+        # Missing: skipped event row for brainstorm.
+        meta["skipped_phases"] = ["brainstorm"]
+        db.update_entity(type_id, metadata=meta)
+        return type_id
+
+    # ---- AC-8 (FR-2.1, #00146) ----
+
+    def test_reconcile_detects_drift_for_started_and_skipped_events(
+        self, db, tmp_path,
+    ):
+        """AC-8: drift detection surfaces missing ``started`` and
+        ``skipped`` phase_events rows in addition to ``completed``."""
+        slug = "089-b1-drift"
+        type_id = self._seed_entity_with_full_metadata_drift(db, tmp_path, slug)
+
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        result = _process_reconcile_check(engine, db, str(tmp_path), type_id)
+        data = json.loads(result)
+
+        assert "error" not in data
+        drift = data["phase_events_drift"]
+        assert isinstance(drift, list)
+
+        kinds = {e["kind"] for e in drift}
+        assert "phase_events_missing_started" in kinds, (
+            f"Expected missing_started kind; got {kinds}"
+        )
+        assert "phase_events_missing_skipped" in kinds, (
+            f"Expected missing_skipped kind; got {kinds}"
+        )
+
+        # Negative control: specify:completed WAS recorded, so no drift.
+        assert not any(
+            e["phase"] == "specify" and e["kind"] == "phase_events_missing_completed"
+            for e in drift
+        )
+
+        # Exact entry shape: started entry carries the started timestamp.
+        started_entry = next(
+            e for e in drift if e["kind"] == "phase_events_missing_started"
+        )
+        assert started_entry["type_id"] == type_id
+        assert started_entry["phase"] == "design"
+        assert started_entry["metadata_completed_at"] == "2026-04-01T00:00:00Z"
+
+        # Skipped entry references brainstorm; metadata_completed_at empty.
+        skipped_entry = next(
+            e for e in drift if e["kind"] == "phase_events_missing_skipped"
+        )
+        assert skipped_entry["type_id"] == type_id
+        assert skipped_entry["phase"] == "brainstorm"
+        assert skipped_entry["metadata_completed_at"] == ""
+
+    # ---- AC-9 (FR-2.2, #00150) ----
+
+    def test_detect_phase_events_drift_uses_bulk_query(self, db, tmp_path):
+        """AC-9: detector calls ``query_phase_events_bulk`` at most twice
+        (single chunk for well under 500 type_ids), not N+1 per entity/phase.
+        """
+        # Seed 10 entities, each with phase_timing for 5 phases — 50 per-(entity,phase)
+        # checks before the bulk rewrite.
+        phases = ["brainstorm", "specify", "design", "create-plan", "implement"]
+        for i in range(10):
+            slug = f"089-b2-{i:02d}"
+            type_id = f"feature:{slug}"
+            db.register_entity(
+                "feature", slug, f"Bulk {i}",
+                status="active", project_id="__unknown__",
+            )
+            db.create_workflow_phase(
+                type_id, workflow_phase="finish",
+                last_completed_phase="implement", mode="standard",
+            )
+            feat_dir = os.path.join(str(tmp_path), "features", slug)
+            os.makedirs(feat_dir, exist_ok=True)
+            with open(os.path.join(feat_dir, ".meta.json"), "w") as f:
+                json.dump({"id": str(i), "slug": slug, "status": "active",
+                           "mode": "standard"}, f)
+            existing = db.get_entity(type_id)
+            meta = json.loads(existing["metadata"]) if existing["metadata"] else {}
+            meta["phase_timing"] = {
+                p: {
+                    "started": f"2026-04-0{(i % 9) + 1}T00:00:00Z",
+                    "completed": f"2026-04-0{(i % 9) + 1}T01:00:00Z",
+                }
+                for p in phases
+            }
+            db.update_entity(type_id, metadata=meta)
+
+        # Count calls to db.query_phase_events_bulk.
+        original_bulk = db.query_phase_events_bulk
+        call_count = [0]
+
+        def counting_bulk(type_ids, event_types=None):
+            call_count[0] += 1
+            return original_bulk(type_ids, event_types=event_types)
+
+        db.query_phase_events_bulk = counting_bulk
+
+        # Also prove the legacy per-row ``query_phase_events`` is no longer
+        # used inside the detector (it would be a regression to N+1).
+        original_single = db.query_phase_events
+        single_call_count = [0]
+
+        def counting_single(**kwargs):
+            single_call_count[0] += 1
+            return original_single(**kwargs)
+
+        db.query_phase_events = counting_single
+
+        try:
+            engine = WorkflowStateEngine(db, str(tmp_path))
+            result = _process_reconcile_check(engine, db, str(tmp_path), None)
+        finally:
+            db.query_phase_events_bulk = original_bulk
+            db.query_phase_events = original_single
+
+        data = json.loads(result)
+        assert "error" not in data
+
+        # ≤ 2 bulk calls (10 entities × 3 event_types = ~30 params << 500 chunk budget).
+        assert call_count[0] <= 2, (
+            f"Expected ≤2 bulk calls; got {call_count[0]} — regression to N+1?"
+        )
+        # Zero per-row calls from the detector (pre-fix was ~50).
+        assert single_call_count[0] == 0, (
+            f"Expected 0 per-row query_phase_events calls; got {single_call_count[0]}"
+        )
+
+    # ---- AC-10 (FR-2.3, #00151) ----
+
+    def test_resolve_project_id_distinguishes_none_from_empty(
+        self, db, tmp_path, capsys, monkeypatch,
+    ):
+        """AC-10: ``_resolve_project_id`` emits a warning for empty
+        project_id (data integrity issue) but silently falls back for
+        None (legitimate legacy row). Both resolve to ``__unknown__``.
+        """
+        from workflow_state_server import _resolve_project_id
+
+        # Empty-string case: warning to stderr + __unknown__ return.
+        capsys.readouterr()  # drain prior output
+        result_empty = _resolve_project_id(
+            {"type_id": "feature:089-b3-empty", "project_id": ""}
+        )
+        err_empty = capsys.readouterr().err
+        assert result_empty == "__unknown__"
+        assert "empty project_id" in err_empty
+        assert "feature:089-b3-empty" in err_empty
+
+        # None case: NO warning + __unknown__ return.
+        capsys.readouterr()  # drain
+        result_none = _resolve_project_id(
+            {"type_id": "feature:089-b3-none", "project_id": None}
+        )
+        err_none = capsys.readouterr().err
+        assert result_none == "__unknown__"
+        assert "empty project_id" not in err_none
+
+        # Missing-key case behaves like None (no warning).
+        capsys.readouterr()
+        result_missing = _resolve_project_id({"type_id": "feature:089-b3-miss"})
+        err_missing = capsys.readouterr().err
+        assert result_missing == "__unknown__"
+        assert "empty project_id" not in err_missing
+
+        # Happy path: real project_id returned as-is, no warning.
+        capsys.readouterr()
+        result_real = _resolve_project_id(
+            {"type_id": "feature:089-b3-ok", "project_id": "my-project"}
+        )
+        err_real = capsys.readouterr().err
+        assert result_real == "my-project"
+        assert "empty project_id" not in err_real
 
 
 # ===========================================================================

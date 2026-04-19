@@ -3122,6 +3122,69 @@ class EntityDatabase:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def query_phase_events_bulk(
+        self,
+        type_ids: list[str],
+        event_types: list[str] | None = None,
+    ) -> list[dict]:
+        """Bulk-fetch phase_events rows for multiple entities in O(1) queries.
+
+        Used by the reconciliation drift detector (Feature 089 FR-2.2 /
+        AC-9 / #00150) to eliminate an N+1 query pattern: instead of one
+        ``query_phase_events`` call per (entity, phase, event_type)
+        tuple, callers pass all ``type_ids`` at once and diff the result
+        Python-side.
+
+        Parameters
+        ----------
+        type_ids:
+            Entity type_ids to fetch events for. Empty list returns ``[]``
+            without issuing any query.
+        event_types:
+            Optional event-type filter. When ``None``, all event_types
+            are returned. When a list, only rows whose ``event_type`` is
+            in the list are returned.
+
+        Returns
+        -------
+        list[dict]
+            All matching phase_events rows (no LIMIT applied — caller is
+            expected to aggregate in Python). Columns match
+            ``PHASE_EVENTS_COLS``.
+
+        Notes
+        -----
+        Input is chunked at 500 parameters per chunk to stay well under
+        SQLite's default ``SQLITE_MAX_VARIABLE_NUMBER`` (999 pre-3.32,
+        32766 after). With ``event_types`` also in the IN clause, the
+        effective per-chunk budget is ``500 - len(event_types)``.
+        """
+        if not type_ids:
+            return []
+
+        # Budget accounting: SQLite's default host-parameter cap is 999.
+        # We chunk type_ids well below that, reserving room for event_types.
+        et_count = len(event_types) if event_types else 0
+        chunk_size = max(1, 500 - et_count)
+
+        results: list[dict] = []
+        for start in range(0, len(type_ids), chunk_size):
+            chunk = type_ids[start:start + chunk_size]
+            placeholders_tid = ",".join("?" * len(chunk))
+            params: list = list(chunk)
+            where = f"type_id IN ({placeholders_tid})"
+            if event_types:
+                placeholders_et = ",".join("?" * len(event_types))
+                where += f" AND event_type IN ({placeholders_et})"
+                params.extend(event_types)
+            rows = self._conn.execute(
+                f"SELECT {PHASE_EVENTS_COLS} FROM phase_events "
+                f"WHERE {where}",
+                params,
+            ).fetchall()
+            results.extend(dict(r) for r in rows)
+        return results
+
     # ------------------------------------------------------------------
     # Workflow Phase CRUD
     # ------------------------------------------------------------------
