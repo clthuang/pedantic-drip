@@ -7,7 +7,7 @@
 
 ## Architecture Overview
 
-Three modules change; one new module is added. No cross-package topology shifts.
+Three modules change; one new module is added. No cross-package topology shifts. pd's inline-test convention is preserved — every test file is co-located with its SUT (Source Under Test) in the same directory.
 
 ```
 plugins/pd/
@@ -15,24 +15,28 @@ plugins/pd/
 │   ├── semantic_memory/
 │   │   ├── config.py                 (unchanged)
 │   │   ├── config_utils.py           ← NEW — shared resolve_float_config helper
-│   │   └── ranking.py                ← MODIFIED — imports from config_utils
+│   │   ├── ranking.py                ← MODIFIED — imports from config_utils
+│   │   ├── test_config_utils.py      ← NEW — FR-4 shared helper tests (bool-handling, clamp, warn-once)
+│   │   ├── test_ranking.py           ← MODIFIED — migrate 6 call sites (lines 80,85,97,109,124,137)
+│   │   └── fixtures/feature_085_snapshots/   ← FR-14 golden-file snapshots (co-located)
+│   │       ├── input_kb.md
+│   │       ├── render_block.md
+│   │       └── md_insert.md
 │   └── pattern_promotion/generators/
 │       ├── _md_insert.py             ← MODIFIED — FR-1 entry_name sanitizer
-│       └── hook.py                   ← MODIFIED — FR-7 regex-aware test stubs
+│       ├── test_md_insert.py         ← MODIFIED — APPEND FR-1 sanitization tests to existing file (do NOT create new)
+│       ├── hook.py                   ← MODIFIED — FR-7 regex-aware test stubs
+│       └── test_hook.py              ← MODIFIED — APPEND FR-7 regex-aware stub tests to existing file
 ├── mcp/
-│   └── memory_server.py              ← MODIFIED — FR-2/3/5/6 (log perm + rotation + diagnostic schema + single-resolution)
-└── hooks/tests/                      ← NEW FILES
-    ├── test_md_insert.py             ← FR-1 sanitization tests
-    ├── test_hook.py                  ← FR-7 regex-aware stub tests
-    ├── test_config_utils.py          ← FR-4 shared helper tests (bool-handling, clamp, warn-once)
-    └── fixtures/feature_085_snapshots/   ← FR-14 golden-file snapshots
-        ├── input_kb.md
-        ├── classifier.json
-        ├── render_block.md
-        └── md_insert.md
+│   ├── memory_server.py              ← MODIFIED — FR-2/3/5/6 (log perm + rotation + diagnostic schema + single-resolution)
+│   └── test_memory_server.py         ← MODIFIED — migrate 6 tuple-unpack sites (lines 1775,1796,1819,1836,1951,2051); update INFLUENCE_DEBUG_LOG_PATH mocks; add FR-3 rotation test
 
 validate.sh                           ← MODIFIED — FR-8 docs-sync guards + circular-import smoke test
 ```
+
+**Test migration discipline:** `test_md_insert.py` and `test_hook.py` already exist at the generators/ paths above — extending them avoids pytest nondeterministic collection from duplicate module names and keeps FR-specific tests co-located with their SUT per pd convention (spec.md Feasibility line 221). New tests for new code (`test_config_utils.py`) are created only where no file exists.
+
+**FR-14 snapshot location:** Golden files live at `plugins/pd/hooks/lib/semantic_memory/fixtures/feature_085_snapshots/` — a single co-located fixture dir used by cross-module snapshot tests. Pytest collects them via a single `test_feature_085_snapshots.py` file in the same dir. Classifier snapshot is DROPPED (see TD-13): `pattern_promotion` has no `classify_entries` top-level function; `classify_keywords(entry)` operates per-entry. Snapshots cover only `_render_block` and `insert_block` outputs, which are the user-facing markdown-writing surfaces.
 
 ### Data Flow: pre-PR vs post-PR
 
@@ -253,10 +257,12 @@ Delete lines 771-778 (the redundant resolution + independent clamp).
 
 **`with_retry` decorator interaction:** `with_retry` at `plugins/pd/hooks/lib/sqlite_retry.py` is return-shape agnostic — it re-invokes the wrapped function on transient SQLite errors and returns whatever the wrapped function returns. Tuple return works identically to str return.
 
-**FR-2 + FR-3 + FR-5:** Rewrite `_emit_influence_diagnostic` (lines 466-500):
+**FR-2 + FR-3 + FR-5:** Rewrite `_emit_influence_diagnostic` (lines 466-500). **Schema preservation:** `injected` field remains `int` (count) per existing test assertion `test_memory_server.py:1906` `assert parsed["injected"] == 3`. Only `recorded` is removed (FR-5). No other JSON keys change.
+
 ```python
 import os
 import json
+import sys
 
 _INFLUENCE_DEBUG_ROTATE_BYTES: Final[int] = 10 * 1024 * 1024  # 10 MB
 _influence_debug_write_failed: bool = False  # one-shot warning flag
@@ -264,11 +270,11 @@ _influence_debug_write_failed: bool = False  # one-shot warning flag
 
 def _emit_influence_diagnostic(
     *,
-    matched: int,
-    resolved_threshold: float,
     agent_role: str,
+    injected: int,              # PRESERVED as int count (not list) — matches existing schema
+    matched: int,
+    resolved_threshold: float,   # NEW — passed by wrapper after single resolution (FR-6)
     feature_type_id: str | None,
-    injected_entry_names: list[str],
 ) -> None:
     global _influence_debug_write_failed
     path = INFLUENCE_DEBUG_LOG_PATH
@@ -291,20 +297,23 @@ def _emit_influence_diagnostic(
             os.umask(old_umask)
 
         # FR-5: omit `recorded` field (was duplicate of `matched` per TD-4).
+        # Schema: {ts, agent_role, injected (int count), matched (int count), threshold, feature_type_id}
         with os.fdopen(fd, "a", encoding="utf-8") as f:
             f.write(json.dumps({
                 "ts": _utc_now_iso(),
                 "agent_role": agent_role,
-                "feature_type_id": feature_type_id,
+                "injected": injected,       # int — PRESERVED from pre-PR schema
+                "matched": matched,          # int — PRESERVED; `recorded` key DROPPED
                 "threshold": resolved_threshold,
-                "matched": matched,
-                "injected": list(injected_entry_names),
+                "feature_type_id": feature_type_id,
             }) + "\n")
     except (OSError, IOError) as exc:
         if not _influence_debug_write_failed:
             _influence_debug_write_failed = True
             print(f"[memory-server] influence-debug.log write failed ({exc}); skipping subsequent writes for this process", file=sys.stderr)
 ```
+
+**Wrapper call preservation:** The MCP wrapper continues to pass `injected=len(injected_entry_names)` (current behavior at `memory_server.py:781`); no test assertion breaks.
 
 ### Component 3: `semantic_memory/ranking.py` modifications
 
@@ -360,24 +369,93 @@ def _is_complex_regex(expr: str) -> bool:
 
 # Known-good samples for the simple-regex ACs (AC-H6/H7/H8) — the constructor
 # tries each strategy in order; first match wins; otherwise degrades to "complex".
+_REGEX_METACHARS = set(".^$*+?{}[]|()")
+
+
 def _construct_matching_sample(expr: str) -> str | None:
     """Return a string that matches `expr`, or None if no simple strategy works.
 
-    Strategy list (ordered by specificity):
-      1. If `expr` contains no metacharacters (pure literal): return expr.
-      2. Drop leading/trailing anchors (`^`, `$`, `\\b`) and escapes; try literal prefix.
-      3. For alternation `A|B|...`: pick leftmost branch, recurse strategy 1-2.
-      4. For character class `[...]`: pick a concrete char from the class.
-      5. Best-effort: attempt `expr` stripped of regex metachars (`?`, `*`, `+`, `^`, `$`, `|`).
+    CONTRACT: Every candidate MUST pass `re.search(expr, candidate)` before
+    being returned; on exhaustion without a match, returns None. Caller (verify-
+    then-fallback) MUST still re-check before trusting — helper may return a
+    candidate that coincidentally matches via regex laxity (e.g., greedy `.*`).
 
-    Each candidate is verified with `re.search(expr, candidate)`; returns the
-    first candidate that matches. If all strategies miss, returns None (caller
-    falls back to generic stub + complex-regex comment — verify-then-fallback).
+    Worked example for `expr = "^foo$"`:
+      - Strategy 1 (no-metachars): fails — expr contains `^`, `$`.
+      - Strategy 2 (anchor-strip): candidate = "foo"; re.search("^foo$", "foo") → match; return "foo".
+
+    Worked example for `expr = r"\\.env$"`:
+      - Strategy 1 fails (contains `.`, `$`).
+      - Strategy 2 strips anchors → `\\.env` (still has `\\.` escape). Candidate construction: `foo.env`.
+        Verify `re.search(r"\\.env$", "foo.env")` → match; return "foo.env".
+
+    Worked example for `expr = r"foo|bar"`:
+      - Strategy 1 fails (contains `|`).
+      - Strategy 3 (alternation) picks leftmost branch `"foo"`.
+        Verify → match; return "foo".
+
+    Worked example for `expr = r"[a-z]+@example\\.com"`:
+      - Strategies 1,2 fail.
+      - Strategy 4 (character class) picks `a` from `[a-z]`, substitutes concrete char,
+        recurses on remainder → candidate = "a@example.com".
+        Verify → match; return "a@example.com".
     """
-    # Concrete strategies elided — implementer follows the list above.
-    # Verify-then-fallback is the critical invariant: CALLER always re-checks
-    # `re.search(expr, result)` before trusting it; a None return means the
-    # caller MUST emit the complex-regex comment regardless of classifier.
+    import re
+    candidates: list[str] = []
+
+    # Strategy 1: no metachars → use expr verbatim.
+    if not any(c in _REGEX_METACHARS for c in expr):
+        candidates.append(expr)
+
+    # Strategy 2: strip leading/trailing anchors + decode escapes.
+    stripped = expr
+    if stripped.startswith("^"):
+        stripped = stripped[1:]
+    if stripped.endswith("$") and not stripped.endswith(r"\$"):
+        stripped = stripped[:-1]
+    # Decode simple escapes like \. → .  (but leave \d, \w alone; those fail Strategy 2)
+    stripped = re.sub(r"\\([.^$*+?{}\[\]|()])", r"\1", stripped)
+    if stripped and not any(c in _REGEX_METACHARS for c in stripped):
+        candidates.append(stripped)
+    # Also try with padding ("foo" → "xxfooxx") for non-anchored patterns:
+    if stripped:
+        candidates.append(f"x{stripped}x")
+
+    # Strategy 3: alternation — leftmost branch (recurse on it).
+    if "|" in expr and not expr.startswith("\\|"):
+        branches = expr.split("|", 1)
+        if branches[0]:
+            sub_candidate = _construct_matching_sample(branches[0])
+            if sub_candidate is not None:
+                candidates.append(sub_candidate)
+
+    # Strategy 4: character class — substitute a concrete char.
+    class_match = re.search(r"\[([^\]]+)\]", expr)
+    if class_match:
+        klass = class_match.group(1)
+        # Pick first char of class (skip ranges for simplicity; "a-z" → "a")
+        concrete = klass[0] if klass and klass[0] != "^" else ""
+        if concrete:
+            candidate = expr[:class_match.start()] + concrete + expr[class_match.end():]
+            # Recurse if remainder still has metachars
+            sub = _construct_matching_sample(candidate)
+            if sub is not None:
+                candidates.append(sub)
+
+    # Strategy 5: best-effort — strip all metachars, pad.
+    stripped_all = "".join(c for c in expr if c not in _REGEX_METACHARS)
+    if stripped_all:
+        candidates.append(f"x{stripped_all}x")
+
+    # Verify each candidate and return the first match.
+    for cand in candidates:
+        try:
+            if re.search(expr, cand):
+                return cand
+        except re.error:
+            # Invalid regex — let caller fall back to complex.
+            return None
+    return None
 
 
 def _render_test_sh(feasibility: dict) -> str:
@@ -419,22 +497,24 @@ def _render_test_sh(feasibility: dict) -> str:
 **Post-PR:** returns `tuple[str, float]` — `(json_body_str, resolved_threshold)`. All six return paths updated in-place; JSON body semantics unchanged. The MCP wrapper `record_influence_by_content` unpacks the tuple. The first early-return path (`not injected_entry_names`) fires before threshold resolution — returns `0.0` as placeholder; wrapper's diagnostic emission is guarded by `_config.get("memory_influence_debug")` and in practice never emits for zero-entry calls. Test migration required at 6 call sites in `test_memory_server.py` (lines 1775, 1796, 1819, 1836, 1951, 2051): change `result_json = _process...(...)` to `result_json, _ = _process...(...)`.
 
 ### I-3: `_emit_influence_diagnostic` (reworked, Component 2)
-**Signature (changed):**
+**Signature (changed from pre-PR):**
 ```python
 def _emit_influence_diagnostic(
     *,
-    matched: int,
-    resolved_threshold: float,     # NEW parameter; was re-resolved internally pre-PR
     agent_role: str,
+    injected: int,                 # PRESERVED: int count (matches current schema)
+    matched: int,                  # PRESERVED
+    resolved_threshold: float,     # NEW parameter (was internally re-resolved pre-PR)
     feature_type_id: str | None,
-    injected_entry_names: list[str],
 ) -> None:
 ```
+Pre-PR signature had `threshold: float` and `injected: int`. Post-PR renames `threshold` → `resolved_threshold` (indicating FR-6's single-resolution contract) and keeps `injected` as int count. Wrapper call-site change: `threshold=effective` → `resolved_threshold=effective` (same value; passed from helper tuple unpack).
+
 **Invariants:**
 - Log file mode is 0o600 at creation (tested under umask 0o022).
 - Pre-existing log files keep their mode (O_CREAT no-op).
 - Rotation to `.1` occurs when `stat().st_size >= 10 MB` prior to each write.
-- JSON schema: `{ts, agent_role, feature_type_id, threshold, matched, injected}` — NO `recorded` field.
+- JSON schema POST-PR: `{ts, agent_role, injected (int), matched (int), threshold, feature_type_id}` — identical to pre-PR except the `recorded` field is DROPPED. `injected` is an int count, NOT a list (schema preservation).
 - All OSError / IOError in the write path are caught; first failure emits a one-shot stderr warning; subsequent calls in same process silently skip diagnostic writes.
 
 ### I-4: `_render_block` (modified, Component 4)
@@ -485,6 +565,8 @@ PYTHONPATH=plugins/pd/hooks/lib python3 -c 'from semantic_memory import config_u
 | TD-10 | FR-6 return-shape change uses `tuple[str, float]` | Change to dict; add out-param; keep str + sidechannel attr | Tuple preserves all 6 current return paths' JSON body semantics (least-disruption migration); wrapper unpacks cleanly; tests update by adding `, _` to unpack. Preserving `_process_record_influence_by_content` as str-only would require sidechannel for threshold, which is un-Pythonic. |
 | TD-11 | Threshold clamp preserved at `[0.01, 1.0]` | Change to `[0.0, 1.0]` | Current code clamps at `[0.01, 1.0]` (line 321 and :778). Design preserves existing behavior; `threshold=0.0` would match everything, an observable semantic change not justified by the 8-item scope. |
 | TD-12 | Inline-flag detection uses `re.Pattern` not literal-substring list | Exact literals like `"(?i)"`, `"(?s)"` | Combined forms like `(?is)`, `(?imsx)` would slip past exact-literal detection. A single regex `\(\?[aiLmsux]+\)` catches all combinations. |
+| TD-13 | Drop classifier snapshot from SC-14 | Snapshot every intermediate output | `pattern_promotion.classifier` exposes `classify_keywords(entry)` per-entry, not a document-level `classify_entries`. Snapshotting at the correct granularity (`_render_block`, `insert_block`) covers the user-facing markdown outputs; classifier output is an internal intermediate with no separate user-facing contract. |
+| TD-14 | New tests EXTEND existing inline test files; never duplicate module names | Create net-new files under `hooks/tests/` | `test_md_insert.py` and `test_hook.py` already exist at `plugins/pd/hooks/lib/pattern_promotion/generators/`. pd's inline-test convention co-locates tests with SUT. Duplicate module names would cause pytest collection nondeterminism and import-path collisions. Only genuinely new SUT (`config_utils.py`) gets a new test file (`test_config_utils.py` alongside it). |
 
 ## Risks
 
@@ -514,7 +596,7 @@ No new external library or pattern introduced. Design is pure stdlib and follows
 
 Per feasibility advisor + spec Test Migration section:
 
-0. **SC-14 snapshots (FIRST — MUST precede any behavior-affecting change)**: Capture golden-file baselines at `plugins/pd/hooks/tests/fixtures/feature_085_snapshots/`. Run `classify_entries(input_kb)`, `_render_block(...)`, `_md_insert.insert_block(...)` against the PRE-PR codebase and write outputs to `classifier.json`, `render_block.md`, `md_insert.md`. Commit snapshots.
+0. **SC-14 snapshots (FIRST — MUST precede any behavior-affecting change)**: Capture golden-file baselines at `plugins/pd/hooks/lib/semantic_memory/fixtures/feature_085_snapshots/`. Run `_render_block(<clean_entry>, <clean_description>, mode)` and `_md_insert.insert_block(<target_md>, <block_lines>)` against the PRE-PR codebase with inputs from `input_kb.md` fixture; write outputs to `render_block.md` and `md_insert.md`. Classifier snapshot DROPPED (TD-13): `pattern_promotion.classifier` exposes only `classify_keywords(entry: KBEntry)` — per-entry, not per-document — so a document-level snapshot has no corresponding public API. The user-facing surfaces (`_render_block`, `insert_block`) are the correct snapshot targets. Commit snapshots and snapshot-test file (new: `plugins/pd/hooks/lib/semantic_memory/test_feature_085_snapshots.py`) as part of step 0.
 1. **FR-4 foundation**: Create `config_utils.py`. Update `memory_server.py` + `ranking.py` imports + callers. Delete local helpers. Migrate test files (`test_memory_server.py` ~10 refs, `test_ranking.py` ~6 refs). Run pytest to confirm green.
 2. **FR-2 + FR-5 + FR-6 batch**: All touch `memory_server.py` around `_emit_influence_diagnostic`. Apply in order: (a) FR-5 remove `recorded` key; (b) FR-6 change `_process_record_influence_by_content` to return `tuple[str, float]`, update wrapper to unpack, delete lines 771-775 redundant resolution, migrate 6 test callers to unpack; (c) FR-2 `os.open + fdopen` with `os.umask(0)` guard. Run pytest.
 3. **FR-3 rotation**: Extend `_emit_influence_diagnostic` with size-check + `os.rename`. Add rotation test. Run pytest.
