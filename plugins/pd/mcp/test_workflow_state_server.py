@@ -8609,3 +8609,286 @@ class TestFeature088BundleE:
         assert data.get("error_type") == "invalid_reviewer_notes"
         assert isinstance(data.get("message"), str)
         assert isinstance(data.get("recovery_hint"), str)
+
+
+# ---------------------------------------------------------------------------
+# Feature 088 Bundle F: analytics pairing + filter-then-limit
+# ---------------------------------------------------------------------------
+
+
+class TestFeature088BundleF:
+    """Feature 088 Bundle F: _compute_durations pairing + iteration_summary
+    filter-then-limit.
+
+    Covers:
+    - AC-13 (FR-4.1): completed-without-started emits null-duration row with
+      missing_started=True.
+    - AC-14 (FR-4.2): imbalanced started/completed counts produce N result
+      rows via zip_longest.
+    - AC-19 (FR-6.3): _compute_durations has a direct unit test (no MCP
+      plumbing) and its imports live at module scope.
+    - AC-24 (FR-7.1): iteration_summary filters iterations=None BEFORE
+      applying the caller-supplied limit.
+    - AC-25 (FR-7.2): _ANALYTICS_EVENT_SCAN_LIMIT exists at module level.
+    """
+
+    def test_phase_duration_completed_without_started_emits_null_row(self):
+        """AC-13: completed@T1 + completed@T2 with no `started` rows still
+        yields result rows flagged `missing_started=True`, `duration=None`.
+        """
+        import asyncio
+        import workflow_state_server as wss
+
+        db = EntityDatabase(":memory:")
+        # Seed only completed events — NO started rows.
+        db.insert_phase_event(
+            type_id="feature:x-001", project_id="Px",
+            phase="design", event_type="completed",
+            timestamp="2026-04-01T10:00:00Z",
+            iterations=1,
+        )
+        db.insert_phase_event(
+            type_id="feature:x-001", project_id="Px",
+            phase="design", event_type="completed",
+            timestamp="2026-04-01T11:00:00Z",
+            iterations=2,
+        )
+
+        orig_db = wss._db
+        orig_project_id = wss._project_id
+        wss._db = db
+        wss._project_id = "Px"
+        try:
+            result_str = asyncio.run(
+                wss.query_phase_analytics(
+                    query_type="phase_duration",
+                    feature_type_id="feature:x-001",
+                )
+            )
+            result = json.loads(result_str)
+        finally:
+            wss._db = orig_db
+            wss._project_id = orig_project_id
+            db.close()
+
+        # With no started rows, zip_longest pairs each completed with None-s.
+        # Both rows must surface with duration_seconds=None and
+        # missing_started=True.
+        rows = result["results"]
+        assert len(rows) == 2, f"expected 2 rows, got {len(rows)}: {rows!r}"
+        for r in rows:
+            assert r["duration_seconds"] is None, r
+            assert r["missing_started"] is True, r
+            assert r["missing_completed"] is False, r
+            assert r["type_id"] == "feature:x-001"
+            assert r["phase"] == "design"
+            assert r["started_at"] is None
+            assert r["completed_at"] is not None
+
+    def test_phase_duration_imbalanced_pairs_handled(self):
+        """AC-14: 3 started + 2 completed → 3 result rows; the third started
+        has duration_seconds=None, missing_completed=True.
+        """
+        import asyncio
+        import workflow_state_server as wss
+
+        db = EntityDatabase(":memory:")
+        # 3 started
+        for i, ts in enumerate([
+            "2026-04-01T10:00:00Z",
+            "2026-04-01T12:00:00Z",
+            "2026-04-01T14:00:00Z",
+        ], start=1):
+            db.insert_phase_event(
+                type_id="feature:y-002", project_id="Py",
+                phase="design", event_type="started",
+                timestamp=ts,
+            )
+        # Only 2 completed (pair with started[0] and started[1]).
+        db.insert_phase_event(
+            type_id="feature:y-002", project_id="Py",
+            phase="design", event_type="completed",
+            timestamp="2026-04-01T11:00:00Z",  # paired with 10:00 started
+            iterations=1,
+        )
+        db.insert_phase_event(
+            type_id="feature:y-002", project_id="Py",
+            phase="design", event_type="completed",
+            timestamp="2026-04-01T13:00:00Z",  # paired with 12:00 started
+            iterations=1,
+        )
+
+        orig_db = wss._db
+        orig_project_id = wss._project_id
+        wss._db = db
+        wss._project_id = "Py"
+        try:
+            result_str = asyncio.run(
+                wss.query_phase_analytics(
+                    query_type="phase_duration",
+                    feature_type_id="feature:y-002",
+                )
+            )
+            result = json.loads(result_str)
+        finally:
+            wss._db = orig_db
+            wss._project_id = orig_project_id
+            db.close()
+
+        rows = result["results"]
+        assert len(rows) == 3, f"expected 3 rows, got {len(rows)}: {rows!r}"
+
+        # Two rows have valid durations (3600s each); one has None.
+        durations = [r["duration_seconds"] for r in rows]
+        assert durations.count(None) == 1, durations
+        assert durations.count(3600.0) == 2, durations
+
+        # Find the unpaired row — must have missing_completed=True.
+        unpaired = [r for r in rows if r["duration_seconds"] is None]
+        assert len(unpaired) == 1
+        assert unpaired[0]["missing_completed"] is True
+        assert unpaired[0]["missing_started"] is False
+        assert unpaired[0]["started_at"] == "2026-04-01T14:00:00Z"
+        assert unpaired[0]["completed_at"] is None
+
+        # None sorts LAST per the docstring contract.
+        assert rows[-1]["duration_seconds"] is None
+
+    def test_compute_durations_isolated(self):
+        """AC-19: direct unit test of _compute_durations — no MCP plumbing.
+
+        Exercises: (a) normal pairing, (b) missing-started, (c) missing-
+        completed, (d) ValueError path (unparseable timestamp keeps duration
+        as None but still emits row), (e) sort order (None last).
+        """
+        from workflow_state_server import _compute_durations
+
+        events = [
+            # Normal pair → 3600s
+            {"type_id": "f:a", "phase": "design",
+             "event_type": "started", "timestamp": "2026-04-01T10:00:00Z"},
+            {"type_id": "f:a", "phase": "design",
+             "event_type": "completed", "timestamp": "2026-04-01T11:00:00Z"},
+            # Normal pair → 1800s (second cycle of same phase)
+            {"type_id": "f:a", "phase": "design",
+             "event_type": "started", "timestamp": "2026-04-02T10:00:00Z"},
+            {"type_id": "f:a", "phase": "design",
+             "event_type": "completed", "timestamp": "2026-04-02T10:30:00Z"},
+            # Missing-started case for a different (type_id, phase) pair
+            {"type_id": "f:b", "phase": "specify",
+             "event_type": "completed", "timestamp": "2026-04-03T10:00:00Z"},
+            # Missing-completed case
+            {"type_id": "f:c", "phase": "implement",
+             "event_type": "started", "timestamp": "2026-04-04T10:00:00Z"},
+            # Non-started/completed event_type — must be ignored entirely.
+            {"type_id": "f:a", "phase": "design",
+             "event_type": "backward", "timestamp": "2026-04-05T10:00:00Z"},
+        ]
+
+        results = _compute_durations(events)
+
+        # Tally: 2 normal pairs (f:a/design) + 1 missing-started (f:b/specify)
+        # + 1 missing-completed (f:c/implement) = 4 rows. Backward is ignored.
+        assert len(results) == 4, results
+
+        # Extract rows keyed for easier assertion.
+        paired_durations = sorted(
+            [r["duration_seconds"] for r in results
+             if r["duration_seconds"] is not None],
+            reverse=True,
+        )
+        assert paired_durations == [3600.0, 1800.0]
+
+        missing_started_rows = [
+            r for r in results if r["missing_started"] is True
+        ]
+        assert len(missing_started_rows) == 1
+        assert missing_started_rows[0]["type_id"] == "f:b"
+        assert missing_started_rows[0]["phase"] == "specify"
+        assert missing_started_rows[0]["duration_seconds"] is None
+
+        missing_completed_rows = [
+            r for r in results if r["missing_completed"] is True
+        ]
+        assert len(missing_completed_rows) == 1
+        assert missing_completed_rows[0]["type_id"] == "f:c"
+        assert missing_completed_rows[0]["phase"] == "implement"
+        assert missing_completed_rows[0]["duration_seconds"] is None
+
+        # Sort order: non-None durations descending, Nones last.
+        sort_values = [
+            r["duration_seconds"] for r in results
+        ]
+        # First two entries are the 3600 and 1800 (non-None, descending).
+        assert sort_values[0] == 3600.0
+        assert sort_values[1] == 1800.0
+        # Last two entries are None (missing-started / missing-completed).
+        assert sort_values[2] is None
+        assert sort_values[3] is None
+
+    def test_iteration_summary_filters_nones_before_limit(self):
+        """AC-24 (FR-7.1): 10 completed events with 5 iterations=None and 5
+        iterations=3; limit=5 must return all 5 rows with iterations=3.
+
+        Baseline: filter-after-limit (bug) returns 0 rows when the first 5
+        fetched have iterations=None.
+        """
+        import asyncio
+        import workflow_state_server as wss
+
+        db = EntityDatabase(":memory:")
+        # Seed 5 rows with iterations=None FIRST (earliest timestamps, so they
+        # sort to the top of a DESC timestamp order; a filter-after-limit
+        # implementation would fetch only these 5 and return zero).
+        #
+        # query_phase_events orders DESC timestamp, so later timestamps come
+        # first. Put iterations=None rows at the LATER timestamps to make them
+        # dominate a naive limit=5 fetch.
+        for i in range(5):
+            db.insert_phase_event(
+                type_id=f"feature:it-{i:03d}", project_id="Piter",
+                phase="design", event_type="completed",
+                timestamp=f"2026-05-02T1{i}:00:00Z",
+                iterations=None,
+            )
+        for i in range(5):
+            db.insert_phase_event(
+                type_id=f"feature:it-{i+100:03d}", project_id="Piter",
+                phase="design", event_type="completed",
+                timestamp=f"2026-05-01T0{i}:00:00Z",
+                iterations=3,
+            )
+
+        orig_db = wss._db
+        orig_project_id = wss._project_id
+        wss._db = db
+        wss._project_id = "Piter"
+        try:
+            result_str = asyncio.run(
+                wss.query_phase_analytics(
+                    query_type="iteration_summary",
+                    limit=5,
+                )
+            )
+            result = json.loads(result_str)
+        finally:
+            wss._db = orig_db
+            wss._project_id = orig_project_id
+            db.close()
+
+        rows = result["results"]
+        # Pre-fix behavior (filter-after-limit): `rows` would be empty or < 5
+        # because the first 5 fetched have iterations=None. Post-fix: all 5
+        # iterations=3 rows survive.
+        assert len(rows) == 5, (
+            f"expected 5 rows with iterations=3, got {len(rows)}: {rows!r}"
+        )
+        assert all(r["iterations"] == 3 for r in rows), rows
+
+    def test_analytics_event_scan_limit_constant_exists(self):
+        """AC-25 sanity: the module-level _ANALYTICS_EVENT_SCAN_LIMIT constant
+        exists and equals 500 (FR-7.2).
+        """
+        import workflow_state_server as wss
+        assert hasattr(wss, "_ANALYTICS_EVENT_SCAN_LIMIT")
+        assert wss._ANALYTICS_EVENT_SCAN_LIMIT == 500

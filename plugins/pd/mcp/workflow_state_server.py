@@ -12,8 +12,16 @@ import sqlite3
 import sys
 import threading
 import time
+from collections import defaultdict
 from contextlib import asynccontextmanager
+from datetime import datetime
+from itertools import zip_longest
 from pathlib import Path
+
+# Feature 088 FR-7.2: internal cap on phase_events rows fetched for analytics.
+# query_phase_analytics fetches up to this many rows per internal call before
+# applying the caller-supplied `limit` (filter-then-truncate ordering).
+_ANALYTICS_EVENT_SCAN_LIMIT = 500
 
 # Make workflow_engine, transition_gate, entity_registry, semantic_memory
 # importable from hooks/lib/ — safety net for direct invocation and tests.
@@ -1767,15 +1775,21 @@ async def query_phase_analytics(
     resolved_project_id = None if project_id == "*" else (project_id or _project_id)
 
     if query_type == "phase_duration":
+        # Feature 088 FR-4.1/FR-4.2: fetch both event types, merge into a
+        # single list, and let _compute_durations emit rows for unpaired
+        # (type_id, phase) groups via zip_longest + key-union.
         started = _db.query_phase_events(
             type_id=feature_type_id, project_id=resolved_project_id,
-            phase=phase, event_type="started", limit=500,
+            phase=phase, event_type="started",
+            limit=_ANALYTICS_EVENT_SCAN_LIMIT,
         )
         completed = _db.query_phase_events(
             type_id=feature_type_id, project_id=resolved_project_id,
-            phase=phase, event_type="completed", limit=500,
+            phase=phase, event_type="completed",
+            limit=_ANALYTICS_EVENT_SCAN_LIMIT,
         )
-        results = _compute_durations(started, completed)
+        events = list(started) + list(completed)
+        results = _compute_durations(events)
         return json.dumps({
             "query_type": "phase_duration",
             "results": results[:limit],
@@ -1783,9 +1797,14 @@ async def query_phase_analytics(
         })
 
     elif query_type == "iteration_summary":
+        # Feature 088 FR-7.1: fetch with the internal scan limit, filter
+        # `iterations is not None` in Python, sort, THEN apply caller's limit.
+        # Prior ordering (fetch with caller's limit, filter after) could return
+        # fewer rows than expected when None rows occupied the top slots.
         events = _db.query_phase_events(
             type_id=feature_type_id, project_id=resolved_project_id,
-            phase=phase, event_type="completed", limit=limit,
+            phase=phase, event_type="completed",
+            limit=_ANALYTICS_EVENT_SCAN_LIMIT,
         )
         results = [
             {
@@ -1797,6 +1816,7 @@ async def query_phase_analytics(
             for e in events if e.get("iterations") is not None
         ]
         results.sort(key=lambda x: x["iterations"] or 0, reverse=True)
+        results = results[:limit]
         return json.dumps({
             "query_type": "iteration_summary",
             "results": results,
@@ -1835,41 +1855,71 @@ async def query_phase_analytics(
     return json.dumps({"error": f"Unknown query_type: {query_type}"})
 
 
-def _compute_durations(
-    started: list[dict], completed: list[dict],
-) -> list[dict]:
-    """Pair Nth started with Nth completed for each (type_id, phase)."""
-    from collections import defaultdict
-    from datetime import datetime
+def _compute_durations(events: list[dict]) -> list[dict]:
+    """Pair `started` / `completed` phase_events for each (type_id, phase).
 
+    Feature 088 FR-4.1/FR-4.2/FR-6.3:
+    - Accepts a SINGLE merged events list (caller concatenates two filtered
+      query_phase_events calls). Signature change from the old
+      ``(started, completed)`` form is intentional — this function now owns
+      grouping by event_type, so the caller can't silently drop one side.
+    - Iterates the UNION of ``groups_s.keys() | groups_c.keys()`` so
+      (type_id, phase) pairs with a started-but-no-completed, or the reverse,
+      still produce a result row (never silently dropped).
+    - Uses ``itertools.zip_longest(fillvalue=None)`` within each group so
+      imbalanced pairs (e.g., 3 started + 2 completed after a mid-transition
+      crash) yield N rows, with unpaired entries flagged via
+      ``missing_started`` / ``missing_completed`` and ``duration_seconds=None``.
+    - Imports (``defaultdict``, ``datetime``, ``zip_longest``) live at
+      module scope per FR-6.3 so importing this module has a fixed cost
+      regardless of whether the function runs.
+
+    Rows are sorted descending by ``duration_seconds``; rows with None duration
+    sort last (they convey "pairing anomaly" diagnostic, not a measurement).
+    """
     groups_s: dict[tuple, list] = defaultdict(list)
     groups_c: dict[tuple, list] = defaultdict(list)
-    for e in started:
-        groups_s[(e["type_id"], e["phase"])].append(e)
-    for e in completed:
-        groups_c[(e["type_id"], e["phase"])].append(e)
+    for e in events:
+        key = (e["type_id"], e["phase"])
+        if e.get("event_type") == "started":
+            groups_s[key].append(e)
+        elif e.get("event_type") == "completed":
+            groups_c[key].append(e)
+        # Other event_types (backward, skipped, ...) are ignored here —
+        # duration is only meaningful for started/completed pairs.
 
-    results = []
-    for key in groups_s:
-        s_list = sorted(groups_s[key], key=lambda x: x["timestamp"])
+    results: list[dict] = []
+    for key in groups_s.keys() | groups_c.keys():
+        s_list = sorted(groups_s.get(key, []), key=lambda x: x["timestamp"])
         c_list = sorted(groups_c.get(key, []), key=lambda x: x["timestamp"])
-        for s, c in zip(s_list, c_list):
-            try:
-                s_ts = s["timestamp"].replace("Z", "+00:00") if s["timestamp"] else ""
-                c_ts = c["timestamp"].replace("Z", "+00:00") if c["timestamp"] else ""
-                s_dt = datetime.fromisoformat(s_ts)
-                c_dt = datetime.fromisoformat(c_ts)
-                dur = (c_dt - s_dt).total_seconds()
-                results.append({
-                    "type_id": key[0],
-                    "phase": key[1],
-                    "started": s["timestamp"],
-                    "completed": c["timestamp"],
-                    "duration_seconds": dur,
-                })
-            except (ValueError, TypeError):
-                continue
-    results.sort(key=lambda x: x["duration_seconds"], reverse=True)
+        for s, c in zip_longest(s_list, c_list, fillvalue=None):
+            row: dict = {
+                "type_id": key[0],
+                "phase": key[1],
+                "started_at": s["timestamp"] if s else None,
+                "completed_at": c["timestamp"] if c else None,
+                "duration_seconds": None,
+                "missing_started": s is None,
+                "missing_completed": c is None,
+            }
+            if s is not None and c is not None:
+                try:
+                    s_ts = s["timestamp"].replace("Z", "+00:00") if s["timestamp"] else ""
+                    c_ts = c["timestamp"].replace("Z", "+00:00") if c["timestamp"] else ""
+                    s_dt = datetime.fromisoformat(s_ts)
+                    c_dt = datetime.fromisoformat(c_ts)
+                    row["duration_seconds"] = (c_dt - s_dt).total_seconds()
+                except (ValueError, TypeError):
+                    # Mixed-tz / unparseable timestamps leave duration as None
+                    # rather than dropping the row (pairing diagnostic still
+                    # useful for operators).
+                    pass
+            results.append(row)
+
+    # None sorts last: coerce to -inf so legitimate durations stay on top.
+    results.sort(
+        key=lambda x: (x["duration_seconds"] is None, -(x["duration_seconds"] or 0)),
+    )
     return results
 
 
