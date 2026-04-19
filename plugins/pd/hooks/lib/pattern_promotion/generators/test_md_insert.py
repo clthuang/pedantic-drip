@@ -215,3 +215,46 @@ class TestInsertBlockSanitization:
             description="# fake heading",
         )
         assert "<!-- Promoted: Entry Name -->" in result
+
+
+# ---------------------------------------------------------------------------
+# Feature 085 FR-1: entry_name sanitization (SC-2 / AC-H1 / AC-E2)
+# ---------------------------------------------------------------------------
+
+import pytest
+
+from pattern_promotion.generators._md_insert import _render_block
+
+
+class TestEntryNameSanitizationFR1:
+    """_render_block MUST refuse entry_names containing HTML-comment or
+    triple-backtick markers that would corrupt the `<!-- Promoted: X -->`
+    wrapper if interpolated verbatim.
+    """
+
+    def test_render_block_rejects_html_comment_closer(self):
+        """AC-H1: entry_name with `-->` closes the marker prematurely."""
+        with pytest.raises(ValueError, match=r"-->"):
+            _render_block(
+                entry_name="weird -->",
+                description="some description",
+                mode="append-to-list",
+            )
+
+    def test_render_block_rejects_html_comment_opener(self):
+        """entry_name with `<!--` opens an inner comment."""
+        with pytest.raises(ValueError, match=r"<!--"):
+            _render_block(
+                entry_name="<!-- sneaky entry",
+                description="some description",
+                mode="append-to-list",
+            )
+
+    def test_render_block_rejects_triple_backtick(self):
+        """AC-E2: entry_name with triple-backtick escapes the block."""
+        with pytest.raises(ValueError, match=r"```"):
+            _render_block(
+                entry_name="code ```fence",
+                description="some description",
+                mode="append-to-list",
+            )

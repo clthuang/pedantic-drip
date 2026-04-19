@@ -65,6 +65,140 @@ _REQUIRED_KEYS = ("event", "tools", "check_kind", "check_expression")
 _CHECK_EXPR_FORBIDDEN = ("`", "$(", "\x00", "\n", "\r")
 
 
+# Feature 085 FR-7: regex-aware test stub generation.
+#
+# Substrings whose presence in a regex makes constructing a matching
+# sample via stdlib verify-then-fallback unreliable. Classifier is a
+# pure substring / single-regex test — NO `sre_parse` dependency (that
+# module is deprecated in Python 3.12+). False-positives are acceptable
+# because the fallback for "complex" regexes is the safe generic stub
+# + a comment.
+_COMPLEX_REGEX_MARKERS: tuple[str, ...] = (
+    "(?=", "(?!", "(?<=", "(?<!", "(?P", "(?#",
+    "\\1", "\\2", "\\3", "\\4", "\\5",
+    "\\6", "\\7", "\\8", "\\9",
+)
+# Inline-flag detector catches `(?i)`, `(?s)`, `(?is)`, `(?imsx)` etc.
+_INLINE_FLAG_RE = re.compile(r"\(\?[aiLmsux]+\)")
+
+# Marker comment injected into the generated test script when the
+# classifier treats a regex as complex. Exact text is asserted by
+# ACs H9 / E11 / E12.
+_COMPLEX_REGEX_NOTE = (
+    "# NOTE: regex too complex for auto-embedded POSITIVE_INPUT — review manually"
+)
+
+# Generic stub values used when the classifier falls back to complex.
+_GENERIC_POSITIVE_FILE_PATH = "relative/path/file.txt"
+_GENERIC_NEGATIVE_FILE_PATH = "/absolute/path/file.txt"
+_GENERIC_POSITIVE_CONTENT = "TRIGGERING content here"
+_GENERIC_NEGATIVE_CONTENT = "safe content here"
+
+# Regex metacharacters used by Strategy 1 (no-metachar) and Strategy 5
+# (strip-all) in `_construct_matching_sample`.
+_REGEX_METACHARS = set(".^$*+?{}[]|()\\")
+
+
+def _is_complex_regex(expr: str) -> bool:
+    """Classify a regex as complex (lookaround, inline flag, backref)."""
+    for marker in _COMPLEX_REGEX_MARKERS:
+        if marker in expr:
+            return True
+    if _INLINE_FLAG_RE.search(expr):
+        return True
+    return False
+
+
+def _construct_matching_sample(expr: str) -> Optional[str]:
+    """Return a string that matches ``expr`` via stdlib-only strategies.
+
+    Returns ``None`` if no simple strategy yields a verified match.
+    The caller (``_render_test_sh``) MUST still re-check by running
+    ``re.search(expr, candidate)`` before using the sample — this
+    helper may return candidates that pass verification but the
+    outer caller enforces contract.
+
+    Strategies tried in order; first verified match wins:
+      1. No regex metachars → use ``expr`` verbatim.
+      2. Strip leading ``^`` / trailing ``$`` anchors, decode simple
+         escapes like ``\\.`` → ``.``; also try padded variant
+         ``"x{body}x"`` for non-anchored cases.
+      3. Alternation ``A|B`` → recurse on leftmost branch ``A``.
+      4. Character class ``[abc...]`` → substitute first concrete
+         character of the class (skipping ranges and negation),
+         recurse on the remainder.
+      5. Last resort: strip all metachars and pad → ``"x{stripped}x"``.
+    """
+    candidates: list[str] = []
+
+    # Strategy 1: no metachars.
+    if not any(c in _REGEX_METACHARS for c in expr):
+        candidates.append(expr)
+
+    # Strategy 2: strip anchors + decode single-char escapes.
+    # The candidate is a plain string; whether its characters happen to
+    # overlap with regex metacharacters is irrelevant — what matters is
+    # whether `re.search(original_expr, candidate)` matches. The verify
+    # loop at the bottom of this function decides; we just enumerate
+    # plausible candidates.
+    stripped = expr
+    if stripped.startswith("^"):
+        stripped = stripped[1:]
+    if stripped.endswith("$") and not stripped.endswith(r"\$"):
+        stripped = stripped[:-1]
+    # Decode simple escapes like \. → . (but not \d, \w, \s class shorthands).
+    decoded = re.sub(r"\\([.^$*+?{}\[\]|()\\])", r"\1", stripped)
+    if decoded:
+        candidates.append(decoded)
+        # Padded variant helps when the regex lacks explicit anchors
+        # and `re.search` would still find the decoded body within.
+        candidates.append(f"x{decoded}x")
+
+    # Strategy 3: leftmost alternation branch.
+    if "|" in expr and not expr.startswith("\\|"):
+        first_branch = expr.split("|", 1)[0]
+        if first_branch:
+            sub = _construct_matching_sample(first_branch)
+            if sub is not None:
+                candidates.append(sub)
+
+    # Strategy 4: character class substitution.
+    class_match = re.search(r"\[([^\]]+)\]", expr)
+    if class_match:
+        klass = class_match.group(1)
+        # Skip negated classes and empty classes for simplicity.
+        if klass and not klass.startswith("^"):
+            concrete = klass[0]
+            substituted = expr[: class_match.start()] + concrete + expr[class_match.end():]
+            sub = _construct_matching_sample(substituted)
+            if sub is not None:
+                candidates.append(sub)
+
+    # Strategy 4b: drop quantifiers that follow a single literal /
+    # character-class. `a+` → `a`, `foo*` → `foo` (trailing char kept).
+    # Applied AFTER Strategy 4 so the class-substituted expression has
+    # already made the quantified base a plain char.
+    quant_stripped = re.sub(r"([^\\])[+*?]", r"\1", expr)
+    if quant_stripped != expr:
+        sub = _construct_matching_sample(quant_stripped)
+        if sub is not None:
+            candidates.append(sub)
+
+    # Strategy 5: last-resort strip-all-metachars + pad.
+    all_stripped = "".join(c for c in expr if c not in _REGEX_METACHARS)
+    if all_stripped:
+        candidates.append(f"x{all_stripped}x")
+
+    # Verify candidates; return the first that matches.
+    for cand in candidates:
+        try:
+            if re.search(expr, cand):
+                return cand
+        except re.error:
+            return None
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Feasibility validator
 # ---------------------------------------------------------------------------
@@ -274,8 +408,17 @@ def _render_test_sh(
     POSITIVE_INPUT: crafted to match the check (hook must exit non-zero).
     NEGATIVE_INPUT: crafted to NOT match (hook must exit 0).
     The test script fails if either case produces the wrong verdict.
+
+    Feature 085 FR-7: for ``file_path_regex`` and ``content_regex``
+    checks, attempt to construct a POSITIVE_INPUT that actually matches
+    the supplied ``check_expression``. Fall back to a generic stub
+    with a reviewer-facing comment when the regex is classified as
+    complex (lookarounds, inline flags, backreferences) or when
+    construction fails to produce a verified match.
     """
     check_kind = feasibility["check_kind"]
+    check_expression = feasibility.get("check_expression", "")
+    complex_comment_block = ""
 
     # Build synthetic stdin bodies for each case. Keep them simple and
     # illustrative — operators are expected to tune them before relying on
@@ -283,13 +426,25 @@ def _render_test_sh(
     #   POSITIVE_INPUT → hook exit != 0
     #   NEGATIVE_INPUT → hook exit == 0
     if check_kind == "file_path_regex":
-        positive = '{"tool_input":{"file_path":"relative/path/file.txt"}}'
         negative = '{"tool_input":{"file_path":"/absolute/path/file.txt"}}'
+        sample = None
+        if not _is_complex_regex(check_expression):
+            sample = _construct_matching_sample(check_expression)
+        if sample is not None and re.search(check_expression, sample):
+            positive = f'{{"tool_input":{{"file_path":"{sample}"}}}}'
+        else:
+            positive = f'{{"tool_input":{{"file_path":"{_GENERIC_POSITIVE_FILE_PATH}"}}}}'
+            complex_comment_block = _COMPLEX_REGEX_NOTE + "\n"
     elif check_kind == "content_regex":
-        positive = (
-            '{"tool_input":{"content":"TRIGGERING content here"}}'
-        )
-        negative = '{"tool_input":{"content":"safe content here"}}'
+        negative = f'{{"tool_input":{{"content":"{_GENERIC_NEGATIVE_CONTENT}"}}}}'
+        sample = None
+        if not _is_complex_regex(check_expression):
+            sample = _construct_matching_sample(check_expression)
+        if sample is not None and re.search(check_expression, sample):
+            positive = f'{{"tool_input":{{"content":"{sample}"}}}}'
+        else:
+            positive = f'{{"tool_input":{{"content":"{_GENERIC_POSITIVE_CONTENT}"}}}}'
+            complex_comment_block = _COMPLEX_REGEX_NOTE + "\n"
     elif check_kind == "json_field":
         positive = '{"tool_input":{"field":"any-value"}}'
         negative = '{"tool_input":{}}'
@@ -313,6 +468,7 @@ def _render_test_sh(
         f"SCRIPT_DIR=\"$(cd \"$(dirname \"${{BASH_SOURCE[0]}}\")\" && pwd)\"\n"
         f"HOOK=\"$SCRIPT_DIR/../{Path(hook_rel_path).name}\"\n"
         f"\n"
+        f"{complex_comment_block}"
         f"POSITIVE_INPUT='{positive}'\n"
         f"NEGATIVE_INPUT='{negative}'\n"
         f"\n"

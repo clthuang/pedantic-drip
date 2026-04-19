@@ -498,3 +498,95 @@ class TestShellInjectionHardening:
         ok, reason = hook.validate_feasibility(bad)
         assert ok is False
         assert reason is not None
+
+
+# ---------------------------------------------------------------------------
+# Feature 085 FR-7: regex-aware test stub generation (SC-10 / AC-H6..9 / AC-E11/12)
+# ---------------------------------------------------------------------------
+
+import re as _re_stdlib  # avoid shadowing within existing module scope
+
+
+_COMPLEX_NOTE = (
+    "# NOTE: regex too complex for auto-embedded POSITIVE_INPUT — review manually"
+)
+
+
+def _render_test_sh_for(check_kind: str, check_expression: str) -> str:
+    """Helper: build a minimal feasibility dict and render the test script."""
+    feas = {
+        "event": "PreToolUse",
+        "tools": ["Read"],
+        "check_kind": check_kind,
+        "check_expression": check_expression,
+    }
+    # Slug / hook_rel_path are placeholders for the render — what we
+    # assert on is the POSITIVE_INPUT and the presence / absence of
+    # the complex-regex note.
+    return hook._render_test_sh(
+        entry_name="Test Entry",
+        slug="test-slug",
+        hook_rel_path="test-slug.sh",
+        feasibility=feas,
+    )
+
+
+def _extract_positive(script: str) -> str:
+    """Extract the string literal assigned to POSITIVE_INPUT in the script."""
+    m = _re_stdlib.search(r"POSITIVE_INPUT='([^']*)'", script)
+    assert m is not None, f"POSITIVE_INPUT not found in:\n{script}"
+    return m.group(1)
+
+
+class TestRenderTestSimpleRegex:
+    """AC-H6/H7/H8: simple regexes produce a POSITIVE_INPUT that matches."""
+
+    def test_render_test_sh_simple_literal_regex(self):
+        """AC-H6: `\\.env$` should match the generated POSITIVE_INPUT."""
+        script = _render_test_sh_for("file_path_regex", r"\.env$")
+        # For file_path_regex the extractor reads .tool_input.file_path.
+        # The POSITIVE_INPUT is a JSON fragment wrapping a path; we
+        # assert the inner path string matches the regex.
+        m = _re_stdlib.search(r'"file_path":"([^"]*)"', script)
+        assert m is not None
+        path = m.group(1)
+        assert _re_stdlib.search(r"\.env$", path), (
+            f"POSITIVE file_path {path!r} does not match \\.env$"
+        )
+        assert _COMPLEX_NOTE not in script
+
+    def test_render_test_sh_alternation(self):
+        """AC-H7: `foo|bar` should match the generated POSITIVE_INPUT."""
+        script = _render_test_sh_for("content_regex", r"foo|bar")
+        m = _re_stdlib.search(r'"content":"([^"]*)"', script)
+        assert m is not None
+        content = m.group(1)
+        assert _re_stdlib.search(r"foo|bar", content), (
+            f"POSITIVE content {content!r} does not match foo|bar"
+        )
+        assert _COMPLEX_NOTE not in script
+
+    def test_render_test_sh_character_class(self):
+        """AC-H8: `[a-z]+@example\\.com` should match the generated POSITIVE_INPUT."""
+        script = _render_test_sh_for("content_regex", r"[a-z]+@example\.com")
+        m = _re_stdlib.search(r'"content":"([^"]*)"', script)
+        assert m is not None
+        content = m.group(1)
+        assert _re_stdlib.search(r"[a-z]+@example\.com", content), (
+            f"POSITIVE content {content!r} does not match regex"
+        )
+        assert _COMPLEX_NOTE not in script
+
+
+class TestRenderTestComplexRegex:
+    """AC-H9 / AC-E11 / AC-E12: complex regexes fall back with a comment."""
+
+    def test_render_test_sh_inline_flag_complex(self):
+        """AC-H9: `(?i)secret` is complex — comment must be present."""
+        script = _render_test_sh_for("content_regex", r"(?i)secret")
+        assert _COMPLEX_NOTE in script
+
+    def test_render_test_sh_backreference_complex(self):
+        """AC-E11: `(foo)\\1` is complex — comment must be present."""
+        script = _render_test_sh_for("content_regex", r"(foo)\1")
+        assert _COMPLEX_NOTE in script

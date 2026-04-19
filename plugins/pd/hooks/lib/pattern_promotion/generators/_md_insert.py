@@ -12,7 +12,7 @@ rendering inline.
 from __future__ import annotations
 
 import re
-from typing import Literal
+from typing import Final, Literal
 
 InsertionMode = Literal["append-to-list", "new-paragraph-after-heading"]
 
@@ -22,6 +22,14 @@ _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 # Keeps promoted blocks compact and prevents unbounded prompt-injection
 # payloads from corrupting future Claude sessions that read the target.
 _MAX_DESCRIPTION_CHARS = 500
+
+# Feature 085 FR-1: substrings that would corrupt the TD-8 marker
+# `<!-- Promoted: {entry_name} -->` if interpolated verbatim. `-->`
+# closes the HTML comment prematurely; `<!--` opens a nested comment
+# that some parsers reject; triple-backtick escapes an enclosing code
+# fence in markdown. Mirrors the shape of `_CHECK_EXPR_FORBIDDEN` at
+# `generators/hook.py:65`.
+_ENTRY_NAME_FORBIDDEN: Final[tuple[str, ...]] = ("-->", "<!--", "```")
 
 
 def _sanitize_description(text: str) -> str:
@@ -112,7 +120,23 @@ def section_span(text: str, heading_line_idx: int) -> tuple[int, int]:
 
 
 def _render_block(entry_name: str, description: str, mode: InsertionMode) -> list[str]:
-    """Return the list of lines (no trailing newline) to insert."""
+    """Return the list of lines (no trailing newline) to insert.
+
+    Raises ``ValueError`` if ``entry_name`` contains any of the
+    substrings in ``_ENTRY_NAME_FORBIDDEN`` — these would corrupt the
+    TD-8 marker emitted at the head of the block. Refuses to render
+    rather than silently escaping: callers need to know a KB entry was
+    rejected so the operator can fix the heading.
+    """
+    # Feature 085 FR-1: reject entry_names containing marker-breaking
+    # substrings BEFORE doing any other work. Mirror-shape of the
+    # `_CHECK_EXPR_FORBIDDEN` iterate-and-raise at `hook.py:117`.
+    for bad in _ENTRY_NAME_FORBIDDEN:
+        if bad in entry_name:
+            raise ValueError(
+                f"entry_name contains forbidden substring {bad!r}; "
+                f"refusing to render"
+            )
     # Sanitize BEFORE newline-flattening so per-line structural patterns
     # (leading `#`, `---`, ```) can still be detected and escaped.
     sanitized = _sanitize_description(description or "")
