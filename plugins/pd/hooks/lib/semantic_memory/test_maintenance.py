@@ -1725,3 +1725,110 @@ class TestDecayScanLimit:
         assert result["scanned"] == 5
         # And the 5 rows LIMIT-selected all demote (all are stale high).
         assert result["demoted_high_to_medium"] == 5
+
+
+# ---------------------------------------------------------------------------
+# Feature 088 Bundle G — FR-10.1 (strict config coercion + unknown-key warn)
+#                         FR-10.2 (CLI uid check)
+# ---------------------------------------------------------------------------
+
+
+class TestCoerceBoolStrict:
+    """AC-34b: ``_coerce_bool('False', ...)`` MUST fall back to default + warn."""
+
+    def test_coerce_false_capital_string_returns_default_with_warning(self, capsys):
+        """Capital-F ``'False'`` is ambiguous (not in ``_FALSE_VALUES``) — the
+        canonical bug from finding #00096 part B where ``'False'`` was silently
+        treated as truthy.  Must fall back to ``default`` (True here) AND emit
+        the ``ambiguous boolean`` stderr warning.
+        """
+        from semantic_memory.config import _coerce_bool
+
+        result = _coerce_bool("memory_decay_enabled", "False", True)
+
+        assert result is True  # default returned because 'False' is ambiguous
+        captured = capsys.readouterr()
+        assert "ambiguous boolean" in captured.err
+        assert "memory_decay_enabled" in captured.err
+
+
+class TestWarnUnknownKeys:
+    """AC-34: typos like ``memory_decay_enabaled`` MUST emit a stderr warning."""
+
+    def test_unknown_key_emits_warning(self, capsys):
+        """Only the unknown ``memory_decay_enabaled`` typo warns; the correctly-
+        spelled ``memory_decay_enabled`` (present in DEFAULTS) does not.
+        """
+        from semantic_memory.config import _warn_unknown_keys
+
+        _warn_unknown_keys({
+            "memory_decay_enabaled": True,    # typo — warns
+            "memory_decay_enabled": False,    # correct — silent
+        })
+
+        captured = capsys.readouterr()
+        assert "memory_decay_enabaled" in captured.err
+        # The correct key (in DEFAULTS) MUST NOT warn.  Check via a marker
+        # that only the unknown-key warning line would contain:
+        # ``'memory_decay_enabled'`` (single-quoted by ``{key!r}``).
+        assert "'memory_decay_enabled'" not in captured.err
+        # Defense-in-depth: only one warning line (one unknown key).
+        assert captured.err.count("unknown key") == 1
+
+
+class TestForeignUidProjectRootRefuses:
+    """AC-35: ``maintenance._main`` with foreign-uid project_root MUST exit 2."""
+
+    def test_foreign_uid_project_root_refuses(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """Monkeypatch ``os.getuid`` to return 1000 and ``Path.stat`` for the
+        resolved ``project_root`` to return st_uid=2000.  Calling ``_main``
+        (via ``sys.argv``) MUST ``SystemExit(2)`` and emit a stderr warning
+        containing ``REFUSING``.
+        """
+        import os as os_module
+
+        # Use a real directory so .resolve() + is_dir() succeeds.
+        foreign_root = tmp_path / "foreign"
+        foreign_root.mkdir()
+
+        # Stub os.getuid() (called from maintenance._main).
+        monkeypatch.setattr(os_module, "getuid", lambda: 1000)
+
+        # Stub Path.stat() so the resolved project_root reports a foreign uid.
+        real_stat = type(foreign_root).stat
+
+        class _FakeStat:
+            st_uid = 2000
+
+        def _fake_stat(self, *a, **kw):
+            try:
+                resolved = self.resolve()
+            except OSError:
+                resolved = self
+            if resolved == foreign_root.resolve():
+                return _FakeStat()
+            return real_stat(self, *a, **kw)
+
+        monkeypatch.setattr(type(foreign_root), "stat", _fake_stat)
+
+        # Invoke CLI via sys.argv (parser.parse_args() reads sys.argv[1:]).
+        monkeypatch.setattr(
+            "sys.argv",
+            [
+                "semantic_memory.maintenance",
+                "--decay",
+                "--project-root",
+                str(foreign_root),
+            ],
+        )
+
+        with pytest.raises(SystemExit) as excinfo:
+            maintenance._main()
+
+        assert excinfo.value.code == 2
+        captured = capsys.readouterr()
+        assert "REFUSING" in captured.err
+        assert "uid=2000" in captured.err
+        assert "uid=1000" in captured.err

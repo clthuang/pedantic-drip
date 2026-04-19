@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import functools
 import json
+import os
 import sqlite3
 import sys
 import time
@@ -497,6 +498,26 @@ def _main() -> None:
     )
     if not project_root.is_dir():
         sys.exit(1)  # silent exit; session-start sees empty summary
+
+    # Feature 088 FR-10.2 / AC-35: refuse to run with a project_root owned by
+    # a different uid.  Blocks cross-project config poisoning via symlinked /
+    # user-foreign roots (the stat happens AFTER .resolve() so symlinks are
+    # followed first).
+    try:
+        st_uid = project_root.stat().st_uid
+    except OSError as exc:
+        sys.stderr.write(
+            f"[memory-decay] cannot stat project_root {project_root}: "
+            f"{type(exc).__name__}: {exc}\n"
+        )
+        sys.exit(2)
+    current_uid = os.getuid()
+    if st_uid != current_uid:
+        sys.stderr.write(
+            f"[memory-decay] REFUSING: project_root {project_root} owned by "
+            f"uid={st_uid}, running as uid={current_uid}\n"
+        )
+        sys.exit(2)
 
     # read_config takes the project root DIRECTORY (str), not a file path.
     config = read_config(str(project_root))

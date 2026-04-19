@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import os
 import re
+import sys
+from typing import Any
 
 DEFAULTS: dict[str, bool | int | float | str] = {
     "artifacts_root": "docs",
@@ -31,11 +33,66 @@ DEFAULTS: dict[str, bool | int | float | str] = {
     "memory_auto_promote": False,
     "memory_promote_low_threshold": 3,
     "memory_promote_medium_threshold": 5,
+    # Feature 088 Bundle G (FR-10.1, #00102) — memory decay keys.
+    # Registering defaults allows session-start to detect typos like
+    # ``memory_decay_enabaled`` via ``_warn_unknown_keys``.
+    "memory_decay_enabled": False,
+    "memory_decay_high_threshold_days": 30,
+    "memory_decay_medium_threshold_days": 60,
+    "memory_decay_grace_period_days": 14,
+    "memory_decay_dry_run": False,
+    "memory_decay_scan_limit": 100000,
 }
 
 # Precompiled regexes for type coercion (applied after space stripping).
 _RE_INT = re.compile(r"^-?[0-9]+$")
 _RE_FLOAT = re.compile(r"^-?[0-9]*\.[0-9]+$")
+
+# Feature 088 Bundle G (FR-10.1, #00096 part B) — strict boolean coercion sets.
+# Only these exact values (case-sensitive) are accepted; capital variants like
+# ``'False'`` / ``'True'`` are rejected with a stderr warning to surface the
+# historical truthiness bug where ``'False'`` was silently treated as True.
+_TRUE_VALUES: frozenset = frozenset({True, 'true', '1', 1})
+_FALSE_VALUES: frozenset = frozenset({False, 'false', '0', 0, ''})
+
+
+def _coerce_bool(key: str, value: Any, default: bool) -> bool:
+    """Strictly coerce ``value`` to bool with fallback-on-ambiguity.
+
+    Members of ``_TRUE_VALUES`` return True; members of ``_FALSE_VALUES``
+    return False.  Any other value (e.g., ``'False'``, ``'True'``, ``'yes'``)
+    is ambiguous — emit a one-line stderr warning and return ``default``.
+
+    Feature 088 FR-10.1 / AC-34b.
+    """
+    if value in _TRUE_VALUES:
+        return True
+    if value in _FALSE_VALUES:
+        return False
+    sys.stderr.write(
+        f"[pd-config] {key}: ambiguous boolean {value!r}; "
+        f"falling back to default={default}\n"
+    )
+    return default
+
+
+def _warn_unknown_keys(config: dict) -> None:
+    """Emit a stderr warning for each key in ``config`` not present in DEFAULTS.
+
+    Scope filter: only keys beginning with ``memory_`` or ``pd_`` — other
+    namespaces (e.g., ``yolo_mode``) are intentionally tolerated for forward
+    compatibility.  Feature 088 FR-10.1 / AC-34 (e.g., typo
+    ``memory_decay_enabaled``).
+    """
+    for key in sorted(config.keys()):
+        if key in DEFAULTS:
+            continue
+        if not (key.startswith("memory_") or key.startswith("pd_")):
+            continue
+        sys.stderr.write(
+            f"[pd-config] unknown key {key!r}; "
+            f"did you mean one of the registered memory_*/pd_* keys?\n"
+        )
 
 
 def _coerce(raw: str) -> bool | int | float | str:
@@ -111,5 +168,10 @@ def read_config(project_root: str) -> dict:
                 continue
 
             result[key] = _coerce(raw_value)
+
+    # Feature 088 FR-10.1 / AC-34: surface typos like ``memory_decay_enabaled``
+    # so operators see them at session-start instead of silently missing the
+    # real key and keeping the DEFAULTS value.
+    _warn_unknown_keys(result)
 
     return result
