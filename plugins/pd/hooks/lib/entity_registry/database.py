@@ -3060,6 +3060,11 @@ class EntityDatabase:
         source: str = "live",
     ) -> None:
         """Insert a phase event record into the append-only event log."""
+        # Feature 088 FR-2.4 (defense-in-depth): DB-layer reviewer_notes cap.
+        # The MCP entry point in ``_process_complete_phase`` also validates
+        # size, but direct callers bypassing the MCP tool still get protected.
+        if reviewer_notes is not None and len(reviewer_notes) > 10000:
+            raise ValueError("reviewer_notes exceeds 10000 chars")
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         self._conn.execute(
             "INSERT INTO phase_events "

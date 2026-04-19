@@ -8054,9 +8054,11 @@ class TestPhaseEventsDualWrite:
         metadata = json.loads(entity["metadata"])
         assert "specify" in metadata.get("phase_timing", {})
 
-        # stderr should have warning
+        # stderr should have warning (format updated per feature 088 FR-5.1).
         captured = capsys.readouterr()
-        assert "phase_events INSERT failed" in captured.err
+        assert "phase_events dual-write failed for" in captured.err
+        # Response should also flag the partial failure (feature 088 FR-5.1).
+        assert data.get("phase_events_write_failed") is True
 
     def test_ac19_metadata_still_has_phase_timing(self, fresh_setup, tmp_path):
         """AC-19: after complete_phase, metadata still contains phase_timing."""
@@ -8495,3 +8497,115 @@ class TestFeature088BundleD:
         finally:
             wss._db = orig_db
             db.close()
+
+
+# ---------------------------------------------------------------------------
+# Feature 088 Bundle E: dual-write refactor + reviewer_notes hardening
+# ---------------------------------------------------------------------------
+
+
+class TestFeature088BundleE:
+    """Feature 088 Bundle E: transaction safety + reviewer_notes hardening.
+
+    Covers AC-7 (oversized reviewer_notes), AC-15 (dual-write failure commits
+    main transaction), and malformed-JSON reviewer_notes rejection. AC-16
+    (transaction-participation pin) lives in ``test_phase_events.py``.
+    """
+
+    @pytest.fixture
+    def fresh_setup(self, tmp_path):
+        db = EntityDatabase(":memory:")
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        db.register_entity(
+            "feature", "e-001", "Bundle E Test",
+            status="active", project_id="test-proj",
+        )
+        db.create_workflow_phase("feature:e-001", workflow_phase="brainstorm")
+        feat_dir = os.path.join(str(tmp_path), "features", "e-001")
+        os.makedirs(feat_dir, exist_ok=True)
+        with open(os.path.join(feat_dir, ".meta.json"), "w") as f:
+            f.write(
+                '{"id": "e", "slug": "001", "status": "active", "mode": "standard"}'
+            )
+        return db, engine
+
+    def test_dual_write_failure_commits_main_transaction(
+        self, fresh_setup, monkeypatch, capsys,
+    ):
+        """AC-15 (FR-5.1): phase_events failure must NOT roll back entity update.
+
+        Monkeypatches ``insert_phase_event`` to raise ``sqlite3.IntegrityError``,
+        calls ``transition_phase``, and asserts:
+        - entity metadata update persisted (query back)
+        - response has ``phase_events_write_failed: true``
+        - stderr matches the spec-mandated ``[workflow-state] phase_events
+          dual-write failed for`` format
+        """
+        db, engine = fresh_setup
+
+        def raise_integrity_error(**kwargs):
+            raise sqlite3.IntegrityError("simulated UNIQUE violation")
+
+        monkeypatch.setattr(db, "insert_phase_event", raise_integrity_error)
+
+        result = _process_transition_phase(
+            engine, "feature:e-001", "specify", False, db=db,
+        )
+        data = json.loads(result)
+
+        # Main transaction MUST have committed: transitioned + metadata landed.
+        assert data.get("transitioned") is True
+        assert data.get("phase_events_write_failed") is True
+
+        entity = db.get_entity("feature:e-001")
+        metadata = json.loads(entity["metadata"])
+        assert "phase_timing" in metadata
+        assert "specify" in metadata["phase_timing"]
+        assert "started" in metadata["phase_timing"]["specify"]
+
+        # stderr warning matches spec format.
+        import re
+        captured = capsys.readouterr()
+        assert re.search(
+            r"\[workflow-state\] phase_events dual-write failed for",
+            captured.err,
+        ), f"stderr did not match expected pattern: {captured.err!r}"
+
+    def test_complete_phase_rejects_oversized_reviewer_notes(
+        self, fresh_setup,
+    ):
+        """AC-7 (FR-2.4): reviewer_notes >10000 chars returns structured error."""
+        db, engine = fresh_setup
+
+        # 20000 chars — well above the 10000 cap.
+        oversized = "x" * 20000
+        result = _process_complete_phase(
+            engine, "feature:e-001", "brainstorm",
+            db=db, reviewer_notes=oversized,
+        )
+        data = json.loads(result)
+        assert data.get("error") is True
+        assert data.get("error_type") == "oversized_reviewer_notes"
+        assert "exceeds 10000" in data.get("message", "")
+
+        # No phase_events row was written (validation returned early).
+        rows = db.query_phase_events(type_id="feature:e-001")
+        assert rows == []
+
+    def test_complete_phase_rejects_malformed_json_reviewer_notes(
+        self, fresh_setup,
+    ):
+        """FR-2.4 (single-parse with hardened error path): malformed JSON
+        returns ``invalid_reviewer_notes`` error via ``_make_error`` shape.
+        """
+        db, engine = fresh_setup
+
+        result = _process_complete_phase(
+            engine, "feature:e-001", "brainstorm",
+            db=db, reviewer_notes="not-valid-json{",
+        )
+        data = json.loads(result)
+        assert data.get("error") is True
+        assert data.get("error_type") == "invalid_reviewer_notes"
+        assert isinstance(data.get("message"), str)
+        assert isinstance(data.get("recovery_hint"), str)

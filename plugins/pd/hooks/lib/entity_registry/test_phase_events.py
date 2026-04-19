@@ -565,3 +565,100 @@ class TestFeature088Migration10Hardening:
         assert len(bh["reason"]) == 800
         assert len(bh["target_phase"]) == 800
         database.close()
+
+
+# ---------------------------------------------------------------------------
+# Feature 088 Bundle E: DB-layer reviewer_notes guard + transaction participation
+# ---------------------------------------------------------------------------
+
+
+class TestFeature088BundleE:
+    """Feature 088 Bundle E: DB-layer reviewer_notes cap + transaction pin.
+
+    Covers FR-2.4 (DB-layer defense-in-depth) and FR-5.2 / AC-16
+    (``insert_phase_event`` participates in an outer ``db.transaction()``
+    block rather than committing prematurely). The latter is a pin of the
+    existing ``_commit()`` guard at ``database.py:1672-1675`` — no source
+    change is made by this test; it merely locks in current behavior.
+    """
+
+    def test_insert_phase_event_rejects_oversized_reviewer_notes(self, db):
+        """FR-2.4 DB-layer defense: reviewer_notes >10000 chars raises
+        ``ValueError`` before SQL execution.
+        """
+        oversized = "x" * 10001
+        with pytest.raises(ValueError, match="reviewer_notes exceeds 10000 chars"):
+            db.insert_phase_event(
+                type_id="feature:oversized-001",
+                project_id=TEST_PROJECT_ID,
+                phase="specify",
+                event_type="completed",
+                timestamp="2026-04-01T10:00:00Z",
+                reviewer_notes=oversized,
+            )
+
+        # No row was inserted.
+        rows = db._conn.execute(
+            "SELECT * FROM phase_events WHERE type_id = 'feature:oversized-001'"
+        ).fetchall()
+        assert rows == []
+
+        # Exact-boundary sanity: 10000 chars is allowed.
+        at_boundary = "x" * 10000
+        db.insert_phase_event(
+            type_id="feature:boundary-001",
+            project_id=TEST_PROJECT_ID,
+            phase="specify",
+            event_type="completed",
+            timestamp="2026-04-01T10:00:00Z",
+            reviewer_notes=at_boundary,
+        )
+        rows_ok = db._conn.execute(
+            "SELECT * FROM phase_events WHERE type_id = 'feature:boundary-001'"
+        ).fetchall()
+        assert len(rows_ok) == 1
+
+    def test_insert_phase_event_does_not_prematurely_commit_outer_transaction(
+        self, db,
+    ):
+        """AC-16 (FR-5.2): inside ``db.transaction()``, ``insert_phase_event``
+        MUST participate in the outer transaction rather than auto-commit.
+
+        Pins the existing ``_commit()`` guard at ``database.py:1672-1675``
+        which defers to ``self._in_transaction`` (set by the ``transaction()``
+        context manager). A rollback triggered by an exception inside the
+        ``with`` block MUST remove the inserted row.
+        """
+        type_id_under_test = "feature:txn-pin-001"
+
+        # Precondition: no rows for this type_id.
+        pre = db._conn.execute(
+            "SELECT COUNT(*) AS c FROM phase_events WHERE type_id = ?",
+            (type_id_under_test,),
+        ).fetchone()["c"]
+        assert pre == 0
+
+        # Run the transaction wrapper; expect our sentinel to propagate.
+        with pytest.raises(RuntimeError, match="rollback test"):
+            with db.transaction():
+                db.insert_phase_event(
+                    type_id=type_id_under_test,
+                    project_id=TEST_PROJECT_ID,
+                    phase="specify",
+                    event_type="started",
+                    timestamp="2026-04-01T10:00:00Z",
+                )
+                # Force an abort BEFORE the ``with`` block exits — the
+                # outer transaction must roll back, discarding the insert.
+                raise RuntimeError("rollback test")
+
+        # Post-rollback: the inserted row MUST be absent. If the insert had
+        # auto-committed via an unguarded ``self._commit()``, it would persist.
+        post = db._conn.execute(
+            "SELECT COUNT(*) AS c FROM phase_events WHERE type_id = ?",
+            (type_id_under_test,),
+        ).fetchone()["c"]
+        assert post == 0, (
+            "insert_phase_event prematurely committed despite outer "
+            "db.transaction() context manager being active"
+        )

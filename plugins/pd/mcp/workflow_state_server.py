@@ -576,6 +576,12 @@ def _process_transition_phase(
     # (entity_engine.transition_phase checks blockers then delegates).
     transitioned = False
     warning = None
+    # Feature 088 FR-5.1: capture entity, ts, skipped_list OUTSIDE transaction
+    # so the post-commit phase_events dual-write can reference them even if
+    # the transaction aborted before these were populated.
+    entity = None
+    ts: str | None = None
+    skipped_list: list[str] = []
 
     if db is not None:
         with db.transaction():
@@ -619,32 +625,11 @@ def _process_transition_phase(
                 metadata["phase_timing"] = phase_timing
 
                 # Store skipped phases if provided
-                skipped_list: list[str] = []
                 if skipped_phases:
                     skipped_list = json.loads(skipped_phases)
                     metadata["skipped_phases"] = skipped_list
 
                 db.update_entity(feature_type_id, metadata=metadata)
-
-                # Dual-write to phase_events (NFR-3: failure MUST NOT break transition)
-                try:
-                    db.insert_phase_event(
-                        type_id=feature_type_id,
-                        project_id=entity.get("project_id", "__unknown__"),
-                        phase=target_phase,
-                        event_type="started",
-                        timestamp=ts,
-                    )
-                    for skipped in skipped_list:
-                        db.insert_phase_event(
-                            type_id=feature_type_id,
-                            project_id=entity.get("project_id", "__unknown__"),
-                            phase=skipped,
-                            event_type="skipped",
-                            timestamp=ts,
-                        )
-                except Exception as e:
-                    print(f"[workflow-state] phase_events INSERT failed: {e}", file=sys.stderr)
 
                 # Update kanban_column for features based on phase
                 if feature_type_id.startswith("feature:"):
@@ -654,11 +639,45 @@ def _process_transition_phase(
         response = engine.transition_phase(feature_type_id, target_phase, yolo_active)
         transitioned = all(r.allowed for r in response.results)
 
+    # Feature 088 FR-5.1: Dual-write phase_events AFTER main transaction commits.
+    # Failure here MUST NOT roll back the primary workflow write.
+    phase_events_write_failed = False
+    if db is not None and transitioned and entity is not None and ts is not None:
+        # ``.get(k, default)`` does NOT apply default when key is present with
+        # None value; use ``or`` so a None project_id falls through to the
+        # sentinel ``__unknown__`` string.
+        project_id = entity.get("project_id") or "__unknown__"
+        try:
+            db.insert_phase_event(
+                type_id=feature_type_id,
+                project_id=project_id,
+                phase=target_phase,
+                event_type="started",
+                timestamp=ts,
+            )
+            for skipped in skipped_list:
+                db.insert_phase_event(
+                    type_id=feature_type_id,
+                    project_id=project_id,
+                    phase=skipped,
+                    event_type="skipped",
+                    timestamp=ts,
+                )
+        except Exception as exc:
+            phase_events_write_failed = True
+            sys.stderr.write(
+                f"[workflow-state] phase_events dual-write failed for "
+                f"{feature_type_id}:{target_phase}: "
+                f"{type(exc).__name__}: {str(exc)[:200]}\n"
+            )
+
     result: dict = {
         "transitioned": transitioned,
         "results": [_serialize_result(r) for r in response.results],
         "degraded": response.degraded,
     }
+    if phase_events_write_failed:
+        result["phase_events_write_failed"] = True
 
     # Filesystem write AFTER transaction committed
     if transitioned and db is not None:
@@ -741,6 +760,30 @@ def _process_complete_phase(
     completion = None
     warning = None
 
+    # Feature 088 FR-2.4: entry-point reviewer_notes size guard.
+    if reviewer_notes and len(reviewer_notes) > 10000:
+        return _make_error(
+            "oversized_reviewer_notes",
+            f"reviewer_notes size {len(reviewer_notes)} exceeds 10000",
+            "Reduce reviewer_notes payload size",
+        )
+    # Parse JSON exactly once (the original code parsed twice — once for
+    # phase_timing metadata, again for phase_events insert).
+    try:
+        parsed_notes = json.loads(reviewer_notes) if reviewer_notes else None
+    except json.JSONDecodeError as exc:
+        return _make_error(
+            "invalid_reviewer_notes",
+            f"reviewer_notes is not valid JSON: {exc.msg}",
+            "Pass a JSON-serializable payload",
+        )
+
+    # Feature 088 FR-5.1: capture entity and timestamp OUTSIDE transaction
+    # so the post-commit phase_events dual-write can reference them even if
+    # the transaction aborted before these were populated.
+    entity = None
+    ts: str | None = None
+
     # First db.get_entity for UUID resolution stays OUTSIDE transaction
     if db is not None:
         with db.transaction():
@@ -787,27 +830,15 @@ def _process_complete_phase(
             phase_timing[phase]["completed"] = ts
             if iterations is not None:
                 phase_timing[phase]["iterations"] = iterations
-            if reviewer_notes:
-                phase_timing[phase]["reviewerNotes"] = json.loads(reviewer_notes)
+            if parsed_notes is not None:
+                phase_timing[phase]["reviewerNotes"] = parsed_notes
             metadata["phase_timing"] = phase_timing
             metadata["last_completed_phase"] = phase
 
-            # Dual-write to phase_events (NFR-3: failure MUST NOT break completion)
-            try:
-                db.insert_phase_event(
-                    type_id=feature_type_id,
-                    project_id=entity.get("project_id", "__unknown__"),
-                    phase=phase,
-                    event_type="completed",
-                    timestamp=ts,
-                    iterations=iterations,
-                    reviewer_notes=json.dumps(json.loads(reviewer_notes)) if reviewer_notes else None,
-                )
-            except Exception as e:
-                print(f"[workflow-state] phase_events INSERT failed: {e}", file=sys.stderr)
-
-            # Update entity metadata (status='completed' handled by entity engine
-            # for features via frozen engine, and for tasks via _task_complete)
+            # Feature 088 FR-5.1 (ordering swap): update_entity(metadata) MUST
+            # run INSIDE the transaction; insert_phase_event is dispatched
+            # AFTER the transaction commits (below). This prevents a phase_events
+            # failure from silently rolling back the primary workflow write.
             db.update_entity(feature_type_id, metadata=metadata)
 
             # Update kanban_column for features based on completed phase
@@ -818,7 +849,35 @@ def _process_complete_phase(
     else:
         state = engine.complete_phase(feature_type_id, phase)
 
+    # Feature 088 FR-5.1: Dual-write phase_events AFTER main transaction commits.
+    # Failure here MUST NOT roll back the primary workflow write.
+    phase_events_write_failed = False
+    if db is not None and entity is not None and ts is not None:
+        project_id = entity.get("project_id") or "__unknown__"
+        try:
+            db.insert_phase_event(
+                type_id=feature_type_id,
+                project_id=project_id,
+                phase=phase,
+                event_type="completed",
+                timestamp=ts,
+                iterations=iterations,
+                reviewer_notes=(
+                    json.dumps(parsed_notes) if parsed_notes is not None else None
+                ),
+            )
+        except Exception as exc:
+            phase_events_write_failed = True
+            sys.stderr.write(
+                f"[workflow-state] phase_events dual-write failed for "
+                f"{feature_type_id}:{phase}: "
+                f"{type(exc).__name__}: {str(exc)[:200]}\n"
+            )
+
     result = _serialize_state(state)
+
+    if phase_events_write_failed:
+        result["phase_events_write_failed"] = True
 
     # Add cascade info when entity engine was used
     if completion is not None:
