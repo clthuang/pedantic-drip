@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import MAXYEAR, datetime, timedelta, timezone
 
 import pytest
 
@@ -427,12 +427,21 @@ class TestSelectCandidates:
             created_at=stale_med_ts,
         )
 
-        result = maintenance._select_candidates(
-            fresh_db,
+        # Feature 088 FR-3.3 / FR-9.6: _select_candidates is now a generator
+        # (no now_iso); bucket partitioning moved to _partition_candidates.
+        rows = list(
+            maintenance._select_candidates(
+                fresh_db,
+                high_cutoff=high_cutoff,
+                med_cutoff=med_cutoff,
+                grace_cutoff=grace_cutoff,
+            )
+        )
+        result = maintenance._partition_candidates(
+            rows,
             high_cutoff=high_cutoff,
             med_cutoff=med_cutoff,
             grace_cutoff=grace_cutoff,
-            now_iso=now_iso,
         )
 
         assert result["import_count"] == 1
@@ -454,7 +463,12 @@ NOW = datetime(2026, 4, 16, 12, 0, 0, tzinfo=timezone.utc)
 
 
 def _iso(dt: datetime) -> str:
-    return dt.isoformat()
+    # Feature 088 FR-3.1: Z-suffix UTC format (matches production
+    # ``maintenance._iso_utc`` so tests that assert ``updated_at == _iso(NOW)``
+    # compare against the same format ``decay_confidence`` now writes).
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc)
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _days_ago(days: float, *, base: datetime = NOW) -> str:
@@ -1590,3 +1604,124 @@ class TestCliProcessLevelZeroOverhead:
         assert not (
             home / ".claude" / "pd" / "memory" / "memory.db"
         ).exists()
+
+
+# ---------------------------------------------------------------------------
+# Feature 088 Bundle B — FR-3 (timestamp/overflow) + FR-9.6 (scan_limit)
+# ---------------------------------------------------------------------------
+
+
+class TestDecayOverflowGuard:
+    """AC-11: OverflowError/ValueError in cutoff arithmetic → error dict."""
+
+    def test_overflow_config_returns_error_dict(
+        self, fresh_db, capsys, monkeypatch
+    ):
+        """FR-3.2: pathological ``now - timedelta(days=...)`` that overflows
+        ``datetime`` range MUST NOT crash — return the zero-diag error dict.
+
+        The production clamp ``(1, 365)`` for threshold days would prevent
+        the pathological config from reaching ``timedelta()``, so this test
+        widens the clamp via a pass-through monkeypatch so the raw
+        ``10_000_000`` survives and actually hits the overflow branch.
+        """
+        # Pass-through: return int(config[key]) verbatim for threshold keys.
+        def _no_clamp(config, key, default, *, clamp=None, warned):
+            return int(config.get(key, default))
+
+        monkeypatch.setattr(maintenance, "_resolve_int_config", _no_clamp)
+
+        cfg = _enabled_config(
+            memory_decay_high_threshold_days=10_000_000,
+            memory_decay_medium_threshold_days=10_000_000,
+            memory_decay_grace_period_days=10_000_000,
+        )
+        # datetime(MAXYEAR, 12, 31) - timedelta(days=10_000_000) → OverflowError.
+        far_future = datetime(MAXYEAR, 12, 31, 0, 0, 0, tzinfo=timezone.utc)
+
+        result = maintenance.decay_confidence(
+            fresh_db, cfg, now=far_future
+        )
+
+        assert "error" in result
+        assert result["demoted_high_to_medium"] == 0
+        assert result["demoted_medium_to_low"] == 0
+        assert result["scanned"] == 0
+
+        captured = capsys.readouterr()
+        assert "[memory-decay]" in captured.err
+        assert (
+            "overflow" in captured.err.lower()
+            or "OverflowError" in captured.err
+        )
+
+
+class TestDecayExactThresholdBoundary:
+    """AC-37: last_recalled_at == cutoff is NOT stale (strict ``<``)."""
+
+    def test_exact_threshold_boundary_is_not_stale(self, fresh_db):
+        """Seed an entry with ``last_recalled_at = _iso_utc(NOW - 30 days)``
+        EXACTLY.  Decay's SQL guard is ``last_recalled_at < high_cutoff``
+        (strict <) — boundary equality MUST NOT demote.  Mutation of ``<``
+        to ``<=`` at maintenance.py:259/262 is caught by this test.
+        """
+        boundary_ts = maintenance._iso_utc(NOW - timedelta(days=30))
+        _seed_entry(
+            fresh_db,
+            entry_id="e1",
+            confidence="high",
+            last_recalled_at=boundary_ts,
+            created_at=boundary_ts,
+        )
+
+        result = maintenance.decay_confidence(
+            fresh_db, _enabled_config(), now=NOW
+        )
+
+        assert result["demoted_high_to_medium"] == 0
+        assert result["demoted_medium_to_low"] == 0
+        row = _get_row(fresh_db, "e1")
+        assert row["confidence"] == "high"
+
+
+class TestDecayScanLimit:
+    """AC-32: ``memory_decay_scan_limit`` caps the number of rows scanned."""
+
+    def test_scan_limit_caps_result_set(self, fresh_db, monkeypatch):
+        """Seed 10 stale-high entries, pass ``memory_decay_scan_limit=5``
+        in config (bypassing the production clamp via monkeypatch so the raw
+        value survives).  Assert ``scanned == 5`` — the ``LIMIT ?`` clause
+        in ``_select_candidates`` caps the result set regardless of how many
+        rows match the WHERE predicate.
+        """
+        stale = _days_ago(31)
+        for i in range(10):
+            _seed_entry(
+                fresh_db,
+                entry_id=f"e-{i}",
+                confidence="high",
+                last_recalled_at=stale,
+                created_at=stale,
+            )
+
+        # The production ``_resolve_int_config`` clamp is (1000, 10_000_000)
+        # so a raw config value of 5 would be clamped up to 1000.  Replace it
+        # with a pass-through that returns ``config[key]`` verbatim for this
+        # single key so the LIMIT=5 behavior can be exercised directly.
+        original = maintenance._resolve_int_config
+
+        def _pass_through_scan_limit(config, key, default, *, clamp=None, warned):
+            if key == "memory_decay_scan_limit":
+                return int(config.get(key, default))
+            return original(config, key, default, clamp=clamp, warned=warned)
+
+        monkeypatch.setattr(
+            maintenance, "_resolve_int_config", _pass_through_scan_limit
+        )
+
+        cfg = _enabled_config(memory_decay_scan_limit=5)
+        result = maintenance.decay_confidence(fresh_db, cfg, now=NOW)
+
+        assert result["scanned"] == 5
+        # And the 5 rows LIMIT-selected all demote (all are stale high).
+        assert result["demoted_high_to_medium"] == 5
