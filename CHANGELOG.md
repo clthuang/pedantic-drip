@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- SessionStart resume hook error after /clear or /compact: ignore SIGPIPE so the hook exits cleanly when CC closes stdout early
+
 ## [4.15.7] - 2026-04-19
 
 ### Fixed
