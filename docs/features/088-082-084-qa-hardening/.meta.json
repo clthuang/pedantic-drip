@@ -2,10 +2,11 @@
   "id": "088",
   "slug": "082-084-qa-hardening",
   "mode": "full",
-  "status": "active",
+  "status": "completed",
   "created": "2026-04-19T07:54:02.389773+00:00",
   "branch": "feature/088-082-084-qa-hardening",
-  "lastCompletedPhase": "implement",
+  "completed": "2026-04-19T10:22:11.050596+00:00",
+  "lastCompletedPhase": "finish",
   "phases": {
     "brainstorm": {
       "started": "2026-04-19T07:54:02.389105+00:00"
@@ -26,6 +27,9 @@
     "implement": {
       "completed": "2026-04-19T10:17:33.267751+00:00",
       "iterations": 1
+    },
+    "finish": {
+      "completed": "2026-04-19T10:22:11.050596+00:00"
     }
   }
 }
