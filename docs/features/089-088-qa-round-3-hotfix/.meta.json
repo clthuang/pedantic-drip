@@ -1,0 +1,17 @@
+{
+  "id": "089",
+  "slug": "088-qa-round-3-hotfix",
+  "mode": "full",
+  "status": "active",
+  "created": "2026-04-19T10:35:09.886470+00:00",
+  "branch": "feature/089-088-qa-round-3-hotfix",
+  "lastCompletedPhase": null,
+  "phases": {
+    "brainstorm": {
+      "started": "2026-04-19T10:35:09.886239+00:00"
+    },
+    "specify": {
+      "started": "2026-04-19T10:35:13.253789+00:00"
+    }
+  }
+}
