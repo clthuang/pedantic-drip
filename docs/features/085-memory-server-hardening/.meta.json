@@ -1,0 +1,15 @@
+{
+  "id": "085",
+  "slug": "memory-server-hardening",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-04-19T03:06:27.604206+00:00",
+  "branch": "feature/085-memory-server-hardening",
+  "brainstorm_source": "docs/brainstorms/20260419-105300-memory-server-hardening.prd.md",
+  "lastCompletedPhase": null,
+  "phases": {
+    "brainstorm": {
+      "started": "2026-04-19T03:06:27.603092+00:00"
+    }
+  }
+}

@@ -13,7 +13,7 @@ Feature 080 (`/pd:promote-pattern` + memory influence logging) left 8 post-QA re
 
 - [ ] **SC-3**: `influence-debug.log` created with mode `0o600` atomically under ambient umask `0o022` — pytest sets `os.umask(0o022)` in setup, then calls `_emit_influence_diagnostic` on a fresh tmp_path log, asserts `os.stat(path).st_mode & 0o777 == 0o600`.
 
-- [ ] **SC-4**: `_emit_influence_diagnostic` rotates to `.1` at size ≥ 10 MB — pytest pre-seeds tmp_path log with 10.5 MB content, invokes diagnostic, asserts `.1` exists (size ≈ 10.5 MB) and primary log size ≈ 1 line.
+- [ ] **SC-4**: `_emit_influence_diagnostic` rotates to `.1` at size ≥ 10 MB — pytest pre-seeds tmp_path log with 10.5 MB content under umask `0o022`, invokes diagnostic, asserts: (a) `.1` exists with size ≈ 10.5 MB, (b) primary log size ≈ 1 line, (c) `os.stat(log_path).st_mode & 0o777 == 0o600` on the newly created primary log (FR-2's 0o600 invariant applies post-rotation too, since rotation triggers a fresh creation).
 
 - [ ] **SC-5**: `plugins/pd/hooks/lib/semantic_memory/config_utils.py` exists and exports `resolve_float_config`; local duplicates deleted; no dangling references. Verified by TWO shell assertions:
   - (a) `grep -rE 'def (_resolve_float_config|_resolve_weight|_warn_and_default|_ranker_warn_and_default)\b' plugins/pd/mcp/memory_server.py plugins/pd/hooks/lib/semantic_memory/ranking.py | wc -l` → `0`
@@ -129,7 +129,7 @@ Migration approach: direct rewrite to import and call `resolve_float_config` fro
 **AC-H9: Regex-aware test stub generation (inline flag — complex)**
 - **Given** `check_expression=r"(?i)secret"`
 - **When** `_render_test_sh(...)` runs
-- **Then** `POSITIVE_INPUT` falls back to generic non-matching string AND generated script contains the comment `# NOTE: regex too complex for auto-embedded POSITIVE_INPUT — review manually`.
+- **Then** `POSITIVE_INPUT` falls back to the current generic stub string (which may or may not match the expression — the generated script is NOT asserted to pass for complex regexes; only the presence of the comment is asserted) AND generated script contains the comment `# NOTE: regex too complex for auto-embedded POSITIVE_INPUT — review manually`. This aligns with FR-7's intent to document the limitation without breaking the test.
 
 **AC-H10: docs-sync regression guard active (threshold literal)**
 - **Given** a developer reintroduces literal `threshold=0.70` in `plugins/pd/mcp/memory_server.py` (a non-test `.py` file)
