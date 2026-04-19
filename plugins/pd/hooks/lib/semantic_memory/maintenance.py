@@ -13,13 +13,15 @@ pattern). Dedup flags persist across invocations within a single process —
 see spec FR-8a for the authoritative write-owner / reset-policy table.
 
 Cross-reference to 081 (refresh.py):
-- ``_warn_and_default`` and ``_resolve_int_config`` mirror refresh.py:127-183
-  verbatim; only the stderr prefix differs (``[memory-decay]`` vs
-  ``[refresh]``) per spec FR-8 near-identical-reuse contract.
+- ``_warn_and_default`` and ``_resolve_int_config`` share a single
+  implementation at ``semantic_memory._config_utils`` (feature 088 FR-6.7);
+  each caller binds its own stderr prefix (``[memory-decay]`` vs
+  ``[refresh]``) and clamp-warning policy via ``functools.partial``.
 """
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import sqlite3
 import sys
@@ -27,6 +29,10 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from semantic_memory._config_utils import (
+    _resolve_int_config as _resolve_int_config_core,
+    _warn_and_default as _warn_and_default_core,
+)
 from semantic_memory.database import MemoryDatabase
 
 # ---------------------------------------------------------------------------
@@ -58,75 +64,27 @@ _decay_error_warned: bool = False
 
 
 # ---------------------------------------------------------------------------
-# Stubs — implementations land in Phase 1/3 tasks (TDD red→green).
+# Config helpers (shared with refresh.py via _config_utils; prefix/clamp
+# policy bound per caller via functools.partial)
 # ---------------------------------------------------------------------------
 
 
-def _warn_and_default(key: str, raw, default: int, warned: set[str]) -> int:
-    """Emit one stderr warning (per-key-deduped) and return ``default``.
-
-    Called from ``_resolve_int_config`` on any invalid-value path.  Mirrors
-    refresh.py:127-140 verbatim; only the stderr prefix differs
-    (``[memory-decay]`` vs ``[refresh]``) per spec FR-8.
-    """
-    if key not in warned:
-        sys.stderr.write(
-            f"[memory-decay] config field {key!r} value {raw!r} "
-            f"is not an int; using default {default}\n"
-        )
-        warned.add(key)
-    return default
-
-
-def _resolve_int_config(
-    config: dict,
-    key: str,
-    default: int,
-    *,
-    clamp: tuple[int, int] | None = None,
-    warned: set[str],
-) -> int:
-    """Resolve an int-valued config field with bool rejection + dedup warning.
-
-    Body mirrors refresh._resolve_int_config (refresh.py:143-183) verbatim —
-    spec FR-8 near-identical reuse contract.  Only stderr prefix differs
-    (``[memory-decay]`` via ``_warn_and_default`` copy).
-
-    Accepts ``int`` and numeric strings parseable via ``int(raw)``.  Rejects
-    ``bool`` (bool-is-int-subclass trap) and ``float`` (this is the int
-    variant; 5.7 is not a valid int).
-
-    ``clamp`` — optional ``(min, max)`` tuple.  Out-of-range values are
-    clamped SILENTLY (no warning) — operator-tuned values get corrected.
-    """
-    raw = config.get(key, default)
-
-    # Bool rejection MUST come first: bool is int subclass, isinstance(True, int)
-    # is True.  Without this, True would coerce to 1.
-    if isinstance(raw, bool):
-        value = _warn_and_default(key, raw, default, warned)
-    elif isinstance(raw, int):
-        value = raw
-    elif isinstance(raw, str):
-        try:
-            value = int(raw)
-        except ValueError:
-            value = _warn_and_default(key, raw, default, warned)
-    else:
-        # float, None, list, dict, ... → reject with warning
-        value = _warn_and_default(key, raw, default, warned)
-
-    if clamp is not None:
-        lo, hi = clamp
-        clamped = max(lo, min(hi, value))
-        if clamped != value and key not in warned:
-            sys.stderr.write(
-                f"[memory-decay] config field {key!r} value {value} "
-                f"out of range [{lo}, {hi}]; clamped to {clamped}\n"
-            )
-            warned.add(key)
-        value = clamped
-    return value
+# Shared config helpers bound with the maintenance caller's prefix + clamp
+# policy (feature 088 FR-6.7).  Implementation lives in ``_config_utils.py``;
+# ``functools.partial`` preserves the caller-visible signatures
+# (``_warn_and_default(key, raw, default, warned)`` and
+# ``_resolve_int_config(config, key, default, *, clamp=None, warned)``) so
+# tests that reference ``maintenance._warn_and_default`` /
+# ``maintenance._resolve_int_config`` continue to work unchanged.
+#
+# Divergence from ``refresh.py`` preserved per spec FR-8 near-identical-reuse
+# contract: stderr prefix ``[memory-decay]`` and ``warn_on_clamp=True``.
+_warn_and_default = functools.partial(
+    _warn_and_default_core, prefix="[memory-decay]"
+)
+_resolve_int_config = functools.partial(
+    _resolve_int_config_core, prefix="[memory-decay]", warn_on_clamp=True
+)
 
 
 def _emit_decay_diagnostic(diag: dict) -> None:

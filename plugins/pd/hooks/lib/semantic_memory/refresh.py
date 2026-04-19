@@ -28,6 +28,7 @@ the helpers here.
 """
 from __future__ import annotations
 
+import functools
 import json
 import re
 import sys
@@ -35,6 +36,10 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from semantic_memory._config_utils import (
+    _resolve_int_config as _resolve_int_config_core,
+    _warn_and_default as _warn_and_default_core,
+)
 from semantic_memory.database import MemoryDatabase
 from semantic_memory.embedding import EmbeddingProvider
 from semantic_memory.ranking import RankingEngine
@@ -125,63 +130,23 @@ def build_refresh_query(
 # ---------------------------------------------------------------------------
 
 
-def _warn_and_default(
-    key: str, raw, default: int, warned: set[str]
-) -> int:
-    """Emit one stderr warning (per-key-deduped) and return ``default``.
-
-    Called from ``_resolve_int_config`` on any invalid-value path.
-    """
-    if key not in warned:
-        sys.stderr.write(
-            f"[refresh] config field {key!r} value {raw!r} "
-            f"is not an int; using default {default}\n"
-        )
-        warned.add(key)
-    return default
-
-
-def _resolve_int_config(
-    config: dict,
-    key: str,
-    default: int,
-    *,
-    clamp: tuple[int, int] | None = None,
-    warned: set[str],
-) -> int:
-    """Resolve an int-valued config field with bool rejection + dedup warning.
-
-    Accepts ``int`` and numeric strings parseable via ``int(raw)``.  Rejects
-    ``bool`` (Python bool is int subclass; must filter before int branch)
-    and ``float`` (this is an int helper — 5.7 is not a valid int).  Invalid
-    values emit one stderr warning per key per process (via
-    ``_warn_and_default``) and return ``default``.
-
-    ``clamp`` — optional ``(min, max)`` tuple.  Out-of-range values are
-    clamped SILENTLY (no warning) — operator-tuned values get corrected.
-    """
-    raw = config.get(key, default)
-
-    # Bool rejection MUST come first: bool is an int subclass, so
-    # isinstance(True, int) is True.  Without this, True would coerce to 1.
-    if isinstance(raw, bool):
-        value = _warn_and_default(key, raw, default, warned)
-    elif isinstance(raw, int):
-        # Pure int — accept.
-        value = raw
-    elif isinstance(raw, str):
-        try:
-            value = int(raw)
-        except ValueError:
-            value = _warn_and_default(key, raw, default, warned)
-    else:
-        # float, None, list, dict, ... → reject with warning
-        value = _warn_and_default(key, raw, default, warned)
-
-    if clamp is not None:
-        lo, hi = clamp
-        value = max(lo, min(hi, value))
-    return value
+# Shared config helpers bound with the refresh caller's prefix + clamp
+# policy (feature 088 FR-6.7).  Implementation lives in ``_config_utils.py``;
+# ``functools.partial`` preserves the caller-visible signatures
+# (``_warn_and_default(key, raw, default, warned)`` and
+# ``_resolve_int_config(config, key, default, *, clamp=None, warned)``) so
+# tests that reference ``refresh._warn_and_default`` /
+# ``refresh._resolve_int_config`` continue to work unchanged.
+#
+# Divergence from ``maintenance.py`` preserved: stderr prefix ``[refresh]``
+# and ``warn_on_clamp=False`` (clamp is silent — operator-tuned values get
+# corrected without noise).
+_warn_and_default = functools.partial(
+    _warn_and_default_core, prefix="[refresh]"
+)
+_resolve_int_config = functools.partial(
+    _resolve_int_config_core, prefix="[refresh]", warn_on_clamp=False
+)
 
 
 # ---------------------------------------------------------------------------
