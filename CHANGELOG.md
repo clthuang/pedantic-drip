@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.15.9] - 2026-04-19
+
 ### Added
 - Docs-sync regression guards in `validate.sh`: block `threshold=0.70` literal in non-test Python files; require >= 3 `memory_influence_*` references in README_FOR_DEV.md
 - Circular-import smoke test in `validate.sh` covering `semantic_memory.config_utils` and `ranking` boundaries
