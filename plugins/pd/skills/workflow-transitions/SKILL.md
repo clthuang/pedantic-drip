@@ -400,14 +400,29 @@ After Step 3 (Phase Summary) completes:
       })
       ```
    e. **Record backward event for analytics:**
-      After updating backward_history, call `record_backward_event` to record the backward transition in the phase_events table:
+      After updating backward_history, resolve `project_id` explicitly BEFORE calling `record_backward_event` (the MCP tool no longer accepts `project_id` from the caller — it is resolved server-side from the entity record per feature 088 FR-2.3; this block ensures the skill layer does not rely on an undefined variable and preserves traceability for logging/debugging):
+      ```
+      # Resolve project_id in this order:
+      #   (a) read from feature .meta.json if populated,
+      #   (b) else call get_entity(feature_type_id) and extract project_id,
+      #   (c) else fall back to None (MCP validates server-side).
+      project_id = None
+      try:
+        meta = read_json(f"{pd_artifacts_root}/features/{id}-{slug}/.meta.json")
+        project_id = meta.get("project_id")  # may be None if not populated
+      except (FileNotFoundError, JSONDecodeError):
+        project_id = None
+      if not project_id:
+        entity = get_entity(feature_type_id)
+        project_id = entity.get("project_id") if entity else None
+      ```
+      Then call `record_backward_event` (project_id is not passed — MCP resolves it from the entity record):
       ```
       record_backward_event(
         type_id=feature_type_id,
         source_phase=current_phase,
         target_phase=reviewer_response.backward_to,
         reason=reviewer_response.backward_reason,
-        project_id=project_id
       )
       ```
       If the call fails, log a warning and continue (analytics are best-effort).

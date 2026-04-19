@@ -8091,7 +8091,6 @@ class TestRecordBackwardEvent:
                     source_phase="design",
                     target_phase="specify",
                     reason="scope gap",
-                    project_id="test-proj",
                 )
             )
             result = json.loads(result_str)
