@@ -151,3 +151,68 @@ write_hook_state() {
 install_err_trap() {
     trap 'echo "{}" 2>/dev/null; exit 0' ERR
 }
+
+# Emit a Claude Code hook JSON response with hookEventName guaranteed.
+#
+# Feature 087: wraps a user-supplied payload inside `hookSpecificOutput`
+# and ALWAYS includes the required `hookEventName` field. Using this
+# helper prevents the class of CC schema-validation errors documented in:
+#   docs/rca/20260419-hookSpecificOutput-missing-hookEventName-round2.md
+#
+# Args:
+#   $1 — event name (e.g. "PreToolUse", "PostToolUse", "SessionStart",
+#        "EnterPlanMode", "ExitPlanMode"). MUST match the event the hook
+#        is registered for; CC's schema validator rejects mismatches.
+#   $2 — optional JSON body for hookSpecificOutput (a JSON object, e.g.
+#        '{"permissionDecision":"allow"}'). Omit or pass "{}" for none.
+#
+# Exits non-zero (return 2) with a stderr message if:
+#   - event name is empty
+#   - payload is not a JSON object (doesn't start with `{`)
+#
+# Usage:
+#   emit_hook_json "PreToolUse" '{"permissionDecision":"allow"}'
+emit_hook_json() {
+    local event="${1:-}"
+    local payload="${2:-}"
+    # Use a safe default (empty object) if payload is absent or empty.
+    [[ -z "$payload" ]] && payload='{}'
+
+    if [[ -z "$event" ]]; then
+        echo "emit_hook_json: event name required" >&2
+        return 2
+    fi
+
+    # Validate payload shape lightly (object literal).
+    if [[ "${payload:0:1}" != "{" ]]; then
+        echo "emit_hook_json: payload must be a JSON object (got: ${payload:0:40})" >&2
+        return 2
+    fi
+
+    # Prefer jq for correctness; fall back to string splicing if jq absent.
+    if command -v jq >/dev/null 2>&1; then
+        # `$payload` is parsed as JSON via --argjson; jq errors non-zero on invalid.
+        local out
+        if ! out=$(jq -cn \
+            --arg evt "$event" \
+            --argjson payload "$payload" \
+            '{hookSpecificOutput: ($payload + {hookEventName: $evt})}' 2>/dev/null); then
+            echo "emit_hook_json: invalid JSON payload" >&2
+            return 2
+        fi
+        printf '%s\n' "$out"
+    else
+        # Fallback: splice hookEventName as the first member of payload.
+        # JSON object member order is not significant, so prepending is safe.
+        local inner="${payload#\{}"
+        inner="${inner%\}}"
+        # Trim leading whitespace.
+        inner="${inner#"${inner%%[![:space:]]*}"}"
+
+        if [[ -z "$inner" ]]; then
+            printf '{"hookSpecificOutput":{"hookEventName":"%s"}}\n' "$event"
+        else
+            printf '{"hookSpecificOutput":{"hookEventName":"%s",%s}}\n' "$event" "$inner"
+        fi
+    fi
+}

@@ -848,6 +848,38 @@ if ! PYTHONPATH=plugins/pd/hooks/lib python3 -c 'from semantic_memory import con
     echo -e "${RED}FAIL: circular import detected in semantic_memory.config_utils${NC}"
     exit 1
 fi
+
+# --- hook JSON schema: hookSpecificOutput must include hookEventName (feature 087 RCA) ---
+# Per CC schema: every hook EMITTING `hookSpecificOutput` MUST include
+# `hookEventName` inside the same block. Missing the field causes
+# "Hook JSON output validation failed" errors in user sessions.
+#
+# Detect emitters (not consumers) via the JSON-emission signature:
+# `"hookSpecificOutput":` — the literal double-quoted key followed by a
+# colon. This matches emitted JSON objects; it does NOT match Python
+# code accessing the field via `d['hookSpecificOutput']` or `d.get(...)`.
+# Skip the tests/ directory (test scripts consume hook output, not emit).
+# Skip lib/ — the helper itself and its self-test legitimately reference
+# the field in constructors + assertions.
+bad_hook_schema=0
+while IFS= read -r f; do
+    [[ -z "$f" ]] && continue
+    case "$f" in
+        plugins/pd/hooks/tests/*) continue ;;
+        plugins/pd/hooks/lib/*) continue ;;
+    esac
+    # Emitter check: file must also reference hookEventName so the
+    # emitted block is schema-compliant.
+    if ! grep -qE '"hookEventName"' "$f" 2>/dev/null; then
+        echo -e "${RED}FAIL: hookSpecificOutput in $f missing hookEventName${NC}"
+        bad_hook_schema=$((bad_hook_schema + 1))
+    fi
+done < <(grep -rlE '"hookSpecificOutput"[[:space:]]*:' plugins/pd/hooks/ 2>/dev/null || true)
+if [ "$bad_hook_schema" -gt 0 ]; then
+    echo -e "${RED}Hook schema validation failed: $bad_hook_schema file(s) missing hookEventName${NC}"
+    echo -e "${RED}  → Prefer the shared helper: source lib/common.sh; emit_hook_json <event> <payload>${NC}"
+    exit 1
+fi
 echo ""
 
 # Summary
