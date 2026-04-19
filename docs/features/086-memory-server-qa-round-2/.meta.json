@@ -1,0 +1,14 @@
+{
+  "id": "086",
+  "slug": "memory-server-qa-round-2",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-04-19T06:49:12.923215+00:00",
+  "branch": "feature/086-memory-server-qa-round-2",
+  "lastCompletedPhase": null,
+  "phases": {
+    "brainstorm": {
+      "started": "2026-04-19T06:49:12.923102+00:00"
+    }
+  }
+}
