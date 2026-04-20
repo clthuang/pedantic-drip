@@ -78,16 +78,26 @@ When `memory_decay_medium_threshold_days` ≤ `memory_decay_high_threshold_days`
 
 **Important test-isolation constraint:** `session-start.sh` calls `main` unconditionally at line 876, so `source`-ing it and invoking individual functions is not safe (the hook consumes stdin, requires `$SCRIPT_DIR`, `$PROJECT_ROOT`, `$VENV_PYTHON` setup, and sets `trap '' PIPE`). The test harness must invoke the hook end-to-end, OR invoke the Python module with the same guard pattern. Mutating the production `plugins/pd/hooks/lib/semantic_memory/maintenance.py` in-place is forbidden — concurrent pytest or session-start invocations would see the corrupted file.
 
-**Required harness approach (temp PYTHONPATH):**
-1. Copy `plugins/pd/hooks/lib/semantic_memory/` (the entire package) to a `mktemp -d` directory.
-2. Inject the fault into `$TMPDIR/semantic_memory/maintenance.py` (SyntaxError or ImportError).
-3. Invoke the same command-line pattern session-start.sh uses:
-   ```bash
-   PYTHONPATH=$TMPDIR plugins/pd/.venv/bin/python \
-     -m semantic_memory.maintenance --decay --project-root . 2>/dev/null || true
-   ```
-4. Assert exit status is `0` (the `|| true` guard ensures this regardless of Python failure).
-5. Teardown: `trap "rm -rf $TMPDIR" EXIT`.
+**Required harness approach (temp PYTHONPATH, subshell-scoped):**
+
+Each test block runs inside a subshell so `trap ... EXIT` does not overwrite parent-script traps. `$PKG_TMPDIR` is a test-local variable name — chosen over `$TMPDIR` to avoid colliding with macOS's launchd-exported system `$TMPDIR`.
+
+```bash
+(
+  PKG_TMPDIR=$(mktemp -d)
+  trap "rm -rf \"$PKG_TMPDIR\"" EXIT
+  mkdir -p "$PKG_TMPDIR/semantic_memory"
+  cp -R plugins/pd/hooks/lib/semantic_memory/. "$PKG_TMPDIR/semantic_memory/"
+  # Inject fault: e.g., for AC-22b (SyntaxError):
+  printf '\ndef broken(:\n' >> "$PKG_TMPDIR/semantic_memory/maintenance.py"
+  # Invoke with same guard pattern as session-start.sh:719:
+  PYTHONPATH="$PKG_TMPDIR" plugins/pd/.venv/bin/python \
+    -m semantic_memory.maintenance --decay --project-root . 2>/dev/null || true
+  # Assert: the above returns exit 0 regardless of Python failure (|| true).
+)
+```
+
+The subshell's EXIT trap handles cleanup without disturbing the parent. Production `plugins/pd/hooks/lib/semantic_memory/maintenance.py` is NEVER touched.
 
 **Required test blocks:**
 - **AC-22b (SyntaxError):** copy package, inject `def broken(:` at EOF of temp `maintenance.py`, invoke with guarded pattern, assert exit 0, teardown temp dir.
@@ -242,7 +252,7 @@ Entity registry consistency, orphaned worktrees.
 
 ### #00077 (FR-3)
 
-- **AC-4a (SyntaxError):** `test-hooks.sh` contains a test block labeled `AC-22b`. Block follows the temp-PYTHONPATH harness pattern in FR-3: copies `plugins/pd/hooks/lib/semantic_memory/` to a `mktemp -d`, injects `def broken(:` at EOF of the temp `maintenance.py`, invokes `PYTHONPATH=$TMPDIR plugins/pd/.venv/bin/python -m semantic_memory.maintenance --decay --project-root . 2>/dev/null || true`, asserts exit status 0, `trap "rm -rf $TMPDIR" EXIT`. The production `maintenance.py` is NEVER mutated.
+- **AC-4a (SyntaxError):** `test-hooks.sh` contains a test block labeled `AC-22b`. Block follows the temp-PYTHONPATH harness pattern in FR-3: copies `plugins/pd/hooks/lib/semantic_memory/` to a `mktemp -d`, injects `def broken(:` at EOF of the temp `maintenance.py`, invokes `PYTHONPATH=$PKG_TMPDIR plugins/pd/.venv/bin/python -m semantic_memory.maintenance --decay --project-root . 2>/dev/null || true`, asserts exit status 0, `trap "rm -rf $PKG_TMPDIR" EXIT`. The production `maintenance.py` is NEVER mutated.
 - **AC-4b (ImportError):** `test-hooks.sh` contains a test block labeled `AC-22c`. Same temp-PYTHONPATH pattern; injects `import no_such_module_really_does_not_exist` at line 1 of the temp `maintenance.py`; asserts exit 0; teardown temp dir.
 - **AC-4c (no stderr assertions):** the shell guard at session-start.sh:719,735 suppresses stderr via `2>/dev/null`; stderr-based assertions are impossible by design. Tests verify exit-status invariant only (which is the actual contract: shell guard always tolerates fault in the Python module).
 - **AC-4d (isolation invariant):** `git status --porcelain plugins/pd/hooks/lib/semantic_memory/maintenance.py` before and after the test block produces identical output — the production file is untouched even if the test fails mid-run.
@@ -308,7 +318,7 @@ Entity registry consistency, orphaned worktrees.
 2. **R2 [LOW]:** FR-4 signature change affects downstream consumers in tests. **Mitigation:** grep confirmed no external callers; AC-5/AC-6 + AC-7d regression guard.
 3. **R3 [LOW]:** FR-6 edit surfaces format-dependent latent bugs masked by coincidence. **Mitigation:** run `TestSelectCandidates` before + after; if behavior differs, the test was previously unsound → surface as warning.
 4. **R4 [MED]:** Structural exit gate (AC-11) is enforced at `/pd:implement`, not `/pd:specify`. Spec must be tight enough that implement-phase review does not surface structural HIGH findings. **Mitigation:** this spec's test ACs cover mutation-resistance cases (AC-3b, AC-7c).
-5. **R5 [LOW]:** FR-3 AC-22b/c tests modify a production file; if teardown fails, the repo is corrupted. **Mitigation:** `trap "cp $BACKUP $TARGET" EXIT` + explicit teardown in finally block; test CI runs in a worktree.
+5. **R5 [LOW]:** FR-3 temp-PYTHONPATH harness creates a `mktemp -d` directory per test block; if subshell teardown fails, `/tmp` accumulates abandoned dirs. **Mitigation:** each AC-22b/c block is scoped in a subshell (`( PKG_TMPDIR=$(mktemp -d); trap "rm -rf \"$PKG_TMPDIR\"" EXIT; ... )`) so teardown happens on subshell exit without disturbing parent-script traps; macOS `/var/folders` periodic cleanup reclaims abandoned entries. Production `maintenance.py` is never touched (AC-4d invariant).
 
 ## Out of Scope (Explicit)
 
