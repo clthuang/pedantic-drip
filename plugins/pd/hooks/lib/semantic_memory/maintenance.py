@@ -31,6 +31,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from semantic_memory._config_utils import (
+    _iso_utc,
     _resolve_int_config as _resolve_int_config_core,
     _warn_and_default as _warn_and_default_core,
 )
@@ -57,21 +58,10 @@ _DAYS_MIN = 0
 _DAYS_MAX = 365
 
 
-def _iso_utc(dt: datetime) -> str:
-    """Return Z-suffix UTC ISO-8601 (``YYYY-MM-DDTHH:MM:SSZ``).
-
-    Single source-of-truth for timestamp formatting inside decay_confidence
-    so cutoffs and ``now_iso`` compare lexicographically against stored
-    ``last_recalled_at`` / ``created_at`` values written by ``merge_duplicate``
-    (which uses the same Z-suffix format).  Feature 088 FR-3.1.
-
-    Feature 089 FR-1.3 / AC-3 (#00141): tz-naive datetimes are REJECTED with
-    ``ValueError`` — silent fall-through previously allowed local-time values
-    to be stamped as ``Z`` (UTC) and mis-compare against stored timestamps.
-    """
-    if dt.tzinfo is None:
-        raise ValueError("_iso_utc requires timezone-aware datetime")
-    return dt.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+# ``_iso_utc`` is imported from ``_config_utils`` above (feature 089 FR-3.2 /
+# AC-12 — #00148 relocated the helper to the shared utils module so
+# ``refresh.py`` can import it too).  Kept re-exported here as a module-level
+# name so tests that reference ``maintenance._iso_utc`` keep working.
 
 
 # ---------------------------------------------------------------------------
@@ -88,6 +78,24 @@ _decay_warned_fields: set[str] = set()
 _decay_config_warned: bool = False
 _decay_log_warned: bool = False
 _decay_error_warned: bool = False
+
+
+def reset_warning_state() -> None:
+    """Clear all module-level dedup flags (Feature 089 FR-3.6 / AC-16 — #00155).
+
+    Public function for tests (and any long-running supervisor wanting a
+    clean slate between iterations).  The autouse fixtures in
+    ``test_maintenance.py`` monkeypatch each flag individually; this helper
+    is the non-monkeypatch equivalent for callers that cannot use pytest
+    fixtures (e.g. integration harnesses, shell tests that exec the module).
+
+    Side-effect-only; returns ``None``.  Safe to call repeatedly.
+    """
+    global _decay_config_warned, _decay_log_warned, _decay_error_warned
+    _decay_warned_fields.clear()
+    _decay_config_warned = False
+    _decay_log_warned = False
+    _decay_error_warned = False
 
 
 # ---------------------------------------------------------------------------

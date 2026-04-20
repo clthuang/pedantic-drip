@@ -17,7 +17,7 @@ from datetime import MAXYEAR, datetime, timedelta, timezone
 
 import pytest
 
-from semantic_memory import maintenance
+from semantic_memory import maintenance, refresh
 from semantic_memory.database import MemoryDatabase
 
 
@@ -29,6 +29,13 @@ def reset_decay_state(monkeypatch, tmp_path):
     reassign): bool is immutable, and ``from X import Y`` creates a local
     binding to the same object rather than a live reference — setattr is
     the only way to mutate the module namespace reliably.
+
+    Feature 089 FR-3.6 / AC-16 (#00155): also invoke the public
+    ``reset_warning_state()`` helpers on both ``maintenance`` and ``refresh``
+    so any state those functions clear beyond the monkeypatched set is also
+    reset per-test.  The monkeypatched attributes already auto-restore on
+    teardown; the helper call is belt-and-suspenders for flags that might be
+    added later without updating every test fixture.
     """
     monkeypatch.setattr(maintenance, "_decay_warned_fields", set())
     monkeypatch.setattr(maintenance, "_decay_config_warned", False)
@@ -39,8 +46,54 @@ def reset_decay_state(monkeypatch, tmp_path):
         "INFLUENCE_DEBUG_LOG_PATH",
         tmp_path / "influence-debug.log",
     )
+    # Feature 089 FR-3.6: call public reset helpers so any new module-level
+    # dedup flag added later is cleared without needing a fixture change.
+    maintenance.reset_warning_state()
+    refresh.reset_warning_state()
     yield
     # monkeypatch auto-restores on teardown
+
+
+# ---------------------------------------------------------------------------
+# reset_warning_state — Feature 089 FR-3.6 / AC-16 (#00155)
+# ---------------------------------------------------------------------------
+
+
+class TestResetWarningState:
+    """Feature 089 FR-3.6 / AC-16 (#00155)."""
+
+    def test_reset_warning_state_clears_module_globals(self, monkeypatch):
+        """Populate each dedup flag, call reset_warning_state, assert cleared.
+
+        Covers the maintenance-side helper.  The autouse fixture calls this
+        helper pre-yield; this test exercises it explicitly so a regression
+        that removes the helper (or stops clearing a flag) fails fast.
+        """
+        # Set dirty state directly on the module (bypassing autouse fixture's
+        # monkeypatch by setting the flags post-fixture).
+        monkeypatch.setattr(maintenance, "_decay_config_warned", True)
+        monkeypatch.setattr(maintenance, "_decay_log_warned", True)
+        monkeypatch.setattr(maintenance, "_decay_error_warned", True)
+        maintenance._decay_warned_fields.add("some_field")
+
+        maintenance.reset_warning_state()
+
+        assert maintenance._decay_config_warned is False
+        assert maintenance._decay_log_warned is False
+        assert maintenance._decay_error_warned is False
+        assert maintenance._decay_warned_fields == set()
+
+    def test_reset_warning_state_clears_refresh_module_globals(self, monkeypatch):
+        """Populate each refresh dedup flag, call reset, assert cleared."""
+        monkeypatch.setattr(refresh, "_slow_refresh_warned", True)
+        monkeypatch.setattr(refresh, "_refresh_error_warned", True)
+        refresh._refresh_warned_fields.add("some_field")
+
+        refresh.reset_warning_state()
+
+        assert refresh._slow_refresh_warned is False
+        assert refresh._refresh_error_warned is False
+        assert refresh._refresh_warned_fields == set()
 
 
 # ---------------------------------------------------------------------------

@@ -1975,7 +1975,7 @@ async def query_phase_analytics(
     elif query_type == "backward_frequency":
         events = _db.query_phase_events(
             type_id=feature_type_id, project_id=resolved_project_id,
-            event_type="backward", limit=500,
+            event_type="backward", limit=_ANALYTICS_EVENT_SCAN_LIMIT,
         )
         freq: dict[str, int] = {}
         for e in events:

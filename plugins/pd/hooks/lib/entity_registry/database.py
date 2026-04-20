@@ -1601,11 +1601,14 @@ def _migration_10_phase_events(conn: sqlite3.Connection) -> None:
                     ),
                 )
 
-        conn.execute(
-            "INSERT INTO _metadata(key, value) "
-            "VALUES('schema_version', '10') "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
-        )
+        # Feature 089 FR-3.4 / AC-14 (#00152): redundant ``schema_version=10``
+        # write removed — the outer ``_migrate()`` loop (``database.py`` around
+        # line 3915) performs the authoritative ``INSERT INTO _metadata``
+        # upsert after this migration returns.  Keeping a second in-function
+        # write created two paths that could diverge and masked migration-
+        # ordering bugs.  The ``conn.commit()`` below commits the DDL/DML
+        # transaction opened by ``BEGIN IMMEDIATE`` above; the outer loop's
+        # subsequent ``self._commit()`` is idempotent.
         conn.commit()
     except Exception:
         try:
