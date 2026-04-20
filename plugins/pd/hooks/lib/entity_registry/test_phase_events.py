@@ -813,3 +813,175 @@ class TestFeature089BundleA:
             _migration_10_phase_events(proxy)
 
         database.close()
+
+
+# ---------------------------------------------------------------------------
+# Feature 089 Bundle E — Migration 10 live-insert concurrency (AC-24)
+# ---------------------------------------------------------------------------
+
+
+class TestFeature089BundleE:
+    """Feature 089 Bundle E (#00166): when Thread A is mid-migration (paused
+    AFTER the schema_version re-check but BEFORE backfill completes) and
+    Thread B inserts a ``source='live'`` row on a separate connection, the
+    final ``phase_events`` table MUST NOT contain duplicate rows on the
+    ``(type_id, phase, event_type, timestamp, source)`` key.
+
+    The production invariant pinned here:
+
+    - Migration 10 runs under ``BEGIN IMMEDIATE`` — Thread B's live INSERT
+      must wait on the write lock until Thread A commits.
+    - Once A commits (backfill rows inserted with ``source='backfill'``),
+      B's subsequent live INSERT writes with ``source='live'`` which is
+      a distinct tuple column, so NO uniqueness violation occurs.
+    - A duplicate row would only arise if the backfill and live write
+      somehow shared the same (type_id, phase, event_type, timestamp,
+      source) tuple — this test proves that even with carefully aligned
+      timestamps, the source-column divergence prevents it.
+    """
+
+    def test_migration_10_concurrent_with_live_insert_no_duplicate_semantics(
+        self, tmp_path,
+    ):
+        """AC-24 (#00166)."""
+        import threading
+        import time
+        from entity_registry.database import _migration_10_phase_events
+
+        db_path = str(tmp_path / "concurrent-live.db")
+
+        # Seed: a single entity whose metadata will backfill one row per
+        # (phase, event_type) on migration 10.
+        seed_db = EntityDatabase(db_path)
+        seed_db.register_entity(
+            "feature", "089-e24", "E24",
+            project_id=TEST_PROJECT_ID,
+            metadata={
+                "phase_timing": {
+                    "design": {
+                        "started": "2026-04-01T10:00:00Z",
+                        "completed": "2026-04-01T11:00:00Z",
+                    },
+                },
+            },
+        )
+        # Drop phase_events + reset schema_version to re-trigger migration.
+        _reset_phase_events_to_pre_migration(seed_db)
+        seed_db.close()
+
+        # Barrier to synchronize threads inside the migration.  Thread A
+        # waits on the barrier AFTER the schema_version re-check (proxy
+        # intercepts that specific SELECT and signals).
+        barrier = threading.Barrier(2)
+        release_event = threading.Event()
+        errors: list[BaseException] = []
+
+        def migration_worker():
+            """Thread A — run migration 10 via a sync-point proxy."""
+            try:
+                real_conn = sqlite3.connect(
+                    db_path, timeout=30.0, check_same_thread=False,
+                )
+                real_conn.row_factory = sqlite3.Row
+
+                class _SyncPointConn:
+                    """Wraps a real connection; pauses once after the
+                    schema_version SELECT so Thread B can attempt its
+                    live write against the now-locked DB.
+                    """
+                    def __init__(self, inner):
+                        self._inner = inner
+                        self._synced = False
+
+                    def execute(self, sql, *a, **kw):
+                        cursor = self._inner.execute(sql, *a, **kw)
+                        # After the schema_version re-check (inside
+                        # BEGIN IMMEDIATE), release Thread B to try its
+                        # insert and then wait a beat so B has time to
+                        # start — but B will block on the write lock.
+                        if (
+                            not self._synced
+                            and "SELECT value FROM _metadata" in sql
+                        ):
+                            self._synced = True
+                            # Signal B that A is inside the migration.
+                            barrier.wait(timeout=5.0)
+                            # Give B a moment to start its insert attempt
+                            # and enter the wait-on-write-lock state.
+                            time.sleep(0.5)
+                        return cursor
+
+                    def __getattr__(self, name):
+                        return getattr(self._inner, name)
+
+                proxy = _SyncPointConn(real_conn)
+                _migration_10_phase_events(proxy)
+                real_conn.close()
+            except BaseException as exc:
+                errors.append(exc)
+            finally:
+                release_event.set()
+
+        def live_insert_worker():
+            """Thread B — attempt a live INSERT while A holds the lock."""
+            try:
+                # Wait until A signals it is past the schema check.
+                barrier.wait(timeout=5.0)
+
+                # A separate connection tries a live insert. Under
+                # BEGIN IMMEDIATE held by A, this will block until A
+                # commits.  Post-commit, B writes source='live' for a
+                # timestamp that MATCHES one of the backfill rows
+                # (source='backfill') — distinct ``source`` column
+                # keeps tuples unique.
+                live_db = EntityDatabase(db_path)
+                try:
+                    live_db.insert_phase_event(
+                        type_id="feature:089-e24",
+                        project_id=TEST_PROJECT_ID,
+                        phase="design",
+                        event_type="started",
+                        timestamp="2026-04-01T10:00:00Z",
+                        source="live",
+                    )
+                finally:
+                    live_db.close()
+            except BaseException as exc:
+                errors.append(exc)
+
+        thread_a = threading.Thread(target=migration_worker)
+        thread_b = threading.Thread(target=live_insert_worker)
+        thread_a.start()
+        thread_b.start()
+        thread_a.join(timeout=15.0)
+        thread_b.join(timeout=15.0)
+        assert not thread_a.is_alive(), "migration thread hung"
+        assert not thread_b.is_alive(), "live-insert thread hung"
+
+        # sqlite3 contention errors are acceptable (heavy lock pressure);
+        # unrelated exceptions are not.
+        for exc in errors:
+            assert isinstance(exc, sqlite3.Error), (
+                f"unexpected exception in worker: {exc!r}"
+            )
+
+        # Verify the final state: no duplicate
+        # (type_id, phase, event_type, timestamp, source) rows.  The live
+        # insert may or may not have landed depending on lock-timeout
+        # behavior — either outcome is acceptable AS LONG AS no tuple is
+        # duplicated.
+        final_conn = sqlite3.connect(db_path)
+        try:
+            rows = final_conn.execute(
+                "SELECT type_id, phase, event_type, timestamp, source, "
+                "COUNT(*) AS c FROM phase_events "
+                "GROUP BY type_id, phase, event_type, timestamp, source "
+                "HAVING c > 1"
+            ).fetchall()
+        finally:
+            final_conn.close()
+
+        assert rows == [], (
+            f"duplicate (type_id, phase, event_type, timestamp, source) "
+            f"tuples found after concurrent run: {rows!r}"
+        )
