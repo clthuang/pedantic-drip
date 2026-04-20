@@ -58,8 +58,9 @@ Recommended implement order (optimizes for reviewer feedback latency and paralle
 1. **Stream D** (FR-1) — docs-only, can be done first; no code review risk.
 2. **Stream A** (FR-2 predicate swap) — 1-line code change + test; fastest feedback.
 3. **Stream B Part 1** (FR-4 new method) — add `scan_decay_candidates` to `database.py` with tests.
-4. **Stream B Part 2** (FR-4 caller update + FR-5 dead branch) — wire the new method into `maintenance.py`; remove dead SQL branch.
-5. **Stream C** (FR-3 AC-22b/c + FR-6 isoformat drift) — test-only changes.
+4. **Stream B Part 2a** (FR-4 caller update) — wire `db.scan_decay_candidates(...)` into `maintenance.py:_select_candidates` body (signature unchanged).
+5. **Stream B Part 2b** (FR-5 dead branch) — remove `updated_at IS NULL OR` from `database.py:1028` SQL. Independent of FR-4; can be done in parallel or before/after.
+6. **Stream C** (FR-3 AC-22b/c + FR-6 isoformat drift) — test-only changes.
 
 This ordering is a suggestion, not a hard dependency. The plan phase will decompose into atomic tasks; tasks can be parallelized beyond this sequence where safe.
 
@@ -340,11 +341,20 @@ high_cutoff = _iso(NOW - timedelta(days=30))
   # Inject SyntaxError:
   printf '\ndef broken(:\n' >> "$PKG_TMPDIR/semantic_memory/maintenance.py"
 
-  # Invoke with production guard pattern (session-start.sh:719):
+  # Negative control: WITHOUT guard, the raw Python invocation MUST fail.
+  # If it doesn't, the fault injection didn't take effect and the test is invalid.
+  PYTHONPATH="$PKG_TMPDIR" plugins/pd/.venv/bin/python \
+    -m semantic_memory.maintenance --decay --project-root . >/dev/null 2>&1
+  raw_exit=$?
+  [ "$raw_exit" -ne 0 ] || { echo "FAIL: AC-22b fault did not trigger — raw exit was 0"; exit 1; }
+
+  # Positive contract: WITH production guard pattern (session-start.sh:719),
+  # exit status is 0 regardless of Python failure.
   PYTHONPATH="$PKG_TMPDIR" plugins/pd/.venv/bin/python \
     -m semantic_memory.maintenance --decay --project-root . 2>/dev/null || true
-  exit_code=$?
-  [ "$exit_code" -eq 0 ] || { echo "FAIL: AC-22b expected exit 0 got $exit_code"; exit 1; }
+  # The `|| true` guarantees exit 0; this line is a sanity check that the
+  # shell compound above completed normally (no trap, no early exit).
+  echo "AC-22b PASS: Python failed (raw exit $raw_exit) but shell guard tolerated"
 )
 
 # AC-22c (ImportError):
@@ -369,10 +379,16 @@ high_cutoff = _iso(NOW - timedelta(days=30))
   mv "$PKG_TMPDIR/semantic_memory/maintenance.py.new" \
      "$PKG_TMPDIR/semantic_memory/maintenance.py"
 
+  # Negative control: WITHOUT guard, raw invocation MUST fail (ImportError).
+  PYTHONPATH="$PKG_TMPDIR" plugins/pd/.venv/bin/python \
+    -m semantic_memory.maintenance --decay --project-root . >/dev/null 2>&1
+  raw_exit=$?
+  [ "$raw_exit" -ne 0 ] || { echo "FAIL: AC-22c fault did not trigger — raw exit was 0"; exit 1; }
+
+  # Positive contract: WITH guard, exit is 0.
   PYTHONPATH="$PKG_TMPDIR" plugins/pd/.venv/bin/python \
     -m semantic_memory.maintenance --decay --project-root . 2>/dev/null || true
-  exit_code=$?
-  [ "$exit_code" -eq 0 ] || { echo "FAIL: AC-22c expected exit 0 got $exit_code"; exit 1; }
+  echo "AC-22c PASS: Python failed (raw exit $raw_exit) but shell guard tolerated"
 )
 
 # AC-4d invariant (runs outside the subshells):
