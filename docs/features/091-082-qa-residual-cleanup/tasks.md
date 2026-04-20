@@ -15,7 +15,7 @@
 | T3b | Flip `<` → `<=` predicate + warning text (GREEN) | PI-3 | Simple | no | T3a |
 | T4a | Write `scan_decay_candidates` tests (RED) | PI-4 | Medium | yes | T1 |
 | T4b | Add `MemoryDatabase.scan_decay_candidates` method (GREEN) | PI-4 | Simple | no | T4a |
-| T5 | Swap `_select_candidates` body to call new method | PI-5 | Simple | no | T4b, T6 |
+| T5 | Swap `_select_candidates` body to call new method | PI-5 | Simple | no | T4b, T6 (T6 first — regression attributability for AC-7d) |
 | T6 | `TestSelectCandidates` isoformat → _iso swap + canonical pin | PI-6 | Simple | yes | T1 |
 | T7a | `test-hooks.sh` AC-22b block (SyntaxError) | PI-7 | Medium | yes | T1 |
 | T7b | `test-hooks.sh` AC-22c block (ImportError) | PI-7 | Simple | no | T7a |
@@ -190,6 +190,9 @@ plugins/pd/.venv/bin/python -m pytest \
 **Complexity:** Simple
 **Depends on:** T3a (tests must exist and be RED first)
 
+**Pre-check (verified during plan review):**
+- `grep -nE "if med_days < high_days" plugins/pd/hooks/lib/semantic_memory/maintenance.py` returns exactly 1 match (line 424, the production guard). AC-2b's assertion of "0 matches after edit" is non-vacuous.
+
 **Action:**
 1. At `plugins/pd/hooks/lib/semantic_memory/maintenance.py:424-429`:
    ```python
@@ -242,6 +245,9 @@ plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/semantic_memory/test_
 **Files:** `plugins/pd/hooks/lib/semantic_memory/test_database.py`
 **Complexity:** Medium
 **Depends on:** T1 (Group Alpha-docs lands first to isolate docs-only commit per design TD-6)
+
+**Pre-check (verified during plan review):**
+- `MemoryDatabase.insert_test_entry_for_testing` signature at `plugins/pd/hooks/lib/semantic_memory/database.py:835-852` accepts `last_recalled_at: str | None` and `created_at: str` among other keyword-only args. Both are used by T4a tests; signature confirmed compatible.
 
 **Action:**
 1. Add test class `TestScanDecayCandidates` to `test_database.py`:
@@ -400,7 +406,7 @@ print('SQL pin OK')
 "
 
 # T4a tests now GREEN:
-plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/semantic_memory/test_database.py::TestScanDecayCandidates -v | grep -E "3 passed"
+plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/semantic_memory/test_database.py::TestScanDecayCandidates -v | grep -E "4 passed"
 ```
 
 **Commit message:** `pd(091): GREEN — MemoryDatabase.scan_decay_candidates public method (FR-4, #00078)`
