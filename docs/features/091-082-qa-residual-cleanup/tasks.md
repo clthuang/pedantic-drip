@@ -399,7 +399,9 @@ plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/semantic_memory/test_
 python3 -c "
 import re
 src = open('plugins/pd/hooks/lib/semantic_memory/database.py').read()
-compact = re.sub(r'\s+', ' ', src).strip()
+# Collapse Python implicit-string-concat boundaries first, then whitespace
+compact = re.sub(r'\"\s*\"', '', src)
+compact = re.sub(r'\s+', ' ', compact).strip()
 needle = 'SELECT id, confidence, source, last_recalled_at, created_at FROM entries WHERE (last_recalled_at IS NOT NULL AND last_recalled_at < ?) OR (last_recalled_at IS NULL) LIMIT ?'
 assert needle in compact, 'SQL pinning failed'
 print('SQL pin OK')
@@ -766,7 +768,9 @@ echo "AC-5b: SQL pinned"
 python3 -c "
 import re
 src = open('plugins/pd/hooks/lib/semantic_memory/database.py').read()
-compact = re.sub(r'\s+', ' ', src).strip()
+# Collapse Python implicit-string-concat boundaries first, then whitespace
+compact = re.sub(r'\"\s*\"', '', src)
+compact = re.sub(r'\s+', ' ', compact).strip()
 needle = 'SELECT id, confidence, source, last_recalled_at, created_at FROM entries WHERE (last_recalled_at IS NOT NULL AND last_recalled_at < ?) OR (last_recalled_at IS NULL) LIMIT ?'
 assert needle in compact, 'SQL pinning failed'
 "

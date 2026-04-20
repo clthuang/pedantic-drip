@@ -7,6 +7,7 @@ import os
 import re
 import sqlite3
 import sys
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from typing import Callable
 
@@ -948,6 +949,45 @@ class MemoryDatabase:
     # ------------------------------------------------------------------
     # Confidence decay (Feature 082)
     # ------------------------------------------------------------------
+
+    def scan_decay_candidates(
+        self,
+        *,
+        not_null_cutoff: str,
+        scan_limit: int,
+    ) -> Iterator[sqlite3.Row]:
+        """Yield candidate rows for decay confidence processing.
+
+        Encapsulates the read path previously inlined at
+        ``maintenance._select_candidates`` (feature 091 FR-4, #00078).
+        Closes the "Direct ``db._conn`` Access" anti-pattern.
+
+        Yields rows with schema ``(id, confidence, source,
+        last_recalled_at, created_at)``. SQL is pinned byte-for-byte to
+        the feature-088 verbatim query; see feature:091 AC-5b.
+
+        Parameters
+        ----------
+        not_null_cutoff : str
+            Z-suffix ISO-8601 timestamp. Rows matching
+            ``(last_recalled_at IS NOT NULL AND last_recalled_at < ?)``
+            OR ``(last_recalled_at IS NULL)`` are returned.
+        scan_limit : int
+            Maximum rows to return. Caller pre-clamps via
+            ``_resolve_int_config`` (range ``[1000, 10_000_000]`` in
+            production). ``scan_limit <= 0`` yields zero rows (SQLite
+            LIMIT semantics) with no exception.
+        """
+        cursor = self._conn.execute(
+            "SELECT id, confidence, source, last_recalled_at, created_at "
+            "FROM entries "
+            "WHERE (last_recalled_at IS NOT NULL AND last_recalled_at < ?) "
+            "   OR (last_recalled_at IS NULL) "
+            "LIMIT ?",
+            (not_null_cutoff, scan_limit),
+        )
+        for row in cursor:
+            yield row
 
     def batch_demote(
         self,
