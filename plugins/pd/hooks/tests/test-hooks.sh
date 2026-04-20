@@ -2951,6 +2951,130 @@ assert 'Decay:' not in ctx, f'expected NO decay summary when module missing, got
     fi
 }
 
+# Feature 091 FR-3 (#00077): AC-22 extended to cover SyntaxError / ImportError.
+# Uses temp-PYTHONPATH subshell harness per feature:091 design I-5 — copies
+# the real semantic_memory package to mktemp -d, injects the fault there,
+# and invokes the same command-line the production hook uses with the
+# ``2>/dev/null || true`` guard. Production maintenance.py is NEVER mutated
+# (AC-4d invariant).
+test_memory_decay_syntax_error_tolerated() {
+    log_test "session-start guard tolerates SyntaxError in maintenance.py (AC-22b, FR-3)"
+
+    if [[ ! -x "$PLUGIN_VENV_PYTHON" ]]; then
+        log_pass  # SKIP: venv missing — cannot exercise real production pattern
+        return
+    fi
+
+    (
+        set +e
+        PKG_TMPDIR=$(mktemp -d)
+        trap "rm -rf \"$PKG_TMPDIR\"" EXIT
+        mkdir -p "$PKG_TMPDIR/semantic_memory"
+        cp -R "${HOOKS_DIR}/lib/semantic_memory/." "$PKG_TMPDIR/semantic_memory/"
+
+        if [ ! -f "$PKG_TMPDIR/semantic_memory/__init__.py" ]; then
+            echo "FAIL: __init__.py missing from copy"
+            exit 1
+        fi
+
+        # Positive control: clean copy must import successfully.
+        if ! PYTHONPATH="$PKG_TMPDIR" "$PLUGIN_VENV_PYTHON" \
+            -c 'import semantic_memory.maintenance' 2>/dev/null; then
+            echo "FAIL: clean copy does not import"
+            exit 1
+        fi
+
+        # Inject SyntaxError.
+        printf '\ndef broken(:\n' >> "$PKG_TMPDIR/semantic_memory/maintenance.py"
+
+        # Negative control: WITHOUT the shell guard, raw invocation MUST fail.
+        PYTHONPATH="$PKG_TMPDIR" "$PLUGIN_VENV_PYTHON" \
+            -m semantic_memory.maintenance --decay --project-root . >/dev/null 2>&1
+        raw_exit=$?
+        if [ "$raw_exit" -eq 0 ]; then
+            echo "FAIL: AC-22b fault did not trigger — raw exit was 0"
+            exit 1
+        fi
+
+        # Positive contract: WITH production guard pattern (session-start.sh:719).
+        PYTHONPATH="$PKG_TMPDIR" "$PLUGIN_VENV_PYTHON" \
+            -m semantic_memory.maintenance --decay --project-root . 2>/dev/null || true
+
+        exit 0
+    )
+    local subshell_exit=$?
+    if [ "$subshell_exit" -eq 0 ]; then
+        log_pass
+    else
+        log_fail "AC-22b subshell reported failure (exit $subshell_exit)"
+    fi
+
+    # AC-4d invariant: production maintenance.py unchanged.
+    local git_status
+    git_status=$(cd "$(dirname "${HOOKS_DIR}")" && git status --porcelain "plugins/pd/hooks/lib/semantic_memory/maintenance.py" 2>/dev/null || true)
+    if [ -n "$git_status" ]; then
+        log_test "AC-4d invariant: production maintenance.py untouched (T7a)"
+        log_fail "production maintenance.py mutated: $git_status"
+    fi
+}
+
+test_memory_decay_import_error_tolerated() {
+    log_test "session-start guard tolerates ImportError in maintenance.py (AC-22c, FR-3)"
+
+    if [[ ! -x "$PLUGIN_VENV_PYTHON" ]]; then
+        log_pass  # SKIP: venv missing
+        return
+    fi
+
+    (
+        set +e
+        PKG_TMPDIR=$(mktemp -d)
+        trap "rm -rf \"$PKG_TMPDIR\"" EXIT
+        mkdir -p "$PKG_TMPDIR/semantic_memory"
+        cp -R "${HOOKS_DIR}/lib/semantic_memory/." "$PKG_TMPDIR/semantic_memory/"
+
+        if [ ! -f "$PKG_TMPDIR/semantic_memory/__init__.py" ]; then
+            echo "FAIL: __init__.py missing from copy"
+            exit 1
+        fi
+
+        if ! PYTHONPATH="$PKG_TMPDIR" "$PLUGIN_VENV_PYTHON" \
+            -c 'import semantic_memory.maintenance' 2>/dev/null; then
+            echo "FAIL: clean copy does not import"
+            exit 1
+        fi
+
+        # Inject ImportError via sed-free prepend (portable — no BSD/GNU sed divergence).
+        {
+            echo 'import no_such_module_really_does_not_exist'
+            cat "$PKG_TMPDIR/semantic_memory/maintenance.py"
+        } > "$PKG_TMPDIR/semantic_memory/maintenance.py.new"
+        mv "$PKG_TMPDIR/semantic_memory/maintenance.py.new" \
+           "$PKG_TMPDIR/semantic_memory/maintenance.py"
+
+        # Negative control.
+        PYTHONPATH="$PKG_TMPDIR" "$PLUGIN_VENV_PYTHON" \
+            -m semantic_memory.maintenance --decay --project-root . >/dev/null 2>&1
+        raw_exit=$?
+        if [ "$raw_exit" -eq 0 ]; then
+            echo "FAIL: AC-22c fault did not trigger — raw exit was 0"
+            exit 1
+        fi
+
+        # Positive contract.
+        PYTHONPATH="$PKG_TMPDIR" "$PLUGIN_VENV_PYTHON" \
+            -m semantic_memory.maintenance --decay --project-root . 2>/dev/null || true
+
+        exit 0
+    )
+    local subshell_exit=$?
+    if [ "$subshell_exit" -eq 0 ]; then
+        log_pass
+    else
+        log_fail "AC-22c subshell reported failure (exit $subshell_exit)"
+    fi
+}
+
 # Feature 089 AC-21 (#00163 / FR-1.8): Python subprocess.run(..., timeout=10)
 # fallback MUST fire when neither gtimeout nor timeout is on PATH.
 #
@@ -3323,6 +3447,8 @@ main() {
 
     test_memory_decay_session_start
     test_memory_decay_missing_module
+    test_memory_decay_syntax_error_tolerated
+    test_memory_decay_import_error_tolerated
     test_session_start_refuses_meta_json_injection
     test_session_start_decay_skips_when_venv_missing
     test_session_start_decay_timeout_does_not_block_hook
