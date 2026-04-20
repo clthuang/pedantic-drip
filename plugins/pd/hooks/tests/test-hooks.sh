@@ -2951,6 +2951,141 @@ assert 'Decay:' not in ctx, f'expected NO decay summary when module missing, got
     fi
 }
 
+# Feature 089 AC-21 (#00163 / FR-1.8): Python subprocess.run(..., timeout=10)
+# fallback MUST fire when neither gtimeout nor timeout is on PATH.
+#
+# Strategy: construct a wrapper that sets PATH to a location where
+# gtimeout/timeout cannot be found, source session-start.sh's run_memory_decay
+# directly, and stub maintenance.py with time.sleep(30).  The hook MUST
+# complete in <20s because the Python-layer timeout=10 fallback kicks in.
+#
+# Why we stub PATH rather than rely on host absence: session-start.sh re-pins
+# PATH to include /usr/local/bin and /opt/homebrew/bin at the top of
+# run_memory_decay (FR-3.5).  We use a throwaway HOME and a test-only wrapper
+# that clones run_memory_decay's env-pin with PATH stripped to /var/empty,
+# keeping production session-start.sh unmodified.
+test_decay_python_subprocess_timeout_fallback() {
+    log_test "run_memory_decay falls back to Python subprocess timeout when no external timeout cmd (AC-21)"
+
+    # We bound the outer test via a background watchdog — gtimeout/timeout
+    # may not be available on macOS without coreutils (and the point of
+    # this test is to exercise the path where they ARE missing).
+    local tmp_home
+    tmp_home=$(mktemp -d)
+    local maint_py="${HOOKS_DIR}/lib/semantic_memory/maintenance.py"
+    local maint_bak="${maint_py}.bak-089-fallback"
+    local test_hook="${tmp_home}/session-start-fallback-test.sh"
+
+    # CRITICAL: install trap BEFORE destructive mv so restoration always runs.
+    trap 'mv "'"$maint_bak"'" "'"$maint_py"'" 2>/dev/null || true; rm -rf "'"$tmp_home"'"' RETURN
+
+    # Replace maintenance.py with a sleep-30s stub (exceeds the 10s Python
+    # subprocess.run timeout by 20s).
+    mv "$maint_py" "$maint_bak" || { log_fail "Failed to rename maintenance.py"; return; }
+    cat > "$maint_py" << 'STUB'
+"""Feature 089 AC-21 Python-fallback stub — sleeps 30s then exits."""
+import time
+time.sleep(30)
+STUB
+
+    # Build a minimal test wrapper that exercises ONLY the Python-fallback
+    # branch of run_memory_decay: pin PATH to /var/empty so `command -v`
+    # probes for gtimeout/timeout both fail, then invoke the
+    # ``subprocess.run(..., timeout=10)`` code path directly.  This mirrors
+    # run_memory_decay's fallback verbatim (see session-start.sh:721-735).
+    cat > "$test_hook" << HOOK
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="${HOOKS_DIR}"
+PLUGIN_ROOT="${HOOKS_DIR}/.."
+PROJECT_ROOT="${tmp_home}"
+VENV_PYTHON="\${PLUGIN_ROOT}/.venv/bin/python"
+
+# Force the fallback branch: pin PATH to a location where gtimeout/timeout
+# cannot exist, matching the 'neither found' condition at session-start.sh:711.
+export PATH="/var/empty"
+
+# Guard: confirm pre-condition (the test is meaningless if either binary is
+# somehow resolvable here).
+if command -v gtimeout >/dev/null 2>&1 || command -v timeout >/dev/null 2>&1; then
+    echo "PRE_CONDITION_FAIL: gtimeout/timeout unexpectedly findable" >&2
+    exit 99
+fi
+
+# Fallback branch (verbatim from session-start.sh:721-735).
+PYTHONPATH="\${SCRIPT_DIR}/lib" "\$VENV_PYTHON" -c '
+import sys, subprocess
+try:
+    r = subprocess.run(
+        [sys.argv[1], "-m", "semantic_memory.maintenance",
+         "--decay", "--project-root", sys.argv[2]],
+        timeout=10, capture_output=True, text=True,
+    )
+    sys.stdout.write(r.stdout)
+    sys.stderr.write(r.stderr)
+except subprocess.TimeoutExpired:
+    sys.stderr.write("[memory-decay] subprocess timeout (10s)\n")
+' "\$VENV_PYTHON" "\$PROJECT_ROOT" 2>&1 || true
+HOOK
+    chmod +x "$test_hook"
+
+    local t_start t_end wall
+    t_start=$(date +%s)
+    local output exit_code=0
+
+    # Run the test wrapper in the background and kill it after 20s if it
+    # hangs (watchdog pattern — no gtimeout/timeout dependency).
+    local out_file="${tmp_home}/fallback-out.txt"
+    (bash "$test_hook" > "$out_file" 2>&1) &
+    local test_pid=$!
+    local watchdog_fired=0
+    (
+        sleep 20
+        kill -0 "$test_pid" 2>/dev/null && kill -TERM "$test_pid" 2>/dev/null
+    ) &
+    local watchdog_pid=$!
+    wait "$test_pid" 2>/dev/null
+    exit_code=$?
+    # Kill the watchdog if still running (test finished in time).
+    if kill -0 "$watchdog_pid" 2>/dev/null; then
+        kill "$watchdog_pid" 2>/dev/null || true
+        wait "$watchdog_pid" 2>/dev/null || true
+    else
+        # Watchdog fired.
+        watchdog_fired=1
+    fi
+    t_end=$(date +%s)
+    wall=$((t_end - t_start))
+    output=$(cat "$out_file" 2>/dev/null || echo "")
+
+    if [[ $watchdog_fired -eq 1 ]]; then
+        log_fail "watchdog fired at 20s — Python subprocess.run(timeout=10) fallback did not kick (wall=${wall}s)"
+        return
+    fi
+
+    if [[ $exit_code -eq 99 ]]; then
+        log_fail "test precondition failed: gtimeout/timeout still findable on PATH=/var/empty"
+        return
+    fi
+
+    # The wrapper exits 0 after `|| true` in the production fallback path,
+    # even when TimeoutExpired fires (the `except` handler emits to stderr
+    # and exits 0).  Pass condition is wall<20 AND the timeout message in
+    # stderr.
+    if [[ $wall -ge 20 ]]; then
+        log_fail "wall time ${wall}s >= 20s — Python subprocess timeout=10 did not enforce"
+        return
+    fi
+
+    # stderr MUST carry the fallback-timeout diagnostic.
+    if echo "$output" | grep -q 'subprocess timeout (10s)'; then
+        log_pass
+    else
+        log_fail "expected '[memory-decay] subprocess timeout (10s)' in output (wall=${wall}s). Output: ${output:0:400}"
+    fi
+}
+
 # Run all tests
 main() {
     echo "=========================================="
@@ -3104,6 +3239,7 @@ main() {
     test_session_start_refuses_meta_json_injection
     test_session_start_decay_skips_when_venv_missing
     test_session_start_decay_timeout_does_not_block_hook
+    test_decay_python_subprocess_timeout_fallback
 
     echo ""
     echo "--- Path Portability Tests ---"

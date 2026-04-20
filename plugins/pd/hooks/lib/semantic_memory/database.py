@@ -3,11 +3,28 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
 import sys
 from datetime import datetime, timezone
 from typing import Callable
+
+
+def _assert_testing_context() -> None:
+    """Refuse ``*_for_testing`` invocations outside a pytest/PD_TESTING context.
+
+    Feature 089 FR-1.2 / AC-2 (#00140): the seed/introspection helpers below
+    bypass the encapsulation boundary and must never run in production. Gate
+    them behind an env flag OR the ``pytest`` module being imported (the
+    latter catches every test runner invocation in practice).
+    """
+    if os.environ.get("PD_TESTING") or "pytest" in sys.modules:
+        return
+    raise RuntimeError(
+        "for-testing helper called outside pytest "
+        "(set PD_TESTING=1 or import pytest to use)"
+    )
 
 
 # FTS5 metacharacters to strip (everything except intra-word hyphens).
@@ -829,6 +846,7 @@ class MemoryDatabase:
         Bypasses ``upsert_entry``'s normalization path so tests can control
         ``confidence``, ``source``, and ``last_recalled_at`` directly.
         """
+        _assert_testing_context()
         if name is None:
             name = f"name-{entry_id}"
         if keywords is None:
@@ -863,6 +881,7 @@ class MemoryDatabase:
         recall_count, last_recalled_at, created_at, updated_at,
         observation_count)``. Caller generates plausible values.
         """
+        _assert_testing_context()
         self._conn.executemany(
             "INSERT INTO entries (id, name, description, category, keywords, "
             "source, source_project, source_hash, confidence, recall_count, "
@@ -881,6 +900,7 @@ class MemoryDatabase:
         first row as a dict (or None). Scoped to test files that previously
         reached into ``db._conn.execute(...).fetchone()`` for assertions.
         """
+        _assert_testing_context()
         cur = self._conn.execute(sql, params)
         row = cur.fetchone()
         if row is None:
@@ -895,9 +915,21 @@ class MemoryDatabase:
         Executes a raw UPDATE/INSERT/DELETE on the internal connection and
         commits. Scoped to test files that previously reached into
         ``db._conn.execute(...)``.
+
+        Feature 089 FR-1.6 / AC-6 (#00144): on any error during execute or
+        commit, rollback then re-raise so the connection is not left mid-txn.
         """
-        self._conn.execute(sql, params)
-        self._conn.commit()
+        _assert_testing_context()
+        try:
+            self._conn.execute(sql, params)
+            self._conn.commit()
+        except Exception:
+            try:
+                self._conn.rollback()
+            except sqlite3.Error:
+                # Rollback best-effort; surface the original failure below.
+                pass
+            raise
 
     # ------------------------------------------------------------------
     # Confidence decay (Feature 082)

@@ -44,10 +44,16 @@ from semantic_memory.database import MemoryDatabase  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def reset_refresh_state(monkeypatch):
-    """Reset ``refresh``'s module-level dedup flags/sets before each test."""
+    """Reset ``refresh``'s module-level dedup flags/sets before each test.
+
+    Feature 089 FR-3.6 / AC-16 (#00155): also call ``reset_warning_state()``
+    so any future module-level flag is cleared without requiring every test
+    fixture to grow a new ``monkeypatch.setattr`` line.
+    """
     monkeypatch.setattr(refresh, "_slow_refresh_warned", False)
     monkeypatch.setattr(refresh, "_refresh_error_warned", False)
     monkeypatch.setattr(refresh, "_refresh_warned_fields", set())
+    refresh.reset_warning_state()
     yield
 
 

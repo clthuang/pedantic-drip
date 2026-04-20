@@ -3191,7 +3191,12 @@ class TestReconcilePhaseEventsDrift:
     def test_reconcile_check_reports_phase_events_drift(self, db, tmp_path):
         """AC-42: reconcile_check returns a phase_events_drift entry for
         metadata.phase_timing.{phase}.completed with no matching phase_events
-        row (event_type='completed')."""
+        row (event_type='completed').
+
+        Feature 089 FR-2.1 / AC-8 (#00146) extended detection to also cover
+        ``started``; the seed data has both a ``started`` and ``completed``
+        timestamp with no events, so both kinds surface here.
+        """
         slug = "088-l-check"
         type_id = self._seed_feature_with_phase_timing_drift(db, tmp_path, slug)
 
@@ -3203,9 +3208,10 @@ class TestReconcilePhaseEventsDrift:
         assert "phase_events_drift" in data
         drift = data["phase_events_drift"]
         assert isinstance(drift, list)
-        assert len(drift) == 1
-        entry = drift[0]
-        assert entry["kind"] == "phase_events_missing_completed"
+        # Find the completed-drift entry among potentially multiple kinds.
+        completed = [e for e in drift if e["kind"] == "phase_events_missing_completed"]
+        assert len(completed) == 1
+        entry = completed[0]
         assert entry["type_id"] == type_id
         assert entry["phase"] == "design"
         assert entry["metadata_completed_at"] == "2026-04-19T00:00:00Z"
@@ -3255,6 +3261,241 @@ class TestReconcilePhaseEventsDrift:
         # (c) response has phase_events_drift_count >= 1
         assert "phase_events_drift_count" in data
         assert data["phase_events_drift_count"] >= 1
+
+
+# ===========================================================================
+# Feature 089 Bundle B — Detection correctness (FR-2, ACs 8/9/10, #00146/00150/00151)
+# ===========================================================================
+
+
+class TestFeature089BundleBDetection:
+    """Feature 089 Bundle B: extended drift detection + bulk query + project_id helper.
+
+    AC-8  (FR-2.1, #00146): drift detection covers started + skipped events.
+    AC-9  (FR-2.2, #00150): bulk query eliminates the N+1 pattern.
+    AC-10 (FR-2.3, #00151): ``_resolve_project_id`` distinguishes None from ''.
+    """
+
+    def _seed_entity_with_full_metadata_drift(self, db, tmp_path, slug):
+        """Seed an entity with ``phase_timing.design.started`` (no row),
+        ``phase_timing.specify.completed`` (with a row), and
+        ``skipped_phases=['brainstorm']`` (no row). Returns type_id.
+        """
+        type_id = f"feature:{slug}"
+        db.register_entity(
+            "feature", slug, f"B1 {slug}",
+            status="active", project_id="__unknown__",
+        )
+        db.create_workflow_phase(
+            type_id,
+            workflow_phase="design",
+            last_completed_phase="specify",
+            mode="standard",
+        )
+        feat_dir = os.path.join(str(tmp_path), "features", slug)
+        os.makedirs(feat_dir, exist_ok=True)
+        with open(os.path.join(feat_dir, ".meta.json"), "w") as f:
+            json.dump({
+                "id": slug.split("-", 1)[0],
+                "slug": slug,
+                "status": "active",
+                "mode": "standard",
+            }, f)
+
+        # Seed a phase_events row for specify:completed so we can verify it
+        # is NOT flagged as drift (negative control for the detector).
+        db.insert_phase_event(
+            type_id=type_id, project_id="__unknown__", phase="specify",
+            event_type="completed", timestamp="2026-03-31T00:00:00Z",
+            source="live",
+        )
+
+        existing = db.get_entity(type_id)
+        meta = json.loads(existing["metadata"]) if existing["metadata"] else {}
+        meta["phase_timing"] = {
+            # Missing: started event row for design.
+            "design": {
+                "started": "2026-04-01T00:00:00Z",
+            },
+            # Present: completed event row already inserted above.
+            "specify": {
+                "completed": "2026-03-31T00:00:00Z",
+            },
+        }
+        # Missing: skipped event row for brainstorm.
+        meta["skipped_phases"] = ["brainstorm"]
+        db.update_entity(type_id, metadata=meta)
+        return type_id
+
+    # ---- AC-8 (FR-2.1, #00146) ----
+
+    def test_reconcile_detects_drift_for_started_and_skipped_events(
+        self, db, tmp_path,
+    ):
+        """AC-8: drift detection surfaces missing ``started`` and
+        ``skipped`` phase_events rows in addition to ``completed``."""
+        slug = "089-b1-drift"
+        type_id = self._seed_entity_with_full_metadata_drift(db, tmp_path, slug)
+
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        result = _process_reconcile_check(engine, db, str(tmp_path), type_id)
+        data = json.loads(result)
+
+        assert "error" not in data
+        drift = data["phase_events_drift"]
+        assert isinstance(drift, list)
+
+        kinds = {e["kind"] for e in drift}
+        assert "phase_events_missing_started" in kinds, (
+            f"Expected missing_started kind; got {kinds}"
+        )
+        assert "phase_events_missing_skipped" in kinds, (
+            f"Expected missing_skipped kind; got {kinds}"
+        )
+
+        # Negative control: specify:completed WAS recorded, so no drift.
+        assert not any(
+            e["phase"] == "specify" and e["kind"] == "phase_events_missing_completed"
+            for e in drift
+        )
+
+        # Exact entry shape: started entry carries the started timestamp.
+        started_entry = next(
+            e for e in drift if e["kind"] == "phase_events_missing_started"
+        )
+        assert started_entry["type_id"] == type_id
+        assert started_entry["phase"] == "design"
+        assert started_entry["metadata_completed_at"] == "2026-04-01T00:00:00Z"
+
+        # Skipped entry references brainstorm; metadata_completed_at empty.
+        skipped_entry = next(
+            e for e in drift if e["kind"] == "phase_events_missing_skipped"
+        )
+        assert skipped_entry["type_id"] == type_id
+        assert skipped_entry["phase"] == "brainstorm"
+        assert skipped_entry["metadata_completed_at"] == ""
+
+    # ---- AC-9 (FR-2.2, #00150) ----
+
+    def test_detect_phase_events_drift_uses_bulk_query(self, db, tmp_path):
+        """AC-9: detector calls ``query_phase_events_bulk`` at most twice
+        (single chunk for well under 500 type_ids), not N+1 per entity/phase.
+        """
+        # Seed 10 entities, each with phase_timing for 5 phases — 50 per-(entity,phase)
+        # checks before the bulk rewrite.
+        phases = ["brainstorm", "specify", "design", "create-plan", "implement"]
+        for i in range(10):
+            slug = f"089-b2-{i:02d}"
+            type_id = f"feature:{slug}"
+            db.register_entity(
+                "feature", slug, f"Bulk {i}",
+                status="active", project_id="__unknown__",
+            )
+            db.create_workflow_phase(
+                type_id, workflow_phase="finish",
+                last_completed_phase="implement", mode="standard",
+            )
+            feat_dir = os.path.join(str(tmp_path), "features", slug)
+            os.makedirs(feat_dir, exist_ok=True)
+            with open(os.path.join(feat_dir, ".meta.json"), "w") as f:
+                json.dump({"id": str(i), "slug": slug, "status": "active",
+                           "mode": "standard"}, f)
+            existing = db.get_entity(type_id)
+            meta = json.loads(existing["metadata"]) if existing["metadata"] else {}
+            meta["phase_timing"] = {
+                p: {
+                    "started": f"2026-04-0{(i % 9) + 1}T00:00:00Z",
+                    "completed": f"2026-04-0{(i % 9) + 1}T01:00:00Z",
+                }
+                for p in phases
+            }
+            db.update_entity(type_id, metadata=meta)
+
+        # Count calls to db.query_phase_events_bulk.
+        original_bulk = db.query_phase_events_bulk
+        call_count = [0]
+
+        def counting_bulk(type_ids, event_types=None):
+            call_count[0] += 1
+            return original_bulk(type_ids, event_types=event_types)
+
+        db.query_phase_events_bulk = counting_bulk
+
+        # Also prove the legacy per-row ``query_phase_events`` is no longer
+        # used inside the detector (it would be a regression to N+1).
+        original_single = db.query_phase_events
+        single_call_count = [0]
+
+        def counting_single(**kwargs):
+            single_call_count[0] += 1
+            return original_single(**kwargs)
+
+        db.query_phase_events = counting_single
+
+        try:
+            engine = WorkflowStateEngine(db, str(tmp_path))
+            result = _process_reconcile_check(engine, db, str(tmp_path), None)
+        finally:
+            db.query_phase_events_bulk = original_bulk
+            db.query_phase_events = original_single
+
+        data = json.loads(result)
+        assert "error" not in data
+
+        # ≤ 2 bulk calls (10 entities × 3 event_types = ~30 params << 500 chunk budget).
+        assert call_count[0] <= 2, (
+            f"Expected ≤2 bulk calls; got {call_count[0]} — regression to N+1?"
+        )
+        # Zero per-row calls from the detector (pre-fix was ~50).
+        assert single_call_count[0] == 0, (
+            f"Expected 0 per-row query_phase_events calls; got {single_call_count[0]}"
+        )
+
+    # ---- AC-10 (FR-2.3, #00151) ----
+
+    def test_resolve_project_id_distinguishes_none_from_empty(
+        self, db, tmp_path, capsys, monkeypatch,
+    ):
+        """AC-10: ``_resolve_project_id`` emits a warning for empty
+        project_id (data integrity issue) but silently falls back for
+        None (legitimate legacy row). Both resolve to ``__unknown__``.
+        """
+        from workflow_state_server import _resolve_project_id
+
+        # Empty-string case: warning to stderr + __unknown__ return.
+        capsys.readouterr()  # drain prior output
+        result_empty = _resolve_project_id(
+            {"type_id": "feature:089-b3-empty", "project_id": ""}
+        )
+        err_empty = capsys.readouterr().err
+        assert result_empty == "__unknown__"
+        assert "empty project_id" in err_empty
+        assert "feature:089-b3-empty" in err_empty
+
+        # None case: NO warning + __unknown__ return.
+        capsys.readouterr()  # drain
+        result_none = _resolve_project_id(
+            {"type_id": "feature:089-b3-none", "project_id": None}
+        )
+        err_none = capsys.readouterr().err
+        assert result_none == "__unknown__"
+        assert "empty project_id" not in err_none
+
+        # Missing-key case behaves like None (no warning).
+        capsys.readouterr()
+        result_missing = _resolve_project_id({"type_id": "feature:089-b3-miss"})
+        err_missing = capsys.readouterr().err
+        assert result_missing == "__unknown__"
+        assert "empty project_id" not in err_missing
+
+        # Happy path: real project_id returned as-is, no warning.
+        capsys.readouterr()
+        result_real = _resolve_project_id(
+            {"type_id": "feature:089-b3-ok", "project_id": "my-project"}
+        )
+        err_real = capsys.readouterr().err
+        assert result_real == "my-project"
+        assert "empty project_id" not in err_real
 
 
 # ===========================================================================
@@ -8474,9 +8715,20 @@ class TestQueryPhaseAnalytics:
         assert len(result["results"]) <= 3
 
     def test_ac15_project_id_filter(self, analytics_db):
-        """AC-15: project_id filter returns only matching project."""
+        """AC-15: project_id filter returns only matching project.
+
+        Feature 089 FR-1.5 / AC-5 (#00143): ``query_phase_analytics`` now
+        enforces a project_id allowlist. The legacy wide-open scoping that
+        accepted any string is gone; to exercise P002 in this test, we set
+        the current project to P002 (current-project resolves to P002 via
+        the explicit ``project_id='P002'`` argument passing the allowlist
+        check).
+        """
         import asyncio
         import workflow_state_server
+
+        # Set current project to P002 so the allowlist accepts project_id='P002'.
+        workflow_state_server._project_id = "P002"
 
         result_str = asyncio.run(
             workflow_state_server.query_phase_analytics(
@@ -9225,3 +9477,545 @@ class TestFeature088BundleH4:
         assert events == [], (
             f"phase_events row unexpectedly present after lock: {events!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Feature 089 Bundle A — query_phase_analytics project_id allowlist
+# ---------------------------------------------------------------------------
+
+
+class TestFeature089BundleA:
+    """Feature 089 Bundle A (#00143): ``query_phase_analytics`` rejects
+    unknown ``project_id`` values so callers cannot probe foreign
+    projects by guessing IDs.
+    """
+
+    def test_query_phase_analytics_rejects_unknown_project_id(self):
+        """AC-5 (FR-1.5 / #00143).
+
+        Calling with ``project_id='arbitrary'`` from a different current
+        project MUST return an ``error`` dict with a ``forbidden`` tag.
+        Calling with ``project_id='*'`` MUST pass validation (wildcard is
+        the explicit cross-project opt-in).
+        """
+        import asyncio
+        import workflow_state_server as wss
+
+        # Seed a real DB so the wildcard call can succeed past validation.
+        db = EntityDatabase(":memory:")
+        db.insert_phase_event(
+            type_id="feature:z-001", project_id="ProjZ",
+            phase="design", event_type="started",
+            timestamp="2026-04-10T10:00:00Z",
+        )
+
+        wss._db = db
+        wss._project_id = "ProjZ"
+
+        # Unknown project_id → forbidden error.
+        forbidden_result = json.loads(asyncio.run(
+            wss.query_phase_analytics(
+                query_type="raw_events", project_id="arbitrary", limit=10,
+            )
+        ))
+        assert "error" in forbidden_result, (
+            f"expected error dict for unknown project_id, got {forbidden_result!r}"
+        )
+        # _make_error shape: {"error": True, "error_type": "forbidden", ...}
+        assert forbidden_result.get("error_type") == "forbidden", (
+            f"expected error_type=forbidden, got "
+            f"{forbidden_result.get('error_type')!r}"
+        )
+        # The message should mention the cross-project rule.
+        assert "cross-project" in forbidden_result.get("message", ""), (
+            f"forbidden error should reference cross-project rule: "
+            f"{forbidden_result!r}"
+        )
+
+        # Wildcard → passes validation and returns a result (no error).
+        star_result = json.loads(asyncio.run(
+            wss.query_phase_analytics(
+                query_type="raw_events", project_id="*", limit=10,
+            )
+        ))
+        assert "error" not in star_result, (
+            f"wildcard must pass validation, got {star_result!r}"
+        )
+
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Feature 089 Bundle E — Test-gap closure (AC-22, AC-23, AC-25, AC-27,
+# AC-28, AC-29)
+# ---------------------------------------------------------------------------
+
+
+class TestFeature089BundleE:
+    """Feature 089 Bundle E — regression guards for six adversarial-review
+    findings (#00164, #00165, #00167, #00169, #00170, #00171).
+    """
+
+    # ---- AC-22 (#00164): record_backward_event resolves project_id server-side ----
+
+    def test_record_backward_event_ignores_caller_project_id_mismatch(self):
+        """AC-22 (#00164).
+
+        The current MCP signature for ``record_backward_event`` no longer
+        accepts a caller-supplied ``project_id`` (Feature 088 FR-2.3
+        removed it).  This test is a regression guard — it verifies the
+        resolved ``project_id`` comes from the *entity record* even when
+        the current-project global disagrees.  If someone re-adds a
+        ``project_id`` param later, the server MUST continue to resolve
+        from the entity so callers cannot spoof cross-project writes.
+        """
+        import asyncio
+        import workflow_state_server as wss
+
+        db = EntityDatabase(":memory:")
+        # Seed entity with a specific project_id.  We then set the
+        # server's current-project to a DIFFERENT value so the two
+        # cannot be confused; the inserted row MUST carry the entity's.
+        db.register_entity(
+            "feature", "089-e-22", "E22 Test",
+            status="active", project_id="RealProject",
+        )
+        wss._db = db
+        wss._project_id = "SomeOtherProject"  # intentionally different
+
+        result_str = asyncio.run(
+            wss.record_backward_event(
+                type_id="feature:089-e-22",
+                source_phase="design",
+                target_phase="specify",
+                reason="scope gap",
+            )
+        )
+        result = json.loads(result_str)
+        assert result.get("recorded") is True, (
+            f"record_backward_event failed: {result!r}"
+        )
+
+        events = db.query_phase_events(
+            type_id="feature:089-e-22", event_type="backward",
+        )
+        assert len(events) == 1
+        # The row's project_id MUST come from the entity, NOT from
+        # ``wss._project_id`` — confirms server-side resolution.
+        assert events[0]["project_id"] == "RealProject", (
+            f"expected entity project_id 'RealProject', got "
+            f"{events[0]['project_id']!r} — server-side resolution regressed"
+        )
+        db.close()
+
+    # ---- AC-23 (#00165): dual-write failure row stays missing across runs ----
+
+    def test_dual_write_failure_row_remains_missing_after_subsequent_transition(
+        self, tmp_path, monkeypatch,
+    ):
+        """AC-23 (#00165).
+
+        When the first transition's phase_events dual-write fails
+        (simulated ``sqlite3.IntegrityError``), the main transaction
+        still commits the metadata update (FR-5.1).  A later successful
+        transition MUST NOT retroactively backfill the missing row — the
+        gap is permanent and surfaces via ``reconcile_check``.
+        """
+        db = EntityDatabase(":memory:")
+        db.register_entity(
+            "feature", "089-e-23", "E23 Test",
+            status="active", project_id="P-e23",
+        )
+        db.create_workflow_phase(
+            "feature:089-e-23", workflow_phase="brainstorm",
+            last_completed_phase=None, mode="standard",
+        )
+        feat_dir = os.path.join(str(tmp_path), "features", "089-e-23")
+        os.makedirs(feat_dir, exist_ok=True)
+        with open(os.path.join(feat_dir, ".meta.json"), "w") as f:
+            json.dump(
+                {"id": "089", "slug": "089-e-23", "status": "active",
+                 "mode": "standard"}, f,
+            )
+        # Pre-create spec.md so Transition 2 (specify → design) passes
+        # the G-08 hard-prerequisite guard.
+        with open(os.path.join(feat_dir, "spec.md"), "w") as f:
+            f.write("# Spec\n")
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        # Monkeypatch insert_phase_event to raise on the FIRST call only.
+        call_count = [0]
+        real_insert = db.insert_phase_event
+
+        def failing_then_succeeding(**kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise sqlite3.IntegrityError("simulated first-call failure")
+            return real_insert(**kwargs)
+
+        monkeypatch.setattr(db, "insert_phase_event", failing_then_succeeding)
+
+        # Transition 1: brainstorm → specify.  First insert fails.
+        result1 = _process_transition_phase(
+            engine, "feature:089-e-23", "specify", False, db=db,
+        )
+        data1 = json.loads(result1)
+        assert data1.get("transitioned") is True, data1
+        assert data1.get("phase_events_write_failed") is True, (
+            f"expected phase_events_write_failed flag, got: {data1!r}"
+        )
+
+        # Transition 2: specify → design.  Second insert succeeds.
+        result2 = _process_transition_phase(
+            engine, "feature:089-e-23", "design", False, db=db,
+        )
+        data2 = json.loads(result2)
+        assert data2.get("transitioned") is True, data2
+        assert data2.get("phase_events_write_failed") is not True, (
+            f"second transition should not have flagged a failure: {data2!r}"
+        )
+
+        # Phase_events table MUST have EXACTLY ONE row for this feature —
+        # the design transition's 'started' event.  The specify transition's
+        # started row is permanently missing (not retroactively backfilled).
+        rows = db.query_phase_events(type_id="feature:089-e-23")
+        assert len(rows) == 1, (
+            f"expected exactly 1 phase_events row (design only); got "
+            f"{len(rows)}: {rows!r}"
+        )
+        assert rows[0]["phase"] == "design"
+        assert rows[0]["event_type"] == "started"
+        # Specifically confirm the specify row is NOT present.
+        specify_rows = db.query_phase_events(
+            type_id="feature:089-e-23", phase="specify",
+        )
+        assert specify_rows == [], (
+            f"specify row must stay permanently missing, got: {specify_rows!r}"
+        )
+        db.close()
+
+    # ---- AC-25 (#00167): reconcile stable after manual backfill ----
+
+    def test_reconcile_check_stable_after_manual_phase_events_insert(
+        self, tmp_path,
+    ):
+        """AC-25 (#00167).
+
+        When an operator manually inserts a missing phase_events row (after
+        a dual-write failure), the next ``reconcile_check`` MUST report NO
+        drift for that (type_id, phase) pair.  The detector compares
+        metadata timestamps against rows in phase_events; any matching row
+        regardless of ``source`` suppresses the drift entry.
+        """
+        db = EntityDatabase(":memory:")
+        db.register_entity(
+            "feature", "089-e-25", "E25 Test",
+            status="active", project_id="P-e25",
+        )
+        db.create_workflow_phase(
+            "feature:089-e-25", workflow_phase="create-plan",
+            last_completed_phase="design", mode="standard",
+        )
+        feat_dir = os.path.join(str(tmp_path), "features", "089-e-25")
+        os.makedirs(feat_dir, exist_ok=True)
+        with open(os.path.join(feat_dir, ".meta.json"), "w") as f:
+            json.dump(
+                {"id": "089", "slug": "089-e-25", "status": "active",
+                 "mode": "standard"}, f,
+            )
+        # Seed metadata with design.completed but NO phase_events row.
+        entity = db.get_entity("feature:089-e-25")
+        meta = json.loads(entity["metadata"]) if entity["metadata"] else {}
+        meta["phase_timing"] = {
+            "design": {"completed": "2026-04-01T00:00:00Z"},
+        }
+        db.update_entity("feature:089-e-25", metadata=meta)
+
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        # First reconcile_check: drift reported.
+        result1 = _process_reconcile_check(
+            engine, db, str(tmp_path), "feature:089-e-25",
+        )
+        data1 = json.loads(result1)
+        assert "error" not in data1
+        drift1 = data1.get("phase_events_drift", [])
+        design_drift = [
+            e for e in drift1
+            if e["type_id"] == "feature:089-e-25"
+            and e["phase"] == "design"
+            and e["kind"] == "phase_events_missing_completed"
+        ]
+        assert len(design_drift) == 1, (
+            f"expected exactly 1 missing_completed drift entry for design, "
+            f"got: {drift1!r}"
+        )
+
+        # Operator manually inserts the missing row (matching timestamp
+        # and 'live' source — the detector matches on tuple membership,
+        # not source, so 'live' is fine here).
+        db.insert_phase_event(
+            type_id="feature:089-e-25", project_id="P-e25",
+            phase="design", event_type="completed",
+            timestamp="2026-04-01T00:00:00Z",
+            source="live",
+        )
+
+        # Second reconcile_check: no drift for this (type_id, phase).
+        result2 = _process_reconcile_check(
+            engine, db, str(tmp_path), "feature:089-e-25",
+        )
+        data2 = json.loads(result2)
+        assert "error" not in data2
+        drift2 = data2.get("phase_events_drift", [])
+        residual = [
+            e for e in drift2
+            if e["type_id"] == "feature:089-e-25"
+            and e["phase"] == "design"
+        ]
+        assert residual == [], (
+            f"manual backfill must clear drift for design, got residual: "
+            f"{residual!r}"
+        )
+        db.close()
+
+    # ---- AC-27 (#00169): drift detector handles sqlite error gracefully ----
+
+    def test_detect_phase_events_drift_handles_sqlite_error_gracefully(
+        self, tmp_path, monkeypatch,
+    ):
+        """AC-27 (#00169).
+
+        When the drift detector's entity enumeration raises
+        ``sqlite3.OperationalError`` mid-iteration, the outer
+        ``_with_error_handling`` decorator MUST convert the error to a
+        well-formed JSON error response (never propagate a raw exception).
+        The response shape has ``error``, ``error_type``, ``message``, and
+        ``recovery_hint`` keys.
+        """
+        db = EntityDatabase(":memory:")
+        # Seed at least one entity so the detector reaches list_entities.
+        db.register_entity(
+            "feature", "089-e-27", "E27 Test",
+            status="active", project_id="P-e27",
+        )
+        db.create_workflow_phase(
+            "feature:089-e-27", workflow_phase="design",
+            last_completed_phase="specify", mode="standard",
+        )
+        feat_dir = os.path.join(str(tmp_path), "features", "089-e-27")
+        os.makedirs(feat_dir, exist_ok=True)
+        with open(os.path.join(feat_dir, ".meta.json"), "w") as f:
+            json.dump(
+                {"id": "089", "slug": "089-e-27", "status": "active",
+                 "mode": "standard"}, f,
+            )
+
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        # Monkeypatch list_entities to raise — this is the enumerator used
+        # by the bulk-query rewrite (FR-2.2 / AC-9).
+        def _raise_disk_io_error(**kwargs):
+            raise sqlite3.OperationalError("disk I/O error")
+
+        monkeypatch.setattr(db, "list_entities", _raise_disk_io_error)
+
+        # Bulk path (feature_type_id=None) hits list_entities directly.
+        result = _process_reconcile_check(engine, db, str(tmp_path), None)
+        data = json.loads(result)
+
+        # Response MUST be well-formed JSON with the _make_error shape.
+        assert isinstance(data, dict), f"expected dict response, got {data!r}"
+        assert data.get("error") is True, (
+            f"expected error=True after sqlite failure, got: {data!r}"
+        )
+        # error_type should be 'db_unavailable' (sqlite3.Error branch in
+        # _with_error_handling) — pin this observable contract.
+        assert data.get("error_type") == "db_unavailable", (
+            f"expected error_type=db_unavailable, got {data.get('error_type')!r}"
+        )
+        assert isinstance(data.get("message"), str)
+        assert isinstance(data.get("recovery_hint"), str)
+        db.close()
+
+    # ---- AC-28 (#00170): reviewer_notes exact boundary at MCP entry ----
+
+    def test_complete_phase_reviewer_notes_exact_boundary_at_mcp_entry(
+        self, tmp_path,
+    ):
+        """AC-28 (#00170).
+
+        Boundary mutation guard for ``reviewer_notes`` size check in
+        ``_process_complete_phase`` (``workflow_state_server.py:797``):
+
+        - Exactly 10000 chars → accepted (no ``oversized_reviewer_notes``
+          error; may still fail downstream validation, but NOT for size).
+        - Exactly 10001 chars → rejected with
+          ``_make_error('oversized_reviewer_notes', ...)``.
+
+        A ``>`` vs ``>=`` swap on the size check would flip one of these
+        assertions, making this test a precise boundary guard.
+        """
+        db = EntityDatabase(":memory:")
+        db.register_entity(
+            "feature", "089-e-28", "E28 Test",
+            status="active", project_id="P-e28",
+        )
+        db.create_workflow_phase(
+            "feature:089-e-28", workflow_phase="brainstorm",
+            last_completed_phase=None, mode="standard",
+        )
+        feat_dir = os.path.join(str(tmp_path), "features", "089-e-28")
+        os.makedirs(feat_dir, exist_ok=True)
+        with open(os.path.join(feat_dir, ".meta.json"), "w") as f:
+            json.dump(
+                {"id": "089", "slug": "089-e-28", "status": "active",
+                 "mode": "standard"}, f,
+            )
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        # Reviewer notes must be valid JSON — use a JSON string literal
+        # padded to the exact length by adjusting inner content.
+        # JSON string envelope: `"..."` — 2 quote chars of overhead.
+        # Body must be 10000 - 2 = 9998 chars for envelope total = 10000.
+        body_10000 = "x" * 9998
+        notes_at = '"' + body_10000 + '"'
+        assert len(notes_at) == 10000
+
+        result_at = _process_complete_phase(
+            engine, "feature:089-e-28", "brainstorm",
+            db=db, reviewer_notes=notes_at,
+        )
+        data_at = json.loads(result_at)
+        # 10000 MUST pass the size gate.  If size validation blocks it,
+        # the response's error_type would be 'oversized_reviewer_notes'.
+        assert data_at.get("error_type") != "oversized_reviewer_notes", (
+            f"exactly 10000 chars must pass size gate, got: {data_at!r}"
+        )
+
+        # Reset for the second call: re-register so the workflow phase is
+        # in the right state (the first call completed brainstorm).
+        db.close()
+        db = EntityDatabase(":memory:")
+        db.register_entity(
+            "feature", "089-e-28b", "E28b Test",
+            status="active", project_id="P-e28",
+        )
+        db.create_workflow_phase(
+            "feature:089-e-28b", workflow_phase="brainstorm",
+            last_completed_phase=None, mode="standard",
+        )
+        feat_dir2 = os.path.join(str(tmp_path), "features", "089-e-28b")
+        os.makedirs(feat_dir2, exist_ok=True)
+        with open(os.path.join(feat_dir2, ".meta.json"), "w") as f:
+            json.dump(
+                {"id": "089", "slug": "089-e-28b", "status": "active",
+                 "mode": "standard"}, f,
+            )
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        # 10001 chars: envelope of 10001 = body of 9999.
+        body_10001 = "x" * 9999
+        notes_over = '"' + body_10001 + '"'
+        assert len(notes_over) == 10001
+
+        result_over = _process_complete_phase(
+            engine, "feature:089-e-28b", "brainstorm",
+            db=db, reviewer_notes=notes_over,
+        )
+        data_over = json.loads(result_over)
+        assert data_over.get("error") is True, (
+            f"10001 chars must be rejected, got: {data_over!r}"
+        )
+        assert data_over.get("error_type") == "oversized_reviewer_notes", (
+            f"expected error_type=oversized_reviewer_notes, got "
+            f"{data_over.get('error_type')!r}"
+        )
+        assert "exceeds 10000" in data_over.get("message", "")
+        db.close()
+
+    # ---- AC-29 (#00171): end-to-end drift from real transition failure ----
+
+    def test_reconcile_detects_drift_from_real_transition_failure(
+        self, tmp_path, monkeypatch,
+    ):
+        """AC-29 (#00171).
+
+        End-to-end integration:
+        1. Call ``transition_phase`` with ``insert_phase_event``
+           monkeypatched to raise ``sqlite3.IntegrityError``.
+        2. Main transaction commits → ``metadata.phase_timing.specify.started``
+           persists, but phase_events has NO ``started`` row.
+        3. ``reconcile_check`` reports a
+           ``phase_events_missing_started`` drift entry for this
+           (type_id, 'specify').
+        """
+        db = EntityDatabase(":memory:")
+        db.register_entity(
+            "feature", "089-e-29", "E29 Test",
+            status="active", project_id="P-e29",
+        )
+        db.create_workflow_phase(
+            "feature:089-e-29", workflow_phase="brainstorm",
+            last_completed_phase=None, mode="standard",
+        )
+        feat_dir = os.path.join(str(tmp_path), "features", "089-e-29")
+        os.makedirs(feat_dir, exist_ok=True)
+        with open(os.path.join(feat_dir, ".meta.json"), "w") as f:
+            json.dump(
+                {"id": "089", "slug": "089-e-29", "status": "active",
+                 "mode": "standard"}, f,
+            )
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        # Step 1+2: transition with phase_events write failure.
+        def _raise_integrity(**kwargs):
+            raise sqlite3.IntegrityError("simulated failure")
+
+        monkeypatch.setattr(db, "insert_phase_event", _raise_integrity)
+
+        transition_result = _process_transition_phase(
+            engine, "feature:089-e-29", "specify", False, db=db,
+        )
+        t_data = json.loads(transition_result)
+        assert t_data.get("transitioned") is True
+        assert t_data.get("phase_events_write_failed") is True
+
+        # Confirm the metadata was persisted (phase_timing.specify.started).
+        entity = db.get_entity("feature:089-e-29")
+        meta = json.loads(entity["metadata"])
+        assert "specify" in meta.get("phase_timing", {}), (
+            f"metadata missing specify phase_timing: {meta!r}"
+        )
+        assert "started" in meta["phase_timing"]["specify"]
+
+        # Confirm NO phase_events row was written.
+        rows = db.query_phase_events(
+            type_id="feature:089-e-29", phase="specify",
+            event_type="started",
+        )
+        assert rows == [], (
+            f"expected no started row after simulated failure, got: {rows!r}"
+        )
+
+        # Un-patch so reconcile_check can run normally.
+        monkeypatch.undo()
+
+        # Step 3: reconcile_check surfaces the drift.
+        result = _process_reconcile_check(
+            engine, db, str(tmp_path), "feature:089-e-29",
+        )
+        data = json.loads(result)
+        assert "error" not in data, f"reconcile failed: {data!r}"
+        drift = data.get("phase_events_drift", [])
+        matching = [
+            e for e in drift
+            if e["type_id"] == "feature:089-e-29"
+            and e["phase"] == "specify"
+            and e["kind"] == "phase_events_missing_started"
+        ]
+        assert len(matching) == 1, (
+            f"expected exactly 1 missing_started drift for specify; drift="
+            f"{drift!r}"
+        )
+        db.close()

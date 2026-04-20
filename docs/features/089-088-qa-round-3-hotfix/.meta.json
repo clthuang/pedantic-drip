@@ -1,0 +1,27 @@
+{
+  "id": "089",
+  "slug": "088-qa-round-3-hotfix",
+  "mode": "full",
+  "status": "active",
+  "created": "2026-04-19T10:35:09.886470+00:00",
+  "branch": "feature/089-088-qa-round-3-hotfix",
+  "lastCompletedPhase": "create-plan",
+  "phases": {
+    "brainstorm": {
+      "started": "2026-04-19T10:35:09.886239+00:00"
+    },
+    "specify": {
+      "started": "2026-04-19T10:35:13.253789+00:00",
+      "completed": "2026-04-19T10:38:30.385785+00:00",
+      "iterations": 1
+    },
+    "design": {
+      "completed": "2026-04-19T10:38:34.088059+00:00",
+      "iterations": 0
+    },
+    "create-plan": {
+      "completed": "2026-04-19T10:38:38.094019+00:00",
+      "iterations": 0
+    }
+  }
+}

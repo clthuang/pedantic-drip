@@ -31,6 +31,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from semantic_memory._config_utils import (
+    _iso_utc,
     _resolve_int_config as _resolve_int_config_core,
     _warn_and_default as _warn_and_default_core,
 )
@@ -57,17 +58,10 @@ _DAYS_MIN = 0
 _DAYS_MAX = 365
 
 
-def _iso_utc(dt: datetime) -> str:
-    """Return Z-suffix UTC ISO-8601 (``YYYY-MM-DDTHH:MM:SSZ``).
-
-    Single source-of-truth for timestamp formatting inside decay_confidence
-    so cutoffs and ``now_iso`` compare lexicographically against stored
-    ``last_recalled_at`` / ``created_at`` values written by ``merge_duplicate``
-    (which uses the same Z-suffix format).  Feature 088 FR-3.1.
-    """
-    if dt.tzinfo is not None:
-        dt = dt.astimezone(timezone.utc)
-    return dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+# ``_iso_utc`` is imported from ``_config_utils`` above (feature 089 FR-3.2 /
+# AC-12 — #00148 relocated the helper to the shared utils module so
+# ``refresh.py`` can import it too).  Kept re-exported here as a module-level
+# name so tests that reference ``maintenance._iso_utc`` keep working.
 
 
 # ---------------------------------------------------------------------------
@@ -84,6 +78,24 @@ _decay_warned_fields: set[str] = set()
 _decay_config_warned: bool = False
 _decay_log_warned: bool = False
 _decay_error_warned: bool = False
+
+
+def reset_warning_state() -> None:
+    """Clear all module-level dedup flags (Feature 089 FR-3.6 / AC-16 — #00155).
+
+    Public function for tests (and any long-running supervisor wanting a
+    clean slate between iterations).  The autouse fixtures in
+    ``test_maintenance.py`` monkeypatch each flag individually; this helper
+    is the non-monkeypatch equivalent for callers that cannot use pytest
+    fixtures (e.g. integration harnesses, shell tests that exec the module).
+
+    Side-effect-only; returns ``None``.  Safe to call repeatedly.
+    """
+    global _decay_config_warned, _decay_log_warned, _decay_error_warned
+    _decay_warned_fields.clear()
+    _decay_config_warned = False
+    _decay_log_warned = False
+    _decay_error_warned = False
 
 
 # ---------------------------------------------------------------------------
@@ -140,10 +152,48 @@ def _emit_decay_diagnostic(diag: dict) -> None:
         # Note: mkdir(mode=) only applies when the dir is newly created — existing
         # dirs keep their current mode (documented platform behavior).
         INFLUENCE_DEBUG_LOG_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        flags = os.O_APPEND | os.O_CREAT | os.O_WRONLY
+
+        # Feature 089 FR-1.7 / AC-7 (#00154): verify parent dir ownership +
+        # mode BEFORE opening the log. An attacker with write access to the
+        # parent dir (group/world-writable) could race-swap the log file; a
+        # foreign uid on the parent is an active compromise signal.
+        parent_stat = INFLUENCE_DEBUG_LOG_PATH.parent.stat()
+        if parent_stat.st_uid != os.getuid() or (parent_stat.st_mode & 0o077):
+            # Silently decline to write — treat like any other log failure.
+            raise OSError(
+                f"refusing to write log: parent dir "
+                f"{INFLUENCE_DEBUG_LOG_PATH.parent} has insecure "
+                f"uid={parent_stat.st_uid} or mode=0o{parent_stat.st_mode & 0o777:o}"
+            )
+
+        base_flags = os.O_APPEND | os.O_WRONLY
         if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
-        fd = os.open(str(INFLUENCE_DEBUG_LOG_PATH), flags, 0o600)
+            base_flags |= os.O_NOFOLLOW
+        # First attempt: O_EXCL — atomic create-and-acquire. If EEXIST, we
+        # fall back to append-only (no O_CREAT, no O_EXCL) and verify the
+        # existing file's ownership via fstat so a symlink-swap or foreign-uid
+        # hijack is caught BEFORE we write.
+        try:
+            fd = os.open(
+                str(INFLUENCE_DEBUG_LOG_PATH),
+                base_flags | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+        except FileExistsError:
+            fd = os.open(str(INFLUENCE_DEBUG_LOG_PATH), base_flags)
+            # Re-stat the fd — not the path — so a TOCTOU symlink swap post-
+            # open is caught.
+            try:
+                fd_stat = os.fstat(fd)
+            except OSError:
+                os.close(fd)
+                raise
+            if fd_stat.st_uid != os.getuid():
+                os.close(fd)
+                raise OSError(
+                    f"refusing to append log: file owner uid={fd_stat.st_uid} "
+                    f"!= running uid={os.getuid()}"
+                )
         try:
             if hasattr(os, "fchmod"):
                 try:
@@ -335,7 +385,13 @@ def decay_confidence(
     # Normalize to UTC to prevent false-positive demotions from SQLite's
     # lexicographic string comparison on ISO-8601 timestamps with different
     # timezone offsets (adversarial QA finding #1).
-    if now.tzinfo is not None:
+    #
+    # Feature 089 FR-1.3 (#00141): _iso_utc now REJECTS naive datetimes, so
+    # naive inputs must be assumed-UTC here (back-compat with AC-38 test that
+    # pins naive-input acceptance at the decay entry point).
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    else:
         now = now.astimezone(timezone.utc)
 
     # Resolve config via shared helper (bool-reject + clamp + dedup-warn).

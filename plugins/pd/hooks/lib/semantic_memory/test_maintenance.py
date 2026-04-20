@@ -10,13 +10,14 @@ redirected to a per-test ``tmp_path`` so tests that enable
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 from datetime import MAXYEAR, datetime, timedelta, timezone
 
 import pytest
 
-from semantic_memory import maintenance
+from semantic_memory import maintenance, refresh
 from semantic_memory.database import MemoryDatabase
 
 
@@ -28,6 +29,13 @@ def reset_decay_state(monkeypatch, tmp_path):
     reassign): bool is immutable, and ``from X import Y`` creates a local
     binding to the same object rather than a live reference — setattr is
     the only way to mutate the module namespace reliably.
+
+    Feature 089 FR-3.6 / AC-16 (#00155): also invoke the public
+    ``reset_warning_state()`` helpers on both ``maintenance`` and ``refresh``
+    so any state those functions clear beyond the monkeypatched set is also
+    reset per-test.  The monkeypatched attributes already auto-restore on
+    teardown; the helper call is belt-and-suspenders for flags that might be
+    added later without updating every test fixture.
     """
     monkeypatch.setattr(maintenance, "_decay_warned_fields", set())
     monkeypatch.setattr(maintenance, "_decay_config_warned", False)
@@ -38,8 +46,54 @@ def reset_decay_state(monkeypatch, tmp_path):
         "INFLUENCE_DEBUG_LOG_PATH",
         tmp_path / "influence-debug.log",
     )
+    # Feature 089 FR-3.6: call public reset helpers so any new module-level
+    # dedup flag added later is cleared without needing a fixture change.
+    maintenance.reset_warning_state()
+    refresh.reset_warning_state()
     yield
     # monkeypatch auto-restores on teardown
+
+
+# ---------------------------------------------------------------------------
+# reset_warning_state — Feature 089 FR-3.6 / AC-16 (#00155)
+# ---------------------------------------------------------------------------
+
+
+class TestResetWarningState:
+    """Feature 089 FR-3.6 / AC-16 (#00155)."""
+
+    def test_reset_warning_state_clears_module_globals(self, monkeypatch):
+        """Populate each dedup flag, call reset_warning_state, assert cleared.
+
+        Covers the maintenance-side helper.  The autouse fixture calls this
+        helper pre-yield; this test exercises it explicitly so a regression
+        that removes the helper (or stops clearing a flag) fails fast.
+        """
+        # Set dirty state directly on the module (bypassing autouse fixture's
+        # monkeypatch by setting the flags post-fixture).
+        monkeypatch.setattr(maintenance, "_decay_config_warned", True)
+        monkeypatch.setattr(maintenance, "_decay_log_warned", True)
+        monkeypatch.setattr(maintenance, "_decay_error_warned", True)
+        maintenance._decay_warned_fields.add("some_field")
+
+        maintenance.reset_warning_state()
+
+        assert maintenance._decay_config_warned is False
+        assert maintenance._decay_log_warned is False
+        assert maintenance._decay_error_warned is False
+        assert maintenance._decay_warned_fields == set()
+
+    def test_reset_warning_state_clears_refresh_module_globals(self, monkeypatch):
+        """Populate each refresh dedup flag, call reset, assert cleared."""
+        monkeypatch.setattr(refresh, "_slow_refresh_warned", True)
+        monkeypatch.setattr(refresh, "_refresh_error_warned", True)
+        refresh._refresh_warned_fields.add("some_field")
+
+        refresh.reset_warning_state()
+
+        assert refresh._slow_refresh_warned is False
+        assert refresh._refresh_error_warned is False
+        assert refresh._refresh_warned_fields == set()
 
 
 # ---------------------------------------------------------------------------
@@ -2330,3 +2384,305 @@ class TestSqliteErrorDuringSelectPhase:
 # ``TestDecayConfigCoercion`` were augmented in-place with ``capsys`` +
 # stderr regex assertions (per the spec DoD wording). No separate augmented
 # class is needed.
+
+
+# ---------------------------------------------------------------------------
+# Feature 089 Bundle A — Security hardening tests
+# ---------------------------------------------------------------------------
+
+
+class TestFeature089BundleA:
+    """Feature 089 Bundle A (#00139, #00141, #00154): strict boolean
+    coercion routed through ``read_config``, tz-naive rejection in
+    ``_iso_utc``, and insecure-parent-dir refusal in the influence log.
+    """
+
+    def test_coerce_bool_routed_from_read_config(self, tmp_path, capsys):
+        """AC-1 (FR-1.1 / #00139).
+
+        ``read_config`` MUST route bool-default keys through ``_coerce_bool``
+        so ambiguous variants like the capital-F ``'False'`` fall back to
+        the DEFAULTS value (False) AND emit a one-line stderr warning.
+
+        Pre-089 this string round-tripped as ``'False'`` (truthy) and later
+        truthy-checks silently ran decay against the operator's intent.
+        """
+        from semantic_memory.config import read_config
+
+        project_root = tmp_path
+        (project_root / ".claude").mkdir()
+        (project_root / ".claude" / "pd.local.md").write_text(
+            "memory_decay_enabled: False\n"
+        )
+
+        config = read_config(str(project_root))
+
+        assert config["memory_decay_enabled"] is False, (
+            f"capital 'False' must coerce to False (default), got "
+            f"{config['memory_decay_enabled']!r}"
+        )
+        captured = capsys.readouterr()
+        assert re.search(r"ambiguous boolean", captured.err), (
+            f"expected 'ambiguous boolean' stderr warning, got: "
+            f"{captured.err!r}"
+        )
+
+    def test_iso_utc_raises_on_naive_datetime(self):
+        """AC-3 (FR-1.3 / #00141).
+
+        ``_iso_utc`` MUST raise ``ValueError`` for tz-naive inputs and
+        return a Z-suffix string for tz-aware inputs.
+        """
+        # Naive datetime → ValueError.
+        with pytest.raises(ValueError, match="timezone-aware"):
+            maintenance._iso_utc(datetime(2026, 1, 1, 12, 0, 0))
+
+        # Tz-aware datetime → expected Z-suffix string.
+        result = maintenance._iso_utc(
+            datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        )
+        assert result == "2026-01-01T12:00:00Z"
+
+    def test_influence_log_refuses_insecure_parent_dir_mode(
+        self, tmp_path, monkeypatch
+    ):
+        """AC-7 (FR-1.7 / #00154).
+
+        Parent directory with group/world-readable mode (0o755) MUST cause
+        ``_emit_decay_diagnostic`` to decline the write (no log file
+        created, no data leaked to a weakly-protected path).
+        """
+        # Build a parent dir with INSECURE mode 0o755.
+        insecure_parent = tmp_path / "insecure"
+        insecure_parent.mkdir(mode=0o755)
+        # Explicitly chmod in case the umask masked bits we asked for.
+        os.chmod(str(insecure_parent), 0o755)
+
+        log_path = insecure_parent / "influence-debug.log"
+        monkeypatch.setattr(maintenance, "INFLUENCE_DEBUG_LOG_PATH", log_path)
+
+        diag = _make_diag()
+        maintenance._emit_decay_diagnostic(diag)
+
+        # File MUST NOT exist, or at minimum have zero bytes written.
+        if log_path.exists():
+            assert log_path.stat().st_size == 0, (
+                f"insecure parent dir must not receive log writes, "
+                f"but {log_path} has {log_path.stat().st_size} bytes"
+            )
+
+        # Tighten mode back down so pytest cleanup can remove the dir.
+        os.chmod(str(insecure_parent), 0o700)
+
+
+# ---------------------------------------------------------------------------
+# Feature 089 Bundle E — Test-gap closure (AC-18, AC-19, AC-20, AC-26)
+# ---------------------------------------------------------------------------
+
+
+class TestFeature089BundleE:
+    """Feature 089 Bundle E (#00160, #00161, #00162, #00168): direct coverage
+    of the type-exact ``_coerce_bool`` ambiguity table, ``_iso_utc`` both
+    branches, scan-limit zero-behavior contract, and ``_warn_unknown_keys``
+    namespace-filter + dedup semantics.
+    """
+
+    # ---- AC-18 (#00160): _coerce_bool ambiguity parametrization ----
+
+    @pytest.mark.parametrize("raw_value,expected", [
+        # Ambiguous — fall back to default (=True used here to distinguish
+        # the fallback from a legitimate False parse), plus warning.
+        ("TRUE", "default"),       # capital accepted only by legacy frozenset
+        (" true", "default"),      # leading space — type-exact rejects
+        ("1.0", "default"),        # float-as-string — not bool
+        ("yes", "default"),        # English truthy — not accepted
+        ("01", "default"),         # leading zero int-as-string — ambiguous
+        # Accepted values (empty string is treated as False by _coerce_bool).
+        ("", False),
+    ])
+    def test_coerce_bool_ambiguous_variants_parameterized(
+        self, raw_value, expected, capsys,
+    ):
+        """AC-18 (FR-1.1 / #00160). Type-exact ``_coerce_bool`` rejects every
+        legacy-frozenset variant (``'TRUE'``, ``' true'``, ``'1.0'``, ``'yes'``,
+        ``'01'``) and falls back to ``default`` with a one-line ``ambiguous
+        boolean`` stderr warning.  Empty string is an accepted False literal
+        (matching the production contract at ``config.py:78-79``).
+        """
+        from semantic_memory.config import _coerce_bool
+
+        default_value = True  # distinct from False so fallback is observable
+        result = _coerce_bool("memory_decay_enabled", raw_value, default_value)
+
+        captured = capsys.readouterr()
+        if expected == "default":
+            assert result is default_value, (
+                f"{raw_value!r} must fall back to default={default_value}, "
+                f"got {result!r}"
+            )
+            assert "ambiguous boolean" in captured.err, (
+                f"expected 'ambiguous boolean' warning for {raw_value!r}, "
+                f"got stderr: {captured.err!r}"
+            )
+            assert "memory_decay_enabled" in captured.err
+        else:
+            # Expected is a concrete bool; no warning should be emitted.
+            assert result is expected, (
+                f"{raw_value!r} must coerce to {expected!r}, got {result!r}"
+            )
+            assert "ambiguous boolean" not in captured.err, (
+                f"unexpected warning for accepted value {raw_value!r}: "
+                f"{captured.err!r}"
+            )
+
+    # ---- AC-19 (#00161): _iso_utc both branches, direct ----
+
+    def test_iso_utc_handles_both_branches_directly(self):
+        """AC-19 (FR-3.2 / #00161). Directly exercise ``_iso_utc`` for:
+
+        - tz-aware UTC input → straight format to ``Z``-suffix.
+        - tz-aware non-UTC input → converts to UTC before formatting
+          (so US/Eastern 12:00 stamps as 17:00 in winter; ZoneInfo returns
+          standard-time offset for January 1).
+        - tz-naive input → raises ``ValueError`` per FR-1.3.
+
+        The helper now lives in ``semantic_memory._config_utils`` after
+        Feature 089 FR-3.2 / AC-12 (#00148); we test it via the relocated
+        module *and* through the ``maintenance._iso_utc`` re-export so both
+        import paths remain guaranteed.
+        """
+        from zoneinfo import ZoneInfo
+        from semantic_memory._config_utils import _iso_utc as _iso_utc_core
+
+        # Path 1: tz-aware UTC → passes through unchanged (minus the astimezone).
+        utc_input = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        assert _iso_utc_core(utc_input) == "2026-01-01T12:00:00Z"
+        # Module-level re-export must agree with the canonical helper.
+        assert maintenance._iso_utc(utc_input) == "2026-01-01T12:00:00Z"
+
+        # Path 2: tz-aware non-UTC → astimezone(UTC) first.
+        # US/Eastern on 2026-01-01 is EST (UTC-5), so 12:00 EST → 17:00 UTC.
+        est_input = datetime(
+            2026, 1, 1, 12, 0, 0, tzinfo=ZoneInfo("US/Eastern")
+        )
+        assert _iso_utc_core(est_input) == "2026-01-01T17:00:00Z"
+
+        # Path 3: tz-naive → ValueError (FR-1.3 security fix).
+        with pytest.raises(ValueError, match="timezone-aware"):
+            _iso_utc_core(datetime(2026, 1, 1, 12, 0, 0))
+        # Re-export MUST propagate the same error (it is the same function).
+        with pytest.raises(ValueError, match="timezone-aware"):
+            maintenance._iso_utc(datetime(2026, 1, 1, 12, 0, 0))
+
+    # ---- AC-20 (#00162): scan_limit=0 pinned behavior ----
+
+    def test_scan_limit_zero_behavior_pinned(self, fresh_db, monkeypatch):
+        """AC-20 (FR-1.2 / #00162). Pin the contract for
+        ``memory_decay_scan_limit=0``:
+
+        - Production path: the clamp ``(1000, 10_000_000)`` in
+          ``decay_confidence`` (``maintenance.py:462``) raises the raw 0 to
+          1000, so the SQL LIMIT never reaches 0 — ``_resolve_int_config``
+          enforces the min.
+        - Monkeypatched pass-through path: when the clamp is bypassed, 0
+          reaches ``_select_candidates`` as ``LIMIT 0``, which returns zero
+          rows → ``scanned == 0``.
+
+        Whichever contract the production code pins is fine; this test
+        exercises BOTH paths so a refactor cannot silently flip the
+        behavior.
+        """
+        # Seed 3 stale-high rows so the candidate pool is non-empty.
+        stale = _days_ago(31)
+        for i in range(3):
+            _seed_entry(
+                fresh_db, entry_id=f"z-{i}", confidence="high",
+                last_recalled_at=stale, created_at=stale,
+            )
+
+        # Path 1: production clamp kicks in — raw 0 clamped up to 1000.
+        # With only 3 rows total, scanned is 3 (bounded by row count, not LIMIT).
+        cfg_clamped = _enabled_config(memory_decay_scan_limit=0)
+        result_clamped = maintenance.decay_confidence(
+            fresh_db, cfg_clamped, now=NOW
+        )
+        assert "error" not in result_clamped, (
+            f"production path unexpectedly errored: {result_clamped!r}"
+        )
+        # The clamp raised LIMIT to 1000 so all 3 rows scan through.
+        assert result_clamped["scanned"] == 3, (
+            f"expected 3 (clamped to 1000, bounded by row count), got "
+            f"{result_clamped['scanned']}"
+        )
+
+        # Path 2: bypass the clamp via monkeypatch so raw 0 reaches SQL.
+        def _pass_through(config, key, default, *, clamp=None, warned):
+            if key == "memory_decay_scan_limit":
+                return int(config.get(key, default))
+            return default
+
+        monkeypatch.setattr(
+            maintenance, "_resolve_int_config", _pass_through,
+        )
+        cfg_raw = _enabled_config(memory_decay_scan_limit=0)
+        result_raw = maintenance.decay_confidence(
+            fresh_db, cfg_raw, now=NOW
+        )
+        assert "error" not in result_raw
+        # LIMIT 0 returns no rows → scanned == 0.
+        assert result_raw["scanned"] == 0, (
+            f"expected 0 (LIMIT 0 returns nothing), got {result_raw['scanned']}"
+        )
+
+    # ---- AC-26 (#00168): _warn_unknown_keys namespace filter + dedup ----
+
+    def test_warn_unknown_keys_namespace_filter_and_dedup(self, capsys):
+        """AC-26 (FR-3.6 / #00168). Pin the ``_warn_unknown_keys`` contract:
+
+        1. Off-namespace typos (no ``memory_`` / ``pd_`` prefix) are silently
+           tolerated — forward-compat escape hatch.
+        2. On-namespace typos emit a one-line stderr warning naming the key.
+        3. Dedup behavior is currently NOT stateful — each invocation of
+           ``_warn_unknown_keys`` re-emits the same warning for the same
+           key.  This test pins that observable contract so a future switch
+           to process-level dedup (e.g., via a module-level set) must update
+           the pin deliberately.
+        """
+        from semantic_memory.config import _warn_unknown_keys
+
+        # Case 1: off-namespace typo — no ``memory_``/``pd_`` prefix → silent.
+        capsys.readouterr()
+        _warn_unknown_keys({"memor_decay_enabled": True})
+        captured_off = capsys.readouterr()
+        assert captured_off.err == "", (
+            f"off-namespace typo must not warn, got: {captured_off.err!r}"
+        )
+
+        # Case 2: on-namespace typo — warning names the typo exactly.
+        capsys.readouterr()
+        _warn_unknown_keys({"memory_decay_enabaled": True})
+        captured_on = capsys.readouterr()
+        assert "memory_decay_enabaled" in captured_on.err, (
+            f"on-namespace typo must warn, got: {captured_on.err!r}"
+        )
+        assert captured_on.err.count("unknown key") == 1, (
+            f"expected exactly 1 warning line, got: {captured_on.err!r}"
+        )
+
+        # Case 3: dedup pin — 3 calls with same typo.  Current production
+        # implementation does NOT dedup across calls (each invocation
+        # iterates the dict unconditionally).  Pin the observable count
+        # so a future dedup refactor has to update this assertion.
+        capsys.readouterr()
+        cfg = {"memory_decay_enabaled": True}
+        _warn_unknown_keys(cfg)
+        _warn_unknown_keys(cfg)
+        _warn_unknown_keys(cfg)
+        captured_dedup = capsys.readouterr()
+        warning_count = captured_dedup.err.count("unknown key")
+        # Current contract: 3 warnings (no cross-call dedup).
+        assert warning_count == 3, (
+            f"Pinned: no cross-call dedup — expected 3 warnings for 3 calls, "
+            f"got {warning_count}. Stderr: {captured_dedup.err!r}. "
+            f"If you intentionally added dedup, update this pin."
+        )

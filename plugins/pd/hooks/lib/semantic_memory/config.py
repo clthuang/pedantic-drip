@@ -48,27 +48,38 @@ DEFAULTS: dict[str, bool | int | float | str] = {
 _RE_INT = re.compile(r"^-?[0-9]+$")
 _RE_FLOAT = re.compile(r"^-?[0-9]*\.[0-9]+$")
 
-# Feature 088 Bundle G (FR-10.1, #00096 part B) — strict boolean coercion sets.
-# Only these exact values (case-sensitive) are accepted; capital variants like
-# ``'False'`` / ``'True'`` are rejected with a stderr warning to surface the
-# historical truthiness bug where ``'False'`` was silently treated as True.
-_TRUE_VALUES: frozenset = frozenset({True, 'true', '1', 1})
-_FALSE_VALUES: frozenset = frozenset({False, 'false', '0', 0, ''})
-
-
 def _coerce_bool(key: str, value: Any, default: bool) -> bool:
     """Strictly coerce ``value`` to bool with fallback-on-ambiguity.
 
-    Members of ``_TRUE_VALUES`` return True; members of ``_FALSE_VALUES``
-    return False.  Any other value (e.g., ``'False'``, ``'True'``, ``'yes'``)
-    is ambiguous — emit a one-line stderr warning and return ``default``.
+    Type-exact acceptance (no frozenset ``in`` membership — feature 089
+    FR-1.1/#00139):
 
-    Feature 088 FR-10.1 / AC-34b.
+    - True iff ``value is True`` OR (``value`` is ``str`` AND ``value == 'true'``)
+      OR (``value`` is ``int`` AND not ``bool`` AND ``value == 1``).
+    - False iff ``value is False`` OR (``value`` is ``str`` AND ``value == 'false'``
+      OR ``value == ''``) OR (``value`` is ``int`` AND not ``bool`` AND
+      ``value == 0``).
+    - Everything else (``'False'``, ``'TRUE'``, ``'yes'``, ``1.0``, ...) is
+      ambiguous — emit a one-line stderr warning and return ``default``.
+
+    Feature 088 FR-10.1 / AC-34b, Feature 089 FR-1.1 / AC-1.
     """
-    if value in _TRUE_VALUES:
+    # True branch (type-exact).
+    if value is True:
         return True
-    if value in _FALSE_VALUES:
+    if isinstance(value, str) and value == 'true':
+        return True
+    if isinstance(value, int) and not isinstance(value, bool) and value == 1:
+        return True
+
+    # False branch (type-exact).
+    if value is False:
         return False
+    if isinstance(value, str) and (value == 'false' or value == ''):
+        return False
+    if isinstance(value, int) and not isinstance(value, bool) and value == 0:
+        return False
+
     sys.stderr.write(
         f"[pd-config] {key}: ambiguous boolean {value!r}; "
         f"falling back to default={default}\n"
@@ -167,7 +178,17 @@ def read_config(project_root: str) -> dict:
             if not raw_value or raw_value == "null":
                 continue
 
-            result[key] = _coerce(raw_value)
+            # Feature 089 FR-1.1 / AC-1 (#00139): for keys whose DEFAULTS entry
+            # is a bool, route the raw string through ``_coerce_bool`` so
+            # ambiguous variants like ``'False'`` / ``'TRUE'`` fall back to
+            # default with a stderr warning. Without this branch the legacy
+            # ``_coerce`` treated any non-``'true'``/``'false'`` string as a
+            # plain str, which tripped later ``if cfg[key]:`` truthy checks.
+            default_value = DEFAULTS.get(key)
+            if isinstance(default_value, bool):
+                result[key] = _coerce_bool(key, raw_value, default_value)
+            else:
+                result[key] = _coerce(raw_value)
 
     # Feature 088 FR-10.1 / AC-34: surface typos like ``memory_decay_enabaled``
     # so operators see them at session-start instead of silently missing the

@@ -684,13 +684,22 @@ run_memory_decay() {
     # (c) Enforce a 10s subprocess budget via gtimeout/timeout, falling back
     #     to a Python subprocess.run(..., timeout=10) wrapper on platforms
     #     where neither is present.
+    #
+    # Feature 089 FR-3.5 / AC-15 (#00153):
+    # - Use ``trap ... RETURN`` so PATH is restored on ANY exit path (early
+    #   return, SIGINT, unexpected error) — the previous ``export PATH=...``
+    #   at function end ran only on the happy path.
+    # - Extend pinned PATH to include ``/usr/local/bin`` (Intel Homebrew) and
+    #   ``/opt/homebrew/bin`` (Apple Silicon Homebrew) so ``gtimeout`` is
+    #   discoverable on macOS where ``timeout`` is not available by default.
     local PATH_OLD="$PATH"
-    export PATH="/usr/bin:/bin:/usr/sbin:/sbin"
+    # shellcheck disable=SC2064  # intentional early expansion of PATH_OLD
+    trap "export PATH=\"$PATH_OLD\"" RETURN
+    export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
     local VENV_PYTHON="${PLUGIN_ROOT}/.venv/bin/python"
     if [[ ! -x "$VENV_PYTHON" ]]; then
-        export PATH="$PATH_OLD"
-        return 0  # skip silently; do NOT fall back to $PATH python3
+        return 0  # skip silently; trap restores PATH on return
     fi
 
     # Platform-aware timeout (macOS: gtimeout from coreutils, Linux: timeout).
@@ -726,7 +735,9 @@ except subprocess.TimeoutExpired:
 ' "$VENV_PYTHON" "$PROJECT_ROOT" 2>/dev/null || true
     fi
 
-    export PATH="$PATH_OLD"
+    # trap 'export PATH="$PATH_OLD"' RETURN handles PATH restoration on all
+    # function-exit paths, including early ``return`` above and any unexpected
+    # error — no explicit restore needed here.
 }
 
 # Main

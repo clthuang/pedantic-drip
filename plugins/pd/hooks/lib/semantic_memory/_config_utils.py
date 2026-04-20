@@ -25,6 +25,26 @@ preserves the existing divergence so no test regresses from Bundle A alone.
 from __future__ import annotations
 
 import sys
+from datetime import datetime, timezone
+
+
+def _iso_utc(dt: datetime) -> str:
+    """Return Z-suffix UTC ISO-8601 (``YYYY-MM-DDTHH:MM:SSZ``).
+
+    Single source-of-truth for timestamp formatting shared by
+    ``semantic_memory.maintenance`` (decay cutoffs + diagnostic ``ts``) and
+    ``semantic_memory.refresh`` (diagnostic ``ts``).  Feature 088 FR-3.1
+    introduced the helper in ``maintenance.py``; feature 089 FR-3.2 / AC-12
+    (#00148) relocated it here to eliminate the inline
+    ``strftime('%Y-%m-%dT%H:%M:%SZ')`` duplicate in ``refresh.py``.
+
+    Feature 089 FR-1.3 / AC-3 (#00141): tz-naive datetimes are REJECTED with
+    ``ValueError`` — silent fall-through previously allowed local-time values
+    to be stamped as ``Z`` (UTC) and mis-compare against stored timestamps.
+    """
+    if dt.tzinfo is None:
+        raise ValueError("_iso_utc requires timezone-aware datetime")
+    return dt.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
 
 def _warn_and_default(

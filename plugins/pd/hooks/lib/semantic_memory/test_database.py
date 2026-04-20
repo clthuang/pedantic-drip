@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import struct
 import sqlite3
 
@@ -2138,3 +2139,78 @@ class TestConcurrentWriters:
             assert _get_confidence(db_b, "e2") == "high"
         finally:
             db_b.close()
+
+
+# ---------------------------------------------------------------------------
+# Feature 089 Bundle A — Security hardening on test-only helpers
+# ---------------------------------------------------------------------------
+
+
+class TestFeature089BundleA:
+    """Feature 089 Bundle A (#00140, #00144): runtime guard on
+    ``*_for_testing`` helpers + rollback-on-error in
+    ``execute_test_sql_for_testing``.
+    """
+
+    def test_for_testing_helpers_refuse_outside_pytest(self, tmp_path, monkeypatch):
+        """AC-2 (FR-1.2 / #00140).
+
+        With BOTH the ``pytest`` module removed from ``sys.modules`` AND the
+        ``PD_TESTING`` env var unset, calling ``execute_test_sql_for_testing``
+        MUST raise ``RuntimeError``.
+
+        The test re-imports ``semantic_memory.database`` AFTER the mutations
+        so the guard's ``'pytest' in sys.modules`` probe sees a pytest-free
+        namespace at call time.
+        """
+        import sys as _sys
+
+        db_path = str(tmp_path / "guard.db")
+
+        # Build DB inside the test (pytest still imported at this point).
+        db = MemoryDatabase(db_path)
+        try:
+            # Strip pytest + PD_TESTING so the guard trips.
+            monkeypatch.delenv("PD_TESTING", raising=False)
+            # Remove all pytest-prefixed modules so ``'pytest' in sys.modules``
+            # returns False during the call.
+            for mod_name in list(_sys.modules):
+                if mod_name == "pytest" or mod_name.startswith("pytest."):
+                    monkeypatch.delitem(_sys.modules, mod_name, raising=False)
+            assert "pytest" not in _sys.modules
+            assert os.environ.get("PD_TESTING") is None
+
+            with pytest.raises(RuntimeError, match="for-testing helper"):
+                db.execute_test_sql_for_testing("SELECT 1")
+        finally:
+            db.close()
+
+    def test_execute_test_sql_rolls_back_on_error(self, tmp_path, monkeypatch):
+        """AC-6 (FR-1.6 / #00144).
+
+        SQL that fails during execute (here, reference to a nonexistent
+        table inside an explicit BEGIN) MUST trigger ``_conn.rollback()`` so
+        the connection is NOT left mid-transaction.
+        """
+        monkeypatch.setenv("PD_TESTING", "1")
+        db_path = str(tmp_path / "rollback.db")
+        db = MemoryDatabase(db_path)
+        try:
+            # Open a mid-statement transaction before calling the helper.
+            # The helper's sql will fail, causing its except branch to fire
+            # and roll back this transaction.
+            db._conn.execute("BEGIN IMMEDIATE")
+            assert db._conn.in_transaction is True
+
+            # Bogus SQL targeting a non-existent table → sqlite3.OperationalError.
+            with pytest.raises(sqlite3.OperationalError):
+                db.execute_test_sql_for_testing(
+                    "UPDATE nonexistent_table_xyz SET col = ?", (1,)
+                )
+
+            # Post-error: the connection MUST NOT be mid-transaction.
+            assert db._conn.in_transaction is False, (
+                "execute_test_sql_for_testing must rollback on error"
+            )
+        finally:
+            db.close()

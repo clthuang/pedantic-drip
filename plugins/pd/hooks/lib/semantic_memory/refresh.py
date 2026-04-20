@@ -38,6 +38,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from semantic_memory._config_utils import (
+    _iso_utc,
     _resolve_int_config as _resolve_int_config_core,
     _warn_and_default as _warn_and_default_core,
 )
@@ -94,6 +95,23 @@ _slow_refresh_warned: bool = False
 
 # One-shot flag: warn once per process if diagnostic log write fails.
 _refresh_error_warned: bool = False
+
+
+def reset_warning_state() -> None:
+    """Clear all module-level dedup flags (Feature 089 FR-3.6 / AC-16 — #00155).
+
+    Public function for tests (and any long-running supervisor wanting a
+    clean slate between iterations).  The autouse fixture in
+    ``test_refresh.py`` monkeypatches each flag individually; this helper
+    is the non-monkeypatch equivalent for callers that cannot use pytest
+    fixtures (e.g. integration harnesses, shell tests that exec the module).
+
+    Side-effect-only; returns ``None``.  Safe to call repeatedly.
+    """
+    global _slow_refresh_warned, _refresh_error_warned
+    _refresh_warned_fields.clear()
+    _slow_refresh_warned = False
+    _refresh_error_warned = False
 
 
 # ---------------------------------------------------------------------------
@@ -176,8 +194,22 @@ def _emit_refresh_diagnostic(
         # mkdir(mode=) only applies to newly created dirs; existing dirs keep
         # their mode (documented platform behavior).
         INFLUENCE_DEBUG_LOG_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+
+        # Feature 089 FR-1.7 / AC-7 (#00154): verify parent dir ownership +
+        # mode BEFORE opening the log. Mirrors maintenance._emit_decay_diagnostic.
+        parent_stat = INFLUENCE_DEBUG_LOG_PATH.parent.stat()
+        if parent_stat.st_uid != os.getuid() or (parent_stat.st_mode & 0o077):
+            raise OSError(
+                f"refusing to write log: parent dir "
+                f"{INFLUENCE_DEBUG_LOG_PATH.parent} has insecure "
+                f"uid={parent_stat.st_uid} or mode=0o{parent_stat.st_mode & 0o777:o}"
+            )
+
+        # Feature 089 FR-3.2 / AC-12 (#00148): use shared ``_iso_utc`` helper
+        # instead of inline ``strftime('%Y-%m-%dT%H:%M:%SZ')`` so format drift
+        # between maintenance.py and refresh.py is structurally impossible.
         line = json.dumps({
-            "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "ts": _iso_utc(datetime.now(timezone.utc)),
             "event": "memory_refresh",
             "feature_type_id": feature_type_id,
             "completed_phase": completed_phase,
@@ -185,10 +217,30 @@ def _emit_refresh_diagnostic(
             "entry_count": entry_count,
             "elapsed_ms": elapsed_ms,
         })
-        flags = os.O_APPEND | os.O_CREAT | os.O_WRONLY
+        base_flags = os.O_APPEND | os.O_WRONLY
         if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
-        fd = os.open(str(INFLUENCE_DEBUG_LOG_PATH), flags, 0o600)
+            base_flags |= os.O_NOFOLLOW
+        # First attempt: O_EXCL to atomically create-and-acquire. On EEXIST,
+        # reopen in append-only and verify ownership via fstat.
+        try:
+            fd = os.open(
+                str(INFLUENCE_DEBUG_LOG_PATH),
+                base_flags | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+        except FileExistsError:
+            fd = os.open(str(INFLUENCE_DEBUG_LOG_PATH), base_flags)
+            try:
+                fd_stat = os.fstat(fd)
+            except OSError:
+                os.close(fd)
+                raise
+            if fd_stat.st_uid != os.getuid():
+                os.close(fd)
+                raise OSError(
+                    f"refusing to append log: file owner uid={fd_stat.st_uid} "
+                    f"!= running uid={os.getuid()}"
+                )
         try:
             if hasattr(os, "fchmod"):
                 try:

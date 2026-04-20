@@ -464,6 +464,32 @@ def _make_error(error_type: str, message: str, recovery_hint: str) -> str:
     })
 
 
+def _resolve_project_id(entity: dict) -> str:
+    """Resolve ``project_id`` from an entity record, distinguishing missing
+    (legitimate legacy data) from empty-string (data-integrity bug).
+
+    Feature 089 FR-2.3 / AC-10 / #00151. Replaces the ambiguous
+    ``entity.get('project_id') or '__unknown__'`` idiom that silently
+    conflated the two cases.
+
+    - ``None``: legacy row predating project_id enforcement — silent
+      fallback to ``'__unknown__'``.
+    - Empty string: data-integrity issue — emit a stderr warning AND
+      fall back to ``'__unknown__'`` so dual-writes still succeed.
+    - Non-empty: return as-is.
+    """
+    pid = entity.get("project_id")
+    if pid is None:
+        return "__unknown__"
+    if not pid:
+        sys.stderr.write(
+            f'[workflow-state] feature {entity.get("type_id", "?")} '
+            f'has empty project_id (data integrity issue)\n'
+        )
+        return "__unknown__"
+    return pid
+
+
 def _with_error_handling(func):
     """Wrap _process_* functions with standard DB/internal error handling."""
     @functools.wraps(func)
@@ -652,10 +678,8 @@ def _process_transition_phase(
     # Failure here MUST NOT roll back the primary workflow write.
     phase_events_write_failed = False
     if db is not None and transitioned and entity is not None and ts is not None:
-        # ``.get(k, default)`` does NOT apply default when key is present with
-        # None value; use ``or`` so a None project_id falls through to the
-        # sentinel ``__unknown__`` string.
-        project_id = entity.get("project_id") or "__unknown__"
+        # Feature 089 FR-2.3 (#00151): distinguish missing vs empty project_id.
+        project_id = _resolve_project_id(entity)
         try:
             db.insert_phase_event(
                 type_id=feature_type_id,
@@ -862,7 +886,8 @@ def _process_complete_phase(
     # Failure here MUST NOT roll back the primary workflow write.
     phase_events_write_failed = False
     if db is not None and entity is not None and ts is not None:
-        project_id = entity.get("project_id") or "__unknown__"
+        # Feature 089 FR-2.3 (#00151): distinguish missing vs empty project_id.
+        project_id = _resolve_project_id(entity)
         try:
             db.insert_phase_event(
                 type_id=feature_type_id,
@@ -987,17 +1012,27 @@ def _detect_phase_events_drift(
     db: EntityDatabase,
     feature_type_id: str | None,
 ) -> list[dict]:
-    """Detect entities whose metadata.phase_timing has a completed phase with
-    no corresponding ``phase_events`` row (Feature 088 FR-10.9 / AC-42).
+    """Detect entities whose metadata.phase_timing or skipped_phases list
+    lacks a matching ``phase_events`` row (Feature 088 FR-10.9 / AC-42,
+    extended by Feature 089 FR-2.1 / AC-8 / #00146 to also cover
+    ``started`` and ``skipped`` events).
 
-    Dual-write drift between ``entities.metadata.phase_timing`` and the
-    ``phase_events`` append-only log can accumulate when the analytics write
-    (which runs OUTSIDE the main transaction per FR-5.1) fails silently or when
-    historical rows pre-date migration 10. This helper enumerates the drift —
-    the apply path warns but does NOT auto-insert (additive-safe).
+    Dual-write drift between ``entities.metadata`` and the ``phase_events``
+    append-only log can accumulate when the analytics write (which runs
+    OUTSIDE the main transaction per FR-5.1) fails silently or when
+    historical rows pre-date migration 10. This helper enumerates the
+    drift — the apply path warns but does NOT auto-insert (additive-safe).
 
-    Returns an (empty) list of drift entry dicts. Each entry has keys:
+    Feature 089 FR-2.2 / AC-9 / #00150: uses ``query_phase_events_bulk``
+    (single chunked IN query) instead of N+1 per-entity calls.
+
+    Returns a list of drift entry dicts. Each entry has keys:
     ``kind``, ``type_id``, ``phase``, ``metadata_completed_at``.
+    The ``kind`` is one of ``phase_events_missing_started``,
+    ``phase_events_missing_completed``, ``phase_events_missing_skipped``.
+    For ``started``/``skipped`` entries, ``metadata_completed_at`` carries
+    the corresponding ``started`` timestamp (or ``""`` for ``skipped``,
+    which has no timestamp in metadata).
     """
     drift: list[dict] = []
     if feature_type_id:
@@ -1006,27 +1041,61 @@ def _detect_phase_events_drift(
         # ``list_entities`` accepts no ``status`` kwarg — filter Python-side.
         all_features = db.list_entities(entity_type="feature")
         entities = [e for e in all_features if e and e.get("status") == "active"]
+
+    # Filter to real entities and build type_id list for the bulk query.
+    entities = [e for e in entities if e]
+    if not entities:
+        return drift
+
+    type_ids = [e["type_id"] for e in entities]
+
+    # FR-2.2: single bulk query covering all three event_types, then
+    # diff Python-side against phase_timing and skipped_phases.
+    event_types = ["started", "completed", "skipped"]
+    existing_rows = db.query_phase_events_bulk(type_ids, event_types=event_types)
+    existing: set[tuple[str, str, str]] = {
+        (r["type_id"], r["phase"], r["event_type"]) for r in existing_rows
+    }
+
     for entity in entities:
-        if not entity:
-            continue
         meta = parse_metadata(entity.get("metadata"))
+        type_id = entity["type_id"]
         phase_timing = meta.get("phase_timing") or {}
         for phase_name, timing in phase_timing.items():
-            if not isinstance(timing, dict) or not timing.get("completed"):
+            if not isinstance(timing, dict):
                 continue
-            rows = db.query_phase_events(
-                type_id=entity["type_id"],
-                phase=phase_name,
-                event_type="completed",
-                limit=1,
-            )
-            if not rows:
+            # FR-2.1 (#00146) — started check.
+            started_ts = timing.get("started")
+            if started_ts and (type_id, phase_name, "started") not in existing:
+                drift.append({
+                    "kind": "phase_events_missing_started",
+                    "type_id": type_id,
+                    "phase": phase_name,
+                    "metadata_completed_at": started_ts,
+                })
+            # Existing completed check.
+            completed_ts = timing.get("completed")
+            if completed_ts and (type_id, phase_name, "completed") not in existing:
                 drift.append({
                     "kind": "phase_events_missing_completed",
-                    "type_id": entity["type_id"],
+                    "type_id": type_id,
                     "phase": phase_name,
-                    "metadata_completed_at": timing["completed"],
+                    "metadata_completed_at": completed_ts,
                 })
+        # FR-2.1 (#00146) — skipped check. ``skipped_phases`` is a list of
+        # phase names with no associated timestamp in metadata.
+        skipped_phases = meta.get("skipped_phases") or []
+        if isinstance(skipped_phases, list):
+            for phase_name in skipped_phases:
+                if not isinstance(phase_name, str):
+                    continue
+                if (type_id, phase_name, "skipped") not in existing:
+                    drift.append({
+                        "kind": "phase_events_missing_skipped",
+                        "type_id": type_id,
+                        "phase": phase_name,
+                        "metadata_completed_at": "",
+                    })
     return drift
 
 
@@ -1776,7 +1845,8 @@ async def record_backward_event(
         )
 
     # FR-2.3 (b): resolve project_id server-side from entity record.
-    resolved_project_id = entity.get("project_id") or "__unknown__"
+    # Feature 089 FR-2.3 (#00151): distinguish missing vs empty project_id.
+    resolved_project_id = _resolve_project_id(entity)
 
     # FR-2.3 (c) + FR-2.6 harmonized: cap reason and target at 500 chars.
     reason_capped = (reason or "")[:500]
@@ -1836,6 +1906,20 @@ async def query_phase_analytics(
     if _db is None:
         return _NOT_INITIALIZED
 
+    # Feature 089 FR-1.5 / AC-5 (#00143): allowlist ``project_id`` to avoid
+    # cross-project data disclosure via arbitrary scope strings. Accepted:
+    #   - ``None`` → defaults to current project below
+    #   - ``'*'``   → explicit cross-project opt-in
+    #   - ``_project_id`` → explicit current project
+    # Anything else is refused.
+    if project_id is not None and project_id != "*" and project_id != _project_id:
+        return _make_error(
+            "forbidden",
+            f'cross-project query requires project_id="*" or current '
+            f'project ({_project_id!r}); got {project_id!r}',
+            'Pass project_id=None for current, "*" for all projects',
+        )
+
     # FR-2.1: default to current project; "*" means opt into cross-project.
     resolved_project_id = None if project_id == "*" else (project_id or _project_id)
 
@@ -1891,7 +1975,7 @@ async def query_phase_analytics(
     elif query_type == "backward_frequency":
         events = _db.query_phase_events(
             type_id=feature_type_id, project_id=resolved_project_id,
-            event_type="backward", limit=500,
+            event_type="backward", limit=_ANALYTICS_EVENT_SCAN_LIMIT,
         )
         freq: dict[str, int] = {}
         for e in events:
