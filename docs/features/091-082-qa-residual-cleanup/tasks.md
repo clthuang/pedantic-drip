@@ -23,7 +23,7 @@
 | Q2 | Run shell tests (test-hooks.sh) | PI-7 | Simple | no | T7a, T7b |
 | Q3 | Run `./validate.sh` | all | Simple | no | T1..T7b |
 | Q4 | Run `pd:doctor` | all | Simple | no | T1..T7b |
-| V1 | Run AC verification script (all ACs) | all | Simple | no | T1..T7b |
+| V1 | Run AC static verification script (grep/structural) | all | Simple | no | T1..T7b |
 
 Total: 15 tasks. Longest serial chain: T1 → T4a → T4b → T6 → T5 → Q1 → V1 (7 items). Parallel groups defined below.
 
@@ -57,7 +57,7 @@ Total: 15 tasks. Longest serial chain: T1 → T4a → T4b → T6 → T5 → Q1 �
 **Plan Item:** PI-1 (FR-1)
 **Files:** `docs/backlog.md`
 **Complexity:** Medium (23 precise edits across two sections)
-**Depends on:** none
+**Depends on:** none (runs first; reviewer-bandwidth isolation per design TD-6)
 
 **Action:**
 1. For each of the 23 rows in spec FR-1 mapping table, locate the corresponding entry in `docs/backlog.md` and append the exact marker text from column 4.
@@ -105,7 +105,7 @@ echo "All 27 IDs present."
 **Plan Item:** PI-2 (FR-5)
 **Files:** `plugins/pd/hooks/lib/semantic_memory/database.py`
 **Complexity:** Simple
-**Depends on:** none
+**Depends on:** T1 (Group Alpha-docs lands first to isolate docs-only commit per design TD-6)
 
 **Action:**
 1. At `plugins/pd/hooks/lib/semantic_memory/database.py:1028`:
@@ -131,12 +131,15 @@ plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/semantic_memory/test_
 **Plan Item:** PI-3 (FR-2)
 **Files:** `plugins/pd/hooks/lib/semantic_memory/test_maintenance.py`
 **Complexity:** Simple
-**Depends on:** none
+**Depends on:** T1 (Group Alpha-docs lands first to isolate docs-only commit per design TD-6)
 
 **Action:**
-1. Add new test class or append to existing `TestDecayConfigWarnings` test class:
+1. Add new test class `TestDecayWarningPredicate` to `test_maintenance.py` (append near the other warning-related test classes). Place the two tests as methods of this class so pytest test IDs are unambiguous:
    ```python
-   def test_equal_threshold_emits_warning(self, fresh_db, capsys):
+   class TestDecayWarningPredicate:
+       """FR-2 #00076: med_days <= high_days emits stderr warning."""
+
+       def test_equal_threshold_emits_warning(self, fresh_db, capsys):
        """FR-2 AC-3: med_days == high_days emits stderr warning."""
        # `re` is imported at module top of test_maintenance.py already;
        # no function-local import needed.
@@ -168,7 +171,10 @@ plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/semantic_memory/test_
 
 **Definition of Done (binary pass/fail):**
 ```bash
-plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/semantic_memory/test_maintenance.py::test_equal_threshold_emits_warning plugins/pd/hooks/lib/semantic_memory/test_maintenance.py::test_strictly_less_threshold_still_emits_warning -v
+plugins/pd/.venv/bin/python -m pytest \
+  plugins/pd/hooks/lib/semantic_memory/test_maintenance.py::TestDecayWarningPredicate::test_equal_threshold_emits_warning \
+  plugins/pd/hooks/lib/semantic_memory/test_maintenance.py::TestDecayWarningPredicate::test_strictly_less_threshold_still_emits_warning \
+  -v
 # Expect RED: BOTH tests FAIL before T3b applies the predicate swap
 # (equal-case test fails because no warning; strict-less test fails because warning text doesn't contain "<=")
 ```
@@ -206,7 +212,13 @@ plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/semantic_memory/test_
        )
        _decay_config_warned = True
    ```
-2. **Test-pollution pre-check** (per plan-reviewer iteration 1 warning): existing test `TestDecayThresholdEquality::test_ac31_threshold_equality_edge` at `test_maintenance.py:1357-1379` seeds `med=high=30` without `capsys`. After the `<=` flip, this test will trigger the new warning as a side effect. Action: add `capsys` fixture to its signature and append `captured = capsys.readouterr()` to drain stderr (no assertion needed — drain only). This is NOT a behavior change; just avoids stderr leakage polluting pytest output.
+2. **Test-pollution pre-check** (per plan-reviewer iteration 1 warning): existing test `TestDecayThresholdEquality::test_ac31_threshold_equality_edge` at `test_maintenance.py:1357-1379` seeds `med=high=30` without `capsys`. After the `<=` flip, this test will trigger the new warning as a side effect. Action:
+   - At `test_maintenance.py` line ~1360, change signature from `def test_ac31_threshold_equality_edge(self, fresh_db):` to `def test_ac31_threshold_equality_edge(self, fresh_db, capsys):`.
+   - Append `captured = capsys.readouterr()` as the final line of that test (drain only; no assertion).
+   - Include this edit in T3b's commit (same commit as the `<=` flip).
+   - Verify: `grep -nE "def test_ac31.*capsys" plugins/pd/hooks/lib/semantic_memory/test_maintenance.py` returns 1 match.
+
+   This is NOT a behavior change — just avoids stderr leakage polluting pytest output.
 
 **Definition of Done (binary pass/fail):**
 ```bash
@@ -217,7 +229,7 @@ plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/semantic_memory/test_
 [ "$(grep -cE 'if med_days < high_days' plugins/pd/hooks/lib/semantic_memory/maintenance.py)" = "0" ]
 
 # T3a tests now GREEN:
-plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/semantic_memory/test_maintenance.py -v -k "test_equal_threshold or test_strictly_less" | grep -E "2 passed"
+plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/semantic_memory/test_maintenance.py::TestDecayWarningPredicate -v | grep -E "2 passed"
 ```
 
 **Commit message:** `pd(091): GREEN — <= predicate + updated warning text (FR-2, #00076)`
@@ -229,7 +241,7 @@ plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/semantic_memory/test_
 **Plan Item:** PI-4 (FR-4)
 **Files:** `plugins/pd/hooks/lib/semantic_memory/test_database.py`
 **Complexity:** Medium
-**Depends on:** none
+**Depends on:** T1 (Group Alpha-docs lands first to isolate docs-only commit per design TD-6)
 
 **Action:**
 1. Add test class `TestScanDecayCandidates` to `test_database.py`:
@@ -239,13 +251,13 @@ plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/semantic_memory/test_
    class TestScanDecayCandidates:
        """FR-4: public scan_decay_candidates method on MemoryDatabase."""
 
-       def test_scan_decay_candidates_respects_scan_limit(self, fresh_db):
-           """AC-7: seed 10 rows, scan_limit=5, assert len==5."""
+       def test_scan_decay_candidates_respects_where_predicate(self, fresh_db):
+           """AC-7: seed 3 stale + 7 fresh; scan_limit=100 returns only 3 stale."""
            cutoff = "2026-04-20T00:00:00Z"
-           # Seed 10 rows with last_recalled_at < cutoff
-           # Seed 3 rows BELOW cutoff + 7 rows ABOVE cutoff so the LIMIT
-           # actually bites (scan_limit=5 but only 3 match → test asserts 3,
-           # not a vacuous "≤ 10" pass). Note: real MemoryDatabase signature
+           # Seed 3 rows BELOW cutoff (stale) + 7 rows ABOVE cutoff (fresh).
+           # With scan_limit=100, only the 3 stale rows match the WHERE predicate —
+           # a non-vacuous assertion that the predicate is actually applied.
+           # Note: real MemoryDatabase.insert_test_entry_for_testing signature
            # uses `description` not `content`.
            for i in range(3):
                fresh_db.insert_test_entry_for_testing(
@@ -325,7 +337,7 @@ plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/semantic_memory/test_
 **Definition of Done (binary pass/fail):**
 ```bash
 plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/semantic_memory/test_database.py::TestScanDecayCandidates -v
-# Expect RED: all 3 tests FAIL with AttributeError (method doesn't exist yet)
+# Expect RED: all 4 tests FAIL with AttributeError (method doesn't exist yet)
 ```
 
 **Commit message:** `pd(091): RED — scan_decay_candidates tests (FR-4, #00078)`
@@ -448,7 +460,7 @@ plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/semantic_memory/test_
 **Plan Item:** PI-6 (FR-6)
 **Files:** `plugins/pd/hooks/lib/semantic_memory/test_maintenance.py`
 **Complexity:** Simple
-**Depends on:** none
+**Depends on:** T1 (Group Alpha-docs lands first to isolate docs-only commit per design TD-6)
 
 **Action:**
 1. At `plugins/pd/hooks/lib/semantic_memory/test_maintenance.py:397-410` (inside `TestSelectCandidates.test_partitions_six_entries_across_all_buckets`):
@@ -500,7 +512,7 @@ plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/semantic_memory/test_
 **Plan Item:** PI-7 (FR-3)
 **Files:** `plugins/pd/hooks/tests/test-hooks.sh`
 **Complexity:** Medium
-**Depends on:** none
+**Depends on:** T1 (Group Alpha-docs lands first to isolate docs-only commit per design TD-6)
 
 **Action:**
 1. Append new test block immediately after existing AC-22 block (at ~line 2952 in test-hooks.sh). Use the full harness template from design I-5:
@@ -676,7 +688,9 @@ grep -E "AC-22b PASS|AC-22c PASS" /tmp/test-hooks.log
 
 ---
 
-### V1: AC verification script (all ACs)
+### V1: AC static verification script (grep/structural checks only)
+
+**Note:** V1 covers only static/structural ACs (grep, shell invariants, file content). Dynamic ACs requiring test execution (AC-3/AC-3b pytest; AC-7/AC-7b/AC-7c/AC-7d pytest; AC-9b/AC-9c pytest; AC-4a/AC-4b test-hooks.sh PASS markers) are verified by **Q1** (full pytest run) and **Q2** (test-hooks.sh run). Do NOT skip Q1/Q2 based on V1 passing.
 
 **Depends on:** T1..T7b
 
