@@ -1,0 +1,18 @@
+{
+  "id": "091",
+  "slug": "082-qa-residual-cleanup",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-04-20T07:22:32.670327+00:00",
+  "branch": "feature/091-082-qa-residual-cleanup",
+  "brainstorm_source": "docs/brainstorms/20260420-145644-082-qa-residual-hotfix.prd.md",
+  "lastCompletedPhase": null,
+  "phases": {
+    "brainstorm": {
+      "started": "2026-04-20T07:22:32.669769+00:00"
+    },
+    "specify": {
+      "started": "2026-04-20T07:23:11.920551+00:00"
+    }
+  }
+}
