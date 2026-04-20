@@ -6,6 +6,7 @@ import json
 import os
 import struct
 import sqlite3
+from collections.abc import Iterator
 
 import numpy as np
 import pytest
@@ -1898,6 +1899,93 @@ def _get_updated_at(db: MemoryDatabase, entry_id: str) -> str:
         "SELECT updated_at FROM entries WHERE id = ?", (entry_id,)
     )
     return cur.fetchone()["updated_at"]
+
+
+class TestScanDecayCandidates:
+    """Feature 091 FR-4 (#00078): public ``scan_decay_candidates`` method
+    encapsulates the read path previously inlined at
+    ``maintenance._select_candidates``. Closes "Direct db._conn Access"
+    anti-pattern.
+    """
+
+    def test_scan_decay_candidates_respects_where_predicate(self, db: MemoryDatabase):
+        """AC-7 (WHERE predicate): seed 3 stale + 7 fresh; scan_limit=100 returns only 3 stale."""
+        cutoff = "2026-04-20T00:00:00Z"
+        for i in range(3):
+            db.insert_test_entry_for_testing(
+                entry_id=f"e-stale-{i}",
+                description=f"stale entry {i}",
+                confidence="high",
+                source="session-capture",
+                last_recalled_at="2026-04-15T00:00:00Z",
+                created_at="2026-04-15T00:00:00Z",
+            )
+        for i in range(7):
+            db.insert_test_entry_for_testing(
+                entry_id=f"e-fresh-{i}",
+                description=f"fresh entry {i}",
+                confidence="high",
+                source="session-capture",
+                last_recalled_at="2026-04-25T00:00:00Z",
+                created_at="2026-04-25T00:00:00Z",
+            )
+        rows = list(db.scan_decay_candidates(
+            not_null_cutoff=cutoff, scan_limit=100,
+        ))
+        assert len(rows) == 3, f"expected 3 stale rows, got {len(rows)}"
+
+    def test_scan_decay_candidates_respects_scan_limit_cap(self, db: MemoryDatabase):
+        """AC-7 (scan_limit cap): scan_limit caps result below match count."""
+        cutoff = "2026-04-20T00:00:00Z"
+        for i in range(10):
+            db.insert_test_entry_for_testing(
+                entry_id=f"e-stale-{i}",
+                description=f"stale {i}",
+                confidence="high",
+                source="session-capture",
+                last_recalled_at="2026-04-15T00:00:00Z",
+                created_at="2026-04-15T00:00:00Z",
+            )
+        rows = list(db.scan_decay_candidates(
+            not_null_cutoff=cutoff, scan_limit=5,
+        ))
+        assert len(rows) == 5
+
+    def test_scan_decay_candidates_includes_null_last_recalled_at(
+        self, db: MemoryDatabase
+    ):
+        """AC-7b: NULL last_recalled_at rows are returned."""
+        cutoff = "2026-04-20T00:00:00Z"
+        db.insert_test_entry_for_testing(
+            entry_id="e-null",
+            description="x",
+            confidence="medium",
+            source="session-capture",
+            last_recalled_at=None,
+            created_at="2026-04-15T00:00:00Z",
+        )
+        db.insert_test_entry_for_testing(
+            entry_id="e-past",
+            description="y",
+            confidence="high",
+            source="session-capture",
+            last_recalled_at="2026-04-15T00:00:00Z",
+            created_at="2026-04-15T00:00:00Z",
+        )
+        rows = list(db.scan_decay_candidates(
+            not_null_cutoff=cutoff, scan_limit=100,
+        ))
+        ids = {row["id"] for row in rows}
+        assert "e-null" in ids
+        assert "e-past" in ids
+
+    def test_scan_decay_candidates_returns_iterator(self, db: MemoryDatabase):
+        """AC-7c: generator semantics — future refactor to list would fail this."""
+        cutoff = "2026-04-20T00:00:00Z"
+        result = db.scan_decay_candidates(
+            not_null_cutoff=cutoff, scan_limit=10,
+        )
+        assert isinstance(result, Iterator)
 
 
 class TestBatchDemote:

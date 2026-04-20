@@ -254,18 +254,16 @@ def _select_candidates(
 
     Feature 088 FR-3.3 removed the dead ``now_iso`` parameter.
     """
+    # Feature 091 FR-4 (#00078): encapsulation — delegate to public
+    # MemoryDatabase.scan_decay_candidates instead of the private connection.
+    # Signature (including grace_cutoff) preserved for test compatibility;
+    # grace_cutoff is unused in the SQL path but consumed downstream by
+    # _partition_candidates per the caller's existing contract.
     not_null_cutoff = max(high_cutoff, med_cutoff)
-
-    cursor = db._conn.execute(
-        "SELECT id, confidence, source, last_recalled_at, created_at "
-        "FROM entries "
-        "WHERE (last_recalled_at IS NOT NULL AND last_recalled_at < ?) "
-        "   OR (last_recalled_at IS NULL) "
-        "LIMIT ?",
-        (not_null_cutoff, scan_limit),
+    yield from db.scan_decay_candidates(
+        not_null_cutoff=not_null_cutoff,
+        scan_limit=scan_limit,
     )
-    for row in cursor:
-        yield row
 
 
 def _partition_candidates(
@@ -421,11 +419,11 @@ def decay_confidence(
     # Semantic-coupling warning (spec FR-3 / AC-14) — dedup via module flag.
     # Declare all module-global flags mutated in this function up-front (PEP 8).
     global _decay_config_warned, _decay_error_warned
-    if med_days < high_days and not _decay_config_warned:
+    if med_days <= high_days and not _decay_config_warned:
         sys.stderr.write(
             "[memory-decay] memory_decay_medium_threshold_days "
-            f"({med_days}) < memory_decay_high_threshold_days ({high_days}); "
-            "medium tier will decay faster than high\n"
+            f"({med_days}) <= memory_decay_high_threshold_days ({high_days}); "
+            "medium tier will decay at same pace or faster than high\n"
         )
         _decay_config_warned = True
 

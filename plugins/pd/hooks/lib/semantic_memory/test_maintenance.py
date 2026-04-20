@@ -398,16 +398,21 @@ class TestSelectCandidates:
     """Task 1.11 / 1.12 — design I-2 (single SELECT + Python partition)."""
 
     def test_partitions_six_entries_across_all_buckets(self, fresh_db):
-        NOW = datetime(2026, 4, 16, 12, 0, 0, tzinfo=timezone.utc)
-        now_iso = NOW.isoformat()
-        high_cutoff = (NOW - timedelta(days=30)).isoformat()
-        med_cutoff = (NOW - timedelta(days=60)).isoformat()
-        grace_cutoff = (NOW - timedelta(days=14)).isoformat()
+        # AC-9c: pin canonical Z-suffix format that production _iso_utc uses.
+        # Feature 091 FR-6 (New-082-inv-1): swap from stdlib-isoformat (produces
+        # `+00:00` suffix) to _iso() (Z suffix) so SQLite lexical comparisons
+        # match production behavior. `NOW` resolves via module-level
+        # `_TEST_EPOCH` alias at line 507.
+        assert _iso(NOW) == NOW.strftime("%Y-%m-%dT%H:%M:%SZ")
+        now_iso = _iso(NOW)
+        high_cutoff = _iso(NOW - timedelta(days=30))
+        med_cutoff = _iso(NOW - timedelta(days=60))
+        grace_cutoff = _iso(NOW - timedelta(days=14))
 
-        stale_high_ts = (NOW - timedelta(days=100)).isoformat()
-        stale_med_ts = (NOW - timedelta(days=100)).isoformat()
-        fresh_in_grace_ts = (NOW - timedelta(days=10)).isoformat()  # within grace
-        past_grace_ts = (NOW - timedelta(days=80)).isoformat()  # past 14d + past 60d
+        stale_high_ts = _iso(NOW - timedelta(days=100))
+        stale_med_ts = _iso(NOW - timedelta(days=100))
+        fresh_in_grace_ts = _iso(NOW - timedelta(days=10))  # within grace
+        past_grace_ts = _iso(NOW - timedelta(days=80))  # past 14d + past 60d
 
         # Row 1: source=import + stale (must appear in import_count).
         _seed_entry(
@@ -1085,6 +1090,51 @@ class TestDecayWarningDedup:
         assert len(matches) == 1
 
 
+class TestDecayWarningPredicate:
+    """Feature 091 FR-2 (#00076): med_days <= high_days emits stderr warning.
+
+    Predicate flipped from strict `<` to inclusive `<=` so the equal-threshold
+    case (where medium and high tiers decay at the same pace) also triggers
+    the semantic-coupling warning. Both cases use the same warning template.
+    """
+
+    def test_equal_threshold_emits_warning(self, fresh_db, capsys):
+        """AC-3: med_days == high_days emits stderr warning.
+
+        The autouse ``reset_decay_state`` fixture resets
+        ``maintenance._decay_config_warned`` per-test; no manual reset needed.
+        """
+        cfg = _enabled_config(
+            memory_decay_high_threshold_days=30,
+            memory_decay_medium_threshold_days=30,
+        )
+        maintenance.decay_confidence(fresh_db, cfg, now=NOW)
+        captured = capsys.readouterr()
+        assert re.search(
+            r"\[memory-decay\].*memory_decay_medium_threshold_days.*<=.*"
+            r"memory_decay_high_threshold_days",
+            captured.err,
+        ), f"expected equal-threshold warning; got stderr: {captured.err!r}"
+
+    def test_strictly_less_threshold_still_emits_warning(self, fresh_db, capsys):
+        """AC-3b: med_days < high_days case continues to emit warning.
+
+        Regression pin for the `<` → `<=` predicate swap: the strict-less
+        case MUST still fire so the swap does not silently drop prior behavior.
+        """
+        cfg = _enabled_config(
+            memory_decay_high_threshold_days=30,
+            memory_decay_medium_threshold_days=10,
+        )
+        maintenance.decay_confidence(fresh_db, cfg, now=NOW)
+        captured = capsys.readouterr()
+        assert re.search(
+            r"\[memory-decay\].*memory_decay_medium_threshold_days.*<=.*"
+            r"memory_decay_high_threshold_days",
+            captured.err,
+        ), f"expected strict-less warning; got stderr: {captured.err!r}"
+
+
 class TestDecayImportIdempotency:
     """AC-16: source=import entries remain skipped idempotently."""
 
@@ -1357,7 +1407,7 @@ class TestDecayPerformance:
 class TestDecayThresholdEquality:
     """AC-31: high == medium threshold → one-tier demotion holds."""
 
-    def test_ac31_threshold_equality_edge(self, fresh_db):
+    def test_ac31_threshold_equality_edge(self, fresh_db, capsys):
         # Use 30d + 1s so the entry is strictly past the cutoff (the SQL guard
         # is `staleness_ts < cutoff`).  Equality-of-thresholds is the edge
         # being tested — not equality-of-cutoff.
@@ -1377,6 +1427,9 @@ class TestDecayThresholdEquality:
         assert result["demoted_high_to_medium"] == 1
         assert result["demoted_medium_to_low"] == 0
         assert _get_row(fresh_db, "e1")["confidence"] == "medium"
+        # Feature 091 FR-2: med == high now emits semantic-coupling warning.
+        # Drain stderr to prevent pollution of downstream test output.
+        capsys.readouterr()
 
 
 class TestDecayChunkingHappyPath:
