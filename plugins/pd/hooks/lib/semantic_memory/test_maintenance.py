@@ -398,16 +398,21 @@ class TestSelectCandidates:
     """Task 1.11 / 1.12 — design I-2 (single SELECT + Python partition)."""
 
     def test_partitions_six_entries_across_all_buckets(self, fresh_db):
-        NOW = datetime(2026, 4, 16, 12, 0, 0, tzinfo=timezone.utc)
-        now_iso = NOW.isoformat()
-        high_cutoff = (NOW - timedelta(days=30)).isoformat()
-        med_cutoff = (NOW - timedelta(days=60)).isoformat()
-        grace_cutoff = (NOW - timedelta(days=14)).isoformat()
+        # AC-9c: pin canonical Z-suffix format that production _iso_utc uses.
+        # Feature 091 FR-6 (New-082-inv-1): swap from stdlib-isoformat (produces
+        # `+00:00` suffix) to _iso() (Z suffix) so SQLite lexical comparisons
+        # match production behavior. `NOW` resolves via module-level
+        # `_TEST_EPOCH` alias at line 507.
+        assert _iso(NOW) == NOW.strftime("%Y-%m-%dT%H:%M:%SZ")
+        now_iso = _iso(NOW)
+        high_cutoff = _iso(NOW - timedelta(days=30))
+        med_cutoff = _iso(NOW - timedelta(days=60))
+        grace_cutoff = _iso(NOW - timedelta(days=14))
 
-        stale_high_ts = (NOW - timedelta(days=100)).isoformat()
-        stale_med_ts = (NOW - timedelta(days=100)).isoformat()
-        fresh_in_grace_ts = (NOW - timedelta(days=10)).isoformat()  # within grace
-        past_grace_ts = (NOW - timedelta(days=80)).isoformat()  # past 14d + past 60d
+        stale_high_ts = _iso(NOW - timedelta(days=100))
+        stale_med_ts = _iso(NOW - timedelta(days=100))
+        fresh_in_grace_ts = _iso(NOW - timedelta(days=10))  # within grace
+        past_grace_ts = _iso(NOW - timedelta(days=80))  # past 14d + past 60d
 
         # Row 1: source=import + stale (must appear in import_count).
         _seed_entry(
