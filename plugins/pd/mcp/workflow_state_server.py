@@ -12,8 +12,16 @@ import sqlite3
 import sys
 import threading
 import time
+from collections import defaultdict
 from contextlib import asynccontextmanager
+from datetime import datetime
+from itertools import zip_longest
 from pathlib import Path
+
+# Feature 088 FR-7.2: internal cap on phase_events rows fetched for analytics.
+# query_phase_analytics fetches up to this many rows per internal call before
+# applying the caller-supplied `limit` (filter-then-truncate ordering).
+_ANALYTICS_EVENT_SCAN_LIMIT = 500
 
 # Make workflow_engine, transition_gate, entity_registry, semantic_memory
 # importable from hooks/lib/ — safety net for direct invocation and tests.
@@ -36,6 +44,7 @@ from entity_registry.frontmatter_sync import (
     detect_drift,
     scan_all,
 )
+from entity_registry.metadata import parse_metadata
 from semantic_memory.config import read_config
 from semantic_memory.database import MemoryDatabase
 from semantic_memory.embedding import EmbeddingProvider, create_provider
@@ -455,6 +464,32 @@ def _make_error(error_type: str, message: str, recovery_hint: str) -> str:
     })
 
 
+def _resolve_project_id(entity: dict) -> str:
+    """Resolve ``project_id`` from an entity record, distinguishing missing
+    (legitimate legacy data) from empty-string (data-integrity bug).
+
+    Feature 089 FR-2.3 / AC-10 / #00151. Replaces the ambiguous
+    ``entity.get('project_id') or '__unknown__'`` idiom that silently
+    conflated the two cases.
+
+    - ``None``: legacy row predating project_id enforcement — silent
+      fallback to ``'__unknown__'``.
+    - Empty string: data-integrity issue — emit a stderr warning AND
+      fall back to ``'__unknown__'`` so dual-writes still succeed.
+    - Non-empty: return as-is.
+    """
+    pid = entity.get("project_id")
+    if pid is None:
+        return "__unknown__"
+    if not pid:
+        sys.stderr.write(
+            f'[workflow-state] feature {entity.get("type_id", "?")} '
+            f'has empty project_id (data integrity issue)\n'
+        )
+        return "__unknown__"
+    return pid
+
+
 def _with_error_handling(func):
     """Wrap _process_* functions with standard DB/internal error handling."""
     @functools.wraps(func)
@@ -576,6 +611,12 @@ def _process_transition_phase(
     # (entity_engine.transition_phase checks blockers then delegates).
     transitioned = False
     warning = None
+    # Feature 088 FR-5.1: capture entity, ts, skipped_list OUTSIDE transaction
+    # so the post-commit phase_events dual-write can reference them even if
+    # the transaction aborted before these were populated.
+    entity = None
+    ts: str | None = None
+    skipped_list: list[str] = []
 
     if db is not None:
         with db.transaction():
@@ -619,32 +660,11 @@ def _process_transition_phase(
                 metadata["phase_timing"] = phase_timing
 
                 # Store skipped phases if provided
-                skipped_list: list[str] = []
                 if skipped_phases:
                     skipped_list = json.loads(skipped_phases)
                     metadata["skipped_phases"] = skipped_list
 
                 db.update_entity(feature_type_id, metadata=metadata)
-
-                # Dual-write to phase_events (NFR-3: failure MUST NOT break transition)
-                try:
-                    db.insert_phase_event(
-                        type_id=feature_type_id,
-                        project_id=entity.get("project_id", "__unknown__"),
-                        phase=target_phase,
-                        event_type="started",
-                        timestamp=ts,
-                    )
-                    for skipped in skipped_list:
-                        db.insert_phase_event(
-                            type_id=feature_type_id,
-                            project_id=entity.get("project_id", "__unknown__"),
-                            phase=skipped,
-                            event_type="skipped",
-                            timestamp=ts,
-                        )
-                except Exception as e:
-                    print(f"[workflow-state] phase_events INSERT failed: {e}", file=sys.stderr)
 
                 # Update kanban_column for features based on phase
                 if feature_type_id.startswith("feature:"):
@@ -654,11 +674,43 @@ def _process_transition_phase(
         response = engine.transition_phase(feature_type_id, target_phase, yolo_active)
         transitioned = all(r.allowed for r in response.results)
 
+    # Feature 088 FR-5.1: Dual-write phase_events AFTER main transaction commits.
+    # Failure here MUST NOT roll back the primary workflow write.
+    phase_events_write_failed = False
+    if db is not None and transitioned and entity is not None and ts is not None:
+        # Feature 089 FR-2.3 (#00151): distinguish missing vs empty project_id.
+        project_id = _resolve_project_id(entity)
+        try:
+            db.insert_phase_event(
+                type_id=feature_type_id,
+                project_id=project_id,
+                phase=target_phase,
+                event_type="started",
+                timestamp=ts,
+            )
+            for skipped in skipped_list:
+                db.insert_phase_event(
+                    type_id=feature_type_id,
+                    project_id=project_id,
+                    phase=skipped,
+                    event_type="skipped",
+                    timestamp=ts,
+                )
+        except Exception as exc:
+            phase_events_write_failed = True
+            sys.stderr.write(
+                f"[workflow-state] phase_events dual-write failed for "
+                f"{feature_type_id}:{target_phase}: "
+                f"{type(exc).__name__}: {str(exc)[:200]}\n"
+            )
+
     result: dict = {
         "transitioned": transitioned,
         "results": [_serialize_result(r) for r in response.results],
         "degraded": response.degraded,
     }
+    if phase_events_write_failed:
+        result["phase_events_write_failed"] = True
 
     # Filesystem write AFTER transaction committed
     if transitioned and db is not None:
@@ -741,6 +793,30 @@ def _process_complete_phase(
     completion = None
     warning = None
 
+    # Feature 088 FR-2.4: entry-point reviewer_notes size guard.
+    if reviewer_notes and len(reviewer_notes) > 10000:
+        return _make_error(
+            "oversized_reviewer_notes",
+            f"reviewer_notes size {len(reviewer_notes)} exceeds 10000",
+            "Reduce reviewer_notes payload size",
+        )
+    # Parse JSON exactly once (the original code parsed twice — once for
+    # phase_timing metadata, again for phase_events insert).
+    try:
+        parsed_notes = json.loads(reviewer_notes) if reviewer_notes else None
+    except json.JSONDecodeError as exc:
+        return _make_error(
+            "invalid_reviewer_notes",
+            f"reviewer_notes is not valid JSON: {exc.msg}",
+            "Pass a JSON-serializable payload",
+        )
+
+    # Feature 088 FR-5.1: capture entity and timestamp OUTSIDE transaction
+    # so the post-commit phase_events dual-write can reference them even if
+    # the transaction aborted before these were populated.
+    entity = None
+    ts: str | None = None
+
     # First db.get_entity for UUID resolution stays OUTSIDE transaction
     if db is not None:
         with db.transaction():
@@ -787,27 +863,15 @@ def _process_complete_phase(
             phase_timing[phase]["completed"] = ts
             if iterations is not None:
                 phase_timing[phase]["iterations"] = iterations
-            if reviewer_notes:
-                phase_timing[phase]["reviewerNotes"] = json.loads(reviewer_notes)
+            if parsed_notes is not None:
+                phase_timing[phase]["reviewerNotes"] = parsed_notes
             metadata["phase_timing"] = phase_timing
             metadata["last_completed_phase"] = phase
 
-            # Dual-write to phase_events (NFR-3: failure MUST NOT break completion)
-            try:
-                db.insert_phase_event(
-                    type_id=feature_type_id,
-                    project_id=entity.get("project_id", "__unknown__"),
-                    phase=phase,
-                    event_type="completed",
-                    timestamp=ts,
-                    iterations=iterations,
-                    reviewer_notes=json.dumps(json.loads(reviewer_notes)) if reviewer_notes else None,
-                )
-            except Exception as e:
-                print(f"[workflow-state] phase_events INSERT failed: {e}", file=sys.stderr)
-
-            # Update entity metadata (status='completed' handled by entity engine
-            # for features via frozen engine, and for tasks via _task_complete)
+            # Feature 088 FR-5.1 (ordering swap): update_entity(metadata) MUST
+            # run INSIDE the transaction; insert_phase_event is dispatched
+            # AFTER the transaction commits (below). This prevents a phase_events
+            # failure from silently rolling back the primary workflow write.
             db.update_entity(feature_type_id, metadata=metadata)
 
             # Update kanban_column for features based on completed phase
@@ -818,7 +882,36 @@ def _process_complete_phase(
     else:
         state = engine.complete_phase(feature_type_id, phase)
 
+    # Feature 088 FR-5.1: Dual-write phase_events AFTER main transaction commits.
+    # Failure here MUST NOT roll back the primary workflow write.
+    phase_events_write_failed = False
+    if db is not None and entity is not None and ts is not None:
+        # Feature 089 FR-2.3 (#00151): distinguish missing vs empty project_id.
+        project_id = _resolve_project_id(entity)
+        try:
+            db.insert_phase_event(
+                type_id=feature_type_id,
+                project_id=project_id,
+                phase=phase,
+                event_type="completed",
+                timestamp=ts,
+                iterations=iterations,
+                reviewer_notes=(
+                    json.dumps(parsed_notes) if parsed_notes is not None else None
+                ),
+            )
+        except Exception as exc:
+            phase_events_write_failed = True
+            sys.stderr.write(
+                f"[workflow-state] phase_events dual-write failed for "
+                f"{feature_type_id}:{phase}: "
+                f"{type(exc).__name__}: {str(exc)[:200]}\n"
+            )
+
     result = _serialize_state(state)
+
+    if phase_events_write_failed:
+        result["phase_events_write_failed"] = True
 
     # Add cascade info when entity engine was used
     if completion is not None:
@@ -915,6 +1008,97 @@ def _process_list_features_by_status(engine: WorkflowStateEngine, status: str) -
 # ---------------------------------------------------------------------------
 
 
+def _detect_phase_events_drift(
+    db: EntityDatabase,
+    feature_type_id: str | None,
+) -> list[dict]:
+    """Detect entities whose metadata.phase_timing or skipped_phases list
+    lacks a matching ``phase_events`` row (Feature 088 FR-10.9 / AC-42,
+    extended by Feature 089 FR-2.1 / AC-8 / #00146 to also cover
+    ``started`` and ``skipped`` events).
+
+    Dual-write drift between ``entities.metadata`` and the ``phase_events``
+    append-only log can accumulate when the analytics write (which runs
+    OUTSIDE the main transaction per FR-5.1) fails silently or when
+    historical rows pre-date migration 10. This helper enumerates the
+    drift — the apply path warns but does NOT auto-insert (additive-safe).
+
+    Feature 089 FR-2.2 / AC-9 / #00150: uses ``query_phase_events_bulk``
+    (single chunked IN query) instead of N+1 per-entity calls.
+
+    Returns a list of drift entry dicts. Each entry has keys:
+    ``kind``, ``type_id``, ``phase``, ``metadata_completed_at``.
+    The ``kind`` is one of ``phase_events_missing_started``,
+    ``phase_events_missing_completed``, ``phase_events_missing_skipped``.
+    For ``started``/``skipped`` entries, ``metadata_completed_at`` carries
+    the corresponding ``started`` timestamp (or ``""`` for ``skipped``,
+    which has no timestamp in metadata).
+    """
+    drift: list[dict] = []
+    if feature_type_id:
+        entities = [db.get_entity(feature_type_id)]
+    else:
+        # ``list_entities`` accepts no ``status`` kwarg — filter Python-side.
+        all_features = db.list_entities(entity_type="feature")
+        entities = [e for e in all_features if e and e.get("status") == "active"]
+
+    # Filter to real entities and build type_id list for the bulk query.
+    entities = [e for e in entities if e]
+    if not entities:
+        return drift
+
+    type_ids = [e["type_id"] for e in entities]
+
+    # FR-2.2: single bulk query covering all three event_types, then
+    # diff Python-side against phase_timing and skipped_phases.
+    event_types = ["started", "completed", "skipped"]
+    existing_rows = db.query_phase_events_bulk(type_ids, event_types=event_types)
+    existing: set[tuple[str, str, str]] = {
+        (r["type_id"], r["phase"], r["event_type"]) for r in existing_rows
+    }
+
+    for entity in entities:
+        meta = parse_metadata(entity.get("metadata"))
+        type_id = entity["type_id"]
+        phase_timing = meta.get("phase_timing") or {}
+        for phase_name, timing in phase_timing.items():
+            if not isinstance(timing, dict):
+                continue
+            # FR-2.1 (#00146) — started check.
+            started_ts = timing.get("started")
+            if started_ts and (type_id, phase_name, "started") not in existing:
+                drift.append({
+                    "kind": "phase_events_missing_started",
+                    "type_id": type_id,
+                    "phase": phase_name,
+                    "metadata_completed_at": started_ts,
+                })
+            # Existing completed check.
+            completed_ts = timing.get("completed")
+            if completed_ts and (type_id, phase_name, "completed") not in existing:
+                drift.append({
+                    "kind": "phase_events_missing_completed",
+                    "type_id": type_id,
+                    "phase": phase_name,
+                    "metadata_completed_at": completed_ts,
+                })
+        # FR-2.1 (#00146) — skipped check. ``skipped_phases`` is a list of
+        # phase names with no associated timestamp in metadata.
+        skipped_phases = meta.get("skipped_phases") or []
+        if isinstance(skipped_phases, list):
+            for phase_name in skipped_phases:
+                if not isinstance(phase_name, str):
+                    continue
+                if (type_id, phase_name, "skipped") not in existing:
+                    drift.append({
+                        "kind": "phase_events_missing_skipped",
+                        "type_id": type_id,
+                        "phase": phase_name,
+                        "metadata_completed_at": "",
+                    })
+    return drift
+
+
 @_with_error_handling
 @_catch_value_error
 def _process_reconcile_check(
@@ -933,9 +1117,14 @@ def _process_reconcile_check(
     if feature_type_id is not None:
         _validate_feature_type_id(feature_type_id, artifacts_root)
     result = check_workflow_drift(engine, db, artifacts_root, feature_type_id)
+    # Feature 088 FR-10.9 / AC-42: additive sibling key surfacing drift between
+    # entities.metadata.phase_timing and phase_events rows. Does not affect the
+    # existing WorkflowDriftResult (frozen dataclass) schema.
+    phase_events_drift = _detect_phase_events_drift(db, feature_type_id)
     return json.dumps({
         "features": [_serialize_workflow_drift_report(r) for r in result.features],
         "summary": result.summary,
+        "phase_events_drift": phase_events_drift,
     })
 
 
@@ -955,9 +1144,21 @@ def _process_reconcile_apply(
     result = apply_workflow_reconciliation(
         engine, db, artifacts_root, feature_type_id, dry_run
     )
+    # Feature 088 FR-10.9 / AC-42b: detect phase_events-vs-metadata drift and
+    # emit stderr warnings. We do NOT auto-insert phase_events rows — drift of
+    # this kind requires manual inspection (a live row backfill would falsify
+    # the created_at audit trail).
+    phase_events_drift = _detect_phase_events_drift(db, feature_type_id)
+    for entry in phase_events_drift:
+        sys.stderr.write(
+            f"[reconcile] phase_events drift for {entry['type_id']}:{entry['phase']} "
+            f"(metadata completed={entry['metadata_completed_at']}, phase_events missing) — "
+            f"NOT auto-fixing (manual inspection recommended)\n"
+        )
     return json.dumps({
         "actions": [_serialize_reconcile_action(a) for a in result.actions],
         "summary": result.summary,
+        "phase_events_drift_count": len(phase_events_drift),
     })
 
 
@@ -1617,36 +1818,68 @@ async def record_backward_event(
     source_phase: str,
     target_phase: str,
     reason: str = "",
-    project_id: str = "__unknown__",
 ) -> str:
     """Record a backward phase transition event for analytics.
 
     Called by workflow-transitions skill AFTER transition_phase completes
-    a backward transition. project_id is accepted as a parameter (the skill
-    layer has it in scope) rather than resolved via db.get_entity.
+    a backward transition. `project_id` is resolved server-side from the
+    entity record (feature 088 FR-2.3) — callers MUST NOT pass it.
+
+    FR-2.3 validation: rejects unknown `type_id`; caps `reason` and
+    `target_phase` at 500 chars. FR-2.5: sqlite failures return the
+    standard `_make_error` shape (never raw `str(e)`).
     """
+    err = _check_db_available()
+    if err:
+        return err
     if _db is None:
         return _NOT_INITIALIZED
+
+    # FR-2.3 (a): reject unknown type_id.
+    entity = _db.get_entity(type_id)
+    if not entity:
+        return _make_error(
+            "entity_not_found",
+            f"Entity {type_id} not found",
+            "Verify type_id matches an existing entity",
+        )
+
+    # FR-2.3 (b): resolve project_id server-side from entity record.
+    # Feature 089 FR-2.3 (#00151): distinguish missing vs empty project_id.
+    resolved_project_id = _resolve_project_id(entity)
+
+    # FR-2.3 (c) + FR-2.6 harmonized: cap reason and target at 500 chars.
+    reason_capped = (reason or "")[:500]
+    target_capped = (target_phase or "")[:500]
+
     ts = _iso_now()
     try:
         _db.insert_phase_event(
             type_id=type_id,
-            project_id=project_id,
+            project_id=resolved_project_id,
             phase=source_phase,
             event_type="backward",
             timestamp=ts,
-            backward_reason=reason,
-            backward_target=target_phase,
+            backward_reason=reason_capped,
+            backward_target=target_capped,
         )
-    except Exception as e:
-        print(f"[workflow-state] backward event INSERT failed: {e}", file=sys.stderr)
-        return json.dumps({"error": str(e)})
+    except sqlite3.Error as e:
+        print(
+            f"[workflow-state] backward event INSERT failed: "
+            f"{type(e).__name__}: {str(e)[:200]}",
+            file=sys.stderr,
+        )
+        return _make_error(
+            "insert_failed",
+            f"{type(e).__name__}: {str(e)[:200]}",
+            "Check type_id validity",
+        )
 
     return json.dumps({
         "recorded": True,
         "type_id": type_id,
         "source_phase": source_phase,
-        "target_phase": target_phase,
+        "target_phase": target_capped,
     })
 
 
@@ -1661,20 +1894,51 @@ async def query_phase_analytics(
     """Query structured phase execution data for analytics.
 
     query_type: 'phase_duration' | 'iteration_summary' | 'backward_frequency' | 'raw_events'
+
+    Cross-project isolation (feature 088, FR-2.1): by default, results are
+    scoped to the current project (`_project_id`). Pass `project_id="*"` to
+    opt into a cross-project query; pass a literal `project_id` string to
+    scope to a specific project other than the current one.
     """
+    err = _check_db_available()
+    if err:
+        return err
     if _db is None:
         return _NOT_INITIALIZED
 
+    # Feature 089 FR-1.5 / AC-5 (#00143): allowlist ``project_id`` to avoid
+    # cross-project data disclosure via arbitrary scope strings. Accepted:
+    #   - ``None`` → defaults to current project below
+    #   - ``'*'``   → explicit cross-project opt-in
+    #   - ``_project_id`` → explicit current project
+    # Anything else is refused.
+    if project_id is not None and project_id != "*" and project_id != _project_id:
+        return _make_error(
+            "forbidden",
+            f'cross-project query requires project_id="*" or current '
+            f'project ({_project_id!r}); got {project_id!r}',
+            'Pass project_id=None for current, "*" for all projects',
+        )
+
+    # FR-2.1: default to current project; "*" means opt into cross-project.
+    resolved_project_id = None if project_id == "*" else (project_id or _project_id)
+
     if query_type == "phase_duration":
+        # Feature 088 FR-4.1/FR-4.2: fetch both event types, merge into a
+        # single list, and let _compute_durations emit rows for unpaired
+        # (type_id, phase) groups via zip_longest + key-union.
         started = _db.query_phase_events(
-            type_id=feature_type_id, project_id=project_id,
-            phase=phase, event_type="started", limit=500,
+            type_id=feature_type_id, project_id=resolved_project_id,
+            phase=phase, event_type="started",
+            limit=_ANALYTICS_EVENT_SCAN_LIMIT,
         )
         completed = _db.query_phase_events(
-            type_id=feature_type_id, project_id=project_id,
-            phase=phase, event_type="completed", limit=500,
+            type_id=feature_type_id, project_id=resolved_project_id,
+            phase=phase, event_type="completed",
+            limit=_ANALYTICS_EVENT_SCAN_LIMIT,
         )
-        results = _compute_durations(started, completed)
+        events = list(started) + list(completed)
+        results = _compute_durations(events)
         return json.dumps({
             "query_type": "phase_duration",
             "results": results[:limit],
@@ -1682,9 +1946,14 @@ async def query_phase_analytics(
         })
 
     elif query_type == "iteration_summary":
+        # Feature 088 FR-7.1: fetch with the internal scan limit, filter
+        # `iterations is not None` in Python, sort, THEN apply caller's limit.
+        # Prior ordering (fetch with caller's limit, filter after) could return
+        # fewer rows than expected when None rows occupied the top slots.
         events = _db.query_phase_events(
-            type_id=feature_type_id, project_id=project_id,
-            phase=phase, event_type="completed", limit=limit,
+            type_id=feature_type_id, project_id=resolved_project_id,
+            phase=phase, event_type="completed",
+            limit=_ANALYTICS_EVENT_SCAN_LIMIT,
         )
         results = [
             {
@@ -1696,6 +1965,7 @@ async def query_phase_analytics(
             for e in events if e.get("iterations") is not None
         ]
         results.sort(key=lambda x: x["iterations"] or 0, reverse=True)
+        results = results[:limit]
         return json.dumps({
             "query_type": "iteration_summary",
             "results": results,
@@ -1704,8 +1974,8 @@ async def query_phase_analytics(
 
     elif query_type == "backward_frequency":
         events = _db.query_phase_events(
-            type_id=feature_type_id, project_id=project_id,
-            event_type="backward", limit=500,
+            type_id=feature_type_id, project_id=resolved_project_id,
+            event_type="backward", limit=_ANALYTICS_EVENT_SCAN_LIMIT,
         )
         freq: dict[str, int] = {}
         for e in events:
@@ -1722,7 +1992,7 @@ async def query_phase_analytics(
 
     elif query_type == "raw_events":
         events = _db.query_phase_events(
-            type_id=feature_type_id, project_id=project_id,
+            type_id=feature_type_id, project_id=resolved_project_id,
             phase=phase, limit=limit,
         )
         return json.dumps({
@@ -1734,41 +2004,71 @@ async def query_phase_analytics(
     return json.dumps({"error": f"Unknown query_type: {query_type}"})
 
 
-def _compute_durations(
-    started: list[dict], completed: list[dict],
-) -> list[dict]:
-    """Pair Nth started with Nth completed for each (type_id, phase)."""
-    from collections import defaultdict
-    from datetime import datetime
+def _compute_durations(events: list[dict]) -> list[dict]:
+    """Pair `started` / `completed` phase_events for each (type_id, phase).
 
+    Feature 088 FR-4.1/FR-4.2/FR-6.3:
+    - Accepts a SINGLE merged events list (caller concatenates two filtered
+      query_phase_events calls). Signature change from the old
+      ``(started, completed)`` form is intentional — this function now owns
+      grouping by event_type, so the caller can't silently drop one side.
+    - Iterates the UNION of ``groups_s.keys() | groups_c.keys()`` so
+      (type_id, phase) pairs with a started-but-no-completed, or the reverse,
+      still produce a result row (never silently dropped).
+    - Uses ``itertools.zip_longest(fillvalue=None)`` within each group so
+      imbalanced pairs (e.g., 3 started + 2 completed after a mid-transition
+      crash) yield N rows, with unpaired entries flagged via
+      ``missing_started`` / ``missing_completed`` and ``duration_seconds=None``.
+    - Imports (``defaultdict``, ``datetime``, ``zip_longest``) live at
+      module scope per FR-6.3 so importing this module has a fixed cost
+      regardless of whether the function runs.
+
+    Rows are sorted descending by ``duration_seconds``; rows with None duration
+    sort last (they convey "pairing anomaly" diagnostic, not a measurement).
+    """
     groups_s: dict[tuple, list] = defaultdict(list)
     groups_c: dict[tuple, list] = defaultdict(list)
-    for e in started:
-        groups_s[(e["type_id"], e["phase"])].append(e)
-    for e in completed:
-        groups_c[(e["type_id"], e["phase"])].append(e)
+    for e in events:
+        key = (e["type_id"], e["phase"])
+        if e.get("event_type") == "started":
+            groups_s[key].append(e)
+        elif e.get("event_type") == "completed":
+            groups_c[key].append(e)
+        # Other event_types (backward, skipped, ...) are ignored here —
+        # duration is only meaningful for started/completed pairs.
 
-    results = []
-    for key in groups_s:
-        s_list = sorted(groups_s[key], key=lambda x: x["timestamp"])
+    results: list[dict] = []
+    for key in groups_s.keys() | groups_c.keys():
+        s_list = sorted(groups_s.get(key, []), key=lambda x: x["timestamp"])
         c_list = sorted(groups_c.get(key, []), key=lambda x: x["timestamp"])
-        for s, c in zip(s_list, c_list):
-            try:
-                s_ts = s["timestamp"].replace("Z", "+00:00") if s["timestamp"] else ""
-                c_ts = c["timestamp"].replace("Z", "+00:00") if c["timestamp"] else ""
-                s_dt = datetime.fromisoformat(s_ts)
-                c_dt = datetime.fromisoformat(c_ts)
-                dur = (c_dt - s_dt).total_seconds()
-                results.append({
-                    "type_id": key[0],
-                    "phase": key[1],
-                    "started": s["timestamp"],
-                    "completed": c["timestamp"],
-                    "duration_seconds": dur,
-                })
-            except (ValueError, TypeError):
-                continue
-    results.sort(key=lambda x: x["duration_seconds"], reverse=True)
+        for s, c in zip_longest(s_list, c_list, fillvalue=None):
+            row: dict = {
+                "type_id": key[0],
+                "phase": key[1],
+                "started_at": s["timestamp"] if s else None,
+                "completed_at": c["timestamp"] if c else None,
+                "duration_seconds": None,
+                "missing_started": s is None,
+                "missing_completed": c is None,
+            }
+            if s is not None and c is not None:
+                try:
+                    s_ts = s["timestamp"].replace("Z", "+00:00") if s["timestamp"] else ""
+                    c_ts = c["timestamp"].replace("Z", "+00:00") if c["timestamp"] else ""
+                    s_dt = datetime.fromisoformat(s_ts)
+                    c_dt = datetime.fromisoformat(c_ts)
+                    row["duration_seconds"] = (c_dt - s_dt).total_seconds()
+                except (ValueError, TypeError):
+                    # Mixed-tz / unparseable timestamps leave duration as None
+                    # rather than dropping the row (pairing diagnostic still
+                    # useful for operators).
+                    pass
+            results.append(row)
+
+    # None sorts last: coerce to -inf so legitimate durations stay on top.
+    results.sort(
+        key=lambda x: (x["duration_seconds"] is None, -(x["duration_seconds"] or 0)),
+    )
     return results
 
 

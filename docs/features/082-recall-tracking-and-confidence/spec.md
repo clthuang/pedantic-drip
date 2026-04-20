@@ -354,3 +354,35 @@ Revert the single feature commit. The 5 config fields are additive and silently 
 - Config resolution: `plugins/pd/hooks/lib/semantic_memory/config.py` — tolerant parser; decay uses point-of-consumption coercion via 081's `_resolve_int_config`
 - Session-start hook: `plugins/pd/hooks/session-start.sh:660-775` (main) — per FR-4 (single authoritative ordering), `run_memory_decay` invocation is inserted at line 701 BEFORE `build_memory_context`, and the existing `run_reconciliation` / `run_doctor_autofix` calls are kept in their current positions (which now run after `build_memory_context` in the reordered sequence). See FR-4 for the exact final call order
 - Entries schema: `database.py:78-82` — `confidence TEXT DEFAULT 'medium' CHECK(confidence IN ('high', 'medium', 'low'))`, `last_recalled_at TEXT`, `created_at TEXT`, `updated_at TEXT`, `source TEXT`
+
+## Amendments (2026-04-19 — feature 088)
+
+Post-release QA (feature 088, adversarial reviewers — 8 parallel agents surfaced 43 findings #00095–#00137) produced these corrections to the original spec. **The original text above is preserved for historical auditability.** The corrections below supersede the original on conflict. Each amendment cites the feature-088 finding ID that drove it.
+
+### Amendment A — AC-10 `skipped_floor` value (finding #00101)
+
+**Original AC-10 assertion:** `skipped_floor == 1`
+
+**Corrected:** `skipped_floor == 2`
+
+**Reason:** The 3-entry fixture (1 high stale, 1 medium stale, 1 low stale) produces TWO floor entries on the second tick — the originally-seeded low entry AND the newly-demoted medium-stale-now-low entry both count as floor-capped. Retro.md already noted this error (`retro.md line 25`); the in-place spec text was not patched at the time.
+
+### Amendment B — FR-2 NULL-branch text (finding #00109)
+
+**Original FR-2 NULL branch:** "If `last_recalled_at IS NULL`: fall back to `created_at - grace_period_days`. Comparison: `created_at < now - grace_period_days`."
+
+**Corrected:** "If `last_recalled_at IS NULL`: first verify grace has elapsed (`created_at < now - grace_period_days`); if inside grace, skip (`skipped_grace`). If past grace, apply the tier staleness check using `created_at` as the staleness timestamp (i.e., `created_at < now - threshold_days` for the entry's current confidence tier)."
+
+**Reason:** The original text only described the grace comparison and was inconsistent with AC-5/AC-6 which require tier-threshold comparison on the NULL branch past grace. The implementation in `maintenance.py::_select_candidates` already does the correct thing; only the spec text was incomplete. No code change required — this amendment aligns the spec with the shipped behavior.
+
+### Amendment C — AC-11 stderr warning assertion (finding #00100)
+
+**Original AC-11a/b/c test requirement:** (implicit — tests did not assert stderr content when config values were clamped)
+
+**Corrected:** AC-11a/b/c MUST include:
+```python
+captured = capsys.readouterr()
+assert re.search(r'\[memory-decay\].*memory_decay_high_threshold_days', captured.err)
+```
+
+**Reason:** AC-11 specified that out-of-range threshold values are "clamped AND emit a stderr warning," but the original tests only asserted the clamped value was used (not the warning content). The docstring comment I-3 in `maintenance.py` claiming "clamped SILENTLY (no warning)" contradicted both the spec AND the actual implementation which DOES emit a warning (`maintenance.py:119-128`). Feature 088's Bundle J corrects the docstring to reflect warn-on-clamp behavior. Tests `test_ac11a/b/c` are augmented with `capsys` assertions in feature 088.

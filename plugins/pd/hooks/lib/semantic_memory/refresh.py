@@ -28,13 +28,20 @@ the helpers here.
 """
 from __future__ import annotations
 
+import functools
 import json
+import os
 import re
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from semantic_memory._config_utils import (
+    _iso_utc,
+    _resolve_int_config as _resolve_int_config_core,
+    _warn_and_default as _warn_and_default_core,
+)
 from semantic_memory.database import MemoryDatabase
 from semantic_memory.embedding import EmbeddingProvider
 from semantic_memory.ranking import RankingEngine
@@ -90,6 +97,23 @@ _slow_refresh_warned: bool = False
 _refresh_error_warned: bool = False
 
 
+def reset_warning_state() -> None:
+    """Clear all module-level dedup flags (Feature 089 FR-3.6 / AC-16 — #00155).
+
+    Public function for tests (and any long-running supervisor wanting a
+    clean slate between iterations).  The autouse fixture in
+    ``test_refresh.py`` monkeypatches each flag individually; this helper
+    is the non-monkeypatch equivalent for callers that cannot use pytest
+    fixtures (e.g. integration harnesses, shell tests that exec the module).
+
+    Side-effect-only; returns ``None``.  Safe to call repeatedly.
+    """
+    global _slow_refresh_warned, _refresh_error_warned
+    _refresh_warned_fields.clear()
+    _slow_refresh_warned = False
+    _refresh_error_warned = False
+
+
 # ---------------------------------------------------------------------------
 # Query construction
 # ---------------------------------------------------------------------------
@@ -125,63 +149,23 @@ def build_refresh_query(
 # ---------------------------------------------------------------------------
 
 
-def _warn_and_default(
-    key: str, raw, default: int, warned: set[str]
-) -> int:
-    """Emit one stderr warning (per-key-deduped) and return ``default``.
-
-    Called from ``_resolve_int_config`` on any invalid-value path.
-    """
-    if key not in warned:
-        sys.stderr.write(
-            f"[refresh] config field {key!r} value {raw!r} "
-            f"is not an int; using default {default}\n"
-        )
-        warned.add(key)
-    return default
-
-
-def _resolve_int_config(
-    config: dict,
-    key: str,
-    default: int,
-    *,
-    clamp: tuple[int, int] | None = None,
-    warned: set[str],
-) -> int:
-    """Resolve an int-valued config field with bool rejection + dedup warning.
-
-    Accepts ``int`` and numeric strings parseable via ``int(raw)``.  Rejects
-    ``bool`` (Python bool is int subclass; must filter before int branch)
-    and ``float`` (this is an int helper — 5.7 is not a valid int).  Invalid
-    values emit one stderr warning per key per process (via
-    ``_warn_and_default``) and return ``default``.
-
-    ``clamp`` — optional ``(min, max)`` tuple.  Out-of-range values are
-    clamped SILENTLY (no warning) — operator-tuned values get corrected.
-    """
-    raw = config.get(key, default)
-
-    # Bool rejection MUST come first: bool is an int subclass, so
-    # isinstance(True, int) is True.  Without this, True would coerce to 1.
-    if isinstance(raw, bool):
-        value = _warn_and_default(key, raw, default, warned)
-    elif isinstance(raw, int):
-        # Pure int — accept.
-        value = raw
-    elif isinstance(raw, str):
-        try:
-            value = int(raw)
-        except ValueError:
-            value = _warn_and_default(key, raw, default, warned)
-    else:
-        # float, None, list, dict, ... → reject with warning
-        value = _warn_and_default(key, raw, default, warned)
-
-    if clamp is not None:
-        lo, hi = clamp
-        value = max(lo, min(hi, value))
-    return value
+# Shared config helpers bound with the refresh caller's prefix + clamp
+# policy (feature 088 FR-6.7).  Implementation lives in ``_config_utils.py``;
+# ``functools.partial`` preserves the caller-visible signatures
+# (``_warn_and_default(key, raw, default, warned)`` and
+# ``_resolve_int_config(config, key, default, *, clamp=None, warned)``) so
+# tests that reference ``refresh._warn_and_default`` /
+# ``refresh._resolve_int_config`` continue to work unchanged.
+#
+# Divergence from ``maintenance.py`` preserved: stderr prefix ``[refresh]``
+# and ``warn_on_clamp=False`` (clamp is silent — operator-tuned values get
+# corrected without noise).
+_warn_and_default = functools.partial(
+    _warn_and_default_core, prefix="[refresh]"
+)
+_resolve_int_config = functools.partial(
+    _resolve_int_config_core, prefix="[refresh]", warn_on_clamp=False
+)
 
 
 # ---------------------------------------------------------------------------
@@ -206,9 +190,26 @@ def _emit_refresh_diagnostic(
     """
     global _refresh_error_warned
     try:
-        INFLUENCE_DEBUG_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        # FR-1.2 (#00097): parent dir 0o700; symlink-safe open via O_NOFOLLOW.
+        # mkdir(mode=) only applies to newly created dirs; existing dirs keep
+        # their mode (documented platform behavior).
+        INFLUENCE_DEBUG_LOG_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+
+        # Feature 089 FR-1.7 / AC-7 (#00154): verify parent dir ownership +
+        # mode BEFORE opening the log. Mirrors maintenance._emit_decay_diagnostic.
+        parent_stat = INFLUENCE_DEBUG_LOG_PATH.parent.stat()
+        if parent_stat.st_uid != os.getuid() or (parent_stat.st_mode & 0o077):
+            raise OSError(
+                f"refusing to write log: parent dir "
+                f"{INFLUENCE_DEBUG_LOG_PATH.parent} has insecure "
+                f"uid={parent_stat.st_uid} or mode=0o{parent_stat.st_mode & 0o777:o}"
+            )
+
+        # Feature 089 FR-3.2 / AC-12 (#00148): use shared ``_iso_utc`` helper
+        # instead of inline ``strftime('%Y-%m-%dT%H:%M:%SZ')`` so format drift
+        # between maintenance.py and refresh.py is structurally impossible.
         line = json.dumps({
-            "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "ts": _iso_utc(datetime.now(timezone.utc)),
             "event": "memory_refresh",
             "feature_type_id": feature_type_id,
             "completed_phase": completed_phase,
@@ -216,8 +217,39 @@ def _emit_refresh_diagnostic(
             "entry_count": entry_count,
             "elapsed_ms": elapsed_ms,
         })
-        with INFLUENCE_DEBUG_LOG_PATH.open("a", encoding="utf-8") as f:
-            f.write(line + "\n")
+        base_flags = os.O_APPEND | os.O_WRONLY
+        if hasattr(os, "O_NOFOLLOW"):
+            base_flags |= os.O_NOFOLLOW
+        # First attempt: O_EXCL to atomically create-and-acquire. On EEXIST,
+        # reopen in append-only and verify ownership via fstat.
+        try:
+            fd = os.open(
+                str(INFLUENCE_DEBUG_LOG_PATH),
+                base_flags | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+        except FileExistsError:
+            fd = os.open(str(INFLUENCE_DEBUG_LOG_PATH), base_flags)
+            try:
+                fd_stat = os.fstat(fd)
+            except OSError:
+                os.close(fd)
+                raise
+            if fd_stat.st_uid != os.getuid():
+                os.close(fd)
+                raise OSError(
+                    f"refusing to append log: file owner uid={fd_stat.st_uid} "
+                    f"!= running uid={os.getuid()}"
+                )
+        try:
+            if hasattr(os, "fchmod"):
+                try:
+                    os.fchmod(fd, 0o600)
+                except (OSError, NotImplementedError):
+                    pass  # platforms without fchmod / filesystems without perm bits
+            os.write(fd, (line + "\n").encode("utf-8"))
+        finally:
+            os.close(fd)
     except (OSError, IOError) as exc:
         if not _refresh_error_warned:
             sys.stderr.write(

@@ -3,11 +3,43 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
 import sys
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from typing import Callable
+
+
+def _assert_testing_context() -> None:
+    """Refuse ``*_for_testing`` invocations outside an active pytest test.
+
+    Feature 089 FR-1.2 / AC-2 (#00140): the seed/introspection helpers below
+    bypass the encapsulation boundary and must never run in production.
+
+    Feature 090 FR-2 / AC-2 (#00173): the prior guard accepted either
+    ``PD_TESTING=1`` in the environment OR ``'pytest' in sys.modules``. Both
+    signals leak into non-test contexts — ``PD_TESTING`` survives any child
+    process spawned from a shell that exported it, and a transitive import
+    of ``pytest`` (e.g. a library that imports it at top level for type
+    hints or optional dev tooling) trips the second branch. Require
+    ``PYTEST_CURRENT_TEST`` instead, which pytest sets ONLY while actively
+    running a test and unsets between tests — this is the narrowest signal
+    available. The legacy PD_TESTING / sys.modules checks are retained as
+    belt-and-suspenders noise filters so a pytest-flavoured environment
+    without an active test body still raises.
+    """
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        raise RuntimeError(
+            "for-testing helper called outside an active pytest test "
+            "(PYTEST_CURRENT_TEST not set)"
+        )
+    if not (os.environ.get("PD_TESTING") or "pytest" in sys.modules):
+        raise RuntimeError(
+            "for-testing helper called outside pytest "
+            "(set PD_TESTING=1 or import pytest to use)"
+        )
 
 
 # FTS5 metacharacters to strip (everything except intra-word hyphens).
@@ -798,8 +830,164 @@ class MemoryDatabase:
         self._conn.commit()
 
     # ------------------------------------------------------------------
+    # Test-only helpers (Feature 088 FR-10.3 / AC-36)
+    # ------------------------------------------------------------------
+
+    def insert_test_entry_for_testing(
+        self,
+        *,
+        entry_id: str,
+        name: str | None = None,
+        description: str = "desc",
+        category: str = "patterns",
+        keywords: str | None = None,
+        source: str = "session-capture",
+        source_project: str = "/tmp/test-project",
+        source_hash: str | None = None,
+        confidence: str = "medium",
+        recall_count: int | None = None,
+        last_recalled_at: str | None = None,
+        created_at: str,
+        updated_at: str | None = None,
+        observation_count: int = 1,
+    ) -> None:
+        """Test-only seed helper (feature 088 FR-10.3).
+
+        Replaces direct ``db._conn.execute`` access from test files so the
+        internal connection remains encapsulated per
+        `engineering-memory` anti-pattern. The ``_for_testing`` suffix
+        signals to reviewers this is NOT for production callers.
+
+        Bypasses ``upsert_entry``'s normalization path so tests can control
+        ``confidence``, ``source``, and ``last_recalled_at`` directly.
+        """
+        _assert_testing_context()
+        if name is None:
+            name = f"name-{entry_id}"
+        if keywords is None:
+            keywords = json.dumps(["k"])
+        if source_hash is None:
+            source_hash = "0" * 16
+        if updated_at is None:
+            updated_at = created_at
+        if recall_count is None:
+            recall_count = 1 if last_recalled_at else 0
+        self._conn.execute(
+            "INSERT INTO entries (id, name, description, category, keywords, "
+            "source, source_project, source_hash, confidence, recall_count, "
+            "last_recalled_at, created_at, updated_at, observation_count) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                entry_id, name, description, category, keywords,
+                source, source_project, source_hash, confidence, recall_count,
+                last_recalled_at, created_at, updated_at, observation_count,
+            ),
+        )
+        self._conn.commit()
+
+    def insert_test_entries_bulk_for_testing(
+        self, rows: list[tuple],
+    ) -> None:
+        """Batched executemany seed helper for large test fixtures.
+
+        ``rows`` is a list of 14-tuples matching the INSERT column order
+        used by ``insert_test_entry_for_testing``: ``(id, name, description,
+        category, keywords, source, source_project, source_hash, confidence,
+        recall_count, last_recalled_at, created_at, updated_at,
+        observation_count)``. Caller generates plausible values.
+        """
+        _assert_testing_context()
+        self._conn.executemany(
+            "INSERT INTO entries (id, name, description, category, keywords, "
+            "source, source_project, source_hash, confidence, recall_count, "
+            "last_recalled_at, created_at, updated_at, observation_count) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            rows,
+        )
+        self._conn.commit()
+
+    def fetch_row_for_testing(
+        self, sql: str, params: tuple | list = (),
+    ) -> dict | None:
+        """Test-only read helper (feature 088 FR-10.3).
+
+        Executes a raw SELECT on the internal connection and returns the
+        first row as a dict (or None). Scoped to test files that previously
+        reached into ``db._conn.execute(...).fetchone()`` for assertions.
+        """
+        _assert_testing_context()
+        cur = self._conn.execute(sql, params)
+        row = cur.fetchone()
+        if row is None:
+            return None
+        return dict(row)
+
+    def execute_test_sql_for_testing(
+        self, sql: str, params: tuple | list = (),
+    ) -> None:
+        """Test-only write helper (feature 088 FR-10.3).
+
+        Executes a raw UPDATE/INSERT/DELETE on the internal connection and
+        commits. Scoped to test files that previously reached into
+        ``db._conn.execute(...)``.
+
+        Feature 089 FR-1.6 / AC-6 (#00144): on any error during execute or
+        commit, rollback then re-raise so the connection is not left mid-txn.
+        """
+        _assert_testing_context()
+        try:
+            self._conn.execute(sql, params)
+            self._conn.commit()
+        except Exception:
+            try:
+                self._conn.rollback()
+            except sqlite3.Error:
+                # Rollback best-effort; surface the original failure below.
+                pass
+            raise
+
+    # ------------------------------------------------------------------
     # Confidence decay (Feature 082)
     # ------------------------------------------------------------------
+
+    def scan_decay_candidates(
+        self,
+        *,
+        not_null_cutoff: str,
+        scan_limit: int,
+    ) -> Iterator[sqlite3.Row]:
+        """Yield candidate rows for decay confidence processing.
+
+        Encapsulates the read path previously inlined at
+        ``maintenance._select_candidates`` (feature 091 FR-4, #00078).
+        Closes the "Direct ``db._conn`` Access" anti-pattern.
+
+        Yields rows with schema ``(id, confidence, source,
+        last_recalled_at, created_at)``. SQL is pinned byte-for-byte to
+        the feature-088 verbatim query; see feature:091 AC-5b.
+
+        Parameters
+        ----------
+        not_null_cutoff : str
+            Z-suffix ISO-8601 timestamp. Rows matching
+            ``(last_recalled_at IS NOT NULL AND last_recalled_at < ?)``
+            OR ``(last_recalled_at IS NULL)`` are returned.
+        scan_limit : int
+            Maximum rows to return. Caller pre-clamps via
+            ``_resolve_int_config`` (range ``[1000, 10_000_000]`` in
+            production). ``scan_limit <= 0`` yields zero rows (SQLite
+            LIMIT semantics) with no exception.
+        """
+        cursor = self._conn.execute(
+            "SELECT id, confidence, source, last_recalled_at, created_at "
+            "FROM entries "
+            "WHERE (last_recalled_at IS NOT NULL AND last_recalled_at < ?) "
+            "   OR (last_recalled_at IS NULL) "
+            "LIMIT ?",
+            (not_null_cutoff, scan_limit),
+        )
+        for row in cursor:
+            yield row
 
     def batch_demote(
         self,
@@ -877,7 +1065,7 @@ class MemoryDatabase:
             f"UPDATE entries "
             f"SET confidence = ?, updated_at = ? "
             f"WHERE id IN ({placeholders}) "
-            f"  AND (updated_at IS NULL OR updated_at < ?)"
+            f"  AND updated_at < ?"
         )
         cursor = self._conn.execute(
             sql, (new_confidence, now_iso, *ids, now_iso)

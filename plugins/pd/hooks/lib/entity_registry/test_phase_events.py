@@ -347,3 +347,825 @@ class TestQueryPhaseEvents:
         )
         assert len(results) == 1
         assert results[0]["phase"] == "brainstorm"
+
+
+# ---------------------------------------------------------------------------
+# Feature 090 FR-4 — query_phase_events_bulk event_types contract
+# ---------------------------------------------------------------------------
+
+
+class TestFeature090BulkEventTypesContract:
+    """Feature 090 FR-4 / AC-4 (#00175): ``query_phase_events_bulk`` must
+    distinguish ``event_types=None`` ("no filter, return all") from
+    ``event_types=[]`` ("filter by empty set, return nothing"). Pre-090 both
+    collapsed to the same code path because the guard was ``if event_types:``.
+    """
+
+    @pytest.fixture(autouse=True)
+    def seed_events(self, db):
+        events = [
+            ("feature:bulk-001", "proj-A", "brainstorm", "started", "2026-04-01T00:00:00Z"),
+            ("feature:bulk-001", "proj-A", "brainstorm", "completed", "2026-04-01T01:00:00Z"),
+            ("feature:bulk-001", "proj-A", "specify", "started", "2026-04-01T02:00:00Z"),
+            ("feature:bulk-002", "proj-A", "design", "backward", "2026-04-02T00:00:00Z"),
+        ]
+        for type_id, proj, phase, evt, ts in events:
+            db.insert_phase_event(
+                type_id=type_id, project_id=proj, phase=phase,
+                event_type=evt, timestamp=ts,
+            )
+
+    def test_empty_event_types_returns_empty_list(self, db):
+        """AC-4: event_types=[] MUST return [] (filter by empty set)."""
+        results = db.query_phase_events_bulk(
+            type_ids=["feature:bulk-001"], event_types=[],
+        )
+        assert results == [], (
+            f"event_types=[] must short-circuit to []; got "
+            f"{len(results)} rows — pre-090 contract regressed"
+        )
+
+    def test_none_event_types_returns_all(self, db):
+        """AC-4: event_types=None MUST return all rows for the type_ids."""
+        results = db.query_phase_events_bulk(
+            type_ids=["feature:bulk-001"], event_types=None,
+        )
+        assert len(results) == 3, (
+            f"event_types=None must return all 3 rows for bulk-001, got "
+            f"{len(results)}"
+        )
+
+    def test_filter_by_event_types_list(self, db):
+        """AC-4: event_types=['started'] MUST filter correctly."""
+        results = db.query_phase_events_bulk(
+            type_ids=["feature:bulk-001", "feature:bulk-002"],
+            event_types=["started"],
+        )
+        assert len(results) == 2
+        assert all(r["event_type"] == "started" for r in results)
+
+
+# ---------------------------------------------------------------------------
+# Feature 088 Bundle D: migration 10 hardening tests
+# ---------------------------------------------------------------------------
+
+
+def _reset_phase_events_to_pre_migration(database):
+    """Drop phase_events artefacts + reset schema_version to 9.
+
+    Used by feature 088 Bundle D tests to exercise ``_migration_10_phase_events``
+    directly against a clean slate.
+    """
+    database._conn.execute("DROP TABLE IF EXISTS phase_events")
+    database._conn.execute("DROP INDEX IF EXISTS idx_pe_lookup")
+    database._conn.execute("DROP INDEX IF EXISTS idx_pe_project")
+    database._conn.execute("DROP INDEX IF EXISTS idx_pe_timestamp")
+    database._conn.execute("DROP INDEX IF EXISTS phase_events_backfill_dedup")
+    database._conn.execute(
+        "INSERT INTO _metadata(key, value) VALUES('schema_version', '9') "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+    )
+    database._conn.commit()
+
+
+class TestFeature088Migration10Hardening:
+    """Feature 088 Bundle D: migration 10 concurrency, backfill validation."""
+
+    def test_migration_10_concurrent_idempotent(self, tmp_path):
+        """AC-5: two threads running migration 10 simultaneously yield single-run row count.
+
+        Uses ``threading.Barrier`` to align both threads inside the migration
+        entry point. The partial UNIQUE index + INSERT OR IGNORE (plus the
+        inside-BEGIN schema_version re-check) MUST produce the same row count
+        as a single-threaded control run.
+        """
+        import threading
+        import time
+        from entity_registry.database import _migration_10_phase_events
+
+        db_path = str(tmp_path / "concurrent.db")
+
+        # Seed one control DB and one concurrent DB with identical entity set.
+        def seed_entities(database):
+            # Three entities with phase_timing metadata.
+            database.register_entity(
+                "feature", "001-alpha", "Alpha",
+                project_id=TEST_PROJECT_ID,
+                metadata={
+                    "phase_timing": {
+                        "brainstorm": {
+                            "started": "2026-01-01T00:00:00Z",
+                            "completed": "2026-01-01T01:00:00Z",
+                            "iterations": 2,
+                        },
+                        "specify": {"started": "2026-01-01T02:00:00Z"},
+                    },
+                    "skipped_phases": ["design"],
+                },
+            )
+            database.register_entity(
+                "feature", "002-beta", "Beta",
+                project_id=TEST_PROJECT_ID,
+                metadata={
+                    "phase_timing": {
+                        "brainstorm": {
+                            "started": "2026-01-02T00:00:00Z",
+                            "completed": "2026-01-02T01:00:00Z",
+                        },
+                    },
+                    "backward_history": [{
+                        "source_phase": "specify",
+                        "target_phase": "brainstorm",
+                        "reason": "gap",
+                        "timestamp": "2026-01-02T02:00:00Z",
+                    }],
+                },
+            )
+
+        # Control: single-thread run
+        control_db = EntityDatabase(":memory:")
+        seed_entities(control_db)
+        _reset_phase_events_to_pre_migration(control_db)
+        _migration_10_phase_events(control_db._conn)
+        control_count = control_db._conn.execute(
+            "SELECT COUNT(*) FROM phase_events"
+        ).fetchone()[0]
+        control_db.close()
+        assert control_count > 0, "control run must produce backfill rows"
+
+        # Concurrent: two threads race on the same file-backed DB.
+        seed_db = EntityDatabase(db_path)
+        seed_entities(seed_db)
+        _reset_phase_events_to_pre_migration(seed_db)
+        seed_db.close()
+
+        barrier = threading.Barrier(2)
+        errors: list[BaseException] = []
+
+        def worker():
+            try:
+                conn = sqlite3.connect(db_path, timeout=10.0)
+                try:
+                    barrier.wait(timeout=5.0)
+                    _migration_10_phase_events(conn)
+                finally:
+                    conn.close()
+            except BaseException as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10.0)
+            assert not t.is_alive(), "migration thread hung"
+
+        # At least one thread may raise sqlite3.OperationalError under heavy
+        # lock contention; that is acceptable as long as the winning run
+        # produced the correct row count.  But a RuntimeError from the
+        # barrier or an unrelated crash is not acceptable.
+        for exc in errors:
+            assert isinstance(exc, sqlite3.Error), (
+                f"unexpected non-sqlite exception in worker: {exc!r}"
+            )
+
+        final_conn = sqlite3.connect(db_path)
+        try:
+            final_count = final_conn.execute(
+                "SELECT COUNT(*) FROM phase_events"
+            ).fetchone()[0]
+        finally:
+            final_conn.close()
+
+        # Concurrent run must produce EXACTLY the same count as single-run.
+        assert final_count == control_count, (
+            f"concurrent run produced {final_count} rows; "
+            f"control produced {control_count}"
+        )
+
+    def test_migration_skips_unparseable_timestamp(self, capsys):
+        """AC-9: unparseable timestamp is skipped with stderr warning."""
+        from entity_registry.database import _migration_10_phase_events
+
+        database = EntityDatabase(":memory:")
+        # Seed an entity with an unparseable timestamp in metadata.phase_timing.
+        database.register_entity(
+            "feature", "bad-ts", "Bad Timestamp",
+            project_id=TEST_PROJECT_ID,
+            metadata={
+                "phase_timing": {
+                    "design": {"started": "not-a-date"},
+                    "brainstorm": {
+                        "started": "2026-01-01T00:00:00Z",
+                        "completed": "2026-01-01T01:00:00Z",
+                    },
+                },
+            },
+        )
+        _reset_phase_events_to_pre_migration(database)
+        _migration_10_phase_events(database._conn)
+
+        # Row for (type_id, design, started) MUST NOT exist.
+        rows = database._conn.execute(
+            "SELECT * FROM phase_events "
+            "WHERE type_id='feature:bad-ts' AND phase='design' "
+            "AND event_type='started'"
+        ).fetchall()
+        assert rows == []
+
+        # Valid rows still landed.
+        rows_ok = database._conn.execute(
+            "SELECT * FROM phase_events "
+            "WHERE type_id='feature:bad-ts' AND phase='brainstorm'"
+        ).fetchall()
+        assert len(rows_ok) == 2
+
+        # Stderr warning was emitted.
+        captured = capsys.readouterr()
+        assert "[migration-10] skipping unparseable timestamp" in captured.err
+        database.close()
+
+    def test_migration_truncates_backward_reason_at_500(self):
+        """AC-9b: backward_reason and backward_target truncated to 500 chars."""
+        from entity_registry.database import _migration_10_phase_events
+
+        database = EntityDatabase(":memory:")
+        database.register_entity(
+            "feature", "trunc-001", "Trunc",
+            project_id=TEST_PROJECT_ID,
+            metadata={
+                "backward_history": [{
+                    "source_phase": "design",
+                    "target_phase": "y" * 800,
+                    "reason": "x" * 800,
+                    "timestamp": "2026-04-01T00:00:00Z",
+                }],
+            },
+        )
+        _reset_phase_events_to_pre_migration(database)
+        _migration_10_phase_events(database._conn)
+
+        row = database._conn.execute(
+            "SELECT backward_reason, backward_target "
+            "FROM phase_events WHERE type_id='feature:trunc-001' "
+            "AND event_type='backward'"
+        ).fetchone()
+        assert row is not None
+        assert len(row["backward_reason"]) == 500
+        assert len(row["backward_target"]) == 500
+
+        # Original metadata blob is unchanged (AC-9b invariant).
+        entity = database.get_entity("feature:trunc-001")
+        meta = json.loads(entity["metadata"])
+        bh = meta["backward_history"][0]
+        assert len(bh["reason"]) == 800
+        assert len(bh["target_phase"]) == 800
+        database.close()
+
+
+# ---------------------------------------------------------------------------
+# Feature 088 Bundle E: DB-layer reviewer_notes guard + transaction participation
+# ---------------------------------------------------------------------------
+
+
+class TestFeature088BundleE:
+    """Feature 088 Bundle E: DB-layer reviewer_notes cap + transaction pin.
+
+    Covers FR-2.4 (DB-layer defense-in-depth) and FR-5.2 / AC-16
+    (``insert_phase_event`` participates in an outer ``db.transaction()``
+    block rather than committing prematurely). The latter is a pin of the
+    existing ``_commit()`` guard at ``database.py:1672-1675`` — no source
+    change is made by this test; it merely locks in current behavior.
+    """
+
+    def test_insert_phase_event_rejects_oversized_reviewer_notes(self, db):
+        """FR-2.4 DB-layer defense: reviewer_notes >10000 chars raises
+        ``ValueError`` before SQL execution.
+        """
+        oversized = "x" * 10001
+        with pytest.raises(ValueError, match="reviewer_notes exceeds 10000 chars"):
+            db.insert_phase_event(
+                type_id="feature:oversized-001",
+                project_id=TEST_PROJECT_ID,
+                phase="specify",
+                event_type="completed",
+                timestamp="2026-04-01T10:00:00Z",
+                reviewer_notes=oversized,
+            )
+
+        # No row was inserted.
+        rows = db._conn.execute(
+            "SELECT * FROM phase_events WHERE type_id = 'feature:oversized-001'"
+        ).fetchall()
+        assert rows == []
+
+        # Exact-boundary sanity: 10000 chars is allowed.
+        at_boundary = "x" * 10000
+        db.insert_phase_event(
+            type_id="feature:boundary-001",
+            project_id=TEST_PROJECT_ID,
+            phase="specify",
+            event_type="completed",
+            timestamp="2026-04-01T10:00:00Z",
+            reviewer_notes=at_boundary,
+        )
+        rows_ok = db._conn.execute(
+            "SELECT * FROM phase_events WHERE type_id = 'feature:boundary-001'"
+        ).fetchall()
+        assert len(rows_ok) == 1
+
+    def test_insert_phase_event_does_not_prematurely_commit_outer_transaction(
+        self, db,
+    ):
+        """AC-16 (FR-5.2): inside ``db.transaction()``, ``insert_phase_event``
+        MUST participate in the outer transaction rather than auto-commit.
+
+        Pins the existing ``_commit()`` guard at ``database.py:1672-1675``
+        which defers to ``self._in_transaction`` (set by the ``transaction()``
+        context manager). A rollback triggered by an exception inside the
+        ``with`` block MUST remove the inserted row.
+        """
+        type_id_under_test = "feature:txn-pin-001"
+
+        # Precondition: no rows for this type_id.
+        pre = db._conn.execute(
+            "SELECT COUNT(*) AS c FROM phase_events WHERE type_id = ?",
+            (type_id_under_test,),
+        ).fetchone()["c"]
+        assert pre == 0
+
+        # Run the transaction wrapper; expect our sentinel to propagate.
+        with pytest.raises(RuntimeError, match="rollback test"):
+            with db.transaction():
+                db.insert_phase_event(
+                    type_id=type_id_under_test,
+                    project_id=TEST_PROJECT_ID,
+                    phase="specify",
+                    event_type="started",
+                    timestamp="2026-04-01T10:00:00Z",
+                )
+                # Force an abort BEFORE the ``with`` block exits — the
+                # outer transaction must roll back, discarding the insert.
+                raise RuntimeError("rollback test")
+
+        # Post-rollback: the inserted row MUST be absent. If the insert had
+        # auto-committed via an unguarded ``self._commit()``, it would persist.
+        post = db._conn.execute(
+            "SELECT COUNT(*) AS c FROM phase_events WHERE type_id = ?",
+            (type_id_under_test,),
+        ).fetchone()["c"]
+        assert post == 0, (
+            "insert_phase_event prematurely committed despite outer "
+            "db.transaction() context manager being active"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Feature 088 Bundle H.4 — Feature 084 test additions (FR-10.10, AC-43)
+# ---------------------------------------------------------------------------
+
+
+class TestFeature088BundleH4PhaseEvents:
+    """AC-43 coverage additions targeting phase_events layer behavior."""
+
+    def test_insert_phase_event_rejects_invalid_event_type_and_source(self, db):
+        """AC-43 (FR-10.10): CHECK constraint negative test.
+
+        The ``phase_events.event_type`` column is CHECK-constrained to
+        ``('started', 'completed', 'skipped', 'backward')`` and
+        ``phase_events.source`` is CHECK-constrained to
+        ``('live', 'backfill')``. Inserts violating either constraint MUST
+        raise ``sqlite3.IntegrityError``.
+        """
+        # Invalid event_type.
+        with pytest.raises(sqlite3.IntegrityError):
+            db.insert_phase_event(
+                type_id="feature:bad-et-001",
+                project_id=TEST_PROJECT_ID,
+                phase="design",
+                event_type="gibberish",  # NOT in the CHECK set
+                timestamp="2026-04-01T10:00:00Z",
+            )
+
+        # Invalid source.
+        with pytest.raises(sqlite3.IntegrityError):
+            db.insert_phase_event(
+                type_id="feature:bad-src-001",
+                project_id=TEST_PROJECT_ID,
+                phase="design",
+                event_type="started",
+                timestamp="2026-04-01T10:00:00Z",
+                source="forbidden",  # NOT in the CHECK set
+            )
+
+        # No rows inserted for either failing call.
+        rows = db._conn.execute(
+            "SELECT COUNT(*) AS c FROM phase_events "
+            "WHERE type_id IN ('feature:bad-et-001', 'feature:bad-src-001')"
+        ).fetchone()["c"]
+        assert rows == 0
+
+    def test_migration_10_rerun_on_pre_existing_rows_does_not_duplicate_backfill(self):
+        """AC-43 (FR-10.10): re-running migration 10 over a backfilled DB
+        MUST NOT duplicate rows (partial UNIQUE index + INSERT OR IGNORE).
+        """
+        from entity_registry.database import _migration_10_phase_events
+
+        database = EntityDatabase(":memory:")
+        database.register_entity(
+            "feature", "rerun-001", "Rerun",
+            project_id=TEST_PROJECT_ID,
+            metadata={
+                "phase_timing": {
+                    "brainstorm": {
+                        "started": "2026-04-01T00:00:00Z",
+                        "completed": "2026-04-01T01:00:00Z",
+                        "iterations": 1,
+                    },
+                },
+            },
+        )
+        _reset_phase_events_to_pre_migration(database)
+
+        # First migration run.
+        _migration_10_phase_events(database._conn)
+        first_count = database._conn.execute(
+            "SELECT COUNT(*) AS c FROM phase_events WHERE source='backfill'"
+        ).fetchone()["c"]
+        assert first_count > 0, "control backfill must produce rows"
+
+        # Reset schema_version BUT keep phase_events rows — simulates a
+        # rerun against a partially-migrated DB (e.g., after a crash).
+        database._conn.execute(
+            "INSERT INTO _metadata(key, value) VALUES('schema_version', '9') "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+        )
+        database._conn.commit()
+
+        # Second migration run — must be a no-op for backfill rows.
+        _migration_10_phase_events(database._conn)
+        second_count = database._conn.execute(
+            "SELECT COUNT(*) AS c FROM phase_events WHERE source='backfill'"
+        ).fetchone()["c"]
+        assert second_count == first_count, (
+            f"backfill rerun duplicated rows: first={first_count}, "
+            f"second={second_count}"
+        )
+        database.close()
+
+
+# ---------------------------------------------------------------------------
+# Feature 090 FR-3 — Migration 10 atomic schema_version stamp
+# ---------------------------------------------------------------------------
+
+
+class TestFeature090Migration10Atomicity:
+    """Feature 090 FR-3 / AC-3 (#00174): the in-function
+    ``INSERT OR REPLACE INTO _metadata VALUES ('schema_version', '10')`` MUST
+    commit atomically with the DDL/DML body. Feature 089 Bundle C.4 removed
+    this and left a crash window between the migration's ``conn.commit()``
+    and the outer ``_migrate()`` loop's stamp commit — a SIGKILL in that
+    window desyncs the DB (phase_events populated at schema_version=9).
+    """
+
+    def test_migration_10_stamps_schema_version_before_outer_loop_commit(self):
+        """AC-3: after _migration_10_phase_events returns (BEFORE any outer
+        stamp), schema_version MUST already be '10' on the same connection.
+
+        Invoking the migration function directly bypasses the outer
+        ``_migrate()`` loop — if the stamp lives in the outer loop,
+        schema_version would still read '9' at this point. With the
+        in-function stamp restored, both DDL and stamp committed in the
+        SAME transaction, so schema_version MUST be '10' immediately.
+        """
+        from entity_registry.database import _migration_10_phase_events
+
+        database = EntityDatabase(":memory:")
+        try:
+            database.register_entity(
+                "feature", "090-atom-001", "Atomic Test",
+                project_id=TEST_PROJECT_ID,
+                metadata={
+                    "phase_timing": {
+                        "brainstorm": {
+                            "started": "2026-04-19T00:00:00Z",
+                            "completed": "2026-04-19T01:00:00Z",
+                        },
+                    },
+                },
+            )
+            _reset_phase_events_to_pre_migration(database)
+
+            # Direct invocation — no outer _migrate() loop to stamp after.
+            _migration_10_phase_events(database._conn)
+
+            # Both invariants must hold on the SAME connection:
+            # (1) phase_events populated (migration body ran),
+            # (2) schema_version already = '10' (stamp is in-function).
+            row_count = database._conn.execute(
+                "SELECT COUNT(*) FROM phase_events"
+            ).fetchone()[0]
+            assert row_count > 0, "migration body must have inserted backfill rows"
+
+            version_row = database._conn.execute(
+                "SELECT value FROM _metadata WHERE key = 'schema_version'"
+            ).fetchone()
+            assert version_row is not None
+            assert version_row[0] == "10", (
+                f"schema_version stamp must commit atomically with migration "
+                f"body (got {version_row[0]!r}) — crash window regressed"
+            )
+        finally:
+            database.close()
+
+    def test_migration_10_rollback_desyncs_neither_schema_nor_rows(self):
+        """AC-3: if the migration raises after the DDL/DML but before the
+        final commit, the ``try/except`` rollback path MUST leave the DB in
+        a clean pre-migration state — schema_version still '9', no
+        phase_events table. This guards the atomicity contract on the
+        error path (the outer _migrate() stamp never runs on exception).
+        """
+        from entity_registry.database import _migration_10_phase_events
+
+        database = EntityDatabase(":memory:")
+        try:
+            _reset_phase_events_to_pre_migration(database)
+
+            # Proxy connection that lets DDL through but raises on the
+            # schema_version stamp — models a mid-commit failure.
+            real_conn = database._conn
+
+            class _StampFailConn:
+                def __init__(self, inner):
+                    self._inner = inner
+
+                def execute(self, sql, *args, **kwargs):
+                    if (
+                        "INSERT OR REPLACE INTO _metadata" in sql
+                        and "schema_version" in sql
+                        and "'10'" in sql
+                    ):
+                        raise sqlite3.OperationalError(
+                            "simulated stamp-write failure"
+                        )
+                    return self._inner.execute(sql, *args, **kwargs)
+
+                def rollback(self):
+                    return self._inner.rollback()
+
+                def commit(self):
+                    return self._inner.commit()
+
+                def __getattr__(self, name):
+                    return getattr(self._inner, name)
+
+            proxy = _StampFailConn(real_conn)
+            with pytest.raises(sqlite3.OperationalError, match="stamp-write"):
+                _migration_10_phase_events(proxy)
+
+            # Post-rollback: schema_version remains 9, phase_events absent.
+            version_row = real_conn.execute(
+                "SELECT value FROM _metadata WHERE key = 'schema_version'"
+            ).fetchone()
+            assert version_row[0] == "9", (
+                f"expected rollback to leave schema_version=9, got "
+                f"{version_row[0]!r}"
+            )
+            tbl_row = real_conn.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='table' AND name='phase_events'"
+            ).fetchone()
+            assert tbl_row is None, (
+                "phase_events table must not survive migration rollback"
+            )
+        finally:
+            database.close()
+
+
+# ---------------------------------------------------------------------------
+# Feature 089 Bundle A — Security hardening (narrow OperationalError catch)
+# ---------------------------------------------------------------------------
+
+
+class TestFeature089BundleA:
+    """Feature 089 Bundle A (#00142): migration 10 MUST only swallow the
+    ``no such table`` OperationalError — every other error (e.g. ``database
+    is locked``) must propagate so the caller sees the real failure.
+    """
+
+    def test_migration_10_rethrows_non_missing_table_operational_error(self):
+        """AC-4 (FR-1.4 / #00142).
+
+        A ``database is locked`` OperationalError raised from the schema
+        re-check SELECT MUST propagate out of ``_migration_10_phase_events``.
+        Pre-089 the bare ``except sqlite3.OperationalError: pass`` silently
+        swallowed any cause.
+
+        Strategy: wrap the real connection in a proxy that intercepts
+        the schema_version SELECT and raises ``database is locked``. All
+        other SQL passes through to the real connection.
+        """
+        from entity_registry.database import _migration_10_phase_events
+
+        database = EntityDatabase(":memory:")
+        real_conn = database._conn
+
+        class _ProxyConn:
+            """Minimal connection proxy that raises on the schema SELECT."""
+
+            def __init__(self, inner):
+                self._inner = inner
+
+            def execute(self, sql, *args, **kwargs):
+                if "SELECT value FROM _metadata" in sql:
+                    raise sqlite3.OperationalError("database is locked")
+                return self._inner.execute(sql, *args, **kwargs)
+
+            def rollback(self):
+                return self._inner.rollback()
+
+            def commit(self):
+                return self._inner.commit()
+
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+
+        proxy = _ProxyConn(real_conn)
+
+        # Expect the OperationalError to propagate (not swallowed).
+        with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+            _migration_10_phase_events(proxy)
+
+        database.close()
+
+
+# ---------------------------------------------------------------------------
+# Feature 089 Bundle E — Migration 10 live-insert concurrency (AC-24)
+# ---------------------------------------------------------------------------
+
+
+class TestFeature089BundleE:
+    """Feature 089 Bundle E (#00166): when Thread A is mid-migration (paused
+    AFTER the schema_version re-check but BEFORE backfill completes) and
+    Thread B inserts a ``source='live'`` row on a separate connection, the
+    final ``phase_events`` table MUST NOT contain duplicate rows on the
+    ``(type_id, phase, event_type, timestamp, source)`` key.
+
+    The production invariant pinned here:
+
+    - Migration 10 runs under ``BEGIN IMMEDIATE`` — Thread B's live INSERT
+      must wait on the write lock until Thread A commits.
+    - Once A commits (backfill rows inserted with ``source='backfill'``),
+      B's subsequent live INSERT writes with ``source='live'`` which is
+      a distinct tuple column, so NO uniqueness violation occurs.
+    - A duplicate row would only arise if the backfill and live write
+      somehow shared the same (type_id, phase, event_type, timestamp,
+      source) tuple — this test proves that even with carefully aligned
+      timestamps, the source-column divergence prevents it.
+    """
+
+    def test_migration_10_concurrent_with_live_insert_no_duplicate_semantics(
+        self, tmp_path,
+    ):
+        """AC-24 (#00166)."""
+        import threading
+        import time
+        from entity_registry.database import _migration_10_phase_events
+
+        db_path = str(tmp_path / "concurrent-live.db")
+
+        # Seed: a single entity whose metadata will backfill one row per
+        # (phase, event_type) on migration 10.
+        seed_db = EntityDatabase(db_path)
+        seed_db.register_entity(
+            "feature", "089-e24", "E24",
+            project_id=TEST_PROJECT_ID,
+            metadata={
+                "phase_timing": {
+                    "design": {
+                        "started": "2026-04-01T10:00:00Z",
+                        "completed": "2026-04-01T11:00:00Z",
+                    },
+                },
+            },
+        )
+        # Drop phase_events + reset schema_version to re-trigger migration.
+        _reset_phase_events_to_pre_migration(seed_db)
+        seed_db.close()
+
+        # Barrier to synchronize threads inside the migration.  Thread A
+        # waits on the barrier AFTER the schema_version re-check (proxy
+        # intercepts that specific SELECT and signals).
+        barrier = threading.Barrier(2)
+        release_event = threading.Event()
+        errors: list[BaseException] = []
+
+        def migration_worker():
+            """Thread A — run migration 10 via a sync-point proxy."""
+            try:
+                real_conn = sqlite3.connect(
+                    db_path, timeout=30.0, check_same_thread=False,
+                )
+                real_conn.row_factory = sqlite3.Row
+
+                class _SyncPointConn:
+                    """Wraps a real connection; pauses once after the
+                    schema_version SELECT so Thread B can attempt its
+                    live write against the now-locked DB.
+                    """
+                    def __init__(self, inner):
+                        self._inner = inner
+                        self._synced = False
+
+                    def execute(self, sql, *a, **kw):
+                        cursor = self._inner.execute(sql, *a, **kw)
+                        # After the schema_version re-check (inside
+                        # BEGIN IMMEDIATE), release Thread B to try its
+                        # insert and then wait a beat so B has time to
+                        # start — but B will block on the write lock.
+                        if (
+                            not self._synced
+                            and "SELECT value FROM _metadata" in sql
+                        ):
+                            self._synced = True
+                            # Signal B that A is inside the migration.
+                            barrier.wait(timeout=5.0)
+                            # Give B a moment to start its insert attempt
+                            # and enter the wait-on-write-lock state.
+                            time.sleep(0.5)
+                        return cursor
+
+                    def __getattr__(self, name):
+                        return getattr(self._inner, name)
+
+                proxy = _SyncPointConn(real_conn)
+                _migration_10_phase_events(proxy)
+                real_conn.close()
+            except BaseException as exc:
+                errors.append(exc)
+            finally:
+                release_event.set()
+
+        def live_insert_worker():
+            """Thread B — attempt a live INSERT while A holds the lock."""
+            try:
+                # Wait until A signals it is past the schema check.
+                barrier.wait(timeout=5.0)
+
+                # A separate connection tries a live insert. Under
+                # BEGIN IMMEDIATE held by A, this will block until A
+                # commits.  Post-commit, B writes source='live' for a
+                # timestamp that MATCHES one of the backfill rows
+                # (source='backfill') — distinct ``source`` column
+                # keeps tuples unique.
+                live_db = EntityDatabase(db_path)
+                try:
+                    live_db.insert_phase_event(
+                        type_id="feature:089-e24",
+                        project_id=TEST_PROJECT_ID,
+                        phase="design",
+                        event_type="started",
+                        timestamp="2026-04-01T10:00:00Z",
+                        source="live",
+                    )
+                finally:
+                    live_db.close()
+            except BaseException as exc:
+                errors.append(exc)
+
+        thread_a = threading.Thread(target=migration_worker)
+        thread_b = threading.Thread(target=live_insert_worker)
+        thread_a.start()
+        thread_b.start()
+        thread_a.join(timeout=15.0)
+        thread_b.join(timeout=15.0)
+        assert not thread_a.is_alive(), "migration thread hung"
+        assert not thread_b.is_alive(), "live-insert thread hung"
+
+        # sqlite3 contention errors are acceptable (heavy lock pressure);
+        # unrelated exceptions are not.
+        for exc in errors:
+            assert isinstance(exc, sqlite3.Error), (
+                f"unexpected exception in worker: {exc!r}"
+            )
+
+        # Verify the final state: no duplicate
+        # (type_id, phase, event_type, timestamp, source) rows.  The live
+        # insert may or may not have landed depending on lock-timeout
+        # behavior — either outcome is acceptable AS LONG AS no tuple is
+        # duplicated.
+        final_conn = sqlite3.connect(db_path)
+        try:
+            rows = final_conn.execute(
+                "SELECT type_id, phase, event_type, timestamp, source, "
+                "COUNT(*) AS c FROM phase_events "
+                "GROUP BY type_id, phase, event_type, timestamp, source "
+                "HAVING c > 1"
+            ).fetchall()
+        finally:
+            final_conn.close()
+
+        assert rows == [], (
+            f"duplicate (type_id, phase, event_type, timestamp, source) "
+            f"tuples found after concurrent run: {rows!r}"
+        )

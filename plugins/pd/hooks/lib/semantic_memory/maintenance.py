@@ -13,20 +13,28 @@ pattern). Dedup flags persist across invocations within a single process —
 see spec FR-8a for the authoritative write-owner / reset-policy table.
 
 Cross-reference to 081 (refresh.py):
-- ``_warn_and_default`` and ``_resolve_int_config`` mirror refresh.py:127-183
-  verbatim; only the stderr prefix differs (``[memory-decay]`` vs
-  ``[refresh]``) per spec FR-8 near-identical-reuse contract.
+- ``_warn_and_default`` and ``_resolve_int_config`` share a single
+  implementation at ``semantic_memory._config_utils`` (feature 088 FR-6.7);
+  each caller binds its own stderr prefix (``[memory-decay]`` vs
+  ``[refresh]``) and clamp-warning policy via ``functools.partial``.
 """
 from __future__ import annotations
 
 import argparse
+import functools
 import json
+import os
 import sqlite3
 import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from semantic_memory._config_utils import (
+    _iso_utc,
+    _resolve_int_config as _resolve_int_config_core,
+    _warn_and_default as _warn_and_default_core,
+)
 from semantic_memory.database import MemoryDatabase
 
 # ---------------------------------------------------------------------------
@@ -40,6 +48,21 @@ from semantic_memory.database import MemoryDatabase
 INFLUENCE_DEBUG_LOG_PATH: Path = (
     Path.home() / ".claude" / "pd" / "memory" / "influence-debug.log"
 )
+
+# Threshold-days clamp bounds (feature 088 FR-3.2).  Widening MUST re-audit
+# overflow safety: Python ``timedelta`` raises ``OverflowError`` for day counts
+# above ~2.7M, and ``datetime`` subtraction can produce ``year < MINYEAR=1``.
+# Any increase requires adding ``test_overflow_config_returns_error_dict``-
+# style coverage.
+_DAYS_MIN = 0
+_DAYS_MAX = 365
+
+
+# ``_iso_utc`` is imported from ``_config_utils`` above (feature 089 FR-3.2 /
+# AC-12 — #00148 relocated the helper to the shared utils module so
+# ``refresh.py`` can import it too).  Kept re-exported here as a module-level
+# name so tests that reference ``maintenance._iso_utc`` keep working.
+
 
 # ---------------------------------------------------------------------------
 # Module-level dedup state (per-process)
@@ -57,76 +80,46 @@ _decay_log_warned: bool = False
 _decay_error_warned: bool = False
 
 
-# ---------------------------------------------------------------------------
-# Stubs — implementations land in Phase 1/3 tasks (TDD red→green).
-# ---------------------------------------------------------------------------
+def reset_warning_state() -> None:
+    """Clear all module-level dedup flags (Feature 089 FR-3.6 / AC-16 — #00155).
 
+    Public function for tests (and any long-running supervisor wanting a
+    clean slate between iterations).  The autouse fixtures in
+    ``test_maintenance.py`` monkeypatch each flag individually; this helper
+    is the non-monkeypatch equivalent for callers that cannot use pytest
+    fixtures (e.g. integration harnesses, shell tests that exec the module).
 
-def _warn_and_default(key: str, raw, default: int, warned: set[str]) -> int:
-    """Emit one stderr warning (per-key-deduped) and return ``default``.
-
-    Called from ``_resolve_int_config`` on any invalid-value path.  Mirrors
-    refresh.py:127-140 verbatim; only the stderr prefix differs
-    (``[memory-decay]`` vs ``[refresh]``) per spec FR-8.
+    Side-effect-only; returns ``None``.  Safe to call repeatedly.
     """
-    if key not in warned:
-        sys.stderr.write(
-            f"[memory-decay] config field {key!r} value {raw!r} "
-            f"is not an int; using default {default}\n"
-        )
-        warned.add(key)
-    return default
+    global _decay_config_warned, _decay_log_warned, _decay_error_warned
+    _decay_warned_fields.clear()
+    _decay_config_warned = False
+    _decay_log_warned = False
+    _decay_error_warned = False
 
 
-def _resolve_int_config(
-    config: dict,
-    key: str,
-    default: int,
-    *,
-    clamp: tuple[int, int] | None = None,
-    warned: set[str],
-) -> int:
-    """Resolve an int-valued config field with bool rejection + dedup warning.
+# ---------------------------------------------------------------------------
+# Config helpers (shared with refresh.py via _config_utils; prefix/clamp
+# policy bound per caller via functools.partial)
+# ---------------------------------------------------------------------------
 
-    Body mirrors refresh._resolve_int_config (refresh.py:143-183) verbatim —
-    spec FR-8 near-identical reuse contract.  Only stderr prefix differs
-    (``[memory-decay]`` via ``_warn_and_default`` copy).
 
-    Accepts ``int`` and numeric strings parseable via ``int(raw)``.  Rejects
-    ``bool`` (bool-is-int-subclass trap) and ``float`` (this is the int
-    variant; 5.7 is not a valid int).
-
-    ``clamp`` — optional ``(min, max)`` tuple.  Out-of-range values are
-    clamped SILENTLY (no warning) — operator-tuned values get corrected.
-    """
-    raw = config.get(key, default)
-
-    # Bool rejection MUST come first: bool is int subclass, isinstance(True, int)
-    # is True.  Without this, True would coerce to 1.
-    if isinstance(raw, bool):
-        value = _warn_and_default(key, raw, default, warned)
-    elif isinstance(raw, int):
-        value = raw
-    elif isinstance(raw, str):
-        try:
-            value = int(raw)
-        except ValueError:
-            value = _warn_and_default(key, raw, default, warned)
-    else:
-        # float, None, list, dict, ... → reject with warning
-        value = _warn_and_default(key, raw, default, warned)
-
-    if clamp is not None:
-        lo, hi = clamp
-        clamped = max(lo, min(hi, value))
-        if clamped != value and key not in warned:
-            sys.stderr.write(
-                f"[memory-decay] config field {key!r} value {value} "
-                f"out of range [{lo}, {hi}]; clamped to {clamped}\n"
-            )
-            warned.add(key)
-        value = clamped
-    return value
+# Shared config helpers bound with the maintenance caller's prefix + clamp
+# policy (feature 088 FR-6.7).  Implementation lives in ``_config_utils.py``;
+# ``functools.partial`` preserves the caller-visible signatures
+# (``_warn_and_default(key, raw, default, warned)`` and
+# ``_resolve_int_config(config, key, default, *, clamp=None, warned)``) so
+# tests that reference ``maintenance._warn_and_default`` /
+# ``maintenance._resolve_int_config`` continue to work unchanged.
+#
+# Divergence from ``refresh.py`` preserved per spec FR-8 near-identical-reuse
+# contract: stderr prefix ``[memory-decay]`` and ``warn_on_clamp=True``.
+_warn_and_default = functools.partial(
+    _warn_and_default_core, prefix="[memory-decay]"
+)
+_resolve_int_config = functools.partial(
+    _resolve_int_config_core, prefix="[memory-decay]", warn_on_clamp=True
+)
 
 
 def _emit_decay_diagnostic(diag: dict) -> None:
@@ -139,7 +132,7 @@ def _emit_decay_diagnostic(diag: dict) -> None:
     same filesystem path as 080/081 (re-declared constant per TD-2).
     """
     line = json.dumps({
-        "ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "ts": _iso_utc(datetime.now(timezone.utc)),
         "event": "memory_decay",
         "scanned": diag["scanned"],
         "demoted_high_to_medium": diag["demoted_high_to_medium"],
@@ -155,9 +148,61 @@ def _emit_decay_diagnostic(diag: dict) -> None:
         # and "path is a directory" errors (AC-19 monkeypatch) are caught.
         # OSError covers IsADirectoryError, PermissionError, FileNotFoundError,
         # and IOError (alias in Python 3).
-        INFLUENCE_DEBUG_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with INFLUENCE_DEBUG_LOG_PATH.open("a") as f:
-            f.write(line + "\n")
+        # FR-1.2 (#00097): parent dir 0o700; symlink-safe open via O_NOFOLLOW.
+        # Note: mkdir(mode=) only applies when the dir is newly created — existing
+        # dirs keep their current mode (documented platform behavior).
+        INFLUENCE_DEBUG_LOG_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+
+        # Feature 089 FR-1.7 / AC-7 (#00154): verify parent dir ownership +
+        # mode BEFORE opening the log. An attacker with write access to the
+        # parent dir (group/world-writable) could race-swap the log file; a
+        # foreign uid on the parent is an active compromise signal.
+        parent_stat = INFLUENCE_DEBUG_LOG_PATH.parent.stat()
+        if parent_stat.st_uid != os.getuid() or (parent_stat.st_mode & 0o077):
+            # Silently decline to write — treat like any other log failure.
+            raise OSError(
+                f"refusing to write log: parent dir "
+                f"{INFLUENCE_DEBUG_LOG_PATH.parent} has insecure "
+                f"uid={parent_stat.st_uid} or mode=0o{parent_stat.st_mode & 0o777:o}"
+            )
+
+        base_flags = os.O_APPEND | os.O_WRONLY
+        if hasattr(os, "O_NOFOLLOW"):
+            base_flags |= os.O_NOFOLLOW
+        # First attempt: O_EXCL — atomic create-and-acquire. If EEXIST, we
+        # fall back to append-only (no O_CREAT, no O_EXCL) and verify the
+        # existing file's ownership via fstat so a symlink-swap or foreign-uid
+        # hijack is caught BEFORE we write.
+        try:
+            fd = os.open(
+                str(INFLUENCE_DEBUG_LOG_PATH),
+                base_flags | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+        except FileExistsError:
+            fd = os.open(str(INFLUENCE_DEBUG_LOG_PATH), base_flags)
+            # Re-stat the fd — not the path — so a TOCTOU symlink swap post-
+            # open is caught.
+            try:
+                fd_stat = os.fstat(fd)
+            except OSError:
+                os.close(fd)
+                raise
+            if fd_stat.st_uid != os.getuid():
+                os.close(fd)
+                raise OSError(
+                    f"refusing to append log: file owner uid={fd_stat.st_uid} "
+                    f"!= running uid={os.getuid()}"
+                )
+        try:
+            if hasattr(os, "fchmod"):
+                try:
+                    os.fchmod(fd, 0o600)
+                except (OSError, NotImplementedError):
+                    pass  # platforms without fchmod / filesystems without perm bits
+            os.write(fd, (line + "\n").encode("utf-8"))
+        finally:
+            os.close(fd)
     except OSError as e:
         global _decay_log_warned
         if not _decay_log_warned:
@@ -192,14 +237,46 @@ def _select_candidates(
     high_cutoff: str,
     med_cutoff: str,
     grace_cutoff: str,
-    now_iso: str,
-) -> dict:
-    """SELECT decay candidates per tier + count skips (design I-2).
+    *,
+    scan_limit: int = 100000,
+):
+    """Yield decay-candidate rows (up to ``scan_limit``) — design I-2, FR-9.6.
 
-    Single SQL query fetches a staleness superset; Python partitions into
-    per-tier buckets.  The NOT-NULL branch uses ``max(high_cutoff, med_cutoff)``
-    so all potential demotable rows are returned; the NULL branch uses
-    ``grace_cutoff`` so never-recalled rows past the grace window are included.
+    Single SQL query fetches a staleness superset bounded by ``LIMIT ?`` so
+    unbounded scans are impossible in production (feature 088 FR-9.6,
+    #00107).  Returns a generator of ``sqlite3.Row`` — callers wrap with
+    ``list(...)`` and partition via ``_partition_candidates``.
+
+    The NOT-NULL branch uses ``max(high_cutoff, med_cutoff)`` so all
+    potential demotable rows are returned; the NULL branch returns every
+    never-recalled row so the Python partitioner can distinguish past-grace
+    (demote) from in-grace (skipped_grace) entries.
+
+    Feature 088 FR-3.3 removed the dead ``now_iso`` parameter.
+    """
+    # Feature 091 FR-4 (#00078): encapsulation — delegate to public
+    # MemoryDatabase.scan_decay_candidates instead of the private connection.
+    # Signature (including grace_cutoff) preserved for test compatibility;
+    # grace_cutoff is unused in the SQL path but consumed downstream by
+    # _partition_candidates per the caller's existing contract.
+    not_null_cutoff = max(high_cutoff, med_cutoff)
+    yield from db.scan_decay_candidates(
+        not_null_cutoff=not_null_cutoff,
+        scan_limit=scan_limit,
+    )
+
+
+def _partition_candidates(
+    rows,
+    *,
+    high_cutoff: str,
+    med_cutoff: str,
+    grace_cutoff: str,
+) -> dict:
+    """Partition candidate rows into per-tier buckets (design I-2).
+
+    Extracted from ``_select_candidates`` in feature 088 (FR-9.6) so the SQL
+    layer can stream rows while Python partition rules remain in one place.
 
     Bucket partitioning rules:
     - ``source == "import"`` → ``import_count`` (skipped)
@@ -210,29 +287,15 @@ def _select_candidates(
     - ``confidence == "medium" AND staleness_ts < med_cutoff`` → ``medium_ids``
     where ``staleness_ts = last_recalled_at if NOT NULL else created_at``.
     """
-    # NOT-NULL branch: use the later (less restrictive) cutoff so we get
-    # rows potentially demotable under either the high OR medium threshold.
-    # NULL branch: return ALL never-recalled rows so Python-side partition
-    # can distinguish past-grace candidates (-> demote) from in-grace rows
-    # (-> grace_count).  Spec FR-7 requires skipped_grace in the diagnostic.
-    not_null_cutoff = max(high_cutoff, med_cutoff)
-
-    cursor = db._conn.execute(
-        "SELECT id, confidence, source, last_recalled_at, created_at "
-        "FROM entries "
-        "WHERE (last_recalled_at IS NOT NULL AND last_recalled_at < ?) "
-        "   OR (last_recalled_at IS NULL)",
-        (not_null_cutoff,),
-    )
-    rows = cursor.fetchall()
-
     high_ids: list[str] = []
     medium_ids: list[str] = []
     floor_count = 0
     import_count = 0
     grace_count = 0
+    row_total = 0
 
     for row in rows:
+        row_total += 1
         entry_id = row["id"]
         confidence = row["confidence"]
         source = row["source"]
@@ -267,7 +330,7 @@ def _select_candidates(
         "floor_count": floor_count,
         "import_count": import_count,
         "grace_count": grace_count,
-        "scanned_total": len(rows) - import_count,
+        "scanned_total": row_total - import_count,
     }
 
 
@@ -320,7 +383,13 @@ def decay_confidence(
     # Normalize to UTC to prevent false-positive demotions from SQLite's
     # lexicographic string comparison on ISO-8601 timestamps with different
     # timezone offsets (adversarial QA finding #1).
-    if now.tzinfo is not None:
+    #
+    # Feature 089 FR-1.3 (#00141): _iso_utc now REJECTS naive datetimes, so
+    # naive inputs must be assumed-UTC here (back-compat with AC-38 test that
+    # pins naive-input acceptance at the decay entry point).
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    else:
         now = now.astimezone(timezone.utc)
 
     # Resolve config via shared helper (bool-reject + clamp + dedup-warn).
@@ -348,24 +417,59 @@ def decay_confidence(
     dry_run = bool(config.get("memory_decay_dry_run", False))
 
     # Semantic-coupling warning (spec FR-3 / AC-14) — dedup via module flag.
-    global _decay_config_warned
-    if med_days < high_days and not _decay_config_warned:
+    # Declare all module-global flags mutated in this function up-front (PEP 8).
+    global _decay_config_warned, _decay_error_warned
+    if med_days <= high_days and not _decay_config_warned:
         sys.stderr.write(
             "[memory-decay] memory_decay_medium_threshold_days "
-            f"({med_days}) < memory_decay_high_threshold_days ({high_days}); "
-            "medium tier will decay faster than high\n"
+            f"({med_days}) <= memory_decay_high_threshold_days ({high_days}); "
+            "medium tier will decay at same pace or faster than high\n"
         )
         _decay_config_warned = True
 
-    # Compute staleness cutoffs.
-    high_cutoff = (now - timedelta(days=high_days)).isoformat()
-    med_cutoff = (now - timedelta(days=med_days)).isoformat()
-    grace_cutoff = (now - timedelta(days=grace_days)).isoformat()
-    now_iso = now.isoformat()
+    # Compute staleness cutoffs (Z-suffix UTC — FR-3.1).  Guard against
+    # OverflowError/ValueError raised by timedelta + datetime arithmetic for
+    # pathological config values (FR-3.2, AC-11) — route through the zero-
+    # diagnostic error path.
+    try:
+        high_cutoff = _iso_utc(now - timedelta(days=high_days))
+        med_cutoff = _iso_utc(now - timedelta(days=med_days))
+        grace_cutoff = _iso_utc(now - timedelta(days=grace_days))
+        now_iso = _iso_utc(now)
+    except (OverflowError, ValueError) as exc:
+        if not _decay_error_warned:
+            sys.stderr.write(
+                f"[memory-decay] cutoff computation overflow: "
+                f"{type(exc).__name__}: {str(exc)[:200]}\n"
+            )
+            _decay_error_warned = True
+        return {
+            **_zero_diag(dry_run=dry_run),
+            "error": f"{type(exc).__name__}: {str(exc)[:200]}",
+        }
+
+    # FR-9.6: bound candidate scan.  Clamp to (1000, 10_000_000) — low end
+    # protects against degenerate config; high end covers realistic DB sizes
+    # well above the 100k default.  Bundle G.1 later adds
+    # ``memory_decay_scan_limit`` to config.DEFAULTS; until then, ``config.get``
+    # falls back to 100000 here.
+    scan_limit = _resolve_int_config(
+        config,
+        "memory_decay_scan_limit",
+        100000,
+        clamp=(1000, 10_000_000),
+        warned=_decay_warned_fields,
+    )
 
     try:
-        candidates = _select_candidates(
-            db, high_cutoff, med_cutoff, grace_cutoff, now_iso
+        rows = list(_select_candidates(
+            db, high_cutoff, med_cutoff, grace_cutoff, scan_limit=scan_limit,
+        ))
+        candidates = _partition_candidates(
+            rows,
+            high_cutoff=high_cutoff,
+            med_cutoff=med_cutoff,
+            grace_cutoff=grace_cutoff,
         )
 
         diag = {
@@ -394,7 +498,6 @@ def decay_confidence(
             diag["demoted_medium_to_low"] = len(candidates["medium_ids"])
 
     except sqlite3.Error as e:
-        global _decay_error_warned
         if not _decay_error_warned:
             sys.stderr.write(
                 f"[memory-decay] DB error during decay: {e}\n"
@@ -463,6 +566,26 @@ def _main() -> None:
     )
     if not project_root.is_dir():
         sys.exit(1)  # silent exit; session-start sees empty summary
+
+    # Feature 088 FR-10.2 / AC-35: refuse to run with a project_root owned by
+    # a different uid.  Blocks cross-project config poisoning via symlinked /
+    # user-foreign roots (the stat happens AFTER .resolve() so symlinks are
+    # followed first).
+    try:
+        st_uid = project_root.stat().st_uid
+    except OSError as exc:
+        sys.stderr.write(
+            f"[memory-decay] cannot stat project_root {project_root}: "
+            f"{type(exc).__name__}: {exc}\n"
+        )
+        sys.exit(2)
+    current_uid = os.getuid()
+    if st_uid != current_uid:
+        sys.stderr.write(
+            f"[memory-decay] REFUSING: project_root {project_root} owned by "
+            f"uid={st_uid}, running as uid={current_uid}\n"
+        )
+        sys.exit(2)
 
     # read_config takes the project root DIRECTORY (str), not a file path.
     config = read_config(str(project_root))

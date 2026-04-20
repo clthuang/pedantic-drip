@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import struct
 import sqlite3
+from collections.abc import Iterator
 
 import numpy as np
 import pytest
@@ -1899,6 +1901,93 @@ def _get_updated_at(db: MemoryDatabase, entry_id: str) -> str:
     return cur.fetchone()["updated_at"]
 
 
+class TestScanDecayCandidates:
+    """Feature 091 FR-4 (#00078): public ``scan_decay_candidates`` method
+    encapsulates the read path previously inlined at
+    ``maintenance._select_candidates``. Closes "Direct db._conn Access"
+    anti-pattern.
+    """
+
+    def test_scan_decay_candidates_respects_where_predicate(self, db: MemoryDatabase):
+        """AC-7 (WHERE predicate): seed 3 stale + 7 fresh; scan_limit=100 returns only 3 stale."""
+        cutoff = "2026-04-20T00:00:00Z"
+        for i in range(3):
+            db.insert_test_entry_for_testing(
+                entry_id=f"e-stale-{i}",
+                description=f"stale entry {i}",
+                confidence="high",
+                source="session-capture",
+                last_recalled_at="2026-04-15T00:00:00Z",
+                created_at="2026-04-15T00:00:00Z",
+            )
+        for i in range(7):
+            db.insert_test_entry_for_testing(
+                entry_id=f"e-fresh-{i}",
+                description=f"fresh entry {i}",
+                confidence="high",
+                source="session-capture",
+                last_recalled_at="2026-04-25T00:00:00Z",
+                created_at="2026-04-25T00:00:00Z",
+            )
+        rows = list(db.scan_decay_candidates(
+            not_null_cutoff=cutoff, scan_limit=100,
+        ))
+        assert len(rows) == 3, f"expected 3 stale rows, got {len(rows)}"
+
+    def test_scan_decay_candidates_respects_scan_limit_cap(self, db: MemoryDatabase):
+        """AC-7 (scan_limit cap): scan_limit caps result below match count."""
+        cutoff = "2026-04-20T00:00:00Z"
+        for i in range(10):
+            db.insert_test_entry_for_testing(
+                entry_id=f"e-stale-{i}",
+                description=f"stale {i}",
+                confidence="high",
+                source="session-capture",
+                last_recalled_at="2026-04-15T00:00:00Z",
+                created_at="2026-04-15T00:00:00Z",
+            )
+        rows = list(db.scan_decay_candidates(
+            not_null_cutoff=cutoff, scan_limit=5,
+        ))
+        assert len(rows) == 5
+
+    def test_scan_decay_candidates_includes_null_last_recalled_at(
+        self, db: MemoryDatabase
+    ):
+        """AC-7b: NULL last_recalled_at rows are returned."""
+        cutoff = "2026-04-20T00:00:00Z"
+        db.insert_test_entry_for_testing(
+            entry_id="e-null",
+            description="x",
+            confidence="medium",
+            source="session-capture",
+            last_recalled_at=None,
+            created_at="2026-04-15T00:00:00Z",
+        )
+        db.insert_test_entry_for_testing(
+            entry_id="e-past",
+            description="y",
+            confidence="high",
+            source="session-capture",
+            last_recalled_at="2026-04-15T00:00:00Z",
+            created_at="2026-04-15T00:00:00Z",
+        )
+        rows = list(db.scan_decay_candidates(
+            not_null_cutoff=cutoff, scan_limit=100,
+        ))
+        ids = {row["id"] for row in rows}
+        assert "e-null" in ids
+        assert "e-past" in ids
+
+    def test_scan_decay_candidates_returns_iterator(self, db: MemoryDatabase):
+        """AC-7c: generator semantics — future refactor to list would fail this."""
+        cutoff = "2026-04-20T00:00:00Z"
+        result = db.scan_decay_candidates(
+            not_null_cutoff=cutoff, scan_limit=10,
+        )
+        assert isinstance(result, Iterator)
+
+
 class TestBatchDemote:
     """Task 2.3 / 2.4 — design I-7 (BEGIN IMMEDIATE, 500-ids chunking,
     `updated_at < ?` guard for intra-tick idempotency).
@@ -2138,3 +2227,132 @@ class TestConcurrentWriters:
             assert _get_confidence(db_b, "e2") == "high"
         finally:
             db_b.close()
+
+
+# ---------------------------------------------------------------------------
+# Feature 089 Bundle A — Security hardening on test-only helpers
+# ---------------------------------------------------------------------------
+
+
+class TestFeature089BundleA:
+    """Feature 089 Bundle A (#00140, #00144): runtime guard on
+    ``*_for_testing`` helpers + rollback-on-error in
+    ``execute_test_sql_for_testing``.
+    """
+
+    def test_for_testing_helpers_refuse_outside_pytest(self, tmp_path, monkeypatch):
+        """AC-2 (FR-1.2 / #00140).
+
+        With ``PYTEST_CURRENT_TEST`` unset AND the ``pytest`` module removed
+        from ``sys.modules`` AND the ``PD_TESTING`` env var unset, calling
+        ``execute_test_sql_for_testing`` MUST raise ``RuntimeError``.
+
+        Feature 090 FR-2 (#00173): after tightening, the guard short-circuits
+        on the missing ``PYTEST_CURRENT_TEST`` alone — the other two probes
+        are now belt-and-suspenders. We still strip them all to exercise the
+        full "production-like" negative path.
+        """
+        import sys as _sys
+
+        db_path = str(tmp_path / "guard.db")
+
+        # Build DB inside the test (pytest still imported at this point).
+        db = MemoryDatabase(db_path)
+        try:
+            # Strip pytest + PD_TESTING + PYTEST_CURRENT_TEST so the guard trips.
+            monkeypatch.delenv("PD_TESTING", raising=False)
+            monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+            # Remove all pytest-prefixed modules so ``'pytest' in sys.modules``
+            # returns False during the call.
+            for mod_name in list(_sys.modules):
+                if mod_name == "pytest" or mod_name.startswith("pytest."):
+                    monkeypatch.delitem(_sys.modules, mod_name, raising=False)
+            assert "pytest" not in _sys.modules
+            assert os.environ.get("PD_TESTING") is None
+            assert os.environ.get("PYTEST_CURRENT_TEST") is None
+
+            with pytest.raises(RuntimeError, match="for-testing helper"):
+                db.execute_test_sql_for_testing("SELECT 1")
+        finally:
+            db.close()
+
+    def test_guard_rejects_pd_testing_without_pytest_current_test(
+        self, tmp_path, monkeypatch,
+    ):
+        """Feature 090 AC-2 (FR-2 / #00173).
+
+        With only ``PD_TESTING=1`` set and ``PYTEST_CURRENT_TEST`` unset, the
+        guard MUST raise. This closes the parent-shell PD_TESTING leak vector
+        where a developer exports PD_TESTING once and inadvertently leaves it
+        set for all child processes including production sessions.
+        """
+        db_path = str(tmp_path / "pd_testing_only.db")
+        db = MemoryDatabase(db_path)
+        try:
+            monkeypatch.setenv("PD_TESTING", "1")
+            monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+            assert os.environ.get("PD_TESTING") == "1"
+            assert os.environ.get("PYTEST_CURRENT_TEST") is None
+
+            with pytest.raises(
+                RuntimeError, match="PYTEST_CURRENT_TEST not set",
+            ):
+                db.execute_test_sql_for_testing("SELECT 1")
+        finally:
+            db.close()
+
+    def test_guard_passes_with_both_pd_testing_and_pytest_current_test(
+        self, tmp_path, monkeypatch,
+    ):
+        """Feature 090 AC-2 (FR-2 / #00173).
+
+        With BOTH ``PD_TESTING=1`` and ``PYTEST_CURRENT_TEST`` set, the guard
+        MUST pass — this is the canonical "active pytest test" configuration
+        that pytest's own runner establishes for every test body.
+        """
+        db_path = str(tmp_path / "both_set.db")
+        db = MemoryDatabase(db_path)
+        try:
+            monkeypatch.setenv("PD_TESTING", "1")
+            # pytest normally sets PYTEST_CURRENT_TEST itself; we set it
+            # explicitly so the assertion is self-contained.
+            monkeypatch.setenv(
+                "PYTEST_CURRENT_TEST",
+                "test_database.py::test_guard_passes (call)",
+            )
+            # Should NOT raise.
+            db.execute_test_sql_for_testing(
+                "CREATE TABLE IF NOT EXISTS _feat090_guard_probe (x INTEGER)"
+            )
+        finally:
+            db.close()
+
+    def test_execute_test_sql_rolls_back_on_error(self, tmp_path, monkeypatch):
+        """AC-6 (FR-1.6 / #00144).
+
+        SQL that fails during execute (here, reference to a nonexistent
+        table inside an explicit BEGIN) MUST trigger ``_conn.rollback()`` so
+        the connection is NOT left mid-transaction.
+        """
+        monkeypatch.setenv("PD_TESTING", "1")
+        db_path = str(tmp_path / "rollback.db")
+        db = MemoryDatabase(db_path)
+        try:
+            # Open a mid-statement transaction before calling the helper.
+            # The helper's sql will fail, causing its except branch to fire
+            # and roll back this transaction.
+            db._conn.execute("BEGIN IMMEDIATE")
+            assert db._conn.in_transaction is True
+
+            # Bogus SQL targeting a non-existent table → sqlite3.OperationalError.
+            with pytest.raises(sqlite3.OperationalError):
+                db.execute_test_sql_for_testing(
+                    "UPDATE nonexistent_table_xyz SET col = ?", (1,)
+                )
+
+            # Post-error: the connection MUST NOT be mid-transaction.
+            assert db._conn.in_transaction is False, (
+                "execute_test_sql_for_testing must rollback on error"
+            )
+        finally:
+            db.close()

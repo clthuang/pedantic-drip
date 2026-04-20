@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import os
 import re
+import sys
+from typing import Any
 
 DEFAULTS: dict[str, bool | int | float | str] = {
     "artifacts_root": "docs",
@@ -31,11 +33,77 @@ DEFAULTS: dict[str, bool | int | float | str] = {
     "memory_auto_promote": False,
     "memory_promote_low_threshold": 3,
     "memory_promote_medium_threshold": 5,
+    # Feature 088 Bundle G (FR-10.1, #00102) — memory decay keys.
+    # Registering defaults allows session-start to detect typos like
+    # ``memory_decay_enabaled`` via ``_warn_unknown_keys``.
+    "memory_decay_enabled": False,
+    "memory_decay_high_threshold_days": 30,
+    "memory_decay_medium_threshold_days": 60,
+    "memory_decay_grace_period_days": 14,
+    "memory_decay_dry_run": False,
+    "memory_decay_scan_limit": 100000,
 }
 
 # Precompiled regexes for type coercion (applied after space stripping).
 _RE_INT = re.compile(r"^-?[0-9]+$")
 _RE_FLOAT = re.compile(r"^-?[0-9]*\.[0-9]+$")
+
+def _coerce_bool(key: str, value: Any, default: bool) -> bool:
+    """Strictly coerce ``value`` to bool with fallback-on-ambiguity.
+
+    Type-exact acceptance (no frozenset ``in`` membership — feature 089
+    FR-1.1/#00139):
+
+    - True iff ``value is True`` OR (``value`` is ``str`` AND ``value == 'true'``)
+      OR (``value`` is ``int`` AND not ``bool`` AND ``value == 1``).
+    - False iff ``value is False`` OR (``value`` is ``str`` AND ``value == 'false'``
+      OR ``value == ''``) OR (``value`` is ``int`` AND not ``bool`` AND
+      ``value == 0``).
+    - Everything else (``'False'``, ``'TRUE'``, ``'yes'``, ``1.0``, ...) is
+      ambiguous — emit a one-line stderr warning and return ``default``.
+
+    Feature 088 FR-10.1 / AC-34b, Feature 089 FR-1.1 / AC-1.
+    """
+    # True branch (type-exact).
+    if value is True:
+        return True
+    if isinstance(value, str) and value == 'true':
+        return True
+    if isinstance(value, int) and not isinstance(value, bool) and value == 1:
+        return True
+
+    # False branch (type-exact).
+    if value is False:
+        return False
+    if isinstance(value, str) and (value == 'false' or value == ''):
+        return False
+    if isinstance(value, int) and not isinstance(value, bool) and value == 0:
+        return False
+
+    sys.stderr.write(
+        f"[pd-config] {key}: ambiguous boolean {value!r}; "
+        f"falling back to default={default}\n"
+    )
+    return default
+
+
+def _warn_unknown_keys(config: dict) -> None:
+    """Emit a stderr warning for each key in ``config`` not present in DEFAULTS.
+
+    Scope filter: only keys beginning with ``memory_`` or ``pd_`` — other
+    namespaces (e.g., ``yolo_mode``) are intentionally tolerated for forward
+    compatibility.  Feature 088 FR-10.1 / AC-34 (e.g., typo
+    ``memory_decay_enabaled``).
+    """
+    for key in sorted(config.keys()):
+        if key in DEFAULTS:
+            continue
+        if not (key.startswith("memory_") or key.startswith("pd_")):
+            continue
+        sys.stderr.write(
+            f"[pd-config] unknown key {key!r}; "
+            f"did you mean one of the registered memory_*/pd_* keys?\n"
+        )
 
 
 def _coerce(raw: str) -> bool | int | float | str:
@@ -110,6 +178,21 @@ def read_config(project_root: str) -> dict:
             if not raw_value or raw_value == "null":
                 continue
 
-            result[key] = _coerce(raw_value)
+            # Feature 089 FR-1.1 / AC-1 (#00139): for keys whose DEFAULTS entry
+            # is a bool, route the raw string through ``_coerce_bool`` so
+            # ambiguous variants like ``'False'`` / ``'TRUE'`` fall back to
+            # default with a stderr warning. Without this branch the legacy
+            # ``_coerce`` treated any non-``'true'``/``'false'`` string as a
+            # plain str, which tripped later ``if cfg[key]:`` truthy checks.
+            default_value = DEFAULTS.get(key)
+            if isinstance(default_value, bool):
+                result[key] = _coerce_bool(key, raw_value, default_value)
+            else:
+                result[key] = _coerce(raw_value)
+
+    # Feature 088 FR-10.1 / AC-34: surface typos like ``memory_decay_enabaled``
+    # so operators see them at session-start instead of silently missing the
+    # real key and keeping the DEFAULTS value.
+    _warn_unknown_keys(result)
 
     return result

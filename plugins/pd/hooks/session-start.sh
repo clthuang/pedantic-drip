@@ -56,35 +56,36 @@ find_active_feature() {
 
     # Find .meta.json files and check for active status
     # Use portable find + python for cross-platform compatibility (macOS + Linux)
+    # FR-1.1: single-quoted Python source + positional args (no bash var interpolation).
     local latest_meta
-    latest_meta=$(python3 -c "
+    latest_meta=$(python3 -c '
 import os
 import json
 import sys
 
-features_dir = '$features_dir'
+features_dir = sys.argv[1]
 active_features = []
 
 for root, dirs, files in os.walk(features_dir):
-    if '.meta.json' in files:
-        meta_path = os.path.join(root, '.meta.json')
+    if ".meta.json" in files:
+        meta_path = os.path.join(root, ".meta.json")
         try:
             with open(meta_path) as f:
                 meta = json.load(f)
             # Only consider features with explicit active status
             # Note: planned features are excluded here — only active features are surfaced
-            status = meta.get('status')
-            if status == 'active':
+            status = meta.get("status")
+            if status == "active":
                 mtime = os.path.getmtime(meta_path)
                 active_features.append((mtime, meta_path))
-        except:
+        except Exception:
             pass
 
 if active_features:
     # Sort by modification time, most recent first
     active_features.sort(reverse=True)
     print(active_features[0][1])
-" 2>/dev/null)
+' "$features_dir" 2>/dev/null)
 
     if [[ -z "$latest_meta" ]]; then
         return 1
@@ -102,16 +103,17 @@ parse_feature_meta() {
     fi
 
     # Extract fields using python (more reliable than bash JSON parsing)
-    python3 -c "
-import json
-with open('$meta_file') as f:
+    # FR-1.1: single-quoted Python source + positional arg (no bash var interpolation).
+    python3 -c '
+import json, sys
+with open(sys.argv[1]) as f:
     meta = json.load(f)
-    print(meta.get('id', 'unknown'))
-    print(meta.get('slug', meta.get('name', 'unknown')))
-    print(meta.get('mode', 'Standard'))
-    print(meta.get('branch', ''))
-    print(meta.get('project_id', ''))
-" 2>/dev/null
+    print(meta.get("id", "unknown"))
+    print(meta.get("slug", meta.get("name", "unknown")))
+    print(meta.get("mode", "Standard"))
+    print(meta.get("branch", ""))
+    print(meta.get("project_id", ""))
+' "$meta_file" 2>/dev/null
 }
 
 # Detect current phase from existing artifacts
@@ -185,7 +187,8 @@ ensure_capture_hook() {
     fi
 
     # Use python3 to safely read/create/update JSON
-    python3 -c "
+    # FR-1.1: single-quoted Python source (bash does not expand vars inside).
+    python3 -c '
 import json, os, sys
 settings_path = sys.argv[1]
 hook_cmd = sys.argv[2]
@@ -196,27 +199,27 @@ if os.path.exists(settings_path):
 else:
     settings = {}
 
-hooks = settings.setdefault('hooks', {})
+hooks = settings.setdefault("hooks", {})
 
 # Ensure both PostToolUse and PostToolUseFailure have the hook
-for event in ['PostToolUse', 'PostToolUseFailure']:
+for event in ["PostToolUse", "PostToolUseFailure"]:
     entries = hooks.setdefault(event, [])
     found = False
     for entry in entries:
-        for h in entry.get('hooks', []):
-            if 'capture-tool-failure' in h.get('command', ''):
-                h['command'] = hook_cmd
+        for h in entry.get("hooks", []):
+            if "capture-tool-failure" in h.get("command", ""):
+                h["command"] = hook_cmd
                 found = True
     if not found:
         entries.append({
-            'matcher': 'Bash|Edit|Write',
-            'hooks': [{'type': 'command', 'command': hook_cmd, 'async': True}]
+            "matcher": "Bash|Edit|Write",
+            "hooks": [{"type": "command", "command": hook_cmd, "async": True}]
         })
 
 os.makedirs(os.path.dirname(settings_path), exist_ok=True)
-with open(settings_path, 'w') as f:
+with open(settings_path, "w") as f:
     json.dump(settings, f, indent=2)
-" "$settings_path" "$hook_cmd" 2>/dev/null || true
+' "$settings_path" "$hook_cmd" 2>/dev/null || true
 }
 
 # Clean up stale/orphaned MCP server processes via PID files + lsof fallback.
@@ -434,15 +437,16 @@ build_context() {
                 local project_slug
                 local artifacts_root_val
                 artifacts_root_val=$(resolve_artifacts_root)
-                project_slug=$(python3 -c "
+                # FR-1.1: single-quoted Python source + positional args (no bash expansion).
+                project_slug=$(python3 -c '
 import os, json, glob, sys
-dirs = glob.glob(os.path.join(sys.argv[1], sys.argv[3], 'projects', sys.argv[2] + '-*/'))
+dirs = glob.glob(os.path.join(sys.argv[1], sys.argv[3], "projects", sys.argv[2] + "-*/"))
 if dirs:
-    with open(os.path.join(dirs[0], '.meta.json')) as f:
-        print(json.load(f).get('slug', 'unknown'))
+    with open(os.path.join(dirs[0], ".meta.json")) as f:
+        print(json.load(f).get("slug", "unknown"))
 else:
-    print('unknown')
-" "$PROJECT_ROOT" "$project_id" "$artifacts_root_val" 2>/dev/null)
+    print("unknown")
+' "$PROJECT_ROOT" "$project_id" "$artifacts_root_val" 2>/dev/null)
                 context+="Project: ${project_id}-${project_slug}\n"
             fi
 
@@ -595,20 +599,21 @@ run_reconciliation() {
 
     # Extract workflow_reconcile summary and format for display (AC-6)
     # Silent when zero changes.
+    # FR-1.1: single-quoted Python source + positional arg (no bash expansion).
     if [[ -n "$result" ]]; then
-        python3 -c "
+        python3 -c '
 import json, sys
 try:
     data = json.loads(sys.argv[1])
-    wr = data.get('workflow_reconcile') or {}
-    synced = wr.get('reconciled', 0) + wr.get('created', 0)
-    kanban = wr.get('kanban_fixed', 0)
-    warnings = wr.get('error', 0)
+    wr = data.get("workflow_reconcile") or {}
+    synced = wr.get("reconciled", 0) + wr.get("created", 0)
+    kanban = wr.get("kanban_fixed", 0)
+    warnings = wr.get("error", 0)
     if synced or kanban or warnings:
-        print(f'Reconciled: {synced} features synced, {kanban} kanban fixed, {warnings} warnings')
+        print(f"Reconciled: {synced} features synced, {kanban} kanban fixed, {warnings} warnings")
 except Exception:
     pass
-" "$result" 2>/dev/null
+' "$result" 2>/dev/null
     fi
 }
 
@@ -638,24 +643,25 @@ run_doctor_autofix() {
         --artifacts-root "$artifacts_root" \
         --fix 2>/dev/null) || true
 
+    # FR-1.1: single-quoted Python source + positional arg (no bash expansion).
     if [[ -n "$result" ]]; then
-        python3 -c "
+        python3 -c '
 import json, sys
 try:
     data = json.loads(sys.argv[1])
-    fixes = data.get('fixes') or {}
-    fixed = fixes.get('fixed_count', 0)
-    post = data.get('post_fix') or {}
-    remaining = post.get('error_count', 0) + post.get('warning_count', 0)
+    fixes = data.get("fixes") or {}
+    fixed = fixes.get("fixed_count", 0)
+    post = data.get("post_fix") or {}
+    remaining = post.get("error_count", 0) + post.get("warning_count", 0)
     if fixed > 0 and remaining > 0:
-        print(f'Doctor: fixed {fixed} issues ({remaining} remaining)')
+        print(f"Doctor: fixed {fixed} issues ({remaining} remaining)")
     elif fixed > 0:
-        print(f'Doctor: fixed {fixed} issues')
+        print(f"Doctor: fixed {fixed} issues")
     elif remaining > 0:
-        print(f'Doctor: {remaining} issues need manual attention')
+        print(f"Doctor: {remaining} issues need manual attention")
 except Exception:
     pass
-" "$result" 2>/dev/null
+' "$result" 2>/dev/null
     fi
 }
 
@@ -669,26 +675,69 @@ except Exception:
 # Internal NFR-2 ceiling is 5000ms (AC-24); 10s leaves margin for subprocess
 # startup + BEGIN IMMEDIATE busy-wait (per spec FR-5 writer-contention note).
 run_memory_decay() {
-    # Platform-aware timeout (macOS: gtimeout from coreutils, Linux: timeout)
-    local timeout_cmd=""
-    if command -v gtimeout &>/dev/null; then
-        timeout_cmd="gtimeout 10"
-    elif command -v timeout &>/dev/null; then
-        timeout_cmd="timeout 10"
+    # FR-1.3 (#00112): PATH pinning + venv hard-fail + timeout enforcement.
+    # (a) Pin PATH to a known-safe value for the duration of the subprocess
+    #     invocation so `command -v gtimeout/timeout` and any implicit child
+    #     lookups cannot be redirected via a tampered user $PATH.
+    # (b) Hard-fail (silent skip) if the plugin venv Python is missing — do
+    #     NOT fall back to $PATH-resolved python3.
+    # (c) Enforce a 10s subprocess budget via gtimeout/timeout, falling back
+    #     to a Python subprocess.run(..., timeout=10) wrapper on platforms
+    #     where neither is present.
+    #
+    # Feature 089 FR-3.5 / AC-15 (#00153):
+    # - Use ``trap ... RETURN`` so PATH is restored on ANY exit path (early
+    #   return, SIGINT, unexpected error) — the previous ``export PATH=...``
+    #   at function end ran only on the happy path.
+    # - Extend pinned PATH to include ``/usr/local/bin`` (Intel Homebrew) and
+    #   ``/opt/homebrew/bin`` (Apple Silicon Homebrew) so ``gtimeout`` is
+    #   discoverable on macOS where ``timeout`` is not available by default.
+    local PATH_OLD="$PATH"
+    # shellcheck disable=SC2064  # intentional early expansion of PATH_OLD
+    trap "export PATH=\"$PATH_OLD\"" RETURN
+    export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+    local VENV_PYTHON="${PLUGIN_ROOT}/.venv/bin/python"
+    if [[ ! -x "$VENV_PYTHON" ]]; then
+        return 0  # skip silently; trap restores PATH on return
     fi
 
-    # Resolve Python: prefer venv, fall back to system python3
-    local python_cmd="python3"
-    if [[ -x "${PLUGIN_ROOT}/.venv/bin/python" ]]; then
-        python_cmd="${PLUGIN_ROOT}/.venv/bin/python"
+    # Platform-aware timeout (macOS: gtimeout from coreutils, Linux: timeout).
+    local TIMEOUT_CMD=""
+    if command -v gtimeout >/dev/null 2>&1; then
+        TIMEOUT_CMD="gtimeout 10"
+    elif command -v timeout >/dev/null 2>&1; then
+        TIMEOUT_CMD="timeout 10"
     fi
 
     # stderr suppressed: maintenance.py errors must not corrupt hook JSON output.
     # `|| true` belt-and-suspenders on top of FR-8 / I-1 internal exception-swallowing.
-    PYTHONPATH="${SCRIPT_DIR}/lib" $timeout_cmd "$python_cmd" -m semantic_memory.maintenance \
-        --decay \
-        --project-root "$PROJECT_ROOT" \
-        2>/dev/null || true
+    if [[ -n "$TIMEOUT_CMD" ]]; then
+        PYTHONPATH="${SCRIPT_DIR}/lib" $TIMEOUT_CMD "$VENV_PYTHON" -m semantic_memory.maintenance \
+            --decay \
+            --project-root "$PROJECT_ROOT" \
+            2>/dev/null || true
+    else
+        # Portable fallback: invoke via Python's subprocess.run with timeout=10.
+        # FR-1.1: single-quoted Python source + positional args.
+        PYTHONPATH="${SCRIPT_DIR}/lib" "$VENV_PYTHON" -c '
+import sys, subprocess
+try:
+    r = subprocess.run(
+        [sys.argv[1], "-m", "semantic_memory.maintenance",
+         "--decay", "--project-root", sys.argv[2]],
+        timeout=10, capture_output=True, text=True,
+    )
+    sys.stdout.write(r.stdout)
+    sys.stderr.write(r.stderr)
+except subprocess.TimeoutExpired:
+    sys.stderr.write("[memory-decay] subprocess timeout (10s)\n")
+' "$VENV_PYTHON" "$PROJECT_ROOT" 2>/dev/null || true
+    fi
+
+    # trap 'export PATH="$PATH_OLD"' RETURN handles PATH restoration on all
+    # function-exit paths, including early ``return`` above and any unexpected
+    # error — no explicit restore needed here.
 }
 
 # Main

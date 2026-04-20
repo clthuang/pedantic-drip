@@ -528,6 +528,9 @@ class TestIndexes:
             "idx_wp_kanban_column",
             "idx_wp_uuid",
             "idx_wp_workflow_phase",
+            # Feature 088 (FR-2.2): partial UNIQUE index added to migration 10
+            # for concurrent-safe backfill dedup.
+            "phase_events_backfill_dedup",
         ]
         assert index_names == expected
 

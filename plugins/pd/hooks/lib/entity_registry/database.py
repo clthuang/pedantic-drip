@@ -1374,9 +1374,50 @@ def _migration_9_remove_create_tasks(conn: sqlite3.Connection) -> None:
 
 
 def _migration_10_phase_events(conn: sqlite3.Connection) -> None:
-    """Create phase_events table + composite indexes + backfill from metadata."""
-    conn.execute("BEGIN IMMEDIATE")
+    """Create phase_events table + composite indexes + backfill from metadata.
+
+    Feature 088 hardening:
+    - FR-6.4: ``BEGIN IMMEDIATE`` is inside the try block, eliminating the
+      window where an exception between BEGIN and try leaves an open
+      transaction.
+    - FR-2.2: schema_version re-check as first statement inside try
+      (double-check after BEGIN IMMEDIATE serializes concurrent runners);
+      partial UNIQUE index on backfill rows + ``INSERT OR IGNORE`` so a
+      concurrent double-invocation produces the same row count as a single
+      run.
+    - FR-2.6: each timestamp read from metadata is validated via
+      ``datetime.fromisoformat``; rows with unparseable timestamps are
+      skipped with a stderr warning. ``backward_reason`` and
+      ``backward_target`` are truncated to 500 chars before INSERT.
+    """
     try:
+        conn.execute("BEGIN IMMEDIATE")
+
+        # FR-2.2: schema_version re-check as first statement inside try.
+        # If another process completed migration 10 between the caller's
+        # version check and our BEGIN IMMEDIATE, early-return as a no-op.
+        try:
+            v_row = conn.execute(
+                "SELECT value FROM _metadata WHERE key = 'schema_version'"
+            ).fetchone()
+            if v_row is not None:
+                try:
+                    current_version = int(v_row[0])
+                except (TypeError, ValueError):
+                    current_version = 0
+                if current_version >= 10:
+                    conn.rollback()
+                    return
+        except sqlite3.OperationalError as e:
+            # Feature 089 FR-1.4 / AC-4 (#00142): narrow the catch so only the
+            # "_metadata table does not yet exist" case is swallowed — any
+            # other OperationalError (e.g. ``database is locked``) must
+            # propagate so callers see the real failure.
+            if 'no such table' not in str(e).lower():
+                raise
+            # _metadata table does not yet exist — safe to proceed.
+
+        # Existing DDL (unchanged per design — deployed schema).
         conn.execute("""
             CREATE TABLE IF NOT EXISTS phase_events (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1407,12 +1448,44 @@ def _migration_10_phase_events(conn: sqlite3.Connection) -> None:
             "CREATE INDEX IF NOT EXISTS idx_pe_timestamp ON phase_events(timestamp)"
         )
 
+        # FR-2.2: scoped dedup of rows from prior concurrent-race backfills
+        # (before creating the UNIQUE index, which would otherwise fail).
+        # Only source='backfill' rows can have re-run duplicates; live rows
+        # are append-only analytics with naturally-unique created_at.
+        conn.execute(
+            "DELETE FROM phase_events "
+            "WHERE source = 'backfill' AND id NOT IN ("
+            "    SELECT MIN(id) FROM phase_events "
+            "    WHERE source = 'backfill' "
+            "    GROUP BY type_id, phase, event_type, timestamp"
+            ")"
+        )
+
+        # FR-2.2: partial UNIQUE index on backfill rows only. Live writes
+        # are not constrained — two legitimate same-second events coexist.
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS phase_events_backfill_dedup "
+            "ON phase_events(type_id, phase, event_type, timestamp) "
+            "WHERE source = 'backfill'"
+        )
+
         # Backfill from existing metadata
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         rows = conn.execute(
             "SELECT type_id, project_id, metadata, created_at "
             "FROM entities WHERE metadata IS NOT NULL"
         ).fetchall()
+
+        def _valid_iso(ts: str | None) -> bool:
+            """FR-2.6: reject unparseable timestamps via datetime.fromisoformat."""
+            if not ts or not isinstance(ts, str):
+                return False
+            try:
+                # fromisoformat pre-3.11 does not accept 'Z' suffix.
+                datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                return True
+            except (ValueError, TypeError):
+                return False
 
         for row in rows:
             type_id, project_id, meta_str, created_at = (
@@ -1434,66 +1507,121 @@ def _migration_10_phase_events(conn: sqlite3.Connection) -> None:
             for phase, timing in phase_timing.items():
                 if not isinstance(timing, dict):
                     continue
-                if timing.get("started"):
-                    conn.execute(
-                        "INSERT INTO phase_events "
-                        "(type_id, project_id, phase, event_type, timestamp, "
-                        "source, created_at) "
-                        "VALUES (?, ?, ?, 'started', ?, 'backfill', ?)",
-                        (type_id, project_id, phase, timing["started"], now),
-                    )
-                if timing.get("completed"):
-                    conn.execute(
-                        "INSERT INTO phase_events "
-                        "(type_id, project_id, phase, event_type, timestamp, "
-                        "iterations, reviewer_notes, source, created_at) "
-                        "VALUES (?, ?, ?, 'completed', ?, ?, ?, 'backfill', ?)",
-                        (
-                            type_id, project_id, phase,
-                            timing["completed"],
-                            timing.get("iterations"),
-                            json.dumps(timing.get("reviewerNotes"))
-                            if timing.get("reviewerNotes") else None,
-                            now,
-                        ),
-                    )
+                started_ts = timing.get("started")
+                if started_ts:
+                    if not _valid_iso(started_ts):
+                        print(
+                            f"[migration-10] skipping unparseable timestamp "
+                            f"{started_ts} for {type_id}:{phase}",
+                            file=sys.stderr,
+                        )
+                    else:
+                        conn.execute(
+                            "INSERT OR IGNORE INTO phase_events "
+                            "(type_id, project_id, phase, event_type, timestamp, "
+                            "source, created_at) "
+                            "VALUES (?, ?, ?, 'started', ?, 'backfill', ?)",
+                            (type_id, project_id, phase, started_ts, now),
+                        )
+                completed_ts = timing.get("completed")
+                if completed_ts:
+                    if not _valid_iso(completed_ts):
+                        print(
+                            f"[migration-10] skipping unparseable timestamp "
+                            f"{completed_ts} for {type_id}:{phase}",
+                            file=sys.stderr,
+                        )
+                    else:
+                        conn.execute(
+                            "INSERT OR IGNORE INTO phase_events "
+                            "(type_id, project_id, phase, event_type, timestamp, "
+                            "iterations, reviewer_notes, source, created_at) "
+                            "VALUES (?, ?, ?, 'completed', ?, ?, ?, 'backfill', ?)",
+                            (
+                                type_id, project_id, phase,
+                                completed_ts,
+                                timing.get("iterations"),
+                                json.dumps(timing.get("reviewerNotes"))
+                                if timing.get("reviewerNotes") else None,
+                                now,
+                            ),
+                        )
 
             skipped_list = meta.get("skipped_phases", [])
             if not isinstance(skipped_list, list):
                 skipped_list = []
             for skipped in skipped_list:
+                skipped_ts = created_at or now
+                if not _valid_iso(skipped_ts):
+                    print(
+                        f"[migration-10] skipping unparseable timestamp "
+                        f"{skipped_ts} for {type_id}:{skipped}",
+                        file=sys.stderr,
+                    )
+                    continue
                 conn.execute(
-                    "INSERT INTO phase_events "
+                    "INSERT OR IGNORE INTO phase_events "
                     "(type_id, project_id, phase, event_type, timestamp, "
                     "source, created_at) "
                     "VALUES (?, ?, ?, 'skipped', ?, 'backfill', ?)",
-                    (type_id, project_id, skipped, created_at or now, now),
+                    (type_id, project_id, skipped, skipped_ts, now),
                 )
 
             for bh in meta.get("backward_history", []):
+                if not isinstance(bh, dict):
+                    continue
+                bh_ts = bh.get("timestamp", now)
+                if not _valid_iso(bh_ts):
+                    src_phase_name = bh.get("source_phase", "unknown")
+                    print(
+                        f"[migration-10] skipping unparseable timestamp "
+                        f"{bh_ts} for {type_id}:{src_phase_name}",
+                        file=sys.stderr,
+                    )
+                    continue
+                # FR-2.6: truncate backward_reason / backward_target to 500 chars.
+                bh_reason = bh.get("reason")
+                if isinstance(bh_reason, str):
+                    bh_reason = bh_reason[:500]
+                bh_target = bh.get("target_phase")
+                if isinstance(bh_target, str):
+                    bh_target = bh_target[:500]
                 conn.execute(
-                    "INSERT INTO phase_events "
+                    "INSERT OR IGNORE INTO phase_events "
                     "(type_id, project_id, phase, event_type, timestamp, "
                     "backward_reason, backward_target, source, created_at) "
                     "VALUES (?, ?, ?, 'backward', ?, ?, ?, 'backfill', ?)",
                     (
                         type_id, project_id,
                         bh.get("source_phase", "unknown"),
-                        bh.get("timestamp", now),
-                        bh.get("reason"),
-                        bh.get("target_phase"),
+                        bh_ts,
+                        bh_reason,
+                        bh_target,
                         now,
                     ),
                 )
 
-        conn.execute(
-            "INSERT INTO _metadata(key, value) "
-            "VALUES('schema_version', '10') "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
-        )
+        # Feature 090 FR-3 / AC-3 (#00174): restore the in-function
+        # ``schema_version=10`` stamp so the DDL/DML body AND the stamp
+        # commit atomically in a single transaction.  Feature 089 Bundle
+        # C.4 removed this in favour of letting the outer ``_migrate()``
+        # loop (``database.py`` around line 3919) perform the upsert, but
+        # that left a crash window: a process killed (SIGKILL, OOM) between
+        # the migration's ``conn.commit()`` and the outer loop's stamp
+        # commit leaves the DB with phase_events populated at
+        # schema_version=9, which would re-run migration 10 on the next
+        # open.  With the stamp inside the same transaction as the DDL,
+        # that window is eliminated — schema + stamp are either both
+        # present or both absent.  The outer loop's subsequent upsert is
+        # a no-op idempotent write (same key, same value) on ``ON CONFLICT
+        # DO UPDATE``.
+        conn.execute("INSERT OR REPLACE INTO _metadata (key, value) VALUES ('schema_version', '10')")
         conn.commit()
     except Exception:
-        conn.rollback()
+        try:
+            conn.rollback()
+        except sqlite3.Error:
+            pass
         raise
 
 
@@ -1516,6 +1644,14 @@ _UNSET = object()
 
 # Export format version — separate from the DB schema version.
 EXPORT_SCHEMA_VERSION = 1
+
+# FR-6.2 (feature 088): explicit column list for phase_events SELECTs.
+# Replaces ``SELECT *`` so schema evolution cannot silently leak columns.
+PHASE_EVENTS_COLS = (
+    "id, type_id, project_id, phase, event_type, timestamp, "
+    "iterations, reviewer_notes, backward_reason, backward_target, "
+    "source, created_at"
+)
 
 
 class EntityDatabase:
@@ -2939,6 +3075,11 @@ class EntityDatabase:
         source: str = "live",
     ) -> None:
         """Insert a phase event record into the append-only event log."""
+        # Feature 088 FR-2.4 (defense-in-depth): DB-layer reviewer_notes cap.
+        # The MCP entry point in ``_process_complete_phase`` also validates
+        # size, but direct callers bypassing the MCP tool still get protected.
+        if reviewer_notes is not None and len(reviewer_notes) > 10000:
+            raise ValueError("reviewer_notes exceeds 10000 chars")
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         self._conn.execute(
             "INSERT INTO phase_events "
@@ -2979,13 +3120,95 @@ class EntityDatabase:
             params.append(event_type)
 
         where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
-        params.append(min(max(limit, 1), 500))
+        # Clamp: limit < 0 is treated as 0 (0 rows, not SQLite LIMIT -1 =
+        # unlimited); limit > 500 is capped at 500. ``limit=0`` honors
+        # caller intent ("return 0 rows") rather than being coerced up to 1.
+        params.append(max(0, min(limit, 500)))
 
         rows = self._conn.execute(
-            f"SELECT * FROM phase_events{where} ORDER BY timestamp DESC LIMIT ?",
+            f"SELECT {PHASE_EVENTS_COLS} FROM phase_events{where} "
+            "ORDER BY timestamp DESC LIMIT ?",
             params,
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def query_phase_events_bulk(
+        self,
+        type_ids: list[str],
+        event_types: list[str] | None = None,
+    ) -> list[dict]:
+        """Bulk-fetch phase_events rows for multiple entities in O(1) queries.
+
+        Used by the reconciliation drift detector (Feature 089 FR-2.2 /
+        AC-9 / #00150) to eliminate an N+1 query pattern: instead of one
+        ``query_phase_events`` call per (entity, phase, event_type)
+        tuple, callers pass all ``type_ids`` at once and diff the result
+        Python-side.
+
+        Parameters
+        ----------
+        type_ids:
+            Entity type_ids to fetch events for. Empty list returns ``[]``
+            without issuing any query.
+        event_types:
+            Optional event-type filter. When ``None``, all event_types
+            are returned. When a list, only rows whose ``event_type`` is
+            in the list are returned.
+
+        Returns
+        -------
+        list[dict]
+            All matching phase_events rows (no LIMIT applied — caller is
+            expected to aggregate in Python). Columns match
+            ``PHASE_EVENTS_COLS``.
+
+        Notes
+        -----
+        Input is chunked at 500 parameters per chunk to stay well under
+        SQLite's default ``SQLITE_MAX_VARIABLE_NUMBER`` (999 pre-3.32,
+        32766 after). With ``event_types`` also in the IN clause, the
+        effective per-chunk budget is ``500 - len(event_types)``.
+        """
+        if not type_ids:
+            return []
+
+        # Feature 090 FR-4 / AC-4 (#00175): explicit empty-list short-circuit.
+        # Pre-090 the filter guard was ``if event_types:`` — falsy for both
+        # ``None`` and ``[]``, collapsing "no filter, match all" and "filter
+        # by empty set, match none" into the same code path.  The correct
+        # semantics: ``event_types=None`` means "no filter" (return all
+        # event_types); ``event_types=[]`` means "filter by empty set"
+        # (return zero rows, since no value can be ``IN ()``).  Returning
+        # early here preserves the all-or-nothing SQL contract and avoids
+        # issuing a query that would otherwise silently fall through to
+        # the unfiltered branch.
+        if event_types is not None and not event_types:
+            return []
+
+        # Budget accounting: SQLite's default host-parameter cap is 999.
+        # We chunk type_ids well below that, reserving room for event_types.
+        et_count = len(event_types) if event_types else 0
+        chunk_size = max(1, 500 - et_count)
+
+        results: list[dict] = []
+        for start in range(0, len(type_ids), chunk_size):
+            chunk = type_ids[start:start + chunk_size]
+            placeholders_tid = ",".join("?" * len(chunk))
+            params: list = list(chunk)
+            where = f"type_id IN ({placeholders_tid})"
+            if event_types is not None:
+                # Empty-list case short-circuited above; here event_types
+                # is a non-empty list.
+                placeholders_et = ",".join("?" * len(event_types))
+                where += f" AND event_type IN ({placeholders_et})"
+                params.extend(event_types)
+            rows = self._conn.execute(
+                f"SELECT {PHASE_EVENTS_COLS} FROM phase_events "
+                f"WHERE {where}",
+                params,
+            ).fetchall()
+            results.extend(dict(r) for r in rows)
+        return results
 
     # ------------------------------------------------------------------
     # Workflow Phase CRUD

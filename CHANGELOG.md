@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.16.0] - 2026-04-20
+
+### Added
+- **`MemoryDatabase.scan_decay_candidates`** public method — encapsulates the decay-candidate read path previously inlined at `maintenance._select_candidates`. Closes the "Direct `db._conn` Access" anti-pattern (feature:091 FR-4, #00078).
+- **`test-hooks.sh` AC-22b / AC-22c blocks** — SyntaxError and ImportError fault-injection tests for `run_memory_decay` using a temp-PYTHONPATH subshell harness. Extends AC-22 coverage beyond the file-missing case (feature:091 FR-3, #00077).
+
+### Changed
+- **Decay semantic-coupling warning predicate** — `memory_decay_medium_threshold_days <= memory_decay_high_threshold_days` now emits the stderr warning (previously only `<`). Warning text updated to reflect the inclusive semantics (feature:091 FR-2, #00076).
+- **`docs/backlog.md` closure markers** — 22 previously-fixed items from 082/088/089 and 1 partial (#00116) now carry explicit `(fixed in feature:N — ...)` markers. Aligns backlog with actual remediation state (feature:091 FR-1).
+
+### Fixed
+- **Dead `updated_at IS NULL` SQL branch** removed from `MemoryDatabase._execute_chunk`. Schema enforces `NOT NULL` on `updated_at`; the branch was unreachable (feature:091 FR-5, #00079).
+- **Test isoformat drift** — `TestSelectCandidates.test_partitions_six_entries_across_all_buckets` now uses the test-local `_iso()` helper (Z-suffix) instead of `.isoformat()` (`+00:00` suffix). Eliminates silent SQL boundary divergence between test fixtures and production (feature:091 FR-6, New-082-inv-1).
+
 ## [4.15.11] - 2026-04-19
 
 ### Added

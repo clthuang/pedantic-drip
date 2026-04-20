@@ -1,0 +1,35 @@
+{
+  "id": "088",
+  "slug": "082-084-qa-hardening",
+  "mode": "full",
+  "status": "completed",
+  "created": "2026-04-19T07:54:02.389773+00:00",
+  "branch": "feature/088-082-084-qa-hardening",
+  "completed": "2026-04-19T10:22:11.050596+00:00",
+  "lastCompletedPhase": "finish",
+  "phases": {
+    "brainstorm": {
+      "started": "2026-04-19T07:54:02.389105+00:00"
+    },
+    "specify": {
+      "started": "2026-04-19T07:54:38.927000+00:00",
+      "completed": "2026-04-19T08:07:59.964948+00:00",
+      "iterations": 3
+    },
+    "design": {
+      "completed": "2026-04-19T08:29:14.411411+00:00",
+      "iterations": 4
+    },
+    "create-plan": {
+      "completed": "2026-04-19T08:41:50.303731+00:00",
+      "iterations": 2
+    },
+    "implement": {
+      "completed": "2026-04-19T10:17:33.267751+00:00",
+      "iterations": 1
+    },
+    "finish": {
+      "completed": "2026-04-19T10:22:11.050596+00:00"
+    }
+  }
+}

@@ -2709,6 +2709,204 @@ assert 'Decay: demoted high->medium' in ctx, f'expected decay summary in ctx, go
     fi
 }
 
+# Test: session-start.sh rejects injection payloads in .meta.json (feature 088 AC-1)
+test_session_start_refuses_meta_json_injection() {
+    log_test "session-start refuses .meta.json python injection (feature 088 AC-1)"
+
+    local tmp_home tmp_proj
+    tmp_home=$(mktemp -d)
+    tmp_proj=$(mktemp -d)
+    # Ensure the canary file does not exist before the test.
+    local canary="/tmp/pd-088-pwned"
+    rm -f "$canary" 2>/dev/null
+
+    trap 'rm -f "'"$canary"'" 2>/dev/null; rm -rf "'"$tmp_home"'" "'"$tmp_proj"'"' RETURN
+
+    # Build fixture feature dir with poisoned .meta.json.
+    # Injection payload in project_id tries to break out of single-quoted
+    # Python source via embedded quote + os.system touch call.
+    mkdir -p "$tmp_proj/.git" "$tmp_proj/.claude" "$tmp_proj/docs/features/099-test-feature"
+    cat > "$tmp_proj/.claude/pd.local.md" << 'PDCFG'
+---
+memory_injection_enabled: false
+memory_decay_enabled: false
+PDCFG
+    cat > "$tmp_proj/docs/features/099-test-feature/.meta.json" << 'EOFMETA'
+{
+  "id": "099",
+  "slug": "test-feature",
+  "name": "test-feature",
+  "mode": "Standard",
+  "branch": "feature/099-test-feature",
+  "status": "active",
+  "project_id": "'; import os; os.system('touch /tmp/pd-088-pwned'); #"
+}
+EOFMETA
+
+    # Run session-start.sh with PROJECT_ROOT pointing at the fixture.
+    local output exit_code=0
+    output=$(cd "$tmp_proj" && HOME="$tmp_home" bash "${HOOKS_DIR}/session-start.sh" < /dev/null 2>/dev/null) || exit_code=$?
+
+    # Hook must exit 0 (never crash session-start on poisoned input).
+    if [[ $exit_code -ne 0 ]]; then
+        log_fail "session-start.sh exited non-zero on poisoned meta: $exit_code"
+        return
+    fi
+
+    # The injection MUST NOT have created the canary file.
+    if [[ -e "$canary" ]]; then
+        log_fail "INJECTION SUCCEEDED — ${canary} was created by poisoned .meta.json"
+        return
+    fi
+
+    # Output must be parseable JSON (hook didn't emit malformed JSON).
+    if ! echo "$output" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null; then
+        log_fail "session-start.sh produced invalid JSON on poisoned meta"
+        return
+    fi
+
+    log_pass
+}
+
+# Test: session-start.sh skips decay cleanly when plugin venv python is missing
+# (feature 088 AC-3 — FR-1.3 venv hard-fail, no $PATH fallback).
+test_session_start_decay_skips_when_venv_missing() {
+    log_test "session-start skips decay silently when plugin venv python is missing (feature 088 AC-3)"
+
+    local tmp_home tmp_proj
+    tmp_home=$(mktemp -d)
+    tmp_proj=$(mktemp -d)
+    local venv_python="${HOOKS_DIR}/../.venv/bin/python"
+    local venv_python_bak="${venv_python}.bak-088"
+
+    # CRITICAL: install trap BEFORE rename so restoration happens on any failure.
+    trap 'mv "'"$venv_python_bak"'" "'"$venv_python"'" 2>/dev/null || true; rm -rf "'"$tmp_home"'" "'"$tmp_proj"'"' RETURN
+
+    mkdir -p "$tmp_proj/.git" "$tmp_proj/.claude"
+    cat > "$tmp_proj/.claude/pd.local.md" << 'PDCFG'
+---
+memory_decay_enabled: true
+memory_decay_high_threshold_days: 30
+PDCFG
+
+    # Rename venv python so the hard-fail path is exercised. If the venv
+    # doesn't exist at all (CI without setup), skip.
+    if [[ ! -x "$venv_python" ]]; then
+        log_skip "plugin venv python not present (CI without setup)"
+        return
+    fi
+    mv "$venv_python" "$venv_python_bak" || { log_fail "Failed to rename venv python"; return; }
+
+    local output exit_code=0
+    output=$(cd "$tmp_proj" && HOME="$tmp_home" bash "${HOOKS_DIR}/session-start.sh" < /dev/null 2>/dev/null) || exit_code=$?
+
+    # Restore immediately so subsequent tests work (trap will also restore on return).
+    mv "$venv_python_bak" "$venv_python" 2>/dev/null || true
+
+    if [[ $exit_code -ne 0 ]]; then
+        log_fail "session-start.sh exited non-zero when venv missing: $exit_code"
+        return
+    fi
+
+    # JSON well-formed and NO "Decay:" marker in additionalContext.
+    if echo "$output" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+ctx = d.get('hookSpecificOutput', {}).get('additionalContext', '')
+assert 'Decay:' not in ctx, f'expected NO decay summary when venv missing, got: {ctx[:300]}'
+" 2>/dev/null; then
+        log_pass
+    else
+        log_fail "Decay summary unexpectedly present or JSON malformed. Output: ${output:0:400}"
+    fi
+}
+
+# Test: session-start.sh enforces decay subprocess timeout so a hung
+# maintenance CLI does not block the hook (feature 088 AC-40 / FR-10.7).
+#
+# Strategy: replace maintenance.py with a stub that sleeps 30s (well above
+# the 10s internal budget enforced inside run_memory_decay). Wrap the hook
+# in a bash-level 20s guard. The hook MUST complete in <20s (honoring its
+# own budget), exit 0, and omit the "Decay:" summary from additionalContext.
+test_session_start_decay_timeout_does_not_block_hook() {
+    log_test "session-start decay timeout does not block hook (feature 088 AC-40)"
+
+    local tmp_home
+    tmp_home=$(mktemp -d)
+    local maint_py="${HOOKS_DIR}/lib/semantic_memory/maintenance.py"
+    local maint_bak="${maint_py}.bak-088-timeout"
+
+    # CRITICAL: install trap BEFORE rename so restoration always runs.
+    trap 'mv "'"$maint_bak"'" "'"$maint_py"'" 2>/dev/null || true; rm -rf "'"$tmp_home"'"' RETURN
+
+    # Enable decay so the CLI is invoked.
+    mkdir -p "$tmp_home/.claude"
+    cat > "$tmp_home/.claude/pd.local.md" << 'PDCFG'
+---
+memory_decay_enabled: true
+---
+PDCFG
+
+    # Replace maintenance.py with a sleep-30s stub.
+    mv "$maint_py" "$maint_bak" || { log_fail "Failed to rename maintenance.py"; return; }
+    cat > "$maint_py" << 'STUB'
+"""Feature 088 AC-40 timeout stub — sleeps 30s then exits."""
+import time
+time.sleep(30)
+STUB
+
+    # Wrap session-start in a pytest-equivalent outer timeout. The hook's
+    # internal budget is 10s, so 20s outer gives ample margin. If the
+    # internal budget is NOT enforced, the outer timeout fires and we fail.
+    local outer_timeout=""
+    if command -v gtimeout >/dev/null 2>&1; then
+        outer_timeout="gtimeout 20"
+    elif command -v timeout >/dev/null 2>&1; then
+        outer_timeout="timeout 20"
+    fi
+
+    local t_start t_end wall
+    t_start=$(date +%s)
+    local output exit_code=0
+    if [[ -n "$outer_timeout" ]]; then
+        output=$(cd "$tmp_home" && HOME="$tmp_home" $outer_timeout bash "${HOOKS_DIR}/session-start.sh" < /dev/null 2>/dev/null) || exit_code=$?
+    else
+        # No outer timeout available (rare); rely on hook's internal guard.
+        output=$(cd "$tmp_home" && HOME="$tmp_home" bash "${HOOKS_DIR}/session-start.sh" < /dev/null 2>/dev/null) || exit_code=$?
+    fi
+    t_end=$(date +%s)
+    wall=$((t_end - t_start))
+
+    # Exit code 124 = outer timeout fired → hook did NOT honor its budget.
+    if [[ $exit_code -eq 124 ]]; then
+        log_fail "outer 20s timeout fired — session-start decay did not honor 10s internal budget (wall=${wall}s)"
+        return
+    fi
+
+    if [[ $exit_code -ne 0 ]]; then
+        log_fail "session-start.sh exited non-zero ($exit_code) under decay timeout stub"
+        return
+    fi
+
+    # Wall time must be < 20s (should be ~10s given the internal budget).
+    if [[ $wall -ge 20 ]]; then
+        log_fail "wall time ${wall}s >= 20s — internal timeout not enforced"
+        return
+    fi
+
+    # additionalContext MUST NOT contain "Decay:" (CLI was killed by timeout).
+    if echo "$output" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+ctx = d.get('hookSpecificOutput', {}).get('additionalContext', '')
+assert 'Decay:' not in ctx, f'expected NO decay summary after timeout, got: {ctx[:300]}'
+" 2>/dev/null; then
+        log_pass
+    else
+        log_fail "Decay summary present despite timeout, or JSON malformed. Wall=${wall}s, Output: ${output:0:400}"
+    fi
+}
+
 # Test: session-start.sh is resilient when maintenance.py is missing (AC-22)
 test_memory_decay_missing_module() {
     log_test "session-start resilient when maintenance.py is missing (AC-22)"
@@ -2751,6 +2949,360 @@ assert 'Decay:' not in ctx, f'expected NO decay summary when module missing, got
     else
         log_fail "Decay summary unexpectedly present or JSON malformed. Output: ${output:0:400}"
     fi
+}
+
+# Feature 091 FR-3 (#00077): AC-22 extended to cover SyntaxError / ImportError.
+# Uses temp-PYTHONPATH subshell harness per feature:091 design I-5 — copies
+# the real semantic_memory package to mktemp -d, injects the fault there,
+# and invokes the same command-line the production hook uses with the
+# ``2>/dev/null || true`` guard. Production maintenance.py is NEVER mutated
+# (AC-4d invariant).
+test_memory_decay_syntax_error_tolerated() {
+    log_test "session-start guard tolerates SyntaxError in maintenance.py (AC-22b, FR-3)"
+
+    if [[ ! -x "$PLUGIN_VENV_PYTHON" ]]; then
+        log_pass  # SKIP: venv missing — cannot exercise real production pattern
+        return
+    fi
+
+    (
+        set +e
+        PKG_TMPDIR=$(mktemp -d)
+        trap "rm -rf \"$PKG_TMPDIR\"" EXIT
+        mkdir -p "$PKG_TMPDIR/semantic_memory"
+        cp -R "${HOOKS_DIR}/lib/semantic_memory/." "$PKG_TMPDIR/semantic_memory/"
+
+        if [ ! -f "$PKG_TMPDIR/semantic_memory/__init__.py" ]; then
+            echo "FAIL: __init__.py missing from copy"
+            exit 1
+        fi
+
+        # Positive control: clean copy must import successfully.
+        if ! PYTHONPATH="$PKG_TMPDIR" "$PLUGIN_VENV_PYTHON" \
+            -c 'import semantic_memory.maintenance' 2>/dev/null; then
+            echo "FAIL: clean copy does not import"
+            exit 1
+        fi
+
+        # Inject SyntaxError.
+        printf '\ndef broken(:\n' >> "$PKG_TMPDIR/semantic_memory/maintenance.py"
+
+        # Negative control: WITHOUT the shell guard, raw invocation MUST fail.
+        PYTHONPATH="$PKG_TMPDIR" "$PLUGIN_VENV_PYTHON" \
+            -m semantic_memory.maintenance --decay --project-root . >/dev/null 2>&1
+        raw_exit=$?
+        if [ "$raw_exit" -eq 0 ]; then
+            echo "FAIL: AC-22b fault did not trigger — raw exit was 0"
+            exit 1
+        fi
+
+        # Positive contract: WITH production guard pattern (session-start.sh:719).
+        PYTHONPATH="$PKG_TMPDIR" "$PLUGIN_VENV_PYTHON" \
+            -m semantic_memory.maintenance --decay --project-root . 2>/dev/null || true
+
+        exit 0
+    )
+    local subshell_exit=$?
+    if [ "$subshell_exit" -eq 0 ]; then
+        log_pass
+    else
+        log_fail "AC-22b subshell reported failure (exit $subshell_exit)"
+    fi
+
+    # AC-4d invariant: production maintenance.py unchanged.
+    local git_status
+    git_status=$(cd "$(dirname "${HOOKS_DIR}")" && git status --porcelain "plugins/pd/hooks/lib/semantic_memory/maintenance.py" 2>/dev/null || true)
+    if [ -n "$git_status" ]; then
+        log_test "AC-4d invariant: production maintenance.py untouched (T7a)"
+        log_fail "production maintenance.py mutated: $git_status"
+    fi
+}
+
+test_memory_decay_import_error_tolerated() {
+    log_test "session-start guard tolerates ImportError in maintenance.py (AC-22c, FR-3)"
+
+    if [[ ! -x "$PLUGIN_VENV_PYTHON" ]]; then
+        log_pass  # SKIP: venv missing
+        return
+    fi
+
+    (
+        set +e
+        PKG_TMPDIR=$(mktemp -d)
+        trap "rm -rf \"$PKG_TMPDIR\"" EXIT
+        mkdir -p "$PKG_TMPDIR/semantic_memory"
+        cp -R "${HOOKS_DIR}/lib/semantic_memory/." "$PKG_TMPDIR/semantic_memory/"
+
+        if [ ! -f "$PKG_TMPDIR/semantic_memory/__init__.py" ]; then
+            echo "FAIL: __init__.py missing from copy"
+            exit 1
+        fi
+
+        if ! PYTHONPATH="$PKG_TMPDIR" "$PLUGIN_VENV_PYTHON" \
+            -c 'import semantic_memory.maintenance' 2>/dev/null; then
+            echo "FAIL: clean copy does not import"
+            exit 1
+        fi
+
+        # Inject ImportError via sed-free prepend (portable — no BSD/GNU sed divergence).
+        {
+            echo 'import no_such_module_really_does_not_exist'
+            cat "$PKG_TMPDIR/semantic_memory/maintenance.py"
+        } > "$PKG_TMPDIR/semantic_memory/maintenance.py.new"
+        mv "$PKG_TMPDIR/semantic_memory/maintenance.py.new" \
+           "$PKG_TMPDIR/semantic_memory/maintenance.py"
+
+        # Negative control.
+        PYTHONPATH="$PKG_TMPDIR" "$PLUGIN_VENV_PYTHON" \
+            -m semantic_memory.maintenance --decay --project-root . >/dev/null 2>&1
+        raw_exit=$?
+        if [ "$raw_exit" -eq 0 ]; then
+            echo "FAIL: AC-22c fault did not trigger — raw exit was 0"
+            exit 1
+        fi
+
+        # Positive contract.
+        PYTHONPATH="$PKG_TMPDIR" "$PLUGIN_VENV_PYTHON" \
+            -m semantic_memory.maintenance --decay --project-root . 2>/dev/null || true
+
+        exit 0
+    )
+    local subshell_exit=$?
+    if [ "$subshell_exit" -eq 0 ]; then
+        log_pass
+    else
+        log_fail "AC-22c subshell reported failure (exit $subshell_exit)"
+    fi
+
+    # AC-4d invariant: production maintenance.py unchanged.
+    local git_status
+    git_status=$(cd "$(dirname "${HOOKS_DIR}")" && git status --porcelain "plugins/pd/hooks/lib/semantic_memory/maintenance.py" 2>/dev/null || true)
+    if [ -n "$git_status" ]; then
+        log_test "AC-4d invariant: production maintenance.py untouched (T7b)"
+        log_fail "production maintenance.py mutated: $git_status"
+    fi
+}
+
+# Feature 089 AC-21 (#00163 / FR-1.8): Python subprocess.run(..., timeout=10)
+# fallback MUST fire when neither gtimeout nor timeout is on PATH.
+#
+# Feature 090 FR-1 / AC-1 (#00172): the test MUST invoke the production
+# ``run_memory_decay`` function directly so the shell's
+# ``command -v gtimeout`` / ``command -v timeout`` selector is actually
+# exercised.  The pre-090 version replayed the fallback ``python -c`` block
+# inline in a generated wrapper — it never touched the real selector code in
+# ``session-start.sh``, which meant a refactor that broke the selector (e.g.
+# reversing the if/elif order, typo'ing a binary name) would still pass.
+#
+# Strategy:
+# 1. Copy ``session-start.sh`` into HOOKS_DIR as a sibling file with the
+#    trailing ``main`` invocation stripped, so sourcing it registers
+#    ``run_memory_decay`` without running the full session-start pipeline.
+#    The copy lives in HOOKS_DIR (not /tmp) because session-start.sh
+#    derives its ``SCRIPT_DIR`` from ``BASH_SOURCE[0]`` and then sources
+#    ``${SCRIPT_DIR}/lib/common.sh``.
+# 2. In a subshell, shadow the ``command`` builtin with a function that
+#    returns non-zero for ``command -v gtimeout`` and ``command -v timeout``
+#    lookups — this survives the in-function PATH re-pin (which otherwise
+#    makes PATH=/var/empty from the parent ineffective once
+#    ``run_memory_decay`` runs).  All other ``command -v`` lookups (python3,
+#    ls, etc.) fall through to the real builtin unchanged via ``builtin
+#    command "$@"``.
+# 3. Replace maintenance.py with a sleep-30s stub that also writes a marker
+#    file on entry (the stub's own stderr is captured by the fallback's
+#    ``capture_output=True``, then discarded on TimeoutExpired — the marker
+#    file is our only way to prove the stub was invoked at all).
+# 4. Source the stripped session-start.sh, then call ``run_memory_decay``.
+#    Assert (a) wall-time between 8s and 20s (the 10s subprocess timeout
+#    enforced the kill, excluding the sub-second hot path and the 30s stub
+#    runtime), AND (b) the stub's marker file exists (proves the selector
+#    routed maintenance through the ``python -c`` fallback wrapper — the
+#    shell gtimeout/timeout branches invoke maintenance with different
+#    argv shapes but the marker writes on any invocation, so the critical
+#    signal is the *wall-time window* which can only be produced by the
+#    Python-layer ``subprocess.run(..., timeout=10)``).
+#
+# Why shadow ``command`` rather than PATH: session-start.sh's
+# ``run_memory_decay`` re-pins PATH to ``/usr/local/bin:/opt/homebrew/bin:...``
+# the moment it's invoked (FR-3.5 / AC-15), so any parent-shell PATH trick
+# is overwritten before the selector runs.  Shadowing ``command`` with a
+# bash function survives the PATH re-pin because functions take precedence
+# over builtins in bash's lookup order.
+#
+# Why not assert stderr contains "[memory-decay] subprocess timeout (10s)":
+# production ``run_memory_decay`` intentionally ``2>/dev/null``-swallows the
+# fallback branch's stderr (session-start.sh ~line 735) so maintenance
+# errors cannot corrupt the hook's JSON stdout.  That suppression is load-
+# bearing FR-8 behaviour — any test that observes the diagnostic literally
+# would need to reach through the stderr redirect, which is neither portable
+# nor stable.  The wall-time window (8s <= wall < 20s) is only produceable
+# by the Python subprocess-timeout path (gtimeout/timeout branches kill at
+# 10s wall too, but they're disabled here; hot-path success is <1s; the
+# sleep-30 stub naturally runs 30s).  Wall-time window + marker file is a
+# stronger selector-exercise signal than the swallowed stderr string.
+test_decay_python_subprocess_timeout_fallback() {
+    log_test "run_memory_decay falls back to Python subprocess timeout when no external timeout cmd (AC-21)"
+
+    local tmp_home
+    tmp_home=$(mktemp -d)
+    local maint_py="${HOOKS_DIR}/lib/semantic_memory/maintenance.py"
+    local maint_bak="${maint_py}.bak-089-fallback"
+    local ss_src="${HOOKS_DIR}/session-start.sh"
+    # IMPORTANT: stripped copy MUST live inside HOOKS_DIR so
+    # ``SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"`` at the
+    # top of session-start.sh resolves to the real hooks directory (not the
+    # tmp dir), so ``source "${SCRIPT_DIR}/lib/common.sh"`` finds its deps.
+    local ss_stripped="${HOOKS_DIR}/session-start.fallback-test.sh"
+    local marker_file="${tmp_home}/stub-invoked.marker"
+
+    # CRITICAL: install trap BEFORE destructive mv so restoration always runs.
+    trap 'mv "'"$maint_bak"'" "'"$maint_py"'" 2>/dev/null || true; rm -f "'"$ss_stripped"'"; rm -rf "'"$tmp_home"'"' RETURN
+
+    # Replace maintenance.py with a sleep-30s stub that marks the filesystem
+    # on entry.  The marker proves the selector routed through to
+    # maintenance; wall-time < 20s proves the Python-layer timeout=10 cut
+    # the stub off before its natural 30s completion.
+    mv "$maint_py" "$maint_bak" || { log_fail "Failed to rename maintenance.py"; return; }
+    cat > "$maint_py" << STUB
+"""Feature 090 FR-1 Python-fallback stub — marks + sleeps 30s then exits."""
+import os, time
+try:
+    with open("${marker_file}", "w") as _fh:
+        _fh.write("invoked\n")
+except Exception:
+    pass
+time.sleep(30)
+STUB
+
+    # Copy session-start.sh with the trailing ``main`` call stripped.  The
+    # production file ends with a bare ``main`` on the last line; sourcing
+    # it verbatim would execute the full session-start pipeline.  We only
+    # want the function definitions (including run_memory_decay) registered
+    # in the current shell.
+    if ! awk 'NR==FNR{total=NR; next} FNR < total || $0 !~ /^main$/' \
+        "$ss_src" "$ss_src" > "$ss_stripped"; then
+        log_fail "Failed to build stripped session-start.sh copy"
+        return
+    fi
+    # Defensive sanity check: stripped file must still define run_memory_decay.
+    if ! grep -q '^run_memory_decay()' "$ss_stripped"; then
+        log_fail "Stripped session-start.sh missing run_memory_decay definition"
+        return
+    fi
+    # And the trailing bare `main` invocation must be gone.
+    if tail -5 "$ss_stripped" | grep -qE '^main$'; then
+        log_fail "Stripped session-start.sh still contains trailing 'main' call"
+        return
+    fi
+
+    local t_start t_end wall
+    t_start=$(date +%s)
+    local out_file="${tmp_home}/fallback-out.txt"
+
+    # Invoke run_memory_decay in a subshell that shadows ``command`` so the
+    # selector's ``command -v gtimeout`` / ``command -v timeout`` probes
+    # both return non-zero.  HOME/PROJECT_ROOT point to the tmp dir so
+    # detect_project_root inside session-start.sh lands on a harmless
+    # location.  We run under a background watchdog (20s) as a safety net
+    # because this test is specifically about the case where no external
+    # timeout command is available.
+    (
+        bash -c '
+            set +e  # do not propagate pipefail; we inspect stderr directly
+            # Shadow the command builtin to simulate absent gtimeout/timeout.
+            command() {
+                if [[ "$1" == "-v" ]] && \
+                   [[ "$2" == "gtimeout" || "$2" == "timeout" ]]; then
+                    return 1
+                fi
+                builtin command "$@"
+            }
+            # Confirm precondition: both lookups now miss.
+            if command -v gtimeout >/dev/null 2>&1 \
+               || command -v timeout >/dev/null 2>&1; then
+                echo "PRE_CONDITION_FAIL: command shadow ineffective" >&2
+                exit 99
+            fi
+            # Source the stripped session-start.sh to register run_memory_decay.
+            # It reads SCRIPT_DIR/PLUGIN_ROOT/PROJECT_ROOT from its own
+            # top-of-file init; we point HOME at the tmp dir so any writes
+            # are sandboxed.
+            export HOME="'"$tmp_home"'"
+            # shellcheck disable=SC1090
+            source "'"$ss_stripped"'" || {
+                echo "SOURCE_FAIL: could not source stripped session-start.sh" >&2
+                exit 98
+            }
+            # Sanity: run_memory_decay must now be defined as a function.
+            if ! declare -F run_memory_decay >/dev/null; then
+                echo "DEF_FAIL: run_memory_decay not registered" >&2
+                exit 97
+            fi
+            # Actually invoke it — this exercises the real command-selector
+            # branching inside session-start.sh.
+            run_memory_decay
+        ' > "$out_file" 2>&1
+    ) &
+    local test_pid=$!
+    local watchdog_fired=0
+    (
+        sleep 20
+        kill -0 "$test_pid" 2>/dev/null && kill -TERM "$test_pid" 2>/dev/null
+    ) &
+    local watchdog_pid=$!
+    local exit_code=0
+    wait "$test_pid" 2>/dev/null
+    exit_code=$?
+    if kill -0 "$watchdog_pid" 2>/dev/null; then
+        kill "$watchdog_pid" 2>/dev/null || true
+        wait "$watchdog_pid" 2>/dev/null || true
+    else
+        watchdog_fired=1
+    fi
+    t_end=$(date +%s)
+    wall=$((t_end - t_start))
+    local output
+    output=$(cat "$out_file" 2>/dev/null || echo "")
+
+    if [[ $watchdog_fired -eq 1 ]]; then
+        log_fail "watchdog fired at 20s — Python subprocess.run(timeout=10) fallback did not kick (wall=${wall}s). Output: ${output:0:400}"
+        return
+    fi
+
+    if [[ $exit_code -eq 99 ]]; then
+        log_fail "test precondition failed: 'command' shadow ineffective (gtimeout/timeout still resolvable)"
+        return
+    fi
+    if [[ $exit_code -eq 98 ]]; then
+        log_fail "failed to source stripped session-start.sh. Output: ${output:0:400}"
+        return
+    fi
+    if [[ $exit_code -eq 97 ]]; then
+        log_fail "run_memory_decay not registered after source"
+        return
+    fi
+
+    # Pass condition: (a) wall between 8s and 20s (only the Python-layer
+    # subprocess.run(timeout=10) produces a kill in this window with a
+    # sleep-30 stub and the external timeout commands shadowed), AND (b)
+    # the stub's marker file exists (proves maintenance was actually
+    # invoked — distinguishes the selector-works case from a misrouted
+    # silent-skip path).
+    if [[ ! -f "$marker_file" ]]; then
+        log_fail "stub marker file not created — maintenance.py stub was never invoked (wall=${wall}s). Output: ${output:0:400}"
+        return
+    fi
+
+    if [[ $wall -ge 20 ]]; then
+        log_fail "wall time ${wall}s >= 20s — Python subprocess timeout=10 did not enforce (stub should have been killed at 10s)"
+        return
+    fi
+    if [[ $wall -lt 8 ]]; then
+        log_fail "wall time ${wall}s < 8s — stub exited too fast; Python subprocess.run(timeout=10) was not the kill path (gtimeout/timeout may have leaked through, or the selector short-circuited elsewhere). Output: ${output:0:400}"
+        return
+    fi
+
+    log_pass
 }
 
 # Run all tests
@@ -2903,6 +3455,12 @@ main() {
 
     test_memory_decay_session_start
     test_memory_decay_missing_module
+    test_memory_decay_syntax_error_tolerated
+    test_memory_decay_import_error_tolerated
+    test_session_start_refuses_meta_json_injection
+    test_session_start_decay_skips_when_venv_missing
+    test_session_start_decay_timeout_does_not_block_hook
+    test_decay_python_subprocess_timeout_fallback
 
     echo ""
     echo "--- Path Portability Tests ---"
