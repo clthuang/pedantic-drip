@@ -11,6 +11,11 @@ from collections.abc import Iterator
 from datetime import datetime, timezone
 from typing import Callable
 
+# Feature 092 FR-5 (#00197): Z-suffix ISO-8601 format matching production
+# `_config_utils._iso_utc` output (strftime("%Y-%m-%dT%H:%M:%SZ")).
+# Used by `MemoryDatabase.scan_decay_candidates` to validate `not_null_cutoff`.
+_ISO8601_Z_PATTERN = re.compile(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$')
+
 
 def _assert_testing_context() -> None:
     """Refuse ``*_for_testing`` invocations outside an active pytest test.
@@ -969,15 +974,29 @@ class MemoryDatabase:
         Parameters
         ----------
         not_null_cutoff : str
-            Z-suffix ISO-8601 timestamp. Rows matching
+            Z-suffix ISO-8601 timestamp (YYYY-MM-DDTHH:MM:SSZ). Rows matching
             ``(last_recalled_at IS NOT NULL AND last_recalled_at < ?)``
-            OR ``(last_recalled_at IS NULL)`` are returned.
+            OR ``(last_recalled_at IS NULL)`` are returned. Feature 092 FR-5
+            (#00197): malformed cutoff → stderr warning + empty result (NO
+            exception — consistent with FR-1 clamp philosophy).
         scan_limit : int
             Maximum rows to return. Caller pre-clamps via
             ``_resolve_int_config`` (range ``[1000, 10_000_000]`` in
-            production). ``scan_limit <= 0`` yields zero rows (SQLite
-            LIMIT semantics) with no exception.
+            production). Feature 092 FR-1 (#00193): ``scan_limit <= 0`` yields
+            zero rows (negative values clamped to 0 before SQL binding to
+            avoid SQLite LIMIT -1 = unlimited semantics).
         """
+        # Feature 092 FR-5 (#00197): validate Z-suffix format; log-and-skip on
+        # violation (no exception — matches FR-1 clamp philosophy).
+        if not _ISO8601_Z_PATTERN.match(not_null_cutoff):
+            sys.stderr.write(
+                f"[scan_decay_candidates] not_null_cutoff format violation: "
+                f"expected YYYY-MM-DDTHH:MM:SSZ, got {not_null_cutoff!r}; "
+                f"returning empty result\n"
+            )
+            return  # empty generator (no yield)
+        # Feature 092 FR-1 (#00193): clamp negatives — SQLite LIMIT -1 = unlimited semantics.
+        scan_limit = max(0, scan_limit)
         cursor = self._conn.execute(
             "SELECT id, confidence, source, last_recalled_at, created_at "
             "FROM entries "
@@ -1030,6 +1049,11 @@ class MemoryDatabase:
         """
         if not ids:
             return 0
+        # Feature 092 FR-8 (#00200): reject empty now_iso after empty-ids short-circuit.
+        # Empty string would bind `updated_at=""` which silently corrupts the
+        # `updated_at < ?` guard used by intra-tick idempotency downstream.
+        if not now_iso:
+            raise ValueError("now_iso must be non-empty ISO-8601 timestamp")
         if new_confidence not in ("medium", "low"):
             raise ValueError(f"invalid new_confidence: {new_confidence!r}")
 
