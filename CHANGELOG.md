@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.16.1] - 2026-04-24
+
+### Fixed
+- **DoS vector in `MemoryDatabase.scan_decay_candidates`**: `scan_limit < 0` is now clamped to 0 before SQL binding. SQLite `LIMIT -1` = unlimited, which on populated knowledge banks could materialize the entire `entries` table — documented behavior said "yields zero rows" but was factually wrong for negatives (feature:092 FR-1, #00193).
+- **`MemoryDatabase.scan_decay_candidates` format validation**: Malformed `not_null_cutoff` (e.g., `+00:00` suffix, empty, non-ISO) now logs a stderr warning and returns an empty generator instead of silently executing SQL with wrong data. Production caller (via `_iso_utc`) never triggers the warning path (feature:092 FR-5, #00197).
+- **`MemoryDatabase.batch_demote` empty `now_iso` validation**: Raises `ValueError` when `ids` is non-empty but `now_iso` is empty (empty-ids short-circuit preserved) to prevent `updated_at=""` corruption (feature:092 FR-8, #00200).
+- **Filesystem-root write hazard in AC-22b/c test harness**: `test-hooks.sh` fault-injection tests now use single-quoted `trap` body + triple `mktemp -d` guards (failure / non-empty / is-directory) so a `mktemp` failure can no longer lead to creating `/semantic_memory` at filesystem root (feature:092 FR-2, #00194).
+- **AC-4d production-file invariant was a silent no-op**: test-hooks.sh AC-22b/c now use `git -C "$(git rev-parse --show-toplevel)"` for the mutation check, so it actually fires when production `maintenance.py` is dirty. Verified via manual fire-test (feature:092 FR-3, #00195).
+- **Symlink-follow vector in `cp -R`**: changed to `cp -R -P` (no-dereference) so planted symlinks in the source tree can't redirect the fault-injection copy (feature:092 FR-4, #00196).
+
+### Changed
+- **`_run_maintenance_fault_test` helper** extracted in `test-hooks.sh` — consolidates ~55 lines of duplicated scaffold between AC-22b (SyntaxError) and AC-22c (ImportError). Parametrized by `inject_mode` (append/prepend) + payload (feature:092 FR-7, #00199).
+- **AC-22b/c PASS markers**: test-hooks.sh now emits explicit `AC-22b PASS: ...` / `AC-22c PASS: ...` lines from inside the subshell (where `raw_exit` is in scope) so grep-based DoD checks match actual output (feature:092 FR-9, #00201).
+- **Feature 091 spec clamp values corrected** from stale `[1000, 500000]` to actual `[1000, 10_000_000]` at two locations in `docs/features/091-082-qa-residual-cleanup/spec.md` (feature:092 FR-6, #00198).
+
 ## [4.16.0] - 2026-04-20
 
 ### Added

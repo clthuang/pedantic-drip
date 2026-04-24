@@ -46,7 +46,7 @@ Annotate entries in `docs/backlog.md` per the existing closure convention (see l
 | 11 | #00104 | closure | ` (fixed in feature:088 — insert_test_entry_for_testing + execute_test_sql_for_testing helpers)` |
 | 12 | #00105 | closure | ` (fixed in feature:088 — _config_utils.py single impl with functools.partial bindings)` |
 | 13 | #00106 | closure | ` (fixed in feature:088 — dead now_iso param removed from _select_candidates)` |
-| 14 | #00107 | closure | ` (fixed in feature:088 — LIMIT ? with scan_limit clamped to [1000, 500000])` |
+| 14 | #00107 | closure | ` (fixed in feature:088 — LIMIT ? with scan_limit clamped to [1000, 10_000_000])` |
 | 15 | #00108 | closure | ` (fixed in feature:088 — spec Amendment B for FR-2 NULL-branch)` |
 | 16 | #00109 | closure | ` (fixed in feature:088 — spec detailed threading contract at AC-20b)` |
 | 17 | #00111 | closure | ` (fixed in feature:088 — _TEST_EPOCH rename with NOW alias)` |
@@ -136,7 +136,7 @@ def scan_decay_candidates(
 ```
 Parameters bound positionally: `(not_null_cutoff, scan_limit)`. The implementation MUST reproduce this string byte-for-byte (copied from current `maintenance.py:260-266`) — no restructuring, no simplification, no reformatting.
 
-**Edge-case behavior (scan_limit):** Callers are responsible for pre-clamping `scan_limit` to a sensible range. Current production callers (`_select_candidates`) receive the already-clamped value from `_resolve_int_config` which bounds it to `[1000, 500000]`. The new method does NOT re-validate; a caller passing `scan_limit <= 0` receives zero rows (SQLite LIMIT semantics) with no exception. This matches current behavior.
+**Edge-case behavior (scan_limit):** Callers are responsible for pre-clamping `scan_limit` to a sensible range. Current production callers (`_select_candidates`) receive the already-clamped value from `_resolve_int_config` which bounds it to `[1000, 10_000_000]`. The new method does NOT re-validate; a caller passing `scan_limit <= 0` receives zero rows (SQLite LIMIT semantics) with no exception. This matches current behavior.
 
 **Required caller update:** `plugins/pd/hooks/lib/semantic_memory/maintenance.py:_select_candidates` (lines 259-268) replaces `db._conn.execute(...)` + `for row in cursor: yield row` with `yield from db.scan_decay_candidates(not_null_cutoff=not_null_cutoff, scan_limit=scan_limit)`.
 

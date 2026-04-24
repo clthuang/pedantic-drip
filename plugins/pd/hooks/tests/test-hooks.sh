@@ -2629,6 +2629,15 @@ TMPL
 test_memory_decay_session_start() {
     log_test "session-start invokes memory decay and surfaces Decay summary (AC-21)"
 
+    # Skip when venv is absent: session-start.sh's first_run_warning path
+    # short-circuits decay when ${PLUGIN_ROOT}/.venv/bin/python is missing,
+    # surfacing "Setup required for MCP workflow tools" instead of the
+    # "Decay: ..." summary. CI runs bare (no setup.sh) — skip cleanly there.
+    if [[ ! -x "$PLUGIN_VENV_PYTHON" ]]; then
+        log_pass  # SKIP: venv missing (CI env without pd setup)
+        return
+    fi
+
     local tmp_home
     tmp_home=$(mktemp -d)
     # Cleanup isolated HOME on function exit (success OR failure)
@@ -2957,8 +2966,28 @@ assert 'Decay:' not in ctx, f'expected NO decay summary when module missing, got
 # and invokes the same command-line the production hook uses with the
 # ``2>/dev/null || true`` guard. Production maintenance.py is NEVER mutated
 # (AC-4d invariant).
-test_memory_decay_syntax_error_tolerated() {
-    log_test "session-start guard tolerates SyntaxError in maintenance.py (AC-22b, FR-3)"
+# Feature 092 FR-7 (#00199): shared scaffold for AC-22b/c fault-injection tests.
+# Consolidates ~55 lines of duplicated scaffold (subshell setup, mktemp guards,
+# package copy, positive control, negative control, positive contract, AC-4d
+# invariant) into one helper. Parametrized by inject_mode ("append"|"prepend")
+# + inject_payload.
+#
+# Safety invariants:
+#   - set +e (NOT -e: negative-control deliberately returns non-zero; `set -e`
+#     would terminate before raw_exit=$? captures the exit. See feature 092 TD-4.)
+#   - Triple mktemp guard (failure / non-empty / is-directory) — FR-2 (#00194).
+#   - Single-quoted trap body for deferred expansion — FR-2 (#00194).
+#   - cp -R -P (no-dereference symlinks) — FR-4 (#00196).
+#   - AC-4d invariant uses `git -C "$(git rev-parse --show-toplevel)"` — FR-3 (#00195).
+#   - Explicit PASS echo INSIDE subshell (raw_exit in scope) — FR-9 (#00201).
+#
+# Usage: _run_maintenance_fault_test <label> <t7_tag> <inject_mode> <inject_payload>
+#   inject_mode: "append" (AC-22b SyntaxError) | "prepend" (AC-22c ImportError)
+_run_maintenance_fault_test() {
+    local test_label="$1"
+    local t7_tag="$2"
+    local inject_mode="$3"
+    local inject_payload="$4"
 
     if [[ ! -x "$PLUGIN_VENV_PYTHON" ]]; then
         log_pass  # SKIP: venv missing — cannot exercise real production pattern
@@ -2966,121 +2995,87 @@ test_memory_decay_syntax_error_tolerated() {
     fi
 
     (
-        set +e
-        PKG_TMPDIR=$(mktemp -d)
-        trap "rm -rf \"$PKG_TMPDIR\"" EXIT
-        mkdir -p "$PKG_TMPDIR/semantic_memory"
-        cp -R "${HOOKS_DIR}/lib/semantic_memory/." "$PKG_TMPDIR/semantic_memory/"
+        set +e  # NOT -e: negative-control Python invocation deliberately
+                # returns non-zero; set -e would terminate before raw_exit
+                # is captured. Feature 092 TD-4.
+        PKG_TMPDIR=$(mktemp -d) || { log_fail "mktemp -d failed"; exit 1; }
+        [ -n "$PKG_TMPDIR" ] || { log_fail "mktemp -d returned empty"; exit 1; }
+        [ -d "$PKG_TMPDIR" ] || { log_fail "mktemp -d target not a directory"; exit 1; }
+        trap 'rm -rf -- "$PKG_TMPDIR"' EXIT
 
-        if [ ! -f "$PKG_TMPDIR/semantic_memory/__init__.py" ]; then
-            echo "FAIL: __init__.py missing from copy"
-            exit 1
-        fi
+        mkdir -p "$PKG_TMPDIR/semantic_memory" \
+            || { echo "FAIL: mkdir -p failed"; exit 1; }
+        cp -R -P "${HOOKS_DIR}/lib/semantic_memory/." "$PKG_TMPDIR/semantic_memory/" \
+            || { echo "FAIL: cp -R -P failed"; exit 1; }
+
+        [ -f "$PKG_TMPDIR/semantic_memory/__init__.py" ] \
+            || { echo "FAIL: __init__.py missing from copy"; exit 1; }
 
         # Positive control: clean copy must import successfully.
-        if ! PYTHONPATH="$PKG_TMPDIR" "$PLUGIN_VENV_PYTHON" \
-            -c 'import semantic_memory.maintenance' 2>/dev/null; then
-            echo "FAIL: clean copy does not import"
-            exit 1
-        fi
+        PYTHONPATH="$PKG_TMPDIR" "$PLUGIN_VENV_PYTHON" \
+            -c 'import semantic_memory.maintenance' 2>/dev/null \
+            || { echo "FAIL: clean copy does not import"; exit 1; }
 
-        # Inject SyntaxError.
-        printf '\ndef broken(:\n' >> "$PKG_TMPDIR/semantic_memory/maintenance.py"
+        # Inject fault per mode:
+        case "$inject_mode" in
+            append)
+                printf '%s' "$inject_payload" >> "$PKG_TMPDIR/semantic_memory/maintenance.py" \
+                    || { echo "FAIL: append failed"; exit 1; }
+                ;;
+            prepend)
+                {
+                    echo "$inject_payload"
+                    cat "$PKG_TMPDIR/semantic_memory/maintenance.py"
+                } > "$PKG_TMPDIR/semantic_memory/maintenance.py.new" \
+                    || { echo "FAIL: prepend failed"; exit 1; }
+                mv "$PKG_TMPDIR/semantic_memory/maintenance.py.new" \
+                   "$PKG_TMPDIR/semantic_memory/maintenance.py" \
+                    || { echo "FAIL: mv failed"; exit 1; }
+                ;;
+            *)
+                echo "FAIL: unknown inject_mode=$inject_mode"; exit 1
+                ;;
+        esac
 
         # Negative control: WITHOUT the shell guard, raw invocation MUST fail.
         PYTHONPATH="$PKG_TMPDIR" "$PLUGIN_VENV_PYTHON" \
             -m semantic_memory.maintenance --decay --project-root . >/dev/null 2>&1
         raw_exit=$?
-        if [ "$raw_exit" -eq 0 ]; then
-            echo "FAIL: AC-22b fault did not trigger — raw exit was 0"
-            exit 1
-        fi
+        [ "$raw_exit" -ne 0 ] \
+            || { echo "FAIL: ${test_label} fault did not trigger — raw exit was 0"; exit 1; }
 
-        # Positive contract: WITH production guard pattern (session-start.sh:719).
+        # Positive contract: WITH production guard pattern (session-start.sh).
         PYTHONPATH="$PKG_TMPDIR" "$PLUGIN_VENV_PYTHON" \
             -m semantic_memory.maintenance --decay --project-root . 2>/dev/null || true
 
-        exit 0
+        # Feature 092 FR-9 (#00201): explicit PASS marker (raw_exit in scope here).
+        echo "${test_label} PASS: shell guard tolerated Python failure (raw_exit=$raw_exit)"
     )
     local subshell_exit=$?
     if [ "$subshell_exit" -eq 0 ]; then
         log_pass
     else
-        log_fail "AC-22b subshell reported failure (exit $subshell_exit)"
+        log_fail "${test_label} subshell reported failure (exit $subshell_exit)"
     fi
 
-    # AC-4d invariant: production maintenance.py unchanged.
+    # Feature 092 FR-3 (#00195): AC-4d invariant uses repo-root-absolute git call.
     local git_status
-    git_status=$(cd "$(dirname "${HOOKS_DIR}")" && git status --porcelain "plugins/pd/hooks/lib/semantic_memory/maintenance.py" 2>/dev/null || true)
+    git_status=$(git -C "$(git rev-parse --show-toplevel)" status --porcelain \
+        plugins/pd/hooks/lib/semantic_memory/maintenance.py 2>/dev/null || true)
     if [ -n "$git_status" ]; then
-        log_test "AC-4d invariant: production maintenance.py untouched (T7a)"
+        log_test "AC-4d invariant: production maintenance.py untouched (${t7_tag})"
         log_fail "production maintenance.py mutated: $git_status"
     fi
 }
 
+test_memory_decay_syntax_error_tolerated() {
+    log_test "session-start guard tolerates SyntaxError in maintenance.py (AC-22b, FR-3)"
+    _run_maintenance_fault_test "AC-22b" "T7a" "append" $'\ndef broken(:\n'
+}
+
 test_memory_decay_import_error_tolerated() {
     log_test "session-start guard tolerates ImportError in maintenance.py (AC-22c, FR-3)"
-
-    if [[ ! -x "$PLUGIN_VENV_PYTHON" ]]; then
-        log_pass  # SKIP: venv missing
-        return
-    fi
-
-    (
-        set +e
-        PKG_TMPDIR=$(mktemp -d)
-        trap "rm -rf \"$PKG_TMPDIR\"" EXIT
-        mkdir -p "$PKG_TMPDIR/semantic_memory"
-        cp -R "${HOOKS_DIR}/lib/semantic_memory/." "$PKG_TMPDIR/semantic_memory/"
-
-        if [ ! -f "$PKG_TMPDIR/semantic_memory/__init__.py" ]; then
-            echo "FAIL: __init__.py missing from copy"
-            exit 1
-        fi
-
-        if ! PYTHONPATH="$PKG_TMPDIR" "$PLUGIN_VENV_PYTHON" \
-            -c 'import semantic_memory.maintenance' 2>/dev/null; then
-            echo "FAIL: clean copy does not import"
-            exit 1
-        fi
-
-        # Inject ImportError via sed-free prepend (portable — no BSD/GNU sed divergence).
-        {
-            echo 'import no_such_module_really_does_not_exist'
-            cat "$PKG_TMPDIR/semantic_memory/maintenance.py"
-        } > "$PKG_TMPDIR/semantic_memory/maintenance.py.new"
-        mv "$PKG_TMPDIR/semantic_memory/maintenance.py.new" \
-           "$PKG_TMPDIR/semantic_memory/maintenance.py"
-
-        # Negative control.
-        PYTHONPATH="$PKG_TMPDIR" "$PLUGIN_VENV_PYTHON" \
-            -m semantic_memory.maintenance --decay --project-root . >/dev/null 2>&1
-        raw_exit=$?
-        if [ "$raw_exit" -eq 0 ]; then
-            echo "FAIL: AC-22c fault did not trigger — raw exit was 0"
-            exit 1
-        fi
-
-        # Positive contract.
-        PYTHONPATH="$PKG_TMPDIR" "$PLUGIN_VENV_PYTHON" \
-            -m semantic_memory.maintenance --decay --project-root . 2>/dev/null || true
-
-        exit 0
-    )
-    local subshell_exit=$?
-    if [ "$subshell_exit" -eq 0 ]; then
-        log_pass
-    else
-        log_fail "AC-22c subshell reported failure (exit $subshell_exit)"
-    fi
-
-    # AC-4d invariant: production maintenance.py unchanged.
-    local git_status
-    git_status=$(cd "$(dirname "${HOOKS_DIR}")" && git status --porcelain "plugins/pd/hooks/lib/semantic_memory/maintenance.py" 2>/dev/null || true)
-    if [ -n "$git_status" ]; then
-        log_test "AC-4d invariant: production maintenance.py untouched (T7b)"
-        log_fail "production maintenance.py mutated: $git_status"
-    fi
+    _run_maintenance_fault_test "AC-22c" "T7b" "prepend" "import no_such_module_really_does_not_exist"
 }
 
 # Feature 089 AC-21 (#00163 / FR-1.8): Python subprocess.run(..., timeout=10)
@@ -3142,6 +3137,15 @@ test_memory_decay_import_error_tolerated() {
 # stronger selector-exercise signal than the swallowed stderr string.
 test_decay_python_subprocess_timeout_fallback() {
     log_test "run_memory_decay falls back to Python subprocess timeout when no external timeout cmd (AC-21)"
+
+    # Skip when venv is absent: run_memory_decay in session-start.sh
+    # early-returns when VENV_PYTHON is missing (lines 700-702), so the
+    # stubbed maintenance.py is never invoked and the marker file is
+    # never created. CI runs bare (no setup.sh) — skip cleanly there.
+    if [[ ! -x "$PLUGIN_VENV_PYTHON" ]]; then
+        log_pass  # SKIP: venv missing (CI env without pd setup)
+        return
+    fi
 
     local tmp_home
     tmp_home=$(mktemp -d)

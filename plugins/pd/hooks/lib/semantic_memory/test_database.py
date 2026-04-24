@@ -1987,6 +1987,53 @@ class TestScanDecayCandidates:
         )
         assert isinstance(result, Iterator)
 
+    def test_scan_decay_candidates_clamps_negative_scan_limit_to_zero(
+        self, db: MemoryDatabase,
+    ):
+        """Feature 092 AC-1 / FR-1 (#00193): scan_limit=-1 → zero rows
+        (clamped, not SQLite LIMIT -1 = unlimited DoS vector)."""
+        db.insert_test_entry_for_testing(
+            entry_id="e1",
+            description="x",
+            confidence="high",
+            source="session-capture",
+            last_recalled_at="2026-04-15T00:00:00Z",
+            created_at="2026-04-15T00:00:00Z",
+        )
+        rows = list(db.scan_decay_candidates(
+            not_null_cutoff="2026-04-20T00:00:00Z", scan_limit=-1,
+        ))
+        assert rows == [], \
+            f"expected zero rows from clamp; got {len(rows)} (SQLite LIMIT -1 = unlimited if unclamped)"
+
+    def test_scan_decay_candidates_rejects_malformed_cutoff(
+        self, db: MemoryDatabase, capsys,
+    ):
+        """Feature 092 AC-7 / FR-5 (#00197): malformed cutoff → empty result
+        + stderr 'format violation' + NO exception (log-and-skip, consistent
+        with FR-1 clamp philosophy)."""
+        for bad_cutoff in ("+00:00", "", "not-iso", "2026-04-20T00:00:00+00:00"):
+            rows = list(db.scan_decay_candidates(
+                not_null_cutoff=bad_cutoff, scan_limit=100,
+            ))
+            assert rows == [], f"expected empty for {bad_cutoff!r}; got {rows}"
+        captured = capsys.readouterr()
+        assert "format violation" in captured.err, \
+            f"expected stderr to contain 'format violation'; got: {captured.err!r}"
+
+    def test_scan_decay_candidates_matches_iso_utc_output(
+        self, db: MemoryDatabase,
+    ):
+        """Feature 092 AC-7 / FR-5: production _iso_utc output must pass the
+        regex (prevents silent production breaker if _iso_utc format drifts)."""
+        from datetime import datetime, timezone
+        from semantic_memory._config_utils import _iso_utc
+        from semantic_memory.database import _ISO8601_Z_PATTERN
+        now_iso = _iso_utc(datetime(2026, 4, 16, 12, 0, 0, tzinfo=timezone.utc))
+        assert _ISO8601_Z_PATTERN.match(now_iso), (
+            f"_iso_utc output {now_iso!r} does not match regex — format drift"
+        )
+
 
 class TestBatchDemote:
     """Task 2.3 / 2.4 — design I-7 (BEGIN IMMEDIATE, 500-ids chunking,
@@ -2000,6 +2047,25 @@ class TestBatchDemote:
         try:
             result = db.batch_demote([], "medium", self.NOW_ISO)
             assert result == 0
+        finally:
+            db.close()
+
+    def test_batch_demote_empty_now_iso_with_ids_raises(self):
+        """Feature 092 AC-10 / FR-8 (#00200): ids=['x'] + now_iso='' →
+        ValueError (prevents `updated_at=""` corruption)."""
+        db = MemoryDatabase(":memory:")
+        try:
+            with pytest.raises(ValueError, match="now_iso must be non-empty"):
+                db.batch_demote(["x"], "medium", "")
+        finally:
+            db.close()
+
+    def test_batch_demote_empty_now_iso_with_empty_ids_returns_zero(self):
+        """Feature 092 AC-10 / FR-8: ids=[] + now_iso='' → 0 (preserves
+        empty-ids short-circuit; empty-ids trumps empty-now_iso)."""
+        db = MemoryDatabase(":memory:")
+        try:
+            assert db.batch_demote([], "medium", "") == 0
         finally:
             db.close()
 
