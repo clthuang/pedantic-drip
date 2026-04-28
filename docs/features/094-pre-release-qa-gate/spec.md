@@ -15,7 +15,7 @@ This closes the structural gap responsible for 4 consecutive post-release advers
 
 ## Acceptance Criteria (binary-verifiable)
 
-- **AC-1** `plugins/pd/commands/finish-feature.md` contains a heading line matching `^##\s.*Step 5b.*Pre-Release Adversarial QA Gate` between the existing Step 5a end and Step 5a-bis start.
+- **AC-1** `plugins/pd/commands/finish-feature.md` contains a heading line matching `^#{2,4}\s.*Step 5b.*Pre-Release Adversarial QA Gate` between the existing Step 5a end and Step 5a-bis start. Regex allows H2-H4 because Step 5a / Step 5a-bis use H3 (`### Step Na`) under `## Step 5: Execute Selected Option`; Step 5b at H3 preserves the natural sub-step hierarchy. Amended from initial `^##\s` after dogfood self-test confirmed H3 is the structurally-correct level.
 - **AC-2** Step 5b prose contains all 4 reviewer agent names: `pd:security-reviewer`, `pd:code-quality-reviewer`, `pd:implementation-reviewer`, `pd:test-deepener` — each with explicit `model:` line matching the agent's frontmatter (opus/sonnet/opus/opus respectively).
 - **AC-3** Step 5b prose contains the literal phrase `dispatch all 4 reviewers in parallel` (no "or equivalent" — exact match required for binary verification via `grep -q`).
 - **AC-4** Step 5b dispatches `pd:test-deepener` in **Step A mode only** — the dispatch prompt explicitly contains the literal token `Step A` and instructs the agent to return JSON outline only (no test-write).
@@ -232,7 +232,7 @@ test_finish_feature_step_5b_present() {
     log_test "finish-feature.md contains Step 5b QA gate dispatch"
     local file="${PROJECT_ROOT}/plugins/pd/commands/finish-feature.md"
     local fails=0
-    grep -qE '^##\s.*Step 5b.*Pre-Release Adversarial QA Gate' "$file" || { echo "  AC-14.1 missing Step 5b heading"; ((fails++)); }
+    grep -qE '^#{2,4}\s.*Step 5b.*Pre-Release Adversarial QA Gate' "$file" || { echo "  AC-14.1 missing Step 5b heading"; ((fails++)); }
     grep -q 'pd:security-reviewer' "$file" || { echo "  AC-14.2 missing pd:security-reviewer"; ((fails++)); }
     grep -q 'pd:code-quality-reviewer' "$file" || { echo "  AC-14.3 missing pd:code-quality-reviewer"; ((fails++)); }
     grep -q 'pd:implementation-reviewer' "$file" || { echo "  AC-14.4 missing pd:implementation-reviewer"; ((fails++)); }

@@ -157,7 +157,8 @@ def bucket(finding, all_findings):
 ```bash
 # Find max existing 5-digit ID anchored to start-of-list-line
 max_id=$(grep -oE '^- \*\*#[0-9]{5}\*\*' docs/backlog.md | grep -oE '[0-9]{5}' | sort -n | tail -1)
-next_id=$(printf '%05d' $((10#$max_id + 1)))
+# Fallback to 0 when backlog is empty or has no matches (per FR-7a step 2: "if no matches, start at 00001")
+next_id=$(printf '%05d' $((10#${max_id:-0} + 1)))
 ```
 
 For batch MED filing in one run: reserve IDs sequentially (`next_id`, `next_id+1`, ...) in the order the gate processes findings.
@@ -205,12 +206,22 @@ Append-only sections; consumed and deleted by `pd:retrospecting` skill (Step 2c)
 1. Compute current HEAD SHA: `git rev-parse HEAD`.
 2. If `.qa-gate.json` exists AND parses as JSON AND has all required fields AND `head_sha` matches current → SKIP dispatch, append `skip: HEAD {sha} at {iso}` line to `.qa-gate.log`, proceed to Step 5a-bis.
 3. **Corruption handling:** if `.qa-gate.json` exists but does not parse as JSON OR is missing `head_sha`/`gate_passed_at`/`summary` → treat as cache-miss, re-dispatch, append `cache-corrupt: re-dispatching at HEAD {sha}` to `.qa-gate.log`.
-4. Cache miss (HEAD differs OR file absent OR corrupt): dispatch reviewers. **Do NOT delete existing `.qa-gate.json` yet.** Only on PASS, atomically overwrite via temp file + `mv`:
+4. Cache miss (HEAD differs OR file absent OR corrupt): dispatch reviewers. **Do NOT delete existing `.qa-gate.json` yet.** Only on PASS, atomically overwrite via temp file + `mv`. Pass values via env vars (NOT shell-string interpolation — OWASP anti-pattern for future maintainers):
 
 ```bash
-python3 -c "import json,sys; print(json.dumps({'head_sha':'$HEAD','gate_passed_at':'$ISO','summary':{'high':$H,'med':$M,'low':$L}}))" > .qa-gate.json.tmp
+HEAD="$(git rev-parse HEAD)" ISO="$(date -u +%Y-%m-%dT%H:%M:%SZ)" H="$h_count" M="$m_count" L="$l_count" \
+python3 -c '
+import json, os
+print(json.dumps({
+    "head_sha": os.environ["HEAD"],
+    "gate_passed_at": os.environ["ISO"],
+    "summary": {"high": int(os.environ["H"]), "med": int(os.environ["M"]), "low": int(os.environ["L"])}
+}))
+' > .qa-gate.json.tmp
 mv .qa-gate.json.tmp .qa-gate.json
 ```
+
+This pattern eliminates shell→python3 string-interpolation surface even for future extensions that may add reviewer-supplied descriptions to the cache.
 
 5. On INCOMPLETE or HIGH-block, leave previous cache untouched (re-run on a subsequent fix-commit will mismatch SHA and re-dispatch).
 
