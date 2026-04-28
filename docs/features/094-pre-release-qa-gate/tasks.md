@@ -1,6 +1,10 @@
 # Tasks: Feature 094 — Pre-Release Adversarial QA Gate
 
-**Direct-orchestrator execution** with **TDD-first ordering** — tight scope (4 files, ~280 LOC) lands in a single atomic commit. Full task detail co-located in `plan.md` (Implementation Order + AC Coverage Matrix + exact Old/New text quotes); this file is the compact task index.
+**Direct-orchestrator execution** with **TDD-first ordering** — tight scope (4 files, ~280 LOC) lands in a single atomic commit.
+
+**⚠ Co-read requirement:** This file is a compact task index. The exact Old/New text quotes, function bodies, prose to insert, and 12-section content live in `plan.md`. The direct-orchestrator (Claude executing the implement phase) MUST co-read `plan.md` Implementation Order + AC Coverage Matrix when running each task — `tasks.md` alone is insufficient for execution. This is intentional per the 091/092/093 surgical-feature template (deliberate to avoid prose duplication between plan and tasks).
+
+If the implementer is a distributed subagent that receives ONLY `tasks.md`, that subagent must Read `plan.md` as its first action.
 
 ## Task Index
 
@@ -55,18 +59,21 @@ Per plan.md T3: 12 H2 sections matching `^## §[0-9]+ — `. Critical inline con
 - §12 must document override-storm trigger
 
 **DoD:**
-- File exists
-- `grep -cE '^## §[0-9]+ — ' qa-gate-procedure.md` ≥ 12
-- `grep -q 'import sys, json, re' qa-gate-procedure.md` exit 0
+- `[ -f docs/dev_guides/qa-gate-procedure.md ]` exit 0
+- `grep -cE '^## §[0-9]+ — ' docs/dev_guides/qa-gate-procedure.md` ≥ 12
+- `grep -q 'import sys, json, re' docs/dev_guides/qa-gate-procedure.md` exit 0
+- `grep -q 'FR-3\|FR-8\|FR-9' docs/dev_guides/qa-gate-procedure.md` exit 0
 - `test_qa_gate_procedure_doc_exists` flips FAIL → PASS
 
 ## T4 — retrospecting/SKILL.md (FR-7b)
 
 Per plan.md T4: insert "Step 2c: Fold Pre-Release QA Sidecars" before existing "Step 3: Write retro.md" at line 168.
 
-**DoD:**
-- `grep -q 'qa-gate-low-findings\.md\|qa-gate\.log\|Pre-release QA notes' plugins/pd/skills/retrospecting/SKILL.md` (3 separate greps, all exit 0)
-- `wc -l` = `PRE_LINES_RS + 15` (±5)
+**DoD (3 separate greps — all must exit 0):**
+- `grep -q 'qa-gate-low-findings\.md' plugins/pd/skills/retrospecting/SKILL.md` exit 0
+- `grep -q 'qa-gate\.log' plugins/pd/skills/retrospecting/SKILL.md` exit 0
+- `grep -q 'Pre-release QA notes' plugins/pd/skills/retrospecting/SKILL.md` exit 0
+- `wc -l < plugins/pd/skills/retrospecting/SKILL.md` = `PRE_LINES_RS + 15` (±5)
 
 ## T5 — Quality gates
 
@@ -81,6 +88,8 @@ bash plugins/pd/hooks/tests/test-hooks.sh        # exit 0
 - `validate.sh` warning count unchanged
 
 ## T6 — Dogfood self-test (3 phases)
+
+**Pre-step:** if `docs/features/094-pre-release-qa-gate/retro.md` does not exist, create it with `# Retro: Feature 094 — Pre-Release Adversarial QA Gate` H1. The "Manual Verification" section gets appended below; retrospect skill on completion will fold its own AORTA content above this section.
 
 Per plan.md T6:
 - **(a)** Self-dispatch via /pd:finish-feature gate prose on feature 094 branch — verify dispatch + bucket + parse paths; document AC-6/7/8/10/16/17 observations in retro.md "Manual Verification" section. Document AC-deferred-verification for AC-9/11/13/19 (need feature 095 first-run).
