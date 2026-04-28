@@ -29,7 +29,7 @@ This closes the structural gap responsible for 4 consecutive post-release advers
   - `gate_passed_at` matches `\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z`
   - `summary` is an object with `high`, `med`, `low` integer fields
 - **AC-7** On re-run with matching HEAD SHA, the gate skips dispatch and appends one line to `.qa-gate.log` (sidecar in feature dir) matching pattern `^skip: HEAD [0-9a-f]{40} at \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z` (audit log; folded into retro.md by retrospecting skill per FR-7b).
-- **AC-8** `qa-override.md` requirement: gate accepts override only when file exists AND `wc -c < qa-override.md` ≥ 50.
+- **AC-8** `qa-override.md` requirement: gate accepts override only when file exists AND `wc -c < qa-override.md` ≥ 50. **Rationale format resolved to plain prose** (PRD Open Question 5): user writes free-form rationale below the comment placeholder, no structured template required. The 50-char threshold measures the **user-authored portion only** (the gate-written frontmatter + H2 heading + comment placeholder do NOT count toward the threshold). Implementation: gate computes byte-count of the file content excluding (a) the YAML frontmatter block and (b) the literal comment placeholder line `<!-- User: write your rationale here ... -->`.
 - **AC-9** Override file format:
   - First override: gate writes top-level YAML frontmatter listing offending finding(s) + a `## Override 1 ({date})` H2 section with rationale comment placeholder. User fills the rationale below the comment (≥ 50 chars total file size).
   - Nth override (N ≥ 2): gate **does NOT modify the top-level frontmatter**. Gate appends a new H2 heading `## Override {N} ({date})` where N = `(max integer found in existing headings matching ^## Override (\d+)) + 1`; if no such headings exist, N = 1. Each H2 section contains its own inline findings list (markdown bullet list) + rationale comment placeholder.
@@ -140,6 +140,8 @@ Modify `plugins/pd/skills/retrospecting/SKILL.md` to add a step (anywhere before
    - `rm` the sidecar after successful fold.
 2. If neither sidecar exists: skip silently (no-op).
 
+**Note:** Either sidecar may exist independently. A skip-only gate run (cache hit) produces ONLY `.qa-gate.log` (no LOW findings written). A clean dispatch run with no LOW findings produces ONLY `.qa-gate.log` with `count:` lines. A blocked-on-HIGH run with LOWs filed produces both. The fold step must handle each sidecar independently — never require coexistence.
+
 ### FR-8 — Idempotency via HEAD-SHA cache
 
 **File:** `docs/features/{id}-{slug}/.qa-gate.json`
@@ -248,9 +250,18 @@ test_finish_feature_under_600_lines() {
     lines=$(wc -l < "${PROJECT_ROOT}/plugins/pd/commands/finish-feature.md")
     if [[ $lines -lt 600 ]]; then log_pass; else log_fail "finish-feature.md is $lines lines (>=600)"; fi
 }
+
+# Also: verify the extracted procedure doc exists and is non-trivial
+test_qa_gate_procedure_doc_exists() {
+    log_test "qa-gate-procedure.md exists and references key FRs"
+    local doc="${PROJECT_ROOT}/docs/dev_guides/qa-gate-procedure.md"
+    if [[ ! -f "$doc" ]]; then log_fail "missing $doc"; return; fi
+    grep -q 'FR-3\|FR-8\|FR-9' "$doc" || { log_fail "qa-gate-procedure.md missing key FR section markers"; return; }
+    log_pass
+}
 ```
 
-Register both in test runner section. Both must pass before merge.
+Register all three (`test_finish_feature_step_5b_present`, `test_finish_feature_under_600_lines`, `test_qa_gate_procedure_doc_exists`) in the test runner section. All three must pass before merge.
 
 ## Non-Functional Requirements
 
@@ -317,11 +328,21 @@ Register both in test runner section. Both must pass before merge.
 - Implementation Notes — revised line estimates (30–50 / 150–200 / 15 / 30) per spec-reviewer's "implausibly tight" critique. Reason: blocker 4.
 - Definition of Done — strengthened dogfood self-test to require synthetic-HIGH injection. Reason: suggestion 13.
 
+### Iteration 1 — phase-reviewer (sonnet, 2026-04-29)
+
+**Findings:** approved=true with 2 warnings + 2 suggestions
+
+**Corrections applied:**
+- FR-7b — added explicit note that `.qa-gate.log` and `.qa-gate-low-findings.md` are folded independently; skip-only-run produces only the log; clean-no-LOW run also only produces the log. Reason: Warning 1.
+- AC-8 — resolved Open Question 5 to "plain prose" rationale; specified that the 50-char threshold measures user-authored portion only (gate-written frontmatter + comment placeholder excluded from count). Reason: Warning 2.
+- FR-12 — added third test `test_qa_gate_procedure_doc_exists` asserting `docs/dev_guides/qa-gate-procedure.md` exists and contains FR section markers. Reason: Suggestion 1 (closes the gap where finish-feature.md stays small but procedure doc is never written).
+- DoD — expanded AC enumeration to "AC-1..AC-5, AC-5b, AC-6..AC-20" for unambiguous count. Reason: Suggestion 2.
+
 ## Definition of Done
 
-- [ ] All 21 ACs (AC-1..AC-20 + AC-5b) pass binary verification
+- [ ] All 21 ACs (AC-1..AC-5, AC-5b, AC-6..AC-20) pass binary verification
 - [ ] All 12 FRs implemented (FR-7 split as FR-7a + FR-7b)
 - [ ] All 4 NFRs met
 - [ ] `validate.sh` exit 0
-- [ ] `bash plugins/pd/hooks/tests/test-hooks.sh` exit 0 with both new tests (`test_finish_feature_step_5b_present` + `test_finish_feature_under_600_lines`) passing
+- [ ] `bash plugins/pd/hooks/tests/test-hooks.sh` exit 0 with all three new tests (`test_finish_feature_step_5b_present` + `test_finish_feature_under_600_lines` + `test_qa_gate_procedure_doc_exists`) passing
 - [ ] **Strengthened dogfood self-test:** dispatch the new gate against this feature's own diff (prose-only). Manually inject ONE synthetic HIGH-equivalent finding (e.g., a fake unbounded-LIMIT pattern in a code-block comment) into a sample file and confirm at least one reviewer flags it. Remove the synthetic injection before merge. The vacuous "zero findings on prose-only diff" pass is NOT sufficient evidence the dispatch+severity path works.
