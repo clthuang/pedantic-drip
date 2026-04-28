@@ -343,6 +343,84 @@ test_sync_cache_missing_source() {
     rm -rf "$tmpdir"
 }
 
+# Test 13b: sync-cache.sh detects pd install under any marketplace name
+# (regression guard for the my-local-plugins hardcode bug)
+test_sync_cache_detects_arbitrary_marketplace() {
+    log_test "sync-cache.sh detects pd install under non-my-local-plugins marketplace"
+
+    local tmpdir cache_dir
+    tmpdir=$(mktemp -d) || { log_fail "mktemp failed"; return; }
+    cache_dir="$tmpdir/.claude/plugins/cache/test-marketplace/pd/9.9.9"
+    mkdir -p "$cache_dir/.claude-plugin"
+    mkdir -p "$tmpdir/.claude/plugins/marketplaces/test-marketplace/.claude-plugin"
+
+    # Pre-populate cache plugin.json with stale content to detect overwrite
+    echo '{"name":"stale-marker"}' > "$cache_dir/.claude-plugin/plugin.json"
+
+    # Inject fake installed_plugins.json with non-my-local-plugins marketplace
+    cat > "$tmpdir/.claude/plugins/installed_plugins.json" <<EOF
+{
+  "version": 1,
+  "plugins": {
+    "pd@test-marketplace": [
+      {"scope":"user","installPath":"$cache_dir","version":"9.9.9"}
+    ]
+  }
+}
+EOF
+
+    local exit_code=0
+    HOME="$tmpdir" "${HOOKS_DIR}/sync-cache.sh" >/dev/null 2>&1 || exit_code=$?
+
+    # Cache plugin.json should now match source (rsync overwrote stale content)
+    local source_plugin_json="${HOOKS_DIR}/../.claude-plugin/plugin.json"
+    if [[ $exit_code -eq 0 ]] && cmp -s "$source_plugin_json" "$cache_dir/.claude-plugin/plugin.json"; then
+        log_pass
+    else
+        log_fail "expected sync to test-marketplace cache (exit=$exit_code, files differ)"
+    fi
+
+    rm -rf "$tmpdir"
+}
+
+# Test 13c: marketplace.json target derives from installPath, not hardcode
+test_sync_cache_marketplace_json_target_derives() {
+    log_test "sync-cache.sh derives marketplace.json target from installPath"
+
+    local tmpdir cache_dir mkt_cache_dir mkt_cache
+    tmpdir=$(mktemp -d) || { log_fail "mktemp failed"; return; }
+    cache_dir="$tmpdir/.claude/plugins/cache/derived-mkt/pd/1.0.0"
+    mkt_cache_dir="$tmpdir/.claude/plugins/marketplaces/derived-mkt/.claude-plugin"
+    mkt_cache="$mkt_cache_dir/marketplace.json"
+    mkdir -p "$cache_dir/.claude-plugin"
+    mkdir -p "$mkt_cache_dir"
+
+    # Pre-populate target with stale content
+    echo '{"stale":true}' > "$mkt_cache"
+
+    cat > "$tmpdir/.claude/plugins/installed_plugins.json" <<EOF
+{
+  "plugins": {
+    "pd@derived-mkt": [
+      {"scope":"user","installPath":"$cache_dir","version":"1.0.0"}
+    ]
+  }
+}
+EOF
+
+    local exit_code=0
+    HOME="$tmpdir" "${HOOKS_DIR}/sync-cache.sh" >/dev/null 2>&1 || exit_code=$?
+
+    local source_mkt="${PROJECT_ROOT}/.claude-plugin/marketplace.json"
+    if [[ $exit_code -eq 0 ]] && [[ -f "$source_mkt" ]] && cmp -s "$source_mkt" "$mkt_cache"; then
+        log_pass
+    else
+        log_fail "expected marketplace.json synced to derived-mkt path (exit=$exit_code)"
+    fi
+
+    rm -rf "$tmpdir"
+}
+
 # === YOLO Hook Tests ===
 
 # Helper: create temp YOLO config
@@ -3332,6 +3410,8 @@ main() {
     test_pre_push_guard_blocks_broken_meta
     test_sync_cache_json
     test_sync_cache_missing_source
+    test_sync_cache_detects_arbitrary_marketplace
+    test_sync_cache_marketplace_json_target_derives
 
     echo ""
     echo "--- YOLO Hook Tests ---"

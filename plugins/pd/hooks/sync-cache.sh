@@ -17,8 +17,8 @@ INSTALLED_PLUGINS="$HOME/.claude/plugins/installed_plugins.json"
 CACHE_PLUGIN=""
 
 if [[ -f "$INSTALLED_PLUGINS" ]]; then
-    # Extract installPath for pd@my-local-plugins
-    CACHE_PLUGIN=$(grep -o '"installPath": *"[^"]*my-local-plugins/pd/[^"]*"' "$INSTALLED_PLUGINS" 2>/dev/null | head -1 | sed 's/"installPath": *"\([^"]*\)"/\1/' || true)
+    # Match any pd marketplace install: .../cache/<marketplace>/pd/<version>
+    CACHE_PLUGIN=$(grep -oE '"installPath": *"[^"]*/cache/[^/]+/pd/[^"]+"' "$INSTALLED_PLUGINS" 2>/dev/null | head -1 | sed 's/"installPath": *"\([^"]*\)"/\1/' || true)
 fi
 
 # Exit gracefully if pd not found in installed_plugins.json
@@ -33,8 +33,10 @@ if [[ -d "${SOURCE_PLUGIN}" && -f "${SOURCE_PLUGIN}/.claude-plugin/plugin.json" 
 fi
 
 # Also sync marketplace.json to marketplace cache
+# Derive marketplace name from CACHE_PLUGIN: .../cache/<marketplace>/pd/<version>
 SOURCE_MARKETPLACE="${SOURCE_ROOT}/.claude-plugin/marketplace.json"
-CACHE_MARKETPLACE="$HOME/.claude/plugins/marketplaces/my-local-plugins/.claude-plugin/marketplace.json"
+MARKETPLACE_NAME="$(echo "$CACHE_PLUGIN" | sed -E 's|.*/cache/([^/]+)/pd/[^/]+/?$|\1|')"
+CACHE_MARKETPLACE="$HOME/.claude/plugins/marketplaces/${MARKETPLACE_NAME}/.claude-plugin/marketplace.json"
 
 if [[ -f "$SOURCE_MARKETPLACE" && -d "$(dirname "$CACHE_MARKETPLACE")" ]]; then
     cp "$SOURCE_MARKETPLACE" "$CACHE_MARKETPLACE" 2>/dev/null || true
