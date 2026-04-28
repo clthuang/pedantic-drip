@@ -184,7 +184,7 @@ Modify `plugins/pd/skills/retrospecting/SKILL.md` to add a step (anywhere before
    <!-- User: write your rationale here (≥50 chars). Why is this finding a false positive or acceptable risk? -->
    ```
 2. User fills in rationale below the comment.
-3. Bypass check: file exists AND `wc -c < qa-override.md` ≥ 50 → skip dispatch.
+3. Bypass check (per AC-8): file exists AND **trimmed byte-count ≥ 50**, where trimmed-count = total file bytes minus (a) the YAML frontmatter block (everything between the first pair of `---` delimiters, inclusive), and (b) the literal comment placeholder line `<!-- User: write your rationale here ... -->`. Pseudo: `sed -e '/^---$/,/^---$/d' -e '/^<!-- User: write your rationale here/d' qa-override.md | wc -c` ≥ 50 → skip dispatch.
 
 **Nth override** (file already exists, gate fires again on different findings):
 1. Gate **does NOT modify the top-level frontmatter** (it preserves the first invocation's record).
@@ -199,7 +199,7 @@ Modify `plugins/pd/skills/retrospecting/SKILL.md` to add a step (anywhere before
 
    <!-- User: write your rationale here (≥50 chars). -->
    ```
-4. User fills in rationale. Bypass check (same as first override): `wc -c < qa-override.md` ≥ 50 → skip dispatch. Git history is the audit log of all override invocations.
+4. User fills in rationale. Bypass check (same trimmed-count algorithm as first override per AC-8 + step 3 above) → skip dispatch. Git history is the audit log of all override invocations.
 
 ### FR-10 — Incomplete-run = block
 
@@ -337,6 +337,13 @@ Register all three (`test_finish_feature_step_5b_present`, `test_finish_feature_
 - AC-8 — resolved Open Question 5 to "plain prose" rationale; specified that the 50-char threshold measures user-authored portion only (gate-written frontmatter + comment placeholder excluded from count). Reason: Warning 2.
 - FR-12 — added third test `test_qa_gate_procedure_doc_exists` asserting `docs/dev_guides/qa-gate-procedure.md` exists and contains FR section markers. Reason: Suggestion 1 (closes the gap where finish-feature.md stays small but procedure doc is never written).
 - DoD — expanded AC enumeration to "AC-1..AC-5, AC-5b, AC-6..AC-20" for unambiguous count. Reason: Suggestion 2.
+
+### Iteration 2 — phase-reviewer (sonnet, 2026-04-29)
+
+**Findings:** approved=true with 1 warning
+
+**Corrections applied:**
+- FR-9 steps 3 + 4 — replaced raw `wc -c` bypass check with the trimmed-count algorithm specified in AC-8 (strip frontmatter + comment placeholder before measuring). Aligns FR-9 with AC-8's contract. Reason: Warning 1 (AC-8 vs FR-9 inconsistency on what "≥50 chars" measures).
 
 ## Definition of Done
 
