@@ -371,6 +371,45 @@ Fix these issues manually, then run /finish-feature again.
 
 Do NOT proceed to Create PR or Merge & Release if validation is failing.
 
+### Step 5b: Pre-Release Adversarial QA Gate
+
+> **YOLO exception:** HIGH findings always exit non-zero; gate never prompts; MED/LOW auto-file silently. This is the one explicit YOLO exception in `finish-feature.md`.
+
+After Step 5a (validate.sh) passes, dispatch the 4 adversarial reviewer agents against the feature branch diff to catch HIGH-severity issues that would otherwise surface only in post-release adversarial QA.
+
+**In a single Claude message, dispatch all 4 reviewers in parallel using the Task tool. Do NOT dispatch sequentially.**
+
+**Dispatch table:**
+
+| # | subagent_type | model | Output shape |
+|---|---|---|---|
+| 1 | `pd:security-reviewer` | opus | JSON `{approved, issues[{severity, securitySeverity, location, ...}], summary}` |
+| 2 | `pd:code-quality-reviewer` | sonnet | JSON `{approved, issues[{severity, location, ...}], summary}` |
+| 3 | `pd:implementation-reviewer` | opus | JSON `{approved, issues[{severity, level, ...}], summary}` |
+| 4 | `pd:test-deepener` | opus | **Step A** mode only — JSON `{gaps[{severity, mutation_caught, location, ...}], summary}` |
+
+Each dispatch prompt MUST include: feature `spec.md` content (or fallback `no spec.md found — review for general defects against the diff; do not synthesize requirements`), diff via `git diff {pd_base_branch}...HEAD`, and an instruction to emit `location` as `file:line` for cross-confirmation.
+
+**Severity rubric** (predicates inline per AC-5):
+
+- HIGH: `severity == "blocker"` OR `securitySeverity in {"critical", "high"}`
+- MED: `severity == "warning"` OR `securitySeverity == "medium"`
+- LOW: `severity == "suggestion"` OR `securitySeverity == "low"`
+
+**test-deepener narrowed remap** (AC-5b): test-deepener gaps with severity HIGH remap to MED **only when** `mutation_caught == false` AND no other reviewer flagged the same `location`. Cross-confirmed gaps stay HIGH (uncaught coverage-debt only).
+
+**Decision tree:**
+
+- **HIGH count > 0** → block merge unless `qa-override.md` exists with ≥ 50 chars of user-authored rationale (per-section trimmed-count). Print findings list with location + suggested_fix per finding. Exit non-zero.
+- **MED findings** → auto-file each to `{pd_artifacts_root}/backlog.md` under `## From Feature {feature_id} Pre-Release QA Findings ({date})` section (next-available 5-digit ID).
+- **LOW findings** → append each to `{pd_artifacts_root}/features/{id}-{slug}/.qa-gate-low-findings.md` sidecar (created if absent). Folded into `retro.md` by `pd:retrospecting` skill.
+- **Idempotency:** if `.qa-gate.json` exists with `head_sha == $(git rev-parse HEAD)`, skip dispatch and append `skip:` line to `.qa-gate.log`.
+- **Incomplete-run** (any reviewer fails JSON parse + schema validation): block; print `INCOMPLETE: {n} of 4 reviewers failed: [...]`; exit non-zero. Never silent-pass on partial coverage.
+
+**Audit/telemetry:** gate appends one `count: [pd:reviewer]: HIGH=N MED=N LOW=N` line per reviewer to `.qa-gate.log` (per AC-17).
+
+**See [`docs/dev_guides/qa-gate-procedure.md`](../../../docs/dev_guides/qa-gate-procedure.md)** for full dispatch prompts (§1), test-deepener Step A invocation (§2), JSON parse contract via `python3 -c` heredoc (§3), severity bucketing two-phase logic (§4), per-feature backlog sectioning + ID extraction (§5), LOW sidecar format (§6), idempotency cache + atomic-rename writes + corruption handling (§7), override path with per-section trimmed-count (§8), incomplete-run policy (§9), YOLO surfacing (§10), large-diff fallback (§11), and override-storm warning (§12).
+
 ### Step 5a-bis: Security Review (CC Native)
 
 After all discovered project checks pass (or when none are discovered), run CC's native `/security-review` as a complementary defense-in-depth check on the pending changes. This does NOT replace pd's security-reviewer agent in the implement review loop — it is an additional gate specifically for pre-merge.

@@ -421,6 +421,42 @@ EOF
     rm -rf "$tmpdir"
 }
 
+# Feature 094: pre-release adversarial QA gate anti-drift assertions
+
+test_finish_feature_step_5b_present() {
+    log_test "finish-feature.md contains Step 5b QA gate dispatch"
+    local file="${PROJECT_ROOT}/plugins/pd/commands/finish-feature.md"
+    local fails=0
+    grep -qE '^#{2,4}\s.*Step 5b.*Pre-Release Adversarial QA Gate' "$file" || { echo "  AC-14.1 missing Step 5b heading"; ((fails++)); }
+    grep -q 'pd:security-reviewer' "$file" || { echo "  AC-14.2 missing pd:security-reviewer"; ((fails++)); }
+    grep -q 'pd:code-quality-reviewer' "$file" || { echo "  AC-14.3 missing pd:code-quality-reviewer"; ((fails++)); }
+    grep -q 'pd:implementation-reviewer' "$file" || { echo "  AC-14.4 missing pd:implementation-reviewer"; ((fails++)); }
+    grep -q 'pd:test-deepener' "$file" || { echo "  AC-14.5 missing pd:test-deepener"; ((fails++)); }
+    grep -q 'Step A' "$file" || { echo "  AC-14.6 missing 'Step A' token"; ((fails++)); }
+    grep -q '\.qa-gate\.json' "$file" || { echo "  AC-14.7 missing .qa-gate.json reference"; ((fails++)); }
+    grep -q '\.qa-gate-low-findings\.md' "$file" || { echo "  AC-14.8 missing .qa-gate-low-findings.md reference"; ((fails++)); }
+    grep -q 'dispatch all 4 reviewers in parallel' "$file" || { echo "  AC-3 missing literal parallel-dispatch phrase"; ((fails++)); }
+    grep -q 'no spec.md found' "$file" || { echo "  AC-15 missing spec-absent fallback string"; ((fails++)); }
+    grep -q 'securitySeverity' "$file" || { echo "  AC-5 missing severity predicate"; ((fails++)); }
+    grep -q 'mutation_caught' "$file" || { echo "  AC-5b missing test-deepener narrowed-remap predicate"; ((fails++)); }
+    if [[ $fails -eq 0 ]]; then log_pass; else log_fail "$fails assertion(s) failed"; fi
+}
+
+test_finish_feature_under_600_lines() {
+    log_test "finish-feature.md kept under 600 lines (Step 5b detail extracted)"
+    local lines
+    lines=$(wc -l < "${PROJECT_ROOT}/plugins/pd/commands/finish-feature.md")
+    if [[ $lines -lt 600 ]]; then log_pass; else log_fail "finish-feature.md is $lines lines (>=600)"; fi
+}
+
+test_qa_gate_procedure_doc_exists() {
+    log_test "qa-gate-procedure.md exists and references key FRs"
+    local doc="${PROJECT_ROOT}/docs/dev_guides/qa-gate-procedure.md"
+    if [[ ! -f "$doc" ]]; then log_fail "missing $doc"; return; fi
+    grep -q 'FR-3\|FR-8\|FR-9' "$doc" || { log_fail "qa-gate-procedure.md missing key FR section markers"; return; }
+    log_pass
+}
+
 # === YOLO Hook Tests ===
 
 # Helper: create temp YOLO config
@@ -3412,6 +3448,9 @@ main() {
     test_sync_cache_missing_source
     test_sync_cache_detects_arbitrary_marketplace
     test_sync_cache_marketplace_json_target_derives
+    test_finish_feature_step_5b_present
+    test_finish_feature_under_600_lines
+    test_qa_gate_procedure_doc_exists
 
     echo ""
     echo "--- YOLO Hook Tests ---"
