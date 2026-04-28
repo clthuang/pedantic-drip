@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`sync-cache.sh` now detects any pd marketplace install**: the SessionStart hook's grep at `plugins/pd/hooks/sync-cache.sh:21` was hardcoded to `my-local-plugins/pd/`, so installs under any other marketplace (e.g. `pedantic-drip-marketplace`) silently exited 0 without syncing — every session-start hook fired as a no-op. The grep now matches `.../cache/<marketplace>/pd/<version>` and the marketplace.json target is derived from the matched installPath, giving a single source of truth for both sync targets. Two regression tests added to `test-hooks.sh` (`test_sync_cache_detects_arbitrary_marketplace`, `test_sync_cache_marketplace_json_target_derives`).
+
 ## [4.16.2] - 2026-04-24
 
 ### Fixed
