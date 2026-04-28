@@ -49,3 +49,8 @@ agent_sandbox/
 # Playwright MCP output
 .playwright-mcp/
 *.db
+
+# Feature 094: pre-release adversarial QA gate runtime sidecars (never committed)
+docs/features/**/.qa-gate.json
+docs/features/**/.qa-gate.log
+docs/features/**/.qa-gate-low-findings.md

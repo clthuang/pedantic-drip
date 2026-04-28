@@ -165,6 +165,22 @@ For each entry, set defaults for fields the investigation-agent doesn't produce:
 
 Skip Step 4b (validation of pre-existing entries) during fallback.
 
+### Step 2c: Fold Pre-Release QA Sidecars (FR-7b from feature 094)
+
+If `{pd_artifacts_root}/features/{id}-{slug}/.qa-gate-low-findings.md` exists:
+1. Read its content.
+2. Append under `## Pre-release QA notes` H2 in the planned `retro.md` content (create section if absent), prefixed with sub-heading `### LOW findings`.
+3. After successful append, `rm` the sidecar file.
+
+If `{pd_artifacts_root}/features/{id}-{slug}/.qa-gate.log` exists:
+1. Read its content (skip lines + count lines per AC-7/AC-17 patterns).
+2. Append under `## Pre-release QA notes` H2 in `retro.md` (create section if absent), prefixed with sub-heading `### Audit log`.
+3. After successful append, `rm` the sidecar file.
+
+**Note:** Each sidecar may exist independently. A skip-only gate run produces only `.qa-gate.log`; a clean dispatch with no LOW findings also produces only `.qa-gate.log`. The fold step must handle each independently.
+
+If neither sidecar exists: skip silently (no-op).
+
 ### Step 3: Write retro.md
 
 Write `{pd_artifacts_root}/features/{id}-{slug}/retro.md` using the `retro_md` field from the retro-facilitator agent response.

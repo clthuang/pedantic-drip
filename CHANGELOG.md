@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Pre-release adversarial QA gate (Step 5b in `/pd:finish-feature`)**: dispatches the 4 existing reviewer agents (`pd:security-reviewer`, `pd:code-quality-reviewer`, `pd:implementation-reviewer`, `pd:test-deepener` Step A only) in one parallel `Task()` batch against the feature branch diff before merge to develop. Severity rubric: HIGH-blocks merge (override via `qa-override.md` ≥ 50 chars trimmed-count), MED auto-files to backlog with per-feature section heading, LOW writes to `.qa-gate-low-findings.md` sidecar (folded into retro.md by the retrospecting skill). HEAD-SHA-keyed `.qa-gate.json` cache provides idempotency with atomic-rename writes + corruption recovery. YOLO mode does NOT auto-override HIGH findings — gate stops autonomous flow with non-zero exit, no `AskUserQuestion`. Closes structural gap surfaced across features 091/092/093 post-release adversarial QA cycles where the same 4 reviewers caught 3 HIGH production bugs after merge that they could have caught pre-merge (feature:094 FR-1..FR-12, backlog #00217).
+- **`docs/dev_guides/qa-gate-procedure.md`** (NEW): full procedural reference for the gate — 12 sections covering dispatch prompts (§1), test-deepener Step A invocation (§2), `python3 -c` JSON parse contract with stdlib-only schema validation (§3), severity bucketing two-phase logic with `normalize_location()` cross-confirmation (§4), per-feature backlog sectioning + ID extraction with empty-fallback (§5), LOW sidecar format (§6), idempotency cache with atomic-rename + corruption handling (§7), override path with per-section trimmed-count via awk pipeline (§8), incomplete-run policy (§9), YOLO surfacing (§10), large-diff fallback at >2000 LOC (§11), and override-storm warning at ≥3 overrides (§12).
+
+### Changed
+- **`pd:retrospecting` skill** now folds `.qa-gate.log` (audit + telemetry) and `.qa-gate-low-findings.md` (LOW findings) sidecars from feature dirs into `retro.md` under a `## Pre-release QA notes` H2 section, then deletes the consumed sidecars (FR-7b).
+
+### Tests
+- **3 new anti-drift tests** in `test-hooks.sh`: `test_finish_feature_step_5b_present` (12 grep assertions), `test_finish_feature_under_600_lines` (size constraint), `test_qa_gate_procedure_doc_exists` (procedure doc + FR markers). Test count: 111 → 114 PASS.
+
 ## [4.16.3] - 2026-04-29
 
 ### Fixed
