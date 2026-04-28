@@ -94,7 +94,7 @@ bash plugins/pd/hooks/tests/test-hooks.sh        # exit 0
 Per plan.md T6:
 - **(a)** Self-dispatch via /pd:finish-feature gate prose on feature 094 branch — verify dispatch + bucket + parse paths; document AC-6/7/8/10/16/17 observations in retro.md "Manual Verification" section. Document AC-deferred-verification for AC-9/11/13/19 (need feature 095 first-run).
 - **(b)** Synthetic-HIGH injection (2 patterns: SQL + shell) on scratch branch; require ≥1 detection per pattern; fallback if both escape = HIGH against gate itself.
-- **(c)** Cleanup: `rm` any dogfood-generated `.qa-gate*` files from feature dir; add `.qa-gate.json`, `.qa-gate.log`, `.qa-gate-low-findings.md` to repo `.gitignore`.
+- **(c)** Cleanup: `rm` any dogfood-generated `.qa-gate*` files from feature dir; add scoped patterns to repo `.gitignore`: `docs/features/**/.qa-gate.json`, `docs/features/**/.qa-gate.log`, `docs/features/**/.qa-gate-low-findings.md` (qa-override.md NOT ignored — committed as audit trail).
 
 **DoD:**
 - All 3 phases documented in `retro.md` "Manual Verification" section
@@ -105,8 +105,8 @@ Per plan.md T6:
 
 Per plan.md AC Coverage Matrix:
 - **Auto-tested (10 ACs):** AC-1, 2, 3, 4, 5, 5b, 12, 15, 18, 20 (via test-hooks)
-- **Manual via T6 dogfood (7 ACs):** AC-6, 7, 8, 9, 10, 16, 17
-- **AC-deferred-verification (4 ACs):** AC-11, 13, 19 + end-to-end coverage — verified by feature 095 first-run; documented in retro.md as known contingency
+- **Manual via T6 dogfood (6 ACs):** AC-6, 7, 8, 10, 16, 17 (one-shot observable in T6)
+- **AC-deferred-verification (5 ACs):** AC-9, 11, 13, 19 + end-to-end coverage of AC-6/7/8/10/17 — verified by feature 095 first-run; documented in retro.md as known contingency
 
 ## Manual ACs tracked in retro.md
 

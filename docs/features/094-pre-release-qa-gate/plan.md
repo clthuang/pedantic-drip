@@ -262,7 +262,7 @@ bash plugins/pd/hooks/tests/test-hooks.sh        # exit 0, +3 tests
 This is the canonical end-to-end test: run `/pd:finish-feature` against the feature 094 branch itself with `--dry-run-step-5b-only` semantics (i.e., halt before merge). Concrete steps:
 
 1. Stage all uncommitted changes (T1–T4 work) so the gate sees the prose-only diff.
-2. Manually invoke just the Step 5b dispatch logic by reading `finish-feature.md` Step 5b prose + the procedure doc — Claude executes the parallel 4-reviewer Task() block against `git diff develop...HEAD`.
+2. **Precondition:** T3 must be complete — `docs/dev_guides/qa-gate-procedure.md` must exist before this step (the gate prose references it). Manually invoke just the Step 5b dispatch logic by reading `finish-feature.md` Step 5b prose + the procedure doc — Claude executes the parallel 4-reviewer Task() block against `git diff develop...HEAD`.
 3. Observe per-reviewer JSON outputs; bucket findings; verify:
    - **AC-5/5b:** Severity predicates resolve to expected buckets (manually trace one finding through the predicate).
    - **AC-6:** `.qa-gate.json` would be written on PASS — inspect format if written.
@@ -286,7 +286,7 @@ This is the canonical end-to-end test: run `/pd:finish-feature` against the feat
 
 1. Run `git status docs/features/094-pre-release-qa-gate/` — if any of `.qa-gate.json`, `.qa-gate.log`, `.qa-gate-low-findings.md`, `qa-override.md` appear (generated during T6(a)), `rm` them.
 2. Verify no scratch-branch synthetic injection leaked back to feature 094 branch.
-3. Add `.qa-gate.json`, `.qa-gate.log`, `.qa-gate-low-findings.md` to `.gitignore` at repo root (these are runtime state, never committed). `qa-override.md` is intentionally committed as audit trail per FR-9.
+3. Add scoped `.gitignore` patterns at repo root: `docs/features/**/.qa-gate.json`, `docs/features/**/.qa-gate.log`, `docs/features/**/.qa-gate-low-findings.md` (these are feature-dir-scoped runtime state, never committed). `qa-override.md` is intentionally NOT in .gitignore — it is committed as audit trail per FR-9.
 
 **T6 DoD:**
 - All 3 phases documented in retro.md "Manual Verification" section
@@ -320,8 +320,8 @@ This is the canonical end-to-end test: run `/pd:finish-feature` against the feat
 | AC-20 | No new external deps | `validate.sh` | T5 |
 
 **Auto-tested (10):** AC-1, AC-2, AC-3, AC-4, AC-5, AC-5b, AC-12, AC-15, AC-18, AC-20  
-**Manual via T6 dogfood (6):** AC-6, AC-7, AC-8, AC-9, AC-10, AC-16, AC-17  
-**AC-deferred-verification (post-merge / feature 095 first-run, 4):** AC-11, AC-13, AC-19, plus end-to-end coverage of AC-6/7/8/9/10/17. These are not "unverified" — they're verified by the gate's first real production use, which happens immediately on the next feature merge. retro.md captures this contingency.
+**Manual via T6 dogfood (6):** AC-6, AC-7, AC-8, AC-10, AC-16, AC-17 (one-shot observable in T6)  
+**AC-deferred-verification (5, post-merge / feature 095 first-run):** AC-9 (needs 2 HIGH events on same feature), AC-11 (YOLO HIGH-stop in real flow), AC-13 (retrospect fold across features), AC-19 (real MED auto-file with new ID), plus end-to-end coverage of AC-6/7/8/10/17 from T6. These are not "unverified" — they're verified by the gate's first real production use on the next feature merge. retro.md captures this contingency.
 
 The Manual Verification Gate (design.md) captures all manual + deferred ACs in retro.md as a checklist.
 
