@@ -1,110 +1,104 @@
 # Tasks: Feature 094 — Pre-Release Adversarial QA Gate
 
-**Direct-orchestrator execution** (per 091/092/093 surgical template) — tight scope (4 files, ~80 prose + ~35 test LOC + new ~180-line doc) lands in a single atomic commit. Full task detail co-located in `plan.md` (Implementation Order + AC Coverage Matrix); this file is the compact task index.
+**Direct-orchestrator execution** with **TDD-first ordering** — tight scope (4 files, ~280 LOC) lands in a single atomic commit. Full task detail co-located in `plan.md` (Implementation Order + AC Coverage Matrix + exact Old/New text quotes); this file is the compact task index.
 
 ## Task Index
 
 | ID | Title | File | Depends on |
 |----|-------|------|------------|
-| T1 | Insert Step 5b into finish-feature.md | `plugins/pd/commands/finish-feature.md` | none |
-| T2 | Create qa-gate-procedure.md (NEW) | `docs/dev_guides/qa-gate-procedure.md` | T1 (cross-references) |
-| T3 | Update retrospecting/SKILL.md (FR-7b sidecar fold) | `plugins/pd/skills/retrospecting/SKILL.md` | none |
-| T4 | Add 3 test-hooks anti-drift functions | `plugins/pd/hooks/tests/test-hooks.sh` | T1, T2 (both files must exist) |
-| T5 | Quality gates (validate.sh + test-hooks.sh) | — | T1, T2, T3, T4 |
-| T6 | Dogfood self-test (3 phases) | `retro.md` | T5 |
+| **T0** | Capture baselines (PRE_HEAD, PRE_LINES_FF, PRE_TEST_COUNT, PRE_LOG_PASS_COUNT) | — (record in implementation-log.md) | none |
+| **T1** | Add 3 anti-drift tests (RED) — `test_finish_feature_step_5b_present` (12 greps), `test_finish_feature_under_600_lines`, `test_qa_gate_procedure_doc_exists` | `plugins/pd/hooks/tests/test-hooks.sh` | T0 |
+| **T2** | Insert Step 5b into finish-feature.md (GREEN for grep test) | `plugins/pd/commands/finish-feature.md` | T1 (RED state) |
+| **T3** | Create qa-gate-procedure.md (NEW, ~180 lines, 12 H2 sections) (GREEN for procedure-doc-exists test) | `docs/dev_guides/qa-gate-procedure.md` | T1 |
+| **T4** | Update retrospecting/SKILL.md — add Step 2c sidecar fold (FR-7b) | `plugins/pd/skills/retrospecting/SKILL.md` | none (independent of T1-T3) |
+| **T5** | Quality gates (validate.sh + test-hooks.sh exit 0; +3 PASS) | — | T1, T2, T3, T4 |
+| **T6** | Two-phase dogfood self-test + cleanup + .gitignore update | `retro.md` + `.gitignore` | T5 |
 
-T1, T3 are independent — could run parallel, but direct-orchestrator runs sequentially for atomicity.
+T2, T3, T4 are independent — could parallelize via worktrees. Direct-orchestrator runs them sequentially for atomic commit cohesion (justified in plan.md Notes).
 
-## T1 — Insert Step 5b
+## T0 — Capture baselines
 
-**File:** `plugins/pd/commands/finish-feature.md`  
-**Action:** Insert new "Step 5b: Pre-Release Adversarial QA Gate" between Step 5a end and Step 5a-bis start (currently ~lines 373/374).
+Record before any edits:
+```bash
+PRE_HEAD=$(git rev-parse HEAD)
+PRE_LINES_FF=$(wc -l < plugins/pd/commands/finish-feature.md)         # expect 508
+PRE_LINES_TH=$(wc -l < plugins/pd/hooks/tests/test-hooks.sh)          # expect 3494
+PRE_LINES_RS=$(wc -l < plugins/pd/skills/retrospecting/SKILL.md)
+PRE_TEST_COUNT=$(grep -c 'log_test ' plugins/pd/hooks/tests/test-hooks.sh)  # expect 111
+PRE_LOG_PASS_COUNT=$(bash plugins/pd/hooks/tests/test-hooks.sh 2>&1 | grep -c '  PASS')  # expect 111
+```
+**DoD:** all 6 captured; ±5% from expected else investigate.
 
-**Inline content (~50 lines):**
-1. H2 heading: `## Step 5b: Pre-Release Adversarial QA Gate`
-2. YOLO exception comment: `# YOLO exception: HIGH findings always exit non-zero; gate never prompts; MED/LOW auto-file silently.`
-3. Dispatch instruction with literal phrase: "In a single Claude message, **dispatch all 4 reviewers in parallel** using the Task tool. Do NOT dispatch sequentially."
-4. 4-row dispatch table per design FR-2 (subagent_type, model, output shape).
-5. Severity rubric (AC-5 + AC-5b inline):
-   - HIGH: `severity == "blocker"` OR `securitySeverity in {"critical", "high"}` (with test-deepener narrowed remap clause)
-   - MED: `severity == "warning"` OR `securitySeverity == "medium"`
-   - LOW: `severity == "suggestion"` OR `securitySeverity == "low"`
-6. Decision tree: HIGH → block (FR-6); MED → file to backlog (FR-7a); LOW → file to sidecar (FR-7a).
-7. References: spec-absent fallback string `no spec.md found — review for general defects against the diff; do not synthesize requirements` (AC-15); diff token `{pd_base_branch}...HEAD` (AC-16); idempotency cache `.qa-gate.json` (AC-6); sidecar `.qa-gate-low-findings.md` (AC-12).
-8. Pointer: "See `docs/dev_guides/qa-gate-procedure.md` for full dispatch prompts, JSON parse contract, severity bucketing logic, override path, and per-feature backlog sectioning."
+## T1 — RED tests
 
-**DoD:** all 10 grep assertions in `test_finish_feature_step_5b_present` pass + `wc -l < plugins/pd/commands/finish-feature.md` < 600.
+Per plan.md T1: add 3 functions + register them. Confirm RED state (`bash plugins/pd/hooks/tests/test-hooks.sh` exits non-zero with `test_finish_feature_step_5b_present` + `test_qa_gate_procedure_doc_exists` failing; `test_finish_feature_under_600_lines` passes since 508 < 600).
 
-## T2 — Create qa-gate-procedure.md (NEW)
+**DoD:** RED confirmed; only 1 of 3 new tests passes (`under_600_lines`); `PRE_LOG_PASS_COUNT + 1` total.
 
-**File:** `docs/dev_guides/qa-gate-procedure.md`  
-**Action:** Create new file with 12 sections (§1..§12) per plan.md Step 2.
+## T2 — Step 5b prose (GREEN for grep test)
 
-**Critical content (per design TDs):**
-- §3 must contain literal `import sys, json, re` (TD-8 JSON parse heredoc — full snippet from design TD-8 lines 178-230).
-- §4 must contain `normalize_location` + `cross_confirmed` predicates (design I-6).
-- §5 must contain regex `^- \*\*#[0-9]{5}\*\*` for backlog ID extraction (TD-7).
-- §5 must contain section heading template `## From Feature {feature_id} Pre-Release QA Findings ({date})`.
-- §7 must contain atomic-rename pseudocode `tmp file + mv` (TD-5).
-- §8 must contain awk pipeline `awk "/^## Override ${last_n} /,0"` for per-section trimmed-count (TD-3).
-- §11 must document >2000 LOC threshold + file-list-summary fallback (R-7).
-- §12 must document override-storm warning trigger (R-1).
+Per plan.md T2: insert Step 5b between line 372 ("Do NOT proceed...") and line 374 ("### Step 5a-bis"). Full New-text content in plan.md.
 
 **DoD:**
-- File exists at correct path
-- `grep -c '^##\s§[0-9]+' docs/dev_guides/qa-gate-procedure.md` >= 12
-- `grep -q 'import sys, json, re' docs/dev_guides/qa-gate-procedure.md` exit 0
-- `grep -q 'FR-3\|FR-8\|FR-9' docs/dev_guides/qa-gate-procedure.md` exit 0 (test_qa_gate_procedure_doc_exists check)
+- `wc -l plugins/pd/commands/finish-feature.md` ≤ `PRE_LINES_FF + 50` AND `< 600`
+- `test_finish_feature_step_5b_present` flips FAIL → PASS (all 12 greps)
 
-## T3 — Update retrospecting/SKILL.md (FR-7b)
+## T3 — qa-gate-procedure.md (NEW)
 
-**File:** `plugins/pd/skills/retrospecting/SKILL.md`  
-**Action:** Add a step to the existing skill (anywhere before retro.md final write) that:
-1. For each sidecar in `{feature_dir}/`: `.qa-gate-low-findings.md` and `.qa-gate.log`:
-   - If exists: read content, append under `## Pre-release QA notes` H2 in `retro.md` (create section if absent), with sub-heading `### LOW findings` for the .md file and `### Audit log` for the .log file, then `rm` the sidecar.
-2. Note: each sidecar may exist independently (per FR-7b design note).
-3. If neither present: skip silently (no-op).
-
-**Size:** ~15 lines added.
+Per plan.md T3: 12 H2 sections matching `^## §[0-9]+ — `. Critical inline content per design TDs:
+- §3 must include `import sys, json, re` (TD-8 heredoc)
+- §4 must include `normalize_location` + `cross_confirmed`
+- §5 must include `^- \*\*#[0-9]{5}\*\*` regex + per-feature heading template
+- §7 must include atomic-rename pseudocode
+- §8 must include `awk "/^## Override ${last_n} /,0"`
+- §11 must document >2000 LOC threshold
+- §12 must document override-storm trigger
 
 **DoD:**
-- `grep -q 'qa-gate-low-findings\.md' plugins/pd/skills/retrospecting/SKILL.md` exit 0
-- `grep -q 'qa-gate\.log' plugins/pd/skills/retrospecting/SKILL.md` exit 0
-- `grep -q 'Pre-release QA notes' plugins/pd/skills/retrospecting/SKILL.md` exit 0
+- File exists
+- `grep -cE '^## §[0-9]+ — ' qa-gate-procedure.md` ≥ 12
+- `grep -q 'import sys, json, re' qa-gate-procedure.md` exit 0
+- `test_qa_gate_procedure_doc_exists` flips FAIL → PASS
 
-## T4 — Add 3 test-hooks functions
+## T4 — retrospecting/SKILL.md (FR-7b)
 
-**File:** `plugins/pd/hooks/tests/test-hooks.sh`  
-**Action:** Add 3 functions per plan.md Step 4 (full snippet there) and register them in the runner section. Functions:
-1. `test_finish_feature_step_5b_present` (10 grep assertions per design C4)
-2. `test_finish_feature_under_600_lines` (file size constraint per AC-18)
-3. `test_qa_gate_procedure_doc_exists` (procedure doc existence + FR markers)
+Per plan.md T4: insert "Step 2c: Fold Pre-Release QA Sidecars" before existing "Step 3: Write retro.md" at line 168.
 
 **DoD:**
-- `bash plugins/pd/hooks/tests/test-hooks.sh` exit 0
-- New PASS count = baseline + 3
+- `grep -q 'qa-gate-low-findings\.md\|qa-gate\.log\|Pre-release QA notes' plugins/pd/skills/retrospecting/SKILL.md` (3 separate greps, all exit 0)
+- `wc -l` = `PRE_LINES_RS + 15` (±5)
 
 ## T5 — Quality gates
 
 ```bash
 ./validate.sh                                    # exit 0
-bash plugins/pd/hooks/tests/test-hooks.sh        # exit 0, +3 tests
+bash plugins/pd/hooks/tests/test-hooks.sh        # exit 0
 ```
 
-**DoD:** Both green; total test count = baseline + 3.
+**DoD:**
+- Both exit 0
+- `bash plugins/pd/hooks/tests/test-hooks.sh 2>&1 | grep -c '  PASS'` = `PRE_LOG_PASS_COUNT + 3`
+- `validate.sh` warning count unchanged
 
-## T6 — Dogfood self-test
+## T6 — Dogfood self-test (3 phases)
 
-Per plan.md Step 6 — three phases:
+Per plan.md T6:
+- **(a)** Self-dispatch via /pd:finish-feature gate prose on feature 094 branch — verify dispatch + bucket + parse paths; document AC-6/7/8/10/16/17 observations in retro.md "Manual Verification" section. Document AC-deferred-verification for AC-9/11/13/19 (need feature 095 first-run).
+- **(b)** Synthetic-HIGH injection (2 patterns: SQL + shell) on scratch branch; require ≥1 detection per pattern; fallback if both escape = HIGH against gate itself.
+- **(c)** Cleanup: `rm` any dogfood-generated `.qa-gate*` files from feature dir; add `.qa-gate.json`, `.qa-gate.log`, `.qa-gate-low-findings.md` to repo `.gitignore`.
 
-**(a) Self-dispatch:** invoke 4 reviewers manually (via Task tool) against current branch diff. Document outcome in retro.md "Manual Verification" section. Verify gate would NOT have blocked (or correctly remapped self-references).
+**DoD:**
+- All 3 phases documented in `retro.md` "Manual Verification" section
+- `git status` clean of dogfood artifacts
+- `.gitignore` updated with 3 new patterns
 
-**(b) Synthetic-HIGH injection:** scratch branch with synthetic HIGH (e.g., `LIMIT -1` SQL or shell-injection f-string). Re-dispatch reviewers. Verify ≥1 reviewer flags HIGH. Discard scratch branch.
+## AC Coverage (summary)
 
-**(c) Cleanup:** verify no synthetic injection leaked to feature branch.
+Per plan.md AC Coverage Matrix:
+- **Auto-tested (10 ACs):** AC-1, 2, 3, 4, 5, 5b, 12, 15, 18, 20 (via test-hooks)
+- **Manual via T6 dogfood (7 ACs):** AC-6, 7, 8, 9, 10, 16, 17
+- **AC-deferred-verification (4 ACs):** AC-11, 13, 19 + end-to-end coverage — verified by feature 095 first-run; documented in retro.md as known contingency
 
-**DoD:** All 3 phases documented in `docs/features/094-pre-release-qa-gate/retro.md` "Manual Verification" section before merge.
+## Manual ACs tracked in retro.md
 
-## Manual ACs (per design.md Manual Verification Gate)
-
-11 ACs (AC-5, AC-5b, AC-6, AC-7, AC-8, AC-9, AC-10, AC-11, AC-13, AC-17, AC-19) require manual confirmation during T6 dogfood. Each tracked as a checkbox in retro.md "Manual Verification" section per design lines 460-490.
+11 ACs (AC-5b, 6, 7, 8, 9, 10, 11, 13, 17, 19) require manual confirmation during T6 dogfood + post-merge feature 095 first-run. Each tracked as a checkbox in retro.md "Manual Verification" section per design Manual Verification Gate.
