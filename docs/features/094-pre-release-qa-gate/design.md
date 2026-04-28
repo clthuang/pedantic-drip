@@ -351,10 +351,18 @@ Findings this run:
 {user-written rationale}
 ```
 
-**Bypass check pseudocode:**
+**Bypass check pseudocode (per-section per TD-3):**
 ```bash
-trimmed_count=$(sed -e '/^---$/,/^---$/d' -e '/^<!-- User: write your rationale here/d' qa-override.md | wc -c)
-[[ -f qa-override.md && "$trimmed_count" -ge 50 ]]
+[[ -f qa-override.md ]] || exit_block
+last_n=$(grep -oE '^## Override [0-9]+' qa-override.md | grep -oE '[0-9]+' | sort -n | tail -1)
+trimmed=$(awk "/^## Override ${last_n} /,0" qa-override.md \
+  | sed -e '/^---$/,/^---$/d' \
+        -e "/^## Override ${last_n} /d" \
+        -e '/^<!-- User: write your rationale here/d' \
+        -e '/^Findings this run:/d' \
+        -e '/^- reviewer:/d' \
+  | wc -c)
+[[ "$trimmed" -ge 50 ]]
 ```
 
 ### I-5: Reviewer dispatch prompt template
@@ -432,7 +440,7 @@ This makes cross-confirmation viable across reviewer output schemas.
 - **R-4 [MED]** — Cross-feature interaction bugs invisible to diff-scoped reviewers (first-principles). **Not mitigated by this feature.** Documented as out-of-scope; would require a post-merge gate or full-codebase pass. Filed as future-consideration.
 - **R-5 [MED]** — Large-diff degradation (antifragility). **Mitigated by:** NFR-1 size warning; gate proceeds, does not auto-skip.
 - **R-6 [LOW]** — Spec-absent feature path (antifragility). **Mitigated by:** AC-15 fallback prompt string; design spec-absent features to use the literal fallback text.
-- **R-7 [MED]** — Context-window saturation on very large diffs (pre-mortem advisor — surfaced in design-reviewer iter 1). At >2000 LOC, the diff text alone could exceed reviewer context budget when sent to 4 agents in parallel. **Mitigated by:** documented per-reviewer budget hint in C2 (procedure doc): if `git diff {pd_base_branch}...HEAD | wc -l` > 2000, the dispatch prompt includes a file-list summary instead of full diff, and instructs each reviewer to request specific files via clarification rather than reviewing all in one pass. Wall-clock NFR-1 widened to 10 min above this threshold.
+- **R-7 [MED]** — Context-window saturation on very large diffs (pre-mortem advisor — surfaced in design-reviewer iter 1). At >2000 LOC, the diff text alone could exceed reviewer context budget when sent to 4 agents in parallel. **Mitigated by:** documented per-reviewer budget hint in C2 (procedure doc): if `git diff {pd_base_branch}...HEAD | wc -l` > 2000, the dispatch prompt includes a file-list summary instead of full diff, and instructs each reviewer to request specific files via clarification rather than reviewing all in one pass. Wall-clock budget widened to 10 min above this threshold (design-level extension of spec NFR-1; spec amendment not required since the warning-but-proceed behavior is preserved). **C2 obligation:** procedure doc MUST document the >2000 LOC threshold + file-list-summary fallback explicitly; without it this risk stays unmitigated.
 
 ## Out of Scope
 
@@ -474,7 +482,7 @@ All in one commit (~80 prod prose + ~35 test LOC + new ~180-line doc). Followed 
 | AC-12 (`.qa-gate-low-findings.md` path) | `test_finish_feature_step_5b_present` grep |
 | AC-13 (retrospecting fold) | Manual: place sidecar, run /pd:retrospect, verify retro.md gains section |
 | AC-14 (8 distinct greps) | `test_finish_feature_step_5b_present` itself (recursive — the test verifies its own AC) |
-| AC-15 (fallback prompt string) | `test_finish_feature_step_5b_present` could grep this; OR check via procedure doc |
+| AC-15 (fallback prompt string) | `test_finish_feature_step_5b_present` grep (10th assertion per C4) |
 | AC-16 (diff range token) | Source-file grep for literal `{pd_base_branch}...HEAD` |
 | AC-17 (per-reviewer count pattern) | Regex `^count: \[(pd:[a-z-]+)\]: HIGH=\d+ MED=\d+ LOW=\d+$` — manual |
 | AC-18 (file <600 + procedure exists) | `test_finish_feature_under_600_lines` + `test_qa_gate_procedure_doc_exists` |
@@ -501,6 +509,15 @@ All in one commit (~80 prod prose + ~35 test LOC + new ~180-line doc). Followed 
 - R-1 — restructured: explicitly downgraded to "partially mitigated"; added override-storm forcing function (3+ overrides emits warning to retro for human escalation); kept honest residual statement. Reason: Warning 12.
 - Implementation Order step 6 — split into two-phase dogfood: (a) self-dispatch on own branch, (b) synthetic-HIGH injection in scratch branch, (c) cleanup. Reason: Warning 11.
 - Sidecar consolidation — declined; kept 3 sidecars per TD-2 (different lifecycles justify separate files). Suggestion 14 acknowledged but not adopted.
+
+### Iteration 1 — phase-reviewer (sonnet, 2026-04-29)
+
+**Findings:** approved=true with 1 warning + 2 suggestions
+
+**Corrections applied:**
+- I-4 — replaced bypass-check pseudocode with the per-section awk pipeline from TD-3 (was inadvertently file-level, contradicting TD-3 and silently defeating override-friction goal). Reason: Warning 1.
+- Test Strategy table AC-15 row — changed to unambiguous "test_finish_feature_step_5b_present grep (10th assertion per C4)". Reason: Suggestion 1.
+- R-7 — added explicit C2 obligation language ("procedure doc MUST document the >2000 LOC threshold... without it this risk stays unmitigated"). Reason: Suggestion 2.
 
 ## Manual Verification Gate
 
