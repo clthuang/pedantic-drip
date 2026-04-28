@@ -1,0 +1,21 @@
+{
+  "id": "094",
+  "slug": "pre-release-qa-gate",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-04-28T19:12:36.608743+00:00",
+  "branch": "feature/094-pre-release-qa-gate",
+  "brainstorm_source": "docs/brainstorms/20260429-024953-pre-release-qa-gate.prd.md",
+  "backlog_source": "00217",
+  "lastCompletedPhase": "specify",
+  "phases": {
+    "brainstorm": {
+      "started": "2026-04-28T19:12:36.607795+00:00"
+    },
+    "specify": {
+      "started": "2026-04-28T19:27:26.571608+00:00",
+      "completed": "2026-04-28T19:27:30.823656+00:00",
+      "iterations": 5
+    }
+  }
+}

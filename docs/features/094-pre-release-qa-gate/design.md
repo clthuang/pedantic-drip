@@ -56,7 +56,7 @@ plugins/pd/hooks/tests/test-hooks.sh            ┐
 docs/features/{id}/.qa-gate.json (RUNTIME)      ┐
 docs/features/{id}/.qa-gate.log (RUNTIME)       ├──> Sidecar files written
 docs/features/{id}/.qa-gate-low-findings.md     │     by gate at runtime
-docs/features/{id}/qa-override.md (USER-WRITTEN) ┘     (last is user-written)
+docs/features/{id}/qa-override.md               ┘     (gate-initiated, user-completed)
 ```
 
 **No production Python or shell paths change.** The gate is **prose interpreted by Claude at run-time** in `finish-feature.md` (which Claude reads when the user invokes `/pd:finish-feature`).
@@ -86,16 +86,30 @@ docs/features/{id}/qa-override.md (USER-WRITTEN) ┘     (last is user-written)
 
 **Rationale:** Each sidecar has one writer (gate), one consumer (retrospecting for `.log` + `-low-findings`; gate itself for `.json`). Clear ownership. Gate's own re-run logic only needs `.qa-gate.json`; retrospect only needs the other two. Independent file existence is explicit (per spec FR-7b note).
 
-### TD-3: Trimmed byte-count for `qa-override.md` rationale
+### TD-3: Per-section trimmed byte-count for `qa-override.md` rationale
 
-**Decision:** Bypass check uses `sed -e '/^---$/,/^---$/d' -e '/^<!-- User: write your rationale here/d' qa-override.md | wc -c` ≥ 50. The user must write ≥50 bytes of *new* content; the gate-written frontmatter + comment placeholder do not count.
+**Decision:** Bypass check measures the **latest `## Override N (date)` section specifically**, NOT total file bytes. The user must write ≥50 bytes of new rationale per HIGH-block event; prior overrides' rationale does not satisfy a new gate failure.
+
+**Algorithm:**
+```bash
+# Extract content from the highest-numbered Override section to EOF
+last_n=$(grep -oE '^## Override [0-9]+' qa-override.md | grep -oE '[0-9]+' | sort -n | tail -1)
+trimmed=$(awk "/^## Override ${last_n} /,0" qa-override.md \
+  | sed -e '/^---$/,/^---$/d' \
+        -e "/^## Override ${last_n} /d" \
+        -e '/^<!-- User: write your rationale here/d' \
+        -e '/^Findings this run:/d' \
+        -e '/^- reviewer:/d' \
+  | wc -c)
+[[ "$trimmed" -ge 50 ]]
+```
 
 **Alternatives rejected:**
-- *Raw `wc -c < qa-override.md` ≥ 50.* The gate-written frontmatter alone exceeds 50 bytes (~150-200 chars typical). User could create the file with empty rationale and bypass succeed.
+- *Raw `wc -c < qa-override.md` ≥ 50.* Gate-written frontmatter exceeds 50 bytes; empty-rationale files would auto-bypass.
+- *File-level trimmed byte-count* (v1 of this TD). Auto-bypass on Override 2+ because Override 1's rationale already exceeds 50. Design-reviewer iter 1 blocker 3.
 - *Require the user to delete the comment placeholder.* Too easy to miss; comment placeholder is a UX hint, not a flag.
-- *Require ≥50 chars in a specific named section.* More structural complexity for marginal benefit.
 
-**Rationale:** Forces the user to actually articulate rationale. Pre-mortem advisor flagged "override normalization" as the dominant gate-collapse failure mode for single-developer YOLO. Making the override path painful is the antidote. The sed pipeline is portable across macOS/Linux.
+**Rationale:** Per-section measurement is the only way to keep each new HIGH-block forcing fresh rationale. Pre-mortem advisor flagged "override normalization" as the dominant gate-collapse failure mode; allowing one rationale to satisfy multiple HIGHs would defeat the gate. The sed/awk pipeline is portable across macOS/Linux (`awk '/pattern/,0'` extracts pattern-to-EOF; available in BSD + GNU awk).
 
 ### TD-4: test-deepener narrowed remap (AC-5b) — coverage-debt vs cross-confirmed risk
 
@@ -117,6 +131,10 @@ docs/features/{id}/qa-override.md (USER-WRITTEN) ┘     (last is user-written)
 
 **Rationale:** Re-run on a fix-commit (different HEAD) naturally invalidates cache via SHA mismatch. Re-run on the same HEAD always implies the prior outcome is still valid (no code changed). Atomic-rename ensures observers never see partial JSON.
 
+**Corruption handling:** If `.qa-gate.json` exists but does not parse as JSON OR is missing any of the required fields (`head_sha`, `gate_passed_at`, `summary`), treat as cache-miss and re-dispatch. Append warning to `.qa-gate.log`: `cache-corrupt: re-dispatching at HEAD {sha}`. Prevents silent skip on corrupted state.
+
+**Step ordering dependency:** Step 5b only writes `.qa-gate.json` after Step 5a (validate.sh) has passed in the same `/pd:finish-feature` invocation. The cache represents "full pre-merge gate passed at this HEAD"; partial passes do not write cache. Step 5b reads cache at start (skip-if-match logic in FR-8 step 2) regardless of 5a outcome — but a stale cache from a prior 5a-passing run stays valid until HEAD changes.
+
 ### TD-6: Parallel dispatch via single Claude message (not sequential or async)
 
 **Decision:** Step 5b prose instructs Claude to dispatch all 4 reviewers in **one message** with 4 `Task` tool calls. Claude (the orchestrator) waits for all 4 responses before evaluating severity buckets.
@@ -127,33 +145,89 @@ docs/features/{id}/qa-override.md (USER-WRITTEN) ┘     (last is user-written)
 
 **Rationale:** All 4 reviewers fit in `max_concurrent_agents: 5`. Wall-clock matches industry parallel-LLM-reviewer norms (~60-90s). Single-message dispatch is the canonical pattern from CLAUDE.md "If you intend to call multiple tools and there are no dependencies between them, make all independent tool calls in parallel."
 
-### TD-7: Backlog ID extraction — file-scan regex with sequential reservation
+### TD-7: Backlog ID extraction + per-feature sectioning
 
-**Decision:** Algorithm:
+**ID extraction algorithm:**
 1. `grep -oE '^- \*\*#[0-9]{5}\*\*' docs/backlog.md | grep -oE '[0-9]{5}' | sort -n | tail -1` to find max ID.
 2. `next_id = max + 1` (zero-padded to 5 digits via `printf '%05d'`).
 3. For batch MED filing in one run: reserve IDs sequentially `next_id, next_id+1, ...` in the order the gate processes findings (deterministic).
-4. Append (not insert) to backlog.md to preserve chronological sectioning.
+
+**Verification of regex coverage:** Run `grep -cE '^- \*\*#[0-9]{5}\*\*' docs/backlog.md` and compare against expected entry count documented in C2. As of 2026-04-29 the regex matches 100% of entries (all of #00001..#00263 follow this format — verified by spec-reviewer iter 1 audit). If a future entry uses a different format, broaden regex or pre-normalize.
+
+**Section integration (per existing convention seen at backlog.md:222-340):**
+
+The gate creates (if absent) a section heading near the top of `docs/backlog.md` for the running feature:
+```markdown
+## From Feature {feature_id} Pre-Release QA Findings ({date})
+
+```
+Subsequent runs of the same feature append within this section. Different features get their own section. Mirrors the existing 091/092/093 post-release structure.
+
+**Insertion algorithm:**
+1. Search `docs/backlog.md` for `^## From Feature {feature_id} Pre-Release QA`.
+2. If found: append entries inside that section (after the heading, before the next `## ` heading).
+3. If not found: insert new section heading + entries immediately before the first existing `## ` heading. (This places the new section near the top, in inverse-chronological order matching existing convention.)
 
 **Alternatives rejected:**
-- *Naive `grep -E '#\d{5}'`.* Over-counts: cross-references like `(see #00193)` inside finding descriptions would inflate the max.
-- *Track next-id in a separate state file.* Adds another sidecar; no benefit over scanning the source-of-truth.
+- *Append to file EOF.* Breaks per-feature grouping convention; flat append-only structure mixes 094's findings into older sections.
+- *Naive `grep -E '#\d{5}'`.* Over-counts cross-references like `(see #00193)` inside descriptions.
+- *Track next-id in a separate state file.* Adds a sidecar with no benefit over scanning the source-of-truth.
 
-**Rationale:** Anchored regex `^- \*\*#(\d{5})\*\*` matches only top-of-list entries (the canonical entry start). Cross-references inside descriptions (which never start a list item) are excluded by the `^- ` anchor. Deterministic sequential reservation makes multi-MED runs reproducible.
+**Rationale:** Anchored regex matches only top-of-list entries; sectioning matches existing 091/092/093 convention; inverse-chronological top-of-file insertion makes recent findings discoverable.
 
-### TD-8: JSON parse with fenced-block extraction + balanced-brace fallback + schema validation
+### TD-8: JSON parse via inline `python3 -c` heredoc with stdlib only
 
-**Decision:** Per-reviewer JSON parse contract (FR-10):
-1. **Primary:** extract first ```` ```json ... ``` ```` fenced block.
-2. **Fallback:** scan for first balanced `{ ... }` block, parse with `json.loads`.
-3. **Validate:** check required fields per FR-2 table for each reviewer.
-4. **INCOMPLETE iff** all three fail OR schema validation fails.
+**Decision:** Step 5b prose tells Claude to invoke a single `Bash` call with `python3 -c '...'` heredoc that performs extraction + schema validation per reviewer. Claude pipes each reviewer's raw output text into stdin; Python returns either a parsed JSON object on stdout or exits non-zero with an error reason on stderr.
+
+**Concrete shell snippet (template — full version in C2 procedure doc):**
+
+```bash
+python3 -c '
+import sys, json, re
+text = sys.stdin.read()
+# Primary: fenced ```json block
+m = re.search(r"```json\s*(\{.*?\})\s*```", text, re.DOTALL)
+if m:
+    payload = m.group(1)
+else:
+    # Fallback: first balanced {...} (greedy enough for simple shapes)
+    start = text.find("{")
+    if start == -1:
+        sys.exit("no_json_found")
+    depth, i = 0, start
+    while i < len(text):
+        if text[i] == "{": depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                payload = text[start:i+1]
+                break
+        i += 1
+    else:
+        sys.exit("unbalanced_braces")
+try:
+    obj = json.loads(payload)
+except json.JSONDecodeError as e:
+    sys.exit(f"json_decode_error: {e}")
+# Schema validation per reviewer role (passed as $1)
+role = sys.argv[1] if len(sys.argv) > 1 else ""
+required = {"pd:security-reviewer": ["approved", "issues", "summary"],
+            "pd:code-quality-reviewer": ["approved", "issues", "summary"],
+            "pd:implementation-reviewer": ["approved", "issues", "summary"],
+            "pd:test-deepener": ["gaps", "summary"]}
+for f in required.get(role, []):
+    if f not in obj:
+        sys.exit(f"schema_missing: {f}")
+print(json.dumps(obj))
+' "$REVIEWER_ROLE" <<< "$REVIEWER_OUTPUT"
+```
 
 **Alternatives rejected:**
-- *Strict JSON-only (require fenced block).* Reviewers often respond with prose preamble + JSON; rejecting this is overly punitive. Reviewers would have to be re-prompted, doubling wall-clock.
-- *Lenient text-extraction with regex.* Brittle; can't validate schema; risks accepting malformed responses.
+- *Claude performs extraction + validation cognitively.* Spec-reviewer iter 1 + design-reviewer iter 1 both flagged this as ambiguous. LLM "schema check" is non-deterministic; a malformed response could slip through if Claude pattern-matches loosely.
+- *Strict JSON-only (require fenced block).* Reviewers often emit prose preamble + JSON; rejecting trips the INCOMPLETE path unnecessarily.
+- *Adding `jq` dependency.* `jq` isn't guaranteed across all environments; `python3` is already required by pd's other shell scripts.
 
-**Rationale:** Two-step extraction handles both well-behaved (fenced) and prose-mixed responses. Schema validation catches truncated or wrong-shaped responses (e.g., test-deepener returning `gaps:[]` instead of `issues:[]`). INCOMPLETE on schema failure is the correct posture per FR-10.
+**Rationale:** stdlib `json` + `re` are deterministic, fast (<10ms per parse), and produce traceable failure reasons in the INCOMPLETE message. The snippet runs once per reviewer (4 invocations total per gate run); no measurable overhead.
 
 ## Architecture Components
 
@@ -182,16 +256,16 @@ docs/features/{id}/qa-override.md (USER-WRITTEN) ┘     (last is user-written)
 
 **Owner:** plugins/pd/hooks/tests/test-hooks.sh  
 **Responsibility:** prevent silent removal of Step 5b dispatch via 3 new test functions:
-- `test_finish_feature_step_5b_present` — 8 grep assertions per AC-14
+- `test_finish_feature_step_5b_present` — **10 grep assertions** (8 per AC-14 + 2 added per design-reviewer iter 1: the "dispatch all 4 reviewers in parallel" literal phrase per AC-3, and the AC-15 fallback string `no spec.md found — review for general defects`)
 - `test_finish_feature_under_600_lines` — file size constraint per AC-18
 - `test_qa_gate_procedure_doc_exists` — procedure doc exists with FR markers per AC-18 + suggestion 1
-**Size constraint:** ~30 lines added
+**Size constraint:** ~35 lines added (10 greps × ~3 lines each + 2 helper tests)
 
 ### C5: Runtime-generated sidecars
 
-**Owner:** Step 5b prose (Claude generates at runtime via Bash)  
-**Responsibility:** persist gate state (`.qa-gate.json`), audit/telemetry (`.qa-gate.log`), and LOW findings (`.qa-gate-low-findings.md`) per the schemas in interface section below  
-**Lifecycle:** `.qa-gate.json` survives across runs (cache); `.qa-gate.log` and `.qa-gate-low-findings.md` are consumed and deleted by C3 during retro
+**Owner:** Step 5b prose (Claude generates at runtime via Bash) for `.qa-gate.json`, `.qa-gate.log`, `.qa-gate-low-findings.md`. **Gate-initiated, user-completed** for `qa-override.md` (gate writes frontmatter + scaffolding on first HIGH-block; user fills rationale; gate appends new H2 section on subsequent blocks).  
+**Responsibility:** persist gate state (`.qa-gate.json`), audit/telemetry (`.qa-gate.log`), LOW findings (`.qa-gate-low-findings.md`), and HIGH-block scaffolding (`qa-override.md`)  
+**Lifecycle:** `.qa-gate.json` survives across runs (cache); `.qa-gate.log` and `.qa-gate-low-findings.md` are consumed and deleted by C3 during retro; `qa-override.md` persists across feature lifetime as audit trail (committed to git).
 
 ## Interfaces
 
@@ -308,10 +382,14 @@ Return JSON in a ```json fenced block matching the schema for your reviewer role
 
 For `pd:test-deepener`, the prompt additionally states: "Run **Step A** (Outline Generation) ONLY. Do NOT write tests. Output gaps with `mutation_caught` boolean."
 
-### I-6: Severity bucket logic (pseudocode)
+### I-6: Severity bucket logic — two-phase
+
+**Phase 1 — Collection:** After all 4 reviewers respond, parse each per FR-10 and collect `(reviewer, severity, securitySeverity, location, description, suggestion, mutation_caught)` tuples into a single list `all_findings`. Normalize each `location` field via `normalize_location()` defined below before insertion.
+
+**Phase 2 — Bucketing:** For each finding, run `bucket(finding, all_findings)`:
 
 ```python
-def bucket(reviewer_name, finding):
+def bucket(finding, all_findings):
     sev = finding.get("severity")
     sec_sev = finding.get("securitySeverity")
     high = sev == "blocker" or sec_sev in {"critical", "high"}
@@ -319,29 +397,42 @@ def bucket(reviewer_name, finding):
     low = sev == "suggestion" or sec_sev == "low"
 
     # AC-5b narrowed remap for test-deepener
-    if reviewer_name == "pd:test-deepener" and high:
-        if not finding.get("mutation_caught", True) and not _cross_confirmed(finding["location"]):
+    if finding["reviewer"] == "pd:test-deepener" and high:
+        mutation_caught = finding.get("mutation_caught", True)
+        cross_confirmed = any(
+            other["location"] == finding["location"]
+            and other["reviewer"] != "pd:test-deepener"
+            for other in all_findings
+        )
+        if not mutation_caught and not cross_confirmed:
             return "MED"  # coverage-debt only
 
     if high: return "HIGH"
     if med:  return "MED"
     if low:  return "LOW"
     return "MED"  # default for missing severity field
-
-def _cross_confirmed(location):
-    return any(other_finding.location == location
-               for other_finding in findings_by_reviewer
-               if other_finding.reviewer != "pd:test-deepener")
 ```
+
+**`normalize_location(loc: str) -> str`:**
+- Extract `{filename_basename}:{line_number}` if `loc` matches `[^/\s]+\.[a-z]+:\d+` (basename + line).
+- Match anywhere in the string (not anchored), e.g. `"plugins/pd/hooks/lib/foo.py:42"` → `"foo.py:42"`.
+- If no match, return `loc.strip().lower()` as a coarse fallback.
+- Document this rule in C2 (procedure doc) so reviewer prompts can request `file:line` format from agents that emit free-form locations.
+
+**Reviewer prompt addendum (in I-5):** All 4 reviewer dispatch prompts MUST include:
+> Output `location` as `file:line` (e.g., `database.py:1055`) when the issue maps to a specific source line. For non-line issues (e.g., architecture-level), use `file` only.
+
+This makes cross-confirmation viable across reviewer output schemas.
 
 ## Risks
 
-- **R-1 [HIGH]** — Override normalization in YOLO + single-developer (pre-mortem + antifragility advisors). **Mitigated by:** TD-3 (trimmed-count requires ≥50 user-authored chars); FR-11 (YOLO HIGH always exits non-zero, no AskUserQuestion); git-history audit log of all overrides. **Residual:** if user writes "lgtm, false positive, ship it" 50+ times, gate degrades. Open Question 1 revisit trigger (false-block rate >15%) is the structural backstop.
-- **R-2 [MED]** — Idempotency cache silent-skip after force-push (pre-mortem advisor). **Mitigated by:** SHA-mismatch always invalidates cache (FR-8 step 3); skip event always logged to `.qa-gate.log` (AC-7); retrospecting skill folds the audit log into retro for visibility.
-- **R-3 [MED]** — test-deepener output shape ambiguity (first-principles + pre-mortem). **Mitigated by:** AC-5b narrowed remap; FR-10 schema validation rejects mis-shaped output; FR-4 explicit Step A invocation prompt.
+- **R-1 [HIGH]** — Override normalization in YOLO + single-developer (pre-mortem + antifragility advisors). **Partially mitigated by:** TD-3 (per-section trimmed-count forces ≥50 fresh chars per HIGH-block — Override 1's rationale does NOT satisfy Override 2). FR-11 (YOLO HIGH always exits non-zero, no AskUserQuestion). **Audit observability (not mitigation):** git history records all override invocations; `.qa-gate.log` records skips. **Honest residual:** if the user writes "lgtm shipping it false positive 50 chars" each time, gate degrades to advisory. **Forcing function (added per design-reviewer warning 12):** if 3 consecutive `## Override` sections appear in the same `qa-override.md`, gate emits warning to retro escalating for review. Implementation: gate counts `^## Override [0-9]+` headings; if ≥3, append `## Override-Storm Warning` H2 to retro.md flagging the feature for human escalation. Structural backstop deferred to Open Question 1 (consensus weighting after 3 features ship through gate).
+- **R-2 [MED]** — Idempotency cache silent-skip after force-push (pre-mortem advisor). **Mitigated by:** SHA-mismatch always invalidates cache (FR-8 step 3); skip event always logged to `.qa-gate.log` (AC-7); retrospecting skill folds the audit log into retro for visibility. Corrupted-cache (invalid JSON) handled by treating as cache-miss (TD-5 corruption clause below).
+- **R-3 [MED]** — test-deepener output shape ambiguity (first-principles + pre-mortem). **Mitigated by:** AC-5b narrowed remap with two-phase ordering (I-6); FR-10 schema validation via python3 heredoc (TD-8); FR-4 explicit Step A invocation prompt; location-normalization rule (I-6) enables cross-confirmation across heterogeneous reviewer schemas.
 - **R-4 [MED]** — Cross-feature interaction bugs invisible to diff-scoped reviewers (first-principles). **Not mitigated by this feature.** Documented as out-of-scope; would require a post-merge gate or full-codebase pass. Filed as future-consideration.
-- **R-5 [LOW]** — Large-diff degradation (antifragility). **Mitigated by:** NFR-1 size warning; gate proceeds, does not auto-skip.
+- **R-5 [MED]** — Large-diff degradation (antifragility). **Mitigated by:** NFR-1 size warning; gate proceeds, does not auto-skip.
 - **R-6 [LOW]** — Spec-absent feature path (antifragility). **Mitigated by:** AC-15 fallback prompt string; design spec-absent features to use the literal fallback text.
+- **R-7 [MED]** — Context-window saturation on very large diffs (pre-mortem advisor — surfaced in design-reviewer iter 1). At >2000 LOC, the diff text alone could exceed reviewer context budget when sent to 4 agents in parallel. **Mitigated by:** documented per-reviewer budget hint in C2 (procedure doc): if `git diff {pd_base_branch}...HEAD | wc -l` > 2000, the dispatch prompt includes a file-list summary instead of full diff, and instructs each reviewer to request specific files via clarification rather than reviewing all in one pass. Wall-clock NFR-1 widened to 10 min above this threshold.
 
 ## Out of Scope
 
@@ -360,9 +451,12 @@ Direct-orchestrator pattern fits (per 091/092/093 surgical template). All edits 
 3. Edit `plugins/pd/skills/retrospecting/SKILL.md`: add sidecar fold step (C3).
 4. Edit `plugins/pd/hooks/tests/test-hooks.sh`: add 3 new test functions and register them (C4).
 5. Quality gates: `validate.sh`, `test-hooks.sh` (with the 3 new tests passing), spec ACs binary verified.
-6. Dogfood self-test (DoD): inject synthetic HIGH into a sample file, run `/pd:finish-feature` self-dispatch, confirm at least one reviewer flags it; remove synthetic injection.
+6. **Dogfood self-test (DoD), two-phase:**
+   - **(a) Self-dispatch:** Run `/pd:finish-feature` on feature 094's own branch — confirm gate dispatches all 4 reviewers against the prose diff, completes, and writes `.qa-gate.json` if no HIGHs found.
+   - **(b) Synthetic-HIGH injection:** In a scratch sub-branch, inject a HIGH-equivalent (e.g., add `LIMIT -1` unbounded SQL query or `subprocess.Popen(shell=True, ...)` with f-string) into a Python file. Run gate; confirm at least one reviewer flags HIGH and gate exits non-zero. Discard the scratch branch.
+   - **(c) Cleanup:** Remove synthetic injection if any leaked back to the feature branch.
 
-All in one commit (~80 prod prose + ~30 test LOC + new ~180-line doc). Followed by post-merge adversarial QA per the new gate itself (eat-own-dog-food validation).
+All in one commit (~80 prod prose + ~35 test LOC + new ~180-line doc). Followed by post-merge adversarial QA per the new gate itself (eat-own-dog-food validation).
 
 ## Test Strategy
 
@@ -388,6 +482,25 @@ All in one commit (~80 prod prose + ~30 test LOC + new ~180-line doc). Followed 
 | AC-20 (no new deps) | `validate.sh` passes; no new pip/brew/npm files added |
 
 **Manual Verification Gate** (per AC-5b/8/9/10/11/13/17/19): a `## Manual Verification` checklist appended to retro.md after dogfood self-test. Responsible party: feature implementer. Environment: develop branch, current shell. Each item ticked off with the specific command run + observation.
+
+## Review History
+
+### Iteration 1 — design-reviewer (opus, 2026-04-29)
+
+**Findings:** 5 blockers + 7 warnings + 3 suggestions
+
+**Corrections applied:**
+- TD-3 — switched `qa-override.md` bypass check from file-level trimmed-count to **per-section** (latest `## Override N` to EOF) trimmed-count. Override 1's rationale no longer satisfies Override 2. Reason: Blocker 3.
+- I-6 — restructured to two-phase (Phase 1 collect, Phase 2 bucket); added `normalize_location()` rule for cross-confirmation across heterogeneous reviewer schemas; added I-5 prompt addendum requiring `file:line` location format. Reason: Blockers 1 + 2.
+- TD-8 — concretized JSON parse mechanism as inline `python3 -c` heredoc with stdlib only; removed ambiguity about who runs json.loads. Reason: Blocker 4.
+- TD-7 — added per-feature sectioning (`## From Feature {feature_id} Pre-Release QA Findings (date)`) per existing 091/092/093 backlog convention; added regex-coverage verification step. Reason: Blocker 5 + warning 10.
+- R-7 NEW — added context-window saturation risk (>2000 LOC) with file-list-summary mitigation in C2; widened NFR-1 wall-clock budget. Reason: Warning 6.
+- C5 — clarified ownership of `qa-override.md` as gate-initiated/user-completed; updated Architecture diagram annotation. Reason: Warning 7.
+- TD-5 — added corrupted-cache handling (treat as cache-miss, log warning); explicit Step 5a→5b ordering dependency. Reason: Warning 8 + suggestion 13.
+- C4 — extended `test_finish_feature_step_5b_present` from 8 to 10 grep assertions (added AC-3 literal phrase + AC-15 fallback string). Reason: Warning 9 + suggestion 15.
+- R-1 — restructured: explicitly downgraded to "partially mitigated"; added override-storm forcing function (3+ overrides emits warning to retro for human escalation); kept honest residual statement. Reason: Warning 12.
+- Implementation Order step 6 — split into two-phase dogfood: (a) self-dispatch on own branch, (b) synthetic-HIGH injection in scratch branch, (c) cleanup. Reason: Warning 11.
+- Sidecar consolidation — declined; kept 3 sidecars per TD-2 (different lifecycles justify separate files). Suggestion 14 acknowledged but not adopted.
 
 ## Manual Verification Gate
 
