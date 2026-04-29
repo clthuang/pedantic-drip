@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import os
+import re
 import struct
 import sqlite3
 from collections.abc import Iterator
@@ -13,8 +15,6 @@ import numpy as np
 import pytest
 
 from semantic_memory.database import MemoryDatabase, _sanitize_fts5_query, _ISO8601_Z_PATTERN
-import inspect
-import re
 
 
 # ---------------------------------------------------------------------------
