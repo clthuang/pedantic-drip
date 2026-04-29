@@ -12,7 +12,9 @@ from datetime import datetime, timezone
 import numpy as np
 import pytest
 
-from semantic_memory.database import MemoryDatabase, _sanitize_fts5_query
+from semantic_memory.database import MemoryDatabase, _sanitize_fts5_query, _ISO8601_Z_PATTERN
+import inspect
+import re
 
 
 # ---------------------------------------------------------------------------
@@ -2038,7 +2040,6 @@ class TestScanDecayCandidates:
         adds microseconds) and would silently break BOTH scan_decay_candidates
         (log-and-skip) AND batch_demote (raise)."""
         from semantic_memory._config_utils import _iso_utc
-        from semantic_memory.database import _ISO8601_Z_PATTERN
         test_dt = test_dt_factory()
         output = _iso_utc(test_dt)
         assert _ISO8601_Z_PATTERN.fullmatch(output), (
@@ -2083,6 +2084,29 @@ class TestScanDecayCandidates:
         captured = capsys.readouterr()
         assert "format violation" in captured.err
 
+    @pytest.mark.parametrize("partial_unicode_input,case_name", [
+        ("2026-01-0１T00:00:00Z", "day-pos"),       # Feature 095 #00252 — fullwidth 1 at day-units
+        ("2026-01-01T0１:00:00Z", "hour-pos"),      # Feature 095 #00252 — fullwidth 1 at hour-units
+        ("2026-01-01T00:0１:00Z", "minute-pos"),    # Feature 095 #00252 — fullwidth 1 at minute-units
+        ("2026-01-01T00:00:0１Z", "second-pos"),    # Feature 095 #00252 — fullwidth 1 at second-units
+    ], ids=["day-pos", "hour-pos", "minute-pos", "second-pos"])
+    def test_pattern_rejects_partial_unicode_injection(
+        self, db: MemoryDatabase, capsys, partial_unicode_input, case_name,
+    ):
+        """Feature 095 #00252 — pin rejection of mid-string single Unicode digit injection.
+
+        Existing test_pattern_rejects_unicode_digits covers full Unicode replacement (year).
+        This test pins the partial-injection case at each datetime field position.
+        """
+        rows = list(db.scan_decay_candidates(
+            not_null_cutoff=partial_unicode_input, scan_limit=10,
+        ))
+        assert rows == [], f"[{case_name}] expected empty for {partial_unicode_input!r}; got {len(rows)} rows"
+        captured = capsys.readouterr()
+        assert "format violation" in captured.err, (
+            f"[{case_name}] scan_decay_candidates must reject partial Unicode injection"
+        )
+
 
 class TestBatchDemote:
     """Task 2.3 / 2.4 — design I-7 (BEGIN IMMEDIATE, 500-ids chunking,
@@ -2099,16 +2123,24 @@ class TestBatchDemote:
         finally:
             db.close()
 
-    @pytest.mark.parametrize("invalid_now_iso,case_name", [
+    _INVALID_NOW_ISO_CASES = [
         ("", "empty"),
         ("   ", "whitespace-only"),
         ("\n", "newline-only"),
         ("​", "zero-width-space"),
         ("10000-01-01T00:00:00Z", "5-digit-year-breaks-sqlite-lex-collation"),
         ("2026-04-20T00:00:00Z\n", "trailing-newline"),
+        ("2026-04-20T00:00:00Z ", "trailing-space"),       # Feature 095 #00251
+        ("2026-04-20T00:00:00Z\r\n", "trailing-crlf"),     # Feature 095 #00251
         ("２０２６-04-20T00:00:00Z", "unicode-digits"),
         ("2026-04-20T00:00:00+00:00", "plus-offset-not-Z-suffix"),
-    ])
+    ]
+
+    @pytest.mark.parametrize(
+        "invalid_now_iso,case_name",
+        _INVALID_NOW_ISO_CASES,
+        ids=[c for _, c in _INVALID_NOW_ISO_CASES],
+    )
     def test_batch_demote_rejects_invalid_now_iso(self, invalid_now_iso, case_name):
         """Feature 093 FR-3 (#00221): batch_demote uses same _ISO8601_Z_PATTERN
         as scan_decay_candidates (single source of truth). All inputs that would
@@ -2118,6 +2150,22 @@ class TestBatchDemote:
         try:
             with pytest.raises(ValueError, match="Z-suffix ISO-8601"):
                 db.batch_demote(["x"], "medium", invalid_now_iso)
+        finally:
+            db.close()
+
+    @pytest.mark.parametrize("partial_unicode_input,case_name", [
+        ("2026-01-0１T00:00:00Z", "day-pos"),       # Feature 095 #00252
+        ("2026-01-01T0１:00:00Z", "hour-pos"),      # Feature 095 #00252
+        ("2026-01-01T00:0１:00Z", "minute-pos"),    # Feature 095 #00252
+        ("2026-01-01T00:00:0１Z", "second-pos"),    # Feature 095 #00252
+    ], ids=["day-pos", "hour-pos", "minute-pos", "second-pos"])
+    def test_batch_demote_rejects_partial_unicode_injection(self, partial_unicode_input, case_name):
+        """Feature 095 #00252 — cross-call-site parity: batch_demote must also reject
+        partial Unicode injection at any datetime position (not just full-Unicode year)."""
+        db = MemoryDatabase(":memory:")
+        try:
+            with pytest.raises(ValueError, match="Z-suffix ISO-8601"):
+                db.batch_demote(["x"], "medium", partial_unicode_input)
         finally:
             db.close()
 
@@ -2202,6 +2250,62 @@ class TestBatchDemote:
             assert result == 501
         finally:
             db.close()
+
+
+class TestIso8601PatternSourcePins:
+    """Feature 095 — source-level mutation-resistance pins for _ISO8601_Z_PATTERN.
+
+    Closes feature 093 post-release adversarial QA gaps #00246-#00250.
+    Per advisor consensus, uses _ISO8601_Z_PATTERN.pattern / .flags (stable Python 3.7+
+    public attrs) where signal is equivalent; uses inspect.getsource() only for call-site
+    .fullmatch() pin (#00250) where call-form IS the contract.
+    """
+
+    def test_pattern_source_uses_explicit_digit_class(self):
+        """Closes #00246 — pin literal `[0-9]` in pattern source, NOT `\\d`."""
+        assert '[0-9]' in _ISO8601_Z_PATTERN.pattern, \
+            "_ISO8601_Z_PATTERN.pattern must use explicit [0-9] character class for ASCII-only matching"
+        assert r'\d' not in _ISO8601_Z_PATTERN.pattern, \
+            "_ISO8601_Z_PATTERN.pattern must NOT use \\d (Unicode-digit-permissive in Python 3 str patterns)"
+
+    def test_pattern_compiled_with_re_ascii_flag(self):
+        """Closes #00247 — pin re.ASCII flag presence (defense-in-depth)."""
+        assert bool(_ISO8601_Z_PATTERN.flags & re.ASCII), \
+            "_ISO8601_Z_PATTERN must be compiled with re.ASCII flag (defense-in-depth against future class expansion)"
+
+    @pytest.mark.parametrize("unicode_input,case_name", [
+        ("２０２６-04-20T00:00:00Z", "fullwidth-year"),
+        ("٢٠٢٦-04-20T00:00:00Z", "arabic-indic-year"),
+        ("२०२६-04-20T00:00:00Z", "devanagari-year"),
+    ], ids=["fullwidth", "arabic-indic", "devanagari"])
+    def test_pattern_rejects_unicode_digits_directly(self, unicode_input, case_name):
+        """Closes #00248 — direct pattern-object Unicode rejection, decoupled from call sites.
+
+        Catches combined mutation: swap [0-9] -> \\d AND drop re.ASCII flag (which would
+        re-introduce #00219 Unicode-digit bypass). Behavior tests via call sites also
+        catch this combined mutation, but this test catches it without needing a DB.
+        """
+        assert _ISO8601_Z_PATTERN.fullmatch(unicode_input) is None, \
+            f"[{case_name}] Pattern must reject Unicode-digit input directly"
+
+    @pytest.mark.parametrize("method", [
+        MemoryDatabase.scan_decay_candidates,
+        MemoryDatabase.batch_demote,
+    ], ids=["scan_decay_candidates", "batch_demote"])
+    def test_call_sites_use_fullmatch_not_match(self, method):
+        """Closes #00250 + #00249 — pin .fullmatch() call-form at both call sites,
+        and confirm both share _ISO8601_Z_PATTERN as single source of truth.
+
+        This is the only test in this class that uses inspect.getsource() — required because
+        the contract IS the call-form, not an attribute of the pattern object.
+        """
+        src = inspect.getsource(method)
+        assert '_ISO8601_Z_PATTERN.fullmatch(' in src, \
+            f"{method.__name__} must use _ISO8601_Z_PATTERN.fullmatch()"
+        assert '_ISO8601_Z_PATTERN.match(' not in src, \
+            f"{method.__name__} must NOT use _ISO8601_Z_PATTERN.match() (allows trailing newline bypass)"
+        assert 're.compile(' not in src, \
+            f"{method.__name__} must NOT define a local re.compile() — must use the module-level _ISO8601_Z_PATTERN constant"
 
 
 class TestExecuteChunkSeam:

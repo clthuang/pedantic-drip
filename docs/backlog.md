@@ -369,3 +369,7 @@ First-ever dogfood of the new pre-release adversarial QA gate (Step 5b in `/pd:f
 - Shell→python3 string-interpolation OWASP anti-pattern — **fixed inline**: switched to env-var passing in §7.
 - Trivially-defeatable 50-char override threshold — already mitigated by §12 storm-warning + Open Question 1 (consensus weighting deferred).
 - Diff-content secret exposure — out-of-scope (existing pd reviewers already have this surface; no incremental risk).
+
+## From Feature 095 First-Principles Advisor (2026-04-29)
+
+- **#00277** [MED/architecture] Relocate `_ISO8601_Z_PATTERN` from `database.py:23-26` to `_config_utils.py` near `_iso_utc`. Co-locating the validator with its producer would: (1) make source-level pins trivially checkable as `assert _PATTERN.flags & re.ASCII` without requiring `inspect.getsource()` on call-site method bodies; (2) centralize the two call sites onto a single canonical import; (3) make module-level invariants testable without implementation coupling to `database.py` internals; (4) break the recursive test-hardening pattern observed across 091/092/093/095 where each hardening iteration generates new test-coverage debt because the validator lives in a non-obvious place. Filed by feature:095 first-principles advisor as the architectural debt root-cause. (filed by feature:095 — relocate pattern to config-utils)
