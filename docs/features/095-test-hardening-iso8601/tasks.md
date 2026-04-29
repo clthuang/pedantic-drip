@@ -45,7 +45,7 @@ Per plan T1: extend line 15 + add `import inspect`.
 
 Per plan T2: delete inline import inside `test_iso_utc_output_always_passes_hardened_pattern`.
 
-**DoD:** `grep -c 'from semantic_memory.database import _ISO8601_Z_PATTERN' test_database.py` = exactly 1.
+**DoD:** `grep -c 'from semantic_memory.database import _ISO8601_Z_PATTERN' plugins/pd/hooks/lib/semantic_memory/test_database.py` = exactly 1.
 
 ## T3 — Extend parametrize
 
