@@ -194,6 +194,8 @@ Evaluate whether requirements are achievable. Focus on POSSIBILITY, not difficul
 - [ ] Feasibility assessment uses evidence, not opinion?
 - [ ] Assumptions explicitly listed?
 - [ ] If any FR or AC names symbols used in test bodies (e.g. `inspect.getsource`, `re.ASCII`, `pytest.mark.parametrize`), **all** required stdlib imports are enumerated in the FR — not just the most prominent one. Closes #00288 traceability gap.
+- [ ] **Recursive test-hardening check (feature 099 FR-2):** If any FR text grep-matches `Test[A-Z][\w]+|test_[\w]+` (i.e., references existing test classes or test functions), include explicit answer to: "Is this scope recursive test-hardening? Behavioral coverage at production call sites is the architectural alternative — see qa-override.md template (`{pd_artifacts_root}/features/097-iso8601-test-pin-v2/qa-override.md`)." Surface either: (a) acknowledgement of architectural rationale, OR (b) explicit framing as test-only refactor.
+- [ ] **Empirical-verification check (feature 099 FR-7):** If any FR or AC references stdlib runtime behavior — including but not limited to: regex flags via `.flags` / `re.compile()` / `re.ASCII` / `re.UNICODE`; `re`, `sys`, `pkgutil`, `inspect`, `unicodedata`, `datetime`, `json`, `pathlib`, `subprocess` module APIs; encoding semantics like `str.isspace`, `str.isdigit`, `str.isascii`, `unicodedata.category`, `unicodedata.normalize` — include a Python REPL verification line inline using format `>>> <expr> → <result>`. Empirical evidence at spec time prevents iteration-deferred blockers.
 
 If any check fails, revise before saving.
 

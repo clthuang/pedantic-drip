@@ -175,6 +175,17 @@ MUST use Context7 to verify at least one library/API claim OR WebSearch for exte
 - "Verified: {claim} via {source}"
 - OR "Unable to verify independently - flagged for human review"
 
+### Recursive Test-Hardening (feature 099 FR-2 prevention)
+
+- [ ] Detect: regex search FR text for `Test[A-Z][\w]+|test_[\w]+` references.
+- [ ] If detected AND no architectural-rationale acknowledgement present → emit `severity: warning` with category `recursive-test-hardening` and suggestion: "Acknowledge whether scope is intentional test-hardening (with rationale per qa-override.md template at `{pd_artifacts_root}/features/097-iso8601-test-pin-v2/qa-override.md`) OR reframe as behavioral coverage at production call sites."
+
+### Empirical Verification (feature 099 FR-7 prevention)
+
+- [ ] Detect (judgment-based, not auto-emit): scan FRs for trigger keywords `re\.|pkgutil\.|inspect\.|unicodedata\.|sys\.|datetime\.|json\.|pathlib\.|subprocess\.|str\.is\w+`.
+- [ ] If trigger keyword appears AND its behavior is **load-bearing for an AC** (i.e., the AC's pass/fail depends on the runtime semantics) AND spec contains no `>>>` lines or `Empirical:` markers → emit `severity: warning` with category `empirical-verification` and suggestion: "Add a Python REPL verification line near the FR demonstrating the runtime contract (format: `>>> expr → result`)."
+- [ ] Mode is judgment-based: prose mentions ("see re.compile docs") without load-bearing AC do NOT trigger.
+
 ## Review Process
 
 1. **Read the PRD** to understand original requirements
