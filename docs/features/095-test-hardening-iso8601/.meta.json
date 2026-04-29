@@ -1,0 +1,38 @@
+{
+  "id": "095",
+  "slug": "test-hardening-iso8601",
+  "mode": "standard",
+  "status": "completed",
+  "created": "2026-04-29T03:14:50.381298+00:00",
+  "branch": "feature/095-test-hardening-iso8601",
+  "completed": "2026-04-29T04:00:38.033902+00:00",
+  "brainstorm_source": "docs/brainstorms/20260429-110407-test-hardening-iso8601.prd.md",
+  "backlog_source": "00246",
+  "lastCompletedPhase": "finish",
+  "phases": {
+    "brainstorm": {
+      "started": "2026-04-29T03:14:50.380468+00:00"
+    },
+    "specify": {
+      "started": "2026-04-29T03:15:22.008210+00:00",
+      "completed": "2026-04-29T03:23:24.651632+00:00",
+      "iterations": 3
+    },
+    "design": {
+      "completed": "2026-04-29T03:33:16.381096+00:00",
+      "iterations": 3
+    },
+    "create-plan": {
+      "completed": "2026-04-29T03:44:58.315455+00:00",
+      "iterations": 3
+    },
+    "implement": {
+      "completed": "2026-04-29T03:52:48.820754+00:00",
+      "iterations": 1
+    },
+    "finish": {
+      "completed": "2026-04-29T04:00:38.033902+00:00",
+      "iterations": 1
+    }
+  }
+}
