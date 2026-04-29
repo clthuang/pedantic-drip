@@ -21,6 +21,8 @@ Move `_ISO8601_Z_PATTERN` from `plugins/pd/hooks/lib/semantic_memory/database.py
   - `grep -qF "r'[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z'" plugins/pd/hooks/lib/semantic_memory/_config_utils.py`
   - `grep -qF "re.ASCII" plugins/pd/hooks/lib/semantic_memory/_config_utils.py`
 - **AC-3** The 9-line lineage comment block (currently `database.py:14-22`) is moved to `_config_utils.py` immediately above the relocated `_ISO8601_Z_PATTERN` definition. Verifiable: `grep -q 'Feature 093 FR-1' plugins/pd/hooks/lib/semantic_memory/_config_utils.py` AND `grep -q 'Feature 092 shipped' plugins/pd/hooks/lib/semantic_memory/_config_utils.py`.
+
+- **AC-3a** The migrated lineage block also includes a 3-line annotation citing the feature 096 relocation (per design I-1 — required for traceability of the relocation history). Verifiable: `grep -q 'Feature 096 #00277' plugins/pd/hooks/lib/semantic_memory/_config_utils.py`.
 - **AC-4** `_config_utils.py` contains a one-line convention comment near `_ISO8601_Z_PATTERN` per FR-4 (flywheel advisor recommendation). Verifiable: `grep -qE 'validators? for formats produced' plugins/pd/hooks/lib/semantic_memory/_config_utils.py`.
 - **AC-5** `_ISO8601_Z_PATTERN` is **REMOVED** from `database.py` (no longer defined locally). Verifiable: `grep -cE '^_ISO8601_Z_PATTERN = re.compile' plugins/pd/hooks/lib/semantic_memory/database.py` returns `0`.
 - **AC-6** The 9-line lineage comment block is **REMOVED** from `database.py` (migrated, not duplicated). Verifiable: `grep -c 'Feature 093 FR-1' plugins/pd/hooks/lib/semantic_memory/database.py` returns `0` for the comment-block lineage marker.
@@ -30,11 +32,14 @@ Move `_ISO8601_Z_PATTERN` from `plugins/pd/hooks/lib/semantic_memory/database.py
 - **AC-10** Pytest pass count unchanged: `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/semantic_memory/test_database.py -q | tail -1` returns `214 passed`. Wider regression check: `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/ -q | tail -1` returns `3198 passed` exact (baseline captured 2026-04-29 on feature/096 HEAD pre-edit; no out-of-scope regressions allowed).
 - **AC-11** Feature 095 source-pin tests in `TestIso8601PatternSourcePins` continue to pass without modification (count-relative, not hardcoded). Verifiable: `pytest plugins/pd/hooks/lib/semantic_memory/test_database.py::TestIso8601PatternSourcePins -q | tail -1` returns the SAME pass count post-feature-096 as on develop pre-edit (no regressions, no test removals). Pre-edit baseline (captured 2026-04-29): 7 passed.
 - **AC-12** `validate.sh` exit 0; warning count unchanged from baseline.
-- **AC-13** Single atomic commit covers all 3 production files (atomicity verified across the entire feature branch, not just HEAD). Verifiable:
-  - `git log develop..HEAD --oneline -- plugins/pd/hooks/lib/semantic_memory/_config_utils.py | wc -l` returns `1`
-  - `git log develop..HEAD --oneline -- plugins/pd/hooks/lib/semantic_memory/database.py | wc -l` returns `1`
-  - `git log develop..HEAD --oneline -- plugins/pd/hooks/lib/semantic_memory/test_database.py | wc -l` returns `1`
-  - All three commands return the SAME commit hash.
+- **AC-13** Single atomic commit covers all 3 production files (atomicity verified across the entire feature branch via hash-equality assertion, not just HEAD count). Verifiable:
+  ```bash
+  H1=$(git log develop..HEAD --format=%H -- plugins/pd/hooks/lib/semantic_memory/_config_utils.py)
+  H2=$(git log develop..HEAD --format=%H -- plugins/pd/hooks/lib/semantic_memory/database.py)
+  H3=$(git log develop..HEAD --format=%H -- plugins/pd/hooks/lib/semantic_memory/test_database.py)
+  test "$H1" = "$H2" -a "$H2" = "$H3" -a -n "$H1" && [[ $(echo "$H1" | wc -w) -eq 1 ]]
+  ```
+  Returns exit 0 iff all 3 files were touched by exactly one commit AND that commit is the same hash for all 3 (catches the 2-commit anti-pattern even if each commit happens to touch only one file).
 
 - **AC-14** No circular-import risk introduced. Verifiable: `grep -cE '^from semantic_memory.database' plugins/pd/hooks/lib/semantic_memory/_config_utils.py` returns `0` AND `grep -cE '^from \.database' plugins/pd/hooks/lib/semantic_memory/_config_utils.py` returns `0`. Mirrors PRD constraint into the spec as a binary check.
 
@@ -48,7 +53,7 @@ Move `_ISO8601_Z_PATTERN` from `plugins/pd/hooks/lib/semantic_memory/database.py
 
 ### FR-2 — Migrate the 9-line lineage comment block
 
-**Source:** `database.py:14-22` (verbatim). Quote:
+**Source:** `database.py:14-22`. Migrate verbatim **except line 2** — drop the `_config_utils.` qualifier from `_config_utils._iso_utc` since the comment now lives IN `_config_utils.py` itself (intra-module reference, not cross-module). Plus append a 3-line feature 096 annotation per AC-3a (cited at end of new comment block in destination). Quote of source-state:
 ```
 # Feature 093 FR-1 (#00219, #00220): Z-suffix ISO-8601 format matching production
 # `_config_utils._iso_utc` output (strftime("%Y-%m-%dT%H:%M:%SZ")).
@@ -139,14 +144,14 @@ All 3 production-file edits MUST land in a single commit alongside feature artif
 
 ## Definition of Done
 
-- [ ] All 14 ACs (AC-1..AC-14) pass binary verification
+- [ ] All 15 ACs (AC-1..AC-3, AC-3a, AC-4..AC-14) pass binary verification
 - [ ] All 8 FRs implemented (FR-1..FR-8)
 - [ ] All 4 NFRs met
 - [ ] `validate.sh` exit 0
 - [ ] Pytest pass count = 214 exactly (test_database.py) and 3198 exact (wider plugins/pd/hooks/lib/)
-- [ ] Single atomic commit verified per AC-13 (3 files in 1 commit on the feature branch)
+- [ ] Single atomic commit verified per AC-13 hash-equality assertion (3 files in 1 commit, same hash, on feature branch)
 - [ ] No circular-import per AC-14
-- [ ] Feature 094 gate dispatches successfully on T9 (no INCOMPLETE failures)
+- [ ] Feature 094 gate dispatches successfully on T6 (no INCOMPLETE failures)
 
 ## Review History
 

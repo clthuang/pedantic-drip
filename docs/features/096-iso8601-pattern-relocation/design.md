@@ -100,7 +100,7 @@ test_database.py    [edit, +1 LOC: split line 17 into 2 import lines]
 
 **Owner:** `plugins/pd/hooks/lib/semantic_memory/_config_utils.py`  
 **Responsibility:** Co-locate the validator with its producer; add `import re`; add convention seed comment.  
-**Size:** +13 LOC (1 import + 9-line comment block + 4-line definition + 2-line convention comment with blank-line separators) — actual closer to +15 with blank lines.
+**Size:** +13 LOC (1 import + 9-line comment block + 4-line definition + 2-line convention comment + 3-line feature-096 annotation per AC-3a; LOC accounting excludes blank-line separators per diff convention).
 
 ### C2: `database.py` removal + import
 
@@ -200,7 +200,7 @@ Same as PRD/spec. No expansion. The convention comment is in scope (FR-4 / TD-2)
 
 Direct-orchestrator. Single atomic commit:
 
-1. **T0** — capture baselines (PRE_HEAD, PRE_PYTEST_PASS=214, PRE_PYTEST_PASS_WIDE=3198, PRE_TEST_DB_LINES).
+1. **T0** — capture baselines (PRE_HEAD, PRE_PYTEST_PASS=214, PRE_PYTEST_PASS_WIDE=3198). PRE_TEST_DB_LINES dropped (no AC consumes it; line-count delta verified implicitly via successful pytest pass count + AC-9 grep).
 2. **T1** — edit `_config_utils.py`: add `import re` + comment block + definition + convention comment.
 3. **T2** — edit `database.py`: remove old comment+definition (lines 14-26), add import line.
 4. **T3** — edit `test_database.py`: split line 17 into 2 lines.
@@ -228,6 +228,20 @@ Direct-orchestrator. Single atomic commit:
 | AC-14 (no circular import) | grep at T4 | T4 |
 
 All 14 ACs binary-verifiable. Zero manual-only ACs.
+
+## Review History
+
+### Iteration 1 — design-reviewer (opus, 2026-04-29)
+
+**Findings:** 1 blocker + 2 warnings + 3 suggestions
+
+**Corrections applied:**
+- AC-13 — replaced `wc -l` count check with explicit hash-equality bash assertion (3 commits returning same hash). Catches 2-commit anti-pattern even with single-file commits per file. Reason: Blocker 1.
+- AC-3a NEW — added explicit verification for the feature 096 annotation prescribed in I-1 (was unverified by AC-3). Reason: Warning 1.
+- FR-2 — explicit "verbatim except line 2" clause documenting the qualifier-drop deviation that design's I-1 prescribes. Spec/design now consistent on what "verbatim" means here. Reason: Warning 2.
+- C1 LOC accounting — clarified "excludes blank-line separators per diff convention" so spec/design accounting agree. Reason: Suggestion 4.
+- T0 PRE_TEST_DB_LINES — dropped (was dead baseline). Reason: Suggestion 5.
+- AC-5 ghost-comment robustness — confirmed line-anchored grep handles edge case. Reason: Suggestion 6 (no code change required).
 
 ## Definition of Done
 
