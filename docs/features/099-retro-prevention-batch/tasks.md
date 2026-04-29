@@ -3,16 +3,17 @@
 Total: 28 tasks across 8 FRs in 6 implementation groups. All tasks reference exact files and AC-N from spec.md. Dependencies marked explicitly.
 
 Legend:
-- 🔴 = test/fixture (TDD red)
-- 🟢 = implementation (TDD green)
+- 🔴 = test/fixture (TDD red — expected to fail until corresponding green task lands)
+- 🟢 = implementation (TDD green — makes red tests pass) OR self-contained executable
 - 📝 = doc edit (no test, additive markdown)
 - ⚙️ = config/registration
+- ✅ = final-verification / smoke / validation (T26-T28)
 
 ---
 
 ## Group D: FR-5 PreToolUse Unicode Hook (independent) — TDD ORDER
 
-- [ ] **T04** 🔴 (TDD red — tests first; matches design I-3 file path) Add `plugins/pd/hooks/tests/test_pre_edit_unicode_guard.py` (Python pytest file using `subprocess.run` to invoke the hook with stdin) covering all FR-5 ACs. **DoD:** pytest --collect-only succeeds (collects ≥6 test functions); pytest run reports collection errors or assertion failures (NOT pass) — this is the expected TDD-red state. T01/T02 then make them pass.
+- [ ] **T04** 🔴 (TDD red — tests first; matches design I-3 file path) Add `plugins/pd/hooks/tests/test_pre_edit_unicode_guard.py` (Python pytest file using `subprocess.run` to invoke the hook with stdin) covering all FR-5 ACs. **DoD (binary, command-based):** Run `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/tests/test_pre_edit_unicode_guard.py --collect-only` — MUST exit 0 (≥6 test functions collected, no syntax errors). Run `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/tests/test_pre_edit_unicode_guard.py` — MUST exit non-zero (assertions fail because T01/T02 do not yet exist). Both signals together = correct TDD-red state.
   - AC-6: single codepoint 0x85 input → stderr matches `Unicode codepoint.*0x0085.*chr\(0x0085\)`, stdout `{"continue": true}`, exit 0.
   - AC-6b: multi-codepoint input `[0x85, 0xa0, 0x85, 0x2014, 0x2014, 0x2014, 0x3000]` → exactly 4 unique codepoints in first-seen order: `0x0085, 0x00a0, 0x2014, 0x3000`.
   - AC-6c: `hook_event_name="SessionStart"` → silent stderr.
@@ -41,7 +42,9 @@ Legend:
 
 ## Group A: FR-1 QA Gate Test-Only Mode (independent) — TDD ORDER
 
-- [ ] **T05b** 🟢 (Self-contained — canonical Python impl + assertions in one file; passes immediately on authoring) Create `plugins/pd/scripts/tests/test_qa_gate_bucket.py` with the canonical bucket() Python implementation mirroring qa-gate-procedure.md §4 pseudocode plus pytest-style assertions for:
+- [ ] **T05b** 🟢 (Self-contained — canonical Python impl + assertions in one file; passes immediately on authoring)
+  - **DoD:** `plugins/pd/.venv/bin/python -m pytest plugins/pd/scripts/tests/test_qa_gate_bucket.py` exits 0 (file IS the canonical impl; assertions pass on first run). Purpose: machine-checkable reference for T05's markdown pseudocode.
+  - Create `plugins/pd/scripts/tests/test_qa_gate_bucket.py` with the canonical bucket() Python implementation mirroring qa-gate-procedure.md §4 pseudocode plus pytest-style assertions for:
   - AC-1: 6 test paths via `re.search(TEST_FILE_RE, path)` (test_database.py, plugins/pd/tests/test_foo.py, foo_test.py, tests/conftest.py → True; database.py, plugins/pd/hooks/tests/test-hooks.sh → False); empty list → IS_TEST_ONLY_REFACTOR=False (AC-E1 vacuous-truth).
   - AC-2 helper: 6 `_location_matches_test_path()` assertions (with/without `:line` suffix, .py/.sh, prod/test).
   - AC-2 bucket(): 4 call variants (kwarg=True with test loc → LOW; kwarg=False → MED; default kwarg → MED; kwarg=True with prod loc → MED).
@@ -100,8 +103,8 @@ Legend:
 - [ ] **T13** 🟢 Add `check_stale_feature_branches()` function to doctor.sh per design I-2 + set -e discipline.
   - First line in function: `local PROJECT_ROOT; PROJECT_ROOT=$(detect_project_root)`.
   - Iterate `git for-each-ref --format='%(refname:short)' refs/heads/feature/*` wrapped in `|| true`.
-  - Parse feature ID via bash regex match; if no match → `info` and `continue`.
-  - Look up `.meta.json` at `${PROJECT_ROOT}/docs/features/{id}-{slug}/.meta.json`; if absent → status="no entity".
+  - Parse feature ID via bash regex match `^feature/([0-9]+)-([a-z0-9-]+)$`; if no match → `info` and `continue`.
+  - Path strategy: branch slug and directory slug are identical by convention (per brainstorm/create-feature skill). Construct exact path `${PROJECT_ROOT}/${artifacts_root}/features/${id}-${slug}/.meta.json`; if `[[ ! -f ${path} ]]` → status="no entity" (no glob, cheap stat).
   - **Merge-state check under set -e:** `if git merge-base --is-ancestor "${branch}" "${base}" 2>/dev/null; then merged=true; else merged=false; fi` (returns 0=merged, 1=unmerged — both expected, neither must abort).
   - Apply Tier 1 (warn with `git branch -D` hint) / Tier 2 (info) / silent (active or merged) per spec FR-3.
   - Verifies: AC-4, AC-E2, AC-E9.
@@ -116,6 +119,7 @@ Legend:
   - python3 stdlib datetime diff with Z-suffix replacement.
   - Warn if `gap_days > tier_doc_staleness_days` (default 30).
   - Skip-info on missing frontmatter or no source commits.
+  - **Fixture-backed DoD (state-independent):** Create temp tier doc `/tmp/pd099-stale-fixture.md` with `last-updated: 2025-01-01T00:00:00Z` (60+ days stale), invoke check directly with that file, assert `Tier doc stale:` warn line emitted. Also create `/tmp/pd099-no-frontmatter.md` (no `---` at all), assert `Skipped: ... no last-updated frontmatter` info line. Both assertions are deterministic.
   - Verifies: AC-5, AC-E3.
 
 - [ ] **T15** ⚙️ Wire `check_stale_feature_branches` and `check_tier_doc_freshness` into `run_all_checks()` under new `Project Hygiene` section header.
@@ -144,7 +148,7 @@ Legend:
   - AC-9 (apply on fixture with all sub-bullets a-g — line-count math, archive header, byte-verbatim, idempotency post-conditions).
   - AC-E6 (empty section not archivable).
   - AC-E7 (idempotency: second --apply is no-op).
-  - **DoD:** pytest --collect-only succeeds (collects ≥5 test functions); pytest run reports collection errors or assertion failures (NOT pass) — this is the expected TDD-red state. T16 then makes them pass.
+  - **DoD (binary, command-based):** `plugins/pd/.venv/bin/python -m pytest plugins/pd/scripts/tests/test_cleanup_backlog.py --collect-only` exits 0 (≥5 test functions collected, no syntax errors); `plugins/pd/.venv/bin/python -m pytest plugins/pd/scripts/tests/test_cleanup_backlog.py` exits non-zero (assertions fail — T16 not yet implemented).
   - Depends on T17.
 
 - [ ] **T16** 🟢 (TDD green — implementation to pass T18) Create `plugins/pd/scripts/cleanup_backlog.py` per design I-4 public API.
@@ -162,6 +166,7 @@ Legend:
   - Parse arg (`--dry-run` default; `--apply` triggers AskUserQuestion confirmation, auto-confirm in YOLO).
   - Invoke `python3 ${script}` with appropriate flags.
   - **Commit responsibility:** ONLY commit when (a) `--apply` was the user-invoked mode AND (b) `--backlog-path` and `--archive-path` flags were NOT overridden (i.e., the canonical project paths were used). Skip commit on fixture-based runs (any path override). Commit message: `docs(backlog): archive {N} fully-closed sections`.
+  - **Behavioral verification (manual smoke):** Inspect command body for: (a) `--dry-run` is the default mode; (b) `--apply` invokes AskUserQuestion (auto-confirmed in YOLO); (c) commit-skip-on-path-override logic visible. Automated coverage of these flows is out-of-scope for the .md command file — covered indirectly by T18 fixture invocation through the script directly.
   - Verifies: AC-15(c) markdown frontmatter validity.
 
 ### FR-8: /pd:test-debt-report — TDD ORDER
@@ -171,7 +176,7 @@ Legend:
   - AC-14 (4-column schema verified by `tr -cd '|' | wc -c == 5`).
   - AC-E8 (empty-input case: header + footer only).
   - normalize_location parity check vs qa-gate-procedure.md §4 (per design I-5 cross-version note).
-  - **DoD:** pytest --collect-only succeeds (collects ≥4 test functions); pytest run reports collection errors or assertion failures (NOT pass) — TDD-red state. T20 then makes them pass.
+  - **DoD (binary, command-based):** `plugins/pd/.venv/bin/python -m pytest plugins/pd/scripts/tests/test_test_debt_report.py --collect-only` exits 0 (≥4 test functions collected); `plugins/pd/.venv/bin/python -m pytest plugins/pd/scripts/tests/test_test_debt_report.py` exits non-zero (assertions fail — T20 not yet implemented).
 
 - [ ] **T20** 🟢 (TDD green — implementation to pass T21) Create `plugins/pd/scripts/test_debt_report.py` per design I-5.
   - `normalize_location(loc)` with widened regex `[a-zA-Z0-9]+` (per design fix).
@@ -185,6 +190,7 @@ Legend:
 - [ ] **T22** 📝 Create `plugins/pd/commands/test-debt-report.md` (thin invocation wrapper).
   - YAML frontmatter.
   - Single line invoking `python3 ${script}`.
+  - **Smoke verify:** `python3 plugins/pd/scripts/test_debt_report.py` exits 0 and prints the markdown table header `| File or Module | Category | Open Count | Source Features |` (covered by T21 + AC-13 against synthetic fixtures; this command .md is purely an invocation wrapper).
   - Verifies: AC-15(c) frontmatter validity.
 
 ---
@@ -210,16 +216,16 @@ Legend:
   - Either: edit AC-9(c) to add note, OR add comment block under AC-9 explaining the line-count semantic.
   - Resolves spec/design discrepancy flagged in design review iter 1.
 
-- [ ] **T26** 🔴 Run `./validate.sh` on feature branch.
+- [ ] **T26** ✅ Run `./validate.sh` on feature branch.
   - Verifies: AC-16 (no portability violations, no broken doctor, no malformed JSON, no hardcoded paths).
   - May surface issues from earlier tasks; iterate until clean.
 
-- [ ] **T27** 🔴 Run full pytest suite if any Python tests exist:
+- [ ] **T27** ✅ Run full pytest suite if any Python tests exist:
   - `plugins/pd/.venv/bin/python -m pytest plugins/pd/scripts/tests/`.
   - `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/tests/` (if applicable).
   - Verifies: NFR-7 (no regressions in feature 091-098 surfaces) — zero new failures vs develop baseline.
 
-- [ ] **T28** 🔴 Time + run `bash plugins/pd/scripts/doctor.sh` end-to-end on the feature branch.
+- [ ] **T28** ✅ Time + run `bash plugins/pd/scripts/doctor.sh` end-to-end on the feature branch.
   - Run `time bash plugins/pd/scripts/doctor.sh 2>&1 | tail -1` — capture wall-clock time.
   - Verifies: NFR-3 (combined performance < 3s — assert `real` time < 3s); summary output includes Project Hygiene section with all 3 new checks.
   - Manual visual check: warn/info/pass markers correctly formatted.
