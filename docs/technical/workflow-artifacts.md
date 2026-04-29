@@ -1,6 +1,7 @@
 ---
-last-updated: 2026-04-15T00:00:00Z
+last-updated: 2026-04-29T00:00:00Z
 source-feature: 078-cc-native-integration
+audit-feature: 098-tier-doc-frontmatter-sweep
 ---
 
 <!-- AUTO-GENERATED: START - source: 078-cc-native-integration -->
@@ -21,12 +22,20 @@ Each feature has a directory under `docs/features/{feature-id}/` containing:
 | `design.md` | designing skill | Architecture, component map, interfaces, technical decisions |
 | `plan.md` | planning skill | Ordered implementation plan with dependencies |
 | `tasks.md` | breaking-down-tasks skill | Atomic task list with dependency graph |
-| `impl-log.md` | implementer agent | Per-task decisions, deviations, and concerns (deleted after retro) |
-| `retro.md` | retrospecting skill | AORTA retrospective findings and knowledge bank updates |
+| `implementation-log.md` | implementer agent (or direct-orchestrator per feature 096 retro Tune #2) | Per-task decisions, deviations, concerns, T0 baselines, tooling-friction notes (deleted after retro per finish-feature Step 6b) |
+| `retro.md` | retrospecting skill | AORTA retrospective findings and knowledge bank updates; folds `.qa-gate-low-findings.md` and `.qa-gate.log` sidecars per Step 2c (FR-7b) |
+| `qa-override.md` | finish-feature Step 5b (manual) | Required when QA gate produces HIGH findings; ≥50-char user-authored rationale unblocks merge (feature 094) |
+| `.qa-gate.log` / `.qa-gate.json` / `.qa-gate-low-findings.md` | finish-feature Step 5b (transient sidecars, gitignored) | Per-reviewer audit log + idempotency cache (head_sha) + LOW-finding deferral; folded into retro.md by retrospecting skill |
 
 ## .meta.json Schema
 
 The `.meta.json` file is the primary read surface for a feature's workflow state. It is always regenerated from authoritative sources (entity DB + workflow engine) and must never be written directly. See `docs/technical/api-reference.md` for the full field reference.
+
+Notable schema fields added since the source feature (078):
+- `phase_summaries` (array) — per workflow-transitions skill Step 3a; one entry per completed phase with key decisions, artifacts, reviewer notes
+- `backward_context` (object) — populated when a reviewer triggers backward travel; contains the referral message and target phase
+- `backward_return_target` (string) — phase to return to after rework completes
+- `backward_history` (array) — historical record of all backward transitions for the feature
 
 ## Knowledge Bank
 
@@ -65,7 +74,10 @@ Recent feature artifacts (latest features):
 
 | Feature | Status | Artifacts | Notes |
 |---------|--------|----------|-------|
-| [075-phase-context-accumulation](../features/075-phase-context-accumulation/) | In progress | prd.md, spec.md, design.md, plan.md, tasks.md | — |
-| [078-cc-native-integration](../features/078-cc-native-integration/) | In progress | prd.md, spec.md, design.md, plan.md, tasks.md | T0.4 (agent path compliance) and T4.1 (context:fork) require manual verification in interactive CC sessions — automated tests cannot cover these. |
+| [094-pre-release-qa-gate](../features/094-pre-release-qa-gate/) | Completed | prd.md, spec.md, design.md, plan.md, tasks.md, retro.md | Introduced finish-feature Step 5b adversarial QA gate (4 reviewers parallel). |
+| [095-test-hardening-iso8601](../features/095-test-hardening-iso8601/) | Completed | prd.md, spec.md, design.md, plan.md, tasks.md, retro.md | Test hardening sweep: source-pin tests for `_ISO8601_Z_PATTERN`. First production exercise of feature 094 QA gate. |
+| [096-iso8601-pattern-relocation](../features/096-iso8601-pattern-relocation/) | Completed | prd.md, spec.md, design.md, plan.md, tasks.md, retro.md, implementation-log.md | Relocated `_ISO8601_Z_PATTERN` to `_config_utils.py`. Closed recursive test-hardening cycle. SECOND QA gate exercise. |
+| [097-iso8601-test-pin-v2](../features/097-iso8601-test-pin-v2/) | Completed | spec.md, design.md, plan.md, tasks.md, retro.md, implementation-log.md, qa-override.md | TestIso8601PatternSourcePins v2 refactor (8 sub-items + bonus identity-pin). THIRD QA gate exercise; HIGH findings overridden as recursive test-hardening per anti-pattern. |
+| [098-tier-doc-frontmatter-sweep](../features/098-tier-doc-frontmatter-sweep/) | In progress | (this audit) | Tier-doc frontmatter drift sweep using parallel audit subagents. |
 
 <!-- AUTO-GENERATED: END -->

@@ -1,6 +1,7 @@
 ---
-last-updated: 2026-04-02T00:00:00Z
+last-updated: 2026-04-29T00:00:00Z
 source-feature: 075-phase-context-accumulation
+audit-feature: 098-tier-doc-frontmatter-sweep
 ---
 
 <!-- AUTO-GENERATED: START - source: 075-phase-context-accumulation -->
@@ -12,7 +13,7 @@ pd is a Claude Code plugin that turns ideas into shipped features through struct
 
 pd imposes a proven workflow on top of Claude Code:
 
-- Each feature moves through phases in order: brainstorm → specify → design → plan → tasks → implement → finish
+- Each feature moves through phases in order: brainstorm → specify → design → create-plan → implement → finish
 - Every phase has an AI reviewer that challenges the output before progression
 - Quality gates catch issues early, before they compound into later phases
 - Memory persists learnings across sessions and projects so past decisions inform future work
@@ -49,6 +50,10 @@ pd persists learnings in a global memory store (`~/.claude/pd/memory/`) that acc
 
 A local web UI starts automatically at `http://localhost:8718/` each session. It shows all features, brainstorms, backlog items, and projects with their current phase — no setup required.
 
+### Pre-Release Adversarial QA Gate
+
+When `/pd:finish-feature` runs, before the merge it dispatches 4 reviewers in parallel against the branch diff: `security-reviewer`, `code-quality-reviewer`, `implementation-reviewer`, and `test-deepener` (Step A mode). Findings are bucketed by severity (HIGH/MED/LOW) using a defined rubric. HIGH findings block merge unless a `qa-override.md` rationale (≥50 chars) is provided; MED findings auto-file to backlog; LOW findings fold into the retro. The gate is idempotent (cached by HEAD SHA) and non-blocking when YOLO mode is active for MED/LOW. See [`docs/dev_guides/qa-gate-procedure.md`](../dev_guides/qa-gate-procedure.md) for full procedure.
+
 ### Domain Knowledge
 
 Built-in specialist knowledge is available for:
@@ -60,7 +65,7 @@ Built-in specialist knowledge is available for:
 ## How the Workflow Fits Together
 
 ```
-brainstorm → specify → design → plan → tasks → implement → finish
+brainstorm → specify → design → create-plan → implement → finish
                ↑___________backward rework (with context)___|
 ```
 

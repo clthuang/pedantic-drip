@@ -1,6 +1,7 @@
 ---
-last-updated: 2026-04-15T00:00:00Z
+last-updated: 2026-04-29T00:00:00Z
 source-feature: 078-cc-native-integration
+audit-feature: 098-tier-doc-frontmatter-sweep
 ---
 
 <!-- AUTO-GENERATED: START - source: 078-cc-native-integration -->
@@ -114,7 +115,7 @@ Configure the qualifying threshold via `memory_promote_min_observations` in `.cl
 To run the workflow without manual confirmation at each phase gate:
 
 ```bash
-/pd:secretary mode yolo                        # Enable YOLO mode
+/pd:yolo on                                    # Enable YOLO mode
 /pd:secretary orchestrate "add user auth"      # Build end-to-end
 /pd:secretary continue                         # Resume from last phase
 /pd:yolo off                                   # Return to manual mode
