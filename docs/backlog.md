@@ -380,7 +380,7 @@ First production exercise of feature 094's Step 5b adversarial QA gate produced 
 
 **MED (1, consolidated from 8) — surfaced by feature:095 pre-release QA:**
 
-- **#00278** [MED/testability] **Test-pin refinement bundle (8 sub-items, consolidated from #00278-#00285)** — feature 095's `TestIso8601PatternSourcePins` source-pins all use substring/presence checks that miss several mutation classes. A single follow-up "test-pin v2" sweep should address all 8 together. Sub-items:
+- **#00278** [MED/testability] (promoted → feature:097-iso8601-test-pin-v2) **Test-pin refinement bundle (8 sub-items, consolidated from #00278-#00285)** — feature 095's `TestIso8601PatternSourcePins` source-pins all use substring/presence checks that miss several mutation classes. A single follow-up "test-pin v2" sweep should address all 8 together. Sub-items:
   - **(a)** `test_pattern_source_uses_explicit_digit_class` substring asserts miss character-class EXPANSION (`[0-9０-９]` keeps `[0-9]` substring AND keeps `\d` absent). Fix: replace with exact-string equality on `_ISO8601_Z_PATTERN.pattern`.
   - **(b)** `test_pattern_compiled_with_re_ascii_flag` asserts presence not exclusivity — `re.ASCII | re.IGNORECASE` mutation keeps `flags & re.ASCII` truthy while making lowercase `z` match. Fix: pin exact bitmask OR add behavioral lowercase-z negative case.
   - **(c)** `test_call_sites_use_fullmatch_not_match` is closed-set over 2 methods — future call sites slip past. Fix: open-set discovery via `inspect.getmembers(MemoryDatabase, predicate=inspect.isfunction)`.
@@ -402,6 +402,20 @@ First production exercise of feature 094's Step 5b adversarial QA gate produced 
 - ~~**#00286**~~ [LOW/testability] **CLOSED 2026-04-29** — FR-2 trailing-whitespace extension extended to `\t`, `\v`, `\f`, `\r` alone, and NEL (U+0085). `test_pattern_rejects_trailing_whitespace` parametrize +5 cases; `TestBatchDemote._INVALID_NOW_ISO_CASES` +5 cases. pytest 214→224 (+10).
 - ~~**#00287**~~ [LOW/testability] **CLOSED 2026-04-29** — `assert r'\D' not in _ISO8601_Z_PATTERN.pattern` added to `test_pattern_source_uses_explicit_digit_class`.
 - ~~**#00288**~~ [LOW/quality] **CLOSED 2026-04-29** — `specifying` skill Self-Check now requires explicit enumeration of all stdlib imports referenced in test bodies (not just the most prominent one). Closes the traceability gap for future specs.
+
+## From Feature 097 Pre-Release QA Findings (2026-04-29)
+
+**MED (4) — surfaced by feature:097 pre-release QA gate (THIRD production exercise):**
+
+- **#00290** [MED/testability] Cross-consumer identity-pin gap (HIGH→MED via AC-5b narrowed remap; no cross-confirm). FR-7's `database._ISO8601_Z_PATTERN is _config_utils._ISO8601_Z_PATTERN` only checks 1 of 4 NFR-1-named consumers. Add `pkgutil.iter_modules`-based discovery to assert ALL semantic_memory submodules with the symbol bind to the same identity. Surfaced by feature:097 test-deepener.
+- **#00291** [MED/testability] Leading-WS coverage scoped to ASCII space only (FR-4 misses partial-strip mutations against `\t`/`\n`/`\r`/`\v`/`\f`/U+00A0). Extend `test_pattern_rejects_leading_whitespace` parametrize to cover all `str.isspace()` chars. Surfaced by feature:097 test-deepener.
+- **#00292** [MED/testability] `_pattern_probe` fixture is cosmetic — module-level import at line 18 makes class-level `pytest.importorskip` a no-op. Either delete + accept module-level blast radius, OR fully isolate by removing line 18 import and routing all uses through fixtures. Spec acknowledges this; documented for future refactor decision. Surfaced by feature:097 test-deepener.
+- **#00293** [MED/testability] Curated 13-script Unicode-Nd parametrize covers ~17% of Python 3.14.4 Nd scripts; dynamic coverage assert (`>=70`) checks Python's database, not the validator. Replace with FOR-EACH-SCRIPT behavioral assert iterating all Nd codepoints. Would convert ~75 silent script gaps into ~75 assertions. Surfaced by feature:097 test-deepener.
+
+**Override-applied HIGH (2) — accepted as residual risk per qa-override.md:**
+
+- ~~AST-walk misses aliased / getattr / walrus call forms (test_database.py:2354-2362)~~ — **OVERRIDE accepted**: behavioral tests in TestScanDecayCandidates/TestBatchDemote catch real production regressions; this is recursive test-hardening cycle (anti-pattern #00277 closed by 096). Revisit only if production regresses.
+- ~~`re.fullmatch(_ISO8601_Z_PATTERN.pattern, s)` flag-bypass form not flagged (test_database.py:2338-2367)~~ — **OVERRIDE accepted**: same architectural rationale.
 
 ## From Feature 096 Retro Tune #5 (2026-04-29)
 

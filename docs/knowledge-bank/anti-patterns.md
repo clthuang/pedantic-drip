@@ -704,3 +704,11 @@ Direct-orchestrator features still need a minimal implementation-log.md with T0 
 - Confidence: medium
 - Last observed: Feature #096
 - Observation count: 1
+
+### Anti-Pattern: Python F-String List-of-Tuple Format Silently Produces 1-Tuples
+F-string templates that omit explicit commas between adjacent string literals produce Python's implicit-string-concatenation: `('value1' 'value2')` parses as a 1-tuple containing the concatenated string, NOT a 2-tuple. The error is invisible at write time and at module import — only manifests when consumers iterate (e.g. parametrize). Always include explicit commas in templates AND validate via `ast.parse()` before write.
+- Observed in: Feature 097 T1 — `_UNICODE_DIGIT_SCRIPTS` f-string format `f"({datetime!r:30s} '{name}'),"` missed the comma between strings; 13 entries collapsed to 1-tuples; caught by AC-10b grep returning 0 instead of ≥13
+- Fix: include explicit comma in template (`f"({datetime!r}, '{name}'),"`); validate via ast.parse() before write
+- Confidence: high
+- Last observed: Feature #097
+- Observation count: 1
