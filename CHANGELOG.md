@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.16.5] - 2026-04-29
+
 ### Added
 - **Test-hardening sweep for `_ISO8601_Z_PATTERN` mutation-resistance gaps** (feature 095 closes backlog #00246-#00252): 17 new parametrized assertions in `plugins/pd/hooks/lib/semantic_memory/test_database.py` pinning source-level structural invariants. New `TestIso8601PatternSourcePins` class with 5 methods using stable Python public attributes (`pattern.pattern`, `pattern.flags & re.ASCII`) for character-class + flag pins (advisor consensus: prefer over `inspect.getsource()` text-grep where signal is equivalent), plus `inspect.getsource()` only for call-site `.fullmatch()` source pin where call-form IS the contract. Cross-call-site rejection parity extended (#00251) and partial Unicode-injection coverage added at all datetime field positions (#00252) for both `scan_decay_candidates` and `batch_demote`. Pytest baseline: 197 → 214 (exact +17 delta).
 
