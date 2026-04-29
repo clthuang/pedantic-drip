@@ -380,7 +380,7 @@ First production exercise of feature 094's Step 5b adversarial QA gate produced 
 
 **MED (1, consolidated from 8) — surfaced by feature:095 pre-release QA:**
 
-- **#00278** [MED/testability] **Test-pin refinement bundle (8 sub-items, consolidated from #00278-#00285)** — feature 095's `TestIso8601PatternSourcePins` source-pins all use substring/presence checks that miss several mutation classes. A single follow-up "test-pin v2" sweep should address all 8 together. Sub-items:
+- **#00278** [MED/testability] (promoted → feature:097-iso8601-test-pin-v2) **Test-pin refinement bundle (8 sub-items, consolidated from #00278-#00285)** — feature 095's `TestIso8601PatternSourcePins` source-pins all use substring/presence checks that miss several mutation classes. A single follow-up "test-pin v2" sweep should address all 8 together. Sub-items:
   - **(a)** `test_pattern_source_uses_explicit_digit_class` substring asserts miss character-class EXPANSION (`[0-9０-９]` keeps `[0-9]` substring AND keeps `\d` absent). Fix: replace with exact-string equality on `_ISO8601_Z_PATTERN.pattern`.
   - **(b)** `test_pattern_compiled_with_re_ascii_flag` asserts presence not exclusivity — `re.ASCII | re.IGNORECASE` mutation keeps `flags & re.ASCII` truthy while making lowercase `z` match. Fix: pin exact bitmask OR add behavioral lowercase-z negative case.
   - **(c)** `test_call_sites_use_fullmatch_not_match` is closed-set over 2 methods — future call sites slip past. Fix: open-set discovery via `inspect.getmembers(MemoryDatabase, predicate=inspect.isfunction)`.

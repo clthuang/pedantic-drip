@@ -1,0 +1,15 @@
+{
+  "id": "097",
+  "slug": "iso8601-test-pin-v2",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-04-29T08:08:15.785885+00:00",
+  "branch": "feature/097-iso8601-test-pin-v2",
+  "backlog_source": "00278",
+  "lastCompletedPhase": null,
+  "phases": {
+    "brainstorm": {
+      "started": "2026-04-29T08:08:15.785428+00:00"
+    }
+  }
+}
