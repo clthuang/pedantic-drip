@@ -18,6 +18,36 @@ Execute the implementation plan with a structured per-task dispatch approach.
 For complex implementations:
 - `implementing-with-tdd` - RED-GREEN-REFACTOR discipline
 
+## Direct-Orchestrator Mode (≤4 task files, sequential dependencies)
+
+The default Step 2 flow dispatches implementer subagents in worktree-isolated batches. For surgical features where this overhead exceeds the benefit, the orchestrating model itself executes T1-T5 inline. **Direct-orchestrator mode applies when ALL the following hold:**
+
+- ≤4 task files; total production-touch ≤~20 LOC
+- Sequential task dependencies (T1→T2→T3...) with no parallelism win
+- Atomic-commit invariant or other cross-task ordering constraint that worktrees would complicate
+- Test-only-equivalent risk profile (zero behavior change verifiable via hash-equality, source-pin transparency, or equivalent invariants)
+
+Prior production exercises: features 091-096 (surgical-feature template).
+
+**Required hygiene (do NOT skip — promoted from feature 096 retro Tune #2 + #3):**
+
+1. **Emit `implementation-log.md`** in the feature directory. Even when there are no subagent reports to collect, the retro framework treats this file as a primary input. Minimum content per task:
+   ```markdown
+   ## T{n}: {title}
+   - **Files changed:** {list}
+   - **DoD checks:** {pass/fail per AC, with grep/pytest exit codes}
+   - **Tooling friction:** {note any Edit-tool fallbacks, retries, or escape hatches}
+   ```
+   Also emit a top-level `## T0 — Baselines` section with captured `PRE_*` values.
+
+2. **Call `complete_phase` MCP per phase boundary.** The default subagent-dispatch flow handles this via `commitAndComplete`. Direct-orchestrator must call it explicitly at minimum at the implement-phase boundary (after the atomic commit succeeds, before handoff to `/pd:finish-feature`). Skipping leaves the workflow DB stuck at `create-plan` and forces recovery in `finish-feature`. Pattern:
+   ```
+   complete_phase(feature_type_id="feature:{id}-{slug}", phase="implement", iterations=1)
+   ```
+   If MCP unavailable: log warning, do not block; reconciliation will recover on next `reconcile_apply`.
+
+3. **AC-13 hash-equality assertion** when the commit must be atomic across N files. See [`designing` skill § Cross-File Invariants](../designing/SKILL.md#5-cross-file-invariants-when-design-spans-2-files) for the AC pattern.
+
 ## Process
 
 ### Step 1: Read Task List
