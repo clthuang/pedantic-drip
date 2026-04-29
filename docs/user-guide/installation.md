@@ -1,6 +1,7 @@
 ---
-last-updated: 2026-04-15T00:00:00Z
+last-updated: 2026-04-29T00:00:00Z
 source-feature: 078-cc-native-integration
+audit-feature: 098-tier-doc-frontmatter-sweep
 ---
 
 <!-- AUTO-GENERATED: START - source: 078-cc-native-integration -->
@@ -12,7 +13,7 @@ source-feature: 078-cc-native-integration
 |-------------|---------|-------|
 | Claude Code | latest | The CLI tool from Anthropic |
 | Python | 3.10+ | Required for semantic memory. Linux: also install `python3-venv` |
-| git | any | Required for branch management |
+| git | any | Required |
 
 Optional: `rsync` and `gtimeout` (macOS: `brew install coreutils`).
 
@@ -23,7 +24,7 @@ Optional: `rsync` and `gtimeout` (macOS: `brew install coreutils`).
 /plugin install pd@my-local-plugins
 ```
 
-Core dependencies install automatically on first session launch.
+Core dependencies auto-install on first session.
 
 ## Set Up Semantic Memory (Recommended)
 

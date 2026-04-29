@@ -1,6 +1,7 @@
 ---
-last-updated: 2026-04-15T00:00:00Z
+last-updated: 2026-04-29T00:00:00Z
 source-feature: 078-cc-native-integration
+audit-feature: 098-tier-doc-frontmatter-sweep
 ---
 
 <!-- AUTO-GENERATED: START - source: 078-cc-native-integration -->
@@ -30,8 +31,8 @@ User
  ├── Hooks                    Lifecycle scripts — fire on Claude Code events
  │   plugins/pd/hooks/        (SessionStart, PreToolUse, PostToolUse, Stop)
  │
- ├── MCP: workflow-state      Phase transition state machine + .meta.json projection
- │   plugins/pd/mcp/          workflow_state_server.py
+ ├── MCP: workflow-engine     Phase transition state machine + .meta.json projection
+ │   plugins/pd/mcp/          workflow_state_server.py (registered as FastMCP("workflow-engine"))
  │
  ├── MCP: entity-registry     Cross-project entity lineage + metadata storage
  │   plugins/pd/mcp/          entity_server.py → ~/.claude/pd/entities/entities.db
@@ -205,20 +206,30 @@ Constraints: max 2000 chars per entry (serialized JSON). Truncation order: `revi
 
 Hooks are shell scripts in `plugins/pd/hooks/` executed by Claude Code at lifecycle points defined in `hooks.json`.
 
+Total: 16 hooks. Subset shown below; see [README_FOR_DEV.md](../../README_FOR_DEV.md) for the complete table.
+
 | Hook | Trigger | Key behavior |
 |------|---------|-------------|
 | `session-start` | SessionStart | Reads active feature `.meta.json`, injects context into session |
 | `meta-json-guard` | PreToolUse (Write/Edit) | Blocks unauthorized `.meta.json` modifications |
 | `pre-commit-guard` | PreToolUse (Bash) | Branch protection, pd directory protection |
+| `pre-push-guard` | PreToolUse (Bash) | Pre-push validation hooks |
 | `pre-exit-plan-review` | PreToolUse (ExitPlanMode) | Gates plan exit behind `plan-reviewer` dispatch |
+| `post-enter-plan` / `post-exit-plan` | PostToolUse (ExitPlanMode) | Post-plan-mode lifecycle |
 | `yolo-guard` | PreToolUse (.*) | Enforces YOLO mode safety boundaries |
 | `yolo-stop` | Stop | Chains to next phase on YOLO stop events |
+| `cleanup-locks` / `cleanup-sandbox` / `cleanup-stale-versions` | SessionStart | Clean up SQLite locks, agent sandboxes, stale plugin versions |
+| `inject-secretary-context` | PreToolUse (Task) | Injects secretary routing context |
+| `start-ui-server` / `sync-cache` | SessionStart | Auto-start Kanban UI server, sync plugin cache |
+| `capture-tool-failure` | PostToolUse | Capture tool failures for diagnostics |
 
 ## Agent Categories
 
+Total: 29 agents (verify via `ls plugins/pd/agents/*.md | wc -l`).
+
 | Category | Count | Purpose |
 |----------|-------|---------|
-| Reviewers | 13 | Validate artifacts and gate phase transitions |
+| Reviewers | 14 | Validate artifacts and gate phase transitions (incl. secretary-reviewer, relevance-verifier) |
 | Workers | 6 | Implement, synthesize, or transform content |
 | Researchers | 5 | Gather context, scan codebase, search memory |
 | Advisory | 1 | Domain advisory for brainstorm problems |
