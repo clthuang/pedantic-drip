@@ -16,18 +16,27 @@ Move `_ISO8601_Z_PATTERN` from `plugins/pd/hooks/lib/semantic_memory/database.py
 ## Acceptance Criteria (binary-verifiable)
 
 - **AC-1** `plugins/pd/hooks/lib/semantic_memory/_config_utils.py` contains `import re` near the top of the file (with the existing stdlib imports). Verifiable: `grep -qE '^import re$' plugins/pd/hooks/lib/semantic_memory/_config_utils.py`.
-- **AC-2** `_config_utils.py` contains the relocated definition matching exactly: `_ISO8601_Z_PATTERN = re.compile(...)` with the same source string `r'[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z'` and `re.ASCII` flag. Verifiable: `grep -qE "_ISO8601_Z_PATTERN = re.compile\(" plugins/pd/hooks/lib/semantic_memory/_config_utils.py` AND `grep -q 'r.\[0-9\]\{4\}-\[0-9\]\{2\}-\[0-9\]\{2\}T\[0-9\]\{2\}:\[0-9\]\{2\}:\[0-9\]\{2\}Z' plugins/pd/hooks/lib/semantic_memory/_config_utils.py` AND `grep -q 're.ASCII' plugins/pd/hooks/lib/semantic_memory/_config_utils.py`.
+- **AC-2** `_config_utils.py` contains the relocated definition matching exactly: `_ISO8601_Z_PATTERN = re.compile(...)` with the same source string `r'[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z'` and `re.ASCII` flag. Verifiable (using `grep -F` for literal substring matching, eliminates regex metachar ambiguity):
+  - `grep -qE "^_ISO8601_Z_PATTERN = re.compile\(" plugins/pd/hooks/lib/semantic_memory/_config_utils.py`
+  - `grep -qF "r'[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z'" plugins/pd/hooks/lib/semantic_memory/_config_utils.py`
+  - `grep -qF "re.ASCII" plugins/pd/hooks/lib/semantic_memory/_config_utils.py`
 - **AC-3** The 9-line lineage comment block (currently `database.py:14-22`) is moved to `_config_utils.py` immediately above the relocated `_ISO8601_Z_PATTERN` definition. Verifiable: `grep -q 'Feature 093 FR-1' plugins/pd/hooks/lib/semantic_memory/_config_utils.py` AND `grep -q 'Feature 092 shipped' plugins/pd/hooks/lib/semantic_memory/_config_utils.py`.
 - **AC-4** `_config_utils.py` contains a one-line convention comment near `_ISO8601_Z_PATTERN` per FR-4 (flywheel advisor recommendation). Verifiable: `grep -qE 'validators? for formats produced' plugins/pd/hooks/lib/semantic_memory/_config_utils.py`.
 - **AC-5** `_ISO8601_Z_PATTERN` is **REMOVED** from `database.py` (no longer defined locally). Verifiable: `grep -cE '^_ISO8601_Z_PATTERN = re.compile' plugins/pd/hooks/lib/semantic_memory/database.py` returns `0`.
 - **AC-6** The 9-line lineage comment block is **REMOVED** from `database.py` (migrated, not duplicated). Verifiable: `grep -c 'Feature 093 FR-1' plugins/pd/hooks/lib/semantic_memory/database.py` returns `0` for the comment-block lineage marker.
 - **AC-7** `database.py` imports `_ISO8601_Z_PATTERN` from `_config_utils.py`. Verifiable: `grep -qE '^from semantic_memory._config_utils import.*_ISO8601_Z_PATTERN' plugins/pd/hooks/lib/semantic_memory/database.py`.
-- **AC-8** `test_database.py:17` no longer imports `_ISO8601_Z_PATTERN` from `database`. Verifiable: `grep -E '^from semantic_memory.database import' plugins/pd/hooks/lib/semantic_memory/test_database.py | grep -v '_ISO8601_Z_PATTERN'` returns the import line (i.e., the symbol is NOT in the database-side import).
+- **AC-8** `test_database.py` no longer imports `_ISO8601_Z_PATTERN` from `database`. Verifiable: `grep -cE '^from semantic_memory.database import .*_ISO8601_Z_PATTERN' plugins/pd/hooks/lib/semantic_memory/test_database.py` returns `0` (the symbol is no longer imported on a database-side import line).
 - **AC-9** `test_database.py` imports `_ISO8601_Z_PATTERN` from `_config_utils`. Verifiable: `grep -qE '^from semantic_memory._config_utils import.*_ISO8601_Z_PATTERN' plugins/pd/hooks/lib/semantic_memory/test_database.py`.
-- **AC-10** Pytest pass count unchanged: `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/semantic_memory/test_database.py -q | tail -1` returns `214 passed`. Wider regression check: `pytest plugins/pd/hooks/lib/ -q` returns `PRE_PYTEST_PASS_WIDE` exact (no out-of-scope regressions).
-- **AC-11** Feature 095 source-pin tests in `TestIso8601PatternSourcePins` continue to pass without modification. Verifiable: `pytest plugins/pd/hooks/lib/semantic_memory/test_database.py::TestIso8601PatternSourcePins -v` shows all 7 cases PASS (1+1+3+2 from feature 095).
+- **AC-10** Pytest pass count unchanged: `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/semantic_memory/test_database.py -q | tail -1` returns `214 passed`. Wider regression check: `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/ -q | tail -1` returns `3198 passed` exact (baseline captured 2026-04-29 on feature/096 HEAD pre-edit; no out-of-scope regressions allowed).
+- **AC-11** Feature 095 source-pin tests in `TestIso8601PatternSourcePins` continue to pass without modification (count-relative, not hardcoded). Verifiable: `pytest plugins/pd/hooks/lib/semantic_memory/test_database.py::TestIso8601PatternSourcePins -q | tail -1` returns the SAME pass count post-feature-096 as on develop pre-edit (no regressions, no test removals). Pre-edit baseline (captured 2026-04-29): 7 passed.
 - **AC-12** `validate.sh` exit 0; warning count unchanged from baseline.
-- **AC-13** Single atomic commit covers all 3 production files. Verifiable: `git show --stat HEAD` shows `_config_utils.py`, `database.py`, `test_database.py` all in the same commit (plus feature artifacts).
+- **AC-13** Single atomic commit covers all 3 production files (atomicity verified across the entire feature branch, not just HEAD). Verifiable:
+  - `git log develop..HEAD --oneline -- plugins/pd/hooks/lib/semantic_memory/_config_utils.py | wc -l` returns `1`
+  - `git log develop..HEAD --oneline -- plugins/pd/hooks/lib/semantic_memory/database.py | wc -l` returns `1`
+  - `git log develop..HEAD --oneline -- plugins/pd/hooks/lib/semantic_memory/test_database.py | wc -l` returns `1`
+  - All three commands return the SAME commit hash.
+
+- **AC-14** No circular-import risk introduced. Verifiable: `grep -cE '^from semantic_memory.database' plugins/pd/hooks/lib/semantic_memory/_config_utils.py` returns `0` AND `grep -cE '^from \.database' plugins/pd/hooks/lib/semantic_memory/_config_utils.py` returns `0`. Mirrors PRD constraint into the spec as a binary check.
 
 ## Functional Requirements
 
@@ -67,7 +76,7 @@ _ISO8601_Z_PATTERN = re.compile(
 
 ### FR-4 — Convention comment (flywheel seed)
 
-**Location:** `_config_utils.py` immediately after the `_ISO8601_Z_PATTERN` definition (or as part of the same comment block above the definition).
+**Location:** `_config_utils.py` immediately AFTER the `_ISO8601_Z_PATTERN` definition (with one blank line separating the definition from the convention comment, and one blank line separating the convention comment from `_warn_and_default`). Single deterministic placement chosen — do NOT include in the lineage comment block above (which is symbol-history specific).
 **Text:** `# Convention: validators for formats produced by this module live here (see _iso_utc + _ISO8601_Z_PATTERN).`
 
 ### FR-5 — Remove from `database.py`
@@ -130,11 +139,26 @@ All 3 production-file edits MUST land in a single commit alongside feature artif
 
 ## Definition of Done
 
-- [ ] All 13 ACs (AC-1..AC-13) pass binary verification
+- [ ] All 14 ACs (AC-1..AC-14) pass binary verification
 - [ ] All 8 FRs implemented (FR-1..FR-8)
 - [ ] All 4 NFRs met
 - [ ] `validate.sh` exit 0
-- [ ] Pytest pass count = 214 exactly (unchanged from feature 095 baseline)
-- [ ] Wider regression check `pytest plugins/pd/hooks/lib/` exit 0 with no new failures
-- [ ] Single atomic commit verified via `git show --stat HEAD`
+- [ ] Pytest pass count = 214 exactly (test_database.py) and 3198 exact (wider plugins/pd/hooks/lib/)
+- [ ] Single atomic commit verified per AC-13 (3 files in 1 commit on the feature branch)
+- [ ] No circular-import per AC-14
 - [ ] Feature 094 gate dispatches successfully on T9 (no INCOMPLETE failures)
+
+## Review History
+
+### Iteration 1 — spec-reviewer (opus, 2026-04-29)
+
+**Findings:** 4 warnings + 3 suggestions
+
+**Corrections applied:**
+- AC-10 — replaced unbound `PRE_PYTEST_PASS_WIDE` placeholder with concrete baseline `3198 passed` (captured 2026-04-29 on feature/096 HEAD pre-edit). Reason: Warning 1.
+- AC-13 — strengthened atomicity check from HEAD-only `git show --stat` to per-file `git log develop..HEAD` returning exactly 1 commit hash (same hash for all 3 files). Catches 2-commit anti-pattern. Reason: Warning 2.
+- AC-14 NEW — added explicit grep-based circular-import check (mirrors PRD constraint into spec). Reason: Warning 3.
+- AC-8 — rephrased to strict `grep -c ... returns 0` count check (was prose-described). Reason: Warning 4.
+- AC-2 — switched to `grep -F` literal substring matching for the pattern source string (eliminates regex metachar ambiguity from `r.` permissive matching). Reason: Suggestion 5.
+- AC-11 — replaced hardcoded "7 cases" assertion with count-relative "SAME pass count as develop pre-edit" + baseline citation. Reason: Suggestion 6.
+- FR-4 — resolved placement ambiguity to single deterministic option (immediately AFTER definition with blank-line separators). Reason: Suggestion 7.
