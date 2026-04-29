@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Backlog cleanup** (feature 100, AUDIT-ONLY) — closed 15 backlog items: 7 HIGH already-shipped (#00139→089, #00140→088, #00141→089, #00142→refactored-away, #00143→089, #00146→089, #00172→091, all code-level verified), 6 testability HIGH already-shipped via feature 097's TestIso8601PatternSourcePins (#00247-#00252), 2 architectural close-with-rationale (#00144 circular over-defensive on test infrastructure, #00145 LOC accounting process artifact). Plus 5 fully-closed sections archived to `backlog-archive.md` via `/pd:cleanup-backlog --apply`. Net: active backlog 153 → 142, **0 HIGH-severity items now open**. Zero functional code change.
+
 ## [4.16.9] - 2026-04-30
 
 ### Added
