@@ -33,6 +33,7 @@ Eight recurring patterns observed across feature cycles 091-098 (recursive test-
 >>> any(ord(c) > 127 for c in 'hello')                    → False
 >>> datetime.fromisoformat('2026-04-29T00:00:00Z'.replace('Z', '+00:00')).tzinfo is not None  → True   (FR-4 last-updated parsing)
 >>> json.loads('{"continue": true}')                       → {'continue': True}   (FR-5 hook output shape)
+>>> '[(0x{:04x}, {!r})]'.format(0x85, chr(0x85))           → "[(0x0085, '\\x85')]"   (FR-5 stderr fragment shape; pins AC-6 regex)
 ```
 
 These confirm: (a) FR-1 test-file regex correctly excludes non-Python and root conftest, (b) FR-5 codepoint-threshold predicate is correct, (c) FR-4 frontmatter timestamp parsing handles Z-suffix, (d) FR-7 verification format is testable.
@@ -46,7 +47,7 @@ These confirm: (a) FR-1 test-file regex correctly excludes non-Python and root c
 - **FR-3** Doctor `check_stale_feature_branches` (`plugins/pd/scripts/doctor.sh`)
 - **FR-4** Doctor `check_tier_doc_freshness` (`plugins/pd/scripts/doctor.sh`)
 - **FR-5** PreToolUse hook `pre-edit-unicode-guard.sh` (`plugins/pd/hooks/` + `plugins/pd/hooks/hooks.json`)
-- **FR-6a** `/pd:cleanup-backlog` command (`plugins/pd/commands/cleanup-backlog.md` + `plugins/pd/skills/cleaning-up-backlog/SKILL.md` + `plugins/pd/scripts/cleanup_backlog.py`)
+- **FR-6a** `/pd:cleanup-backlog` command (`plugins/pd/commands/cleanup-backlog.md` + `plugins/pd/scripts/cleanup_backlog.py`)
 - **FR-6b** Doctor `check_active_backlog_size` (`plugins/pd/scripts/doctor.sh`)
 - **FR-7** Specifying empirical-verification Self-Check (`plugins/pd/skills/specifying/SKILL.md` + `plugins/pd/agents/spec-reviewer.md`)
 - **FR-8** `/pd:test-debt-report` command (`plugins/pd/commands/test-debt-report.md` + `plugins/pd/scripts/test_debt_report.py`)
@@ -75,9 +76,41 @@ Anchored to `.py` only. Non-Python test files (`.sh`, `.bash`, `.js`) are intent
 - Empty diff (zero paths) → `IS_TEST_ONLY_REFACTOR = 0` (vacuous truth not allowed; see AC-E1).
 - `re.search` (not `re.match`/`re.fullmatch`) — verified empirically above.
 
+**Location-matching helper (handles `:line` suffix in finding locations):**
+
+Findings emit `location` in the format `file:line` (per `qa-gate-procedure.md` §1 reviewer instruction "emit location as file:line"). The diff-path-trigger uses raw paths like `test_database.py`, but the bucket-time location check sees `test_database.py:2354`. We need a helper that strips the optional line-number suffix before matching:
+
+```python
+_LOC_LINE_SUFFIX_RE = re.compile(r':\d+$')
+
+def _location_matches_test_path(location: str) -> bool:
+    """Strip optional ':<digits>' suffix, then check against TEST_FILE_RE."""
+    path = _LOC_LINE_SUFFIX_RE.sub('', location)
+    return bool(re.search(TEST_FILE_RE, path))
+```
+
+**Empirical:**
+```text
+>>> re.sub(r':\d+$', '', 'test_database.py:2354')                      → 'test_database.py'
+>>> re.sub(r':\d+$', '', 'plugins/pd/tests/test_foo.py:42')            → 'plugins/pd/tests/test_foo.py'
+>>> re.sub(r':\d+$', '', 'database.py:1055')                           → 'database.py'
+>>> re.sub(r':\d+$', '', 'test_database.py')                           → 'test_database.py'  # no-suffix case unchanged
+>>> bool(re.search(TEST_FILE_RE, 'test_database.py'))                  → True
+>>> bool(re.search(TEST_FILE_RE, 'database.py'))                       → False
+```
+
 **Bucketing function signature change (qa-gate-procedure.md §4):**
 The existing `bucket(finding, all_findings)` is extended with one new keyword-only parameter, default-False to preserve all existing call-sites:
 ```python
+import re
+
+# Module-level constants (compile once)
+TEST_FILE_RE = re.compile(r'(^|/)test_[^/]*\.py$|_test\.py$|(^|/)tests/.*\.py$')
+_LOC_LINE_SUFFIX_RE = re.compile(r':\d+$')
+
+def _location_matches_test_path(location: str) -> bool:
+    return bool(TEST_FILE_RE.search(_LOC_LINE_SUFFIX_RE.sub('', location)))
+
 def bucket(finding, all_findings, *, is_test_only_refactor: bool = False):
     sev = finding.get("severity")
     sec_sev = finding.get("securitySeverity")
@@ -94,7 +127,7 @@ def bucket(finding, all_findings, *, is_test_only_refactor: bool = False):
         )
         if not mutation_caught and not cross_confirmed:
             # FR-1 NEW: test-only refactor with location in test file → LOW (sidecar-fold)
-            if is_test_only_refactor and re.search(TEST_FILE_RE, finding.get("location", "")):
+            if is_test_only_refactor and _location_matches_test_path(finding.get("location", "")):
                 return "LOW"
             return "MED"  # existing AC-5b coverage-debt path (non-test-only or non-test-location)
     if high: return "HIGH"
@@ -102,6 +135,11 @@ def bucket(finding, all_findings, *, is_test_only_refactor: bool = False):
     if low:  return "LOW"
     return "MED"
 ```
+
+**Implementation notes:**
+- The implementation MUST add `import re` at the top of the qa-gate procedure module if not already present.
+- `TEST_FILE_RE` and `_LOC_LINE_SUFFIX_RE` MUST be compiled once as module-level constants, NOT re-compiled per `bucket()` invocation (performance — `bucket()` runs N times per gate exercise).
+- The `_location_matches_test_path()` helper MUST be unit-tested independently of `bucket()` for AC-2 to be reliably testable in isolation.
 
 **Wiring:** `finish-feature.md` Step 5b computes `IS_TEST_ONLY_REFACTOR` once before the bucketing loop and passes it as `is_test_only_refactor=...` to each `bucket()` call. The default-False parameter ensures any out-of-band caller of `bucket()` (e.g., test fixtures) gets the existing pre-FR-1 behavior. Documentation updated in qa-gate-procedure.md §4 with the extended pseudo-code above.
 
@@ -121,10 +159,15 @@ def bucket(finding, all_findings, *, is_test_only_refactor: bool = False):
 
 **Function signature:** Add `check_stale_feature_branches()` to `plugins/pd/scripts/doctor.sh`, called from `run_all_checks()` under a new `Project Hygiene` section.
 
-**Orphan-qualifying entity status set (canonical):**
-- A feature branch `feature/{id}-{slug}` is an **orphan** iff entity status is in `{completed, cancelled, abandoned, archived, "no entity"}` AND HEAD is unmerged into base.
-- Branches with status in `{active, planned, paused, in_progress}` are NOT orphans regardless of merge state (user may resume or has not yet started).
-- Reference: `plugins/pd/hooks/lib/entity_lifecycle.py` ENTITY_MACHINES for canonical state names. Doctor reads filesystem `.meta.json` only (no MCP dependency for the check); status set is hardcoded.
+**Orphan-qualifying entity status set (canonical, severity-split):**
+
+Two-tier severity to avoid destructive guidance on uncommitted experimental branches:
+
+- **Tier 1 (warn — likely cleanable):** `{completed, cancelled, abandoned, archived}` — these are explicit terminal states. Doctor emits `warn()` with cleanup hint `git branch -D <branch>`.
+- **Tier 2 (info — needs investigation):** `{"no entity", "unknown"}` — `.meta.json` missing OR status not in canonical set. May represent in-progress experimental work that has not been registered. Doctor emits `info()` with non-destructive guidance: `"Branch {branch} has no entity record. Either run /pd:brainstorm to register, or delete if abandoned."`
+- **Not orphans (silent):** `{active, planned, paused, in_progress}` — user may resume; no output regardless of merge state.
+
+Reference: `plugins/pd/hooks/lib/entity_lifecycle.py` ENTITY_MACHINES for canonical state names. Doctor reads filesystem `.meta.json` only (no MCP dependency for the check); status set is hardcoded.
 
 **Logic:**
 1. Iterate `git for-each-ref --format='%(refname:short)' refs/heads/feature/*`.
@@ -133,10 +176,13 @@ def bucket(finding, all_findings, *, is_test_only_refactor: bool = False):
 4. Locate matching `.meta.json` at `{artifacts_root}/features/{id}-{slug}/.meta.json`. If missing → status = `"no entity"`.
 5. If `.meta.json` exists, read `status` field. If `status` not in canonical set → status = `"unknown"` (treated as orphan-qualifying).
 6. Check merge status: `git merge-base --is-ancestor <branch> <base>`. Returns 0 if merged, 1 if unmerged.
-7. **Orphan iff** status in orphan-qualifying set (`{completed, cancelled, abandoned, archived, "no entity", "unknown"}`) AND merge-base check returned 1 (unmerged).
-8. Orphan: emit `warn()` with message `"Orphan branch: {branch} (status={status}, unmerged into {base}). Cleanup: git branch -D {branch} if no longer needed."`.
-9. Non-orphan: silent (no per-branch output).
-10. After loop: emit one summary line. If zero orphans: `pass()` `"No stale feature branches"`. Else: `info()` `"Total: N orphan branch(es)"`.
+7. Apply severity-split:
+   - **Tier 1** (status in `{completed, cancelled, abandoned, archived}` AND unmerged) → emit `warn()` with message `"Orphan branch: {branch} (status={status}, unmerged into {base}). Cleanup: git branch -D {branch} if no longer needed."`
+   - **Tier 2** (status in `{"no entity", "unknown"}` AND unmerged) → emit `info()` with message `"Branch {branch} has no entity record (status={status}, unmerged into {base}). Either run /pd:brainstorm to register, or delete if abandoned."`
+   - **Not orphan** (status in `{active, planned, paused, in_progress}` OR merged into base) → silent (no per-branch output).
+8. After loop: emit one summary line:
+   - If zero Tier 1 + Tier 2: `pass()` `"No stale feature branches"`.
+   - If ≥1 Tier 1: `info()` `"Total: {N1} cleanable orphan(s), {N2} unregistered branch(es)"`.
 
 **Empirical:**
 ```text
@@ -209,6 +255,9 @@ Reference: existing `meta-json-guard.sh` reads the same shape; engineering memor
 2. If `tool_name not in ("Edit", "Write")` → exit 0 with stdout `{"continue": true}`, no stderr.
 3. Else proceed to scan logic.
 
+**Implementation note (defensive short-circuit retained for testability):**
+> Steps 1-2 are defensively redundant in production because hooks.json registration under `PreToolUse` with matcher `"Write|Edit"` already routes only matching events to this hook. However, both short-circuits MUST be retained: (a) AC-6c and AC-6d test the hook by piping JSON directly to stdin, bypassing the CC routing, and require the defensive checks to pass; (b) the same defensive pattern is used in `meta-json-guard.sh` for consistency; (c) future-proofing against potential CC matcher-routing changes. Implementer MUST NOT remove these as "dead code" — they are testable code paths.
+
 **Scan logic:**
 4. Use python3 (one-shot subprocess; ~80ms typical) to:
    - Parse stdin JSON.
@@ -262,9 +311,19 @@ A backlog item is **active** iff it is an item AND not closed.
 
 This predicate is implemented as a shared helper `is_item_closed(line: str) -> bool` in `cleanup_backlog.py`. Doctor `check_active_backlog_size` (FR-6b) uses the same logic via direct grep equivalent (see FR-6b for the regex form).
 
-**Inputs:**
-- Argument `--dry-run` (optional): preview only, no writes.
-- Reads `{pd_artifacts_root}/backlog.md`.
+**Inputs (CLI flags — full enumeration):**
+
+| Flag | Mutex with | Default | Purpose |
+|------|------------|---------|---------|
+| `--dry-run` | `--apply`, `--count-active` | (default mode) | Preview archivable sections; no writes. Default behavior when no flag is given. |
+| `--apply` | `--dry-run`, `--count-active` | – | Perform writes (move sections from backlog to archive, commit). |
+| `--count-active` | `--dry-run`, `--apply` | – | Print active-item count to stdout (single integer). Used by AC-X1 cross-check with doctor. |
+| `--backlog-path PATH` | – | `{pd_artifacts_root}/backlog.md` | Override backlog source path (used by fixture-backed ACs). |
+| `--archive-path PATH` | – | `{pd_artifacts_root}/backlog-archive.md` | Override archive destination path (used by fixture-backed ACs). |
+
+Mode selection: exactly one of `{--dry-run, --apply, --count-active}` may be present. Absence of all three implies `--dry-run` (default). Presence of more than one → exit 2 with usage error.
+
+Reads (default mode): `{pd_artifacts_root}/backlog.md`.
 
 **Logic:**
 1. Parse `backlog.md` into sections demarcated by `^## From ` headers (matches both `## From Feature 086 QA` and `## From Features 082 & 084 ...`). Section ends at next `^## ` heading or EOF.
@@ -386,11 +445,21 @@ Total: {N} open items across {M} files.
 
 **AC-1 (FR-1 predicate):** Given a fixture diff containing paths `[tests/test_foo.py, plugins/pd/skills/specifying/test_self_check.py]`, when each path is evaluated via `re.search(TEST_FILE_RE, path)` and ALL match, then `IS_TEST_ONLY_REFACTOR=1`. Given fixture `[test_foo.py, database.py]`, then `IS_TEST_ONLY_REFACTOR=0` (database.py does not match). Given fixture `[plugins/pd/hooks/tests/test-hooks.sh]`, then `IS_TEST_ONLY_REFACTOR=0` (regex anchored to .py — shell tests excluded). Given empty fixture `[]`, then `IS_TEST_ONLY_REFACTOR=0` (vacuous truth not allowed; see AC-E1).
 
-**AC-2 (FR-1 bucketing — extended signature):** Given the new bucket() signature `bucket(finding, all_findings, *, is_test_only_refactor=False)`, when called as:
+**AC-2 (FR-1 bucketing — extended signature with location helper):** Given the new bucket() signature `bucket(finding, all_findings, *, is_test_only_refactor=False)` and the `_location_matches_test_path()` helper:
+
+Helper assertions (independently testable):
+- `_location_matches_test_path("test_database.py:2354")` → `True` (suffix stripped, then TEST_FILE_RE matches).
+- `_location_matches_test_path("test_database.py")` → `True` (no suffix, direct match).
+- `_location_matches_test_path("plugins/pd/tests/test_foo.py:42")` → `True`.
+- `_location_matches_test_path("database.py:1055")` → `False` (production file, not test).
+- `_location_matches_test_path("plugins/pd/hooks/tests/test-hooks.sh:10")` → `False` (regex anchored to .py).
+- `_location_matches_test_path("")` → `False`.
+
+Bucket() call assertions:
 - `bucket({reviewer: "pd:test-deepener", severity: "blocker", location: "test_database.py:2354", mutation_caught: false}, [], is_test_only_refactor=True)` → returns `"LOW"`.
 - `bucket({...same finding...}, [], is_test_only_refactor=False)` → returns `"MED"` (existing AC-5b path preserved).
 - `bucket({...same finding...}, [])` (no kwarg, default applies) → returns `"MED"` (backward-compat default-False).
-- `bucket({reviewer: "pd:test-deepener", severity: "blocker", location: "database.py:1055", mutation_caught: false}, [], is_test_only_refactor=True)` → returns `"MED"` (location is NOT a test-file path; existing AC-5b applies).
+- `bucket({reviewer: "pd:test-deepener", severity: "blocker", location: "database.py:1055", mutation_caught: false}, [], is_test_only_refactor=True)` → returns `"MED"` (location helper returns False; existing AC-5b applies).
 
 **AC-3 (FR-2 Self-Check + reviewer):** `grep -E "recursive[ -]test[ -]hardening|Test\[A-Z\]" plugins/pd/skills/specifying/SKILL.md` returns ≥1 hit AND `grep -E "recursive[ -]test[ -]hardening|Test\[A-Z\]" plugins/pd/agents/spec-reviewer.md` returns ≥1 hit.
 
@@ -426,11 +495,13 @@ Running `python3 plugins/pd/scripts/cleanup_backlog.py --dry-run --backlog-path 
 **AC-8b (FR-6a dry-run on REAL backlog):** Running `python3 plugins/pd/scripts/cleanup_backlog.py --dry-run` on the project's actual `docs/backlog.md` exits 0 and prints a non-empty table (≥1 row). The exact archivable-section count is project-state-dependent and NOT asserted (this is a smoke test of the parser against real data, not a stateful assertion).
 
 **AC-9 (FR-6a live — fixture-backed):** Given the same fixture as AC-8 with archive file ABSENT. Running `python3 plugins/pd/scripts/cleanup_backlog.py --apply --backlog-path tests/fixtures/backlog-099-archivable.md --archive-path tests/fixtures/backlog-099-archive.md` (and YOLO auto-confirm if interactive prompt fires):
-- (a) Fixture backlog line count DECREASES by exactly the count of moved lines (header + items + trailing blank per section).
-- (b) Archive file is CREATED with header (4 lines: H1, blank, body, blank) PLUS the moved-section text.
-- (c) Total archive file line count = `4 + sum(moved_lines_per_section)` for the first-creation case.
+- (a) Fixture backlog line count DECREASES by exactly `sum(section_lines_per_archived)` where `section_lines_per_archived` is the count from the section's `## From ` header line through the last item line (NOT including the trailing blank line — see (f) for blank-line semantics).
+- (b) Archive file is CREATED with the standard 4-line header (H1 `# Backlog Archive`, blank, body line, blank) PLUS one trailing blank between header and first appended section, PLUS the moved-section content (each section appended with its `## From ` header + items + one trailing blank line for separation).
+- (c) Total archive file line count = `4 (header) + sum(section_lines_per_archived) + N_archived_sections (trailing blanks)` for the first-creation case.
 - (d) Post-run: re-running with `--apply` produces zero diffs (NFR-5 idempotency).
 - (e) Each moved section text appears verbatim in archive (header line and item lines preserved byte-for-byte).
+- **(f) Trailing-blank collapse rule:** After section removal, the parser MUST NOT leave consecutive blank-line runs in `backlog.md`. Specifically: if removing a section leaves two adjacent blank lines (one before the removed section, one after), they collapse to a single blank line. Verified post-archive: `grep -c '^$' backlog.md` shows no double-blank runs (`grep -Pzo '\n\n\n' backlog.md` returns empty).
+- **(g) Section-removal boundary:** An archived section is removed as a contiguous block from the first character of its `## From ` header through the trailing newline immediately before the next `## ` heading (or EOF if last). Inter-section blank lines are handled by (f).
 
 **AC-10 (FR-6b doctor backlog):** `bash plugins/pd/scripts/doctor.sh 2>&1 | grep -E "Active backlog"` returns ≥1 hit. With current backlog containing >30 active items, output contains `"items (threshold 30)"`. After cleanup-backlog reduces active count below 30, output shifts to pass status.
 
@@ -467,9 +538,11 @@ Running `python3 plugins/pd/scripts/cleanup_backlog.py --dry-run --backlog-path 
 **AC-X1 (FR-6a/FR-6b predicate agreement):** Given the project's current `docs/backlog.md`, the active-item count from cleanup_backlog.py's `count_active()` helper equals the active-item count from doctor's `check_active_backlog_size`. Verified via:
 ```bash
 python_count=$(python3 plugins/pd/scripts/cleanup_backlog.py --count-active)
-doctor_count=$(bash plugins/pd/scripts/doctor.sh 2>&1 | grep -oE "Active backlog: [0-9]+" | grep -oE "[0-9]+")
-[ "$python_count" = "$doctor_count" ]
+# Pin to the count field with awk to avoid matching threshold or other digits in surrounding output
+doctor_count=$(bash plugins/pd/scripts/doctor.sh 2>&1 | grep -oE "Active backlog: [0-9]+" | head -1 | awk '{print $3}')
+[ "$python_count" = "$doctor_count" ] && echo MATCH || echo MISMATCH
 ```
+Expected output: `MATCH`. The `head -1 | awk '{print $3}'` extraction pins to the third whitespace-separated token of the FIRST `Active backlog:` line, so any threshold-related digits or trailing output do not interfere.
 
 **AC-E6 (FR-6a malformed backlog):** Given a `## From ...` section with no items (header only), it is NOT marked ARCHIVABLE (item count = 0).
 
@@ -481,11 +554,13 @@ doctor_count=$(bash plugins/pd/scripts/doctor.sh 2>&1 | grep -oE "Active backlog
 
 ### FR-1 Bucketing Truth Table (extended)
 
-| reviewer | severity | securitySeverity | mutation_caught | cross_confirm | IS_TEST_ONLY | location matches test path | → final |
-|----------|----------|------------------|-----------------|---------------|--------------|---------------------------|---------|
-| pd:test-deepener | blocker | – | false | false | 1 | true | **LOW** (new) |
-| pd:test-deepener | blocker | – | false | false | 1 | false | MED (existing AC-5b) |
-| pd:test-deepener | blocker | – | false | false | 0 | – | MED (existing AC-5b) |
+"location matches test path" below means `_location_matches_test_path(finding.location)` returns True (i.e., after stripping `:line` suffix, TEST_FILE_RE matches).
+
+| reviewer | severity | securitySeverity | mutation_caught | cross_confirm | IS_TEST_ONLY | _loc_matches_test_path | → final |
+|----------|----------|------------------|-----------------|---------------|--------------|------------------------|---------|
+| pd:test-deepener | blocker | – | false | false | True | True | **LOW** (new) |
+| pd:test-deepener | blocker | – | false | false | True | False | MED (existing AC-5b) |
+| pd:test-deepener | blocker | – | false | false | False | – | MED (existing AC-5b) |
 | pd:test-deepener | blocker | – | false | true | – | – | HIGH |
 | pd:test-deepener | blocker | – | true | – | – | – | HIGH |
 | any other | blocker | – | – | – | – | – | HIGH |
