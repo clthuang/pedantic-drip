@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Architectural: `_ISO8601_Z_PATTERN` co-located with producer** (`#00277`, feature 096) — moved the ISO-8601 Z-suffix regex validator from `semantic_memory/database.py` (consumer) to `semantic_memory/_config_utils.py` (producer, alongside `_iso_utc`). Closes the recursive test-hardening pattern flagged across features 091/092/093/095. Zero behavior change. Convention seeded in-source: format validators live with their producing module.
+
 ## [4.16.5] - 2026-04-29
 
 ### Added
