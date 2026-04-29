@@ -193,6 +193,7 @@ Evaluate whether requirements are achievable. Focus on POSSIBILITY, not difficul
 - [ ] Concise (fits one screen)?
 - [ ] Feasibility assessment uses evidence, not opinion?
 - [ ] Assumptions explicitly listed?
+- [ ] If any FR or AC names symbols used in test bodies (e.g. `inspect.getsource`, `re.ASCII`, `pytest.mark.parametrize`), **all** required stdlib imports are enumerated in the FR — not just the most prominent one. Closes #00288 traceability gap.
 
 If any check fails, revise before saving.
 
