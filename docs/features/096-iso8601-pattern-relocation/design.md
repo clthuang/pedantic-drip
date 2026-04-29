@@ -3,7 +3,7 @@
 ## Status
 - Created: 2026-04-29
 - Phase: design
-- Upstream: spec.md (14 ACs, 8 FRs, 4 NFRs)
+- Upstream: spec.md (15 ACs, 8 FRs, 4 NFRs)
 
 ## Prior Art Research
 

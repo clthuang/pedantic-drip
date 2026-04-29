@@ -31,7 +31,7 @@ PRE_PYTEST_PASS_WIDE=$(plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/li
 
 Per plan T1: add `import re` + relocated definition with 9-line lineage comment + 3-line feature 096 annotation + convention comment, after `_iso_utc` (line 47).
 
-**DoD:** All AC-1, AC-2, AC-3, AC-3a, AC-4, AC-14 grep checks pass (8 grep assertions per plan T1 DoD).
+**DoD:** All AC-1, AC-2, AC-3, AC-3a, AC-4, AC-14 grep checks pass (9 grep assertions per plan T1 DoD).
 
 ## T2 — `database.py` edit
 

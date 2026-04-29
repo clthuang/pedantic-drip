@@ -31,7 +31,7 @@ Move `_ISO8601_Z_PATTERN` from `plugins/pd/hooks/lib/semantic_memory/database.py
 - **AC-9** `test_database.py` imports `_ISO8601_Z_PATTERN` from `_config_utils`. Verifiable: `grep -qE '^from semantic_memory._config_utils import.*_ISO8601_Z_PATTERN' plugins/pd/hooks/lib/semantic_memory/test_database.py`.
 - **AC-10** Pytest pass count unchanged: `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/semantic_memory/test_database.py -q | tail -1` returns `214 passed`. Wider regression check: `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/ -q | tail -1` returns `3198 passed` exact (baseline captured 2026-04-29 on feature/096 HEAD pre-edit; no out-of-scope regressions allowed).
 - **AC-11** Feature 095 source-pin tests in `TestIso8601PatternSourcePins` continue to pass without modification (count-relative, not hardcoded). Verifiable: `pytest plugins/pd/hooks/lib/semantic_memory/test_database.py::TestIso8601PatternSourcePins -q | tail -1` returns the SAME pass count post-feature-096 as on develop pre-edit (no regressions, no test removals). Pre-edit baseline (captured 2026-04-29): 7 passed.
-- **AC-12** `validate.sh` exit 0; warning count unchanged from baseline.
+- **AC-12** `validate.sh` exit 0. (Warning-count comparison dropped — `validate.sh` exit code is the binding signal; warning-count tracking would require a baseline-capture step that adds noise without commensurate signal for a 3-file relocation.)
 - **AC-13** Single atomic commit covers all 3 production files (atomicity verified across the entire feature branch via hash-equality assertion, not just HEAD count). Verifiable:
   ```bash
   H1=$(git log develop..HEAD --format=%H -- plugins/pd/hooks/lib/semantic_memory/_config_utils.py)

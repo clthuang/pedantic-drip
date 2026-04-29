@@ -15,7 +15,7 @@ plugins/pd/hooks/lib/semantic_memory/database.py        [edit, net -12 LOC]
 plugins/pd/hooks/lib/semantic_memory/test_database.py   [edit, +1 LOC]
 ```
 
-## Stage 0 — Capture Baselines (BEFORE any edits)
+## T0 — Capture Baselines (BEFORE any edits)
 
 ```bash
 PRE_HEAD=$(git rev-parse HEAD)
@@ -28,7 +28,7 @@ PRE_PYTEST_PASS_WIDE=$(plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/li
 # PRE_PYTEST_PASS_WIDE = 3198
 ```
 
-**Stage 0 DoD:** 3 baselines captured. PRE_PYTEST_PASS == 214 and PRE_PYTEST_PASS_WIDE == 3198 else investigate before any edits.
+**T0 DoD:** 3 baselines captured. PRE_PYTEST_PASS == 214 and PRE_PYTEST_PASS_WIDE == 3198 else investigate before any edits.
 
 ## Implementation Order — TDD-aware
 
@@ -97,13 +97,17 @@ def _warn_and_default(
 - `grep -qF 're.ASCII' plugins/pd/hooks/lib/semantic_memory/_config_utils.py` (AC-2 flag)
 - `grep -q 'Feature 093 FR-1' plugins/pd/hooks/lib/semantic_memory/_config_utils.py` (AC-3)
 - `grep -q 'Feature 092 shipped' plugins/pd/hooks/lib/semantic_memory/_config_utils.py` (AC-3)
-- `grep -q 'Feature 096 #00277' plugins/pd/hooks/lib/semantic_memory/_config_utils.py` (AC-3a)
+- AC-3a (anchored): `awk '/^# Feature 093 FR-1/,/^_ISO8601_Z_PATTERN = re.compile/' plugins/pd/hooks/lib/semantic_memory/_config_utils.py | grep -q 'Feature 096 #00277'` — verifies the feature 096 annotation lives **between** the lineage-comment start and the definition (rejects displaced or duplicated annotations elsewhere in the file)
 - `grep -qE 'validators? for formats produced' plugins/pd/hooks/lib/semantic_memory/_config_utils.py` (AC-4)
 - `grep -cE '^from semantic_memory.database' plugins/pd/hooks/lib/semantic_memory/_config_utils.py` returns `0` (AC-14)
 
 ### T2 — Edit `database.py` (remove old definition + comment, add import line)
 
 **File:** `plugins/pd/hooks/lib/semantic_memory/database.py`
+
+**Ordering directive:** Edits 2a and 2b are **text-anchored** (verbatim Old/New string match via the Edit tool, not line-number-based). **Apply 2a (removal) BEFORE 2b (insertion)** — 2a's Old text spans lines 14-26 and is unambiguous; 2b's anchor is the unchanged `from typing import Callable` block at line 12 which is unaffected by 2a. Reversing the order would still work text-anchored, but the canonical path is 2a→2b for review readability.
+
+**Note on `import re`:** `database.py:7` already has `import re` and **stays** — it's still required by `_FTS5_STRIP_RE` (database.py:60). Do NOT remove the `import re` from `database.py`; only the `_ISO8601_Z_PATTERN` definition + its 9-line lineage comment are removed.
 
 **Edit 2a — Remove lines 14-26 (9-line lineage comment + 4-line definition):**
 
@@ -288,4 +292,36 @@ Direct-orchestrator chosen because:
 
 ## Review History
 
-(plan-reviewer iter 1+ corrections will append here)
+### plan-reviewer iter 1 (2026-04-29) — NOT APPROVED → corrections applied
+
+**Findings:**
+- [warning] AC-12 retained an obsolete "warning count unchanged" clause that referenced a baseline that was never captured. (at: spec.md AC-12)
+- [warning] T2 split into 2a/2b without an explicit text-anchored ordering directive. Reviewer flagged risk that an implementer could read it as line-number-anchored and apply edits in the wrong order. (at: plan.md T2)
+- [suggestion] AC-3a grep was too loose — bare `grep -q 'Feature 096 #00277'` would also pass if the annotation was misplaced elsewhere in the file. Tighten to anchored awk-pipeline between lineage start and definition. (at: plan.md T1 DoD AC-3a)
+- [suggestion] T2 should explicitly note that `import re` at `database.py:7` is retained for `_FTS5_STRIP_RE`. Without the note, an over-aggressive implementer might remove it. (at: plan.md T2)
+- [suggestion] AC-8 multi-line note (low priority, deferred — single-line invariant of test_database.py:17 is structurally enforced by Edit text-anchoring).
+
+**Corrections Applied:**
+- spec.md AC-12 simplified: dropped warning-count comparison clause; binding signal is `validate.sh` exit 0.
+- plan.md T2: prepended explicit ordering directive ("apply 2a BEFORE 2b") and `import re` retention note.
+- plan.md T1 DoD AC-3a: replaced bare grep with awk-pipeline anchor between lineage-comment start (`^# Feature 093 FR-1`) and definition line (`^_ISO8601_Z_PATTERN = re.compile`).
+
+### task-reviewer iter 1 (2026-04-29) — APPROVED → 1 suggestion applied
+
+**Findings:**
+- [suggestion] tasks.md T1 DoD parenthetical said "8 grep assertions per plan T1 DoD" but plan.md T1 DoD lists 9 distinct grep commands. (at: tasks.md T1 DoD)
+
+**Corrections Applied:**
+- tasks.md T1 DoD: "8 grep assertions" → "9 grep assertions".
+
+### plan-reviewer iter 2 + phase-reviewer + relevance-verifier (2026-04-29) — ALL APPROVED
+
+**Findings:**
+- plan-reviewer iter 2: APPROVED, zero issues. All iter 1 corrections verified against production files (text anchors match byte-for-byte).
+- phase-reviewer: APPROVED, 2 cosmetic suggestions: (1) design.md Status said "14 ACs", should be "15"; (2) plan.md called it "Stage 0" while tasks.md called it "T0".
+- relevance-verifier: APPROVED, 2 cosmetic observations (same "14 ACs" stale count + T6 "preferred" qualifier). All 15 ACs trace to tasks with binary DoDs; all 5 TDs/3 components/3 interfaces have implementing tasks; plan text anchors verified.
+
+**Corrections Applied:**
+- design.md Status: "14 ACs" → "15 ACs".
+- plan.md: renamed "Stage 0" → "T0" (header + DoD line) for 1:1 mapping with tasks.md.
+- T6 DoD "preferred" qualifier left as-is — contingency path (qa-override.md) is concretely defined; no implementer ambiguity.
