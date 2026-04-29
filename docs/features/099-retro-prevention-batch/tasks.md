@@ -12,7 +12,7 @@ Legend:
 
 ## Group D: FR-5 PreToolUse Unicode Hook (independent) — TDD ORDER
 
-- [ ] **T04** 🔴 (TDD red — tests first) Add `plugins/pd/hooks/tests/test_pre_edit_unicode_guard.sh` with stdin-piped fixtures covering all FR-5 ACs. Initially all assertions fail (script doesn't exist yet).
+- [ ] **T04** 🔴 (TDD red — tests first; matches design I-3 file path) Add `plugins/pd/hooks/tests/test_pre_edit_unicode_guard.py` (Python pytest file using `subprocess.run` to invoke the hook with stdin) covering all FR-5 ACs. **DoD:** pytest --collect-only succeeds (collects ≥6 test functions); pytest run reports collection errors or assertion failures (NOT pass) — this is the expected TDD-red state. T01/T02 then make them pass.
   - AC-6: single codepoint 0x85 input → stderr matches `Unicode codepoint.*0x0085.*chr\(0x0085\)`, stdout `{"continue": true}`, exit 0.
   - AC-6b: multi-codepoint input `[0x85, 0xa0, 0x85, 0x2014, 0x2014, 0x2014, 0x3000]` → exactly 4 unique codepoints in first-seen order: `0x0085, 0x00a0, 0x2014, 0x3000`.
   - AC-6c: `hook_event_name="SessionStart"` → silent stderr.
@@ -41,7 +41,7 @@ Legend:
 
 ## Group A: FR-1 QA Gate Test-Only Mode (independent) — TDD ORDER
 
-- [ ] **T05b** 🔴 (TDD red — executable test harness, not just markdown pseudocode) Create `plugins/pd/scripts/tests/test_qa_gate_bucket.py` with the canonical bucket() Python implementation mirroring qa-gate-procedure.md §4 pseudocode plus pytest-style assertions for:
+- [ ] **T05b** 🟢 (Self-contained — canonical Python impl + assertions in one file; passes immediately on authoring) Create `plugins/pd/scripts/tests/test_qa_gate_bucket.py` with the canonical bucket() Python implementation mirroring qa-gate-procedure.md §4 pseudocode plus pytest-style assertions for:
   - AC-1: 6 test paths via `re.search(TEST_FILE_RE, path)` (test_database.py, plugins/pd/tests/test_foo.py, foo_test.py, tests/conftest.py → True; database.py, plugins/pd/hooks/tests/test-hooks.sh → False); empty list → IS_TEST_ONLY_REFACTOR=False (AC-E1 vacuous-truth).
   - AC-2 helper: 6 `_location_matches_test_path()` assertions (with/without `:line` suffix, .py/.sh, prod/test).
   - AC-2 bucket(): 4 call variants (kwarg=True with test loc → LOW; kwarg=False → MED; default kwarg → MED; kwarg=True with prod loc → MED).
@@ -122,6 +122,7 @@ Legend:
   - Insertion point: after `check_memory_store` block, before `check_project_context` block.
   - Pattern: `printf "\n${BOLD}Project Hygiene${NC}\n"; check_stale_feature_branches || true; check_tier_doc_freshness || true`.
   - The `|| true` matches existing pattern in run_all_checks for set -e safety.
+  - **Smoke check (DoD signal):** Run `bash plugins/pd/scripts/doctor.sh 2>&1 | grep -E "Project Hygiene"` returns ≥1 hit AND exit code is 0. Verifies wiring before reaching T28's full timing measurement.
   - Verifies: AC-4, AC-5 (Project Hygiene section visible).
   - Depends on T13, T14.
 
@@ -143,7 +144,7 @@ Legend:
   - AC-9 (apply on fixture with all sub-bullets a-g — line-count math, archive header, byte-verbatim, idempotency post-conditions).
   - AC-E6 (empty section not archivable).
   - AC-E7 (idempotency: second --apply is no-op).
-  - Initially all tests fail (script doesn't exist yet — verify pytest collects them, then they error on import).
+  - **DoD:** pytest --collect-only succeeds (collects ≥5 test functions); pytest run reports collection errors or assertion failures (NOT pass) — this is the expected TDD-red state. T16 then makes them pass.
   - Depends on T17.
 
 - [ ] **T16** 🟢 (TDD green — implementation to pass T18) Create `plugins/pd/scripts/cleanup_backlog.py` per design I-4 public API.
@@ -170,7 +171,7 @@ Legend:
   - AC-14 (4-column schema verified by `tr -cd '|' | wc -c == 5`).
   - AC-E8 (empty-input case: header + footer only).
   - normalize_location parity check vs qa-gate-procedure.md §4 (per design I-5 cross-version note).
-  - Initially all tests fail (script doesn't exist).
+  - **DoD:** pytest --collect-only succeeds (collects ≥4 test functions); pytest run reports collection errors or assertion failures (NOT pass) — TDD-red state. T20 then makes them pass.
 
 - [ ] **T20** 🟢 (TDD green — implementation to pass T21) Create `plugins/pd/scripts/test_debt_report.py` per design I-5.
   - `normalize_location(loc)` with widened regex `[a-zA-Z0-9]+` (per design fix).
@@ -225,42 +226,51 @@ Legend:
 
 ---
 
-## Dependency Summary
+## Dependency Summary (TDD-red first)
 
 ```
-T01 (py)     T02 (sh)     T03 (json)
-   └─────┬──────┘           └─→ T04 (test)
-T04 ←────┘                         │
-                                   ▼
-                       Group D done
+Group D (FR-5):  T04 (tests-fail) ─→ T01 (py impl) ─→ T02 (sh wrapper) ─→ T03 (hooks.json registration)
+                                                                                ↓
+                                                                            Group D done
 
-T05 (proc)   T06 (finish)
-   └─→ T07 (verify)
+Group A (FR-1):  T05b (canonical Python impl + assertions, self-passes) ─→ T05 (mirror to §4 doc)
+                                                                          ─→ T06 (finish-feature.md edit)
+                                                                          ─→ T07 (doc empirical block)
 
-T08 (FR-2)   T09 (FR-7)   T10 (FR-2)   T11 (FR-7)
-   (any order within Group B)
+Group B (FR-2,7): T08, T09, T10, T11 (markdown edits, any order — grep-only verification per ACs)
 
-T12 (helper) → T13 (FR-3) → T15 (wire C)
-                T14 (FR-4) ┘
+Group C (FR-3,4): T12 (helper) ─→ T13 (FR-3) ─→┐
+                                  T14 (FR-4) ─→┴─→ T15 (wire + smoke-check Project Hygiene section)
 
-T16 (cleanup_backlog.py) ─→ T17 (fixture) ─→ T18 (tests)
-T16 ─→ T19 (cleanup-backlog.md)
-T16 ─→ T23 (check_active_backlog_size) ─→ T24 (wire C′)
+Group E FR-6a:   T17 (fixture) ─→ T18 (tests-fail) ─→ T16 (impl makes tests pass) ─→ T19 (command md)
+Group E FR-8:    T21 (tests-fail w/ synth fixtures) ─→ T20 (impl makes tests pass) ─→ T22 (command md)
 
-T20 (test_debt_report.py) ─→ T21 (tests)
-T20 ─→ T22 (test-debt-report.md)
+Group C′ (FR-6b): T23 (check_active_backlog_size) [DEPENDS on T16] ─→ T24 (wire C′)
 
-T25 (spec note — independent, can run anytime)
+Cross-cutting:    T25 (spec note — independent, anytime)
 
-T26-T28 (validation — last)
+Final validation: T26 (validate.sh) → T27 (pytest) → T28 (timed doctor run)
 ```
 
-**Parallel batches** (per implementing skill `max_concurrent_agents=5`):
-- **Batch 1:** T01, T02, T05, T08, T12 (5 independent tasks)
-- **Batch 2:** T03, T06, T09, T13, T14, T16, T20 (7 tasks; some independent — pick top 5)
-- **Batch 3:** T04, T07, T10, T11, T17, T19, T22 (depends on prior batch outputs)
-- **Batch 4:** T15, T18, T21, T23, T25 (mid-coupling)
-- **Batch 5:** T24, T26, T27, T28 (final integration + validation)
+**Parallel batches** (per implementing skill `max_concurrent_agents=5`, honoring TDD red-first):
+
+- **Batch 1 — TDD red (tests + fixtures fail):** T04 (FR-5 tests), T17 (FR-6a fixture), T18 (FR-6a tests), T21 (FR-8 tests + synth fixtures), T05b (FR-1 canonical Python — self-passes immediately)
+  - All 5 tasks fully independent. T18 depends only on T17 within Batch 1 — sequence within the batch.
+
+- **Batch 2 — TDD green / impl (makes tests pass):** T01 (FR-5 hook impl), T16 (FR-6a impl), T20 (FR-8 impl), T05 (FR-1 doc edit), T12 (FR-3 helper)
+  - 5 independent impl tasks. Each makes its corresponding Batch 1 test pass.
+
+- **Batch 3 — Wiring + commands:** T02 (FR-5 wrapper), T03 (FR-5 hooks.json), T06 (FR-1 finish-feature edit), T07 (FR-1 doc), T13 (FR-3 check), T14 (FR-4 check)
+  - Depends on Batch 2.
+
+- **Batch 4 — Group B + Group C wire + Group E commands + Group C′:** T08, T09, T10, T11 (FR-2/7 doc edits — independent), T15 (Group C wire), T19 (FR-6a command), T22 (FR-8 command), T23 (FR-6b check)
+  - T23 needs T16 (in Batch 2 — done by Batch 4 time).
+
+- **Batch 5 — Final wire + spec amendment:** T24 (Group C′ wire), T25 (spec amendment carry-forward — anytime).
+
+- **Batch 6 — Validation:** T26 (validate.sh), T27 (pytest), T28 (timed doctor).
+
+Note: T16 (FR-6a impl) and T20 (FR-8 impl) are independent of each other — no shared code; the cross-FR invariant is FR-6a↔FR-6b only.
 
 ## Done Criteria
 
