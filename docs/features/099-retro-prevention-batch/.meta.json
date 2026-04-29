@@ -1,0 +1,14 @@
+{
+  "id": "099",
+  "slug": "retro-prevention-batch",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-04-29T15:39:46.563744+00:00",
+  "branch": "feature/099-retro-prevention-batch",
+  "lastCompletedPhase": null,
+  "phases": {
+    "brainstorm": {
+      "started": "2026-04-29T15:39:46.560674+00:00"
+    }
+  }
+}
