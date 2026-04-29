@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.16.8] - 2026-04-29
+
 ### Changed
 - **Documentation: tier-doc frontmatter sweep** (`#00289`, feature 098) — refreshed 6 tier docs (`docs/user-guide/{overview,installation,usage}.md`, `docs/technical/{architecture,workflow-artifacts,api-reference}.md`) using parallel audit subagents (5+1 batches). Fixes include: phase sequence (`plan → tasks` → `create-plan`), MCP server name (`workflow-state` → `workflow-engine`), deprecated `/pd:secretary mode yolo` → `/pd:yolo on`, MCP signature corrections (complete_phase, transition_phase, get_lineage, search_memory), expanded hook table 6→16, recent-feature index update. Zero code change.
 
