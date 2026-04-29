@@ -398,6 +398,8 @@ Each dispatch prompt MUST include: feature `spec.md` content (or fallback `no sp
 
 **test-deepener narrowed remap** (AC-5b): test-deepener gaps with severity HIGH remap to MED **only when** `mutation_caught == false` AND no other reviewer flagged the same `location`. Cross-confirmed gaps stay HIGH (uncaught coverage-debt only).
 
+**Test-only-refactor downgrade** (feature 099 FR-1): Before the bucketing loop, compute `IS_TEST_ONLY_REFACTOR` via `git diff {pd_base_branch}...HEAD --name-only` filtered by the test-file regex `(^|/)test_[^/]*\.py$|_test\.py$|(^|/)tests/.*\.py$` (re.search; non-empty AND all-match → True). Pass `is_test_only_refactor=...` kwarg to each `bucket()` call. When the conditions of AC-5b would have produced HIGH→MED AND `IS_TEST_ONLY_REFACTOR == True` AND the finding's location matches the same test-file regex (with `:line` suffix stripped), the bucketing further downgrades HIGH → LOW. LOW folds to retro sidecar instead of auto-filing to backlog. Prevents recursive test-hardening accumulation per `{pd_artifacts_root}/features/097-iso8601-test-pin-v2/qa-override.md` rationale.
+
 **Decision tree:**
 
 - **HIGH count > 0** → block merge unless `qa-override.md` exists with ≥ 50 chars of user-authored rationale (per-section trimmed-count). Print findings list with location + suggested_fix per finding. Exit non-zero.

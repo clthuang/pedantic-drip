@@ -133,6 +133,25 @@ install_venv_cmd() {
 }
 
 # ---------------------------------------------------------------------------
+# Project Hygiene helpers (FR-3, FR-4, FR-6b — feature 099)
+# ---------------------------------------------------------------------------
+
+# Resolve base branch from pd.local.md or git remote HEAD; fallback main.
+# Per design TD + spec FR-3 base-branch resolution.
+_pd_resolve_base_branch() {
+    local config_file="$1"
+    local base
+    base=$(read_config_field "${config_file}" "base_branch" "auto")
+    if [[ "${base}" == "auto" ]]; then
+        base=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || true)
+        if [[ -z "${base}" ]]; then
+            base="main"
+        fi
+    fi
+    printf '%s' "${base}"
+}
+
+# ---------------------------------------------------------------------------
 # Check functions — each is independently callable for reuse by setup.sh
 # ---------------------------------------------------------------------------
 
@@ -420,6 +439,202 @@ check_project_context() {
 }
 
 # ---------------------------------------------------------------------------
+# Project Hygiene checks (feature 099 — FR-3, FR-4, FR-6b)
+# ---------------------------------------------------------------------------
+
+# FR-3: Detect orphan feature branches.
+check_stale_feature_branches() {
+    local project_root config_file artifacts_root base_branch
+    project_root=$(detect_project_root)
+
+    if [[ ! -d "${project_root}/.git" ]]; then
+        return 0  # Skip silently if not a git project.
+    fi
+
+    config_file="${project_root}/.claude/pd.local.md"
+    artifacts_root=$(read_config_field "${config_file}" "artifacts_root" "docs")
+    base_branch=$(_pd_resolve_base_branch "${config_file}")
+
+    local n_warn=0 n_info=0 n_total=0
+    local branches
+    branches=$(cd "${project_root}" && git for-each-ref --format='%(refname:short)' 'refs/heads/feature/*' 2>/dev/null || true)
+
+    if [[ -z "${branches}" ]]; then
+        pass "No feature branches"
+        return 0
+    fi
+
+    while IFS= read -r branch; do
+        [[ -z "${branch}" ]] && continue
+        (( n_total++ )) || true
+        # Parse feature ID and slug.
+        if [[ ! "${branch}" =~ ^feature/([0-9]+)-([a-z0-9-]+)$ ]]; then
+            info "Branch ${branch}: no parsable feature ID — manual classification needed"
+            (( n_info++ )) || true
+            continue
+        fi
+        local id="${BASH_REMATCH[1]}"
+        local slug="${BASH_REMATCH[2]}"
+        local meta_path="${project_root}/${artifacts_root}/features/${id}-${slug}/.meta.json"
+
+        # Read status from .meta.json (filesystem read; no MCP dependency).
+        local status="no entity"
+        if [[ -f "${meta_path}" ]]; then
+            status=$(grep -oE '"status"[[:space:]]*:[[:space:]]*"[^"]+"' "${meta_path}" 2>/dev/null | head -1 | sed -E 's/.*"([^"]+)"$/\1/' || echo "unknown")
+            [[ -z "${status}" ]] && status="unknown"
+        fi
+
+        # Merge-state short-circuit (highest priority): silent if merged.
+        local merged=false
+        if (cd "${project_root}" && git merge-base --is-ancestor "${branch}" "${base_branch}" 2>/dev/null); then
+            merged=true
+        fi
+        if [[ "${merged}" == "true" ]]; then
+            continue  # silent
+        fi
+
+        # Active states → silent.
+        case "${status}" in
+            active|planned|paused|in_progress)
+                continue
+                ;;
+            completed|cancelled|abandoned|archived)
+                # Tier 1: warn with cleanup hint.
+                warn "Orphan branch: ${branch} (status=${status}, unmerged into ${base_branch})" \
+                    "git branch -D ${branch}  # if no longer needed"
+                (( n_warn++ )) || true
+                ;;
+            *)
+                # Tier 2 (no entity / unknown): info, non-destructive.
+                info "Branch ${branch} has no entity record (status=${status}, unmerged into ${base_branch}) — register via /pd:brainstorm or delete if abandoned"
+                (( n_info++ )) || true
+                ;;
+        esac
+    done <<< "${branches}"
+
+    if (( n_warn == 0 && n_info == 0 )); then
+        pass "No stale feature branches (${n_total} examined)"
+    fi
+}
+
+# FR-4: Detect tier docs whose source content has drifted past the staleness threshold.
+check_tier_doc_freshness() {
+    local project_root config_file
+    project_root=$(detect_project_root)
+
+    if [[ ! -d "${project_root}/.git" ]]; then
+        return 0
+    fi
+
+    config_file="${project_root}/.claude/pd.local.md"
+    local threshold doc_root
+    threshold=$(read_config_field "${config_file}" "tier_doc_staleness_days" "30")
+    doc_root=$(read_config_field "${config_file}" "tier_doc_root" "docs")
+
+    # Default tier source paths (per finish-feature.md Step 2b convention).
+    local tiers=("user-guide" "dev-guide" "technical")
+    local default_user_guide="README.md package.json setup.py pyproject.toml bin/"
+    local default_dev_guide="src/ test/ Makefile .github/ CONTRIBUTING.md docker-compose.yml"
+    local default_technical="src/ docs/technical/"
+
+    local found_any=false
+    for tier in "${tiers[@]}"; do
+        local tier_underscored="${tier//-/_}"
+        local default_paths
+        case "${tier}" in
+            user-guide) default_paths="${default_user_guide}" ;;
+            dev-guide) default_paths="${default_dev_guide}" ;;
+            technical) default_paths="${default_technical}" ;;
+        esac
+        local source_paths
+        source_paths=$(read_config_field "${config_file}" "tier_doc_source_paths_${tier_underscored}" "${default_paths}")
+
+        local tier_glob="${project_root}/${doc_root}/${tier}"
+        if [[ ! -d "${tier_glob}" ]]; then
+            info "No docs in tier ${tier}"
+            continue
+        fi
+
+        for doc in "${tier_glob}"/*.md; do
+            [[ -f "${doc}" ]] || continue
+            found_any=true
+            # Awk-extract last-updated frontmatter (no PyYAML).
+            local last_updated
+            last_updated=$(awk '/^---$/{c++;next} c==1 && /^last-updated:/{sub(/^last-updated:[[:space:]]*/, ""); print; exit}' "${doc}" 2>/dev/null || echo "")
+            if [[ -z "${last_updated}" ]]; then
+                info "Skipped: ${doc##*/} (no last-updated frontmatter)"
+                continue
+            fi
+
+            # Source ts via git log (multi-path).
+            local source_ts
+            source_ts=$(cd "${project_root}" && git log -1 --format=%aI -- ${source_paths} 2>/dev/null || echo "")
+            if [[ -z "${source_ts}" ]]; then
+                info "Skipped: ${doc##*/} (tier ${tier}: no source commits)"
+                continue
+            fi
+
+            # Date diff via python3 stdlib datetime.
+            local gap_days
+            gap_days=$(python3 -c "
+from datetime import datetime
+import sys
+try:
+    src = datetime.fromisoformat(sys.argv[1].replace('Z', '+00:00'))
+    upd = datetime.fromisoformat(sys.argv[2].replace('Z', '+00:00'))
+    print(int((src - upd).total_seconds() // 86400))
+except Exception:
+    print('')
+" "${source_ts}" "${last_updated}" 2>/dev/null || echo "")
+
+            if [[ -z "${gap_days}" ]]; then
+                info "Skipped: ${doc##*/} (tier ${tier}: timestamp parse failed)"
+                continue
+            fi
+
+            if (( gap_days > threshold )); then
+                warn "Tier doc stale: ${doc##*/} (last-updated ${last_updated}, source modified ${gap_days}d later)"
+            fi
+        done
+    done
+
+    if [[ "${found_any}" == "false" ]]; then
+        info "Tier doc freshness: no tier docs found (skipped)"
+    fi
+}
+
+# FR-6b: Active backlog size threshold check.
+check_active_backlog_size() {
+    local project_root config_file backlog_path threshold count script_dir
+    project_root=$(detect_project_root)
+    config_file="${project_root}/.claude/pd.local.md"
+    backlog_path="${project_root}/$(read_config_field "${config_file}" "artifacts_root" "docs")/backlog.md"
+    threshold=$(read_config_field "${config_file}" "backlog_active_threshold" "30")
+
+    if [[ ! -f "${backlog_path}" ]]; then
+        info "Active backlog: no backlog.md found"
+        return 0
+    fi
+
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [[ ! -f "${script_dir}/cleanup_backlog.py" ]]; then
+        info "Active backlog: cleanup_backlog.py not found (skipped)"
+        return 0
+    fi
+
+    count=$(python3 "${script_dir}/cleanup_backlog.py" --count-active --backlog-path "${backlog_path}" 2>/dev/null || echo 0)
+    # Coerce empty / non-numeric to 0.
+    [[ "${count}" =~ ^[0-9]+$ ]] || count=0
+
+    if (( count > threshold )); then
+        warn "Active backlog: ${count} items (threshold ${threshold})" \
+            "Run /pd:cleanup-backlog to archive closed sections"
+    else
+        pass "Active backlog: ${count} items"
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 run_all_checks() {
@@ -444,6 +659,11 @@ run_all_checks() {
 
     printf "\n${BOLD}Memory System${NC}\n"
     check_memory_store || true
+
+    printf "\n${BOLD}Project Hygiene${NC}\n"
+    check_stale_feature_branches || true
+    check_tier_doc_freshness || true
+    check_active_backlog_size || true
 
     printf "\n${BOLD}Project Context${NC}\n"
     check_project_context || true

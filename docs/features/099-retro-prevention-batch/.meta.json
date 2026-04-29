@@ -1,0 +1,31 @@
+{
+  "id": "099",
+  "slug": "retro-prevention-batch",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-04-29T15:39:46.563744+00:00",
+  "branch": "feature/099-retro-prevention-batch",
+  "lastCompletedPhase": "implement",
+  "phases": {
+    "brainstorm": {
+      "started": "2026-04-29T15:39:46.560674+00:00"
+    },
+    "specify": {
+      "started": "2026-04-29T16:15:42.300582+00:00",
+      "completed": "2026-04-29T16:15:46.776599+00:00",
+      "iterations": 6
+    },
+    "design": {
+      "completed": "2026-04-29T16:30:53.318765+00:00",
+      "iterations": 5
+    },
+    "create-plan": {
+      "completed": "2026-04-29T16:51:35.517280+00:00",
+      "iterations": 7
+    },
+    "implement": {
+      "completed": "2026-04-29T17:05:43.620661+00:00",
+      "iterations": 1
+    }
+  }
+}

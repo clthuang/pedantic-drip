@@ -94,6 +94,15 @@
         ]
       },
       {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pre-edit-unicode-guard.sh"
+          }
+        ]
+      },
+      {
         "matcher": ".*",
         "hooks": [
           {
