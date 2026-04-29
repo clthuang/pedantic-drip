@@ -176,11 +176,12 @@ Reference: `plugins/pd/hooks/lib/entity_lifecycle.py` ENTITY_MACHINES for canoni
 4. Locate matching `.meta.json` at `{artifacts_root}/features/{id}-{slug}/.meta.json`. If missing → status = `"no entity"`.
 5. If `.meta.json` exists, read `status` field. If `status` not in canonical set → status = `"unknown"` (treated as orphan-qualifying).
 6. Check merge status: `git merge-base --is-ancestor <branch> <base>`. Returns 0 if merged, 1 if unmerged.
-7. Apply severity-split:
-   - **Tier 1** (status in `{completed, cancelled, abandoned, archived}` AND unmerged) → emit `warn()` with message `"Orphan branch: {branch} (status={status}, unmerged into {base}). Cleanup: git branch -D {branch} if no longer needed."`
-   - **Tier 2** (status in `{"no entity", "unknown"}` AND unmerged) → emit `info()` with message `"Branch {branch} has no entity record (status={status}, unmerged into {base}). Either run /pd:brainstorm to register, or delete if abandoned."`
-   - **Not orphan** (status in `{active, planned, paused, in_progress}` OR merged into base) → silent (no per-branch output).
-8. After loop: emit one summary line:
+7. **Merge-state short-circuit (highest priority):** If `git merge-base --is-ancestor <branch> <base>` returns 0 (merged), the branch is silent regardless of entity status — the work is preserved in base, no investigation needed. Skip remaining checks.
+8. For unmerged branches only, apply severity-split:
+   - **Tier 1** (status in `{completed, cancelled, abandoned, archived}`) → emit `warn()` with message `"Orphan branch: {branch} (status={status}, unmerged into {base}). Cleanup: git branch -D {branch} if no longer needed."`
+   - **Tier 2** (status in `{"no entity", "unknown"}`) → emit `info()` with message `"Branch {branch} has no entity record (status={status}, unmerged into {base}). Either run /pd:brainstorm to register, or delete if abandoned."`
+   - **Not orphan** (status in `{active, planned, paused, in_progress}`) → silent.
+9. After loop: emit one summary line:
    - If zero Tier 1 + Tier 2: `pass()` `"No stale feature branches"`.
    - If ≥1 Tier 1: `info()` `"Total: {N1} cleanable orphan(s), {N2} unregistered branch(es)"`.
 
@@ -217,15 +218,25 @@ If a project does not set these fields, defaults are used (`tier_doc_root: docs`
 1. Read threshold from `pd.local.md` field `tier_doc_staleness_days` (default: `30`).
 2. Read per-tier source paths from `pd.local.md` `tier_doc_source_paths_{tier}` fields (default to mapping above).
 3. For each tier in `{user-guide, dev-guide, technical}`:
-   - Glob `docs/{tier}/*.md`. If glob is empty → info "No docs in tier {tier}".
-   - For each doc, parse YAML frontmatter `last-updated:` field via `python3 -c "import yaml,sys; print(yaml.safe_load(open(sys.argv[1]).read().split('---')[1]).get('last-updated',''))"`.
+   - Glob `{tier_doc_root}/{tier}/*.md`. If glob is empty → info "No docs in tier {tier}".
+   - For each doc, parse YAML frontmatter `last-updated:` field via grep-based extraction (avoiding PyYAML dependency since doctor.sh runs WITHOUT pd venv): `awk '/^---$/{c++;next} c==1 && /^last-updated:/{sub(/^last-updated:[[:space:]]*/, ""); print; exit}' {doc}`. Returns the value (e.g., `2026-04-29T00:00:00Z`) or empty string if absent. This matches doctor.sh's existing config-reading pattern in `read_config_field()`.
    - Compute source timestamp: `git log -1 --format=%aI -- <space-separated source paths>`.
    - If frontmatter `last-updated` missing → info `"Skipped: {doc} (no last-updated frontmatter)"` (covered by AC-E3).
    - If `git log` returns empty (no commits matching paths) → info `"Skipped: {doc} (tier {tier}: no source commits)"`.
-   - If both parsed, compute `gap_days = floor((source_ts - last_updated_ts) / 86400)`.
+   - If both parsed, compute `gap_days` via `python3 -c "from datetime import datetime, timezone; ..."` (Python 3.10+ stdlib only — no PyYAML). Use `datetime.fromisoformat()` with `'Z' → '+00:00'` translation.
    - If `gap_days > threshold` → warn `"Tier doc stale: {doc} (last-updated {date}, source modified {gap_days}d later)"`.
 
-**Performance:** O(T*D) where T=3 tiers, D=tier doc count. Each doc: 1 file read (for frontmatter) + 1 python invocation + 1 git invocation. Typical: <2s for ≤30 docs.
+**Empirical (grep-based frontmatter parsing avoids PyYAML):**
+```text
+>>> # awk -based YAML last-updated extraction (no PyYAML needed):
+>>> # Given file with frontmatter `last-updated: 2026-04-29T00:00:00Z`,
+>>> # the awk command above returns the literal string '2026-04-29T00:00:00Z'.
+>>> # Verified equivalent to (but cheaper than) PyYAML's full-document parse for this single-key extraction.
+>>> from datetime import datetime, timezone
+>>> datetime.fromisoformat('2026-04-29T00:00:00Z'.replace('Z', '+00:00')).tzinfo  → datetime.timezone.utc  (matches expected UTC parsing)
+```
+
+**Performance:** O(T*D) where T=3 tiers, D=tier doc count. Each doc: 1 awk invocation + 1 git invocation + 1 python invocation (for date diff only). Typical: <2s for ≤30 docs. No PyYAML dependency — pure stdlib + standard POSIX tools.
 
 ### FR-5: PreToolUse hook `pre-edit-unicode-guard.sh`
 
@@ -340,8 +351,9 @@ Reads (default mode): `{pd_artifacts_root}/backlog.md`.
    ...
    Total: K archivable section(s) with M items.
    ```
-4. **Live mode** (no `--dry-run`):
-   - Confirm via AskUserQuestion in command body (auto-confirmed in YOLO).
+4. **Live mode** (`--apply` flag):
+   - **Confirmation lives in the command body, not the script.** `cleanup_backlog.py --apply` proceeds to write WITHOUT any interactive prompt — the Python script never invokes any interactive tool (AskUserQuestion is a Claude Code orchestration tool unavailable inside Python). Confirmation MUST be obtained by the orchestrator (the slash-command in `cleanup-backlog.md`) BEFORE invoking the script with `--apply`.
+   - In YOLO mode, the command body's AskUserQuestion auto-confirms; in non-YOLO, the user explicitly confirms.
    - For each ARCHIVABLE section: append the exact section text (header line + blank line + item lines + trailing blank) to `{pd_artifacts_root}/backlog-archive.md`. If archive file absent, create with header:
      ```
      # Backlog Archive
@@ -456,7 +468,7 @@ def normalize_location(loc: str) -> str:
 >>> normalize_location('')                            → ''
 ```
 
-If qa-gate-procedure.md §4's `normalize_location` ever changes, the FR-8 implementation MUST keep its own pinned copy (per this spec) until intentionally re-aligned in a follow-up feature.
+If qa-gate-procedure.md §4's `normalize_location` ever changes, the FR-8 implementation MUST keep its own pinned copy (per this spec) until intentionally re-aligned in a follow-up feature. Cross-version parity for the example above is asserted by AC-15(b) Python compile-check on `test_debt_report.py` plus the empirical block here — both sides produce `'foo.py:42'` for the input `'plugins/pd/lib/foo.py:42'`.
 
 **Read-only:** No writes. Pure aggregator. Exit 0 always.
 
@@ -500,7 +512,7 @@ produces:
 - stdout exactly `{"continue": true}`
 - exit code 0
 
-**AC-6b (FR-5 hook — dedup + ordering):** Given input with codepoints `[0x85, 0xa0, 0x85, 0x2014, 0x2014, 0x2014, 0x3000]` (NEL, NBSP, NEL repeat, em-dash repeat ×3, ideographic space), the stderr warning lists exactly 5 unique codepoints in first-seen order: `0x0085, 0x00a0, 0x2014, 0x3000` followed by no further entries (only 4 unique present; cap unreached). For 6+ unique input, only first 5 by occurrence order appear.
+**AC-6b (FR-5 hook — dedup + ordering):** Given input with codepoints `[0x85, 0xa0, 0x85, 0x2014, 0x2014, 0x2014, 0x3000]` (NEL, NBSP, NEL repeat, em-dash repeat ×3, ideographic space), the stderr warning lists exactly **4 unique codepoints** in first-seen order: `0x0085, 0x00a0, 0x2014, 0x3000` (input has 4 unique; cap of 5 unreached). For 6+ unique input, only first 5 by occurrence order appear (cap enforced).
 
 **AC-6c (FR-5 hook — short-circuit on non-PreToolUse):** Given JSON input with `hook_event_name: "SessionStart"` (not PreToolUse), the hook exits 0 with stdout `{"continue": true}` and EMPTY stderr (no codepoint scan performed regardless of payload).
 
