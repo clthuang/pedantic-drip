@@ -2072,6 +2072,11 @@ class TestScanDecayCandidates:
         "2026-04-20T00:00:00Z\n",       # trailing newline (the #00220 case)
         "2026-04-20T00:00:00Z ",        # trailing space
         "2026-04-20T00:00:00Z\r\n",     # trailing CRLF
+        "2026-04-20T00:00:00Z\t",       # #00286 — trailing tab (selective rstrip('\n ') would miss)
+        "2026-04-20T00:00:00Z\v",       # #00286 — trailing vertical tab
+        "2026-04-20T00:00:00Z\f",       # #00286 — trailing form feed
+        "2026-04-20T00:00:00Z\r",       # #00286 — trailing CR alone (not CRLF)
+        "2026-04-20T00:00:00Z",   # #00286 — trailing NEL (U+0085, Latin-1 newline)
     ])
     def test_pattern_rejects_trailing_whitespace(
         self, trailing_cutoff, db: MemoryDatabase, capsys,
@@ -2133,6 +2138,11 @@ class TestBatchDemote:
         ("2026-04-20T00:00:00Z\n", "trailing-newline"),
         ("2026-04-20T00:00:00Z ", "trailing-space"),       # Feature 095 #00251
         ("2026-04-20T00:00:00Z\r\n", "trailing-crlf"),     # Feature 095 #00251
+        ("2026-04-20T00:00:00Z\t", "trailing-tab"),         # #00286 selective rstrip miss
+        ("2026-04-20T00:00:00Z\v", "trailing-vtab"),        # #00286
+        ("2026-04-20T00:00:00Z\f", "trailing-formfeed"),    # #00286
+        ("2026-04-20T00:00:00Z\r", "trailing-cr-only"),     # #00286
+        ("2026-04-20T00:00:00Z", "trailing-nel-u0085"),  # #00286 Latin-1 NEL
         ("２０２６-04-20T00:00:00Z", "unicode-digits"),
         ("2026-04-20T00:00:00+00:00", "plus-offset-not-Z-suffix"),
     ]
@@ -2263,11 +2273,17 @@ class TestIso8601PatternSourcePins:
     """
 
     def test_pattern_source_uses_explicit_digit_class(self):
-        """Closes #00246 — pin literal `[0-9]` in pattern source, NOT `\\d`."""
+        """Closes #00246 — pin literal `[0-9]` in pattern source, NOT `\\d`.
+
+        #00287 (2026-04-29): also pin absence of `\\D` (negation of non-digit, equivalent
+        to `\\d` mod Unicode). Realistic mutation pattern is unusual but cheap to defend.
+        """
         assert '[0-9]' in _ISO8601_Z_PATTERN.pattern, \
             "_ISO8601_Z_PATTERN.pattern must use explicit [0-9] character class for ASCII-only matching"
         assert r'\d' not in _ISO8601_Z_PATTERN.pattern, \
             "_ISO8601_Z_PATTERN.pattern must NOT use \\d (Unicode-digit-permissive in Python 3 str patterns)"
+        assert r'\D' not in _ISO8601_Z_PATTERN.pattern, \
+            "_ISO8601_Z_PATTERN.pattern must NOT use \\D (negation-form Unicode-digit-permissive equivalent)"
 
     def test_pattern_compiled_with_re_ascii_flag(self):
         """Closes #00247 — pin re.ASCII flag presence (defense-in-depth)."""

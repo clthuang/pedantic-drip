@@ -399,6 +399,6 @@ First production exercise of feature 094's Step 5b adversarial QA gate produced 
 
 **LOW (3) — surfaced by feature:095 pre-release QA:**
 
-- **#00286** [LOW/testability] FR-2 trailing-whitespace extension covers `\n`, ` `, `\r\n` but not `\t`, `\v`, `\f`, `\r` alone, or NEL (U+0085). `.fullmatch()` rejects all, but a future `now_iso.rstrip('\n ')` (selective rstrip) bypasses tab/CR/etc. Fix: extend parametrize to full ASCII whitespace surface. Surfaced by feature:095 test-deepener.
-- **#00287** [LOW/testability] `r'\d' not in pattern.pattern` doesn't catch `[^\\D]` (negation of non-digit, equivalent to `\d` but contains `\D` not `\d`). Realistic mutation pattern is unusual but worth pinning: add `assert r'\D' not in _ISO8601_Z_PATTERN.pattern`. Surfaced by feature:095 test-deepener.
+- ~~**#00286**~~ [LOW/testability] **CLOSED 2026-04-29** — FR-2 trailing-whitespace extension extended to `\t`, `\v`, `\f`, `\r` alone, and NEL (U+0085). `test_pattern_rejects_trailing_whitespace` parametrize +5 cases; `TestBatchDemote._INVALID_NOW_ISO_CASES` +5 cases. pytest 214→224 (+10).
+- ~~**#00287**~~ [LOW/testability] **CLOSED 2026-04-29** — `assert r'\D' not in _ISO8601_Z_PATTERN.pattern` added to `test_pattern_source_uses_explicit_digit_class`.
 - **#00288** [LOW/quality] Spec FR-5 prescribes `import inspect` but `import re` is also needed (for `re.ASCII` in `test_pattern_compiled_with_re_ascii_flag`). Spec gap, not implementation defect — implementer correctly added both at T1, but spec/AC-2 should explicitly enumerate all stdlib imports referenced in test bodies to close traceability gap. Surfaced by feature:095 code-quality-reviewer.
