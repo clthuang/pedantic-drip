@@ -60,6 +60,45 @@
 - For test-only-equivalent features, run empirical Python REPL verifications during spec phase to pre-empt assumption-driven blockers — confidence: high
 - Surface optional-bonus QA suggestions from feature N as required FRs in feature N+1 on the same code surface — confidence: high
 
+## Pre-release QA notes
+
+### Audit log
+```
+2026-04-29 [feature/097-iso8601-test-pin-v2] head=d9f3164 reviewers=4 (THIRD production exercise)
+count: [pd:security-reviewer]: HIGH=0 MED=0 LOW=3
+count: [pd:code-quality-reviewer]: HIGH=0 MED=0 LOW=4
+count: [pd:implementation-reviewer]: HIGH=0 MED=0 LOW=3
+count: [pd:test-deepener]: HIGH=3 MED=3 LOW=2
+narrowed-remap-applied: true (AC-5b)
+  - HIGH-1 AST-walk call-form gaps @ 2354-2362: cross-confirmed by security-reviewer @ 2342-2367 → stays HIGH
+  - HIGH-2 re.fullmatch flag-bypass @ 2338-2367: cross-confirmed by security-reviewer → stays HIGH
+  - HIGH-3 identity-pin cross-consumer @ 2412-2416: no cross-confirm + mutation_caught=false → remaps to MED
+aggregate: HIGH=2 MED=4 LOW=12
+verdict: BLOCK_unless_override
+override: qa-override.md exists, ≥50 chars rationale (~800 words)
+verdict_after_override: PASS
+```
+
+### LOW findings (12 total — folded from `.qa-gate-low-findings.md`)
+- security-reviewer (3): bare except in AST-walk; one-sided Nd threshold; bare-Name receiver only.
+- code-quality-reviewer (4): import ordering; 3 blank lines between classes (PEP-8 E303 tolerated by validate.sh); per-method count tuples simplified to names; long FR-2b docstring.
+- implementation-reviewer (3): 3 blank lines (duplicate); implementation-log.md placeholders unfilled (atomic-commit chicken-and-egg); AC-9 acknowledged non-gating.
+- test-deepener (2): name-parsing fragility in dynamic-coverage assert; sanity-floor doesn't pin caller count.
+
+All 12 accept-as-is. None block merge. See qa-override.md for HIGH-gap residual-risk rationale.
+
+### Architectural decision (recursive test-hardening cycle)
+
+Feature 097 was filed because feature 096's QA gate identified legitimate behavioral source-pin gaps (#00278). Feature 097 closed those. THIS gate run on feature 097 itself surfaces 2 new HIGH gaps in the new test class — meta-gaps about coverage breadth of the source-pin tests themselves. Per the heuristic "3+ consecutive features hardening tests around the same private symbol → suspect architectural debt" (filed via feature 096 retro), feature 097 explicitly invokes this anti-pattern recognition:
+
+- Feature 091/092/093/095: hardened tests around `_ISO8601_Z_PATTERN` in database.py (consumer side) — fixed structurally by feature 096 (relocation).
+- Feature 097: hardened source-pin tests in TestIso8601PatternSourcePins — closes behaviorally-exploitable gaps (#00278 sub-items a-h).
+- THIS gate (Feature 097): surfaces 2 HIGH gaps in feature 097's tests themselves.
+
+The honest fix at this point is **not** test-pin v3, v4, v5. Behavioral coverage in `TestScanDecayCandidates` (Unicode/trailing-WS/leading-WS/partial-injection) and `TestBatchDemote._INVALID_NOW_ISO_CASES` (15 invalid inputs) already catches production regressions. Source-pin tests are a useful safety net but have natural diminishing returns past 21 tests across 7 mutation surfaces.
+
+The 4 MEDs (#00290-#00293) are filed for evaluation if real production regression observed; otherwise they age out as residual risk. The 2 HIGH gaps are documented in qa-override.md and explicitly NOT filed — they trigger only if the codebase introduces aliased/walrus call forms (improbable) or `re.fullmatch(pattern_string, ...)` form (unidiomatic).
+
 ## Raw Data
 - Feature: 097-iso8601-test-pin-v2
 - Mode: Standard (with [YOLO_MODE] override)
