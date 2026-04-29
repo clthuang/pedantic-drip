@@ -57,6 +57,7 @@ Legend:
   - Extend `bucket()` signature with kwarg-only `is_test_only_refactor: bool = False`.
   - Insert new test-deepener narrowed-remap branch: HIGH → LOW when conditions met (per spec FR-1).
   - Add cross-reference note: "Canonical Python implementation + AC tests live in plugins/pd/scripts/tests/test_qa_gate_bucket.py."
+  - **Sync verification (DoD step):** After both T05 and T05b complete, run `grep -A 1 "TEST_FILE_RE = " docs/dev_guides/qa-gate-procedure.md` and `grep -A 1 "TEST_FILE_RE = " plugins/pd/scripts/tests/test_qa_gate_bucket.py`. The literal regex strings MUST be byte-identical. If they differ, the implementer must reconcile (canonical source = T05b's Python file).
   - Depends on T05b (verifies T05's pseudocode matches T05b's implementation).
 
 - [ ] **T06** 📝 Edit `plugins/pd/commands/finish-feature.md` Step 5b (line 393+):
@@ -119,7 +120,7 @@ Legend:
   - python3 stdlib datetime diff with Z-suffix replacement.
   - Warn if `gap_days > tier_doc_staleness_days` (default 30).
   - Skip-info on missing frontmatter or no source commits.
-  - **Fixture-backed DoD (state-independent):** Create temp tier doc `/tmp/pd099-stale-fixture.md` with `last-updated: 2025-01-01T00:00:00Z` (60+ days stale), invoke check directly with that file, assert `Tier doc stale:` warn line emitted. Also create `/tmp/pd099-no-frontmatter.md` (no `---` at all), assert `Skipped: ... no last-updated frontmatter` info line. Both assertions are deterministic.
+  - **Fixture-backed DoD (state-independent):** Create fixture INSIDE the repo at `plugins/pd/scripts/tests/fixtures/tier-doc-stale.md` with `last-updated: 2025-01-01T00:00:00Z` and `git add` it (so source_ts via `git log` resolves to a real commit timestamp). For AC-5 stale assertion: the test invokes `check_tier_doc_freshness` with overridden `tier_doc_root=plugins/pd/scripts/tests/fixtures/` and `tier_doc_source_paths_*=plugins/pd/scripts/tests/fixtures/` (same dir as source), giving a deterministic source_ts equal to the fixture's commit time — comparing against the 2025-01-01 frontmatter produces a 480+ day gap, asserts `Tier doc stale:` warn. For AC-E3 (missing frontmatter): create fixture `plugins/pd/scripts/tests/fixtures/tier-doc-no-frontmatter.md` (no `---` at all), invoke same way, assert `Skipped: ... no last-updated frontmatter` info line. The implementer MUST provide a way to override `tier_doc_root` from the test (env var, function arg, or test-mode shim) — design choice deferred to implementer; spec NFR-1 requires fixture isolation regardless of mechanism.
   - Verifies: AC-5, AC-E3.
 
 - [ ] **T15** ⚙️ Wire `check_stale_feature_branches` and `check_tier_doc_freshness` into `run_all_checks()` under new `Project Hygiene` section header.
@@ -148,7 +149,8 @@ Legend:
   - AC-9 (apply on fixture with all sub-bullets a-g — line-count math, archive header, byte-verbatim, idempotency post-conditions).
   - AC-E6 (empty section not archivable).
   - AC-E7 (idempotency: second --apply is no-op).
-  - **DoD (binary, command-based):** `plugins/pd/.venv/bin/python -m pytest plugins/pd/scripts/tests/test_cleanup_backlog.py --collect-only` exits 0 (≥5 test functions collected, no syntax errors); `plugins/pd/.venv/bin/python -m pytest plugins/pd/scripts/tests/test_cleanup_backlog.py` exits non-zero (assertions fail — T16 not yet implemented).
+  - **Lazy-import requirement (TDD-red collect-only contract):** Test file MUST use lazy imports — import `cleanup_backlog` inside test function bodies, NOT at module top. Alternatively, use `cleanup_backlog = pytest.importorskip("cleanup_backlog")` inside an `@pytest.fixture`. This ensures `pytest --collect-only` exits 0 even when cleanup_backlog.py does not yet exist; the actual test run then fails on the import (NOT collect).
+  - **DoD (binary, command-based):** `plugins/pd/.venv/bin/python -m pytest plugins/pd/scripts/tests/test_cleanup_backlog.py --collect-only` exits 0 (≥5 test functions collected, no syntax errors, no import errors due to lazy imports); `plugins/pd/.venv/bin/python -m pytest plugins/pd/scripts/tests/test_cleanup_backlog.py` exits non-zero (assertions fail — T16 not yet implemented).
   - Depends on T17.
 
 - [ ] **T16** 🟢 (TDD green — implementation to pass T18) Create `plugins/pd/scripts/cleanup_backlog.py` per design I-4 public API.
@@ -176,6 +178,7 @@ Legend:
   - AC-14 (4-column schema verified by `tr -cd '|' | wc -c == 5`).
   - AC-E8 (empty-input case: header + footer only).
   - normalize_location parity check vs qa-gate-procedure.md §4 (per design I-5 cross-version note).
+  - **Lazy-import requirement (TDD-red collect-only contract):** Same as T18 — import `test_debt_report` inside test function bodies, NOT at module top. Ensures `--collect-only` exits 0 when the module doesn't yet exist.
   - **DoD (binary, command-based):** `plugins/pd/.venv/bin/python -m pytest plugins/pd/scripts/tests/test_test_debt_report.py --collect-only` exits 0 (≥4 test functions collected); `plugins/pd/.venv/bin/python -m pytest plugins/pd/scripts/tests/test_test_debt_report.py` exits non-zero (assertions fail — T20 not yet implemented).
 
 - [ ] **T20** 🟢 (TDD green — implementation to pass T21) Create `plugins/pd/scripts/test_debt_report.py` per design I-5.
