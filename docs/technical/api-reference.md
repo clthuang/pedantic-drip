@@ -1,6 +1,7 @@
 ---
-last-updated: 2026-04-02T00:00:00Z
+last-updated: 2026-04-29T00:00:00Z
 source-feature: codebase-analysis
+audit-feature: 098-tier-doc-frontmatter-sweep
 ---
 
 <!-- AUTO-GENERATED: START - source: codebase-analysis -->
@@ -9,9 +10,9 @@ source-feature: codebase-analysis
 
 Internal contracts for MCP tools and key module interfaces. This document covers the MCP tool signatures used by workflow skills and commands, and the entity metadata contracts consumed by the workflow engine.
 
-## MCP: Workflow State Server
+## MCP: Workflow Engine Server
 
-**Server:** `plugins/pd/mcp/workflow_state_server.py`
+**Server:** `plugins/pd/mcp/workflow_state_server.py` (registered as `FastMCP("workflow-engine")`; the file is named `workflow_state_server.py` for legacy reasons but the MCP server name is `workflow-engine`)
 **Bootstrap:** `plugins/pd/mcp/run-workflow-server.sh`
 
 ### complete_phase
@@ -20,15 +21,15 @@ Records phase completion in entity metadata and re-projects `.meta.json`.
 
 ```
 complete_phase(
-    type_id: str,           # Feature entity type_id, e.g., "feature:075-phase-context-accumulation"
-    phase: str,             # Phase name, e.g., "specify", "design"
-    iterations: int,        # Review iteration count
-    reviewer_notes: list[str],  # Reviewer feedback strings
-    artifacts: list[str],   # Artifact file paths produced
-)
+    feature_type_id: str | None = None,     # Feature entity type_id, e.g., "feature:097-iso8601-test-pin-v2"
+    phase: str = "",                        # Phase name, e.g., "specify", "design", "implement"
+    iterations: int | None = None,          # Review iteration count (optional)
+    reviewer_notes: str | None = None,      # JSON-serialized array OR null; raw string passed directly
+    ref: str | None = None,                 # Alternative to feature_type_id (UUID or slug-based)
+) -> str
 ```
 
-Writes to `phase_timing[phase].{completed, iterations, reviewerNotes}` in entity metadata. Does not write `phase_summaries` — that is handled separately via `update_entity` in `commitAndComplete` Step 3a.
+Writes to `phase_timing[phase].{completed, iterations, reviewerNotes}` in entity metadata. Does not write `phase_summaries` — that is handled separately via `update_entity` in `commitAndComplete` Step 3a. Note: `reviewer_notes` is parsed as a JSON blob, not passed as a Python list — callers must pre-serialize.
 
 ### transition_phase
 
@@ -36,10 +37,12 @@ Advances workflow state to the next phase in the engine.
 
 ```
 transition_phase(
-    type_id: str,
-    target_phase: str,
-    skipped_phases: list[str] | None,
-)
+    feature_type_id: str | None = None,
+    target_phase: str = "",
+    yolo_active: bool = False,              # When True, validates with YOLO transition rules
+    skipped_phases: str | None = None,      # JSON-serialized list; null means none skipped
+    ref: str | None = None,                 # Alternative to feature_type_id
+) -> str
 ```
 
 ### validate_prerequisites
@@ -106,11 +109,14 @@ get_entity(type_id: str) -> entity dict or None
 
 ```
 get_lineage(
-    type_id: str,
-    direction: "up" | "down",
-    depth: int | None,
-) -> list[entity dict]
+    type_id: str | None = None,
+    direction: str = "up",                  # "up" (ancestors) or "down" (descendants)
+    max_depth: int = 10,                    # Walk depth cap; default 10 levels
+    ref: str | None = None,                 # Alternative to type_id
+) -> str                                    # Formatted tree string, NOT a list
 ```
+
+Returns a human-readable formatted tree, not a structured list. Parse caller-side if structured access is needed.
 
 ## Entity Metadata Contracts
 
@@ -222,11 +228,13 @@ store_memory(
 ```
 search_memory(
     query: str,
-    limit: int,          # default: 10
-    category: str | None,
-) -> list[memory entry]
+    limit: int = 10,
+    category: str | None = None,
+    brief: bool = False,                    # When True, returns terse one-line summaries
+    project: str | None = None,             # Optional project-scope filter
+) -> str                                    # Formatted markdown string, NOT a list
 ```
 
-Uses hybrid retrieval: vector similarity (Gemini embeddings) + BM25 keyword search. Falls back to FTS5 keyword search when no API key is configured.
+Uses hybrid retrieval: vector similarity (Gemini embeddings) + BM25 keyword search. Falls back to FTS5 keyword search when no API key is configured. Returns a formatted markdown string; caller must parse if structured access is needed.
 
 <!-- AUTO-GENERATED: END -->

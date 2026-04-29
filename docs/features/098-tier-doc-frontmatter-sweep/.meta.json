@@ -1,0 +1,33 @@
+{
+  "id": "098",
+  "slug": "tier-doc-frontmatter-sweep",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-04-29T10:12:20.272326+00:00",
+  "branch": "feature/098-tier-doc-frontmatter-sweep",
+  "backlog_source": "00289",
+  "lastCompletedPhase": "implement",
+  "phases": {
+    "brainstorm": {
+      "started": "2026-04-29T10:12:20.272057+00:00",
+      "completed": "2026-04-29T10:21:39.604285+00:00",
+      "iterations": 0
+    },
+    "specify": {
+      "completed": "2026-04-29T10:21:45.559548+00:00",
+      "iterations": 0
+    },
+    "design": {
+      "completed": "2026-04-29T10:21:46.357506+00:00",
+      "iterations": 0
+    },
+    "create-plan": {
+      "completed": "2026-04-29T10:21:47.419712+00:00",
+      "iterations": 0
+    },
+    "implement": {
+      "completed": "2026-04-29T10:21:47.924310+00:00",
+      "iterations": 1
+    }
+  }
+}
