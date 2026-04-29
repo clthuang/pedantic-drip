@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Test-hardening sweep for `_ISO8601_Z_PATTERN` mutation-resistance gaps** (feature 095 closes backlog #00246-#00252): 17 new parametrized assertions in `plugins/pd/hooks/lib/semantic_memory/test_database.py` pinning source-level structural invariants. New `TestIso8601PatternSourcePins` class with 5 methods using stable Python public attributes (`pattern.pattern`, `pattern.flags & re.ASCII`) for character-class + flag pins (advisor consensus: prefer over `inspect.getsource()` text-grep where signal is equivalent), plus `inspect.getsource()` only for call-site `.fullmatch()` source pin where call-form IS the contract. Cross-call-site rejection parity extended (#00251) and partial Unicode-injection coverage added at all datetime field positions (#00252) for both `scan_decay_candidates` and `batch_demote`. Pytest baseline: 197 → 214 (exact +17 delta).
+
+### Tests
+- Test-only feature; zero production code changes (`database.py` unchanged). Catches 4 mutation classes that all 18 prior behavior tests miss: (1) swap `[0-9]` → `\d`, (2) drop `re.ASCII` flag, (3) single-call-site `.fullmatch()` → `.match()` revert, (4) mid-string single Unicode-digit substitution.
+
+### Process
+- **First production exercise of feature 094's pre-release adversarial QA gate** (Step 5b in `/pd:finish-feature`). Gate dispatched 4 reviewers in parallel against feature 095's diff before merge; all 4 returned APPROVED (security: 0 findings; code-quality: 1 import-ordering MED fixed inline; implementation: 0 blockers; test-deepener: 3 HIGH meta-mutation gaps remapped to MED via AC-5b narrowed-remap because no cross-confirm by other reviewers). Final aggregate: 0 HIGH / 9 MED / 3 LOW → gate PASS. 8 MEDs auto-filed to backlog as #00278-#00285 per FR-7a. Closes feature 094 deferred-verification AC-13b empirically (`+++ b/test_database.py` confirmed in dispatch context).
+
 ## [4.16.4] - 2026-04-29
 
 ### Added
