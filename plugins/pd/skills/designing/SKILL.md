@@ -79,6 +79,19 @@ For significant choices:
 - What could go wrong?
 - How do we mitigate?
 
+### 5. Cross-File Invariants (when design spans 2+ files)
+
+If the design moves or splits a single logical unit across multiple files (e.g. relocating a symbol, extracting a shared helper, threading a new parameter), explicitly enumerate the cross-file invariants up front. Common patterns:
+
+| Invariant | Verification Pattern |
+|-----------|---------------------|
+| Atomic-commit (all N files must land in one commit) | AC asserting per-file `git log {base}..HEAD --format=%H -- {file}` returns same single non-empty hash across all files. Hash-equality is O(file-size), zero infrastructure, binary pass/fail. |
+| Source-pin transparency (existing tests must continue passing post-relocation) | Determine whether existing source-pin tests use `inspect.getsource(method)` (insulated from module-level relocation — safe) vs `inspect.getsource(module)` (would break — requires coordinated test update). Enumerate which flavor is in use BEFORE the design lands. |
+| Single source of truth (relocated symbol must remain identity-equal across imports) | Optional identity-pin test: `assert consumer_module._SYMBOL is producer_module._SYMBOL`. Guards against future local re-shadowing. |
+| Circular-import ban (e.g. producer module must not import from consumer) | Grep AC: `grep -cE '^from {consumer_module}' {producer_module}` returns 0. |
+
+Naming these invariants in the design phase reduces design-reviewer iteration churn for structural refactors. (Promoted from feature 096 retro Tune #1.)
+
 ## Output: design.md
 
 Write to `{pd_artifacts_root}/features/{id}-{slug}/design.md`:

@@ -380,7 +380,7 @@ First production exercise of feature 094's Step 5b adversarial QA gate produced 
 
 **MED (1, consolidated from 8) — surfaced by feature:095 pre-release QA:**
 
-- **#00278** [MED/testability] **Test-pin refinement bundle (8 sub-items, consolidated from #00278-#00285)** — feature 095's `TestIso8601PatternSourcePins` source-pins all use substring/presence checks that miss several mutation classes. A single follow-up "test-pin v2" sweep should address all 8 together. Sub-items:
+- **#00278** [MED/testability] (promoted → feature:097-iso8601-test-pin-v2) **Test-pin refinement bundle (8 sub-items, consolidated from #00278-#00285)** — feature 095's `TestIso8601PatternSourcePins` source-pins all use substring/presence checks that miss several mutation classes. A single follow-up "test-pin v2" sweep should address all 8 together. Sub-items:
   - **(a)** `test_pattern_source_uses_explicit_digit_class` substring asserts miss character-class EXPANSION (`[0-9０-９]` keeps `[0-9]` substring AND keeps `\d` absent). Fix: replace with exact-string equality on `_ISO8601_Z_PATTERN.pattern`.
   - **(b)** `test_pattern_compiled_with_re_ascii_flag` asserts presence not exclusivity — `re.ASCII | re.IGNORECASE` mutation keeps `flags & re.ASCII` truthy while making lowercase `z` match. Fix: pin exact bitmask OR add behavioral lowercase-z negative case.
   - **(c)** `test_call_sites_use_fullmatch_not_match` is closed-set over 2 methods — future call sites slip past. Fix: open-set discovery via `inspect.getmembers(MemoryDatabase, predicate=inspect.isfunction)`.
@@ -390,10 +390,41 @@ First production exercise of feature 094's Step 5b adversarial QA gate produced 
   - **(g)** `TestIso8601PatternSourcePins` module-level import creates collection-error blast radius across all 214 tests on rename. Fix: `pytest.importorskip` probe + isolation test using `getattr(...)`.
   - **(h)** `test_pattern_rejects_unicode_digits_directly` covers only 3 Unicode scripts (fullwidth, Arabic-Indic, Devanagari) at year position — Bengali, Tibetan, Khmer, Myanmar slip past. Fix: property-based test enumerating ALL Unicode `Nd` category chars.
 
-  Surfaced by feature:095 test-deepener (3 HIGH→MED via AC-5b narrowed remap with no cross-confirm; 5 native MED). **Note:** several sub-items (a, c, e, g) become trivially obviated if `_ISO8601_Z_PATTERN` is relocated to `_config_utils.py` per #00277 — recommend pursuing #00277 first.
+  Surfaced by feature:095 test-deepener (3 HIGH→MED via AC-5b narrowed remap with no cross-confirm; 5 native MED).
+
+  **Post-096 audit (2026-04-29):** the original brief's claim that sub-items (a, c, e, g) would be "trivially obviated" by feature 096's relocation was over-stated. After auditing each sub-item against the post-096 state of `test_database.py:2265-2309`, **none** of the eight concerns is actually eliminated by relocation alone — the test methods continue to use substring/closed-set assertions on `_ISO8601_Z_PATTERN.pattern` regardless of which module hosts the symbol. What feature 096 *did* enable is a new defensive test (`assert database._ISO8601_Z_PATTERN is _config_utils._ISO8601_Z_PATTERN` for single-source-of-truth pinning) which is additive, not obviating. Recommended next steps:
+  - **Lower priority** for sub-items (a, c, e, g): the architectural fix (096) reduces the *frequency* at which this debt manifests (no more recursive hardening pressure on this specific symbol), but the test-pin weaknesses themselves remain.
+  - **Defer all 8 sub-items** unless a concrete mutation slips through — feature 096's hash-equality + co-location pattern reduces the realistic blast radius of escape mutations to "very low".
+  - **If pursued**, scope as a single "test-pin v2 sweep" feature targeting all 8 sub-items together (they share a common test class and remediation style).
 
 **LOW (3) — surfaced by feature:095 pre-release QA:**
 
-- **#00286** [LOW/testability] FR-2 trailing-whitespace extension covers `\n`, ` `, `\r\n` but not `\t`, `\v`, `\f`, `\r` alone, or NEL (U+0085). `.fullmatch()` rejects all, but a future `now_iso.rstrip('\n ')` (selective rstrip) bypasses tab/CR/etc. Fix: extend parametrize to full ASCII whitespace surface. Surfaced by feature:095 test-deepener.
-- **#00287** [LOW/testability] `r'\d' not in pattern.pattern` doesn't catch `[^\\D]` (negation of non-digit, equivalent to `\d` but contains `\D` not `\d`). Realistic mutation pattern is unusual but worth pinning: add `assert r'\D' not in _ISO8601_Z_PATTERN.pattern`. Surfaced by feature:095 test-deepener.
-- **#00288** [LOW/quality] Spec FR-5 prescribes `import inspect` but `import re` is also needed (for `re.ASCII` in `test_pattern_compiled_with_re_ascii_flag`). Spec gap, not implementation defect — implementer correctly added both at T1, but spec/AC-2 should explicitly enumerate all stdlib imports referenced in test bodies to close traceability gap. Surfaced by feature:095 code-quality-reviewer.
+- ~~**#00286**~~ [LOW/testability] **CLOSED 2026-04-29** — FR-2 trailing-whitespace extension extended to `\t`, `\v`, `\f`, `\r` alone, and NEL (U+0085). `test_pattern_rejects_trailing_whitespace` parametrize +5 cases; `TestBatchDemote._INVALID_NOW_ISO_CASES` +5 cases. pytest 214→224 (+10).
+- ~~**#00287**~~ [LOW/testability] **CLOSED 2026-04-29** — `assert r'\D' not in _ISO8601_Z_PATTERN.pattern` added to `test_pattern_source_uses_explicit_digit_class`.
+- ~~**#00288**~~ [LOW/quality] **CLOSED 2026-04-29** — `specifying` skill Self-Check now requires explicit enumeration of all stdlib imports referenced in test bodies (not just the most prominent one). Closes the traceability gap for future specs.
+
+## From Feature 097 Pre-Release QA Findings (2026-04-29)
+
+**MED (4) — surfaced by feature:097 pre-release QA gate (THIRD production exercise):**
+
+- **#00290** [MED/testability] Cross-consumer identity-pin gap (HIGH→MED via AC-5b narrowed remap; no cross-confirm). FR-7's `database._ISO8601_Z_PATTERN is _config_utils._ISO8601_Z_PATTERN` only checks 1 of 4 NFR-1-named consumers. Add `pkgutil.iter_modules`-based discovery to assert ALL semantic_memory submodules with the symbol bind to the same identity. Surfaced by feature:097 test-deepener.
+- **#00291** [MED/testability] Leading-WS coverage scoped to ASCII space only (FR-4 misses partial-strip mutations against `\t`/`\n`/`\r`/`\v`/`\f`/U+00A0). Extend `test_pattern_rejects_leading_whitespace` parametrize to cover all `str.isspace()` chars. Surfaced by feature:097 test-deepener.
+- **#00292** [MED/testability] `_pattern_probe` fixture is cosmetic — module-level import at line 18 makes class-level `pytest.importorskip` a no-op. Either delete + accept module-level blast radius, OR fully isolate by removing line 18 import and routing all uses through fixtures. Spec acknowledges this; documented for future refactor decision. Surfaced by feature:097 test-deepener.
+- **#00293** [MED/testability] Curated 13-script Unicode-Nd parametrize covers ~17% of Python 3.14.4 Nd scripts; dynamic coverage assert (`>=70`) checks Python's database, not the validator. Replace with FOR-EACH-SCRIPT behavioral assert iterating all Nd codepoints. Would convert ~75 silent script gaps into ~75 assertions. Surfaced by feature:097 test-deepener.
+
+**Override-applied HIGH (2) — accepted as residual risk per qa-override.md:**
+
+- ~~AST-walk misses aliased / getattr / walrus call forms (test_database.py:2354-2362)~~ — **OVERRIDE accepted**: behavioral tests in TestScanDecayCandidates/TestBatchDemote catch real production regressions; this is recursive test-hardening cycle (anti-pattern #00277 closed by 096). Revisit only if production regresses.
+- ~~`re.fullmatch(_ISO8601_Z_PATTERN.pattern, s)` flag-bypass form not flagged (test_database.py:2338-2367)~~ — **OVERRIDE accepted**: same architectural rationale.
+
+## From Feature 096 Retro Tune #5 (2026-04-29)
+
+- **#00289** [LOW/docs-hygiene] Tier-doc frontmatter drift sweep. As of 2026-04-29, six tier-doc files have stale `last-updated` frontmatter values that pre-date their tier's source-monitoring timestamp:
+  - `docs/user-guide/overview.md` (last-updated 2026-04-02; source ts 2026-04-18)
+  - `docs/user-guide/installation.md` (last-updated 2026-04-15; source ts 2026-04-18)
+  - `docs/user-guide/usage.md` (last-updated 2026-04-15; source ts 2026-04-18)
+  - `docs/technical/architecture.md` (last-updated 2026-04-15T00; source ts 2026-04-15T09)
+  - `docs/technical/workflow-artifacts.md` (last-updated 2026-04-15T00; source ts 2026-04-15T09)
+  - `docs/technical/api-reference.md` (last-updated 2026-04-02; source ts 2026-04-15)
+
+  Drift accumulated across features 079-095, NOT feature 096-driven. The honest fix is content-audit-then-bump (verify each doc still reflects current state before updating timestamp), not mechanical timestamp bumping. Estimated effort: ~30 minutes per doc × 6 = 3 hours. Filed as a future feature scope rather than inline cleanup. Surfaced by feature:096 retro Tune #5.

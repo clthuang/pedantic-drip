@@ -8,6 +8,9 @@ import os
 import re
 import struct
 import sqlite3
+import ast
+import textwrap
+import unicodedata
 from collections.abc import Iterator
 from datetime import datetime, timezone
 
@@ -2072,6 +2075,11 @@ class TestScanDecayCandidates:
         "2026-04-20T00:00:00Z\n",       # trailing newline (the #00220 case)
         "2026-04-20T00:00:00Z ",        # trailing space
         "2026-04-20T00:00:00Z\r\n",     # trailing CRLF
+        "2026-04-20T00:00:00Z\t",       # #00286 — trailing tab (selective rstrip('\n ') would miss)
+        "2026-04-20T00:00:00Z\v",       # #00286 — trailing vertical tab
+        "2026-04-20T00:00:00Z\f",       # #00286 — trailing form feed
+        "2026-04-20T00:00:00Z\r",       # #00286 — trailing CR alone (not CRLF)
+        "2026-04-20T00:00:00Z",   # #00286 — trailing NEL (U+0085, Latin-1 newline)
     ])
     def test_pattern_rejects_trailing_whitespace(
         self, trailing_cutoff, db: MemoryDatabase, capsys,
@@ -2133,6 +2141,11 @@ class TestBatchDemote:
         ("2026-04-20T00:00:00Z\n", "trailing-newline"),
         ("2026-04-20T00:00:00Z ", "trailing-space"),       # Feature 095 #00251
         ("2026-04-20T00:00:00Z\r\n", "trailing-crlf"),     # Feature 095 #00251
+        ("2026-04-20T00:00:00Z\t", "trailing-tab"),         # #00286 selective rstrip miss
+        ("2026-04-20T00:00:00Z\v", "trailing-vtab"),        # #00286
+        ("2026-04-20T00:00:00Z\f", "trailing-formfeed"),    # #00286
+        ("2026-04-20T00:00:00Z\r", "trailing-cr-only"),     # #00286
+        ("2026-04-20T00:00:00Z", "trailing-nel-u0085"),  # #00286 Latin-1 NEL
         ("２０２６-04-20T00:00:00Z", "unicode-digits"),
         ("2026-04-20T00:00:00+00:00", "plus-offset-not-Z-suffix"),
     ]
@@ -2253,60 +2266,155 @@ class TestBatchDemote:
             db.close()
 
 
-class TestIso8601PatternSourcePins:
-    """Feature 095 — source-level mutation-resistance pins for _ISO8601_Z_PATTERN.
+# Curated Unicode-Nd script samples for FR-6 parametrize.
+# Empirically verified at spec time on Python 3.14.4 via unicodedata.category(c) == 'Nd'.
+# 13 distinct scripts (3 from feature 095 + 10 added by feature 097 #00278 sub-item h).
+_UNICODE_DIGIT_SCRIPTS = [
+    ('２０２６-04-20T00:00:00Z', 'fullwidth-year'),  # U+FF10..FF19
+    ('٢٠٢٦-04-20T00:00:00Z', 'arabic-indic-year'),  # U+0660..0669
+    ('२०२६-04-20T00:00:00Z', 'devanagari-year'),  # U+0966..096F
+    ('২০২৬-04-20T00:00:00Z', 'bengali-year'),  # U+09E6..09EF
+    ('༢༠༢༦-04-20T00:00:00Z', 'tibetan-year'),  # U+0F20..0F29
+    ('២០២៦-04-20T00:00:00Z', 'khmer-year'),  # U+17E0..17E9
+    ('၂၀၂၆-04-20T00:00:00Z', 'myanmar-year'),  # U+1040..1049
+    ('೨೦೨೬-04-20T00:00:00Z', 'kannada-year'),  # U+0CE6..0CEF
+    ('௨௦௨௬-04-20T00:00:00Z', 'tamil-year'),  # U+0BE6..0BEF
+    ('୨୦୨୬-04-20T00:00:00Z', 'oriya-year'),  # U+0B66..0B6F
+    ('൨൦൨൬-04-20T00:00:00Z', 'malayalam-year'),  # U+0D66..0D6F
+    ('๒๐๒๖-04-20T00:00:00Z', 'thai-year'),  # U+0E50..0E59
+    ('᮲᮰᮲᮶-04-20T00:00:00Z', 'sundanese-year'),  # U+1BB0..1BB9
+]
 
-    Closes feature 093 post-release adversarial QA gaps #00246-#00250.
-    Per advisor consensus, uses _ISO8601_Z_PATTERN.pattern / .flags (stable Python 3.7+
-    public attrs) where signal is equivalent; uses inspect.getsource() only for call-site
-    .fullmatch() pin (#00250) where call-form IS the contract.
+
+class TestIso8601PatternSourcePins:
+    """Feature 097 (#00278) — refactored source-level mutation-resistance pins for _ISO8601_Z_PATTERN.
+
+    Refactored from feature 095's substring/closed-set pins to use:
+    - exact-string equality (FR-1 / sub-item a)
+    - component-flag assertions (FR-2a / sub-item b)
+    - behavioral lowercase-z negative case (FR-2b / sub-item b)
+    - AST-walk open-set call-site discovery (FR-3 / sub-items c+d+e)
+    - leading-WS rejection (FR-4 / sub-item f)
+    - pytest.importorskip partial-isolation fixture (FR-5 / sub-item g)
+    - curated 13-script Unicode-Nd parametrize + dynamic coverage (FR-6 / sub-item h)
+    - identity-pin (FR-7 / bonus i)
+
+    Closes backlog #00278 (8 sub-items consolidated from #00278-#00285).
     """
 
-    def test_pattern_source_uses_explicit_digit_class(self):
-        """Closes #00246 — pin literal `[0-9]` in pattern source, NOT `\\d`."""
-        assert '[0-9]' in _ISO8601_Z_PATTERN.pattern, \
-            "_ISO8601_Z_PATTERN.pattern must use explicit [0-9] character class for ASCII-only matching"
-        assert r'\d' not in _ISO8601_Z_PATTERN.pattern, \
-            "_ISO8601_Z_PATTERN.pattern must NOT use \\d (Unicode-digit-permissive in Python 3 str patterns)"
+    EXPECTED_PATTERN = r'[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z'
 
-    def test_pattern_compiled_with_re_ascii_flag(self):
-        """Closes #00247 — pin re.ASCII flag presence (defense-in-depth)."""
-        assert bool(_ISO8601_Z_PATTERN.flags & re.ASCII), \
-            "_ISO8601_Z_PATTERN must be compiled with re.ASCII flag (defense-in-depth against future class expansion)"
+    @pytest.fixture(autouse=True, scope='class')
+    def _pattern_probe(self):
+        """FR-5 partial-isolation fixture (side-effect-only, no return).
 
-    @pytest.mark.parametrize("unicode_input,case_name", [
-        ("２０２６-04-20T00:00:00Z", "fullwidth-year"),
-        ("٢٠٢٦-04-20T00:00:00Z", "arabic-indic-year"),
-        ("२०२६-04-20T00:00:00Z", "devanagari-year"),
-    ], ids=["fullwidth", "arabic-indic", "devanagari"])
+        Skips this class via pytest.importorskip if `_ISO8601_Z_PATTERN` is renamed
+        in `_config_utils.py`. Other tests in this file still depend on the
+        module-level import (line 18); full isolation is out of scope.
+        """
+        config_utils = pytest.importorskip(
+            'semantic_memory._config_utils',
+            reason='_ISO8601_Z_PATTERN producer module unavailable',
+        )
+        if getattr(config_utils, '_ISO8601_Z_PATTERN', None) is None:
+            pytest.skip('_ISO8601_Z_PATTERN absent from _config_utils')
+
+    def test_pattern_source_exact_equality(self):
+        """FR-1 — exact-string equality strictly subsumes substring + \\d/\\D negatives."""
+        assert _ISO8601_Z_PATTERN.pattern == self.EXPECTED_PATTERN
+
+    def test_pattern_compiled_flags_components(self):
+        """FR-2a — component-level flag assertions, robust to Python flag-default drift."""
+        assert _ISO8601_Z_PATTERN.flags & re.ASCII
+        assert not (_ISO8601_Z_PATTERN.flags & re.IGNORECASE)
+        assert not (_ISO8601_Z_PATTERN.flags & re.MULTILINE)
+        assert not (_ISO8601_Z_PATTERN.flags & re.DOTALL)
+        assert not (_ISO8601_Z_PATTERN.flags & re.VERBOSE)
+
+    def test_pattern_rejects_lowercase_z(self):
+        """FR-2b — defends against `re.ASCII | re.IGNORECASE` mutation that would keep `flags & re.ASCII` truthy while making lowercase z match."""
+        assert _ISO8601_Z_PATTERN.fullmatch('2026-04-20T00:00:00z') is None
+
+    def test_call_sites_only_use_fullmatch(self):
+        """FR-3 — open-set AST-walk over MemoryDatabase methods, allowlist `.fullmatch()` only.
+
+        Closes sub-items c+d+e: open-set discovery, comment/docstring immunity, full negative coverage.
+        Limitation: only handles bare-Name receiver `_ISO8601_Z_PATTERN.method()`. Qualified module
+        access (`some_alias._ISO8601_Z_PATTERN.method()`) out of scope per design R-4.
+        """
+        methods_with_pattern_calls = []
+        for name, method in inspect.getmembers(MemoryDatabase, predicate=inspect.isfunction):
+            try:
+                src = inspect.getsource(method)
+            except (TypeError, OSError):
+                continue
+            if '_ISO8601_Z_PATTERN' not in src:
+                continue
+            tree = ast.parse(textwrap.dedent(src))
+            for node in ast.walk(tree):
+                if (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id == '_ISO8601_Z_PATTERN'):
+                    assert node.func.attr == 'fullmatch', (
+                        f"{name} uses _ISO8601_Z_PATTERN.{node.func.attr}() — "
+                        f"only .fullmatch() is allowed (rejects trailing whitespace/newline)"
+                    )
+            methods_with_pattern_calls.append(name)
+        assert methods_with_pattern_calls, (
+            "No MemoryDatabase method references _ISO8601_Z_PATTERN — "
+            "either the validator is unused (suspicious) or discovery is broken"
+        )
+
+    @pytest.mark.parametrize("leading_input,case_name", [
+        (' 2026-04-20T00:00:00Z',     "leading-space"),
+        ('  2026-04-20T00:00:00Z  ',  "leading-and-trailing-space"),
+    ])
+    def test_pattern_rejects_leading_whitespace(self, leading_input, case_name):
+        """FR-4 — defends against `now_iso.strip()` pre-fullmatch mutation that would pass
+        both source pin AND trailing-WS-only behavioral tests.
+        """
+        assert _ISO8601_Z_PATTERN.fullmatch(leading_input) is None, \
+            f"[{case_name}] pattern must reject leading whitespace"
+
+    @pytest.mark.parametrize("unicode_input,case_name", _UNICODE_DIGIT_SCRIPTS)
     def test_pattern_rejects_unicode_digits_directly(self, unicode_input, case_name):
-        """Closes #00248 — direct pattern-object Unicode rejection, decoupled from call sites.
-
-        Catches combined mutation: swap [0-9] -> \\d AND drop re.ASCII flag (which would
-        re-introduce #00219 Unicode-digit bypass). Behavior tests via call sites also
-        catch this combined mutation, but this test catches it without needing a DB.
+        """FR-6 curated — 13 distinct Unicode-Nd scripts. All codepoints empirically
+        verified at spec time on Python 3.14.4.
         """
         assert _ISO8601_Z_PATTERN.fullmatch(unicode_input) is None, \
-            f"[{case_name}] Pattern must reject Unicode-digit input directly"
+            f"[{case_name}] pattern must reject Unicode-digit input directly"
 
-    @pytest.mark.parametrize("method", [
-        MemoryDatabase.scan_decay_candidates,
-        MemoryDatabase.batch_demote,
-    ], ids=["scan_decay_candidates", "batch_demote"])
-    def test_call_sites_use_fullmatch_not_match(self, method):
-        """Closes #00250 + #00249 — pin .fullmatch() call-form at both call sites,
-        and confirm both share _ISO8601_Z_PATTERN as single source of truth.
+    def test_unicode_nd_coverage_matches_python_3_14(self):
+        """FR-6 dynamic — sanity assertion on Python 3.14.4 Nd-script count.
 
-        This is the only test in this class that uses inspect.getsource() — required because
-        the contract IS the call-form, not an attribute of the pattern object.
+        Non-blocking signal: if Python's Unicode database expands substantially,
+        revisit _UNICODE_DIGIT_SCRIPTS. Threshold >=70 accommodates ~5 new scripts
+        without spec revision; significant growth beyond that triggers NFR-6.
         """
-        src = inspect.getsource(method)
-        assert '_ISO8601_Z_PATTERN.fullmatch(' in src, \
-            f"{method.__name__} must use _ISO8601_Z_PATTERN.fullmatch()"
-        assert '_ISO8601_Z_PATTERN.match(' not in src, \
-            f"{method.__name__} must NOT use _ISO8601_Z_PATTERN.match() (allows trailing newline bypass)"
-        assert 're.compile(' not in src, \
-            f"{method.__name__} must NOT define a local re.compile() — must use the module-level _ISO8601_Z_PATTERN constant"
+        nd_scripts = set()
+        for cp in range(0x110000):
+            c = chr(cp)
+            try:
+                if unicodedata.category(c) != 'Nd':
+                    continue
+            except ValueError:
+                continue
+            name = unicodedata.name(c, '')
+            if ' DIGIT ' in name:
+                nd_scripts.add(name.rsplit(' DIGIT ', 1)[0])
+        assert len(nd_scripts) >= 70, (
+            f'Expected >=70 Nd scripts in Python 3.14.4 (actual: 75); '
+            f'got {len(nd_scripts)}. Update _UNICODE_DIGIT_SCRIPTS if Unicode '
+            f'database expanded substantially.'
+        )
+
+    def test_pattern_is_single_source_of_truth(self):
+        """FR-7 — identity-pin defends against future local re-shadowing post-feature-096."""
+        from semantic_memory import database, _config_utils
+        assert database._ISO8601_Z_PATTERN is _config_utils._ISO8601_Z_PATTERN, \
+            'database._ISO8601_Z_PATTERN must be the same object as _config_utils._ISO8601_Z_PATTERN (single source of truth)'
+
 
 
 class TestExecuteChunkSeam:

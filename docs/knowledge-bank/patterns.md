@@ -750,3 +750,19 @@ Source-pin tests using `inspect.getsource()` on consumer call-site method bodies
 - Confidence: high
 - Last observed: Feature #096
 - Observation count: 1
+
+### Pattern: Empirical-at-Spec-Time Verification for Assumption-Laden FRs
+When spec FRs make claims that depend on runtime/library/Python-version state (regex flags, module attributes, Unicode database, etc.), invoke `python3 -c '...'` during spec drafting and pin the empirical result inline. This converts assumption-laden FRs into verified preconditions before any reviewer sees the spec, pre-empting blockers that would otherwise surface at design/implement.
+- Observed in: Feature 097 (4 spec-reviewer iter 1 blockers all resolved via <30s of Python REPL invocations during iter 1→2 corrections)
+- Benefit: cheapest available defense against assumption cascades; converts O(reviewer-iteration) cost into O(seconds)
+- Confidence: high
+- Last observed: Feature #097
+- Observation count: 1
+
+### Pattern: Cross-Feature QA Suggestion Promotion (Optional Bonus → Required FR)
+When QA gate on feature N flags optional-bonus suggestions (test-deepener identity-pins, code-quality stylistic, security-reviewer defense-in-depth), and feature N+1 touches the same code surface, promote those bonuses to required FRs in N+1. Trivial scope expansion (one new FR + one AC) yields compounding quality across consecutive features on the same module.
+- Observed in: Feature 096 test-deepener identity-pin bonus → Feature 097 FR-7 + AC-11 gating (post-relocation single-source-of-truth pin)
+- Benefit: bonuses don't languish; quality trends up across feature chains; same-surface successor features are the natural promotion path
+- Confidence: high
+- Last observed: Feature #097
+- Observation count: 1
