@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Preventive hooks/checks/commands** (feature 099) — eight preventive measures derived from features 097-098 retrospective weakness review:
+  - **`/pd:cleanup-backlog`** — new command + Python script. Archives fully-closed per-feature sections from `backlog.md` to `backlog-archive.md`. Modes: `--dry-run` (default), `--apply`, `--count-active`. Skip-on-path-override prevents commit pollution from fixture-based runs.
+  - **`/pd:test-debt-report`** — new read-only aggregator. Scans `*.qa-gate.json` + active testability backlog tags; produces 4-column markdown table sorted by open-count.
+  - **`pre-edit-unicode-guard`** — new PreToolUse hook (Write/Edit matcher). Warns (non-blocking) on tool input containing codepoints > 127. Catches Edit-tool Unicode-stripping at call site instead of via downstream AC-grep failure.
+  - **Doctor "Project Hygiene" section** — three new checks: `check_stale_feature_branches` (severity-split: warn for completed/cancelled/abandoned/archived; info for no-entity/unknown; silent for active or merged), `check_tier_doc_freshness` (awk-based frontmatter parser, no PyYAML), `check_active_backlog_size` (subprocess to `cleanup_backlog.py --count-active`).
+  - **QA gate test-only-mode** — `qa-gate-procedure.md` §4 `bucket()` extended with `is_test_only_refactor` kwarg. When the diff touches only test files (`.py` anchored), test-deepener gaps with `mutation_caught=false` and no cross-confirm auto-downgrade HIGH→LOW (instead of HIGH→MED). Prevents recursive test-hardening backlog accumulation.
+  - **Spec-reviewer additions** — two new challenge categories in `spec-reviewer.md` + `specifying/SKILL.md` Self-Check: "Recursive Test-Hardening" (flags FRs referencing test classes without architectural rationale) and "Empirical Verification" (judgment-based: load-bearing stdlib runtime claims need `>>> expr → result` lines).
+
+### Changed
+
+- `bucket()` in qa-gate-procedure.md §4 — extended signature with default-False `is_test_only_refactor` kwarg; backward-compat preserved.
+- `hooks.json` — added `pre-edit-unicode-guard.sh` to PreToolUse Write/Edit matcher (coexists with existing `meta-json-guard.sh`).
+
 ## [4.16.8] - 2026-04-29
 
 ### Changed

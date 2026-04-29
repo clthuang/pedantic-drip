@@ -120,27 +120,46 @@ If `python3` exits non-zero, gate emits `INCOMPLETE: {reviewer} parse failure: {
 **Phase 2 — Bucketing:** For each finding, run:
 
 ```python
-def bucket(finding, all_findings):
+import re
+
+# Module-level constants (compile once) — feature 099 FR-1 + design TD-4.
+TEST_FILE_RE = re.compile(r'(^|/)test_[^/]*\.py$|_test\.py$|(^|/)tests/.*\.py$')
+_LOC_LINE_SUFFIX_RE = re.compile(r':\d+$')
+
+def _location_matches_test_path(location: str) -> bool:
+    """Strip optional ':<digits>' suffix, then check against TEST_FILE_RE."""
+    return bool(TEST_FILE_RE.search(_LOC_LINE_SUFFIX_RE.sub('', location)))
+
+def bucket(finding, all_findings, *, is_test_only_refactor: bool = False):
     sev = finding.get("severity")
     sec_sev = finding.get("securitySeverity")
     high = sev == "blocker" or sec_sev in {"critical", "high"}
     med = sev == "warning" or sec_sev == "medium"
     low = sev == "suggestion" or sec_sev == "low"
     # AC-5b narrowed remap for test-deepener
-    if finding["reviewer"] == "pd:test-deepener" and high:
+    if finding.get("reviewer") == "pd:test-deepener" and high:
         mutation_caught = finding.get("mutation_caught", True)
         cross_confirmed = any(
-            other["location"] == finding["location"]
-            and other["reviewer"] != "pd:test-deepener"
+            other.get("location") == finding.get("location")
+            and other.get("reviewer") != "pd:test-deepener"
             for other in all_findings
         )
         if not mutation_caught and not cross_confirmed:
-            return "MED"  # coverage-debt only
+            # FR-1 NEW (feature 099): test-only refactor with location in test file → LOW (sidecar-fold)
+            if is_test_only_refactor and _location_matches_test_path(finding.get("location", "")):
+                return "LOW"
+            return "MED"  # coverage-debt only (existing AC-5b path)
     if high: return "HIGH"
     if med:  return "MED"
     if low:  return "LOW"
     return "MED"  # default for missing severity field
 ```
+
+**FR-1 trigger (feature 099):** Compute `IS_TEST_ONLY_REFACTOR` once before the bucketing loop:
+- True iff `git diff <pd_base_branch>...HEAD --name-only` returns ≥1 path AND every path matches `TEST_FILE_RE` (via `re.search`). Empty diff → False (vacuous truth not allowed).
+- Pass as `is_test_only_refactor=...` kwarg to each `bucket()` call.
+
+**Canonical Python implementation + AC tests** live at `plugins/pd/scripts/tests/test_qa_gate_bucket.py` — run via `pytest` to verify AC-1, AC-2, AC-E1.
 
 **`normalize_location(loc)`:** extract `{filename_basename}:{line_number}` if `loc` matches `[^/\s]+\.[a-z]+:\d+` anywhere in string (e.g., `plugins/pd/hooks/lib/foo.py:42` → `foo.py:42`). Else return `loc.strip().lower()`. Reviewer prompts (per §1) require `file:line` format, making cross-confirmation viable.
 
