@@ -98,16 +98,6 @@ Inserted between existing `TestBatchDemote` (ends ~line 2122) and next class. To
 
 **Rationale:** Spec discipline. Fixture asymmetry mirrors the read-vs-write semantic split shipped in feature 092 (TD-3 read-path log-and-skip vs write-path raise). Tests should match call-site posture, not normalize for cosmetic uniformity.
 
-### TD-6: FR-4 retrofit of `ids=` onto existing parametrize block
-
-**Decision:** Add `ids=[c for _, c in cases]` to the existing `test_batch_demote_rejects_invalid_now_iso` parametrize block at `test_database.py:2102` as part of feature 095 (per spec FR-4 + AC-10). This changes pytest test-ID output for the 8 pre-existing cases from auto-numbered (e.g., `test_batch_demote_rejects_invalid_now_iso[invalid_now_iso0-empty]`) to descriptive (`...[empty]`).
-
-**Alternatives rejected:**
-- Leave existing block without `ids=` — inconsistent with new parametrize blocks in same feature; defeats feature 094 retro suggestion #00243.
-- File as separate backlog cleanup — micro-task pollutes backlog.
-
-**Rationale:** Cosmetic improvement to pytest output. **Verified no external CI consumer** of these specific test IDs in this repo (no test-report dashboard parses pytest IDs; CI just runs `pytest` and checks exit code). One-line decorator edit.
-
 ### TD-5: In-place cleanup of redundant inline import (FR-5 cleanup expansion)
 
 **Decision:** Per phase-reviewer suggestion, the redundant inline `from semantic_memory.database import _ISO8601_Z_PATTERN` at line 2041 is REMOVED in this feature (in-scope, since we're already touching the file).
@@ -117,6 +107,16 @@ Inserted between existing `TestBatchDemote` (ends ~line 2122) and next class. To
 - Promote to backlog item — micro-task that pollutes backlog with trivial cleanup.
 
 **Rationale:** Cheapest path forward. One-line edit. Verified by AC-11 baseline pass count: removing the inline import doesn't change behavior since module-level import already covers the same symbol.
+
+### TD-6: FR-4 retrofit of `ids=` onto existing parametrize block
+
+**Decision:** Add `ids=[c for _, c in cases]` to the existing `test_batch_demote_rejects_invalid_now_iso` parametrize block at `test_database.py:2102` as part of feature 095 (per spec FR-4 + AC-10). This changes pytest test-ID output for the 8 pre-existing cases from auto-numbered (e.g., `test_batch_demote_rejects_invalid_now_iso[invalid_now_iso0-empty]`) to descriptive (`...[empty]`).
+
+**Alternatives rejected:**
+- Leave existing block without `ids=` — inconsistent with new parametrize blocks in same feature; defeats feature 094 retro suggestion #00243.
+- File as separate backlog cleanup — micro-task pollutes backlog.
+
+**Rationale:** Cosmetic improvement to pytest output. **Verified no external CI consumer** of these specific test IDs in this repo (no test-report dashboard parses pytest IDs; CI just runs `pytest` and checks exit code). One-line decorator edit.
 
 ## Components
 
