@@ -724,3 +724,38 @@ Existing helpers like `entity_registry._derive_next_phase('finish') == 'finish'`
 - Confidence: medium
 - Last observed: Feature #081
 - Observation count: 1
+
+### Heuristic: 3+ Consecutive Features Hardening Same Private Symbol = Architectural Debt
+When 3+ consecutive features harden tests around the same private symbol, suspect architectural debt before writing the next test. Ask: is this symbol co-located with its consumer or its producer? If consumer — relocate to producer; the test-hardening cycle ends.
+- Source: Feature 096-iso8601-pattern-relocation (broke cycle from 091/092/093/095)
+- Confidence: high
+- Last observed: Feature #096
+- Observation count: 1
+
+### Heuristic: Distinguish inspect.getsource(method) vs inspect.getsource(module) Before Relocating
+When relocating module-level symbols, check whether existing tests use `inspect.getsource()` on call-site method bodies (insulated, safe to relocate) versus `inspect.getsource()` on module objects (would break). The former are transparent to relocation; the latter require coordinated test updates.
+- Source: Feature 096-iso8601-pattern-relocation T4 (TestIso8601PatternSourcePins=7 passed transparently because pinning was at consumer method body, not module)
+- Confidence: high
+- Last observed: Feature #096
+- Observation count: 1
+
+### Heuristic: Edit Tool Failure on Non-ASCII Visually-Identical Text → Switch to Python Byte-Anchored RMW
+When Edit tool's old_string fails on text containing non-ASCII characters that visually match ASCII (e.g., fullwidth digits ０１２ vs 012), do not iterate Edit with variant strings — switch immediately to Python read-modify-write with explicit byte assertions on anchor lines. Edit's old_string match is byte-exact, but visual inspection in Read output cannot distinguish fullwidth from ASCII digits.
+- Source: Feature 096-iso8601-pattern-relocation T2 (Edit 2a failed on fullwidth ０１２ characters; Python script with line-anchor assertions succeeded on first attempt)
+- Confidence: high
+- Last observed: Feature #096
+- Observation count: 1
+
+### Heuristic: Add Hash-Equality AC When Refactor Splits Content Across N Files
+For atomic-commit refactors that split content across N files, add a hash-equality AC (per-file `git log` returns identical single hash) as a cheap branch-level safeguard. Catches the 2-commit anti-pattern before merge. O(file-size) to verify, zero infrastructure, binary pass/fail.
+- Source: Feature 096-iso8601-pattern-relocation (AC-13 caught zero violations; gate validated as cheap and effective for atomicity invariants)
+- Confidence: high
+- Last observed: Feature #096
+- Observation count: 1
+
+### Heuristic: Direct-Orchestrator Must Emit Minimal implementation-log.md
+Direct-orchestrator pattern must emit a minimal implementation-log.md with T0 baselines, per-task DoD outcomes, and tooling-friction notes — even when review-history is inlined into plan.md. Retros depend on this artifact for qualitative reconstruction; conversation context is ephemeral.
+- Source: Feature 096-iso8601-pattern-relocation (implementation-log.md missing; retro had to reconstruct from conversation, high-effort and non-durable)
+- Confidence: medium
+- Last observed: Feature #096
+- Observation count: 1

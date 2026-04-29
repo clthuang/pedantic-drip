@@ -718,3 +718,35 @@ When two code paths must produce identical outputs on identical inputs (e.g., tw
 - Confidence: high
 - Last observed: Feature #081
 - Observation count: 1
+
+### Pattern: AC-13 Hash-Equality Gate for Atomic-Commit Refactors
+When a refactor must commit atomically across N files, add an AC asserting that `git log {base}..HEAD --format=%H -- file_i` returns the same single hash across all files. The gate is cheap (one hash per file via per-file `git log`), runs at branch level, and catches the 2-commit anti-pattern before merge. Pattern: `H1=$(git log develop..HEAD --format=%H -- f1) && ... && test "$H1" = "$H2" -a "$H2" = "$H3" -a -n "$H1" && [[ $(echo "$H1" | wc -w) -eq 1 ]]`.
+- Observed in: Feature 096-iso8601-pattern-relocation (design AC-13; T5 verification PASS with H1=H2=H3=fc42d6f6730eb7fe026a73f205c8ef46db652604)
+- Benefit: cheapest possible gate (O(file-size), zero infrastructure) for the highest-blast-radius refactor mode (split atomic commits)
+- Confidence: high
+- Last observed: Feature #096
+- Observation count: 1
+
+### Pattern: Co-Locate Validators With Producer, Not Consumer
+Private regex/format validators belong with the function that authoritatively defines the format. E.g., `_ISO8601_Z_PATTERN` belongs with `_iso_utc` in `_config_utils.py` (the producer module), NOT with `database.py` which merely consumes timestamps. When co-located with the consumer, every additional consumer needs to import or duplicate the validator and the producer's output format can drift from the validator's accepted set. Co-locating with the producer makes the format definition the single source of truth.
+- Observed in: Feature 096-iso8601-pattern-relocation (relocation closes recursive test-hardening cycle started in features 091/092/093/095)
+- Benefit: eliminates entire class of test-hardening cycles by making validator location structurally correct; convention seeded via in-source comment for future ISO-8601/time-format validators
+- Confidence: high
+- Last observed: Feature #096
+- Observation count: 1
+
+### Pattern: Direct-Orchestrator + Surgical-Feature Template Scales to Cross-Cutting Refactors at Test-Only-Equivalent Risk
+The direct-orchestrator pattern (091-095 surgical-feature template) scales beyond same-file edits to cross-cutting structural refactors when scope is constrained to test-only-equivalent risk profile (zero behavior change verifiable via hash-equality + source-pin transparency). Feature 096: 6-stage YOLO ritual completed 12 reviewer dispatches across 7 reviewer types, all within the 3-iteration cap, in ≈1h elapsed.
+- Observed in: Feature 096-iso8601-pattern-relocation (3-file edit, +2 LOC ex-blank, atomic-commit, 100% YOLO autonomous)
+- Benefit: avoids worktree-parallelism overhead for sequential-by-construction refactors; preserves reviewer rigor without taskification cost
+- Confidence: high
+- Last observed: Feature #096
+- Observation count: 1
+
+### Pattern: inspect.getsource() on Method Bodies Is Insulated From Module-Level Symbol Relocation
+Source-pin tests using `inspect.getsource()` on consumer call-site method bodies are insulated from module-level symbol movement. Only `inspect.getsource()` on the module object itself would break. This makes consumer-side source-pin tests a stable safety net even during refactors that move symbols between modules.
+- Observed in: Feature 096-iso8601-pattern-relocation T4 (TestIso8601PatternSourcePins=7 passed transparently post-relocation of `_ISO8601_Z_PATTERN`)
+- Benefit: enables safe relocation of module-level symbols without coordinated test updates; flags which tests would actually break before attempting the relocation
+- Confidence: high
+- Last observed: Feature #096
+- Observation count: 1

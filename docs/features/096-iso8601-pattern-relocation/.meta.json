@@ -1,0 +1,25 @@
+{
+  "id": "096",
+  "slug": "iso8601-pattern-relocation",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-04-29T06:12:24.008484+00:00",
+  "branch": "feature/096-iso8601-pattern-relocation",
+  "brainstorm_source": "docs/brainstorms/20260429-140126-iso8601-pattern-relocation.prd.md",
+  "backlog_source": "00277",
+  "lastCompletedPhase": "design",
+  "phases": {
+    "brainstorm": {
+      "started": "2026-04-29T06:12:24.008245+00:00"
+    },
+    "specify": {
+      "started": "2026-04-29T06:12:59.818575+00:00",
+      "completed": "2026-04-29T06:19:22.195625+00:00",
+      "iterations": 3
+    },
+    "design": {
+      "completed": "2026-04-29T06:26:52.182552+00:00",
+      "iterations": 3
+    }
+  }
+}

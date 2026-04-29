@@ -24,6 +24,7 @@ preserves the existing divergence so no test regresses from Bundle A alone.
 """
 from __future__ import annotations
 
+import re
 import sys
 from datetime import datetime, timezone
 
@@ -45,6 +46,27 @@ def _iso_utc(dt: datetime) -> str:
     if dt.tzinfo is None:
         raise ValueError("_iso_utc requires timezone-aware datetime")
     return dt.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+
+# Feature 093 FR-1 (#00219, #00220): Z-suffix ISO-8601 format matching production
+# `_iso_utc` output (strftime("%Y-%m-%dT%H:%M:%SZ")).
+# Used symmetrically by `MemoryDatabase.scan_decay_candidates` (read path, log-and-skip)
+# and `MemoryDatabase.batch_demote` (write path, raise) to validate ISO-8601 Z-suffix
+# timestamps. Feature 092 shipped `\d` without `re.ASCII` which accepted Unicode digit
+# codepoints (Arabic-Indic ٠١٢, Devanagari ०१२, fullwidth ０１２); 093 hardens via:
+#   - `[0-9]` literal (ASCII-only, primary defense against Unicode homograph)
+#   - `re.ASCII` flag (defense-in-depth against future class expansion)
+#   - call sites use `.fullmatch()` instead of `.match()` to reject trailing `\n` (#00220)
+#
+# Feature 096 #00277: relocated here from `database.py` to co-locate with `_iso_utc`
+# (the producer). Source-level pins now use `_ISO8601_Z_PATTERN.pattern` and `.flags`
+# directly without `inspect.getsource()` brittleness.
+_ISO8601_Z_PATTERN = re.compile(
+    r'[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z',
+    re.ASCII,
+)
+
+# Convention: validators for formats produced by this module live here (see _iso_utc + _ISO8601_Z_PATTERN).
 
 
 def _warn_and_default(
