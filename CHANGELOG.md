@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.16.7] - 2026-04-29
+
 ### Changed
 - **Test hardening: `TestIso8601PatternSourcePins` v2 refactor** (`#00278`, feature 097) — refactored source-pin tests to use exact-string equality, component-flag assertions, AST-walk open-set call-site discovery (immune to comment/docstring false-fails), curated 13-script Unicode-Nd parametrize, and identity-pin across `database`/`_config_utils`. Net pytest +14 cases (224→238 narrow). Zero production behavior change. Closes 8 sub-items consolidated from #00278-#00285. THIRD production exercise of feature 094 pre-release QA gate.
 
