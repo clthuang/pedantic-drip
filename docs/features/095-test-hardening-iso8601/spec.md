@@ -33,10 +33,11 @@ Test-only feature; zero production code changes.
   Closes #00251 (cross-call-site rejection parity with `test_pattern_rejects_trailing_whitespace` in `TestScanDecayCandidates`).
 - **AC-8** `TestScanDecayCandidates` contains method `test_pattern_rejects_partial_unicode_injection` parametrized over 4 positions (day/hour/minute/second) with single fullwidth `１` substituted (e.g., `"2026-01-0１T00:00:00Z"`). Each asserts call-site rejection via `scan_decay_candidates`. Closes #00252 at scan path.
 - **AC-9** `TestBatchDemote` contains method `test_batch_demote_rejects_partial_unicode_injection` parametrized identically to AC-8. Each asserts `pytest.raises(ValueError, match="Z-suffix ISO-8601")` via `batch_demote(["x"], "medium", case)`. Closes #00252 at batch path.
-- **AC-10** All NEW parametrize blocks in feature 095 include `ids=[...]` argument with descriptive labels (per feature 094 retro #00243 + FR-4). Verifiable: every new parametrize decorator in `TestIso8601PatternSourcePins`, `test_pattern_rejects_partial_unicode_injection`, `test_batch_demote_rejects_partial_unicode_injection` has `ids=` keyword argument.
-- **AC-11** Pytest baseline transition: pre-feature pass count → post-feature pass count = pre + 15 to pre + 25 (15-25 net new parametrized assertions per NFR-1). No regressions.
+- **AC-10** All NEW parametrize blocks AND the FR-2 extension to `test_batch_demote_rejects_invalid_now_iso` include `ids=[...]` argument with descriptive labels (per feature 094 retro #00243 + FR-4). Verifiable: every parametrize decorator added/modified by feature 095 — `TestIso8601PatternSourcePins.test_pattern_rejects_unicode_digits_directly`, `TestIso8601PatternSourcePins.test_call_sites_use_fullmatch_not_match`, `TestScanDecayCandidates.test_pattern_rejects_partial_unicode_injection`, `TestBatchDemote.test_batch_demote_rejects_partial_unicode_injection`, AND the extended `TestBatchDemote.test_batch_demote_rejects_invalid_now_iso` — has `ids=` keyword argument.
+- **AC-11** Pytest baseline pinned at feature 095 start: `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/semantic_memory/test_database.py -q | tail -1` returns `197 passed` (measured 2026-04-29). Post-feature count must equal `214 passed` (= 197 baseline + 17 new per NFR-1). No regressions; exact +17 delta.
 - **AC-12** Zero changes to `plugins/pd/hooks/lib/semantic_memory/database.py`. Verifiable: `git diff develop...HEAD -- plugins/pd/hooks/lib/semantic_memory/database.py` returns no output.
-- **AC-13** Pre-mortem advisor concern (test self-update co-commit) is acknowledged in retro.md "Manual Verification" section as fundamental limitation — feature 094 pre-release QA gate is the structural backstop; verify gate sees test files (Open Question 1 closure) during T6 dogfood by inspecting reviewer dispatch diff scope.
+- **AC-13a** Retro.md contains "Manual Verification" section with literal text matching `094 gate` AND `test self-update`. Verifiable: `grep -qE 'Manual Verification' docs/features/095-test-hardening-iso8601/retro.md && grep -qE '094 gate' docs/features/095-test-hardening-iso8601/retro.md && grep -qE 'test self-update' docs/features/095-test-hardening-iso8601/retro.md`.
+- **AC-13b** Open Question 1 closure: T6 dogfood verifies feature 094 gate's reviewer-dispatch diff scope INCLUDES test files. Verifiable: dogfood diff capture shows `test_database.py` in the path list passed to reviewers. Concrete artifact: `git diff develop...HEAD -- 'plugins/pd/hooks/lib/semantic_memory/test_database.py' | wc -l` returns > 0 captured in retro.md as evidence.
 
 ## Functional Requirements
 
@@ -123,6 +124,8 @@ Add `test_pattern_rejects_partial_unicode_injection` to BOTH `TestScanDecayCandi
 
 **Body template (4 parametrized cases per call site):**
 
+For `TestScanDecayCandidates` — match existing fixture pattern (`db: MemoryDatabase, capsys` per `test_pattern_rejects_unicode_digits` at `test_database.py:2011-2016`):
+
 ```python
 @pytest.mark.parametrize("partial_unicode_input,case_name", [
     ("2026-01-0１T00:00:00Z", "day-pos"),       # fullwidth 1 in day position
@@ -130,19 +133,26 @@ Add `test_pattern_rejects_partial_unicode_injection` to BOTH `TestScanDecayCandi
     ("2026-01-01T00:０0:00Z", "minute-pos"),    # fullwidth 0 in minute position
     ("2026-01-01T00:00:０0Z", "second-pos"),    # fullwidth 0 in second position
 ], ids=["day-pos", "hour-pos", "minute-pos", "second-pos"])
-def test_pattern_rejects_partial_unicode_injection(self, db, partial_unicode_input, case_name):
-    """Closes #00252 — pin rejection of mid-string single Unicode digit injection.
-
-    All-Unicode-year tests already cover full Unicode replacement (test_pattern_rejects_unicode_digits).
-    This test pins the partial-injection case at each datetime field position.
-    """
-    # For TestScanDecayCandidates:
-    captured = capsys.readouterr()  # capture stderr warnings
+def test_pattern_rejects_partial_unicode_injection(
+    self, db: MemoryDatabase, capsys, partial_unicode_input, case_name,
+):
+    """Closes #00252 — pin rejection of mid-string single Unicode digit injection."""
     list(db.scan_decay_candidates(partial_unicode_input, scan_limit=10))
-    assert "format violation" in captured.err, \
-        f"[{case_name}] scan_decay_candidates must reject partial Unicode injection in {case_name}"
+    captured = capsys.readouterr()
+    assert "format violation" in captured.err, (
+        f"[{case_name}] scan_decay_candidates must reject partial Unicode injection"
+    )
+```
 
-# For TestBatchDemote: same parametrize, but body is:
+For `TestBatchDemote` — match existing pattern (no `db` fixture; manual construct + try/finally per `test_batch_demote_rejects_invalid_now_iso` at `test_database.py:2112-2122`):
+
+```python
+@pytest.mark.parametrize("partial_unicode_input,case_name", [
+    ("2026-01-0１T00:00:00Z", "day-pos"),
+    ("2026-01-01T０0:00:00Z", "hour-pos"),
+    ("2026-01-01T00:０0:00Z", "minute-pos"),
+    ("2026-01-01T00:00:０0Z", "second-pos"),
+], ids=["day-pos", "hour-pos", "minute-pos", "second-pos"])
 def test_batch_demote_rejects_partial_unicode_injection(self, partial_unicode_input, case_name):
     db = MemoryDatabase(":memory:")
     try:
@@ -152,20 +162,31 @@ def test_batch_demote_rejects_partial_unicode_injection(self, partial_unicode_in
         db.close()
 ```
 
+**Fixture asymmetry rationale:** mirrors existing precedent — `TestScanDecayCandidates` uses class-level `db` fixture + `capsys` for stderr capture (log-and-skip read path); `TestBatchDemote` does NOT have a `db` fixture (raise-on-invalid write path tests are stateless). Pattern unchanged from feature 093.
+
+**Warning string evidence:** `"format violation"` literal verified in existing `test_pattern_rejects_unicode_digits` body comment at `test_database.py:2014` — same string, same assertion shape.
+
 ### FR-4 — `ids=[...]` on all NEW parametrize blocks
 
 All 4 new parametrize decorators (`test_pattern_rejects_unicode_digits_directly`, `test_call_sites_use_fullmatch_not_match`, `test_pattern_rejects_partial_unicode_injection` ×2, plus the FR-2 extension which doesn't introduce a new decorator but the existing block already uses `case_name` so we follow up by adding `ids=[c for _, c in ...]`) include `ids=` argument.
 
 ### FR-5 — Module-level imports
 
-Add to `plugins/pd/hooks/lib/semantic_memory/test_database.py` near existing imports (top of file):
+Verified state at feature 095 start (via `grep -nE '^from semantic_memory.database import' test_database.py`):
 
-```python
-import inspect
-from semantic_memory.database import _ISO8601_Z_PATTERN, MemoryDatabase
+```
+test_database.py:15: from semantic_memory.database import MemoryDatabase, _sanitize_fts5_query
 ```
 
-`MemoryDatabase` is already imported elsewhere in the file — no duplicate, just confirm. `_ISO8601_Z_PATTERN` was previously imported INSIDE `test_iso_utc_output_always_passes_hardened_pattern`; lift to module top so parametrize-level decorators can reference it (FR-1's `test_call_sites_use_fullmatch_not_match` parametrize uses `MemoryDatabase.scan_decay_candidates` etc., which only needs `MemoryDatabase` at decoration time; the `_ISO8601_Z_PATTERN` lift is for the other 3 methods that reference it in body assertions).
+So `MemoryDatabase` is already module-level imported (good — AC-6 parametrize uses it at decoration time). FR-5 modifies line 15 to add `_ISO8601_Z_PATTERN`:
+
+```python
+from semantic_memory.database import MemoryDatabase, _sanitize_fts5_query, _ISO8601_Z_PATTERN
+```
+
+Plus add `import inspect` at top of file (verifiable via `grep -qE '^import inspect$' test_database.py` post-edit).
+
+The previous inline `from semantic_memory.database import _ISO8601_Z_PATTERN` inside `test_iso_utc_output_always_passes_hardened_pattern` (line 2041) becomes redundant — leave it for now (no harm, doesn't conflict with module-level import); could be cleaned up in a future pass.
 
 ## Non-Functional Requirements
 
@@ -186,7 +207,7 @@ from semantic_memory.database import _ISO8601_Z_PATTERN, MemoryDatabase
 
 | Scenario | Expected Behavior | Verified by |
 |----------|-------------------|-------------|
-| Python 3.13+ `inspect.getsource()` regression returns wrong line | Test FAILS LOUDLY (red CI) — false-RED is correct vs false-GREEN | AC-6, FR-1 (only `test_call_sites_use_fullmatch_not_match` uses `getsource`; structural pins #00246/#00247/#00248 use stable public attrs instead) |
+| Python `inspect.getsource()` regression returns wrong line (CPython #122981, fixed in 3.13.0 final; project runs **Python 3.14.4** per `plugins/pd/.venv/bin/python --version`, so risk is theoretical for current target) | Test FAILS LOUDLY (red CI) — false-RED is correct vs false-GREEN | AC-6, FR-1 (only `test_call_sites_use_fullmatch_not_match` uses `getsource`; structural pins #00246/#00247/#00248 use stable public attrs instead) |
 | `_ISO8601_Z_PATTERN` renamed in future refactor | All 5 source-pin tests fail at module collection (`ImportError`) | AC-2 module import + Edge Cases distribution: 4 of 7 pin tests live in NEW class; 3 (FR-2 + FR-3 ×2) live in EXISTING classes — partial protection if rename happens |
 | Test class collection-failure SPOF | Mitigated by 2-class distribution: 4 source-pins in `TestIso8601PatternSourcePins`; 3 behavioral pins in existing `TestScanDecayCandidates` / `TestBatchDemote` | FR-1 + FR-2 + FR-3 |
 | Test self-update during refactor (test+prod co-commit) | Documented limitation; feature 094 pre-release QA gate is structural backstop | AC-13 |
@@ -207,14 +228,30 @@ from semantic_memory.database import _ISO8601_Z_PATTERN, MemoryDatabase
 - All 17 new parametrized assertions added in ONE atomic commit
 - Followed by `/pd:finish-feature` which will trigger the new pre-release QA gate (Step 5b) — first production exercise of feature 094
 
+## Review History
+
+### Iteration 1 — spec-reviewer (opus, 2026-04-29)
+
+**Findings:** 2 blockers + 4 warnings + 2 suggestions
+
+**Corrections applied:**
+- FR-3 (TestScanDecayCandidates body) — added `capsys` to method signature; matches existing `test_pattern_rejects_unicode_digits` pattern at `test_database.py:2011-2016`. Reason: Blocker 1.
+- AC-13 split into AC-13a (binary grep on retro.md prose markers) + AC-13b (binary diff-list capture). Both now grep-verifiable. Reason: Blocker 2.
+- AC-11 — pinned baseline to 197 PASS measured 2026-04-29 with target 214 PASS (= 197 + 17 per NFR-1). Tightened from 15-25 range to exact +17. Reason: Warning 3.
+- FR-5 — quoted exact existing import line `test_database.py:15` and prescribed in-place modification. Reason: Warning 4.
+- FR-3 — explained fixture asymmetry (TestScanDecayCandidates uses `db + capsys`, TestBatchDemote uses manual construct) by citing existing precedents. Reason: Warning 5.
+- AC-10 — explicitly states the FR-2 extension to existing block ALSO requires `ids=` (resolves AC-10 vs FR-4 ambiguity). Reason: Warning 6.
+- FR-3 — added "Warning string evidence" note quoting `test_database.py:2014` for the literal `"format violation"` substring. Reason: Suggestion 7.
+- Edge Cases — added explicit Python 3.14.4 version + CPython #122981 fixed-in-3.13.0-final note. Reason: Suggestion 8.
+
 ## Definition of Done
 
-- [ ] All 13 ACs (AC-1..AC-13) pass binary verification
+- [ ] All 14 ACs (AC-1..AC-12, AC-13a, AC-13b) pass binary verification
 - [ ] All 5 FRs implemented
 - [ ] All 4 NFRs met
 - [ ] `validate.sh` exit 0 (no new errors; pre-existing warnings unchanged)
-- [ ] Pytest pass count = baseline + 17 (NFR-1 says 15-25; we ship exactly 17)
+- [ ] Pytest pass count = 197 baseline + 17 = 214 PASS (per AC-11 pinned baseline)
 - [ ] Zero production code changes (AC-12)
 - [ ] Backlog item filed for `_ISO8601_Z_PATTERN` relocation to `_config_utils.py` per Open Question 2
-- [ ] Feature 094 gate test-file scope verified empirically during T6 dogfood (Open Question 1 closure)
-- [ ] Retro.md "Manual Verification" section documents AC-13 + Open Question 1 closure
+- [ ] Feature 094 gate test-file scope verified empirically during T6 dogfood (AC-13b closure)
+- [ ] Retro.md "Manual Verification" section documents AC-13a + AC-13b closure
