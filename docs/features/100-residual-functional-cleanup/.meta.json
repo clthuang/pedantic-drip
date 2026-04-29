@@ -1,0 +1,14 @@
+{
+  "id": "100",
+  "slug": "residual-functional-cleanup",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-04-29T18:27:13.376458+00:00",
+  "branch": "feature/100-residual-functional-cleanup",
+  "lastCompletedPhase": null,
+  "phases": {
+    "brainstorm": {
+      "started": "2026-04-29T18:27:13.376225+00:00"
+    }
+  }
+}
