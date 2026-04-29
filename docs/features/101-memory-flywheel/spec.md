@@ -93,7 +93,7 @@ sidecar write failure is logged but does not block the influence call.
   influence tracking` markers, asserts each occurs before the next
   `**Branch on result**` or `**Branch on (...) result**` marker within
   the same numbered step section). Script lives in `plugins/pd/scripts/`
-  and is invoked from validation (e.g., validate.sh integration).
+  and is invoked as a new step in `validate.sh`'s component-check loop.
 - **AC-1.3:** All 14 blocks include the literal output-line instruction
   `Influence recorded:` in their prose. Verified via `grep -c 'Influence recorded:' plugins/pd/commands/{specify,design,create-plan,implement}.md`
   → 2 / 2 / 3 / 7 (matching site counts).
@@ -147,9 +147,11 @@ but the user's DB shows 0 rows — diagnose AND repair.
   timestamps),
   `fts5_errors` (any caught exception messages, else `[]`),
   `db_path` (absolute),
-  `created_at` (ISO 8601, the `_iso_utc` Z-suffix form).
-  Written ONCE on first rebuild; subsequent rebuilds APPEND an entry to
-  the JSON's `refires` array (each: `{timestamp, fts5_count_before, fts5_count_after}`).
+  `created_at` (ISO 8601, the `_iso_utc` Z-suffix form),
+  `refires` (initially `[]` empty array on first write; each subsequent
+  rebuild appends an object: `{timestamp, fts5_count_before, fts5_count_after}`).
+  Written ONCE on first rebuild with `refires: []`; subsequent rebuilds
+  re-read the file, append to `refires`, and write back.
 - **AC-2.4:** If diagnostic file already exists when rebuild fires, log
   stronger warning: `[memory] FTS5 rebuild fired again (refire #N); see
   ~/.claude/pd/memory/.fts5-rebuild-diag.json`.
@@ -220,8 +222,12 @@ Either gate triggers `low → medium`. Both gates' values doubled trigger
 - **AC-4.2:** Called from `decay_confidence()` after the demotion check
   AND from `merge_duplicate()` after observation_count++.
 - **AC-4.3:** New config key `memory_promote_use_signal` documented in
-  `pd.local.md` reference (default 5). High-tier threshold auto-doubled
-  (no separate key for K_USE_HIGH).
+  `pd.local.md` reference (default 5). High-tier thresholds are
+  **auto-derived by doubling** the medium-tier values: `K_OBS_HIGH = K_OBS * 2`
+  (default 6, derived from `memory_promote_min_observations`),
+  `K_USE_HIGH = K_USE * 2` (default 10, derived from
+  `memory_promote_use_signal`). NEITHER high-tier value is a separately
+  documented key — both are runtime-computed.
 - **AC-4.4:** Test cases in `test_maintenance.py` (every seed specifies
   starting confidence explicitly):
   - Seed `confidence='low', observation_count=3, influence_count=0, recall_count=0` →
