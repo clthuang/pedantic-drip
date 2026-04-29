@@ -206,11 +206,12 @@ The default mapping (matching the convention in `finish-feature.md` Step 2b "Pre
 
 Projects override via `.claude/pd.local.md`:
 ```
+tier_doc_root: docs                                    # default; root containing user-guide/, dev-guide/, technical/
 tier_doc_source_paths_user_guide: README.md plugins/ scripts/
 tier_doc_source_paths_dev_guide: plugins/pd/ scripts/ docs/dev_guides/
 tier_doc_source_paths_technical: plugins/pd/ docs/technical/
 ```
-If a project does not set these fields, defaults are used. The pd repository (which has no `src/`, `test/`, etc. at root) SHOULD set these in its `pd.local.md` to make the check meaningful — recorded as a follow-up implementation step in design phase.
+If a project does not set these fields, defaults are used (`tier_doc_root: docs`; source paths per the table above). The pd repository (which has no `src/`, `test/`, etc. at root) SHOULD set the source-path fields in its `pd.local.md` to make the check meaningful — recorded as a follow-up implementation step in design phase. Misconfigured `tier_doc_root` (pointing to non-existent directory) emits info `"No docs in tier {tier}"` — fail-quiet by design; configuration drift is a doctor-detectable secondary issue out of scope here.
 
 **Logic:**
 1. Read threshold from `pd.local.md` field `tier_doc_staleness_days` (default: `30`).
@@ -354,7 +355,7 @@ Reads (default mode): `{pd_artifacts_root}/backlog.md`.
 
 **Idempotency (NFR-5):** Running cleanup-backlog twice in succession produces zero diffs on the second run. Verified: after first run, all `ARCHIVABLE` sections are gone from backlog.md, so the second run finds zero archivable sections and exits without writes.
 
-**Top-level table (lines 5-55, "legacy" pre-section format):** OUT OF SCOPE — left untouched. Only `^## From ` headed sections are evaluated. Items in the top-level table that are closed remain there until manual cleanup.
+**Top-level table (any markdown table appearing BEFORE the first `^## From ` heading):** OUT OF SCOPE — left untouched. Only `^## From ` headed sections are evaluated. Items in the top-level table that are closed remain there until manual cleanup. (No line-number coupling — the parser identifies the boundary structurally.)
 
 ### FR-6b: Doctor `check_active_backlog_size`
 
@@ -433,7 +434,29 @@ Total: {N} open items across {M} files.
 
 **Sort:** `Open Count` DESC, then `File or Module` ASC.
 
-**Grouping:** Group by `(normalized_location, category)`. `normalize_location()` is the same helper as qa-gate-procedure.md §4: extract `{filename_basename}:{line_number}` if `loc` matches `[^/\s]+\.[a-z]+:\d+` anywhere in string; else `loc.strip().lower()`.
+**Grouping:** Group by `(normalized_location, category)`. `normalize_location(loc)` semantics (inlined from qa-gate-procedure.md §4 for stability — pinned in this spec to avoid silent drift if upstream helper changes):
+
+```python
+import re
+_NORMALIZE_LOC_RE = re.compile(r'([^/\s]+\.[a-z]+:\d+)')
+
+def normalize_location(loc: str) -> str:
+    """Extract `{filename_basename}:{line_number}` if found; else lowercased strip."""
+    m = _NORMALIZE_LOC_RE.search(loc)
+    if m:
+        return m.group(1)  # e.g., 'plugins/pd/lib/foo.py:42' → 'foo.py:42'
+    return loc.strip().lower()
+```
+
+**Empirical:**
+```text
+>>> normalize_location('plugins/pd/lib/foo.py:42')   → 'foo.py:42'
+>>> normalize_location('test_database.py:2354')      → 'test_database.py:2354'
+>>> normalize_location('Architecture-level note')    → 'architecture-level note'
+>>> normalize_location('')                            → ''
+```
+
+If qa-gate-procedure.md §4's `normalize_location` ever changes, the FR-8 implementation MUST keep its own pinned copy (per this spec) until intentionally re-aligned in a follow-up feature.
 
 **Read-only:** No writes. Pure aggregator. Exit 0 always.
 
@@ -495,7 +518,7 @@ Running `python3 plugins/pd/scripts/cleanup_backlog.py --dry-run --backlog-path 
 **AC-8b (FR-6a dry-run on REAL backlog):** Running `python3 plugins/pd/scripts/cleanup_backlog.py --dry-run` on the project's actual `docs/backlog.md` exits 0 and prints a non-empty table (≥1 row). The exact archivable-section count is project-state-dependent and NOT asserted (this is a smoke test of the parser against real data, not a stateful assertion).
 
 **AC-9 (FR-6a live — fixture-backed):** Given the same fixture as AC-8 with archive file ABSENT. Running `python3 plugins/pd/scripts/cleanup_backlog.py --apply --backlog-path tests/fixtures/backlog-099-archivable.md --archive-path tests/fixtures/backlog-099-archive.md` (and YOLO auto-confirm if interactive prompt fires):
-- (a) Fixture backlog line count DECREASES by exactly `sum(section_lines_per_archived)` where `section_lines_per_archived` is the count from the section's `## From ` header line through the last item line (NOT including the trailing blank line — see (f) for blank-line semantics).
+- (a) Fixture backlog line count DECREASES by AT LEAST `sum(section_lines_per_archived)` where `section_lines_per_archived` is the count from the section's `## From ` header line through the last item line (NOT including the trailing blank line). The actual decrease may exceed this by `N_collapsed_blanks` (number of inter-section blank-line pairs collapsed per rule (f)). Strict invariant: the post-archive backlog has no double-blank-line runs (see (f)).
 - (b) Archive file is CREATED with the standard 4-line header (H1 `# Backlog Archive`, blank, body line, blank) PLUS one trailing blank between header and first appended section, PLUS the moved-section content (each section appended with its `## From ` header + items + one trailing blank line for separation).
 - (c) Total archive file line count = `4 (header) + sum(section_lines_per_archived) + N_archived_sections (trailing blanks)` for the first-creation case.
 - (d) Post-run: re-running with `--apply` produces zero diffs (NFR-5 idempotency).
@@ -538,11 +561,12 @@ Running `python3 plugins/pd/scripts/cleanup_backlog.py --dry-run --backlog-path 
 **AC-X1 (FR-6a/FR-6b predicate agreement):** Given the project's current `docs/backlog.md`, the active-item count from cleanup_backlog.py's `count_active()` helper equals the active-item count from doctor's `check_active_backlog_size`. Verified via:
 ```bash
 python_count=$(python3 plugins/pd/scripts/cleanup_backlog.py --count-active)
-# Pin to the count field with awk to avoid matching threshold or other digits in surrounding output
-doctor_count=$(bash plugins/pd/scripts/doctor.sh 2>&1 | grep -oE "Active backlog: [0-9]+" | head -1 | awk '{print $3}')
+# Two-stage extraction: grep pins to "Active backlog: <N>" line; second grep extracts ONLY the digits at end.
+# Robust to message-template wording drift as long as the "Active backlog:" prefix remains.
+doctor_count=$(bash plugins/pd/scripts/doctor.sh 2>&1 | grep -oE "Active backlog: [0-9]+" | head -1 | grep -oE "[0-9]+$")
 [ "$python_count" = "$doctor_count" ] && echo MATCH || echo MISMATCH
 ```
-Expected output: `MATCH`. The `head -1 | awk '{print $3}'` extraction pins to the third whitespace-separated token of the FIRST `Active backlog:` line, so any threshold-related digits or trailing output do not interfere.
+Expected output: `MATCH`.
 
 **AC-E6 (FR-6a malformed backlog):** Given a `## From ...` section with no items (header only), it is NOT marked ARCHIVABLE (item count = 0).
 
