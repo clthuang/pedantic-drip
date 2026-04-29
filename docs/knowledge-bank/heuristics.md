@@ -759,3 +759,17 @@ Direct-orchestrator pattern must emit a minimal implementation-log.md with T0 ba
 - Confidence: medium
 - Last observed: Feature #096
 - Observation count: 1
+
+### Heuristic: Validate Generated Python Source via ast.parse() Before Write
+When generating Python source via f-strings, templates, or string concatenation, validate the output via `ast.parse()` before writing to file. Catches missing-comma errors (implicit-string-concatenation 1-tuples), unclosed brackets, and other syntactic anomalies before they reach test runs. Cost: O(milliseconds).
+- Source: Feature 097 T1 (missing-comma f-string error caught by AC-10b grep instead of ast.parse — would have been caught earlier with ast.parse)
+- Confidence: high
+- Last observed: Feature #097
+- Observation count: 1
+
+### Heuristic: For Test-Only-Equivalent Features, Run Empirical Python REPL Verification During Spec Phase
+When the feature is test-only-equivalent and FRs reference library state (regex flags, module attributes, Unicode database, version-dependent behavior), invoke `python3 -c '...'` during spec drafting and pin empirical values inline. Spec-reviewer iter 1 blocker count drops accordingly because assumptions are pre-resolved.
+- Source: Feature 097 spec-reviewer iter 1 (4 blockers all empirically verifiable in <2 minutes total)
+- Confidence: high
+- Last observed: Feature #097
+- Observation count: 1
