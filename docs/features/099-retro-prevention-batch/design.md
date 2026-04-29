@@ -54,7 +54,8 @@ Research-stage time-savings: ~3-5 min agent dispatches avoided.
 plugins/pd/
 ├── commands/
 │   ├── cleanup-backlog.md         (NEW) FR-6a entry point — orchestration + AskUserQuestion
-│   └── test-debt-report.md         (NEW) FR-8 entry point — read-only aggregator
+│   ├── test-debt-report.md         (NEW) FR-8 entry point — read-only aggregator
+│   └── finish-feature.md           (MOD) FR-1 — Step 5b passes is_test_only_refactor= to each bucket() call
 ├── scripts/
 │   ├── doctor.sh                   (MOD) FR-3, FR-4, FR-6b — 3 new check_* functions + Project Hygiene section
 │   ├── cleanup_backlog.py          (NEW) FR-6a parser/writer/counter
@@ -386,10 +387,37 @@ def is_item_closed(line: str) -> bool:
     ))
 
 def count_active(backlog_path: str) -> int:
-    """Per FR-6b: count active backlog items."""
+    """Per FR-6b: count active backlog items.
+
+    Algorithm:
+      1. Read file. Split into lines.
+      2. For each line matching ITEM_RE (`^- (~~)?\\*\\*#\\d+\\*\\*`):
+         - If is_item_closed(line) → skip.
+         - Else → increment counter.
+      3. Return counter.
+
+    Edge cases: empty file → 0; no items → 0; all items closed → 0.
+    Performance: O(N) lines, single pass; no per-section grouping needed for the count.
+    """
 
 def parse_sections(content: str) -> list[dict]:
-    """Per FR-6a: parse `## From ` sections from backlog.md content."""
+    """Per FR-6a: parse `## From ` sections from backlog.md content.
+
+    Algorithm:
+      1. Split content on lines matching `^## ` (any H2 heading).
+      2. For each split, identify if it's a `## From ` section (FR-6a scope; skip top-level table per spec).
+      3. For each `## From ` section, return:
+         {
+           "header": str,           # full header line (e.g., "## From Feature 086 QA")
+           "lines": list[str],      # all section lines including header + trailing blank (preserves formatting)
+           "items": list[str],      # subset of lines matching ITEM_RE
+           "is_archivable": bool,   # True iff items count > 0 AND all items pass is_item_closed()
+         }
+      4. Return list in document order (preserves stable ordering for archive append).
+
+    Edge cases: section with 0 items → is_archivable=False; section with mixed items → is_archivable=False;
+                trailing-blank-only section → treated same as empty (skipped from archivable).
+    """
 
 # CLI entry point (argparse):
 #   --dry-run       Default mode. Print archivable-section table.
