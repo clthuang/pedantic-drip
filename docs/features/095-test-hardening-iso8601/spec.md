@@ -23,10 +23,10 @@ Test-only feature; zero production code changes.
 - **AC-4** `TestIso8601PatternSourcePins` contains method `test_pattern_compiled_with_re_ascii_flag` whose body asserts `bool(_ISO8601_Z_PATTERN.flags & re.ASCII)` is True. Closes #00247.
 - **AC-5** `TestIso8601PatternSourcePins` contains method `test_pattern_rejects_unicode_digits_directly` parametrized over fullwidth/Arabic-Indic/Devanagari direct cases (3 cases minimum) with `ids=[...]` argument. Each asserts `_ISO8601_Z_PATTERN.fullmatch(case) is None` directly on the pattern object (decoupled from call sites). Closes #00248.
 - **AC-6** `TestIso8601PatternSourcePins` contains method `test_call_sites_use_fullmatch_not_match` parametrized over `[MemoryDatabase.scan_decay_candidates, MemoryDatabase.batch_demote]` with `ids=['scan_decay_candidates', 'batch_demote']`. For each method, uses `inspect.getsource()` and asserts:
-  - `'_ISO8601_Z_PATTERN.fullmatch(' in src` (positive — fullmatch is used)
-  - `'_ISO8601_Z_PATTERN.match(' not in src` (negative — match is NOT used)
-  - `'re.compile(' not in src` (negative — no local re-compile)
-  Closes #00250 + #00249 (both call sites verified to share single source of truth).
+  - `'_ISO8601_Z_PATTERN.fullmatch(' in src` (positive — closes BOTH #00249 *and* #00250: the literal token `_ISO8601_Z_PATTERN` proves the shared module-level constant is referenced (#00249 single source of truth); `.fullmatch(` proves call-form (#00250))
+  - `'_ISO8601_Z_PATTERN.match(' not in src` (negative — match is NOT used; closes #00250 negative direction)
+  - `'re.compile(' not in src` (negative — no local re-compile; closes #00249 negative direction)
+  Closes #00250 + #00249.
 - **AC-7** `TestBatchDemote.test_batch_demote_rejects_invalid_now_iso` parametrize list extended with **2 new cases** (per FR-2 below):
   - `("2026-04-20T00:00:00Z ", "trailing-space")`
   - `("2026-04-20T00:00:00Z\r\n", "trailing-crlf")`
@@ -186,7 +186,7 @@ from semantic_memory.database import MemoryDatabase, _sanitize_fts5_query, _ISO8
 
 Plus add `import inspect` at top of file (verifiable via `grep -qE '^import inspect$' test_database.py` post-edit).
 
-The previous inline `from semantic_memory.database import _ISO8601_Z_PATTERN` inside `test_iso_utc_output_always_passes_hardened_pattern` (line 2041) becomes redundant — leave it for now (no harm, doesn't conflict with module-level import); could be cleaned up in a future pass.
+The previous inline `from semantic_memory.database import _ISO8601_Z_PATTERN` inside `test_iso_utc_output_always_passes_hardened_pattern` (line 2041) becomes redundant. **Remove it as part of this feature** (in-scope cleanup, since we're already editing the same file): delete the inline import line, leaving the body to use the module-level import from line 15. Verifiable: `grep -c 'from semantic_memory.database import _ISO8601_Z_PATTERN' test_database.py` returns exactly 1 (the line-15 module-level import) post-feature.
 
 ## Non-Functional Requirements
 
@@ -243,6 +243,14 @@ The previous inline `from semantic_memory.database import _ISO8601_Z_PATTERN` in
 - AC-10 — explicitly states the FR-2 extension to existing block ALSO requires `ids=` (resolves AC-10 vs FR-4 ambiguity). Reason: Warning 6.
 - FR-3 — added "Warning string evidence" note quoting `test_database.py:2014` for the literal `"format violation"` substring. Reason: Suggestion 7.
 - Edge Cases — added explicit Python 3.14.4 version + CPython #122981 fixed-in-3.13.0-final note. Reason: Suggestion 8.
+
+### Iteration 1 — phase-reviewer (sonnet, 2026-04-29)
+
+**Findings:** approved=true with 2 suggestions
+
+**Corrections applied:**
+- AC-6 — added one-sentence rationale clarifying that `'_ISO8601_Z_PATTERN.fullmatch(' in src` simultaneously closes #00249 (shared constant proves single source of truth) and #00250 (call-form). Reason: Suggestion 1.
+- FR-5 — promoted the inline-import cleanup at line 2041 from "future pass" to in-scope this feature. Added grep DoD: `grep -c '...' test_database.py == 1`. Reason: Suggestion 2.
 
 ## Definition of Done
 
