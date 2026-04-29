@@ -1,8 +1,62 @@
-# Specification: Residual Functional Cleanup (100)
+# Specification: Residual Functional Cleanup (100) — AUDIT-ONLY
 
-## Problem Statement
+## Outcome
 
-After feature 099 shipped the asymmetric-backlog-detection infrastructure, an honest audit surfaced 7 truly-open HIGH-severity functional items concentrated in `semantic_memory/`, `workflow_state_server.py`, and `session-start.sh`. These are real primary/secondary defense gaps — not edge cases, not over-defensive testing, not black-swan scenarios. Close them in one focused pass.
+**Implementation phase findings: ALL 7 HIGH items were already silently shipped by features 088-091.** Feature 100's actual work was a verification audit + backlog closure pass. Zero new code change required.
+
+## Problem Statement (original)
+
+After feature 099 shipped the asymmetric-backlog-detection infrastructure, an honest audit surfaced 7 truly-open HIGH-severity functional items concentrated in `semantic_memory/`, `workflow_state_server.py`, and `session-start.sh`. These appeared to be real primary/secondary defense gaps. Close them in one focused pass.
+
+## Verification Findings
+
+Each item was code-level verified before closure marker was applied:
+
+| ID | Surface checked | Status |
+|----|-----------------|--------|
+| #00139 | `config.py:51-87, 189` | `_coerce_bool` defined + wired in `read_config()`. Type-exact checks; no frozenset hash collapse. **Shipped feature 089 FR-1.1.** |
+| #00140 | `database.py:17, 866, 901, 920, 939` | `_assert_testing_context()` guards all 4 `*_for_testing` helpers. **Shipped feature 088.** |
+| #00141 | `maintenance.py:387` (`feature 089 FR-1.3` comment) | `_iso_utc` rejects naive datetimes. **Shipped feature 089 FR-1.3.** |
+| #00142 | `database.py:1186-1203` | Migration loop refactored to `BEGIN IMMEDIATE` + global try/raise; no per-migration silent except. **Refactored away.** |
+| #00143 | `workflow_state_server.py:1909` (`feature 089 FR-1.5` comment) | `query_phase_analytics` has project_id allowlist. **Shipped feature 089 FR-1.5.** |
+| #00146 | `workflow_state_server.py:1054` | `_detect_phase_events_drift` checks `["started", "completed", "skipped"]`. **Extended.** |
+| #00172 | `test-hooks.sh:3196+` | Test sources `session-start.sh` and calls `run_memory_decay` directly to exercise the shell selector. **Shipped feature 091.** |
+
+## Closures Applied (this feature's only deliverable)
+
+- `docs/backlog.md` — 7 HIGH items struck through with verified-feature-marker rationale per code-level verification.
+
+## Implication for Backlog Hygiene
+
+The W2 asymmetric-backlog-growth pattern is now concretely measurable: **7 HIGH-severity items remained "active" in backlog.md for 2-3 weeks after their fixes shipped** because no one closed them. Feature 099's `check_active_backlog_size` doctor warning was correctly signaling backlog asymmetry, but the new `/pd:cleanup-backlog` only archives strikethrough/closed items — it cannot detect "shipped but not marked" cases.
+
+This is a **follow-up signal for a future feature:** an automated closure-detector that scans backlog items mentioning `file:line` references against current code to flag items where the cited issue no longer exists. Filed as observation, not a feature commitment.
+
+## Out of Scope
+
+Per project directive ("focus on primary plugin features and primary/secondary defense; anything beyond that is most likely black swan, don't over-invest"):
+
+- The 92 MED/LOW non-testability items still open — likely many are also silently-shipped; would require code-level verification per item. Defer until either: (a) a doctor-detected real production regression, or (b) a future automated closure-detector feature.
+- The 57 testability items in `/pd:test-debt-report` — separate triage decision (Option A/B/C/D from earlier).
+- Ad-hoc test-hardening of any of the 7 confirmed-shipped fixes.
+
+## Closures NOT applied (architectural decision)
+
+- `#00144` — try/except + rollback in test-only helper. CIRCULAR over-defensive on test infrastructure. Closed with rationale.
+- `#00145` — AC-23 LOC accounting. Process artifact, not user-facing defense. Closed with rationale.
+
+## Original Empirical Verifications (kept for reference)
+
+```text
+>>> hash(True) == hash(1) == hash(1.0)  → True   (Python hash collapses — frozenset bug rationale for #00139)
+>>> {True, 1, 1.0}                       → {True}   (single element due to hash collapse)
+```
+
+## Provenance
+
+- 7 HIGH backlog items selected from active backlog post-feature-099 audit.
+- Implementation phase verified each item against current code; all 7 found already shipped.
+- Project directive: "focus on primary plugin features and primary and secondary defense; anything beyond that is most likely black swan, don't over-invest."
 
 ## Triage Filter Applied
 
