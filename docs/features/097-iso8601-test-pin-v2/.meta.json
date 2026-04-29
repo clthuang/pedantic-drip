@@ -2,11 +2,12 @@
   "id": "097",
   "slug": "iso8601-test-pin-v2",
   "mode": "standard",
-  "status": "active",
+  "status": "completed",
   "created": "2026-04-29T08:08:15.785885+00:00",
   "branch": "feature/097-iso8601-test-pin-v2",
+  "completed": "2026-04-29T09:01:46.690478+00:00",
   "backlog_source": "00278",
-  "lastCompletedPhase": "implement",
+  "lastCompletedPhase": "finish",
   "phases": {
     "brainstorm": {
       "started": "2026-04-29T08:08:15.785428+00:00",
@@ -27,6 +28,10 @@
     },
     "implement": {
       "completed": "2026-04-29T08:45:16.746289+00:00",
+      "iterations": 1
+    },
+    "finish": {
+      "completed": "2026-04-29T09:01:46.690478+00:00",
       "iterations": 1
     }
   }
