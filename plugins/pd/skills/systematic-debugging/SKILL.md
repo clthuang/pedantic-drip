@@ -100,6 +100,14 @@ This indicates an architectural problem, not a bug.
 | Environment guards | Prevent dangerous ops in test/prod |
 | Debug instrumentation | Capture context for forensics |
 
+## Tooling Friction Escape Hatches
+
+| Symptom | Escape Hatch |
+|---------|-------------|
+| Edit `old_string` fails on text containing non-ASCII characters that visually match ASCII (e.g. fullwidth digits `０１２` vs `012`, NEL U+0085 vs space, NBSP U+00A0 vs space) | Switch immediately to Python read-modify-write with byte-anchor assertions on adjacent line numbers. Generate non-ASCII chars at runtime via `chr(0x85)` etc. — do **not** embed them in the script source, since Write/Edit may strip them. |
+| Write/Edit silently strips control bytes from script source | Generate the byte at runtime: `NEL = chr(0x85)`, then concatenate. Verify post-write via `count` or `ord()` assertion before trusting the file. |
+| Edit retried 2-3 times with variant strings | Stop iterating. The mismatch is byte-level, not visible. Switch to Python RMW. |
+
 ## Related Skills
 
 - [root-cause-analysis](../root-cause-analysis/SKILL.md) - Formal 6-phase RCA with 3+ hypotheses, verification scripts, and causal DAG. Use when 3+ fix attempts have failed.
