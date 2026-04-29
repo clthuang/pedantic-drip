@@ -215,6 +215,7 @@ Direct-orchestrator. Single atomic commit:
 | AC-1 (import re) | grep at T1 | T1 |
 | AC-2 (relocated definition with re.ASCII) | 3 grep checks at T1 (literal substring + line anchor) | T1 |
 | AC-3 (lineage comment in destination) | 2 grep checks at T1 | T1 |
+| AC-3a (feature 096 annotation in lineage block) | grep at T1 | T1 |
 | AC-4 (convention comment) | grep at T1 | T1 |
 | AC-5 (definition removed from database.py) | grep -c returns 0 at T2 | T2 |
 | AC-6 (lineage comment removed from database.py) | grep -c returns 0 at T2 | T2 |
@@ -227,7 +228,7 @@ Direct-orchestrator. Single atomic commit:
 | AC-13 (atomic commit per-file) | 3 git log commands at T5 | T5 |
 | AC-14 (no circular import) | grep at T4 | T4 |
 
-All 14 ACs binary-verifiable. Zero manual-only ACs.
+All 15 ACs binary-verifiable (AC-1..AC-3, AC-3a, AC-4..AC-14). Zero manual-only ACs.
 
 ## Review History
 
@@ -246,7 +247,7 @@ All 14 ACs binary-verifiable. Zero manual-only ACs.
 ## Definition of Done
 
 Per spec.md DoD:
-- All 14 ACs pass binary verification
+- All 15 ACs pass binary verification
 - All 8 FRs implemented
 - All 4 NFRs met
 - `validate.sh` exit 0; pytest counts: 214 (test_database.py) + 3198 (plugins/pd/hooks/lib)
