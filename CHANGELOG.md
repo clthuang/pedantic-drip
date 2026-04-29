@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.16.9] - 2026-04-30
+
 ### Added
 
 - **Preventive hooks/checks/commands** (feature 099) — eight preventive measures derived from features 097-098 retrospective weakness review:
