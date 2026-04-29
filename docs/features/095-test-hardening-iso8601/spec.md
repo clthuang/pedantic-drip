@@ -37,7 +37,7 @@ Test-only feature; zero production code changes.
 - **AC-11** Pytest baseline pinned at feature 095 start: `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/semantic_memory/test_database.py -q | tail -1` returns `197 passed` (measured 2026-04-29). Post-feature count must equal `214 passed` (= 197 baseline + 17 new per NFR-1). No regressions; exact +17 delta.
 - **AC-12** Zero changes to `plugins/pd/hooks/lib/semantic_memory/database.py`. Verifiable: `git diff develop...HEAD -- plugins/pd/hooks/lib/semantic_memory/database.py` returns no output.
 - **AC-13a** Retro.md contains "Manual Verification" section with literal text matching `094 gate` AND `test self-update`. Verifiable: `grep -qE 'Manual Verification' docs/features/095-test-hardening-iso8601/retro.md && grep -qE '094 gate' docs/features/095-test-hardening-iso8601/retro.md && grep -qE 'test self-update' docs/features/095-test-hardening-iso8601/retro.md`.
-- **AC-13b** Open Question 1 closure: T6 dogfood verifies feature 094 gate's reviewer-dispatch diff scope INCLUDES test files. Verifiable: dogfood diff capture shows `test_database.py` in the path list passed to reviewers. Concrete artifact: `git diff develop...HEAD -- 'plugins/pd/hooks/lib/semantic_memory/test_database.py' | wc -l` returns > 0 captured in retro.md as evidence.
+- **AC-13b** Open Question 1 closure: during T9 (`/pd:finish-feature` → feature 094 Step 5b gate), retro.md captures the actual reviewer dispatch context (or its meaningful proxy: the `git diff` output passed to reviewers) and confirms `test_database.py` appears in the file list passed to at least one of the 4 reviewers. Concrete artifact: retro.md "Manual Verification" section contains a quoted excerpt from one reviewer's dispatch prompt (or its tool-input JSON) showing `test_database.py` as a referenced file. If feature 094's gate prompt construction (per qa-gate-procedure.md §1) embeds the full `git diff {pd_base_branch}...HEAD` output and that output contains `+++ b/plugins/pd/hooks/lib/semantic_memory/test_database.py` (the standard unified-diff file marker), AC-13b is closed.
 
 ## Functional Requirements
 
@@ -128,10 +128,10 @@ For `TestScanDecayCandidates` — match existing fixture pattern (`db: MemoryDat
 
 ```python
 @pytest.mark.parametrize("partial_unicode_input,case_name", [
-    ("2026-01-0１T00:00:00Z", "day-pos"),       # fullwidth 1 in day position
-    ("2026-01-01T０0:00:00Z", "hour-pos"),      # fullwidth 0 in hour position
-    ("2026-01-01T00:０0:00Z", "minute-pos"),    # fullwidth 0 in minute position
-    ("2026-01-01T00:00:０0Z", "second-pos"),    # fullwidth 0 in second position
+    ("2026-01-0１T00:00:00Z", "day-pos"),       # fullwidth 1 at day-units
+    ("2026-01-01T0１:00:00Z", "hour-pos"),      # fullwidth 1 at hour-units
+    ("2026-01-01T00:0１:00Z", "minute-pos"),    # fullwidth 1 at minute-units
+    ("2026-01-01T00:00:0１Z", "second-pos"),    # fullwidth 1 at second-units
 ], ids=["day-pos", "hour-pos", "minute-pos", "second-pos"])
 def test_pattern_rejects_partial_unicode_injection(
     self, db: MemoryDatabase, capsys, partial_unicode_input, case_name,
@@ -149,9 +149,9 @@ For `TestBatchDemote` — match existing pattern (no `db` fixture; manual constr
 ```python
 @pytest.mark.parametrize("partial_unicode_input,case_name", [
     ("2026-01-0１T00:00:00Z", "day-pos"),
-    ("2026-01-01T０0:00:00Z", "hour-pos"),
-    ("2026-01-01T00:０0:00Z", "minute-pos"),
-    ("2026-01-01T00:00:０0Z", "second-pos"),
+    ("2026-01-01T0１:00:00Z", "hour-pos"),
+    ("2026-01-01T00:0１:00Z", "minute-pos"),
+    ("2026-01-01T00:00:0１Z", "second-pos"),
 ], ids=["day-pos", "hour-pos", "minute-pos", "second-pos"])
 def test_batch_demote_rejects_partial_unicode_injection(self, partial_unicode_input, case_name):
     db = MemoryDatabase(":memory:")
@@ -201,14 +201,14 @@ The previous inline `from semantic_memory.database import _ISO8601_Z_PATTERN` in
   - **Total: 17 net new parametrized assertions** (within 15-25 target)
 - **NFR-2** Zero changes to `plugins/pd/hooks/lib/semantic_memory/database.py`. Verified by AC-12.
 - **NFR-3** No new external dependencies. Stdlib `inspect` + `re` only.
-- **NFR-4** Wall-clock direct-orchestrator implementation: target <30 min.
+- **NFR-4** Wall-clock direct-orchestrator implementation T0..T8 (implementation through quality gates): target <30 min. T9 (`/pd:finish-feature` triggering feature 094 Step 5b 4-reviewer parallel gate + merge + push + release) is excluded from this budget — its latency depends on feature 094's reviewer dispatch and is bounded by feature 094's own NFR-1 (≤5 min for ≤500 LOC diffs; feature 095 diff is well under that threshold).
 
 ## Edge Cases (mirror PRD)
 
 | Scenario | Expected Behavior | Verified by |
 |----------|-------------------|-------------|
 | Python `inspect.getsource()` regression returns wrong line (CPython #122981, fixed in 3.13.0 final; project runs **Python 3.14.4** per `plugins/pd/.venv/bin/python --version`, so risk is theoretical for current target) | Test FAILS LOUDLY (red CI) — false-RED is correct vs false-GREEN | AC-6, FR-1 (only `test_call_sites_use_fullmatch_not_match` uses `getsource`; structural pins #00246/#00247/#00248 use stable public attrs instead) |
-| `_ISO8601_Z_PATTERN` renamed in future refactor | All 5 source-pin tests fail at module collection (`ImportError`) | AC-2 module import + Edge Cases distribution: 4 of 7 pin tests live in NEW class; 3 (FR-2 + FR-3 ×2) live in EXISTING classes — partial protection if rename happens |
+| `_ISO8601_Z_PATTERN` renamed in future refactor | **ENTIRE test_database.py module fails to collect** (loud ImportError, all 214 tests blocked simultaneously) | AC-2 module-level import at line 15. By design (TD-3 reframe): rename refactor must touch both database.py AND test_database.py in same commit; loud collection error is the alarm signal. The 2-class split is for human readability, not collection-error isolation. |
 | Test class collection-failure SPOF | Mitigated by 2-class distribution: 4 source-pins in `TestIso8601PatternSourcePins`; 3 behavioral pins in existing `TestScanDecayCandidates` / `TestBatchDemote` | FR-1 + FR-2 + FR-3 |
 | Test self-update during refactor (test+prod co-commit) | Documented limitation; feature 094 pre-release QA gate is structural backstop | AC-13 |
 | Feature 094 gate excludes `tests/` from diff scope | Verified empirically during T6 dogfood per Success Criterion + Open Question 1 | T6 + retro.md |

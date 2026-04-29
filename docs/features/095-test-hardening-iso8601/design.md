@@ -71,15 +71,22 @@ Inserted between existing `TestBatchDemote` (ends ~line 2122) and next class. To
 
 **Rationale:** Pattern follows existing in-repo precedent (`test_workflow_state_server.py:1851`). Python 3.14.4 (project version) is post-CPython-#122981 fix. False-RED on Python upgrade is acceptable; false-GREEN avoided.
 
-### TD-3: Two-class distribution (avoid collection-error SPOF)
+### TD-3: Two-class distribution (organize by concern; collection-error blast radius reframed)
 
 **Decision:** Source-level structural pins (#00246-#00250, all 5 methods) live in NEW `TestIso8601PatternSourcePins` class. Behavioral pins (#00251 trailing-WS parity, #00252 partial-injection ×2) live in EXISTING `TestScanDecayCandidates` + `TestBatchDemote` classes.
 
 **Alternatives rejected:**
-- All 7 pins in one new class → single import-error kills all 7 simultaneously (antifragility R-2 collection-error SPOF)
-- All 7 pins distributed in existing classes → blurs source-vs-behavior boundary; readers can't grep one class for "structural pins"
+- All 7 pins in one new class → blurs source-vs-behavior boundary; readers can't grep one class for "structural pins"; single class also harder to comprehend at 200+ LOC.
+- All 7 pins distributed in existing classes → no clear "structural pins" landing spot; obscures the source-vs-behavior distinction the advisors emphasized.
 
-**Rationale:** Antifragility advisor recommendation. If `_ISO8601_Z_PATTERN` is renamed/moved, only the 5 pins in `TestIso8601PatternSourcePins` fail at collection; the 12 behavioral assertions (4 partial-injection scan + 4 partial-injection batch + 2 trailing-WS extension + existing behavior tests) continue to fire and emit signal.
+**Rationale (revised after design-reviewer iter 1 blocker 2):** This split is for **conceptual organization**, NOT collection-error isolation.
+
+**Honest collection-error blast-radius reframing:** FR-5 promotes `_ISO8601_Z_PATTERN` to a module-level import at `test_database.py:15` (alongside the existing `MemoryDatabase` import). If the symbol is renamed in `database.py`, the **ENTIRE `test_database.py` module fails to collect** — all 214 tests, not just the 5 in `TestIso8601PatternSourcePins`. This is intentional and acceptable because:
+1. `_ISO8601_Z_PATTERN` is already referenced by 6+ test methods across 3 classes (`TestScanDecayCandidates`, `TestBatchDemote`, the new `TestIso8601PatternSourcePins`) — localizing the import to one class would NOT isolate the blast radius given the existing usage pattern.
+2. A rename refactor must update both `database.py` AND `test_database.py` in the same commit anyway; the loud collection-error IS the alarm signal.
+3. Pre-feature 095, `_ISO8601_Z_PATTERN` is already a critical import (`test_iso_utc_output_always_passes_hardened_pattern` body imports it inline at line 2041 and asserts on it); its rename would already have broken that test. Feature 095 just makes the dependency explicit at module top.
+
+**Antifragility R-2 mitigation (refined):** the 2-class split provides clarity for human readers grepping "what test class covers source-level pins?" — it does NOT provide collection-error isolation. The original antifragility R-2 framing in spec was over-strong; this TD reframes it honestly.
 
 ### TD-4: Match existing fixture asymmetry (don't normalize)
 
@@ -90,6 +97,16 @@ Inserted between existing `TestBatchDemote` (ends ~line 2122) and next class. To
 - Force both to use manual construction — would diverge from existing TestScanDecayCandidates `capsys`-based stderr capture pattern.
 
 **Rationale:** Spec discipline. Fixture asymmetry mirrors the read-vs-write semantic split shipped in feature 092 (TD-3 read-path log-and-skip vs write-path raise). Tests should match call-site posture, not normalize for cosmetic uniformity.
+
+### TD-6: FR-4 retrofit of `ids=` onto existing parametrize block
+
+**Decision:** Add `ids=[c for _, c in cases]` to the existing `test_batch_demote_rejects_invalid_now_iso` parametrize block at `test_database.py:2102` as part of feature 095 (per spec FR-4 + AC-10). This changes pytest test-ID output for the 8 pre-existing cases from auto-numbered (e.g., `test_batch_demote_rejects_invalid_now_iso[invalid_now_iso0-empty]`) to descriptive (`...[empty]`).
+
+**Alternatives rejected:**
+- Leave existing block without `ids=` — inconsistent with new parametrize blocks in same feature; defeats feature 094 retro suggestion #00243.
+- File as separate backlog cleanup — micro-task pollutes backlog.
+
+**Rationale:** Cosmetic improvement to pytest output. **Verified no external CI consumer** of these specific test IDs in this repo (no test-report dashboard parses pytest IDs; CI just runs `pytest` and checks exit code). One-line decorator edit.
 
 ### TD-5: In-place cleanup of redundant inline import (FR-5 cleanup expansion)
 
@@ -166,12 +183,14 @@ assert 're.compile(' not in src                                  # #00249 negati
 
 ### I-6: Partial Unicode-injection cases (parametrized over 4 positions × 2 call sites)
 
+Standardized on fullwidth `１` (U+FF11) at the units digit of each position (matches existing `test_pattern_rejects_unicode_digits` precedent which uses fullwidth `２０２６` for year). Inserting at units position keeps cases readable and isomorphic across positions:
+
 ```python
 [
-    ("2026-01-0１T00:00:00Z", "day-pos"),
-    ("2026-01-01T０0:00:00Z", "hour-pos"),
-    ("2026-01-01T00:０0:00Z", "minute-pos"),
-    ("2026-01-01T00:00:０0Z", "second-pos"),
+    ("2026-01-0１T00:00:00Z", "day-pos"),       # fullwidth 1 at day-units
+    ("2026-01-01T0１:00:00Z", "hour-pos"),      # fullwidth 1 at hour-units
+    ("2026-01-01T00:0１:00Z", "minute-pos"),    # fullwidth 1 at minute-units
+    ("2026-01-01T00:00:0１Z", "second-pos"),    # fullwidth 1 at second-units
 ]
 ```
 
@@ -180,9 +199,11 @@ Batch-path body: `pytest.raises(ValueError, match="Z-suffix ISO-8601")` around `
 
 ## Risks
 
-- **R-1 [LOW]** `inspect.getsource()` returns wrong content for decorated callable. **Mitigated:** call sites are plain methods (no decorators); only used in 1 method (TD-1 minimizes blast). Python 3.14.4 post-#122981.
+- **R-1 [LOW]** `inspect.getsource()` returns wrong content for decorated callable. **Mitigated:** `MemoryDatabase.scan_decay_candidates` and `MemoryDatabase.batch_demote` are plain methods (no decorators — verified by code-quality reviewer in dogfood); only used in 1 method (TD-1 minimizes blast). Python 3.14.4 post-#122981.
 - **R-2 [LOW]** Test self-update co-commit (test + prod changed together) — fundamental limitation of any pin test. **Mitigated:** AC-13a/13b; structural backstop is feature 094 pre-release QA gate (Open Question 1 closure verifies test-file scope).
-- **R-3 [LOW]** Renaming `_ISO8601_Z_PATTERN` causes 5 pin tests to fail at collection. **Acceptable:** rename refactor must touch tests anyway; loud collection-error IS the alarm.
+- **R-3 [LOW]** Renaming `_ISO8601_Z_PATTERN` causes ENTIRE `test_database.py` module to fail collection (revised from "5 pin tests" per design-reviewer iter 1). **Acceptable:** rename refactor must touch tests anyway; loud collection-error IS the alarm. See TD-3 reframe.
+- **R-4 [LOW]** `re.compile` global cache: pattern object remains importable as a module attribute even if a future refactor removes the inline `_ISO8601_Z_PATTERN.fullmatch(...)` call from `scan_decay_candidates` or `batch_demote` body. **Mitigated:** AC-6 positive assertion `'_ISO8601_Z_PATTERN.fullmatch(' in src` reads the function body via `inspect.getsource()`, NOT the module namespace — so a removed call-site usage is caught regardless of import-cache state. Surfaced by pre-mortem advisor as failure mode #3; explicitly traced here.
+- **R-5 [MED]** Feature 094 gate first-run failure at T9. **Likelihood:** non-trivial (this is the first production exercise of an unverified gate per pre-mortem advisor failure mode #4). **Contingency:** if gate produces a false-blocker, capture the failure mode in retro.md "Manual Verification" section, file backlog item against feature 094 with marker `(surfaced by feature:095 first-gate-run)`, and use the `qa-override.md` manual-override path documented in feature 094's qa-gate-procedure.md §8 (≥50-char trimmed-count rationale required). Do NOT silently bypass. AC-13a documents both the gate-pass case AND the gate-failure-with-override case.
 
 ## Out of Scope
 
@@ -226,6 +247,21 @@ Direct-orchestrator (091/092/093/094 surgical template). All in one atomic commi
 | AC-13b | dogfood diff capture in retro.md showing test_database.py in path list |
 
 All ACs binary-verifiable. No manual ACs.
+
+## Review History
+
+### Iteration 1 — design-reviewer (opus, 2026-04-29)
+
+**Findings:** 2 blockers + 4 warnings + 3 suggestions
+
+**Corrections applied:**
+- AC-13b — replaced tautological `wc -l > 0` artifact with concrete dispatch-prompt evidence requirement (capture `+++ b/test_database.py` from feature 094 reviewer's diff context). Reason: Blocker 1 (T6/T9 referent collision) + Warning 3 (tautological artifact). Spec now references T9 explicitly via "/pd:finish-feature".
+- TD-3 — reframed honestly: 2-class split is for **conceptual organization**, not collection-error isolation. FR-5 module-level import lift expands blast radius to whole file (acceptable because rename refactor must touch tests anyway; loud collection-error IS the alarm). Spec Edge Cases table updated to match. Reason: Blocker 2.
+- R-4 NEW — added explicit risk entry for `re.compile` global-cache failure mode (pre-mortem advisor failure mode #3). Mitigation traced through AC-6 positive assertion. Reason: Warning 4.
+- R-5 NEW — added MED risk for feature 094 first-gate-run failure with explicit contingency (capture, file backlog, qa-override.md path). Reason: Warning 5.
+- I-6 + spec FR-3 — standardized on fullwidth `１` at units-position across all 4 cases (was inconsistent `１` for day, `０` for others). Reason: Suggestion 6.
+- TD-6 NEW — explicit treatment of FR-4 retrofit of `ids=` onto existing parametrize block; verified no external CI consumer of pytest IDs. Reason: Suggestion 7.
+- NFR-4 — clarified scope: <30 min applies to T0..T8 only; T9 finish-feature gate latency excluded (bounded by feature 094 NFR-1). Reason: Suggestion 8.
 
 ## Definition of Done
 
