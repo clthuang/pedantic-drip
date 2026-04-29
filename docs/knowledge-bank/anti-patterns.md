@@ -688,3 +688,19 @@ Adding a new key to an MCP tool response shape breaks existing tests that assert
 - Confidence: high
 - Last observed: Feature #081
 - Observation count: 1
+
+### Anti-Pattern: Recursive Test-Hardening Around a Misplaced Private Symbol
+When 3+ consecutive features add increasingly elaborate tests (call-site source pins, .pattern/.flags pins, byte-equality pins) around the same private symbol, the underlying issue is architectural debt — the symbol is co-located with its consumer instead of its producer. Adding more tests is a losing battle; the structural fix is to relocate the symbol.
+- Observed in: Features 091/092/093/095 → 096 (cycle around `_ISO8601_Z_PATTERN` in database.py; broken by relocating to _config_utils.py alongside producer `_iso_utc`)
+- Fix: when a feature backlog item proposes the 4th round of test-hardening on the same symbol, instead investigate whether the symbol should move. Threshold = 3 consecutive features hardening identical surface.
+- Confidence: high
+- Last observed: Feature #096
+- Observation count: 1
+
+### Anti-Pattern: Skipping implementation-log.md in Direct-Orchestrator Pattern
+Direct-orchestrator features still need a minimal implementation-log.md with T0 baselines, per-task DoD outcomes, and tooling-friction notes — even when review-history is inlined into plan.md. Without one, retros cannot reconstruct phase signals and qualitative analysis becomes dependent on conversation replay (non-durable).
+- Observed in: Feature 096-iso8601-pattern-relocation (.review-history.md and implementation-log.md both missing; retro had to reconstruct T1-T5 outcomes from conversation context)
+- Fix: direct-orchestrator template should include a 3-section implementation-log.md stub: T0 baselines, per-task PASS/FAIL DoD checks, tooling-friction notes. Cheap to write; expensive to reconstruct.
+- Confidence: medium
+- Last observed: Feature #096
+- Observation count: 1

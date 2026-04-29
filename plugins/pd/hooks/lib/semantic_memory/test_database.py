@@ -14,7 +14,8 @@ from datetime import datetime, timezone
 import numpy as np
 import pytest
 
-from semantic_memory.database import MemoryDatabase, _sanitize_fts5_query, _ISO8601_Z_PATTERN
+from semantic_memory.database import MemoryDatabase, _sanitize_fts5_query
+from semantic_memory._config_utils import _ISO8601_Z_PATTERN
 
 
 # ---------------------------------------------------------------------------
