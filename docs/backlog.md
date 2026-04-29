@@ -402,3 +402,15 @@ First production exercise of feature 094's Step 5b adversarial QA gate produced 
 - ~~**#00286**~~ [LOW/testability] **CLOSED 2026-04-29** — FR-2 trailing-whitespace extension extended to `\t`, `\v`, `\f`, `\r` alone, and NEL (U+0085). `test_pattern_rejects_trailing_whitespace` parametrize +5 cases; `TestBatchDemote._INVALID_NOW_ISO_CASES` +5 cases. pytest 214→224 (+10).
 - ~~**#00287**~~ [LOW/testability] **CLOSED 2026-04-29** — `assert r'\D' not in _ISO8601_Z_PATTERN.pattern` added to `test_pattern_source_uses_explicit_digit_class`.
 - ~~**#00288**~~ [LOW/quality] **CLOSED 2026-04-29** — `specifying` skill Self-Check now requires explicit enumeration of all stdlib imports referenced in test bodies (not just the most prominent one). Closes the traceability gap for future specs.
+
+## From Feature 096 Retro Tune #5 (2026-04-29)
+
+- **#00289** [LOW/docs-hygiene] Tier-doc frontmatter drift sweep. As of 2026-04-29, six tier-doc files have stale `last-updated` frontmatter values that pre-date their tier's source-monitoring timestamp:
+  - `docs/user-guide/overview.md` (last-updated 2026-04-02; source ts 2026-04-18)
+  - `docs/user-guide/installation.md` (last-updated 2026-04-15; source ts 2026-04-18)
+  - `docs/user-guide/usage.md` (last-updated 2026-04-15; source ts 2026-04-18)
+  - `docs/technical/architecture.md` (last-updated 2026-04-15T00; source ts 2026-04-15T09)
+  - `docs/technical/workflow-artifacts.md` (last-updated 2026-04-15T00; source ts 2026-04-15T09)
+  - `docs/technical/api-reference.md` (last-updated 2026-04-02; source ts 2026-04-15)
+
+  Drift accumulated across features 079-095, NOT feature 096-driven. The honest fix is content-audit-then-bump (verify each doc still reflects current state before updating timestamp), not mechanical timestamp bumping. Estimated effort: ~30 minutes per doc × 6 = 3 hours. Filed as a future feature scope rather than inline cleanup. Surfaced by feature:096 retro Tune #5.
