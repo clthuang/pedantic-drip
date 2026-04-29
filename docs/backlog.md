@@ -419,7 +419,7 @@ First production exercise of feature 094's Step 5b adversarial QA gate produced 
 
 ## From Feature 096 Retro Tune #5 (2026-04-29)
 
-- **#00289** [LOW/docs-hygiene] Tier-doc frontmatter drift sweep. As of 2026-04-29, six tier-doc files have stale `last-updated` frontmatter values that pre-date their tier's source-monitoring timestamp:
+- ~~**#00289**~~ [LOW/docs-hygiene] **CLOSED 2026-04-29 (promoted → feature:098-tier-doc-frontmatter-sweep)** — content-audited and refreshed via 6 parallel audit subagents. 5 BUMP_AND_FIX + 1 DRIFT (api-reference.md). All 6 timestamps bumped to 2026-04-29 with `audit-feature` provenance. Original entry preserved below for reference: Tier-doc frontmatter drift sweep. As of 2026-04-29, six tier-doc files have stale `last-updated` frontmatter values that pre-date their tier's source-monitoring timestamp:
   - `docs/user-guide/overview.md` (last-updated 2026-04-02; source ts 2026-04-18)
   - `docs/user-guide/installation.md` (last-updated 2026-04-15; source ts 2026-04-18)
   - `docs/user-guide/usage.md` (last-updated 2026-04-15; source ts 2026-04-18)
