@@ -226,8 +226,9 @@ check_tier_doc_freshness() {
 check_active_backlog_size() {
     # Per spec FR-6b + TD-1 (revised): invoke cleanup_backlog.py via subprocess CLI
     # (NOT Python import). Single canonical surface tested by AC-X1.
-    local script_dir backlog_path threshold count
+    local script_dir config_file backlog_path threshold count
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    config_file="${PROJECT_ROOT}/.claude/pd.local.md"  # explicit local — does not assume run_all_checks prelude
     backlog_path="${PROJECT_ROOT}/docs/backlog.md"
     threshold=$(read_config_field "${config_file}" "backlog_active_threshold" "30")
     count=$(python3 "${script_dir}/cleanup_backlog.py" --count-active --backlog-path "${backlog_path}" 2>/dev/null || echo 0)
@@ -414,7 +415,9 @@ Closed sections moved from backlog.md by /pd:cleanup-backlog.   ← line 3 (body
                             ← (last line of section is trailing blank)
 ```
 
-So `archive_total_lines = 4 (header) + sum(section_total_lines)` where `section_total_lines` includes the section's trailing blank. AC-9(c) formula reduces to: `4 + sum(section_lines_per_archived)` — drop the `+ N_archived_sections` redundancy that double-counted the trailing blanks. **Implement-phase will need to either amend AC-9(c) in spec OR add a clarifying note that the section_lines count INCLUDES the trailing blank.**
+So `archive_total_lines = 4 (header) + sum(section_total_lines)` where `section_total_lines` includes the section's trailing blank. AC-9(c) formula reduces to: `4 + sum(section_lines_per_archived)` — drop the `+ N_archived_sections` redundancy that double-counted the trailing blanks.
+
+**Tracked task for implement phase:** Add a tasks.md entry under Group E for FR-6a: "Reconcile AC-9(c) line-count formula by adding clarifying note in spec.md that section_lines includes trailing blank, OR amend AC-9(c) to drop the +N_archived_sections term." This carry-forward prevents the spec/design discrepancy from being lost between phases.
 
 ### I-5: test_debt_report.py — public API
 
@@ -496,7 +499,7 @@ Two new bullet items appended to existing Self-Check list (after the #00288 clos
 | Risk | Severity | Likelihood | Mitigation |
 |------|----------|------------|------------|
 | Hook performance exceeds 200ms budget on large file_path edits | Medium | Low | Cap codepoint scan at 5 unique per field (FR-5 step 4); python3 startup ~80ms is fixed cost; total scan O(N) on input string. |
-| AC-X1 fails because `python3 -c "from cleanup_backlog import ..."` requires PYTHONPATH | High | Medium | Use absolute-path invocation: `python3 -c "import sys; sys.path.insert(0, '/path/to/scripts'); from cleanup_backlog import is_item_closed"`. Document in doctor implementation. |
+| AC-X1 subprocess invocation fails due to python3 PATH issues or missing cleanup_backlog.py | Medium | Low | TD-1 uses `${BASH_SOURCE[0]}`-relative resolution → `${script_dir}/cleanup_backlog.py`. Falls back to `echo 0` on subprocess error (`2>/dev/null \|\| echo 0`), so doctor never crashes. Verified portable across cache + dev workspace plugin paths via the design-time spot-check. |
 | FR-3 destructive `git branch -D` hint causes user to lose uncommitted work | High | Low | Severity-split (TD/spec FR-3): only Tier 1 known-terminal states get the `-D` hint; Tier 2 unknown gets non-destructive guidance. Merged branches always silent. |
 | Doctor performance regression — 3 new checks add up to 5s+ on large project | Medium | Medium | Per NFR-3 budget 3s combined. Each check has bounded inputs (≤20 branches, ≤30 docs, ≤200 backlog lines). Measure during implement. |
 | FR-1 regex misclassifies novel test-file naming conventions | Low | Low | Anchored to `.py` only (intentional per spec). Non-Python tests get standard AC-5b path (HIGH→MED), not the new HIGH→LOW. Fail-safe. |
