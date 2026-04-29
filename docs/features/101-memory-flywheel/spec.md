@@ -24,7 +24,7 @@ backwards-compatibility shims (private tooling).
 | Stage | FRs | File domain |
 |-------|-----|-------------|
 | 1 — Foundations | FR-2, FR-3, FR-5 | `database.py`, `maintenance.py`, `memory_server.py`, `session-start.sh` |
-| 2 — Influence Wiring + Lifecycle | FR-1, FR-4 | `commands/{specify,design,create-plan,implement}.md`, `maintenance.py`, new `audit.py` |
+| 2 — Influence Wiring + Lifecycle | FR-1, FR-4 | `commands/{specify,design,create-plan,implement}.md`, `maintenance.py`, new `audit.py`, new `scripts/check_block_ordering.py` |
 | 3 — Adoption Trigger | FR-6 | `skills/retrospecting/SKILL.md` |
 
 Stages MAY ship as one PR or three sequential PRs at implementer
@@ -192,6 +192,10 @@ but the user's DB shows 0 rows — diagnose AND repair.
   satisfies (use the larger). Rationale: 5ms is the hard floor for
   near-zero baselines; 5% protects against scaling regressions on slower
   baselines.
+  **Baseline capture:** the benchmark fixture runs the same query path
+  twice — once with the FR-3 `update_recall` call monkeypatched to a no-op
+  (baseline), once unpatched (post-FR-3). Both measured in the same test
+  invocation; no separately-pinned baseline file required.
 
 ### FR-4: Confidence Upgrade Path
 
