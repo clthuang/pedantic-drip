@@ -2,11 +2,12 @@
   "id": "098",
   "slug": "tier-doc-frontmatter-sweep",
   "mode": "standard",
-  "status": "active",
+  "status": "completed",
   "created": "2026-04-29T10:12:20.272326+00:00",
   "branch": "feature/098-tier-doc-frontmatter-sweep",
+  "completed": "2026-04-29T10:26:18.472225+00:00",
   "backlog_source": "00289",
-  "lastCompletedPhase": "implement",
+  "lastCompletedPhase": "finish",
   "phases": {
     "brainstorm": {
       "started": "2026-04-29T10:12:20.272057+00:00",
@@ -27,6 +28,10 @@
     },
     "implement": {
       "completed": "2026-04-29T10:21:47.924310+00:00",
+      "iterations": 1
+    },
+    "finish": {
+      "completed": "2026-04-29T10:26:18.472225+00:00",
       "iterations": 1
     }
   }
