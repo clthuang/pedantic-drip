@@ -390,7 +390,12 @@ First production exercise of feature 094's Step 5b adversarial QA gate produced 
   - **(g)** `TestIso8601PatternSourcePins` module-level import creates collection-error blast radius across all 214 tests on rename. Fix: `pytest.importorskip` probe + isolation test using `getattr(...)`.
   - **(h)** `test_pattern_rejects_unicode_digits_directly` covers only 3 Unicode scripts (fullwidth, Arabic-Indic, Devanagari) at year position — Bengali, Tibetan, Khmer, Myanmar slip past. Fix: property-based test enumerating ALL Unicode `Nd` category chars.
 
-  Surfaced by feature:095 test-deepener (3 HIGH→MED via AC-5b narrowed remap with no cross-confirm; 5 native MED). **Note:** several sub-items (a, c, e, g) become trivially obviated if `_ISO8601_Z_PATTERN` is relocated to `_config_utils.py` per #00277 — recommend pursuing #00277 first.
+  Surfaced by feature:095 test-deepener (3 HIGH→MED via AC-5b narrowed remap with no cross-confirm; 5 native MED).
+
+  **Post-096 audit (2026-04-29):** the original brief's claim that sub-items (a, c, e, g) would be "trivially obviated" by feature 096's relocation was over-stated. After auditing each sub-item against the post-096 state of `test_database.py:2265-2309`, **none** of the eight concerns is actually eliminated by relocation alone — the test methods continue to use substring/closed-set assertions on `_ISO8601_Z_PATTERN.pattern` regardless of which module hosts the symbol. What feature 096 *did* enable is a new defensive test (`assert database._ISO8601_Z_PATTERN is _config_utils._ISO8601_Z_PATTERN` for single-source-of-truth pinning) which is additive, not obviating. Recommended next steps:
+  - **Lower priority** for sub-items (a, c, e, g): the architectural fix (096) reduces the *frequency* at which this debt manifests (no more recursive hardening pressure on this specific symbol), but the test-pin weaknesses themselves remain.
+  - **Defer all 8 sub-items** unless a concrete mutation slips through — feature 096's hash-equality + co-location pattern reduces the realistic blast radius of escape mutations to "very low".
+  - **If pursued**, scope as a single "test-pin v2 sweep" feature targeting all 8 sub-items together (they share a common test class and remediation style).
 
 **LOW (3) — surfaced by feature:095 pre-release QA:**
 
