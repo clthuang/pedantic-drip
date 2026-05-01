@@ -581,14 +581,24 @@ class MemoryDatabase:
                             (new_conf, existing_id),
                         )
 
-            # Feature 101 FR-4: _recompute_confidence inline hook (always-on,
-            # uses memory_promote_min_observations / memory_promote_use_signal
-            # keys per design C-8). Computes upgrade based on projected
-            # post-merge counters; applied even if memory_auto_promote is off.
+            # Feature 101 FR-4: _recompute_confidence inline hook.
+            # Imports from sibling _confidence module (pure function; breaks
+            # the upward dependency that an import from maintenance.py would
+            # introduce — code-quality-reviewer iter 1, blocker B2).
+            #
+            # Reads the CURRENT confidence (post-auto-promote, if it ran)
+            # to avoid the double-upgrade race where memory_auto_promote
+            # already wrote a new tier — code-quality-reviewer iter 1, W3.
             try:
-                from semantic_memory.maintenance import _recompute_confidence
+                from semantic_memory._confidence import _recompute_confidence
+                # Re-read confidence in case memory_auto_promote block updated it.
+                cur_row = self._conn.execute(
+                    "SELECT confidence FROM entries WHERE id = ?",
+                    (existing_id,),
+                ).fetchone()
+                cur_conf = cur_row["confidence"] if cur_row else entry["confidence"]
                 projected = {
-                    "confidence": entry["confidence"],
+                    "confidence": cur_conf,
                     "observation_count": entry["observation_count"] + 1,
                     "influence_count": entry.get("influence_count", 0),
                     "recall_count": entry.get("recall_count", 0),
@@ -600,7 +610,7 @@ class MemoryDatabase:
                     ),
                 }
                 new_conf_fr4 = _recompute_confidence(projected)
-                if new_conf_fr4 and new_conf_fr4 != entry["confidence"]:
+                if new_conf_fr4 and new_conf_fr4 != cur_conf:
                     self._conn.execute(
                         "UPDATE entries SET confidence = ? WHERE id = ?",
                         (new_conf_fr4, existing_id),
@@ -1104,6 +1114,33 @@ class MemoryDatabase:
             self._conn.rollback()
             raise
         return rows_affected
+
+    def scan_upgrade_candidates(
+        self, *, k_obs: int, k_use: int, scan_limit: int
+    ) -> list[dict]:
+        """Yield candidates eligible for confidence upgrade (Feature 101 FR-4).
+
+        Encapsulates the read path previously inlined at
+        ``maintenance._select_upgrade_candidates``. Closes the
+        "Direct ``db._conn`` Access" anti-pattern (mirrors
+        ``scan_decay_candidates``).
+
+        Selects entries with ``confidence != 'high'`` matching either
+        the observation gate (``observation_count >= k_obs``) or the
+        use gate (``influence_count >= 1 AND influence_count + recall_count >= k_use``).
+        No staleness filter — disjoint from decay's stale-only candidate scan.
+        """
+        sql = (
+            "SELECT id, confidence, observation_count, influence_count, recall_count "
+            "FROM entries "
+            "WHERE confidence != 'high' "
+            "  AND (observation_count >= ? "
+            "       OR (influence_count >= 1 AND influence_count + recall_count >= ?)) "
+            "LIMIT ?"
+        )
+        cursor = self._conn.execute(sql, (k_obs, k_use, scan_limit))
+        cols = [c[0] for c in cursor.description]
+        return [dict(zip(cols, row)) for row in cursor.fetchall()]
 
     def batch_promote(
         self,

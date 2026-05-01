@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sqlite3
 import sys
@@ -22,10 +23,19 @@ from pathlib import Path
 
 
 SC1_TARGET = 0.80
+# Security: prevent git argument injection via untrusted ref/branch input.
+# Allows 7-40 hex chars (commit SHA) and standard Git ref characters.
+_SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
+_REF_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
+_FEATURE_ID_RE = re.compile(r"^[0-9]{1,4}$")
 
 
 def _resolve_feature_path(feature_id: str) -> Path:
     """Find feature dir matching `{id}-*` pattern under docs/features/."""
+    if not _FEATURE_ID_RE.fullmatch(feature_id):
+        raise ValueError(
+            f"Invalid feature_id {feature_id!r} — must be 1-4 digits"
+        )
     candidates = sorted(Path("docs/features").glob(f"{feature_id}-*"))
     if not candidates:
         raise FileNotFoundError(f"No feature directory found for ID {feature_id}")

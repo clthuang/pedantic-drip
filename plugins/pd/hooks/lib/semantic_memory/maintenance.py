@@ -35,6 +35,7 @@ from semantic_memory._config_utils import (
     _resolve_int_config as _resolve_int_config_core,
     _warn_and_default as _warn_and_default_core,
 )
+from semantic_memory._confidence import _recompute_confidence as _recompute_confidence_core
 from semantic_memory.database import MemoryDatabase
 
 # ---------------------------------------------------------------------------
@@ -524,50 +525,8 @@ def decay_confidence(
 # ---------------------------------------------------------------------------
 
 
-def _recompute_confidence(entry: dict) -> str | None:
-    """Return new confidence tier if upgrade applies, else None.
-
-    Feature 101 FR-4. OR-semantics over two gates with outcome-validation
-    floor on the use gate:
-
-    - Observation gate: ``observation_count >= K_OBS``
-      (default 3, key ``memory_promote_min_observations``).
-    - Use gate: ``influence_count >= 1 AND influence_count + recall_count >= K_USE``
-      (default ``K_USE=5``, new key ``memory_promote_use_signal``).
-
-    Either gate triggers ``low → medium``. Both gates' values doubled
-    (``K_OBS_HIGH = K_OBS * 2``, ``K_USE_HIGH = K_USE * 2``) trigger
-    ``medium → high``. ``high`` is idempotent (returns None).
-
-    Pure function: no DB access, no config read here. Caller resolves
-    K_OBS and K_USE via ``_resolve_int_config`` and passes them via
-    ``entry`` shape... actually, since the function is pure, it reads
-    constants from module-level config (set by ``upgrade_confidence``).
-    """
-    cur = entry.get("confidence", "low")
-    if cur not in ("low", "medium"):
-        return None
-    obs = int(entry.get("observation_count", 0) or 0)
-    inf = int(entry.get("influence_count", 0) or 0)
-    rec = int(entry.get("recall_count", 0) or 0)
-
-    K_OBS = entry.get("_K_OBS", 3)
-    K_USE = entry.get("_K_USE", 5)
-    K_OBS_HIGH = K_OBS * 2
-    K_USE_HIGH = K_USE * 2
-
-    obs_gate_med = obs >= K_OBS
-    use_gate_med = inf >= 1 and (inf + rec) >= K_USE
-    obs_gate_high = obs >= K_OBS_HIGH
-    use_gate_high = inf >= 1 and (inf + rec) >= K_USE_HIGH
-
-    if cur == "low" and (obs_gate_med or use_gate_med):
-        if obs_gate_high or use_gate_high:
-            return "high"
-        return "medium"
-    if cur == "medium" and (obs_gate_high or use_gate_high):
-        return "high"
-    return None
+# Re-export for backward-compat with tests that patch the module symbol.
+_recompute_confidence = _recompute_confidence_core
 
 
 def _select_upgrade_candidates(
@@ -575,21 +534,16 @@ def _select_upgrade_candidates(
 ) -> list[dict]:
     """Scan entries with confidence != 'high' that satisfy upgrade gates.
 
-    Feature 101 FR-4. Independent of decay_confidence's staleness scan —
-    selects HOT entries (eligible for promotion) regardless of recency.
-    Bounded by ``scan_limit``.
+    Feature 101 FR-4. Delegates to the public ``db.scan_upgrade_candidates``
+    method (closes the Direct ``db._conn`` Access anti-pattern per
+    code-quality-reviewer iter 1, blocker B1).
+
+    Independent of decay_confidence's staleness scan — selects HOT entries
+    (eligible for promotion) regardless of recency. Bounded by ``scan_limit``.
     """
-    sql = (
-        "SELECT id, confidence, observation_count, influence_count, recall_count "
-        "FROM entries "
-        "WHERE confidence != 'high' "
-        "  AND (observation_count >= ? "
-        "       OR (influence_count >= 1 AND influence_count + recall_count >= ?)) "
-        "LIMIT ?"
+    return db.scan_upgrade_candidates(
+        k_obs=k_obs, k_use=k_use, scan_limit=scan_limit
     )
-    cursor = db._conn.execute(sql, (k_obs, k_use, scan_limit))
-    cols = [c[0] for c in cursor.description]
-    return [dict(zip(cols, row)) for row in cursor.fetchall()]
 
 
 def upgrade_confidence(
