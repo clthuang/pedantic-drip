@@ -14,6 +14,10 @@ Thumbs.db
 .claude/.yolo-hook-state
 .claude/.plan-review-state
 
+# Feature 101 FR-1: per-feature influence-log sidecar (diagnostic)
+docs/features/*/.influence-log.jsonl
+docs/features/*/.influence-log.jsonl.pre-cutover
+
 # Logs
 *.log
 firebase-debug.log

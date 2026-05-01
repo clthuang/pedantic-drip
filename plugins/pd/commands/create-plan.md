@@ -159,15 +159,16 @@ c. **Parse response:** Extract `approved` field.
 
    **Fallback detection (I9):** Search the agent's response for "Files read:" pattern. If not found, log `LAZY-LOAD-WARNING: plan-reviewer did not confirm artifact reads` to `.review-history.md`. Proceed regardless. Note: Resumed dispatches (I2 template) do not include Required Artifacts, so "Files read:" may not appear — only apply I9 detection to fresh dispatches.
 
-   **Post-dispatch influence tracking:**
-   If search_memory returned entries before this dispatch:
-     call record_influence_by_content(
-       subagent_output_text=<full agent output text>,
-       injected_entry_names=<list of entry names from search_memory results>,
-       agent_role="plan-reviewer",
-       feature_type_id=<current feature type_id from .meta.json>)
-     If record_influence_by_content fails: warn "Influence tracking failed: {error}", continue
-     If .meta.json missing or type_id unresolvable: skip influence recording with warning
+   <!-- influence-tracking-site: s5 -->
+   **Influence tracking (mandatory, unconditional):**
+   Call `record_influence_by_content(
+     subagent_output_text=<full agent output text>,
+     injected_entry_names=<list from search_memory results, or [] if none>,
+     agent_role="plan-reviewer",
+     feature_type_id=<current feature type_id from .meta.json>)`
+   Emit one line to your output: `Influence recorded: N matches`.
+   On MCP failure: warn "Influence tracking failed: {error}", continue.
+   If .meta.json missing or type_id unresolvable: skip with warning.
 
 d. **Branch on plan-reviewer result (strict threshold):**
    - **PASS:** `approved: true` AND zero issues with severity "blocker" or "warning"
@@ -316,15 +317,16 @@ e3. **Parse task-reviewer response:** Extract `approved` field.
 
    **Fallback detection (I9):** Search the agent's response for "Files read:" pattern. If not found, log `LAZY-LOAD-WARNING: task-reviewer did not confirm artifact reads` to `.review-history.md`. Proceed regardless. Note: Resumed dispatches (I2 template) do not include Required Artifacts, so "Files read:" may not appear — only apply I9 detection to fresh dispatches.
 
-   **Post-dispatch influence tracking:**
-   If search_memory returned entries before this dispatch:
-     call record_influence_by_content(
-       subagent_output_text=<full agent output text>,
-       injected_entry_names=<list of entry names from search_memory results>,
-       agent_role="task-reviewer",
-       feature_type_id=<current feature type_id from .meta.json>)
-     If record_influence_by_content fails: warn "Influence tracking failed: {error}", continue
-     If .meta.json missing or type_id unresolvable: skip influence recording with warning
+   <!-- influence-tracking-site: s6 -->
+   **Influence tracking (mandatory, unconditional):**
+   Call `record_influence_by_content(
+     subagent_output_text=<full agent output text>,
+     injected_entry_names=<list from search_memory results, or [] if none>,
+     agent_role="task-reviewer",
+     feature_type_id=<current feature type_id from .meta.json>)`
+   Emit one line to your output: `Influence recorded: N matches`.
+   On MCP failure: warn "Influence tracking failed: {error}", continue.
+   If .meta.json missing or type_id unresolvable: skip with warning.
 
 e4. **Branch on task-reviewer result (strict threshold):**
    - **PASS:** `approved: true` AND zero issues with severity "blocker" or "warning"
@@ -470,15 +472,16 @@ e6. **Parse phase-reviewer response:** Extract `approved` field.
 
    **Fallback detection (I9):** Search the agent's response for "Files read:" pattern. If not found, log `LAZY-LOAD-WARNING: phase-reviewer did not confirm artifact reads` to `.review-history.md`. Proceed regardless. Note: Resumed dispatches (I2 template) do not include Required Artifacts, so "Files read:" may not appear — only apply I9 detection to fresh dispatches.
 
-   **Post-dispatch influence tracking:**
-   If search_memory returned entries before this dispatch:
-     call record_influence_by_content(
-       subagent_output_text=<full agent output text>,
-       injected_entry_names=<list of entry names from search_memory results>,
-       agent_role="phase-reviewer",
-       feature_type_id=<current feature type_id from .meta.json>)
-     If record_influence_by_content fails: warn "Influence tracking failed: {error}", continue
-     If .meta.json missing or type_id unresolvable: skip influence recording with warning
+   <!-- influence-tracking-site: s7 -->
+   **Influence tracking (mandatory, unconditional):**
+   Call `record_influence_by_content(
+     subagent_output_text=<full agent output text>,
+     injected_entry_names=<list from search_memory results, or [] if none>,
+     agent_role="phase-reviewer",
+     feature_type_id=<current feature type_id from .meta.json>)`
+   Emit one line to your output: `Influence recorded: N matches`.
+   On MCP failure: warn "Influence tracking failed: {error}", continue.
+   If .meta.json missing or type_id unresolvable: skip with warning.
 
 e7. **Branch on phase-reviewer result (strict threshold):**
    - **PASS:** `approved: true` AND zero issues with severity "blocker" or "warning"

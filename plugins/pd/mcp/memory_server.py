@@ -239,6 +239,19 @@ def _process_search_memory(
         category=category,
     )
 
+    # Feature 101 FR-3: bump recall_count for returned entries.
+    # Set-dedup so the same entry returned twice in one ranker output
+    # counts as a single retrieval. Best-effort — UPDATE failure logs
+    # but does not raise.
+    if selected:
+        try:
+            returned_ids = list({e["id"] for e in selected if "id" in e})
+            if returned_ids:
+                now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                db.update_recall(returned_ids, now_iso)
+        except Exception as e:
+            sys.stderr.write(f"[memory-server] update_recall failed: {e}\n")
+
     if not selected:
         return "No matching memories found."
 
@@ -385,12 +398,26 @@ def _process_record_influence_by_content(
             "warning": "chunk embedding failed",
         }), threshold
 
+    # Feature 101 FR-5: source_project filter to prevent cross-project
+    # influence pollution. When _project_root is set, only entries whose
+    # source_project matches the current project are eligible. When
+    # _project_root is None/empty (e.g., global agent context), bypass
+    # the filter and emit a one-line warning.
+    if not _project_root:
+        sys.stderr.write(
+            "[memory] record_influence: no project context; skipping project filter\n"
+        )
+
     # Compare against each injected entry
     matched = []
     skipped = 0
     for entry_name in injected_entry_names:
         entry = db.find_entry_by_name(entry_name)
         if entry is None or entry.get("embedding") is None:
+            skipped += 1
+            continue
+        # FR-5: skip cross-project entries when in a project context
+        if _project_root and entry.get("source_project") != _project_root:
             skipped += 1
             continue
 

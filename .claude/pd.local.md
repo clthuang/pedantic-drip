@@ -55,6 +55,10 @@ memory_dedup_threshold: 0.90
 # Minimum observation count a KB entry must have to qualify for /pd:promote-pattern.
 # Raise if enumeration floods (>20 entries); lower if no entries qualify (0 entries).
 memory_promote_min_observations: 3
+# Feature 101 FR-4: use-gate threshold for low→medium confidence upgrade
+# (influence_count + recall_count >= K_USE, with influence_count >= 1 floor).
+# K_OBS_HIGH and K_USE_HIGH are auto-derived as K_OBS*2 and K_USE*2 respectively.
+memory_promote_use_signal: 5
 # cosine similarity threshold for influence matching; lower = more permissive; range [0.0, 1.0] clamped
 memory_influence_threshold: 0.55
 # contribution of influence to ranking prominence; coefficient in _prominence formula; NOT auto-renormalized — raise only by subtracting from other weights so sum stays ≤1.0

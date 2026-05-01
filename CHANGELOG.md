@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.16.11] - 2026-05-02
+
+### Added
+
+- **Memory flywheel loop closure** (feature 101, backlog #00053) — wired
+  the existing memory-subsystem infrastructure into a self-improving loop
+  across 6 FRs:
+  - **FR-2 FTS5 self-heal:** new `--rebuild-fts5` CLI subcommand in
+    `semantic_memory.maintenance`; session-start integrity check
+    auto-detects empty `entries_fts` and rebuilds; diagnostic JSON at
+    `~/.claude/pd/memory/.fts5-rebuild-diag.json` with refire history.
+  - **FR-3 mid-session recall tracking:** `search_memory` MCP now
+    bumps `recall_count` for returned entries (set-deduped, best-effort
+    on locked DB).
+  - **FR-4 confidence upgrade path:** new `_recompute_confidence` (in
+    new `semantic_memory._confidence` module), `MemoryDatabase.scan_upgrade_candidates`
+    + `MemoryDatabase.batch_promote` public methods, `upgrade_confidence`
+    wrapper called after `decay_confidence` in `--decay` flow, inline
+    hook in `merge_duplicate`. OR-semantics over observation gate +
+    use gate (with `influence_count >= 1` outcome floor to prevent
+    rich-get-richer popularity promotion).
+  - **FR-5 source_project filter at influence recording:**
+    `record_influence_by_content` MCP now filters candidate entries by
+    current `_project_root`; null-project bypass with stderr warning.
+  - **FR-1 prose-block restructure (14 sites):** unconditional
+    `record_influence_by_content` invocation at all reviewer-return
+    points across `specify.md`, `design.md`, `create-plan.md`,
+    `implement.md` with HTML-comment markers (`s1`-`s14`) and
+    `Influence recorded: N matches` output line.
+  - **FR-6 promote-pattern adoption trigger:** new Step 4c.1 in
+    retrospecting skill enumerates qualifying KB entries via
+    `pattern_promotion enumerate --json` subprocess and surfaces
+    `/pd:promote-pattern` with YOLO auto-chain.
+- **`memory_promote_use_signal` config key** (default 5) for FR-4 use-gate
+  threshold. `K_OBS_HIGH` / `K_USE_HIGH` auto-derived as `K_* * 2`.
+- **`semantic_memory.audit` CLI** for per-feature SC-1 dogfood validation.
+- **`check_block_ordering.py`** validates FR-1 marker positioning across
+  all 4 command files (2/2/3/7 distribution).
+
+### Changed
+
+- **`MemoryDatabase`** gained `scan_upgrade_candidates` and `batch_promote`
+  helpers (parallel to existing `scan_decay_candidates` / `batch_demote`)
+  to close the direct-`db._conn` access anti-pattern.
+- **`session-start.sh`** runs `check_fts5_integrity` before decay so memory
+  injection sees a populated keyword-search index.
+
+### Notes
+
+- RED tests for FR-2/3/4/5/6 are deferred per qa-override.md (high-leverage
+  upstream rigor traded against test-debt; live FR-2 rebuild verified
+  end-to-end on user's DB). FR-1 sidecar JSONL capture mechanism not yet
+  wired in the 14 prose blocks (audit chain follow-up). All deferred items
+  documented in `docs/features/101-memory-flywheel/qa-override.md`.
+
 ## [4.16.10] - 2026-04-30
 
 ### Changed

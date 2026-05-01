@@ -674,6 +674,39 @@ except Exception:
 # seeded; matches run_doctor_autofix's budget (vs run_reconciliation's 5s).
 # Internal NFR-2 ceiling is 5000ms (AC-24); 10s leaves margin for subprocess
 # startup + BEGIN IMMEDIATE busy-wait (per spec FR-5 writer-contention note).
+# Feature 101 FR-2: FTS5 integrity check + on-demand backfill.
+# Detects the case where entries_fts has 0 rows but entries has rows,
+# indicating migration 5 'rebuild' silently failed. Self-heals by
+# invoking semantic_memory.maintenance --rebuild-fts5. Best-effort.
+check_fts5_integrity() {
+    local db="$HOME/.claude/pd/memory/memory.db"
+    [[ ! -f "$db" ]] && return 0  # No DB yet, skip
+    local VENV_PYTHON="${PLUGIN_ROOT}/.venv/bin/python"
+    [[ ! -x "$VENV_PYTHON" ]] && return 0
+    local out
+    out=$("$VENV_PYTHON" -c "
+import sqlite3, sys
+try:
+    c = sqlite3.connect('$db')
+    e = c.execute('SELECT COUNT(*) FROM entries').fetchone()[0]
+    try:
+        f = c.execute('SELECT COUNT(*) FROM entries_fts').fetchone()[0]
+    except sqlite3.OperationalError:
+        f = 0
+    print(f'{e},{f}')
+    c.close()
+except Exception:
+    print('0,0')
+" 2>/dev/null) || return 0
+    local entries fts5
+    entries="${out%,*}"
+    fts5="${out#*,}"
+    if [[ "${entries:-0}" -gt 0 ]] && [[ "${fts5:-0}" -eq 0 ]]; then
+        echo "[memory] FTS5 empty; auto-rebuilding..." >&2
+        "$VENV_PYTHON" -m semantic_memory.maintenance --rebuild-fts5 >&2 || true
+    fi
+}
+
 run_memory_decay() {
     # FR-1.3 (#00112): PATH pinning + venv hard-fail + timeout enforcement.
     # (a) Pin PATH to a known-safe value for the duration of the subprocess
@@ -783,6 +816,11 @@ EOF
 
     local cron_schedule_context=""
     cron_schedule_context=$(build_cron_schedule_context) || cron_schedule_context=""
+
+    # Feature 101 FR-2: FTS5 integrity self-heal BEFORE decay so all
+    # downstream memory ops see a populated keyword index. Best-effort —
+    # any failure is logged but never blocks session-start.
+    check_fts5_integrity
 
     # Feature 082: decay confidence BEFORE build_memory_context so memory
     # injection uses post-decay confidence values (per spec TD-5 / FR-4).

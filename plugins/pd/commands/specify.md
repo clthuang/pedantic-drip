@@ -163,15 +163,17 @@ c. **Parse response:** Extract the `approved` field from reviewer's JSON respons
 
    **Fallback detection (I9):** Search the agent's response for "Files read:" pattern. If not found, log `LAZY-LOAD-WARNING: spec-reviewer did not confirm artifact reads` to `.review-history.md`. Proceed regardless. Note: Resumed dispatches (I2 template) do not include Required Artifacts, so "Files read:" may not appear — only apply I9 detection to fresh dispatches.
 
-   **Post-dispatch influence tracking:**
-   If search_memory returned entries before this dispatch:
-     call record_influence_by_content(
-       subagent_output_text=<full agent output text>,
-       injected_entry_names=<list of entry names from search_memory results>,
-       agent_role="spec-reviewer",
-       feature_type_id=<current feature type_id from .meta.json>)
-     If record_influence_by_content fails: warn "Influence tracking failed: {error}", continue
-     If .meta.json missing or type_id unresolvable: skip influence recording with warning
+   <!-- influence-tracking-site: s1 -->
+   **Influence tracking (mandatory, unconditional):**
+   Call `record_influence_by_content(
+     subagent_output_text=<full agent output text>,
+     injected_entry_names=<list from search_memory results, or [] if none>,
+     agent_role="spec-reviewer",
+     feature_type_id=<current feature type_id from .meta.json>)`
+   Emit one line to your output: `Influence recorded: N matches`
+   (where N = matched count from MCP response).
+   On MCP failure: warn "Influence tracking failed: {error}", continue.
+   If .meta.json missing or type_id unresolvable: skip with warning.
 
 d. **Branch on result (strict threshold):**
    - **PASS:** `approved: true` AND zero issues with severity "blocker" or "warning"
@@ -323,15 +325,16 @@ e. **Invoke phase-reviewer:**
 
    **Fallback detection (I9):** Search the agent's response for "Files read:" pattern. If not found, log `LAZY-LOAD-WARNING: phase-reviewer did not confirm artifact reads` to `.review-history.md`. Proceed regardless. Note: Resumed dispatches (I2 template) do not include Required Artifacts, so "Files read:" may not appear — only apply I9 detection to fresh dispatches.
 
-   **Post-dispatch influence tracking:**
-   If search_memory returned entries before this dispatch:
-     call record_influence_by_content(
-       subagent_output_text=<full agent output text>,
-       injected_entry_names=<list of entry names from search_memory results>,
-       agent_role="phase-reviewer",
-       feature_type_id=<current feature type_id from .meta.json>)
-     If record_influence_by_content fails: warn "Influence tracking failed: {error}", continue
-     If .meta.json missing or type_id unresolvable: skip influence recording with warning
+   <!-- influence-tracking-site: s2 -->
+   **Influence tracking (mandatory, unconditional):**
+   Call `record_influence_by_content(
+     subagent_output_text=<full agent output text>,
+     injected_entry_names=<list from search_memory results, or [] if none>,
+     agent_role="phase-reviewer",
+     feature_type_id=<current feature type_id from .meta.json>)`
+   Emit one line to your output: `Influence recorded: N matches`.
+   On MCP failure: warn "Influence tracking failed: {error}", continue.
+   If .meta.json missing or type_id unresolvable: skip with warning.
 
 f. **Branch on result (strict threshold):**
    - **PASS:** `approved: true` AND zero issues with severity "blocker" or "warning"
