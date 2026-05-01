@@ -1,0 +1,16 @@
+{
+  "id": "102",
+  "slug": "memory-capture-closure",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-05-01T19:43:49.552606+00:00",
+  "branch": "feature/102-memory-capture-closure",
+  "brainstorm_source": "docs/brainstorms/20260501-192713-memory-capture-closure.prd.md",
+  "backlog_source": "00052",
+  "lastCompletedPhase": null,
+  "phases": {
+    "brainstorm": {
+      "started": "2026-05-01T19:43:49.551648+00:00"
+    }
+  }
+}
