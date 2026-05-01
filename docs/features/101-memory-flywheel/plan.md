@@ -108,8 +108,8 @@ to Stage 2 (P2.5).
 | T1.5.13 | Implement `_select_upgrade_candidates(db, scan_limit)` SQL helper | GREEN | same | M | T1.5.12 |
 | T1.5.14 | Implement `upgrade_confidence(db, scan_limit)` wrapper | GREEN | same | M | T1.5.13 |
 | T1.5.15 | Implement `db.batch_promote(ids, new_confidence, now_iso)` | GREEN | `plugins/pd/hooks/lib/semantic_memory/database.py` | M | T1.5.14 |
-| T1.5.16 | Wire `upgrade_confidence` into `run_memory_decay` AFTER `decay_confidence` returns | GREEN | maintenance.py | S | T1.5.15 |
-| T1.5.17 | Document `memory_promote_use_signal` config key (default 5) in pd config-key reference | DOCS | `plugins/pd/references/memory-config.md` (or equivalent — find via grep) | S | T1.5.16 |
+| T1.5.16 | Wire `upgrade_confidence` into `run_memory_decay` AFTER `decay_confidence` returns. Pre-check: grep callers of `run_memory_decay` to confirm no caller relies on existing return-shape (`upgraded` key is additive). | GREEN | maintenance.py | M | T1.5.15 |
+| T1.5.17 | Document `memory_promote_use_signal` (default 5) in `.claude/pd.local.md` (existing config-key file; add inline alongside `memory_promote_min_observations`) | DOCS | `.claude/pd.local.md` | S | T1.5.16 |
 | T1.5.18 | Run all FR-4 Stage-1 tests | VERIFY | — | S | T1.5.17 |
 
 ### P1.4 — Stage 1 integration
@@ -121,8 +121,8 @@ to Stage 2 (P2.5).
 | T1.4.3 | Manual smoke: drop entries_fts on test DB, run session-start, verify rebuild + diag JSON | VERIFY | — | M | T1.4.2 |
 | T1.4.4 | Commit Stage 1: `pd(101): Stage 1 — Foundations (FTS5 + recall + project filter + FR-4 code)` | COMMIT | — | S | T1.4.3 |
 
-**Stage 1 complexity total:** ~50 tasks (S=29, M=18, C=3). Lands
-before Stage 2; FR-1's audit consumes FR-3 + FR-5 + FR-4 data flows.
+**Stage 1 task count:** P1.1=9 + P1.2=8 + P1.3=6 + P1.5=18 + P1.4=4 = **45 tasks**.
+Lands before Stage 2; FR-1's audit consumes FR-3 + FR-5 + FR-4 data flows.
 
 ---
 
@@ -135,23 +135,23 @@ filter end-to-end.
 
 ### P2.1 — FR-1 prerequisites: helpers + sidecar + audit
 
-| # | Task | TDD step | File | Time | Depends |
-|---|------|----------|------|------|---------|
-| T2.1.1 | Write `test_append_influence_log_atomic` (flock concurrent-write fixture) | RED | `plugins/pd/hooks/lib/semantic_memory/test_influence_log.py` (new) | 12m | Stage 1 |
-| T2.1.2 | Write `test_append_influence_log_creates_parent_dir` (mkdir defense) | RED | same | 5m | T2.1.1 |
-| T2.1.3 | Write `test_append_influence_log_handles_long_lines` (>512 byte JSON line) | RED | same | 8m | T2.1.2 |
-| T2.1.4 | Implement `influence_log.py` module with `append_influence_log()` (fcntl.flock + mkdir) | GREEN | `plugins/pd/hooks/lib/semantic_memory/influence_log.py` (new) | 15m | T2.1.3 |
-| T2.1.5 | Write `test_audit_basic` (mock sidecar + DB; assert markdown table output) | RED | `plugins/pd/hooks/lib/semantic_memory/test_audit.py` (new) | 12m | T2.1.4 |
-| T2.1.6 | Write `test_audit_cutover_filter` (sidecar with mixed pre/post-cutover SHAs) | RED | same | 12m | T2.1.5 |
-| T2.1.7 | Write `test_audit_source_project_filter` (cross-project name collision) | RED | same | 8m | T2.1.6 |
-| T2.1.8 | Write `test_audit_malformed_line_handling` (corrupt JSONL line → skip+warn) | RED | same | 6m | T2.1.7 |
-| T2.1.9 | Write `test_audit_strict_exit_code` (--strict + rate < 80% → exit 2) | RED | same | 6m | T2.1.8 |
-| T2.1.10 | Implement `audit.py` module with full CLI + filter logic | GREEN | `plugins/pd/hooks/lib/semantic_memory/audit.py` (new) | 25m | T2.1.9 |
-| T2.1.11 | Write `test_check_block_ordering_basic` (synthetic md fixture with 14 markers) | RED | `plugins/pd/scripts/test_check_block_ordering.py` (new) | 10m | T2.1.10 |
-| T2.1.12 | Write `test_check_block_ordering_fails_on_misorder` (marker after Branch) | RED | same | 6m | T2.1.11 |
-| T2.1.13 | Write `test_check_block_ordering_count_mismatch` (13 markers instead of 14) | RED | same | 6m | T2.1.12 |
-| T2.1.14 | Implement `check_block_ordering.py` script | GREEN | `plugins/pd/scripts/check_block_ordering.py` (new) | 15m | T2.1.13 |
-| T2.1.15 | Add `.gitignore` entry for `docs/features/*/.influence-log.jsonl` | GREEN | `.gitignore` (root) | 2m | T2.1.14 |
+| # | Task | TDD | File | Cx | Depends |
+|---|------|-----|------|----|---------|
+| T2.1.1 | Write `test_append_influence_log_atomic` (flock concurrent-write) | RED | `plugins/pd/hooks/lib/semantic_memory/test_influence_log.py` (new) | M | Stage 1 |
+| T2.1.2 | Write `test_append_influence_log_creates_parent_dir` (mkdir defense) | RED | same | S | T2.1.1 |
+| T2.1.3 | Write `test_append_influence_log_handles_long_lines` (>512 byte JSON) | RED | same | S | T2.1.2 |
+| T2.1.4 | Implement `influence_log.py` with `append_influence_log()` (fcntl.flock + mkdir) | GREEN | `plugins/pd/hooks/lib/semantic_memory/influence_log.py` (new) | M | T2.1.3 |
+| T2.1.5 | Write `test_audit_basic` (mock sidecar + DB) | RED | `plugins/pd/hooks/lib/semantic_memory/test_audit.py` (new) | M | T2.1.4 |
+| T2.1.6 | Write `test_audit_cutover_filter` | RED | same | M | T2.1.5 |
+| T2.1.7 | Write `test_audit_source_project_filter` | RED | same | M | T2.1.6 |
+| T2.1.8 | Write `test_audit_malformed_line_handling` | RED | same | S | T2.1.7 |
+| T2.1.9 | Write `test_audit_strict_exit_code` | RED | same | S | T2.1.8 |
+| T2.1.10 | Implement `audit.py` with full CLI + filter logic | GREEN | `plugins/pd/hooks/lib/semantic_memory/audit.py` (new) | C | T2.1.9 |
+| T2.1.11 | Write `test_check_block_ordering_basic` (14-marker fixture) | RED | `plugins/pd/scripts/test_check_block_ordering.py` (new) | M | T2.1.10 |
+| T2.1.12 | Write `test_check_block_ordering_fails_on_misorder` | RED | same | S | T2.1.11 |
+| T2.1.13 | Write `test_check_block_ordering_count_mismatch` | RED | same | S | T2.1.12 |
+| T2.1.14 | Implement `check_block_ordering.py` script | GREEN | `plugins/pd/scripts/check_block_ordering.py` (new) | M | T2.1.13 |
+| T2.1.15 | Add `.gitignore` entry for `docs/features/*/.influence-log.jsonl` | GREEN | `.gitignore` (root) | S | T2.1.14 |
 
 ### P2.2 — FR-1 prose-block restructuring (14 sites)
 
@@ -163,7 +163,7 @@ correct sidecar entries):
 |---|------|-----|------|----|---------|
 | T2.2.0a | Write `test_canonical_block_content_complete` — assert each restructured site contains literal substrings: `record_influence_by_content`, `append_influence_log`, `mcp_status`, `matched_count`, AND HTML marker `<!-- influence-tracking-site: sN -->` (N matching the site_id table). | RED | `plugins/pd/scripts/test_canonical_block_content.py` (new) | M | T2.1.15 |
 | T2.2.0b | Write `test_canonical_block_writes_correct_mcp_status` — fixture simulates 3 paths (MCP success → `'ok'` + matched_count from response; MCP exception → `'error'` + matched_count=null; MCP unavailable → `'skipped'` + matched_count=null). Assert each path appends sidecar with the matching `mcp_status`. **This validates the audit's three-way breakdown.** | RED | same | C | T2.2.0a |
-| T2.2.1 | Capture FR-1 cutover SHA: assert `.influence-log.jsonl` does not exist or is empty (cutover-cleanliness invariant); then `git rev-parse HEAD > docs/features/101-memory-flywheel/.fr1-cutover-sha` | SETUP | feature dir | S | T2.2.0b |
+| T2.2.1 | Capture FR-1 cutover SHA. **Pre-check + recovery:** if `.influence-log.jsonl` exists with content from a prior partial implement run, rename to `.influence-log.jsonl.pre-cutover` and continue. Then `git rev-parse HEAD > docs/features/101-memory-flywheel/.fr1-cutover-sha` | SETUP | feature dir | S | T2.2.0b |
 | T2.2.2 | Restructure s1 (specify.md spec-reviewer, 1st) per C-1 canonical template | GREEN | `plugins/pd/commands/specify.md` | M | T2.2.1 |
 | T2.2.3 | Restructure s2 (specify.md phase-reviewer, 2nd) | GREEN | same | M | T2.2.2 |
 | T2.2.4 | Restructure s3, s4 (design.md ×2) | GREEN | `plugins/pd/commands/design.md` | M | T2.2.3 |
@@ -176,15 +176,16 @@ correct sidecar entries):
 
 ### P2.3 — FR-4 Stage-2 portion: `merge_duplicate` hook + live integration
 
-(FR-4 code already shipped in Stage 1 P1.5. This sub-batch wires the
-`merge_duplicate` inline hook and adds an integration test exercising
-the use gate with real influence_count data flowing from Stage 2.)
+(FR-4 code already shipped in Stage 1 P1.5. T2.3.1+T2.3.2 are
+DB-layer unit work that depend ONLY on P1.5; T2.3.3 integration test
+is the only piece that requires Stage 2 prose to be live to populate
+sidecar with real influence data.)
 
 | # | Task | TDD | File | Cx | Depends |
 |---|------|-----|------|----|---------|
-| T2.3.1 | Write `test_merge_duplicate_recomputes_confidence` (mock _recompute_confidence; assert called with merged-entry dict after observation_count++) | RED | `plugins/pd/hooks/lib/semantic_memory/test_database.py` | M | T2.4.4 (Stage 2 prose lands first) |
+| T2.3.1 | Write `test_merge_duplicate_recomputes_confidence` (mock _recompute_confidence; assert called with merged-entry dict after observation_count++) | RED | `plugins/pd/hooks/lib/semantic_memory/test_database.py` | M | T1.5.18 (only needs P1.5 code) |
 | T2.3.2 | Wire `_recompute_confidence` into `merge_duplicate` (after observation_count++) | GREEN | `plugins/pd/hooks/lib/semantic_memory/database.py` | M | T2.3.1 |
-| T2.3.3 | Write integration test `test_use_gate_promotes_via_real_influence_data` — populate sidecar via real reviewer dispatch (or mocked equivalent), run upgrade_confidence, assert at least one entry promotes via use-gate path | RED→GREEN | new integration test | C | T2.3.2 |
+| T2.3.3 | Write integration test `test_use_gate_promotes_via_real_influence_data` — populate sidecar via reviewer-dispatch fixture (or mocked equivalent), run upgrade_confidence, assert at least one entry promotes via use-gate path | RED→GREEN | new integration test | C | T2.3.2 + T2.4.5 (Stage 2 prose committed) |
 | T2.3.4 | Run all FR-4 Stage-2 tests | VERIFY | — | S | T2.3.3 |
 
 ### P2.4 — Stage 2 prose-block + helper integration + LIVE smoke
@@ -192,7 +193,7 @@ the use gate with real influence_count data flowing from Stage 2.)
 | # | Task | TDD | File | Cx | Depends |
 |---|------|-----|------|----|---------|
 | T2.4.1 | Run combined Stage 2 test suite (P2.1 + P2.2) | VERIFY | — | S | All P2.1/P2.2 |
-| T2.4.2 | **Live smoke** — invoke `/pd:specify` on a throwaway toy feature; verify (a) bash snippet runs without error, (b) `.influence-log.jsonl` gains exactly one well-formed line per dispatch with all I-7 fields. **HARD GATE: on failure, hard-revert P2.2 commits before continuing.** | VERIFY | — | M | T2.4.1 |
+| T2.4.2 | **Live smoke** — run `bash plugins/pd/scripts/smoke-influence-block.sh` (NEW; simulates the orchestrator emitting the canonical block by extracting the bash snippet from a restructured site, executing it with mock `record_influence_by_content` MCP, and asserting `.influence-log.jsonl` gains a well-formed I-7 line). **HARD GATE: on failure, revert P2.2 uncommitted edits via `git checkout HEAD -- plugins/pd/commands/{specify,design,create-plan,implement}.md` before continuing.** | VERIFY | — | M | T2.4.1 |
 | T2.4.3 | Run `python -m semantic_memory.audit --feature 101` — verify it produces a table (may have low rate pre-cutover) | VERIFY | — | S | T2.4.2 |
 | T2.4.4 | Run `validate.sh` — assert check_block_ordering passes | VERIFY | — | S | T2.4.3 |
 | T2.4.5 | Commit Stage 2 prose: `pd(101): Stage 2 — Influence wiring (14 sites) + sidecar + audit` | COMMIT | — | S | T2.4.4 |
@@ -201,10 +202,11 @@ the use gate with real influence_count data flowing from Stage 2.)
 
 | # | Task | TDD | File | Cx | Depends |
 |---|------|-----|------|----|---------|
-| T2.5.1 | Run P2.3 FR-4 Stage-2 tests | VERIFY | — | S | T2.4.5 + T2.3.4 |
+| T2.5.1 | Run `python -m semantic_memory.audit --feature 101` and verify the `mcp_status` breakdown shows non-zero count for at least the `'ok'` bucket (proves real MCP calls fired during the live smoke and Stage 2 reviewer dispatches). | VERIFY | — | S | T2.4.5 + T2.3.4 |
 | T2.5.2 | Commit Stage 2 FR-4 hook: `pd(101): Stage 2 — merge_duplicate FR-4 hook + live integration` | COMMIT | — | S | T2.5.1 |
 
-**Stage 2 complexity total:** ~36 tasks (S=15, M=18, C=3) across P2.1/2.2/2.3/2.4/2.5.
+**Stage 2 task count:** P2.1=15 + P2.2=13 + P2.3=4 + P2.4=5 + P2.5=2 = **39 tasks**
+across P2.1/2.2/2.3/2.4/2.5.
 
 ---
 
@@ -240,7 +242,7 @@ is parsed by Python tests):
 | T3.2.3 | Run `validate.sh` end-to-end | VERIFY | — | S | T3.2.2 |
 | T3.2.4 | Commit Stage 3: `pd(101): Stage 3 — Promote-pattern adoption trigger` | COMMIT | — | S | T3.2.3 |
 
-**Stage 3 complexity total:** 11 tasks (S=7, M=4).
+**Stage 3 task count:** P3.1=7 + P3.2=4 = **11 tasks**.
 
 ---
 
@@ -287,14 +289,27 @@ Stage 1 (FR-2/3/5 + FR-4 code)  ─────► Stage 2 (FR-1 + FR-4 hook)  �
   diagnose via audit's `mcp_status` breakdown (was it MCP errors
   or semantic non-matches?) before declaring feature done.
 
-## Complexity Summary
+## Task Count Summary
 
-| Stage | Tasks | S | M | C |
-|-------|-------|---|---|---|
-| Stage 1 (P1.1 + P1.2 + P1.3 + P1.5 + P1.4) | 50 | 29 | 18 | 3 |
-| Stage 2 (P2.1 + P2.2 + P2.3 + P2.4 + P2.5) | 38 | 15 | 20 | 3 |
-| Stage 3 (P3.1 + P3.2) | 11 | 7 | 4 | 0 |
-| **Total** | **99** | **51** | **42** | **6** |
+| Stage | Tasks |
+|-------|-------|
+| Stage 1 (P1.1=9 + P1.2=8 + P1.3=6 + P1.5=18 + P1.4=4) | 45 |
+| Stage 2 (P2.1=15 + P2.2=13 + P2.3=4 + P2.4=5 + P2.5=2) | 39 |
+| Stage 3 (P3.1=7 + P3.2=4) | 11 |
+| **Total** | **95** |
 
-(Implementers report wall-clock per stage in retrospect; estimates omitted
-to follow CLAUDE.md plan-reviewer rubric "no time/LOC estimates — deliverables only".)
+Tasks use Cx tier (S/M/C) per CLAUDE.md plan-reviewer rubric — no
+time/LOC estimates. Implementer reports actual wall-clock in retrospect.
+
+## New Deliverables Summary
+
+Files created during implementation (consolidated for traceability):
+- `plugins/pd/hooks/lib/semantic_memory/influence_log.py` (FR-1 helper)
+- `plugins/pd/hooks/lib/semantic_memory/audit.py` (FR-1 audit CLI)
+- `plugins/pd/scripts/check_block_ordering.py` (FR-1 ordering validator)
+- `plugins/pd/scripts/test_canonical_block_content.py` (FR-1 content validator + tests)
+- `plugins/pd/scripts/smoke-influence-block.sh` (FR-1 live-smoke harness for T2.4.2)
+- `plugins/pd/skills/retrospecting/test_promote_trigger.py` (FR-6 SKILL.md prose tests)
+- `docs/features/101-memory-flywheel/.fr1-cutover-sha` (one-line cutover marker)
+- `docs/features/101-memory-flywheel/.influence-log.jsonl` (gitignored sidecar)
+- `~/.claude/pd/memory/.fts5-rebuild-diag.json` (FR-2 diagnostic, not in git)
