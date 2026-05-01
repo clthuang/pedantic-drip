@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.16.11] - 2026-05-02
+
 ### Added
 
 - **Memory flywheel loop closure** (feature 101, backlog #00053) — wired
