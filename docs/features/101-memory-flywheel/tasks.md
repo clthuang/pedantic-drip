@@ -37,8 +37,8 @@ sidecar data are Stage 2 (P2.3).
 - [ ] **T1.2.4** Write `test_search_memory_recall_failure_logs_warn_returns_entries` — monkeypatch `db.update_recall` to raise OperationalError; assert returned entries are still populated AND `[memory-server] update_recall failed:` warning emitted to stderr. (TDD: RED) | Same | Done: test FAILS | Depends: T1.2.3
 - [ ] **T1.2.5** Modify `_process_search_memory` in `plugins/pd/mcp/memory_server.py`: after computing returned_entries, compute `returned_ids = list({e['id'] for e in returned_entries})`; call `db.update_recall(returned_ids, _iso_utc(now()))` if non-empty. (TDD: GREEN) | memory_server.py | Done: T1.2.1 + T1.2.2 + T1.2.3 PASS | Depends: T1.2.4
 - [ ] **T1.2.6** Wrap update_recall call in try/except sqlite3.OperationalError; log `[memory-server] update_recall failed: {e}` to stderr; do NOT re-raise (NFR-1 best-effort). (TDD: GREEN) | memory_server.py | Done: T1.2.4 PASS | Depends: T1.2.5
-- [ ] **T1.2.7** Write `test_search_memory_benchmark.py`: synthetic 1000-entry DB, run baseline (monkeypatch update_recall to no-op) + post-FR-3 (real); assert `delta_p50_absolute_ms < max(5, 0.05 * baseline_p50_ms)` per AC-3.6; print P95 informationally. (TDD: GREEN) | new file `plugins/pd/mcp/test_search_memory_benchmark.py` | Done: benchmark PASSES P50 bound | Depends: T1.2.6
-- [ ] **T1.2.8** Run all FR-3 tests: `pytest plugins/pd/mcp/ -k search_memory -v`. Verify 4 unit + 1 benchmark pass. (TDD: VERIFY) | — | Done: 5 PASS | Depends: T1.2.7
+- [ ] **T1.2.7** Write `test_search_memory_benchmark.py` with test function named `test_search_memory_benchmark_p50_bound` (matches `-k search_memory` filter): synthetic 1000-entry DB, run baseline (monkeypatch update_recall to no-op) + post-FR-3 (real); assert `delta_p50_absolute_ms < max(5, 0.05 * baseline_p50_ms)` per AC-3.6; print P95 informationally. (TDD: GREEN) | new file `plugins/pd/mcp/test_search_memory_benchmark.py` | Done: benchmark PASSES P50 bound | Depends: T1.2.6
+- [ ] **T1.2.8** Run all FR-3 tests: `pytest plugins/pd/mcp/ -k search_memory -v`. Verify 4 unit + 1 benchmark pass. **HARD GATE: on benchmark failure, do NOT proceed to T1.4.x — open R-11 mitigation review.** (TDD: VERIFY) | — | Done: 5 PASS, exit 0 | Depends: T1.2.7
 
 ### P1.3 — FR-5: source_project filter
 
@@ -51,19 +51,37 @@ sidecar data are Stage 2 (P2.3).
 
 ### P1.5 — FR-4 code (Stage 1 portion per design C-8)
 
-- [ ] **T1.5.1** Write `test_recompute_confidence_observation_gate` — seed `confidence='low', observation_count=3, influence_count=0, recall_count=0`; assert returns `'medium'`. (TDD: RED) | `plugins/pd/hooks/lib/semantic_memory/test_maintenance.py` | Cx: S | Depends: —
+P1.5 splits into two ≤15-task batches around the RED→GREEN boundary
+to stay under the sequential-chain limit:
+- **P1.5a (RED batch, 11 tasks):** T1.5.1 → T1.5.11
+- **Checkpoint:** T1.5.11.5 verifies all RED tests collected + failing
+- **P1.5b (GREEN batch, 7 tasks):** T1.5.12 → T1.5.18
+
+- [ ] **T1.5.1** Write `test_recompute_confidence_observation_gate` — seed `confidence='low', observation_count=3, influence_count=0, recall_count=0`; assert returns `'medium'`. (TDD: RED) | `plugins/pd/hooks/lib/semantic_memory/test_maintenance.py` | Cx: S | Done: pytest --collect-only shows test; running it FAILS (function not yet defined) | Depends: —
 - [ ] **T1.5.2** Write `test_recompute_confidence_use_gate_with_floor` — seed `confidence='low', observation_count=0, influence_count=2, recall_count=3`; assert returns `'medium'`. (RED) | Same | Cx: S | Depends: T1.5.1
 - [ ] **T1.5.3** Write `test_recompute_confidence_recall_only_no_promotion` — seed `confidence='low', observation_count=0, influence_count=0, recall_count=10`; assert returns `None` (floor blocks). (RED) | Same | Cx: S | Depends: T1.5.2
 - [ ] **T1.5.4** Write `test_recompute_confidence_neither_gate_no_op` — seed `confidence='low', observation_count=2, influence_count=1, recall_count=2`; assert returns `None`. (RED) | Same | Cx: S | Depends: T1.5.3
 - [ ] **T1.5.5** Write `test_recompute_confidence_medium_to_high_obs` — seed `confidence='medium', observation_count=6`; assert returns `'high'`. (RED) | Same | Cx: S | Depends: T1.5.4
 - [ ] **T1.5.6** Write `test_recompute_confidence_medium_to_high_use` — seed `confidence='medium', observation_count=0, influence_count=4, recall_count=6`; assert returns `'high'`. (RED) | Same | Cx: S | Depends: T1.5.5
 - [ ] **T1.5.7** Write `test_recompute_confidence_high_idempotent` — seed `confidence='high'`; assert returns `None`. (RED) | Same | Cx: S | Depends: T1.5.6
-- [ ] **T1.5.8** Write `test_select_upgrade_candidates_query` — populate DB with 3 hot non-stale entries + 2 stale entries; call `_select_upgrade_candidates`; assert only 3 hot entries returned. (RED) | Same | Cx: M | Depends: T1.5.7
+- [ ] **T1.5.8** Write `test_select_upgrade_candidates_query` — populate DB with: (a) 3 "candidate" entries with `confidence='low'` AND `observation_count >= K_OBS=3` (these MUST be returned), (b) 2 "ineligible" entries with `confidence='low'` AND `observation_count=0 AND influence_count=0` (do NOT match either gate; MUST NOT be returned), (c) 1 "high-tier" entry with `confidence='high'` (excluded by `confidence != 'high'` clause). Call `_select_upgrade_candidates(scan_limit=100)`; assert exactly 3 entries returned (the candidates). (RED) | Same | Cx: M | Done: test FAILS | Depends: T1.5.7
 - [ ] **T1.5.9** Write `test_upgrade_confidence_wrapper` — populate DB with mixed entries; call `upgrade_confidence(db, scan_limit=100)`; assert returns dict with non-empty `low_to_medium` AND DB rows updated. (RED) | Same | Cx: M | Depends: T1.5.8
 - [ ] **T1.5.10** Write `test_batch_promote_basic` parallel to `test_batch_demote_basic`. (RED) | `plugins/pd/hooks/lib/semantic_memory/test_database.py` | Cx: M | Depends: T1.5.9
-- [ ] **T1.5.11** Write `test_run_memory_decay_invokes_upgrade_after_decay` — mock both decay_confidence and upgrade_confidence; assert call order (decay before upgrade). (RED) | `plugins/pd/hooks/lib/semantic_memory/test_maintenance.py` | Cx: M | Depends: T1.5.10
-- [ ] **T1.5.12** Implement `_recompute_confidence(entry: dict) -> str | None` with K_OBS / K_USE / K_OBS_HIGH=K_OBS*2 / K_USE_HIGH=K_USE*2; OR semantics with influence floor on use gate. (GREEN) | maintenance.py | Cx: M | Depends: T1.5.11
-- [ ] **T1.5.13** Implement `_select_upgrade_candidates(db, scan_limit) -> list[dict]` SQL helper. (GREEN) | maintenance.py | Cx: M | Depends: T1.5.12
+- [ ] **T1.5.11** Write `test_run_memory_decay_invokes_upgrade_after_decay` — mock both decay_confidence and upgrade_confidence; assert call order (decay before upgrade). (RED) | `plugins/pd/hooks/lib/semantic_memory/test_maintenance.py` | Cx: M | Done: test FAILS | Depends: T1.5.10
+- [ ] **T1.5.11.5** **CHECKPOINT** — run `pytest plugins/pd/hooks/lib/semantic_memory/ -k 'recompute_confidence or upgrade_candidates or batch_promote or invokes_upgrade' --collect-only` and verify all 11 RED tests collected; running them shows 11 FAIL (none unexpectedly passing). Done: 11 collected, 11 fail. | — | Cx: S | Depends: T1.5.11
+- [ ] **T1.5.12** Implement `_recompute_confidence(entry: dict) -> str | None` per spec FR-4 / AC-4.4. **Constants** (read via `_resolve_int_config`): `K_OBS = memory_promote_min_observations` (default 3, existing key); `K_USE = memory_promote_use_signal` (default 5, NEW key from T1.5.17); `K_OBS_HIGH = K_OBS * 2`; `K_USE_HIGH = K_USE * 2` (auto-derived, no separate keys). **OR-semantics gates:** observation gate = `observation_count >= K_OBS`; use gate = `influence_count >= 1 AND influence_count + recall_count >= K_USE` (the `>= 1` is the outcome-validation floor). High-tier promotion uses K_*_HIGH constants. (GREEN) | maintenance.py | Cx: M | Depends: T1.5.11
+- [ ] **T1.5.13** Implement `_select_upgrade_candidates(db, scan_limit) -> list[dict]` SQL helper. **SQL** (per design C-8):
+  ```sql
+  SELECT id, confidence, observation_count, influence_count, recall_count
+    FROM entries
+   WHERE confidence != 'high'
+     AND (observation_count >= ?  -- K_OBS
+          OR (influence_count >= 1
+              AND influence_count + recall_count >= ?))  -- K_USE
+   LIMIT ?
+  ```
+  No staleness filter — independent of decay's stale-only candidate scan.
+  (GREEN) | maintenance.py | Cx: M | Depends: T1.5.12
 - [ ] **T1.5.14** Implement `upgrade_confidence(db, scan_limit) -> dict` wrapper. (GREEN) | maintenance.py | Cx: M | Depends: T1.5.13
 - [ ] **T1.5.15** Implement `db.batch_promote(ids, new_confidence, now_iso)` mirroring batch_demote. (GREEN) | `plugins/pd/hooks/lib/semantic_memory/database.py` | Cx: M | Depends: T1.5.14
 - [ ] **T1.5.16** Wire `upgrade_confidence` into `run_memory_decay` AFTER `decay_confidence` returns. Pre-check: grep callers of `run_memory_decay` to confirm no caller relies on existing return-shape (`upgraded` key is additive). Add `upgraded` to diagnostic dict. (GREEN) | maintenance.py | Cx: M | Depends: T1.5.15
@@ -104,14 +122,23 @@ sidecar data are Stage 2 (P2.3).
 **RED tests for canonical block content** (NOT just positional ordering):
 
 - [ ] **T2.2.0a** Write `test_canonical_block_content_complete` — assert each restructured site contains literal substrings: `record_influence_by_content`, `append_influence_log`, `mcp_status`, `matched_count`, AND HTML marker `<!-- influence-tracking-site: sN -->` matching site_id table. (RED) | new `plugins/pd/scripts/test_canonical_block_content.py` | Cx: M | Depends: T2.1.15
-- [ ] **T2.2.0b** Write `test_canonical_block_writes_correct_mcp_status` — fixture simulates 3 paths (MCP success, MCP exception, MCP unavailable); assert each path appends sidecar with matching `mcp_status` value. **Validates audit's three-way breakdown.** (RED) | same | Cx: C | Depends: T2.2.0a
+- [ ] **T2.2.0b** Write `test_canonical_block_writes_correct_mcp_status` — fixture simulates 3 paths with explicit mock setups:
+  - **(1) MCP success**: mock returns `{'matched_count': N}`; assert sidecar line has `mcp_status='ok'` AND `matched_count=N`.
+  - **(2) MCP exception**: mock raises `Exception('mcp error')`; assert sidecar line has `mcp_status='error'` AND `matched_count=null`.
+  - **(3) MCP unavailable**: mock raises `ConnectionRefusedError` (or sentinel indicating server-not-running); assert sidecar line has `mcp_status='skipped'` AND `matched_count=null`.
+  **Validates audit's three-way breakdown.** Align mock branches with the canonical block's exception-handling logic in design.md §C-1. (RED) | same | Cx: C | Done: test FAILS | Depends: T2.2.0a
 - [ ] **T2.2.1** Capture FR-1 cutover SHA. **Pre-check + recovery:** if `.influence-log.jsonl` exists with content from a prior partial run, `mv .influence-log.jsonl .influence-log.jsonl.pre-cutover` and continue. Then `git rev-parse HEAD > docs/features/101-memory-flywheel/.fr1-cutover-sha`. (SETUP) | feature dir | Cx: S | Depends: T2.2.0b
-- [ ] **T2.2.2** Restructure s1 (specify.md spec-reviewer block, 1st): replace existing post-dispatch block with C-1 canonical template; insert `<!-- influence-tracking-site: s1 -->` marker; verify position before `**Branch on`. (GREEN) | `plugins/pd/commands/specify.md` | Done: marker present, block before Branch, contains "Influence recorded:" | Depends: T2.2.1
-- [ ] **T2.2.3** Restructure s2 (specify.md phase-reviewer, 2nd). (GREEN) | Same | Done: marker s2 present | Depends: T2.2.2
-- [ ] **T2.2.4** Restructure s3, s4 (design.md ×2). (GREEN) | `plugins/pd/commands/design.md` | Done: markers s3, s4 present; both before Branch | Depends: T2.2.3
-- [ ] **T2.2.5** Restructure s5, s6, s7 (create-plan.md ×3). (GREEN) | `plugins/pd/commands/create-plan.md` | Done: markers s5, s6, s7 present; all before Branch | Depends: T2.2.4
-- [ ] **T2.2.6** Restructure s8, s9 (implement.md test-deepener Phase A + B). (GREEN) | `plugins/pd/commands/implement.md` | Done: markers s8, s9 present | Depends: T2.2.5
-- [ ] **T2.2.7** Restructure s10–s14 (implement.md remaining 5 sites). For each, read the dispatch's `subagent_type:` field to determine the role; substitute into canonical template. (GREEN) | Same | Done: markers s10–s14 present, 7 total in implement.md | Depends: T2.2.6
+**For all T2.2.2-T2.2.7 below: read design.md §C-1 for the canonical
+template body** (bash snippet, JSON record schema, mcp_status branches).
+Each site uses the SAME template — only the `{site_id}` HTML marker
+and `{role}`/`{feature_type_id}` bindings vary per site.
+
+- [ ] **T2.2.2** Restructure s1 (specify.md spec-reviewer block, 1st occurrence): replace existing post-dispatch block with design.md §C-1 canonical template; insert `<!-- influence-tracking-site: s1 -->` marker; verify position before `**Branch on`. (GREEN) | `plugins/pd/commands/specify.md` | Cx: M | Done: marker present, block before Branch, contains "Influence recorded:" | Depends: T2.2.1
+- [ ] **T2.2.3** Restructure s2 (specify.md phase-reviewer, 2nd). (GREEN) | Same | Cx: M | Done: marker s2 present | Depends: T2.2.2
+- [ ] **T2.2.4** Restructure s3, s4 (design.md ×2). (GREEN) | `plugins/pd/commands/design.md` | Cx: M | Done: markers s3, s4 present; both before Branch | Depends: T2.2.3
+- [ ] **T2.2.5** Restructure s5, s6, s7 (create-plan.md ×3). (GREEN) | `plugins/pd/commands/create-plan.md` | Cx: M | Done: markers s5, s6, s7 present; all before Branch | Depends: T2.2.4
+- [ ] **T2.2.6** Restructure s8, s9 (implement.md test-deepener Phase A + B). (GREEN) | `plugins/pd/commands/implement.md` | Cx: M | Done: markers s8, s9 present | Depends: T2.2.5
+- [ ] **T2.2.7** Restructure s10–s14 (implement.md remaining 5 sites). For each, read the dispatch's `subagent_type:` field to determine the role; substitute into canonical template. (GREEN) | Same | Cx: C | Done: markers s10–s14 present, 7 total in implement.md | Depends: T2.2.6
 - [ ] **T2.2.8** Run `python plugins/pd/scripts/check_block_ordering.py`; assert exit 0. (VERIFY) | — | Done: stdout shows "OK: 14 blocks correctly positioned (2/2/3/7)" | Depends: T2.2.7
 - [ ] **T2.2.9** Run `grep -c 'Influence recorded:' plugins/pd/commands/{specify,design,create-plan,implement}.md`; assert 2/2/3/7. (VERIFY) | — | Done: counts match | Depends: T2.2.8
 - [ ] **T2.2.10** Add `python plugins/pd/scripts/check_block_ordering.py` AND `pytest plugins/pd/scripts/test_canonical_block_content.py` invocations to `validate.sh` component-check loop. (DOCS) | `validate.sh` | Cx: S | Depends: T2.2.9
@@ -129,7 +156,8 @@ real influence_count data flowing.)
 
 ### P2.4 — Stage 2 prose+helper integration + LIVE smoke
 
-- [ ] **T2.4.1** Run combined Stage 2 prose+helper test suite. (VERIFY) | — | Cx: S | Depends: T2.2.10 + T2.1.15
+- [ ] **T2.4.0** **NEW.** Create `plugins/pd/scripts/smoke-influence-block.sh`: extract the bash snippet from a restructured site (e.g., specify.md s1) into a tempfile; mock `record_influence_by_content` MCP via env-var override that logs to stdout instead; invoke the snippet against a tempdir feature path; assert `.influence-log.jsonl` gains exactly one well-formed JSON line containing all I-7 fields. Idempotent dry-run mode. (GREEN) | new `plugins/pd/scripts/smoke-influence-block.sh` | Cx: M | Depends: T2.2.10
+- [ ] **T2.4.1** Run combined Stage 2 prose+helper test suite. (VERIFY) | — | Cx: S | Depends: T2.4.0
 - [ ] **T2.4.2** **Live smoke** — run `bash plugins/pd/scripts/smoke-influence-block.sh` (NEW; extracts the bash snippet from a restructured site, executes it with mock `record_influence_by_content` MCP, and asserts `.influence-log.jsonl` gains a well-formed I-7 line). **HARD GATE: on failure, revert P2.2 uncommitted edits via `git checkout HEAD -- plugins/pd/commands/{specify,design,create-plan,implement}.md` before continuing.** (VERIFY) | — | Cx: M | Depends: T2.4.1
 - [ ] **T2.4.3** Run `python -m semantic_memory.audit --feature 101` (no --strict; expect output even if rate < 80% pre-cutover). (VERIFY) | — | Cx: S | Depends: T2.4.2
 - [ ] **T2.4.4** Run `validate.sh`. (VERIFY) | — | Cx: S | Depends: T2.4.3
@@ -160,7 +188,7 @@ scripts only).
 
 ### P3.2 — Dogfood + final validation
 
-- [ ] **T3.2.1** Run final SC-1 audit: `python -m semantic_memory.audit --feature 101 --strict`. Verify rate ≥ 80% on post-cutover dispatches OR diagnose via `mcp_status` breakdown. (VERIFY) | — | Done: exit 0 (rate ≥ 80%) OR diagnosis recorded for retro | Depends: T2.4.4 + all reviewer dispatches in implement phase
+- [ ] **T3.2.1** Run final SC-1 audit: `python -m semantic_memory.audit --feature 101 --strict`. **Done: exit code 0 (rate ≥ 80%) — binary pass/fail.** If exit non-zero, do NOT mark done; record `mcp_status` breakdown analysis in retro.md and escalate to user before T3.2.4 commit. (VERIFY) | — | Cx: S | Depends: T3.1.7 + Stage 2 reviewer dispatches
 - [ ] **T3.2.2** Smoke-test FR-6 trigger: manually invoke retrospecting Step 4c.1 logic against a deliberately seeded test KB (≥1 qualifying entry); verify trigger fires + AskUserQuestion / YOLO chain works. (VERIFY) | — | Done: trigger demonstrably fires | Depends: T3.2.1
 - [ ] **T3.2.3** Run `validate.sh` end-to-end. (VERIFY) | — | Done: 0 errors | Depends: T3.2.2
 - [ ] **T3.2.4** Commit Stage 3: `git add -A && git commit -m "pd(101): Stage 3 — Promote-pattern adoption trigger"`. (COMMIT) | — | Done: commit lands | Depends: T3.2.3
@@ -184,9 +212,12 @@ constraints noted):
 
 **Within Stage 2:**
 - P2.1 (helpers, prereq RED tests for canonical block) → P2.2 (prose)
-  → P2.4 (live smoke + commit) → P2.3 (FR-4 hook) → P2.5 (final commit).
-- All sequential — same-file dependency on `memory_server.py`,
-  command files, `database.py` make true parallelism risky.
+  → P2.4 (live smoke + commit).
+- **P2.3 split:** T2.3.1+T2.3.2 (`merge_duplicate` hook unit test +
+  GREEN) depend ONLY on T1.5.18 (P1.5 code), so they CAN run in parallel
+  with P2.1/P2.2. T2.3.3 (integration test against real influence data)
+  must wait for T2.4.5 (Stage 2 prose committed).
+- P2.5 (final mcp_status verification + commit) runs last.
 
 **Stage 3:** sequential single-file change.
 
@@ -231,6 +262,6 @@ constraints noted):
 | AC-6.6 | T3.1.4 (subprocess error isolation) |
 | AC-6.7 | T3.2.2 (dogfood) |
 
-Total tasks: **95** across 3 stages (Stage 1 = 45, Stage 2 = 39, Stage 3 = 11).
+Total tasks: **94** across 3 stages (Stage 1 = 45, Stage 2 = 38, Stage 3 = 11).
 Tier distribution: S/M/C per CLAUDE.md plan-reviewer rubric. No time/LOC
 estimates — implementer reports actual wall-clock in retrospect.

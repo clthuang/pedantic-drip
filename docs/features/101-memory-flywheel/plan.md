@@ -205,7 +205,7 @@ sidecar with real influence data.)
 | T2.5.1 | Run `python -m semantic_memory.audit --feature 101` and verify the `mcp_status` breakdown shows non-zero count for at least the `'ok'` bucket (proves real MCP calls fired during the live smoke and Stage 2 reviewer dispatches). | VERIFY | — | S | T2.4.5 + T2.3.4 |
 | T2.5.2 | Commit Stage 2 FR-4 hook: `pd(101): Stage 2 — merge_duplicate FR-4 hook + live integration` | COMMIT | — | S | T2.5.1 |
 
-**Stage 2 task count:** P2.1=15 + P2.2=13 + P2.3=4 + P2.4=5 + P2.5=2 = **39 tasks**
+**Stage 2 task count:** P2.1=15 + P2.2=12 + P2.3=4 + P2.4=5 + P2.5=2 = **38 tasks**
 across P2.1/2.2/2.3/2.4/2.5.
 
 ---
@@ -294,9 +294,9 @@ Stage 1 (FR-2/3/5 + FR-4 code)  ─────► Stage 2 (FR-1 + FR-4 hook)  �
 | Stage | Tasks |
 |-------|-------|
 | Stage 1 (P1.1=9 + P1.2=8 + P1.3=6 + P1.5=18 + P1.4=4) | 45 |
-| Stage 2 (P2.1=15 + P2.2=13 + P2.3=4 + P2.4=5 + P2.5=2) | 39 |
+| Stage 2 (P2.1=15 + P2.2=12 + P2.3=4 + P2.4=5 + P2.5=2) | 38 |
 | Stage 3 (P3.1=7 + P3.2=4) | 11 |
-| **Total** | **95** |
+| **Total** | **94** |
 
 Tasks use Cx tier (S/M/C) per CLAUDE.md plan-reviewer rubric — no
 time/LOC estimates. Implementer reports actual wall-clock in retrospect.
