@@ -160,6 +160,19 @@ template above):
   — uniform across all 14 sites; no per-site step-numbering required
   (the marker disambiguates).
 
+**Exception taxonomy for `mcp_status` discrimination:**
+
+| `mcp_status` value | Trigger condition | Python signal |
+|--------------------|-------------------|---------------|
+| `"ok"`     | MCP returned response (matched_count = `len(matched)`) | normal return |
+| `"error"`  | MCP raised any Exception during call (call attempted but failed) | `except Exception as e:` (excluding `ConnectionRefusedError`/`OSError`-as-server-not-running) |
+| `"skipped"` | MCP unreachable (server not running, refused connection, missing tool) | `except (ConnectionRefusedError, FileNotFoundError):` OR explicit "MCP tool not available" sentinel from the orchestrator's tool-discovery layer |
+
+The canonical block prose MUST include an inline comment documenting
+the chosen sentinel, so test mocks (T2.2.0b) and future maintainers can
+align without spelunking. Test fixtures use `ConnectionRefusedError` for
+`'skipped'` paths; production block uses the same.
+
 ### C-2: Influence-Log Sidecar (FR-1)
 
 **Path:** `docs/features/{id}-{slug}/.influence-log.jsonl`
