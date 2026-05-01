@@ -120,26 +120,32 @@ The 14 sites use stable identifiers `s1`-`s14` derived from
 file:line at time of restructuring. C-4's parser keys off these
 markers, not heading text.
 
-**Site identifier table:**
-| site_id | file | line | role | parent context |
-|---------|------|------|------|----------------|
-| s1  | specify.md       | 166  | spec-reviewer        | step c (review loop) |
-| s2  | specify.md       | 326  | phase-reviewer       | step e (phase review) |
-| s3  | design.md        | 368  | design-reviewer      | step c (review loop) |
-| s4  | design.md        | 564  | phase-reviewer       | step b (handoff) |
-| s5  | create-plan.md   | 162  | plan-reviewer        | step c (plan review) |
-| s6  | create-plan.md   | 319  | task-reviewer        | step e (task review) |
-| s7  | create-plan.md   | 473  | phase-reviewer       | step e (phase review) |
-| s8  | implement.md     | 127  | test-deepener-A      | Phase A dispatch |
-| s9  | implement.md     | 192  | test-deepener-B      | Phase B dispatch |
-| s10 | implement.md     | 505  | (varies — confirm at impl time) | review loop |
-| s11 | implement.md     | 666  | (varies)             | review loop |
-| s12 | implement.md     | 844  | (varies)             | review loop |
-| s13 | implement.md     | 1015 | (varies)             | review loop |
-| s14 | implement.md     | 1178 | (varies)             | review loop |
+**Site identifier table** (anchored by ordinal-within-file, not
+line numbers — line numbers shift after restructuring; ordinal is
+stable):
 
-(Implementer confirms s10-s14 role names by reading the dispatch
-context; no design-time assumption.)
+| site_id | file | ordinal | role | parent context |
+|---------|------|---------|------|----------------|
+| s1  | specify.md       | 1st  | spec-reviewer        | step c (review loop) |
+| s2  | specify.md       | 2nd  | phase-reviewer       | step e (phase review) |
+| s3  | design.md        | 1st  | design-reviewer      | step c (review loop) |
+| s4  | design.md        | 2nd  | phase-reviewer       | step b (handoff) |
+| s5  | create-plan.md   | 1st  | plan-reviewer        | step c (plan review) |
+| s6  | create-plan.md   | 2nd  | task-reviewer        | step e (task review) |
+| s7  | create-plan.md   | 3rd  | phase-reviewer       | step e (phase review) |
+| s8  | implement.md     | 1st  | test-deepener-phaseA | Phase A dispatch (line 127 pre-restructure) |
+| s9  | implement.md     | 2nd  | test-deepener-phaseB | Phase B dispatch (line 192 pre-restructure) |
+| s10 | implement.md     | 3rd  | implementation-reviewer | review loop iter 1 (line 505 pre-restructure) |
+| s11 | implement.md     | 4th  | code-quality-reviewer   | review loop iter 1 (line 666 pre-restructure) |
+| s12 | implement.md     | 5th  | security-reviewer       | review loop iter 1 (line 844 pre-restructure) |
+| s13 | implement.md     | 6th  | phase-reviewer          | review loop iter 1 (line 1015 pre-restructure) |
+| s14 | implement.md     | 7th  | phase-reviewer (final handoff) | post-loop handoff (line 1178 pre-restructure) |
+
+The HTML-comment marker is the post-restructuring source of truth;
+ordinal+role identify the marker before restructuring. Pre-restructure
+line numbers are advisory only (snapshot at design time, will shift).
+For implement.md s10-s14, implementer confirms exact roles by reading
+each dispatch's `subagent_type` field at restructure time.
 
 **Restructuring rules** (all 14 sites, applied from the canonical
 template above):
@@ -186,6 +192,7 @@ from pathlib import Path
 
 def append_influence_log(feature_path: Path, record: dict) -> None:
     """Atomic append to .influence-log.jsonl using LOCK_EX file lock."""
+    feature_path.mkdir(parents=True, exist_ok=True)  # ENOENT defense
     log_path = feature_path / ".influence-log.jsonl"
     line = json.dumps(record, ensure_ascii=False) + "\n"
     fd = os.open(log_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
@@ -197,17 +204,28 @@ def append_influence_log(feature_path: Path, record: dict) -> None:
         os.close(fd)
 ```
 
-**Invocation from prose blocks:** Each restructured site invokes via
-inline `python3 -c` heredoc (not bash redirect) to use the helper:
+**Invocation from prose blocks (canonical Bash snippet, follows
+CLAUDE.md two-location PYTHONPATH pattern):** Each restructured site
+emits this exact snippet — orchestrator LLM executes it via the Bash
+tool:
 ```bash
-"$PLUGIN_VENV_PYTHON" -c "
-from semantic_memory.influence_log import append_influence_log
-from pathlib import Path
+PLUGIN_ROOT=$(ls -d ~/.claude/plugins/cache/*/pd*/*/hooks 2>/dev/null | head -1 | xargs -r dirname)
+[ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT="plugins/pd"  # fallback (dev workspace)
+PYTHONPATH="$PLUGIN_ROOT/hooks/lib" "$PLUGIN_ROOT/.venv/bin/python" -c "
 import json, sys
+from pathlib import Path
+from semantic_memory.influence_log import append_influence_log
 record = json.loads(sys.stdin.read())
-append_influence_log(Path('${feature_path}'), record)
-" <<< "$json_record" 2>/dev/null || true
+append_influence_log(Path('{feature_path}'), record)
+" <<< '{json_record}' 2>/dev/null || true
 ```
+
+Bindings (resolved by orchestrator before emitting):
+- `{feature_path}` — substituted with literal feature dir from
+  command's already-known feature context (same value the command uses
+  to write `spec.md`/`design.md`).
+- `{json_record}` — substituted with the constructed JSON record string
+  (single-quoted, properly escaped; orchestrator builds it inline).
 
 (Best-effort wrapper; `|| true` ensures sidecar failures never block.)
 
@@ -249,16 +267,30 @@ malformed-line handling, and outcome breakdown):**
      `mcp_status`, `matched_count`); skip-with-warn if missing.
 3. Determine FR-1 cutover SHA: read `.fr1-cutover-sha` file (one-line
    text file in `{feature_path}/`, written by the implementer when FR-1
-   commits land). Filter sidecar lines: keep only those with `commit_sha`
-   matching `git rev-list <cutover>..HEAD` (i.e., post-cutover).
-   If `.fr1-cutover-sha` missing: emit warning, count ALL lines (no
-   filter). Reported in summary so dogfood validation is honest.
-4. Resolve current `_project_root` (from session config). Open the
-   SQLite DB; query candidate entries:
+   commits land). Filter sidecar lines:
+   - Anchor: `git rev-list <cutover>..<feature-branch-tip>` where
+     `<feature-branch-tip>` is `git rev-parse HEAD` if currently on the
+     feature branch, else read from `.meta.json.branch` and resolve via
+     `git rev-parse refs/heads/{branch}`.
+   - Keep sidecar lines whose `commit_sha` is in the rev-list output.
+   - **Unreachable-commit policy:** if a `commit_sha` is unreachable
+     (rebased / squashed / orphaned), check whether the cutover SHA
+     itself is reachable; if yes, treat the unreachable line as
+     post-cutover (include in audit) — the line is real evidence even
+     if the commit was history-rewritten.
+   - If `.fr1-cutover-sha` missing: emit warning, count ALL lines (no
+     filter). Reported in summary so dogfood validation is honest.
+4. Resolve `--project-root` (from CLI arg, default: walk up from
+   `os.getcwd()` to find the nearest `.git` directory and use its
+   parent). Open the SQLite DB; query candidate entries:
    `SELECT id, name, source_project, influence_count, recall_count
     FROM entries WHERE name IN (?, ...) AND source_project = ?`
    The source_project filter prevents cross-project name collisions
    from poisoning SC-1.
+
+   **Schema versioning note:** Feature 101 is the first feature using
+   the I-7 sidecar schema. No schema-migration shims required for
+   pre-iter-2 lines (none exist).
 5. Emit a markdown table:
    ```
    | entry_id | name | was_injected | mcp_status | matched | influence_count | recall_count |
@@ -326,32 +358,47 @@ def rebuild_fts5(db_path: Path) -> dict:
     }
     conn = sqlite3.connect(db_path)
     try:
-        diag["entries_count"] = conn.execute("SELECT COUNT(*) FROM entries").fetchone()[0]
-        diag["fts5_count_before"] = conn.execute("SELECT COUNT(*) FROM entries_fts").fetchone()[0]
-        diag["schema_user_version"] = conn.execute("PRAGMA user_version").fetchone()[0]
-        # Explicit transaction: BEGIN IMMEDIATE acquires write lock, blocks
-        # concurrent MCP server writes from observing the empty intermediate
-        # state. Required because rebuild deletes-then-inserts inside its
-        # own implicit txn but other connections can still see the empty
-        # state without an explicit outer-tx wrapping our intent.
-        conn.execute("BEGIN IMMEDIATE")
+        # Autocommit mode required for explicit BEGIN IMMEDIATE — Python's
+    # sqlite3 default isolation_level wraps DML in implicit txn, which
+    # conflicts with explicit BEGIN.
+    conn.isolation_level = None
+
+    diag["entries_count"] = conn.execute("SELECT COUNT(*) FROM entries").fetchone()[0]
+    diag["fts5_count_before"] = conn.execute("SELECT COUNT(*) FROM entries_fts").fetchone()[0]
+    diag["schema_user_version"] = conn.execute("PRAGMA user_version").fetchone()[0]
+
+    # Explicit retry loop — once on locked-DB, then surface error.
+    # BEGIN IMMEDIATE acquires write lock; concurrent MCP reader either
+    # sees pre-rebuild or post-rebuild state, never empty intermediate.
+    max_attempts = 2
+    backoff_seconds = 0.05
+    last_exc = None
+    for attempt in range(max_attempts):
         try:
-            conn.execute("INSERT INTO entries_fts(entries_fts) VALUES('rebuild')")
-            # Post-rebuild integrity check (canonical SQLite FTS5 diagnostic)
-            conn.execute("INSERT INTO entries_fts(entries_fts) VALUES('integrity-check')")
-            conn.commit()
-        except Exception as e:
-            conn.rollback()
-            diag["fts5_errors"].append(str(e))
-            raise
-        diag["fts5_count_after"] = conn.execute("SELECT COUNT(*) FROM entries_fts").fetchone()[0]
-    except sqlite3.OperationalError as e:
-        # Likely 'database is locked' due to concurrent MCP write.
-        # Retry once after short backoff; if still locked, surface error.
-        diag["fts5_errors"].append(f"OperationalError: {e}")
-        raise
-    finally:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                conn.execute("INSERT INTO entries_fts(entries_fts) VALUES('rebuild')")
+                # Post-rebuild integrity check (canonical FTS5 diagnostic)
+                conn.execute("INSERT INTO entries_fts(entries_fts) VALUES('integrity-check')")
+                conn.execute("COMMIT")
+                last_exc = None
+                break
+            except Exception as inner:
+                conn.execute("ROLLBACK")
+                raise inner
+        except sqlite3.OperationalError as e:
+            last_exc = e
+            diag["fts5_errors"].append(f"attempt {attempt+1}: {e}")
+            if "locked" in str(e).lower() and attempt < max_attempts - 1:
+                time.sleep(backoff_seconds)
+                continue
+            break
+    if last_exc is not None:
         conn.close()
+        raise last_exc
+
+    diag["fts5_count_after"] = conn.execute("SELECT COUNT(*) FROM entries_fts").fetchone()[0]
+    conn.close()
     return diag
 ```
 
@@ -410,10 +457,12 @@ if returned_ids:
 Note: `update_recall` calls `self._conn.commit()` on every invocation
 (per existing implementation). Per AC-3.6, the benchmark runs both
 baseline (monkeypatched no-op) and post-FR-3 paths in the same fixture;
-P95 (not just P50) MUST also be reported in the benchmark output to
-catch tail-latency regressions under concurrent decay-write contention.
-If P95 regresses materially (>2× the P50 delta), defer the commit via
-batched flush helper (out-of-scope mitigation per R-11).
+**P95 reported informationally** alongside P50; SC-7 enforces P50 only
+(threshold from spec AC-3.6). If P95 regresses materially under
+concurrent-write contention (informational; team review before next
+release), defer the commit via batched flush helper (out-of-scope
+mitigation per R-11). P95-as-enforcement-threshold is deferred to a
+future iteration to avoid expanding scope beyond user filter.
 
 ### C-8: Confidence Upgrade (FR-4)
 
@@ -502,7 +551,19 @@ stale entries, upgrade scans non-stale entries with sufficient signal —
 disjoint candidate sets in practice (a hot entry is not stale).
 
 **New helper `db.batch_promote(ids, new_confidence, now_iso)`** in
-`database.py` mirroring `batch_demote` shape.
+`database.py`. Mirrors existing `batch_demote` (in `database.py` —
+implementer cites exact line at impl time; symmetric helper). SQL:
+```sql
+UPDATE entries
+   SET confidence = ?,
+       last_promoted_at = ?
+ WHERE id IN (?, ?, ...)
+   AND confidence != ?  -- defensive idempotency
+```
+Test coverage: add `test_database.py::test_batch_promote_basic`
+parallel to existing `test_batch_demote*` test set; assert (a) batch
+of 3 ids upgrades atomically, (b) idempotent re-call no-ops,
+(c) `last_promoted_at` populated.
 
 ### C-9: Cross-Project Influence Filter (FR-5)
 
@@ -726,9 +787,13 @@ Error mode: SQLite locked → caller catches and logs (NFR-1)
 
 ```
 Args:
-  --feature {id}     Required. Feature ID (e.g., '101').
-  --db-path {path}   Optional. Override DB path. Default: ~/.claude/pd/memory/memory.db
-  --json             Optional. Emit JSON instead of markdown.
+  --feature {id}        Required. Feature ID (e.g., '101').
+  --db-path {path}      Optional. Override DB path.
+                        Default: ~/.claude/pd/memory/memory.db
+  --project-root {path} Optional. Override project root for source_project filter.
+                        Default: walk up from os.getcwd() to find .git, use its parent.
+  --json                Optional. Emit JSON instead of markdown.
+  --strict              Optional. Exit code 2 if SC-1 rate < 80% (CI mode).
 
 Output (markdown):
   | entry_id | name | was_injected | influence_count | recall_count |
@@ -837,10 +902,13 @@ Stage 1 (Foundations): C-5, C-6, C-7, C-8, C-9 + I-2, I-4, I-8
 Stage 2 (Influence Wiring + Lifecycle): C-1, C-2, C-3, C-4, C-8 (call sites) + I-1, I-3, I-5, I-6, I-7
 Stage 3 (Adoption Trigger): C-10
 
-Note C-8 spans Stage 1 (function definition + decay call site) and
-Stage 2 (merge call site + integration test for OR semantics with
-real influence_count data flowing). This is acceptable because the
-Stage 1 portion is no-op without FR-1 data; Stage 2 activates it.
+Note C-8 spans Stage 1 (function definitions: `_recompute_confidence`
++ `_select_upgrade_candidates` + `upgrade_confidence` wrapper +
+`run_memory_decay` integration) and Stage 2 (`merge_duplicate` inline
+call + integration test for OR semantics with real influence_count
+data flowing). This is acceptable because the Stage 1 portion is no-op
+on hot entries until FR-1 data starts flowing in Stage 2; the upgrade
+scan correctly handles the "no candidates" case from day one.
 
 ## Dependencies
 
@@ -899,6 +967,37 @@ Internal (new in this feature):
 - C-7 commit cost: AC-3.6 strengthened to require P95 reporting + R-11
   added to risks with batched-flush deferred mitigation.
 - I-7 schema: added `matched_count` + `mcp_status` for outcome breakdown.
+
+---
+
+### Design Review - Iteration 2 - 2026-04-30
+**Reviewer:** design-reviewer (skeptic)
+**Decision:** Needs Revision (4 blockers + 6 warnings/suggestions)
+
+**Blockers fixed:**
+- C-5 retry: explicit retry loop in pseudocode (max_attempts=2,
+  backoff_seconds=0.05). Locked-DB → retry; second failure surfaces.
+- C-2 invocation: canonical Bash snippet with two-location PYTHONPATH
+  pattern (PLUGIN_ROOT cache glob + dev-workspace fallback) per
+  CLAUDE.md convention. `{feature_path}` and `{json_record}` bindings
+  resolved by orchestrator before emitting.
+- C-3 `--project-root`: added to I-3 args with cwd-walk-up default.
+- C-3 cutover SHA anchor: feature-branch tip explicit; unreachable-commit
+  policy (include if cutover reachable).
+
+**Warnings fixed:**
+- C-5 isolation_level=None: explicit autocommit mode set before BEGIN IMMEDIATE.
+- C-2 mkdir: `feature_path.mkdir(parents=True, exist_ok=True)` ENOENT defense.
+- C-1 site_id table: anchored by ordinal-within-file (stable across
+  restructure); line numbers marked as advisory snapshot.
+- C-7 P95: explicit informational-only (SC-7 enforces P50 only).
+- C-8 batch_promote: SQL pattern + test pointer added.
+- Stage Boundaries C-8 description: updated to reflect new
+  upgrade_confidence wrapper.
+
+**Suggestion applied:**
+- Schema versioning note: explicit "feature 101 is first I-7 user;
+  no migration shims required."
 
 ---
 
