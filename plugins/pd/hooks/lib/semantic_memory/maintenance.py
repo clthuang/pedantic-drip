@@ -35,6 +35,7 @@ from semantic_memory._config_utils import (
     _resolve_int_config as _resolve_int_config_core,
     _warn_and_default as _warn_and_default_core,
 )
+from semantic_memory._confidence import _recompute_confidence as _recompute_confidence_core
 from semantic_memory.database import MemoryDatabase
 
 # ---------------------------------------------------------------------------
@@ -519,6 +520,204 @@ def decay_confidence(
     return diag
 
 
+# ---------------------------------------------------------------------------
+# Feature 101 FR-4: Confidence upgrade
+# ---------------------------------------------------------------------------
+
+
+# Re-export for backward-compat with tests that patch the module symbol.
+_recompute_confidence = _recompute_confidence_core
+
+
+def _select_upgrade_candidates(
+    db: MemoryDatabase, scan_limit: int, k_obs: int, k_use: int
+) -> list[dict]:
+    """Scan entries with confidence != 'high' that satisfy upgrade gates.
+
+    Feature 101 FR-4. Delegates to the public ``db.scan_upgrade_candidates``
+    method (closes the Direct ``db._conn`` Access anti-pattern per
+    code-quality-reviewer iter 1, blocker B1).
+
+    Independent of decay_confidence's staleness scan — selects HOT entries
+    (eligible for promotion) regardless of recency. Bounded by ``scan_limit``.
+    """
+    return db.scan_upgrade_candidates(
+        k_obs=k_obs, k_use=k_use, scan_limit=scan_limit
+    )
+
+
+def upgrade_confidence(
+    db: MemoryDatabase,
+    config: dict,
+    *,
+    now: datetime | None = None,
+) -> dict:
+    """Run confidence-upgrade pass after decay.
+
+    Feature 101 FR-4. Returns a diagnostic dict mirroring decay_confidence
+    shape. Best-effort: never raises for config / DB errors (NFR-1).
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    elif not isinstance(now, datetime):
+        raise TypeError(f"now must be datetime, got {type(now).__name__}")
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    else:
+        now = now.astimezone(timezone.utc)
+
+    k_obs = _resolve_int_config(
+        config,
+        "memory_promote_min_observations",
+        3,
+        clamp=(1, 1000),
+        warned=_decay_warned_fields,
+    )
+    k_use = _resolve_int_config(
+        config,
+        "memory_promote_use_signal",
+        5,
+        clamp=(1, 1000),
+        warned=_decay_warned_fields,
+    )
+    scan_limit = _resolve_int_config(
+        config,
+        "memory_decay_scan_limit",
+        10000,
+        clamp=(1000, 10_000_000),
+        warned=_decay_warned_fields,
+    )
+
+    diag = {
+        "upgraded_low_to_medium": 0,
+        "upgraded_medium_to_high": 0,
+        "scanned": 0,
+    }
+    try:
+        candidates = _select_upgrade_candidates(db, scan_limit, k_obs, k_use)
+        diag["scanned"] = len(candidates)
+        med_ids: list[str] = []
+        high_ids: list[str] = []
+        for c in candidates:
+            c["_K_OBS"] = k_obs
+            c["_K_USE"] = k_use
+            new = _recompute_confidence(c)
+            if new == "medium" and c["confidence"] == "low":
+                med_ids.append(c["id"])
+            elif new == "high":
+                high_ids.append(c["id"])
+        now_iso = _iso_utc(now)
+        if med_ids:
+            db.batch_promote(med_ids, "medium", now_iso)
+            diag["upgraded_low_to_medium"] = len(med_ids)
+        if high_ids:
+            db.batch_promote(high_ids, "high", now_iso)
+            diag["upgraded_medium_to_high"] = len(high_ids)
+    except sqlite3.Error as e:
+        diag["error"] = f"sqlite3.Error: {e}"
+    return diag
+
+
+# ---------------------------------------------------------------------------
+# Feature 101 FR-2: FTS5 self-heal
+# ---------------------------------------------------------------------------
+
+FTS5_DIAG_PATH: Path = (
+    Path.home() / ".claude" / "pd" / "memory" / ".fts5-rebuild-diag.json"
+)
+
+
+def rebuild_fts5(db_path: Path) -> dict:
+    """Rebuild entries_fts from entries. Returns diagnostic dict.
+
+    Feature 101 FR-2 / design C-5. Uses BEGIN IMMEDIATE + retry-on-locked +
+    integrity-check. Caller responsible for diagnostic-file persistence.
+    """
+    diag = {
+        "entries_count": 0,
+        "fts5_count_before": 0,
+        "fts5_count_after": 0,
+        "schema_user_version": None,
+        "fts5_errors": [],
+        "db_path": str(db_path),
+    }
+    conn = sqlite3.connect(str(db_path))
+    # Autocommit for explicit BEGIN IMMEDIATE.
+    conn.isolation_level = None
+    try:
+        diag["entries_count"] = conn.execute(
+            "SELECT COUNT(*) FROM entries"
+        ).fetchone()[0]
+        try:
+            diag["fts5_count_before"] = conn.execute(
+                "SELECT COUNT(*) FROM entries_fts"
+            ).fetchone()[0]
+        except sqlite3.OperationalError:
+            diag["fts5_count_before"] = 0
+        diag["schema_user_version"] = conn.execute(
+            "PRAGMA user_version"
+        ).fetchone()[0]
+
+        max_attempts = 2
+        for attempt in range(max_attempts):
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    conn.execute(
+                        "INSERT INTO entries_fts(entries_fts) VALUES('rebuild')"
+                    )
+                    conn.execute(
+                        "INSERT INTO entries_fts(entries_fts) "
+                        "VALUES('integrity-check')"
+                    )
+                    conn.execute("COMMIT")
+                    break
+                except Exception as inner:
+                    conn.execute("ROLLBACK")
+                    raise inner
+            except sqlite3.OperationalError as e:
+                diag["fts5_errors"].append(f"attempt {attempt+1}: {e}")
+                if "locked" in str(e).lower() and attempt < max_attempts - 1:
+                    time.sleep(0.05)
+                    continue
+                raise
+        diag["fts5_count_after"] = conn.execute(
+            "SELECT COUNT(*) FROM entries_fts"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    return diag
+
+
+def _persist_fts5_diagnostic(diag: dict) -> None:
+    """Write/append rebuild diagnostic JSON. Best-effort."""
+    try:
+        FTS5_DIAG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        ts = _iso_utc(datetime.now(timezone.utc))
+        if FTS5_DIAG_PATH.exists():
+            try:
+                existing = json.loads(FTS5_DIAG_PATH.read_text())
+            except (json.JSONDecodeError, OSError):
+                existing = {}
+            existing.setdefault("refires", []).append(
+                {
+                    "timestamp": ts,
+                    "fts5_count_before": diag["fts5_count_before"],
+                    "fts5_count_after": diag["fts5_count_after"],
+                    "schema_user_version": diag.get("schema_user_version"),
+                }
+            )
+            FTS5_DIAG_PATH.write_text(json.dumps(existing, indent=2))
+        else:
+            full = dict(diag)
+            full["created_at"] = ts
+            full["refires"] = []
+            FTS5_DIAG_PATH.write_text(json.dumps(full, indent=2))
+    except Exception:
+        # Diagnostic persistence is best-effort; never block rebuild.
+        pass
+
+
 def _main() -> None:
     """CLI entry exposed as ``python -m semantic_memory.maintenance``.
 
@@ -541,6 +740,11 @@ def _main() -> None:
         help="Run confidence decay pass",
     )
     parser.add_argument(
+        "--rebuild-fts5",
+        action="store_true",
+        help="Feature 101 FR-2: rebuild entries_fts virtual table",
+    )
+    parser.add_argument(
         "--project-root",
         type=str,
         default=None,
@@ -552,6 +756,23 @@ def _main() -> None:
         help="Force dry-run (overrides memory_decay_dry_run config)",
     )
     args = parser.parse_args()
+
+    if args.rebuild_fts5:
+        # FR-2 standalone path — does not require config / project-root.
+        db_path = Path.home() / ".claude" / "pd" / "memory" / "memory.db"
+        if not db_path.exists():
+            sys.exit(0)
+        try:
+            diag = rebuild_fts5(db_path)
+            _persist_fts5_diagnostic(diag)
+            print(
+                f"Rebuilt {diag['fts5_count_after']} rows in entries_fts "
+                f"(was {diag['fts5_count_before']})."
+            )
+        except Exception as e:
+            sys.stderr.write(f"[memory] rebuild_fts5 failed: {e}\n")
+            sys.exit(1)
+        sys.exit(0)
 
     if not args.decay:
         parser.print_usage()
@@ -605,6 +826,9 @@ def _main() -> None:
 
     try:
         diag = decay_confidence(db, config)
+        # Feature 101 FR-4: upgrade pass after decay.
+        upgrade_diag = upgrade_confidence(db, config)
+        diag["upgraded"] = upgrade_diag
         summary = _build_summary_line(diag)
         if summary:
             print(summary)

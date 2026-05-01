@@ -124,15 +124,16 @@ Task tool call:
 
 **Fallback detection (I9):** After receiving the test-deepener Phase A response, search for "Files read:" pattern. If not found, log `LAZY-LOAD-WARNING: test-deepener did not confirm artifact reads` to `.review-history.md`. Proceed regardless.
 
-**Post-dispatch influence tracking:**
-If search_memory returned entries before this dispatch:
-  call record_influence_by_content(
-    subagent_output_text=<full agent output text>,
-    injected_entry_names=<list of entry names from search_memory results>,
-    agent_role="test-deepener",
-    feature_type_id=<current feature type_id from .meta.json>)
-  If record_influence_by_content fails: warn "Influence tracking failed: {error}", continue
-  If .meta.json missing or type_id unresolvable: skip influence recording with warning
+<!-- influence-tracking-site: s8 -->
+**Influence tracking (mandatory, unconditional):**
+Call `record_influence_by_content(
+  subagent_output_text=<full agent output text>,
+  injected_entry_names=<list from search_memory results, or [] if none>,
+  agent_role="test-deepener",
+  feature_type_id=<current feature type_id from .meta.json>)`
+Emit one line to your output: `Influence recorded: N matches`.
+On MCP failure: warn "Influence tracking failed: {error}", continue.
+If .meta.json missing or type_id unresolvable: skip with warning.
 
 **Phase A validation:** If `outlines` array is empty, log warning: "Test deepening Phase A returned no outlines — skipping test deepening" and proceed to Step 7.
 
@@ -189,15 +190,16 @@ Task tool call:
     {search_memory results from the pre-dispatch call above}
 ```
 
-**Post-dispatch influence tracking:**
-If search_memory returned entries before this dispatch:
-  call record_influence_by_content(
-    subagent_output_text=<full agent output text>,
-    injected_entry_names=<list of entry names from search_memory results>,
-    agent_role="test-deepener",
-    feature_type_id=<current feature type_id from .meta.json>)
-  If record_influence_by_content fails: warn "Influence tracking failed: {error}", continue
-  If .meta.json missing or type_id unresolvable: skip influence recording with warning
+<!-- influence-tracking-site: s9 -->
+**Influence tracking (mandatory, unconditional):**
+Call `record_influence_by_content(
+  subagent_output_text=<full agent output text>,
+  injected_entry_names=<list from search_memory results, or [] if none>,
+  agent_role="test-deepener",
+  feature_type_id=<current feature type_id from .meta.json>)`
+Emit one line to your output: `Influence recorded: N matches`.
+On MCP failure: warn "Influence tracking failed: {error}", continue.
+If .meta.json missing or type_id unresolvable: skip with warning.
 
 **Divergence control flow:**
 
@@ -502,15 +504,16 @@ resume_state["implementation-reviewer"].last_commit_sha = {current HEAD SHA}
 
 **Fallback detection (I9):** After receiving the implementation-reviewer's response, search for "Files read:" pattern. If not found, log `LAZY-LOAD-WARNING: implementation-reviewer did not confirm artifact reads` to `.review-history.md`. Proceed regardless. Note: Resumed dispatches (I2/I2-FV templates) do not include Required Artifacts, so "Files read:" may not appear — only apply I9 detection to fresh dispatches.
 
-**Post-dispatch influence tracking:**
-If search_memory returned entries before this dispatch:
-  call record_influence_by_content(
-    subagent_output_text=<full agent output text>,
-    injected_entry_names=<list of entry names from search_memory results>,
-    agent_role="implementation-reviewer",
-    feature_type_id=<current feature type_id from .meta.json>)
-  If record_influence_by_content fails: warn "Influence tracking failed: {error}", continue
-  If .meta.json missing or type_id unresolvable: skip influence recording with warning
+<!-- influence-tracking-site: s10 -->
+**Influence tracking (mandatory, unconditional):**
+Call `record_influence_by_content(
+  subagent_output_text=<full agent output text>,
+  injected_entry_names=<list from search_memory results, or [] if none>,
+  agent_role="implementation-reviewer",
+  feature_type_id=<current feature type_id from .meta.json>)`
+Emit one line to your output: `Influence recorded: N matches`.
+On MCP failure: warn "Influence tracking failed: {error}", continue.
+If .meta.json missing or type_id unresolvable: skip with warning.
 
 **7a2. Level 2: Spec-Level Verification (Relevance Check):**
 
@@ -663,15 +666,16 @@ resume_state["relevance-verifier"].last_commit_sha = {current HEAD SHA}
 
 **Fallback detection (I9):** After receiving the relevance-verifier's response, search for "Files read:" pattern. If not found, log `LAZY-LOAD-WARNING: relevance-verifier did not confirm artifact reads` to `.review-history.md`. Proceed regardless. Note: Resumed dispatches (I2/I2-FV templates) do not include Required Artifacts, so "Files read:" may not appear -- only apply I9 detection to fresh dispatches.
 
-**Post-dispatch influence tracking:**
-If search_memory returned entries before this dispatch:
-  call record_influence_by_content(
-    subagent_output_text=<full agent output text>,
-    injected_entry_names=<list of entry names from search_memory results>,
-    agent_role="relevance-verifier",
-    feature_type_id=<current feature type_id from .meta.json>)
-  If record_influence_by_content fails: warn "Influence tracking failed: {error}", continue
-  If .meta.json missing or type_id unresolvable: skip influence recording with warning
+<!-- influence-tracking-site: s11 -->
+**Influence tracking (mandatory, unconditional):**
+Call `record_influence_by_content(
+  subagent_output_text=<full agent output text>,
+  injected_entry_names=<list from search_memory results, or [] if none>,
+  agent_role="relevance-verifier",
+  feature_type_id=<current feature type_id from .meta.json>)`
+Emit one line to your output: `Influence recorded: N matches`.
+On MCP failure: warn "Influence tracking failed: {error}", continue.
+If .meta.json missing or type_id unresolvable: skip with warning.
 
 **Handle relevance-verifier result:**
 - Apply strict threshold: **PASS** = `pass: true` with zero gaps across all checks. **FAIL** = `pass: false` OR any check has gaps.
@@ -841,15 +845,16 @@ resume_state["code-quality-reviewer"].last_commit_sha = {current HEAD SHA}
 
 **Fallback detection (I9):** After receiving the code-quality-reviewer's response, search for "Files read:" pattern. If not found, log `LAZY-LOAD-WARNING: code-quality-reviewer did not confirm artifact reads` to `.review-history.md`. Proceed regardless. Note: Resumed dispatches (I2/I2-FV templates) do not include Required Artifacts, so "Files read:" may not appear — only apply I9 detection to fresh dispatches.
 
-**Post-dispatch influence tracking:**
-If search_memory returned entries before this dispatch:
-  call record_influence_by_content(
-    subagent_output_text=<full agent output text>,
-    injected_entry_names=<list of entry names from search_memory results>,
-    agent_role="code-quality-reviewer",
-    feature_type_id=<current feature type_id from .meta.json>)
-  If record_influence_by_content fails: warn "Influence tracking failed: {error}", continue
-  If .meta.json missing or type_id unresolvable: skip influence recording with warning
+<!-- influence-tracking-site: s12 -->
+**Influence tracking (mandatory, unconditional):**
+Call `record_influence_by_content(
+  subagent_output_text=<full agent output text>,
+  injected_entry_names=<list from search_memory results, or [] if none>,
+  agent_role="code-quality-reviewer",
+  feature_type_id=<current feature type_id from .meta.json>)`
+Emit one line to your output: `Influence recorded: N matches`.
+On MCP failure: warn "Influence tracking failed: {error}", continue.
+If .meta.json missing or type_id unresolvable: skip with warning.
 
 **7c. Level 3: Standards-Level Verification -- Security Review:**
 
@@ -1012,15 +1017,16 @@ resume_state["security-reviewer"].last_commit_sha = {current HEAD SHA}
 
 **Fallback detection (I9):** After receiving the security-reviewer's response, search for "Files read:" pattern. If not found, log `LAZY-LOAD-WARNING: security-reviewer did not confirm artifact reads` to `.review-history.md`. Proceed regardless. Note: Resumed dispatches (I2/I2-FV templates) do not include Required Artifacts, so "Files read:" may not appear — only apply I9 detection to fresh dispatches.
 
-**Post-dispatch influence tracking:**
-If search_memory returned entries before this dispatch:
-  call record_influence_by_content(
-    subagent_output_text=<full agent output text>,
-    injected_entry_names=<list of entry names from search_memory results>,
-    agent_role="security-reviewer",
-    feature_type_id=<current feature type_id from .meta.json>)
-  If record_influence_by_content fails: warn "Influence tracking failed: {error}", continue
-  If .meta.json missing or type_id unresolvable: skip influence recording with warning
+<!-- influence-tracking-site: s13 -->
+**Influence tracking (mandatory, unconditional):**
+Call `record_influence_by_content(
+  subagent_output_text=<full agent output text>,
+  injected_entry_names=<list from search_memory results, or [] if none>,
+  agent_role="security-reviewer",
+  feature_type_id=<current feature type_id from .meta.json>)`
+Emit one line to your output: `Influence recorded: N matches`.
+On MCP failure: warn "Influence tracking failed: {error}", continue.
+If .meta.json missing or type_id unresolvable: skip with warning.
 
 **7d. Selective Dispatch Logic:**
 
@@ -1175,15 +1181,16 @@ resume_state["implementer"].last_iteration = {iteration}
 
 **Fallback detection (I9):** After receiving the implementer's response, search for "Files read:" pattern. If not found, log `LAZY-LOAD-WARNING: implementer did not confirm artifact reads` to `.review-history.md`. Proceed regardless. Note: Resumed dispatches (I7 resumed template) do not include Required Artifacts, so "Files read:" may not appear — only apply I9 detection to fresh dispatches.
 
-**Post-dispatch influence tracking:**
-If search_memory returned entries before this dispatch:
-  call record_influence_by_content(
-    subagent_output_text=<full agent output text>,
-    injected_entry_names=<list of entry names from search_memory results>,
-    agent_role="implementer",
-    feature_type_id=<current feature type_id from .meta.json>)
-  If record_influence_by_content fails: warn "Influence tracking failed: {error}", continue
-  If .meta.json missing or type_id unresolvable: skip influence recording with warning
+<!-- influence-tracking-site: s14 -->
+**Influence tracking (mandatory, unconditional):**
+Call `record_influence_by_content(
+  subagent_output_text=<full agent output text>,
+  injected_entry_names=<list from search_memory results, or [] if none>,
+  agent_role="implementer",
+  feature_type_id=<current feature type_id from .meta.json>)`
+Emit one line to your output: `Influence recorded: N matches`.
+On MCP failure: warn "Influence tracking failed: {error}", continue.
+If .meta.json missing or type_id unresolvable: skip with warning.
 
 **7e-commit. Per-iteration git commit after implementer fixes:**
 

@@ -358,6 +358,41 @@ For each NEW entry written in Step 4 (not pre-existing entries from 4b):
 
 4. Output: "Memory promotion: N universal promoted, M project-specific kept local"
 
+### Step 4c.1: Promote-Pattern Adoption Trigger (Feature 101 FR-6)
+
+After universal classification + global-store promotion in Step 4c,
+surface `/pd:promote-pattern` to the user when the KB has qualifying
+entries. This converts the deferred-value adoption barrier (the command
+exists but is rarely invoked) into a moment of immediate trigger.
+
+1. **Enumerate qualifying entries** via subprocess CLI (matches the
+   `promoting-patterns` skill's invocation convention):
+   ```bash
+   PLUGIN_ROOT=$(ls -d ~/.claude/plugins/cache/*/pd*/*/hooks 2>/dev/null | head -1 | xargs -r dirname)
+   [ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT="plugins/pd"  # fallback (dev workspace)
+   result=$(PYTHONPATH="$PLUGIN_ROOT/hooks/lib" "$PLUGIN_ROOT/.venv/bin/python" -m pattern_promotion enumerate --json 2>/dev/null) || result='{"count":0}'
+   count=$(echo "$result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('count',0))" 2>/dev/null) || count=0
+   ```
+   Threshold uses existing config key `memory_promote_min_observations`
+   (same key reused by FR-4's observation gate; eligibility for
+   confidence upgrade and pattern-promotion are aligned).
+
+2. **If `count > 0`:**
+   - **YOLO mode** (`[YOLO_MODE]` substring in args, per
+     `specifying/SKILL.md:16` precedent): skip the prompt, directly
+     invoke `Skill({skill: "pd:promoting-patterns"})`.
+   - **Non-YOLO:** AskUserQuestion with options:
+     - `"Run /pd:promote-pattern (Recommended)"` →
+       `Skill({skill: "pd:promoting-patterns"})`
+     - `"Skip"` → continue retro
+
+3. **If `count == 0`:** emit nothing (silent skip).
+
+4. **Subprocess error isolation:** if the enumerate subprocess errors
+   (MCP unavailable, missing venv, etc.), log
+   `[retrospect] promote-pattern enumerate failed: {error}; skipping trigger`
+   to stderr and continue retro. Never block on this step.
+
 ### Step 5: Commit
 
 ```bash
