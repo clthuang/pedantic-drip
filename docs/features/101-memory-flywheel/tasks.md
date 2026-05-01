@@ -4,8 +4,14 @@
 
 ## Format
 
-Each task: 5–15 minutes. Done criterion is binary. TDD ordering enforced
-(RED before GREEN). `Depends:` lists task IDs that must complete first.
+Tasks use complexity tiers (S/M/C) per CLAUDE.md plan-reviewer rubric.
+Done criterion is binary. TDD ordering enforced (RED before GREEN).
+`Depends:` lists task IDs that must complete first.
+
+**Stage placement reconciliation (per design C-8):** FR-4 code +
+function definitions + `run_memory_decay` integration moved to Stage 1
+P1.5; only `merge_duplicate` inline call + integration with real
+sidecar data are Stage 2 (P2.3).
 
 ---
 
@@ -43,12 +49,33 @@ Each task: 5–15 minutes. Done criterion is binary. TDD ordering enforced
 - [ ] **T1.3.5** Add null-`_project_root` bypass branch: if None, log `[memory] record_influence: no project context; skipping project filter` to stderr and skip the filter. (TDD: GREEN) | memory_server.py | Done: T1.3.3 PASS | Depends: T1.3.4
 - [ ] **T1.3.6** Run all FR-5 tests: `pytest plugins/pd/mcp/ -k record_influence -v`. Verify 3 PASS. (TDD: VERIFY) | — | Done: 3 PASS | Depends: T1.3.5
 
+### P1.5 — FR-4 code (Stage 1 portion per design C-8)
+
+- [ ] **T1.5.1** Write `test_recompute_confidence_observation_gate` — seed `confidence='low', observation_count=3, influence_count=0, recall_count=0`; assert returns `'medium'`. (TDD: RED) | `plugins/pd/hooks/lib/semantic_memory/test_maintenance.py` | Cx: S | Depends: —
+- [ ] **T1.5.2** Write `test_recompute_confidence_use_gate_with_floor` — seed `confidence='low', observation_count=0, influence_count=2, recall_count=3`; assert returns `'medium'`. (RED) | Same | Cx: S | Depends: T1.5.1
+- [ ] **T1.5.3** Write `test_recompute_confidence_recall_only_no_promotion` — seed `confidence='low', observation_count=0, influence_count=0, recall_count=10`; assert returns `None` (floor blocks). (RED) | Same | Cx: S | Depends: T1.5.2
+- [ ] **T1.5.4** Write `test_recompute_confidence_neither_gate_no_op` — seed `confidence='low', observation_count=2, influence_count=1, recall_count=2`; assert returns `None`. (RED) | Same | Cx: S | Depends: T1.5.3
+- [ ] **T1.5.5** Write `test_recompute_confidence_medium_to_high_obs` — seed `confidence='medium', observation_count=6`; assert returns `'high'`. (RED) | Same | Cx: S | Depends: T1.5.4
+- [ ] **T1.5.6** Write `test_recompute_confidence_medium_to_high_use` — seed `confidence='medium', observation_count=0, influence_count=4, recall_count=6`; assert returns `'high'`. (RED) | Same | Cx: S | Depends: T1.5.5
+- [ ] **T1.5.7** Write `test_recompute_confidence_high_idempotent` — seed `confidence='high'`; assert returns `None`. (RED) | Same | Cx: S | Depends: T1.5.6
+- [ ] **T1.5.8** Write `test_select_upgrade_candidates_query` — populate DB with 3 hot non-stale entries + 2 stale entries; call `_select_upgrade_candidates`; assert only 3 hot entries returned. (RED) | Same | Cx: M | Depends: T1.5.7
+- [ ] **T1.5.9** Write `test_upgrade_confidence_wrapper` — populate DB with mixed entries; call `upgrade_confidence(db, scan_limit=100)`; assert returns dict with non-empty `low_to_medium` AND DB rows updated. (RED) | Same | Cx: M | Depends: T1.5.8
+- [ ] **T1.5.10** Write `test_batch_promote_basic` parallel to `test_batch_demote_basic`. (RED) | `plugins/pd/hooks/lib/semantic_memory/test_database.py` | Cx: M | Depends: T1.5.9
+- [ ] **T1.5.11** Write `test_run_memory_decay_invokes_upgrade_after_decay` — mock both decay_confidence and upgrade_confidence; assert call order (decay before upgrade). (RED) | `plugins/pd/hooks/lib/semantic_memory/test_maintenance.py` | Cx: M | Depends: T1.5.10
+- [ ] **T1.5.12** Implement `_recompute_confidence(entry: dict) -> str | None` with K_OBS / K_USE / K_OBS_HIGH=K_OBS*2 / K_USE_HIGH=K_USE*2; OR semantics with influence floor on use gate. (GREEN) | maintenance.py | Cx: M | Depends: T1.5.11
+- [ ] **T1.5.13** Implement `_select_upgrade_candidates(db, scan_limit) -> list[dict]` SQL helper. (GREEN) | maintenance.py | Cx: M | Depends: T1.5.12
+- [ ] **T1.5.14** Implement `upgrade_confidence(db, scan_limit) -> dict` wrapper. (GREEN) | maintenance.py | Cx: M | Depends: T1.5.13
+- [ ] **T1.5.15** Implement `db.batch_promote(ids, new_confidence, now_iso)` mirroring batch_demote. (GREEN) | `plugins/pd/hooks/lib/semantic_memory/database.py` | Cx: M | Depends: T1.5.14
+- [ ] **T1.5.16** Wire `upgrade_confidence` into `run_memory_decay` AFTER `decay_confidence` returns. Add `upgraded` to diagnostic dict. (GREEN) | maintenance.py | Cx: S | Depends: T1.5.15
+- [ ] **T1.5.17** Document `memory_promote_use_signal` (default 5) in pd config-key reference. K_OBS_HIGH/K_USE_HIGH NOT separately documented (auto-derived). (DOCS) | find via `grep -r 'memory_promote_min_observations' plugins/pd/references/` | Cx: S | Depends: T1.5.16
+- [ ] **T1.5.18** Run all FR-4 Stage-1 tests: `pytest plugins/pd/hooks/lib/semantic_memory/ -k 'recompute_confidence or upgrade_candidates or batch_promote or invokes_upgrade' -v`. (VERIFY) | — | Cx: S | Depends: T1.5.17
+
 ### P1.4 — Stage 1 integration
 
-- [ ] **T1.4.1** Run combined Stage 1 test suite: `pytest plugins/pd/hooks/lib/semantic_memory/ plugins/pd/mcp/ -v`. (VERIFY) | — | Done: all green; no regressions vs main | Depends: T1.1.9 + T1.2.8 + T1.3.6
-- [ ] **T1.4.2** Run `validate.sh`. (VERIFY) | — | Done: 0 errors | Depends: T1.4.1
-- [ ] **T1.4.3** Manual smoke test: copy `~/.claude/pd/memory/memory.db` to `/tmp/test.db`, drop entries_fts, run `PLUGIN_ROOT=... python3 -m semantic_memory.maintenance --rebuild-fts5 --db-path /tmp/test.db`, verify entries_fts repopulated AND `.fts5-rebuild-diag.json` written. (VERIFY) | — | Done: rebuild succeeded; diag JSON has all 8 fields | Depends: T1.4.2
-- [ ] **T1.4.4** Commit Stage 1: `git add -A && git commit -m "pd(101): Stage 1 — FTS5 self-heal + recall tracking + project filter"`. (COMMIT) | — | Done: commit lands; HEAD on feature branch | Depends: T1.4.3
+- [ ] **T1.4.1** Run combined Stage 1 test suite: `pytest plugins/pd/hooks/lib/semantic_memory/ plugins/pd/mcp/ -v`. (VERIFY) | — | Cx: S | Depends: T1.1.9 + T1.2.8 + T1.3.6 + T1.5.18
+- [ ] **T1.4.2** Run `validate.sh`. (VERIFY) | — | Cx: S | Depends: T1.4.1
+- [ ] **T1.4.3** Manual smoke: copy DB to `/tmp/test.db`, drop entries_fts, run `python -m semantic_memory.maintenance --rebuild-fts5 --db-path /tmp/test.db`, verify rebuild + diag JSON. (VERIFY) | — | Cx: M | Depends: T1.4.2
+- [ ] **T1.4.4** Commit Stage 1: `git commit -m "pd(101): Stage 1 — Foundations (FTS5 + recall + project filter + FR-4 code)"`. (COMMIT) | — | Cx: S | Depends: T1.4.3
 
 ---
 
@@ -74,7 +101,11 @@ Each task: 5–15 minutes. Done criterion is binary. TDD ordering enforced
 
 ### P2.2 — Restructure 14 prose blocks
 
-- [ ] **T2.2.1** Capture FR-1 cutover SHA: `git rev-parse HEAD > docs/features/101-memory-flywheel/.fr1-cutover-sha` (one-line text file). (SETUP) | feature dir | Done: file exists, single line, 40-char SHA | Depends: T2.1.15
+**RED tests for canonical block content** (NOT just positional ordering):
+
+- [ ] **T2.2.0a** Write `test_canonical_block_content_complete` — assert each restructured site contains literal substrings: `record_influence_by_content`, `append_influence_log`, `mcp_status`, `matched_count`, AND HTML marker `<!-- influence-tracking-site: sN -->` matching site_id table. (RED) | new `plugins/pd/scripts/test_canonical_block_content.py` | Cx: M | Depends: T2.1.15
+- [ ] **T2.2.0b** Write `test_canonical_block_writes_correct_mcp_status` — fixture simulates 3 paths (MCP success, MCP exception, MCP unavailable); assert each path appends sidecar with matching `mcp_status` value. **Validates audit's three-way breakdown.** (RED) | same | Cx: C | Depends: T2.2.0a
+- [ ] **T2.2.1** Capture FR-1 cutover SHA. **PRE-CHECK:** assert `.influence-log.jsonl` does not exist or is empty (cutover-cleanliness invariant). Then `git rev-parse HEAD > docs/features/101-memory-flywheel/.fr1-cutover-sha`. (SETUP) | feature dir | Cx: S | Depends: T2.2.0b
 - [ ] **T2.2.2** Restructure s1 (specify.md spec-reviewer block, 1st): replace existing post-dispatch block with C-1 canonical template; insert `<!-- influence-tracking-site: s1 -->` marker; verify position before `**Branch on`. (GREEN) | `plugins/pd/commands/specify.md` | Done: marker present, block before Branch, contains "Influence recorded:" | Depends: T2.2.1
 - [ ] **T2.2.3** Restructure s2 (specify.md phase-reviewer, 2nd). (GREEN) | Same | Done: marker s2 present | Depends: T2.2.2
 - [ ] **T2.2.4** Restructure s3, s4 (design.md ×2). (GREEN) | `plugins/pd/commands/design.md` | Done: markers s3, s4 present; both before Branch | Depends: T2.2.3
@@ -83,35 +114,31 @@ Each task: 5–15 minutes. Done criterion is binary. TDD ordering enforced
 - [ ] **T2.2.7** Restructure s10–s14 (implement.md remaining 5 sites). For each, read the dispatch's `subagent_type:` field to determine the role; substitute into canonical template. (GREEN) | Same | Done: markers s10–s14 present, 7 total in implement.md | Depends: T2.2.6
 - [ ] **T2.2.8** Run `python plugins/pd/scripts/check_block_ordering.py`; assert exit 0. (VERIFY) | — | Done: stdout shows "OK: 14 blocks correctly positioned (2/2/3/7)" | Depends: T2.2.7
 - [ ] **T2.2.9** Run `grep -c 'Influence recorded:' plugins/pd/commands/{specify,design,create-plan,implement}.md`; assert 2/2/3/7. (VERIFY) | — | Done: counts match | Depends: T2.2.8
-- [ ] **T2.2.10** Add `python plugins/pd/scripts/check_block_ordering.py` invocation to `validate.sh` component-check loop. (DOCS) | `validate.sh` | Done: validate.sh runs the check; failure surfaces as validation failure | Depends: T2.2.9
+- [ ] **T2.2.10** Add `python plugins/pd/scripts/check_block_ordering.py` AND `pytest plugins/pd/scripts/test_canonical_block_content.py` invocations to `validate.sh` component-check loop. (DOCS) | `validate.sh` | Cx: S | Depends: T2.2.9
 
-### P2.3 — FR-4 confidence upgrade
+### P2.3 — FR-4 Stage-2 portion: merge_duplicate hook + live integration
 
-- [ ] **T2.3.1** Write `test_recompute_confidence_observation_gate` — seed `confidence='low', observation_count=3, influence_count=0, recall_count=0`; assert `_recompute_confidence` returns `'medium'`. (TDD: RED) | `plugins/pd/hooks/lib/semantic_memory/test_maintenance.py` | Done: test FAILS | Depends: T1.4.4
-- [ ] **T2.3.2** Write `test_recompute_confidence_use_gate_with_floor` — seed `confidence='low', observation_count=0, influence_count=2, recall_count=3`; assert returns `'medium'`. (TDD: RED) | Same | Done: test FAILS | Depends: T2.3.1
-- [ ] **T2.3.3** Write `test_recompute_confidence_recall_only_no_promotion` — seed `confidence='low', observation_count=0, influence_count=0, recall_count=10`; assert returns `None` (floor blocks). (TDD: RED) | Same | Done: test FAILS | Depends: T2.3.2
-- [ ] **T2.3.4** Write `test_recompute_confidence_neither_gate_no_op` — seed `confidence='low', observation_count=2, influence_count=1, recall_count=2`; assert returns `None`. (TDD: RED) | Same | Done: test FAILS | Depends: T2.3.3
-- [ ] **T2.3.5** Write `test_recompute_confidence_medium_to_high_obs` — seed `confidence='medium', observation_count=6`; assert returns `'high'`. (TDD: RED) | Same | Done: test FAILS | Depends: T2.3.4
-- [ ] **T2.3.6** Write `test_recompute_confidence_medium_to_high_use` — seed `confidence='medium', observation_count=0, influence_count=4, recall_count=6`; assert returns `'high'`. (TDD: RED) | Same | Done: test FAILS | Depends: T2.3.5
-- [ ] **T2.3.7** Write `test_recompute_confidence_high_idempotent` — seed `confidence='high'`; assert returns `None`. (TDD: RED) | Same | Done: test FAILS | Depends: T2.3.6
-- [ ] **T2.3.8** Write `test_select_upgrade_candidates_query` — populate DB with 3 hot entries (obs >= 3, NOT stale per decay) + 2 stale entries; call `_select_upgrade_candidates`; assert only the 3 hot entries returned. (TDD: RED) | Same | Done: test FAILS | Depends: T2.3.7
-- [ ] **T2.3.9** Write `test_upgrade_confidence_wrapper` — populate DB with mixed entries; call `upgrade_confidence(db, scan_limit=100)`; assert returns dict with non-empty `low_to_medium` list AND DB rows updated. (TDD: RED) | Same | Done: test FAILS | Depends: T2.3.8
-- [ ] **T2.3.10** Write `test_batch_promote_basic` parallel to existing `test_batch_demote_basic`: seed 3 'low' entries; call `db.batch_promote(ids, 'medium', now_iso)`; assert all 3 confidence updated AND last_promoted_at populated; second call no-ops (idempotent). (TDD: RED) | `plugins/pd/hooks/lib/semantic_memory/test_database.py` | Done: test FAILS | Depends: T2.3.9
-- [ ] **T2.3.11** Implement `_recompute_confidence(entry: dict) -> str | None` in `plugins/pd/hooks/lib/semantic_memory/maintenance.py`: read K_OBS = `_resolve_int_config('memory_promote_min_observations', 3)`; K_USE = `_resolve_int_config('memory_promote_use_signal', 5)`; K_OBS_HIGH = K_OBS*2; K_USE_HIGH = K_USE*2; apply OR-semantics with floor per spec FR-4. (TDD: GREEN) | maintenance.py | Done: T2.3.1–T2.3.7 PASS | Depends: T2.3.10
-- [ ] **T2.3.12** Implement `_select_upgrade_candidates(db, scan_limit) -> list[dict]` SQL helper in maintenance.py: SELECT id, confidence, observation_count, influence_count, recall_count FROM entries WHERE confidence != 'high' AND (observation_count >= ? OR (influence_count >= 1 AND influence_count + recall_count >= ?)) LIMIT ?. (TDD: GREEN) | maintenance.py | Done: T2.3.8 PASS | Depends: T2.3.11
-- [ ] **T2.3.13** Implement `upgrade_confidence(db, scan_limit) -> dict` wrapper: iterate `_select_upgrade_candidates`, call `_recompute_confidence` per row, collect upgrades, call `db.batch_promote(ids, new_tier, now_iso)`, return summary dict. (TDD: GREEN) | maintenance.py | Done: T2.3.9 PASS | Depends: T2.3.12
-- [ ] **T2.3.14** Implement `db.batch_promote(ids, new_confidence, now_iso)` in `plugins/pd/hooks/lib/semantic_memory/database.py` mirroring `batch_demote` shape: `UPDATE entries SET confidence=?, last_promoted_at=? WHERE id IN (?,...) AND confidence != ?` (idempotency guard). (TDD: GREEN) | database.py | Done: T2.3.10 PASS | Depends: T2.3.13
-- [ ] **T2.3.15** Wire `upgrade_confidence(db, scan_limit)` into `run_memory_decay()` AFTER `decay_confidence()` returns. Add the result to the diagnostic dict under `upgraded`. (TDD: GREEN) | maintenance.py | Done: end-to-end run shows both decay AND upgrade in diagnostic | Depends: T2.3.14
-- [ ] **T2.3.16** Wire `_recompute_confidence` into `merge_duplicate()` in database.py: after `observation_count++`, call `_recompute_confidence` on the merged entry; if returns non-None, UPDATE confidence inline. (TDD: GREEN) | database.py | Done: integration test (merge two duplicates that cross K_OBS threshold; assert upgrade applied) PASS | Depends: T2.3.15
-- [ ] **T2.3.17** Document `memory_promote_use_signal` (default 5) in pd config-key reference. K_OBS_HIGH and K_USE_HIGH NOT separately documented (auto-derived). (DOCS) | `plugins/pd/references/memory-config.md` (or equivalent — find the right file via grep on existing config keys) | Done: new key documented with default + behavior | Depends: T2.3.16
-- [ ] **T2.3.18** Run all FR-4 tests: `pytest plugins/pd/hooks/lib/semantic_memory/ -k 'recompute_confidence or upgrade_candidates or batch_promote' -v`. Verify ≥10 PASS. (TDD: VERIFY) | — | Done: all PASS | Depends: T2.3.17
+(FR-4 code shipped in Stage 1 P1.5. Stage 2 wires the `merge_duplicate`
+inline call and adds an integration test exercising the use gate with
+real influence_count data flowing.)
 
-### P2.4 — Stage 2 integration
+- [ ] **T2.3.1** Write `test_merge_duplicate_recomputes_confidence` — mock `_recompute_confidence`; trigger merge with two duplicate entries that cross K_OBS threshold; assert `_recompute_confidence` called with merged-entry dict AND confidence updated inline. (TDD: RED) | `plugins/pd/hooks/lib/semantic_memory/test_database.py` | Cx: M | Depends: T2.4.5
+- [ ] **T2.3.2** Wire `_recompute_confidence` into `merge_duplicate()` in database.py: after `observation_count++`, call `_recompute_confidence` on merged entry; if returns non-None, UPDATE confidence inline. (TDD: GREEN) | `plugins/pd/hooks/lib/semantic_memory/database.py` | Cx: M | Depends: T2.3.1
+- [ ] **T2.3.3** Write integration test `test_use_gate_promotes_via_real_influence_data` — populate sidecar via reviewer-dispatch fixture (or mock equivalent), run `upgrade_confidence`, assert at least one entry promotes via use-gate path. (RED → GREEN) | new integration test in `test_maintenance.py` | Cx: C | Depends: T2.3.2
+- [ ] **T2.3.4** Run all FR-4 Stage-2 tests. (VERIFY) | — | Cx: S | Depends: T2.3.3
 
-- [ ] **T2.4.1** Run combined Stage 2 test suite: full pytest run on changed modules. (VERIFY) | — | Done: green | Depends: T2.2.10 + T2.3.18
-- [ ] **T2.4.2** Run `python -m semantic_memory.audit --feature 101` (no --strict; expect output even if rate < 80% pre-cutover). (VERIFY) | — | Done: command produces a markdown table; summary line printed | Depends: T2.4.1
-- [ ] **T2.4.3** Run `validate.sh`. (VERIFY) | — | Done: 0 errors; check_block_ordering passes | Depends: T2.4.2
-- [ ] **T2.4.4** Commit Stage 2: `git add -A && git commit -m "pd(101): Stage 2 — Influence wiring (14 sites) + confidence upgrade"`. (COMMIT) | — | Done: commit lands | Depends: T2.4.3
+### P2.4 — Stage 2 prose+helper integration + LIVE smoke
+
+- [ ] **T2.4.1** Run combined Stage 2 prose+helper test suite. (VERIFY) | — | Cx: S | Depends: T2.2.10 + T2.1.15
+- [ ] **T2.4.2** **Live smoke** — invoke `/pd:specify` on a throwaway toy feature (or mock-orchestrator harness); verify (a) bash snippet runs without error, (b) `.influence-log.jsonl` gains exactly one well-formed line per dispatch with all I-7 fields. **HARD GATE: on failure, hard-revert P2.2 commits via `git revert` before continuing to P2.5.** (VERIFY) | — | Cx: M | Depends: T2.4.1
+- [ ] **T2.4.3** Run `python -m semantic_memory.audit --feature 101` (no --strict; expect output even if rate < 80% pre-cutover). (VERIFY) | — | Cx: S | Depends: T2.4.2
+- [ ] **T2.4.4** Run `validate.sh`. (VERIFY) | — | Cx: S | Depends: T2.4.3
+- [ ] **T2.4.5** Commit Stage 2 prose: `git commit -m "pd(101): Stage 2 — Influence wiring (14 sites) + sidecar + audit"`. (COMMIT) | — | Cx: S | Depends: T2.4.4
+
+### P2.5 — Stage 2 FR-4 hook + final integration
+
+- [ ] **T2.5.1** Run P2.3 FR-4 Stage-2 tests + cross-check audit's mcp_status breakdown is non-trivial. (VERIFY) | — | Cx: S | Depends: T2.3.4 + T2.4.5
+- [ ] **T2.5.2** Commit Stage 2 FR-4 hook: `git commit -m "pd(101): Stage 2 — merge_duplicate FR-4 hook + live integration"`. (COMMIT) | — | Cx: S | Depends: T2.5.1
 
 ---
 
@@ -119,13 +146,17 @@ Each task: 5–15 minutes. Done criterion is binary. TDD ordering enforced
 
 ### P3.1 — Retrospecting Step 4c.1
 
-- [ ] **T3.1.1** Write `test_retrospecting_promote_trigger_zero_qualifying_silent` — bash test sourcing skill prose; mock enumerate to return `count=0`; assert no AskUserQuestion emitted, no skill chained. (TDD: RED) | new `plugins/pd/skills/retrospecting/test_promote_trigger.sh` | Done: test FAILS (Step 4c.1 not yet inserted) | Depends: T2.4.4
-- [ ] **T3.1.2** Write `test_retrospecting_promote_trigger_with_qualifying_emits_question` — mock enumerate `count=2`, non-YOLO; assert AskUserQuestion text "qualify for promotion" present. (TDD: RED) | Same | Done: test FAILS | Depends: T3.1.1
-- [ ] **T3.1.3** Write `test_retrospecting_promote_trigger_yolo_chains_skill` — `[YOLO_MODE]` arg + `count=2`; assert `Skill({skill: "pd:promoting-patterns"})` invocation, no AskUserQuestion. (TDD: RED) | Same | Done: test FAILS | Depends: T3.1.2
-- [ ] **T3.1.4** Write `test_retrospecting_promote_trigger_subprocess_failure_isolated` — enumerate subprocess returns non-zero; assert log warn + retro continues. (TDD: RED) | Same | Done: test FAILS | Depends: T3.1.3
-- [ ] **T3.1.5** Insert Step 4c.1 prose into `plugins/pd/skills/retrospecting/SKILL.md` per design C-10 template: subprocess `pattern_promotion enumerate --json`, count check, YOLO branch (auto-Skill chain on `[YOLO_MODE]` token), non-YOLO branch (AskUserQuestion), error isolation. (GREEN) | retrospecting/SKILL.md | Done: T3.1.1–T3.1.4 PASS | Depends: T3.1.4
-- [ ] **T3.1.6** Verify YOLO detection mechanism: `grep -E '\[YOLO_MODE\]' plugins/pd/skills/retrospecting/SKILL.md`; assert match within Step 4c.1 prose. (VERIFY) | — | Done: 1 match in 4c.1 region | Depends: T3.1.5
-- [ ] **T3.1.7** Run all FR-6 tests: `bash plugins/pd/skills/retrospecting/test_promote_trigger.sh`. (TDD: VERIFY) | — | Done: 4 PASS | Depends: T3.1.6
+Skill prose validation uses Python pytest convention (matches existing
+pd test pattern; bash tests in `plugins/pd/hooks/tests/` are for shell
+scripts only).
+
+- [ ] **T3.1.1** Write `test_promote_trigger_zero_qualifying_silent` — parse SKILL.md text, assert Step 4c.1 block contains the count-check + silent-skip path. (TDD: RED) | new `plugins/pd/skills/retrospecting/test_promote_trigger.py` | Cx: M | Depends: T2.5.2
+- [ ] **T3.1.2** Write `test_promote_trigger_with_qualifying_emits_question` — assert AskUserQuestion options text "qualify for promotion" present in non-YOLO branch. (TDD: RED) | same | Cx: M | Depends: T3.1.1
+- [ ] **T3.1.3** Write `test_promote_trigger_yolo_chains_skill` — assert YOLO branch contains `Skill({skill: "pd:promoting-patterns"})` invocation. (TDD: RED) | same | Cx: M | Depends: T3.1.2
+- [ ] **T3.1.4** Write `test_promote_trigger_subprocess_failure_isolated` — assert error-handling prose ("log warn + continue retro") present. (TDD: RED) | same | Cx: S | Depends: T3.1.3
+- [ ] **T3.1.5** Insert Step 4c.1 prose into `plugins/pd/skills/retrospecting/SKILL.md` per design C-10 template: subprocess `pattern_promotion enumerate --json`, count check, YOLO branch (auto-Skill chain on `[YOLO_MODE]` token), non-YOLO branch (AskUserQuestion), subprocess error isolation. (GREEN) | retrospecting/SKILL.md | Cx: M | Depends: T3.1.4
+- [ ] **T3.1.6** Verify YOLO detection: `grep -E '\[YOLO_MODE\]' plugins/pd/skills/retrospecting/SKILL.md`; assert match within Step 4c.1 region. (VERIFY) | — | Cx: S | Depends: T3.1.5
+- [ ] **T3.1.7** Run all FR-6 tests: `pytest plugins/pd/skills/retrospecting/ -v`. (TDD: VERIFY) | — | Cx: S | Depends: T3.1.6
 
 ### P3.2 — Dogfood + final validation
 
@@ -138,19 +169,24 @@ Each task: 5–15 minutes. Done criterion is binary. TDD ordering enforced
 
 ## Parallel Execution Plan
 
-Per `.worktreeinclude` worktree-parallel pattern:
+Per `.worktreeinclude` worktree-parallel pattern (with same-file
+constraints noted):
 
-**Within Stage 1 (after T1.4.4 prerequisites are clear, but conceptually
-parallelizable since each P1.x is a different file):**
-- Worktree 1: P1.1 (FR-2)
-- Worktree 2: P1.2 (FR-3)
-- Worktree 3: P1.3 (FR-5)
-- Then sequentially: T1.4.1–T1.4.4
+**Within Stage 1:**
+- P1.1 (FR-2: `maintenance.py` + `session-start.sh`) and P1.5 (FR-4:
+  `maintenance.py` + `database.py`) **share `maintenance.py`** —
+  serialize within one worktree, OR coordinate function-boundary
+  additions explicitly if running parallel.
+- P1.2 (FR-3) and P1.3 (FR-5) **share `memory_server.py`** — work
+  serially in one worktree (P1.2 first → P1.3).
+- Two genuinely independent worktree chains: (P1.1 + P1.5) || (P1.2 → P1.3).
+- T1.4.1–T1.4.4 integration after both chains converge.
 
 **Within Stage 2:**
-- After P2.1 (helpers) completes, P2.2 (prose) and P2.3 (FR-4) can
-  parallelize across 2 worktrees.
-- Then sequentially: P2.4 integration.
+- P2.1 (helpers, prereq RED tests for canonical block) → P2.2 (prose)
+  → P2.4 (live smoke + commit) → P2.3 (FR-4 hook) → P2.5 (final commit).
+- All sequential — same-file dependency on `memory_server.py`,
+  command files, `database.py` make true parallelism risky.
 
 **Stage 3:** sequential single-file change.
 
@@ -176,11 +212,11 @@ parallelizable since each P1.x is a different file):**
 | AC-3.4 | T1.2.4, T1.2.6 (UPDATE failure handling) |
 | AC-3.5 | T1.2.1 (integration) |
 | AC-3.6 | T1.2.7 (synthetic benchmark) |
-| AC-4.1 | T2.3.11 (_recompute_confidence) |
-| AC-4.2 | T2.3.15, T2.3.16 (call sites) |
-| AC-4.3 | T2.3.17 (config key documented) |
-| AC-4.4 | T2.3.1–T2.3.7 (7 seed cases) |
-| AC-4.5 | (config override test — added inline within T2.3.18 verification) |
+| AC-4.1 | T1.5.12 (_recompute_confidence) |
+| AC-4.2 | T1.5.16 (run_memory_decay wire) + T2.3.2 (merge_duplicate hook) |
+| AC-4.3 | T1.5.17 (config key documented) |
+| AC-4.4 | T1.5.1–T1.5.7 (7 seed cases) |
+| AC-4.5 | (config override test — added inline within T1.5.18 verification) |
 | AC-5.1 | T1.3.4 (filter clause) |
 | AC-5.2 | T1.3.1 (cross-project test) |
 | AC-5.3 | T1.3.5 (null-project bypass + warn) |
@@ -195,5 +231,6 @@ parallelizable since each P1.x is a different file):**
 | AC-6.6 | T3.1.4 (subprocess error isolation) |
 | AC-6.7 | T3.2.2 (dogfood) |
 
-Total tasks: **63**. Estimated total time: **~9.5 hours** with the
-parallelism plan above.
+Total tasks: **99** (S=51, M=42, C=6). No time/LOC estimates per
+CLAUDE.md plan-reviewer rubric — implementer reports actual wall-clock
+in retrospect.
