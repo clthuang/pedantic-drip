@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Memory pipeline capture closure** (feature 102, backlog #00052 + #00064-66) —
+  closes the capture-side gap in feature 101's memory flywheel by adding two
+  new hooks and three surgical promote-pattern improvements:
+  - **`tag-correction.sh`** (new UserPromptSubmit hook) — regex-tags user
+    prompts containing corrective phrasing ("no don't", "stop", "revert",
+    preference statements) into a per-session JSONL buffer. Bash + jq, <10ms.
+  - **`capture-on-stop.sh`** (new Stop hook, async:true, timeout:30) — reads
+    correction buffer at session end, joins each tag with the next assistant
+    response from the transcript, emits candidate KB entries via
+    `semantic_memory.writer` with `confidence: low`, `source: session-capture`.
+    Cap of 5 candidates per Stop tick (configurable via new
+    `memory_capture_session_cap` key in `pd.local.md`); overflow logged to
+    `~/.claude/pd/capture-overflow.log`.
+  - **`session-start.sh::cleanup_stale_correction_buffers`** — sweeps
+    correction-buffer JSONL files older than 24h to prevent disk pollution
+    from crashed sessions.
+  - **`extract_workarounds.py`** (new standalone Python) — invoked at retro
+    skill runtime to deterministically extract workaround patterns from
+    `implementation-log.md` (decision-followed-by-≥2-failures heuristic) and
+    inject them as candidates into the retro-facilitator dispatch prompt.
+
+### Changed
+
+- **`/pd:promote-pattern` classifier** — `decide_target` now requires
+  `max_score >= 2` for the keyword path to win (was `>= 1`); single-keyword
+  matches now correctly trigger LLM fallback. Fixes the 3/4 misclassification
+  observed on the dogfood corpus where entries containing only "reviewer"
+  were misclassified to `agent`.
+- **`/pd:promote-pattern enumerate`** — output JSON now uses top-level
+  `entries` key with new per-entry fields `enforceability_score` (deontic-modal
+  density) and `descriptive` (boolean, score==0). Entries with
+  `descriptive: true` are excluded by default; pass `--include-descriptive` to
+  include them. Output array is sorted by `enforceability_score` DESC.
+- **`pattern_promotion` CLI argparse** — replaced `parse_args` with
+  `parse_known_args` per subparser. Unknown args now emit a stderr warning
+  and exit 0 instead of `SystemExit(2)`. Recognized typos (e.g.
+  `--entries`) get a suggestion to invoke via `/pd:promote-pattern`.
+
 ## [4.16.11] - 2026-05-02
 
 ### Added

@@ -35,6 +35,10 @@ class KBEntry:
     `line_range` is 1-indexed (start, end) inclusive, matching the lines of the
     entry's markdown block (heading through the last content line before the
     next sibling heading).
+
+    Feature 102 FR-5: `enforceability_score` is computed from deontic-modal
+    regex matches in `name + description`. `descriptive` is `score == 0`
+    (entry contains no rule-like markers).
     """
 
     name: str
@@ -44,6 +48,8 @@ class KBEntry:
     category: str
     file_path: Path
     line_range: tuple[int, int]
+    enforceability_score: int = 0
+    descriptive: bool = True
 
 
 _FEATURE_RE = re.compile(r"Feature\s+#(\d+)", re.IGNORECASE)
@@ -148,6 +154,9 @@ def _parse_file(path: Path) -> tuple[list[KBEntry], set[str]]:
         # KBEntry.name stores the raw heading (including any
         # `Pattern: ` / `Anti-Pattern: ` / `Heuristic: ` prefix) so
         # `mark_entry` can match it against the on-disk heading line.
+        # Feature 102 FR-5: compute enforceability score from name + description.
+        from pattern_promotion.enforceability import score_enforceability
+        ef_score, _ = score_enforceability(f"{heading} {description}")
         entries.append(
             KBEntry(
                 name=heading,
@@ -157,6 +166,8 @@ def _parse_file(path: Path) -> tuple[list[KBEntry], set[str]]:
                 category=category,
                 file_path=path,
                 line_range=(line_idx + 1, end_idx),
+                enforceability_score=ef_score,
+                descriptive=(ef_score == 0),
             )
         )
         if marker_seen:

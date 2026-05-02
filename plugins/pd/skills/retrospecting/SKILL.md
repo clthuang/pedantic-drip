@@ -63,6 +63,30 @@ Read and collect all intermediate data:
 - If file exists: capture full content
 - If file doesn't exist: note "No implementation log available"
 
+**c2. Workaround extraction (Feature 102 FR-3) — Run `extract_workarounds.py`:**
+
+The retrospecting skill orchestrator runs the bash snippet below as a shell
+command via the Bash tool to extract workaround_candidates from the
+implementation log. This is invoked at skill runtime, not test-only.
+
+```bash
+PLUGIN_ROOT=$(ls -d ~/.claude/plugins/cache/*/pd*/* 2>/dev/null | head -1)
+[[ -z "$PLUGIN_ROOT" ]] && PLUGIN_ROOT="plugins/pd"
+
+workaround_candidates=$("$PLUGIN_ROOT/.venv/bin/python3" \
+  "$PLUGIN_ROOT/skills/retrospecting/scripts/extract_workarounds.py" \
+  --log-path "{pd_artifacts_root}/features/{id}-{slug}/implementation-log.md" \
+  --meta-json-path "{pd_artifacts_root}/features/{id}-{slug}/.meta.json" \
+  2>/dev/null || echo "[]")
+```
+
+Inject the resulting JSON array under the `### Pre-extracted Workaround
+Candidates` section of the retro-facilitator dispatch prompt (above). When
+the implementation log is absent or no phase has iterations >= 3, the
+extractor returns `[]` and the section displays an empty array. The retro-
+facilitator agent may then incorporate any extracted candidates into
+`act.heuristics` per the existing AORTA flow.
+
 **d. Git Summary** — Run via Bash:
 ```bash
 git log --oneline {pd_base_branch}..HEAD | wc -l
@@ -97,6 +121,9 @@ Task tool call:
 
     ### Implementation Log
     {implementation-log.md content, or "No implementation log available"}
+
+    ### Pre-extracted Workaround Candidates
+    {workaround_candidates_json — see "Workaround extraction" below}
 
     ### Git Summary
     Commits: {commit count}
