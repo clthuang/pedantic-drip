@@ -57,9 +57,19 @@ All subsequent subcommand calls reference `$SANDBOX` and `$PY`.
   --sandbox "$SANDBOX" --kb-dir "{pd_artifacts_root}/knowledge-bank"
 ```
 
-Parse the final stdout line as JSON. Read `$SANDBOX/entries.json` — a list of
+Parse the final stdout line as JSON. Read `$SANDBOX/entries.json` — a JSON
+object with top-level `entries` key (array of records). Each entry record:
 `{name, description, confidence, effective_observation_count, category,
-file_path, line_range}` records.
+file_path, line_range, enforceability_score, descriptive}`.
+
+**Feature 102 FR-5:** Entries are pre-sorted by `enforceability_score` DESC,
+and entries with `descriptive: true` (score == 0) are EXCLUDED by default.
+The remaining entries are enforceable rules (contain at least one deontic-
+modal marker like must / never / always / should). To include descriptive
+observation-only entries, pass `--include-descriptive` to enumerate; the
+returned options will then prefix descriptive entries with `[descriptive]`
+to warn the user that the entry is observation-only and not directly
+promotable to an enforceable rule.
 
 **If `count == 0`:** inform the user via AskUserQuestion (they may want to
 lower the threshold in `.claude/pd.local.md`) and exit the skill. Do not

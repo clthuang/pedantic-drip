@@ -104,11 +104,17 @@ def classify_keywords(entry: KBEntry) -> dict[str, int]:
 
 
 def decide_target(scores: dict[str, int]) -> Optional[str]:
-    """FR-2b: strictly-highest winner, else None (escalate to LLM fallback)."""
+    """Feature 102 FR-4: require max_score >= 2 for keyword path to win.
+
+    Single-keyword winners (score==1) escalate to LLM fallback to reduce
+    misclassification on entries that match a single ambiguous keyword
+    (e.g. "reviewer" matching agent pattern set when the entry is actually
+    an orchestration pattern for a skill).
+    """
     if not scores:
         return None
     max_score = max(scores.values())
-    if max_score == 0:
+    if max_score < 2:
         return None
     winners = [t for t, s in scores.items() if s == max_score]
     if len(winners) == 1:

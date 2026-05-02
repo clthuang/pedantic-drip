@@ -81,4 +81,6 @@ memory_decay_medium_threshold_days: 60
 memory_decay_grace_period_days: 14
 # when true, report what would be demoted without modifying the DB; useful for measuring impact before enabling
 memory_decay_dry_run: false
+# Feature 102 FR-2: per-Stop-tick cap on candidates emitted by capture-on-stop.sh; overflow logged + discarded
+memory_capture_session_cap: 5
 ---

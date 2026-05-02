@@ -73,14 +73,23 @@ def _write_sandbox_json(path: Path, payload) -> None:
 
 
 def _load_entries(sandbox: Path, entries_path: Path | None = None) -> list[dict]:
-    """Read entries.json from either an explicit path or the sandbox default."""
+    """Read entries.json from either an explicit path or the sandbox default.
+
+    Feature 102 FR-5: shape is `{"entries": [...]}` (top-level entries key).
+    Backwards-compat: also accepts a bare list for older sandboxes.
+    """
     path = entries_path if entries_path is not None else sandbox / "entries.json"
     if not path.is_file():
         raise FileNotFoundError(f"entries.json not found at {path}")
     data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, list):
-        raise ValueError(f"entries.json must be a list, got {type(data).__name__}")
-    return data
+    if isinstance(data, dict) and "entries" in data:
+        entries = data["entries"]
+        if not isinstance(entries, list):
+            raise ValueError(f"entries.json 'entries' field must be a list, got {type(entries).__name__}")
+        return entries
+    if isinstance(data, list):
+        return data
+    raise ValueError(f"entries.json must be a list or dict with 'entries' key, got {type(data).__name__}")
 
 
 def _find_entry(entries: list[dict], entry_name: str) -> dict | None:
@@ -223,8 +232,15 @@ def _cmd_enumerate(args: argparse.Namespace) -> int:
         _emit_status("error", error=f"enumerate failed: {exc}")
         return 1
 
+    # Feature 102 FR-5: hard-filter descriptive entries (score == 0) by default;
+    # `--include-descriptive` opts in. Sort by enforceability_score DESC.
+    include_descriptive = getattr(args, "include_descriptive", False)
+    if not include_descriptive:
+        entries = [e for e in entries if not e.descriptive]
+    entries = sorted(entries, key=lambda e: e.enforceability_score, reverse=True)
+
     data_path = sandbox / "entries.json"
-    serialized = [
+    serialized_entries = [
         {
             "name": e.name,
             "description": e.description,
@@ -233,10 +249,14 @@ def _cmd_enumerate(args: argparse.Namespace) -> int:
             "category": e.category,
             "file_path": str(e.file_path),
             "line_range": list(e.line_range),
+            "enforceability_score": e.enforceability_score,
+            "descriptive": e.descriptive,
         }
         for e in entries
     ]
-    data_path.write_text(json.dumps(serialized, indent=2), encoding="utf-8")
+    # FR-5 / I-5: top-level `entries` key (canonical shape)
+    payload = {"entries": serialized_entries}
+    data_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     _emit_status(
         "ok",
@@ -247,6 +267,7 @@ def _cmd_enumerate(args: argparse.Namespace) -> int:
             "min_observations": min_obs,
             "entries_path": str(data_path),
             "sandbox": str(sandbox),
+            "include_descriptive": include_descriptive,
         },
     )
     return 0
@@ -654,6 +675,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Project root for .claude/pd.local.md resolution (default: cwd)",
     )
+    p_enum.add_argument(
+        "--include-descriptive",
+        action="store_true",
+        default=False,
+        help="Feature 102 FR-5: include entries with enforceability_score==0 (default: exclude)",
+    )
 
     p_classify = sub.add_parser(
         "classify", help="Score KB entries against the keyword table"
@@ -712,7 +739,13 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     _ensure_package_on_path()
     parser = _build_parser()
-    args = parser.parse_args(argv)
+    # Feature 102 FR-6: tolerate unknown args with stderr warning instead of SystemExit(2).
+    args, unknown = parser.parse_known_args(argv)
+    if unknown:
+        msg = f"WARN: unknown args ignored: {' '.join(unknown)}; see /pd:promote-pattern --help"
+        if any(u.startswith("--entries") for u in unknown):
+            msg += "; did you mean to invoke /pd:promote-pattern (the skill orchestrator reads from sandbox automatically)?"
+        print(msg, file=sys.stderr)
     if args.cmd == "enumerate":
         return _cmd_enumerate(args)
     if args.cmd == "classify":

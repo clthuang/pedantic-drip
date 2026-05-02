@@ -63,7 +63,12 @@ def _run_enumerate(
     sandbox: Path,
     min_observations: int | None = None,
 ) -> tuple[int, dict]:
-    """Invoke the CLI; return (returncode, parsed-status-json)."""
+    """Invoke the CLI; return (returncode, parsed-status-json).
+
+    Feature 102 FR-5: passes `--include-descriptive` so existing test fixtures
+    (which use descriptive prose) continue producing the same counts. New
+    tests targeting FR-5 hard-filter behavior call enumerate directly.
+    """
     env = os.environ.copy()
     existing = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = (
@@ -80,6 +85,7 @@ def _run_enumerate(
         str(project_root / "docs" / "knowledge-bank"),
         "--project-root",
         str(project_root),
+        "--include-descriptive",
     ]
     if min_observations is not None:
         cmd.extend(["--min-observations", str(min_observations)])
@@ -151,7 +157,9 @@ class TestMinObservations:
         assert rc == 0
         data_path = Path(status["data_path"])
         assert data_path.is_file()
-        entries = json.loads(data_path.read_text())
+        # Feature 102 FR-5: entries.json now uses top-level `entries` key
+        data = json.loads(data_path.read_text())
+        entries = data["entries"] if isinstance(data, dict) else data
         assert isinstance(entries, list)
         assert len(entries) == status["count"]
         for e in entries:
@@ -375,7 +383,13 @@ def _run_cli(
     cwd: Path | None = None,
     env_extra: dict | None = None,
 ) -> tuple[int, str, str]:
-    """Invoke `python -m pattern_promotion <args>`; return (rc, stdout, stderr)."""
+    """Invoke `python -m pattern_promotion <args>`; return (rc, stdout, stderr).
+
+    Feature 102 FR-5: when subcommand is "enumerate", auto-inject
+    `--include-descriptive` so existing test fixtures (which don't use
+    deontic-modal vocabulary) continue to produce the same counts. New
+    FR-5-targeted tests in test_kb_parser/test_main bypass this helper.
+    """
     env = os.environ.copy()
     existing = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = (
@@ -383,8 +397,11 @@ def _run_cli(
     )
     if env_extra:
         env.update(env_extra)
+    final_args = list(args)
+    if final_args and final_args[0] == "enumerate" and "--include-descriptive" not in final_args:
+        final_args.append("--include-descriptive")
     proc = subprocess.run(
-        [str(VENV_PY), "-m", "pattern_promotion", *args],
+        [str(VENV_PY), "-m", "pattern_promotion", *final_args],
         env=env,
         capture_output=True,
         text=True,
@@ -509,10 +526,11 @@ class TestEnumerateContract:
         assert Path(status["entries_path"]).is_file()
         # data_path (design-level alias) and entries_path agree
         assert Path(status["data_path"]) == Path(status["entries_path"])
-        # entries.json contents match count
-        entries = json.loads(
+        # entries.json contents match count (Feature 102 FR-5: top-level `entries` key)
+        data = json.loads(
             (sandbox / "entries.json").read_text(encoding="utf-8")
         )
+        entries = data["entries"] if isinstance(data, dict) else data
         assert isinstance(entries, list)
         assert len(entries) == status["count"]
         # Two qualifying entries at default threshold 3
