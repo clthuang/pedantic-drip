@@ -28,6 +28,9 @@ _SOFT_MARKERS = [
     "ensure",
 ]
 
+# Multi-word soft pattern: clause-style "when X then Y" rules score 1
+_WHEN_THEN_RE = re.compile(r"\bwhen\b.*?\bthen\b", re.IGNORECASE | re.DOTALL)
+
 
 def _build_pattern(markers: list[str]) -> re.Pattern[str]:
     parts = []
@@ -51,7 +54,8 @@ def score_enforceability(text: str) -> tuple[int, list[str]]:
 
     strong_matches = [m.group(0).lower() for m in _STRONG_RE.finditer(text)]
     soft_matches = [m.group(0).lower() for m in _SOFT_RE.finditer(text)]
+    when_then_matches = ["when...then" for _ in _WHEN_THEN_RE.finditer(text)]
 
-    score = 2 * len(strong_matches) + 1 * len(soft_matches)
-    markers = strong_matches + soft_matches
+    score = 2 * len(strong_matches) + 1 * (len(soft_matches) + len(when_then_matches))
+    markers = strong_matches + soft_matches + when_then_matches
     return score, markers

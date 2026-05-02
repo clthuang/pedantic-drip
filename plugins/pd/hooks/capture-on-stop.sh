@@ -75,10 +75,13 @@ while IFS= read -r tag_line; do
     continue
   fi
 
-  # Determine category from matched_pattern
+  # Determine category from matched_pattern (match exact regex literal, not substring).
+  # Negative-correction patterns → anti-patterns; preference/style → patterns.
   category="patterns"
   case "$matched_pattern" in
-    *"don'?t"*|*"stop"*|*"revert"*|*"undo"*|*"wrong"*|*"not "*) category="anti-patterns" ;;
+    '\b(no,? don'\''?t)\b'|'\bstop( doing| that)?\b'|'\b(revert|undo) (that|this|it)\b'|"\b(wrong|that's wrong|incorrect)\b"|'\bnot (that|this|what i)\b')
+      category="anti-patterns"
+      ;;
   esac
 
   # Derive name (≤60 chars, deterministic)
@@ -109,19 +112,25 @@ done < "$buffer_file"
 if [[ $total_tags -gt $session_cap ]]; then
   dropped=$((total_tags - session_cap))
   ts_now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-  jq -nc \
-    --arg ts "$ts_now" \
-    --arg sid "$session_id" \
-    --argjson dc "$dropped" \
-    '{ts: $ts, session_id: $sid, dropped_count: $dc}' >> "$overflow_log"
 
-  # Rotate at 1MB
+  # Collect dropped tags' prompt_excerpts (lines beyond session_cap)
+  dropped_excerpts_json=$(tail -n "+$((session_cap + 1))" "$buffer_file" 2>/dev/null \
+    | jq -cs '[.[] | .prompt_excerpt]' 2>/dev/null || echo "[]")
+
+  # Rotate BEFORE append: if existing log already over 1MB, rotate first
   if [[ -f "$overflow_log" ]]; then
     size=$(stat -f%z "$overflow_log" 2>/dev/null || stat -c%s "$overflow_log" 2>/dev/null || echo 0)
     if [[ $size -gt 1048576 ]]; then
       mv -f "$overflow_log" "${overflow_log}.1" 2>/dev/null
     fi
   fi
+
+  jq -nc \
+    --arg ts "$ts_now" \
+    --arg sid "$session_id" \
+    --argjson dc "$dropped" \
+    --argjson de "$dropped_excerpts_json" \
+    '{ts: $ts, session_id: $sid, dropped_count: $dc, dropped_excerpts: $de}' >> "$overflow_log"
 fi
 
 # Stderr diagnostics

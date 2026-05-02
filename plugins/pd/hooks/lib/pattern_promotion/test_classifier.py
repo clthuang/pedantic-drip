@@ -162,10 +162,18 @@ class TestDecideTarget:
 
 class TestDogfoodCorpus:
     """Feature 102 AC-4.3: 4 entries from feature 083 retro that previously
-    misclassified to 'agent' under the old `>= 1` threshold. Under the new
-    `>= 2` threshold, all four score 1 (matching only 'reviewer') and fall
-    through to LLM fallback. With monkeypatched LLM returning 'skill', all
-    four resolve correctly.
+    misclassified to 'agent' under the old `>= 1` threshold.
+
+    Scope of this test: in-process classifier change verification only. We
+    assert that decide_target() returns None for all 4 entries under the new
+    `>= 2` threshold, triggering the external LLM-fallback path orchestrated
+    by promoting-patterns/SKILL.md (which dispatches via AskUserQuestion at
+    skill runtime, not via an in-process function).
+
+    The end-to-end "4/4 resolves to skill" claim is verified at the skill
+    orchestrator layer, not the unit layer — there is no in-process llm_classify
+    function to mock. AC-4.3a documents this caveat as a regression gate on
+    the n=4 corpus (not a generalized accuracy metric).
     """
 
     DOGFOOD_ENTRIES = [
@@ -179,16 +187,14 @@ class TestDogfoodCorpus:
          "Pre-validate against knowledge bank anti-patterns before dispatching reviewer agents."),
     ]
 
-    def test_dogfood_corpus_4_of_4(self):
-        """All 4 dogfood entries score < 2 keywords → LLM fallback fires.
-        Mocked LLM returns 'skill' for each → 4/4 correct.
+    def test_dogfood_corpus_triggers_llm_fallback(self):
+        """All 4 dogfood entries score < 2 keywords under new threshold →
+        decide_target returns None → external LLM fallback fires.
         """
         for name, description in self.DOGFOOD_ENTRIES:
             entry = _entry(name, description)
             scores = classify_keywords(entry)
-            # All 4 entries match at most 1 keyword from any single target's pattern set
             assert max(scores.values()) < 2, f"Entry {name!r} scored {scores}; expected <2 for LLM fallback"
-            # decide_target returns None → LLM fallback triggers
             assert decide_target(scores) is None
 
 
