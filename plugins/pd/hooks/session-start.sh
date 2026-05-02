@@ -277,6 +277,24 @@ cleanup_stale_mcp_servers() {
 }
 
 # Check MCP bootstrap error log for recent failures.
+# Feature 102 FR-1.5: clean up stale FR-1 correction-buffer files.
+# Files older than 24 hours are removed to prevent disk pollution from
+# crashed sessions where capture-on-stop.sh never ran.
+cleanup_stale_correction_buffers() {
+    local buffer_dir="$HOME/.claude/pd"
+    [[ -d "$buffer_dir" ]] || return 0
+    local count=0
+    for f in "$buffer_dir"/correction-buffer-*.jsonl; do
+        [[ -e "$f" ]] || continue
+        # mtime > 24h (1 day) ago
+        if [[ -n $(find "$f" -mtime +0 -print 2>/dev/null) ]]; then
+            rm -f "$f" 2>/dev/null && count=$((count + 1))
+        fi
+    done
+    [[ $count -gt 0 ]] && echo "Cleaned $count stale correction buffers" >&2
+    return 0
+}
+
 # Reads ~/.claude/pd/mcp-bootstrap-errors.log for entries < 10 minutes old.
 # Returns warning text via stdout, or empty string.
 # Truncates entries > 1 hour from the log file on every invocation.
@@ -800,6 +818,9 @@ EOF
 
     # Clean up stale/orphaned MCP servers before health checks (feature 063)
     cleanup_stale_mcp_servers
+
+    # Feature 102 FR-1.5: stale correction-buffer cleanup (>24h mtime)
+    cleanup_stale_correction_buffers
 
     # Ensure capture-tool-failure hook is registered in settings.local.json (feature 077)
     ensure_capture_hook

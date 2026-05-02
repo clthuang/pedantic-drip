@@ -1,0 +1,20 @@
+{"prompt": "no, don't do that", "expected": "correction"}
+{"prompt": "stop doing that", "expected": "correction"}
+{"prompt": "revert that change", "expected": "correction"}
+{"prompt": "that's wrong, undo it", "expected": "correction"}
+{"prompt": "not what I meant", "expected": "correction"}
+{"prompt": "I prefer pytest over unittest", "expected": "correction"}
+{"prompt": "don't use mocks for this", "expected": "correction"}
+{"prompt": "do not add comments", "expected": "correction"}
+{"prompt": "use jq instead of python3 here", "expected": "correction"}
+{"prompt": "I always use UTC timestamps", "expected": "correction"}
+{"prompt": "Can you add a feature for user notifications?", "expected": "noise"}
+{"prompt": "What does this function do?", "expected": "noise"}
+{"prompt": "Show me the test results", "expected": "noise"}
+{"prompt": "Run the tests", "expected": "noise"}
+{"prompt": "Now refactor this module", "expected": "noise"}
+{"prompt": "Add type hints to all functions", "expected": "noise"}
+{"prompt": "What's the next step?", "expected": "noise"}
+{"prompt": "Check if this passes lint", "expected": "noise"}
+{"prompt": "Continue with the implementation", "expected": "noise"}
+{"prompt": "Look at the design document", "expected": "noise"}

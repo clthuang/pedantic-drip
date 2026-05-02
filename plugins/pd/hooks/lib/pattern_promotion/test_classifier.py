@@ -147,8 +147,55 @@ class TestDecideTarget:
     def test_all_zero_returns_none(self):
         assert decide_target({"hook": 0, "skill": 0, "agent": 0, "command": 0}) is None
 
-    def test_single_nonzero_wins(self):
-        assert decide_target({"hook": 0, "skill": 0, "agent": 1, "command": 0}) == "agent"
+    def test_single_keyword_score_one_returns_none(self):
+        """Feature 102 AC-4.2: score==1 (single keyword) triggers LLM fallback."""
+        assert decide_target({"hook": 0, "skill": 0, "agent": 1, "command": 0}) is None
+
+    def test_score_two_unique_winner(self):
+        """Feature 102 AC-4.1: max_score >= 2 with unique winner returns that target."""
+        assert decide_target({"hook": 0, "skill": 2, "agent": 0, "command": 0}) == "skill"
+
+    def test_score_two_tie_returns_none(self):
+        """AC-4.2: ties → None even at score 2."""
+        assert decide_target({"hook": 2, "skill": 2, "agent": 0, "command": 0}) is None
+
+
+class TestDogfoodCorpus:
+    """Feature 102 AC-4.3: 4 entries from feature 083 retro that previously
+    misclassified to 'agent' under the old `>= 1` threshold.
+
+    Scope of this test: in-process classifier change verification only. We
+    assert that decide_target() returns None for all 4 entries under the new
+    `>= 2` threshold, triggering the external LLM-fallback path orchestrated
+    by promoting-patterns/SKILL.md (which dispatches via AskUserQuestion at
+    skill runtime, not via an in-process function).
+
+    The end-to-end "4/4 resolves to skill" claim is verified at the skill
+    orchestrator layer, not the unit layer — there is no in-process llm_classify
+    function to mock. AC-4.3a documents this caveat as a regression gate on
+    the n=4 corpus (not a generalized accuracy metric).
+    """
+
+    DOGFOOD_ENTRIES = [
+        ("Three-Reviewer Parallel Dispatch With Selective Re-Dispatch",
+         "Dispatch reviewer agents in parallel and selectively re-dispatch only failed reviewers in iter 2+."),
+        ("Reviewer Approval State Tracking Across Iterations",
+         "Maintain reviewer_status dict tracking pending/passed/failed for each reviewer across iterations."),
+        ("Heavy Upfront Review Investment Reduces Implement Iterations",
+         "Investing in rigorous upstream review enables single-pass implement with reviewer agents."),
+        ("Adversarial Reviewer Pre-Validation Against Knowledge Bank",
+         "Pre-validate against knowledge bank anti-patterns before dispatching reviewer agents."),
+    ]
+
+    def test_dogfood_corpus_triggers_llm_fallback(self):
+        """All 4 dogfood entries score < 2 keywords under new threshold →
+        decide_target returns None → external LLM fallback fires.
+        """
+        for name, description in self.DOGFOOD_ENTRIES:
+            entry = _entry(name, description)
+            scores = classify_keywords(entry)
+            assert max(scores.values()) < 2, f"Entry {name!r} scored {scores}; expected <2 for LLM fallback"
+            assert decide_target(scores) is None
 
 
 class TestDistinctPatternCount:

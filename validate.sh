@@ -191,8 +191,9 @@ validate_hooks_schema() {
         for (( j=0; j<entry_count; j++ )); do
             local entry_path=".hooks[\"$event_name\"][$j]"
 
-            # Check matcher field (not required for Stop/SubagentStop events)
-            if [[ "$event_name" != "Stop" ]] && [[ "$event_name" != "SubagentStop" ]]; then
+            # Check matcher field (not required for Stop/SubagentStop/UserPromptSubmit events)
+            # UserPromptSubmit fires on every prompt; matcher is optional per CC hook docs.
+            if [[ "$event_name" != "Stop" ]] && [[ "$event_name" != "SubagentStop" ]] && [[ "$event_name" != "UserPromptSubmit" ]]; then
                 if ! jq -e "$entry_path.matcher" "$file" > /dev/null 2>&1; then
                     log_error "$file: $event_name[$j] missing 'matcher' field"
                 fi
