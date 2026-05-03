@@ -9,7 +9,9 @@ Invoke the designing skill for the current feature context.
 
 ## Codex Reviewer Routing
 
-Before any reviewer dispatch in this command (design-reviewer, phase-reviewer), follow `plugins/pd/references/codex-routing.md`. If `~/.claude/plugins/cache/openai-codex/codex/*/scripts/codex-companion.mjs` exists AND the dispatched reviewer is NOT `pd:security-reviewer`, route the dispatch through Codex's `adversarial-review` (foreground) instead of the pd reviewer Task. Reuse the reviewer's prompt body verbatim. Translate the response per the field-mapping table in the reference doc. Falls back to pd reviewer Task on detection failure or malformed codex output.
+Before any reviewer dispatch in this command (design-reviewer, phase-reviewer), follow the codex-routing reference (primary: `~/.claude/plugins/cache/*/pd*/*/references/codex-routing.md`; fallback for dev workspace: `plugins/pd/references/codex-routing.md`). If codex is installed (per the path-integrity-checked detection helper in the reference doc), route via Codex `task --prompt-file` (foreground). Reuse the reviewer's prompt body verbatim via temp-file delivery (single-quoted heredoc — never argv interpolation). Translate the response per the field-mapping table in the reference doc. Falls back to pd reviewer Task on detection failure or malformed codex output.
+
+**Security exclusion:** This phase does NOT dispatch `pd:security-reviewer`, so the codex-routing exclusion does not need to be enforced here. The exclusion is enforced wherever `pd:security-reviewer` IS dispatched (implement, finish-feature).
 
 ## YOLO Mode Overrides
 

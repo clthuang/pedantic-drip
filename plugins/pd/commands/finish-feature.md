@@ -9,11 +9,11 @@ Complete a feature and clean up.
 
 ## Codex Reviewer Routing (Step 5b QA Gate)
 
-For Step 5b's pre-release adversarial QA gate, follow `plugins/pd/references/codex-routing.md`. If `~/.claude/plugins/cache/openai-codex/codex/*/scripts/codex-companion.mjs` exists, dispatch the 4 QA gate reviewers as follows:
-- `pd:code-quality-reviewer`, `pd:implementation-reviewer`, `pd:test-deepener` → route via Codex `adversarial-review` (background, in parallel; collect via `result <job-id>` per the reference doc).
+For Step 5b's pre-release adversarial QA gate, follow the codex-routing reference (primary: `~/.claude/plugins/cache/*/pd*/*/references/codex-routing.md`; fallback for dev workspace: `plugins/pd/references/codex-routing.md`). If codex is installed (per the path-integrity-checked detection helper in the reference doc), dispatch the 4 QA gate reviewers as follows:
+- `pd:code-quality-reviewer`, `pd:implementation-reviewer`, `pd:test-deepener` → route via Codex `task --background --prompt-file` (parallel; collect via `result <job-id>` per the reference doc).
 - `pd:security-reviewer` → **always** dispatched via standard `Task(subagent_type: pd:security-reviewer, model: opus, ...)` regardless of codex availability — security review stays on Anthropic models for safety-calibration reasons.
 
-When codex is not installed, dispatch all 4 reviewers via the standard Task pattern. Translate codex JSON responses per the reference doc's field-mapping table. Falls back to pd reviewer Task on detection failure or malformed codex output.
+When codex is not installed, dispatch all 4 reviewers via the standard Task pattern. Reviewer prompts MUST be delivered via `--prompt-file` with single-quoted heredoc to avoid argv-interpolation injection on adversarial artifact content. Translate codex JSON responses per the reference doc's field-mapping table. Falls back to pd reviewer Task on detection failure or malformed codex output.
 
 ## Config Variables
 Use these values from session context (injected at session start):
