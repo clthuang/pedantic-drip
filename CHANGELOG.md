@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Codex reviewer routing** (feature 103) — when the `openai-codex/codex`
+  plugin is installed, all pd reviewer dispatches **except**
+  `pd:security-reviewer` route through Codex's `task --prompt-file`
+  instead of the in-process pd reviewer Task. Security review stays on
+  Anthropic Claude (safety-calibration reasons). New shared reference
+  `plugins/pd/references/codex-routing.md` documents the detection
+  helper (with realpath-under-cache-root path-integrity check),
+  foreground/background dispatch patterns (temp-file delivery via
+  single-quoted heredoc — no argv-interpolation injection), the
+  codex→pd JSON field-mapping table, and graceful fallback to pd
+  reviewer Task on detection failure or schema mismatch.
+  Reviewer-dispatching commands carry routing preambles.
+  `validate.sh` enforces the security-reviewer exclusion via a
+  per-file regression guard.
+
 ## [4.16.12] - 2026-05-03
 
 ### Added
