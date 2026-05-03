@@ -9,6 +9,10 @@ Invoke the implementing skill for the current feature context.
 
 <!-- Placeholder: static content injected here for prompt cache efficiency -->
 
+## Codex Reviewer Routing
+
+Before any reviewer dispatch in this command (implementation-reviewer, code-quality-reviewer, relevance-verifier, test-deepener — but **NOT** `pd:security-reviewer`), follow the codex-routing reference (primary: `~/.claude/plugins/cache/*/pd*/*/references/codex-routing.md`; fallback for dev workspace: `plugins/pd/references/codex-routing.md`). If codex is installed (per the path-integrity-checked detection helper in the reference doc), route those dispatches through Codex's `task --prompt-file` (foreground) instead of the pd reviewer Task. Reuse the reviewer's prompt body verbatim via temp-file delivery (single-quoted heredoc — never argv interpolation). Translate the response per the field-mapping table in the reference doc. **`pd:security-reviewer` always dispatches via the standard Task pattern (Anthropic) regardless of codex availability** — security review stays on Anthropic models for safety-calibration reasons. Falls back to pd reviewer Task on detection failure or malformed codex output.
+
 ## YOLO Mode Overrides
 
 If `[YOLO_MODE]` is active:

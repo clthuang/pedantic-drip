@@ -823,6 +823,35 @@ else
 fi
 echo ""
 
+# --- Codex Reviewer Routing exclusion guard (feature 103) ---
+# Files that reference codex-routing.md AND dispatch pd:security-reviewer MUST
+# include explicit exclusion language. Defends against future regression where
+# codex routing accidentally captures security-reviewer.
+echo "Checking Codex Reviewer Routing exclusion..."
+codex_routing_exclusion_violations=0
+while IFS= read -r f; do
+    [[ -z "$f" ]] && continue
+    # Skip the reference doc itself.
+    [[ "$f" == "plugins/pd/references/codex-routing.md" ]] && continue
+    # Files that mention codex-routing must either (a) explicitly exclude
+    # security-reviewer when they dispatch it, or (b) explicitly note that
+    # security-reviewer is not dispatched at this phase.
+    if grep -q "subagent_type:.*pd:security-reviewer" "$f" 2>/dev/null; then
+        # Dispatches security-reviewer → MUST contain exclusion language.
+        if ! grep -qE "always.*Task.*pd:security-reviewer|NOT.*pd:security-reviewer|security.*always.*Anthropic|security-reviewer.*always.*standard" "$f"; then
+            log_error "$f: references codex-routing.md AND dispatches pd:security-reviewer but lacks explicit exclusion language"
+            codex_routing_exclusion_violations=$((codex_routing_exclusion_violations + 1))
+        fi
+    else
+        # Does not dispatch security-reviewer → MUST contain "no security review at this phase" indicator.
+        if ! grep -qE "does NOT dispatch.*pd:security-reviewer|no security review|exclusion does not need to be enforced" "$f"; then
+            log_warning "$f: references codex-routing.md but lacks 'no security review at this phase' indicator (informational only)"
+        fi
+    fi
+done < <(grep -rl "plugins/pd/references/codex-routing.md\|codex-routing\.md" plugins/pd/commands plugins/pd/skills 2>/dev/null)
+[ "$codex_routing_exclusion_violations" = "0" ] && log_info "Codex Reviewer Routing exclusions validated"
+echo ""
+
 # --- docs-sync regression guards (feature 085 FR-8; from feature 080 AC-7/AC-11) ---
 # (a) The literal `threshold=0.70` must NOT resurface in non-test .py files
 #     under plugins/pd/ — feature 080 established 0.55 as the correct default.

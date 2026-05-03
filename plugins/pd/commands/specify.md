@@ -6,6 +6,13 @@ argument-hint: [--feature=<id-slug>]
 Invoke the specifying skill for the current feature context.
 
 ## Static Reference
+
+## Codex Reviewer Routing
+
+Before any reviewer dispatch in this command, follow the codex-routing reference (primary: `~/.claude/plugins/cache/*/pd*/*/references/codex-routing.md`; fallback for dev workspace: `plugins/pd/references/codex-routing.md`). If codex is installed (per the path-integrity-checked detection helper in the reference doc), route this command's reviewer dispatches (spec-reviewer, phase-reviewer) through Codex's `task` subcommand with `--prompt-file` (foreground). Reuse the reviewer's prompt body verbatim via temp-file delivery (single-quoted heredoc — never argv interpolation). Translate the response per the field-mapping table in the reference doc. Falls back to pd reviewer Task on detection failure or malformed codex output.
+
+**Security exclusion:** This phase does NOT dispatch `pd:security-reviewer` (no code surface to review at spec stage), so the codex-routing exclusion does not need to be enforced here. The exclusion is enforced wherever `pd:security-reviewer` IS dispatched (implement, finish-feature).
+
 ## YOLO Mode Overrides
 
 If `[YOLO_MODE]` is active:

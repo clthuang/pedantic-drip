@@ -102,6 +102,10 @@ bash scripts/release.sh --ci     # Release (develop→main)
 | [Commands Reference](docs/dev_guides/commands-reference.md) | Test commands, validation, release process |
 | [ECC Comparison Improvements](docs/ecc-comparison-improvements.md) | Prioritizing plugin improvements based on competitive analysis |
 
+## Codex Reviewer Routing
+
+When the `openai-codex/codex` plugin is installed (detected by presence of `~/.claude/plugins/cache/openai-codex/codex/*/scripts/codex-companion.mjs`), pd reviewer dispatches **except `pd:security-reviewer`** route through Codex's `adversarial-review` instead of the pd reviewer Task. Security review stays on Anthropic Claude (safety-calibration reasons). See `plugins/pd/references/codex-routing.md` for the detection helper, foreground/background dispatch patterns, and the codex-to-pd JSON field-mapping table. Each reviewer-dispatching command has a "Codex Reviewer Routing" preamble pointing to the reference.
+
 ## Knowledge & Memory
 
 - **Knowledge bank:** `docs/knowledge-bank/{patterns,anti-patterns,heuristics}.md` — updated by retrospectives
