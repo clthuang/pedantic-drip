@@ -7,6 +7,14 @@ argument-hint: [feature-id]
 
 Complete a feature and clean up.
 
+## Codex Reviewer Routing (Step 5b QA Gate)
+
+For Step 5b's pre-release adversarial QA gate, follow `plugins/pd/references/codex-routing.md`. If `~/.claude/plugins/cache/openai-codex/codex/*/scripts/codex-companion.mjs` exists, dispatch the 4 QA gate reviewers as follows:
+- `pd:code-quality-reviewer`, `pd:implementation-reviewer`, `pd:test-deepener` → route via Codex `adversarial-review` (background, in parallel; collect via `result <job-id>` per the reference doc).
+- `pd:security-reviewer` → **always** dispatched via standard `Task(subagent_type: pd:security-reviewer, model: opus, ...)` regardless of codex availability — security review stays on Anthropic models for safety-calibration reasons.
+
+When codex is not installed, dispatch all 4 reviewers via the standard Task pattern. Translate codex JSON responses per the reference doc's field-mapping table. Falls back to pd reviewer Task on detection failure or malformed codex output.
+
 ## Config Variables
 Use these values from session context (injected at session start):
 - `{pd_artifacts_root}` — root directory for feature artifacts (default: `docs`)

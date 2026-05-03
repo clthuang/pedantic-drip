@@ -9,6 +9,10 @@ Invoke the implementing skill for the current feature context.
 
 <!-- Placeholder: static content injected here for prompt cache efficiency -->
 
+## Codex Reviewer Routing
+
+Before any reviewer dispatch in this command (implementation-reviewer, code-quality-reviewer, relevance-verifier, test-deepener — but **NOT** security-reviewer), follow `plugins/pd/references/codex-routing.md`. If `~/.claude/plugins/cache/openai-codex/codex/*/scripts/codex-companion.mjs` exists, route those dispatches through Codex's `adversarial-review` (foreground for sequential review loops) instead of the pd reviewer Task. Reuse the reviewer's prompt body verbatim. Translate the response per the field-mapping table in the reference doc. **`pd:security-reviewer` always dispatches via the standard Task pattern (Anthropic) regardless of codex availability** — security review stays on Anthropic models for safety-calibration reasons. Falls back to pd reviewer Task on detection failure or malformed codex output.
+
 ## YOLO Mode Overrides
 
 If `[YOLO_MODE]` is active:

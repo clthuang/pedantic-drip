@@ -6,6 +6,11 @@ argument-hint: [--feature=<id-slug>]
 Invoke the specifying skill for the current feature context.
 
 ## Static Reference
+
+## Codex Reviewer Routing
+
+Before any reviewer dispatch in this command, follow `plugins/pd/references/codex-routing.md`. If `~/.claude/plugins/cache/openai-codex/codex/*/scripts/codex-companion.mjs` exists AND the dispatched reviewer is NOT `pd:security-reviewer`, route the dispatch through Codex's `adversarial-review` (foreground) instead of the pd reviewer Task. Reuse the reviewer's prompt body verbatim. Translate the response per the field-mapping table in the reference doc. Falls back to pd reviewer Task on detection failure or malformed codex output.
+
 ## YOLO Mode Overrides
 
 If `[YOLO_MODE]` is active:

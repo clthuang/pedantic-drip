@@ -9,6 +9,10 @@ Invoke the planning skill and breaking-down-tasks skill for the current feature 
 
 <!-- Placeholder: static content injected here for prompt cache efficiency -->
 
+## Codex Reviewer Routing
+
+Before any reviewer dispatch in this command (plan-reviewer, task-reviewer, phase-reviewer), follow `plugins/pd/references/codex-routing.md`. If `~/.claude/plugins/cache/openai-codex/codex/*/scripts/codex-companion.mjs` exists AND the dispatched reviewer is NOT `pd:security-reviewer`, route the dispatch through Codex's `adversarial-review` (foreground) instead of the pd reviewer Task. Reuse the reviewer's prompt body verbatim. Translate the response per the field-mapping table in the reference doc. Falls back to pd reviewer Task on detection failure or malformed codex output.
+
 ### 1-3. Validate, Branch Check, Partial Recovery, Mark Started
 
 Follow `validateAndSetup("create-plan")` from the **workflow-transitions** skill.

@@ -7,6 +7,10 @@ description: Guides a 6-stage process producing evidence-backed PRDs. Use when t
 
 Guide divergent thinking through a structured 6-stage process that produces a PRD.
 
+## Codex Reviewer Routing
+
+Before any reviewer dispatch in this skill (prd-reviewer at Stage 4, brainstorm-reviewer at Stage 5), follow `plugins/pd/references/codex-routing.md`. If `~/.claude/plugins/cache/openai-codex/codex/*/scripts/codex-companion.mjs` exists, route those dispatches through Codex's `adversarial-review` (foreground) instead of the pd reviewer Task. Reuse the reviewer's prompt body verbatim. Translate the response per the field-mapping table in the reference doc. The `pd:security-reviewer` exclusion does not apply here (no security review at brainstorm stage). Falls back to pd reviewer Task on detection failure or malformed codex output.
+
 ## YOLO Mode Overrides
 
 If `[YOLO_MODE]` is active in the execution context:
