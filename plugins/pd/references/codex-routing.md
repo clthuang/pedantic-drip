@@ -17,10 +17,12 @@ codex_installed() {
   [[ -n "$script" ]] || return 1
   # Path-integrity check: resolved real path must be under the expected cache root.
   # Defends against symlink redirection (cache dir is user-writable).
+  # Use `command -v realpath` for portability (macOS: /bin/realpath, Linux: /usr/bin/realpath).
+  command -v realpath >/dev/null 2>&1 || return 1
   local resolved
-  resolved=$(/usr/bin/realpath -- "$script" 2>/dev/null) || return 1
+  resolved=$(realpath -- "$script" 2>/dev/null) || return 1
   local resolved_root
-  resolved_root=$(/usr/bin/realpath -- "$cache_root" 2>/dev/null) || return 1
+  resolved_root=$(realpath -- "$cache_root" 2>/dev/null) || return 1
   [[ "$resolved" == "$resolved_root"/* ]] || return 1
   echo "$script"
 }
