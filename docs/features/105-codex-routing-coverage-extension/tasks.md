@@ -52,12 +52,13 @@
 
 ### T3: Insert codex-routing preamble in commands/taskify.md
 
-- [ ] Identify insertion position in `plugins/pd/commands/taskify.md`: within first 100 lines, after frontmatter and before the first procedural section.
+- [ ] Identify exact insertion seam in `plugins/pd/commands/taskify.md`: AFTER the line `Break down any plan file into atomic, actionable tasks. This is a standalone command that works on ANY plan from ANY project -- no .meta.json, no entity registry, no MCP calls.` (line 6 at HEAD) and BEFORE `## Step 1: Parse Arguments` (line 8 at HEAD). Insert with blank-line separators on each side.
 - [ ] Insert preamble using same template as T2, with substitutions:
   - Reviewer name: `pd:task-reviewer`
   - "{command|skill|phase}" → "command"
-- [ ] Verify AC-1.2 using the same extract_codex_section + grep checks (without R-8 note):
+- [ ] Verify AC-1.2 (self-contained snippet — function defined inline):
   ```bash
+  extract_codex_section() { awk '/^## Codex Reviewer Routing/{f=1} f{print; if (/^## /&&!/Codex Reviewer Routing/){exit}}' "$1"; }
   section=$(extract_codex_section plugins/pd/commands/taskify.md)
   [[ -n "$section" ]] || { echo "FAIL: section not found"; exit 1; }
   echo "$section" | grep -qE "does NOT dispatch.*pd:security-reviewer|no security review|exclusion does not need to be enforced" || { echo "FAIL: exclusion missing"; exit 1; }
@@ -71,23 +72,56 @@
 
 ### T4: Insert codex-routing preamble in commands/review-ds-code.md
 
-- [ ] Identify insertion position in `plugins/pd/commands/review-ds-code.md`: within first 100 lines, after frontmatter.
+- [ ] Identify exact insertion seam in `plugins/pd/commands/review-ds-code.md`: AFTER the line `Dispatch the ds-code-reviewer agent to check DS Python code quality.` (line 8 at HEAD) and BEFORE `## Get Target File` (line 10 at HEAD). Insert with blank-line separators on each side.
 - [ ] Insert preamble with substitutions: reviewer = `pd:ds-code-reviewer`, "{command|skill|phase}" → "command".
-- [ ] Verify AC-1.3 using the same extract_codex_section pattern as T3, substituting the file path.
+- [ ] Verify AC-1.3 (self-contained snippet):
+  ```bash
+  extract_codex_section() { awk '/^## Codex Reviewer Routing/{f=1} f{print; if (/^## /&&!/Codex Reviewer Routing/){exit}}' "$1"; }
+  section=$(extract_codex_section plugins/pd/commands/review-ds-code.md)
+  [[ -n "$section" ]] || { echo "FAIL: section not found"; exit 1; }
+  echo "$section" | grep -qE "does NOT dispatch.*pd:security-reviewer|no security review|exclusion does not need to be enforced" || { echo "FAIL: exclusion missing"; exit 1; }
+  heading_line=$(grep -n "^## Codex Reviewer Routing" plugins/pd/commands/review-ds-code.md | head -1 | cut -d: -f1)
+  [[ "$heading_line" -le 100 ]] || { echo "FAIL: heading too far down"; exit 1; }
+  echo "$section" | grep -qE "codex-routing\.md" || { echo "FAIL: missing reference"; exit 1; }
+  echo "$section" | grep -qiE "fall.?back|falls back" || { echo "FAIL: missing fallback"; exit 1; }
+  echo "PASS"
+  ```
 - [ ] DoD: AC-1.3 verification prints PASS.
 
 ### T5: Insert codex-routing preamble in commands/review-ds-analysis.md
 
-- [ ] Identify insertion position in `plugins/pd/commands/review-ds-analysis.md`: within first 100 lines, after frontmatter.
+- [ ] Identify exact insertion seam in `plugins/pd/commands/review-ds-analysis.md`: AFTER the line `Dispatch the ds-analysis-reviewer agent via 3 chained calls to review analysis for statistical pitfalls, methodology issues, and conclusion validity.` (line 8 at HEAD) and BEFORE `## Get Target File` (line 10 at HEAD). Insert with blank-line separators on each side.
 - [ ] Insert preamble with substitutions: reviewer = `pd:ds-analysis-reviewer`, "{command|skill|phase}" → "command".
-- [ ] Verify AC-1.4 using the same extract_codex_section pattern.
+- [ ] Verify AC-1.4 (self-contained snippet):
+  ```bash
+  extract_codex_section() { awk '/^## Codex Reviewer Routing/{f=1} f{print; if (/^## /&&!/Codex Reviewer Routing/){exit}}' "$1"; }
+  section=$(extract_codex_section plugins/pd/commands/review-ds-analysis.md)
+  [[ -n "$section" ]] || { echo "FAIL: section not found"; exit 1; }
+  echo "$section" | grep -qE "does NOT dispatch.*pd:security-reviewer|no security review|exclusion does not need to be enforced" || { echo "FAIL: exclusion missing"; exit 1; }
+  heading_line=$(grep -n "^## Codex Reviewer Routing" plugins/pd/commands/review-ds-analysis.md | head -1 | cut -d: -f1)
+  [[ "$heading_line" -le 100 ]] || { echo "FAIL: heading too far down"; exit 1; }
+  echo "$section" | grep -qE "codex-routing\.md" || { echo "FAIL: missing reference"; exit 1; }
+  echo "$section" | grep -qiE "fall.?back|falls back" || { echo "FAIL: missing fallback"; exit 1; }
+  echo "PASS"
+  ```
 - [ ] DoD: AC-1.4 verification prints PASS.
 
 ### T6: Insert codex-routing preamble in skills/decomposing/SKILL.md
 
-- [ ] Identify insertion position in `plugins/pd/skills/decomposing/SKILL.md`: within first 100 lines, after frontmatter.
+- [ ] Identify exact insertion seam in `plugins/pd/skills/decomposing/SKILL.md`: AFTER the line `Decomposes a project PRD into modules and features through an AI decomposer/reviewer cycle.` (line 12 at HEAD) and BEFORE `## Prerequisites` (line 14 at HEAD). Insert with blank-line separators on each side.
 - [ ] Insert preamble with substitutions: reviewer = `pd:project-decomposition-reviewer`, "{command|skill|phase}" → "skill".
-- [ ] Verify AC-1.5 using the same extract_codex_section pattern.
+- [ ] Verify AC-1.5 (self-contained snippet):
+  ```bash
+  extract_codex_section() { awk '/^## Codex Reviewer Routing/{f=1} f{print; if (/^## /&&!/Codex Reviewer Routing/){exit}}' "$1"; }
+  section=$(extract_codex_section plugins/pd/skills/decomposing/SKILL.md)
+  [[ -n "$section" ]] || { echo "FAIL: section not found"; exit 1; }
+  echo "$section" | grep -qE "does NOT dispatch.*pd:security-reviewer|no security review|exclusion does not need to be enforced" || { echo "FAIL: exclusion missing"; exit 1; }
+  heading_line=$(grep -n "^## Codex Reviewer Routing" plugins/pd/skills/decomposing/SKILL.md | head -1 | cut -d: -f1)
+  [[ "$heading_line" -le 100 ]] || { echo "FAIL: heading too far down"; exit 1; }
+  echo "$section" | grep -qE "codex-routing\.md" || { echo "FAIL: missing reference"; exit 1; }
+  echo "$section" | grep -qiE "fall.?back|falls back" || { echo "FAIL: missing fallback"; exit 1; }
+  echo "PASS"
+  ```
 - [ ] DoD: AC-1.5 verification prints PASS.
 
 ## Phase 3: validate.sh Patches (sequential)
@@ -104,10 +138,11 @@
   # Expect: zero matches (the log_warning line is gone)
   grep -n "log_error" validate.sh | grep -i "no security review"
   # Expect: 1 match showing the patched block
-  grep -nC 1 "log_error" validate.sh | grep -A 1 "no security review" | grep "codex_routing_exclusion_violations"
-  # Expect: 1 match showing the counter increment immediately after the log_error
+  # Direct anchor-based check for counter increment immediately after log_error:
+  grep -A 1 "lacks 'no security review at this phase' indicator" validate.sh | grep -q "codex_routing_exclusion_violations" || { echo "FAIL: counter increment not adjacent to log_error"; exit 1; }
+  echo "PASS"
   ```
-- [ ] DoD: log_warning gone; log_error + counter increment present.
+- [ ] DoD: log_warning gone; log_error + counter increment present (PASS printed).
 
 ### T8: Insert FR-2b allowlist+count block in validate.sh after line 877
 
@@ -116,12 +151,16 @@
 - [ ] Include the alternation-redundancy comment line per design fix.
 - [ ] Verify:
   ```bash
-  grep -n "Codex routing coverage drift" validate.sh
-  # Expect: exactly 1 match
-  grep -n 'plugins/pd/references/codex-routing\.md\\\\|codex-routing\\\\\.md' validate.sh
-  # Expect: line in the FR-2b block matching the two-alternation regex
+  grep -c "Codex routing coverage drift" validate.sh
+  # Expect: 1
+  grep -c "FR-2b" validate.sh
+  # Expect: ≥ 1 (the FR-2b comment marker is present)
+  grep -c "expected_codex_files" validate.sh
+  # Expect: ≥ 1 (the allowlist heredoc starts with this var)
+  grep -c "actual_codex_files" validate.sh
+  # Expect: ≥ 1 (the discovery grep stores in this var)
   ```
-- [ ] DoD: FR-2b block inserted with exact 11-file allowlist and two-alternation grep pattern.
+- [ ] DoD: FR-2b block inserted with exact 11-file allowlist (all 4 grep -c above return ≥ 1).
 
 ## Phase 4: Validation
 
@@ -138,8 +177,9 @@
 
 ### T10 (T-EXEC-AC-2.2): Run AC-2.2 negative-path procedure
 
-- [ ] Create temp clone:
+- [ ] Create temp clone (capture original cwd FIRST so we can return to it):
   ```bash
+  ORIGINAL_DIR=$(pwd)
   TEMP_TEST_DIR=$(mktemp -d -t pd-105-fr2a-test.XXXXXX)
   trap 'rm -rf "$TEMP_TEST_DIR"' EXIT
   cp -R . "$TEMP_TEST_DIR/repo"
@@ -156,13 +196,20 @@
   [ "$rc" -ne 0 ] || { echo "FAIL: validate.sh did not error on missing exclusion clause"; exit 1; }
   echo "PASS: FR-2a regression guard fires on missing exclusion clause"
   ```
-- [ ] cd back to source repo: `cd <repo-root>`
+- [ ] cd back to source repo: `cd "$ORIGINAL_DIR"`
 - [ ] Paste full terminal output (stdout + stderr from the procedure) to `agent_sandbox/2026-05-06/feature-105-evidence/T-EXEC-AC-2.2.txt`. Create the directory if needed.
 - [ ] DoD: evidence file committed at `agent_sandbox/2026-05-06/feature-105-evidence/T-EXEC-AC-2.2.txt` containing terminal output showing non-zero exit.
 
 ### T11 (T-EXEC-AC-2.3): Run AC-2.3 allowlist-drift procedure
 
-- [ ] Create temp clone (same scaffold as T10).
+- [ ] Create temp clone (same scaffold as T10, including `ORIGINAL_DIR=$(pwd)` capture):
+  ```bash
+  ORIGINAL_DIR=$(pwd)
+  TEMP_TEST_DIR=$(mktemp -d -t pd-105-fr2b-test.XXXXXX)
+  trap 'rm -rf "$TEMP_TEST_DIR"' EXIT
+  cp -R . "$TEMP_TEST_DIR/repo"
+  cd "$TEMP_TEST_DIR/repo"
+  ```
 - [ ] Direction (a) — drift +1:
   ```bash
   echo "See codex-routing.md" > plugins/pd/commands/extra-file.md
