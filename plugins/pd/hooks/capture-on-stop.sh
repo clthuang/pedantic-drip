@@ -37,6 +37,11 @@ plugin_root=$(ls -d ~/.claude/plugins/cache/*/pd*/* 2>/dev/null | head -1)
 [[ -z "$plugin_root" ]] && plugin_root="$project_root/plugins/pd"
 writer_python="$plugin_root/.venv/bin/python"
 writer_pythonpath="$plugin_root/hooks/lib"
+# Feature 104 test-injection seam: tests can override the writer python module
+# path so capture-on-stop.sh routes to a stub instead of the real writer.
+# Production behavior unchanged when these env vars are unset.
+[[ -n "${PD_TEST_WRITER_PYTHONPATH:-}" ]] && writer_pythonpath="$PD_TEST_WRITER_PYTHONPATH"
+[[ -n "${PD_TEST_WRITER_PYTHON:-}" ]] && writer_python="$PD_TEST_WRITER_PYTHON"
 
 # Read buffer tags (preserve insertion order); cap at session_cap
 total_tags=$(wc -l < "$buffer_file" 2>/dev/null | tr -d ' ')

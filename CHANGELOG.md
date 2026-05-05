@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.16.14] - 2026-05-06
+
+### Added
+
+- **Batch B test-hardening for feature 102** (feature 104, backlog #00298–#00306) —
+  3 bash integration test scripts (`test-tag-correction.sh`, `test-capture-on-stop.sh`,
+  `test-session-start.sh`) and 1 pytest module (`pattern_promotion/test_main.py`)
+  closing 9 deferred test-coverage items from the feature 102 QA gate. New tests
+  cover FR-1 hook regex set + 20-sample precision corpus (≥9/10 corrections, ≤2/10
+  noise — verified 10/10 + 0/10 on first run), FR-2 Stop-hook orchestration
+  (10 ACs incl. transcript-join truncation, category mapping, cap+overflow,
+  log rotation), FR-1.5 stale-buffer cleanup, and pattern_promotion CLI seam
+  (FR-7 enumerate JSON contract + FR-8 argparse tolerance).
+- **`validate.sh` Hooks.json Registration Contract section** — 4 jq/grep
+  assertions guarding the hooks.json shape feature 102 depends on
+  (UserPromptSubmit length, Stop length + 2nd entry async/timeout, retrospecting
+  SKILL.md `extract_workarounds` reference).
+
+### Changed
+
+- **`capture-on-stop.sh`** — added optional test-injection seam
+  (`PD_TEST_WRITER_PYTHONPATH` / `PD_TEST_WRITER_PYTHON` env vars) so tests
+  can route the writer dispatch to a stub. No behavior change in production
+  (env vars unset by default).
+
+### Fixed
+
+- **`tag-correction.sh:20`** — header comment corrected from
+  `'12-pattern regex set'` to `'8-pattern regex set'` (matches the actual
+  `patterns=()` array; `#00305` verified already mitigated).
+- **`session-start.sh`** — removed vestigial single-line comment misidentifying
+  `cleanup_stale_correction_buffers` (`#00304`).
+
 ## [4.16.13] - 2026-05-03
 
 ### Added

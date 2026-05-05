@@ -17,7 +17,7 @@ trap 'printf "{}\n"' EXIT
 [[ -z "$prompt" ]] && exit 0
 [[ -z "$session_id" ]] && exit 0
 
-# 12-pattern regex set (per design I-1 / spec FR-1)
+# 8-pattern regex set (per design I-1 / spec FR-1)
 patterns=(
   '\b(no,? don'\''?t)\b'
   '\bstop( doing| that)?\b'

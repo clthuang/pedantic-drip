@@ -1,0 +1,15 @@
+{
+  "id": "104",
+  "slug": "batch-b-test-hardening",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-05-05T18:39:35.905576+00:00",
+  "branch": "feature/104-batch-b-test-hardening",
+  "brainstorm_source": "docs/brainstorms/20260503-053000-batch-b-test-hardening.prd.md",
+  "lastCompletedPhase": null,
+  "phases": {
+    "brainstorm": {
+      "started": "2026-05-05T18:39:35.904413+00:00"
+    }
+  }
+}
