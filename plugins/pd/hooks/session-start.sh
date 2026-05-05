@@ -276,7 +276,6 @@ cleanup_stale_mcp_servers() {
     fi
 }
 
-# Check MCP bootstrap error log for recent failures.
 # Feature 102 FR-1.5: clean up stale FR-1 correction-buffer files.
 # Files older than 24 hours are removed to prevent disk pollution from
 # crashed sessions where capture-on-stop.sh never ran.
