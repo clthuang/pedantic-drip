@@ -7,6 +7,12 @@ argument-hint: <notebook or script path>
 
 Dispatch the ds-analysis-reviewer agent via 3 chained calls to review analysis for statistical pitfalls, methodology issues, and conclusion validity.
 
+## Codex Reviewer Routing
+
+Before any reviewer dispatch in this command (ds-analysis-reviewer), follow the codex-routing reference (primary: `~/.claude/plugins/cache/*/pd*/*/references/codex-routing.md`; fallback for dev workspace: `plugins/pd/references/codex-routing.md`). If codex is installed (per the path-integrity-checked detection helper in the reference doc), route via Codex `task --prompt-file` (foreground). Reuse the reviewer's prompt body verbatim via temp-file delivery (single-quoted heredoc — never argv interpolation). Translate the response per the field-mapping table in the reference doc. Falls back to pd reviewer Task on detection failure or malformed codex output.
+
+**Security exclusion:** This command does NOT dispatch `pd:security-reviewer`, so the codex-routing exclusion does not need to be enforced here. The exclusion is enforced wherever `pd:security-reviewer` IS dispatched (implement, finish-feature).
+
 ## Get Target File
 
 If $ARGUMENTS is provided, use it as the target file path.

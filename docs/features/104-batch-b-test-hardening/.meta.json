@@ -2,14 +2,31 @@
   "id": "104",
   "slug": "batch-b-test-hardening",
   "mode": "standard",
-  "status": "active",
+  "status": "completed",
   "created": "2026-05-05T18:39:35.905576+00:00",
   "branch": "feature/104-batch-b-test-hardening",
+  "completed": "2026-05-05T19:31:41.930729+00:00",
   "brainstorm_source": "docs/brainstorms/20260503-053000-batch-b-test-hardening.prd.md",
-  "lastCompletedPhase": null,
+  "lastCompletedPhase": "finish",
   "phases": {
     "brainstorm": {
-      "started": "2026-05-05T18:39:35.904413+00:00"
+      "started": "2026-05-05T18:39:35.904413+00:00",
+      "completed": "2026-05-05T19:21:43.755806+00:00"
+    },
+    "specify": {
+      "completed": "2026-05-05T19:21:48.057865+00:00"
+    },
+    "design": {
+      "completed": "2026-05-05T19:21:51.760524+00:00"
+    },
+    "create-plan": {
+      "completed": "2026-05-05T19:21:56.665000+00:00"
+    },
+    "implement": {
+      "completed": "2026-05-05T19:22:01.385180+00:00"
+    },
+    "finish": {
+      "completed": "2026-05-05T19:31:41.930729+00:00"
     }
   }
 }
