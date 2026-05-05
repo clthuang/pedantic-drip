@@ -160,7 +160,7 @@
   grep -c "actual_codex_files" validate.sh
   # Expect: ≥ 1 (the discovery grep stores in this var)
   ```
-- [ ] DoD: FR-2b block inserted with exact 11-file allowlist (all 4 grep -c above return ≥ 1).
+- [ ] DoD: FR-2b block inserted (grep -c "Codex routing coverage drift" returns exactly 1; grep -c for FR-2b / expected_codex_files / actual_codex_files each return ≥ 1).
 
 ## Phase 4: Validation
 
@@ -229,7 +229,7 @@
   echo "PASS direction (b)"
   ```
   Expected diff output: validate.sh's `log_error "Codex routing coverage drift..."` shows `taskify.md.disabled` in the actual list and `taskify.md` in the expected list — path mismatch, count stays 11.
-- [ ] cd back to source repo.
+- [ ] cd back to source repo: `cd "$ORIGINAL_DIR"`
 - [ ] Paste full terminal output (both directions) to `agent_sandbox/2026-05-06/feature-105-evidence/T-EXEC-AC-2.3.txt`.
 - [ ] DoD: evidence file committed at the documented path showing both directions produce non-zero exit.
 
