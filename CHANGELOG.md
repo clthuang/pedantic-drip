@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.16.15] - 2026-05-06
+
 ### Changed
 
 - **Codex reviewer routing coverage extended** (feature 105) — added the
