@@ -5,10 +5,15 @@
   "status": "active",
   "created": "2026-05-05T19:32:10.386017+00:00",
   "branch": "feature/105-codex-routing-coverage-extension",
-  "lastCompletedPhase": null,
+  "lastCompletedPhase": "specify",
   "phases": {
     "brainstorm": {
       "started": "2026-05-05T19:32:10.385847+00:00"
+    },
+    "specify": {
+      "started": "2026-05-05T19:46:29.296717+00:00",
+      "completed": "2026-05-05T19:46:33.595506+00:00",
+      "iterations": 3
     }
   }
 }
