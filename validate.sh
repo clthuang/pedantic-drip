@@ -871,10 +871,43 @@ while IFS= read -r f; do
     else
         # Does not dispatch security-reviewer → MUST contain "no security review at this phase" indicator.
         if ! grep -qE "does NOT dispatch.*pd:security-reviewer|no security review|exclusion does not need to be enforced" "$f"; then
-            log_warning "$f: references codex-routing.md but lacks 'no security review at this phase' indicator (informational only)"
+            log_error "$f: references codex-routing.md but lacks 'no security review at this phase' indicator"
+            codex_routing_exclusion_violations=$((codex_routing_exclusion_violations + 1))
         fi
     fi
 done < <(grep -rl "plugins/pd/references/codex-routing.md\|codex-routing\.md" plugins/pd/commands plugins/pd/skills 2>/dev/null)
+
+# FR-2b (feature 105): allowlist+count assertion for codex-routing references.
+# Catches drift where a preamble is removed from one of the 11 expected sites,
+# or a 12th non-target file accidentally references codex-routing.md.
+codex_routing_allowlist_violations=0
+if [[ -f "./validate.sh" && -d "./plugins/pd" ]]; then
+    expected_codex_files="plugins/pd/commands/specify.md
+plugins/pd/commands/design.md
+plugins/pd/commands/create-plan.md
+plugins/pd/commands/implement.md
+plugins/pd/commands/finish-feature.md
+plugins/pd/skills/brainstorming/SKILL.md
+plugins/pd/commands/secretary.md
+plugins/pd/commands/taskify.md
+plugins/pd/commands/review-ds-code.md
+plugins/pd/commands/review-ds-analysis.md
+plugins/pd/skills/decomposing/SKILL.md"
+    # Note: alternation is intentionally redundant (mirrors validate.sh main-loop grep verbatim).
+    # Scope (commands+skills, NOT references) excludes codex-routing.md itself from the discovery set.
+    actual_codex_files=$(grep -rl "plugins/pd/references/codex-routing.md\|codex-routing\.md" plugins/pd/commands plugins/pd/skills 2>/dev/null | sort)
+    expected_sorted=$(echo "$expected_codex_files" | sort)
+    if [ "$actual_codex_files" != "$expected_sorted" ]; then
+        log_error "Codex routing coverage drift: actual file set differs from allowlist (feature 105 FR-2b)"
+        diff <(echo "$expected_sorted") <(echo "$actual_codex_files") | head -20 | while IFS= read -r line; do log_error "  $line"; done || true
+        codex_routing_allowlist_violations=$((codex_routing_allowlist_violations + 1))
+    fi
+else
+    log_error "FR-2b allowlist check requires repo-root cwd (validate.sh and plugins/pd not found in cwd)"
+    codex_routing_allowlist_violations=$((codex_routing_allowlist_violations + 1))
+fi
+[ "$codex_routing_allowlist_violations" = "0" ] && log_info "Codex routing coverage allowlist validated (11 expected files)"
+
 [ "$codex_routing_exclusion_violations" = "0" ] && log_info "Codex Reviewer Routing exclusions validated"
 echo ""
 
