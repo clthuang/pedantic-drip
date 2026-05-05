@@ -54,7 +54,7 @@ Five new `## Codex Reviewer Routing` sections inserted in:
 The chosen template is the existing `design.md` block because (1) `design.md` is itself a "no security-reviewer dispatch" site, (2) its body wording covers both the reference glob and fallback semantics required by ACs, and (3) it has the "Security exclusion: This phase does NOT dispatch `pd:security-reviewer`..." clause matching validate.sh's regex.
 
 For each new site, the placeholder substitutions are:
-- `secretary.md`: "this command's reviewer dispatches (design-reviewer, phase-reviewer)" → "this command's reviewer dispatches (secretary-reviewer)". "This phase does NOT dispatch" → "This command does NOT dispatch" (for stylistic consistency).
+- `secretary.md`: "this command's reviewer dispatches (design-reviewer, phase-reviewer)" → "this command's reviewer dispatches (secretary-reviewer)". "This phase does NOT dispatch" → "This command does NOT dispatch" (for stylistic consistency). Per R-8, append a one-sentence note: "Note: Dynamic agent dispatch at Step 7 DELEGATE (line 726) is a runtime-templated routing, not a static reviewer dispatch; codex routing is not applied at that delegation site."
 - `taskify.md`: substitute reviewer to `task-reviewer`. "This command does NOT dispatch."
 - `review-ds-code.md`: substitute reviewer to `ds-code-reviewer`. "This command does NOT dispatch."
 - `review-ds-analysis.md`: substitute reviewer to `ds-analysis-reviewer`. "This command does NOT dispatch."
@@ -185,11 +185,19 @@ Manual checklist + output evidence achieves the user-direction filter ("primary 
 
 ### R-7: secretary.md positioning
 
-**Risk:** `secretary.md` already has a large reference-table block at the top ("Static Reference Tables", "Routing Boundary Directive", etc.). Inserting the preamble within "first 100 lines" may push it after these tables, breaking visual consistency with other sites where the preamble is the FIRST major content block.
+**Risk:** `secretary.md` has a large Static Reference Tables block starting at line 10 and running to line 235 (verified at design-review iter 1). Inserting the preamble "after the tables but within line-100 budget" is impossible — the tables span past line 100.
 
-**Mitigation:** Insertion position spec says "within first 100 lines, after frontmatter". Specifically for `secretary.md`, the preamble can go immediately after the file's first H1 (or YAML frontmatter close) but BEFORE the reference tables. Alternatively, place after the reference tables but still within line-100 budget. Either is AC-1.1-compliant. Implementer chooses based on visual readability.
+**Mitigation:** Single prescriptive insertion position: immediately after secretary.md's H1 and brief description (line 6 area), and BEFORE the `## Static Reference Tables` H2 at line 10. Insertion point is between line 8 (end of brief description) and line 10 (start of tables). This is AC-1.1-compliant (heading lands at line ~10, well within first 100). Implementer has no choice to make.
 
 **Severity:** Low.
+
+### R-8: secretary.md dynamic-dispatch loophole
+
+**Risk:** `secretary.md` line 726 dispatches `Task({ subagent_type: "{plugin}:{agent}", ... })` — a templated delegation that could route to any discovered agent at runtime, including a reviewer agent (e.g., `pd:security-reviewer` or any `pd:*-reviewer`). The new preamble's security-exclusion clause says "this command does NOT dispatch `pd:security-reviewer`," which is technically true for the literal grep at the static dispatch site (line 644 dispatches `pd:secretary-reviewer`, not security-reviewer), but ignores the runtime-templated case at line 726.
+
+**Mitigation:** Out of scope for feature 105 per the user-direction filter. Acknowledge explicitly in the secretary.md preamble body via a one-sentence note: "Note: Dynamic agent dispatch at Step 7 DELEGATE (line 726) is a runtime-templated routing, not a static reviewer dispatch; codex routing is not applied at that delegation site." This makes the loophole explicit so future readers know it was intentionally not addressed. A future feature could add codex routing to the dynamic-dispatch path.
+
+**Severity:** Medium for security-correctness (a user could ask secretary to delegate to security-reviewer, and that delegation would not currently route through codex — but the codex exclusion for security-reviewer means this is correct behavior, not a bug). Low for feature 105 scope (the feature does not introduce or worsen this; it merely doesn't fix it).
 
 ## File Change Summary
 
@@ -291,6 +299,8 @@ plugins/pd/commands/taskify.md
 plugins/pd/commands/review-ds-code.md
 plugins/pd/commands/review-ds-analysis.md
 plugins/pd/skills/decomposing/SKILL.md"
+    # Note: alternation is intentionally redundant (mirrors validate.sh:877 verbatim per spec FR-2b).
+    # Scope (commands+skills, NOT references) excludes codex-routing.md itself from the discovery set.
     actual_codex_files=$(grep -rl "plugins/pd/references/codex-routing.md\|codex-routing\.md" plugins/pd/commands plugins/pd/skills 2>/dev/null | sort)
     expected_sorted=$(echo "$expected_codex_files" | sort)
     if [ "$actual_codex_files" != "$expected_sorted" ]; then
@@ -331,12 +341,15 @@ trap 'rm -rf "$TEMP_TEST_DIR"' EXIT
 cp -R . "$TEMP_TEST_DIR/repo"
 cd "$TEMP_TEST_DIR/repo"
 # ... per-AC mutation ...
+# Sanity check: confirm mutation took effect (defends against BSD/GNU sed regex differences).
+# For AC-2.2: ! grep -q 'does NOT dispatch.*pd:security-reviewer' plugins/pd/commands/secretary.md \
+#   || { echo "FAIL: AC-2.2 sed mutation did not take effect"; exit 1; }
 ./validate.sh; rc=$?
 [ "$rc" -ne 0 ] || { echo "FAIL"; exit 1; }
 echo "PASS"
 ```
 
-The implementer pastes the terminal output (stdout + stderr) into a per-task evidence file `docs/features/105-codex-routing-coverage-extension/.evidence-T-EXEC-AC-2.{2,3}.txt`. These files are NOT committed (added to `.gitignore` if not already covered) but referenced in tasks.md task-completion DoD.
+The implementer pastes the terminal output (stdout + stderr) into a per-task evidence file under `agent_sandbox/2026-05-06/feature-105-evidence/T-EXEC-AC-2.{2,3}.txt`. The `agent_sandbox/` directory is already git-tracked-ignore per CLAUDE.md ("Put all agent generated non-workflow related content in `agent_sandbox/[YYYY-MM-DD]/[Meaningful Directory Name]/`"). Evidence files are referenced in tasks.md task-completion DoD but NOT committed.
 
 ## Open Questions
 
