@@ -823,6 +823,32 @@ else
 fi
 echo ""
 
+# --- Hooks.json Registration Contract (feature 104 FR-1 + FR-2) ---
+# Asserts hooks.json keeps the registration shape feature 102 / 104 depend on.
+# Defends against silent hook-misconfiguration regressions.
+echo "Checking Hooks.json Registration Contract..."
+if jq -e '.hooks.UserPromptSubmit | length == 1' plugins/pd/hooks/hooks.json > /dev/null 2>&1; then
+    log_success "hooks.json: UserPromptSubmit registered (1 entry)"
+else
+    log_error "hooks.json: UserPromptSubmit length != 1"
+fi
+if jq -e '.hooks.Stop | length == 2' plugins/pd/hooks/hooks.json > /dev/null 2>&1; then
+    log_success "hooks.json: Stop array has 2 entries"
+else
+    log_error "hooks.json: Stop length != 2"
+fi
+if jq -e '.hooks.Stop[1].hooks[0] | (.async == true and .timeout == 30)' plugins/pd/hooks/hooks.json > /dev/null 2>&1; then
+    log_success "hooks.json: Stop[1] has async:true, timeout:30"
+else
+    log_error "hooks.json: Stop[1] async/timeout assertion failed"
+fi
+if grep -qE 'extract_workarounds|workaround_candidates' plugins/pd/skills/retrospecting/SKILL.md; then
+    log_success "retrospecting/SKILL.md references extract_workarounds"
+else
+    log_error "retrospecting/SKILL.md missing extract_workarounds reference"
+fi
+echo ""
+
 # --- Codex Reviewer Routing exclusion guard (feature 103) ---
 # Files that reference codex-routing.md AND dispatch pd:security-reviewer MUST
 # include explicit exclusion language. Defends against future regression where
