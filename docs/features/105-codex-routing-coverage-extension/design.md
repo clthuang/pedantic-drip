@@ -315,21 +315,35 @@ fi
 [ "$codex_routing_allowlist_violations" = "0" ] && log_info "Codex routing coverage allowlist validated (11 expected files)"
 ```
 
-### I-4: AC-3.1 Baseline Capture
+### I-4: AC-3.1 Baseline Capture + FR-2b Pre-Baseline
 
-Captured by the implementer at task start:
+Captured by the implementer at task start. Two baselines:
 
+**(a) pd:security-reviewer dispatch baseline (AC-3.1):**
 ```bash
 grep -rn "subagent_type:.*pd:security-reviewer" plugins/pd/ | sort > /tmp/pd-105-sec-baseline.txt
 ```
 
 Verified post-implementation:
-
 ```bash
 grep -rn "subagent_type:.*pd:security-reviewer" plugins/pd/ | sort | diff - /tmp/pd-105-sec-baseline.txt
 ```
-
 Acceptance: empty diff (exit 0).
+
+**(b) FR-2b allowlist false-positive baseline (load-bearing tasks.md DoD instruction):**
+
+Before any FR-1 changes, capture the current discovery set and confirm it matches the existing 6 files exactly (no false positives from prose mentions in unrelated files):
+```bash
+grep -rl "plugins/pd/references/codex-routing.md\|codex-routing\.md" plugins/pd/commands plugins/pd/skills 2>/dev/null | sort > /tmp/pd-105-codex-baseline.txt
+expected_pre="plugins/pd/commands/create-plan.md
+plugins/pd/commands/design.md
+plugins/pd/commands/finish-feature.md
+plugins/pd/commands/implement.md
+plugins/pd/commands/specify.md
+plugins/pd/skills/brainstorming/SKILL.md"
+diff <(echo "$expected_pre" | sort) /tmp/pd-105-codex-baseline.txt
+```
+Acceptance: empty diff (exit 0). If non-empty, the FR-2b allowlist of 11 expected files would inherit the false-positive — investigate and either widen the allowlist (if the additional file is a legitimate codex-routing reference) or narrow the grep regex (if it's a false-positive prose mention).
 
 ### I-5: Manual Checklist Procedure (AC-2.2, AC-2.3)
 
@@ -349,7 +363,10 @@ cd "$TEMP_TEST_DIR/repo"
 echo "PASS"
 ```
 
-The implementer pastes the terminal output (stdout + stderr) into a per-task evidence file under `agent_sandbox/2026-05-06/feature-105-evidence/T-EXEC-AC-2.{2,3}.txt`. The `agent_sandbox/` directory is already git-tracked-ignore per CLAUDE.md ("Put all agent generated non-workflow related content in `agent_sandbox/[YYYY-MM-DD]/[Meaningful Directory Name]/`"). Evidence files are referenced in tasks.md task-completion DoD but NOT committed.
+The implementer pastes the terminal output (stdout + stderr) into a per-task evidence file under `agent_sandbox/2026-05-06/feature-105-evidence/T-EXEC-AC-2.{2,3}.txt`. The `agent_sandbox/` directory is the project-convention location for agent-generated non-workflow content per CLAUDE.md.
+
+**Commit-stance for evidence files (load-bearing tasks.md DoD instruction):**
+Evidence files ARE committed. Per CLAUDE.md ("Put all agent generated non-workflow related content in `agent_sandbox/[YYYY-MM-DD]/[Meaningful Directory Name]/`"), `agent_sandbox/` is the convention path for tracked-but-non-workflow agent output. The tasks.md DoD for T-EXEC-AC-2.2 and T-EXEC-AC-2.3 must say verbatim: "Evidence file committed at `agent_sandbox/2026-05-06/feature-105-evidence/T-EXEC-AC-2.{N}.txt` containing the terminal output of the procedure."
 
 ## Open Questions
 
