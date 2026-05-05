@@ -52,14 +52,14 @@ heading_line=$(grep -n "^## Codex Reviewer Routing" plugins/pd/commands/secretar
 
 **AC-1.6:** Every new preamble references the codex-routing reference path. Verifiable via:
 ```bash
-for f in <five-file-list>; do
+for f in plugins/pd/commands/secretary.md plugins/pd/commands/taskify.md plugins/pd/commands/review-ds-code.md plugins/pd/commands/review-ds-analysis.md plugins/pd/skills/decomposing/SKILL.md; do
   extract_codex_section "$f" | grep -qE "codex-routing\.md" || { echo "FAIL: $f section lacks codex-routing.md reference"; exit 1; }
 done
 ```
 
 **AC-1.7:** Every new preamble includes fallback semantic text within the section (not just anywhere in the file). Verifiable via:
 ```bash
-for f in <five-file-list>; do
+for f in plugins/pd/commands/secretary.md plugins/pd/commands/taskify.md plugins/pd/commands/review-ds-code.md plugins/pd/commands/review-ds-analysis.md plugins/pd/skills/decomposing/SKILL.md; do
   extract_codex_section "$f" | grep -qiE "fall.?back|falls back" || { echo "FAIL: $f section lacks fallback semantic"; exit 1; }
 done
 ```
@@ -106,6 +106,7 @@ cp -R . "$TEMP_TEST_DIR/repo"
 cd "$TEMP_TEST_DIR/repo"
 # Mutate: remove exclusion clause from secretary.md
 sed -i.bak '/does NOT dispatch.*pd:security-reviewer/d' plugins/pd/commands/secretary.md
+rm -f plugins/pd/commands/secretary.md.bak  # avoid .bak being picked up as a 12th allowlist file
 # Run validate.sh from this temp tree (cwd = repo-root inside temp)
 ./validate.sh; rc=$?
 [ "$rc" -ne 0 ] || { echo "FAIL: validate.sh did not error on missing exclusion clause"; exit 1; }
