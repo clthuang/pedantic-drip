@@ -17,15 +17,27 @@ Feature 103 introduced codex reviewer routing for 5 commands (`specify`, `design
 
 ### FR-1: Preamble Authoring
 
-The 5 listed files each receive a `## Codex Reviewer Routing` section that appears within the first 100 lines of the file (after any frontmatter). Body wording matches the pattern established by the existing 4 "no-dispatch" sites (`design.md`, `create-plan.md`, `specify.md`, `brainstorming/SKILL.md`). The exclusion clause MUST use the exact phrasing pattern: "This {command|skill|phase} does NOT dispatch `pd:security-reviewer` ..." (so it satisfies validate.sh:873's regex `does NOT dispatch.*pd:security-reviewer|no security review|exclusion does not need to be enforced`).
+The 5 listed files each receive a `## Codex Reviewer Routing` section that appears within the first 100 lines of the file (after any frontmatter). The section body is **copied byte-equivalent** from `plugins/pd/commands/design.md`'s existing `## Codex Reviewer Routing` block (lines 10-14 of `design.md` at HEAD), with the following site-specific adjustments only:
+- Reviewer-type list in the body paragraph (e.g., "(design-reviewer, phase-reviewer)" → site-specific reviewers per Notes inventory).
+- Heading-level placeholder text (e.g., "this command's reviewer dispatches" → "this skill's reviewer dispatches" for the `decomposing/SKILL.md` site).
+
+The exclusion clause MUST use the exact phrasing pattern: "This {command|skill|phase} does NOT dispatch `pd:security-reviewer`, so the codex-routing exclusion does not need to be enforced here. The exclusion is enforced wherever `pd:security-reviewer` IS dispatched (implement, finish-feature)." (so it satisfies validate.sh:873's regex `does NOT dispatch.*pd:security-reviewer|no security review|exclusion does not need to be enforced`).
 
 If a target file dispatches more than one reviewer type, the preamble enumerates all dispatched reviewer types. (Per the verified inventory in Notes, secretary.md dispatches only `pd:secretary-reviewer`; all 5 sites are effectively single-reviewer.)
 
+**Section-extraction helper (used by AC-1.1 through AC-1.7):**
+```bash
+extract_codex_section() {
+  awk '/^## Codex Reviewer Routing/{f=1} f{print; if (/^## /&&!/Codex Reviewer Routing/){exit}}' "$1"
+}
+```
+ACs below invoke `extract_codex_section <file>` to scope checks to the section content only.
+
 **AC-1.1:** `commands/secretary.md` contains a `## Codex Reviewer Routing` section within the first 100 lines. The section names `pd:security-reviewer` in an exclusion clause whose phrasing matches validate.sh:873's regex. Verifiable via:
 ```bash
-section=$(awk '/^## Codex Reviewer Routing/{f=1} f{print; if (/^## /&&!/Codex Reviewer Routing/){exit}}' plugins/pd/commands/secretary.md)
+section=$(extract_codex_section plugins/pd/commands/secretary.md)
 [[ -n "$section" ]] || { echo "FAIL: section not found"; exit 1; }
-echo "$section" | head -n 100 | grep -qE "does NOT dispatch.*pd:security-reviewer|no security review|exclusion does not need to be enforced" || { echo "FAIL: exclusion clause missing"; exit 1; }
+echo "$section" | grep -qE "does NOT dispatch.*pd:security-reviewer|no security review|exclusion does not need to be enforced" || { echo "FAIL: exclusion clause missing"; exit 1; }
 heading_line=$(grep -n "^## Codex Reviewer Routing" plugins/pd/commands/secretary.md | head -1 | cut -d: -f1)
 [[ "$heading_line" -le 100 ]] || { echo "FAIL: heading too far down"; exit 1; }
 ```
@@ -38,9 +50,19 @@ heading_line=$(grep -n "^## Codex Reviewer Routing" plugins/pd/commands/secretar
 
 **AC-1.5:** `skills/decomposing/SKILL.md` contains a `## Codex Reviewer Routing` section. Same verification as AC-1.1. The dispatched reviewer is `pd:project-decomposition-reviewer` (line 82). Note: this skill also dispatches `pd:project-decomposer` (an executor, not a reviewer) — only the reviewer is routed via codex.
 
-**AC-1.6:** Every new preamble references the codex-routing reference path. Verifiable via the awk-extracted section content from AC-1.1's pattern grep'd for `codex-routing\.md`. Required: ≥1 match per file's section.
+**AC-1.6:** Every new preamble references the codex-routing reference path. Verifiable via:
+```bash
+for f in <five-file-list>; do
+  extract_codex_section "$f" | grep -qE "codex-routing\.md" || { echo "FAIL: $f section lacks codex-routing.md reference"; exit 1; }
+done
+```
 
-**AC-1.7:** Every new preamble includes fallback semantic text within the section (not just anywhere in the file). Verifiable via the awk-extracted section content grep'd for `fall.?back|falls back` (case-insensitive). Required: ≥1 match per file's section.
+**AC-1.7:** Every new preamble includes fallback semantic text within the section (not just anywhere in the file). Verifiable via:
+```bash
+for f in <five-file-list>; do
+  extract_codex_section "$f" | grep -qiE "fall.?back|falls back" || { echo "FAIL: $f section lacks fallback semantic"; exit 1; }
+done
+```
 
 ### FR-2: Validate Coverage Assertion
 
@@ -48,8 +70,11 @@ Two changes to `validate.sh`:
 
 **FR-2a:** Tighten `validate.sh`'s line-874 from `log_warning` to `log_error`. The else-branch (file references codex-routing.md but does NOT dispatch `pd:security-reviewer`) currently only warns when the "no security review at this phase" indicator is missing. Changing this to error makes the regression guard load-bearing for files like the 5 new ones (and the existing 4 no-dispatch sites). Pre-change verification: confirm the existing 4 no-dispatch files (`design.md`, `create-plan.md`, `specify.md`, `brainstorming/SKILL.md`) all already match `does NOT dispatch.*pd:security-reviewer|no security review|exclusion does not need to be enforced` so they continue to pass.
 
-**FR-2b:** Add an allowlist+count assertion to `validate.sh`'s codex-routing section. After the existing while-loop, capture the discovery list and assert it matches a known-good set of exactly 11 files. The allowlist is defined inline in `validate.sh`. Implementation sketch:
+**FR-2b:** Add an allowlist+count assertion to `validate.sh`'s codex-routing section. After the existing while-loop, capture the discovery list and assert it matches a known-good set of exactly 11 files. The allowlist is defined inline in `validate.sh`. The grep regex MUST mirror line 877's two-alternation pattern verbatim (`"plugins/pd/references/codex-routing.md\|codex-routing\.md"`) so the allowlist scan sees the same file set as the main loop. Implementation sketch:
 ```bash
+# FR-2b: cwd assertion — allowlist check requires repo-root cwd
+[[ -f "./validate.sh" && -d "./plugins/pd" ]] || { log_error "FR-2b allowlist check requires repo-root cwd"; codex_routing_exclusion_violations=$((codex_routing_exclusion_violations + 1)); }
+
 expected_codex_files="plugins/pd/commands/specify.md
 plugins/pd/commands/design.md
 plugins/pd/commands/create-plan.md
@@ -61,7 +86,7 @@ plugins/pd/commands/taskify.md
 plugins/pd/commands/review-ds-code.md
 plugins/pd/commands/review-ds-analysis.md
 plugins/pd/skills/decomposing/SKILL.md"
-actual_codex_files=$(grep -rl "codex-routing\.md" plugins/pd/commands plugins/pd/skills 2>/dev/null | sort)
+actual_codex_files=$(grep -rl "plugins/pd/references/codex-routing.md\|codex-routing\.md" plugins/pd/commands plugins/pd/skills 2>/dev/null | sort)
 expected_sorted=$(echo "$expected_codex_files" | sort)
 if [ "$actual_codex_files" != "$expected_sorted" ]; then
   log_error "Codex routing coverage drift: actual file set differs from allowlist"
@@ -72,9 +97,37 @@ fi
 
 **AC-2.1:** Running `./validate.sh` after the FR-1 + FR-2a + FR-2b changes succeeds with exit 0 AND the codex-routing exclusion check logs success for all 11 files.
 
-**AC-2.2:** FR-2a's regression guard is verified by removing the exclusion clause from one of the 5 new files in a temp working tree (NOT in the source tree), running `validate.sh` against the temp tree, and asserting non-zero exit. Implementation: copy the 5 new files plus `validate.sh` into `/tmp/pd-105-test-$$/`, mutate one copy via `sed -i.bak '/does NOT dispatch.*pd:security-reviewer/d' /tmp/pd-105-test-$$/<file>`, re-run `validate.sh` from the temp dir scope (or via a test wrapper that overrides `plugins/pd/`), and assert non-zero exit. Cleanup: `rm -rf /tmp/pd-105-test-$$/`. This is encoded as a manual implementer-checklist step in `tasks.md`, NOT automated in test files (acceptance: tasks.md task documenting the procedure exists and was performed).
+**AC-2.2:** FR-2a's regression guard is verified by removing the exclusion clause from one of the 5 new files in a temp clone of the repo (NOT in the source tree). Procedure (encoded as manual implementer-checklist in tasks.md):
+```bash
+# Set up temp clone (full repo tree so validate.sh's relative paths work)
+TEMP_TEST_DIR=$(mktemp -d -t pd-105-fr2a-test.XXXXXX)
+trap 'rm -rf "$TEMP_TEST_DIR"' EXIT
+cp -R . "$TEMP_TEST_DIR/repo"
+cd "$TEMP_TEST_DIR/repo"
+# Mutate: remove exclusion clause from secretary.md
+sed -i.bak '/does NOT dispatch.*pd:security-reviewer/d' plugins/pd/commands/secretary.md
+# Run validate.sh from this temp tree (cwd = repo-root inside temp)
+./validate.sh; rc=$?
+[ "$rc" -ne 0 ] || { echo "FAIL: validate.sh did not error on missing exclusion clause"; exit 1; }
+echo "PASS: FR-2a regression guard fires on missing exclusion clause"
+```
+Acceptance: tasks.md documents this procedure AND the implementer pastes the procedure's terminal output into `.qa-gate-low-findings.md` or task-completion artifact as evidence.
 
-**AC-2.3:** FR-2b's allowlist drift is verified by simulating drift in two directions: (a) add a 12th file that references codex-routing.md (e.g. via temp-tree copy of `commands/secretary.md` to `/tmp/pd-105-test-$$/extra-file.md` and pointing the test wrapper at it) → expect non-zero exit; (b) delete one of the 11 expected files from the temp tree → expect non-zero exit. Same temp-tree pattern as AC-2.2; same manual-checklist documentation requirement.
+**AC-2.3:** FR-2b's allowlist drift is verified by simulating drift in two directions in a temp clone (same setup as AC-2.2):
+```bash
+# Direction (a): add a 12th file referencing codex-routing.md
+echo "See codex-routing.md" > plugins/pd/commands/extra-file.md
+./validate.sh; rc_a=$?
+[ "$rc_a" -ne 0 ] || { echo "FAIL: drift+1 not detected"; exit 1; }
+rm plugins/pd/commands/extra-file.md
+# Direction (b): delete one of the 11 expected files
+mv plugins/pd/commands/taskify.md plugins/pd/commands/taskify.md.disabled
+./validate.sh; rc_b=$?
+[ "$rc_b" -ne 0 ] || { echo "FAIL: drift-1 not detected"; exit 1; }
+mv plugins/pd/commands/taskify.md.disabled plugins/pd/commands/taskify.md
+echo "PASS: FR-2b allowlist drift detection works in both directions"
+```
+Same manual-checklist documentation requirement as AC-2.2.
 
 **AC-2.4:** `validate.sh` passes overall after the FR-1 and FR-2 changes (`./validate.sh` exits 0). No regressions in unrelated checks.
 
@@ -108,9 +161,9 @@ This feature does NOT modify:
 - Reviewer prompt bodies anywhere.
 - The `decomposing/SKILL.md` `pd:project-decomposer` dispatch (executor, not a reviewer; not part of the reviewer routing scope).
 
-**AC-4.1:** `git diff main...HEAD --name-only -- plugins/pd/agents/` returns no files. Verifiable via the diff listing being empty.
+**AC-4.1:** `git diff develop...HEAD --name-only -- plugins/pd/agents/` returns no files. Verifiable via the diff listing being empty. (Per CLAUDE.md, this repo's base branch is `develop`, not `main`; release script handles develop→main.)
 
-**AC-4.2:** `git diff main...HEAD -- plugins/pd/commands/specify.md plugins/pd/commands/design.md plugins/pd/commands/create-plan.md plugins/pd/commands/implement.md plugins/pd/commands/finish-feature.md plugins/pd/skills/brainstorming/SKILL.md` shows ZERO substantive changes (verifiable: existing `## Codex Reviewer Routing` sections are byte-identical to main).
+**AC-4.2:** `git diff develop...HEAD -- plugins/pd/commands/specify.md plugins/pd/commands/design.md plugins/pd/commands/create-plan.md plugins/pd/commands/implement.md plugins/pd/commands/finish-feature.md plugins/pd/skills/brainstorming/SKILL.md` shows ZERO substantive changes to the 6 listed files (verifiable: existing `## Codex Reviewer Routing` sections are byte-identical to develop). Note: `validate.sh` IS in the diff per FR-2a's `log_warning → log_error` change, but it is excluded from this AC's file list intentionally — the FR-2a change is in scope and authorized.
 
 ## Non-Functional Requirements
 
