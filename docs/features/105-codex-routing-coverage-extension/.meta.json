@@ -1,0 +1,31 @@
+{
+  "id": "105",
+  "slug": "codex-routing-coverage-extension",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-05-05T19:32:10.386017+00:00",
+  "branch": "feature/105-codex-routing-coverage-extension",
+  "lastCompletedPhase": "implement",
+  "phases": {
+    "brainstorm": {
+      "started": "2026-05-05T19:32:10.385847+00:00"
+    },
+    "specify": {
+      "started": "2026-05-05T19:46:29.296717+00:00",
+      "completed": "2026-05-05T19:46:33.595506+00:00",
+      "iterations": 3
+    },
+    "design": {
+      "completed": "2026-05-05T19:55:23.662041+00:00",
+      "iterations": 4
+    },
+    "create-plan": {
+      "completed": "2026-05-05T20:09:23.508796+00:00",
+      "iterations": 3
+    },
+    "implement": {
+      "completed": "2026-05-05T20:22:52.013751+00:00",
+      "iterations": 1
+    }
+  }
+}

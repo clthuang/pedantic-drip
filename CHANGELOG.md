@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Codex reviewer routing coverage extended** (feature 105) — added the
+  `## Codex Reviewer Routing` preamble to 5 additional dispatch sites that
+  were missed in feature 103's initial rollout: `commands/secretary.md`
+  (dispatches `pd:secretary-reviewer`), `commands/taskify.md`
+  (dispatches `pd:task-reviewer`), `commands/review-ds-code.md`
+  (dispatches `pd:ds-code-reviewer`), `commands/review-ds-analysis.md`
+  (dispatches `pd:ds-analysis-reviewer`), and `skills/decomposing/SKILL.md`
+  (dispatches `pd:project-decomposition-reviewer`). When the
+  `openai-codex/codex` plugin is installed, these reviewers now route via
+  Codex; when not installed, they fall back to the standard pd reviewer
+  Task. `pd:security-reviewer` continues to dispatch via standard
+  Task pattern (Anthropic) at all sites for safety calibration.
+  All 11 dispatch sites (existing 6 + new 5) now have the routing
+  preamble. `validate.sh` tightens its codex-routing exclusion guard
+  (else-branch `log_warning` → `log_error` + counter increment) and
+  adds an allowlist+count assertion that catches drift in either direction
+  (added file, removed file, or path substitution).
+
 ## [4.16.14] - 2026-05-06
 
 ### Added
