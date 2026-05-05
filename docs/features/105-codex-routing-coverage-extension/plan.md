@@ -26,7 +26,7 @@ Extend feature 103's codex reviewer routing to 5 missed dispatch sites. Tighten 
 T2-T6 are independent (5 different files, no overlap). Can run in parallel or sequentially. Each task is a near-byte-equivalent copy of the existing `commands/design.md` `## Codex Reviewer Routing` block with site-specific reviewer-name substitutions per design C1.
 
 **T2: Insert codex-routing preamble in commands/secretary.md**
-- Insertion position: between line 8 (end of file header description) and line 10 (start of `## Static Reference Tables` H2). Per design R-7 prescriptive position.
+- Insertion seam: AFTER the existing line `Route requests to the best-matching specialist agent.` (currently line 8 at HEAD) and BEFORE the `## Static Reference Tables` H2 (currently line 10 at HEAD). Insert a blank-line separator on each side of the new `## Codex Reviewer Routing` heading. Line numbers are informational; the anchor text is content-stable. Per design R-7.
 - Reviewer name in body: `pd:secretary-reviewer`
 - Append R-8 one-sentence note: "Note: Dynamic agent dispatch at Step 7 DELEGATE (line 726) is a runtime-templated routing, not a static reviewer dispatch; codex routing is not applied at that delegation site."
 - Substitution: "{command|skill|phase}" → "command"
@@ -79,7 +79,7 @@ T2-T6 are independent (5 different files, no overlap). Can run in parallel or se
 
 **T9: Run validate.sh + AC-3.1 + AC-3.2 + AC-4.1 + AC-4.2**
 - Run `./validate.sh` from repo root → expect exit 0
-- Verify post-implementation pd:security-reviewer dispatch diff is empty (AC-3.1 acceptance per design I-4 a)
+- Verify post-implementation pd:security-reviewer dispatch diff is empty (AC-3.1 acceptance per design I-4 a). **Note:** the AC-3.1 baseline regex is anchored to `subagent_type:` dispatch prefix. The 5 new preambles add prose mentions of `pd:security-reviewer` in their exclusion clauses; these prose mentions do NOT contain `subagent_type:` and therefore do NOT pollute the baseline. Empty diff is still expected.
 - Run AC-3.2 negative-grep → expect zero matches
 - Run AC-4.1 `git diff develop...HEAD --name-only -- plugins/pd/agents/` → expect empty
 - Run AC-4.2 diff against existing 6 preamble files → expect zero substantive changes (validate.sh excluded as authorized FR-2a touch)
@@ -101,11 +101,11 @@ T10-T12 are evidence-collection tasks per design TD-4. Each pastes terminal outp
 
 **T11 (T-EXEC-AC-2.3): Run AC-2.3 allowlist-drift procedure (both directions)**
 - Setup: same temp-clone scaffold as T10
-- Direction (a): `echo "See codex-routing.md" > plugins/pd/commands/extra-file.md; ./validate.sh; rc_a=$?` → expect non-zero; cleanup `rm plugins/pd/commands/extra-file.md`
-- Direction (b): `mv plugins/pd/commands/taskify.md plugins/pd/commands/taskify.md.disabled; ./validate.sh; rc_b=$?` → expect non-zero; cleanup `mv plugins/pd/commands/taskify.md.disabled plugins/pd/commands/taskify.md`
+- Direction (a) — drift +1: `echo "See codex-routing.md" > plugins/pd/commands/extra-file.md; ./validate.sh; rc_a=$?` → expect non-zero; cleanup `rm plugins/pd/commands/extra-file.md`
+- Direction (b) — drift -1 (path substitution): `mv plugins/pd/commands/taskify.md plugins/pd/commands/taskify.md.disabled`. Add sanity check to confirm grep discovery picked up the rename: `grep -rl "codex-routing" plugins/pd/commands plugins/pd/skills | grep -q "taskify.md.disabled" || { echo "FAIL: rename did not propagate to grep discovery"; exit 1; }`. Then `./validate.sh; rc_b=$?` → expect non-zero. Expected validate.sh output: `log_error "Codex routing coverage drift..."` showing diff between expected list (containing `taskify.md`) and actual list (containing `taskify.md.disabled`). Count stays at 11; path differs. Cleanup `mv plugins/pd/commands/taskify.md.disabled plugins/pd/commands/taskify.md`.
 - Paste output to `agent_sandbox/2026-05-06/feature-105-evidence/T-EXEC-AC-2.3.txt`
 - Estimated time: 10 min
-- DoD: evidence file committed at documented path showing both directions produce non-zero exit
+- DoD: evidence file committed at documented path showing both directions produce non-zero exit AND direction (b) sanity check passes (grep discovery shows the renamed path)
 
 **T12 (T-EXEC-AC-3.1): Verify pd:security-reviewer dispatch baseline match (already done in T9)**
 - Already executed as part of T9 validation. Document evidence by appending the diff output to `agent_sandbox/2026-05-06/feature-105-evidence/T-EXEC-AC-3.1.txt`
