@@ -10,7 +10,7 @@ The create-feature args called out 3 conflicting/coupled fixes. Resolutions:
 
 **Decision 1 — #00310 vs #00315 (capture-on-stop test-injection seam):** The seam (`PD_TEST_WRITER_PYTHONPATH` / `PD_TEST_WRITER_PYTHON` env vars at `capture-on-stop.sh:42-44`) is the mechanism feature 104's tests rely on. Removing it would invalidate the existing test infrastructure (the original PYTHONPATH-only override doesn't survive the subprocess boundary because `capture-on-stop.sh` re-assigns `PYTHONPATH` before invoking the writer). Decision: **Option (b) — keep the seam and amend feature 104's design.md TD-2 to canonicalize it**. This makes #00310 a documentation-only fix. #00315 (defensive `CLAUDE_CODE_DEV_MODE` guard) remains in-scope as a separate small hardening.
 
-**Decision 2 — #00312 vs #00314 (test-session-start consolidation):** The two files (`test-session-start.sh` hyphenated, `test_session_start_cleanup.sh` underscored) duplicate coverage. Decision: **consolidate into the hyphenated `test-session-start.sh` and apply the sed-extract pattern (TD-1 from feature 104) during the merge**. This subsumes #00314 (the older file's copy-paste is rewritten via sed-extract as part of consolidation). The underscored file is deleted.
+**Decision 2 — #00312 vs #00314 (test-session-start consolidation):** The two files cover **different functions** (verified at spec time): `test-session-start.sh` (hyphenated) tests `cleanup_stale_correction_buffers` (1 test, AC-6.1 from feature 104). `test_session_start_cleanup.sh` (underscored) tests `cleanup_stale_mcp_servers` (5 tests: stale-PID, missing-PID-dir, invalid-PID-content, non-orphaned-process, double-fork-orphan). Both functions are defined in the same `session-start.sh` source file. Decision: **merge both files' tests into the single hyphenated `test-session-start.sh`, applying the sed-extract pattern (TD-1 from feature 104) to BOTH function extractions** (the underscored file currently embeds copy-paste of `cleanup_stale_mcp_servers`; new file will sed-extract both). This subsumes #00314 (sed-extract backport applied during consolidation). The underscored file is deleted. Coverage is preserved by counting test functions before vs after.
 
 **Decision 3 — #00319 (agent_sandbox commit-stance):** This is a pure process learning, not a code defect. Decision: **add a one-paragraph note to `docs/dev_guides/component-authoring.md`** (or equivalent existing dev_guide that covers feature artifact conventions) reminding designers to verify `.gitignore` status of any prescribed committed-artifact path. Backlog item closes as "documented".
 
@@ -22,7 +22,7 @@ The create-feature args called out 3 conflicting/coupled fixes. Resolutions:
 2. All existing hook tests (`bash plugins/pd/hooks/tests/test-hooks.sh`) continue to pass.
 3. `validate.sh` continues to pass.
 4. The pattern_promotion pytest continues to pass.
-5. `bash plugins/pd/hooks/tests/test-session-start.sh` runs the consolidated tests (covering both AC-6.1 from feature 104 AND the cleanup-stale-correction-buffers coverage that previously lived in `test_session_start_cleanup.sh`).
+5. `bash plugins/pd/hooks/tests/test-session-start.sh` runs the consolidated tests (covering AC-6.1 `cleanup_stale_correction_buffers` from feature 104 AND the 5 `cleanup_stale_mcp_servers` tests previously in `test_session_start_cleanup.sh`). Total test count in consolidated file ≥ 6 (1 + 5).
 6. Backlog rows for #00310-#00319 are updated with `(closed: ...)` annotations referencing this feature or specific resolution.
 
 ## Functional Requirements
@@ -31,7 +31,7 @@ The create-feature args called out 3 conflicting/coupled fixes. Resolutions:
 
 **FR-1a (#00310):** Amend `docs/features/104-batch-b-test-hardening/design.md` TD-2 to canonicalize the test-injection seam. Add a paragraph after the existing TD-2 body documenting the `PD_TEST_WRITER_PYTHONPATH` / `PD_TEST_WRITER_PYTHON` env vars as the canonical mechanism, with rationale (PYTHONPATH-only doesn't survive subprocess boundary because `capture-on-stop.sh` hardcodes its own PYTHONPATH).
 
-**FR-1b (#00319):** Add a one-paragraph note to `docs/dev_guides/component-authoring.md` (or equivalent existing dev_guide) under a section like "Feature artifact paths" or "Committed vs gitignored evidence" reminding designers to verify `.gitignore` status of any prescribed committed-artifact path. Reference feature 105's `.qa-gate-evidence.md` resolution as the precedent.
+**FR-1b (#00319):** Add a one-paragraph note to `docs/dev_guides/component-authoring.md` under a new subsection (heading like "Committed vs gitignored evidence" or "Feature artifact paths"). The paragraph reminds designers to verify `.gitignore` status of any prescribed committed-artifact path. References feature 105's `.qa-gate-evidence.md` resolution as the precedent. Target file is fixed: `docs/dev_guides/component-authoring.md` (no implementer choice). If that file does not exist, create it.
 
 **AC-1.1:** `docs/features/104-batch-b-test-hardening/design.md` contains a paragraph in or immediately after TD-2 referencing both `PD_TEST_WRITER_PYTHONPATH` and `PD_TEST_WRITER_PYTHON`. Verifiable via:
 ```bash
@@ -40,21 +40,25 @@ grep -A 30 "^### TD-2" docs/features/104-batch-b-test-hardening/design.md | grep
 echo "AC-1.1 PASS"
 ```
 
-**AC-1.2:** A dev_guide file under `docs/dev_guides/` contains a section or paragraph mentioning both "agent_sandbox" AND ("gitignore" OR "gitignored"). Verifiable via:
+**AC-1.2:** `docs/dev_guides/component-authoring.md` contains a section or paragraph mentioning both `agent_sandbox` AND (`gitignore` OR `gitignored`). Verifiable:
 ```bash
-grep -rn "agent_sandbox" docs/dev_guides/ | grep -E "gitignore|gitignored" | head -1
+grep -n "agent_sandbox" docs/dev_guides/component-authoring.md | grep -E "gitignore|gitignored" | head -1
+# OR (since the keywords may be on different lines within the same paragraph):
+awk '/^##/{section=$0} /agent_sandbox/{found_sb=1; sb_section=section} /gitignore|gitignored/{if(section==sb_section)found_gi=1} END{exit !(found_sb && found_gi)}' docs/dev_guides/component-authoring.md && echo "AC-1.2 PASS" || echo "AC-1.2 FAIL"
 ```
-Required: ≥1 match.
+Required: at least one of the two checks succeeds.
 
 ### FR-2: Wire test scripts into runner (#00311)
 
 Add invocations for `test-tag-correction.sh`, `test-capture-on-stop.sh`, and `test-session-start.sh` to `plugins/pd/hooks/tests/test-hooks.sh` so they run in the standard `bash plugins/pd/hooks/tests/test-hooks.sh` invocation. Update `docs/dev_guides/commands-reference.md` to reference the consolidated runner.
 
-**AC-2.1:** Running `bash plugins/pd/hooks/tests/test-hooks.sh` invokes all 3 new test scripts. Verifiable via output containing the test script names OR ≥3 test-script invocation lines added to `test-hooks.sh`. Verification:
+**AC-2.1:** Running `bash plugins/pd/hooks/tests/test-hooks.sh` invokes all 3 new test scripts. Verifiable via tightened invocation-line grep (matches `bash <name>`, `./...<name>`, or `"$SCRIPT_DIR"/<name>` invocation patterns; excludes header comments):
 ```bash
-grep -E "test-tag-correction\.sh|test-capture-on-stop\.sh|test-session-start\.sh" plugins/pd/hooks/tests/test-hooks.sh | wc -l
+grep -cE "^[[:space:]]*(bash|\./|\"\\\$SCRIPT_DIR\"/|\\\$SCRIPT_DIR/)[^#]*test-tag-correction\.sh" plugins/pd/hooks/tests/test-hooks.sh
+grep -cE "^[[:space:]]*(bash|\./|\"\\\$SCRIPT_DIR\"/|\\\$SCRIPT_DIR/)[^#]*test-capture-on-stop\.sh" plugins/pd/hooks/tests/test-hooks.sh
+grep -cE "^[[:space:]]*(bash|\./|\"\\\$SCRIPT_DIR\"/|\\\$SCRIPT_DIR/)[^#]*test-session-start\.sh" plugins/pd/hooks/tests/test-hooks.sh
 ```
-Required: ≥3 (one per script).
+Required: each grep ≥1 (one invocation line per script).
 
 **AC-2.2:** `bash plugins/pd/hooks/tests/test-hooks.sh` exits 0 after the wiring change. Verifiable via running the script.
 
@@ -66,26 +70,38 @@ Required: ≥1 match.
 
 ### FR-3: Consolidate test-session-start files (#00312, subsumes #00314)
 
-Merge content of `test_session_start_cleanup.sh` (underscored, broader coverage) into `test-session-start.sh` (hyphenated, AC-6.1 only), applying the sed-extract pattern (TD-1 from feature 104) for the `cleanup_stale_correction_buffers` function. Delete `test_session_start_cleanup.sh` after consolidation.
+Merge `test_session_start_cleanup.sh` (covers `cleanup_stale_mcp_servers`, 5 tests, copy-paste extraction) into `test-session-start.sh` (covers `cleanup_stale_correction_buffers`, 1 test, sed-extract). Apply the sed-extract pattern (TD-1 from feature 104) to BOTH function extractions in the merged file. Delete `test_session_start_cleanup.sh` after merge.
 
-**AC-3.1:** `plugins/pd/hooks/tests/test-session-start.sh` exists and contains BOTH the AC-6.1 25h-old/1h-old fixture test AND the broader cleanup coverage previously in `test_session_start_cleanup.sh`. Verifiable:
+**AC-3.1:** `plugins/pd/hooks/tests/test-session-start.sh` contains test functions covering BOTH `cleanup_stale_correction_buffers` AND `cleanup_stale_mcp_servers`. The underscored `test_session_start_cleanup.sh` no longer exists. Verifiable:
 ```bash
-test -f plugins/pd/hooks/tests/test-session-start.sh
-grep -c "cleanup_stale_correction_buffers" plugins/pd/hooks/tests/test-session-start.sh  # ≥1 (sed-extract or function reference)
-test ! -f plugins/pd/hooks/tests/test_session_start_cleanup.sh  # underscored file deleted
+test -f plugins/pd/hooks/tests/test-session-start.sh || { echo "FAIL: hyphenated file missing"; exit 1; }
+test ! -f plugins/pd/hooks/tests/test_session_start_cleanup.sh || { echo "FAIL: underscored file still present"; exit 1; }
+grep -q "cleanup_stale_correction_buffers" plugins/pd/hooks/tests/test-session-start.sh || { echo "FAIL: correction-buffers function reference missing"; exit 1; }
+grep -q "cleanup_stale_mcp_servers" plugins/pd/hooks/tests/test-session-start.sh || { echo "FAIL: mcp-servers function reference missing"; exit 1; }
+echo "AC-3.1 PASS"
 ```
 
-**AC-3.2:** The consolidated `test-session-start.sh` uses the sed-extract pattern for sourcing `cleanup_stale_correction_buffers`. Verifiable:
+**AC-3.2:** The consolidated `test-session-start.sh` uses sed-extract for BOTH function extractions (no copy-paste from session-start.sh). Verifiable:
 ```bash
-grep -c "sed -n '/^cleanup_stale_correction_buffers" plugins/pd/hooks/tests/test-session-start.sh
+grep -c "sed -n '/^cleanup_stale_correction_buffers" plugins/pd/hooks/tests/test-session-start.sh  # ≥1
+grep -c "sed -n '/^cleanup_stale_mcp_servers" plugins/pd/hooks/tests/test-session-start.sh  # ≥1
 ```
-Required: ≥1 match (sed-extract idiom present).
+Required: each grep ≥1 match.
 
-**AC-3.3:** Running `bash plugins/pd/hooks/tests/test-session-start.sh` exits 0 with all consolidated tests passing.
+**AC-3.3:** The consolidated file preserves all 6 prior tests (1 from hyphenated + 5 from underscored). Verifiable:
+```bash
+test_count=$(grep -cE "^[[:space:]]*test_[a-zA-Z_]+\(\)" plugins/pd/hooks/tests/test-session-start.sh)
+[[ "$test_count" -ge 6 ]] || { echo "FAIL: only $test_count tests, expected ≥6"; exit 1; }
+echo "AC-3.3 PASS ($test_count tests)"
+```
+
+**AC-3.4:** Running `bash plugins/pd/hooks/tests/test-session-start.sh` exits 0 with all 6 consolidated tests passing.
 
 ### FR-4: Refactor test_category_mapping (#00313)
 
-Refactor the interleaved-teardown test in `plugins/pd/hooks/tests/test-capture-on-stop.sh` (`test_category_mapping`) into two smaller test functions, one per branch (anti-patterns vs patterns), each with own setup/teardown.
+Refactor the interleaved-teardown test in `plugins/pd/hooks/tests/test-capture-on-stop.sh` (`test_category_mapping`, line 188) into two smaller test functions, one per branch (anti-patterns vs patterns), each with own setup/teardown.
+
+(Note: backlog #00313 mis-attributes the function to `test-tag-correction.sh`. The function actually lives in `test-capture-on-stop.sh:188` — verified at spec time. FR-4 location is authoritative.)
 
 **AC-4.1:** `plugins/pd/hooks/tests/test-capture-on-stop.sh` contains 2 test functions covering category mapping (one per branch), instead of one combined function. Verifiable:
 ```bash
@@ -99,11 +115,13 @@ Required: ≥2 matches.
 
 Add a `[[ "${CLAUDE_CODE_DEV_MODE:-}" == "1" ]]` guard to the test-injection seam in `plugins/pd/hooks/capture-on-stop.sh:42-44` so the env-var override only takes effect when `CLAUDE_CODE_DEV_MODE=1` is set.
 
-**AC-5.1:** `capture-on-stop.sh` checks `CLAUDE_CODE_DEV_MODE` before honoring `PD_TEST_WRITER_PYTHONPATH` / `PD_TEST_WRITER_PYTHON`. Verifiable:
+**AC-5.1:** `capture-on-stop.sh` checks `CLAUDE_CODE_DEV_MODE` before honoring `PD_TEST_WRITER_PYTHONPATH` / `PD_TEST_WRITER_PYTHON`. Implementer must use one of: (a) inline guard on each env-var line (`[[ "${CLAUDE_CODE_DEV_MODE:-}" == "1" ]] && [[ -n "${PD_TEST_WRITER_PYTHONPATH:-}" ]] && writer_pythonpath="$PD_TEST_WRITER_PYTHONPATH"`), or (b) wrapping `if [[ ... DEV_MODE ... ]]; then` block around both env-var checks. Verifiable: extract the section between the existing `# Feature 104 test-injection seam` comment and the next blank line / comment, and assert `CLAUDE_CODE_DEV_MODE` appears in that block:
 ```bash
-grep -B 2 "PD_TEST_WRITER_PYTHONPATH" plugins/pd/hooks/capture-on-stop.sh | grep -q "CLAUDE_CODE_DEV_MODE"
+section=$(awk '/# Feature 104 test-injection seam/,/^[[:space:]]*$/' plugins/pd/hooks/capture-on-stop.sh)
+echo "$section" | grep -q "CLAUDE_CODE_DEV_MODE" || { echo "AC-5.1 FAIL: guard missing"; exit 1; }
+echo "$section" | grep -q "PD_TEST_WRITER_PYTHONPATH" || { echo "AC-5.1 FAIL: seam missing"; exit 1; }
+echo "AC-5.1 PASS"
 ```
-Required: match found within 2 lines preceding the seam.
 
 **AC-5.2:** `bash plugins/pd/hooks/tests/test-capture-on-stop.sh` continues to pass after the guard is added (the test must export `CLAUDE_CODE_DEV_MODE=1` so the seam is honored). The test script may need a one-line update to set this var.
 
@@ -138,10 +156,10 @@ grep -q "Step 7 DELEGATE" plugins/pd/commands/secretary.md && echo "AC-7.2 PASS"
 
 Update `docs/backlog.md` rows for #00310-#00319 with `(closed: ...)` annotations referencing this feature.
 
-**AC-8.1:** All 10 backlog rows are annotated with closing rationale. Verifiable:
+**AC-8.1:** All 10 backlog rows are annotated with closing rationale. Verifiable (regex grouping fixed):
 ```bash
 for id in 00310 00311 00312 00313 00314 00315 00316 00317 00318 00319; do
-  grep -E "^- \*\*#$id\*\*.*\(closed:|fixed in feature:106|wontfix" docs/backlog.md > /dev/null \
+  grep -E "^- \*\*#$id\*\*.*(\(closed:|fixed in feature:106|wontfix)" docs/backlog.md > /dev/null \
     || { echo "FAIL: #$id not annotated"; exit 1; }
 done
 echo "AC-8.1 PASS"
