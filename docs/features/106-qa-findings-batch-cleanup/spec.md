@@ -193,7 +193,7 @@ echo "AC-8.1 PASS"
 
 - Feature follows the same direct-orchestrator pattern proven across features 101, 102, 104, 105 — heavy upstream review (target ~10 reviewer iterations across phases) buys single-pass implementation.
 - File-touch surface (verified at spec time):
-  - 5 production code files: `plugins/pd/hooks/capture-on-stop.sh` (FR-5), `plugins/pd/hooks/tests/test-hooks.sh` (FR-2), `plugins/pd/hooks/tests/test-capture-on-stop.sh` (FR-4), `plugins/pd/hooks/tests/test-session-start.sh` (FR-3, expanded), `plugins/pd/commands/secretary.md` (FR-7), `validate.sh` (FR-6).
+  - 6 files modified: `plugins/pd/hooks/capture-on-stop.sh` (FR-5), `plugins/pd/hooks/tests/test-hooks.sh` (FR-2), `plugins/pd/hooks/tests/test-capture-on-stop.sh` (FR-4), `plugins/pd/hooks/tests/test-session-start.sh` (FR-3, expanded), `plugins/pd/commands/secretary.md` (FR-7), `validate.sh` (FR-6).
   - 1 deletion: `plugins/pd/hooks/tests/test_session_start_cleanup.sh` (FR-3).
   - 3 doc files: `docs/features/104-batch-b-test-hardening/design.md` (FR-1a), `docs/dev_guides/component-authoring.md` or equivalent (FR-1b), `docs/dev_guides/commands-reference.md` (FR-2 reference).
   - `docs/backlog.md` (FR-8).
