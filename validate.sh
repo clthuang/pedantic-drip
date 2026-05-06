@@ -906,9 +906,9 @@ else
     log_error "FR-2b allowlist check requires repo-root cwd (validate.sh and plugins/pd not found in cwd)"
     codex_routing_allowlist_violations=$((codex_routing_allowlist_violations + 1))
 fi
-[ "$codex_routing_allowlist_violations" = "0" ] && log_info "Codex routing coverage allowlist validated (11 expected files)"
-
 [ "$codex_routing_exclusion_violations" = "0" ] && log_info "Codex Reviewer Routing exclusions validated"
+
+[ "$codex_routing_allowlist_violations" = "0" ] && log_info "Codex routing coverage allowlist validated (11 expected files)"
 echo ""
 
 # --- docs-sync regression guards (feature 085 FR-8; from feature 080 AC-7/AC-11) ---

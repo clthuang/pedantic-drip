@@ -338,6 +338,18 @@ Use these terms consistently across all skills, commands, agents, and documentat
 
 ---
 
+## Committed vs gitignored evidence paths
+
+When designing a feature that prescribes evidence files (terminal output of manual checklists, QA gate procedure logs, etc.) be committed at a specific path, verify the target path's `.gitignore` status FIRST. Common pitfall: `agent_sandbox/` is the project convention for agent-generated non-workflow content (per CLAUDE.md), but it is gitignored at the repo root.
+
+If evidence files MUST be committed for QA-gate verification:
+- Place them under `docs/features/{id}-{slug}/.qa-gate-evidence.md` or similar (committed by default).
+- Or under any other non-gitignored path verified via `git check-ignore <path>`.
+
+Precedent: feature 105 originally prescribed `agent_sandbox/2026-05-06/feature-105-evidence/` in design I-5 ("Evidence files ARE committed..."), discovered at implement-time that the path was gitignored, resolved by committing the procedure outputs to `.qa-gate-evidence.md` in the feature directory. See `docs/features/105-codex-routing-coverage-extension/.qa-gate-evidence.md`.
+
+---
+
 ## See Also
 
 - [Architecture Design](../prds/claude_code_special_force_design.md) - Three-tier configuration hierarchy

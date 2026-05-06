@@ -63,7 +63,8 @@ bash scripts/test_migrate_bash.sh
 # Rebuild FTS index on entities DB (kills MCP servers temporarily, they auto-restart)
 python3 scripts/migrate_db.py rebuild-fts [--skip-kill] [db_path]
 
-# Run hook integration tests
+# Run hook integration tests (includes external test scripts:
+# test-tag-correction.sh, test-capture-on-stop.sh, test-session-start.sh)
 bash plugins/pd/hooks/tests/test-hooks.sh
 
 # Run capture-tool-failure hook tests (PostToolUseFailure — 11 tests)

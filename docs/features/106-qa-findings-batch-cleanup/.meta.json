@@ -1,0 +1,31 @@
+{
+  "id": "106",
+  "slug": "qa-findings-batch-cleanup",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-05-06T01:58:42.353564+00:00",
+  "branch": "feature/106-qa-findings-batch-cleanup",
+  "lastCompletedPhase": "implement",
+  "phases": {
+    "brainstorm": {
+      "started": "2026-05-06T01:58:42.353323+00:00"
+    },
+    "specify": {
+      "started": "2026-05-06T02:06:38.328913+00:00",
+      "completed": "2026-05-06T02:06:43.624689+00:00",
+      "iterations": 2
+    },
+    "design": {
+      "completed": "2026-05-06T02:11:20.743914+00:00",
+      "iterations": 2
+    },
+    "create-plan": {
+      "completed": "2026-05-06T02:22:25.996918+00:00",
+      "iterations": 3
+    },
+    "implement": {
+      "completed": "2026-05-06T02:37:22.465617+00:00",
+      "iterations": 1
+    }
+  }
+}
