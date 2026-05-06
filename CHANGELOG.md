@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.16.16] - 2026-05-06
+
 ### Changed
 
 - **QA findings batch cleanup** (feature 106, closes #00310-#00319) — closes
