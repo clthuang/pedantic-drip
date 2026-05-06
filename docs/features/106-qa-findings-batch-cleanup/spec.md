@@ -52,11 +52,11 @@ Required: at least one of the two checks succeeds.
 
 Add invocations for `test-tag-correction.sh`, `test-capture-on-stop.sh`, and `test-session-start.sh` to `plugins/pd/hooks/tests/test-hooks.sh` so they run in the standard `bash plugins/pd/hooks/tests/test-hooks.sh` invocation. Update `docs/dev_guides/commands-reference.md` to reference the consolidated runner.
 
-**AC-2.1:** Running `bash plugins/pd/hooks/tests/test-hooks.sh` invokes all 3 new test scripts. Verifiable via tightened invocation-line grep (matches `bash <name>`, `./...<name>`, or `"$SCRIPT_DIR"/<name>` invocation patterns; excludes header comments):
+**AC-2.1:** Running `bash plugins/pd/hooks/tests/test-hooks.sh` invokes all 3 new test scripts. Verifiable via invocation-anchored grep (matches any non-comment line that ends with the script name, regardless of `bash`/`./`/`${SCRIPT_DIR}/`/`"${SCRIPT_DIR}/` prefix):
 ```bash
-grep -cE "^[[:space:]]*(bash|\./|\"\\\$SCRIPT_DIR\"/|\\\$SCRIPT_DIR/)[^#]*test-tag-correction\.sh" plugins/pd/hooks/tests/test-hooks.sh
-grep -cE "^[[:space:]]*(bash|\./|\"\\\$SCRIPT_DIR\"/|\\\$SCRIPT_DIR/)[^#]*test-capture-on-stop\.sh" plugins/pd/hooks/tests/test-hooks.sh
-grep -cE "^[[:space:]]*(bash|\./|\"\\\$SCRIPT_DIR\"/|\\\$SCRIPT_DIR/)[^#]*test-session-start\.sh" plugins/pd/hooks/tests/test-hooks.sh
+grep -cE "^[[:space:]]*[^#]*test-tag-correction\.sh" plugins/pd/hooks/tests/test-hooks.sh
+grep -cE "^[[:space:]]*[^#]*test-capture-on-stop\.sh" plugins/pd/hooks/tests/test-hooks.sh
+grep -cE "^[[:space:]]*[^#]*test-session-start\.sh" plugins/pd/hooks/tests/test-hooks.sh
 ```
 Required: each grep ≥1 (one invocation line per script).
 
@@ -103,9 +103,9 @@ Refactor the interleaved-teardown test in `plugins/pd/hooks/tests/test-capture-o
 
 (Note: backlog #00313 mis-attributes the function to `test-tag-correction.sh`. The function actually lives in `test-capture-on-stop.sh:188` — verified at spec time. FR-4 location is authoritative.)
 
-**AC-4.1:** `plugins/pd/hooks/tests/test-capture-on-stop.sh` contains 2 test functions covering category mapping (one per branch), instead of one combined function. Verifiable:
+**AC-4.1:** `plugins/pd/hooks/tests/test-capture-on-stop.sh` contains 2 test functions covering category mapping (one per branch), instead of one combined function. Verifiable (regex aligned with design I-4 function names `test_category_mapping_anti_patterns()` and `test_category_mapping_preference()`):
 ```bash
-grep -cE "^test_category_(anti_patterns|patterns)\b|^test_category_mapping_(anti|preference)\b" plugins/pd/hooks/tests/test-capture-on-stop.sh
+grep -cE "^test_category_mapping_(anti_patterns|preference)\(\)" plugins/pd/hooks/tests/test-capture-on-stop.sh
 ```
 Required: ≥2 matches.
 

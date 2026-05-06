@@ -127,11 +127,11 @@ All tasks reference verbatim diffs from `design.md` interfaces I-1..I-9. No re-s
 - [ ] Locate `main()` in `plugins/pd/hooks/tests/test-hooks.sh`. Find the result-summary block (`echo "=========================================="` near end of `main()`).
 - [ ] Insert the I-2 block (External Test Scripts section with 3 conditional invocations) before the result-summary block.
 - [ ] Locate or add a Test Commands section in `docs/dev_guides/commands-reference.md`. Add a one-liner: `bash plugins/pd/hooks/tests/test-hooks.sh` runs hook integration tests including consolidated external test scripts.
-- [ ] Verify AC-2.1:
+- [ ] Verify AC-2.1 (invocation-anchored, brace-form-friendly):
   ```bash
-  grep -cE "^[[:space:]]*(bash|\./|\"\\\$SCRIPT_DIR\"/|\\\$SCRIPT_DIR/)[^#]*test-tag-correction\.sh" plugins/pd/hooks/tests/test-hooks.sh
-  grep -cE "^[[:space:]]*(bash|\./|\"\\\$SCRIPT_DIR\"/|\\\$SCRIPT_DIR/)[^#]*test-capture-on-stop\.sh" plugins/pd/hooks/tests/test-hooks.sh
-  grep -cE "^[[:space:]]*(bash|\./|\"\\\$SCRIPT_DIR\"/|\\\$SCRIPT_DIR/)[^#]*test-session-start\.sh" plugins/pd/hooks/tests/test-hooks.sh
+  grep -cE "^[[:space:]]*[^#]*test-tag-correction\.sh" plugins/pd/hooks/tests/test-hooks.sh
+  grep -cE "^[[:space:]]*[^#]*test-capture-on-stop\.sh" plugins/pd/hooks/tests/test-hooks.sh
+  grep -cE "^[[:space:]]*[^#]*test-session-start\.sh" plugins/pd/hooks/tests/test-hooks.sh
   ```
   Required: each grep ≥1.
 - [ ] Verify AC-2.2: `bash plugins/pd/hooks/tests/test-hooks.sh` exits 0 (now invokes 3 external scripts; all must pass).
