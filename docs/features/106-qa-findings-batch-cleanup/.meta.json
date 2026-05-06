@@ -1,0 +1,14 @@
+{
+  "id": "106",
+  "slug": "qa-findings-batch-cleanup",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-05-06T01:58:42.353564+00:00",
+  "branch": "feature/106-qa-findings-batch-cleanup",
+  "lastCompletedPhase": null,
+  "phases": {
+    "brainstorm": {
+      "started": "2026-05-06T01:58:42.353323+00:00"
+    }
+  }
+}
