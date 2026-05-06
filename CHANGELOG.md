@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.16.16] - 2026-05-06
+
+### Changed
+
+- **QA findings batch cleanup** (feature 106, closes #00310-#00319) — closes
+  10 deferred QA findings from features 104+105 in a single batch.
+  - `capture-on-stop.sh` test-injection seam now gated by `CLAUDE_CODE_DEV_MODE=1`
+    (defense-in-depth; production behavior unchanged when flag unset).
+  - 3 hook test scripts (`test-tag-correction.sh`, `test-capture-on-stop.sh`,
+    `test-session-start.sh`) now run as part of `bash plugins/pd/hooks/tests/test-hooks.sh`.
+  - `test-session-start.sh` consolidated with the deleted
+    `test_session_start_cleanup.sh` (6 tests covering both
+    `cleanup_stale_correction_buffers` and `cleanup_stale_mcp_servers`,
+    sed-extract pattern applied to both function extractions).
+  - `test_category_mapping` split into per-branch hermetic functions.
+  - `validate.sh` log_info ordering corrected (exclusion success now prints
+    before allowlist success, matching the actual check order).
+  - `secretary.md` R-8 note no longer hardcodes a stale line number.
+  - `docs/dev_guides/component-authoring.md` gains a "Committed vs gitignored
+    evidence paths" subsection (process learning from feature 105).
+  - Feature 104 design.md TD-2 amended to canonicalize the test-injection seam.
+
 ## [4.16.15] - 2026-05-06
 
 ### Changed

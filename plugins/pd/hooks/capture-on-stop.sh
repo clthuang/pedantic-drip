@@ -40,8 +40,9 @@ writer_pythonpath="$plugin_root/hooks/lib"
 # Feature 104 test-injection seam: tests can override the writer python module
 # path so capture-on-stop.sh routes to a stub instead of the real writer.
 # Production behavior unchanged when these env vars are unset.
-[[ -n "${PD_TEST_WRITER_PYTHONPATH:-}" ]] && writer_pythonpath="$PD_TEST_WRITER_PYTHONPATH"
-[[ -n "${PD_TEST_WRITER_PYTHON:-}" ]] && writer_python="$PD_TEST_WRITER_PYTHON"
+# Feature 106 FR-5: gated on CLAUDE_CODE_DEV_MODE so seam is no-op in production.
+[[ "${CLAUDE_CODE_DEV_MODE:-}" == "1" ]] && [[ -n "${PD_TEST_WRITER_PYTHONPATH:-}" ]] && writer_pythonpath="$PD_TEST_WRITER_PYTHONPATH"
+[[ "${CLAUDE_CODE_DEV_MODE:-}" == "1" ]] && [[ -n "${PD_TEST_WRITER_PYTHON:-}" ]] && writer_python="$PD_TEST_WRITER_PYTHON"
 
 # Read buffer tags (preserve insertion order); cap at session_cap
 total_tags=$(wc -l < "$buffer_file" 2>/dev/null | tr -d ' ')

@@ -2,10 +2,11 @@
   "id": "105",
   "slug": "codex-routing-coverage-extension",
   "mode": "standard",
-  "status": "active",
+  "status": "completed",
   "created": "2026-05-05T19:32:10.386017+00:00",
   "branch": "feature/105-codex-routing-coverage-extension",
-  "lastCompletedPhase": "implement",
+  "completed": "2026-05-05T20:31:41.362493+00:00",
+  "lastCompletedPhase": "finish",
   "phases": {
     "brainstorm": {
       "started": "2026-05-05T19:32:10.385847+00:00"
@@ -26,6 +27,9 @@
     "implement": {
       "completed": "2026-05-05T20:22:52.013751+00:00",
       "iterations": 1
+    },
+    "finish": {
+      "completed": "2026-05-05T20:31:41.362493+00:00"
     }
   }
 }

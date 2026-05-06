@@ -3597,6 +3597,23 @@ main() {
     test_advisors_use_base_directory_derivation
 
     echo ""
+    echo "--- External Test Scripts (feature 106 FR-2) ---"
+    echo ""
+
+    if [[ -x "${SCRIPT_DIR}/test-tag-correction.sh" ]]; then
+        echo "Running test-tag-correction.sh..."
+        "${SCRIPT_DIR}/test-tag-correction.sh" || TESTS_FAILED=$((TESTS_FAILED + 1))
+    fi
+    if [[ -x "${SCRIPT_DIR}/test-capture-on-stop.sh" ]]; then
+        echo "Running test-capture-on-stop.sh..."
+        "${SCRIPT_DIR}/test-capture-on-stop.sh" || TESTS_FAILED=$((TESTS_FAILED + 1))
+    fi
+    if [[ -x "${SCRIPT_DIR}/test-session-start.sh" ]]; then
+        echo "Running test-session-start.sh..."
+        "${SCRIPT_DIR}/test-session-start.sh" || TESTS_FAILED=$((TESTS_FAILED + 1))
+    fi
+
+    echo ""
     echo "=========================================="
     echo "Results: ${TESTS_PASSED}/${TESTS_RUN} passed"
     if [[ $TESTS_SKIPPED -gt 0 ]]; then
