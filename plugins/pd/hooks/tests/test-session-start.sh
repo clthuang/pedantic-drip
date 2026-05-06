@@ -22,7 +22,9 @@ log_fail() { TESTS_FAILED=$((TESTS_FAILED + 1)); echo -e "  ${RED}FAIL: $1${NC}"
 
 ORIG_HOME="$HOME"
 TEST_HOME=$(mktemp -d)
-trap 'rm -rf "$TEST_HOME"' EXIT
+# Always restore HOME on exit so a test that fails mid-flight doesn't leave the
+# parent shell pointed at a torn-down tmp dir.
+trap 'HOME="$ORIG_HOME"; rm -rf "$TEST_HOME"' EXIT
 
 # AC-6.1: cleanup_stale_correction_buffers deletes 25h-old, keeps 1h-old
 test_cleanup_stale_correction_buffers() {
@@ -75,6 +77,14 @@ extract_mcp_cleanup_fn() {
     local fn_tmpfile
     fn_tmpfile=$(mktemp -t pd-fn-extract.XXXXXX)
     sed -n '/^cleanup_stale_mcp_servers()/,/^}/p' "${HOOKS_DIR}/session-start.sh" > "$fn_tmpfile"
+    # Sanity check: if session-start.sh is refactored and the function moves/renames,
+    # the extracted file would be empty — surface that as a clear error rather than
+    # a confusing 'command not found' downstream.
+    if ! grep -q "cleanup_stale_mcp_servers" "$fn_tmpfile"; then
+        echo "FAIL: sed extraction of cleanup_stale_mcp_servers produced empty/invalid file" >&2
+        rm -f "$fn_tmpfile"
+        return 1
+    fi
     # shellcheck disable=SC1090
     source "$fn_tmpfile"
     rm -f "$fn_tmpfile"
