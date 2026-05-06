@@ -5,6 +5,9 @@
 # (per design TD-2).
 set -uo pipefail
 
+# Feature 106 FR-5: enable test-injection seam in capture-on-stop.sh
+export CLAUDE_CODE_DEV_MODE=1
+
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
 HOOKS_DIR=$(dirname "$SCRIPT_DIR")
 HOOK="${HOOKS_DIR}/capture-on-stop.sh"
@@ -184,51 +187,63 @@ test_candidate_construction() {
     teardown
 }
 
-# AC-5.4a: parametrized — negative-correction → anti-patterns; preference → patterns
-test_category_mapping() {
-    log_test "AC-5.4a: negative-correction → anti-patterns; preference/style → patterns"
+# AC-5.4a (anti-patterns branch): negative-correction → category=anti-patterns
+test_category_mapping_anti_patterns() {
+    log_test "AC-5.4a: negative-correction → anti-patterns"
     setup_capture_dir
     export PROJECT_ROOT="$(pwd)"
     local sid_neg="test-cat-neg"
-    local sid_pref="test-cat-pref"
     mkdir -p "$HOME/.claude/pd"
-    # Negative-correction tag
     jq -nc --arg ts "2026-05-03T05:00:00Z" --arg pe "no don't" \
         --arg mp '\b(no,? don'\''?t)\b' --arg pf "no don't" \
         '{ts:$ts, prompt_excerpt:$pe, matched_pattern:$mp, prompt_full:$pf}' \
         > "$HOME/.claude/pd/correction-buffer-${sid_neg}.jsonl"
-    # Preference tag
-    jq -nc --arg ts "2026-05-03T05:00:00Z" --arg pe "I prefer pytest" \
-        --arg mp '\bi (want|prefer|always|never)\b' --arg pf "I prefer pytest" \
-        '{ts:$ts, prompt_excerpt:$pe, matched_pattern:$mp, prompt_full:$pf}' \
-        > "$HOME/.claude/pd/correction-buffer-${sid_pref}.jsonl"
-    local stdin1 stdin2
+    local stdin1
     stdin1=$(jq -nc --arg t "$FIXTURES_DIR/transcript-with-response.jsonl" --arg s "$sid_neg" '{transcript_path:$t, stop_hook_active:false, session_id:$s, hook_event_name:"Stop"}')
     invoke_stop_hook "$stdin1" >/dev/null 2>&1 || true
-    # Now check call-1.json (from negative)
     if [[ ! -f "$STUB_CAPTURE_DIR/call-1.json" ]]; then
         log_fail "no negative candidate captured"
+        unset PROJECT_ROOT
         teardown
         return
     fi
     local cat_neg
     cat_neg=$(jq -r '.category' "$STUB_CAPTURE_DIR/call-1.json")
-    # Now run with the pref tag (separate STUB_CAPTURE_DIR so files don't collide)
+    if [[ "$cat_neg" == "anti-patterns" ]]; then
+        log_pass
+    else
+        log_fail "neg=$cat_neg (want anti-patterns)"
+    fi
+    unset PROJECT_ROOT
     teardown
+}
+
+# AC-5.4a (patterns branch): preference statement → category=patterns
+test_category_mapping_preference() {
+    log_test "AC-5.4a: preference/style → patterns"
     setup_capture_dir
     export PROJECT_ROOT="$(pwd)"
+    local sid_pref="test-cat-pref"
+    mkdir -p "$HOME/.claude/pd"
     jq -nc --arg ts "2026-05-03T05:00:00Z" --arg pe "I prefer pytest" \
         --arg mp '\bi (want|prefer|always|never)\b' --arg pf "I prefer pytest" \
         '{ts:$ts, prompt_excerpt:$pe, matched_pattern:$mp, prompt_full:$pf}' \
         > "$HOME/.claude/pd/correction-buffer-${sid_pref}.jsonl"
+    local stdin2
     stdin2=$(jq -nc --arg t "$FIXTURES_DIR/transcript-with-response.jsonl" --arg s "$sid_pref" '{transcript_path:$t, stop_hook_active:false, session_id:$s, hook_event_name:"Stop"}')
     invoke_stop_hook "$stdin2" >/dev/null 2>&1 || true
+    if [[ ! -f "$STUB_CAPTURE_DIR/call-1.json" ]]; then
+        log_fail "no preference candidate captured"
+        unset PROJECT_ROOT
+        teardown
+        return
+    fi
     local cat_pref
     cat_pref=$(jq -r '.category' "$STUB_CAPTURE_DIR/call-1.json")
-    if [[ "$cat_neg" == "anti-patterns" ]] && [[ "$cat_pref" == "patterns" ]]; then
+    if [[ "$cat_pref" == "patterns" ]]; then
         log_pass
     else
-        log_fail "neg=$cat_neg (want anti-patterns), pref=$cat_pref (want patterns)"
+        log_fail "pref=$cat_pref (want patterns)"
     fi
     unset PROJECT_ROOT
     teardown
@@ -362,7 +377,8 @@ test_stuck_guard
 test_missing_buffer
 test_truncate_500_chars
 test_candidate_construction
-test_category_mapping
+test_category_mapping_anti_patterns
+test_category_mapping_preference
 test_cap_overflow
 test_cleanup_after_dedup
 test_no_response_warning
