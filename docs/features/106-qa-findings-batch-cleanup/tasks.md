@@ -4,10 +4,11 @@ All tasks reference verbatim diffs from `design.md` interfaces I-1..I-9. No re-s
 
 ## Phase 1: Independent Code Edits (parallelizable group A)
 
-### T1: Add CLAUDE_CODE_DEV_MODE guard to capture-on-stop.sh seam (FR-5, #00315)
+### T1: Add CLAUDE_CODE_DEV_MODE guard + test export (FR-5, #00315)
 
-- [ ] Read design.md I-1 for the exact replacement.
-- [ ] Apply edit to `plugins/pd/hooks/capture-on-stop.sh` lines 42-43: prepend `[[ "${CLAUDE_CODE_DEV_MODE:-}" == "1" ]] &&` to each `[[ -n "${PD_TEST_WRITER_*}" ]]` line. Add `# Feature 106 FR-5:` comment above.
+- [ ] Read design.md I-1 for the exact production-hook replacement.
+- [ ] Apply edit 1 to `plugins/pd/hooks/capture-on-stop.sh` seam lines: prepend `[[ "${CLAUDE_CODE_DEV_MODE:-}" == "1" ]] &&` to each `[[ -n "${PD_TEST_WRITER_*}" ]]` line. Add `# Feature 106 FR-5:` comment above.
+- [ ] Apply edit 2 to `plugins/pd/hooks/tests/test-capture-on-stop.sh`: add `export CLAUDE_CODE_DEV_MODE=1` near the top (after `set -uo pipefail`, before any test setup) so the FR-5 guard honors the seam during tests. Without this export, the FR-5 guard makes the seam no-op during tests, breaking AC-5.2 and AC-2.2.
 - [ ] Verify AC-5.1:
   ```bash
   section=$(awk '/# Feature 104 test-injection seam/,/^[[:space:]]*$/' plugins/pd/hooks/capture-on-stop.sh)
@@ -15,7 +16,8 @@ All tasks reference verbatim diffs from `design.md` interfaces I-1..I-9. No re-s
   echo "$section" | grep -q "PD_TEST_WRITER_PYTHONPATH" || { echo "AC-5.1 FAIL: seam missing"; exit 1; }
   echo "AC-5.1 PASS"
   ```
-- [ ] DoD: AC-5.1 prints PASS.
+- [ ] Verify AC-5.2: `bash plugins/pd/hooks/tests/test-capture-on-stop.sh` exits 0 (confirms guard + export work together; the test's PD_TEST_WRITER_* env vars are now honored because CLAUDE_CODE_DEV_MODE=1 is exported at file top).
+- [ ] DoD: AC-5.1 + AC-5.2 both PASS.
 
 ### T5: Swap validate.sh log_info ordering (FR-6, #00316)
 
@@ -136,10 +138,20 @@ All tasks reference verbatim diffs from `design.md` interfaces I-1..I-9. No re-s
 - [ ] Verify AC-2.3: `grep -E "test-hooks\.sh" docs/dev_guides/commands-reference.md | head -1` returns ≥1 match.
 - [ ] DoD: AC-2.1 + AC-2.2 + AC-2.3 all PASS.
 
-## Phase 4: Backlog Annotations
+## Phase 4: Final Validation (BEFORE backlog annotations)
+
+### T10: Run validate.sh + test-hooks.sh + pattern_promotion pytest
+
+- [ ] Run `./validate.sh` → expect exit 0.
+- [ ] Run `bash plugins/pd/hooks/tests/test-hooks.sh` → expect exit 0 (includes 3 external scripts via FR-2 wiring).
+- [ ] Run `cd plugins/pd && .venv/bin/python -m pytest hooks/lib/pattern_promotion/ -q && cd -` → expect exit 0.
+- [ ] DoD: all 3 commands pass. If any fails, STOP — do not proceed to T9 backlog annotation; rollback via `git reset --hard` instead.
+
+## Phase 5: Backlog Annotations (after T10 passes)
 
 ### T9: Annotate 10 backlog rows (FR-8)
 
+- [ ] Confirm T10 passed. If not, STOP and rollback.
 - [ ] Read design.md I-9 for the per-row append text.
 - [ ] For each of #00310 through #00319 in `docs/backlog.md`, append the disposition text per the I-9 table.
 - [ ] Verify AC-8.1:
@@ -151,15 +163,6 @@ All tasks reference verbatim diffs from `design.md` interfaces I-1..I-9. No re-s
   echo "AC-8.1 PASS"
   ```
 - [ ] DoD: AC-8.1 PASS.
-
-## Phase 5: Final Validation
-
-### T10: Run validate.sh + test-hooks.sh + pattern_promotion pytest
-
-- [ ] Run `./validate.sh` → expect exit 0.
-- [ ] Run `bash plugins/pd/hooks/tests/test-hooks.sh` → expect exit 0 (includes 3 external scripts via FR-2 wiring).
-- [ ] Run `cd plugins/pd && .venv/bin/python -m pytest hooks/lib/pattern_promotion/ -q && cd -` → expect exit 0.
-- [ ] DoD: all 3 commands pass.
 
 ## Phase 6: Final Commit + Phase Complete
 
