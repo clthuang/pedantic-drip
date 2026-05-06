@@ -111,9 +111,9 @@ All tasks reference verbatim diffs from `design.md` interfaces I-1..I-9. No re-s
   - `test_category_mapping_anti_patterns()` — anti-pattern branch, own setup/teardown
   - `test_category_mapping_preference()` — preference (patterns) branch, own setup/teardown
 - [ ] Update bottom-of-file invocation: replace `test_category_mapping` line with `test_category_mapping_anti_patterns` and `test_category_mapping_preference` (two lines).
-- [ ] Verify AC-4.1:
+- [ ] Verify AC-4.1 (matches design I-4 function names `test_category_mapping_anti_patterns()` and `test_category_mapping_preference()`):
   ```bash
-  count=$(grep -cE "^test_category_(anti_patterns|preference)\(\)" plugins/pd/hooks/tests/test-capture-on-stop.sh)
+  count=$(grep -cE "^test_category_mapping_(anti_patterns|preference)\(\)" plugins/pd/hooks/tests/test-capture-on-stop.sh)
   [[ "$count" -ge 2 ]] && echo "AC-4.1 PASS ($count functions)" || echo "AC-4.1 FAIL"
   ```
 - [ ] Verify AC-4.2: `bash plugins/pd/hooks/tests/test-capture-on-stop.sh` exits 0.

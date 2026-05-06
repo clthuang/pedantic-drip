@@ -72,7 +72,7 @@ Each task is a small, independent surgical edit at a specific anchor. Implementa
 
 **T4 (FR-4, #00313): Refactor test_category_mapping in test-capture-on-stop.sh**
 - Why this item: implements design C4 / FR-4; split interleaved-teardown function per #00313.
-- Why this order: must precede T2 (runner wiring depends on consolidated test state); parallel with T3.
+- Why this order: depends on T1 (shared file: test-capture-on-stop.sh — T1 adds `export CLAUDE_CODE_DEV_MODE=1` near top, T4 modifies the test_category_mapping function at line 188; serialize to avoid edit conflict); must precede T2 (runner wiring depends on consolidated test state); parallel with T3 (different file).
 - File: `plugins/pd/hooks/tests/test-capture-on-stop.sh`
 - Edit: per design I-4 — split `test_category_mapping` (line 188) into `test_category_mapping_anti_patterns` and `test_category_mapping_preference`, each with own setup/teardown. Update bottom-of-file invocation.
 - DoD:
@@ -124,8 +124,8 @@ T6 (secretary.md R-8 drop) ────────────────┼�
 T7 (104 design TD-2) ──────────────────────┤
 T8 (component-authoring) ──────────────────┘
                                            │
-T3 (test-session-start consolidation) ─────┐ both parallel — different files
-T4 (test_category_mapping refactor) ───────┘ both must precede T2
+T3 (test-session-start consolidation) ─── parallelizable with Group A (independent file)
+T4 (test_category_mapping refactor) ─── DEPENDS ON T1 (shared file: test-capture-on-stop.sh)
                                            │
 T2 (test-hooks.sh wiring) ─── depends on T3 + T4 (wiring references final test state)
                                            │
@@ -137,8 +137,8 @@ T9 (backlog annotations) ─── depends on T10 (only annotate after validatio
 ## Parallel Execution Groups
 
 - **Group A (5 tasks parallelizable):** T1, T5, T6, T7, T8 — different files, no overlap.
-- **Group B (2 tasks parallelizable):** T3, T4 — different test files.
-- **Sequential:** Group A + Group B → T2 → T10 → T9.
+- **Group B (1 task parallel with Group A, 1 sequential after T1):** T3 (parallelizable with Group A — independent file), T4 (sequential after T1 — same file: test-capture-on-stop.sh).
+- **Sequential:** Group A → T4 (after T1) + T3 (parallel) → T2 → T10 → T9.
 
 ## Risks Inherited from Design
 
