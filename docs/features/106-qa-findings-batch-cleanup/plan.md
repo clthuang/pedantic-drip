@@ -138,7 +138,7 @@ T9 (backlog annotations) ─── depends on T10 (only annotate after validatio
 
 - **Group A (5 tasks parallelizable):** T1, T5, T6, T7, T8 — different files, no overlap.
 - **Group B (2 tasks parallelizable):** T3, T4 — different test files.
-- **Sequential:** Group A + Group B → T2 → T9 → T10.
+- **Sequential:** Group A + Group B → T2 → T10 → T9.
 
 ## Risks Inherited from Design
 
