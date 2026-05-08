@@ -1,0 +1,6 @@
+# Generated at PR open; re-run locally to re-verify but do not re-commit.
+baseline_sha=b770040486e049a660979bc4a65d9352c52cb671
+baseline_median_ms=485
+patched_median_ms=443
+delta_ms=-42
+threshold_ms=50
