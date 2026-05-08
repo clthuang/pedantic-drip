@@ -3617,8 +3617,27 @@ main() {
         "${SCRIPT_DIR}/test-session-start-broken-pipe.sh" || TESTS_FAILED=$((TESTS_FAILED + 1))
     fi
     if [[ -x "${SCRIPT_DIR}/check-no-unsafe-writes.sh" ]]; then
-        echo "Running check-no-unsafe-writes.sh (feature 107 FR8 guard)..."
+        echo "Running check-no-unsafe-writes.sh (feature 107 FR8 guard, negative control)..."
         "${SCRIPT_DIR}/check-no-unsafe-writes.sh" || TESTS_FAILED=$((TESTS_FAILED + 1))
+        if [[ -f "${SCRIPT_DIR}/fixture-unsafe-write.sh" ]]; then
+            echo "Running check-no-unsafe-writes.sh (feature 107 AC11 positive control)..."
+            if "${SCRIPT_DIR}/check-no-unsafe-writes.sh" "${SCRIPT_DIR}/fixture-unsafe-write.sh" >/dev/null 2>&1; then
+                echo "  FAIL: FR8 guard did not catch fixture-unsafe-write.sh"
+                TESTS_FAILED=$((TESTS_FAILED + 1))
+            fi
+        fi
+    fi
+    if [[ -x "${SCRIPT_DIR}/repro-broken-pipe.sh" ]]; then
+        echo "Running repro-broken-pipe.sh (feature 107 AC1)..."
+        "${SCRIPT_DIR}/repro-broken-pipe.sh" || TESTS_FAILED=$((TESTS_FAILED + 1))
+    fi
+    if [[ -x "${SCRIPT_DIR}/probe-a1-exit0-under-broken-pipe.sh" ]]; then
+        echo "Running probe-a1-exit0-under-broken-pipe.sh (feature 107 AC10)..."
+        "${SCRIPT_DIR}/probe-a1-exit0-under-broken-pipe.sh" | dd of=/dev/null bs=1 count=0 2>/dev/null
+        if [[ "${PIPESTATUS[0]}" -ne 0 ]]; then
+            echo "  FAIL: A1 probe did not exit 0 under closed-stdout"
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+        fi
     fi
 
     echo ""
