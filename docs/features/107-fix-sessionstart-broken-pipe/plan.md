@@ -37,9 +37,11 @@ graph TD
     T9 --> T10[T10: Replace cat<<EOF L922]
     T10 --> T11[T11: Run repro+tests]
     T11 --> T12[T12: SoT doc]
-    T12 --> T13[T13: Bench script]
-    T13 --> T14[T14: Spec amendment]
-    T14 --> T15[T15: Final validate.sh + commit bench-results.txt]
+    T11 --> T13[T13: Bench script]
+    T14[T14: Spec amendment - independent, parallelizable]
+    T12 --> T15[T15: Final validate.sh + commit bench-results.txt]
+    T13 --> T15
+    T14 -.optional.-> T15
 ```
 
 ## Sequencing Note

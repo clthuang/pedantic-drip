@@ -64,7 +64,7 @@ Make executable.
 - **T4:** happy path → exit 0 + jq assertions for `hookSpecificOutput.hookEventName == "SessionStart"` and `additionalContext | type == "string"`
 - **T5:** log-file population — runs T1+T2+T3, asserts `$PD_SESSION_START_LOG` matches `PD_LOG_LINE_REGEX` constant. Also tests AC5b (1000-iteration loop, log size < 2 MB).
 - **T6:** happy-path with multiline `additionalContext` containing `"`, `\`, `\n`, unicode — JSON parses cleanly (R1 mitigation).
-- **T7:** `PD_FORCE_BUILD_CONTEXT_FAIL=1` — assert hook exits 0. EXIT trap fires (because `build_context` returned 1 → main propagates) and emits the fallback `{}` (bare JSON object, NOT the FR4-structured `hookSpecificOutput` shape). When stdout is healthy (test pipes to a tempfile), assert `jq -e '. == {}' < /tmp/t7-out.json`. R7 mitigation.
+- **T7:** `PD_FORCE_BUILD_CONTEXT_FAIL=1` — assert hook exits 0. EXIT trap fires (because `build_context` returned 1 → main propagates) and emits the fallback `{}` (bare JSON object, NOT the FR4-structured `hookSpecificOutput` shape). When stdout is healthy, save to a per-test tempfile and assert: `out=$(mktemp); PD_FORCE_BUILD_CONTEXT_FAIL=1 bash plugins/pd/hooks/session-start.sh </dev/null > "$out" 2>&1; rc=$?; jq -e '. == {}' < "$out"; rm "$out"; [[ $rc -eq 0 ]]`. R7 mitigation.
 - **T8 (AC12 first-run):** Run `HOME=$(mktemp -d) PD_SESSION_START_LOG="$HOME/.claude/pd/session-start.log" bash plugins/pd/hooks/session-start.sh </dev/null | dd of=/dev/null bs=1 count=0 ; rc=$?` — assert `rc == 0` AND assert `[[ -f "$HOME/.claude/pd/session-start.log" ]]` (directory was auto-created and a log line was appended; per AC12).
 - **T9 (FR5 recovery-of-recovery):** Set `PD_SESSION_START_LOG=/dev/null/cannot-create.log` (an unwriteable path) and invoke under closed-stdout; assert hook still exits 0 (log-write failure is silently swallowed per FR5 recovery-of-recovery clause).
 
@@ -109,10 +109,13 @@ build_context() {
     # ... existing body ...
 }
 ```
-**DoD (cannot source session-start.sh as a library — it auto-runs main; verify structurally + end-to-end):**
+**DoD (Task 7 own gate, structural — does not require Task 8 to have run):**
 - Structural: `grep -A 3 '^build_context()' plugins/pd/hooks/session-start.sh | grep -q 'PD_FORCE_BUILD_CONTEXT_FAIL'` exits 0 (the guard exists at the top of `build_context`).
-- End-to-end behavior (verifies the guard works AND that the EXIT trap recovers — this is what test T7 in Task 5 also exercises): `PD_FORCE_BUILD_CONTEXT_FAIL=1 bash plugins/pd/hooks/session-start.sh </dev/null > /dev/null 2>&1; echo $?` → `0` (hook still exits 0 because EXIT trap emits fallback `{}`).
-**Depends on:** Tasks 6, 8 (the end-to-end check requires the EXIT trap to be installed — that's done in Task 8's `install_session_start_traps` migration). For Task 7 in isolation, the structural check is sufficient.
+
+**Post-T8 verification (confirmed during Task 11's full run, NOT required for Task 7 sign-off):**
+- End-to-end: `PD_FORCE_BUILD_CONTEXT_FAIL=1 bash plugins/pd/hooks/session-start.sh </dev/null > /dev/null 2>&1; echo $?` → `0` (hook exits 0 via EXIT trap fallback). Test T7 in Task 5 also exercises this.
+
+**Depends on:** Task 6 (no other dependency for Task 7's own gate).
 
 ### Task 8: Update session-start.sh banner and trap installer
 
