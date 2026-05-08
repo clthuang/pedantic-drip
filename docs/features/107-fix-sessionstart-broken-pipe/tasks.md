@@ -39,8 +39,8 @@ Make executable.
 **Action:** Create per design TD9. Accepts a target path argument (defaulting to `plugins/pd/hooks/session-start.sh`). Greps for line-leading `cat <<` using `[[:space:]]` POSIX class; exits 1 with violation message if found.
 **DoD:**
 - `bash plugins/pd/hooks/tests/check-no-unsafe-writes.sh plugins/pd/hooks/tests/fixture-unsafe-write.sh; echo $?` → `1` (positive control catches the fixture).
-- `bash plugins/pd/hooks/tests/check-no-unsafe-writes.sh /tmp/empty-file-no-cat.sh` → `0` (negative control on a clean file).
-- Uses `[[:space:]]` not `\s` (verify by grep `\\s` returns no match in the script).
+- `tmp=$(mktemp); bash plugins/pd/hooks/tests/check-no-unsafe-writes.sh "$tmp"; rc=$?; rm "$tmp"; [[ $rc -eq 0 ]]` (negative control on an empty tempfile that exists).
+- Uses POSIX `[[:space:]]` not `\s` (verify: `grep -c '\[\[:space:\]\]' plugins/pd/hooks/tests/check-no-unsafe-writes.sh` ≥ 1).
 **Depends on:** Task 2.
 
 ### Task 4: Create AC1 reproduction driver
@@ -64,7 +64,7 @@ Make executable.
 - **T4:** happy path → exit 0 + jq assertions for `hookSpecificOutput.hookEventName == "SessionStart"` and `additionalContext | type == "string"`
 - **T5:** log-file population — runs T1+T2+T3, asserts `$PD_SESSION_START_LOG` matches `PD_LOG_LINE_REGEX` constant. Also tests AC5b (1000-iteration loop, log size < 2 MB).
 - **T6:** happy-path with multiline `additionalContext` containing `"`, `\`, `\n`, unicode — JSON parses cleanly (R1 mitigation).
-- **T7:** `PD_FORCE_BUILD_CONTEXT_FAIL=1` — assert hook still exits 0 with valid JSON (R7 mitigation).
+- **T7:** `PD_FORCE_BUILD_CONTEXT_FAIL=1` — assert hook exits 0. EXIT trap fires (because `build_context` returned 1 → main propagates) and emits the fallback `{}` (bare JSON object, NOT the FR4-structured `hookSpecificOutput` shape). When stdout is healthy (test pipes to a tempfile), assert `jq -e '. == {}' < /tmp/t7-out.json`. R7 mitigation.
 - **T8 (AC12 first-run):** Run `HOME=$(mktemp -d) PD_SESSION_START_LOG="$HOME/.claude/pd/session-start.log" bash plugins/pd/hooks/session-start.sh </dev/null | dd of=/dev/null bs=1 count=0 ; rc=$?` — assert `rc == 0` AND assert `[[ -f "$HOME/.claude/pd/session-start.log" ]]` (directory was auto-created and a log line was appended; per AC12).
 - **T9 (FR5 recovery-of-recovery):** Set `PD_SESSION_START_LOG=/dev/null/cannot-create.log` (an unwriteable path) and invoke under closed-stdout; assert hook still exits 0 (log-write failure is silently swallowed per FR5 recovery-of-recovery clause).
 
@@ -109,10 +109,10 @@ build_context() {
     # ... existing body ...
 }
 ```
-**DoD:**
-- `PD_FORCE_BUILD_CONTEXT_FAIL=1 bash -c 'source plugins/pd/hooks/session-start.sh; build_context'` returns 1.
-- Without the env var, `build_context` returns 0 on a clean invocation.
-**Depends on:** none (modifies session-start.sh but only adds a 4-line guard at function start).
+**DoD (cannot source session-start.sh as a library — it auto-runs main; verify structurally + end-to-end):**
+- Structural: `grep -A 3 '^build_context()' plugins/pd/hooks/session-start.sh | grep -q 'PD_FORCE_BUILD_CONTEXT_FAIL'` exits 0 (the guard exists at the top of `build_context`).
+- End-to-end behavior (verifies the guard works AND that the EXIT trap recovers — this is what test T7 in Task 5 also exercises): `PD_FORCE_BUILD_CONTEXT_FAIL=1 bash plugins/pd/hooks/session-start.sh </dev/null > /dev/null 2>&1; echo $?` → `0` (hook still exits 0 because EXIT trap emits fallback `{}`).
+**Depends on:** Tasks 6, 8 (the end-to-end check requires the EXIT trap to be installed — that's done in Task 8's `install_session_start_traps` migration). For Task 7 in isolation, the structural check is sufficient.
 
 ### Task 8: Update session-start.sh banner and trap installer
 
@@ -146,7 +146,8 @@ safe_emit_hook_json "$payload"
 (This block is the early-exit JSON for missing python3; uses simple string interpolation, no jq.)
 **DoD:**
 - `grep -nE '^[[:space:]]*cat[[:space:]]*<<' plugins/pd/hooks/session-start.sh` produces NO match for line 807 area.
-- Existing test (manually triggering python3-missing path) still emits valid JSON.
+- Structural: `grep -n 'safe_emit_hook_json' plugins/pd/hooks/session-start.sh` shows the call site replacement at the L807 area.
+- Functional proxy: `bash plugins/pd/hooks/session-start.sh </dev/null | jq -e '.hookSpecificOutput.hookEventName == "SessionStart"'` exits 0 (the happy path — python3 IS available in test env — still emits valid JSON, which proves the broader emission machinery still works after this edit). The python3-missing branch is structurally verified by grep above; an automated python3-missing test is out of scope (would require fragile PATH manipulation across CI matrix).
 **Depends on:** Task 8.
 
 ### Task 10: Replace cat <<EOF at line 922 (with jq fallback)
@@ -214,6 +215,12 @@ safe_emit_hook_json "$payload"
 - First line of the file is the banner comment.
 - `delta_ms` ≤ 50 (NFR2 verified per AC8).
 - File is committed in this feature branch.
+
+**Failure remediation (if delta_ms > 50):**
+- Do NOT commit bench-results.txt with the failing delta.
+- Profile to identify which of Tasks 6, 8, 9, 10 introduced the regression (run `time bash plugins/pd/hooks/session-start.sh </dev/null >/dev/null` before and after each).
+- If the regression cannot be resolved within the existing design (e.g., the new safe_emit_hook_json is inherently slower than `cat <<EOF` for large payloads), escalate per spec NFR2: re-enter design phase, do not merge. Spec AC7 fallback procedure also applies.
+
 **Depends on:** Task 13a.
 
 ### Task 14: Spec amendment — update FR5 example reason string
@@ -227,15 +234,18 @@ safe_emit_hook_json "$payload"
 
 ### Task 15: Final validate.sh + check-no-unsafe-writes guard CI integration
 
+**Note:** Task 5 already adds an invocation of `test-session-start-broken-pipe.sh` to `test-hooks.sh`. This task adds a SEPARATE invocation of `check-no-unsafe-writes.sh`. Verify both are present after this task.
+
 **Action:**
-- Add `bash plugins/pd/hooks/tests/check-no-unsafe-writes.sh` to `plugins/pd/hooks/tests/test-hooks.sh` so it runs as part of the suite.
+- Add `bash plugins/pd/hooks/tests/check-no-unsafe-writes.sh` (no args — defaults to `plugins/pd/hooks/session-start.sh`) to `plugins/pd/hooks/tests/test-hooks.sh` as a NEW invocation (do not replace Task 5's invocation of `test-session-start-broken-pipe.sh`).
 - Run `./validate.sh` to confirm no plugin-validation regressions.
 - Run `bash plugins/pd/hooks/tests/test-hooks.sh` to confirm full hook suite passes.
-- Run `bash plugins/pd/hooks/tests/check-no-unsafe-writes.sh` (no args; default to session-start.sh) — exits 0.
+- Run `bash plugins/pd/hooks/tests/check-no-unsafe-writes.sh` (no args) — exits 0.
 **DoD:**
 - `./validate.sh` exit 0.
 - `bash plugins/pd/hooks/tests/test-hooks.sh` exit 0 with no errors in summary.
-- `check-no-unsafe-writes.sh` runs as part of `test-hooks.sh`.
+- `grep -c 'check-no-unsafe-writes.sh' plugins/pd/hooks/tests/test-hooks.sh` ≥ 1 (this task's addition).
+- `grep -c 'test-session-start-broken-pipe.sh' plugins/pd/hooks/tests/test-hooks.sh` ≥ 1 (Task 5's addition; verify it was not lost).
 **Depends on:** all prior tasks.
 
 ## Parallel Execution Plan
