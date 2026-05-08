@@ -31,15 +31,19 @@ git worktree add "$worktree_dir" "$baseline_sha" >/dev/null
 
 # measure_median <hook_path>
 # 11 timed runs; drop fastest+slowest; median of 9 in milliseconds.
+# Runs each invocation under HOME=$(mktemp -d) to isolate from workspace
+# state (otherwise build_context's output differs based on active feature
+# / pd state, which conflates state-driven workload with hook code changes).
 measure_median() {
     local hook="$1"
     local times=()
     for _ in $(seq 1 11); do
+        local fresh_home; fresh_home=$(mktemp -d)
         local start_ns end_ns
-        # Use date +%s%N if GNU, else fall back to perl/python; macOS date lacks %N
         start_ns=$(perl -MTime::HiRes -e 'printf "%d", Time::HiRes::time()*1e9' 2>/dev/null)
-        bash "$hook" </dev/null >/dev/null 2>&1 || true
+        HOME="$fresh_home" bash "$hook" </dev/null >/dev/null 2>&1 || true
         end_ns=$(perl -MTime::HiRes -e 'printf "%d", Time::HiRes::time()*1e9' 2>/dev/null)
+        rm -rf "$fresh_home"
         local elapsed_ms=$(( (end_ns - start_ns) / 1000000 ))
         times+=("$elapsed_ms")
     done
