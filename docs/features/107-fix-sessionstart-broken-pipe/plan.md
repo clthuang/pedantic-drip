@@ -42,9 +42,9 @@ graph TD
     T14 --> T15[T15: Final validate.sh + commit bench-results.txt]
 ```
 
-## Sequencing Note (per phase-reviewer iter-2 suggestion)
+## Sequencing Note
 
-T14 (spec FR5 example amendment) MUST occur before T11's test code finalization, because T5's regex assertion targets the FR5 schema in spec.md. In practice T14 is small (2-line edit) and can be folded into T5 as a sub-step; treating it separately keeps dependencies explicit.
+T14 (spec FR5 example amendment) is a documentation-only edit — it changes the example string in spec.md but does NOT change the FR5 regex schema. T5's regex assertion uses `PD_LOG_LINE_REGEX` hardcoded in the test file (per TD5), so T14 has no functional dependency on T11. T14 can run anytime after spec.md is in place (i.e., always — it's safe to parallelize). Listed as `Depends on: none` in tasks.md.
 
 ## Parallelizable Groups
 

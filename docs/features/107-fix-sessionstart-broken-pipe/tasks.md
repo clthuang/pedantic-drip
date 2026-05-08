@@ -57,17 +57,19 @@ Make executable.
 ### Task 5: Create test-session-start-broken-pipe.sh (T1–T9, T-recovery)
 
 **File:** `plugins/pd/hooks/tests/test-session-start-broken-pipe.sh`
-**Action:** Create the test file containing the following sub-tests:
+**Action:** Create the test file containing the following 9 sub-tests:
 - **T1:** closed-stdout pre-write → exit 0
 - **T2:** closed-stdout mid-write → exit 0
 - **T3:** closed-stdout AND-stderr → exit 0
 - **T4:** happy path → exit 0 + jq assertions for `hookSpecificOutput.hookEventName == "SessionStart"` and `additionalContext | type == "string"`
 - **T5:** log-file population — runs T1+T2+T3, asserts `$PD_SESSION_START_LOG` matches `PD_LOG_LINE_REGEX` constant. Also tests AC5b (1000-iteration loop, log size < 2 MB).
 - **T6:** happy-path with multiline `additionalContext` containing `"`, `\`, `\n`, unicode — JSON parses cleanly (R1 mitigation).
-- **T7:** *(removed — defensive `set +e` is verified by code review of `__pd_exit_handler`; T1-T3 already exercise the EXIT trap recovery path. Adding a `false`-injection test would require a production-helper backdoor that's out of scope.)*
-- **T8 (renumbered to T7):** `PD_FORCE_BUILD_CONTEXT_FAIL=1` — assert hook still exits 0 with valid JSON (R7 mitigation).
-- **T8 (NEW — AC12 first-run):** Run `HOME=$(mktemp -d) PD_SESSION_START_LOG="$HOME/.claude/pd/session-start.log" bash plugins/pd/hooks/session-start.sh </dev/null | dd of=/dev/null bs=1 count=0 ; rc=$?` — assert `rc == 0` AND assert `[[ -f "$HOME/.claude/pd/session-start.log" ]]` (directory was auto-created and a log line was appended; per AC12).
-- **T9 (NEW — FR5 recovery-of-recovery):** Set `PD_SESSION_START_LOG=/dev/null/cannot-create.log` (an unwriteable path) and invoke under closed-stdout; assert hook still exits 0 (log-write failure is silently swallowed per FR5 recovery-of-recovery clause).
+- **T7:** `PD_FORCE_BUILD_CONTEXT_FAIL=1` — assert hook still exits 0 with valid JSON (R7 mitigation).
+- **T8 (AC12 first-run):** Run `HOME=$(mktemp -d) PD_SESSION_START_LOG="$HOME/.claude/pd/session-start.log" bash plugins/pd/hooks/session-start.sh </dev/null | dd of=/dev/null bs=1 count=0 ; rc=$?` — assert `rc == 0` AND assert `[[ -f "$HOME/.claude/pd/session-start.log" ]]` (directory was auto-created and a log line was appended; per AC12).
+- **T9 (FR5 recovery-of-recovery):** Set `PD_SESSION_START_LOG=/dev/null/cannot-create.log` (an unwriteable path) and invoke under closed-stdout; assert hook still exits 0 (log-write failure is silently swallowed per FR5 recovery-of-recovery clause).
+
+(Note: an earlier draft included a defensive-`set +e` injection test as a sub-test; removed because it would require a production-helper backdoor. The defensive `set +e` in `__pd_exit_handler` is verified by code review; T1-T3 exercise the EXIT trap recovery path.)
+
 - Single regex constant `PD_LOG_LINE_REGEX` used by T5 (per TD5).
 - Add an invocation in `plugins/pd/hooks/tests/test-hooks.sh` so it runs as part of the suite.
 
@@ -75,9 +77,9 @@ Make executable.
 - File exists, executable.
 - `bash -n plugins/pd/hooks/tests/test-session-start-broken-pipe.sh` parses cleanly.
 - Test file references `PD_LOG_LINE_REGEX` constant (single source of truth).
-- All 9 sub-tests are present in the file (T1-T9).
+- All 9 sub-tests T1-T9 are present in the file.
 
-**DoD (post-implementation, verified by Task 11):** `bash plugins/pd/hooks/tests/test-session-start-broken-pipe.sh` exits 0 with all 9 sub-tests passing.
+**DoD (post-implementation, verified by Task 11):** `bash plugins/pd/hooks/tests/test-session-start-broken-pipe.sh` exits 0 with all 9 sub-tests T1-T9 passing.
 
 **Depends on:** Tasks 1, 3.
 
@@ -169,10 +171,10 @@ safe_emit_hook_json "$payload"
 
 ### Task 11: Run repro driver + full test file; verify all green
 
-**Action:** Execute `bash plugins/pd/hooks/tests/repro-broken-pipe.sh` and `bash plugins/pd/hooks/tests/test-session-start-broken-pipe.sh`. All 4 repro scenarios MUST exit 0; all T1–T8 MUST pass.
+**Action:** Execute `bash plugins/pd/hooks/tests/repro-broken-pipe.sh` and `bash plugins/pd/hooks/tests/test-session-start-broken-pipe.sh`. All 4 repro scenarios MUST exit 0; all T1–T9 MUST pass.
 **DoD:**
 - Repro: 4/4 scenarios pass (exit 0).
-- Test file: T1–T8 all pass.
+- Test file: T1–T9 all pass (all 9 sub-tests, matching Task 5's enumeration).
 - `bash plugins/pd/hooks/tests/test-hooks.sh` overall exit 0.
 - `./validate.sh` passes.
 **Depends on:** Tasks 4, 5, 6, 7, 8, 9, 10.
