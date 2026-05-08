@@ -7,6 +7,7 @@
 # AFTER the fix: all 4 must exit 0.
 
 set -u  # not -e — we capture rcs explicitly
+cd "$(git rev-parse --show-toplevel)"
 HOOK="plugins/pd/hooks/session-start.sh"
 LOG=$(mktemp)
 export PD_SESSION_START_LOG="$LOG"

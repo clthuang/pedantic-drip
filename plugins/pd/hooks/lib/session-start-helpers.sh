@@ -28,10 +28,10 @@ pd_log_diagnostic() {
     local exit_code="$5"
     local reason="$6"
 
-    # Indirect lookup of env var (bash 3.2 compat — no nameref ${!var})
-    # shellcheck disable=SC2086,SC2294
-    local log_path
-    eval "log_path=\${$log_env_var_name:-$default_log_path}"
+    # Indirect env-var expansion via ${!var} (bash 2.0+, available on 3.2).
+    # Avoids `eval` to eliminate command-injection vector through hostile $HOME
+    # (per security-reviewer iter 1).
+    local log_path="${!log_env_var_name:-$default_log_path}"
 
     local log_dir
     log_dir="$(dirname "$log_path")"
@@ -86,8 +86,8 @@ __pd_err_handler() {
 }
 
 __pd_exit_handler() {
-    local rc="$1"
     set +e
+    local rc="$1"
 
     if (( rc != 0 )); then
         # Main failed; emit fallback JSON. Happy path already emitted via

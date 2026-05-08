@@ -16,6 +16,10 @@ if [[ -n "$(git status --porcelain)" ]]; then
     echo "ERROR: working tree dirty; commit or stash before running benchmark." >&2
     exit 2
 fi
+command -v perl >/dev/null 2>&1 || {
+    echo "ERROR: perl required for nanosecond timing (Time::HiRes)" >&2
+    exit 2
+}
 
 baseline_sha=$(git merge-base HEAD develop)
 worktree_dir=".pd-worktrees/bench-${baseline_sha:0:8}"
@@ -54,6 +58,7 @@ measure_median() {
         local elapsed_ms=$(( (end_ns - start_ns) / 1000000 ))
         times+=("$elapsed_ms")
     done
+    # awk NR==5: 5th of 9 values = median after dropping fastest+slowest
     printf '%s\n' "${times[@]}" | sort -n | sed '1d;$d' | awk 'NR==5'
 }
 
