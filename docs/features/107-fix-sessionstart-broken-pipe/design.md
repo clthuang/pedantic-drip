@@ -2,7 +2,7 @@
 
 - **Feature:** 107-fix-sessionstart-broken-pipe
 - **Spec:** `docs/features/107-fix-sessionstart-broken-pipe/spec.md` (rev 3)
-- **Status:** draft (rev 2 — addresses design-reviewer iteration 1)
+- **Status:** draft (rev 3 — addresses design-reviewer iterations 1 and 2)
 
 ## Prior Art Research
 
@@ -150,7 +150,10 @@ __pd_err_handler() {
     local rc="$2"
     set +e   # defensive (rev 2)
     pd_log_session_start_diagnostic "$line_no" "$rc" "ERR trap fired"
-    # Do not exit; let EXIT trap handle fallback emission.
+    # ERR trap fires under set -e; the script then exits at the failing site
+    # after this function returns. The EXIT trap runs next and handles
+    # fallback emission. We do not call `exit` explicitly here so the EXIT
+    # trap observes the original failure rc via $?.
 }
 
 __pd_exit_handler() {
@@ -227,8 +230,47 @@ All under `plugins/pd/hooks/tests/`:
 - `repro-broken-pipe.sh` — driver running 4 scenarios (happy, pre-write, mid-write, AND-stderr) and asserting exit 0. Used by AC1.
 - `bench-session-start.sh` — 11-run timing harness (TD7 detail below). Used by AC8.
 - `bench-results.txt` — committed alongside (TD7).
-- `probe-a1-exit0-under-broken-pipe.sh` — copy of the in-conversation A1 probe. Used by AC10.
-- `probe-printf-sigpipe.sh` — the 4-scenario printf-vs-trap exit-code matrix probe (rev 2 — empirically grounds TD8). Used by AC10's "Verified Bash Behavior" claim.
+- `probe-a1-exit0-under-broken-pipe.sh` — A1 probe (content inlined below). Used by AC10.
+- `probe-printf-sigpipe.sh` — printf-vs-trap exit-code matrix probe (content inlined below; rev 2 — empirically grounds TD8). Used by AC10's "Verified Bash Behavior" claim.
+
+**Inlined probe content (rev 3 — addresses suggestion #5):** copy these verbatim during implement to satisfy AC10.
+
+`probe-a1-exit0-under-broken-pipe.sh`:
+```bash
+#!/usr/bin/env bash
+# Verifies: bash with set -e + trap '' PIPE + EPIPE-safe write exits 0
+# under closed-stdout. Run: bash probe-a1-exit0-under-broken-pipe.sh
+set -euo pipefail
+trap '' PIPE
+{ printf '{}\n' 2>/dev/null; } || true
+exit 0
+# Invocation under closed-stdout (asserts exit 0):
+#   bash probe-a1-exit0-under-broken-pipe.sh | dd of=/dev/null bs=1 count=0 ; echo "rc=$?"
+```
+
+`probe-printf-sigpipe.sh`:
+```bash
+#!/usr/bin/env bash
+# Verifies the Verified Bash Behavior matrix in design.md.
+# Each subshell writes >64KB to ensure pipe-close is detected.
+report() { echo "=== $1 ==="; }
+
+report "no trap, no '|| true'"
+( for i in $(seq 1 1500); do printf '%0100d\n' $i 2>/dev/null || exit 1; done; echo OK >&2 ) | head -c 1 >/dev/null
+echo "rc=$?"
+
+report "trap '' PIPE, no '|| true'"
+( trap '' PIPE; for i in $(seq 1 1500); do printf '%0100d\n' $i 2>/dev/null || exit 1; done; echo OK >&2 ) | head -c 1 >/dev/null
+echo "rc=$?"
+
+report "set -e, no trap, with '|| true'"
+( set -e; for i in $(seq 1 1500); do { printf '%0100d\n' $i 2>/dev/null; } || true; done; echo OK >&2 ) | head -c 1 >/dev/null
+echo "rc=$?"
+
+report "set -e + trap '' PIPE + '|| true' (the safe pattern)"
+( set -e; trap '' PIPE; for i in $(seq 1 1500); do { printf '%0100d\n' $i 2>/dev/null; } || true; done; echo OK >&2 ) | head -c 1 >/dev/null
+echo "rc=$?"
+```
 - `fixtures/unsafe-write-fixture.sh` — intentionally-unsafe `cat <<EOF ... EOF` (FR8 positive control). Used by AC11.
 - `test-session-start-broken-pipe.sh` — hosts T1–T8 (FR7 + new T6/T7/T8). Invoked by `test-hooks.sh`.
 - `check-no-unsafe-writes.sh` — FR8 static guard (TD9 — descoped to a tighter, regex-checkable invariant).
@@ -317,27 +359,39 @@ Rationale (per Verified Bash Behavior matrix):
 
 Both are required. The banner comment in C4 warns future contributors against removing either.
 
-#### TD9. FR8 static guard descoped to tighter invariant (rev 2 — warning #7)
+#### TD9. FR8 static guard descoped to tighter invariant (rev 2 — warning #7; rev 3 — warnings #1 and #2)
 
-Decision: `check-no-unsafe-writes.sh` enforces a single tight invariant rather than a complex regex with false-positive risk:
+Decision: `check-no-unsafe-writes.sh` enforces a single tight, BSD-portable invariant. The script accepts a **target path argument** so the same code path can be exercised by both production check and AC11's positive control.
 
 ```bash
-# Forbid any new `cat <<` heredoc in session-start.sh outside an
-# EPIPE-safe wrapper. The only legal cat-heredoc usage is inside
-# variable assignment: `payload=$(cat <<...)` (caught by $() context).
+#!/usr/bin/env bash
+# Usage: check-no-unsafe-writes.sh [target_path]
+# Default target: plugins/pd/hooks/session-start.sh
 #
-# Invariant: line-leading `cat\s*<<` is forbidden. Anything inside
-# `$(...)` is line-prefixed with the `=$(` or surrounded by parens.
+# Forbids line-leading `cat <<` heredoc (legal cat-heredocs in pd are
+# always inside `$(...)` substitutions, which are not line-leading).
+#
+# CRITICAL: Use POSIX [[:space:]] not `\s` — BSD grep on macOS does NOT
+# support `\s` in ERE; using `\s` would silently match nothing.
 
-violations=$(grep -nE '^\s*cat\s*<<' plugins/pd/hooks/session-start.sh || true)
-[[ -z "$violations" ]] || { echo "FR8 violation: $violations"; exit 1; }
+set -euo pipefail
+target="${1:-plugins/pd/hooks/session-start.sh}"
+violations=$(grep -nE '^[[:space:]]*cat[[:space:]]*<<' "$target" || true)
+if [[ -n "$violations" ]]; then
+    echo "FR8 violation in $target:" >&2
+    echo "$violations" >&2
+    exit 1
+fi
+exit 0
 ```
 
-Negative control (verified during design): all current `cat` calls in session-start.sh are inside `$(...)` substitutions (line-prefixed); the post-fix file has zero line-leading `cat <<`.
+Negative control: all current `cat` calls in session-start.sh are inside `$(...)` substitutions, so they are NOT line-leading (`=$(cat ...)` is prefixed with `=$(`). Verified by manual sweep during design; the test will run this guard against the post-fix file and assert zero output.
 
-Positive control (AC11): `fixtures/unsafe-write-fixture.sh` contains a line-leading `cat <<EOF` that the guard MUST flag.
+Positive control (AC11): `tests/fixtures/unsafe-write-fixture.sh` contains a line-leading `cat <<EOF`. The test invokes `check-no-unsafe-writes.sh plugins/pd/hooks/tests/fixtures/unsafe-write-fixture.sh` — the SAME code path as production — and asserts non-zero exit + violation message on stderr.
 
-This drops `echo` and `printf` from FR8's scope (they're heavily used inside `$(...)` substitutions and have low SIGPIPE risk inside command substitution). The narrower invariant is grep-checkable and has zero false positives on the current code.
+This drops `echo` and `printf` from FR8's scope (they're heavily used inside `$(...)` and have low SIGPIPE risk in command substitution). The narrower invariant is grep-checkable and has zero false positives on current code.
+
+**Portability check:** verified during design (rev 3) that `[[:space:]]` works under both GNU grep (Linux) and BSD grep (macOS default). `\s` was rejected because BSD ERE treats it as a literal `s`.
 
 ### Risks
 
@@ -367,11 +421,16 @@ This drops `echo` and `printf` from FR8's scope (they're heavily used inside `$(
 
 The defensive `set +e` at the start of `__pd_exit_handler` (rev 2) removes the footgun. R6 retired.
 
-#### R7. (NEW rev 2 — design-reviewer warning #8) `set -e` propagation through `$(...)` in bash 3.2
+#### R7. (rev 2 — design-reviewer warning #8) `set -e` propagation through `$(...)` in bash 3.2
 
-`session-start.sh` calls `$(build_context)`, `$(build_memory_context)`, `$(run_doctor_autofix)` etc. (lines 838–860). bash 3.2 has known edge cases where errors inside `$(...)` may not propagate to the parent shell's ERR trap (and may silently return empty + nonzero exit code that the assignment swallows).
+`session-start.sh` calls `$(build_context)`, `$(build_memory_context)`, `$(run_doctor_autofix)` etc. (lines 838–860). bash 3.2 has known edge cases where errors inside `$(...)` may not propagate to the parent shell's ERR trap.
 
-**Mitigation:** Add T8 — inject a controlled failure inside `build_context` (e.g., set `PD_FORCE_BUILD_CONTEXT_FAIL=1` env var that the function honors) and verify the hook still exits 0 with valid `{}` JSON. If T8 fails, add explicit guards: `local x; x=$(build_context) || x=""` at each load-bearing call site. The EXIT trap defends against the silent-failure case because main's `set -e` will eventually trigger when an empty result causes downstream failure, AND because the trap fires regardless of how main exits.
+**Mitigation (rev 3 — committed strategy):** The EXIT trap is the sole defense; we do NOT add explicit `|| x=""` guards at the call sites. Rationale:
+- The EXIT trap fires regardless of how main exits (success or failure, ERR-trap-fired or not).
+- An empty result from `$(build_context)` causes `additionalContext` to be empty — which FR4 (rev 3 spec) explicitly permits.
+- Adding guards at 6+ call sites is a wider change than fixing the symptom and risks introducing the very `|| true` over-suppression patterns we're trying to avoid in lib code review.
+
+**T8 verification:** the test injects a controlled failure (env var `PD_FORCE_BUILD_CONTEXT_FAIL=1` honored at the top of `build_context` to `return 1`). The test asserts `bash session-start.sh` exits 0 in this case. If T8 reveals that the EXIT trap is bypassed, we re-enter design (per spec SG fallback procedures); the design does NOT pre-commit to a different mitigation that may not be needed.
 
 #### R8. (NEW rev 2 — design-reviewer warning #10) Concurrent rotation race
 
