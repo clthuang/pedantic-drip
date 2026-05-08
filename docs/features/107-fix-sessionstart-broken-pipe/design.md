@@ -525,6 +525,7 @@ The design phase identified that the spec's FR5 example reason string `EPIPE on 
 | NFR4 (no stale state) | `mktemp` cleanup, `git worktree remove` | implicit |
 | **set -e in $() (R7)** | `__pd_exit_handler` rc=$? defensive | T8 |
 | **JSON encoding parity (R1)** | C4 fallback | T6 |
+| **Spec FR5 stale example (rev 3)** | Spec amendment task in plan | spec edit |
 
 ### Scope Guards Compliance (rev 2 — suggestion #12)
 
@@ -538,9 +539,17 @@ The design phase identified that the spec's FR5 example reason string `EPIPE on 
 3. **AC8 baseline pinning** → TD7: `git worktree add` against merge-base; SHA recorded in `bench-results.txt`. ✓
 4. **AC10 tense** → spec already disambiguates ("verified during specify... committed during implement"); design treats them as separate steps. ✓
 
-## Open Questions for Plan/Implement
+## Resolved Open Questions (rev 3 — phase-reviewer iteration 1 follow-up)
 
-- **OQ-bench-baseline.** If `develop` is fast-moving, merge-base may be stale by merge time. Suggested: bench runs at PR-open against merge-base; if NFR2 fails, user re-runs against current develop HEAD before merge.
-- **OQ-jq-fallback.** Resolved in design (C4 fallback shown).
-- **OQ-fixture-naming.** `fixtures/` subdir vs flat `tests/` files — verify the existing test harness supports `fixtures/` discovery; if not, flatten to `tests/fixture-unsafe-write.sh`. Implement-phase verification.
-- **OQ-T8-mechanism.** What's the cleanest way to inject controlled failure into `build_context` for T8? Suggested: env var `PD_FORCE_BUILD_CONTEXT_FAIL` checked at the top of `build_context`; tests set it. Implement-phase mechanic.
+- **OQ-bench-baseline (resolved policy).** Bench runs at PR-open against merge-base. If NFR2 fails, user re-runs against current `develop` HEAD before merge as a final check. The plan task for the bench script encodes this policy in its run instructions.
+- **OQ-jq-fallback (resolved).** C4 specifies the `command -v jq` branch with `printf` + `escape_json` fallback.
+- **OQ-fixture-naming (resolved decision).** Place fixture at `plugins/pd/hooks/tests/fixture-unsafe-write.sh` (FLAT, no `fixtures/` subdir). Rationale: `test-hooks.sh` discovers tests via flat glob; subdirectory support is not assumed. Plan task: "Create `tests/fixture-unsafe-write.sh` containing one line-leading `cat <<EOF` and AC11 invokes `check-no-unsafe-writes.sh tests/fixture-unsafe-write.sh`."
+- **OQ-T8-mechanism (resolved decision).** Add `PD_FORCE_BUILD_CONTEXT_FAIL` env-var guard at the top of `build_context` in `session-start.sh`. When set non-empty, the function `return 1` immediately. T8 sets this env var, runs the hook, and asserts exit 0. Plan task: "Add 4-line guard to `build_context` (lines ~423-426 of session-start.sh): `if [[ -n "${PD_FORCE_BUILD_CONTEXT_FAIL:-}" ]]; then return 1; fi`."
+
+## Plan Phase Tasks (rev 3 — phase-reviewer follow-up)
+
+The plan phase will produce explicit tasks for these design-derived work items (each maps to a component or verification requirement):
+
+1. **Spec amendment task.** Update `spec.md` FR5 example reason string from `EPIPE on cat` to a string from the Reason Vocabulary (e.g., `EXIT non-zero`). Two-line spec edit.
+2. **bench-results.txt policy.** The file IS committed (one-time AC8 evidence at PR open); subsequent local re-runs of `bench-session-start.sh` produce updated output but are NOT re-committed. Rationale: bench-results.txt captures the AC8 evidence at the PR-merge moment; routine recompilation would produce noisy diffs. The plan instructs implement to commit ONCE and add a banner comment in `bench-results.txt` itself: "Generated at PR open; re-run locally to re-verify but do not re-commit."
+3. **Verification mapping addition.** Add a row to design's Verification Mapping for the spec FR5 example update task → satisfied by the spec amendment task above.
