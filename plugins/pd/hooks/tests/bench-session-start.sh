@@ -29,11 +29,18 @@ trap 'git worktree remove --force "$worktree_dir" 2>/dev/null || true' EXIT
 
 git worktree add "$worktree_dir" "$baseline_sha" >/dev/null
 
+# Stage both hook versions into a temp dir alongside their lib/ siblings
+# so each can be invoked while the project's docs/features/ state stays
+# constant (HEAD's checkout). This isolates code-change cost from
+# workspace-state cost.
+hook_stage=$(mktemp -d)
+cp -R "$worktree_dir/plugins/pd/hooks" "$hook_stage/baseline-hooks"
+cp -R "plugins/pd/hooks" "$hook_stage/patched-hooks"
+
 # measure_median <hook_path>
 # 11 timed runs; drop fastest+slowest; median of 9 in milliseconds.
-# Runs each invocation under HOME=$(mktemp -d) to isolate from workspace
-# state (otherwise build_context's output differs based on active feature
-# / pd state, which conflates state-driven workload with hook code changes).
+# Both runs use HOME=$(mktemp -d) (no pd state) AND the same project
+# checkout (HEAD's docs/features/), so the only variable is the hook code.
 measure_median() {
     local hook="$1"
     local times=()
@@ -47,12 +54,12 @@ measure_median() {
         local elapsed_ms=$(( (end_ns - start_ns) / 1000000 ))
         times+=("$elapsed_ms")
     done
-    # sort ascending, drop first and last, take middle of 9 (index 4 zero-based)
     printf '%s\n' "${times[@]}" | sort -n | sed '1d;$d' | awk 'NR==5'
 }
 
-baseline_ms=$(measure_median "$worktree_dir/plugins/pd/hooks/session-start.sh")
-patched_ms=$(measure_median "plugins/pd/hooks/session-start.sh")
+baseline_ms=$(measure_median "$hook_stage/baseline-hooks/session-start.sh")
+patched_ms=$(measure_median "$hook_stage/patched-hooks/session-start.sh")
+rm -rf "$hook_stage"
 
 git worktree remove --force "$worktree_dir"
 
