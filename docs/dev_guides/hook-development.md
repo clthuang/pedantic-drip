@@ -150,3 +150,61 @@ The `cleanup-stale-versions.sh` SessionStart hook (feature 087) automates this �
 ### Enforcement
 
 `validate.sh` runs a static scanner on every PR: any `"hookSpecificOutput":` emission (literal JSON-emission signature) without `hookEventName` in the same file fails CI. Test-consumer files under `plugins/pd/hooks/tests/` are excluded (they read hook output, not emit it).
+
+## Broken-pipe handling for hooks emitting structured output
+
+Feature 107 — see `docs/features/107-fix-sessionstart-broken-pipe/` and RCA `docs/rca/20260508-110928-sessionstart-skills.md`.
+
+### Why `set -e` + `cat <<EOF` is unsafe
+
+Hooks that emit large `hookSpecificOutput` JSON via `cat <<EOF` are vulnerable when the host (Claude Code) closes the hook's stdout before the hook finishes writing — for example during `/clear`, `/compact`, or specific bootstrap paths in CC v2.1.x. The cat heredoc spawns a child `cat` process whose `write(2)` returns EPIPE on a closed read end. The child exits 1, and `set -euo pipefail` propagates that as the hook's exit code. CC then surfaces "Failed with non-blocking status code: No stderr output" on the user's startup screen, and the hook's intended context injection is lost.
+
+### Why `trap '' PIPE` is necessary but not sufficient
+
+`trap '' PIPE` ignores SIGPIPE for the bash process itself — without it, the bash builtin `printf` is killed by SIGPIPE before any `|| true` can run (verified empirically in `plugins/pd/hooks/tests/probe-printf-sigpipe.sh`). However, `trap '' PIPE` alone does NOT fix `set -e` propagation: when EPIPE is returned to the bash builtin, `printf` returns exit 1, and `set -e` aborts. Both `trap '' PIPE` AND `{ printf ...; } || true` are required. Removing either re-introduces the hook failure.
+
+### The canonical pattern (`session-start.sh` post-fix)
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+trap '' PIPE                                    # required: bash-process SIGPIPE ignore
+source "${SCRIPT_DIR}/lib/session-start-helpers.sh"
+install_session_start_traps                     # ERR + EXIT trap with set +e defensive
+
+# ... main work ...
+
+local payload
+if command -v jq >/dev/null 2>&1; then
+    payload=$(jq -nc --arg ctx "$ctx" '{...}')
+else
+    payload=$(printf '...')
+fi
+safe_emit_hook_json "$payload"                  # printf-based, EPIPE-safe wrapper
+exit 0                                          # EXIT trap fires; rc==0, no fallback emitted
+```
+
+The `safe_emit_hook_json` helper (`plugins/pd/hooks/lib/session-start-helpers.sh`) wraps `printf` with `{ ...; } 2>/dev/null || true`. The `install_session_start_traps` helper installs an EXIT trap that emits a fallback `{}` JSON only when the hook exits non-zero; on the happy path the hook's own emission is preserved. Both trap handlers `set +e` defensively.
+
+### Test recipes
+
+```bash
+# closed-stdout pre-write (FR1)
+bash plugins/pd/hooks/session-start.sh </dev/null | dd of=/dev/null bs=1 count=0
+# closed-stdout mid-write (FR2)
+bash plugins/pd/hooks/session-start.sh </dev/null | head -c 1 >/dev/null
+# closed-stdout AND stderr (FR3)
+bash plugins/pd/hooks/session-start.sh </dev/null \
+    > >(dd of=/dev/null bs=1 count=0) \
+    2> >(dd of=/dev/null bs=1 count=0)
+```
+
+All three MUST exit 0 after the fix. See `plugins/pd/hooks/tests/repro-broken-pipe.sh` and `plugins/pd/hooks/tests/test-session-start-broken-pipe.sh`.
+
+### Anti-pattern: do NOT remove `trap '' PIPE`
+
+The banner comment of `session-start.sh` explicitly warns against removing `trap '' PIPE`. A future contributor seeing the printf+`|| true` pattern might assume the trap is vestigial — it is not. Without the trap, the bash process dies of SIGPIPE before `|| true` can recover. See `probe-printf-sigpipe.sh` for the empirical exit-code matrix.
+
+### Static guard (FR8)
+
+`plugins/pd/hooks/tests/check-no-unsafe-writes.sh` enforces that `session-start.sh` contains zero line-leading `cat <<` heredocs. The check is invoked from `test-hooks.sh`. Positive control: `tests/fixture-unsafe-write.sh` contains an intentionally-unsafe heredoc that the guard catches.

@@ -3612,6 +3612,14 @@ main() {
         echo "Running test-session-start.sh..."
         "${SCRIPT_DIR}/test-session-start.sh" || TESTS_FAILED=$((TESTS_FAILED + 1))
     fi
+    if [[ -x "${SCRIPT_DIR}/test-session-start-broken-pipe.sh" ]]; then
+        echo "Running test-session-start-broken-pipe.sh (feature 107)..."
+        "${SCRIPT_DIR}/test-session-start-broken-pipe.sh" || TESTS_FAILED=$((TESTS_FAILED + 1))
+    fi
+    if [[ -x "${SCRIPT_DIR}/check-no-unsafe-writes.sh" ]]; then
+        echo "Running check-no-unsafe-writes.sh (feature 107 FR8 guard)..."
+        "${SCRIPT_DIR}/check-no-unsafe-writes.sh" || TESTS_FAILED=$((TESTS_FAILED + 1))
+    fi
 
     echo ""
     echo "=========================================="

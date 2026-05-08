@@ -73,7 +73,7 @@ When the hook encounters an internal failure (broken pipe, ERR trap fired, Pytho
 
 - `<UTC-timestamp>` is produced by `date -u +%Y-%m-%dT%H:%M:%SZ`. Example: `2026-05-08T03:14:11Z`.
 - Fields are tab-separated; one line; no embedded newlines.
-- Concrete example: `2026-05-08T03:14:11Z\tsession-start.sh:807\t1\tEPIPE on cat`.
+- Concrete example: `2026-05-08T03:14:11Z\tsession-start.sh:0\t1\tEXIT non-zero` (one of the reasons emitted by `__pd_exit_handler` per design Reason Vocabulary table).
 
 **Log path resolution:**
 1. If `PD_SESSION_START_LOG` env var is set and non-empty, use that path.
