@@ -919,14 +919,15 @@ main() {
         full_context="$context"
     fi
 
-    local escaped_context
-    escaped_context=$(escape_json "$full_context")
-
     local payload
     if command -v jq >/dev/null 2>&1; then
+        # jq --arg handles JSON encoding; skip escape_json (which is O(n)
+        # bash char-iteration and dominates hook latency for large contexts).
         payload=$(jq -nc --arg event "SessionStart" --arg ctx "$full_context" \
             '{hookSpecificOutput: {hookEventName: $event, additionalContext: $ctx}}')
     else
+        local escaped_context
+        escaped_context=$(escape_json "$full_context")
         payload=$(printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"%s"}}' "$escaped_context")
     fi
     safe_emit_hook_json "$payload"
