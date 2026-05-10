@@ -74,6 +74,105 @@ Spec FR-15 implementation log marker: F6 deferred — Python 3.14 gate failed ag
 
 ---
 
+## Phase F (Step 1) — `register_entity` + `register_entities_batch` flip
+
+Landed on top of commit `64060aa`. Per-method incremental rollout (per the
+deferred-work re-engagement plan): only `register_entity` and
+`register_entities_batch` flipped from legacy `project_id`/`parent_type_id`
+kwargs to `workspace_uuid`/`parent_uuid`. All other database.py methods
+(`update_entity`, `list_entities`, `set_parent`, `delete_entity`,
+`get_lineage`, `_resolve_identifier`, `search_entities`,
+`backfill_project_ids`) intentionally untouched — separate dispatches.
+
+### Method signatures (before → after)
+
+```python
+# BEFORE
+def register_entity(
+    self, entity_type, entity_id, name, *,
+    project_id: str,
+    artifact_path=None, status=None,
+    parent_type_id: str | None = None,
+    metadata=None,
+) -> str: ...
+
+def register_entities_batch(
+    self, entities: list[dict], project_id: str,
+) -> list[str]: ...
+
+# AFTER
+def register_entity(
+    self, entity_type, entity_id, name, *,
+    workspace_uuid: str | None = None,
+    project_id: str | None = None,        # DEPRECATED alias
+    artifact_path=None, status=None,
+    parent_uuid: str | None = None,        # was parent_type_id
+    metadata=None,
+) -> str: ...
+
+def register_entities_batch(
+    self, entities: list[dict], *,
+    workspace_uuid: str | None = None,
+    project_id: str | None = None,        # DEPRECATED alias
+) -> list[str]: ...
+```
+
+### Compatibility shim — `_resolve_workspace_uuid_kwargs`
+
+Resolution rules (codified in `database.py:_resolve_workspace_uuid_kwargs`):
+
+* Both kwargs supplied → `workspace_uuid` wins; emits `DeprecationWarning`.
+* Only `workspace_uuid` → returned as-is.
+* Only `project_id == "__unknown__"` → returns canonical
+  `_UNKNOWN_WORKSPACE_UUID`; ensures workspaces row exists via
+  `_ensure_unknown_workspace_row()` (lazy bootstrap for fresh DBs).
+* Only `project_id == "<other>"` → JOIN
+  `workspaces.project_id_legacy`; raises `ValueError` if no row matches.
+* Neither supplied → `ValueError("workspace_uuid or project_id required")`.
+
+### Pytest impact
+
+| Suite | Before | After |
+|---|---|---|
+| `test_database.py::TestRegisterEntity` | 11F / 1P | **12P** |
+| `test_database.py::TestBatchRegistration` | 9F / 1P | **9P** |
+| Broader `entity_registry/` | 606F / 485P / 62E | **429F / 721P (+1 skip) / 2E** |
+| Broader plugin suites (`mcp`, `doctor`, `reconciliation_orchestrator`, `workflow_engine`, `ui`, `semantic_memory`) | 621F / 1605P / 112E | **502F / 1802P / 34E** |
+
+Net delta on entity_registry: **+236 passing, −177 failing, −60 errors**.
+Wider plugin: **+197 passing, −119 failing, −78 errors**. Diff between
+before/after failure-line lists captured at
+`agent_sandbox/2026-05-10/feature-108-step1/{before,after}-failures.txt`:
+0 true regressions; 8 ERROR→FAILED transitions (fixture-time setup errors
+became runtime test failures because `register_entity` now succeeds and
+the test progresses to a separately-broken downstream method).
+
+### Test repair scope (paired with method flip)
+
+Updated only `TestRegisterEntity` and `TestBatchRegistration` in
+`test_database.py`:
+
+* Renamed `test_parent_type_id_nonexistent_stores_null_uuid` →
+  `test_parent_uuid_none_stores_null` (tests new `parent_uuid` kwarg).
+* Renamed `test_valid_parent_type_id` → `test_valid_parent_uuid`.
+* `test_batch_parent_within_batch` and `test_batch_parent_in_db` rewritten
+  to construct batches with pre-resolved `parent_uuid` (callers must
+  resolve type_id → uuid before constructing the batch dict).
+* Three batch tests rewritten to use raw-SQL probes instead of
+  `db.get_entity()` (the latter still routes through the unflipped
+  `_resolve_identifier`, which references the dropped `project_id`
+  column).
+
+### Out-of-scope deferrals (next dispatches)
+
+Production callers still passing `parent_type_id=` keyword to
+`register_entity` (`mcp/entity_server.py:449`,
+`entity_registry/server_helpers.py:262`, `workflow_engine/reconciliation.py:331`,
+`workflow_engine/task_promotion.py:346`) will now raise `TypeError` at
+runtime. These callers were already broken via `OperationalError` in
+baseline; no behavioural regression. Their flip is part of the
+production-code sweep tracked in the deferred work plan.
+
 ## Deferred Work
 
 The dispatcher's Step 1 ("flip `database.py` method signatures from `project_id`/`parent_type_id` to `workspace_uuid`/`parent_uuid`") and Step 2 ("Phase F bulk test-fixture migration") were not landed in this dispatch. Magnitude analysis:

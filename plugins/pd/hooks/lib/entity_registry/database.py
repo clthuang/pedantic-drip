@@ -17,6 +17,7 @@ import re
 import sqlite3
 import sys
 import uuid as uuid_mod
+import warnings
 from collections.abc import Callable
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -2735,6 +2736,94 @@ class EntityDatabase:
             self._conn.commit()
 
     # ------------------------------------------------------------------
+    # Internal: workspace_uuid kwarg resolution (Feature 108 transition)
+    # ------------------------------------------------------------------
+
+    def _ensure_unknown_workspace_row(self) -> None:
+        """Insert the canonical ``__unknown__`` workspaces row if absent.
+
+        Required so the FK ``entities.workspace_uuid → workspaces.uuid`` is
+        satisfiable for entities written via the legacy
+        ``project_id='__unknown__'`` alias on a fresh post-Migration-11 DB.
+        """
+        existing = self._conn.execute(
+            "SELECT 1 FROM workspaces WHERE uuid = ?",
+            (_UNKNOWN_WORKSPACE_UUID,),
+        ).fetchone()
+        if existing is None:
+            now = self._now_iso()
+            self._conn.execute(
+                "INSERT INTO workspaces "
+                "(uuid, project_id_legacy, project_root, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (_UNKNOWN_WORKSPACE_UUID, "__unknown__", None, now, now),
+            )
+            self._commit()
+
+    def _resolve_workspace_uuid_kwargs(
+        self,
+        workspace_uuid: str | None,
+        project_id: str | None,
+        *,
+        _caller: str = "register_entity",
+    ) -> str:
+        """Resolve the (workspace_uuid, project_id) kwarg pair to a canonical
+        workspace_uuid.
+
+        Compatibility shim for Feature 108 Migration 11 transition window.
+
+        Resolution rules
+        ----------------
+        * Both supplied → ``workspace_uuid`` wins; emits DeprecationWarning.
+        * Only ``workspace_uuid`` → returned as-is.
+        * Only ``project_id == "__unknown__"`` → returns canonical
+          ``_UNKNOWN_WORKSPACE_UUID`` and ensures the workspaces row exists.
+        * Only ``project_id == "<other>"`` → JOIN on
+          ``workspaces.project_id_legacy``; raises if no row matches.
+        * Neither → ``ValueError``.
+
+        Returns
+        -------
+        str
+            The resolved workspace_uuid (FK target satisfied).
+
+        Raises
+        ------
+        ValueError
+            If neither kwarg is supplied, or if a non-``__unknown__``
+            ``project_id`` cannot be resolved against the workspaces table.
+        """
+        if workspace_uuid is not None and project_id is not None:
+            warnings.warn(
+                f"{_caller}() received both workspace_uuid and project_id; "
+                f"workspace_uuid wins. project_id is deprecated.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+            return workspace_uuid
+        if workspace_uuid is not None:
+            return workspace_uuid
+        if project_id is None:
+            raise ValueError(
+                f"{_caller}() requires workspace_uuid or project_id"
+            )
+        # Legacy project_id path
+        if project_id == "__unknown__":
+            self._ensure_unknown_workspace_row()
+            return _UNKNOWN_WORKSPACE_UUID
+        row = self._conn.execute(
+            "SELECT uuid FROM workspaces WHERE project_id_legacy = ?",
+            (project_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError(
+                f"{_caller}(): project_id={project_id!r} has no matching "
+                f"workspaces.project_id_legacy row. Either pass "
+                f"workspace_uuid directly or pre-register the workspace."
+            )
+        return row["uuid"]
+
+    # ------------------------------------------------------------------
     # Internal: identifier resolution
     # ------------------------------------------------------------------
 
@@ -3131,10 +3220,11 @@ class EntityDatabase:
         entity_id: str,
         name: str,
         *,
-        project_id: str,
+        workspace_uuid: str | None = None,
+        project_id: str | None = None,
         artifact_path: str | None = None,
         status: str | None = None,
-        parent_type_id: str | None = None,
+        parent_uuid: str | None = None,
         metadata: dict | None = None,
     ) -> str:
         """Register an entity with INSERT OR IGNORE semantics.
@@ -3148,22 +3238,36 @@ class EntityDatabase:
             Unique identifier within the entity_type namespace.
         name:
             Human-readable name.
+        workspace_uuid:
+            Workspace identity for the entity. Post-Migration-11 the entities
+            table is keyed on (workspace_uuid, type_id). Required unless the
+            deprecated ``project_id`` alias is supplied.
+        project_id:
+            DEPRECATED — legacy alias for ``workspace_uuid``. Resolved to a
+            workspace_uuid via JOIN on ``workspaces.project_id_legacy``.
+            ``"__unknown__"`` maps to the canonical
+            ``_UNKNOWN_WORKSPACE_UUID``. Other values without an existing
+            workspaces row will raise ``ValueError``.
         artifact_path:
             Optional filesystem path to the entity's artifact.
         status:
             Optional status string.
-        parent_type_id:
-            Optional type_id of the parent entity (must exist).
+        parent_uuid:
+            Optional UUID of the parent entity. Replaces the legacy
+            ``parent_type_id`` kwarg (callers must resolve type_id → uuid
+            before calling).
         metadata:
             Optional dict stored as JSON TEXT.
-        project_id:
-            Project scope for the entity. Required at DB layer for
-            cross-project uniqueness (UNIQUE(project_id, type_id)).
 
         Returns
         -------
         str
             The UUID of the registered (or already-existing) entity.
+
+        Raises
+        ------
+        ValueError
+            If neither ``workspace_uuid`` nor ``project_id`` is provided.
         """
         self._validate_entity_type(entity_type)
         type_id = f"{entity_type}:{entity_id}"
@@ -3176,27 +3280,21 @@ class EntityDatabase:
             for w in validate_metadata(entity_type, metadata):
                 print(f"metadata warning: {w}", file=sys.stderr)
 
-        # Resolve parent_uuid from parent_type_id if provided
-        parent_uuid = None
-        if parent_type_id is not None:
-            parent_row = self._conn.execute(
-                "SELECT uuid FROM entities WHERE type_id = ? AND project_id = ?",
-                (parent_type_id, project_id),
-            ).fetchone()
-            if parent_row is not None:
-                parent_uuid = parent_row["uuid"]
+        ws_uuid = self._resolve_workspace_uuid_kwargs(
+            workspace_uuid, project_id, _caller="register_entity"
+        )
 
         # Audit 062: 2 write SQL statements — wrapped in transaction() for BEGIN IMMEDIATE
         entity_uuid = str(uuid_mod.uuid4())
         with self.transaction():
             cursor = self._conn.execute(
                 "INSERT OR IGNORE INTO entities "
-                "(uuid, type_id, project_id, entity_type, entity_id, name, status, "
-                "parent_type_id, parent_uuid, artifact_path, "
+                "(uuid, workspace_uuid, type_id, entity_type, entity_id, "
+                "name, status, parent_uuid, artifact_path, "
                 "created_at, updated_at, metadata) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (entity_uuid, type_id, project_id, entity_type, entity_id,
-                 name, status, parent_type_id, parent_uuid, artifact_path,
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (entity_uuid, ws_uuid, type_id, entity_type, entity_id,
+                 name, status, parent_uuid, artifact_path,
                  now, now, metadata_json),
             )
             if cursor.rowcount == 1:
@@ -3215,17 +3313,25 @@ class EntityDatabase:
                      metadata_text),
                 )
             self._commit()  # no-op inside transaction(); commit handled by context manager
-        # Apply parent_type_id on duplicate if caller provided one and existing entity has none
-        if cursor.rowcount == 0 and parent_type_id is not None and parent_uuid is not None:
+        # Apply parent_uuid on duplicate if caller provided one and existing entity has none.
+        # Direct UPDATE bypasses set_parent() (which still uses pre-Migration-11 columns).
+        if cursor.rowcount == 0 and parent_uuid is not None:
             existing_parent = self._conn.execute(
-                "SELECT parent_type_id FROM entities WHERE type_id = ? AND project_id = ?",
-                (type_id, project_id),
+                "SELECT parent_uuid FROM entities "
+                "WHERE workspace_uuid = ? AND type_id = ?",
+                (ws_uuid, type_id),
             ).fetchone()
-            if existing_parent and existing_parent["parent_type_id"] is None:
-                self.set_parent(type_id, parent_type_id, project_id=project_id)
+            if existing_parent and existing_parent["parent_uuid"] is None:
+                self._conn.execute(
+                    "UPDATE entities SET parent_uuid = ?, updated_at = ? "
+                    "WHERE workspace_uuid = ? AND type_id = ?",
+                    (parent_uuid, self._now_iso(), ws_uuid, type_id),
+                )
+                self._commit()
         result = self._conn.execute(
-            "SELECT uuid FROM entities WHERE type_id = ? AND project_id = ?",
-            (type_id, project_id),
+            "SELECT uuid FROM entities "
+            "WHERE workspace_uuid = ? AND type_id = ?",
+            (ws_uuid, type_id),
         ).fetchone()
         return result["uuid"]
 
@@ -4823,7 +4929,11 @@ class EntityDatabase:
     # ------------------------------------------------------------------
 
     def register_entities_batch(
-        self, entities: list[dict], project_id: str,
+        self,
+        entities: list[dict],
+        *,
+        workspace_uuid: str | None = None,
+        project_id: str | None = None,
     ) -> list[str]:
         """Register multiple entities in a single transaction.
 
@@ -4831,9 +4941,16 @@ class EntityDatabase:
         ----------
         entities:
             List of dicts, each with keys: entity_type, entity_id, name,
-            and optional: artifact_path, status, parent_type_id, metadata.
+            and optional: artifact_path, status, parent_uuid, metadata.
+            ``parent_uuid`` (post-Feature-108) replaces the legacy
+            ``parent_type_id`` dict key.
+        workspace_uuid:
+            Workspace identity applied to every entity in the batch.
+            Required unless the deprecated ``project_id`` alias is supplied.
         project_id:
-            Project scope applied to all entities in the batch.
+            DEPRECATED — legacy alias for ``workspace_uuid``. Resolved via
+            ``workspaces.project_id_legacy``; ``"__unknown__"`` maps to
+            the canonical ``_UNKNOWN_WORKSPACE_UUID``.
 
         Returns
         -------
@@ -4842,11 +4959,11 @@ class EntityDatabase:
 
         Notes
         -----
-        Single-level parent references within batch are supported: a parent
-        must either exist in DB already or appear earlier in the batch list.
-        Multi-level chains within a single batch are NOT supported.
         Invalid entity_type causes the entire batch to fail (none inserted).
         Duplicate type_id entries are skipped via INSERT OR IGNORE.
+        Intra-batch parent references must pass ``parent_uuid`` directly;
+        callers are responsible for resolving type_id → uuid before
+        constructing the batch.
         """
         if not entities:
             return []
@@ -4854,6 +4971,10 @@ class EntityDatabase:
         # Validate all entity_types upfront
         for ent in entities:
             self._validate_entity_type(ent["entity_type"])
+
+        ws_uuid = self._resolve_workspace_uuid_kwargs(
+            workspace_uuid, project_id, _caller="register_entities_batch"
+        )
 
         self._conn.execute("BEGIN IMMEDIATE")
         try:
@@ -4869,34 +4990,19 @@ class EntityDatabase:
                 type_id = f"{entity_type}:{entity_id}"
                 status = ent.get("status")
                 artifact_path = ent.get("artifact_path")
-                parent_type_id = ent.get("parent_type_id")
+                parent_uuid = ent.get("parent_uuid")
                 metadata = ent.get("metadata")
                 metadata_json = json.dumps(metadata) if metadata is not None else None
-
-                # Resolve parent_uuid
-                parent_uuid = None
-                if parent_type_id is not None:
-                    # Check batch-local first, then DB
-                    if parent_type_id in batch_uuids:
-                        parent_uuid = batch_uuids[parent_type_id]
-                    else:
-                        parent_row = self._conn.execute(
-                            "SELECT uuid FROM entities "
-                            "WHERE type_id = ? AND project_id = ?",
-                            (parent_type_id, project_id),
-                        ).fetchone()
-                        if parent_row is not None:
-                            parent_uuid = parent_row["uuid"]
 
                 entity_uuid = str(uuid_mod.uuid4())
                 cursor = self._conn.execute(
                     "INSERT OR IGNORE INTO entities "
-                    "(uuid, type_id, project_id, entity_type, entity_id, "
-                    "name, status, parent_type_id, parent_uuid, "
+                    "(uuid, workspace_uuid, type_id, entity_type, "
+                    "entity_id, name, status, parent_uuid, "
                     "artifact_path, created_at, updated_at, metadata) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (entity_uuid, type_id, project_id, entity_type,
-                     entity_id, name, status, parent_type_id, parent_uuid,
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (entity_uuid, ws_uuid, type_id, entity_type,
+                     entity_id, name, status, parent_uuid,
                      artifact_path, now, now, metadata_json),
                 )
 
@@ -4922,8 +5028,8 @@ class EntityDatabase:
                     # Already existed — fetch existing UUID
                     existing = self._conn.execute(
                         "SELECT uuid FROM entities "
-                        "WHERE type_id = ? AND project_id = ?",
-                        (type_id, project_id),
+                        "WHERE workspace_uuid = ? AND type_id = ?",
+                        (ws_uuid, type_id),
                     ).fetchone()
                     if existing:
                         batch_uuids[type_id] = existing["uuid"]

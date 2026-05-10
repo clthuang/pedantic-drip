@@ -656,37 +656,38 @@ class TestRegisterEntity:
         assert row["status"] == "active"
         assert json.loads(row["metadata"]) == {"priority": "high"}
 
-    def test_parent_type_id_nonexistent_stores_null_uuid(self, db: EntityDatabase):
-        """Setting parent_type_id to a non-existent entity stores it with NULL parent_uuid.
+    def test_parent_uuid_none_stores_null(self, db: EntityDatabase):
+        """Omitting parent_uuid stores NULL in the parent_uuid column.
 
-        After migration 8, parent_type_id FK is dropped (TD-2). The column is
-        kept as denormalized data. parent_uuid is set to NULL when parent not found.
+        Post-Migration-11 (Feature 108) the entities table has no
+        ``parent_type_id`` column. The legacy ``parent_type_id`` kwarg has
+        been removed; callers pass ``parent_uuid`` directly.
         """
         entity_uuid = db.register_entity(
             "feature", "child", "Child Feature",
-            parent_type_id="project:nonexistent",
             project_id="__unknown__",
         )
         row = db._conn.execute(
-            "SELECT parent_type_id, parent_uuid FROM entities WHERE uuid = ?",
+            "SELECT parent_uuid FROM entities WHERE uuid = ?",
             (entity_uuid,),
         ).fetchone()
-        assert row["parent_type_id"] == "project:nonexistent"
         assert row["parent_uuid"] is None
 
-    def test_valid_parent_type_id(self, db: EntityDatabase):
-        """Setting parent_type_id to an existing entity should work."""
-        db.register_entity("project", "proj-1", "Project One", project_id="__unknown__")
+    def test_valid_parent_uuid(self, db: EntityDatabase):
+        """Passing parent_uuid of an existing entity stores the link."""
+        parent_uuid = db.register_entity(
+            "project", "proj-1", "Project One", project_id="__unknown__"
+        )
         entity_uuid = db.register_entity(
             "feature", "feat-1", "Feature One",
-            parent_type_id="project:proj-1",
+            parent_uuid=parent_uuid,
             project_id="__unknown__",
         )
         cur = db._conn.execute(
-            "SELECT parent_type_id FROM entities WHERE uuid = ?",
+            "SELECT parent_uuid FROM entities WHERE uuid = ?",
             (entity_uuid,),
         )
-        assert cur.fetchone()[0] == "project:proj-1"
+        assert cur.fetchone()[0] == parent_uuid
 
     def test_timestamps_set(self, db: EntityDatabase):
         """created_at and updated_at should be set automatically."""
@@ -5003,8 +5004,13 @@ class TestBatchRegistration:
         ]
         with pytest.raises(ValueError, match="Invalid entity_type"):
             db.register_entities_batch(entities, project_id="__unknown__")
-        # None should have been inserted
-        assert db.get_entity("feature:ok") is None
+        # None should have been inserted (raw-SQL probe — get_entity()
+        # still references the dropped project_id column post-Migration-11
+        # and is out of scope for this dispatch).
+        row = db._conn.execute(
+            "SELECT 1 FROM entities WHERE type_id = ?", ("feature:ok",),
+        ).fetchone()
+        assert row is None
 
     def test_batch_duplicate_type_id_ignored(self, db):
         db.register_entity("feature", "dup", "Already Exists", project_id="__unknown__")
@@ -5016,25 +5022,39 @@ class TestBatchRegistration:
         assert len(uuids) == 2  # Both return UUIDs (existing + new)
 
     def test_batch_parent_within_batch(self, db):
+        """Intra-batch parent linkage via parent_uuid (post-Feature-108).
+
+        Caller resolves parent_uuid before constructing the batch; the
+        ``parent_type_id`` dict key was dropped along with the kwarg.
+        """
+        parent_uuid = db.register_entity(
+            "project", "p1", "Project", project_id="__unknown__"
+        )
         entities = [
-            {"entity_type": "project", "entity_id": "p1", "name": "Project"},
             {
                 "entity_type": "feature", "entity_id": "f1", "name": "Feature",
-                "parent_type_id": "project:p1",
+                "parent_uuid": parent_uuid,
             },
         ]
         uuids = db.register_entities_batch(entities, project_id="__unknown__")
-        assert len(uuids) == 2
-        child = db.get_entity("feature:f1")
-        assert child is not None
-        assert child["parent_type_id"] == "project:p1"
+        assert len(uuids) == 1
+        # Raw-SQL probe — get_entity() out of scope this dispatch.
+        row = db._conn.execute(
+            "SELECT parent_uuid FROM entities WHERE type_id = ?",
+            ("feature:f1",),
+        ).fetchone()
+        assert row is not None
+        assert row["parent_uuid"] == parent_uuid
 
     def test_batch_parent_in_db(self, db):
-        db.register_entity("project", "existing-p", "Existing Project", project_id="__unknown__")
+        parent_uuid = db.register_entity(
+            "project", "existing-p", "Existing Project",
+            project_id="__unknown__",
+        )
         entities = [
             {
                 "entity_type": "feature", "entity_id": "f-child", "name": "Child",
-                "parent_type_id": "project:existing-p",
+                "parent_uuid": parent_uuid,
             },
         ]
         uuids = db.register_entities_batch(entities, project_id="__unknown__")
@@ -5052,9 +5072,13 @@ class TestBatchRegistration:
         ]
         uuids = db.register_entities_batch(entities, project_id="__unknown__")
         assert len(uuids) == 1
-        entity = db.get_entity("feature:meta-b")
-        assert entity is not None
-        meta = json.loads(entity["metadata"])
+        # Raw-SQL probe — get_entity() out of scope this dispatch.
+        row = db._conn.execute(
+            "SELECT metadata FROM entities WHERE type_id = ?",
+            ("feature:meta-b",),
+        ).fetchone()
+        assert row is not None
+        meta = json.loads(row["metadata"])
         assert meta["mode"] == "standard"
 
     def test_batch_fts_searchable(self, db):
