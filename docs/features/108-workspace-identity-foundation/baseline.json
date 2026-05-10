@@ -1,8 +1,0 @@
-{
-  "PRE_SHA": "afe19a6",
-  "PRE_EPOCH": "2026-05-10T20:23:15Z",
-  "branch": "feature/108-workspace-identity-foundation",
-  "feature": "108-workspace-identity-foundation",
-  "captured_at_phase": "implement",
-  "purpose": "Stage 0 baseline (Task 1.0) — anchors rollback diff and enables post-implementation 'what changed since implementation start' queries."
-}
