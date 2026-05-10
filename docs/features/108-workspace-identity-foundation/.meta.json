@@ -2,11 +2,12 @@
   "id": "108",
   "slug": "workspace-identity-foundation",
   "mode": "standard",
-  "status": "active",
+  "status": "completed",
+  "completed": "2026-05-11T00:00:00+00:00",
   "created": "2026-05-10T07:38:15.859019+00:00",
   "branch": "feature/108-workspace-identity-foundation",
   "brainstorm_source": "docs/brainstorms/20260510-152932-entity-system-redesign.prd.md",
-  "lastCompletedPhase": "implement",
+  "lastCompletedPhase": "finish",
   "phases": {
     "specify": {
       "started": "2026-05-10T07:41:15.131210+00:00",
@@ -30,6 +31,11 @@
       "reviewerNotes": {
         "note": "dispatch validation: complete_phase post-Migration-11"
       }
+    },
+    "finish": {
+      "completed": "2026-05-11T00:00:00+00:00",
+      "iterations": 1,
+      "reviewerNotes": "QA gate OVERRIDE: 9 HIGH (3 runtime-breakers fixed, 6 deferred to backlog 00360-00366), 22 MED filed 00367-00388, 14 LOW in sidecar. Released v4.17.0. complete_phase MCP unavailable in session (broken via backlog 00363 territory) so .meta.json updated via guard-fallback path."
     }
   }
 }
