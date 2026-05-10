@@ -3323,6 +3323,7 @@ class EntityDatabase:
         artifact_path: str | None = None,
         status: str | None = None,
         parent_uuid: str | None = None,
+        parent_type_id: str | None = None,
         metadata: dict | None = None,
     ) -> str:
         """Register an entity with INSERT OR IGNORE semantics.
@@ -3351,9 +3352,14 @@ class EntityDatabase:
         status:
             Optional status string.
         parent_uuid:
-            Optional UUID of the parent entity. Replaces the legacy
-            ``parent_type_id`` kwarg (callers must resolve type_id → uuid
-            before calling).
+            Optional UUID of the parent entity. The post-Migration-11 way
+            to express a parent edge.
+        parent_type_id:
+            DEPRECATED — legacy alias resolved to ``parent_uuid`` via
+            :meth:`_resolve_identifier` (workspace-scoped). Provided for
+            test-fixture compatibility during the Feature 108 transition.
+            If both ``parent_uuid`` and ``parent_type_id`` are supplied,
+            ``parent_uuid`` wins and a DeprecationWarning is emitted.
         metadata:
             Optional dict stored as JSON TEXT.
 
@@ -3365,7 +3371,8 @@ class EntityDatabase:
         Raises
         ------
         ValueError
-            If neither ``workspace_uuid`` nor ``project_id`` is provided.
+            If neither ``workspace_uuid`` nor ``project_id`` is provided,
+            or if ``parent_type_id`` cannot be resolved to an entity.
         """
         self._validate_entity_type(entity_type)
         type_id = f"{entity_type}:{entity_id}"
@@ -3381,6 +3388,24 @@ class EntityDatabase:
         ws_uuid = self._resolve_workspace_uuid_kwargs(
             workspace_uuid, project_id, _caller="register_entity"
         )
+
+        # Compat shim (Feature 108 transition): resolve deprecated
+        # parent_type_id alias to parent_uuid. workspace-scoped resolution.
+        if parent_type_id is not None:
+            if parent_uuid is not None:
+                warnings.warn(
+                    "register_entity() received both parent_uuid and "
+                    "parent_type_id; parent_uuid wins. parent_type_id is "
+                    "deprecated.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+            else:
+                resolved_parent_uuid, _ = self._resolve_identifier(
+                    parent_type_id,
+                    workspace_uuid=ws_uuid,
+                )
+                parent_uuid = resolved_parent_uuid
 
         # Audit 062: 2 write SQL statements — wrapped in transaction() for BEGIN IMMEDIATE
         entity_uuid = str(uuid_mod.uuid4())
@@ -3412,7 +3437,8 @@ class EntityDatabase:
                 )
             self._commit()  # no-op inside transaction(); commit handled by context manager
         # Apply parent_uuid on duplicate if caller provided one and existing entity has none.
-        # Direct UPDATE bypasses set_parent() (which still uses pre-Migration-11 columns).
+        # Direct UPDATE keeps the on-duplicate path inside this method's
+        # single-statement boundary (no separate set_parent() call needed).
         if cursor.rowcount == 0 and parent_uuid is not None:
             existing_parent = self._conn.execute(
                 "SELECT parent_uuid FROM entities "
@@ -3434,8 +3460,12 @@ class EntityDatabase:
         return result["uuid"]
 
     def set_parent(
-        self, type_id: str, parent_type_id: str,
+        self,
+        type_id: str,
+        parent_type_id: str,
         project_id: str | None = None,
+        *,
+        workspace_uuid: str | None = None,
     ) -> str:
         """Set or change the parent of an entity.
 
@@ -3444,10 +3474,16 @@ class EntityDatabase:
         type_id:
             The entity to update (UUID or type_id).
         parent_type_id:
-            The new parent entity (UUID or type_id, must exist).
+            The new parent entity (UUID or type_id, must exist). Despite
+            the name (kept for API compatibility), a UUID is also
+            accepted; the kwarg is the *parent identifier*, not strictly
+            a type_id.
+        workspace_uuid:
+            If provided, scope both ``type_id`` and ``parent_type_id``
+            lookups to this workspace.
         project_id:
-            If provided, scope both type_id and parent_type_id lookups
-            to this project.
+            DEPRECATED — legacy alias for ``workspace_uuid``. Resolved via
+            JOIN on ``workspaces.project_id_legacy``.
 
         Returns
         -------
@@ -3460,11 +3496,15 @@ class EntityDatabase:
             If either entity is not found, or if the assignment would
             create a circular reference.
         """
-        child_uuid, child_type_id = self._resolve_identifier(
-            type_id, project_id=project_id
+        child_uuid, _child_type_id = self._resolve_identifier(
+            type_id,
+            project_id=project_id,
+            workspace_uuid=workspace_uuid,
         )
-        parent_uuid, parent_type_id_resolved = self._resolve_identifier(
-            parent_type_id, project_id=project_id
+        parent_uuid, _parent_type_id_resolved = self._resolve_identifier(
+            parent_type_id,
+            project_id=project_id,
+            workspace_uuid=workspace_uuid,
         )
 
         # Self-parent check using UUIDs
@@ -3493,10 +3533,9 @@ class EntityDatabase:
             )
 
         self._conn.execute(
-            "UPDATE entities SET parent_type_id = ?, parent_uuid = ?, "
-            "updated_at = ? WHERE uuid = ?",
-            (parent_type_id_resolved, parent_uuid, self._now_iso(),
-             child_uuid),
+            "UPDATE entities SET parent_uuid = ?, updated_at = ? "
+            "WHERE uuid = ?",
+            (parent_uuid, self._now_iso(), child_uuid),
         )
         self._commit()
         return child_uuid
@@ -3564,6 +3603,9 @@ class EntityDatabase:
         type_id: str,
         direction: str = "up",
         max_depth: int = 10,
+        project_id: str | None = None,
+        *,
+        workspace_uuid: str | None = None,
     ) -> list[dict]:
         """Traverse the entity hierarchy.
 
@@ -3576,6 +3618,13 @@ class EntityDatabase:
             ``"down"`` walks toward leaves (BFS order).
         max_depth:
             Maximum levels to traverse (default 10).
+        workspace_uuid:
+            If provided, scope ``type_id`` resolution to this workspace.
+            Lineage traversal itself follows ``parent_uuid`` chains
+            which are workspace-scoped by FK.
+        project_id:
+            DEPRECATED — legacy alias for ``workspace_uuid``. Resolved via
+            JOIN on ``workspaces.project_id_legacy``.
 
         Returns
         -------
@@ -3583,7 +3632,11 @@ class EntityDatabase:
             Ordered list of entity dicts. Empty if type_id not found.
         """
         try:
-            resolved_uuid, _ = self._resolve_identifier(type_id)
+            resolved_uuid, _ = self._resolve_identifier(
+                type_id,
+                project_id=project_id,
+                workspace_uuid=workspace_uuid,
+            )
         except ValueError:
             return []
 
@@ -3875,7 +3928,11 @@ class EntityDatabase:
     # ------------------------------------------------------------------
 
     def delete_entity(
-        self, type_id: str, project_id: str | None = None,
+        self,
+        type_id: str,
+        project_id: str | None = None,
+        *,
+        workspace_uuid: str | None = None,
     ) -> None:
         """Delete an entity and all associated data.
 
@@ -3887,8 +3944,11 @@ class EntityDatabase:
         ----------
         type_id : str
             Entity type_id or UUID.
+        workspace_uuid:
+            If provided, scope ``type_id`` resolution to this workspace.
         project_id:
-            If provided, scope type_id resolution to this project.
+            DEPRECATED — legacy alias for ``workspace_uuid``. Resolved via
+            JOIN on ``workspaces.project_id_legacy``.
 
         Raises
         ------
@@ -3899,9 +3959,11 @@ class EntityDatabase:
         """
         self._conn.execute("BEGIN IMMEDIATE")
         try:
-            # 1. Resolve to UUID (project-scoped if provided)
+            # 1. Resolve to UUID (workspace-scoped if provided)
             entity_uuid, resolved_type_id = self._resolve_identifier(
-                type_id, project_id=project_id
+                type_id,
+                project_id=project_id,
+                workspace_uuid=workspace_uuid,
             )
 
             # Fetch rowid for FTS cleanup
@@ -3956,6 +4018,120 @@ class EntityDatabase:
         except Exception:
             self._conn.rollback()
             raise
+
+    # ------------------------------------------------------------------
+    # Re-attribution (Feature 108 Phase F)
+    # ------------------------------------------------------------------
+
+    def claim_unknown_entities(
+        self,
+        workspace_uuid: str,
+        *,
+        entity_type: str | None = None,
+        limit: int | None = None,
+    ) -> int:
+        """Re-attribute entities from the canonical unknown-workspace UUID
+        to the caller's workspace.
+
+        Migration 11 maps every legacy ``project_id == "__unknown__"``
+        entity to the canonical ``_UNKNOWN_WORKSPACE_UUID``. Once a real
+        workspace is bootstrapped, callers use this method to claim the
+        previously-orphaned entities — moving them out of the "unknown"
+        bucket and into a concrete workspace.
+
+        Parameters
+        ----------
+        workspace_uuid:
+            Target workspace_uuid. Must already exist in the
+            ``workspaces`` table; FK violation raises ``sqlite3.IntegrityError``.
+        entity_type:
+            If provided, only claim entities of this entity_type
+            (e.g. ``"feature"``).
+        limit:
+            If provided, claim at most this many entities (oldest first
+            by ``created_at``). Useful for batched claims.
+
+        Returns
+        -------
+        int
+            The number of entities re-attributed.
+
+        Raises
+        ------
+        ValueError
+            If ``workspace_uuid`` equals ``_UNKNOWN_WORKSPACE_UUID``
+            (no-op self-claim) or is empty.
+        """
+        if not workspace_uuid:
+            raise ValueError(
+                "claim_unknown_entities() requires a non-empty workspace_uuid"
+            )
+        if workspace_uuid == _UNKNOWN_WORKSPACE_UUID:
+            raise ValueError(
+                "claim_unknown_entities() refuses to re-attribute entities "
+                "to the canonical _UNKNOWN_WORKSPACE_UUID (no-op)"
+            )
+
+        # Verify the target workspace exists; FK enforcement catches this
+        # at UPDATE time too, but a pre-check yields a clearer error.
+        target = self._conn.execute(
+            "SELECT 1 FROM workspaces WHERE uuid = ?",
+            (workspace_uuid,),
+        ).fetchone()
+        if target is None:
+            raise ValueError(
+                f"claim_unknown_entities(): workspace_uuid={workspace_uuid!r} "
+                f"has no matching workspaces row. Bootstrap the workspace "
+                f"first."
+            )
+
+        # Build the UPDATE. The immutability trigger
+        # `enforce_immutable_workspace_uuid` blocks plain UPDATE OF
+        # workspace_uuid statements, so re-attribution must temporarily
+        # disable that trigger via a recursive sentinel: we drop the trigger,
+        # run the UPDATE, then recreate it.
+        select_sql = (
+            "SELECT uuid FROM entities WHERE workspace_uuid = ?"
+        )
+        select_params: list = [_UNKNOWN_WORKSPACE_UUID]
+        if entity_type is not None:
+            select_sql += " AND entity_type = ?"
+            select_params.append(entity_type)
+        select_sql += " ORDER BY created_at ASC"
+        if limit is not None:
+            select_sql += " LIMIT ?"
+            select_params.append(int(limit))
+
+        with self.transaction():
+            rows = self._conn.execute(select_sql, select_params).fetchall()
+            if not rows:
+                return 0
+            uuids = [r["uuid"] for r in rows]
+
+            # Temporarily drop the workspace_uuid immutability trigger so
+            # this re-attribution path is allowed. Recreate it afterwards.
+            self._conn.execute(
+                "DROP TRIGGER IF EXISTS enforce_immutable_workspace_uuid"
+            )
+            try:
+                placeholders = ",".join("?" for _ in uuids)
+                now = self._now_iso()
+                self._conn.execute(
+                    f"UPDATE entities SET workspace_uuid = ?, updated_at = ? "
+                    f"WHERE uuid IN ({placeholders})",
+                    [workspace_uuid, now, *uuids],
+                )
+            finally:
+                self._conn.execute("""
+                    CREATE TRIGGER IF NOT EXISTS
+                        enforce_immutable_workspace_uuid
+                    BEFORE UPDATE OF workspace_uuid ON entities
+                    BEGIN SELECT RAISE(ABORT,
+                        'workspace_uuid is immutable — use re-attribution API'
+                    ); END
+                """)
+            self._commit()
+        return len(uuids)
 
     # ------------------------------------------------------------------
     # Search
@@ -4812,6 +4988,9 @@ class EntityDatabase:
         self,
         entity_uuid: str | None = None,
         blocked_by_uuid: str | None = None,
+        project_id: str | None = None,
+        *,
+        workspace_uuid: str | None = None,
     ) -> list[dict]:
         """Query dependencies with flexible filtering.
 
@@ -4821,23 +5000,52 @@ class EntityDatabase:
             If provided, filter by the blocked entity.
         blocked_by_uuid:
             If provided, filter by the blocker entity.
-        Both None returns all dependencies.
+        workspace_uuid:
+            If provided, restrict results to dependencies whose blocked
+            entity (``entity_uuid``) lives in this workspace. Cross-
+            workspace edges (post-Migration-11 they should be rare) are
+            excluded.
+        project_id:
+            DEPRECATED — legacy alias for ``workspace_uuid``. Resolved via
+            JOIN on ``workspaces.project_id_legacy``.
+
+        Both None for entity_uuid/blocked_by_uuid returns all dependencies
+        (subject to the workspace filter, if any).
 
         Returns
         -------
         list[dict]
             Each dict has keys: entity_uuid, blocked_by_uuid.
         """
+        ws_uuid = self._resolve_optional_workspace_filter(
+            workspace_uuid, project_id, _caller="query_dependencies"
+        )
+
         conditions: list[str] = []
         params: list[str] = []
         if entity_uuid is not None:
-            conditions.append("entity_uuid = ?")
+            conditions.append("ed.entity_uuid = ?")
             params.append(entity_uuid)
         if blocked_by_uuid is not None:
-            conditions.append("blocked_by_uuid = ?")
+            conditions.append("ed.blocked_by_uuid = ?")
             params.append(blocked_by_uuid)
+        if ws_uuid is not None:
+            conditions.append("e.workspace_uuid = ?")
+            params.append(ws_uuid)
 
-        sql = "SELECT entity_uuid, blocked_by_uuid FROM entity_dependencies"
+        if ws_uuid is not None:
+            # JOIN on entities to filter by workspace; the blocked-entity
+            # side carries the workspace identity for filtering.
+            sql = (
+                "SELECT ed.entity_uuid, ed.blocked_by_uuid "
+                "FROM entity_dependencies ed "
+                "JOIN entities e ON e.uuid = ed.entity_uuid"
+            )
+        else:
+            sql = (
+                "SELECT ed.entity_uuid, ed.blocked_by_uuid "
+                "FROM entity_dependencies ed"
+            )
         if conditions:
             sql += " WHERE " + " AND ".join(conditions)
 

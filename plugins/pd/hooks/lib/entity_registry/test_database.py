@@ -882,14 +882,16 @@ class TestRegisterEntityParentOnDuplicate:
 class TestSetParent:
     def test_happy_path(self, db: EntityDatabase):
         """Set parent on a child entity."""
-        db.register_entity("project", "proj-1", "Project One", project_id="__unknown__")
+        parent_uuid = db.register_entity("project", "proj-1", "Project One", project_id="__unknown__")
         child_uuid = db.register_entity("feature", "f1", "Feature One", project_id="__unknown__")
         result = db.set_parent("feature:f1", "project:proj-1")
         assert result == child_uuid
+        # Post-Migration-11: parent edge stored in parent_uuid (parent_type_id
+        # column dropped). Assert via UUID round-trip.
         cur = db._conn.execute(
-            "SELECT parent_type_id FROM entities WHERE type_id = 'feature:f1'"
+            "SELECT parent_uuid FROM entities WHERE type_id = 'feature:f1'"
         )
-        assert cur.fetchone()[0] == "project:proj-1"
+        assert cur.fetchone()[0] == parent_uuid
 
     def test_circular_reference_rejected(self, db: EntityDatabase):
         """A->B->C, then setting C's parent to A should raise (circular)."""
@@ -920,13 +922,15 @@ class TestSetParent:
     def test_reassign_parent(self, db: EntityDatabase):
         """Should be able to change parent from one entity to another."""
         db.register_entity("project", "p1", "Project 1", project_id="__unknown__")
-        db.register_entity("project", "p2", "Project 2", project_id="__unknown__")
+        p2_uuid = db.register_entity("project", "p2", "Project 2", project_id="__unknown__")
         db.register_entity("feature", "f1", "Feature", parent_type_id="project:p1", project_id="__unknown__")
         db.set_parent("feature:f1", "project:p2")
+        # Post-Migration-11: parent edge stored in parent_uuid (parent_type_id
+        # column dropped). Assert via UUID round-trip.
         cur = db._conn.execute(
-            "SELECT parent_type_id FROM entities WHERE type_id = 'feature:f1'"
+            "SELECT parent_uuid FROM entities WHERE type_id = 'feature:f1'"
         )
-        assert cur.fetchone()[0] == "project:p2"
+        assert cur.fetchone()[0] == p2_uuid
 
     def test_deep_circular_reference_rejected(self, db: EntityDatabase):
         """A->B->C->D, then setting A's parent to D should be rejected."""
@@ -1780,15 +1784,18 @@ class TestSetParentUUID:
         assert result == child_uuid
 
     def test_set_parent_updates_both_parent_columns(self, db: EntityDatabase):
-        """set_parent should populate both parent_type_id and parent_uuid."""
+        """set_parent should populate parent_uuid.
+
+        Post-Migration-11: parent_type_id column is dropped; only
+        parent_uuid is the system-of-record for the parent edge.
+        """
         parent_uuid = db.register_entity("project", "proj-1", "Project One", project_id="__unknown__")
         child_uuid = db.register_entity("feature", "f1", "Feature One", project_id="__unknown__")
         db.set_parent(child_uuid, "project:proj-1")
         row = db._conn.execute(
-            "SELECT parent_type_id, parent_uuid FROM entities WHERE uuid = ?",
+            "SELECT parent_uuid FROM entities WHERE uuid = ?",
             (child_uuid,),
         ).fetchone()
-        assert row["parent_type_id"] == "project:proj-1"
         assert row["parent_uuid"] == parent_uuid
 
 
@@ -2235,31 +2242,32 @@ class TestSetParentConsistencyAfterUpdate:
     def test_set_parent_produces_consistent_dual_parent_columns(
         self, db: EntityDatabase,
     ):
-        """After set_parent, parent_type_id and parent_uuid resolve to same entity.
-        Anticipate: If set_parent updates one column but not the other,
-        the parent columns would be inconsistent.
+        """After set_parent, parent_uuid resolves to the parent entity.
+
+        Post-Migration-11: parent_type_id column was dropped; parent_uuid
+        is now the single source of truth. The "dual columns" guarantee
+        is replaced by parent_uuid being a valid FK to entities.uuid.
         """
         # Given parent and child entities
         parent_uuid = db.register_entity("project", "parent", "Parent", project_id="__unknown__")
         child_uuid = db.register_entity("feature", "child", "Child", project_id="__unknown__")
         # When setting parent
         db.set_parent("feature:child", "project:parent")
-        # Then get_entity shows consistent parent columns
+        # Then get_entity exposes parent_uuid pointing to the parent
         child = db.get_entity("feature:child")
-        assert child["parent_type_id"] == "project:parent"
         assert child["parent_uuid"] == parent_uuid
-        # And resolving parent_uuid returns the same entity as parent_type_id
+        # And resolving parent_uuid returns the parent entity
         parent_by_uuid = db.get_entity(child["parent_uuid"])
-        parent_by_type_id = db.get_entity(child["parent_type_id"])
-        assert parent_by_uuid["uuid"] == parent_by_type_id["uuid"]
+        assert parent_by_uuid["uuid"] == parent_uuid
         assert parent_by_uuid["type_id"] == "project:parent"
 
     def test_reassign_parent_keeps_both_columns_in_sync(
         self, db: EntityDatabase,
     ):
-        """Reassigning parent should update BOTH parent columns atomically.
-        Anticipate: Reassignment might update parent_uuid but leave
-        parent_type_id pointing to old parent.
+        """Reassigning parent should update parent_uuid atomically.
+
+        Post-Migration-11: only parent_uuid remains; the legacy
+        parent_type_id column is dropped.
         derived_from: spec:AC-28
         """
         # Given a child with existing parent
@@ -2271,9 +2279,8 @@ class TestSetParentConsistencyAfterUpdate:
         )
         # When reassigning parent
         db.set_parent("feature:child", "project:p2")
-        # Then both columns reflect the new parent
+        # Then parent_uuid reflects the new parent
         child = db.get_entity("feature:child")
-        assert child["parent_type_id"] == "project:p2"
         assert child["parent_uuid"] == p2_uuid
 
 
@@ -2284,15 +2291,15 @@ class TestRootEntityParentUuidIsNone:
 
     def test_root_entity_has_null_parent_uuid(self, db: EntityDatabase):
         """Root entity (registered without parent) has parent_uuid=None.
-        Anticipate: Migration or register_entity might set parent_uuid
-        to a default value instead of NULL.
+
+        Post-Migration-11: parent_type_id column dropped; only parent_uuid
+        remains. A root entity has parent_uuid IS NULL.
         """
         # Given a root entity with no parent
         entity_uuid = db.register_entity("project", "root", "Root Project", project_id="__unknown__")
         # When retrieving it
         entity = db.get_entity(entity_uuid)
-        # Then both parent columns are None
-        assert entity["parent_type_id"] is None
+        # Then parent_uuid is None
         assert entity["parent_uuid"] is None
 
 
@@ -7465,3 +7472,216 @@ class TestMigration11SchemaDiff:
         finally:
             ref_conn.close()
             roundtrip_conn.close()
+
+
+# ===========================================================================
+# Feature 108 Phase F (lineage + dependency flip):
+# claim_unknown_entities re-attribution method
+# ===========================================================================
+
+
+class TestFeature108ClaimUnknownEntities:
+    """Re-attribution: move entities out of the canonical unknown-workspace
+    bucket into a concrete workspace.
+
+    The method drops the immutable_workspace_uuid trigger inside a
+    transaction, runs the UPDATE, then recreates it.
+    """
+
+    def _make_target_workspace(self, db: EntityDatabase) -> str:
+        """Insert a fresh workspaces row and return its uuid."""
+        target_uuid = str(uuid.uuid4())
+        now = db._now_iso()
+        db._conn.execute(
+            "INSERT INTO workspaces (uuid, project_id_legacy, "
+            "project_root, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (target_uuid, "claim-target", "/tmp/claim-target", now, now),
+        )
+        db._conn.commit()
+        return target_uuid
+
+    def test_claims_all_unknown_entities_to_target_workspace(
+        self, db: EntityDatabase,
+    ):
+        """Without entity_type filter, every unknown-workspace entity is moved."""
+        from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
+        # Two entities in the unknown bucket
+        u1 = db.register_entity("feature", "f1", "F1", project_id="__unknown__")
+        u2 = db.register_entity("feature", "f2", "F2", project_id="__unknown__")
+        target = self._make_target_workspace(db)
+
+        n = db.claim_unknown_entities(workspace_uuid=target)
+        assert n == 2
+
+        # Both rows now point to the target workspace
+        rows = db._conn.execute(
+            "SELECT uuid, workspace_uuid FROM entities "
+            "WHERE uuid IN (?, ?)",
+            (u1, u2),
+        ).fetchall()
+        for row in rows:
+            assert row["workspace_uuid"] == target
+        # No entities still attributed to unknown
+        unknown_count = db._conn.execute(
+            "SELECT COUNT(*) FROM entities WHERE workspace_uuid = ?",
+            (_UNKNOWN_WORKSPACE_UUID,),
+        ).fetchone()[0]
+        assert unknown_count == 0
+
+    def test_entity_type_filter(self, db: EntityDatabase):
+        """entity_type kwarg restricts the claim to that type only."""
+        db.register_entity("feature", "f1", "F1", project_id="__unknown__")
+        b_uid = db.register_entity("backlog", "b1", "B1", project_id="__unknown__")
+        target = self._make_target_workspace(db)
+
+        n = db.claim_unknown_entities(
+            workspace_uuid=target, entity_type="feature"
+        )
+        assert n == 1
+
+        # Backlog row still in unknown
+        from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
+        b_row = db._conn.execute(
+            "SELECT workspace_uuid FROM entities WHERE uuid = ?",
+            (b_uid,),
+        ).fetchone()
+        assert b_row["workspace_uuid"] == _UNKNOWN_WORKSPACE_UUID
+
+    def test_limit_kwarg_caps_claims(self, db: EntityDatabase):
+        """limit kwarg caps the number of entities re-attributed."""
+        for i in range(3):
+            db.register_entity(
+                "feature", f"f{i}", f"F{i}", project_id="__unknown__"
+            )
+        target = self._make_target_workspace(db)
+
+        n = db.claim_unknown_entities(workspace_uuid=target, limit=2)
+        assert n == 2
+
+    def test_no_unknown_entities_returns_zero(self, db: EntityDatabase):
+        """Empty unknown-workspace bucket returns 0 (no-op)."""
+        target = self._make_target_workspace(db)
+        assert db.claim_unknown_entities(workspace_uuid=target) == 0
+
+    def test_self_claim_to_unknown_uuid_rejected(self, db: EntityDatabase):
+        """Refuse to re-attribute entities to the canonical unknown UUID."""
+        from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
+        with pytest.raises(ValueError, match="canonical _UNKNOWN_WORKSPACE_UUID"):
+            db.claim_unknown_entities(workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+
+    def test_empty_workspace_uuid_rejected(self, db: EntityDatabase):
+        """Empty/None workspace_uuid raises ValueError."""
+        with pytest.raises(ValueError, match="non-empty workspace_uuid"):
+            db.claim_unknown_entities(workspace_uuid="")
+
+    def test_unknown_target_workspace_rejected(self, db: EntityDatabase):
+        """Target workspace_uuid must already exist in workspaces table."""
+        bogus = str(uuid.uuid4())
+        with pytest.raises(ValueError, match="has no matching workspaces row"):
+            db.claim_unknown_entities(workspace_uuid=bogus)
+
+    def test_immutability_trigger_restored_after_claim(
+        self, db: EntityDatabase,
+    ):
+        """After successful claim, plain UPDATE OF workspace_uuid is still blocked."""
+        u_uid = db.register_entity(
+            "feature", "f1", "F1", project_id="__unknown__"
+        )
+        target = self._make_target_workspace(db)
+        db.claim_unknown_entities(workspace_uuid=target)
+
+        # Build a second target with a unique legacy id so UNIQUE doesn't trip.
+        other_uuid = str(uuid.uuid4())
+        now = db._now_iso()
+        db._conn.execute(
+            "INSERT INTO workspaces (uuid, project_id_legacy, "
+            "project_root, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (other_uuid, "claim-target-2", "/tmp/claim-target-2", now, now),
+        )
+        db._conn.commit()
+        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+            db._conn.execute(
+                "UPDATE entities SET workspace_uuid = ? WHERE uuid = ?",
+                (other_uuid, u_uid),
+            )
+
+    def test_claim_preserves_uuid_and_payload(self, db: EntityDatabase):
+        """Re-attribution preserves uuid, type_id, name, status, metadata."""
+        u_uid = db.register_entity(
+            "feature", "claim-1", "Claim Me", status="planned",
+            metadata={"k": "v"}, project_id="__unknown__",
+        )
+        target = self._make_target_workspace(db)
+        db.claim_unknown_entities(workspace_uuid=target)
+
+        row = db._conn.execute(
+            "SELECT uuid, type_id, name, status, metadata, workspace_uuid "
+            "FROM entities WHERE uuid = ?",
+            (u_uid,),
+        ).fetchone()
+        assert row["uuid"] == u_uid
+        assert row["type_id"] == "feature:claim-1"
+        assert row["name"] == "Claim Me"
+        assert row["status"] == "planned"
+        assert json.loads(row["metadata"]) == {"k": "v"}
+        assert row["workspace_uuid"] == target
+
+
+# ===========================================================================
+# Feature 108 Phase F (lineage + dependency flip):
+# query_dependencies workspace_uuid filtering
+# ===========================================================================
+
+
+class TestFeature108QueryDependenciesWorkspaceFilter:
+    """The workspace_uuid kwarg restricts query_dependencies to dependencies
+    whose blocked entity lives in the named workspace.
+    """
+
+    def _make_target_workspace(self, db: EntityDatabase) -> str:
+        target_uuid = str(uuid.uuid4())
+        now = db._now_iso()
+        db._conn.execute(
+            "INSERT INTO workspaces (uuid, project_id_legacy, "
+            "project_root, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (target_uuid, "ws-2", "/tmp/ws-2", now, now),
+        )
+        db._conn.commit()
+        return target_uuid
+
+    def test_workspace_uuid_filter_restricts_results(
+        self, db: EntityDatabase,
+    ):
+        """Edges in workspace A are not returned when filtering on workspace B."""
+        # Workspace A: unknown bucket
+        a1 = db.register_entity("feature", "a1", "A1", project_id="__unknown__")
+        a2 = db.register_entity("feature", "a2", "A2", project_id="__unknown__")
+        db.add_dependency(a1, a2)
+
+        # Workspace B: fresh workspace
+        ws_b = self._make_target_workspace(db)
+        b1 = db.register_entity("feature", "b1", "B1", workspace_uuid=ws_b)
+        b2 = db.register_entity("feature", "b2", "B2", workspace_uuid=ws_b)
+        db.add_dependency(b1, b2)
+
+        # Filtering on ws_b returns only the B edge.
+        deps = db.query_dependencies(workspace_uuid=ws_b)
+        assert len(deps) == 1
+        assert deps[0]["entity_uuid"] == b1
+        assert deps[0]["blocked_by_uuid"] == b2
+
+    def test_no_filter_returns_all(self, db: EntityDatabase):
+        """Without workspace_uuid kwarg, all edges return regardless of workspace."""
+        a1 = db.register_entity("feature", "a1", "A1", project_id="__unknown__")
+        a2 = db.register_entity("feature", "a2", "A2", project_id="__unknown__")
+        ws_b = self._make_target_workspace(db)
+        b1 = db.register_entity("feature", "b1", "B1", workspace_uuid=ws_b)
+        b2 = db.register_entity("feature", "b2", "B2", workspace_uuid=ws_b)
+        db.add_dependency(a1, a2)
+        db.add_dependency(b1, b2)
+
+        all_deps = db.query_dependencies()
+        assert len(all_deps) == 2
