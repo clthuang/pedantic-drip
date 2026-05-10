@@ -6997,3 +6997,447 @@ class TestMigration11ConcurrentRunners:
                 )
         finally:
             verify_conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Phase C: Migration 11 reverse + MIGRATIONS_DOWN dispatcher (Tasks 3.5–3.8)
+# ---------------------------------------------------------------------------
+
+
+def _seed_pre_migration_entities(conn: sqlite3.Connection) -> list[str]:
+    """Insert representative entities into a v10 DB; return their UUIDs.
+
+    Mix of (parent_uuid, parent_type_id) state combinations:
+      - both NULL
+      - parent_uuid only (post-Migration-11 invariant)
+      - parent_type_id only (this case is BLOCKED by the forward step 6
+        assertion, so do NOT include it in round-trip seed data)
+      - both set (common production state)
+
+    Note: Migration 11 forward aborts on (parent_uuid IS NULL AND
+    parent_type_id IS NOT NULL) per FR-7 step 6, so we exclude that combo.
+    """
+    now = "2026-05-10T00:00:00+00:00"
+    parent_uuid = str(uuid.uuid4())
+    child_uuid_only = str(uuid.uuid4())
+    child_both = str(uuid.uuid4())
+    standalone = str(uuid.uuid4())
+    rows = [
+        # 1) Parent (no parent_uuid, no parent_type_id) — both NULL
+        (parent_uuid, "feature:001-parent", "wsA", "feature", "001-parent",
+         "Parent", None, None, now),
+        # 2) Child via parent_uuid only
+        (child_uuid_only, "feature:002-child-uuid", "wsA", "feature",
+         "002-child-uuid", "Child UUID", None, parent_uuid, now),
+        # 3) Child via both parent_uuid AND parent_type_id
+        (child_both, "feature:003-child-both", "wsA", "feature",
+         "003-child-both", "Child Both", "feature:001-parent", parent_uuid,
+         now),
+        # 4) Standalone in different workspace
+        (standalone, "feature:004-standalone", "wsB", "feature",
+         "004-standalone", "Standalone", None, None, now),
+    ]
+    for row in rows:
+        conn.execute(
+            "INSERT INTO entities (uuid, type_id, project_id, entity_type, "
+            "entity_id, name, parent_type_id, parent_uuid, created_at, "
+            "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (*row[:8], row[8], row[8]),
+        )
+    conn.commit()
+    return [r[0] for r in rows]
+
+
+def _entities_snapshot_pre11(conn: sqlite3.Connection) -> list[tuple]:
+    """Return entities rows in PRE-Migration-11 column order, ordered by uuid."""
+    return conn.execute(
+        "SELECT uuid, type_id, project_id, entity_type, entity_id, name, "
+        "status, parent_type_id, parent_uuid, artifact_path, "
+        "created_at, updated_at, metadata FROM entities ORDER BY uuid"
+    ).fetchall()
+
+
+def _entities_snapshot_post11(conn: sqlite3.Connection) -> list[tuple]:
+    """Return entities rows in POST-Migration-11 column order, ordered by uuid."""
+    return conn.execute(
+        "SELECT uuid, workspace_uuid, type_id, entity_type, entity_id, name, "
+        "status, parent_uuid, artifact_path, created_at, updated_at, metadata "
+        "FROM entities ORDER BY uuid"
+    ).fetchall()
+
+
+def _table_info_snapshot(
+    conn: sqlite3.Connection, table: str
+) -> list[tuple]:
+    """Return PRAGMA table_info rows for a table."""
+    return conn.execute(f"PRAGMA table_info({table})").fetchall()
+
+
+def _migrate_down_to_10(conn: sqlite3.Connection) -> None:
+    """Test helper: reverse Migration 11 via the MIGRATIONS_DOWN dispatcher."""
+    from entity_registry.database import _migrate_down
+    _migrate_down(conn, 10)
+
+
+class TestMigrationsDownDispatcher:
+    """Phase C Task 3.1: MIGRATIONS_DOWN dispatcher behaviour."""
+
+    def test_migrations_down_contains_only_11(self):
+        """Phase C ships only the reverse Migration 11."""
+        from entity_registry.database import MIGRATIONS_DOWN
+        assert list(MIGRATIONS_DOWN.keys()) == [11]
+
+    def test_migrate_down_raises_on_unsupported_target_version(self, tmp_path):
+        """Reversing past 10 raises NotImplementedError."""
+        from entity_registry.database import _migrate_down
+        from entity_registry.test_helpers import make_v10_db
+        conn = make_v10_db(tmp_path / "v10.db")
+        try:
+            os.environ["PD_WORKSPACE_ROOT"] = str(tmp_path)
+            try:
+                _migrate_to_11(conn)
+            finally:
+                os.environ.pop("PD_WORKSPACE_ROOT", None)
+            # Now schema_version=11; ask to reverse to 9 → should attempt to
+            # reverse 11→10 (registered) then 10→9 (not registered) and
+            # raise NotImplementedError.
+            with pytest.raises(NotImplementedError) as exc:
+                _migrate_down(conn, 9)
+            assert "schema_version 10" in str(exc.value)
+        finally:
+            conn.close()
+
+
+class TestMigration11Reverse:
+    """Phase C Tasks 3.5, 3.6: Migration 11 reverse correctness."""
+
+    def test_migration_11_reverse_round_trip(self, tmp_path):
+        """up → down → up returns byte-identical entities + table_info."""
+        from entity_registry.test_helpers import make_v10_db
+        conn = make_v10_db(tmp_path / "v10.db")
+        try:
+            _seed_pre_migration_entities(conn)
+            os.environ["PD_WORKSPACE_ROOT"] = str(tmp_path)
+            try:
+                # Forward 1.
+                _migrate_to_11(conn)
+                snap_after_up1 = _entities_snapshot_post11(conn)
+                tinfo_after_up1 = _table_info_snapshot(conn, "entities")
+
+                # Reverse 1.
+                _migrate_down_to_10(conn)
+                # Schema version must be back to 10.
+                v = conn.execute(
+                    "SELECT value FROM _metadata "
+                    "WHERE key='schema_version'"
+                ).fetchone()
+                assert v[0] == "10"
+                # workspaces table should be gone.
+                tables = {
+                    r[0] for r in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    )
+                }
+                assert "workspaces" not in tables
+                # entities should have project_id and parent_type_id again.
+                cols_after_down = {
+                    r[1] for r in conn.execute(
+                        "PRAGMA table_info(entities)"
+                    )
+                }
+                assert "project_id" in cols_after_down
+                assert "parent_type_id" in cols_after_down
+                assert "workspace_uuid" not in cols_after_down
+
+                # Forward 2.
+                _migrate_to_11(conn)
+                snap_after_up2 = _entities_snapshot_post11(conn)
+                tinfo_after_up2 = _table_info_snapshot(conn, "entities")
+            finally:
+                os.environ.pop("PD_WORKSPACE_ROOT", None)
+
+            # Up #2 should produce byte-identical entities table_info.
+            assert tinfo_after_up1 == tinfo_after_up2, (
+                "PRAGMA table_info diff between up#1 and up#2"
+            )
+
+            # For the entity rows themselves, only workspace_uuid changes
+            # (it gets a new fresh UUID per up-migration). Compare the
+            # workspace-independent fields. Column order:
+            # uuid, workspace_uuid, type_id, entity_type, entity_id,
+            # name, status, parent_uuid, artifact_path, created_at,
+            # updated_at, metadata
+            def strip_ws(rows):
+                return [
+                    (r[0], r[2], r[3], r[4], r[5], r[6], r[7], r[8],
+                     r[9], r[10], r[11])
+                    for r in rows
+                ]
+
+            assert strip_ws(snap_after_up1) == strip_ws(snap_after_up2), (
+                "Entities content (modulo workspace_uuid) diverged across "
+                "up→down→up cycle"
+            )
+            # Counts agree.
+            assert (
+                conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
+                == 4
+            )
+        finally:
+            conn.close()
+
+    def test_migration_11_reverse_aborts_on_cross_workspace_parent_uuid(
+        self, tmp_path
+    ):
+        """Pre-down assertion: cross-workspace parent_uuid edges abort reverse."""
+        from entity_registry.test_helpers import make_v10_db
+        conn = make_v10_db(tmp_path / "v10.db")
+        try:
+            now = "2026-05-10T00:00:00+00:00"
+            # Two parents, each in a different workspace.
+            parent_a = str(uuid.uuid4())
+            parent_b = str(uuid.uuid4())
+            # Child references parent_a but lives in workspace B (cross-ws).
+            child_xws = str(uuid.uuid4())
+            for u, tid, pid, pt_id, p_uuid in [
+                (parent_a, "feature:001-A", "wsA", None, None),
+                (parent_b, "feature:001-B", "wsB", None, None),
+                (child_xws, "feature:002-xws", "wsB", None, parent_a),
+            ]:
+                conn.execute(
+                    "INSERT INTO entities (uuid, type_id, project_id, "
+                    "entity_type, entity_id, name, parent_type_id, "
+                    "parent_uuid, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (u, tid, pid, "feature", tid.split(":")[-1],
+                     "x", pt_id, p_uuid, now, now),
+                )
+            conn.commit()
+
+            os.environ["PD_WORKSPACE_ROOT"] = str(tmp_path)
+            try:
+                _migrate_to_11(conn)
+                # At this point cross-workspace edges may exist (parent_uuid
+                # points across workspaces). Reverse should abort.
+                with pytest.raises(RuntimeError) as exc:
+                    _migrate_down_to_10(conn)
+                assert (
+                    "cross-workspace" in str(exc.value).lower()
+                    or "cross_workspace" in str(exc.value).lower()
+                ), exc.value
+                # schema_version unchanged.
+                v = conn.execute(
+                    "SELECT value FROM _metadata "
+                    "WHERE key='schema_version'"
+                ).fetchone()
+                assert v[0] == "11"
+            finally:
+                os.environ.pop("PD_WORKSPACE_ROOT", None)
+        finally:
+            conn.close()
+
+    def test_migration_11_up_and_down_full_round_trip_on_synthetic(
+        self, tmp_path
+    ):
+        """4-row mix → up → down → assert restored project_id + parent_type_id.
+
+        Asserts AC-11 (parent_type_id restored from parent_uuid → type_id JOIN)
+        and AC-12 (project_id restored from workspaces.project_id_legacy).
+        """
+        from entity_registry.test_helpers import make_v10_db
+        conn = make_v10_db(tmp_path / "v10.db")
+        try:
+            uuids = _seed_pre_migration_entities(conn)
+            # Capture pre-up state for comparison.
+            pre_up = _entities_snapshot_pre11(conn)
+            pre_up_by_uuid = {r[0]: r for r in pre_up}
+
+            os.environ["PD_WORKSPACE_ROOT"] = str(tmp_path)
+            try:
+                _migrate_to_11(conn)
+                _migrate_down_to_10(conn)
+            finally:
+                os.environ.pop("PD_WORKSPACE_ROOT", None)
+
+            post_down = _entities_snapshot_pre11(conn)
+            post_down_by_uuid = {r[0]: r for r in post_down}
+
+            # Same set of UUIDs.
+            assert set(post_down_by_uuid.keys()) == set(pre_up_by_uuid.keys())
+            # Each row has project_id restored to the original.
+            for u in uuids:
+                pre = pre_up_by_uuid[u]
+                post = post_down_by_uuid[u]
+                # Column order: uuid, type_id, project_id, entity_type,
+                # entity_id, name, status, parent_type_id, parent_uuid,
+                # artifact_path, created_at, updated_at, metadata
+                assert pre[2] == post[2], (
+                    f"project_id changed for {u}: "
+                    f"pre={pre[2]!r} post={post[2]!r}"
+                )
+            # Children with parent_uuid have parent_type_id restored.
+            child_uuid_only = uuids[1]
+            child_both = uuids[2]
+            for u in (child_uuid_only, child_both):
+                row = post_down_by_uuid[u]
+                # parent_uuid (idx 8) should be the parent's uuid.
+                assert row[8] == uuids[0]
+                # parent_type_id (idx 7) should be 'feature:001-parent'
+                # (recovered from parent_uuid → type_id JOIN).
+                assert row[7] == "feature:001-parent", (
+                    f"parent_type_id not restored for {u}: got {row[7]!r}"
+                )
+            # Standalone has parent_type_id NULL.
+            row_standalone = post_down_by_uuid[uuids[3]]
+            assert row_standalone[7] is None
+        finally:
+            conn.close()
+
+
+class TestMigration11LiveDbRoundTrip:
+    """Phase C Task 3.7: round-trip on a copy of the live DB."""
+
+    def test_migration_11_round_trip_on_live_db_copy(self, tmp_path):
+        """Copy ~/.claude/pd/entities/entities.db → up → down → up.
+
+        Skipped if the live DB is missing or already migrated past 10.
+        """
+        import shutil
+        live_db = os.path.expanduser("~/.claude/pd/entities/entities.db")
+        if not os.path.isfile(live_db):
+            pytest.skip(f"Live DB not present at {live_db}")
+        copy_path = str(tmp_path / "live_copy.db")
+        shutil.copy2(live_db, copy_path)
+        # WAL/SHM may also exist; copy them so we open a consistent db.
+        for ext in ("-wal", "-shm"):
+            src = live_db + ext
+            if os.path.isfile(src):
+                shutil.copy2(src, copy_path + ext)
+
+        # Open and check schema_version.
+        probe = sqlite3.connect(copy_path, timeout=5.0)
+        try:
+            probe.row_factory = sqlite3.Row
+            probe.execute("PRAGMA journal_mode = WAL")
+            row = probe.execute(
+                "SELECT value FROM _metadata WHERE key='schema_version'"
+            ).fetchone()
+            if row is None:
+                pytest.skip("Live DB has no _metadata.schema_version")
+            try:
+                live_v = int(row[0])
+            except (TypeError, ValueError):
+                pytest.skip(f"Live DB schema_version unreadable: {row[0]!r}")
+            if live_v != 10:
+                pytest.skip(
+                    f"Live DB schema_version={live_v}, not 10 — "
+                    "round-trip test skipped (already migrated)"
+                )
+        finally:
+            probe.close()
+
+        # Run the round-trip.
+        conn = sqlite3.connect(copy_path, timeout=10.0)
+        try:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA busy_timeout = 15000")
+            os.environ["PD_WORKSPACE_ROOT"] = str(tmp_path)
+            try:
+                _migrate_to_11(conn)
+                # Check whether reverse is feasible on this live DB —
+                # cross-workspace parent_uuid edges are blocked by the
+                # pre-down assertion. If present, we still validate that
+                # the forward migration succeeded and the assertion fires.
+                cross_n = conn.execute(
+                    "SELECT COUNT(*) FROM entities e WHERE EXISTS ("
+                    "  SELECT 1 FROM entities p "
+                    "  WHERE p.uuid = e.parent_uuid "
+                    "    AND p.workspace_uuid != e.workspace_uuid"
+                    ")"
+                ).fetchone()[0]
+                if cross_n > 0:
+                    with pytest.raises(RuntimeError) as exc:
+                        _migrate_down_to_10(conn)
+                    assert "cross-workspace" in str(exc.value).lower()
+                    # Forward path succeeded; reverse blocked by data.
+                    v = conn.execute(
+                        "SELECT value FROM _metadata "
+                        "WHERE key='schema_version'"
+                    ).fetchone()
+                    assert v[0] == "11"
+                    return  # Test passes — reverse correctly blocked.
+                _migrate_down_to_10(conn)
+                _migrate_to_11(conn)
+            finally:
+                os.environ.pop("PD_WORKSPACE_ROOT", None)
+            v = conn.execute(
+                "SELECT value FROM _metadata WHERE key='schema_version'"
+            ).fetchone()
+            assert v[0] == "11"
+        finally:
+            conn.close()
+
+
+class TestMigration11SchemaDiff:
+    """Phase C Task 3.8: capture forward → reverse schema diff and assert empty."""
+
+    def test_migration_11_schema_diff_is_empty(self, tmp_path):
+        """forward → reverse → schema diff against original v10 must be empty.
+
+        This is the runtime version of Task 3.8; the file-based artifact is
+        committed at ``docs/features/108-workspace-identity-foundation/migration-11-schema-diff.txt``
+        as additional human-reviewable evidence.
+        """
+        import difflib
+        from entity_registry.test_helpers import make_v10_db
+
+        # Build two identical v10 DBs; one stays as the reference, the
+        # other goes through forward + reverse.
+        ref_conn = make_v10_db(tmp_path / "ref.db")
+        roundtrip_conn = make_v10_db(tmp_path / "rt.db")
+        try:
+            os.environ["PD_WORKSPACE_ROOT"] = str(tmp_path)
+            try:
+                _migrate_to_11(roundtrip_conn)
+                _migrate_down_to_10(roundtrip_conn)
+            finally:
+                os.environ.pop("PD_WORKSPACE_ROOT", None)
+
+            def schema_lines(conn):
+                rows = conn.execute(
+                    "SELECT type, name, tbl_name, sql FROM sqlite_master "
+                    "WHERE name NOT LIKE 'sqlite_%' "
+                    "ORDER BY type, name"
+                ).fetchall()
+                lines = []
+                for typ, name, tbl, sql in rows:
+                    if sql:
+                        lines.append(f"{typ}:{name}:{tbl}:")
+                        # Normalise whitespace for comparison.
+                        norm = " ".join(sql.split())
+                        # SQLite ALTER TABLE RENAME stores the new table
+                        # name double-quoted in sqlite_master; that
+                        # quoting is a serialisation artefact, not a
+                        # schema difference. Strip CREATE TABLE quoting
+                        # so the round-trip diff stays empty.
+                        # Match: CREATE TABLE "name" → CREATE TABLE name
+                        norm = re.sub(
+                            r'(CREATE\s+(?:VIRTUAL\s+)?TABLE\s+)"([^"]+)"',
+                            r'\1\2', norm,
+                        )
+                        lines.append(f"  {norm}")
+                return lines
+
+            ref_lines = schema_lines(ref_conn)
+            rt_lines = schema_lines(roundtrip_conn)
+            diff = list(difflib.unified_diff(
+                ref_lines, rt_lines,
+                fromfile="pre-up.sql", tofile="post-down.sql", lineterm="",
+            ))
+            assert not diff, (
+                "Schema diff non-empty after up→down round-trip:\n"
+                + "\n".join(diff)
+            )
+        finally:
+            ref_conn.close()
+            roundtrip_conn.close()

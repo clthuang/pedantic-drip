@@ -22,7 +22,12 @@ if _hooks_lib not in (os.path.normpath(p) for p in sys.path):
 from entity_registry.backfill import run_backfill
 from entity_registry.database import EntityDatabase
 from entity_registry.id_generator import generate_entity_id
-from entity_registry.project_identity import GitProjectInfo, collect_git_info, detect_project_id
+from entity_registry.project_identity import (
+    GitProjectInfo,
+    collect_git_info,
+    detect_project_id,
+    resolve_workspace_uuid,
+)
 from entity_registry.server_helpers import (
     _process_export_entities,
     _process_export_lineage_markdown,
@@ -49,6 +54,10 @@ _project_root: str = ""
 _artifacts_root: str = ""
 _project_id: str = ""
 _git_info: GitProjectInfo | None = None
+# Phase D Task 4.8: lazy workspace_uuid global. Populated during lifespan
+# from resolve_workspace_uuid(_project_root). Phase E will swap callers
+# (e.g., _upsert_project) over to using this. Empty string until set.
+_workspace_uuid: str = ""
 
 _logger = logging.getLogger("entity_server")
 
@@ -170,7 +179,7 @@ def _backfill_project_ids(
 @asynccontextmanager
 async def lifespan(server):
     """Manage DB connection and backfill lifecycle."""
-    global _db, _db_unavailable, _recovery_thread, _config, _project_root, _artifacts_root, _project_id, _git_info
+    global _db, _db_unavailable, _recovery_thread, _config, _project_root, _artifacts_root, _project_id, _git_info, _workspace_uuid
 
     # Determine DB path (env override for testing, else global store).
     db_path = os.environ.get(
@@ -200,6 +209,17 @@ async def lifespan(server):
 
         # Detect project identity and register in DB.
         _project_id = detect_project_id(_project_root)
+        # Phase D Task 4.8: populate the workspace_uuid lazy global. This is
+        # best-effort — failures are logged but never block startup. Phase E
+        # will swap _upsert_project and register_entity to use this.
+        try:
+            _workspace_uuid = resolve_workspace_uuid(_project_root)
+        except Exception as exc:
+            print(
+                f"entity-server: workspace_uuid resolution failed: {exc}",
+                file=sys.stderr,
+            )
+            _workspace_uuid = ""
         try:
             _git_info = collect_git_info(_project_root)
             _upsert_project(_db, _git_info)

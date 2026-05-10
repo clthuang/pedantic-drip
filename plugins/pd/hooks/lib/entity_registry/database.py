@@ -2188,6 +2188,416 @@ def _migration_11_workspace_identity(conn: sqlite3.Connection) -> None:
         )
 
 
+def _migration_11_workspace_identity_down(conn: sqlite3.Connection) -> None:
+    """Reverse Migration 11. Restores exact pre-11 schema.
+
+    Per spec FR-8 / design §7.2, this is a 16-step reverse migration packaged
+    as a single transactional unit. Mirrors the forward envelope (PRAGMA OFF
+    outside tx; BEGIN IMMEDIATE; in-tx schema_version=10 stamp; COMMIT;
+    PRAGMA ON; post-FK check).
+
+    Steps:
+      0. Pre-tx: SQLite ≥ 3.35 assertion (DROP COLUMN requirement).
+      1. PRAGMA foreign_keys = OFF.
+      2. BEGIN IMMEDIATE; reverse re-check guard.
+      3. Pre-down assertion (cross-workspace parent_uuid edges).
+      4. Pre-migration FK check.
+      5. Build entities_old (pre-11 schema).
+      6. Restore project_id via JOIN on workspaces.project_id_legacy.
+      7. Restore parent_type_id via parent_uuid → uuid → type_id JOIN.
+      8. DROP entities; RENAME entities_old → entities.
+      9. Recreate 9 pre-11 triggers + 6 pre-11 indexes.
+     10. Reverse workflow_phases (drop triggers, drop index,
+         DROP COLUMN workspace_uuid).
+     11. Reverse sequences (rebuild keyed on project_id).
+     12. Reverse projects (drop workspace_uuid column).
+     13. Rebuild entities_fts.
+     14. DROP workspaces table + idx_workspaces_legacy.
+     15. UPDATE _metadata SET schema_version='10' INSIDE tx.
+     16. COMMIT; PRAGMA foreign_keys = ON; post-FK check.
+
+    Raises:
+        AssertionError: SQLite < 3.35.0 (DROP COLUMN unavailable).
+        RuntimeError: cross-workspace parent_uuid edges; FK violations.
+    """
+    # ----------------------------------------------------------------------
+    # Step 0: SQLite version assertion (defense in depth)
+    # ----------------------------------------------------------------------
+    # ALTER TABLE DROP COLUMN was added in SQLite 3.35.0 (March 2021). The
+    # workflow_phases.workspace_uuid drop in step 10 requires it. Python 3.12+
+    # ships sqlite >= 3.43, so this is documentation/safety more than a real
+    # gate.
+    assert sqlite3.sqlite_version_info >= (3, 35, 0), (
+        "Migration 11 reverse requires SQLite 3.35+ for "
+        "ALTER TABLE DROP COLUMN; current version: "
+        f"{sqlite3.sqlite_version}"
+    )
+
+    # ----------------------------------------------------------------------
+    # Step 1: PRAGMA foreign_keys = OFF (outside transaction)
+    # ----------------------------------------------------------------------
+    conn.execute("PRAGMA foreign_keys = OFF")
+    fk_status = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+    if fk_status != 0:
+        raise RuntimeError(
+            "PRAGMA foreign_keys = OFF did not take effect — "
+            "aborting migration 11 reverse"
+        )
+
+    try:
+        # ------------------------------------------------------------------
+        # Step 2: BEGIN IMMEDIATE; reverse re-check guard
+        # ------------------------------------------------------------------
+        conn.execute("BEGIN IMMEDIATE")
+        # Reverse re-check guard: if schema_version is already <= 10,
+        # someone (or another process) already applied the reverse — no-op.
+        v_row = conn.execute(
+            "SELECT value FROM _metadata WHERE key='schema_version'"
+        ).fetchone()
+        if v_row is None:
+            raise RuntimeError(
+                "Migration 11 reverse: _metadata.schema_version missing"
+            )
+        try:
+            current_version = int(v_row[0])
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"Migration 11 reverse: invalid schema_version {v_row[0]!r}"
+            ) from exc
+        if current_version <= 10:
+            conn.rollback()
+            return
+
+        # ------------------------------------------------------------------
+        # Step 3: Pre-down assertion — cross-workspace parent_uuid edges
+        # ------------------------------------------------------------------
+        # Cross-workspace parent_uuid references cannot be reversed losslessly
+        # into pre-11 parent_type_id text format (text references are
+        # workspace-scoped via the old UNIQUE(project_id, type_id)). Abort if
+        # any such edges exist.
+        cross_n = conn.execute(
+            "SELECT COUNT(*) FROM entities e WHERE EXISTS ("
+            "  SELECT 1 FROM entities p "
+            "  WHERE p.uuid = e.parent_uuid "
+            "    AND p.workspace_uuid != e.workspace_uuid"
+            ")"
+        ).fetchone()[0]
+        if cross_n > 0:
+            raise RuntimeError(
+                f"Cannot reverse Migration 11: {cross_n} cross-workspace "
+                "parent_uuid edges exist; operator must prune them before "
+                "reversing"
+            )
+
+        # ------------------------------------------------------------------
+        # Step 4: pre-migration FK check
+        # ------------------------------------------------------------------
+        fk_violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if fk_violations:
+            raise RuntimeError(
+                f"Migration 11 reverse pre-FK check non-empty: "
+                f"{fk_violations}"
+            )
+
+        # ------------------------------------------------------------------
+        # Pre-step 5: drop triggers that reference `entities` so that the
+        # subsequent DROP TABLE entities does not fire them.
+        # ------------------------------------------------------------------
+        # The wp_autofill_workspace_uuid + wp_reject_orphaned_insert pair
+        # references entities via subqueries in their WHEN clauses; SQLite
+        # otherwise re-evaluates them during the rebuild. We will recreate
+        # the workflow_phases-side cleanup in step 10.
+        conn.execute("DROP TRIGGER IF EXISTS wp_autofill_workspace_uuid")
+        conn.execute("DROP TRIGGER IF EXISTS wp_reject_orphaned_insert")
+
+        # ------------------------------------------------------------------
+        # Step 5: Build entities_old (pre-11 schema)
+        # ------------------------------------------------------------------
+        # Mirrors the post-Migration-8 entities table layout exactly:
+        # 13 columns, project_id NOT NULL DEFAULT '__unknown__',
+        # parent_type_id, parent_uuid (FK to self), UNIQUE(project_id, type_id).
+        conn.execute("""
+            CREATE TABLE entities_old (
+                uuid           TEXT NOT NULL PRIMARY KEY,
+                type_id        TEXT NOT NULL,
+                project_id     TEXT NOT NULL DEFAULT '__unknown__',
+                entity_type    TEXT NOT NULL,
+                entity_id      TEXT NOT NULL,
+                name           TEXT NOT NULL,
+                status         TEXT,
+                parent_type_id TEXT,
+                parent_uuid    TEXT REFERENCES entities_old(uuid),
+                artifact_path  TEXT,
+                created_at     TEXT NOT NULL,
+                updated_at     TEXT NOT NULL,
+                metadata       TEXT,
+                UNIQUE(project_id, type_id)
+            )
+        """)
+
+        # ------------------------------------------------------------------
+        # Step 6: Restore project_id via JOIN on workspaces.project_id_legacy
+        # ------------------------------------------------------------------
+        pre_count = conn.execute(
+            "SELECT COUNT(*) FROM entities"
+        ).fetchone()[0]
+        conn.execute(
+            "INSERT INTO entities_old "
+            "(uuid, type_id, project_id, entity_type, entity_id, name, "
+            "status, parent_type_id, parent_uuid, artifact_path, "
+            "created_at, updated_at, metadata) "
+            "SELECT e.uuid, e.type_id, w.project_id_legacy, e.entity_type, "
+            "e.entity_id, e.name, e.status, NULL, e.parent_uuid, "
+            "e.artifact_path, e.created_at, e.updated_at, e.metadata "
+            "FROM entities e "
+            "JOIN workspaces w ON e.workspace_uuid = w.uuid"
+        )
+        post_count = conn.execute(
+            "SELECT COUNT(*) FROM entities_old"
+        ).fetchone()[0]
+        if post_count != pre_count:
+            raise RuntimeError(
+                f"Migration 11 reverse data copy mismatch: "
+                f"entities pre={pre_count}, entities_old post={post_count}"
+            )
+
+        # ------------------------------------------------------------------
+        # Step 7: Restore parent_type_id via parent_uuid → uuid → type_id JOIN
+        # ------------------------------------------------------------------
+        conn.execute(
+            "UPDATE entities_old SET parent_type_id = ("
+            "  SELECT type_id FROM entities_old AS p "
+            "  WHERE p.uuid = entities_old.parent_uuid"
+            ") WHERE parent_uuid IS NOT NULL"
+        )
+
+        # ------------------------------------------------------------------
+        # Step 8: DROP entities; RENAME entities_old → entities
+        # ------------------------------------------------------------------
+        conn.execute("DROP TABLE entities")
+        conn.execute("PRAGMA legacy_alter_table = OFF")
+        conn.execute("ALTER TABLE entities_old RENAME TO entities")
+
+        # ------------------------------------------------------------------
+        # Step 9: Recreate 9 pre-11 triggers + 6 pre-11 indexes
+        # ------------------------------------------------------------------
+        # Drop any post-11 triggers that the rename did not carry over.
+        conn.execute("DROP TRIGGER IF EXISTS enforce_immutable_workspace_uuid")
+        conn.execute("DROP TRIGGER IF EXISTS enforce_no_self_parent_uuid_insert")
+        conn.execute("DROP TRIGGER IF EXISTS enforce_no_self_parent_uuid_update")
+
+        # 9 pre-11 triggers (mirrors post-Migration-8 trigger set):
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS enforce_immutable_type_id
+            BEFORE UPDATE OF type_id ON entities
+            BEGIN SELECT RAISE(ABORT, 'type_id is immutable'); END
+        """)
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS enforce_immutable_entity_type
+            BEFORE UPDATE OF entity_type ON entities
+            BEGIN SELECT RAISE(ABORT, 'entity_type is immutable'); END
+        """)
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS enforce_immutable_created_at
+            BEFORE UPDATE OF created_at ON entities
+            BEGIN SELECT RAISE(ABORT, 'created_at is immutable'); END
+        """)
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS enforce_immutable_uuid
+            BEFORE UPDATE OF uuid ON entities
+            BEGIN SELECT RAISE(ABORT, 'uuid is immutable'); END
+        """)
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS enforce_immutable_project_id
+            BEFORE UPDATE OF project_id ON entities
+            BEGIN SELECT RAISE(ABORT, 'project_id is immutable — use re-attribution API'); END
+        """)
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS enforce_no_self_parent
+            BEFORE INSERT ON entities
+            WHEN NEW.parent_type_id = NEW.type_id
+            BEGIN SELECT RAISE(ABORT, 'entity cannot be its own parent'); END
+        """)
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS enforce_no_self_parent_update
+            BEFORE UPDATE OF parent_type_id ON entities
+            WHEN NEW.parent_type_id = NEW.type_id
+            BEGIN SELECT RAISE(ABORT, 'entity cannot be its own parent'); END
+        """)
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS enforce_no_self_parent_uuid_insert
+            BEFORE INSERT ON entities
+            WHEN NEW.parent_uuid = NEW.uuid
+            BEGIN SELECT RAISE(ABORT, 'entity cannot be its own parent (uuid)'); END
+        """)
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS enforce_no_self_parent_uuid_update
+            BEFORE UPDATE OF parent_uuid ON entities
+            WHEN NEW.parent_uuid = NEW.uuid
+            BEGIN SELECT RAISE(ABORT, 'entity cannot be its own parent (uuid)'); END
+        """)
+
+        # Drop post-11 indexes (rename may or may not have carried them).
+        conn.execute("DROP INDEX IF EXISTS idx_workspace_uuid")
+        conn.execute("DROP INDEX IF EXISTS idx_workspace_entity_type")
+
+        # 6 pre-11 indexes:
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_entity_type "
+            "ON entities(entity_type)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_status ON entities(status)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_parent_type_id "
+            "ON entities(parent_type_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_parent_uuid "
+            "ON entities(parent_uuid)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_project_id "
+            "ON entities(project_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_project_entity_type "
+            "ON entities(project_id, entity_type)"
+        )
+
+        # ------------------------------------------------------------------
+        # Step 10: Reverse workflow_phases (drop idx + column)
+        # ------------------------------------------------------------------
+        # Triggers were dropped pre-step 5 because they reference entities.
+        conn.execute("DROP INDEX IF EXISTS idx_wp_workspace_uuid")
+        conn.execute(
+            "ALTER TABLE workflow_phases DROP COLUMN workspace_uuid"
+        )
+
+        # ------------------------------------------------------------------
+        # Step 11: Reverse sequences (rebuild keyed on project_id)
+        # ------------------------------------------------------------------
+        conn.execute("""
+            CREATE TABLE sequences_old (
+                project_id  TEXT NOT NULL,
+                entity_type TEXT NOT NULL,
+                next_val    INTEGER NOT NULL DEFAULT 1,
+                PRIMARY KEY (project_id, entity_type)
+            )
+        """)
+        conn.execute(
+            "INSERT INTO sequences_old (project_id, entity_type, next_val) "
+            "SELECT w.project_id_legacy, s.entity_type, s.next_val "
+            "FROM sequences s "
+            "JOIN workspaces w ON s.workspace_uuid = w.uuid"
+        )
+        conn.execute("DROP TABLE sequences")
+        conn.execute("ALTER TABLE sequences_old RENAME TO sequences")
+
+        # ------------------------------------------------------------------
+        # Step 12: Reverse projects (drop workspace_uuid column)
+        # ------------------------------------------------------------------
+        # Rebuild without workspace_uuid (mirror of forward step 13).
+        conn.execute("""
+            CREATE TABLE projects_old (
+                project_id      TEXT PRIMARY KEY,
+                name            TEXT NOT NULL,
+                root_commit_sha TEXT,
+                remote_url      TEXT,
+                normalized_url  TEXT,
+                remote_host     TEXT,
+                remote_owner    TEXT,
+                remote_repo     TEXT,
+                default_branch  TEXT,
+                project_root    TEXT,
+                is_git_repo     INTEGER NOT NULL DEFAULT 1,
+                created_at      TEXT NOT NULL,
+                updated_at      TEXT NOT NULL
+            )
+        """)
+        conn.execute(
+            "INSERT INTO projects_old "
+            "(project_id, name, root_commit_sha, remote_url, normalized_url, "
+            "remote_host, remote_owner, remote_repo, default_branch, "
+            "project_root, is_git_repo, created_at, updated_at) "
+            "SELECT project_id, name, root_commit_sha, remote_url, "
+            "normalized_url, remote_host, remote_owner, remote_repo, "
+            "default_branch, project_root, is_git_repo, created_at, updated_at "
+            "FROM projects"
+        )
+        conn.execute("DROP TABLE projects")
+        conn.execute("ALTER TABLE projects_old RENAME TO projects")
+
+        # ------------------------------------------------------------------
+        # Step 13: Rebuild entities_fts (mirror of forward step 14)
+        # ------------------------------------------------------------------
+        conn.execute("DROP TABLE IF EXISTS entities_fts")
+        try:
+            conn.execute(
+                "CREATE VIRTUAL TABLE entities_fts USING fts5("
+                "name, entity_id, entity_type, status, metadata_text)"
+            )
+        except sqlite3.OperationalError as exc:
+            if "no such module: fts5" in str(exc):
+                raise RuntimeError("FTS5 extension not available") from exc
+            raise
+        rows = conn.execute(
+            "SELECT rowid, name, entity_id, entity_type, status, metadata "
+            "FROM entities"
+        ).fetchall()
+        for row in rows:
+            metadata_text = flatten_metadata(
+                json.loads(row[5]) if row[5] else None
+            )
+            conn.execute(
+                "INSERT INTO entities_fts(rowid, name, entity_id, "
+                "entity_type, status, metadata_text) "
+                "VALUES(?, ?, ?, ?, ?, ?)",
+                (row[0], row[1], row[2], row[3], row[4] or "", metadata_text),
+            )
+
+        # ------------------------------------------------------------------
+        # Step 14: DROP workspaces + idx_workspaces_legacy
+        # ------------------------------------------------------------------
+        conn.execute("DROP INDEX IF EXISTS idx_workspaces_legacy")
+        conn.execute("DROP TABLE workspaces")
+
+        # ------------------------------------------------------------------
+        # Step 15: stamp schema_version=10 INSIDE the transaction
+        # ------------------------------------------------------------------
+        # Mirrors forward Migration 11 step 15 + Migration 10's pattern at
+        # database.py:1604-1618.
+        conn.execute(
+            "INSERT OR REPLACE INTO _metadata (key, value) "
+            "VALUES ('schema_version', '10')"
+        )
+
+        # ------------------------------------------------------------------
+        # Step 16: COMMIT
+        # ------------------------------------------------------------------
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except sqlite3.Error:
+            pass
+        raise
+    finally:
+        # Re-enable FKs whether success or failure.
+        conn.execute("PRAGMA foreign_keys = ON")
+
+    # ----------------------------------------------------------------------
+    # Post-transaction FK check
+    # ----------------------------------------------------------------------
+    post_violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+    if post_violations:
+        raise RuntimeError(
+            f"Migration 11 reverse post-FK check non-empty: "
+            f"{post_violations}"
+        )
+
+
 # Ordered mapping of version -> migration function.
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _create_initial_schema,
@@ -2202,6 +2612,77 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     10: _migration_10_phase_events,
     11: _migration_11_workspace_identity,
 }
+
+# Reverse-migration registry (FR-8 / design §6.7). Migrations 1-10 are
+# forward-only; calling _migrate_down() with target_version < 10 raises
+# NotImplementedError. Currently only schema_version 11 is reversible.
+MIGRATIONS_DOWN: dict[int, Callable[[sqlite3.Connection], None]] = {
+    11: _migration_11_workspace_identity_down,
+}
+
+
+def _migrate_down(conn: sqlite3.Connection, target_version: int) -> None:
+    """Reverse-migration dispatcher (test-only in this feature).
+
+    Iterates ``MIGRATIONS_DOWN`` keys in **descending** order, applying each
+    reverse migration until ``_metadata.schema_version == target_version``.
+
+    Each reverse migration manages its own transaction (BEGIN IMMEDIATE /
+    COMMIT) and stamps the new (lower) schema_version INSIDE that transaction
+    — mirroring the forward Migration 10 / Migration 11 pattern.
+
+    Currently only schema_version 11 is reversible. Calling with
+    ``target_version < 10`` raises ``NotImplementedError`` naming the missing
+    reverse migration.
+
+    Parameters
+    ----------
+    conn:
+        Open SQLite connection.
+    target_version:
+        Desired post-reverse schema_version. Must be >= the smallest
+        reversible version - 1 (i.e., 10 currently).
+
+    Raises
+    ------
+    NotImplementedError
+        If a reverse migration would be required for a version that has
+        no entry in ``MIGRATIONS_DOWN``.
+    """
+    while True:
+        v_row = conn.execute(
+            "SELECT value FROM _metadata WHERE key='schema_version'"
+        ).fetchone()
+        if v_row is None:
+            raise RuntimeError(
+                "_migrate_down: _metadata.schema_version missing"
+            )
+        try:
+            current = int(v_row[0])
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"_migrate_down: invalid schema_version {v_row[0]!r}"
+            ) from exc
+        if current <= target_version:
+            return
+        # Need to reverse from `current` -> `current - 1`.
+        if current not in MIGRATIONS_DOWN:
+            raise NotImplementedError(
+                f"Reverse migration for schema_version {current} not "
+                "implemented"
+            )
+        MIGRATIONS_DOWN[current](conn)
+        # After each reverse migration the version must be lower; if not,
+        # something is wrong with the reverse function (it should stamp
+        # in-tx). Defensive guard against infinite loop.
+        new_v_row = conn.execute(
+            "SELECT value FROM _metadata WHERE key='schema_version'"
+        ).fetchone()
+        if new_v_row is None or int(new_v_row[0]) >= current:
+            raise RuntimeError(
+                f"_migrate_down: schema_version did not decrement after "
+                f"reversing from {current}"
+            )
 
 # Sentinel object to distinguish "not provided" from explicit ``None``.
 _UNSET = object()
