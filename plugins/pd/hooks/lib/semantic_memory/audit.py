@@ -141,6 +141,11 @@ def main(argv: list[str] | None = None) -> int:
         default=str(Path.home() / ".claude" / "pd" / "memory" / "memory.db"),
     )
     parser.add_argument("--project-root", default=None)
+    parser.add_argument(
+        "--workspace-uuid",
+        default=None,
+        help="Optional workspace UUID (feature 108 / Decision 6).",
+    )
     parser.add_argument("--feature-branch", default=None)
     parser.add_argument("--json", action="store_true", dest="emit_json")
     parser.add_argument("--strict", action="store_true")

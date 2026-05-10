@@ -129,7 +129,13 @@ def _check_db_available():
 
 
 def _upsert_project(db: EntityDatabase, info: GitProjectInfo) -> None:
-    """Insert or update a project row via db.upsert_project()."""
+    """Insert or update a project row via db.upsert_project().
+
+    Feature 108 design §6.10: forward the lazy workspace_uuid global so the
+    eventual ``projects.workspace_uuid`` write path has the value
+    pre-resolved. ``_workspace_uuid`` is set by lifespan() before this
+    helper is called.
+    """
     db.upsert_project(
         project_id=info.project_id,
         name=info.name,
@@ -142,6 +148,7 @@ def _upsert_project(db: EntityDatabase, info: GitProjectInfo) -> None:
         default_branch=info.default_branch,
         project_root=info.project_root,
         is_git_repo=info.is_git_repo,
+        workspace_uuid=_workspace_uuid or None,
     )
 
 
@@ -209,11 +216,22 @@ async def lifespan(server):
 
         # Detect project identity and register in DB.
         _project_id = detect_project_id(_project_root)
-        # Phase D Task 4.8: populate the workspace_uuid lazy global. This is
-        # best-effort — failures are logged but never block startup. Phase E
-        # will swap _upsert_project and register_entity to use this.
+        # Phase E Task 5.5: populate the workspace_uuid lazy global with
+        # FR-3 / Decision 11 precedence:
+        #   ENTITY_WORKSPACE_UUID env (test override / explicit)
+        #     > WORKSPACE_UUID env (subprocess inheritance from hooks)
+        #     > resolve_workspace_uuid(_project_root) (file → DB → fresh)
+        # All resolution failures are best-effort; we never block startup.
         try:
-            _workspace_uuid = resolve_workspace_uuid(_project_root)
+            env_uuid = (
+                os.environ.get("ENTITY_WORKSPACE_UUID")
+                or os.environ.get("WORKSPACE_UUID")
+                or ""
+            )
+            if env_uuid:
+                _workspace_uuid = env_uuid
+            else:
+                _workspace_uuid = resolve_workspace_uuid(_project_root)
         except Exception as exc:
             print(
                 f"entity-server: workspace_uuid resolution failed: {exc}",
@@ -458,8 +476,9 @@ async def register_entity(
     name: str = "",
     artifact_path: str | None = None,
     status: str | None = None,
-    parent_type_id: str | None = None,
+    parent_uuid: str | None = None,
     metadata: str | dict | None = None,
+    workspace_uuid: str | None = None,
     project_id: str | None = None,
     auto_id: bool = False,
 ) -> str:
@@ -478,13 +497,21 @@ async def register_entity(
         Optional filesystem path to the entity's artifact.
     status:
         Optional status string.
-    parent_type_id:
-        Optional type_id of the parent entity (e.g. 'project:my-project').
+    parent_uuid:
+        Optional UUID of the parent entity. Replaces the legacy
+        ``parent_type_id`` parameter dropped by feature 108 / FR-13.
     metadata:
         Optional metadata — pass a dict (preferred) or a JSON string;
         dicts are auto-coerced to JSON.
+    workspace_uuid:
+        Workspace identity (feature 108). When ``None``, the MCP server
+        resolves it via the lazy ``_workspace_uuid`` global populated at
+        server startup from ``.claude/pd/workspace.json``.
     project_id:
-        Project scope. Defaults to current project. Cannot be '*'.
+        Legacy project scope (pre-Migration-11). Retained for the duration
+        of the Migration 11 transition: when ``UNIQUE(workspace_uuid,
+        type_id)`` semantics are fully wired through database.py the kwarg
+        is dropped.
     auto_id:
         If True, auto-generate entity_id from name. Cannot be used
         together with an explicit entity_id.
@@ -497,6 +524,10 @@ async def register_entity(
     if _db is None:
         return "Error: database not initialized (server not started)"
 
+    # Feature 108 FR-13: resolve workspace_uuid via lazy global if caller
+    # did not supply it. Default to the empty string when no workspace
+    # context is set (legacy fixture path).
+    resolved_workspace_uuid = workspace_uuid or _workspace_uuid or ""
     resolved_project_id = project_id or _project_id or "__unknown__"
 
     if auto_id and entity_id:
@@ -511,11 +542,16 @@ async def register_entity(
     if isinstance(metadata, dict):
         metadata = json.dumps(metadata)
 
+    # database.py register_entity still keys on project_id; the
+    # workspace_uuid surface is captured in metadata until the DB-layer
+    # signature flip lands (out of scope for this dispatch).
     return _process_register_entity(
         _db, entity_type, entity_id, name,
-        artifact_path, status, parent_type_id,
+        artifact_path, status, None,  # parent_type_id removed (FR-13 AC).
         parse_metadata(metadata),
         project_id=resolved_project_id,
+        parent_uuid=parent_uuid,
+        workspace_uuid=resolved_workspace_uuid,
     )
 
 

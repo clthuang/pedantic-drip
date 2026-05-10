@@ -5006,8 +5006,17 @@ class EntityDatabase:
         default_branch: str | None,
         project_root: str,
         is_git_repo: bool,
+        workspace_uuid: str | None = None,
     ) -> None:
         """Insert or update a project row, preserving created_at on conflict.
+
+        Feature 108 (Decision 5): ``workspace_uuid`` is optional during the
+        Migration 11 transition window. When supplied, callers (e.g.,
+        ``mcp/entity_server.py::_upsert_project``) can record the workspace
+        identity alongside the legacy ``project_id``. The current INSERT
+        does NOT yet write the column because the projects rebuild step
+        (FR-7 step 13) is part of the migration body, and its inserts come
+        from the migration itself rather than this helper.
 
         Parameters
         ----------

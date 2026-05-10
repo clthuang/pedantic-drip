@@ -78,16 +78,21 @@ def _sync_meta_json_entities(db, full_artifacts_path, subdir, entity_type, proje
 
 
 def sync_entity_statuses(db, full_artifacts_path, project_id="__unknown__",
-                         artifacts_root="docs", project_root=""):
+                         artifacts_root="docs", project_root="",
+                         workspace_uuid=""):
     """Scan all entity types and sync statuses to entity registry.
 
     Args:
         db: EntityDatabase instance
         full_artifacts_path: absolute path to the artifacts root (e.g., /project/docs)
-        project_id: project identifier
+        project_id: project identifier (legacy 12-char hex; pre-feature-108)
         artifacts_root: relative artifacts sub-path for stored artifact_path (e.g., "docs")
         project_root: absolute path to project root. If empty, derived from
                       full_artifacts_path by stripping artifacts_root suffix.
+        workspace_uuid: optional workspace UUID (feature 108 / FR-12).
+            Reserved for the post-Migration-11 reattribution path; today the
+            value is recorded but DB writes still use ``project_id`` until
+            the database.py method signatures are migrated.
 
     Returns:
         {"updated": int, "skipped": int, "archived": int,

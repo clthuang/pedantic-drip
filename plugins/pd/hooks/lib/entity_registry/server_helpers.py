@@ -203,6 +203,8 @@ def _process_register_entity(
     metadata: dict | None,
     project_id: str = "__unknown__",
     auto_id: bool = False,
+    parent_uuid: str | None = None,
+    workspace_uuid: str | None = None,
 ) -> str:
     """Register an entity via EntityDatabase with error handling.
 
@@ -239,6 +241,18 @@ def _process_register_entity(
         type_id = f"{entity_type}:{entity_id}"
         existing = db.get_entity(type_id)
         existing_parent = existing["parent_type_id"] if existing else None
+        # Feature 108 FR-13: caller may pass parent_uuid (preferred) or
+        # legacy parent_type_id. If only parent_uuid is given, look up the
+        # parent's type_id for the underlying database layer (which still
+        # keys on parent_type_id pre-Migration-11 callsite flip).
+        if parent_uuid and parent_type_id is None:
+            try:
+                parent_row = db.get_entity_by_uuid(parent_uuid)
+                if parent_row is not None:
+                    parent_type_id = parent_row.get("type_id")
+            except Exception:
+                # Best-effort; fall through with parent_type_id=None.
+                pass
         db.register_entity(
             entity_type=entity_type,
             entity_id=entity_id,

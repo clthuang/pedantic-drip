@@ -65,6 +65,66 @@ pd_log_session_start_diagnostic() {
         "session-start.sh" "$1" "$2" "$3"
 }
 
+# ensure_workspace_uuid()
+# Resolve the workspace UUID for the current project root via the Python
+# helper (entity_registry.project_identity.resolve_workspace_uuid). Echoes
+# the canonical 36-char lowercase hyphenated UUID to stdout on success.
+#
+# Feature 108 FR-2 / FR-11 / NFR-1: this helper is the SOLE shell-level
+# entry point for workspace UUID resolution. It MUST NOT itself perform
+# tempfile manipulation or `mktemp`-based atomic writes — those live in
+# Python (`_atomic_workspace_json_write`) under the same fcntl.flock the
+# Python path uses for cross-process safety.
+#
+# Inputs:
+#   $1 (optional)  Project root directory; defaults to $PWD.
+#   $PLUGIN_ROOT   Set by caller (session-start.sh, meta-json-guard.sh, …).
+# Output:
+#   stdout         The 36-char workspace UUID (no trailing newline beyond
+#                  what `print()` emits).
+#
+# Returns 0 on success, non-zero otherwise. On failure, the caller is
+# responsible for downgrading to fail-soft behaviour (e.g., warn-only via
+# safe_emit_hook_json) — this helper never abort()s the parent shell.
+ensure_workspace_uuid() {
+    local project_root="${1:-$PWD}"
+    local plugin_root="${PLUGIN_ROOT:-}"
+    local venv_python=""
+
+    if [[ -n "$plugin_root" ]] && [[ -x "$plugin_root/.venv/bin/python" ]]; then
+        venv_python="$plugin_root/.venv/bin/python"
+    elif [[ -x "$HOME/.claude/plugins/cache/anthropic/pedantic-drip/main/.venv/bin/python" ]]; then
+        # Plugin cache fallback (multi-version layout).
+        venv_python="$HOME/.claude/plugins/cache/anthropic/pedantic-drip/main/.venv/bin/python"
+    else
+        # Last-resort: glob the cache layout.
+        local cached
+        cached=$(ls -d "$HOME"/.claude/plugins/cache/*/pd*/*/.venv/bin/python 2>/dev/null | head -1) || true
+        if [[ -n "$cached" ]] && [[ -x "$cached" ]]; then
+            venv_python="$cached"
+        fi
+    fi
+
+    if [[ -z "$venv_python" ]]; then
+        return 1
+    fi
+
+    local hooks_lib="$plugin_root/hooks/lib"
+    if [[ ! -d "$hooks_lib" ]]; then
+        # Fallback: derive from venv path.
+        hooks_lib="${venv_python%/.venv/bin/python}/hooks/lib"
+    fi
+
+    # Suppress Python tracebacks/warnings (CLAUDE.md "Hook subprocess safety").
+    PYTHONPATH="$hooks_lib" "$venv_python" -c "
+import os, sys
+sys.path.insert(0, os.environ.get('PYTHONPATH', ''))
+from entity_registry.project_identity import resolve_workspace_uuid
+print(resolve_workspace_uuid(os.environ.get('PD_WORKSPACE_PROJECT_ROOT') or None))
+" 2>/dev/null
+    return $?
+}
+
 # install_session_start_traps()
 # Sets up ERR + EXIT traps. The EXIT trap is the recovery path
 # (always fires); the ERR trap logs diagnostics. Both `set +e`
