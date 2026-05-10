@@ -326,7 +326,20 @@ def resolve_workspace_uuid(working_dir: str | None = None) -> str:
             # Best-effort; any DB error → fall through to step 4.
             pass
 
-    # Step 4: fresh write.
+    # Step 4: fresh write — but ONLY if `.claude/` already exists in the
+    # working directory. This honours the long-standing pd convention that
+    # `.claude/` is the marker indicating pd is active for this project;
+    # we must not auto-create it (test-hooks: "Config was created despite
+    # no .claude/ directory" was failing because os.makedirs on the chain
+    # `.claude/pd/workspace.json` was implicitly creating `.claude/`).
+    claude_dir = os.path.join(cwd, ".claude")
+    if not os.path.isdir(claude_dir):
+        raise WorkspaceCorruptedError(
+            f"Cannot resolve workspace_uuid: .claude/ directory missing at "
+            f"{cwd!r} and no ENTITY_WORKSPACE_UUID env var was set. "
+            f"Create .claude/ (e.g., 'mkdir .claude') to enable pd for this "
+            f"project, or set ENTITY_WORKSPACE_UUID explicitly."
+        )
     fresh_uuid = str(uuid_mod.uuid4())
     return _atomic_workspace_json_write(target_path, fresh_uuid)
 

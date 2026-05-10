@@ -408,6 +408,9 @@ class TestResolveWorkspaceUuidPrecedence:
         fake_home.mkdir()
         monkeypatch.setenv("HOME", str(fake_home))
 
+        # `.claude/` must pre-exist for step 4 fresh-write to fire; pd never
+        # auto-creates `.claude/` (it's the marker that pd is active here).
+        (tmp_path / ".claude").mkdir()
         target = tmp_path / ".claude" / "pd" / "workspace.json"
         assert not target.exists()
 
@@ -429,6 +432,8 @@ class TestResolveWorkspaceUuidPrecedence:
         fake_home.mkdir()
         monkeypatch.setenv("HOME", str(fake_home))
 
+        # `.claude/` must pre-exist for step 4 fresh-write to fire.
+        (tmp_path / ".claude").mkdir()
         first = resolve_workspace_uuid(str(tmp_path))
         second = resolve_workspace_uuid(str(tmp_path))
         assert first == second
@@ -690,6 +695,7 @@ class TestResolveWorkspaceUuidConcurrentRace:
         fake_home.mkdir()
         project_dir = tmp_path / "proj"
         project_dir.mkdir()
+        (project_dir / ".claude").mkdir()  # required pre-existing marker
         sentinel = tmp_path / "go"
 
         ctx = mp.get_context("fork")
