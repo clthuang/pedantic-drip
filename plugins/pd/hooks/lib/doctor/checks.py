@@ -12,7 +12,7 @@ import time
 from doctor.models import CheckResult, Issue
 
 # Expected schema versions
-ENTITY_SCHEMA_VERSION = 9
+ENTITY_SCHEMA_VERSION = 11
 MEMORY_SCHEMA_VERSION = 4
 
 
@@ -292,6 +292,202 @@ def check_db_readiness(
         issues=issues,
         elapsed_ms=elapsed,
         extras={"entity_db_ok": entity_db_ok, "memory_db_ok": memory_db_ok},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Feature 108 FR-17 / AC-20 / AC-21: workspace.json ↔ workspaces table consistency
+# ---------------------------------------------------------------------------
+
+
+def check_workspace_uuid_consistency(
+    entities_db_path: str | None = None,
+    project_root: str | None = None,
+    **_,
+) -> CheckResult:
+    """Verify ``.claude/pd/workspace.json`` matches the ``workspaces`` table.
+
+    Severity matrix per spec FR-17:
+      * file present + DB row matches  → OK (passed=True, no issues).
+      * file present + no matching DB row → ERROR (legacy mismatch).
+      * file missing AND ``entities`` has rows → ERROR (orphaned entities).
+      * file missing AND ``entities`` has zero rows → WARNING (fresh checkout).
+      * file present + ``project_id_legacy`` ≠ DB ``project_id_legacy`` → ERROR.
+
+    Parameters
+    ----------
+    entities_db_path:
+        Path to ``entities.db``. May be ``None`` in unusual call shapes; in
+        that case the check returns OK as a no-op (it cannot reason without
+        a DB).
+    project_root:
+        Project root directory used to locate ``.claude/pd/workspace.json``.
+    """
+    import json as _json
+
+    start = time.monotonic()
+    issues: list[Issue] = []
+
+    # Defensive: required inputs present?
+    if not project_root or not entities_db_path:
+        elapsed = int((time.monotonic() - start) * 1000)
+        return CheckResult(
+            name="workspace_uuid_consistency",
+            passed=True,
+            issues=issues,
+            elapsed_ms=elapsed,
+        )
+
+    workspace_json = os.path.join(
+        project_root, ".claude", "pd", "workspace.json"
+    )
+    file_present = os.path.isfile(workspace_json)
+
+    file_uuid: str | None = None
+    file_legacy: str | None = None
+    if file_present:
+        try:
+            with open(workspace_json, encoding="utf-8") as fh:
+                payload = _json.load(fh)
+            file_uuid = payload.get("workspace_uuid")
+            file_legacy = payload.get("project_id_legacy")
+        except (OSError, _json.JSONDecodeError) as exc:
+            issues.append(
+                Issue(
+                    check="workspace_uuid_consistency",
+                    severity="error",
+                    entity=None,
+                    message=(
+                        f"workspace.json present but unreadable/malformed: "
+                        f"{exc}"
+                    ),
+                    fix_hint=(
+                        "Inspect .claude/pd/workspace.json; if hand-edited, "
+                        "rm and re-run session-start to regenerate."
+                    ),
+                )
+            )
+
+    # DB inspection — best-effort; degrade silently if DB is missing/locked.
+    db_has_entities = False
+    db_legacy_for_uuid: str | None = None
+    db_uuid_present = False
+
+    if os.path.isfile(entities_db_path):
+        conn = None
+        try:
+            conn = sqlite3.connect(
+                f"file:{entities_db_path}?mode=ro", uri=True, timeout=2.0
+            )
+            try:
+                # entities row count (post-Mig-11 schema; pre-Mig-11 still
+                # has the table, just no workspace_uuid column).
+                row = conn.execute(
+                    "SELECT COUNT(*) FROM entities"
+                ).fetchone()
+                db_has_entities = bool(row and row[0] > 0)
+            except sqlite3.Error:
+                pass
+
+            if file_uuid:
+                try:
+                    row = conn.execute(
+                        "SELECT project_id_legacy FROM workspaces "
+                        "WHERE uuid = ?",
+                        (file_uuid,),
+                    ).fetchone()
+                except sqlite3.Error:
+                    row = None
+                if row is not None:
+                    db_uuid_present = True
+                    db_legacy_for_uuid = row[0]
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+    if not file_present:
+        if db_has_entities:
+            issues.append(
+                Issue(
+                    check="workspace_uuid_consistency",
+                    severity="error",
+                    entity=None,
+                    message=(
+                        ".claude/pd/workspace.json missing AND entities DB "
+                        "has rows — workspace identity orphaned"
+                    ),
+                    fix_hint=(
+                        "Run session-start.sh (it regenerates workspace.json "
+                        "via FR-3 step 2.5 if a single workspaces row "
+                        "matches project_root)."
+                    ),
+                )
+            )
+        else:
+            # Fresh checkout — warn-only.
+            issues.append(
+                Issue(
+                    check="workspace_uuid_consistency",
+                    severity="warning",
+                    entity=None,
+                    message=(
+                        ".claude/pd/workspace.json missing (entities DB is "
+                        "empty — fresh checkout)"
+                    ),
+                    fix_hint=(
+                        "Run session-start.sh to bootstrap workspace.json."
+                    ),
+                )
+            )
+    else:
+        # File present — check DB consistency.
+        if file_uuid and not db_uuid_present:
+            issues.append(
+                Issue(
+                    check="workspace_uuid_consistency",
+                    severity="error",
+                    entity=None,
+                    message=(
+                        f"workspace.json UUID {file_uuid} not present in "
+                        "workspaces table"
+                    ),
+                    fix_hint=(
+                        "If pre-Migration-11 DB: run migration. Otherwise "
+                        "rm .claude/pd/workspace.json and re-run "
+                        "session-start to bootstrap from DB."
+                    ),
+                )
+            )
+        elif file_uuid and file_legacy and db_legacy_for_uuid is not None and (
+            db_legacy_for_uuid != file_legacy
+        ):
+            issues.append(
+                Issue(
+                    check="workspace_uuid_consistency",
+                    severity="error",
+                    entity=None,
+                    message=(
+                        f"workspace.json project_id_legacy "
+                        f"{file_legacy!r} differs from workspaces row "
+                        f"{db_legacy_for_uuid!r}"
+                    ),
+                    fix_hint=(
+                        "DB is canonical; rm .claude/pd/workspace.json and "
+                        "re-run session-start to regenerate."
+                    ),
+                )
+            )
+
+    elapsed = int((time.monotonic() - start) * 1000)
+    passed = not any(i.severity == "error" for i in issues)
+    return CheckResult(
+        name="workspace_uuid_consistency",
+        passed=passed,
+        issues=issues,
+        elapsed_ms=elapsed,
     )
 
 
@@ -1559,63 +1755,30 @@ def check_referential_integrity(
     start = time.monotonic()
     issues: list[Issue] = []
 
-    # Build entity lookup
-    entities_by_type_id: dict[str, str] = {}  # type_id -> uuid
+    # Build entity lookup. Post-Migration-11: parent_type_id column was
+    # dropped (feature 108 FR-9); referential integrity now flows entirely
+    # through parent_uuid → uuid joins.
     entities_by_uuid: dict[str, str] = {}  # uuid -> type_id
-    parent_map: dict[str, str | None] = {}  # type_id -> parent_type_id
+    parent_uuid_map: dict[str, str | None] = {}  # uuid -> parent_uuid
 
     try:
         cursor = entities_conn.execute(
-            "SELECT uuid, type_id, parent_type_id, parent_uuid FROM entities"
+            "SELECT uuid, type_id, parent_uuid FROM entities"
         )
         for row in cursor:
-            uuid_val, type_id, parent_type_id, parent_uuid = row
-            entities_by_type_id[type_id] = uuid_val
+            uuid_val, type_id, parent_uuid = row
             entities_by_uuid[uuid_val] = type_id
-            parent_map[type_id] = parent_type_id
+            parent_uuid_map[uuid_val] = parent_uuid
 
-            # 1. Dangling parent_type_id
-            if parent_type_id and parent_type_id not in entities_by_type_id:
-                # Defer -- need full set first
-                pass
-
-            # 4. Self-referential parent
-            if parent_type_id and parent_type_id == type_id:
+            # Self-referential parent (parent_uuid points at the entity itself)
+            if parent_uuid and parent_uuid == uuid_val:
                 issues.append(Issue(
                     check="referential_integrity",
                     severity="error",
                     entity=type_id,
                     message=f"Entity '{type_id}' is its own parent",
-                    fix_hint="Remove self-referential parent_type_id",
+                    fix_hint="Clear self-referential parent_uuid",
                 ))
-
-            # 5. parent_type_id set but parent_uuid NULL
-            if parent_type_id and not parent_uuid:
-                issues.append(Issue(
-                    check="referential_integrity",
-                    severity="error",
-                    entity=type_id,
-                    message=(
-                        f"Entity '{type_id}' has parent_type_id "
-                        f"'{parent_type_id}' but parent_uuid is NULL"
-                    ),
-                    fix_hint="Run migration to populate parent_uuid",
-                ))
-
-            # 2. parent_uuid mismatch
-            if parent_type_id and parent_uuid:
-                expected_uuid = entities_by_type_id.get(parent_type_id)
-                if expected_uuid is not None and expected_uuid != parent_uuid:
-                    issues.append(Issue(
-                        check="referential_integrity",
-                        severity="error",
-                        entity=type_id,
-                        message=(
-                            f"Entity '{type_id}' parent_uuid doesn't match "
-                            f"parent entity '{parent_type_id}'"
-                        ),
-                        fix_hint="Update parent_uuid to match parent entity's uuid",
-                    ))
     except sqlite3.Error as exc:
         issues.append(Issue(
             check="referential_integrity",
@@ -1632,56 +1795,39 @@ def check_referential_integrity(
             elapsed_ms=elapsed,
         )
 
-    # 1. Dangling parent_type_id (second pass with full set)
+    # Dangling parent_uuid — references a non-existent entity.
     try:
         cursor = entities_conn.execute(
-            "SELECT type_id, parent_type_id, parent_uuid FROM entities "
-            "WHERE parent_type_id IS NOT NULL"
+            "SELECT type_id, parent_uuid FROM entities "
+            "WHERE parent_uuid IS NOT NULL"
         )
         for row in cursor:
-            type_id, parent_type_id, parent_uuid = row
-            if parent_type_id not in entities_by_type_id:
+            type_id, parent_uuid = row
+            if parent_uuid not in entities_by_uuid:
                 issues.append(Issue(
                     check="referential_integrity",
                     severity="error",
                     entity=type_id,
                     message=(
                         f"Entity '{type_id}' references non-existent "
-                        f"parent '{parent_type_id}'"
+                        f"parent_uuid '{parent_uuid}'"
                     ),
-                    fix_hint="Remove or fix dangling parent_type_id",
+                    fix_hint="Remove or fix dangling parent_uuid",
                 ))
-            # 2. parent_uuid mismatch (second pass for entities loaded after parent)
-            elif parent_uuid:
-                expected_uuid = entities_by_type_id.get(parent_type_id)
-                if expected_uuid and expected_uuid != parent_uuid:
-                    # Check if already reported
-                    already = any(
-                        i.entity == type_id and "parent_uuid" in i.message
-                        for i in issues
-                    )
-                    if not already:
-                        issues.append(Issue(
-                            check="referential_integrity",
-                            severity="error",
-                            entity=type_id,
-                            message=(
-                                f"Entity '{type_id}' parent_uuid doesn't match "
-                                f"parent entity '{parent_type_id}'"
-                            ),
-                            fix_hint="Update parent_uuid to match parent entity's uuid",
-                        ))
     except sqlite3.Error:
         pass
 
-    # 3. workflow_phases FK
+    # 3. workflow_phases FK — orphans where type_id has no matching entity.
+    # Post-Migration-11 the entities table is keyed by (workspace_uuid,
+    # type_id), but type_id remains globally probe-able for orphan detection.
+    type_ids_in_use = set(entities_by_uuid.values())
     try:
         cursor = entities_conn.execute(
             "SELECT type_id FROM workflow_phases"
         )
         for row in cursor:
             wp_type_id = row[0]
-            if wp_type_id not in entities_by_type_id:
+            if wp_type_id not in type_ids_in_use:
                 issues.append(Issue(
                     check="referential_integrity",
                     severity="error",
@@ -1695,10 +1841,10 @@ def check_referential_integrity(
     except sqlite3.Error:
         pass
 
-    # 6. Circular parent chains
-    for type_id in parent_map:
+    # 6. Circular parent chains (walked via parent_uuid → uuid).
+    for start_uuid in parent_uuid_map:
         visited: set[str] = set()
-        current = type_id
+        current = start_uuid
         depth = 0
         is_cycle = False
         while current and depth < 20:
@@ -1706,10 +1852,11 @@ def check_referential_integrity(
                 is_cycle = True
                 break
             visited.add(current)
-            current = parent_map.get(current)
+            current = parent_uuid_map.get(current)
             depth += 1
 
         if is_cycle:
+            type_id = entities_by_uuid.get(start_uuid, start_uuid)
             issues.append(Issue(
                 check="referential_integrity",
                 severity="error",
@@ -1718,6 +1865,7 @@ def check_referential_integrity(
                 fix_hint="Break the circular parent reference",
             ))
         elif depth >= 20 and current is not None:
+            type_id = entities_by_uuid.get(start_uuid, start_uuid)
             issues.append(Issue(
                 check="referential_integrity",
                 severity="warning",

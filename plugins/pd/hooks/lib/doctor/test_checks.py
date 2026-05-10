@@ -20,9 +20,16 @@ from doctor.models import CheckResult, DiagnosticReport, Issue
 
 
 def _make_db(tmp_path, name: str = "entities.db") -> str:
-    """Create a minimal entity DB with schema matching EntityDatabase v8.
+    """Create a minimal entity DB with legacy schema.
 
-    Returns the path to the DB file.
+    Most doctor tests construct entities via raw INSERT against the legacy
+    schema (project_id, parent_type_id) and exercise pre-Migration-11
+    integrity-check code paths. The doctor production code post-feature-108
+    queries via parent_uuid only — these legacy fixtures still work because
+    parent_uuid is present in v9 too.
+
+    The doctor's schema_version comparison test (test_both_dbs_healthy)
+    explicitly stamps version 11 via _make_db_v11 to match production.
     """
     db_path = str(tmp_path / name)
     conn = sqlite3.connect(db_path)
@@ -379,6 +386,16 @@ class TestCheck8BothDbsHealthy:
         entity_path = _make_db(tmp_path, "entities.db")
         memory_path = _make_memory_db(tmp_path, "memory.db")
 
+        # Stamp schema_version=11 to match the post-Migration-11 production
+        # ENTITY_SCHEMA_VERSION constant. _make_db uses a legacy v9 fixture
+        # so most tests can keep INSERTing via the project_id / parent_type_id
+        # columns until the full Phase F test-fixture migration lands
+        # (backlog #00360).
+        conn = sqlite3.connect(entity_path)
+        conn.execute("UPDATE _metadata SET value = '11' WHERE key = 'schema_version'")
+        conn.commit()
+        conn.close()
+
         result = check_db_readiness(
             entities_db_path=entity_path,
             memory_db_path=memory_path,
@@ -489,6 +506,13 @@ class TestCheck8ImmediateRollbackReleasesLock:
 
         entity_path = _make_db(tmp_path, "entities.db")
         memory_path = _make_memory_db(tmp_path, "memory.db")
+
+        # Stamp schema_version=11 to match the post-Migration-11 production
+        # ENTITY_SCHEMA_VERSION constant (see test_both_dbs_healthy note).
+        conn = sqlite3.connect(entity_path)
+        conn.execute("UPDATE _metadata SET value = '11' WHERE key = 'schema_version'")
+        conn.commit()
+        conn.close()
 
         # Run the check
         result = check_db_readiness(
@@ -2068,28 +2092,16 @@ class TestCheck9SelfReferentialParent:
 
 
 class TestCheck9ParentUuidNullWithTypeId:
-    """Check 9: parent_type_id set but parent_uuid NULL -> error."""
+    """Check 9: parent_type_id-set-but-parent_uuid-NULL — removed post-Migration-11.
 
+    The legacy "parent_type_id set but parent_uuid NULL" detection no longer
+    fires because parent_type_id was dropped by Migration 11 (feature 108).
+    Referential integrity now flows entirely through parent_uuid.
+    """
+
+    @pytest.mark.skip(reason="Check removed post-Mig-11; parent_type_id column dropped")
     def test_check9_parent_uuid_null_with_type_id(self, tmp_path):
-        from doctor.checks import check_referential_integrity
-
-        db_path = _make_db(tmp_path)
-        _register_entity_with_uuid(
-            db_path, "project:p1", "project", "p1",
-        )
-        _register_entity_with_uuid(
-            db_path, "feature:001", "feature", "001",
-            parent_type_id="project:p1", parent_uuid=None,
-        )
-
-        conn = _entities_conn(db_path)
-        try:
-            result = check_referential_integrity(conn)
-            errors = [i for i in result.issues if i.severity == "error"]
-            null_uuid = [e for e in errors if "parent_uuid is NULL" in e.message]
-            assert len(null_uuid) >= 1
-        finally:
-            conn.close()
+        pass
 
 
 class TestCheck9CircularParentChain:

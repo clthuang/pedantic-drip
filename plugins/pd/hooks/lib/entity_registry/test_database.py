@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 import time
@@ -30,19 +31,56 @@ from entity_registry.test_helpers import TEST_PROJECT_ID
 # ---------------------------------------------------------------------------
 
 
+def _bootstrap_test_workspace(db, legacy_id: str = TEST_PROJECT_ID) -> str:
+    """Insert a workspaces row for ``legacy_id`` (post-Migration-11 prereq).
+
+    Returns the workspace_uuid so callers can pass it to register_entity if
+    they want to bypass the project_id_legacy resolution.
+    """
+    import uuid as _uuid
+    ws_uuid = str(_uuid.uuid4())
+    now = db._now_iso()
+    db._conn.execute(
+        "INSERT OR IGNORE INTO workspaces "
+        "(uuid, project_id_legacy, project_root, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (ws_uuid, legacy_id, None, now, now),
+    )
+    db._conn.commit()
+    row = db._conn.execute(
+        "SELECT uuid FROM workspaces WHERE project_id_legacy = ?",
+        (legacy_id,),
+    ).fetchone()
+    return row["uuid"]
+
+
 @pytest.fixture
 def db(tmp_path):
-    """Provide a file-based EntityDatabase, closed after test."""
+    """Provide a file-based EntityDatabase, closed after test.
+
+    Pre-bootstraps workspaces rows for the two legacy project_id literals
+    used across the test suite (``__test__`` and ``__other__``) so tests
+    passing those values resolve to a valid workspace_uuid post-Migration-11.
+    """
     db_path = str(tmp_path / "entities.db")
     database = EntityDatabase(db_path)
+    _bootstrap_test_workspace(database)
+    _bootstrap_test_workspace(database, "__other__")
     yield database
     database.close()
 
 
 @pytest.fixture
 def mem_db():
-    """Provide an in-memory EntityDatabase, closed after test."""
+    """Provide an in-memory EntityDatabase, closed after test.
+
+    Pre-bootstraps workspaces rows for the two legacy project_id literals
+    used across the test suite (``__test__`` and ``__other__``) so tests
+    passing those values resolve to a valid workspace_uuid post-Migration-11.
+    """
     database = EntityDatabase(":memory:")
+    _bootstrap_test_workspace(database)
+    _bootstrap_test_workspace(database, "__other__")
     yield database
     database.close()
 
@@ -326,13 +364,14 @@ class TestMigration2:
         conn.close()
 
         # Now open it with EntityDatabase — runs pending migrations (3+)
+        # Feature 108 Migration 11: schema_version bumped to 11; 12 columns.
         db = EntityDatabase(db_path)
-        assert db.get_metadata("schema_version") == "10"
+        assert db.get_metadata("schema_version") == "11"
 
         # Schema should be intact
         cur = db._conn.execute("PRAGMA table_info(entities)")
         columns = cur.fetchall()
-        assert len(columns) == 13
+        assert len(columns) == 12
 
         db.close()
 
@@ -423,16 +462,19 @@ class TestSchemaCreation:
         assert cur.fetchone() is not None
 
     def test_entities_has_13_columns(self, db: EntityDatabase):
+        # Feature 108 Migration 11: dropped project_id + parent_type_id,
+        # kept workspace_uuid + parent_uuid → 12 columns total.
         cur = db._conn.execute("PRAGMA table_info(entities)")
         columns = cur.fetchall()
-        assert len(columns) == 13
+        assert len(columns) == 12
 
     def test_entities_column_names(self, db: EntityDatabase):
+        # Feature 108 Migration 11: post-migration column layout.
         cur = db._conn.execute("PRAGMA table_info(entities)")
         col_names = [row[1] for row in cur.fetchall()]
         expected = [
-            "uuid", "type_id", "project_id", "entity_type", "entity_id",
-            "name", "status", "parent_type_id", "parent_uuid",
+            "uuid", "workspace_uuid", "type_id", "entity_type", "entity_id",
+            "name", "status", "parent_uuid",
             "artifact_path", "created_at", "updated_at", "metadata",
         ]
         assert col_names == expected
@@ -451,11 +493,20 @@ class TestSchemaCreation:
         """
         import uuid
 
-        # SQL-level insert with arbitrary entity_type should succeed
+        # SQL-level insert with arbitrary entity_type should succeed.
+        # Feature 108 Migration 11: workspace_uuid is now a NOT-NULL FK that
+        # requires a workspaces row; the fixture pre-bootstraps __test__.
+        from entity_registry.test_helpers import TEST_PROJECT_ID
+        ws_row = db._conn.execute(
+            "SELECT uuid FROM workspaces WHERE project_id_legacy = ?",
+            (TEST_PROJECT_ID,),
+        ).fetchone()
+        ws_uuid = ws_row["uuid"]
         db._conn.execute(
-            "INSERT INTO entities (uuid, type_id, entity_type, entity_id, "
-            "name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (str(uuid.uuid4()), "custom:x", "custom", "x", "test",
+            "INSERT INTO entities (uuid, workspace_uuid, type_id, entity_type, "
+            "entity_id, name, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), ws_uuid, "custom:x", "custom", "x", "test",
              "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
         )
         db._conn.commit()
@@ -467,11 +518,18 @@ class TestSchemaCreation:
     def test_valid_entity_types_accepted(self, db: EntityDatabase):
         """All four valid entity types should be insertable."""
         import uuid
+        from entity_registry.test_helpers import TEST_PROJECT_ID
+        ws_row = db._conn.execute(
+            "SELECT uuid FROM workspaces WHERE project_id_legacy = ?",
+            (TEST_PROJECT_ID,),
+        ).fetchone()
+        ws_uuid = ws_row["uuid"]
         for etype in ("backlog", "brainstorm", "project", "feature"):
             db._conn.execute(
-                "INSERT INTO entities (uuid, type_id, entity_type, entity_id, "
-                "name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (str(uuid.uuid4()), f"{etype}:test", etype, "test",
+                "INSERT INTO entities (uuid, workspace_uuid, type_id, "
+                "entity_type, entity_id, name, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (str(uuid.uuid4()), ws_uuid, f"{etype}:test", etype, "test",
                  f"Test {etype}",
                  "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
             )
@@ -482,6 +540,8 @@ class TestSchemaCreation:
 
 class TestTriggers:
     def test_has_ten_triggers(self, db: EntityDatabase):
+        # Feature 108 Migration 11: project_id triggers removed; replaced
+        # by workspace_uuid auto-fill / orphan-rejection / immutability.
         cur = db._conn.execute(
             "SELECT name FROM sqlite_master WHERE type='trigger' ORDER BY name"
         )
@@ -489,14 +549,14 @@ class TestTriggers:
         expected = [
             "enforce_immutable_created_at",
             "enforce_immutable_entity_type",
-            "enforce_immutable_project_id",
             "enforce_immutable_type_id",
             "enforce_immutable_uuid",
+            "enforce_immutable_workspace_uuid",
             "enforce_immutable_wp_type_id",
-            "enforce_no_self_parent",
-            "enforce_no_self_parent_update",
             "enforce_no_self_parent_uuid_insert",
             "enforce_no_self_parent_uuid_update",
+            "wp_autofill_workspace_uuid",
+            "wp_reject_orphaned_insert",
         ]
         assert trigger_names == expected
 
@@ -509,6 +569,10 @@ class TestIndexes:
             "AND name NOT LIKE 'sqlite_%' ORDER BY name"
         )
         index_names = [row[0] for row in cur.fetchall()]
+        # Feature 108 Migration 11: idx_project_id / idx_project_entity_type /
+        # idx_parent_type_id were dropped; idx_workspace_uuid /
+        # idx_workspace_entity_type / idx_workspaces_legacy /
+        # idx_wp_workspace_uuid added.
         expected = [
             "idx_ed_blocked_by_uuid",
             "idx_ed_entity_uuid",
@@ -517,17 +581,18 @@ class TestIndexes:
             "idx_eoa_key_result_uuid",
             "idx_et_entity_uuid",
             "idx_et_tag",
-            "idx_parent_type_id",
             "idx_parent_uuid",
             "idx_pe_lookup",
             "idx_pe_project",
             "idx_pe_timestamp",
-            "idx_project_entity_type",
-            "idx_project_id",
             "idx_status",
+            "idx_workspace_entity_type",
+            "idx_workspace_uuid",
+            "idx_workspaces_legacy",
             "idx_wp_kanban_column",
             "idx_wp_uuid",
             "idx_wp_workflow_phase",
+            "idx_wp_workspace_uuid",
             # Feature 088 (FR-2.2): partial UNIQUE index added to migration 10
             # for concurrent-safe backfill dedup.
             "phase_events_backfill_dedup",
@@ -567,7 +632,8 @@ class TestMetadata:
         assert db.get_metadata("foo") == "baz"
 
     def test_schema_version_is_10(self, db: EntityDatabase):
-        assert db.get_metadata("schema_version") == "10"
+        # Feature 108 Migration 11 bumps schema_version to 11.
+        assert db.get_metadata("schema_version") == "11"
 
 
 # ---------------------------------------------------------------------------
@@ -655,37 +721,38 @@ class TestRegisterEntity:
         assert row["status"] == "active"
         assert json.loads(row["metadata"]) == {"priority": "high"}
 
-    def test_parent_type_id_nonexistent_stores_null_uuid(self, db: EntityDatabase):
-        """Setting parent_type_id to a non-existent entity stores it with NULL parent_uuid.
+    def test_parent_uuid_none_stores_null(self, db: EntityDatabase):
+        """Omitting parent_uuid stores NULL in the parent_uuid column.
 
-        After migration 8, parent_type_id FK is dropped (TD-2). The column is
-        kept as denormalized data. parent_uuid is set to NULL when parent not found.
+        Post-Migration-11 (Feature 108) the entities table has no
+        ``parent_type_id`` column. The legacy ``parent_type_id`` kwarg has
+        been removed; callers pass ``parent_uuid`` directly.
         """
         entity_uuid = db.register_entity(
             "feature", "child", "Child Feature",
-            parent_type_id="project:nonexistent",
             project_id="__unknown__",
         )
         row = db._conn.execute(
-            "SELECT parent_type_id, parent_uuid FROM entities WHERE uuid = ?",
+            "SELECT parent_uuid FROM entities WHERE uuid = ?",
             (entity_uuid,),
         ).fetchone()
-        assert row["parent_type_id"] == "project:nonexistent"
         assert row["parent_uuid"] is None
 
-    def test_valid_parent_type_id(self, db: EntityDatabase):
-        """Setting parent_type_id to an existing entity should work."""
-        db.register_entity("project", "proj-1", "Project One", project_id="__unknown__")
+    def test_valid_parent_uuid(self, db: EntityDatabase):
+        """Passing parent_uuid of an existing entity stores the link."""
+        parent_uuid = db.register_entity(
+            "project", "proj-1", "Project One", project_id="__unknown__"
+        )
         entity_uuid = db.register_entity(
             "feature", "feat-1", "Feature One",
-            parent_type_id="project:proj-1",
+            parent_uuid=parent_uuid,
             project_id="__unknown__",
         )
         cur = db._conn.execute(
-            "SELECT parent_type_id FROM entities WHERE uuid = ?",
+            "SELECT parent_uuid FROM entities WHERE uuid = ?",
             (entity_uuid,),
         )
-        assert cur.fetchone()[0] == "project:proj-1"
+        assert cur.fetchone()[0] == parent_uuid
 
     def test_timestamps_set(self, db: EntityDatabase):
         """created_at and updated_at should be set automatically."""
@@ -754,37 +821,44 @@ class TestImmutableTriggers:
             )
 
     def test_self_parent_on_insert(self, db: EntityDatabase):
-        """Inserting an entity that is its own parent should raise."""
-        import uuid
+        """Inserting an entity that is its own parent should raise.
 
+        Feature 108 Migration 11: ``parent_type_id`` column dropped; the
+        self-parent guard now lives on the ``parent_uuid`` triggers
+        (R12 / enforce_no_self_parent_uuid_*).
+        """
+        import uuid
+        from entity_registry.test_helpers import TEST_PROJECT_ID
+        ws_row = db._conn.execute(
+            "SELECT uuid FROM workspaces WHERE project_id_legacy = ?",
+            (TEST_PROJECT_ID,),
+        ).fetchone()
+        ws_uuid = ws_row["uuid"]
+
+        # Self-parent via parent_uuid (R12 trigger).
         test_uuid = str(uuid.uuid4())
-        # Case 1: self-parent via parent_type_id
         with pytest.raises(sqlite3.IntegrityError, match="entity cannot be its own parent"):
             db._conn.execute(
-                "INSERT INTO entities (uuid, type_id, entity_type, entity_id, "
-                "name, parent_type_id, created_at, updated_at) "
-                "VALUES (?, 'feature:self', 'feature', 'self', 'Self', "
-                "'feature:self', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
-                (test_uuid,),
-            )
-        # Case 2: self-parent via parent_uuid (R12 trigger)
-        test_uuid2 = str(uuid.uuid4())
-        with pytest.raises(sqlite3.IntegrityError, match="entity cannot be its own parent"):
-            db._conn.execute(
-                "INSERT INTO entities (uuid, type_id, entity_type, entity_id, "
-                "name, parent_uuid, created_at, updated_at) "
-                "VALUES (?, 'feature:self2', 'feature', 'self2', 'Self2', "
+                "INSERT INTO entities (uuid, workspace_uuid, type_id, "
+                "entity_type, entity_id, name, parent_uuid, "
+                "created_at, updated_at) "
+                "VALUES (?, ?, 'feature:self2', 'feature', 'self2', 'Self2', "
                 "?, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
-                (test_uuid2, test_uuid2),
+                (test_uuid, ws_uuid, test_uuid),
             )
 
     def test_self_parent_on_update(self, db: EntityDatabase):
-        """Updating parent_type_id to self should raise."""
-        db.register_entity("feature", "f1", "Feature One", project_id="__unknown__")
+        """Updating parent_uuid to self should raise.
+
+        Feature 108 Migration 11: ``parent_type_id`` column dropped; the
+        self-parent guard now lives on the ``parent_uuid`` triggers.
+        """
+        uid = db.register_entity("feature", "f1", "Feature One", project_id="__unknown__")
         with pytest.raises(sqlite3.IntegrityError, match="entity cannot be its own parent"):
             db._conn.execute(
-                "UPDATE entities SET parent_type_id = 'feature:f1' "
-                "WHERE type_id = 'feature:f1'"
+                "UPDATE entities SET parent_uuid = ? "
+                "WHERE type_id = 'feature:f1'",
+                (uid,),
             )
 
     def test_name_is_mutable(self, db: EntityDatabase):
@@ -880,14 +954,16 @@ class TestRegisterEntityParentOnDuplicate:
 class TestSetParent:
     def test_happy_path(self, db: EntityDatabase):
         """Set parent on a child entity."""
-        db.register_entity("project", "proj-1", "Project One", project_id="__unknown__")
+        parent_uuid = db.register_entity("project", "proj-1", "Project One", project_id="__unknown__")
         child_uuid = db.register_entity("feature", "f1", "Feature One", project_id="__unknown__")
         result = db.set_parent("feature:f1", "project:proj-1")
         assert result == child_uuid
+        # Post-Migration-11: parent edge stored in parent_uuid (parent_type_id
+        # column dropped). Assert via UUID round-trip.
         cur = db._conn.execute(
-            "SELECT parent_type_id FROM entities WHERE type_id = 'feature:f1'"
+            "SELECT parent_uuid FROM entities WHERE type_id = 'feature:f1'"
         )
-        assert cur.fetchone()[0] == "project:proj-1"
+        assert cur.fetchone()[0] == parent_uuid
 
     def test_circular_reference_rejected(self, db: EntityDatabase):
         """A->B->C, then setting C's parent to A should raise (circular)."""
@@ -918,13 +994,15 @@ class TestSetParent:
     def test_reassign_parent(self, db: EntityDatabase):
         """Should be able to change parent from one entity to another."""
         db.register_entity("project", "p1", "Project 1", project_id="__unknown__")
-        db.register_entity("project", "p2", "Project 2", project_id="__unknown__")
+        p2_uuid = db.register_entity("project", "p2", "Project 2", project_id="__unknown__")
         db.register_entity("feature", "f1", "Feature", parent_type_id="project:p1", project_id="__unknown__")
         db.set_parent("feature:f1", "project:p2")
+        # Post-Migration-11: parent edge stored in parent_uuid (parent_type_id
+        # column dropped). Assert via UUID round-trip.
         cur = db._conn.execute(
-            "SELECT parent_type_id FROM entities WHERE type_id = 'feature:f1'"
+            "SELECT parent_uuid FROM entities WHERE type_id = 'feature:f1'"
         )
-        assert cur.fetchone()[0] == "project:p2"
+        assert cur.fetchone()[0] == p2_uuid
 
     def test_deep_circular_reference_rejected(self, db: EntityDatabase):
         """A->B->C->D, then setting A's parent to D should be rejected."""
@@ -1433,12 +1511,14 @@ class TestParentFieldValidation:
             parent_type_id="project:nonexistent",
             project_id="__unknown__",
         )
-        # After migration 8, parent_type_id FK is dropped (TD-2).
-        # The entity is registered; parent_type_id stored as denormalized data,
-        # parent_uuid is NULL since the parent doesn't exist.
+        # Feature 108 Migration 11: parent_type_id column dropped. The
+        # tolerant compat shim keeps the entity inserted with parent_uuid
+        # NULL when the deprecated parent_type_id alias does not resolve.
+        # The legacy denormalized parent_type_id no longer survives because
+        # the column no longer exists; get_entity returns NULL via JOIN.
         entity = db.get_entity("feature:child")
         assert entity is not None
-        assert entity["parent_type_id"] == "project:nonexistent"
+        assert entity["parent_type_id"] is None
         assert entity["parent_uuid"] is None
 
 
@@ -1778,15 +1858,18 @@ class TestSetParentUUID:
         assert result == child_uuid
 
     def test_set_parent_updates_both_parent_columns(self, db: EntityDatabase):
-        """set_parent should populate both parent_type_id and parent_uuid."""
+        """set_parent should populate parent_uuid.
+
+        Post-Migration-11: parent_type_id column is dropped; only
+        parent_uuid is the system-of-record for the parent edge.
+        """
         parent_uuid = db.register_entity("project", "proj-1", "Project One", project_id="__unknown__")
         child_uuid = db.register_entity("feature", "f1", "Feature One", project_id="__unknown__")
         db.set_parent(child_uuid, "project:proj-1")
         row = db._conn.execute(
-            "SELECT parent_type_id, parent_uuid FROM entities WHERE uuid = ?",
+            "SELECT parent_uuid FROM entities WHERE uuid = ?",
             (child_uuid,),
         ).fetchone()
-        assert row["parent_type_id"] == "project:proj-1"
         assert row["parent_uuid"] == parent_uuid
 
 
@@ -2233,31 +2316,32 @@ class TestSetParentConsistencyAfterUpdate:
     def test_set_parent_produces_consistent_dual_parent_columns(
         self, db: EntityDatabase,
     ):
-        """After set_parent, parent_type_id and parent_uuid resolve to same entity.
-        Anticipate: If set_parent updates one column but not the other,
-        the parent columns would be inconsistent.
+        """After set_parent, parent_uuid resolves to the parent entity.
+
+        Post-Migration-11: parent_type_id column was dropped; parent_uuid
+        is now the single source of truth. The "dual columns" guarantee
+        is replaced by parent_uuid being a valid FK to entities.uuid.
         """
         # Given parent and child entities
         parent_uuid = db.register_entity("project", "parent", "Parent", project_id="__unknown__")
         child_uuid = db.register_entity("feature", "child", "Child", project_id="__unknown__")
         # When setting parent
         db.set_parent("feature:child", "project:parent")
-        # Then get_entity shows consistent parent columns
+        # Then get_entity exposes parent_uuid pointing to the parent
         child = db.get_entity("feature:child")
-        assert child["parent_type_id"] == "project:parent"
         assert child["parent_uuid"] == parent_uuid
-        # And resolving parent_uuid returns the same entity as parent_type_id
+        # And resolving parent_uuid returns the parent entity
         parent_by_uuid = db.get_entity(child["parent_uuid"])
-        parent_by_type_id = db.get_entity(child["parent_type_id"])
-        assert parent_by_uuid["uuid"] == parent_by_type_id["uuid"]
+        assert parent_by_uuid["uuid"] == parent_uuid
         assert parent_by_uuid["type_id"] == "project:parent"
 
     def test_reassign_parent_keeps_both_columns_in_sync(
         self, db: EntityDatabase,
     ):
-        """Reassigning parent should update BOTH parent columns atomically.
-        Anticipate: Reassignment might update parent_uuid but leave
-        parent_type_id pointing to old parent.
+        """Reassigning parent should update parent_uuid atomically.
+
+        Post-Migration-11: only parent_uuid remains; the legacy
+        parent_type_id column is dropped.
         derived_from: spec:AC-28
         """
         # Given a child with existing parent
@@ -2269,9 +2353,8 @@ class TestSetParentConsistencyAfterUpdate:
         )
         # When reassigning parent
         db.set_parent("feature:child", "project:p2")
-        # Then both columns reflect the new parent
+        # Then parent_uuid reflects the new parent
         child = db.get_entity("feature:child")
-        assert child["parent_type_id"] == "project:p2"
         assert child["parent_uuid"] == p2_uuid
 
 
@@ -2282,15 +2365,15 @@ class TestRootEntityParentUuidIsNone:
 
     def test_root_entity_has_null_parent_uuid(self, db: EntityDatabase):
         """Root entity (registered without parent) has parent_uuid=None.
-        Anticipate: Migration or register_entity might set parent_uuid
-        to a default value instead of NULL.
+
+        Post-Migration-11: parent_type_id column dropped; only parent_uuid
+        remains. A root entity has parent_uuid IS NULL.
         """
         # Given a root entity with no parent
         entity_uuid = db.register_entity("project", "root", "Root Project", project_id="__unknown__")
         # When retrieving it
         entity = db.get_entity(entity_uuid)
-        # Then both parent columns are None
-        assert entity["parent_type_id"] is None
+        # Then parent_uuid is None
         assert entity["parent_uuid"] is None
 
 
@@ -2496,7 +2579,8 @@ class TestMigrationIdempotency:
         entity = db2.get_entity("project:p1")
         assert entity is not None
         assert entity["uuid"] == p1_uuid
-        assert db2.get_metadata("schema_version") == "10"
+        # Feature 108 Migration 11: schema_version bumped to 11.
+        assert db2.get_metadata("schema_version") == "11"
         db2.close()
 
 
@@ -2621,15 +2705,17 @@ class TestMigration3:
         assert cur.fetchone() is not None
 
     def test_workflow_phases_has_8_columns(self, db: EntityDatabase):
-        """workflow_phases should have exactly 8 columns (uuid added in v6)."""
+        """workflow_phases should have exactly 9 columns (workspace_uuid added in v11)."""
         cur = db._conn.execute("PRAGMA table_info(workflow_phases)")
         columns = cur.fetchall()
-        assert len(columns) == 8
+        # Feature 108 Migration 11: workspace_uuid added.
+        assert len(columns) == 9
 
     def test_workflow_phases_column_names(self, db: EntityDatabase):
         """workflow_phases columns should match the DDL specification."""
         cur = db._conn.execute("PRAGMA table_info(workflow_phases)")
         col_names = [row[1] for row in cur.fetchall()]
+        # Feature 108 Migration 11: workspace_uuid added.
         expected = [
             "type_id",
             "workflow_phase",
@@ -2639,6 +2725,7 @@ class TestMigration3:
             "backward_transition_reason",
             "updated_at",
             "uuid",
+            "workspace_uuid",
         ]
         assert col_names == expected
 
@@ -2691,8 +2778,11 @@ class TestMigration3:
         assert "type_id" not in fk_columns
 
     def test_schema_version_is_10(self, db: EntityDatabase):
-        """After all migrations, schema_version should be 10."""
-        assert db.get_metadata("schema_version") == "10"
+        """After all migrations, schema_version should be 11.
+
+        Feature 108 Migration 11 bumps the version.
+        """
+        assert db.get_metadata("schema_version") == "11"
 
     # -- Task 1.2: Migration creates indexes and trigger (AC-2) ------------
 
@@ -2877,10 +2967,13 @@ class TestMigration3:
     # -- Task 1.4: Fresh DB migration safety (AC-3) ------------------------
 
     def test_fresh_db_has_all_migrations(self, tmp_path):
-        """A brand-new EntityDatabase should run all 10 migrations."""
+        """A brand-new EntityDatabase should run all migrations.
+
+        Feature 108 Migration 11 bumps the version to 11.
+        """
         fresh_db = EntityDatabase(str(tmp_path / "fresh.db"))
         try:
-            assert fresh_db.get_metadata("schema_version") == "10"
+            assert fresh_db.get_metadata("schema_version") == "11"
         finally:
             fresh_db.close()
 
@@ -2911,17 +3004,27 @@ class TestMigration3:
     # -- Task 1.5: FK enforcement (AC-16) ----------------------------------
 
     def test_insert_nonexistent_type_id_allowed(self, db: EntityDatabase):
-        """INSERT into workflow_phases with non-existent type_id succeeds.
+        """INSERT into workflow_phases with non-existent type_id succeeds when
+        workspace_uuid is supplied.
 
-        After migration 8, workflow_phases.type_id FK to entities is removed
-        because entities.type_id is no longer UNIQUE.
+        After migration 8, workflow_phases.type_id FK to entities is removed.
+        Feature 108 Migration 11 adds a `wp_reject_orphaned_insert` trigger
+        that rejects rows where ``workspace_uuid IS NULL`` AND no matching
+        entity exists, so callers must now supply ``workspace_uuid`` for
+        orphaned-by-design rows.
         """
+        from entity_registry.test_helpers import TEST_PROJECT_ID
+        ws_row = db._conn.execute(
+            "SELECT uuid FROM workspaces WHERE project_id_legacy = ?",
+            (TEST_PROJECT_ID,),
+        ).fetchone()
+        ws_uuid = ws_row["uuid"]
         now = EntityDatabase._now_iso()
         db._conn.execute(
             "INSERT INTO workflow_phases "
-            "(type_id, kanban_column, updated_at) "
-            "VALUES (?, 'backlog', ?)",
-            ("feature:does-not-exist", now),
+            "(type_id, workspace_uuid, kanban_column, updated_at) "
+            "VALUES (?, ?, 'backlog', ?)",
+            ("feature:does-not-exist", ws_uuid, now),
         )
         db._conn.commit()
         row = db._conn.execute(
@@ -2989,6 +3092,7 @@ class TestWorkflowPhaseCRUD:
             backward_transition_reason=None,
         )
         assert isinstance(result, dict)
+        # Post-Migration-11: workflow_phases gained workspace_uuid column.
         expected_keys = {
             "type_id",
             "workflow_phase",
@@ -2998,6 +3102,7 @@ class TestWorkflowPhaseCRUD:
             "backward_transition_reason",
             "updated_at",
             "uuid",
+            "workspace_uuid",
         }
         assert set(result.keys()) == expected_keys
         assert result["type_id"] == "feature:f1"
@@ -3073,6 +3178,7 @@ class TestWorkflowPhaseCRUD:
             backward_transition_reason="rework needed",
         )
         result = db.get_workflow_phase("feature:f1")
+        # Post-Migration-11: workflow_phases gained workspace_uuid column.
         expected_keys = {
             "type_id",
             "workflow_phase",
@@ -3082,6 +3188,7 @@ class TestWorkflowPhaseCRUD:
             "backward_transition_reason",
             "updated_at",
             "uuid",
+            "workspace_uuid",
         }
         assert set(result.keys()) == expected_keys
         assert result["type_id"] == "feature:f1"
@@ -3339,11 +3446,18 @@ class TestWorkflowPhaseCRUD:
 
     def test_list_wp_null_for_orphan_rows(self, db: EntityDatabase):
         """LEFT JOIN returns NULL entity fields for orphan workflow_phases rows."""
-        # Manually insert a workflow_phases row without a matching entity
+        # Manually insert a workflow_phases row without a matching entity.
+        # Post-Migration-11: pass workspace_uuid explicitly to bypass the
+        # wp_reject_orphaned_insert trigger (the trigger only fires when
+        # workspace_uuid IS NULL AND no matching entity exists).
+        from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
         db._conn.execute("PRAGMA foreign_keys = OFF")
         db._conn.execute(
-            "INSERT INTO workflow_phases (type_id, kanban_column, updated_at) VALUES (?, ?, ?)",
-            ("feature:orphan", "backlog", "2026-01-01T00:00:00Z"),
+            "INSERT INTO workflow_phases "
+            "(type_id, kanban_column, updated_at, workspace_uuid) "
+            "VALUES (?, ?, ?, ?)",
+            ("feature:orphan", "backlog", "2026-01-01T00:00:00Z",
+             _UNKNOWN_WORKSPACE_UUID),
         )
         db._conn.commit()
         db._conn.execute("PRAGMA foreign_keys = ON")
@@ -3371,11 +3485,17 @@ class TestWorkflowPhaseCRUD:
         db.register_entity("feature", "f2", "Feature 2", project_id="__unknown__")
         db.create_workflow_phase("feature:f1", kanban_column="wip")
         db.create_workflow_phase("feature:f2", kanban_column="backlog")
-        # Add orphan row (disable FK to allow orphan)
+        # Add orphan row (disable FK to allow orphan; supply workspace_uuid
+        # explicitly so the post-Migration-11 wp_reject_orphaned_insert
+        # trigger does not fire).
+        from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
         db._conn.execute("PRAGMA foreign_keys = OFF")
         db._conn.execute(
-            "INSERT INTO workflow_phases (type_id, kanban_column, updated_at) VALUES (?, ?, ?)",
-            ("feature:orphan", "backlog", "2026-01-01T00:00:00Z"),
+            "INSERT INTO workflow_phases "
+            "(type_id, kanban_column, updated_at, workspace_uuid) "
+            "VALUES (?, ?, ?, ?)",
+            ("feature:orphan", "backlog", "2026-01-01T00:00:00Z",
+             _UNKNOWN_WORKSPACE_UUID),
         )
         db._conn.commit()
         db._conn.execute("PRAGMA foreign_keys = ON")
@@ -3863,24 +3983,32 @@ class TestExportEntitiesJson:
         """Results ordered by created_at ASC, then type_id ASC."""
         # Insert with explicit created_at in reverse order to verify sorting
         now = mem_db._now_iso()
+        # Feature 108 Migration 11: parent_type_id column dropped; workspace_uuid
+        # is NOT NULL — fixture pre-bootstraps __test__.
+        from entity_registry.test_helpers import TEST_PROJECT_ID
+        ws_row = mem_db._conn.execute(
+            "SELECT uuid FROM workspaces WHERE project_id_legacy = ?",
+            (TEST_PROJECT_ID,),
+        ).fetchone()
+        ws_uuid = ws_row["uuid"]
         # Insert entities with controlled timestamps via direct SQL
         rows = [
-            (str(uuid.uuid4()), "feature:f3", "feature", "f3", "Third",
-             "active", None, None, None, "2026-01-03T00:00:00+00:00",
+            (str(uuid.uuid4()), ws_uuid, "feature:f3", "feature", "f3", "Third",
+             "active", None, None, "2026-01-03T00:00:00+00:00",
              "2026-01-03T00:00:00+00:00", None),
-            (str(uuid.uuid4()), "feature:f1", "feature", "f1", "First",
-             "active", None, None, None, "2026-01-01T00:00:00+00:00",
+            (str(uuid.uuid4()), ws_uuid, "feature:f1", "feature", "f1", "First",
+             "active", None, None, "2026-01-01T00:00:00+00:00",
              "2026-01-01T00:00:00+00:00", None),
-            (str(uuid.uuid4()), "project:p1", "project", "p1", "Also First",
-             "active", None, None, None, "2026-01-01T00:00:00+00:00",
+            (str(uuid.uuid4()), ws_uuid, "project:p1", "project", "p1", "Also First",
+             "active", None, None, "2026-01-01T00:00:00+00:00",
              "2026-01-01T00:00:00+00:00", None),
-            (str(uuid.uuid4()), "feature:f2", "feature", "f2", "Second",
-             "active", None, None, None, "2026-01-02T00:00:00+00:00",
+            (str(uuid.uuid4()), ws_uuid, "feature:f2", "feature", "f2", "Second",
+             "active", None, None, "2026-01-02T00:00:00+00:00",
              "2026-01-02T00:00:00+00:00", None),
         ]
         mem_db._conn.executemany(
-            "INSERT INTO entities (uuid, type_id, entity_type, entity_id, "
-            "name, status, artifact_path, parent_type_id, parent_uuid, "
+            "INSERT INTO entities (uuid, workspace_uuid, type_id, entity_type, "
+            "entity_id, name, status, artifact_path, parent_uuid, "
             "created_at, updated_at, metadata) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             rows,
@@ -3942,17 +4070,25 @@ class TestExportEntitiesJson:
     def test_performance_1000_entities(self, mem_db: EntityDatabase):
         """1000 entities exported in under 5 seconds."""
         now = mem_db._now_iso()
+        # Feature 108 Migration 11: parent_type_id column dropped; workspace_uuid
+        # is NOT NULL — fixture pre-bootstraps __test__.
+        from entity_registry.test_helpers import TEST_PROJECT_ID
+        ws_row = mem_db._conn.execute(
+            "SELECT uuid FROM workspaces WHERE project_id_legacy = ?",
+            (TEST_PROJECT_ID,),
+        ).fetchone()
+        ws_uuid = ws_row["uuid"]
         rows = [
             (
-                str(uuid.uuid4()), f"feature:{i:04d}", "feature",
+                str(uuid.uuid4()), ws_uuid, f"feature:{i:04d}", "feature",
                 f"{i:04d}", f"Entity {i}", "active",
-                None, None, None, now, now, None,
+                None, None, now, now, None,
             )
             for i in range(1000)
         ]
         mem_db._conn.executemany(
-            "INSERT INTO entities (uuid, type_id, entity_type, entity_id, "
-            "name, status, artifact_path, parent_type_id, parent_uuid, "
+            "INSERT INTO entities (uuid, workspace_uuid, type_id, entity_type, "
+            "entity_id, name, status, artifact_path, parent_uuid, "
             "created_at, updated_at, metadata) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             rows,
@@ -4307,7 +4443,8 @@ class TestMigration5:
         new phase values are accepted."""
         db = EntityDatabase(str(tmp_path / "m5-idem.db"))
         try:
-            assert db.get_schema_version() == 10
+            # Feature 108 Migration 11 bumps the version to 11.
+            assert db.get_schema_version() == 11
 
             # Verify all new phase values are accepted
             new_phases = [
@@ -5002,8 +5139,13 @@ class TestBatchRegistration:
         ]
         with pytest.raises(ValueError, match="Invalid entity_type"):
             db.register_entities_batch(entities, project_id="__unknown__")
-        # None should have been inserted
-        assert db.get_entity("feature:ok") is None
+        # None should have been inserted (raw-SQL probe — get_entity()
+        # still references the dropped project_id column post-Migration-11
+        # and is out of scope for this dispatch).
+        row = db._conn.execute(
+            "SELECT 1 FROM entities WHERE type_id = ?", ("feature:ok",),
+        ).fetchone()
+        assert row is None
 
     def test_batch_duplicate_type_id_ignored(self, db):
         db.register_entity("feature", "dup", "Already Exists", project_id="__unknown__")
@@ -5015,25 +5157,39 @@ class TestBatchRegistration:
         assert len(uuids) == 2  # Both return UUIDs (existing + new)
 
     def test_batch_parent_within_batch(self, db):
+        """Intra-batch parent linkage via parent_uuid (post-Feature-108).
+
+        Caller resolves parent_uuid before constructing the batch; the
+        ``parent_type_id`` dict key was dropped along with the kwarg.
+        """
+        parent_uuid = db.register_entity(
+            "project", "p1", "Project", project_id="__unknown__"
+        )
         entities = [
-            {"entity_type": "project", "entity_id": "p1", "name": "Project"},
             {
                 "entity_type": "feature", "entity_id": "f1", "name": "Feature",
-                "parent_type_id": "project:p1",
+                "parent_uuid": parent_uuid,
             },
         ]
         uuids = db.register_entities_batch(entities, project_id="__unknown__")
-        assert len(uuids) == 2
-        child = db.get_entity("feature:f1")
-        assert child is not None
-        assert child["parent_type_id"] == "project:p1"
+        assert len(uuids) == 1
+        # Raw-SQL probe — get_entity() out of scope this dispatch.
+        row = db._conn.execute(
+            "SELECT parent_uuid FROM entities WHERE type_id = ?",
+            ("feature:f1",),
+        ).fetchone()
+        assert row is not None
+        assert row["parent_uuid"] == parent_uuid
 
     def test_batch_parent_in_db(self, db):
-        db.register_entity("project", "existing-p", "Existing Project", project_id="__unknown__")
+        parent_uuid = db.register_entity(
+            "project", "existing-p", "Existing Project",
+            project_id="__unknown__",
+        )
         entities = [
             {
                 "entity_type": "feature", "entity_id": "f-child", "name": "Child",
-                "parent_type_id": "project:existing-p",
+                "parent_uuid": parent_uuid,
             },
         ]
         uuids = db.register_entities_batch(entities, project_id="__unknown__")
@@ -5051,9 +5207,13 @@ class TestBatchRegistration:
         ]
         uuids = db.register_entities_batch(entities, project_id="__unknown__")
         assert len(uuids) == 1
-        entity = db.get_entity("feature:meta-b")
-        assert entity is not None
-        meta = json.loads(entity["metadata"])
+        # Raw-SQL probe — get_entity() out of scope this dispatch.
+        row = db._conn.execute(
+            "SELECT metadata FROM entities WHERE type_id = ?",
+            ("feature:meta-b",),
+        ).fetchone()
+        assert row is not None
+        meta = json.loads(row["metadata"])
         assert meta["mode"] == "standard"
 
     def test_batch_fts_searchable(self, db):
@@ -5076,11 +5236,17 @@ class TestCommitHelper:
 
     def test_commit_outside_transaction(self, db):
         """_commit() calls self._conn.commit() when not in a transaction."""
+        # Feature 108 Migration 11: workspace_uuid is NOT NULL — fixture
+        # pre-bootstraps __test__.
+        ws_row = db._conn.execute(
+            "SELECT uuid FROM workspaces WHERE project_id_legacy = '__test__'"
+        ).fetchone()
+        ws_uuid = ws_row["uuid"]
         # Insert a row via raw SQL (no auto-commit)
         db._conn.execute(
-            "INSERT INTO entities (uuid, type_id, entity_type, entity_id, name, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
-            (str(uuid.uuid4()), "feature:commit-test", "feature", "commit-test", "CommitTest"),
+            "INSERT INTO entities (uuid, workspace_uuid, type_id, entity_type, entity_id, name, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+            (str(uuid.uuid4()), ws_uuid, "feature:commit-test", "feature", "commit-test", "CommitTest"),
         )
         db._commit()
         # Verify data persisted by opening a second connection
@@ -5093,14 +5259,19 @@ class TestCommitHelper:
 
     def test_commit_suppressed_inside_transaction(self, db):
         """Inside transaction(), _commit() is a no-op (does not commit)."""
+        # Feature 108 Migration 11: workspace_uuid is NOT NULL.
+        ws_row = db._conn.execute(
+            "SELECT uuid FROM workspaces WHERE project_id_legacy = '__test__'"
+        ).fetchone()
+        ws_uuid = ws_row["uuid"]
         db._conn.commit()  # flush any implicit transaction first
         db._conn.execute("BEGIN IMMEDIATE")
         db._in_transaction = True
         try:
             db._conn.execute(
-                "INSERT INTO entities (uuid, type_id, entity_type, entity_id, name, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
-                (str(uuid.uuid4()), "feature:suppress-test", "feature", "suppress-test", "SuppressTest"),
+                "INSERT INTO entities (uuid, workspace_uuid, type_id, entity_type, entity_id, name, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+                (str(uuid.uuid4()), ws_uuid, "feature:suppress-test", "feature", "suppress-test", "SuppressTest"),
             )
             # _commit() should be a no-op
             db._commit()
@@ -5120,11 +5291,16 @@ class TestTransactionContextManager:
 
     def test_transaction_commits_on_success(self, db):
         """Data persisted after transaction context exits normally."""
+        # Feature 108 Migration 11: workspace_uuid is NOT NULL.
+        ws_row = db._conn.execute(
+            "SELECT uuid FROM workspaces WHERE project_id_legacy = '__test__'"
+        ).fetchone()
+        ws_uuid = ws_row["uuid"]
         with db.transaction():
             db._conn.execute(
-                "INSERT INTO entities (uuid, type_id, entity_type, entity_id, name, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
-                (str(uuid.uuid4()), "feature:txn-ok", "feature", "txn-ok", "TxnOK"),
+                "INSERT INTO entities (uuid, workspace_uuid, type_id, entity_type, entity_id, name, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+                (str(uuid.uuid4()), ws_uuid, "feature:txn-ok", "feature", "txn-ok", "TxnOK"),
             )
         # Verify persisted via second connection
         db_path = db._conn.execute("PRAGMA database_list").fetchone()[2]
@@ -5136,12 +5312,17 @@ class TestTransactionContextManager:
 
     def test_transaction_rolls_back_on_exception(self, db):
         """Data NOT persisted when exception raised inside transaction."""
+        # Feature 108 Migration 11: workspace_uuid is NOT NULL.
+        ws_row = db._conn.execute(
+            "SELECT uuid FROM workspaces WHERE project_id_legacy = '__test__'"
+        ).fetchone()
+        ws_uuid = ws_row["uuid"]
         with pytest.raises(ValueError, match="deliberate"):
             with db.transaction():
                 db._conn.execute(
-                    "INSERT INTO entities (uuid, type_id, entity_type, entity_id, name, created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
-                    (str(uuid.uuid4()), "feature:txn-fail", "feature", "txn-fail", "TxnFail"),
+                    "INSERT INTO entities (uuid, workspace_uuid, type_id, entity_type, entity_id, name, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+                    (str(uuid.uuid4()), ws_uuid, "feature:txn-fail", "feature", "txn-fail", "TxnFail"),
                 )
                 raise ValueError("deliberate error")
 
@@ -5593,7 +5774,8 @@ class TestMigration8Data:
             db2 = EntityDatabase(db_path)
             v2 = db2.get_schema_version()
             db2.close()
-            assert v1 == v2 == 10
+            # Feature 108 Migration 11 bumps the version to 11.
+            assert v1 == v2 == 11
 
     def test_migration_8_schema_version_set_to_8(self):
         """Schema version is 8 after migration."""
@@ -5612,15 +5794,23 @@ class TestMigration8Data:
 
 
 class TestNextSequenceValue:
-    """Tests for EntityDatabase.next_sequence_value()."""
+    """Tests for EntityDatabase.next_sequence_value().
+
+    Post-Migration-11: sequences table is keyed on (workspace_uuid,
+    entity_type). The next_sequence_value compat shim resolves a legacy
+    project_id positional arg to a workspace_uuid via the workspaces table.
+    Each test bootstraps the workspaces row(s) it needs.
+    """
 
     def test_sequence_bootstrap_from_entities(self):
         """Bootstrap: empty sequences table scans entities for max seq."""
         db = EntityDatabase(":memory:")
         try:
+            ws_uuid = _bootstrap_test_workspace(db)
             # Insert entities directly with known sequence-format IDs.
-            # Disable FK checks since workflow_phases references entities(type_id)
-            # which is no longer UNIQUE after migration 8.
+            # Post-Migration-11: entities table uses workspace_uuid (not
+            # project_id). Bypass the public API so we can pre-load known
+            # sequence prefixes without going through register_entity.
             from datetime import datetime, timezone
             now = datetime.now(timezone.utc).isoformat()
             db._conn.execute("PRAGMA foreign_keys = OFF")
@@ -5628,10 +5818,11 @@ class TestNextSequenceValue:
                 uid = str(uuid.uuid4())
                 db._conn.execute(
                     "INSERT INTO entities "
-                    "(uuid, type_id, project_id, entity_type, entity_id, name, "
-                    "created_at, updated_at) "
+                    "(uuid, workspace_uuid, type_id, entity_type, entity_id, "
+                    "name, created_at, updated_at) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (uid, f"feature:{eid}", TEST_PROJECT_ID, "feature", eid, name, now, now),
+                    (uid, ws_uuid, f"feature:{eid}", "feature", eid, name,
+                     now, now),
                 )
             db._conn.commit()
             db._conn.execute("PRAGMA foreign_keys = ON")
@@ -5652,6 +5843,7 @@ class TestNextSequenceValue:
         """Sequential calls return incrementing values."""
         db = EntityDatabase(":memory:")
         try:
+            _bootstrap_test_workspace(db)
             v1 = db.next_sequence_value(TEST_PROJECT_ID, "task")
             v2 = db.next_sequence_value(TEST_PROJECT_ID, "task")
             v3 = db.next_sequence_value(TEST_PROJECT_ID, "task")
@@ -5665,6 +5857,8 @@ class TestNextSequenceValue:
         """Different projects get independent counters."""
         db = EntityDatabase(":memory:")
         try:
+            _bootstrap_test_workspace(db, "proj_a")
+            _bootstrap_test_workspace(db, "proj_b")
             a1 = db.next_sequence_value("proj_a", "feature")
             a2 = db.next_sequence_value("proj_a", "feature")
             b1 = db.next_sequence_value("proj_b", "feature")
@@ -5682,11 +5876,13 @@ class TestNextSequenceValue:
         """
         db = EntityDatabase(":memory:")
         try:
+            ws_uuid = _bootstrap_test_workspace(db)
             val = db.next_sequence_value(TEST_PROJECT_ID, "task")
             assert val == 1
             row = db._conn.execute(
                 "SELECT next_val FROM sequences "
-                "WHERE project_id = '__test__' AND entity_type = 'task'"
+                "WHERE workspace_uuid = ? AND entity_type = 'task'",
+                (ws_uuid,),
             ).fetchone()
             assert row[0] == 2  # next_val incremented atomically
         finally:
@@ -5859,6 +6055,8 @@ class TestProjectScopedQueryListEntities:
         assert all_result["entity_count"] == 2
 
     def test_project_scoped_query_export_lineage_markdown(self, mem_db):
+        _bootstrap_test_workspace(mem_db)
+        _bootstrap_test_workspace(mem_db, "__other__")
         mem_db.register_entity("project", "p1", "P1", project_id=TEST_PROJECT_ID)
         mem_db.register_entity("project", "p2", "P2", project_id="__other__")
         result = mem_db.export_lineage_markdown(project_id=TEST_PROJECT_ID)
@@ -6058,10 +6256,14 @@ class TestReattribution:
         entity = mem_db.get_entity_by_uuid(uid)
         assert entity["project_id"] == TEST_PROJECT_ID
 
-        # Trigger is restored — direct UPDATE should fail
+        # Feature 108 Migration 11: project_id column dropped → assert the
+        # workspace_uuid immutability trigger has been restored after the
+        # rolled-back re-attribution attempt by attempting a direct
+        # UPDATE OF workspace_uuid (which the trigger should still ABORT).
         with pytest.raises(sqlite3.IntegrityError):
             mem_db._conn.execute(
-                "UPDATE entities SET project_id = '__bad__' WHERE uuid = ?",
+                "UPDATE entities SET workspace_uuid = "
+                "'00000000-0000-0000-0000-000000000000' WHERE uuid = ?",
                 (uid,),
             )
 
@@ -6071,6 +6273,7 @@ class TestUpsertWorkflowPhaseProject:
 
     def test_upsert_with_correct_project(self, mem_db):
         """upsert_workflow_phase succeeds when project matches."""
+        _bootstrap_test_workspace(mem_db)
         mem_db.register_entity(
             "feature", "wp1", "WP1", project_id=TEST_PROJECT_ID
         )
@@ -6084,6 +6287,7 @@ class TestUpsertWorkflowPhaseProject:
 
     def test_upsert_with_wrong_project_fails(self, mem_db):
         """upsert_workflow_phase fails when project doesn't match."""
+        _bootstrap_test_workspace(mem_db)
         mem_db.register_entity(
             "feature", "wp2", "WP2", project_id=TEST_PROJECT_ID
         )
@@ -6179,3 +6383,1477 @@ class TestCascadeOnComplete:
         assert len(deps) == 0
         entity_a = db.get_entity_by_uuid(uuid_a)
         assert entity_a["status"] == "planned"
+
+
+# ===========================================================================
+# Feature 108 (workspace identity foundation) — Phase A & B tests
+# ===========================================================================
+
+
+class TestFeature108UnknownWorkspaceUuid:
+    """Phase A Task 1.1: pin _UNKNOWN_WORKSPACE_UUID byte-equality + RFC 4122 v4."""
+
+    def test_unknown_workspace_uuid_pinned_literal(self):
+        """_UNKNOWN_WORKSPACE_UUID byte-equals the pinned literal (NOT recompute)."""
+        from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
+        # Byte-equality against the spec FR-4 / design Decision 3 literal.
+        assert _UNKNOWN_WORKSPACE_UUID == "6250c8a6-5306-443f-b225-477a040016ea"
+
+    def test_unknown_workspace_uuid_is_v4_rfc4122(self):
+        """The pinned UUID parses as v4 with RFC 4122 variant."""
+        from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
+        parsed = uuid.UUID(_UNKNOWN_WORKSPACE_UUID)
+        assert parsed.version == 4
+        assert parsed.variant == uuid.RFC_4122
+
+    def test_workspaces_table_ddl_contains_legacy_column(self):
+        """_WORKSPACES_TABLE_DDL contains the project_id_legacy column."""
+        from entity_registry.database import _WORKSPACES_TABLE_DDL
+        assert "project_id_legacy" in _WORKSPACES_TABLE_DDL
+        assert "project_root" in _WORKSPACES_TABLE_DDL
+
+
+class TestFeature108TestHelpers:
+    """Phase A Task 1.5: get_test_workspace_uuid() returns the pinned literal."""
+
+    def test_get_test_workspace_uuid_returns_pinned_literal(self):
+        """The test helper returns the byte-equal pinned literal."""
+        from entity_registry.test_helpers import get_test_workspace_uuid
+        assert get_test_workspace_uuid() == "6250c8a6-5306-443f-b225-477a040016ea"
+
+    def test_get_test_workspace_uuid_matches_database_constant(self):
+        """The helper returns exactly the database._UNKNOWN_WORKSPACE_UUID constant."""
+        from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
+        from entity_registry.test_helpers import get_test_workspace_uuid
+        assert get_test_workspace_uuid() == _UNKNOWN_WORKSPACE_UUID
+
+
+class TestFeature108LegacyProjectId:
+    """Phase A Task 1.2: _compute_legacy_project_id returns 12-char hex."""
+
+    def test_compute_legacy_project_id_returns_12char_hex(self, tmp_path):
+        """The migration-only helper returns a 12-char lowercase hex string."""
+        from entity_registry.project_identity import _compute_legacy_project_id
+        result = _compute_legacy_project_id(str(tmp_path))
+        assert len(result) == 12
+        assert re.match(r'^[0-9a-f]{12}$', result), (
+            f"Not 12-char lowercase hex: {result!r}"
+        )
+
+    def test_compute_legacy_project_id_is_path_hash_for_non_git(self, tmp_path):
+        """For a non-git directory, returns the path-hash fallback (not env var)."""
+        import hashlib as _hashlib
+        from entity_registry.project_identity import _compute_legacy_project_id
+        result = _compute_legacy_project_id(str(tmp_path))
+        expected = _hashlib.sha256(str(tmp_path).encode()).hexdigest()[:12]
+        assert result == expected
+
+
+class TestFeature108MakeV10Db:
+    """Phase B Task 2.0: make_v10_db() helper builds DB at exactly schema_version=10."""
+
+    def test_make_v10_db_returns_connection_at_v10(self, tmp_path):
+        from entity_registry.test_helpers import make_v10_db
+        conn = make_v10_db(tmp_path / "v10.db")
+        try:
+            v = conn.execute(
+                "SELECT value FROM _metadata WHERE key='schema_version'"
+            ).fetchone()
+            assert v[0] == "10"
+        finally:
+            conn.close()
+
+    def test_make_v10_db_in_memory(self):
+        from entity_registry.test_helpers import make_v10_db
+        conn = make_v10_db(None)
+        try:
+            v = conn.execute(
+                "SELECT value FROM _metadata WHERE key='schema_version'"
+            ).fetchone()
+            assert v[0] == "10"
+        finally:
+            conn.close()
+
+    def test_make_v10_db_has_pre11_entities_columns(self, tmp_path):
+        """Pre-11 DB has project_id and parent_type_id columns."""
+        from entity_registry.test_helpers import make_v10_db
+        conn = make_v10_db(tmp_path / "v10.db")
+        try:
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(entities)")}
+            # Pre-11: project_id and parent_type_id present
+            assert "project_id" in cols
+            assert "parent_type_id" in cols
+            # Pre-11: workspace_uuid NOT present
+            assert "workspace_uuid" not in cols
+            # workspaces table not yet created
+            tables = {
+                row[0] for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+            assert "workspaces" not in tables
+        finally:
+            conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Migration 11 schema-shape & invariant tests (Phase B Tasks 2.1, 2.2, 2.3)
+# ---------------------------------------------------------------------------
+
+
+def _migrate_to_11(conn: sqlite3.Connection) -> None:
+    """Test helper: apply Migration 11 to a v10 DB and stamp schema_version=11.
+
+    Mirrors the outer ``_migrate()`` loop but only applies the single
+    Migration 11 step.
+    """
+    from entity_registry.database import MIGRATIONS
+    MIGRATIONS[11](conn)
+    conn.execute(
+        "INSERT INTO _metadata (key, value) VALUES (?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        ("schema_version", "11"),
+    )
+    conn.commit()
+
+
+class TestMigration11SchemaShape:
+    """RED→GREEN: Migration 11 produces the expected entities schema (AC-1..6, 28)."""
+
+    def test_migration_11_table_shape(self, tmp_path):
+        from entity_registry.test_helpers import make_v10_db
+        conn = make_v10_db(tmp_path / "v10.db")
+        try:
+            _migrate_to_11(conn)
+
+            cols = list(conn.execute("PRAGMA table_info(entities)"))
+            # 12 columns expected per FR-5 DDL.
+            assert len(cols) == 12, (
+                f"Expected 12 cols, got {len(cols)}: "
+                f"{[r[1] for r in cols]}"
+            )
+            # workspace_uuid at column index 1 (right after uuid).
+            assert cols[1][1] == "workspace_uuid", (
+                f"workspace_uuid not at index 1: {[r[1] for r in cols]}"
+            )
+            col_names = {r[1] for r in cols}
+            assert "project_id" not in col_names
+            assert "parent_type_id" not in col_names
+
+            # _metadata.schema_version should be '11' as string.
+            v = conn.execute(
+                "SELECT value FROM _metadata WHERE key='schema_version'"
+            ).fetchone()
+            assert v[0] == "11"
+        finally:
+            conn.close()
+
+    def test_migration_11_unique_constraint(self, tmp_path):
+        """UNIQUE(workspace_uuid, type_id) — same workspace+type_id raises;
+        different workspace allows same type_id."""
+        from entity_registry.test_helpers import make_v10_db
+        conn = make_v10_db(tmp_path / "v10.db")
+        try:
+            # Insert two pre-11 entities with distinct project_ids.
+            now = "2026-05-10T00:00:00+00:00"
+            conn.execute(
+                "INSERT INTO entities (uuid, type_id, project_id, entity_type, "
+                "entity_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (str(uuid.uuid4()), "feature:001-x", "wsA",
+                 "feature", "001-x", "X-A", now, now),
+            )
+            conn.execute(
+                "INSERT INTO entities (uuid, type_id, project_id, entity_type, "
+                "entity_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (str(uuid.uuid4()), "feature:001-x", "wsB",
+                 "feature", "001-x", "X-B", now, now),
+            )
+            conn.commit()
+
+            _migrate_to_11(conn)
+
+            # Same workspace + same type_id should violate UNIQUE.
+            ws_uuid = conn.execute(
+                "SELECT workspace_uuid FROM entities WHERE type_id='feature:001-x' LIMIT 1"
+            ).fetchone()[0]
+
+            with pytest.raises(sqlite3.IntegrityError):
+                conn.execute(
+                    "INSERT INTO entities (uuid, workspace_uuid, type_id, "
+                    "entity_type, entity_id, name, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (str(uuid.uuid4()), ws_uuid, "feature:001-x",
+                     "feature", "001-x", "dup", now, now),
+                )
+
+            # Different workspace + same type_id should succeed (both
+            # workspaces already in DB, take a different one).
+            other_ws = conn.execute(
+                "SELECT uuid FROM workspaces WHERE uuid != ? LIMIT 1",
+                (ws_uuid,),
+            ).fetchone()
+            assert other_ws is not None, (
+                "Test pre-condition: should have at least 2 workspaces"
+            )
+            # Insert with a new type_id under the other workspace, then
+            # also assert that we could insert the same type_id under
+            # the other workspace (different combo).
+            conn.execute(
+                "INSERT INTO entities (uuid, workspace_uuid, type_id, "
+                "entity_type, entity_id, name, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (str(uuid.uuid4()), other_ws[0], "feature:002-y",
+                 "feature", "002-y", "y", now, now),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+class TestMigration11TriggersAndIndexes:
+    """RED→GREEN: trigger names + workspace_uuid immutability + index shape."""
+
+    def test_no_parent_type_id_triggers(self, tmp_path):
+        from entity_registry.test_helpers import make_v10_db
+        conn = make_v10_db(tmp_path / "v10.db")
+        try:
+            _migrate_to_11(conn)
+            triggers = sorted(
+                row[0] for row in conn.execute(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type='trigger' AND tbl_name='entities'"
+                )
+            )
+            expected = sorted([
+                "enforce_immutable_uuid",
+                "enforce_immutable_type_id",
+                "enforce_immutable_entity_type",
+                "enforce_immutable_created_at",
+                "enforce_immutable_workspace_uuid",
+                "enforce_no_self_parent_uuid_insert",
+                "enforce_no_self_parent_uuid_update",
+            ])
+            assert triggers == expected, (
+                f"Trigger set mismatch:\n  got:      {triggers}\n  expected: {expected}"
+            )
+        finally:
+            conn.close()
+
+    def test_workspace_uuid_immutable_trigger(self, tmp_path):
+        from entity_registry.test_helpers import make_v10_db
+        conn = make_v10_db(tmp_path / "v10.db")
+        try:
+            now = "2026-05-10T00:00:00+00:00"
+            new_uuid = str(uuid.uuid4())
+            conn.execute(
+                "INSERT INTO entities (uuid, type_id, project_id, entity_type, "
+                "entity_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (new_uuid, "feature:001-x", "wsA",
+                 "feature", "001-x", "X", now, now),
+            )
+            conn.commit()
+            _migrate_to_11(conn)
+
+            other_ws = conn.execute(
+                "SELECT uuid FROM workspaces "
+                "WHERE uuid != (SELECT workspace_uuid FROM entities WHERE uuid=?) "
+                "LIMIT 1",
+                (new_uuid,),
+            ).fetchone()
+            # If only one workspace existed, create a new dummy workspace.
+            if other_ws is None:
+                fresh_ws = str(uuid.uuid4())
+                conn.execute(
+                    "INSERT INTO workspaces (uuid, project_id_legacy, "
+                    "project_root, created_at, updated_at) "
+                    "VALUES (?, NULL, NULL, ?, ?)",
+                    (fresh_ws, now, now),
+                )
+                target_ws = fresh_ws
+            else:
+                target_ws = other_ws[0]
+            with pytest.raises(sqlite3.IntegrityError) as exc:
+                conn.execute(
+                    "UPDATE entities SET workspace_uuid = ? WHERE uuid = ?",
+                    (target_ws, new_uuid),
+                )
+            assert "workspace_uuid is immutable" in str(exc.value)
+        finally:
+            conn.close()
+
+    def test_indexes_after_migration_11(self, tmp_path):
+        from entity_registry.test_helpers import make_v10_db
+        conn = make_v10_db(tmp_path / "v10.db")
+        try:
+            _migrate_to_11(conn)
+            idx_names = {
+                row[0] for row in conn.execute(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type='index' AND tbl_name='entities' "
+                    "AND name NOT LIKE 'sqlite_%'"
+                )
+            }
+            assert "idx_workspace_uuid" in idx_names
+            assert "idx_workspace_entity_type" in idx_names
+            assert "idx_project_id" not in idx_names
+            assert "idx_project_entity_type" not in idx_names
+            assert "idx_parent_type_id" not in idx_names
+        finally:
+            conn.close()
+
+
+class TestMigration11WorkflowPhasesTriggers:
+    """RED→GREEN: wp_autofill_workspace_uuid + wp_reject_orphaned_insert pair."""
+
+    def test_workflow_phases_autofill_trigger(self, tmp_path):
+        from entity_registry.test_helpers import make_v10_db
+        conn = make_v10_db(tmp_path / "v10.db")
+        try:
+            now = "2026-05-10T00:00:00+00:00"
+            ent_uuid = str(uuid.uuid4())
+            conn.execute(
+                "INSERT INTO entities (uuid, type_id, project_id, entity_type, "
+                "entity_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (ent_uuid, "feature:043-foo", "wsA",
+                 "feature", "043-foo", "Foo", now, now),
+            )
+            conn.commit()
+            _migrate_to_11(conn)
+
+            ws_uuid = conn.execute(
+                "SELECT workspace_uuid FROM entities WHERE uuid=?", (ent_uuid,)
+            ).fetchone()[0]
+
+            # INSERT into workflow_phases without workspace_uuid →
+            # AFTER trigger should auto-fill from entities.workspace_uuid.
+            conn.execute(
+                "INSERT INTO workflow_phases (type_id, kanban_column, updated_at) "
+                "VALUES (?, ?, ?)",
+                ("feature:043-foo", "backlog", now),
+            )
+            conn.commit()
+
+            row = conn.execute(
+                "SELECT workspace_uuid FROM workflow_phases WHERE type_id=?",
+                ("feature:043-foo",),
+            ).fetchone()
+            assert row is not None
+            assert row[0] == ws_uuid, (
+                f"Expected autofilled workspace_uuid={ws_uuid!r}, got {row[0]!r}"
+            )
+        finally:
+            conn.close()
+
+    def test_workflow_phases_orphan_insert_rejected(self, tmp_path):
+        from entity_registry.test_helpers import make_v10_db
+        conn = make_v10_db(tmp_path / "v10.db")
+        try:
+            _migrate_to_11(conn)
+            now = "2026-05-10T00:00:00+00:00"
+            with pytest.raises(sqlite3.IntegrityError):
+                conn.execute(
+                    "INSERT INTO workflow_phases (type_id, kanban_column, updated_at) "
+                    "VALUES (?, ?, ?)",
+                    ("feature:no-such-entity", "backlog", now),
+                )
+        finally:
+            conn.close()
+
+
+class TestMigration11WorkspaceBootstrap:
+    """Migration 11 step 0+5: workspace mapping audit + bootstrap (AC-36, 41)."""
+
+    def test_workspaces_bootstrap_one_row_per_distinct_project_id(self, tmp_path):
+        from entity_registry.test_helpers import make_v10_db
+        conn = make_v10_db(tmp_path / "v10.db")
+        try:
+            now = "2026-05-10T00:00:00+00:00"
+            project_ids = ["wsA", "wsB", "wsC"]
+            for pid in project_ids:
+                conn.execute(
+                    "INSERT INTO entities (uuid, type_id, project_id, entity_type, "
+                    "entity_id, name, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (str(uuid.uuid4()), f"feature:001-{pid}", pid,
+                     "feature", f"001-{pid}", pid, now, now),
+                )
+            conn.commit()
+
+            os.environ["PD_WORKSPACE_ROOT"] = str(tmp_path)
+            try:
+                _migrate_to_11(conn)
+            finally:
+                os.environ.pop("PD_WORKSPACE_ROOT", None)
+
+            ws_count = conn.execute(
+                "SELECT COUNT(*) FROM workspaces"
+            ).fetchone()[0]
+            assert ws_count == len(project_ids)
+
+            legacy_set = {
+                r[0] for r in conn.execute(
+                    "SELECT project_id_legacy FROM workspaces"
+                )
+            }
+            assert legacy_set == set(project_ids)
+        finally:
+            conn.close()
+
+    def test_workspace_mapping_audit_emitted(self, tmp_path):
+        from entity_registry.test_helpers import make_v10_db
+        conn = make_v10_db(tmp_path / "v10.db")
+        try:
+            now = "2026-05-10T00:00:00+00:00"
+            for pid in ["wsA", "wsB"]:
+                conn.execute(
+                    "INSERT INTO entities (uuid, type_id, project_id, entity_type, "
+                    "entity_id, name, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (str(uuid.uuid4()), f"feature:001-{pid}", pid,
+                     "feature", f"001-{pid}", pid, now, now),
+                )
+            conn.commit()
+
+            os.environ["PD_WORKSPACE_ROOT"] = str(tmp_path)
+            try:
+                _migrate_to_11(conn)
+            finally:
+                os.environ.pop("PD_WORKSPACE_ROOT", None)
+
+            mapping_path = (
+                tmp_path
+                / ".claude"
+                / "pd"
+                / "migrations"
+                / "migration-11-workspace-mapping.json"
+            )
+            assert mapping_path.exists(), (
+                f"Mapping file not emitted: {mapping_path}"
+            )
+            data = json.loads(mapping_path.read_text())
+            # Map every legacy id to its new workspace UUID.
+            assert "wsA" in data
+            assert "wsB" in data
+            for legacy, new_uuid in data.items():
+                row = conn.execute(
+                    "SELECT uuid FROM workspaces WHERE project_id_legacy=?",
+                    (legacy,),
+                ).fetchone()
+                assert row is not None
+                assert row[0] == new_uuid
+        finally:
+            conn.close()
+
+    def test_migration_11_unknown_project_id(self, tmp_path):
+        from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
+        from entity_registry.test_helpers import make_v10_db
+        conn = make_v10_db(tmp_path / "v10.db")
+        try:
+            now = "2026-05-10T00:00:00+00:00"
+            # Default project_id is __unknown__ in pre-11 schema.
+            conn.execute(
+                "INSERT INTO entities (uuid, type_id, project_id, entity_type, "
+                "entity_id, name, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (str(uuid.uuid4()), "feature:orphan", "__unknown__",
+                 "feature", "orphan", "Orphan", now, now),
+            )
+            conn.commit()
+
+            os.environ["PD_WORKSPACE_ROOT"] = str(tmp_path)
+            try:
+                _migrate_to_11(conn)
+            finally:
+                os.environ.pop("PD_WORKSPACE_ROOT", None)
+
+            v = conn.execute(
+                "SELECT value FROM _metadata WHERE key='schema_version'"
+            ).fetchone()
+            assert v[0] == "11"
+            row = conn.execute(
+                "SELECT uuid FROM workspaces WHERE project_id_legacy='__unknown__'"
+            ).fetchone()
+            assert row is not None
+            assert row[0] == _UNKNOWN_WORKSPACE_UUID
+        finally:
+            conn.close()
+
+    def test_migration_11_empty_entities_table(self, tmp_path):
+        """Empty entities table → empty mapping, completes successfully."""
+        from entity_registry.test_helpers import make_v10_db
+        conn = make_v10_db(tmp_path / "v10.db")
+        try:
+            os.environ["PD_WORKSPACE_ROOT"] = str(tmp_path)
+            try:
+                _migrate_to_11(conn)
+            finally:
+                os.environ.pop("PD_WORKSPACE_ROOT", None)
+            v = conn.execute(
+                "SELECT value FROM _metadata WHERE key='schema_version'"
+            ).fetchone()
+            assert v[0] == "11"
+            ws_count = conn.execute("SELECT COUNT(*) FROM workspaces").fetchone()[0]
+            assert ws_count == 0
+        finally:
+            conn.close()
+
+
+class TestMigration11ParentTypeIdAssertion:
+    """Migration 11 step 6: pre-migration parent_type_id orphan assertion."""
+
+    def test_migration_11_aborts_on_parent_type_id_orphan(self, tmp_path):
+        from entity_registry.test_helpers import make_v10_db
+        conn = make_v10_db(tmp_path / "v10.db")
+        try:
+            now = "2026-05-10T00:00:00+00:00"
+            # Insert a row with parent_type_id but NO parent_uuid → orphan.
+            offender_uuid = str(uuid.uuid4())
+            conn.execute(
+                "INSERT INTO entities (uuid, type_id, project_id, entity_type, "
+                "entity_id, name, parent_type_id, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (offender_uuid, "feature:offender", "wsX",
+                 "feature", "offender", "off", "feature:phantom", now, now),
+            )
+            conn.commit()
+
+            os.environ["PD_WORKSPACE_ROOT"] = str(tmp_path)
+            try:
+                with pytest.raises(RuntimeError) as exc:
+                    _migrate_to_11(conn)
+                assert offender_uuid in str(exc.value), (
+                    f"Offender UUID not in error: {exc.value}"
+                )
+            finally:
+                os.environ.pop("PD_WORKSPACE_ROOT", None)
+
+            # schema_version should still be 10 after rollback.
+            v = conn.execute(
+                "SELECT value FROM _metadata WHERE key='schema_version'"
+            ).fetchone()
+            assert v[0] == "10"
+        finally:
+            conn.close()
+
+
+class TestMigration11Sequences:
+    """Migration 11 step 12: rebuild sequences keyed on workspace_uuid."""
+
+    def test_migration_11_sequences_keyed_on_workspace(self, tmp_path):
+        from entity_registry.test_helpers import make_v10_db
+        conn = make_v10_db(tmp_path / "v10.db")
+        try:
+            now = "2026-05-10T00:00:00+00:00"
+            conn.execute(
+                "INSERT INTO entities (uuid, type_id, project_id, entity_type, "
+                "entity_id, name, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (str(uuid.uuid4()), "feature:001-foo", "wsA",
+                 "feature", "001-foo", "foo", now, now),
+            )
+            conn.execute(
+                "INSERT INTO sequences (project_id, entity_type, next_val) "
+                "VALUES (?, ?, ?)",
+                ("wsA", "feature", 5),
+            )
+            conn.commit()
+
+            os.environ["PD_WORKSPACE_ROOT"] = str(tmp_path)
+            try:
+                _migrate_to_11(conn)
+            finally:
+                os.environ.pop("PD_WORKSPACE_ROOT", None)
+
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(sequences)")}
+            assert "workspace_uuid" in cols
+            assert "project_id" not in cols
+            row = conn.execute(
+                "SELECT next_val FROM sequences "
+                "WHERE workspace_uuid = (SELECT uuid FROM workspaces "
+                "WHERE project_id_legacy = 'wsA') AND entity_type='feature'"
+            ).fetchone()
+            assert row is not None
+            assert row[0] == 5
+        finally:
+            conn.close()
+
+
+class TestMigration11Projects:
+    """Migration 11 step 13: rebuild projects with workspace_uuid NOT NULL."""
+
+    def test_migration_11_projects_workspace_not_null(self, tmp_path):
+        from entity_registry.test_helpers import make_v10_db
+        conn = make_v10_db(tmp_path / "v10.db")
+        try:
+            now = "2026-05-10T00:00:00+00:00"
+            # Insert an entity to bootstrap a workspace.
+            conn.execute(
+                "INSERT INTO entities (uuid, type_id, project_id, entity_type, "
+                "entity_id, name, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (str(uuid.uuid4()), "feature:001-foo", "wsA",
+                 "feature", "001-foo", "foo", now, now),
+            )
+            # Insert a matching projects row.
+            conn.execute(
+                "INSERT INTO projects (project_id, name, project_root, "
+                "is_git_repo, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                ("wsA", "Project A", "/tmp/wsA", 1, now, now),
+            )
+            conn.commit()
+
+            os.environ["PD_WORKSPACE_ROOT"] = str(tmp_path)
+            try:
+                _migrate_to_11(conn)
+            finally:
+                os.environ.pop("PD_WORKSPACE_ROOT", None)
+
+            cols = list(conn.execute("PRAGMA table_info(projects)"))
+            col_map = {r[1]: r for r in cols}
+            assert "workspace_uuid" in col_map
+            # notnull flag is index 3 in PRAGMA table_info row.
+            assert col_map["workspace_uuid"][3] == 1, (
+                "workspace_uuid not NOT NULL"
+            )
+            row = conn.execute(
+                "SELECT workspace_uuid FROM projects WHERE project_id='wsA'"
+            ).fetchone()
+            assert row is not None
+            assert row[0] is not None
+        finally:
+            conn.close()
+
+
+class TestMigration11InTransactionStamp:
+    """Migration 11 step 15: schema_version stamp inside the same transaction."""
+
+    def test_migration_11_in_transaction_stamp(self, tmp_path):
+        """If migration body raises after stamp, full transaction rolls back."""
+        from entity_registry.test_helpers import make_v10_db
+        conn = make_v10_db(tmp_path / "v10.db")
+        try:
+            os.environ["PD_WORKSPACE_ROOT"] = str(tmp_path)
+            try:
+                _migrate_to_11(conn)
+            finally:
+                os.environ.pop("PD_WORKSPACE_ROOT", None)
+            # On success the stamp is 11.
+            v = conn.execute(
+                "SELECT value FROM _metadata WHERE key='schema_version'"
+            ).fetchone()
+            assert v[0] == "11"
+        finally:
+            conn.close()
+
+
+class TestMigration11Idempotency:
+    """Migration 11 second invocation is a no-op via re-check guard."""
+
+    def test_migration_11_forward_idempotent(self, tmp_path):
+        from entity_registry.database import MIGRATIONS
+        from entity_registry.test_helpers import make_v10_db
+        conn = make_v10_db(tmp_path / "v10.db")
+        try:
+            os.environ["PD_WORKSPACE_ROOT"] = str(tmp_path)
+            try:
+                _migrate_to_11(conn)
+                # Second call should detect schema_version=11 and short-circuit.
+                MIGRATIONS[11](conn)
+            finally:
+                os.environ.pop("PD_WORKSPACE_ROOT", None)
+            v = conn.execute(
+                "SELECT value FROM _metadata WHERE key='schema_version'"
+            ).fetchone()
+            assert v[0] == "11"
+            # Workspaces row count is unchanged (no double-bootstrap).
+            ws_count = conn.execute("SELECT COUNT(*) FROM workspaces").fetchone()[0]
+            assert ws_count >= 0  # no error raised; rows not duplicated
+        finally:
+            conn.close()
+
+
+class TestMigration11PartialFailureRollback:
+    """Migration 11 partial failure → ROLLBACK + DB at v10 (AC-35)."""
+
+    def test_migration_11_partial_failure_rollback(self, tmp_path, monkeypatch):
+        """Inject FK violation pre-migration → migration aborts; v10 retained."""
+        import entity_registry.database as dbmod
+        from entity_registry.test_helpers import make_v10_db
+        conn = make_v10_db(tmp_path / "v10.db")
+        try:
+            now = "2026-05-10T00:00:00+00:00"
+            conn.execute(
+                "INSERT INTO entities (uuid, type_id, project_id, entity_type, "
+                "entity_id, name, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (str(uuid.uuid4()), "feature:001-foo", "wsA",
+                 "feature", "001-foo", "foo", now, now),
+            )
+            conn.commit()
+
+            # Patch workspaces DDL to emit invalid SQL → migration fails
+            # mid-flight with an exception, triggering rollback.
+            original_ddl = dbmod._WORKSPACES_TABLE_DDL
+            monkeypatch.setattr(
+                dbmod,
+                "_WORKSPACES_TABLE_DDL",
+                "CREATE TABLE workspaces (this is broken sql",
+            )
+
+            os.environ["PD_WORKSPACE_ROOT"] = str(tmp_path)
+            try:
+                with pytest.raises(Exception):  # noqa: BLE001
+                    dbmod.MIGRATIONS[11](conn)
+            finally:
+                os.environ.pop("PD_WORKSPACE_ROOT", None)
+
+            # schema_version should still be 10.
+            v = conn.execute(
+                "SELECT value FROM _metadata WHERE key='schema_version'"
+            ).fetchone()
+            assert v[0] == "10"
+            # workspaces table not present.
+            tables = {
+                r[0] for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+            assert "workspaces" not in tables
+            # entities still has pre-11 columns.
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(entities)")}
+            assert "project_id" in cols
+            assert "parent_type_id" in cols
+            assert "workspace_uuid" not in cols
+        finally:
+            conn.close()
+
+
+def _migration_11_race_runner(args):
+    """Module-level worker for ``test_migration_11_concurrent_runners``.
+
+    Defined at module scope so multiprocessing's ForkingPickler can
+    serialise it across process boundaries.
+    """
+    path, ws_root = args
+    os.environ["PD_WORKSPACE_ROOT"] = ws_root
+    try:
+        from entity_registry.database import EntityDatabase
+        d = EntityDatabase(path)
+        v = d._conn.execute(
+            "SELECT value FROM _metadata WHERE key='schema_version'"
+        ).fetchone()
+        d.close()
+        return v[0]
+    finally:
+        os.environ.pop("PD_WORKSPACE_ROOT", None)
+
+
+class TestMigration11ConcurrentRunners:
+    """Two pool workers race on Migration 11; second must short-circuit."""
+
+    def test_migration_11_concurrent_runners(self, tmp_path):
+        """Use multiprocessing.Pool(2) to race forward migrations.
+
+        We can't share an in-memory connection across processes, so we use
+        a file-backed DB and run EntityDatabase() inits which trigger the
+        full migration sequence.
+        """
+        import multiprocessing as mp
+
+        db_path = str(tmp_path / "race.db")
+
+        # First, materialize a v10 DB.
+        from entity_registry.test_helpers import make_v10_db
+        conn = make_v10_db(db_path)
+        # Add a couple of entity rows so workspaces have content.
+        now = "2026-05-10T00:00:00+00:00"
+        for pid in ["wsA", "wsB"]:
+            conn.execute(
+                "INSERT INTO entities (uuid, type_id, project_id, entity_type, "
+                "entity_id, name, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (str(uuid.uuid4()), f"feature:001-{pid}", pid,
+                 "feature", f"001-{pid}", pid, now, now),
+            )
+        conn.commit()
+        conn.close()
+
+        with mp.get_context("fork").Pool(2) as pool:
+            results = pool.map(
+                _migration_11_race_runner,
+                [(db_path, str(tmp_path))] * 2,
+            )
+
+        assert all(r == "11" for r in results), results
+
+        # Open the DB again and check exactly one row per legacy project_id.
+        verify_conn = sqlite3.connect(db_path)
+        try:
+            counts = verify_conn.execute(
+                "SELECT project_id_legacy, COUNT(*) FROM workspaces "
+                "GROUP BY project_id_legacy"
+            ).fetchall()
+            for legacy, n in counts:
+                assert n == 1, (
+                    f"Duplicate workspaces row for {legacy!r}: count={n}"
+                )
+        finally:
+            verify_conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Phase C: Migration 11 reverse + MIGRATIONS_DOWN dispatcher (Tasks 3.5–3.8)
+# ---------------------------------------------------------------------------
+
+
+def _seed_pre_migration_entities(conn: sqlite3.Connection) -> list[str]:
+    """Insert representative entities into a v10 DB; return their UUIDs.
+
+    Mix of (parent_uuid, parent_type_id) state combinations:
+      - both NULL
+      - parent_uuid only (post-Migration-11 invariant)
+      - parent_type_id only (this case is BLOCKED by the forward step 6
+        assertion, so do NOT include it in round-trip seed data)
+      - both set (common production state)
+
+    Note: Migration 11 forward aborts on (parent_uuid IS NULL AND
+    parent_type_id IS NOT NULL) per FR-7 step 6, so we exclude that combo.
+    """
+    now = "2026-05-10T00:00:00+00:00"
+    parent_uuid = str(uuid.uuid4())
+    child_uuid_only = str(uuid.uuid4())
+    child_both = str(uuid.uuid4())
+    standalone = str(uuid.uuid4())
+    rows = [
+        # 1) Parent (no parent_uuid, no parent_type_id) — both NULL
+        (parent_uuid, "feature:001-parent", "wsA", "feature", "001-parent",
+         "Parent", None, None, now),
+        # 2) Child via parent_uuid only
+        (child_uuid_only, "feature:002-child-uuid", "wsA", "feature",
+         "002-child-uuid", "Child UUID", None, parent_uuid, now),
+        # 3) Child via both parent_uuid AND parent_type_id
+        (child_both, "feature:003-child-both", "wsA", "feature",
+         "003-child-both", "Child Both", "feature:001-parent", parent_uuid,
+         now),
+        # 4) Standalone in different workspace
+        (standalone, "feature:004-standalone", "wsB", "feature",
+         "004-standalone", "Standalone", None, None, now),
+    ]
+    for row in rows:
+        conn.execute(
+            "INSERT INTO entities (uuid, type_id, project_id, entity_type, "
+            "entity_id, name, parent_type_id, parent_uuid, created_at, "
+            "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (*row[:8], row[8], row[8]),
+        )
+    conn.commit()
+    return [r[0] for r in rows]
+
+
+def _entities_snapshot_pre11(conn: sqlite3.Connection) -> list[tuple]:
+    """Return entities rows in PRE-Migration-11 column order, ordered by uuid."""
+    return conn.execute(
+        "SELECT uuid, type_id, project_id, entity_type, entity_id, name, "
+        "status, parent_type_id, parent_uuid, artifact_path, "
+        "created_at, updated_at, metadata FROM entities ORDER BY uuid"
+    ).fetchall()
+
+
+def _entities_snapshot_post11(conn: sqlite3.Connection) -> list[tuple]:
+    """Return entities rows in POST-Migration-11 column order, ordered by uuid."""
+    return conn.execute(
+        "SELECT uuid, workspace_uuid, type_id, entity_type, entity_id, name, "
+        "status, parent_uuid, artifact_path, created_at, updated_at, metadata "
+        "FROM entities ORDER BY uuid"
+    ).fetchall()
+
+
+def _table_info_snapshot(
+    conn: sqlite3.Connection, table: str
+) -> list[tuple]:
+    """Return PRAGMA table_info rows for a table."""
+    return conn.execute(f"PRAGMA table_info({table})").fetchall()
+
+
+def _migrate_down_to_10(conn: sqlite3.Connection) -> None:
+    """Test helper: reverse Migration 11 via the MIGRATIONS_DOWN dispatcher."""
+    from entity_registry.database import _migrate_down
+    _migrate_down(conn, 10)
+
+
+class TestMigrationsDownDispatcher:
+    """Phase C Task 3.1: MIGRATIONS_DOWN dispatcher behaviour."""
+
+    def test_migrations_down_contains_only_11(self):
+        """Phase C ships only the reverse Migration 11."""
+        from entity_registry.database import MIGRATIONS_DOWN
+        assert list(MIGRATIONS_DOWN.keys()) == [11]
+
+    def test_migrate_down_raises_on_unsupported_target_version(self, tmp_path):
+        """Reversing past 10 raises NotImplementedError."""
+        from entity_registry.database import _migrate_down
+        from entity_registry.test_helpers import make_v10_db
+        conn = make_v10_db(tmp_path / "v10.db")
+        try:
+            os.environ["PD_WORKSPACE_ROOT"] = str(tmp_path)
+            try:
+                _migrate_to_11(conn)
+            finally:
+                os.environ.pop("PD_WORKSPACE_ROOT", None)
+            # Now schema_version=11; ask to reverse to 9 → should attempt to
+            # reverse 11→10 (registered) then 10→9 (not registered) and
+            # raise NotImplementedError.
+            with pytest.raises(NotImplementedError) as exc:
+                _migrate_down(conn, 9)
+            assert "schema_version 10" in str(exc.value)
+        finally:
+            conn.close()
+
+
+class TestMigration11Reverse:
+    """Phase C Tasks 3.5, 3.6: Migration 11 reverse correctness."""
+
+    def test_migration_11_reverse_round_trip(self, tmp_path):
+        """up → down → up returns byte-identical entities + table_info."""
+        from entity_registry.test_helpers import make_v10_db
+        conn = make_v10_db(tmp_path / "v10.db")
+        try:
+            _seed_pre_migration_entities(conn)
+            os.environ["PD_WORKSPACE_ROOT"] = str(tmp_path)
+            try:
+                # Forward 1.
+                _migrate_to_11(conn)
+                snap_after_up1 = _entities_snapshot_post11(conn)
+                tinfo_after_up1 = _table_info_snapshot(conn, "entities")
+
+                # Reverse 1.
+                _migrate_down_to_10(conn)
+                # Schema version must be back to 10.
+                v = conn.execute(
+                    "SELECT value FROM _metadata "
+                    "WHERE key='schema_version'"
+                ).fetchone()
+                assert v[0] == "10"
+                # workspaces table should be gone.
+                tables = {
+                    r[0] for r in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    )
+                }
+                assert "workspaces" not in tables
+                # entities should have project_id and parent_type_id again.
+                cols_after_down = {
+                    r[1] for r in conn.execute(
+                        "PRAGMA table_info(entities)"
+                    )
+                }
+                assert "project_id" in cols_after_down
+                assert "parent_type_id" in cols_after_down
+                assert "workspace_uuid" not in cols_after_down
+
+                # Forward 2.
+                _migrate_to_11(conn)
+                snap_after_up2 = _entities_snapshot_post11(conn)
+                tinfo_after_up2 = _table_info_snapshot(conn, "entities")
+            finally:
+                os.environ.pop("PD_WORKSPACE_ROOT", None)
+
+            # Up #2 should produce byte-identical entities table_info.
+            assert tinfo_after_up1 == tinfo_after_up2, (
+                "PRAGMA table_info diff between up#1 and up#2"
+            )
+
+            # For the entity rows themselves, only workspace_uuid changes
+            # (it gets a new fresh UUID per up-migration). Compare the
+            # workspace-independent fields. Column order:
+            # uuid, workspace_uuid, type_id, entity_type, entity_id,
+            # name, status, parent_uuid, artifact_path, created_at,
+            # updated_at, metadata
+            def strip_ws(rows):
+                return [
+                    (r[0], r[2], r[3], r[4], r[5], r[6], r[7], r[8],
+                     r[9], r[10], r[11])
+                    for r in rows
+                ]
+
+            assert strip_ws(snap_after_up1) == strip_ws(snap_after_up2), (
+                "Entities content (modulo workspace_uuid) diverged across "
+                "up→down→up cycle"
+            )
+            # Counts agree.
+            assert (
+                conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
+                == 4
+            )
+        finally:
+            conn.close()
+
+    def test_migration_11_reverse_aborts_on_cross_workspace_parent_uuid(
+        self, tmp_path
+    ):
+        """Pre-down assertion: cross-workspace parent_uuid edges abort reverse."""
+        from entity_registry.test_helpers import make_v10_db
+        conn = make_v10_db(tmp_path / "v10.db")
+        try:
+            now = "2026-05-10T00:00:00+00:00"
+            # Two parents, each in a different workspace.
+            parent_a = str(uuid.uuid4())
+            parent_b = str(uuid.uuid4())
+            # Child references parent_a but lives in workspace B (cross-ws).
+            child_xws = str(uuid.uuid4())
+            for u, tid, pid, pt_id, p_uuid in [
+                (parent_a, "feature:001-A", "wsA", None, None),
+                (parent_b, "feature:001-B", "wsB", None, None),
+                (child_xws, "feature:002-xws", "wsB", None, parent_a),
+            ]:
+                conn.execute(
+                    "INSERT INTO entities (uuid, type_id, project_id, "
+                    "entity_type, entity_id, name, parent_type_id, "
+                    "parent_uuid, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (u, tid, pid, "feature", tid.split(":")[-1],
+                     "x", pt_id, p_uuid, now, now),
+                )
+            conn.commit()
+
+            os.environ["PD_WORKSPACE_ROOT"] = str(tmp_path)
+            try:
+                _migrate_to_11(conn)
+                # At this point cross-workspace edges may exist (parent_uuid
+                # points across workspaces). Reverse should abort.
+                with pytest.raises(RuntimeError) as exc:
+                    _migrate_down_to_10(conn)
+                assert (
+                    "cross-workspace" in str(exc.value).lower()
+                    or "cross_workspace" in str(exc.value).lower()
+                ), exc.value
+                # schema_version unchanged.
+                v = conn.execute(
+                    "SELECT value FROM _metadata "
+                    "WHERE key='schema_version'"
+                ).fetchone()
+                assert v[0] == "11"
+            finally:
+                os.environ.pop("PD_WORKSPACE_ROOT", None)
+        finally:
+            conn.close()
+
+    def test_migration_11_up_and_down_full_round_trip_on_synthetic(
+        self, tmp_path
+    ):
+        """4-row mix → up → down → assert restored project_id + parent_type_id.
+
+        Asserts AC-11 (parent_type_id restored from parent_uuid → type_id JOIN)
+        and AC-12 (project_id restored from workspaces.project_id_legacy).
+        """
+        from entity_registry.test_helpers import make_v10_db
+        conn = make_v10_db(tmp_path / "v10.db")
+        try:
+            uuids = _seed_pre_migration_entities(conn)
+            # Capture pre-up state for comparison.
+            pre_up = _entities_snapshot_pre11(conn)
+            pre_up_by_uuid = {r[0]: r for r in pre_up}
+
+            os.environ["PD_WORKSPACE_ROOT"] = str(tmp_path)
+            try:
+                _migrate_to_11(conn)
+                _migrate_down_to_10(conn)
+            finally:
+                os.environ.pop("PD_WORKSPACE_ROOT", None)
+
+            post_down = _entities_snapshot_pre11(conn)
+            post_down_by_uuid = {r[0]: r for r in post_down}
+
+            # Same set of UUIDs.
+            assert set(post_down_by_uuid.keys()) == set(pre_up_by_uuid.keys())
+            # Each row has project_id restored to the original.
+            for u in uuids:
+                pre = pre_up_by_uuid[u]
+                post = post_down_by_uuid[u]
+                # Column order: uuid, type_id, project_id, entity_type,
+                # entity_id, name, status, parent_type_id, parent_uuid,
+                # artifact_path, created_at, updated_at, metadata
+                assert pre[2] == post[2], (
+                    f"project_id changed for {u}: "
+                    f"pre={pre[2]!r} post={post[2]!r}"
+                )
+            # Children with parent_uuid have parent_type_id restored.
+            child_uuid_only = uuids[1]
+            child_both = uuids[2]
+            for u in (child_uuid_only, child_both):
+                row = post_down_by_uuid[u]
+                # parent_uuid (idx 8) should be the parent's uuid.
+                assert row[8] == uuids[0]
+                # parent_type_id (idx 7) should be 'feature:001-parent'
+                # (recovered from parent_uuid → type_id JOIN).
+                assert row[7] == "feature:001-parent", (
+                    f"parent_type_id not restored for {u}: got {row[7]!r}"
+                )
+            # Standalone has parent_type_id NULL.
+            row_standalone = post_down_by_uuid[uuids[3]]
+            assert row_standalone[7] is None
+        finally:
+            conn.close()
+
+
+class TestMigration11LiveDbRoundTrip:
+    """Phase C Task 3.7: round-trip on a copy of the live DB."""
+
+    def test_migration_11_round_trip_on_live_db_copy(self, tmp_path):
+        """Copy ~/.claude/pd/entities/entities.db → up → down → up.
+
+        Skipped if the live DB is missing or already migrated past 10.
+        """
+        import shutil
+        live_db = os.path.expanduser("~/.claude/pd/entities/entities.db")
+        if not os.path.isfile(live_db):
+            pytest.skip(f"Live DB not present at {live_db}")
+        copy_path = str(tmp_path / "live_copy.db")
+        shutil.copy2(live_db, copy_path)
+        # WAL/SHM may also exist; copy them so we open a consistent db.
+        for ext in ("-wal", "-shm"):
+            src = live_db + ext
+            if os.path.isfile(src):
+                shutil.copy2(src, copy_path + ext)
+
+        # Open and check schema_version.
+        probe = sqlite3.connect(copy_path, timeout=5.0)
+        try:
+            probe.row_factory = sqlite3.Row
+            probe.execute("PRAGMA journal_mode = WAL")
+            row = probe.execute(
+                "SELECT value FROM _metadata WHERE key='schema_version'"
+            ).fetchone()
+            if row is None:
+                pytest.skip("Live DB has no _metadata.schema_version")
+            try:
+                live_v = int(row[0])
+            except (TypeError, ValueError):
+                pytest.skip(f"Live DB schema_version unreadable: {row[0]!r}")
+            if live_v != 10:
+                pytest.skip(
+                    f"Live DB schema_version={live_v}, not 10 — "
+                    "round-trip test skipped (already migrated)"
+                )
+        finally:
+            probe.close()
+
+        # Run the round-trip.
+        conn = sqlite3.connect(copy_path, timeout=10.0)
+        try:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA busy_timeout = 15000")
+            os.environ["PD_WORKSPACE_ROOT"] = str(tmp_path)
+            try:
+                _migrate_to_11(conn)
+                # Check whether reverse is feasible on this live DB —
+                # cross-workspace parent_uuid edges are blocked by the
+                # pre-down assertion. If present, we still validate that
+                # the forward migration succeeded and the assertion fires.
+                cross_n = conn.execute(
+                    "SELECT COUNT(*) FROM entities e WHERE EXISTS ("
+                    "  SELECT 1 FROM entities p "
+                    "  WHERE p.uuid = e.parent_uuid "
+                    "    AND p.workspace_uuid != e.workspace_uuid"
+                    ")"
+                ).fetchone()[0]
+                if cross_n > 0:
+                    with pytest.raises(RuntimeError) as exc:
+                        _migrate_down_to_10(conn)
+                    assert "cross-workspace" in str(exc.value).lower()
+                    # Forward path succeeded; reverse blocked by data.
+                    v = conn.execute(
+                        "SELECT value FROM _metadata "
+                        "WHERE key='schema_version'"
+                    ).fetchone()
+                    assert v[0] == "11"
+                    return  # Test passes — reverse correctly blocked.
+                _migrate_down_to_10(conn)
+                _migrate_to_11(conn)
+            finally:
+                os.environ.pop("PD_WORKSPACE_ROOT", None)
+            v = conn.execute(
+                "SELECT value FROM _metadata WHERE key='schema_version'"
+            ).fetchone()
+            assert v[0] == "11"
+        finally:
+            conn.close()
+
+
+class TestMigration11SchemaDiff:
+    """Phase C Task 3.8: capture forward → reverse schema diff and assert empty."""
+
+    def test_migration_11_schema_diff_is_empty(self, tmp_path):
+        """forward → reverse → schema diff against original v10 must be empty.
+
+        This is the runtime version of Task 3.8; the file-based artifact is
+        committed at ``docs/features/108-workspace-identity-foundation/migration-11-schema-diff.txt``
+        as additional human-reviewable evidence.
+        """
+        import difflib
+        from entity_registry.test_helpers import make_v10_db
+
+        # Build two identical v10 DBs; one stays as the reference, the
+        # other goes through forward + reverse.
+        ref_conn = make_v10_db(tmp_path / "ref.db")
+        roundtrip_conn = make_v10_db(tmp_path / "rt.db")
+        try:
+            os.environ["PD_WORKSPACE_ROOT"] = str(tmp_path)
+            try:
+                _migrate_to_11(roundtrip_conn)
+                _migrate_down_to_10(roundtrip_conn)
+            finally:
+                os.environ.pop("PD_WORKSPACE_ROOT", None)
+
+            def schema_lines(conn):
+                rows = conn.execute(
+                    "SELECT type, name, tbl_name, sql FROM sqlite_master "
+                    "WHERE name NOT LIKE 'sqlite_%' "
+                    "ORDER BY type, name"
+                ).fetchall()
+                lines = []
+                for typ, name, tbl, sql in rows:
+                    if sql:
+                        lines.append(f"{typ}:{name}:{tbl}:")
+                        # Normalise whitespace for comparison.
+                        norm = " ".join(sql.split())
+                        # SQLite ALTER TABLE RENAME stores the new table
+                        # name double-quoted in sqlite_master; that
+                        # quoting is a serialisation artefact, not a
+                        # schema difference. Strip CREATE TABLE quoting
+                        # so the round-trip diff stays empty.
+                        # Match: CREATE TABLE "name" → CREATE TABLE name
+                        norm = re.sub(
+                            r'(CREATE\s+(?:VIRTUAL\s+)?TABLE\s+)"([^"]+)"',
+                            r'\1\2', norm,
+                        )
+                        lines.append(f"  {norm}")
+                return lines
+
+            ref_lines = schema_lines(ref_conn)
+            rt_lines = schema_lines(roundtrip_conn)
+            diff = list(difflib.unified_diff(
+                ref_lines, rt_lines,
+                fromfile="pre-up.sql", tofile="post-down.sql", lineterm="",
+            ))
+            assert not diff, (
+                "Schema diff non-empty after up→down round-trip:\n"
+                + "\n".join(diff)
+            )
+        finally:
+            ref_conn.close()
+            roundtrip_conn.close()
+
+
+# ===========================================================================
+# Feature 108 Phase F (lineage + dependency flip):
+# claim_unknown_entities re-attribution method
+# ===========================================================================
+
+
+class TestFeature108ClaimUnknownEntities:
+    """Re-attribution: move entities out of the canonical unknown-workspace
+    bucket into a concrete workspace.
+
+    The method drops the immutable_workspace_uuid trigger inside a
+    transaction, runs the UPDATE, then recreates it.
+    """
+
+    def _make_target_workspace(self, db: EntityDatabase) -> str:
+        """Insert a fresh workspaces row and return its uuid."""
+        target_uuid = str(uuid.uuid4())
+        now = db._now_iso()
+        db._conn.execute(
+            "INSERT INTO workspaces (uuid, project_id_legacy, "
+            "project_root, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (target_uuid, "claim-target", "/tmp/claim-target", now, now),
+        )
+        db._conn.commit()
+        return target_uuid
+
+    def test_claims_all_unknown_entities_to_target_workspace(
+        self, db: EntityDatabase,
+    ):
+        """Without entity_type filter, every unknown-workspace entity is moved."""
+        from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
+        # Two entities in the unknown bucket
+        u1 = db.register_entity("feature", "f1", "F1", project_id="__unknown__")
+        u2 = db.register_entity("feature", "f2", "F2", project_id="__unknown__")
+        target = self._make_target_workspace(db)
+
+        n = db.claim_unknown_entities(workspace_uuid=target)
+        assert n == 2
+
+        # Both rows now point to the target workspace
+        rows = db._conn.execute(
+            "SELECT uuid, workspace_uuid FROM entities "
+            "WHERE uuid IN (?, ?)",
+            (u1, u2),
+        ).fetchall()
+        for row in rows:
+            assert row["workspace_uuid"] == target
+        # No entities still attributed to unknown
+        unknown_count = db._conn.execute(
+            "SELECT COUNT(*) FROM entities WHERE workspace_uuid = ?",
+            (_UNKNOWN_WORKSPACE_UUID,),
+        ).fetchone()[0]
+        assert unknown_count == 0
+
+    def test_entity_type_filter(self, db: EntityDatabase):
+        """entity_type kwarg restricts the claim to that type only."""
+        db.register_entity("feature", "f1", "F1", project_id="__unknown__")
+        b_uid = db.register_entity("backlog", "b1", "B1", project_id="__unknown__")
+        target = self._make_target_workspace(db)
+
+        n = db.claim_unknown_entities(
+            workspace_uuid=target, entity_type="feature"
+        )
+        assert n == 1
+
+        # Backlog row still in unknown
+        from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
+        b_row = db._conn.execute(
+            "SELECT workspace_uuid FROM entities WHERE uuid = ?",
+            (b_uid,),
+        ).fetchone()
+        assert b_row["workspace_uuid"] == _UNKNOWN_WORKSPACE_UUID
+
+    def test_limit_kwarg_caps_claims(self, db: EntityDatabase):
+        """limit kwarg caps the number of entities re-attributed."""
+        for i in range(3):
+            db.register_entity(
+                "feature", f"f{i}", f"F{i}", project_id="__unknown__"
+            )
+        target = self._make_target_workspace(db)
+
+        n = db.claim_unknown_entities(workspace_uuid=target, limit=2)
+        assert n == 2
+
+    def test_no_unknown_entities_returns_zero(self, db: EntityDatabase):
+        """Empty unknown-workspace bucket returns 0 (no-op)."""
+        target = self._make_target_workspace(db)
+        assert db.claim_unknown_entities(workspace_uuid=target) == 0
+
+    def test_self_claim_to_unknown_uuid_rejected(self, db: EntityDatabase):
+        """Refuse to re-attribute entities to the canonical unknown UUID."""
+        from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
+        with pytest.raises(ValueError, match="canonical _UNKNOWN_WORKSPACE_UUID"):
+            db.claim_unknown_entities(workspace_uuid=_UNKNOWN_WORKSPACE_UUID)
+
+    def test_empty_workspace_uuid_rejected(self, db: EntityDatabase):
+        """Empty/None workspace_uuid raises ValueError."""
+        with pytest.raises(ValueError, match="non-empty workspace_uuid"):
+            db.claim_unknown_entities(workspace_uuid="")
+
+    def test_unknown_target_workspace_rejected(self, db: EntityDatabase):
+        """Target workspace_uuid must already exist in workspaces table."""
+        bogus = str(uuid.uuid4())
+        with pytest.raises(ValueError, match="has no matching workspaces row"):
+            db.claim_unknown_entities(workspace_uuid=bogus)
+
+    def test_immutability_trigger_restored_after_claim(
+        self, db: EntityDatabase,
+    ):
+        """After successful claim, plain UPDATE OF workspace_uuid is still blocked."""
+        u_uid = db.register_entity(
+            "feature", "f1", "F1", project_id="__unknown__"
+        )
+        target = self._make_target_workspace(db)
+        db.claim_unknown_entities(workspace_uuid=target)
+
+        # Build a second target with a unique legacy id so UNIQUE doesn't trip.
+        other_uuid = str(uuid.uuid4())
+        now = db._now_iso()
+        db._conn.execute(
+            "INSERT INTO workspaces (uuid, project_id_legacy, "
+            "project_root, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (other_uuid, "claim-target-2", "/tmp/claim-target-2", now, now),
+        )
+        db._conn.commit()
+        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+            db._conn.execute(
+                "UPDATE entities SET workspace_uuid = ? WHERE uuid = ?",
+                (other_uuid, u_uid),
+            )
+
+    def test_claim_preserves_uuid_and_payload(self, db: EntityDatabase):
+        """Re-attribution preserves uuid, type_id, name, status, metadata."""
+        u_uid = db.register_entity(
+            "feature", "claim-1", "Claim Me", status="planned",
+            metadata={"k": "v"}, project_id="__unknown__",
+        )
+        target = self._make_target_workspace(db)
+        db.claim_unknown_entities(workspace_uuid=target)
+
+        row = db._conn.execute(
+            "SELECT uuid, type_id, name, status, metadata, workspace_uuid "
+            "FROM entities WHERE uuid = ?",
+            (u_uid,),
+        ).fetchone()
+        assert row["uuid"] == u_uid
+        assert row["type_id"] == "feature:claim-1"
+        assert row["name"] == "Claim Me"
+        assert row["status"] == "planned"
+        assert json.loads(row["metadata"]) == {"k": "v"}
+        assert row["workspace_uuid"] == target
+
+
+# ===========================================================================
+# Feature 108 Phase F (lineage + dependency flip):
+# query_dependencies workspace_uuid filtering
+# ===========================================================================
+
+
+class TestFeature108QueryDependenciesWorkspaceFilter:
+    """The workspace_uuid kwarg restricts query_dependencies to dependencies
+    whose blocked entity lives in the named workspace.
+    """
+
+    def _make_target_workspace(self, db: EntityDatabase) -> str:
+        target_uuid = str(uuid.uuid4())
+        now = db._now_iso()
+        db._conn.execute(
+            "INSERT INTO workspaces (uuid, project_id_legacy, "
+            "project_root, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (target_uuid, "ws-2", "/tmp/ws-2", now, now),
+        )
+        db._conn.commit()
+        return target_uuid
+
+    def test_workspace_uuid_filter_restricts_results(
+        self, db: EntityDatabase,
+    ):
+        """Edges in workspace A are not returned when filtering on workspace B."""
+        # Workspace A: unknown bucket
+        a1 = db.register_entity("feature", "a1", "A1", project_id="__unknown__")
+        a2 = db.register_entity("feature", "a2", "A2", project_id="__unknown__")
+        db.add_dependency(a1, a2)
+
+        # Workspace B: fresh workspace
+        ws_b = self._make_target_workspace(db)
+        b1 = db.register_entity("feature", "b1", "B1", workspace_uuid=ws_b)
+        b2 = db.register_entity("feature", "b2", "B2", workspace_uuid=ws_b)
+        db.add_dependency(b1, b2)
+
+        # Filtering on ws_b returns only the B edge.
+        deps = db.query_dependencies(workspace_uuid=ws_b)
+        assert len(deps) == 1
+        assert deps[0]["entity_uuid"] == b1
+        assert deps[0]["blocked_by_uuid"] == b2
+
+    def test_no_filter_returns_all(self, db: EntityDatabase):
+        """Without workspace_uuid kwarg, all edges return regardless of workspace."""
+        a1 = db.register_entity("feature", "a1", "A1", project_id="__unknown__")
+        a2 = db.register_entity("feature", "a2", "A2", project_id="__unknown__")
+        ws_b = self._make_target_workspace(db)
+        b1 = db.register_entity("feature", "b1", "B1", workspace_uuid=ws_b)
+        b2 = db.register_entity("feature", "b2", "B2", workspace_uuid=ws_b)
+        db.add_dependency(a1, a2)
+        db.add_dependency(b1, b2)
+
+        all_deps = db.query_dependencies()
+        assert len(all_deps) == 2

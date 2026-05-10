@@ -1,18 +1,347 @@
 """Project identity detection for cross-project entity scoping.
 
 Provides:
-- detect_project_id(): 12-char hex project identifier
+- detect_project_id(): 12-char hex project identifier (legacy; Phase E removes)
+- resolve_workspace_uuid(): UUID-based workspace identity (FR-3 precedence)
 - collect_git_info(): full git metadata as GitProjectInfo dataclass
 - normalize_remote_url(): canonical host/owner/repo URL form
 """
 from __future__ import annotations
 
 import dataclasses
+import fcntl
 import functools
 import hashlib
+import json
 import os
 import re
 import subprocess
+import sys
+import sqlite3
+import tempfile
+import uuid as uuid_mod
+from datetime import datetime, timezone
+
+
+# ---------------------------------------------------------------------------
+# Phase D: workspace UUID resolution (FR-3 precedence chain).
+# ---------------------------------------------------------------------------
+
+# 36-char lowercase hyphenated UUID format. Accepts both v4 and v7 (the
+# version nibble is allowed to be any hex digit so a future F6 uuid7 deploy
+# does not need to widen this regex).
+_WORKSPACE_UUID_RE = re.compile(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-7][0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}$'
+)
+
+
+class WorkspaceCorruptedError(RuntimeError):
+    """Raised when ``.claude/pd/workspace.json`` is malformed or has an
+    incompatible schema_version."""
+
+
+def _validate_workspace_uuid(value: str) -> str:
+    """Return ``value`` if it matches the 36-char UUID regex, else raise."""
+    if not isinstance(value, str) or not _WORKSPACE_UUID_RE.match(value):
+        raise ValueError(
+            f"Malformed workspace UUID (expected 36-char lowercase "
+            f"hyphenated): {value!r}"
+        )
+    return value
+
+
+def _atomic_workspace_json_write(target_path: str, uuid_value: str) -> str:
+    """Atomic create-if-absent with cross-process consistency.
+
+    Uses ``fcntl.flock(LOCK_EX)`` on a sentinel ``<target_path>.lock`` file
+    in the same directory. Caller order:
+
+      1. Acquire exclusive flock on ``<target_path>.lock``.
+      2. Re-check existence; if file exists, read and return its UUID
+         (loser case — winner's UUID is returned to ALL callers).
+      3. Write tempfile (same dir) + ``os.replace``.
+      4. Re-read file content for return value.
+      5. Release flock.
+
+    Guarantees: under N parallel callers, all return the SAME UUID
+    (either the writer's or the existing-file reader's). Re-read-after-rename
+    WITHOUT flock is BROKEN because each racer's ``os.replace`` overwrites
+    others' tempfiles; the loser would read back its own discarded UUID.
+
+    Parameters
+    ----------
+    target_path:
+        Absolute path to ``.claude/pd/workspace.json``. Parent dir is
+        created via ``os.makedirs(..., exist_ok=True)`` if missing.
+    uuid_value:
+        Candidate UUID to write IFF no existing file is present. Must be a
+        valid 36-char lowercase hyphenated UUID.
+
+    Returns
+    -------
+    str
+        The UUID that ended up on disk (winner's or pre-existing).
+
+    Raises
+    ------
+    OSError: mkdir, open, or rename failure.
+    ValueError: candidate uuid_value malformed, or existing file's
+        ``workspace_uuid`` field malformed.
+    """
+    _validate_workspace_uuid(uuid_value)
+    parent_dir = os.path.dirname(target_path)
+    os.makedirs(parent_dir, exist_ok=True)
+    lock_path = target_path + ".lock"
+
+    # Open the lock file (creating if necessary). Use os.open so we can
+    # explicitly close it; fcntl.flock requires a file descriptor.
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        # Step 1: acquire exclusive flock (blocks until available).
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+        # Step 2: re-check existence; loser case returns existing UUID.
+        if os.path.exists(target_path):
+            with open(target_path, encoding="utf-8") as fh:
+                existing = json.load(fh)
+            existing_uuid = existing.get("workspace_uuid")
+            if not isinstance(existing_uuid, str):
+                raise ValueError(
+                    f"workspace.json missing 'workspace_uuid' field: "
+                    f"{target_path}"
+                )
+            return _validate_workspace_uuid(existing_uuid)
+
+        # Step 3: tempfile (same dir) + os.replace.
+        now_iso = datetime.now(timezone.utc).isoformat()
+        payload = {
+            "workspace_uuid": uuid_value,
+            "schema_version": 1,
+            "created_at": now_iso,
+            "created_by": "session-start.sh",
+        }
+        tmp_fd, tmp_path = tempfile.mkstemp(
+            prefix=".workspace.", suffix=".json.tmp", dir=parent_dir,
+        )
+        try:
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
+                json.dump(payload, fh, indent=2, sort_keys=True)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp_path, target_path)
+            tmp_path = None  # success — no cleanup needed
+        finally:
+            if tmp_path is not None:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+
+        # Step 4: re-read file content for return value.
+        with open(target_path, encoding="utf-8") as fh:
+            written = json.load(fh)
+        return _validate_workspace_uuid(written["workspace_uuid"])
+    finally:
+        # Step 5: release flock + close fd.
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        os.close(lock_fd)
+
+
+def _lookup_workspace_uuid_by_project_root(
+    conn: sqlite3.Connection, project_root_abs: str
+) -> str | None:
+    """Look up a single workspace_uuid by project_root match.
+
+    Returns the workspace_uuid for a single matching row; returns ``None``
+    if zero rows match, multiple rows match, or ``project_root`` is NULL
+    for the candidate row(s).
+
+    Note: requires Migration 11 applied. The caller MUST gate on
+    ``_metadata.schema_version >= 11``.
+    """
+    rows = conn.execute(
+        "SELECT uuid FROM workspaces "
+        "WHERE project_root IS NOT NULL AND project_root = ?",
+        (project_root_abs,),
+    ).fetchall()
+    if len(rows) == 1:
+        return rows[0][0]
+    return None
+
+
+def _read_workspace_json(target_path: str) -> str:
+    """Read and validate workspace.json; return its workspace_uuid.
+
+    Raises
+    ------
+    WorkspaceCorruptedError
+        - File present but unreadable / malformed JSON.
+        - ``schema_version`` not equal to 1.
+        - ``workspace_uuid`` missing or malformed.
+
+    Side effects
+    ------------
+    Emits a WARN log to stderr if the file contains unknown top-level keys
+    (extra keys are tolerated, not aborted).
+    """
+    try:
+        with open(target_path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise WorkspaceCorruptedError(
+            f"workspace.json unreadable or malformed at {target_path}: "
+            f"{exc!r}"
+        ) from exc
+
+    if not isinstance(data, dict):
+        raise WorkspaceCorruptedError(
+            f"workspace.json must be a JSON object: got {type(data).__name__}"
+        )
+    sv = data.get("schema_version")
+    if sv != 1:
+        raise WorkspaceCorruptedError(
+            f"workspace.json schema_version={sv!r}; expected 1"
+        )
+    ws_uuid = data.get("workspace_uuid")
+    if not isinstance(ws_uuid, str):
+        raise WorkspaceCorruptedError(
+            "workspace.json missing or non-string 'workspace_uuid'"
+        )
+    try:
+        _validate_workspace_uuid(ws_uuid)
+    except ValueError as exc:
+        raise WorkspaceCorruptedError(str(exc)) from exc
+
+    # Tolerate (with WARN) unknown top-level keys.
+    KNOWN_KEYS = {
+        "workspace_uuid", "schema_version", "created_at", "created_by",
+        "project_id_legacy",
+    }
+    extras = set(data.keys()) - KNOWN_KEYS
+    if extras:
+        print(
+            f"[workspace.json] WARN: unknown top-level key(s): "
+            f"{sorted(extras)}",
+            file=sys.stderr,
+        )
+    return ws_uuid
+
+
+def resolve_workspace_uuid(working_dir: str | None = None) -> str:
+    """Resolve workspace UUID for the given working directory (FR-3).
+
+    Precedence chain:
+      1. ``ENTITY_WORKSPACE_UUID`` env var (test override).
+      2. ``<working_dir>/.claude/pd/workspace.json`` (file-based; project-level).
+      3. workspaces-table lookup by ``project_root`` match (single row only).
+      4. Fresh write — generate uuid4, persist via flock-synchronised
+         atomic write.
+
+    Parameters
+    ----------
+    working_dir:
+        Directory containing ``.claude/`` (defaults to ``os.getcwd()``).
+
+    Returns
+    -------
+    str
+        Canonical workspace UUID (36-char lowercase hyphenated).
+
+    Raises
+    ------
+    ValueError: env var present but malformed.
+    WorkspaceCorruptedError: workspace.json present but malformed.
+
+    Side effects
+    ------------
+    Step 4 may write ``<working_dir>/.claude/pd/workspace.json`` and
+    ``.claude/pd/workspace.json.lock`` (sentinel for fcntl.flock).
+    """
+    cwd = os.path.abspath(working_dir or os.getcwd())
+
+    # Step 1: env var.
+    env_uuid = os.environ.get("ENTITY_WORKSPACE_UUID")
+    if env_uuid:
+        return _validate_workspace_uuid(env_uuid)
+
+    target_path = os.path.join(cwd, ".claude", "pd", "workspace.json")
+
+    # Step 2: file-based.
+    if os.path.exists(target_path):
+        return _read_workspace_json(target_path)
+
+    # Step 3: workspaces-table lookup (best-effort; DB may be missing).
+    db_path = os.path.expanduser("~/.claude/pd/entities/entities.db")
+    if os.path.isfile(db_path):
+        try:
+            conn = sqlite3.connect(
+                f"file:{db_path}?mode=ro", uri=True, timeout=2.0,
+            )
+            try:
+                # Gate on schema_version >= 11.
+                row = conn.execute(
+                    "SELECT value FROM _metadata WHERE key='schema_version'"
+                ).fetchone()
+                if row is not None:
+                    try:
+                        sv = int(row[0])
+                    except (TypeError, ValueError):
+                        sv = 0
+                    if sv >= 11:
+                        # Multi-row check: if >1 match, fall through with WARN.
+                        rows = conn.execute(
+                            "SELECT uuid FROM workspaces "
+                            "WHERE project_root IS NOT NULL "
+                            "  AND project_root = ?",
+                            (cwd,),
+                        ).fetchall()
+                        if len(rows) == 1:
+                            recovered = rows[0][0]
+                            # Step 2.5: regenerate workspace.json with the
+                            # recovered UUID; no WARN emitted.
+                            try:
+                                _validate_workspace_uuid(recovered)
+                            except ValueError:
+                                # Unexpected — fall through to step 4.
+                                pass
+                            else:
+                                # Atomic write; under race the loser will
+                                # see the existing-file path.
+                                return _atomic_workspace_json_write(
+                                    target_path, recovered
+                                )
+                        elif len(rows) > 1:
+                            print(
+                                "[workspace.json] WARN: workspaces table "
+                                "has multiple rows matching project_root="
+                                f"{cwd!r}; falling through to fresh write",
+                                file=sys.stderr,
+                            )
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            # Best-effort; any DB error → fall through to step 4.
+            pass
+
+    # Step 4: fresh write — but ONLY if `.claude/` already exists in the
+    # working directory. This honours the long-standing pd convention that
+    # `.claude/` is the marker indicating pd is active for this project;
+    # we must not auto-create it (test-hooks: "Config was created despite
+    # no .claude/ directory" was failing because os.makedirs on the chain
+    # `.claude/pd/workspace.json` was implicitly creating `.claude/`).
+    claude_dir = os.path.join(cwd, ".claude")
+    if not os.path.isdir(claude_dir):
+        raise WorkspaceCorruptedError(
+            f"Cannot resolve workspace_uuid: .claude/ directory missing at "
+            f"{cwd!r} and no ENTITY_WORKSPACE_UUID env var was set. "
+            f"Create .claude/ (e.g., 'mkdir .claude') to enable pd for this "
+            f"project, or set ENTITY_WORKSPACE_UUID explicitly."
+        )
+    fresh_uuid = str(uuid_mod.uuid4())
+    return _atomic_workspace_json_write(target_path, fresh_uuid)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -91,23 +420,45 @@ def _run_git(args: list[str], working_dir: str) -> subprocess.CompletedProcess:
     )
 
 
-@functools.lru_cache(maxsize=1)
-def detect_project_id(working_dir: str | None = None) -> str:
-    """Detect a 12-char hex project identifier.
+def _compute_legacy_project_id(working_dir: str | None = None) -> str:
+    """Migration-time-only helper: compute the legacy 12-char hex project_id.
 
-    Fallback chain:
-    1. ``ENTITY_PROJECT_ID`` env var (for CI overrides)
-    2. Root commit SHA truncated to 12 chars (skip if shallow clone)
-    3. HEAD SHA truncated to 12 chars
-    4. SHA-256 of absolute path truncated to 12 chars
+    Reuses the git-SHA fallback chain extracted from the original
+    ``detect_project_id``:
 
-    Cached per-process via ``lru_cache(maxsize=1)``.
+    1. Root commit SHA truncated to 12 chars (skip if shallow clone)
+    2. HEAD SHA truncated to 12 chars
+    3. SHA-256 of absolute path truncated to 12 chars
+
+    NOT cached. NOT consulted by the runtime ``resolve_workspace_uuid``
+    precedence chain — this helper is used ONLY by Migration 11 step 0
+    to populate ``workspaces.project_id_legacy`` for entries that pre-date
+    feature 108. Per design §3.4 / Decision 5, this helper does NOT read
+    any env var (test/CI overrides go via ``ENTITY_WORKSPACE_UUID`` →
+    ``resolve_workspace_uuid``, not here).
+
+    Parameters
+    ----------
+    working_dir:
+        Project root directory. Defaults to ``os.getcwd()``.
+
+    Returns
+    -------
+    str
+        12-char lowercase hex string (legacy project_id format).
+
+    Raises
+    ------
+    Never raises — returns path-hash fallback on any failure.
+
+    Side effects
+    ------------
+    Subprocess calls to git (rev-parse, rev-list). No file or DB writes.
+
+    Idempotency
+    -----------
+    Pure function modulo git state. Same git state → same return value.
     """
-    # Env var override
-    env_id = os.environ.get("ENTITY_PROJECT_ID")
-    if env_id:
-        return env_id
-
     cwd = working_dir or os.getcwd()
 
     try:
@@ -142,6 +493,27 @@ def detect_project_id(working_dir: str | None = None) -> str:
 
     # Final fallback: path hash
     return hashlib.sha256(os.path.abspath(cwd).encode()).hexdigest()[:12]
+
+
+@functools.lru_cache(maxsize=1)
+def detect_project_id(working_dir: str | None = None) -> str:
+    """Detect a 12-char hex project identifier.
+
+    Compatibility alias retained for Phase A — the rename to
+    ``resolve_workspace_uuid`` happens in Phase D (FR-3 / Decision 5).
+    For Phase A we keep this thin wrapper that delegates to
+    ``_compute_legacy_project_id`` and preserves the existing
+    ``ENTITY_PROJECT_ID`` env-var override behaviour. After Phase D,
+    ``ENTITY_PROJECT_ID`` is removed entirely.
+
+    Cached per-process via ``lru_cache(maxsize=1)``.
+    """
+    # Env var override (preserved for Phase A; removed in Phase D).
+    env_id = os.environ.get("ENTITY_PROJECT_ID")
+    if env_id:
+        return env_id
+
+    return _compute_legacy_project_id(working_dir)
 
 
 def collect_git_info(working_dir: str | None = None) -> GitProjectInfo:

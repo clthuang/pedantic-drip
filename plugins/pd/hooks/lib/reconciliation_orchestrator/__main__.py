@@ -20,7 +20,7 @@ import sys
 import time
 
 from entity_registry.database import EntityDatabase
-from entity_registry.project_identity import detect_project_id
+from entity_registry.project_identity import detect_project_id, resolve_workspace_uuid
 from semantic_memory.database import MemoryDatabase
 
 from reconciliation_orchestrator import entity_status, kb_import
@@ -38,6 +38,14 @@ def parse_args(argv=None):
         help="Absolute path to the project/repo root.",
     )
     parser.add_argument(
+        "--workspace-uuid",
+        default=None,
+        help=(
+            "Optional workspace UUID (feature 108 / Decision 6 / Decision 11). "
+            "If unset, resolved via resolve_workspace_uuid(project_root)."
+        ),
+    )
+    parser.add_argument(
         "--artifacts-root",
         required=True,
         help="Relative sub-path for artifacts (e.g., 'docs').",
@@ -53,6 +61,22 @@ def parse_args(argv=None):
         help="Path to the semantic memory SQLite DB file.",
     )
     return parser.parse_args(argv)
+
+
+def _resolve_workspace_uuid_with_precedence(args) -> str:
+    """Resolve workspace UUID using FR-3 / Decision 11 precedence.
+
+    Order: ENTITY_WORKSPACE_UUID env > --workspace-uuid CLI flag >
+           resolve_workspace_uuid(project_root) (which itself walks
+           workspace.json → DB → fresh-write).
+    """
+    env_uuid = os.environ.get("ENTITY_WORKSPACE_UUID")
+    if env_uuid:
+        return env_uuid
+    flag_uuid = getattr(args, "workspace_uuid", None)
+    if flag_uuid:
+        return flag_uuid
+    return resolve_workspace_uuid(args.project_root)
 
 
 def run(args):
@@ -86,12 +110,23 @@ def run(args):
         full_artifacts_path = os.path.join(args.project_root, args.artifacts_root)
         global_store_path = os.path.dirname(args.memory_db)
         project_id = detect_project_id(args.project_root)
+        # Feature 108 FR-12 / AC-30: resolve workspace UUID with the
+        # documented precedence chain. Best-effort: if resolution fails we
+        # fall back to legacy project_id semantics (entity_status / etc.
+        # still accept project_id) and emit nothing — the orchestrator must
+        # never block session-start.
+        try:
+            workspace_uuid = _resolve_workspace_uuid_with_precedence(args)
+        except Exception as exc:
+            results["errors"].append(f"workspace_uuid: {exc}")
+            workspace_uuid = ""
 
         # Task 1: entity status sync
         try:
             results["entity_sync"] = entity_status.sync_entity_statuses(
                 entity_db, full_artifacts_path, project_id=project_id,
-                artifacts_root=args.artifacts_root, project_root=args.project_root
+                artifacts_root=args.artifacts_root, project_root=args.project_root,
+                workspace_uuid=workspace_uuid,
             )
         except Exception as exc:
             results["errors"].append(f"entity_status: {exc}")

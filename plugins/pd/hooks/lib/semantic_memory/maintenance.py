@@ -751,6 +751,11 @@ def _main() -> None:
         help="Override config discovery root",
     )
     parser.add_argument(
+        "--workspace-uuid",
+        default=None,
+        help="Optional workspace UUID (feature 108 / Decision 6).",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Force dry-run (overrides memory_decay_dry_run config)",

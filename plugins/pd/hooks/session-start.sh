@@ -19,6 +19,16 @@ source "${SCRIPT_DIR}/lib/session-start-helpers.sh"
 install_session_start_traps
 PROJECT_ROOT="$(detect_project_root)"
 
+# Feature 108 FR-2/FR-11: resolve workspace UUID via the Python helper and
+# export it as WORKSPACE_UUID for subprocess inheritance (downstream
+# Python entry points read it via the precedence chain in resolve_workspace_uuid).
+# Fail-soft: if the helper fails (no venv, missing plugin layout, etc.), we
+# leave WORKSPACE_UUID unset and let downstream Python re-resolve via FR-3.
+WORKSPACE_UUID="$(PD_WORKSPACE_PROJECT_ROOT="$PROJECT_ROOT" ensure_workspace_uuid "$PROJECT_ROOT" 2>/dev/null || true)"
+if [[ -n "$WORKSPACE_UUID" ]]; then
+    export WORKSPACE_UUID
+fi
+
 # Resolve artifacts_root from config (default: docs)
 resolve_artifacts_root() {
     local config_file="${PROJECT_ROOT}/.claude/pd.local.md"

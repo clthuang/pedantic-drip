@@ -389,6 +389,11 @@ class TestSearchProjectFiltering:
     @pytest.mark.asyncio
     async def test_search_filters_by_project(self, db, monkeypatch):
         """Search with project_id filters results to that project."""
+        # Feature 108 Migration 11: project_id alias requires a matching
+        # workspaces row. Pre-register both legacy ids.
+        from entity_registry.test_helpers import bootstrap_test_workspace
+        bootstrap_test_workspace(db, "project_aaa")
+        bootstrap_test_workspace(db, "project_bbb")
         # Register entities under different projects
         db.register_entity(
             "feature", "proj-a-feat", "Project A Feature",

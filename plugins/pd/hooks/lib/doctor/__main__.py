@@ -34,6 +34,16 @@ def main() -> None:
         help="Path to project root directory",
     )
     parser.add_argument(
+        "--workspace-uuid",
+        default=None,
+        help=(
+            "Optional workspace UUID (feature 108 / Decision 6 / Decision 11). "
+            "If unset, resolved via resolve_workspace_uuid(project_root). "
+            "Precedence: ENTITY_WORKSPACE_UUID env > --workspace-uuid flag > "
+            "workspace.json file > DB recovery > fresh-write."
+        ),
+    )
+    parser.add_argument(
         "--artifacts-root",
         default=None,
         help="Path to artifacts root (default: resolved from config or 'docs')",

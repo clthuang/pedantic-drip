@@ -16,8 +16,16 @@ from reconciliation_orchestrator.entity_status import sync_entity_statuses
 # ---------------------------------------------------------------------------
 
 def make_db() -> EntityDatabase:
-    """Return a fresh in-memory EntityDatabase."""
-    return EntityDatabase(":memory:")
+    """Return a fresh in-memory EntityDatabase.
+
+    Feature 108 Migration 11: pre-bootstraps a workspaces row for
+    "test-project" (the legacy id used across this test module) so calls
+    that pass project_id="test-project" resolve.
+    """
+    from entity_registry.test_helpers import bootstrap_test_workspace
+    db = EntityDatabase(":memory:")
+    bootstrap_test_workspace(db, "test-project")
+    return db
 
 
 def seed_feature(db: EntityDatabase, folder: str, status: str) -> None:
@@ -480,21 +488,27 @@ class TestSyncBacklogEntities:
         db = make_db()
         seed_backlog(db, "00020", status="open")
 
-        # db._conn bypass: UNIQUE(project_id, type_id) prevents duplicates via public API.
-        # Raw SQL is the only way to simulate legacy duplicate data for dedup testing.
+        # db._conn bypass: UNIQUE(workspace_uuid, type_id) prevents duplicates
+        # via public API. Raw SQL is the only way to simulate legacy duplicate
+        # data for dedup testing. Feature 108 Migration 11: replace the table
+        # with a non-UNIQUE clone using the post-Migration-11 column layout.
         import uuid as uuid_mod
+        ws_row = db._conn.execute(
+            "SELECT uuid FROM workspaces WHERE project_id_legacy = ?",
+            ("test-project",),
+        ).fetchone()
+        ws_uuid = ws_row["uuid"]
         db._conn.execute("CREATE TABLE entities_bak AS SELECT * FROM entities")
         db._conn.execute("DROP TABLE entities")
         db._conn.execute("""
             CREATE TABLE entities (
                 uuid TEXT NOT NULL PRIMARY KEY,
+                workspace_uuid TEXT NOT NULL,
                 type_id TEXT NOT NULL,
-                project_id TEXT NOT NULL DEFAULT '__unknown__',
                 entity_type TEXT NOT NULL,
                 entity_id TEXT NOT NULL,
                 name TEXT NOT NULL,
                 status TEXT,
-                parent_type_id TEXT,
                 parent_uuid TEXT,
                 artifact_path TEXT,
                 created_at TEXT NOT NULL,
@@ -504,13 +518,13 @@ class TestSyncBacklogEntities:
         """)
         db._conn.execute("INSERT INTO entities SELECT * FROM entities_bak")
         db._conn.execute("DROP TABLE entities_bak")
-        # Now insert the duplicate (same project_id + type_id, different uuid)
+        # Now insert the duplicate (same workspace_uuid + type_id, different uuid).
         db._conn.execute(
             "INSERT INTO entities (uuid, entity_type, entity_id, type_id, name, "
-            "artifact_path, status, project_id, created_at, updated_at) "
+            "artifact_path, status, workspace_uuid, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
             (str(uuid_mod.uuid4()), "backlog", "00020", "backlog:00020",
-             "00020", "docs/backlog.md", None, "test-project"),
+             "00020", "docs/backlog.md", None, ws_uuid),
         )
         db._conn.commit()
 
@@ -693,8 +707,13 @@ class TestBacklogAdversarial:
         """Adversarial: duplicates with DIFFERENT project_ids are NOT deduped.
         derived_from: spec:AC-7 (out of scope: cross-project dedup)
         """
-        # Given two entities with the same entity_id but different project_ids
+        # Given two entities with the same entity_id but different project_ids.
+        # Feature 108 Migration 11: pre-bootstrap workspaces rows for both
+        # legacy ids so register_entity resolves.
+        from entity_registry.test_helpers import bootstrap_test_workspace
         db = make_db()
+        bootstrap_test_workspace(db, "project-A")
+        bootstrap_test_workspace(db, "project-B")
         db.register_entity(
             entity_type="backlog", entity_id="00020", name="Item",
             artifact_path="docs/backlog.md", status="open",
@@ -789,20 +808,26 @@ class TestDedupEdgeCases:
         db = make_db()
         import uuid as uuid_mod
 
-        # db._conn bypass: UNIQUE(project_id, type_id) prevents duplicates via public API.
-        # Raw SQL is the only way to simulate legacy duplicate data for dedup testing.
+        # db._conn bypass: UNIQUE(workspace_uuid, type_id) prevents duplicates
+        # via public API. Raw SQL is the only way to simulate legacy duplicate
+        # data for dedup testing. Feature 108 Migration 11: replace the table
+        # with a non-UNIQUE clone using the post-Migration-11 column layout.
+        ws_row = db._conn.execute(
+            "SELECT uuid FROM workspaces WHERE project_id_legacy = ?",
+            ("test-project",),
+        ).fetchone()
+        ws_uuid = ws_row["uuid"]
         db._conn.execute("CREATE TABLE entities_bak AS SELECT * FROM entities")
         db._conn.execute("DROP TABLE entities")
         db._conn.execute("""
             CREATE TABLE entities (
                 uuid TEXT NOT NULL PRIMARY KEY,
+                workspace_uuid TEXT NOT NULL,
                 type_id TEXT NOT NULL,
-                project_id TEXT NOT NULL DEFAULT '__unknown__',
                 entity_type TEXT NOT NULL,
                 entity_id TEXT NOT NULL,
                 name TEXT NOT NULL,
                 status TEXT,
-                parent_type_id TEXT,
                 parent_uuid TEXT,
                 artifact_path TEXT,
                 created_at TEXT NOT NULL,
@@ -817,10 +842,10 @@ class TestDedupEdgeCases:
         for _ in range(2):
             db._conn.execute(
                 "INSERT INTO entities (uuid, entity_type, entity_id, type_id, name, "
-                "artifact_path, status, project_id, created_at, updated_at) "
+                "artifact_path, status, workspace_uuid, created_at, updated_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
                 (str(uuid_mod.uuid4()), "backlog", "00050", "backlog:00050",
-                 "Test item", "docs/backlog.md", None, "test-project"),
+                 "Test item", "docs/backlog.md", None, ws_uuid),
             )
         db._conn.commit()
 
