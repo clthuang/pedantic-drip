@@ -21,8 +21,24 @@ from entity_registry.test_helpers import TEST_PROJECT_ID
 
 @pytest.fixture
 def db():
-    """In-memory EntityDatabase."""
+    """In-memory EntityDatabase with TEST_PROJECT_ID workspace pre-registered.
+
+    Post-Migration-11: the sequences and entities tables are keyed on
+    workspace_uuid. Tests using the legacy ``project_id`` API need a
+    workspaces row whose ``project_id_legacy`` matches ``TEST_PROJECT_ID``
+    so the compat shim can resolve it.
+    """
     database = EntityDatabase(":memory:")
+    # Bootstrap the workspaces row for TEST_PROJECT_ID.
+    ws_uuid = str(uuid.uuid4())
+    now = database._now_iso()
+    database._conn.execute(
+        "INSERT OR IGNORE INTO workspaces "
+        "(uuid, project_id_legacy, project_root, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (ws_uuid, TEST_PROJECT_ID, None, now, now),
+    )
+    database._conn.commit()
     yield database
     database.close()
 
@@ -138,10 +154,16 @@ class TestGenerateEntityId:
 
     def test_continues_from_existing_via_sequences(self, db: EntityDatabase):
         """Existing sequences bootstrap the counter."""
-        # Seed the sequences table directly
+        # Post-Migration-11: sequences keyed on workspace_uuid. Resolve the
+        # TEST_PROJECT_ID workspace and seed by UUID.
+        ws_row = db._conn.execute(
+            "SELECT uuid FROM workspaces WHERE project_id_legacy = ?",
+            (TEST_PROJECT_ID,),
+        ).fetchone()
         db._conn.execute(
-            "INSERT INTO sequences(project_id, entity_type, next_val) "
-            "VALUES('__test__', 'feature', 53)"
+            "INSERT INTO sequences(workspace_uuid, entity_type, next_val) "
+            "VALUES(?, 'feature', 53)",
+            (ws_row["uuid"],),
         )
         db._conn.commit()
         result = generate_entity_id(db, "feature", "Structured Logging", project_id=TEST_PROJECT_ID)

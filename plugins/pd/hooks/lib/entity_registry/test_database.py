@@ -48,6 +48,29 @@ def mem_db():
     database.close()
 
 
+def _bootstrap_test_workspace(db, legacy_id: str = TEST_PROJECT_ID) -> str:
+    """Insert a workspaces row for ``legacy_id`` (post-Migration-11 prereq).
+
+    Returns the workspace_uuid so callers can pass it to register_entity if
+    they want to bypass the project_id_legacy resolution.
+    """
+    import uuid as _uuid
+    ws_uuid = str(_uuid.uuid4())
+    now = db._now_iso()
+    db._conn.execute(
+        "INSERT OR IGNORE INTO workspaces "
+        "(uuid, project_id_legacy, project_root, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (ws_uuid, legacy_id, None, now, now),
+    )
+    db._conn.commit()
+    row = db._conn.execute(
+        "SELECT uuid FROM workspaces WHERE project_id_legacy = ?",
+        (legacy_id,),
+    ).fetchone()
+    return row["uuid"]
+
+
 # ---------------------------------------------------------------------------
 # Migration 2: Schema Foundation tests
 # ---------------------------------------------------------------------------
@@ -2998,6 +3021,7 @@ class TestWorkflowPhaseCRUD:
             backward_transition_reason=None,
         )
         assert isinstance(result, dict)
+        # Post-Migration-11: workflow_phases gained workspace_uuid column.
         expected_keys = {
             "type_id",
             "workflow_phase",
@@ -3007,6 +3031,7 @@ class TestWorkflowPhaseCRUD:
             "backward_transition_reason",
             "updated_at",
             "uuid",
+            "workspace_uuid",
         }
         assert set(result.keys()) == expected_keys
         assert result["type_id"] == "feature:f1"
@@ -3082,6 +3107,7 @@ class TestWorkflowPhaseCRUD:
             backward_transition_reason="rework needed",
         )
         result = db.get_workflow_phase("feature:f1")
+        # Post-Migration-11: workflow_phases gained workspace_uuid column.
         expected_keys = {
             "type_id",
             "workflow_phase",
@@ -3091,6 +3117,7 @@ class TestWorkflowPhaseCRUD:
             "backward_transition_reason",
             "updated_at",
             "uuid",
+            "workspace_uuid",
         }
         assert set(result.keys()) == expected_keys
         assert result["type_id"] == "feature:f1"
@@ -3348,11 +3375,18 @@ class TestWorkflowPhaseCRUD:
 
     def test_list_wp_null_for_orphan_rows(self, db: EntityDatabase):
         """LEFT JOIN returns NULL entity fields for orphan workflow_phases rows."""
-        # Manually insert a workflow_phases row without a matching entity
+        # Manually insert a workflow_phases row without a matching entity.
+        # Post-Migration-11: pass workspace_uuid explicitly to bypass the
+        # wp_reject_orphaned_insert trigger (the trigger only fires when
+        # workspace_uuid IS NULL AND no matching entity exists).
+        from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
         db._conn.execute("PRAGMA foreign_keys = OFF")
         db._conn.execute(
-            "INSERT INTO workflow_phases (type_id, kanban_column, updated_at) VALUES (?, ?, ?)",
-            ("feature:orphan", "backlog", "2026-01-01T00:00:00Z"),
+            "INSERT INTO workflow_phases "
+            "(type_id, kanban_column, updated_at, workspace_uuid) "
+            "VALUES (?, ?, ?, ?)",
+            ("feature:orphan", "backlog", "2026-01-01T00:00:00Z",
+             _UNKNOWN_WORKSPACE_UUID),
         )
         db._conn.commit()
         db._conn.execute("PRAGMA foreign_keys = ON")
@@ -3380,11 +3414,17 @@ class TestWorkflowPhaseCRUD:
         db.register_entity("feature", "f2", "Feature 2", project_id="__unknown__")
         db.create_workflow_phase("feature:f1", kanban_column="wip")
         db.create_workflow_phase("feature:f2", kanban_column="backlog")
-        # Add orphan row (disable FK to allow orphan)
+        # Add orphan row (disable FK to allow orphan; supply workspace_uuid
+        # explicitly so the post-Migration-11 wp_reject_orphaned_insert
+        # trigger does not fire).
+        from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
         db._conn.execute("PRAGMA foreign_keys = OFF")
         db._conn.execute(
-            "INSERT INTO workflow_phases (type_id, kanban_column, updated_at) VALUES (?, ?, ?)",
-            ("feature:orphan", "backlog", "2026-01-01T00:00:00Z"),
+            "INSERT INTO workflow_phases "
+            "(type_id, kanban_column, updated_at, workspace_uuid) "
+            "VALUES (?, ?, ?, ?)",
+            ("feature:orphan", "backlog", "2026-01-01T00:00:00Z",
+             _UNKNOWN_WORKSPACE_UUID),
         )
         db._conn.commit()
         db._conn.execute("PRAGMA foreign_keys = ON")
@@ -5644,15 +5684,23 @@ class TestMigration8Data:
 
 
 class TestNextSequenceValue:
-    """Tests for EntityDatabase.next_sequence_value()."""
+    """Tests for EntityDatabase.next_sequence_value().
+
+    Post-Migration-11: sequences table is keyed on (workspace_uuid,
+    entity_type). The next_sequence_value compat shim resolves a legacy
+    project_id positional arg to a workspace_uuid via the workspaces table.
+    Each test bootstraps the workspaces row(s) it needs.
+    """
 
     def test_sequence_bootstrap_from_entities(self):
         """Bootstrap: empty sequences table scans entities for max seq."""
         db = EntityDatabase(":memory:")
         try:
+            ws_uuid = _bootstrap_test_workspace(db)
             # Insert entities directly with known sequence-format IDs.
-            # Disable FK checks since workflow_phases references entities(type_id)
-            # which is no longer UNIQUE after migration 8.
+            # Post-Migration-11: entities table uses workspace_uuid (not
+            # project_id). Bypass the public API so we can pre-load known
+            # sequence prefixes without going through register_entity.
             from datetime import datetime, timezone
             now = datetime.now(timezone.utc).isoformat()
             db._conn.execute("PRAGMA foreign_keys = OFF")
@@ -5660,10 +5708,11 @@ class TestNextSequenceValue:
                 uid = str(uuid.uuid4())
                 db._conn.execute(
                     "INSERT INTO entities "
-                    "(uuid, type_id, project_id, entity_type, entity_id, name, "
-                    "created_at, updated_at) "
+                    "(uuid, workspace_uuid, type_id, entity_type, entity_id, "
+                    "name, created_at, updated_at) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (uid, f"feature:{eid}", TEST_PROJECT_ID, "feature", eid, name, now, now),
+                    (uid, ws_uuid, f"feature:{eid}", "feature", eid, name,
+                     now, now),
                 )
             db._conn.commit()
             db._conn.execute("PRAGMA foreign_keys = ON")
@@ -5684,6 +5733,7 @@ class TestNextSequenceValue:
         """Sequential calls return incrementing values."""
         db = EntityDatabase(":memory:")
         try:
+            _bootstrap_test_workspace(db)
             v1 = db.next_sequence_value(TEST_PROJECT_ID, "task")
             v2 = db.next_sequence_value(TEST_PROJECT_ID, "task")
             v3 = db.next_sequence_value(TEST_PROJECT_ID, "task")
@@ -5697,6 +5747,8 @@ class TestNextSequenceValue:
         """Different projects get independent counters."""
         db = EntityDatabase(":memory:")
         try:
+            _bootstrap_test_workspace(db, "proj_a")
+            _bootstrap_test_workspace(db, "proj_b")
             a1 = db.next_sequence_value("proj_a", "feature")
             a2 = db.next_sequence_value("proj_a", "feature")
             b1 = db.next_sequence_value("proj_b", "feature")
@@ -5714,11 +5766,13 @@ class TestNextSequenceValue:
         """
         db = EntityDatabase(":memory:")
         try:
+            ws_uuid = _bootstrap_test_workspace(db)
             val = db.next_sequence_value(TEST_PROJECT_ID, "task")
             assert val == 1
             row = db._conn.execute(
                 "SELECT next_val FROM sequences "
-                "WHERE project_id = '__test__' AND entity_type = 'task'"
+                "WHERE workspace_uuid = ? AND entity_type = 'task'",
+                (ws_uuid,),
             ).fetchone()
             assert row[0] == 2  # next_val incremented atomically
         finally:
@@ -5891,6 +5945,8 @@ class TestProjectScopedQueryListEntities:
         assert all_result["entity_count"] == 2
 
     def test_project_scoped_query_export_lineage_markdown(self, mem_db):
+        _bootstrap_test_workspace(mem_db)
+        _bootstrap_test_workspace(mem_db, "__other__")
         mem_db.register_entity("project", "p1", "P1", project_id=TEST_PROJECT_ID)
         mem_db.register_entity("project", "p2", "P2", project_id="__other__")
         result = mem_db.export_lineage_markdown(project_id=TEST_PROJECT_ID)
@@ -6103,6 +6159,7 @@ class TestUpsertWorkflowPhaseProject:
 
     def test_upsert_with_correct_project(self, mem_db):
         """upsert_workflow_phase succeeds when project matches."""
+        _bootstrap_test_workspace(mem_db)
         mem_db.register_entity(
             "feature", "wp1", "WP1", project_id=TEST_PROJECT_ID
         )
@@ -6116,6 +6173,7 @@ class TestUpsertWorkflowPhaseProject:
 
     def test_upsert_with_wrong_project_fails(self, mem_db):
         """upsert_workflow_phase fails when project doesn't match."""
+        _bootstrap_test_workspace(mem_db)
         mem_db.register_entity(
             "feature", "wp2", "WP2", project_id=TEST_PROJECT_ID
         )

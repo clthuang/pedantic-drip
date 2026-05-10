@@ -4254,8 +4254,11 @@ class EntityDatabase:
     # ------------------------------------------------------------------
 
     def export_lineage_markdown(
-        self, type_id: str | None = None,
+        self,
+        type_id: str | None = None,
         project_id: str | None = None,
+        *,
+        workspace_uuid: str | None = None,
     ) -> str:
         """Export entity lineage as a markdown tree.
 
@@ -4265,8 +4268,12 @@ class EntityDatabase:
             If provided (UUID or type_id), export only the tree rooted
             at this entity.  If None, export all trees (all root entities).
         project_id:
-            If provided, only include root entities from this project.
-            Children are included via existing tree-walk from filtered roots.
+            DEPRECATED — legacy alias for ``workspace_uuid``. Resolved via
+            ``_resolve_optional_workspace_filter``. If provided, only include
+            root entities in the resolved workspace.
+        workspace_uuid:
+            Workspace scope for root selection. Children are included via
+            existing tree-walk from filtered roots.
 
         Returns
         -------
@@ -4274,22 +4281,29 @@ class EntityDatabase:
             Markdown-formatted tree.
         """
         if type_id is not None:
-            root_uuid, _ = self._resolve_identifier(type_id, project_id=project_id)
+            root_uuid, _ = self._resolve_identifier(
+                type_id,
+                project_id=project_id,
+                workspace_uuid=workspace_uuid,
+            )
             return self._export_tree(root_uuid)
 
         # Find all root entities (no parent).
-        # Uses parent_type_id (not parent_uuid) — both are kept in sync by
-        # set_parent(); parent_type_id is the authoritative column for root
-        # detection since backfill populates it from artifact metadata.
-        if project_id is not None:
+        # Post-Migration-11: parent_type_id column was dropped; parent_uuid
+        # is the single source of truth. Roots are entities with
+        # parent_uuid IS NULL.
+        ws_uuid = self._resolve_optional_workspace_filter(
+            workspace_uuid, project_id, _caller="export_lineage_markdown",
+        )
+        if ws_uuid is not None:
             cur = self._conn.execute(
-                "SELECT uuid FROM entities WHERE parent_type_id IS NULL "
-                "AND project_id = ? ORDER BY entity_type, name",
-                (project_id,),
+                "SELECT uuid FROM entities WHERE parent_uuid IS NULL "
+                "AND workspace_uuid = ? ORDER BY entity_type, name",
+                (ws_uuid,),
             )
         else:
             cur = self._conn.execute(
-                "SELECT uuid FROM entities WHERE parent_type_id IS NULL "
+                "SELECT uuid FROM entities WHERE parent_uuid IS NULL "
                 "ORDER BY entity_type, name"
             )
         roots = [row["uuid"] for row in cur.fetchall()]
@@ -4788,7 +4802,12 @@ class EntityDatabase:
         return dict(result)
 
     def upsert_workflow_phase(
-        self, type_id: str, project_id: str = "__unknown__", **kwargs,
+        self,
+        type_id: str,
+        project_id: str | None = None,
+        *,
+        workspace_uuid: str | None = None,
+        **kwargs,
     ) -> None:
         """Insert or update a workflow_phases row atomically.
 
@@ -4801,8 +4820,12 @@ class EntityDatabase:
         type_id:
             The entity type_id (e.g. ``"feature:my-feat"``).
         project_id:
-            Project scope for entity existence check. Required to
-            ensure the entity belongs to the expected project.
+            DEPRECATED — legacy alias for ``workspace_uuid``. Resolved via
+            ``_resolve_workspace_uuid_kwargs``. Defaults to ``"__unknown__"``
+            when neither this nor ``workspace_uuid`` is supplied.
+        workspace_uuid:
+            Workspace scope for entity existence check. Post-Migration-11
+            the entities table is keyed on (workspace_uuid, type_id).
         **kwargs:
             Mutable columns to set. Allowed keys: ``workflow_phase``,
             ``kanban_column``, ``last_completed_phase``, ``mode``,
@@ -4811,7 +4834,7 @@ class EntityDatabase:
         Raises
         ------
         ValueError
-            If entity not found in the specified project, or if any
+            If entity not found in the specified workspace, or if any
             key in *kwargs* is not in the allow-list.
         """
         ALLOWED_COLUMNS = {
@@ -4826,14 +4849,30 @@ class EntityDatabase:
         if invalid:
             raise ValueError(f"Invalid workflow_phases columns: {invalid}")
 
-        # Entity existence check scoped by project_id
-        entity_row = self._conn.execute(
-            "SELECT uuid FROM entities WHERE type_id = ? AND project_id = ?",
-            (type_id, project_id),
-        ).fetchone()
-        if entity_row is None:
+        # Resolve workspace identity (default __unknown__ when both omitted)
+        if workspace_uuid is None and project_id is None:
+            project_id = "__unknown__"
+        try:
+            ws_uuid = self._resolve_workspace_uuid_kwargs(
+                workspace_uuid, project_id, _caller="upsert_workflow_phase"
+            )
+        except ValueError:
+            # Unknown project_id_legacy → entity is "not found in project"
             raise ValueError(
                 f"Entity {type_id!r} not found in project {project_id!r}"
+            )
+
+        # Entity existence check scoped by workspace_uuid
+        entity_row = self._conn.execute(
+            "SELECT uuid FROM entities "
+            "WHERE workspace_uuid = ? AND type_id = ?",
+            (ws_uuid, type_id),
+        ).fetchone()
+        if entity_row is None:
+            # Compat error message preserves the legacy phrasing.
+            scope = project_id if project_id is not None else ws_uuid
+            raise ValueError(
+                f"Entity {type_id!r} not found in project {scope!r}"
             )
 
         # Audit 062: 2 write SQL statements — wrapped in transaction() for BEGIN IMMEDIATE
@@ -5130,8 +5169,14 @@ class EntityDatabase:
             ).fetchall()
         return [row["entity_id"] for row in rows]
 
-    def next_sequence_value(self, project_id: str, entity_type: str) -> int:
-        """Atomic read-increment-write for per-project, per-type sequence.
+    def next_sequence_value(
+        self,
+        project_id: str | None = None,
+        entity_type: str | None = None,
+        *,
+        workspace_uuid: str | None = None,
+    ) -> int:
+        """Atomic read-increment-write for per-workspace, per-type sequence.
 
         Bootstraps from entities scan if no sequences row exists.
         Returns the next value to issue (pre-increment semantics:
@@ -5140,30 +5185,42 @@ class EntityDatabase:
         Parameters
         ----------
         project_id:
-            The project scope for the sequence.
+            DEPRECATED — legacy alias for ``workspace_uuid``. Resolved via
+            ``_resolve_workspace_uuid_kwargs``. Accepted as the first
+            positional arg for backward compat with id_generator and tests.
         entity_type:
-            The entity type (e.g. "feature", "task").
+            The entity type (e.g. "feature", "task"). Required.
+        workspace_uuid:
+            The workspace scope for the sequence (post-Migration-11 the
+            sequences table is keyed on workspace_uuid).
 
         Returns
         -------
         int
             The next sequence value to use.
         """
+        if entity_type is None:
+            raise TypeError(
+                "next_sequence_value() requires entity_type"
+            )
+        ws_uuid = self._resolve_workspace_uuid_kwargs(
+            workspace_uuid, project_id, _caller="next_sequence_value"
+        )
         self._conn.commit()  # flush any implicit transaction
         self._conn.execute("BEGIN IMMEDIATE")
         try:
             row = self._conn.execute(
                 "SELECT next_val FROM sequences "
-                "WHERE project_id = ? AND entity_type = ?",
-                (project_id, entity_type),
+                "WHERE workspace_uuid = ? AND entity_type = ?",
+                (ws_uuid, entity_type),
             ).fetchone()
 
             if row is None:
                 # Bootstrap: scan entities for max sequence prefix
                 entity_rows = self._conn.execute(
                     "SELECT entity_id FROM entities "
-                    "WHERE project_id = ? AND entity_type = ?",
-                    (project_id, entity_type),
+                    "WHERE workspace_uuid = ? AND entity_type = ?",
+                    (ws_uuid, entity_type),
                 ).fetchall()
                 max_seq = 0
                 for (eid,) in entity_rows:
@@ -5172,16 +5229,16 @@ class EntityDatabase:
                         max_seq = max(max_seq, int(match.group(1)))
                 next_val = max_seq + 1
                 self._conn.execute(
-                    "INSERT INTO sequences(project_id, entity_type, next_val) "
+                    "INSERT INTO sequences(workspace_uuid, entity_type, next_val) "
                     "VALUES(?, ?, ?)",
-                    (project_id, entity_type, next_val + 1),
+                    (ws_uuid, entity_type, next_val + 1),
                 )
             else:
                 next_val = row[0]
                 self._conn.execute(
                     "UPDATE sequences SET next_val = ? "
-                    "WHERE project_id = ? AND entity_type = ?",
-                    (next_val + 1, project_id, entity_type),
+                    "WHERE workspace_uuid = ? AND entity_type = ?",
+                    (next_val + 1, ws_uuid, entity_type),
                 )
 
             self._conn.execute("COMMIT")
