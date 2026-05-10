@@ -84,12 +84,14 @@ def _reset_workflow_state_globals():
     saved_db = m._db
     saved_unavailable = m._db_unavailable
     saved_project_id = m._project_id
+    saved_workspace_uuid = m._workspace_uuid
     try:
         yield
     finally:
         m._db = saved_db
         m._db_unavailable = saved_unavailable
         m._project_id = saved_project_id
+        m._workspace_uuid = saved_workspace_uuid
 
 
 # ---------------------------------------------------------------------------
