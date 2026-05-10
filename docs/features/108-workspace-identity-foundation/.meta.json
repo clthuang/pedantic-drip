@@ -1,0 +1,15 @@
+{
+  "id": "108",
+  "slug": "workspace-identity-foundation",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-05-10T07:38:15.859019+00:00",
+  "branch": "feature/108-workspace-identity-foundation",
+  "brainstorm_source": "docs/brainstorms/20260510-152932-entity-system-redesign.prd.md",
+  "lastCompletedPhase": null,
+  "phases": {
+    "specify": {
+      "started": "2026-05-10T07:41:15.131210+00:00"
+    }
+  }
+}
