@@ -1,18 +1,22 @@
 #!/usr/bin/env bash
-# SessionStart hook: inject workflow context and surface active feature
+# SessionStart hook: inject workflow context and surface active feature.
+#
+# Broken-pipe handling: see docs/dev_guides/hook-development.md
+# (section "Broken-pipe handling for hooks emitting structured output").
+# DO NOT remove `trap '' PIPE` below — it is co-load-bearing with
+# safe_emit_hook_json from lib/session-start-helpers.sh. Without trap,
+# the bash process is SIGPIPE-killed before EPIPE-safe `|| true` can run.
+# See feature 107 design.md "Verified Bash Behavior" matrix for evidence.
 
 set -euo pipefail
 
-# Ignore SIGPIPE: during /clear or /compact, CC may close stdout before the
-# hook finishes writing JSON. Without this, cat <<EOF gets SIGPIPE (exit 141),
-# ERR trap's echo also gets SIGPIPE (stdout closed), exit 0 never runs, and
-# CC reports "Failed with non-blocking status code: No stderr output".
 trap '' PIPE
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
-install_err_trap
+source "${SCRIPT_DIR}/lib/session-start-helpers.sh"
+install_session_start_traps
 PROJECT_ROOT="$(detect_project_root)"
 
 # Resolve artifacts_root from config (default: docs)
@@ -421,6 +425,10 @@ check_claude_md_plugin() {
 
 # Build context message
 build_context() {
+    # T8 / R7 test guard: tests set this env var to verify EXIT trap recovery.
+    if [[ -n "${PD_FORCE_BUILD_CONTEXT_FAIL:-}" ]]; then
+        return 1
+    fi
     local context=""
     local meta_file
     local cwd
@@ -804,14 +812,9 @@ main() {
 
     # python3 is required for feature detection and memory injection
     if ! command -v python3 &>/dev/null; then
-        cat <<EOF
-{
-  "hookSpecificOutput": {
-    "hookEventName": "SessionStart",
-    "additionalContext": "WARNING: python3 not found. Memory injection and feature detection disabled. Install python3 to enable full functionality."
-  }
-}
-EOF
+        local missing_py_payload
+        missing_py_payload='{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"WARNING: python3 not found. Memory injection and feature detection disabled. Install python3 to enable full functionality."}}'
+        safe_emit_hook_json "$missing_py_payload"
         exit 0
     fi
 
@@ -916,17 +919,18 @@ EOF
         full_context="$context"
     fi
 
-    local escaped_context
-    escaped_context=$(escape_json "$full_context")
-
-    cat <<EOF
-{
-  "hookSpecificOutput": {
-    "hookEventName": "SessionStart",
-    "additionalContext": "${escaped_context}"
-  }
-}
-EOF
+    local payload
+    if command -v jq >/dev/null 2>&1; then
+        # jq --arg handles JSON encoding; skip escape_json (which is O(n)
+        # bash char-iteration and dominates hook latency for large contexts).
+        payload=$(jq -nc --arg event "SessionStart" --arg ctx "$full_context" \
+            '{hookSpecificOutput: {hookEventName: $event, additionalContext: $ctx}}')
+    else
+        local escaped_context
+        escaped_context=$(escape_json "$full_context")
+        payload=$(printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"%s"}}' "$escaped_context")
+    fi
+    safe_emit_hook_json "$payload"
 
     exit 0
 }

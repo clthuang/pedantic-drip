@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **SessionStart hook broken-pipe failure** (feature 107) — `plugins/pd/hooks/session-start.sh` no longer surfaces `SessionStart:startup hook error / Failed with non-blocking status code: No stderr output` when Claude Code closes the hook's stdout (during `/clear`, `/compact`, or specific bootstrap paths in CC v2.1.x). The two `cat <<EOF` heredoc emission sites are replaced with the new `safe_emit_hook_json` helper (printf-based, EPIPE-guarded via `{ ...; } 2>/dev/null || true`), and `install_session_start_traps` adds an EXIT trap that emits a fallback `{}` only on failure paths. `trap '' PIPE` is retained at line 13 (now documented as co-load-bearing). RCA: `docs/rca/20260508-110928-sessionstart-skills.md`. Performance: 42 ms FASTER than baseline (escape_json skipped on jq path).
+
+### Added
+
+- **`plugins/pd/hooks/lib/session-start-helpers.sh`** — new helper library: `safe_emit_hook_json`, `pd_log_diagnostic` (TSV diagnostic log with bash-side rotation at 1 MB), `pd_log_session_start_diagnostic`, `install_session_start_traps`, ERR/EXIT trap handlers with defensive `set +e`. Honors `PD_SESSION_START_LOG` env var (default `$HOME/.claude/pd/session-start.log`). Bash 3.2 compatible (uses `${!varname}` indirect expansion, not `eval`).
+- **`docs/dev_guides/hook-development.md`** — new section "Broken-pipe handling for hooks emitting structured output" documents the `set -e` + `cat <<EOF` failure mode, why `trap '' PIPE` alone is insufficient, and the canonical `safe_emit_hook_json` + `install_session_start_traps` pattern.
+- **`plugins/pd/hooks/tests/check-no-unsafe-writes.sh`** — FR8 static guard: forbids line-leading `cat <<` heredoc in `session-start.sh`. Uses POSIX `[[:space:]]` (BSD-portable on macOS).
+- **`plugins/pd/hooks/tests/test-session-start-broken-pipe.sh`** — 9 sub-tests covering closed-stdout pre-write/mid-write/AND-stderr (FR1–FR3), happy-path JSON shape (FR4), log schema + rotation (FR5/FR5b), JSON encoding parity (R1), `PD_FORCE_BUILD_CONTEXT_FAIL` recovery (R7), first-run directory creation (AC12), and recovery-of-recovery (FR5).
+- **Bench harness** (`plugins/pd/hooks/tests/bench-session-start.sh`) — NFR2 latency budget verification using `git worktree add` against merge-base for apples-to-apples comparison.
+
 ## [4.16.16] - 2026-05-06
 
 ### Changed
