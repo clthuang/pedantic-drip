@@ -10,6 +10,7 @@
 # Infrastructure (skip): _migrate (2 sites)
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -26,6 +27,54 @@ _UUID_V4_RE = re.compile(
 
 # Tag format: lowercase letters, digits, hyphens. 1-50 chars. No leading/trailing hyphens.
 _TAG_RE = re.compile(r'^[a-z0-9](?:[a-z0-9-]{0,48}[a-z0-9])?$')
+
+
+# ---------------------------------------------------------------------------
+# Feature 108 (workspace identity foundation): workspace constants & DDL.
+# ---------------------------------------------------------------------------
+# FR-4: deterministic UUID for production __unknown__ rows AND test fixtures.
+# DO NOT MODIFY THE SEED — changing it reassigns every __unknown__ entity.
+_UNKNOWN_WORKSPACE_UUID_SEED: str = "pd-test-fixture-unknown-workspace"
+
+
+def _compute_unknown_workspace_uuid() -> str:
+    """Compute the canonical __unknown__ workspace UUID per FR-4 / Decision 3.
+
+    Algorithm: SHA-256 of seed → first 32 hex chars → format as 8-4-4-4-12,
+    forcing version nibble (idx 12) to '4' and variant nibble (idx 16) to
+    {'8','9','a','b'} per RFC 4122 §4.4.
+    """
+    digest = hashlib.sha256(_UNKNOWN_WORKSPACE_UUID_SEED.encode()).hexdigest()
+    h = digest[:32]
+    return (
+        f"{h[0:8]}-{h[8:12]}-4{h[13:16]}-"
+        f"{('8','9','a','b')[int(h[16],16) % 4]}{h[17:20]}-{h[20:32]}"
+    )
+
+
+_UNKNOWN_WORKSPACE_UUID: str = _compute_unknown_workspace_uuid()
+
+# Pinned literal (asserted at import time). Tests assert byte-equality against
+# this literal, NOT recompute-and-compare.
+assert _UNKNOWN_WORKSPACE_UUID == "6250c8a6-5306-443f-b225-477a040016ea", (
+    f"_UNKNOWN_WORKSPACE_UUID drift: got {_UNKNOWN_WORKSPACE_UUID}; "
+    f"expected pinned literal — seed must not be mutated."
+)
+
+# FR-4: workspaces table DDL (used by Migration 11 step 5).
+_WORKSPACES_TABLE_DDL: str = """
+    CREATE TABLE workspaces (
+        uuid               TEXT NOT NULL PRIMARY KEY,
+        project_id_legacy  TEXT UNIQUE,
+        project_root       TEXT,
+        created_at         TEXT NOT NULL,
+        updated_at         TEXT NOT NULL
+    )
+"""
+
+_WORKSPACES_INDEX_DDL: str = (
+    "CREATE INDEX idx_workspaces_legacy ON workspaces(project_id_legacy)"
+)
 
 
 def flatten_metadata(metadata: dict | None) -> str:
@@ -1625,6 +1674,520 @@ def _migration_10_phase_events(conn: sqlite3.Connection) -> None:
         raise
 
 
+def _atomic_write_workspace_mapping(
+    workspace_root: str, mapping: dict[str, str]
+) -> str:
+    """Atomic-write the migration-11 workspace mapping audit JSON.
+
+    Writes ``<workspace_root>/.claude/pd/migrations/migration-11-workspace-mapping.json``
+    using the same-directory tempfile + os.replace pattern (NFR-7 atomicity).
+
+    Parameters
+    ----------
+    workspace_root:
+        Absolute path of the directory that owns ``.claude/``.
+    mapping:
+        ``{old_project_id_hex: new_workspace_uuid}`` dict.
+
+    Returns
+    -------
+    str
+        Absolute path to the emitted file.
+    """
+    import tempfile as _tempfile
+
+    target_dir = os.path.join(
+        workspace_root, ".claude", "pd", "migrations"
+    )
+    os.makedirs(target_dir, exist_ok=True)
+    target_path = os.path.join(target_dir, "migration-11-workspace-mapping.json")
+
+    fd, tmp_path = _tempfile.mkstemp(
+        prefix=".migration-11-workspace-mapping.", suffix=".json", dir=target_dir,
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(mapping, fh, indent=2, sort_keys=True)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_path, target_path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+    return target_path
+
+
+def _migration_11_workspace_identity(conn: sqlite3.Connection) -> None:
+    """Migration 11: workspaces table + entities.workspace_uuid + drop parent_type_id.
+
+    Per spec FR-7 / design §7.1, this is a single transactional unit replicating
+    Migration 10's in-tx schema_version stamp pattern (database.py:1604-1618)
+    plus the concurrent re-check guard (database.py:1396-1418).
+
+    17 steps:
+      0. Pre-tx: workspace mapping audit (writes JSON file).
+      1. PRAGMA foreign_keys = OFF (outside transaction).
+      2. BEGIN IMMEDIATE.
+      3. Concurrent re-check guard.
+      4. Pre-migration FK check.
+      5. Bootstrap workspaces table.
+      6. Pre-migration parent_type_id orphan assertion.
+      7-8. Build entities_new + JOIN backfill + DROP/RENAME.
+      9-10. Recreate triggers (7) + indexes (5).
+      11. workflow_phases.workspace_uuid ALTER + autofill + reject triggers.
+      12. Rebuild sequences keyed on workspace_uuid.
+      13. Rebuild projects with workspace_uuid NOT NULL.
+      14. Rebuild entities_fts.
+      15. UPDATE _metadata SET schema_version='11' (in-tx stamp).
+      16. COMMIT.
+      17. PRAGMA foreign_keys = ON; post-FK check.
+
+    Raises:
+        RuntimeError on FK violations (pre or post) or
+        on parent_type_id orphan assertion failure.
+    """
+    # ----------------------------------------------------------------------
+    # Pre-step 0: outer-level early-return guard.
+    # ----------------------------------------------------------------------
+    # If the schema is already at version 11, step 0 (which reads the
+    # legacy ``project_id`` column) would crash with OperationalError.
+    # The in-tx re-check guard (step 3) cannot help because step 0 runs
+    # pre-transaction. Bail out early — this also makes the migration
+    # idempotent for callers outside the outer ``_migrate()`` loop.
+    try:
+        v_row = conn.execute(
+            "SELECT value FROM _metadata WHERE key='schema_version'"
+        ).fetchone()
+        if v_row is not None:
+            try:
+                current_version = int(v_row[0])
+            except (TypeError, ValueError):
+                current_version = 0
+            if current_version >= 11:
+                return
+    except sqlite3.OperationalError as e:
+        if "no such table" not in str(e).lower():
+            raise
+
+    # ----------------------------------------------------------------------
+    # Step 0: workspace mapping audit (PRE-TRANSACTION)
+    # ----------------------------------------------------------------------
+    # Compute the mapping {legacy_project_id: new_workspace_uuid} for every
+    # distinct project_id present in entities.
+    distinct_pids = [
+        r[0] for r in conn.execute(
+            "SELECT DISTINCT project_id FROM entities"
+        ).fetchall()
+    ]
+    mapping: dict[str, str] = {}
+    unknown_count = 0
+    for pid in distinct_pids:
+        if pid == "__unknown__":
+            mapping[pid] = _UNKNOWN_WORKSPACE_UUID
+            unknown_count = conn.execute(
+                "SELECT COUNT(*) FROM entities WHERE project_id = '__unknown__'"
+            ).fetchone()[0]
+        else:
+            mapping[pid] = str(uuid_mod.uuid4())
+
+    # Emit the mapping JSON. PD_WORKSPACE_ROOT may override the workspace
+    # root (used by tests); falls back to os.getcwd().
+    workspace_root = os.environ.get("PD_WORKSPACE_ROOT") or os.getcwd()
+    try:
+        _atomic_write_workspace_mapping(workspace_root, mapping)
+    except OSError as e:
+        # Audit emit failure is non-fatal in dev environments where
+        # workspace_root may not be writable; warn and continue.
+        print(
+            f"[migration-11] workspace mapping audit emit failed: {e}",
+            file=sys.stderr,
+        )
+
+    if unknown_count:
+        print(
+            f"[migration-11] WARN: {unknown_count} entities with "
+            f"project_id='__unknown__' attributed to canonical "
+            f"unknown-workspace UUID; review with claim_unknown_entities "
+            f"post-migration.",
+            file=sys.stderr,
+        )
+
+    # ----------------------------------------------------------------------
+    # Step 1: PRAGMA foreign_keys = OFF (outside transaction)
+    # ----------------------------------------------------------------------
+    conn.execute("PRAGMA foreign_keys = OFF")
+    fk_status = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+    if fk_status != 0:
+        raise RuntimeError(
+            "PRAGMA foreign_keys = OFF did not take effect — "
+            "aborting migration 11"
+        )
+
+    try:
+        # ------------------------------------------------------------------
+        # Step 2: BEGIN IMMEDIATE
+        # ------------------------------------------------------------------
+        conn.execute("BEGIN IMMEDIATE")
+
+        # ------------------------------------------------------------------
+        # Step 3: concurrent re-check guard
+        # ------------------------------------------------------------------
+        # Replicates Migration 10 pattern at database.py:1396-1418. If
+        # another process completed migration 11 between our caller's
+        # check and our BEGIN IMMEDIATE, early-return as a no-op.
+        try:
+            v_row = conn.execute(
+                "SELECT value FROM _metadata WHERE key='schema_version'"
+            ).fetchone()
+            if v_row is not None:
+                try:
+                    current_version = int(v_row[0])
+                except (TypeError, ValueError):
+                    current_version = 0
+                if current_version >= 11:
+                    conn.rollback()
+                    return
+        except sqlite3.OperationalError as e:
+            # Narrow catch — only the "_metadata table does not exist"
+            # case is acceptable here; anything else (e.g., 'database is
+            # locked') must propagate.
+            if "no such table" not in str(e).lower():
+                raise
+
+        # ------------------------------------------------------------------
+        # Step 4: pre-migration FK check (must be empty)
+        # ------------------------------------------------------------------
+        fk_violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if fk_violations:
+            raise RuntimeError(
+                f"pre-migration FK check non-empty: {fk_violations}"
+            )
+
+        # ------------------------------------------------------------------
+        # Step 5: bootstrap workspaces table
+        # ------------------------------------------------------------------
+        conn.execute(_WORKSPACES_TABLE_DDL)
+        conn.execute(_WORKSPACES_INDEX_DDL)
+
+        now = datetime.now(timezone.utc).isoformat()
+        for legacy_pid, new_uuid in mapping.items():
+            # Pull project_root from projects (matched by project_id) when
+            # available; default to NULL.
+            proot_row = conn.execute(
+                "SELECT project_root FROM projects WHERE project_id = ?",
+                (legacy_pid,),
+            ).fetchone()
+            project_root = proot_row[0] if proot_row else None
+            conn.execute(
+                "INSERT INTO workspaces "
+                "(uuid, project_id_legacy, project_root, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (new_uuid, legacy_pid, project_root, now, now),
+            )
+
+        # ------------------------------------------------------------------
+        # Step 6: pre-migration parent_type_id orphan assertion
+        # ------------------------------------------------------------------
+        offender_row = conn.execute(
+            "SELECT COUNT(*) AS n, GROUP_CONCAT(uuid) AS offenders "
+            "FROM entities "
+            "WHERE parent_uuid IS NULL AND parent_type_id IS NOT NULL"
+        ).fetchone()
+        n_off = offender_row[0]
+        if n_off > 0:
+            offenders = offender_row[1]
+            raise RuntimeError(
+                f"Migration 11 aborted: {n_off} parent_type_id-only "
+                f"orphans: {offenders}"
+            )
+
+        # ------------------------------------------------------------------
+        # Steps 7-8: build entities_new + JOIN backfill + DROP/RENAME
+        # ------------------------------------------------------------------
+        conn.execute("""
+            CREATE TABLE entities_new (
+                uuid           TEXT NOT NULL PRIMARY KEY,
+                workspace_uuid TEXT NOT NULL REFERENCES workspaces(uuid),
+                type_id        TEXT NOT NULL,
+                entity_type    TEXT NOT NULL,
+                entity_id      TEXT NOT NULL,
+                name           TEXT NOT NULL,
+                status         TEXT,
+                parent_uuid    TEXT REFERENCES entities_new(uuid),
+                artifact_path  TEXT,
+                created_at     TEXT NOT NULL,
+                updated_at     TEXT NOT NULL,
+                metadata       TEXT,
+                UNIQUE(workspace_uuid, type_id)
+            )
+        """)
+
+        pre_count = conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
+        conn.execute(
+            "INSERT INTO entities_new "
+            "(uuid, workspace_uuid, type_id, entity_type, entity_id, name, "
+            "status, parent_uuid, artifact_path, created_at, updated_at, metadata) "
+            "SELECT e.uuid, w.uuid, e.type_id, e.entity_type, e.entity_id, "
+            "e.name, e.status, e.parent_uuid, e.artifact_path, "
+            "e.created_at, e.updated_at, e.metadata "
+            "FROM entities e "
+            "JOIN workspaces w ON e.project_id = w.project_id_legacy"
+        )
+        post_count = conn.execute(
+            "SELECT COUNT(*) FROM entities_new"
+        ).fetchone()[0]
+        if post_count != pre_count:
+            raise RuntimeError(
+                f"Migration 11 data copy mismatch: "
+                f"entities pre={pre_count}, entities_new post={post_count}"
+            )
+        conn.execute("DROP TABLE entities")
+        conn.execute("PRAGMA legacy_alter_table = OFF")
+        conn.execute("ALTER TABLE entities_new RENAME TO entities")
+
+        # ------------------------------------------------------------------
+        # Steps 9-10: recreate 7 triggers + 5 indexes on entities
+        # ------------------------------------------------------------------
+        # Drop legacy triggers that the rename did not carry over.
+        conn.execute("DROP TRIGGER IF EXISTS enforce_no_self_parent")
+        conn.execute("DROP TRIGGER IF EXISTS enforce_no_self_parent_update")
+        conn.execute("DROP TRIGGER IF EXISTS enforce_immutable_project_id")
+
+        conn.execute("""
+            CREATE TRIGGER enforce_immutable_uuid
+            BEFORE UPDATE OF uuid ON entities
+            BEGIN SELECT RAISE(ABORT, 'uuid is immutable'); END
+        """)
+        conn.execute("""
+            CREATE TRIGGER enforce_immutable_type_id
+            BEFORE UPDATE OF type_id ON entities
+            BEGIN SELECT RAISE(ABORT, 'type_id is immutable'); END
+        """)
+        conn.execute("""
+            CREATE TRIGGER enforce_immutable_entity_type
+            BEFORE UPDATE OF entity_type ON entities
+            BEGIN SELECT RAISE(ABORT, 'entity_type is immutable'); END
+        """)
+        conn.execute("""
+            CREATE TRIGGER enforce_immutable_created_at
+            BEFORE UPDATE OF created_at ON entities
+            BEGIN SELECT RAISE(ABORT, 'created_at is immutable'); END
+        """)
+        conn.execute("""
+            CREATE TRIGGER enforce_immutable_workspace_uuid
+            BEFORE UPDATE OF workspace_uuid ON entities
+            BEGIN SELECT RAISE(ABORT, 'workspace_uuid is immutable — use re-attribution API'); END
+        """)
+        conn.execute("""
+            CREATE TRIGGER enforce_no_self_parent_uuid_insert
+            BEFORE INSERT ON entities
+            WHEN NEW.parent_uuid IS NOT NULL AND NEW.parent_uuid = NEW.uuid
+            BEGIN SELECT RAISE(ABORT, 'entity cannot be its own parent (uuid)'); END
+        """)
+        conn.execute("""
+            CREATE TRIGGER enforce_no_self_parent_uuid_update
+            BEFORE UPDATE OF parent_uuid ON entities
+            WHEN NEW.parent_uuid IS NOT NULL AND NEW.parent_uuid = NEW.uuid
+            BEGIN SELECT RAISE(ABORT, 'entity cannot be its own parent (uuid)'); END
+        """)
+
+        # Drop legacy indexes (entities table rename carried them via
+        # auto-recreation in some cases; explicit drop is idempotent).
+        conn.execute("DROP INDEX IF EXISTS idx_project_id")
+        conn.execute("DROP INDEX IF EXISTS idx_project_entity_type")
+        conn.execute("DROP INDEX IF EXISTS idx_parent_type_id")
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_entity_type "
+            "ON entities(entity_type)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_status ON entities(status)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_parent_uuid "
+            "ON entities(parent_uuid)"
+        )
+        conn.execute(
+            "CREATE INDEX idx_workspace_uuid ON entities(workspace_uuid)"
+        )
+        conn.execute(
+            "CREATE INDEX idx_workspace_entity_type "
+            "ON entities(workspace_uuid, entity_type)"
+        )
+
+        # ------------------------------------------------------------------
+        # Step 11: workflow_phases.workspace_uuid ALTER + backfill + triggers
+        # ------------------------------------------------------------------
+        conn.execute(
+            "ALTER TABLE workflow_phases ADD COLUMN workspace_uuid TEXT "
+            "REFERENCES workspaces(uuid)"
+        )
+        conn.execute(
+            "UPDATE workflow_phases SET workspace_uuid = ("
+            "  SELECT e.workspace_uuid FROM entities e "
+            "  WHERE e.type_id = workflow_phases.type_id"
+            ")"
+        )
+        conn.execute(
+            "CREATE INDEX idx_wp_workspace_uuid "
+            "ON workflow_phases(workspace_uuid)"
+        )
+        # Two triggers form a complementary pair:
+        # 1) AFTER INSERT: autofill from entities.workspace_uuid when
+        #    NEW.workspace_uuid IS NULL AND a matching entity exists.
+        # 2) BEFORE INSERT: ABORT when NEW.workspace_uuid IS NULL AND
+        #    no matching entity exists (orphaned phase row).
+        conn.execute("""
+            CREATE TRIGGER wp_autofill_workspace_uuid
+            AFTER INSERT ON workflow_phases
+            WHEN NEW.workspace_uuid IS NULL
+                 AND EXISTS (
+                     SELECT 1 FROM entities e WHERE e.type_id = NEW.type_id
+                 )
+            BEGIN
+                UPDATE workflow_phases
+                SET workspace_uuid = (
+                    SELECT e.workspace_uuid FROM entities e
+                    WHERE e.type_id = NEW.type_id
+                )
+                WHERE rowid = NEW.rowid;
+            END
+        """)
+        conn.execute("""
+            CREATE TRIGGER wp_reject_orphaned_insert
+            BEFORE INSERT ON workflow_phases
+            WHEN NEW.workspace_uuid IS NULL
+                 AND NOT EXISTS (
+                     SELECT 1 FROM entities e WHERE e.type_id = NEW.type_id
+                 )
+            BEGIN
+                SELECT RAISE(ABORT, 'workflow_phases insert references unknown entity type_id (orphaned phase row); pass workspace_uuid explicitly or register the entity first');
+            END
+        """)
+
+        # ------------------------------------------------------------------
+        # Step 12: rebuild sequences keyed on workspace_uuid
+        # ------------------------------------------------------------------
+        conn.execute("""
+            CREATE TABLE sequences_new (
+                workspace_uuid TEXT NOT NULL,
+                entity_type    TEXT NOT NULL,
+                next_val       INTEGER NOT NULL DEFAULT 1,
+                PRIMARY KEY (workspace_uuid, entity_type),
+                FOREIGN KEY (workspace_uuid) REFERENCES workspaces(uuid)
+            )
+        """)
+        conn.execute(
+            "INSERT INTO sequences_new (workspace_uuid, entity_type, next_val) "
+            "SELECT w.uuid, s.entity_type, s.next_val "
+            "FROM sequences s "
+            "JOIN workspaces w ON s.project_id = w.project_id_legacy"
+        )
+        conn.execute("DROP TABLE sequences")
+        conn.execute("ALTER TABLE sequences_new RENAME TO sequences")
+
+        # ------------------------------------------------------------------
+        # Step 13: rebuild projects with workspace_uuid NOT NULL
+        # ------------------------------------------------------------------
+        conn.execute("""
+            CREATE TABLE projects_new (
+                project_id      TEXT PRIMARY KEY,
+                name            TEXT NOT NULL,
+                root_commit_sha TEXT,
+                remote_url      TEXT,
+                normalized_url  TEXT,
+                remote_host     TEXT,
+                remote_owner    TEXT,
+                remote_repo     TEXT,
+                default_branch  TEXT,
+                project_root    TEXT,
+                is_git_repo     INTEGER NOT NULL DEFAULT 1,
+                created_at      TEXT NOT NULL,
+                updated_at      TEXT NOT NULL,
+                workspace_uuid  TEXT NOT NULL REFERENCES workspaces(uuid)
+            )
+        """)
+        conn.execute(
+            "INSERT INTO projects_new "
+            "(project_id, name, root_commit_sha, remote_url, normalized_url, "
+            "remote_host, remote_owner, remote_repo, default_branch, "
+            "project_root, is_git_repo, created_at, updated_at, workspace_uuid) "
+            "SELECT p.project_id, p.name, p.root_commit_sha, p.remote_url, "
+            "p.normalized_url, p.remote_host, p.remote_owner, p.remote_repo, "
+            "p.default_branch, p.project_root, p.is_git_repo, "
+            "p.created_at, p.updated_at, w.uuid "
+            "FROM projects p "
+            "JOIN workspaces w ON p.project_id = w.project_id_legacy"
+        )
+        conn.execute("DROP TABLE projects")
+        conn.execute("ALTER TABLE projects_new RENAME TO projects")
+
+        # ------------------------------------------------------------------
+        # Step 14: rebuild entities_fts
+        # ------------------------------------------------------------------
+        conn.execute("DROP TABLE IF EXISTS entities_fts")
+        try:
+            conn.execute(
+                "CREATE VIRTUAL TABLE entities_fts USING fts5("
+                "name, entity_id, entity_type, status, metadata_text)"
+            )
+        except sqlite3.OperationalError as exc:
+            if "no such module: fts5" in str(exc):
+                raise RuntimeError("FTS5 extension not available") from exc
+            raise
+        rows = conn.execute(
+            "SELECT rowid, name, entity_id, entity_type, status, metadata "
+            "FROM entities"
+        ).fetchall()
+        for row in rows:
+            metadata_text = flatten_metadata(
+                json.loads(row[5]) if row[5] else None
+            )
+            conn.execute(
+                "INSERT INTO entities_fts(rowid, name, entity_id, entity_type, "
+                "status, metadata_text) VALUES(?, ?, ?, ?, ?, ?)",
+                (row[0], row[1], row[2], row[3], row[4] or "", metadata_text),
+            )
+
+        # ------------------------------------------------------------------
+        # Step 15: stamp schema_version=11 INSIDE the transaction
+        # ------------------------------------------------------------------
+        # Replicates Migration 10's in-tx stamp pattern at
+        # database.py:1604-1618. Eliminates the SIGKILL/OOM crash window
+        # between migration body commit and outer-loop stamp commit.
+        conn.execute(
+            "INSERT OR REPLACE INTO _metadata (key, value) "
+            "VALUES ('schema_version', '11')"
+        )
+
+        # ------------------------------------------------------------------
+        # Step 16: COMMIT
+        # ------------------------------------------------------------------
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except sqlite3.Error:
+            pass
+        raise
+    finally:
+        # Re-enable FKs whether success or failure.
+        conn.execute("PRAGMA foreign_keys = ON")
+
+    # ----------------------------------------------------------------------
+    # Step 17: post-transaction FK check
+    # ----------------------------------------------------------------------
+    post_violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+    if post_violations:
+        raise RuntimeError(
+            f"Migration 11 post-FK check non-empty: {post_violations}"
+        )
+
+
 # Ordered mapping of version -> migration function.
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _create_initial_schema,
@@ -1637,6 +2200,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     8: _add_project_scoping,
     9: _migration_9_remove_create_tasks,
     10: _migration_10_phase_events,
+    11: _migration_11_workspace_identity,
 }
 
 # Sentinel object to distinguish "not provided" from explicit ``None``.

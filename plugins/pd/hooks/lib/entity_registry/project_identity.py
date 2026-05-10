@@ -91,23 +91,45 @@ def _run_git(args: list[str], working_dir: str) -> subprocess.CompletedProcess:
     )
 
 
-@functools.lru_cache(maxsize=1)
-def detect_project_id(working_dir: str | None = None) -> str:
-    """Detect a 12-char hex project identifier.
+def _compute_legacy_project_id(working_dir: str | None = None) -> str:
+    """Migration-time-only helper: compute the legacy 12-char hex project_id.
 
-    Fallback chain:
-    1. ``ENTITY_PROJECT_ID`` env var (for CI overrides)
-    2. Root commit SHA truncated to 12 chars (skip if shallow clone)
-    3. HEAD SHA truncated to 12 chars
-    4. SHA-256 of absolute path truncated to 12 chars
+    Reuses the git-SHA fallback chain extracted from the original
+    ``detect_project_id``:
 
-    Cached per-process via ``lru_cache(maxsize=1)``.
+    1. Root commit SHA truncated to 12 chars (skip if shallow clone)
+    2. HEAD SHA truncated to 12 chars
+    3. SHA-256 of absolute path truncated to 12 chars
+
+    NOT cached. NOT consulted by the runtime ``resolve_workspace_uuid``
+    precedence chain — this helper is used ONLY by Migration 11 step 0
+    to populate ``workspaces.project_id_legacy`` for entries that pre-date
+    feature 108. Per design §3.4 / Decision 5, this helper does NOT read
+    any env var (test/CI overrides go via ``ENTITY_WORKSPACE_UUID`` →
+    ``resolve_workspace_uuid``, not here).
+
+    Parameters
+    ----------
+    working_dir:
+        Project root directory. Defaults to ``os.getcwd()``.
+
+    Returns
+    -------
+    str
+        12-char lowercase hex string (legacy project_id format).
+
+    Raises
+    ------
+    Never raises — returns path-hash fallback on any failure.
+
+    Side effects
+    ------------
+    Subprocess calls to git (rev-parse, rev-list). No file or DB writes.
+
+    Idempotency
+    -----------
+    Pure function modulo git state. Same git state → same return value.
     """
-    # Env var override
-    env_id = os.environ.get("ENTITY_PROJECT_ID")
-    if env_id:
-        return env_id
-
     cwd = working_dir or os.getcwd()
 
     try:
@@ -142,6 +164,27 @@ def detect_project_id(working_dir: str | None = None) -> str:
 
     # Final fallback: path hash
     return hashlib.sha256(os.path.abspath(cwd).encode()).hexdigest()[:12]
+
+
+@functools.lru_cache(maxsize=1)
+def detect_project_id(working_dir: str | None = None) -> str:
+    """Detect a 12-char hex project identifier.
+
+    Compatibility alias retained for Phase A — the rename to
+    ``resolve_workspace_uuid`` happens in Phase D (FR-3 / Decision 5).
+    For Phase A we keep this thin wrapper that delegates to
+    ``_compute_legacy_project_id`` and preserves the existing
+    ``ENTITY_PROJECT_ID`` env-var override behaviour. After Phase D,
+    ``ENTITY_PROJECT_ID`` is removed entirely.
+
+    Cached per-process via ``lru_cache(maxsize=1)``.
+    """
+    # Env var override (preserved for Phase A; removed in Phase D).
+    env_id = os.environ.get("ENTITY_PROJECT_ID")
+    if env_id:
+        return env_id
+
+    return _compute_legacy_project_id(working_dir)
 
 
 def collect_git_info(working_dir: str | None = None) -> GitProjectInfo:
