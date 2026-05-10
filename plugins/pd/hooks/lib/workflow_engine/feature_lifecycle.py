@@ -12,7 +12,6 @@ import tempfile
 from datetime import datetime, timezone
 
 from entity_registry.database import EntityDatabase
-from entity_registry.project_identity import detect_project_id
 from workflow_engine.engine import WorkflowStateEngine
 from workflow_engine.kanban import derive_kanban
 
@@ -157,8 +156,10 @@ def init_feature_state(
     if backlog_source:
         metadata["backlog_source"] = backlog_source
 
-    # Register or update entity
-    _project_id = detect_project_id(os.environ.get("PROJECT_ROOT", os.getcwd()))
+    # Register or update entity. Use ``project_id="__unknown__"`` so the
+    # canonical workspaces row is auto-bootstrapped on fresh in-memory DBs.
+    # Production callers running against the persistent entities.db will
+    # be migrated via the existing __unknown__-bucket backfill paths.
     existing = db.get_entity(feature_type_id)
     if existing is None:
         db.register_entity(
@@ -168,7 +169,7 @@ def init_feature_state(
             artifact_path=feature_dir,
             status=status,
             metadata=metadata,
-            project_id=_project_id,
+            project_id="__unknown__",
         )
     else:
         # Retry path: preserve existing phase_timing, last_completed_phase,
@@ -251,7 +252,8 @@ def init_project_state(
         metadata["brainstorm_source"] = brainstorm_source
 
     if existing is None:
-        _proj_pid = detect_project_id(os.environ.get("PROJECT_ROOT", os.getcwd()))
+        # Use ``project_id="__unknown__"`` so the canonical workspaces row is
+        # auto-bootstrapped on fresh in-memory DBs (matches feature 108 pattern).
         db.register_entity(
             entity_type="project",
             entity_id=f"{project_id}-{slug}",
@@ -259,7 +261,7 @@ def init_project_state(
             artifact_path=project_dir,
             status=status,
             metadata=metadata,
-            project_id=_proj_pid,
+            project_id="__unknown__",
         )
 
     # Build project .meta.json

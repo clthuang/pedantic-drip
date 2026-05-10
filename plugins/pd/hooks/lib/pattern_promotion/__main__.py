@@ -676,6 +676,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Project root for .claude/pd.local.md resolution (default: cwd)",
     )
     p_enum.add_argument(
+        "--workspace-uuid",
+        default=None,
+        help="Optional workspace UUID (feature 108 / Decision 6).",
+    )
+    p_enum.add_argument(
         "--include-descriptive",
         action="store_true",
         default=False,

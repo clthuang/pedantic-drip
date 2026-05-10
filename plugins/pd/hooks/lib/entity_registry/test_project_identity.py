@@ -279,3 +279,444 @@ class TestCollectGitInfo:
         assert info.root_commit_sha == ""
         assert info.remote_url == ""
         assert info.name == tmp_path.name  # falls back to dir basename
+
+
+# ---------------------------------------------------------------------------
+# Phase D: resolve_workspace_uuid + _atomic_workspace_json_write tests
+# ---------------------------------------------------------------------------
+
+
+import json as _json
+import sqlite3 as _sqlite3
+import uuid as _uuid
+
+
+def _read_workspace_json_uuid(path: str) -> str:
+    with open(path, encoding="utf-8") as fh:
+        return _json.load(fh)["workspace_uuid"]
+
+
+class TestResolveWorkspaceUuidPrecedence:
+    """Phase D Tasks 4.2, 4.7: FR-3 precedence chain."""
+
+    def test_resolve_workspace_uuid_env_var_wins(self, monkeypatch, tmp_path):
+        """ENTITY_WORKSPACE_UUID env var supersedes file + DB lookups."""
+        from entity_registry.project_identity import resolve_workspace_uuid
+
+        custom = "11111111-2222-4333-8444-555555555555"
+        monkeypatch.setenv("ENTITY_WORKSPACE_UUID", custom)
+        # Even with no .claude/pd, env var wins.
+        result = resolve_workspace_uuid(str(tmp_path))
+        assert result == custom
+
+    def test_resolve_workspace_uuid_env_var_malformed_raises(
+        self, monkeypatch, tmp_path
+    ):
+        """ENTITY_WORKSPACE_UUID with bad format raises ValueError."""
+        from entity_registry.project_identity import resolve_workspace_uuid
+
+        monkeypatch.setenv("ENTITY_WORKSPACE_UUID", "not-a-uuid")
+        with pytest.raises(ValueError):
+            resolve_workspace_uuid(str(tmp_path))
+
+    def test_resolve_workspace_uuid_file_when_env_unset(
+        self, monkeypatch, tmp_path
+    ):
+        """workspace.json is read when env var is absent."""
+        from entity_registry.project_identity import (
+            _atomic_workspace_json_write,
+            resolve_workspace_uuid,
+        )
+
+        monkeypatch.delenv("ENTITY_WORKSPACE_UUID", raising=False)
+        target = tmp_path / ".claude" / "pd" / "workspace.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        seed_uuid = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        _atomic_workspace_json_write(str(target), seed_uuid)
+        result = resolve_workspace_uuid(str(tmp_path))
+        assert result == seed_uuid
+
+    def test_resolve_workspace_uuid_db_lookup_when_no_file(
+        self, monkeypatch, tmp_path
+    ):
+        """Step 2.5: workspaces table single match → regenerate workspace.json."""
+        from entity_registry.project_identity import resolve_workspace_uuid
+
+        monkeypatch.delenv("ENTITY_WORKSPACE_UUID", raising=False)
+
+        # Set up an isolated entities.db with a workspaces row pointing
+        # at our tmp_path.
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        db_dir = fake_home / ".claude" / "pd" / "entities"
+        db_dir.mkdir(parents=True)
+        db_path = db_dir / "entities.db"
+
+        conn = _sqlite3.connect(str(db_path))
+        try:
+            conn.execute(
+                "CREATE TABLE _metadata "
+                "(key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+            )
+            conn.execute(
+                "INSERT INTO _metadata (key, value) "
+                "VALUES ('schema_version', '11')"
+            )
+            conn.execute(
+                "CREATE TABLE workspaces ("
+                " uuid TEXT NOT NULL PRIMARY KEY,"
+                " project_id_legacy TEXT UNIQUE,"
+                " project_root TEXT,"
+                " created_at TEXT NOT NULL,"
+                " updated_at TEXT NOT NULL"
+                ")"
+            )
+            recovered_uuid = "12345678-2222-4333-8444-555555555555"
+            now = "2026-05-10T00:00:00+00:00"
+            project_root_abs = os.path.abspath(str(tmp_path))
+            conn.execute(
+                "INSERT INTO workspaces "
+                "(uuid, project_id_legacy, project_root, "
+                "created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                (recovered_uuid, "legacy01", project_root_abs, now, now),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        # Point HOME at fake_home so the resolver finds our DB.
+        monkeypatch.setenv("HOME", str(fake_home))
+
+        # workspace.json doesn't exist yet → step 2.5 fires.
+        target = tmp_path / ".claude" / "pd" / "workspace.json"
+        assert not target.exists()
+        result = resolve_workspace_uuid(str(tmp_path))
+        assert result == recovered_uuid
+        # File was atomically written with the recovered UUID.
+        assert target.exists()
+        assert _read_workspace_json_uuid(str(target)) == recovered_uuid
+
+    def test_resolve_workspace_uuid_fresh_write_when_nothing_exists(
+        self, monkeypatch, tmp_path
+    ):
+        """Step 4: with no env var, no file, and no DB recovery → fresh UUID."""
+        from entity_registry.project_identity import resolve_workspace_uuid
+
+        monkeypatch.delenv("ENTITY_WORKSPACE_UUID", raising=False)
+        # Point HOME at a fresh dir with no DB.
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setenv("HOME", str(fake_home))
+
+        # `.claude/` must pre-exist for step 4 fresh-write to fire; pd never
+        # auto-creates `.claude/` (it's the marker that pd is active here).
+        (tmp_path / ".claude").mkdir()
+        target = tmp_path / ".claude" / "pd" / "workspace.json"
+        assert not target.exists()
+
+        result = resolve_workspace_uuid(str(tmp_path))
+        # Result is a valid UUID.
+        assert _uuid.UUID(result)
+        # File was created with the same UUID.
+        assert target.exists()
+        assert _read_workspace_json_uuid(str(target)) == result
+
+    def test_resolve_workspace_uuid_idempotent(
+        self, monkeypatch, tmp_path
+    ):
+        """Calling twice returns the same UUID (file already exists path)."""
+        from entity_registry.project_identity import resolve_workspace_uuid
+
+        monkeypatch.delenv("ENTITY_WORKSPACE_UUID", raising=False)
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setenv("HOME", str(fake_home))
+
+        # `.claude/` must pre-exist for step 4 fresh-write to fire.
+        (tmp_path / ".claude").mkdir()
+        first = resolve_workspace_uuid(str(tmp_path))
+        second = resolve_workspace_uuid(str(tmp_path))
+        assert first == second
+
+
+class TestAtomicWorkspaceJsonWrite:
+    """Phase D Task 4.4 / Task 4.5: _atomic_workspace_json_write helper."""
+
+    def test_atomic_workspace_json_write_creates_file(self, tmp_path):
+        """First call writes the file with the candidate UUID."""
+        from entity_registry.project_identity import (
+            _atomic_workspace_json_write,
+        )
+
+        target = tmp_path / ".claude" / "pd" / "workspace.json"
+        candidate = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        result = _atomic_workspace_json_write(str(target), candidate)
+        assert result == candidate
+        assert target.exists()
+        assert _read_workspace_json_uuid(str(target)) == candidate
+
+    def test_atomic_workspace_json_write_loser_returns_existing(
+        self, tmp_path
+    ):
+        """If file already exists, second call returns the existing UUID
+        (loser case) without overwriting."""
+        from entity_registry.project_identity import (
+            _atomic_workspace_json_write,
+        )
+
+        target = tmp_path / ".claude" / "pd" / "workspace.json"
+        first = "11111111-2222-4333-8444-555555555555"
+        second_candidate = "99999999-8888-4777-8666-555555555555"
+        _atomic_workspace_json_write(str(target), first)
+        # Capture mtime so we can assert the file was NOT rewritten.
+        mtime_before = target.stat().st_mtime
+        result = _atomic_workspace_json_write(str(target), second_candidate)
+        # Loser returns the existing UUID, not its own candidate.
+        assert result == first
+        # File was not rewritten.
+        assert _read_workspace_json_uuid(str(target)) == first
+        # mtime unchanged (some filesystems have second-resolution; allow
+        # equality only).
+        assert target.stat().st_mtime == mtime_before
+
+    def test_atomic_workspace_json_write_cleanup_on_exception(
+        self, tmp_path, monkeypatch
+    ):
+        """If os.replace raises, the tempfile is cleaned up; no orphan files."""
+        from entity_registry.project_identity import (
+            _atomic_workspace_json_write,
+        )
+
+        target = tmp_path / ".claude" / "pd" / "workspace.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+        original_replace = os.replace
+        call_count = {"n": 0}
+
+        def boom_replace(src, dst):
+            call_count["n"] += 1
+            raise OSError("simulated rename failure")
+
+        monkeypatch.setattr(os, "replace", boom_replace)
+        with pytest.raises(OSError, match="simulated rename failure"):
+            _atomic_workspace_json_write(
+                str(target),
+                "11111111-2222-4333-8444-555555555555",
+            )
+        # Restore for cleanup checks.
+        monkeypatch.setattr(os, "replace", original_replace)
+        # No tempfile remnants in the parent dir (excluding the lock file).
+        leftovers = [
+            p for p in target.parent.iterdir()
+            if p.name != "workspace.json.lock"
+        ]
+        assert leftovers == [], (
+            f"Tempfile cleanup failed; leftover files: {leftovers}"
+        )
+
+    def test_atomic_workspace_json_write_rejects_malformed_uuid(self, tmp_path):
+        from entity_registry.project_identity import (
+            _atomic_workspace_json_write,
+        )
+
+        target = tmp_path / ".claude" / "pd" / "workspace.json"
+        with pytest.raises(ValueError):
+            _atomic_workspace_json_write(str(target), "not-a-uuid")
+
+
+class TestUnknownWorkspaceUuidV4Format:
+    """Phase D Task 4.5 (renumbered): _UNKNOWN_WORKSPACE_UUID is RFC 4122 v4."""
+
+    def test_unknown_workspace_uuid_is_v4_rfc4122(self):
+        from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
+        parsed = _uuid.UUID(_UNKNOWN_WORKSPACE_UUID)
+        assert parsed.version == 4
+        assert parsed.variant == _uuid.RFC_4122
+
+
+class TestLookupWorkspaceUuidByProjectRoot:
+    """Phase D Task 4.6: _lookup_workspace_uuid_by_project_root helper."""
+
+    def test_lookup_single_match_returns_uuid(self, tmp_path):
+        from entity_registry.project_identity import (
+            _lookup_workspace_uuid_by_project_root,
+        )
+
+        db_path = tmp_path / "ws.db"
+        conn = _sqlite3.connect(str(db_path))
+        try:
+            conn.execute(
+                "CREATE TABLE workspaces ("
+                " uuid TEXT NOT NULL PRIMARY KEY,"
+                " project_id_legacy TEXT UNIQUE,"
+                " project_root TEXT,"
+                " created_at TEXT NOT NULL,"
+                " updated_at TEXT NOT NULL"
+                ")"
+            )
+            now = "2026-05-10T00:00:00+00:00"
+            conn.execute(
+                "INSERT INTO workspaces "
+                "(uuid, project_id_legacy, project_root, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                ("11111111-2222-4333-8444-555555555555", "L1",
+                 "/path/to/proj", now, now),
+            )
+            conn.commit()
+            result = _lookup_workspace_uuid_by_project_root(
+                conn, "/path/to/proj"
+            )
+            assert result == "11111111-2222-4333-8444-555555555555"
+        finally:
+            conn.close()
+
+    def test_lookup_no_match_returns_none(self, tmp_path):
+        from entity_registry.project_identity import (
+            _lookup_workspace_uuid_by_project_root,
+        )
+
+        db_path = tmp_path / "ws.db"
+        conn = _sqlite3.connect(str(db_path))
+        try:
+            conn.execute(
+                "CREATE TABLE workspaces ("
+                " uuid TEXT NOT NULL PRIMARY KEY,"
+                " project_id_legacy TEXT UNIQUE,"
+                " project_root TEXT,"
+                " created_at TEXT NOT NULL,"
+                " updated_at TEXT NOT NULL"
+                ")"
+            )
+            assert _lookup_workspace_uuid_by_project_root(
+                conn, "/no/such/path"
+            ) is None
+        finally:
+            conn.close()
+
+    def test_lookup_multiple_matches_returns_none(self, tmp_path):
+        from entity_registry.project_identity import (
+            _lookup_workspace_uuid_by_project_root,
+        )
+
+        db_path = tmp_path / "ws.db"
+        conn = _sqlite3.connect(str(db_path))
+        try:
+            conn.execute(
+                "CREATE TABLE workspaces ("
+                " uuid TEXT NOT NULL PRIMARY KEY,"
+                " project_id_legacy TEXT UNIQUE,"
+                " project_root TEXT,"
+                " created_at TEXT NOT NULL,"
+                " updated_at TEXT NOT NULL"
+                ")"
+            )
+            now = "2026-05-10T00:00:00+00:00"
+            for u, pl in [
+                ("11111111-2222-4333-8444-555555555555", "L1"),
+                ("22222222-3333-4444-8555-666666666666", "L2"),
+            ]:
+                conn.execute(
+                    "INSERT INTO workspaces "
+                    "(uuid, project_id_legacy, project_root, "
+                    "created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                    (u, pl, "/dup/path", now, now),
+                )
+            conn.commit()
+            assert _lookup_workspace_uuid_by_project_root(
+                conn, "/dup/path"
+            ) is None
+        finally:
+            conn.close()
+
+    def test_lookup_null_project_root_returns_none(self, tmp_path):
+        from entity_registry.project_identity import (
+            _lookup_workspace_uuid_by_project_root,
+        )
+
+        db_path = tmp_path / "ws.db"
+        conn = _sqlite3.connect(str(db_path))
+        try:
+            conn.execute(
+                "CREATE TABLE workspaces ("
+                " uuid TEXT NOT NULL PRIMARY KEY,"
+                " project_id_legacy TEXT UNIQUE,"
+                " project_root TEXT,"
+                " created_at TEXT NOT NULL,"
+                " updated_at TEXT NOT NULL"
+                ")"
+            )
+            now = "2026-05-10T00:00:00+00:00"
+            conn.execute(
+                "INSERT INTO workspaces "
+                "(uuid, project_id_legacy, project_root, "
+                "created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                ("11111111-2222-4333-8444-555555555555", "L1", None,
+                 now, now),
+            )
+            conn.commit()
+            # NULL project_root → no match (predicate filters NULL).
+            assert _lookup_workspace_uuid_by_project_root(
+                conn, "/no/such/path"
+            ) is None
+        finally:
+            conn.close()
+
+
+def _resolve_workspace_uuid_worker(args):
+    """Worker for the multiprocessing race test (must be picklable)."""
+    import os as _os
+    import sys as _sys
+    project_dir, fake_home, sentinel_path, expected_n = args
+    # Each child sets HOME to the fake_home so step 3 DB lookup is a no-op.
+    _os.environ.pop("ENTITY_WORKSPACE_UUID", None)
+    _os.environ["HOME"] = fake_home
+    # Make sure project_identity is reimported in the child.
+    _sys.path.insert(0, str(project_dir) + "/../../../../")
+    from entity_registry.project_identity import resolve_workspace_uuid
+    # Sync barrier — wait for sentinel file to appear.
+    import time
+    deadline = time.time() + 10.0
+    while not _os.path.exists(sentinel_path) and time.time() < deadline:
+        time.sleep(0.01)
+    return resolve_workspace_uuid(project_dir)
+
+
+class TestResolveWorkspaceUuidConcurrentRace:
+    """Phase D Task 4.7: AC-37 concurrent race test."""
+
+    def test_resolve_workspace_uuid_concurrent_race(
+        self, tmp_path, monkeypatch
+    ):
+        """Two processes racing on workspace.json creation return the SAME UUID."""
+        import multiprocessing as mp
+
+        monkeypatch.delenv("ENTITY_WORKSPACE_UUID", raising=False)
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        project_dir = tmp_path / "proj"
+        project_dir.mkdir()
+        (project_dir / ".claude").mkdir()  # required pre-existing marker
+        sentinel = tmp_path / "go"
+
+        ctx = mp.get_context("fork")
+        with ctx.Pool(2) as pool:
+            async_result = pool.map_async(
+                _resolve_workspace_uuid_worker,
+                [(str(project_dir), str(fake_home), str(sentinel), 2)] * 2,
+            )
+            # Spin up workers, then drop the sentinel so they unblock at
+            # roughly the same time.
+            import time
+            time.sleep(0.05)
+            sentinel.touch()
+            results = async_result.get(timeout=30)
+
+        assert len(results) == 2
+        assert results[0] == results[1], (
+            f"Race produced divergent UUIDs: {results}"
+        )
+        # On-disk file matches both.
+        target = project_dir / ".claude" / "pd" / "workspace.json"
+        assert target.exists()
+        on_disk = _read_workspace_json_uuid(str(target))
+        assert on_disk == results[0]

@@ -1,0 +1,11 @@
+{
+  "reviewer": "pd:code-quality-reviewer",
+  "approved": false,
+  "high_count": 2,
+  "issues_high": [
+    {"location": "plugins/pd/hooks/lib/doctor/checks.py:15", "description": "ENTITY_SCHEMA_VERSION hardcoded to 9; post-Migration-11 should be 11", "suggestion": "Bump to 11"},
+    {"location": "plugins/pd/mcp/workflow_state_server.py:102", "description": "_workspace_uuid is populated in lifespan but never read anywhere else — dead code; Feature 108 workspace scoping silently bypassed for all workflow_state_server registrations", "suggestion": "Wire _workspace_uuid into register_entity paths OR add explicit TODO with backlog ref"}
+  ],
+  "issues_warning_count": 5,
+  "issues_suggestion_count": 4
+}

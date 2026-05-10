@@ -1,0 +1,18 @@
+{
+  "reviewer": "pd:test-deepener",
+  "phase": "A",
+  "gaps_count": 17,
+  "high_initial": 6,
+  "high_post_remap": 0,
+  "med_after_remap": 12,
+  "low_count": 4,
+  "remap_note": "All 6 HIGH gaps had mutation_caught=false AND no cross-confirmation by other reviewers (per AC-5b narrowed remap) → MED",
+  "high_initial_gaps": [
+    "doctor/checks.py:303-491 — check_workspace_uuid_consistency zero tests + zero plumbing",
+    "project_identity.py:329-344 — AC-39 WARN log on populated-DB no-match never emitted",
+    "project_identity.py:117-122 — workspace.json never persists project_id_legacy (doctor legacy-mismatch branch dead)",
+    "project_identity.py:204-230 — _read_workspace_json AC-22/AC-23/EC-4 corrupted-state branches untested",
+    "database.py:2780-2841 — _resolve_workspace_uuid_kwargs DeprecationWarning + error paths untested",
+    "database.py:7076-7129 — AC-35 FK-violation rollback test injects DDL syntax error not FK violation"
+  ]
+}

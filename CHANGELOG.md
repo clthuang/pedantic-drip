@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.17.0] - 2026-05-11
+
+### Added
+
+- **Workspace identity foundation** (feature 108) — entity registry now scopes
+  all writes via `workspace_uuid` (UUIDv4) persisted in
+  `.claude/pd/workspace.json` per project. `UNIQUE(workspace_uuid, type_id)`
+  enforces cross-project isolation at the DB level. New
+  `resolve_workspace_uuid` 4-step precedence chain (env var → file → DB
+  recovery → fresh write with `fcntl.flock` atomic synchronization). New
+  `ensure_workspace_uuid` shell helper sourced by `session-start.sh` and
+  `meta-json-guard.sh`, exporting `WORKSPACE_UUID` for subprocess
+  inheritance.
+- **Migration 11 — reversible schema migration** introducing the
+  `workspaces` table, rebuilding `entities` with `workspace_uuid NOT NULL`,
+  and adding the `wp_autofill_workspace_uuid` + `wp_reject_orphaned_insert`
+  trigger pair on `workflow_phases`. Forward+reverse migrations verified
+  byte-identical via `migration-11-schema-diff.txt`. New `MIGRATIONS_DOWN`
+  dispatcher pattern (first reversible migration in the repo).
+- **`doctor` workspace consistency check** (FR-17) —
+  `check_workspace_uuid_consistency` validates `.claude/pd/workspace.json`
+  matches the `workspaces` DB row, reporting drift severity per
+  AC-20/21/22.
+
+### Changed
+
+- **Entity registry API** — `register_entity` and related write methods
+  now accept `workspace_uuid` kwarg; legacy `project_id` kwarg retained as
+  deprecation alias during transition (emits `DeprecationWarning` when
+  both are supplied). `parent_type_id` kwarg replaced by `parent_uuid`
+  (production `parent_type_id` sweep deferred to backlog #00363/#00364).
+- **`doctor` referential integrity check** — rewritten to flow through
+  `parent_uuid` joins exclusively (Migration 11 dropped the
+  `parent_type_id` column). `_fix_parent_uuid` fixer deleted
+  (parent_type_id-based recovery no longer meaningful);
+  `_fix_self_referential_parent` simplified to NULL `parent_uuid` only.
+- **`doctor` schema-version expectation** — `ENTITY_SCHEMA_VERSION`
+  bumped from 9 to 11 to match post-Migration-11 production schema.
+
+### Fixed
+
+- Doctor referential integrity check no longer crashes against
+  post-Migration-11 databases (`SELECT parent_type_id FROM entities`
+  against the dropped column raised `sqlite3.OperationalError`).
+
 ## [4.16.17] - 2026-05-10
 
 ### Fixed

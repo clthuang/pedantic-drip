@@ -5,8 +5,24 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
+# shellcheck source=lib/session-start-helpers.sh
+source "${SCRIPT_DIR}/lib/session-start-helpers.sh"
 install_err_trap
+
+# Feature 108 FR-11 / AC-29: export WORKSPACE_UUID so any subprocess this
+# guard dispatches inherits it. Fail-soft — if the helper errors (no venv,
+# no workspace.json, etc.), we leave WORKSPACE_UUID unset and downstream
+# tools fall back to FR-3 step 2/3.
+PROJECT_ROOT="${PROJECT_ROOT:-$PWD}"
+WORKSPACE_UUID="${WORKSPACE_UUID:-}"
+if [[ -z "$WORKSPACE_UUID" ]]; then
+    WORKSPACE_UUID="$(PD_WORKSPACE_PROJECT_ROOT="$PROJECT_ROOT" ensure_workspace_uuid "$PROJECT_ROOT" 2>/dev/null || true)"
+fi
+if [[ -n "$WORKSPACE_UUID" ]]; then
+    export WORKSPACE_UUID
+fi
 
 # Maintenance mode: bypass guard entirely (AC-3)
 if [[ "${PD_MAINTENANCE:-}" == "1" ]]; then

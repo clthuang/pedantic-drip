@@ -222,6 +222,11 @@ def main() -> None:
         default=os.getcwd(),
         help="Project root for config reading (default: cwd)",
     )
+    parser.add_argument(
+        "--workspace-uuid",
+        default=None,
+        help="Optional workspace UUID (feature 108 / Decision 6).",
+    )
 
     args = parser.parse_args()
 

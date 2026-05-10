@@ -33,7 +33,7 @@ from server_lifecycle import write_pid, remove_pid, start_parent_watchdog
 from sqlite_retry import with_retry, is_transient
 
 from entity_registry.database import EntityDatabase
-from entity_registry.project_identity import detect_project_id
+from entity_registry.project_identity import detect_project_id, resolve_workspace_uuid
 from entity_registry.entity_lifecycle import (
     init_entity_workflow as _lib_init_entity_workflow,
     transition_entity_phase as _lib_transition_entity_phase,
@@ -96,6 +96,18 @@ _entity_engine: EntityWorkflowEngine | None = None
 _artifacts_root: str = ""
 _project_root: str = ""
 _project_id: str = ""
+# Feature 108 Phase E: lazy workspace_uuid global. Populated during lifespan
+# from ENTITY_WORKSPACE_UUID/WORKSPACE_UUID env or resolve_workspace_uuid().
+# Mirrors ``mcp/entity_server.py``'s pattern. Empty string until set.
+#
+# TODO(backlog:00361): wire ``_workspace_uuid`` into the tool handlers that
+# pass through to ``EntityDatabase.register_entity`` /
+# ``upsert_workflow_phase``. Until that lands, the value is resolved at
+# startup but never forwarded, so workflow_state_server writes inherit
+# scoping via the database-layer ``project_id`` deprecation shim (which
+# JOINs ``workspaces.project_id_legacy``). Functional but bypasses the
+# canonical workspace_uuid path that entity_server.py uses.
+_workspace_uuid: str = ""
 _notification_queue: NotificationQueue | None = None
 
 # Feature 081: memory refresh digest — separate MemoryDatabase
@@ -178,7 +190,7 @@ def _check_db_available() -> str | None:
 async def lifespan(server):
     """Manage DB connection and engine lifecycle."""
     global _db, _db_unavailable, _recovery_thread
-    global _engine, _entity_engine, _artifacts_root, _project_root, _project_id, _notification_queue
+    global _engine, _entity_engine, _artifacts_root, _project_root, _project_id, _workspace_uuid, _notification_queue
     global _config, _provider, _memory_db
 
     write_pid("workflow_state_server")
@@ -199,6 +211,28 @@ async def lifespan(server):
         project_root = os.environ.get("PROJECT_ROOT", os.getcwd())
         _project_root = project_root
         _project_id = detect_project_id(project_root)
+        # Feature 108 Phase E: populate workspace_uuid lazy global with the
+        # same FR-3 / Decision 11 precedence as mcp/entity_server.py:
+        #   ENTITY_WORKSPACE_UUID env (test override / explicit)
+        #     > WORKSPACE_UUID env (subprocess inheritance from hooks)
+        #     > resolve_workspace_uuid(_project_root) (file → DB → fresh)
+        # All resolution failures are best-effort; we never block startup.
+        try:
+            env_uuid = (
+                os.environ.get("ENTITY_WORKSPACE_UUID")
+                or os.environ.get("WORKSPACE_UUID")
+                or ""
+            )
+            if env_uuid:
+                _workspace_uuid = env_uuid
+            else:
+                _workspace_uuid = resolve_workspace_uuid(_project_root)
+        except Exception as exc:
+            print(
+                f"workflow-engine: workspace_uuid resolution failed: {exc}",
+                file=sys.stderr,
+            )
+            _workspace_uuid = ""
         config = read_config(project_root)
         _artifacts_root = os.path.join(project_root, str(config.get("artifacts_root", "docs")))
 

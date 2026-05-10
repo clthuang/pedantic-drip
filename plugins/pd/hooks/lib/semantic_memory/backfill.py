@@ -164,6 +164,11 @@ def main() -> None:
         help="Current project root (for config reading)",
     )
     parser.add_argument(
+        "--workspace-uuid",
+        default=None,
+        help="Optional workspace UUID (feature 108 / Decision 6).",
+    )
+    parser.add_argument(
         "--global-store",
         required=True,
         help="Path to ~/.claude/pd/memory",

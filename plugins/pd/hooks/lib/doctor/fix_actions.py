@@ -203,52 +203,17 @@ def _fix_wal_memory(ctx: FixContext, issue: Issue) -> str:
     return "Set journal_mode=WAL on memory DB"
 
 
-def _fix_parent_uuid(ctx: FixContext, issue: Issue) -> str:
-    """Lookup parent entity uuid and update parent_uuid via direct SQL."""
-    if not ctx.entities_conn or not issue.entity:
-        raise ValueError("No entities connection or entity")
-
-    # Get parent_type_id for this entity
-    row = ctx.entities_conn.execute(
-        "SELECT parent_type_id FROM entities WHERE type_id = ?",
-        (issue.entity,),
-    ).fetchone()
-    if not row or not row[0]:
-        raise ValueError(f"No parent_type_id for {issue.entity}")
-
-    parent_type_id = row[0]
-    # Lookup parent uuid
-    parent_row = ctx.entities_conn.execute(
-        "SELECT uuid FROM entities WHERE type_id = ?",
-        (parent_type_id,),
-    ).fetchone()
-    if not parent_row:
-        raise ValueError(f"Parent entity {parent_type_id} not found")
-
-    parent_uuid = parent_row[0]
-    # Intentional encapsulation bypass -- EntityDatabase has no public
-    # setter for parent_uuid.
-    ctx.entities_conn.execute(
-        "UPDATE entities SET parent_uuid = ? WHERE type_id = ?",
-        (parent_uuid, issue.entity),
-    )
-    ctx.entities_conn.commit()
-    return f"Set parent_uuid to {parent_uuid} for {issue.entity}"
-
-
 def _fix_self_referential_parent(ctx: FixContext, issue: Issue) -> str:
-    """Remove self-referential parent_type_id."""
+    """Clear self-referential parent_uuid."""
     if not ctx.entities_conn or not issue.entity:
         raise ValueError("No entities connection or entity")
 
-    # Intentional encapsulation bypass -- EntityDatabase.update_entity
-    # lacks parent_type_id param.
     ctx.entities_conn.execute(
-        "UPDATE entities SET parent_type_id = NULL, parent_uuid = NULL WHERE type_id = ?",
+        "UPDATE entities SET parent_uuid = NULL WHERE type_id = ?",
         (issue.entity,),
     )
     ctx.entities_conn.commit()
-    return f"Removed self-referential parent for {issue.entity}"
+    return f"Cleared self-referential parent for {issue.entity}"
 
 
 def _fix_remove_orphan_dependency(ctx: FixContext, issue: Issue) -> str:

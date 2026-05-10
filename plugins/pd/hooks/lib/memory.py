@@ -246,6 +246,11 @@ def write_tracking(entries, project_root, global_store):
 def main():
     parser = argparse.ArgumentParser(description="Memory injection for pd sessions")
     parser.add_argument("--project-root", required=True, help="Project root directory")
+    parser.add_argument(
+        "--workspace-uuid",
+        default=None,
+        help="Optional workspace UUID (feature 108 / Decision 6).",
+    )
     parser.add_argument("--limit", type=int, required=True, help="Max entries to inject")
     parser.add_argument(
         "--global-store",

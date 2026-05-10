@@ -20,8 +20,14 @@ from entity_registry.test_helpers import TEST_PROJECT_ID
 
 @pytest.fixture
 def db():
-    """In-memory database with full migrations applied."""
+    """In-memory database with full migrations applied.
+
+    Pre-bootstraps a workspaces row for TEST_PROJECT_ID so tests passing
+    project_id="__test__" resolve to a valid workspace_uuid post-Migration-11.
+    """
+    from entity_registry.test_helpers import bootstrap_test_workspace
     database = EntityDatabase(":memory:")
+    bootstrap_test_workspace(database)
     yield database
     database.close()
 
@@ -234,12 +240,17 @@ class TestMigrationSafety:
             raise
 
     def test_null_project_id_entity_not_possible(self, db):
-        """Entity with NULL project_id cannot be created — entities table has NOT NULL.
-        This is NOT a migration 10 bug; the schema prevents the precondition."""
+        """Entity with NULL workspace_uuid cannot be created — entities table
+        has NOT NULL on workspace_uuid (post-Migration-11). This is NOT a
+        migration 10 bug; the schema prevents the precondition.
+
+        Feature 108 Migration 11: ``project_id`` column dropped; the NOT NULL
+        guarantee migrated to ``workspace_uuid``.
+        """
         with pytest.raises(sqlite3.IntegrityError):
             db._conn.execute(
                 "INSERT INTO entities (uuid, entity_type, entity_id, type_id, name, "
-                "project_id, metadata, status, created_at, updated_at) "
+                "workspace_uuid, metadata, status, created_at, updated_at) "
                 "VALUES (?, 'feature', 'null-proj', 'feature:null-proj', 'Null Project', "
                 "NULL, ?, 'active', datetime('now'), datetime('now'))",
                 (

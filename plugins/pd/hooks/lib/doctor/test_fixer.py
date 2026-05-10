@@ -319,16 +319,6 @@ class TestClassifyFix:
         cls, fn = classify_fix("Update .meta.json from DB state")
         assert cls == "safe"
 
-    def test_run_migration_parent_uuid(self):
-        from doctor.fixer import classify_fix
-        cls, fn = classify_fix("Run migration to populate parent_uuid")
-        assert cls == "safe"
-
-    def test_update_parent_uuid(self):
-        from doctor.fixer import classify_fix
-        cls, fn = classify_fix("Update parent_uuid to match parent entity's uuid")
-        assert cls == "safe"
-
     def test_remove_orphan_dependency(self):
         from doctor.fixer import classify_fix
         cls, fn = classify_fix("Remove orphaned dependency row")
@@ -344,9 +334,9 @@ class TestClassifyFix:
         cls, fn = classify_fix("Remove orphaned workflow_phases row")
         assert cls == "safe"
 
-    def test_remove_self_referential(self):
+    def test_clear_self_referential(self):
         from doctor.fixer import classify_fix
-        cls, fn = classify_fix("Remove self-referential parent_type_id")
+        cls, fn = classify_fix("Clear self-referential parent_uuid")
         assert cls == "safe"
 
     def test_rebuild_fts(self):
@@ -500,45 +490,6 @@ class TestFixActions:
         assert "WAL" in action
         conn.close()
 
-    def test_fix_parent_uuid(self, tmp_path):
-        from doctor.fix_actions import FixContext, _fix_parent_uuid
-
-        db_path = _make_db(tmp_path)
-        parent_uuid = str(uuid_mod.uuid4())
-        child_uuid = str(uuid_mod.uuid4())
-
-        conn = sqlite3.connect(db_path)
-        conn.execute(
-            "INSERT INTO entities (uuid, type_id, project_id, entity_type, entity_id, name, status) "
-            "VALUES (?, 'project:alpha', '__unknown__', 'project', 'alpha', 'Alpha', 'active')",
-            (parent_uuid,),
-        )
-        conn.execute(
-            "INSERT INTO entities (uuid, type_id, project_id, entity_type, entity_id, name, status, parent_type_id) "
-            "VALUES (?, 'feature:001-child', '__unknown__', 'feature', '001-child', 'Child', 'active', 'project:alpha')",
-            (child_uuid,),
-        )
-        conn.commit()
-
-        ctx = FixContext(
-            entities_db_path=db_path, memory_db_path="",
-            artifacts_root="", project_root="",
-            db=None, engine=None, entities_conn=conn, memory_conn=None,
-        )
-        issue = Issue(check="referential_integrity", severity="warning",
-                      entity="feature:001-child",
-                      message="missing parent_uuid",
-                      fix_hint="Run migration to populate parent_uuid")
-
-        action = _fix_parent_uuid(ctx, issue)
-        assert parent_uuid in action
-
-        row = conn.execute(
-            "SELECT parent_uuid FROM entities WHERE type_id = 'feature:001-child'"
-        ).fetchone()
-        assert row[0] == parent_uuid
-        conn.close()
-
     def test_fix_self_referential_parent(self, tmp_path):
         from doctor.fix_actions import FixContext, _fix_self_referential_parent
 
@@ -546,9 +497,9 @@ class TestFixActions:
         entity_uuid = str(uuid_mod.uuid4())
         conn = sqlite3.connect(db_path)
         conn.execute(
-            "INSERT INTO entities (uuid, type_id, project_id, entity_type, entity_id, name, status, parent_type_id) "
-            "VALUES (?, 'feature:001-self', '__unknown__', 'feature', '001-self', 'Self', 'active', 'feature:001-self')",
-            (entity_uuid,),
+            "INSERT INTO entities (uuid, type_id, project_id, entity_type, entity_id, name, status, parent_uuid) "
+            "VALUES (?, 'feature:001-self', '__unknown__', 'feature', '001-self', 'Self', 'active', ?)",
+            (entity_uuid, entity_uuid),
         )
         conn.commit()
 
@@ -560,16 +511,15 @@ class TestFixActions:
         issue = Issue(check="referential_integrity", severity="error",
                       entity="feature:001-self",
                       message="self-referential parent",
-                      fix_hint="Remove self-referential parent_type_id")
+                      fix_hint="Clear self-referential parent_uuid")
 
         action = _fix_self_referential_parent(ctx, issue)
-        assert "self-referential" in action.lower() or "Removed" in action
+        assert "self-referential" in action.lower() or "Cleared" in action
 
         row = conn.execute(
-            "SELECT parent_type_id, parent_uuid FROM entities WHERE type_id = 'feature:001-self'"
+            "SELECT parent_uuid FROM entities WHERE type_id = 'feature:001-self'"
         ).fetchone()
         assert row[0] is None
-        assert row[1] is None
         conn.close()
 
     def test_fix_remove_orphan_dependency(self, tmp_path):

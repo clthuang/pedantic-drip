@@ -209,6 +209,11 @@ def main(argv: list[str] | None = None) -> None:
     """
     parser = argparse.ArgumentParser(description="Semantic memory injector")
     parser.add_argument("--project-root", required=True, help="Path to the project root")
+    parser.add_argument(
+        "--workspace-uuid",
+        default=None,
+        help="Optional workspace UUID (feature 108 / Decision 6).",
+    )
     parser.add_argument("--limit", type=int, default=None, help="Max entries to inject")
     parser.add_argument("--global-store", required=True, help="Path to global knowledge store")
     args = parser.parse_args(argv)
