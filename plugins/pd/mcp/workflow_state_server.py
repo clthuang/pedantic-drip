@@ -99,6 +99,14 @@ _project_id: str = ""
 # Feature 108 Phase E: lazy workspace_uuid global. Populated during lifespan
 # from ENTITY_WORKSPACE_UUID/WORKSPACE_UUID env or resolve_workspace_uuid().
 # Mirrors ``mcp/entity_server.py``'s pattern. Empty string until set.
+#
+# TODO(backlog:00361): wire ``_workspace_uuid`` into the tool handlers that
+# pass through to ``EntityDatabase.register_entity`` /
+# ``upsert_workflow_phase``. Until that lands, the value is resolved at
+# startup but never forwarded, so workflow_state_server writes inherit
+# scoping via the database-layer ``project_id`` deprecation shim (which
+# JOINs ``workspaces.project_id_legacy``). Functional but bypasses the
+# canonical workspace_uuid path that entity_server.py uses.
 _workspace_uuid: str = ""
 _notification_queue: NotificationQueue | None = None
 

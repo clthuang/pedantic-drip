@@ -1,0 +1,12 @@
+{
+  "reviewer": "pd:security-reviewer",
+  "approved": true,
+  "issues": [
+    {"severity": "warning", "securitySeverity": "medium", "category": "auth", "location": "plugins/pd/mcp/entity_server.py:226", "description": "MCP lifespans read WORKSPACE_UUID/ENTITY_WORKSPACE_UUID from env without _validate_workspace_uuid(); silent cross-workspace scoping risk", "suggestion": "Route env_uuid through _validate_workspace_uuid() in both lifespans + verify workspaces row exists; fall back to resolve_workspace_uuid(_project_root) if not"},
+    {"severity": "suggestion", "securitySeverity": "low", "category": "config", "location": "plugins/pd/hooks/lib/entity_registry/database.py:60", "description": "_UNKNOWN_WORKSPACE_UUID pinned-literal check uses assert (stripped under python -O)", "suggestion": "Replace assert with explicit RuntimeError"},
+    {"severity": "suggestion", "securitySeverity": "low", "category": "logging", "location": "plugins/pd/hooks/meta-json-guard.sh:140", "description": "JSONL audit log interpolates $tool_name and $feature_id raw (only $file_path escaped)", "suggestion": "Apply escape_json to $tool_name and $feature_id"},
+    {"severity": "suggestion", "securitySeverity": "low", "category": "data-exposure", "location": "plugins/pd/hooks/lib/entity_registry/database.py:1721", "description": "migration-11-workspace-mapping.json leaks legacy_project_id↔workspace_uuid mapping; not gitignored", "suggestion": "Add .claude/pd/migrations/ to .gitignore OR delete audit file after migration completes"},
+    {"severity": "suggestion", "securitySeverity": "low", "category": "config", "location": "plugins/pd/hooks/meta-json-guard.sh:18", "description": "meta-json-guard.sh falls back to $PWD directly without .claude/ marker check (session-start.sh uses detect_project_root)", "suggestion": "Use detect_project_root() helper for parity"}
+  ],
+  "summary": "Approved. Migration 11 forward+reverse is well-engineered. Parameterized queries throughout. fcntl.flock correct. 5 non-blocking findings (1 MED, 4 LOW)."
+}

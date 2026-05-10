@@ -1,0 +1,16 @@
+{
+  "reviewer": "pd:implementation-reviewer",
+  "approved": false,
+  "high_count": 7,
+  "issues_high": [
+    {"location": "plugins/pd/hooks/lib/entity_registry/project_identity.py:499", "description": "FR-3 violated: detect_project_id() still exists; spec required 0 hits", "suggestion": "Delete function; route callers to resolve_workspace_uuid / _compute_legacy_project_id"},
+    {"location": "plugins/pd/hooks/lib/entity_registry/project_identity.py:512", "description": "FR-3 violated: ENTITY_PROJECT_ID env var still read; spec FR-3 AC line 74 required 0 hits", "suggestion": "Remove env-var read; convert test_project_identity.py:140 to ENTITY_WORKSPACE_UUID"},
+    {"location": "plugins/pd/hooks/lib/doctor/checks.py:1765,1834; plugins/pd/hooks/lib/doctor/fix_actions.py:213,247", "description": "FR-9 violated AND runtime-breaking: SELECT parent_type_id FROM entities will raise sqlite3.OperationalError post-migration", "suggestion": "Rewrite to parent_uuid joins for integrity checks; drop fix_actions parent_type_id UPDATE"},
+    {"location": "plugins/pd/mcp/entity_server.py:449; plugins/pd/hooks/lib/workflow_engine/task_promotion.py:346; plugins/pd/hooks/lib/entity_registry/server_helpers.py:262", "description": "FR-9 violated: parent_type_id kwarg in 9+ production files (entity_server, task_promotion, server_helpers, frontmatter_inject, frontmatter_sync, reconciliation)", "suggestion": "Drop parent_type_id from production callers (Tasks 6.7-6.11); resolve to parent_uuid at call site"},
+    {"location": "plugins/pd/commands/create-feature.md:194; plugins/pd/commands/secretary.md:517; plugins/pd/commands/create-project.md:95", "description": "FR-9 AC-18 violated: 14 hits of parent_type_id in commands/ markdown; Task 6.12 markdown sweep not done", "suggestion": "Rewrite prose references to parent_uuid + type_id resolution"},
+    {"location": "plugins/pd/hooks/session-start.sh:129; plugins/pd/hooks/session-start.sh:463-485; plugins/pd/mcp/entity_server.py:55,218,531", "description": "FR-10 violated: session-start.sh and entity_server.py drive primary paths via project_id; spec-mandated workspace_uuid_short-project_slug rendering absent", "suggestion": "Replace meta.get('project_id') with meta.get('workspace_uuid'); use workspace_uuid_short=${WORKSPACE_UUID:0:8}"},
+    {"location": "docs/features/108-workspace-identity-foundation/.qa-gate.json (missing)", "description": "Tasks 8.1-8.10 entirely skipped: no validation logs, no .qa-gate.json, no migration timing test (AC-32), no bash 3.2 verification (AC-34)", "suggestion": "Run Tasks 8.1-8.9 and capture logs; sweep 41 ACs into .qa-gate.json"}
+  ],
+  "issues_warning_count": 4,
+  "issues_suggestion_count": 2
+}
