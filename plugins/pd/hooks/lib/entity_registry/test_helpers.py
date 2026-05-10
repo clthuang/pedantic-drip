@@ -2,9 +2,33 @@
 from __future__ import annotations
 
 import sqlite3
+import uuid as _uuid
 from pathlib import Path
 
 TEST_PROJECT_ID = "__test__"
+
+
+def bootstrap_test_workspace(db, legacy_id: str = TEST_PROJECT_ID) -> str:
+    """Insert a workspaces row for ``legacy_id`` (post-Migration-11 prereq).
+
+    Helper for ad-hoc test files that build their own EntityDatabase
+    instances and pass ``project_id=legacy_id`` to register_entity. Returns
+    the workspace UUID for callers that want it.
+    """
+    ws_uuid = str(_uuid.uuid4())
+    now = db._now_iso()
+    db._conn.execute(
+        "INSERT OR IGNORE INTO workspaces "
+        "(uuid, project_id_legacy, project_root, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (ws_uuid, legacy_id, None, now, now),
+    )
+    db._conn.commit()
+    row = db._conn.execute(
+        "SELECT uuid FROM workspaces WHERE project_id_legacy = ?",
+        (legacy_id,),
+    ).fetchone()
+    return row["uuid"]
 
 
 def get_test_workspace_uuid() -> str:

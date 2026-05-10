@@ -34,7 +34,12 @@ def _patch_detect_project_id(monkeypatch):
 
 
 def _make_db() -> EntityDatabase:
-    return EntityDatabase(":memory:")
+    # Feature 108 Migration 11: pre-bootstrap a workspaces row for
+    # TEST_PROJECT_ID so register_entity(project_id=TEST_PROJECT_ID) resolves.
+    from entity_registry.test_helpers import bootstrap_test_workspace
+    db = EntityDatabase(":memory:")
+    bootstrap_test_workspace(db)
+    return db
 
 
 def _register_feature(

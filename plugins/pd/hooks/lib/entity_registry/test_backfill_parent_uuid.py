@@ -77,6 +77,12 @@ class TestParentUuidPreference:
         # The child completion detection should have worked
         assert result["errors"] == []
 
+    @pytest.mark.skip(
+        reason="Feature 108 Migration 11 dropped the parent_type_id column; "
+        "parent_uuid is now the sole source of truth for parent edges. "
+        "The legacy 'clear parent_uuid → recover via parent_type_id' "
+        "fallback path no longer exists."
+    )
     def test_legacy_parent_type_id_fallback(self, db_and_root):
         """When parent_uuid is NULL but parent_type_id is set, fallback works."""
         db, artifacts_root = db_and_root

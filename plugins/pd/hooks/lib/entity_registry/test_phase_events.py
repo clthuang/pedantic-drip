@@ -16,10 +16,34 @@ from entity_registry.test_helpers import TEST_PROJECT_ID
 # ---------------------------------------------------------------------------
 
 
+def _bootstrap_test_workspace(db, legacy_id: str = TEST_PROJECT_ID) -> str:
+    """Insert a workspaces row for legacy_id (post-Migration-11 prereq)."""
+    import uuid as _uuid
+    ws_uuid = str(_uuid.uuid4())
+    now = db._now_iso()
+    db._conn.execute(
+        "INSERT OR IGNORE INTO workspaces "
+        "(uuid, project_id_legacy, project_root, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (ws_uuid, legacy_id, None, now, now),
+    )
+    db._conn.commit()
+    row = db._conn.execute(
+        "SELECT uuid FROM workspaces WHERE project_id_legacy = ?",
+        (legacy_id,),
+    ).fetchone()
+    return row["uuid"]
+
+
 @pytest.fixture
 def db():
-    """In-memory database with full migrations applied."""
+    """In-memory database with full migrations applied.
+
+    Pre-bootstraps a workspaces row for TEST_PROJECT_ID so tests passing
+    project_id="__test__" resolve to a valid workspace_uuid post-Migration-11.
+    """
     database = EntityDatabase(":memory:")
+    _bootstrap_test_workspace(database)
     yield database
     database.close()
 
@@ -35,6 +59,7 @@ def seeded_db():
     from entity_registry.database import _migration_10_phase_events
 
     database = EntityDatabase(":memory:")
+    _bootstrap_test_workspace(database)
 
     # Seed 3 entities with phase_timing metadata
     meta1 = {
@@ -484,6 +509,7 @@ class TestFeature088Migration10Hardening:
 
         # Control: single-thread run
         control_db = EntityDatabase(":memory:")
+        _bootstrap_test_workspace(control_db)
         seed_entities(control_db)
         _reset_phase_events_to_pre_migration(control_db)
         _migration_10_phase_events(control_db._conn)
@@ -495,6 +521,7 @@ class TestFeature088Migration10Hardening:
 
         # Concurrent: two threads race on the same file-backed DB.
         seed_db = EntityDatabase(db_path)
+        _bootstrap_test_workspace(seed_db)
         seed_entities(seed_db)
         _reset_phase_events_to_pre_migration(seed_db)
         seed_db.close()
@@ -548,6 +575,7 @@ class TestFeature088Migration10Hardening:
         from entity_registry.database import _migration_10_phase_events
 
         database = EntityDatabase(":memory:")
+        _bootstrap_test_workspace(database)
         # Seed an entity with an unparseable timestamp in metadata.phase_timing.
         database.register_entity(
             "feature", "bad-ts", "Bad Timestamp",
@@ -590,6 +618,7 @@ class TestFeature088Migration10Hardening:
         from entity_registry.database import _migration_10_phase_events
 
         database = EntityDatabase(":memory:")
+        _bootstrap_test_workspace(database)
         database.register_entity(
             "feature", "trunc-001", "Trunc",
             project_id=TEST_PROJECT_ID,
@@ -772,6 +801,7 @@ class TestFeature088BundleH4PhaseEvents:
         from entity_registry.database import _migration_10_phase_events
 
         database = EntityDatabase(":memory:")
+        _bootstrap_test_workspace(database)
         database.register_entity(
             "feature", "rerun-001", "Rerun",
             project_id=TEST_PROJECT_ID,
@@ -841,6 +871,7 @@ class TestFeature090Migration10Atomicity:
         from entity_registry.database import _migration_10_phase_events
 
         database = EntityDatabase(":memory:")
+        _bootstrap_test_workspace(database)
         try:
             database.register_entity(
                 "feature", "090-atom-001", "Atomic Test",
@@ -888,6 +919,7 @@ class TestFeature090Migration10Atomicity:
         from entity_registry.database import _migration_10_phase_events
 
         database = EntityDatabase(":memory:")
+        _bootstrap_test_workspace(database)
         try:
             _reset_phase_events_to_pre_migration(database)
 
@@ -968,6 +1000,7 @@ class TestFeature089BundleA:
         from entity_registry.database import _migration_10_phase_events
 
         database = EntityDatabase(":memory:")
+        _bootstrap_test_workspace(database)
         real_conn = database._conn
 
         class _ProxyConn:
@@ -1037,6 +1070,7 @@ class TestFeature089BundleE:
         # Seed: a single entity whose metadata will backfill one row per
         # (phase, event_type) on migration 10.
         seed_db = EntityDatabase(db_path)
+        _bootstrap_test_workspace(seed_db)
         seed_db.register_entity(
             "feature", "089-e24", "E24",
             project_id=TEST_PROJECT_ID,

@@ -1519,12 +1519,29 @@ def _migration_10_phase_events(conn: sqlite3.Connection) -> None:
             "WHERE source = 'backfill'"
         )
 
-        # Backfill from existing metadata
+        # Backfill from existing metadata.
+        # Feature 108 Migration 11: when invoked AFTER Migration 11 (e.g. by
+        # tests that reset phase_events on a post-11 DB), the entities table
+        # no longer has a ``project_id`` column. Detect and JOIN to the
+        # workspaces table for the legacy id.
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        rows = conn.execute(
-            "SELECT type_id, project_id, metadata, created_at "
-            "FROM entities WHERE metadata IS NOT NULL"
-        ).fetchall()
+        entity_cols = {
+            r[1] for r in conn.execute("PRAGMA table_info(entities)").fetchall()
+        }
+        if "project_id" in entity_cols:
+            rows = conn.execute(
+                "SELECT type_id, project_id, metadata, created_at "
+                "FROM entities WHERE metadata IS NOT NULL"
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT e.type_id AS type_id, "
+                "w.project_id_legacy AS project_id, "
+                "e.metadata AS metadata, e.created_at AS created_at "
+                "FROM entities e "
+                "LEFT JOIN workspaces w ON e.workspace_uuid = w.uuid "
+                "WHERE e.metadata IS NOT NULL"
+            ).fetchall()
 
         def _valid_iso(ts: str | None) -> bool:
             """FR-2.6: reject unparseable timestamps via datetime.fromisoformat."""
@@ -2968,9 +2985,20 @@ class EntityDatabase:
         """Retrieve a single entity by UUID.
 
         Returns entity dict or None if not found (or input is not a valid UUID).
+
+        Feature 108: enriches the row dict with a resolved ``parent_type_id``
+        (looked up via ``parent_uuid``) and ``project_id`` (from
+        ``workspaces.project_id_legacy``) so callers retain the legacy fields
+        even though Migration 11 dropped the underlying columns.
         """
         row = self._conn.execute(
-            "SELECT * FROM entities WHERE uuid = ?", (uuid,)
+            "SELECT e.*, p.type_id AS parent_type_id, "
+            "w.project_id_legacy AS project_id "
+            "FROM entities e "
+            "LEFT JOIN entities p ON e.parent_uuid = p.uuid "
+            "LEFT JOIN workspaces w ON e.workspace_uuid = w.uuid "
+            "WHERE e.uuid = ?",
+            (uuid,),
         ).fetchone()
         return dict(row) if row else None
 
@@ -3391,6 +3419,10 @@ class EntityDatabase:
 
         # Compat shim (Feature 108 transition): resolve deprecated
         # parent_type_id alias to parent_uuid. workspace-scoped resolution.
+        # Pre-Migration-11 stored parent_type_id as a denormalized string even
+        # when the parent did not exist (parent_uuid NULL). Post-migration the
+        # column is gone, so we keep parent_uuid NULL on resolution failure
+        # rather than raising.
         if parent_type_id is not None:
             if parent_uuid is not None:
                 warnings.warn(
@@ -3401,11 +3433,16 @@ class EntityDatabase:
                     stacklevel=2,
                 )
             else:
-                resolved_parent_uuid, _ = self._resolve_identifier(
-                    parent_type_id,
-                    workspace_uuid=ws_uuid,
-                )
-                parent_uuid = resolved_parent_uuid
+                try:
+                    resolved_parent_uuid, _ = self._resolve_identifier(
+                        parent_type_id,
+                        workspace_uuid=ws_uuid,
+                    )
+                    parent_uuid = resolved_parent_uuid
+                except ValueError:
+                    # Parent does not exist; preserve pre-Migration-11
+                    # tolerant behaviour by leaving parent_uuid as NULL.
+                    parent_uuid = None
 
         # Audit 062: 2 write SQL statements — wrapped in transaction() for BEGIN IMMEDIATE
         entity_uuid = str(uuid_mod.uuid4())
@@ -3544,13 +3581,24 @@ class EntityDatabase:
         """Retrieve a single entity by UUID or type_id.
 
         Returns ``None`` if not found.
+
+        Feature 108: enriches the row dict with a resolved ``parent_type_id``
+        (looked up via ``parent_uuid``) and ``project_id`` (from
+        ``workspaces.project_id_legacy``) so callers retain the legacy fields
+        even though Migration 11 dropped the underlying columns.
         """
         try:
             uuid, _ = self._resolve_identifier(type_id)
         except ValueError:
             return None
         row = self._conn.execute(
-            "SELECT * FROM entities WHERE uuid = ?", (uuid,)
+            "SELECT e.*, p.type_id AS parent_type_id, "
+            "w.project_id_legacy AS project_id "
+            "FROM entities e "
+            "LEFT JOIN entities p ON e.parent_uuid = p.uuid "
+            "LEFT JOIN workspaces w ON e.workspace_uuid = w.uuid "
+            "WHERE e.uuid = ?",
+            (uuid,),
         ).fetchone()
         return dict(row) if row else None
 
@@ -3586,13 +3634,22 @@ class EntityDatabase:
         conditions: list[str] = []
         params: list[str] = []
         if entity_type is not None:
-            conditions.append("entity_type = ?")
+            conditions.append("e.entity_type = ?")
             params.append(entity_type)
         if ws_uuid is not None:
-            conditions.append("workspace_uuid = ?")
+            conditions.append("e.workspace_uuid = ?")
             params.append(ws_uuid)
 
-        sql = "SELECT * FROM entities"
+        # Feature 108: enrich rows with resolved ``parent_type_id`` (via
+        # parent_uuid JOIN) and ``project_id`` (via workspaces JOIN) so
+        # callers retain the legacy fields post-Migration-11.
+        sql = (
+            "SELECT e.*, p.type_id AS parent_type_id, "
+            "w.project_id_legacy AS project_id "
+            "FROM entities e "
+            "LEFT JOIN entities p ON e.parent_uuid = p.uuid "
+            "LEFT JOIN workspaces w ON e.workspace_uuid = w.uuid"
+        )
         if conditions:
             sql += " WHERE " + " AND ".join(conditions)
         cur = self._conn.execute(sql, params)
@@ -3836,17 +3893,73 @@ class EntityDatabase:
             except Exception:
                 pass  # fail-open: Layers 2+3 catch stale edges
 
-        # Re-attribution (TD-8): pre-Migration-11 path used the now-dropped
-        # ``project_id`` column. The workspace-aware replacement lands in
-        # a later phase of feature 108. We still accept the kwarg so old
-        # callers get a clear error rather than a confusing
-        # "no such column: project_id" SQL failure.
+        # Re-attribution (TD-8): post-Migration-11 the column is workspace_uuid.
+        # We accept the legacy ``new_project_id`` kwarg, resolve it to a
+        # workspace_uuid via ``workspaces.project_id_legacy`` (auto-bootstrap
+        # the canonical __unknown__ row when needed), then UPDATE the
+        # workspace_uuid column under a temporary trigger drop.
         if new_project_id is not None:
-            raise NotImplementedError(
-                "update_entity(new_project_id=...) is disabled post-Migration-11. "
-                "Re-attribution will move to a workspace-aware API in a later "
-                "phase of feature 108."
+            # Resolve the target workspace, bootstrapping the canonical
+            # __unknown__ row when applicable. For arbitrary legacy ids we
+            # require an existing workspaces row (callers must pre-register).
+            target_ws_uuid = self._resolve_workspace_uuid_kwargs(
+                None, new_project_id, _caller="update_entity"
             )
+            self._conn.commit()  # flush implicit transaction
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                self._conn.execute(
+                    "DROP TRIGGER IF EXISTS enforce_immutable_workspace_uuid"
+                )
+                self._conn.execute(
+                    "UPDATE entities SET workspace_uuid = ?, updated_at = ? "
+                    "WHERE uuid = ?",
+                    (target_ws_uuid, self._now_iso(), entity_uuid),
+                )
+                # Cascade to workflow_phases so per-workspace queries stay
+                # in sync. (We use type_id since workflow_phases.type_id is
+                # the natural join key; multi-workspace duplicates would
+                # need more care, but this matches the pre-Migration-11
+                # contract.)
+                wp_type = self._conn.execute(
+                    "SELECT type_id FROM entities WHERE uuid = ?",
+                    (entity_uuid,),
+                ).fetchone()
+                if wp_type is not None:
+                    self._conn.execute(
+                        "UPDATE workflow_phases SET workspace_uuid = ?, "
+                        "updated_at = ? WHERE type_id = ?",
+                        (target_ws_uuid, self._now_iso(), wp_type["type_id"]),
+                    )
+                # Recreate the immutability trigger.
+                self._conn.execute(
+                    "CREATE TRIGGER enforce_immutable_workspace_uuid "
+                    "BEFORE UPDATE OF workspace_uuid ON entities "
+                    "BEGIN SELECT RAISE(ABORT, "
+                    "'workspace_uuid is immutable — use re-attribution API'); "
+                    "END"
+                )
+                self._conn.execute("COMMIT")
+            except Exception:
+                try:
+                    self._conn.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
+                # Best-effort: ensure the trigger exists even if we rolled
+                # back mid-flight. Wrap in try in case the trigger is
+                # already present (rollback may have restored it).
+                try:
+                    self._conn.execute(
+                        "CREATE TRIGGER IF NOT EXISTS "
+                        "enforce_immutable_workspace_uuid "
+                        "BEFORE UPDATE OF workspace_uuid ON entities "
+                        "BEGIN SELECT RAISE(ABORT, "
+                        "'workspace_uuid is immutable — use re-attribution "
+                        "API'); END"
+                    )
+                except sqlite3.Error:
+                    pass
+                raise
 
     def backfill_project_ids(self, project_root: str, project_id: str) -> int:
         """Claim ``__unknown__`` entities whose artifact_path is under *project_root*.
@@ -3875,48 +3988,74 @@ class EntityDatabase:
             raise RuntimeError(
                 "backfill_project_ids cannot be called inside an active transaction"
             )
-        # Escape LIKE special characters in project_root
+        # Feature 108 Migration 11: project_id column dropped. The workspace-
+        # aware replacement is ``claim_unknown_entities``. We resolve the
+        # caller-supplied project_id to a workspace_uuid (auto-bootstrap a
+        # workspaces row if absent), then claim entities whose
+        # workspace_uuid is the canonical __unknown__ AND whose
+        # artifact_path lies under project_root.
+        # Escape LIKE special characters in project_root.
         escaped = (
             project_root
             .replace("\\", "\\\\")
             .replace("%", "\\%")
             .replace("_", "\\_")
         )
+        # Resolve / bootstrap target workspace.
+        ws_row = self._conn.execute(
+            "SELECT uuid FROM workspaces WHERE project_id_legacy = ?",
+            (project_id,),
+        ).fetchone()
+        if ws_row is None:
+            target_ws_uuid = str(uuid_mod.uuid4())
+            now = self._now_iso()
+            self._conn.execute(
+                "INSERT INTO workspaces "
+                "(uuid, project_id_legacy, project_root, created_at, "
+                "updated_at) VALUES (?, ?, ?, ?, ?)",
+                (target_ws_uuid, project_id, project_root, now, now),
+            )
+            self._conn.commit()
+        else:
+            target_ws_uuid = ws_row["uuid"]
+        if target_ws_uuid == _UNKNOWN_WORKSPACE_UUID:
+            return 0  # no-op: cannot claim into the unknown bucket itself
         self._conn.commit()  # flush any implicit transaction
         self._conn.execute("BEGIN IMMEDIATE")
         try:
             self._conn.execute(
-                "DROP TRIGGER IF EXISTS enforce_immutable_project_id"
+                "DROP TRIGGER IF EXISTS enforce_immutable_workspace_uuid"
             )
             cur = self._conn.execute(
-                """UPDATE entities SET project_id = ?
-                   WHERE project_id = '__unknown__'
+                """UPDATE entities SET workspace_uuid = ?, updated_at = ?
+                   WHERE workspace_uuid = ?
                      AND artifact_path LIKE ? ESCAPE '\\'""",
-                (project_id, escaped + "%"),
+                (target_ws_uuid, self._now_iso(),
+                 _UNKNOWN_WORKSPACE_UUID, escaped + "%"),
             )
             count = cur.rowcount
-            self._conn.execute("""
-                CREATE TRIGGER enforce_immutable_project_id
-                BEFORE UPDATE OF project_id ON entities
-                BEGIN SELECT RAISE(ABORT,
-                    'project_id is immutable — use re-attribution API');
-                END
-            """)
+            self._conn.execute(
+                "CREATE TRIGGER enforce_immutable_workspace_uuid "
+                "BEFORE UPDATE OF workspace_uuid ON entities "
+                "BEGIN SELECT RAISE(ABORT, "
+                "'workspace_uuid is immutable — use re-attribution API'); "
+                "END"
+            )
             self._conn.execute("COMMIT")
         except Exception:
             try:
                 self._conn.execute("ROLLBACK")
             except sqlite3.Error:
                 pass
-            # Ensure trigger is restored even on failure
             try:
-                self._conn.execute("""
-                    CREATE TRIGGER IF NOT EXISTS enforce_immutable_project_id
-                    BEFORE UPDATE OF project_id ON entities
-                    BEGIN SELECT RAISE(ABORT,
-                        'project_id is immutable — use re-attribution API');
-                    END
-                """)
+                self._conn.execute(
+                    "CREATE TRIGGER IF NOT EXISTS "
+                    "enforce_immutable_workspace_uuid "
+                    "BEFORE UPDATE OF workspace_uuid ON entities "
+                    "BEGIN SELECT RAISE(ABORT, "
+                    "'workspace_uuid is immutable — use re-attribution "
+                    "API'); END"
+                )
                 self._conn.commit()
             except sqlite3.Error:
                 pass
@@ -4417,25 +4556,35 @@ class EntityDatabase:
             self._validate_entity_type(entity_type)
 
         # 2. Build query conditionally (matches list_entities pattern)
+        # Feature 108: post-Migration-11 schema has workspace_uuid + parent_uuid
+        # instead of project_id + parent_type_id. JOIN back to recover legacy
+        # values for export envelope consumers.
         query = (
-            "SELECT uuid, type_id, entity_type, entity_id, name, status, "
-            "artifact_path, parent_type_id, created_at, updated_at, metadata "
-            "FROM entities"
+            "SELECT e.uuid AS uuid, e.type_id AS type_id, "
+            "e.entity_type AS entity_type, e.entity_id AS entity_id, "
+            "e.name AS name, e.status AS status, "
+            "e.artifact_path AS artifact_path, "
+            "p.type_id AS parent_type_id, "
+            "e.created_at AS created_at, e.updated_at AS updated_at, "
+            "e.metadata AS metadata "
+            "FROM entities e "
+            "LEFT JOIN entities p ON e.parent_uuid = p.uuid "
+            "LEFT JOIN workspaces w ON e.workspace_uuid = w.uuid"
         )
         conditions: list[str] = []
         params: list[str] = []
         if entity_type is not None:
-            conditions.append("entity_type = ?")
+            conditions.append("e.entity_type = ?")
             params.append(entity_type)
         if status is not None:
-            conditions.append("status = ?")
+            conditions.append("e.status = ?")
             params.append(status)
         if project_id is not None:
-            conditions.append("project_id = ?")
+            conditions.append("w.project_id_legacy = ?")
             params.append(project_id)
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
-        query += " ORDER BY created_at ASC, type_id ASC"
+        query += " ORDER BY e.created_at ASC, e.type_id ASC"
 
         rows = self._conn.execute(query, params).fetchall()
 
@@ -5139,7 +5288,11 @@ class EntityDatabase:
     # ------------------------------------------------------------------
 
     def scan_entity_ids(
-        self, entity_type: str, project_id: str | None = None,
+        self,
+        entity_type: str,
+        project_id: str | None = None,
+        *,
+        workspace_uuid: str | None = None,
     ) -> list[str]:
         """Return all entity_id values for the given entity_type.
 
@@ -5147,20 +5300,27 @@ class EntityDatabase:
         ----------
         entity_type:
             The entity type to scan (e.g. "feature", "task").
+        workspace_uuid:
+            If provided, only return IDs from this workspace.
         project_id:
-            If provided, only return IDs from this project.
-            If None, return IDs across all projects.
+            DEPRECATED — legacy alias for ``workspace_uuid``. Resolved via
+            JOIN on ``workspaces.project_id_legacy``.
 
         Returns
         -------
         list[str]
             List of entity_id strings.
         """
-        if project_id is not None:
+        # Feature 108: post-Migration-11 the entities table has no
+        # ``project_id`` column. Resolve the legacy alias to a workspace_uuid.
+        ws_uuid = self._resolve_optional_workspace_filter(
+            workspace_uuid, project_id, _caller="scan_entity_ids"
+        )
+        if ws_uuid is not None:
             rows = self._conn.execute(
                 "SELECT entity_id FROM entities "
-                "WHERE entity_type = ? AND project_id = ?",
-                (entity_type, project_id),
+                "WHERE entity_type = ? AND workspace_uuid = ?",
+                (entity_type, ws_uuid),
             ).fetchall()
         else:
             rows = self._conn.execute(
@@ -5492,13 +5652,30 @@ class EntityDatabase:
             Whether the project is a git repository.
         """
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        # Feature 108 Migration 11: projects.workspace_uuid is NOT NULL.
+        # Resolve / auto-bootstrap the workspaces row keyed on project_id.
+        if workspace_uuid is None:
+            row = self._conn.execute(
+                "SELECT uuid FROM workspaces WHERE project_id_legacy = ?",
+                (project_id,),
+            ).fetchone()
+            if row is not None:
+                workspace_uuid = row["uuid"]
+            else:
+                workspace_uuid = str(uuid_mod.uuid4())
+                self._conn.execute(
+                    "INSERT INTO workspaces "
+                    "(uuid, project_id_legacy, project_root, created_at, "
+                    "updated_at) VALUES (?, ?, ?, ?, ?)",
+                    (workspace_uuid, project_id, project_root, now, now),
+                )
         self._conn.execute(
             """INSERT INTO projects (
                    project_id, name, root_commit_sha, remote_url,
                    normalized_url, remote_host, remote_owner, remote_repo,
                    default_branch, project_root, is_git_repo,
-                   created_at, updated_at
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   created_at, updated_at, workspace_uuid
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(project_id) DO UPDATE SET
                    name=excluded.name,
                    root_commit_sha=excluded.root_commit_sha,
@@ -5517,7 +5694,7 @@ class EntityDatabase:
                 remote_url, normalized_url, remote_host,
                 remote_owner, remote_repo, default_branch,
                 project_root, int(is_git_repo),
-                now, now,
+                now, now, workspace_uuid,
             ),
         )
         self._commit()
