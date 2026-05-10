@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.16.17] - 2026-05-10
+
 ### Fixed
 
 - **SessionStart hook broken-pipe failure** (feature 107) — `plugins/pd/hooks/session-start.sh` no longer surfaces `SessionStart:startup hook error / Failed with non-blocking status code: No stderr output` when Claude Code closes the hook's stdout (during `/clear`, `/compact`, or specific bootstrap paths in CC v2.1.x). The two `cat <<EOF` heredoc emission sites are replaced with the new `safe_emit_hook_json` helper (printf-based, EPIPE-guarded via `{ ...; } 2>/dev/null || true`), and `install_session_start_traps` adds an EXIT trap that emits a fallback `{}` only on failure paths. `trap '' PIPE` is retained at line 13 (now documented as co-load-bearing). RCA: `docs/rca/20260508-110928-sessionstart-skills.md`. Performance: 42 ms FASTER than baseline (escape_json skipped on jq path).
