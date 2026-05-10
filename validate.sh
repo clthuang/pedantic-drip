@@ -716,10 +716,11 @@ for hook_script in plugins/pd/hooks/*.sh; do
     case "$basename" in
         cleanup-locks.sh|cleanup-sandbox.sh) continue ;;
     esac
-    # Check if it sources common.sh and has install_err_trap
+    # Check if it sources common.sh and has install_err_trap (or its
+    # superset install_session_start_traps from session-start-helpers.sh).
     if grep -q 'source.*common\.sh' "$hook_script" 2>/dev/null; then
-        if ! grep -q 'install_err_trap' "$hook_script" 2>/dev/null; then
-            log_error "$hook_script: Sources common.sh but missing install_err_trap call"
+        if ! grep -qE 'install_err_trap|install_session_start_traps' "$hook_script" 2>/dev/null; then
+            log_error "$hook_script: Sources common.sh but missing install_err_trap (or install_session_start_traps) call"
             ((err_trap_missing++)) || true
         fi
     fi
