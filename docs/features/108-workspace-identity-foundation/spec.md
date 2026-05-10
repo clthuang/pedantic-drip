@@ -381,6 +381,8 @@ If the gate fails:
 
 - **AC:** F6 is deferred to a backlog item (`/pd:add-to-backlog "Adopt uuid7 once Python 3.14+ is the venv default and pyproject.toml floor raised"`). The plan and implementation skip F6 changes entirely. Spec marks FR-15 as "deferred" in the implementation log. A backlog entry referencing F6 deferral rationale exists.
 
+**Implementation log entry (2026-05-10):** F6 DEFERRED. Policy gate result captured at `agent_sandbox/2026-05-10/108-f6-gate/gate-result.txt`: `pyproject_requires_python = ">=3.12"` (floor below 3.14, gate FAILS). Backlog item `#00359` filed in `docs/backlog.md`. Negative grep verification: `grep -rn '\b_new_uuid\b' plugins/pd/` returns 0 hits. No `_new_uuid()` helper introduced. PASSES-path tasks (7.2-7.5) NOT executed.
+
 ### FR-16: `.claude/pd/workspace.json` gitignore
 
 - **AC:** `.gitignore` (project-root) is updated to include `.claude/pd/workspace.json`. Workspace UUID is per-`.claude/`-dir, never checked in.
