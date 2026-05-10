@@ -30,6 +30,35 @@ from workflow_engine.reconciliation import (
 )
 
 from entity_registry.entity_lifecycle import ENTITY_MACHINES
+
+
+def _bootstrap_test_workspace(db, legacy_id: str) -> str:
+    """Insert a workspaces row for ``legacy_id`` (post-Migration-11 prereq).
+
+    Feature 108: ``register_entity``/``insert_phase_event`` resolve their
+    ``project_id`` kwarg via ``workspaces.project_id_legacy``; tests passing
+    a non-``__unknown__`` project_id must pre-register a matching row.
+
+    Returns the workspace_uuid so callers can pass it directly if they want
+    to bypass the project_id_legacy resolution.
+    """
+    import uuid as _uuid
+    ws_uuid = str(_uuid.uuid4())
+    now = db._now_iso()
+    db._conn.execute(
+        "INSERT OR IGNORE INTO workspaces "
+        "(uuid, project_id_legacy, project_root, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (ws_uuid, legacy_id, None, now, now),
+    )
+    db._conn.commit()
+    row = db._conn.execute(
+        "SELECT uuid FROM workspaces WHERE project_id_legacy = ?",
+        (legacy_id,),
+    ).fetchone()
+    return row["uuid"]
+
+
 from workflow_state_server import (
     _NOT_INITIALIZED,
     _atomic_json_write,
@@ -8371,6 +8400,7 @@ class TestPhaseEventsDualWrite:
         """Provide db + engine with a feature at brainstorm phase."""
         db = EntityDatabase(":memory:")
         engine = WorkflowStateEngine(db, str(tmp_path))
+        _bootstrap_test_workspace(db, "test-proj")
         db.register_entity(
             "feature", "dw-001", "Dual Write Test",
             status="active", project_id="test-proj",
@@ -8515,6 +8545,7 @@ class TestRecordBackwardEvent:
 
         db = EntityDatabase(":memory:")
         # Feature 088 FR-2.3: entity must exist; project_id resolved server-side.
+        _bootstrap_test_workspace(db, "P001")
         db.register_entity(
             "feature", "test", "Test",
             status="active", project_id="P001",
@@ -8889,6 +8920,7 @@ class TestFeature088BundleD:
         import workflow_state_server as wss
 
         db = EntityDatabase(":memory:")
+        _bootstrap_test_workspace(db, "P001")
         db.register_entity(
             "feature", "trunc-001", "Trunc",
             status="active", project_id="P001",
@@ -8933,6 +8965,7 @@ class TestFeature088BundleE:
     def fresh_setup(self, tmp_path):
         db = EntityDatabase(":memory:")
         engine = WorkflowStateEngine(db, str(tmp_path))
+        _bootstrap_test_workspace(db, "test-proj")
         db.register_entity(
             "feature", "e-001", "Bundle E Test",
             status="active", project_id="test-proj",
@@ -9318,6 +9351,7 @@ class TestFeature088BundleH4:
         """Provide db + engine with a feature at brainstorm phase."""
         db = EntityDatabase(":memory:")
         engine = WorkflowStateEngine(db, str(tmp_path))
+        _bootstrap_test_workspace(db, "test-proj")
         db.register_entity(
             "feature", "h4-001", "H4 Test",
             status="active", project_id="test-proj",
@@ -9404,6 +9438,7 @@ class TestFeature088BundleH4:
         import workflow_state_server as wss
 
         db = EntityDatabase(":memory:")
+        _bootstrap_test_workspace(db, "P-lock")
         db.register_entity(
             "feature", "lock-001", "Lock",
             status="active", project_id="P-lock",
@@ -9591,6 +9626,7 @@ class TestFeature089BundleE:
         # Seed entity with a specific project_id.  We then set the
         # server's current-project to a DIFFERENT value so the two
         # cannot be confused; the inserted row MUST carry the entity's.
+        _bootstrap_test_workspace(db, "RealProject")
         db.register_entity(
             "feature", "089-e-22", "E22 Test",
             status="active", project_id="RealProject",
@@ -9637,6 +9673,7 @@ class TestFeature089BundleE:
         gap is permanent and surfaces via ``reconcile_check``.
         """
         db = EntityDatabase(":memory:")
+        _bootstrap_test_workspace(db, "P-e23")
         db.register_entity(
             "feature", "089-e-23", "E23 Test",
             status="active", project_id="P-e23",
@@ -9723,6 +9760,7 @@ class TestFeature089BundleE:
         regardless of ``source`` suppresses the drift entry.
         """
         db = EntityDatabase(":memory:")
+        _bootstrap_test_workspace(db, "P-e25")
         db.register_entity(
             "feature", "089-e-25", "E25 Test",
             status="active", project_id="P-e25",
@@ -9810,6 +9848,7 @@ class TestFeature089BundleE:
         """
         db = EntityDatabase(":memory:")
         # Seed at least one entity so the detector reaches list_entities.
+        _bootstrap_test_workspace(db, "P-e27")
         db.register_entity(
             "feature", "089-e-27", "E27 Test",
             status="active", project_id="P-e27",
@@ -9872,6 +9911,7 @@ class TestFeature089BundleE:
         assertions, making this test a precise boundary guard.
         """
         db = EntityDatabase(":memory:")
+        _bootstrap_test_workspace(db, "P-e28")
         db.register_entity(
             "feature", "089-e-28", "E28 Test",
             status="active", project_id="P-e28",
@@ -9912,6 +9952,7 @@ class TestFeature089BundleE:
         # in the right state (the first call completed brainstorm).
         db.close()
         db = EntityDatabase(":memory:")
+        _bootstrap_test_workspace(db, "P-e28")
         db.register_entity(
             "feature", "089-e-28b", "E28b Test",
             status="active", project_id="P-e28",
@@ -9966,6 +10007,7 @@ class TestFeature089BundleE:
            (type_id, 'specify').
         """
         db = EntityDatabase(":memory:")
+        _bootstrap_test_workspace(db, "P-e29")
         db.register_entity(
             "feature", "089-e-29", "E29 Test",
             status="active", project_id="P-e29",
