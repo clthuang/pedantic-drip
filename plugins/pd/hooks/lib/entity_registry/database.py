@@ -2823,12 +2823,73 @@ class EntityDatabase:
             )
         return row["uuid"]
 
+    def _resolve_optional_workspace_filter(
+        self,
+        workspace_uuid: str | None,
+        project_id: str | None,
+        *,
+        _caller: str,
+    ) -> str | None:
+        """Resolve an optional (workspace_uuid, project_id) scope filter.
+
+        Variant of :meth:`_resolve_workspace_uuid_kwargs` for read paths
+        that treat ``None`` as "no scoping" rather than an error. Used by
+        ``list_entities``, ``search_entities``, ``_resolve_identifier``,
+        ``resolve_ref``, etc.
+
+        Resolution rules
+        ----------------
+        * Both supplied → ``workspace_uuid`` wins; emits DeprecationWarning.
+        * Only ``workspace_uuid`` → returned as-is.
+        * Only ``project_id == "__unknown__"`` → canonical
+          ``_UNKNOWN_WORKSPACE_UUID`` (workspaces row is read-only here, so
+          we do NOT bootstrap it).
+        * Only ``project_id == "<other>"`` → JOIN on
+          ``workspaces.project_id_legacy``; raises ``ValueError`` if no
+          matching row exists.
+        * Both ``None`` → returns ``None`` (callers omit the WHERE clause).
+
+        Returns
+        -------
+        str | None
+            Resolved workspace_uuid, or None for "no filter".
+        """
+        if workspace_uuid is not None and project_id is not None:
+            warnings.warn(
+                f"{_caller}() received both workspace_uuid and project_id; "
+                f"workspace_uuid wins. project_id is deprecated.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+            return workspace_uuid
+        if workspace_uuid is not None:
+            return workspace_uuid
+        if project_id is None:
+            return None
+        if project_id == "__unknown__":
+            return _UNKNOWN_WORKSPACE_UUID
+        row = self._conn.execute(
+            "SELECT uuid FROM workspaces WHERE project_id_legacy = ?",
+            (project_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError(
+                f"{_caller}(): project_id={project_id!r} has no matching "
+                f"workspaces.project_id_legacy row. Either pass "
+                f"workspace_uuid directly or pre-register the workspace."
+            )
+        return row["uuid"]
+
     # ------------------------------------------------------------------
     # Internal: identifier resolution
     # ------------------------------------------------------------------
 
     def _resolve_identifier(
-        self, identifier: str, project_id: str | None = None,
+        self,
+        identifier: str,
+        project_id: str | None = None,
+        *,
+        workspace_uuid: str | None = None,
     ) -> tuple[str, str]:
         """Resolve a UUID or type_id to a (uuid, type_id) tuple.
 
@@ -2836,11 +2897,14 @@ class EntityDatabase:
         ----------
         identifier:
             Either a UUID v4 string or a type_id string.
-        project_id:
-            If provided, restrict type_id lookup to this project.
+        workspace_uuid:
+            If provided, restrict type_id lookup to this workspace.
             UUID lookups are unchanged (UUID is globally unique).
             If None, type_id must be globally unique or an ambiguity
-            error is raised listing the projects that contain it.
+            error is raised listing the workspaces that contain it.
+        project_id:
+            DEPRECATED — legacy alias for ``workspace_uuid``. Resolved via
+            JOIN on ``workspaces.project_id_legacy``.
 
         Returns
         -------
@@ -2851,7 +2915,8 @@ class EntityDatabase:
         ------
         ValueError
             If no entity matches the identifier, or if the type_id
-            is ambiguous across projects (when project_id is None).
+            is ambiguous across workspaces (when neither kwarg is
+            provided).
         """
         if _UUID_V4_RE.match(identifier.lower()):
             row = self._conn.execute(
@@ -2862,20 +2927,24 @@ class EntityDatabase:
                 raise ValueError(f"Entity not found: {identifier!r}")
             return (row["uuid"], row["type_id"])
 
-        # type_id path: optionally scoped by project_id
-        if project_id is not None:
+        ws_uuid = self._resolve_optional_workspace_filter(
+            workspace_uuid, project_id, _caller="_resolve_identifier"
+        )
+
+        # type_id path: optionally scoped by workspace_uuid
+        if ws_uuid is not None:
             row = self._conn.execute(
                 "SELECT uuid, type_id FROM entities "
-                "WHERE type_id = ? AND project_id = ?",
-                (identifier, project_id),
+                "WHERE type_id = ? AND workspace_uuid = ?",
+                (identifier, ws_uuid),
             ).fetchone()
             if row is None:
                 raise ValueError(f"Entity not found: {identifier!r}")
             return (row["uuid"], row["type_id"])
 
-        # No project_id: must be globally unique
+        # No scope: must be globally unique
         rows = self._conn.execute(
-            "SELECT uuid, type_id, project_id FROM entities "
+            "SELECT uuid, type_id, workspace_uuid FROM entities "
             "WHERE type_id = ?",
             (identifier,),
         ).fetchall()
@@ -2883,11 +2952,12 @@ class EntityDatabase:
             raise ValueError(f"Entity not found: {identifier!r}")
         if len(rows) == 1:
             return (rows[0]["uuid"], rows[0]["type_id"])
-        # Ambiguous: list projects
-        projects = [r["project_id"] for r in rows]
+        # Ambiguous: list workspaces
+        workspaces = [r["workspace_uuid"] for r in rows]
         raise ValueError(
             f"Ambiguous type_id {identifier!r} exists in multiple "
-            f"projects: {projects}. Specify project_id to disambiguate."
+            f"workspaces: {workspaces}. Specify workspace_uuid (or the "
+            f"deprecated project_id alias) to disambiguate."
         )
 
     # ------------------------------------------------------------------
@@ -2904,13 +2974,19 @@ class EntityDatabase:
         ).fetchone()
         return dict(row) if row else None
 
-    def resolve_ref(self, ref: str, project_id: str | None = None) -> str:
+    def resolve_ref(
+        self,
+        ref: str,
+        project_id: str | None = None,
+        *,
+        workspace_uuid: str | None = None,
+    ) -> str:
         """Resolve a flexible reference to a single entity UUID.
 
         Resolution order:
         1. If ref looks like a UUID (36 chars, has dashes), look up by uuid.
-        2. Try as exact type_id (scoped by project_id if provided).
-        3. Try as type_id prefix (scoped by project_id if provided).
+        2. Try as exact type_id (scoped by workspace_uuid if provided).
+        3. Try as type_id prefix (scoped by workspace_uuid if provided).
            - Single match: return that uuid.
            - Multiple matches: raise ValueError with candidate list.
            - No matches: raise ValueError.
@@ -2919,8 +2995,12 @@ class EntityDatabase:
         ----------
         ref:
             UUID string, full type_id, or type_id prefix.
+        workspace_uuid:
+            If provided, restrict type_id and prefix lookups to this
+            workspace.
         project_id:
-            If provided, restrict type_id and prefix lookups to this project.
+            DEPRECATED — legacy alias for ``workspace_uuid``. Resolved via
+            JOIN on ``workspaces.project_id_legacy``.
 
         Returns
         -------
@@ -2932,18 +3012,23 @@ class EntityDatabase:
         ValueError
             If ref is ambiguous (multiple prefix matches) or not found.
         """
-        # 1. Try as UUID (globally unique, project_id not needed)
+        # 1. Try as UUID (globally unique, scoping not needed)
         if _UUID_V4_RE.match(ref.lower()):
             entity = self.get_entity_by_uuid(ref.lower())
             if entity is not None:
                 return entity["uuid"]
             raise ValueError(f"No entity found matching ref: {ref!r}")
 
+        ws_uuid = self._resolve_optional_workspace_filter(
+            workspace_uuid, project_id, _caller="resolve_ref"
+        )
+
         # 2. Try as exact type_id
-        if project_id is not None:
+        if ws_uuid is not None:
             row = self._conn.execute(
-                "SELECT uuid FROM entities WHERE type_id = ? AND project_id = ?",
-                (ref, project_id),
+                "SELECT uuid FROM entities "
+                "WHERE type_id = ? AND workspace_uuid = ?",
+                (ref, ws_uuid),
             ).fetchone()
         else:
             row = self._conn.execute(
@@ -2952,8 +3037,11 @@ class EntityDatabase:
         if row is not None:
             return row["uuid"]
 
-        # 3. Try as prefix
-        matches = self.search_by_type_id_prefix(ref, project_id=project_id)
+        # 3. Try as prefix (forward the already-resolved ws_uuid to avoid
+        # double-resolution / double-deprecation-warning).
+        matches = self.search_by_type_id_prefix(
+            ref, workspace_uuid=ws_uuid
+        )
         if len(matches) == 1:
             return matches[0]["uuid"]
         if len(matches) > 1:
@@ -2988,7 +3076,11 @@ class EntityDatabase:
     # ------------------------------------------------------------------
 
     def search_by_type_id_prefix(
-        self, prefix: str, project_id: str | None = None,
+        self,
+        prefix: str,
+        project_id: str | None = None,
+        *,
+        workspace_uuid: str | None = None,
     ) -> list[dict]:
         """Search for entities whose type_id starts with the given prefix.
 
@@ -2996,22 +3088,28 @@ class EntityDatabase:
         ----------
         prefix:
             The type_id prefix to match (e.g. "feature:05").
+        workspace_uuid:
+            If provided, restrict results to this workspace.
         project_id:
-            If provided, restrict results to this project.
+            DEPRECATED — legacy alias for ``workspace_uuid``. Resolved via
+            JOIN on ``workspaces.project_id_legacy``.
 
         Returns
         -------
         list[dict]
             List of matching entity dicts.
         """
+        ws_uuid = self._resolve_optional_workspace_filter(
+            workspace_uuid, project_id, _caller="search_by_type_id_prefix"
+        )
         # Use LIKE with escaped prefix for efficient prefix search.
         # Escape backslash first (it's the ESCAPE char), then % and _.
         escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        if project_id is not None:
+        if ws_uuid is not None:
             rows = self._conn.execute(
                 "SELECT * FROM entities WHERE type_id LIKE ? ESCAPE '\\' "
-                "AND project_id = ?",
-                (escaped + "%", project_id),
+                "AND workspace_uuid = ?",
+                (escaped + "%", ws_uuid),
             ).fetchall()
         else:
             rows = self._conn.execute(
@@ -3418,33 +3516,42 @@ class EntityDatabase:
         return dict(row) if row else None
 
     def list_entities(
-        self, entity_type: str | None = None,
+        self,
+        entity_type: str | None = None,
         project_id: str | None = None,
+        *,
+        workspace_uuid: str | None = None,
     ) -> list[dict]:
-        """Return all entities, optionally filtered by entity_type and project.
+        """Return all entities, optionally filtered by entity_type and workspace.
 
         Parameters
         ----------
         entity_type:
             If provided, only return entities of this type.
             If None, return all entity types.
+        workspace_uuid:
+            If provided, only return entities in this workspace.
+            If None, return entities across all workspaces.
         project_id:
-            If provided, only return entities in this project.
-            If None, return entities across all projects.
+            DEPRECATED — legacy alias for ``workspace_uuid``. Resolved via
+            JOIN on ``workspaces.project_id_legacy``.
 
         Returns
         -------
         list[dict]
             List of entity dicts with same keys as ``get_entity``.
         """
+        ws_uuid = self._resolve_optional_workspace_filter(
+            workspace_uuid, project_id, _caller="list_entities"
+        )
         conditions: list[str] = []
         params: list[str] = []
         if entity_type is not None:
             conditions.append("entity_type = ?")
             params.append(entity_type)
-        if project_id is not None:
-            conditions.append("project_id = ?")
-            params.append(project_id)
+        if ws_uuid is not None:
+            conditions.append("workspace_uuid = ?")
+            params.append(ws_uuid)
 
         sql = "SELECT * FROM entities"
         if conditions:
@@ -3537,6 +3644,8 @@ class EntityDatabase:
         metadata: dict | None = None,
         project_id: str | None = None,
         new_project_id: str | None = None,
+        *,
+        workspace_uuid: str | None = None,
     ) -> None:
         """Update mutable fields of an existing entity.
 
@@ -3553,20 +3662,31 @@ class EntityDatabase:
         metadata:
             If provided, shallow-merges with existing metadata.
             An empty dict ``{}`` clears metadata to None.
+        workspace_uuid:
+            If provided, scope type_id resolution to this workspace.
         project_id:
-            If provided, scope type_id resolution to this project.
+            DEPRECATED — legacy alias for ``workspace_uuid``. Resolved via
+            JOIN on ``workspaces.project_id_legacy``.
         new_project_id:
-            If provided, re-attribute the entity to a different project
-            using the trigger-drop approach (TD-8).
+            DEPRECATED — pre-Migration-11 re-attribution kwarg. Still
+            accepted; raises ``NotImplementedError`` if used because the
+            ``project_id`` column no longer exists post-Migration-11.
+            Re-attribution will move to a workspace-aware API in a later
+            phase of feature 108.
 
         Raises
         ------
         ValueError
             If the entity does not exist.
+        NotImplementedError
+            If ``new_project_id`` is supplied (re-attribution path
+            disabled until the workspace-aware replacement lands).
         """
         # Resolve identifier directly (accepts both UUID and type_id).
         # Lets ValueError propagate naturally if entity not found.
-        entity_uuid, _ = self._resolve_identifier(type_id, project_id=project_id)
+        entity_uuid, _ = self._resolve_identifier(
+            type_id, project_id=project_id, workspace_uuid=workspace_uuid,
+        )
 
         # FTS sync: capture old values before UPDATE
         old_row = self._conn.execute(
@@ -3663,69 +3783,17 @@ class EntityDatabase:
             except Exception:
                 pass  # fail-open: Layers 2+3 catch stale edges
 
-        # Re-attribution (TD-8): move entity to a different project
+        # Re-attribution (TD-8): pre-Migration-11 path used the now-dropped
+        # ``project_id`` column. The workspace-aware replacement lands in
+        # a later phase of feature 108. We still accept the kwarg so old
+        # callers get a clear error rather than a confusing
+        # "no such column: project_id" SQL failure.
         if new_project_id is not None:
-            self._conn.commit()  # flush any implicit transaction
-            self._conn.execute("BEGIN IMMEDIATE")
-            try:
-                # Drop immutability trigger
-                self._conn.execute(
-                    "DROP TRIGGER IF EXISTS enforce_immutable_project_id"
-                )
-                # Update project_id
-                self._conn.execute(
-                    "UPDATE entities SET project_id = ? WHERE uuid = ?",
-                    (new_project_id, entity_uuid),
-                )
-                # FTS sync after re-attribution
-                reattr_row = self._conn.execute(
-                    "SELECT rowid, name, entity_id, entity_type, status, metadata "
-                    "FROM entities WHERE uuid = ?",
-                    (entity_uuid,),
-                ).fetchone()
-                reattr_meta_text = flatten_metadata(
-                    json.loads(reattr_row["metadata"])
-                    if reattr_row["metadata"] else None
-                )
-                self._conn.execute(
-                    "DELETE FROM entities_fts WHERE rowid = ?",
-                    (reattr_row["rowid"],),
-                )
-                self._conn.execute(
-                    "INSERT INTO entities_fts(rowid, name, entity_id, "
-                    "entity_type, status, metadata_text) "
-                    "VALUES(?, ?, ?, ?, ?, ?)",
-                    (reattr_row["rowid"], reattr_row["name"],
-                     reattr_row["entity_id"], reattr_row["entity_type"],
-                     reattr_row["status"] or "", reattr_meta_text),
-                )
-                # Recreate immutability trigger
-                self._conn.execute("""
-                    CREATE TRIGGER enforce_immutable_project_id
-                    BEFORE UPDATE OF project_id ON entities
-                    BEGIN SELECT RAISE(ABORT,
-                        'project_id is immutable — use re-attribution API');
-                    END
-                """)
-                self._conn.execute("COMMIT")
-            except Exception:
-                try:
-                    self._conn.execute("ROLLBACK")
-                except sqlite3.Error:
-                    pass
-                # Ensure trigger is restored even on failure
-                try:
-                    self._conn.execute("""
-                        CREATE TRIGGER IF NOT EXISTS enforce_immutable_project_id
-                        BEFORE UPDATE OF project_id ON entities
-                        BEGIN SELECT RAISE(ABORT,
-                            'project_id is immutable — use re-attribution API');
-                        END
-                    """)
-                    self._conn.commit()
-                except sqlite3.Error:
-                    pass
-                raise
+            raise NotImplementedError(
+                "update_entity(new_project_id=...) is disabled post-Migration-11. "
+                "Re-attribution will move to a workspace-aware API in a later "
+                "phase of feature 108."
+            )
 
     def backfill_project_ids(self, project_root: str, project_id: str) -> int:
         """Claim ``__unknown__`` entities whose artifact_path is under *project_root*.
@@ -3925,6 +3993,8 @@ class EntityDatabase:
         entity_type: str | None = None,
         limit: int = 20,
         project_id: str | None = None,
+        *,
+        workspace_uuid: str | None = None,
     ) -> list[dict]:
         """Full-text search over entities.
 
@@ -3936,9 +4006,12 @@ class EntityDatabase:
             Optional filter by entity_type.
         limit:
             Max results (clamped to 1..100).
+        workspace_uuid:
+            If provided, restrict results to this workspace.
+            If None, search across all workspaces.
         project_id:
-            If provided, restrict results to this project.
-            If None, search across all projects.
+            DEPRECATED — legacy alias for ``workspace_uuid``. Resolved via
+            JOIN on ``workspaces.project_id_legacy``.
 
         Returns
         -------
@@ -3966,6 +4039,10 @@ class EntityDatabase:
         if fts_query is None:
             return []
 
+        ws_uuid = self._resolve_optional_workspace_filter(
+            workspace_uuid, project_id, _caller="search_entities"
+        )
+
         try:
             # Build WHERE conditions beyond FTS MATCH
             extra_conditions: list[str] = []
@@ -3973,9 +4050,9 @@ class EntityDatabase:
             if entity_type is not None:
                 extra_conditions.append("e.entity_type = ?")
                 extra_params.append(entity_type)
-            if project_id is not None:
-                extra_conditions.append("e.project_id = ?")
-                extra_params.append(project_id)
+            if ws_uuid is not None:
+                extra_conditions.append("e.workspace_uuid = ?")
+                extra_params.append(ws_uuid)
 
             where_clause = "WHERE entities_fts MATCH ?"
             if extra_conditions:
