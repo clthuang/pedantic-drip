@@ -248,6 +248,8 @@ def promote_task(
     db: "EntityDatabase",
     feature_ref: str,
     task_heading: str,
+    *,
+    workspace_uuid: str | None = None,
 ) -> dict:
     """Promote a task from tasks.md to a tracked entity.
 
@@ -345,7 +347,8 @@ def promote_task(
         status="planned",
         parent_type_id=feature_type_id,
         metadata=task_metadata,
-        project_id=_project_id,
+        workspace_uuid=workspace_uuid,
+        project_id=_project_id if workspace_uuid is None else None,
     )
 
     # 9. Create workflow_phase row for the task

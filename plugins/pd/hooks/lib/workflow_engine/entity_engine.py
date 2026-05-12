@@ -108,7 +108,9 @@ class EntityWorkflowEngine:
     # ------------------------------------------------------------------
 
     def complete_phase(
-        self, entity_uuid: str, phase: str
+        self, entity_uuid: str, phase: str,
+        *,
+        workspace_uuid: str | None = None,
     ) -> CompletionResult:
         """Complete a phase for any entity type.
 
@@ -180,7 +182,9 @@ class EntityWorkflowEngine:
         )
 
     def transition_phase(
-        self, entity_uuid: str, target_phase: str
+        self, entity_uuid: str, target_phase: str,
+        *,
+        workspace_uuid: str | None = None,
     ) -> TransitionResponse:
         """Transition an entity to a target phase.
 

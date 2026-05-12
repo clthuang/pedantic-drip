@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **workflow_state_server MCP** (feature 112 / FR-2) — `_workspace_uuid` lazy
+  global is now forwarded to engine functions (`init_feature_state`,
+  `init_project_state`, `activate_feature`, `init_entity_workflow`,
+  `transition_entity_phase`, `complete_phase`, `transition_phase`,
+  `promote_task`) and to inline `db.update_entity` calls inside
+  `_process_complete_phase` / `_process_transition_phase`. Writes now route
+  through the canonical workspace_uuid path instead of relying on the
+  database-layer `project_id` deprecation shim.
+
 ### Removed
 
 - `ENTITY_PROJECT_ID` env-var override (feature 112 / FR-3). Use

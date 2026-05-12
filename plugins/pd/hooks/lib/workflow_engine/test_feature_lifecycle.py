@@ -535,7 +535,7 @@ class TestActivateFeature:
         assert result["new_status"] == "active"
         assert result["feature_type_id"] == "feature:001-001-my-feature"
         mock_db.update_entity.assert_called_once_with(
-            "feature:001-001-my-feature", status="active"
+            "feature:001-001-my-feature", status="active", workspace_uuid=None
         )
 
     def test_feature_not_found_raises(self, mock_db, mock_engine, tmp_artifacts, feature_dir):

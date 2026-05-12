@@ -119,6 +119,8 @@ def init_feature_state(
     brainstorm_source: str | None = None,
     backlog_source: str | None = None,
     status: str = "active",
+    *,
+    workspace_uuid: str | None = None,
 ) -> dict:
     """Create feature entity + workflow state. Idempotent.
 
@@ -169,7 +171,8 @@ def init_feature_state(
             artifact_path=feature_dir,
             status=status,
             metadata=metadata,
-            project_id="__unknown__",
+            workspace_uuid=workspace_uuid,
+            project_id="__unknown__" if workspace_uuid is None else None,
         )
     else:
         # Retry path: preserve existing phase_timing, last_completed_phase,
@@ -188,7 +191,7 @@ def init_feature_state(
             metadata["last_completed_phase"] = existing_meta["last_completed_phase"]
         if existing_meta.get("skipped_phases"):
             metadata["skipped_phases"] = existing_meta["skipped_phases"]
-        db.update_entity(feature_type_id, status=status, metadata=metadata)
+        db.update_entity(feature_type_id, status=status, metadata=metadata, workspace_uuid=workspace_uuid)
 
     # Fix kanban_column via derive_kanban (phase-aware single source of truth).
     wf_row = db.get_workflow_phase(feature_type_id)
@@ -222,6 +225,8 @@ def init_project_state(
     milestones: str,
     brainstorm_source: str | None = None,
     status: str = "active",
+    *,
+    workspace_uuid: str | None = None,
 ) -> dict:
     """Create initial project state in DB + .meta.json.
 
@@ -261,7 +266,8 @@ def init_project_state(
             artifact_path=project_dir,
             status=status,
             metadata=metadata,
-            project_id="__unknown__",
+            workspace_uuid=workspace_uuid,
+            project_id="__unknown__" if workspace_uuid is None else None,
         )
 
     # Build project .meta.json
@@ -292,6 +298,8 @@ def activate_feature(
     engine: WorkflowStateEngine,
     artifacts_root: str,
     feature_type_id: str,
+    *,
+    workspace_uuid: str | None = None,
 ) -> dict:
     """Transition a planned feature to active status.
 
@@ -314,7 +322,7 @@ def activate_feature(
             f"expected 'planned' for activation"
         )
 
-    db.update_entity(feature_type_id, status="active")
+    db.update_entity(feature_type_id, status="active", workspace_uuid=workspace_uuid)
 
     return {
         "activated": True,

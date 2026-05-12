@@ -615,7 +615,7 @@ class TestProcessCompletePhase:
     def test_value_error(self, seeded_engine, monkeypatch):
         monkeypatch.setattr(
             seeded_engine, "complete_phase",
-            lambda *a: (_ for _ in ()).throw(ValueError("phase mismatch")),
+            lambda *a, **kw: (_ for _ in ()).throw(ValueError("phase mismatch")),
         )
         result = _process_complete_phase(
             seeded_engine, "feature:009-test", "design",
@@ -629,7 +629,7 @@ class TestProcessCompletePhase:
     def test_unexpected_exception(self, seeded_engine, monkeypatch):
         monkeypatch.setattr(
             seeded_engine, "complete_phase",
-            lambda *a: (_ for _ in ()).throw(RuntimeError("boom")),
+            lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("boom")),
         )
         result = _process_complete_phase(
             seeded_engine, "feature:009-test", "specify",
@@ -1774,7 +1774,7 @@ class TestSqlite3ErrorThroughMcpTools:
         # Given: monkeypatch to raise sqlite3.Error
         monkeypatch.setattr(
             seeded_engine, "complete_phase",
-            lambda *a: (_ for _ in ()).throw(
+            lambda *a, **kw: (_ for _ in ()).throw(
                 sqlite3.InterfaceError("cannot bind")
             ),
         )

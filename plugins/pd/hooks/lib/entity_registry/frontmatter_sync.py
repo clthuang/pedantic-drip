@@ -409,6 +409,8 @@ def stamp_header(
 def ingest_header(
     db: EntityDatabase,
     filepath: str,
+    *,
+    workspace_uuid: str | None = None,
 ) -> IngestResult:
     """Ingest frontmatter from a file into the DB (file-authoritative).
 
@@ -461,7 +463,7 @@ def ingest_header(
         # Step 4-5: Update artifact_path
         abs_path = os.path.abspath(filepath)
         try:
-            db.update_entity(entity_uuid, artifact_path=abs_path)
+            db.update_entity(entity_uuid, artifact_path=abs_path, workspace_uuid=workspace_uuid)
         except ValueError as exc:
             return IngestResult(
                 filepath=filepath,

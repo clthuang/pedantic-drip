@@ -18,7 +18,7 @@ JUNK_ID_RE = re.compile(r'^[0-9]{5}$')
 NAME_STRIP_RE = re.compile(r'\s*\((?:closed|promoted|fixed|already implemented)[^)]*\)\s*')
 
 
-def _sync_meta_json_entities(db, full_artifacts_path, subdir, entity_type, project_id):
+def _sync_meta_json_entities(db, full_artifacts_path, subdir, entity_type, project_id, workspace_uuid=None):
     """Scan .meta.json files for a single entity type and sync status to entity registry.
 
     Args:
@@ -44,7 +44,7 @@ def _sync_meta_json_entities(db, full_artifacts_path, subdir, entity_type, proje
         if not os.path.isfile(meta_path):
             # .meta.json deleted — archive entity if it exists
             try:
-                db.update_entity(type_id, status="archived", project_id=project_id)
+                db.update_entity(type_id, status="archived", project_id=project_id, workspace_uuid=workspace_uuid)
                 results["archived"] += 1
             except ValueError:
                 pass  # entity not in registry, skip
@@ -69,7 +69,7 @@ def _sync_meta_json_entities(db, full_artifacts_path, subdir, entity_type, proje
             continue
 
         if entity["status"] != meta_status:
-            db.update_entity(type_id, status=meta_status, project_id=project_id)
+            db.update_entity(type_id, status=meta_status, project_id=project_id, workspace_uuid=workspace_uuid)
             results["updated"] += 1
         else:
             results["skipped"] += 1
@@ -111,11 +111,12 @@ def sync_entity_statuses(db, full_artifacts_path, project_id="__unknown__",
         "registered": 0, "deleted": 0, "warnings": [],
     }
 
+    ws_uuid_or_none = workspace_uuid or None
     helpers = [
-        ("features", lambda: _sync_meta_json_entities(db, full_artifacts_path, "features", "feature", project_id)),
-        ("projects", lambda: _sync_meta_json_entities(db, full_artifacts_path, "projects", "project", project_id)),
-        ("brainstorms", lambda: _sync_brainstorm_entities(db, full_artifacts_path, artifacts_root, project_root, project_id)),
-        ("backlogs", lambda: _sync_backlog_entities(db, full_artifacts_path, artifacts_root, project_id)),
+        ("features", lambda: _sync_meta_json_entities(db, full_artifacts_path, "features", "feature", project_id, ws_uuid_or_none)),
+        ("projects", lambda: _sync_meta_json_entities(db, full_artifacts_path, "projects", "project", project_id, ws_uuid_or_none)),
+        ("brainstorms", lambda: _sync_brainstorm_entities(db, full_artifacts_path, artifacts_root, project_root, project_id, ws_uuid_or_none)),
+        ("backlogs", lambda: _sync_backlog_entities(db, full_artifacts_path, artifacts_root, project_id, ws_uuid_or_none)),
     ]
 
     for name, helper in helpers:
@@ -132,7 +133,7 @@ def sync_entity_statuses(db, full_artifacts_path, project_id="__unknown__",
 
 
 def _sync_brainstorm_entities(
-    db, full_artifacts_path, artifacts_root, project_root, project_id
+    db, full_artifacts_path, artifacts_root, project_root, project_id, workspace_uuid=None
 ):
     """Scan brainstorms/ for .prd.md files; register new ones; archive missing ones.
 
@@ -170,7 +171,8 @@ def _sync_brainstorm_entities(
             name=stem,
             artifact_path=artifact_path,
             status="active",
-            project_id=project_id,
+            workspace_uuid=workspace_uuid,
+            project_id=project_id if workspace_uuid is None else None,
         )
         results["registered"] += 1
 
@@ -184,7 +186,7 @@ def _sync_brainstorm_entities(
         if not entity.get("artifact_path"):
             continue
         try:
-            db.update_entity(entity["type_id"], status="archived", project_id=project_id)
+            db.update_entity(entity["type_id"], status="archived", project_id=project_id, workspace_uuid=workspace_uuid)
             results["archived"] += 1
         except ValueError:
             pass  # entity disappeared between list and update, skip
@@ -240,7 +242,7 @@ def _dedup_backlogs(db, entities):
     return deleted
 
 
-def _sync_backlog_entities(db, full_artifacts_path, artifacts_root, project_id):
+def _sync_backlog_entities(db, full_artifacts_path, artifacts_root, project_id, workspace_uuid=None):
     """Parse backlog.md and sync backlog entities to the entity registry.
 
     Execution order: (1) cleanup junk IDs, (2) dedup, (3) parse and sync.
@@ -310,11 +312,12 @@ def _sync_backlog_entities(db, full_artifacts_path, artifacts_root, project_id):
                 name=name,
                 artifact_path=os.path.join(artifacts_root, "backlog.md"),
                 status=status,
-                project_id=project_id,
+                workspace_uuid=workspace_uuid,
+                project_id=project_id if workspace_uuid is None else None,
             )
             results["registered"] += 1
         elif existing["status"] != status:
-            db.update_entity(type_id, status=status, project_id=project_id)
+            db.update_entity(type_id, status=status, project_id=project_id, workspace_uuid=workspace_uuid)
             results["updated"] += 1
         else:
             results["skipped"] += 1
