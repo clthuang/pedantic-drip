@@ -56,6 +56,9 @@ echo "Baseline FAILED count: $BASELINE_FAIL_COUNT" | tee -a agent_sandbox/$(date
 **Dependencies:** T1a.1.
 
 ### T1a.3 — Impl+1 GREEN (cont): wire emitter into finish-feature flow
+
+**File-targeting rationale:** `plugins/pd/commands/finish-feature.md` Step 5b delegates the actual `.qa-gate.json` emit semantics to `docs/dev_guides/qa-gate-procedure.md` (confirmed at `finish-feature.md:421` which states "See [...] qa-gate-procedure.md] for full dispatch prompts, JSON parse contract via python3 -c heredoc, idempotency cache + atomic-rename writes, etc."). The inline emit code lives in qa-gate-procedure.md, NOT finish-feature.md. Updating the procedure doc is sufficient — `finish-feature.md` itself contains only the dispatch shape and decision tree, no JSON construction code.
+
 - Locate inline `.qa-gate.json.tmp` heredoc construction in `docs/dev_guides/qa-gate-procedure.md:213-249` and replace with:
   ```python
   from qa_gate.emitter import emit_qa_gate
@@ -111,6 +114,7 @@ git commit -m "feat(113/FR-2): bash-version-capture.sh AC-12 evidence helper"
 In `plugins/pd/mcp/test_workflow_state_server.py::TestListFeaturesByDefaultSingleWorkspace`, add `test_list_features_handler_empty_project_id_treated_as_default`. Set `_workspace_uuid` to a known value; call `list_features_by_phase(phase="design", project_id="")`; assert results scoped to that workspace.
 **Done (RED):** Test fails — current helper falls into JOIN-resolve and returns None.
 **Time:** 10 min.
+**Dependencies:** None (head of test_workflow_state_server.py serialization chain).
 
 ### T2a.2 — Impl+3.0 GREEN
 In `workflow_state_server.py:_resolve_list_handler_workspace_filter` top, BEFORE `== "*"` check, add `if project_id == "": project_id = None`. Add comment for `_db is None` retain branch per design I5.
