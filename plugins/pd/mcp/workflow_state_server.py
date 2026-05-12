@@ -1560,6 +1560,61 @@ async def validate_prerequisites(
     return _process_validate_prerequisites(_engine, resolved, target_phase)
 
 
+def _resolve_list_handler_workspace_filter(
+    project_id: str | None,
+) -> str | None:
+    """Decide the workspace_uuid scope filter for a list_features_* handler.
+
+    Feature 112 / FR-2 / NFR-5 #4: default behavior is single-workspace
+    (returns ``_workspace_uuid`` if populated, else the canonical unknown UUID
+    resolved from the legacy ``_project_id``). ``project_id == "*"`` opts into
+    cross-workspace by returning ``None``. A specific legacy ``project_id``
+    value preserves backward compat by JOIN-resolving through
+    ``_resolve_optional_workspace_filter``.
+
+    Returns
+    -------
+    str | None
+        Workspace UUID to filter by, or ``None`` for cross-workspace.
+    """
+    if project_id == "*":
+        return None
+    if project_id is not None:
+        # Caller-supplied legacy project_id → JOIN-resolve to workspace_uuid.
+        if _db is None:
+            return None
+        try:
+            return _db._resolve_optional_workspace_filter(
+                workspace_uuid=None, project_id=project_id,
+                _caller="list_features_handler",
+            )
+        except ValueError:
+            return None
+    # Default: filter by current workspace.
+    return _workspace_uuid or None
+
+
+def _filter_states_by_workspace(
+    results_json: str, target_ws_uuid: str | None,
+) -> str:
+    """Post-filter a list_features_* result JSON by workspace_uuid.
+
+    ``target_ws_uuid is None`` means cross-workspace (no filter).
+    """
+    if target_ws_uuid is None or _db is None:
+        return results_json
+    try:
+        states = json.loads(results_json)
+        filtered = []
+        for s in states:
+            entity = _db.get_entity(s.get("feature_type_id", ""))
+            if entity and entity.get("workspace_uuid") == target_ws_uuid:
+                filtered.append(s)
+        return json.dumps(filtered)
+    except (json.JSONDecodeError, Exception):
+        return results_json
+
+
 @mcp.tool()
 async def list_features_by_phase(phase: str, project_id: str | None = None) -> str:
     """All features currently in a given workflow phase.
@@ -1569,28 +1624,19 @@ async def list_features_by_phase(phase: str, project_id: str | None = None) -> s
     phase:
         Workflow phase name to filter by.
     project_id:
-        Project scope. Defaults to current project. Pass '*' for all projects.
+        Project scope. **Default: single-workspace** (current
+        ``_workspace_uuid``). Pass ``'*'`` to opt into cross-workspace
+        results. A legacy 12-char project_id resolves via
+        ``workspaces.project_id_legacy``.
     """
     err = _check_db_available()
     if err:
         return err
     if _engine is None:
         return _NOT_INITIALIZED
-    resolved_project_id = None if project_id == "*" else (project_id or _project_id)
+    ws_filter = _resolve_list_handler_workspace_filter(project_id)
     results = _process_list_features_by_phase(_engine, phase)
-    if resolved_project_id is None or _db is None:
-        return results
-    # Post-filter by project_id
-    try:
-        states = json.loads(results)
-        filtered = []
-        for s in states:
-            entity = _db.get_entity(s.get("feature_type_id", ""))
-            if entity and entity.get("project_id") == resolved_project_id:
-                filtered.append(s)
-        return json.dumps(filtered)
-    except (json.JSONDecodeError, Exception):
-        return results
+    return _filter_states_by_workspace(results, ws_filter)
 
 
 @mcp.tool()
@@ -1602,28 +1648,19 @@ async def list_features_by_status(status: str, project_id: str | None = None) ->
     status:
         Entity status to filter by.
     project_id:
-        Project scope. Defaults to current project. Pass '*' for all projects.
+        Project scope. **Default: single-workspace** (current
+        ``_workspace_uuid``). Pass ``'*'`` to opt into cross-workspace
+        results. A legacy 12-char project_id resolves via
+        ``workspaces.project_id_legacy``.
     """
     err = _check_db_available()
     if err:
         return err
     if _engine is None:
         return _NOT_INITIALIZED
-    resolved_project_id = None if project_id == "*" else (project_id or _project_id)
+    ws_filter = _resolve_list_handler_workspace_filter(project_id)
     results = _process_list_features_by_status(_engine, status)
-    if resolved_project_id is None or _db is None:
-        return results
-    # Post-filter by project_id
-    try:
-        states = json.loads(results)
-        filtered = []
-        for s in states:
-            entity = _db.get_entity(s.get("feature_type_id", ""))
-            if entity and entity.get("project_id") == resolved_project_id:
-                filtered.append(s)
-        return json.dumps(filtered)
-    except (json.JSONDecodeError, Exception):
-        return results
+    return _filter_states_by_workspace(results, ws_filter)
 
 
 @mcp.tool()

@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `_process_complete_phase` / `_process_transition_phase`. Writes now route
   through the canonical workspace_uuid path instead of relying on the
   database-layer `project_id` deprecation shim.
+- **`list_features_by_phase` / `list_features_by_status`** MCP tools default
+  to single-workspace results (current `_workspace_uuid`). Pass
+  `project_id="*"` for the legacy cross-workspace behavior; pass a specific
+  12-char project_id to JOIN-resolve through `workspaces.project_id_legacy`
+  for backward compat.
 
 ### Removed
 
