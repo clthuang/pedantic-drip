@@ -53,9 +53,19 @@ Total estimated change: ~150-250 LOC + ~15 new tests, no schema migration (Migra
 status ∈ {"passed", "deferred", "n_a", "conditional_skipped"}
 ```
 
-**FR-1.2 (per-entry keys):** Every entry in `ac_results[]` carries:
+**FR-1.2 (root-level + per-entry keys):**
+
+Root-level fields (canonical schema):
+- `feature: str` (`"{id}-{slug}"`)
+- `head_sha: str` (`git rev-parse HEAD` at emit time; FR-1.3 idempotency anchor)
+- `gate_run_at: str` (ISO 8601 UTC timestamp of emit)
+- `ac_results: list[AcResult]` (per-entry array; see below)
+- `decision: str` (one of `"approved"` | `"deferred"`)
+- `reviewers: list[str]` (reviewer agent names dispatched at the gate)
+
+Every entry in `ac_results[]` carries:
 - `id: str` (e.g., `"AC-1"`)
-- `status: str` (one of the enum above)
+- `status: str` (one of the FR-1.1 enum)
 - `evidence: str` (free-text test path or grep result, ≤500 chars)
 - `condition: str` (default `""`; non-empty when `status == "conditional_skipped"`)
 - `backlog_ref: str | null` (default `null`; 5-digit backlog ID when applicable)
@@ -318,15 +328,16 @@ No `apply_workflow_reconciliation` forwarding needed here — verified at phase-
 
 **FR-11.4 (MCP handler forwarding):** `reconcile_apply`, `reconcile_frontmatter`, and `reconcile_status` async MCP handlers each pass `workspace_uuid=_workspace_uuid or None` to their `_process_*` helpers (handler bodies at workflow_state_server.py:1678-1693, 1694-1704, 1705+ respectively).
 
-**FR-11.5 (test additions — boundary AND internal-forwarding pins):** Add 6 tests total (3 boundary-pin tests in `plugins/pd/mcp/test_workflow_state_server.py` + 2 internal-forwarding tests in `plugins/pd/hooks/lib/workflow_engine/test_reconciliation.py` + 1 scope-scan test in `plugins/pd/hooks/lib/entity_registry/test_frontmatter_sync.py`):
+**FR-11.5 (test additions — boundary AND internal-forwarding pins):** Add 7 tests total (3 boundary-pin tests in `plugins/pd/mcp/test_workflow_state_server.py` + 2 internal-forwarding tests in `plugins/pd/hooks/lib/workflow_engine/test_reconciliation.py` + 2 scope-scan tests (scoped + default-unscoped pin) in `plugins/pd/hooks/lib/entity_registry/test_frontmatter_sync.py`):
 - `test_reconcile_apply_forwards_workspace_uuid` — set `wss._workspace_uuid`, mock `apply_workflow_reconciliation`, assert it received `workspace_uuid=ws_a` kwarg. (Boundary pin.)
 - `test_reconcile_frontmatter_forwards_workspace_uuid` — same shape for frontmatter; assert `scan_all` mock received the kwarg. (Boundary pin.)
 - `test_reconcile_status_forwards_workspace_uuid` — same shape for status. (Boundary pin.)
 - `test_apply_workflow_reconciliation_forwards_workspace_uuid_to_update_workflow_phase_meta_ahead` (in `plugins/pd/hooks/lib/workflow_engine/test_reconciliation.py`): bootstrap a meta_json_ahead row, call apply with workspace_uuid=ws_a, mock `db.update_workflow_phase`; assert the mock received `workspace_uuid=ws_a` kwarg (pins reconciliation.py:374 forwarding).
 - `test_apply_workflow_reconciliation_forwards_workspace_uuid_to_update_workflow_phase_kanban_drift` (same file): bootstrap a kanban-only-drift row; same shape (pins reconciliation.py:462 forwarding).
 - `test_scan_all_scopes_to_workspace` (in `plugins/pd/hooks/lib/entity_registry/test_frontmatter_sync.py`): bootstrap two workspaces with features; call `scan_all(db, artifacts_root, workspace_uuid=ws_a)`; assert returned reports cover ONLY ws_a's features.
+- `test_scan_all_default_unscoped_returns_all_workspace_features` (same file, paired regression pin): bootstrap two workspaces with features; call `scan_all(db, artifacts_root)` with NO workspace_uuid kwarg; assert reports cover features from BOTH workspaces. Pins default-None behavior preservation (NFR-3 backward-compat).
 
-**Verification (AC-11):** `pytest -k 'reconcile_.*_forwards_workspace_uuid or apply_workflow_reconciliation_forwards or scan_all_scopes_to_workspace' plugins/pd/{mcp,hooks/lib}/ -v` → 6 new tests pass. Mutation pins:
+**Verification (AC-11):** `pytest -k 'reconcile_.*_forwards_workspace_uuid or apply_workflow_reconciliation_forwards or scan_all_scopes_to_workspace or scan_all_default_unscoped' plugins/pd/{mcp,hooks/lib}/ -v` → 7 new tests pass. Mutation pins:
 - Removing `workspace_uuid=_workspace_uuid or None` from any of the 3 async handler bodies fails the corresponding boundary test.
 - Dropping the `workspace_uuid` kwarg at reconciliation.py:374 (or :462) fails the corresponding internal-forwarding test.
 - Ignoring the `workspace_uuid` kwarg inside `scan_all` (e.g., not threading to `list_entities`) fails `test_scan_all_scopes_to_workspace`.
@@ -353,7 +364,7 @@ No `apply_workflow_reconciliation` forwarding needed here — verified at phase-
 
 **AC-10:** `pytest -k 'no_deprecation_warning' plugins/pd/hooks/lib/reconciliation_orchestrator/test_entity_status.py -v` → 4 parametrized sub-tests pass (one per fixed site at lines 47, 72, 189, 320). Wrapped in `simplefilter('error', DeprecationWarning)`.
 
-**AC-11:** `pytest -k 'reconcile_.*_forwards_workspace_uuid or apply_workflow_reconciliation_forwards or scan_all_scopes_to_workspace' plugins/pd/{mcp,hooks/lib}/ -v` → 6 new tests pass (3 boundary-handler pins in `test_workflow_state_server.py` + 2 internal-forwarding pins in `test_reconciliation.py` + 1 scope-scan pin in `test_frontmatter_sync.py`). Mutation pins: removing `workspace_uuid=_workspace_uuid or None` from any of the 3 MCP handler bodies fails the corresponding boundary test; dropping the `workspace_uuid` kwarg at reconciliation.py:374 or :462 fails the corresponding internal-forwarding test; ignoring the kwarg inside `scan_all` (not threading to `list_entities`) fails the scope-scan test.
+**AC-11:** `pytest -k 'reconcile_.*_forwards_workspace_uuid or apply_workflow_reconciliation_forwards or scan_all_scopes_to_workspace or scan_all_default_unscoped' plugins/pd/{mcp,hooks/lib}/ -v` → 7 new tests pass (3 boundary-handler pins in `test_workflow_state_server.py` + 2 internal-forwarding pins in `test_reconciliation.py` + 2 scope-scan pins in `test_frontmatter_sync.py`: one scoped, one default-unscoped regression pin). Mutation pins: removing `workspace_uuid=_workspace_uuid or None` from any of the 3 MCP handler bodies fails the corresponding boundary test; dropping the `workspace_uuid` kwarg at reconciliation.py:374 or :462 fails the corresponding internal-forwarding test; ignoring the kwarg inside `scan_all` (not threading to `list_entities`) fails the scoped test; changing the default from None to a specific UUID fails the default-unscoped test.
 
 **AC-12 (regression baseline, pinned):** Per NFR-2 below, a baseline is captured at the feature branch root commit and stored at `agent_sandbox/{date}/113-validation/baseline.log`. AC-12 is satisfied iff post-implementation full pytest run shows no test_id transitioning from pass→fail vs the baseline log. Net-new failures = 0. New tests added by FR-3 through FR-11 (~15+ tests) all pass.
 
@@ -409,7 +420,7 @@ AC-12 is satisfied iff post-implementation `diff <(grep '^FAILED' baseline.log |
 | AC-8 | pytest 2 tests + stderr capture | `test_server_helpers.py` |
 | AC-9 | pytest 1 test + missing-parent check pin | `test_entity_server.py` |
 | AC-10 | pytest 4 parametrized + DeprecationWarning capture | `test_entity_status.py` |
-| AC-11 | pytest 6 tests (3 boundary + 2 internal-forwarding + 1 scope-scan) | `test_workflow_state_server.py`, `test_reconciliation.py`, `test_frontmatter_sync.py` |
+| AC-11 | pytest 7 tests (3 boundary + 2 internal-forwarding + 2 scope-scan: scoped + default) | `test_workflow_state_server.py`, `test_reconciliation.py`, `test_frontmatter_sync.py` |
 | AC-12 | full plugin pytest, diff against pinned baseline | `agent_sandbox/{date}/113-validation/` |
 | AC-13 | dogfood emit at finish-feature | feature 113's own `.qa-gate.json` |
 

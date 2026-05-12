@@ -5,13 +5,16 @@
   "status": "active",
   "created": "2026-05-12T06:22:22.428795+00:00",
   "branch": "feature/113-feature-112-qa-followups",
-  "lastCompletedPhase": null,
+  "lastCompletedPhase": "specify",
   "phases": {
     "brainstorm": {
       "started": "2026-05-12T06:22:22.428601+00:00"
     },
     "specify": {
-      "started": "2026-05-12T06:34:44.270977+00:00"
+      "started": "2026-05-12T06:34:44.270977+00:00",
+      "completed": "2026-05-12T06:50:53.213718+00:00",
+      "iterations": 5,
+      "reviewerNotes": "Specify completed after 5 spec-reviewer iters + 3 phase-reviewer iters. Final state: approved with 1 residual suggestion on FR-3.3 test naming (db_none return value \u2014 empty list vs unfiltered list)."
     }
   }
 }

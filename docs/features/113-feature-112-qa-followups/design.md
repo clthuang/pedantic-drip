@@ -78,6 +78,8 @@ Feature 113 is **surgical**: it threads existing patterns through gaps, narrows 
 
 **Effect:** Once C3 lands, the mismatch check becomes load-bearing for every transition_phase and complete_phase call — preventing cross-workspace writes via misrouted type_ids.
 
+**Test contract for FR-4.3 mismatch tests:** The engine.py `transition_phase` (line 105) and `complete_phase` (line 178) wrap `db.update_workflow_phase` calls in `except sqlite3.Error:`. FR-4.1's ValueError is NOT a sqlite3.Error subclass, so it WILL propagate. Tests MUST use the explicit shape `with pytest.raises(ValueError, match="workspace_uuid mismatch"):` to pin both the error TYPE and the message fragment. Relying on "test raises something" is insufficient — a future refactor that adds `except (sqlite3.Error, ValueError):` would silently invalidate the pin. Pre-implementation verification: temporarily widen the except to `(sqlite3.Error, ValueError)` and confirm the test fails BEFORE landing the FR-4 commit.
+
 ### C5 — workspace filter narrow-fail (modified)
 
 **File:** `plugins/pd/mcp/workflow_state_server.py:1563-1665`
@@ -110,7 +112,7 @@ Feature 113 is **surgical**: it threads existing patterns through gaps, narrows 
 ### C9 — Reconcile workspace_uuid threading (modified)
 
 **Files:**
-- `plugins/pd/hooks/lib/workflow_engine/reconciliation.py:756` — `apply_workflow_reconciliation` gains `workspace_uuid` kwarg; forwards to `db.update_workflow_phase` at lines 374 and 462
+- `plugins/pd/hooks/lib/workflow_engine/reconciliation.py:756` — `apply_workflow_reconciliation` gains `workspace_uuid` kwarg; merges into the dict at lines 367-373 (NOT via `**kwargs, workspace_uuid=` syntax — avoids future duplicate-kwarg TypeError), and adds as separate kwarg at line 462 (single-kwarg call). See I9 for the exact shape.
 - `plugins/pd/hooks/lib/entity_registry/frontmatter_sync.py:543` — `scan_all` gains `workspace_uuid` kwarg; forwards to `db.list_entities` at line 570 (workspace-scoped scan)
 - `plugins/pd/mcp/workflow_state_server.py:1189, 1223, 1366` — `_process_reconcile_apply`, `_process_reconcile_frontmatter`, `_process_reconcile_status` accept and forward `workspace_uuid`
 - `plugins/pd/mcp/workflow_state_server.py:1678, 1694, 1705` — Async MCP handlers pass `workspace_uuid=_workspace_uuid or None`
@@ -328,20 +330,15 @@ self.db.update_workflow_phase(
 update_kwargs: dict = {
     "workflow_phase": target_phase,
     "kanban_column": kanban_column,
-    "workspace_uuid": workspace_uuid,  # NEW (FR-5.1) — but only if non-None
+    "workspace_uuid": workspace_uuid,  # NEW (FR-5.1) — unconditional, None is no-op per FR-4.1
 }
 if is_forward:
     update_kwargs["last_completed_phase"] = current_phase
 
-# NOTE: Pass workspace_uuid only when non-None to avoid raising ValueError
-# on default (None) calls. Functionally equivalent to:
-#   if workspace_uuid is not None:
-#       update_kwargs["workspace_uuid"] = workspace_uuid
-
 db.update_workflow_phase(type_id, **update_kwargs)
 ```
 
-**Implementation detail:** Either always pass (with None as a no-op) OR conditional. Spec FR-5.1 says "forwards the kwarg to BOTH" — design picks the conditional form to keep update_workflow_phase's default-None code path unchanged for non-workspace-aware callers.
+**Locked at iter 2:** Unconditional pass. FR-4.1 makes None a no-op (the mismatch check is skipped when workspace_uuid is None), so unconditional inclusion is functionally identical to conditional + simpler. Matches spec FR-5.1 verbatim ("forwards the kwarg to BOTH").
 
 ### I5 — `_resolve_list_handler_workspace_filter` extension
 
@@ -457,10 +454,20 @@ def apply_workflow_reconciliation(
     workspace_uuid: str | None = None,  # NEW
 ) -> ReconciliationResult:
     ...
-    # At reconciliation.py:374 — forward kwarg
-    db.update_workflow_phase(feature_type_id, **kwargs, workspace_uuid=workspace_uuid)
+    # At reconciliation.py:367-374 — merge into the kwargs dict before unpacking.
+    # Avoids the `**kwargs, workspace_uuid=...` syntax which would TypeError if
+    # a future maintainer adds 'workspace_uuid' to the dict literal at lines 367-373.
+    kwargs = dict(
+        workflow_phase=meta["workflow_phase"],
+        last_completed_phase=meta["last_completed_phase"],
+        mode=meta["mode"],
+    )
+    if expected_kanban is not None:
+        kwargs["kanban_column"] = expected_kanban
+    kwargs["workspace_uuid"] = workspace_uuid  # NEW (FR-11.1) — None is no-op per FR-4.1
+    db.update_workflow_phase(feature_type_id, **kwargs)
 
-    # At reconciliation.py:462 — forward kwarg
+    # At reconciliation.py:462 — single-kwarg call, no dict; safe to add directly
     db.update_workflow_phase(
         feature_type_id,
         kanban_column=expected_kanban,
@@ -523,6 +530,8 @@ async def reconcile_status(...) -> str:
 # Usage: bash plugins/pd/hooks/tests/bash-version-capture.sh > docs/features/{id}-{slug}/bash-version.log
 # Exit code: 0 if /bin/bash test-hooks.sh exits 0; otherwise propagates that exit code.
 
+# Intentional: no 'set -e' — emit each section even if a prior section command fails,
+# so partial evidence is captured. Only the test-hooks.sh exit code (section 3) propagates.
 set -u
 # Section 1: host bash
 echo "=== Host bash --version ==="
@@ -583,7 +592,14 @@ exit ${RC}
 
 **Risk:** No prior code uses `warnings.catch_warnings()` + `simplefilter('error', DeprecationWarning)`. The pattern could conflict with pytest's global warning filters or pytest plugins.
 
-**Mitigation:** Use `pytest.warns(None)` style context if the catch_warnings pattern fails. Verify locally before committing FR-10.2.
+**Mitigation:** If the primary pattern fails, fall back to the `recwarn` pytest fixture:
+```python
+def test_sync_entity_statuses_no_deprecation_warning_on_happy_path(recwarn):
+    sync_entity_statuses(...)
+    deprecations = [w for w in recwarn if issubclass(w.category, DeprecationWarning)]
+    assert deprecations == [], f"Unexpected DeprecationWarnings: {deprecations}"
+```
+The project pins pytest >=9.0.2,<10 (pyproject.toml:24); `pytest.warns(None)` was removed in pytest 8 and is NOT available. The `recwarn` fixture is the supported fallback. Verify locally before committing FR-10.2.
 
 **Verification:** Run the new test in isolation: `pytest -k 'no_deprecation_warning' -W error::DeprecationWarning`.
 
