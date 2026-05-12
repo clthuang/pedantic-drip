@@ -94,7 +94,7 @@ The `type` enum is reserved at 4 values in this feature. Future features (110, 1
 
 > **Note on `type_id` mutability:** AC-1.7 applies to the *migration*. The runtime `promote_entity` function in FR-3 explicitly rewrites the `type_id` prefix on demand (see AC-3.3). The two are not in tension because migration backfill and runtime promotion are distinct operations on different rows at different times.
 
-### FR-2: phase_events as Sole State-Change Primitive — Path A (Triggers)
+### FR-2: phase_events as Sole State-Change Primitive — Path A (Python-Layer Enforcement)
 
 This spec **commits to Path A: trigger-based projection**. Rationale: Path B (drop `entities.status`, reconstruct via view) requires rewriting every reader (≥20 call sites across hooks, MCP server, and skills) — a multi-feature undertaking that exceeds feature 109's scope. Path A is contained to the schema layer and the small set of writers, leaving readers untouched. Path B may be revisited in feature 110 or later.
 
@@ -164,7 +164,7 @@ Replace the current backlog→feature promotion path with `promote_entity(uuid, 
 
 1. Pre-flight: read existing row by `uuid`. If `entities.type_id` prefix change would collide with an existing `(workspace_uuid, new_type_id)` row, raise `PromotionConflictError`. (Example: promoting `backlog:42` → `feature:42` while a row with `type_id='feature:42'` already exists in the same workspace.)
 2. Single `UPDATE entities SET kind = ?, lifecycle_class = ?, type_id = ?, updated_at = ? WHERE uuid = ?` in one transaction. (The new `type_id` has the form `{new_kind}:{entity_id_suffix}`. The split uses the **first colon** as the delimiter (`type_id.split(":", 1)`); subsequent colons in the suffix are preserved verbatim. Example: `backlog:foo:bar` → `feature:foo:bar` (only the prefix changes). Edge case from PRD evidence: `feature:1-causal-inference-training` (missing zero-pad) — the malformed suffix is preserved as-is; AC-5.3's cleanup may eliminate such rows pre-migration, but `promote_entity` does not validate suffix shape.)
-3. Append `phase_events` row via `append_phase_event(..., event_type='entity_promoted', metadata={"old_kind":..., "new_kind":..., "old_lifecycle_class":..., "new_lifecycle_class":..., "old_type_id":..., "new_type_id":...})`.
+3. Append `phase_events` row via `append_phase_event(new_type_id, event_type='entity_promoted', metadata={"old_kind":..., "new_kind":..., "old_lifecycle_class":..., "new_lifecycle_class":..., "old_type_id":..., "new_type_id":...})`. **Pass `new_type_id` (not old)** so the event row is queryable by the post-promotion identity, consistent with AC-3.3.(e) which verifies the event exists in the post-promotion state. Old `type_id` is captured in the metadata payload for historical traceability.
 4. Return the updated entity dict.
 
 **Trigger drop (12-site sweep — two parallel triggers):**
