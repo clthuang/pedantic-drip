@@ -22,12 +22,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `project_id="*"` for the legacy cross-workspace behavior; pass a specific
   12-char project_id to JOIN-resolve through `workspaces.project_id_legacy`
   for backward compat.
+- **`register_entity` call sites** (feature 112 / FR-4 partial) —
+  `task_promotion.py`, `server_helpers.py`, and `entity_server.py`
+  (`_process_create_key_result`) converted from `parent_type_id=` to
+  `parent_uuid=`. Remaining alias-drop and 30-site test migration deferred
+  to backlog #00390.
+- **`session-start.sh` workspace affiliation** (feature 112 / FR-6) — reads
+  `workspace_uuid` from `.meta.json` (not legacy `project_id`); exports
+  `workspace_uuid_short` (first 8 chars) for the session header line.
 
 ### Removed
 
 - `ENTITY_PROJECT_ID` env-var override (feature 112 / FR-3). Use
   `ENTITY_WORKSPACE_UUID` instead — consulted by `resolve_workspace_uuid`
   per the workspace identity precedence chain.
+- **`parent_type_id` references in command prompts** (feature 112 / FR-5) —
+  14 stale `parent_type_id` references removed from `create-feature.md`,
+  `secretary.md`, and `create-project.md`. Commands now pass `parent_uuid`
+  to `register_entity`.
 
 ## [4.17.0] - 2026-05-11
 
