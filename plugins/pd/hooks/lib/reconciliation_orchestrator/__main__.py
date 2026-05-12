@@ -20,7 +20,7 @@ import sys
 import time
 
 from entity_registry.database import EntityDatabase
-from entity_registry.project_identity import detect_project_id, resolve_workspace_uuid
+from entity_registry.project_identity import _compute_legacy_project_id, resolve_workspace_uuid
 from semantic_memory.database import MemoryDatabase
 
 from reconciliation_orchestrator import entity_status, kb_import
@@ -109,7 +109,7 @@ def run(args):
 
         full_artifacts_path = os.path.join(args.project_root, args.artifacts_root)
         global_store_path = os.path.dirname(args.memory_db)
-        project_id = detect_project_id(args.project_root)
+        project_id = _compute_legacy_project_id(args.project_root)
         # Feature 108 FR-12 / AC-30: resolve workspace UUID with the
         # documented precedence chain. Best-effort: if resolution fails we
         # fall back to legacy project_id semantics (entity_status / etc.

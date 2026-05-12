@@ -57,7 +57,9 @@ ENTITY_MACHINES: dict[str, dict] = {
 
 
 def init_entity_workflow(
-    db: EntityDatabase, type_id: str, workflow_phase: str, kanban_column: str
+    db: EntityDatabase, type_id: str, workflow_phase: str, kanban_column: str,
+    *,
+    workspace_uuid: str | None = None,
 ) -> dict:
     """Create workflow_phases row for an entity. Idempotent.
 
@@ -108,7 +110,8 @@ def init_entity_workflow(
 
     # 3. Insert workflow_phases row via public API
     db.upsert_workflow_phase(
-        type_id, workflow_phase=workflow_phase, kanban_column=kanban_column
+        type_id, workflow_phase=workflow_phase, kanban_column=kanban_column,
+        workspace_uuid=workspace_uuid,
     )
     return {
         "created": True,
@@ -119,7 +122,9 @@ def init_entity_workflow(
 
 
 def transition_entity_phase(
-    db: EntityDatabase, type_id: str, target_phase: str
+    db: EntityDatabase, type_id: str, target_phase: str,
+    *,
+    workspace_uuid: str | None = None,
 ) -> dict:
     """Transition a brainstorm/backlog entity to a new lifecycle phase.
 
@@ -175,7 +180,7 @@ def transition_entity_phase(
     is_forward = (current_phase, target_phase) in machine["forward"]
 
     # 8. Update entities.status via public API
-    db.update_entity(type_id, status=target_phase)
+    db.update_entity(type_id, status=target_phase, workspace_uuid=workspace_uuid)
 
     # 9. Update workflow_phases via public API
     update_kwargs: dict = {

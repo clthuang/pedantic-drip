@@ -92,7 +92,7 @@ Set the brainstorm-to-backlog parent relationship:
 ```
 set_parent(
   type_id="brainstorm:{filename-stem}",
-  parent_type_id="backlog:{5-digit backlog id}"
+  parent_ref="backlog:{5-digit backlog id}"
 )
 ```
 
@@ -111,6 +111,8 @@ register_entity(
 
 ### 4. Register Project Entity
 
+First resolve the brainstorm parent: `get_entity(ref="brainstorm:{filename-stem}")` → capture `uuid` as `brainstorm_uuid`.
+
 ```
 register_entity(
   entity_type="project",
@@ -118,7 +120,7 @@ register_entity(
   name="{slug}",
   artifact_path="{pd_artifacts_root}/projects/P{NNN}-{slug}/",
   status="active",
-  parent_type_id="brainstorm:{filename-stem}"
+  parent_uuid="{brainstorm_uuid}"
 )
 ```
 

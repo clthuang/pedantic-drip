@@ -514,7 +514,7 @@ When Step 0 detected **CREATE** mode, query the entity registry before maturity 
    - Present via AskUserQuestion with options: "Create new", "Link to existing {type_id}", "Cancel"
 
 3. **Propose linkage:**
-   - If parent candidates found and no duplicates → propose: "Link as child of {parent_type_id}?"
+   - If parent candidates found and no duplicates → propose: "Link as child of {parent_ref}?"
    - If both parent and duplicates found → present both findings for user decision
    - If neither → proceed as standalone entity (no parent linkage)
 
@@ -793,9 +793,9 @@ Determine the entity attributes:
 Propose parent linkage using Triage results:
 
 1. If `parent_candidate` was found in Triage:
-   - Call `get_entity(ref="{parent_type_id}")` to confirm parent still exists and is active
-   - Present: "Link as child of {parent_name} ({parent_type_id})?"
-   - Before confirming parent linkage, fetch parent context using `get_parent_context(db, parent_type_id)` from `secretary_intelligence.py`. If context is returned, display: "Parent: {type_id} ({phase}, {progress}%)" with traffic light indicator ({traffic_light}). This is the Catchball pattern (AC-35a) — showing parent intent on creation so the user understands what they're linking into.
+   - Call `get_entity(ref="{parent_ref}")` to confirm parent still exists and is active; capture `uuid` as `parent_uuid`
+   - Present: "Link as child of {parent_name} ({parent_ref})?"
+   - Before confirming parent linkage, fetch parent context using `get_parent_context(db, parent_ref)` from `secretary_intelligence.py`. If context is returned, display: "Parent: {type_id} ({phase}, {progress}%)" with traffic light indicator ({traffic_light}). This is the Catchball pattern (AC-35a) — showing parent intent on creation so the user understands what they're linking into.
    - User confirms or selects different parent or standalone
 
 2. If no parent found:
@@ -817,7 +817,7 @@ Call register_entity with:
   entity_id: "{generated_id}"  (or let the system generate via central ID generator)
   name: "{name}"
   status: "planned"
-  parent_type_id: "{parent_type_id}"  (if linked in C2, otherwise omit)
+  parent_uuid: "{parent_uuid}"  (resolved from parent_ref in C2; otherwise omit)
   metadata: {
     "weight": "{recommended_weight}",
     "tags": ["{tag1}", "{tag2}"],
@@ -827,7 +827,7 @@ Call register_entity with:
 
 If tags were identified, call `add_entity_tag(entity_ref="{type_id}", tag="{tag}")` for each.
 
-Report to user: "Registered: {entity_type}:{entity_id} — {name} (weight: {weight}, parent: {parent_type_id or 'none'})"
+Report to user: "Registered: {entity_type}:{entity_id} — {name} (weight: {weight}, parent: {parent_ref or 'none'})"
 
 #### Step C4: ACTIVATE
 

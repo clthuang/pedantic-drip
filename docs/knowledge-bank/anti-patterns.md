@@ -712,3 +712,27 @@ F-string templates that omit explicit commas between adjacent string literals pr
 - Confidence: high
 - Last observed: Feature #097
 - Observation count: 1
+
+### Anti-Pattern: Unverified Claims in Design/Plan Artifacts
+Don't cite code locations, scope sizes, or API behaviors in design or plan documents without empirical verification. Claims like 'logic lives in function X' or 'this affects ~3 lines' must be grep- or test-verified before publishing — otherwise reviewers waste cycles catching factual errors that block progression.
+- Observed in: Feature #112 design iter 1 (I-3 parent_type_id location wrong by 100+ lines), plan iter 1 (Phase D _project_id scope: 3 budgeted vs 48 actual), design iter 1 (TE.10b update_entity behavior misstated)
+- Fix: Require grep/test citation for any factual claim. Reviewer prompts should fail blocks lacking verification citations.
+- Confidence: high
+- Last observed: Feature #112
+- Observation count: 1
+
+### Anti-Pattern: Point-Fix Without Sibling-Scan
+Don't apply review-driven fixes mechanically without grepping for sibling instances of the same anti-pattern. Treating each finding as a point-fix instead of a class-fix guarantees the next iteration will re-surface the issue.
+- Observed in: Feature #112 plan iter 2 — db._conn fix in C.2 did not propagate to G.1; 4 new blockers introduced from incomplete consolidation
+- Fix: When applying review fixes, grep for sibling instances of the same anti-pattern before declaring resolution
+- Confidence: high
+- Last observed: Feature #112
+- Observation count: 1
+
+### Anti-Pattern: Split Producer/Consumer Across Non-Adjacent Phases
+Don't split tightly-coupled call-site/definition changes across non-adjacent phases. A phase that drops an import while a later phase holds the call site creates an intermediate NameError state. Phase boundaries should follow data-flow coupling, not file-type or alphabetical groupings.
+- Observed in: Feature #112 plan iter 1 — detect_project_id import drop (Phase A) preceded call-site removal (Phase D), creating NameError window
+- Fix: Phase scoping should ask 'is the code working at each phase end?' not 'is this file in the right phase?'
+- Confidence: high
+- Last observed: Feature #112
+- Observation count: 1

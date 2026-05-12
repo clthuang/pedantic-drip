@@ -7857,3 +7857,132 @@ class TestFeature108QueryDependenciesWorkspaceFilter:
 
         all_deps = db.query_dependencies()
         assert len(all_deps) == 2
+
+
+# ---------------------------------------------------------------------------
+# Feature 112 / FR-7 — AC-11 migration timing assertion
+# ---------------------------------------------------------------------------
+
+
+def _seed_v10_rows(conn, count: int) -> None:
+    """Seed `count` v10 entity rows across 5 distinct project_ids."""
+    import uuid as _uuid_mod
+    now = "2026-05-10T00:00:00+00:00"
+    project_ids = [f"ws_perf_{i:02d}" for i in range(5)]
+    rows = []
+    for i in range(count):
+        pid = project_ids[i % len(project_ids)]
+        rows.append((
+            str(_uuid_mod.uuid4()),
+            f"feature:{i:05d}-x",
+            pid,
+            "feature",
+            f"{i:05d}-x",
+            f"feature-{i:05d}",
+            now,
+            now,
+        ))
+    conn.executemany(
+        "INSERT INTO entities (uuid, type_id, project_id, "
+        "entity_type, entity_id, name, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        rows,
+    )
+    conn.commit()
+
+
+class TestMigration11Timing:
+    """Feature 112 / AC-11: MIGRATIONS[11] wall-clock budget on 500 v10 rows.
+
+    Hard gate: < 30s (failure causes spec design revision per R-5).
+    Soft warn: > 2s (warning, not failure).
+    Design-time baseline at ``agent_sandbox/2026-05-12/112-validation/
+    migration-timing-baseline.log``: 0.0063s on dev workstation.
+    """
+
+    def test_migration_11_runtime(self, tmp_path):
+        """AC-11: 500 v10 rows → MIGRATIONS[11] < 30s hard / 2s warn."""
+        import time
+        import warnings
+        from entity_registry.database import MIGRATIONS
+        from entity_registry.test_helpers import make_v10_db
+
+        db_path = tmp_path / "perf-v10.db"
+        conn = make_v10_db(db_path)
+        try:
+            _seed_v10_rows(conn, 500)
+
+            assert conn.execute(
+                "SELECT COUNT(*) FROM entities"
+            ).fetchone()[0] == 500
+
+            t0 = time.perf_counter()
+            MIGRATIONS[11](conn)
+            elapsed = time.perf_counter() - t0
+            conn.execute(
+                "INSERT INTO _metadata (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                ("schema_version", "11"),
+            )
+            conn.commit()
+
+            if elapsed > 2.0:
+                warnings.warn(
+                    f"Migration 11 took {elapsed:.2f}s on 500 rows "
+                    f"(> 2s soft threshold; < 30s hard gate)",
+                    UserWarning,
+                )
+            assert elapsed < 30.0, (
+                f"Migration 11 took {elapsed:.4f}s on 500 rows; "
+                f"AC-11 hard gate is 30.0s"
+            )
+            # Sanity: rows preserved post-migration.
+            assert conn.execute(
+                "SELECT COUNT(*) FROM entities"
+            ).fetchone()[0] == 500
+        finally:
+            conn.close()
+
+
+class TestMigration11StressBenchmark:
+    """Feature 112 / AC-11: 10000-row stress benchmark.
+
+    Gated on @pytest.mark.benchmark — NOT run by default in ``./validate.sh``.
+    Invoke explicitly via ``pytest -m benchmark`` for performance regression
+    tracking.
+    """
+
+    @pytest.mark.benchmark
+    def test_migration_11_stress_benchmark(self, tmp_path):
+        """AC-11 stress: 10000 v10 rows → MIGRATIONS[11] completes."""
+        import time
+        from entity_registry.database import MIGRATIONS
+        from entity_registry.test_helpers import make_v10_db
+
+        db_path = tmp_path / "stress-v10.db"
+        conn = make_v10_db(db_path)
+        try:
+            _seed_v10_rows(conn, 10000)
+            assert conn.execute(
+                "SELECT COUNT(*) FROM entities"
+            ).fetchone()[0] == 10000
+
+            t0 = time.perf_counter()
+            MIGRATIONS[11](conn)
+            elapsed = time.perf_counter() - t0
+            conn.execute(
+                "INSERT INTO _metadata (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                ("schema_version", "11"),
+            )
+            conn.commit()
+
+            # Stress benchmark records elapsed; no hard assertion beyond
+            # the test running to completion (the @pytest.mark.benchmark
+            # opt-in is the gate).
+            print(f"\nMigration 11 stress (10000 rows): {elapsed:.3f}s")
+            assert conn.execute(
+                "SELECT COUNT(*) FROM entities"
+            ).fetchone()[0] == 10000
+        finally:
+            conn.close()

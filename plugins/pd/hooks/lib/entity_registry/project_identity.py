@@ -1,8 +1,8 @@
 """Project identity detection for cross-project entity scoping.
 
 Provides:
-- detect_project_id(): 12-char hex project identifier (legacy; Phase E removes)
 - resolve_workspace_uuid(): UUID-based workspace identity (FR-3 precedence)
+- _compute_legacy_project_id(): 12-char hex (migration-only helper)
 - collect_git_info(): full git metadata as GitProjectInfo dataclass
 - normalize_remote_url(): canonical host/owner/repo URL form
 """
@@ -423,8 +423,7 @@ def _run_git(args: list[str], working_dir: str) -> subprocess.CompletedProcess:
 def _compute_legacy_project_id(working_dir: str | None = None) -> str:
     """Migration-time-only helper: compute the legacy 12-char hex project_id.
 
-    Reuses the git-SHA fallback chain extracted from the original
-    ``detect_project_id``:
+    Reuses the historical git-SHA fallback chain:
 
     1. Root commit SHA truncated to 12 chars (skip if shallow clone)
     2. HEAD SHA truncated to 12 chars
@@ -495,27 +494,6 @@ def _compute_legacy_project_id(working_dir: str | None = None) -> str:
     return hashlib.sha256(os.path.abspath(cwd).encode()).hexdigest()[:12]
 
 
-@functools.lru_cache(maxsize=1)
-def detect_project_id(working_dir: str | None = None) -> str:
-    """Detect a 12-char hex project identifier.
-
-    Compatibility alias retained for Phase A — the rename to
-    ``resolve_workspace_uuid`` happens in Phase D (FR-3 / Decision 5).
-    For Phase A we keep this thin wrapper that delegates to
-    ``_compute_legacy_project_id`` and preserves the existing
-    ``ENTITY_PROJECT_ID`` env-var override behaviour. After Phase D,
-    ``ENTITY_PROJECT_ID`` is removed entirely.
-
-    Cached per-process via ``lru_cache(maxsize=1)``.
-    """
-    # Env var override (preserved for Phase A; removed in Phase D).
-    env_id = os.environ.get("ENTITY_PROJECT_ID")
-    if env_id:
-        return env_id
-
-    return _compute_legacy_project_id(working_dir)
-
-
 def collect_git_info(working_dir: str | None = None) -> GitProjectInfo:
     """Collect git metadata for the projects table.
 
@@ -526,8 +504,9 @@ def collect_git_info(working_dir: str | None = None) -> GitProjectInfo:
     cwd = working_dir or os.getcwd()
     abs_cwd = os.path.abspath(cwd)
 
-    # Detect project_id (uses its own fallback chain)
-    project_id = detect_project_id(cwd)
+    # Compute legacy 12-char hex project_id (migration-shape; used here to
+    # populate GitProjectInfo.project_id for projects-table writes).
+    project_id = _compute_legacy_project_id(cwd)
 
     # Check if git repo and get project root
     is_git_repo = False

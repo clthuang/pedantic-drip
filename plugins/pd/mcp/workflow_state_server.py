@@ -33,7 +33,7 @@ from server_lifecycle import write_pid, remove_pid, start_parent_watchdog
 from sqlite_retry import with_retry, is_transient
 
 from entity_registry.database import EntityDatabase
-from entity_registry.project_identity import detect_project_id, resolve_workspace_uuid
+from entity_registry.project_identity import _compute_legacy_project_id, resolve_workspace_uuid
 from entity_registry.entity_lifecycle import (
     init_entity_workflow as _lib_init_entity_workflow,
     transition_entity_phase as _lib_transition_entity_phase,
@@ -96,17 +96,11 @@ _entity_engine: EntityWorkflowEngine | None = None
 _artifacts_root: str = ""
 _project_root: str = ""
 _project_id: str = ""
-# Feature 108 Phase E: lazy workspace_uuid global. Populated during lifespan
-# from ENTITY_WORKSPACE_UUID/WORKSPACE_UUID env or resolve_workspace_uuid().
-# Mirrors ``mcp/entity_server.py``'s pattern. Empty string until set.
-#
-# TODO(backlog:00361): wire ``_workspace_uuid`` into the tool handlers that
-# pass through to ``EntityDatabase.register_entity`` /
-# ``upsert_workflow_phase``. Until that lands, the value is resolved at
-# startup but never forwarded, so workflow_state_server writes inherit
-# scoping via the database-layer ``project_id`` deprecation shim (which
-# JOINs ``workspaces.project_id_legacy``). Functional but bypasses the
-# canonical workspace_uuid path that entity_server.py uses.
+# Feature 108 Phase E + feature 112 FR-2: lazy workspace_uuid global.
+# Populated during lifespan from ENTITY_WORKSPACE_UUID/WORKSPACE_UUID env or
+# resolve_workspace_uuid(). Mirrors ``mcp/entity_server.py``'s pattern.
+# Empty string until set; forwarded to engine functions as
+# ``workspace_uuid=_workspace_uuid or None`` per the post-FR-2 wiring.
 _workspace_uuid: str = ""
 _notification_queue: NotificationQueue | None = None
 
@@ -210,7 +204,7 @@ async def lifespan(server):
     else:
         project_root = os.environ.get("PROJECT_ROOT", os.getcwd())
         _project_root = project_root
-        _project_id = detect_project_id(project_root)
+        _project_id = _compute_legacy_project_id(project_root)
         # Feature 108 Phase E: populate workspace_uuid lazy global with the
         # same FR-3 / Decision 11 precedence as mcp/entity_server.py:
         #   ENTITY_WORKSPACE_UUID env (test override / explicit)
@@ -658,7 +652,10 @@ def _process_transition_phase(
                 entity = db.get_entity(feature_type_id)
                 if entity is not None:
                     try:
-                        response = entity_engine.transition_phase(entity["uuid"], target_phase)
+                        response = entity_engine.transition_phase(
+                            entity["uuid"], target_phase,
+                            workspace_uuid=_workspace_uuid or None,
+                        )
                     except ValueError as exc:
                         # Blocked or invalid — return as structured error
                         return _make_error(
@@ -667,9 +664,15 @@ def _process_transition_phase(
                             "Check blocked_by dependencies or current phase",
                         )
                 else:
-                    response = engine.transition_phase(feature_type_id, target_phase, yolo_active)
+                    response = engine.transition_phase(
+                    feature_type_id, target_phase, yolo_active,
+                    workspace_uuid=_workspace_uuid or None,
+                )
             else:
-                response = engine.transition_phase(feature_type_id, target_phase, yolo_active)
+                response = engine.transition_phase(
+                    feature_type_id, target_phase, yolo_active,
+                    workspace_uuid=_workspace_uuid or None,
+                )
 
             if response.degraded:
                 raise sqlite3.OperationalError(
@@ -698,14 +701,20 @@ def _process_transition_phase(
                     skipped_list = json.loads(skipped_phases)
                     metadata["skipped_phases"] = skipped_list
 
-                db.update_entity(feature_type_id, metadata=metadata)
+                db.update_entity(
+                    feature_type_id, metadata=metadata,
+                    workspace_uuid=_workspace_uuid or None,
+                )
 
                 # Update kanban_column for features based on phase
                 if feature_type_id.startswith("feature:"):
                     kanban = derive_kanban("active", target_phase)
                     db.update_workflow_phase(feature_type_id, kanban_column=kanban)
     else:
-        response = engine.transition_phase(feature_type_id, target_phase, yolo_active)
+        response = engine.transition_phase(
+            feature_type_id, target_phase, yolo_active,
+            workspace_uuid=_workspace_uuid or None,
+        )
         transitioned = all(r.allowed for r in response.results)
 
     # Feature 088 FR-5.1: Dual-write phase_events AFTER main transaction commits.
@@ -857,7 +866,10 @@ def _process_complete_phase(
             if entity_engine is not None:
                 entity = db.get_entity(feature_type_id)
                 if entity is not None:
-                    completion = entity_engine.complete_phase(entity["uuid"], phase)
+                    completion = entity_engine.complete_phase(
+                        entity["uuid"], phase,
+                        workspace_uuid=_workspace_uuid or None,
+                    )
                     state = completion.state
                     if state is None:
                         return _make_error(
@@ -867,9 +879,15 @@ def _process_complete_phase(
                         )
                 else:
                     # Entity not in registry — fall back to frozen engine
-                    state = engine.complete_phase(feature_type_id, phase)
+                    state = engine.complete_phase(
+                        feature_type_id, phase,
+                        workspace_uuid=_workspace_uuid or None,
+                    )
             else:
-                state = engine.complete_phase(feature_type_id, phase)
+                state = engine.complete_phase(
+                    feature_type_id, phase,
+                    workspace_uuid=_workspace_uuid or None,
+                )
 
             if getattr(completion, 'degraded', False) if completion is not None else getattr(state, '_degraded', False) if hasattr(state, '_degraded') else False:
                 raise sqlite3.OperationalError(
@@ -906,7 +924,10 @@ def _process_complete_phase(
             # run INSIDE the transaction; insert_phase_event is dispatched
             # AFTER the transaction commits (below). This prevents a phase_events
             # failure from silently rolling back the primary workflow write.
-            db.update_entity(feature_type_id, metadata=metadata)
+            db.update_entity(
+                feature_type_id, metadata=metadata,
+                workspace_uuid=_workspace_uuid or None,
+            )
 
             # Update kanban_column for features based on completed phase
             if feature_type_id.startswith("feature:"):
@@ -1256,6 +1277,7 @@ def _process_init_feature_state(
         brainstorm_source=brainstorm_source,
         backlog_source=backlog_source,
         status=status,
+        workspace_uuid=_workspace_uuid or None,
     )
     warning = _project_meta_json(db, engine, result["feature_type_id"], feature_dir)
     if warning:
@@ -1286,6 +1308,7 @@ def _process_init_project_state(
         features=features,
         milestones=milestones,
         brainstorm_source=brainstorm_source,
+        workspace_uuid=_workspace_uuid or None,
     )
     return json.dumps(result)
 
@@ -1305,6 +1328,7 @@ def _process_activate_feature(
         engine=engine,
         artifacts_root=artifacts_root,
         feature_type_id=feature_type_id,
+        workspace_uuid=_workspace_uuid or None,
     )
     warning = _project_meta_json(db, engine, result["feature_type_id"])
     if warning:
@@ -1319,7 +1343,10 @@ def _process_init_entity_workflow(
     db: EntityDatabase, type_id: str, workflow_phase: str, kanban_column: str
 ) -> str:
     """Thin wrapper — delegates to entity_lifecycle.init_entity_workflow."""
-    return json.dumps(_lib_init_entity_workflow(db, type_id, workflow_phase, kanban_column))
+    return json.dumps(_lib_init_entity_workflow(
+        db, type_id, workflow_phase, kanban_column,
+        workspace_uuid=_workspace_uuid or None,
+    ))
 
 
 @_with_error_handling
@@ -1329,7 +1356,10 @@ def _process_transition_entity_phase(
     db: EntityDatabase, type_id: str, target_phase: str
 ) -> str:
     """Thin wrapper — delegates to entity_lifecycle.transition_entity_phase."""
-    return json.dumps(_lib_transition_entity_phase(db, type_id, target_phase))
+    return json.dumps(_lib_transition_entity_phase(
+        db, type_id, target_phase,
+        workspace_uuid=_workspace_uuid or None,
+    ))
 
 
 @_with_error_handling
@@ -1530,6 +1560,61 @@ async def validate_prerequisites(
     return _process_validate_prerequisites(_engine, resolved, target_phase)
 
 
+def _resolve_list_handler_workspace_filter(
+    project_id: str | None,
+) -> str | None:
+    """Decide the workspace_uuid scope filter for a list_features_* handler.
+
+    Feature 112 / FR-2 / NFR-5 #4: default behavior is single-workspace
+    (returns ``_workspace_uuid`` if populated, else the canonical unknown UUID
+    resolved from the legacy ``_project_id``). ``project_id == "*"`` opts into
+    cross-workspace by returning ``None``. A specific legacy ``project_id``
+    value preserves backward compat by JOIN-resolving through
+    ``_resolve_optional_workspace_filter``.
+
+    Returns
+    -------
+    str | None
+        Workspace UUID to filter by, or ``None`` for cross-workspace.
+    """
+    if project_id == "*":
+        return None
+    if project_id is not None:
+        # Caller-supplied legacy project_id → JOIN-resolve to workspace_uuid.
+        if _db is None:
+            return None
+        try:
+            return _db._resolve_optional_workspace_filter(
+                workspace_uuid=None, project_id=project_id,
+                _caller="list_features_handler",
+            )
+        except ValueError:
+            return None
+    # Default: filter by current workspace.
+    return _workspace_uuid or None
+
+
+def _filter_states_by_workspace(
+    results_json: str, target_ws_uuid: str | None,
+) -> str:
+    """Post-filter a list_features_* result JSON by workspace_uuid.
+
+    ``target_ws_uuid is None`` means cross-workspace (no filter).
+    """
+    if target_ws_uuid is None or _db is None:
+        return results_json
+    try:
+        states = json.loads(results_json)
+        filtered = []
+        for s in states:
+            entity = _db.get_entity(s.get("feature_type_id", ""))
+            if entity and entity.get("workspace_uuid") == target_ws_uuid:
+                filtered.append(s)
+        return json.dumps(filtered)
+    except (json.JSONDecodeError, Exception):
+        return results_json
+
+
 @mcp.tool()
 async def list_features_by_phase(phase: str, project_id: str | None = None) -> str:
     """All features currently in a given workflow phase.
@@ -1539,28 +1624,19 @@ async def list_features_by_phase(phase: str, project_id: str | None = None) -> s
     phase:
         Workflow phase name to filter by.
     project_id:
-        Project scope. Defaults to current project. Pass '*' for all projects.
+        Project scope. **Default: single-workspace** (current
+        ``_workspace_uuid``). Pass ``'*'`` to opt into cross-workspace
+        results. A legacy 12-char project_id resolves via
+        ``workspaces.project_id_legacy``.
     """
     err = _check_db_available()
     if err:
         return err
     if _engine is None:
         return _NOT_INITIALIZED
-    resolved_project_id = None if project_id == "*" else (project_id or _project_id)
+    ws_filter = _resolve_list_handler_workspace_filter(project_id)
     results = _process_list_features_by_phase(_engine, phase)
-    if resolved_project_id is None or _db is None:
-        return results
-    # Post-filter by project_id
-    try:
-        states = json.loads(results)
-        filtered = []
-        for s in states:
-            entity = _db.get_entity(s.get("feature_type_id", ""))
-            if entity and entity.get("project_id") == resolved_project_id:
-                filtered.append(s)
-        return json.dumps(filtered)
-    except (json.JSONDecodeError, Exception):
-        return results
+    return _filter_states_by_workspace(results, ws_filter)
 
 
 @mcp.tool()
@@ -1572,28 +1648,19 @@ async def list_features_by_status(status: str, project_id: str | None = None) ->
     status:
         Entity status to filter by.
     project_id:
-        Project scope. Defaults to current project. Pass '*' for all projects.
+        Project scope. **Default: single-workspace** (current
+        ``_workspace_uuid``). Pass ``'*'`` to opt into cross-workspace
+        results. A legacy 12-char project_id resolves via
+        ``workspaces.project_id_legacy``.
     """
     err = _check_db_available()
     if err:
         return err
     if _engine is None:
         return _NOT_INITIALIZED
-    resolved_project_id = None if project_id == "*" else (project_id or _project_id)
+    ws_filter = _resolve_list_handler_workspace_filter(project_id)
     results = _process_list_features_by_status(_engine, status)
-    if resolved_project_id is None or _db is None:
-        return results
-    # Post-filter by project_id
-    try:
-        states = json.loads(results)
-        filtered = []
-        for s in states:
-            entity = _db.get_entity(s.get("feature_type_id", ""))
-            if entity and entity.get("project_id") == resolved_project_id:
-                filtered.append(s)
-        return json.dumps(filtered)
-    except (json.JSONDecodeError, Exception):
-        return results
+    return _filter_states_by_workspace(results, ws_filter)
 
 
 @mcp.tool()
@@ -1792,7 +1859,10 @@ async def promote_task(feature_ref: str, task_heading: str) -> str:
     if _db is None:
         return _NOT_INITIALIZED
     try:
-        result = _lib_promote_task(_db, feature_ref, task_heading)
+        result = _lib_promote_task(
+            _db, feature_ref, task_heading,
+            workspace_uuid=_workspace_uuid or None,
+        )
         return json.dumps(result)
     except (TaskNotFoundError, TaskAlreadyPromotedError) as exc:
         return _make_error(type(exc).__name__, str(exc), "Check heading text or use exact heading from tasks.md")

@@ -766,3 +766,19 @@ When QA gate on feature N flags optional-bonus suggestions (test-deepener identi
 - Confidence: high
 - Last observed: Feature #097
 - Observation count: 1
+
+### Pattern: Per-Method Incremental Commits for Many-Call-Site Refactors
+When implementing a refactor that touches many call sites (10+ files), prefer per-method incremental commits over batch commits. Each commit migrates one method/function with its own test verification, producing a granular audit trail that supplants post-hoc review.
+- Observed in: Feature #112 implement phase — 62 min, 7 commits, zero review iterations needed, +4 pass vs baseline, zero new regressions
+- Benefit: Granular commits make each change independently verifiable and reversible; commit history IS the review record; forces working state at every step
+- Confidence: high
+- Last observed: Feature #112
+- Observation count: 2 (also Feature #108)
+
+### Pattern: Save Iter-N Reviewer Findings to Sidecar Markdown Mid-Session
+When a review session may compact mid-stream, save iter-N findings to a sidecar file (e.g., .plan-review-iter1.md) before continuing. This enables fresh-session resume without re-running the reviewer.
+- Observed in: Feature #112 create-plan phase — iter 1 findings saved at 56% context, enabled iter 2/3 to proceed without losing iter 1 context after user override of conservative budget recommendation
+- Benefit: Reviewer findings are expensive to regenerate; persisting as artifacts makes them resilient to session boundaries
+- Confidence: high
+- Last observed: Feature #112
+- Observation count: 1

@@ -80,6 +80,8 @@ class WorkflowStateEngine:
         feature_type_id: str,
         target_phase: str,
         yolo_active: bool = False,
+        *,
+        workspace_uuid: str | None = None,
     ) -> TransitionResponse:
         """Validate and enter a target phase."""
         state = self.get_state(feature_type_id)
@@ -113,7 +115,9 @@ class WorkflowStateEngine:
         return TransitionResponse(results=tuple(results), degraded=False)
 
     def complete_phase(
-        self, feature_type_id: str, phase: str
+        self, feature_type_id: str, phase: str,
+        *,
+        workspace_uuid: str | None = None,
     ) -> FeatureWorkflowState:
         """Record a phase as completed and advance workflow_phase."""
         state = self.get_state(feature_type_id)
@@ -170,7 +174,7 @@ class WorkflowStateEngine:
             )
             # Sync entities.status when terminal phase reached (Gap S1 fix)
             if phase == "finish":
-                self.db.update_entity(feature_type_id, status="completed")
+                self.db.update_entity(feature_type_id, status="completed", workspace_uuid=workspace_uuid)
         except sqlite3.Error as exc:
             print(
                 f"workflow-engine: DB write failed in complete_phase "

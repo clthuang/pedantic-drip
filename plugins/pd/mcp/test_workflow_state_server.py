@@ -615,7 +615,7 @@ class TestProcessCompletePhase:
     def test_value_error(self, seeded_engine, monkeypatch):
         monkeypatch.setattr(
             seeded_engine, "complete_phase",
-            lambda *a: (_ for _ in ()).throw(ValueError("phase mismatch")),
+            lambda *a, **kw: (_ for _ in ()).throw(ValueError("phase mismatch")),
         )
         result = _process_complete_phase(
             seeded_engine, "feature:009-test", "design",
@@ -629,7 +629,7 @@ class TestProcessCompletePhase:
     def test_unexpected_exception(self, seeded_engine, monkeypatch):
         monkeypatch.setattr(
             seeded_engine, "complete_phase",
-            lambda *a: (_ for _ in ()).throw(RuntimeError("boom")),
+            lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("boom")),
         )
         result = _process_complete_phase(
             seeded_engine, "feature:009-test", "specify",
@@ -1774,7 +1774,7 @@ class TestSqlite3ErrorThroughMcpTools:
         # Given: monkeypatch to raise sqlite3.Error
         monkeypatch.setattr(
             seeded_engine, "complete_phase",
-            lambda *a: (_ for _ in ()).throw(
+            lambda *a, **kw: (_ for _ in ()).throw(
                 sqlite3.InterfaceError("cannot bind")
             ),
         )
@@ -7210,6 +7210,89 @@ class TestListFeaturesByStatusOmitsFieldsDeepened:
             assert "source" not in entry
             assert "feature_type_id" in entry
             assert "current_phase" in entry
+
+
+class TestListFeaturesByDefaultSingleWorkspace:
+    """Feature 112 / FR-2 / C.15b: list_features_by_* defaults to single-workspace.
+
+    Asserts that with no ``project_id`` argument, the handler post-filters
+    by ``_workspace_uuid``. Passing ``project_id="*"`` opts into
+    cross-workspace results.
+    """
+
+    def test_list_features_by_phase_default_single_workspace(self, tmp_path):
+        """Default behavior filters to current _workspace_uuid."""
+        import asyncio
+        import workflow_state_server as wss
+
+        # Bootstrap two workspaces with one feature each in 'specify' phase.
+        db = EntityDatabase(str(tmp_path / "ws.db"))
+        from entity_registry.test_helpers import bootstrap_test_workspace
+        ws_a = bootstrap_test_workspace(db, "ws_a_legacy")
+        ws_b = bootstrap_test_workspace(db, "ws_b_legacy")
+
+        # Register one feature per workspace at the same phase.
+        for ws_uuid, slug in [(ws_a, "alpha"), (ws_b, "beta")]:
+            db.register_entity(
+                entity_type="feature",
+                entity_id=f"001-{slug}",
+                name=slug,
+                status="active",
+                workspace_uuid=ws_uuid,
+            )
+            db.upsert_workflow_phase(
+                f"feature:001-{slug}", workflow_phase="specify",
+                kanban_column="wip", workspace_uuid=ws_uuid,
+            )
+
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, "docs")
+        wss._workspace_uuid = ws_a
+        wss._project_id = "ws_a_legacy"
+
+        # Default call (no project_id) → filters to ws_a only.
+        result = asyncio.run(wss.list_features_by_phase("specify"))
+        entries = json.loads(result)
+        slugs = sorted(e["feature_type_id"] for e in entries)
+        assert slugs == ["feature:001-alpha"], (
+            f"Default should filter to ws_a, got {slugs}"
+        )
+
+    def test_list_features_by_phase_star_cross_workspace(self, tmp_path):
+        """project_id='*' opts into cross-workspace results."""
+        import asyncio
+        import workflow_state_server as wss
+
+        db = EntityDatabase(str(tmp_path / "ws.db"))
+        from entity_registry.test_helpers import bootstrap_test_workspace
+        ws_a = bootstrap_test_workspace(db, "ws_a_legacy")
+        ws_b = bootstrap_test_workspace(db, "ws_b_legacy")
+
+        for ws_uuid, slug in [(ws_a, "alpha"), (ws_b, "beta")]:
+            db.register_entity(
+                entity_type="feature",
+                entity_id=f"002-{slug}",
+                name=slug,
+                status="active",
+                workspace_uuid=ws_uuid,
+            )
+            db.upsert_workflow_phase(
+                f"feature:002-{slug}", workflow_phase="design",
+                kanban_column="wip", workspace_uuid=ws_uuid,
+            )
+
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, "docs")
+        wss._workspace_uuid = ws_a
+
+        result = asyncio.run(wss.list_features_by_phase("design", project_id="*"))
+        entries = json.loads(result)
+        slugs = sorted(e["feature_type_id"] for e in entries)
+        assert slugs == ["feature:002-alpha", "feature:002-beta"], (
+            f"'*' should return cross-workspace results, got {slugs}"
+        )
 
 
 class TestSerializeStateDegradedLogicDeepened:

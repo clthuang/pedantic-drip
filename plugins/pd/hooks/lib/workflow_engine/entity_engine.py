@@ -108,7 +108,9 @@ class EntityWorkflowEngine:
     # ------------------------------------------------------------------
 
     def complete_phase(
-        self, entity_uuid: str, phase: str
+        self, entity_uuid: str, phase: str,
+        *,
+        workspace_uuid: str | None = None,
     ) -> CompletionResult:
         """Complete a phase for any entity type.
 
@@ -142,8 +144,13 @@ class EntityWorkflowEngine:
 
         # Phase A: completion — route by backend
         if entity_type == "feature":
-            state = self._feature_complete(type_id, phase)
+            # FR-2: forward workspace_uuid to the frozen-engine layer.
+            state = self._feature_complete(
+                type_id, phase, workspace_uuid=workspace_uuid,
+            )
         elif entity_type in FIVE_D_ENTITY_TYPES:
+            # Five-D entities: internal helper writes scope via the parent
+            # entity row's existing workspace; no kwarg needed.
             state = self._fived_complete(entity, phase)
         else:
             raise ValueError(f"Unsupported entity type: {entity_type}")
@@ -180,7 +187,9 @@ class EntityWorkflowEngine:
         )
 
     def transition_phase(
-        self, entity_uuid: str, target_phase: str
+        self, entity_uuid: str, target_phase: str,
+        *,
+        workspace_uuid: str | None = None,
     ) -> TransitionResponse:
         """Transition an entity to a target phase.
 
@@ -233,11 +242,16 @@ class EntityWorkflowEngine:
                 )
 
         if entity_type == "feature":
+            # FR-2: forward workspace_uuid to the frozen-engine layer where
+            # it threads through update_workflow_phase / update_entity writes.
             return self._frozen_engine.transition_phase(
-                type_id, target_phase
+                type_id, target_phase, workspace_uuid=workspace_uuid,
             )
 
         if entity_type in FIVE_D_ENTITY_TYPES:
+            # Five-D entities (objective/initiative/etc.): internal helper
+            # writes scope via the parent entity row's existing workspace
+            # (queried inline via _db.get_entity_by_uuid); no kwarg needed.
             return self._fived_transition(entity, target_phase)
 
         raise ValueError(f"Unsupported entity type: {entity_type}")
@@ -373,10 +387,19 @@ class EntityWorkflowEngine:
     # ------------------------------------------------------------------
 
     def _feature_complete(
-        self, type_id: str, phase: str
+        self, type_id: str, phase: str,
+        *,
+        workspace_uuid: str | None = None,
     ) -> FeatureWorkflowState:
-        """Phase A for features: delegate to frozen engine (auto-commits)."""
-        return self._frozen_engine.complete_phase(type_id, phase)
+        """Phase A for features: delegate to frozen engine (auto-commits).
+
+        FR-2: workspace_uuid is forwarded to the frozen engine which routes
+        it through update_workflow_phase / update_entity writes on the
+        terminal phase path.
+        """
+        return self._frozen_engine.complete_phase(
+            type_id, phase, workspace_uuid=workspace_uuid,
+        )
 
     # ------------------------------------------------------------------
     # Private: FiveDBackend (direct DB — tasks, projects, initiatives, etc.)
