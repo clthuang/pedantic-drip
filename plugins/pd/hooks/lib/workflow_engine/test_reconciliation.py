@@ -1248,6 +1248,133 @@ class TestApplyWorkflowReconciliation:
         assert row is not None
         assert row["last_completed_phase"] == "implement"
 
+    # -----------------------------------------------------------------
+    # Feature 113 FR-11.1: workspace_uuid forwarding (internal-pin tests)
+    # -----------------------------------------------------------------
+
+    def test_apply_workflow_reconciliation_forwards_workspace_uuid_to_update_workflow_phase_meta_ahead(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """FR-11.1 mutation pin (reconciliation.py:374 meta_json_ahead branch).
+
+        apply_workflow_reconciliation must forward its workspace_uuid kwarg
+        to db.update_workflow_phase when reconciling a meta_json_ahead row.
+        """
+        # Bootstrap a meta_json_ahead row scoped to a real workspace.
+        db = _make_db()
+        from entity_registry.test_helpers import bootstrap_test_workspace
+        ws_a = bootstrap_test_workspace(db, "ws-fr11-meta-ahead")
+        type_id = type_id = "feature:010-test"
+        db.register_entity(
+            entity_type="feature",
+            entity_id="010-test",
+            name="Test",
+            status="active",
+            workspace_uuid=ws_a,
+        )
+        db.create_workflow_phase(
+            type_id, workflow_phase="specify",
+            last_completed_phase="brainstorm", mode="standard",
+        )
+        _create_meta_json(
+            tmp_path, "010-test", status="active",
+            last_completed_phase="design",
+        )
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        captured_kwargs: list[dict] = []
+        original = db.update_workflow_phase
+
+        def capture(type_id_arg, **kwargs):
+            captured_kwargs.append(dict(kwargs))
+            return original(type_id_arg, **kwargs)
+
+        monkeypatch.setattr(db, "update_workflow_phase", capture)
+
+        result = apply_workflow_reconciliation(
+            engine, db, str(tmp_path),
+            feature_type_id=type_id,
+            workspace_uuid=ws_a,
+        )
+
+        # At least one update_workflow_phase call captured, and it received
+        # workspace_uuid=ws_a (pins reconciliation.py:374 forwarding).
+        assert captured_kwargs, "db.update_workflow_phase was never invoked"
+        assert any(
+            kw.get("workspace_uuid") == ws_a for kw in captured_kwargs
+        ), (
+            f"workspace_uuid not forwarded to update_workflow_phase; "
+            f"captured kwargs={captured_kwargs}"
+        )
+        # Sanity: action succeeded (mismatch would error since ws_a matches).
+        assert result.summary.get("reconciled", 0) >= 1
+
+    def test_apply_workflow_reconciliation_forwards_workspace_uuid_to_update_workflow_phase_kanban_drift(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """FR-11.1 mutation pin (reconciliation.py:462 kanban-only drift).
+
+        For an in_sync row with only kanban_column drift, the single-kwarg
+        db.update_workflow_phase call must receive workspace_uuid.
+        """
+        # Bootstrap a phase-in-sync row whose kanban_column needs fixing.
+        # Feature in phase "create-plan" expects kanban_column="prioritised";
+        # we seed it as "backlog" so the kanban-only drift branch fires.
+        db = _make_db()
+        from entity_registry.test_helpers import bootstrap_test_workspace
+        ws_a = bootstrap_test_workspace(db, "ws-fr11-kanban")
+        type_id = "feature:020-kanban"
+        db.register_entity(
+            entity_type="feature",
+            entity_id="020-kanban",
+            name="Kanban Test",
+            status="active",
+            workspace_uuid=ws_a,
+        )
+        db.create_workflow_phase(
+            type_id, workflow_phase="create-plan",
+            last_completed_phase="design", mode="standard",
+            kanban_column="backlog",  # wrong; expected "prioritised"
+        )
+        _create_meta_json(
+            tmp_path, "020-kanban", status="active",
+            last_completed_phase="design",
+        )
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        captured_kwargs: list[dict] = []
+        original = db.update_workflow_phase
+
+        def capture(type_id_arg, **kwargs):
+            captured_kwargs.append(dict(kwargs))
+            return original(type_id_arg, **kwargs)
+
+        monkeypatch.setattr(db, "update_workflow_phase", capture)
+
+        result = apply_workflow_reconciliation(
+            engine, db, str(tmp_path),
+            feature_type_id=type_id,
+            workspace_uuid=ws_a,
+        )
+
+        # The kanban-drift branch invokes update_workflow_phase with
+        # kanban_column=... ; assert workspace_uuid was forwarded there too.
+        assert captured_kwargs, "db.update_workflow_phase was never invoked"
+        kanban_calls = [
+            kw for kw in captured_kwargs if "kanban_column" in kw
+        ]
+        assert kanban_calls, (
+            f"Expected at least one kanban_column update; got {captured_kwargs}"
+        )
+        assert all(
+            kw.get("workspace_uuid") == ws_a for kw in kanban_calls
+        ), (
+            f"workspace_uuid not forwarded to kanban-drift update; "
+            f"captured kanban kwargs={kanban_calls}"
+        )
+        # Sanity: action succeeded.
+        assert result.summary.get("reconciled", 0) >= 1
+
 
 # ===========================================================================
 # Task 7.1: Full-cycle integration tests
