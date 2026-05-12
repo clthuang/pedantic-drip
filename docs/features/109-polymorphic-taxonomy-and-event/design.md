@@ -4,7 +4,7 @@
 - **Feature:** 109-polymorphic-taxonomy-and-event
 - **Phase:** Phase 2 of project roadmap
 - **Mode:** full
-- **Status:** Draft (revision 3 after design-reviewer iterations 1+2)
+- **Status:** Draft (revision 4 after design-reviewer iterations 1+2+3 — cap-3 reached per CLAUDE.md; proceeding to phase-reviewer with documented residual notes)
 - **Created:** 2026-05-12
 - **Last updated:** 2026-05-12
 - **Spec reference:** `docs/features/109-polymorphic-taxonomy-and-event/spec.md`
@@ -127,7 +127,7 @@ The rename is a single-commit step (commit 9 in spec NFR-3) with the new param s
 
 **Important clarification of iteration-1 mis-citation:** the 4 lines I cited earlier (`database.py:1587, 1603, 1630, 1657`) are **SQL `INSERT OR IGNORE INTO phase_events` statements** inside the backfill helper, NOT Python method calls of `insert_phase_event`. Those SQL statements stay in place (they are the backfill helper's own raw SQL — see spec FR-4 audit table rows 1587/1603/1630/1657 routing to "upsert via direct INSERT — phase_events has its own dedup index"). The rename only affects Python call sites, which are exclusively in `workflow_state_server.py` plus tests.
 
-**Test caller scope (sized at implement time):** `grep -rn 'insert_phase_event(' plugins/pd/hooks/lib/entity_registry/test_*.py` enumerates test fixtures using the old name; these are renamed in the same commit.
+**Test caller scope (sized at implement time):** `grep -rn 'insert_phase_event(' plugins/pd/ | grep 'test_'` enumerates test fixtures using the old name (note: bulk of test callers are in `plugins/pd/mcp/test_workflow_state_server.py` — ~28 sites; not under entity_registry/). All renamed in the same commit as production callers.
 
 All such callers are renamed and parameter-shape-migrated in the same commit. This is consistent with the "no backward compat" project constraint.
 
@@ -194,6 +194,7 @@ def upsert_entity(self, kind, entity_id, name, *, workspace_uuid=None, status=No
             self.append_phase_event(
                 type_id=type_id,
                 event_type='entity_status_changed',
+                workspace_uuid=workspace_uuid,  # required for entity_* events to scope the entities UPDATE
                 metadata={'old_status': existing_status, 'new_status': status},
             )
             return existing_uuid
@@ -246,6 +247,7 @@ def promote_entity(self, uuid: str, new_kind: str, new_lifecycle_class: str, *, 
         self.append_phase_event(
             type_id=new_type_id,  # post-promotion identity (per spec FR-3 step 3 clarification)
             event_type='entity_promoted',
+            workspace_uuid=existing['workspace_uuid'],  # required for entity_* events
             metadata={
                 'old_kind': existing['kind'],
                 'new_kind': new_kind,
@@ -268,7 +270,7 @@ The 6 historical `CREATE VIRTUAL TABLE entities_fts` definitions live inside `_m
 
 **Source-code cleanup:** the 6 historical definitions retain their `entity_type` references. This is **permitted** per spec AC-1.4 exception (b) ("the `_migrate_*` historical migration functions in `database.py` that document past schema epochs"). Removing them would alter the historical record of the migration sequence — an anti-pattern called out in CLAUDE.md.
 
-**What migration 12 changes:** only its own new FTS5 CREATE block, and the production-path INSERT/DELETE statements at `database.py:3469, 5544, 3874, 4142` (the runtime sync paths, not the historical schema-creation paths). Per AC-1.8's grep-predicate verification.
+**What migration 12 changes:** only its own new FTS5 CREATE block, plus the production-path INSERT sync statements that reference `entity_type`. The durable scope is defined by AC-1.8's grep-predicate (`grep -nE "INSERT INTO entities_fts.*entity_type"` returns 0 production matches post-migration). Verified live INSERT sync sites (2026-05-12): `database.py:3469` (register_entity FTS sync), `database.py:3877` (update-path FTS resync after delete), `database.py:5545` (register_entities_batch bulk path). The DELETE statements at `database.py:3874, 4142` operate on `rowid` only — they do NOT reference `entity_type` and require no edit. (Prior revision listed 3874/4142 as edit targets in error.)
 
 **Spec/design alignment on AC-1.8 wording:** spec AC-1.8 says "all 6 `CREATE VIRTUAL TABLE entities_fts` definitions in `database.py` (lines 430, 794, 973, 1257, 2153, 2556) are rewritten to use `kind` as the search column." Design TD-7 reads this as: the **conceptual** rewrite is at all 6 sites, but the **practical** source-code change is only at the runtime production CREATE (in migration 12). The 6 historical CREATEs inside `_migrate_*` functions retain `entity_type` per AC-1.4 exception (b) (historical schema epochs are not rewritten). AC-1.8's grep-predicate verification (`grep -nE "INSERT INTO entities_fts.*entity_type"`) covers only sync paths, not historical CREATE definitions — so the AC verification passes without rewriting the historical CREATEs. This is the design's resolution of the spec-AC-1.8 "all 6 ... rewritten" phrasing: it means "the cumulative search-column semantics across the migration sequence end at `kind`", not "every historical CREATE statement is edited to use kind".
 
@@ -359,6 +361,12 @@ def register_entity(
 
 **Breaking change:** previously silently no-op'd on conflict; now raises `EntityExistsError`. Callers per the FR-4 Python-caller audit table either explicitly catch `EntityExistsError` (when conflict-is-real-error) or migrate to `upsert_entity`.
 
+**Behavior change: removed on-duplicate parent_uuid fixup.** The current `register_entity` at `database.py:3479-3493` has an on-duplicate fixup branch (when `cursor.rowcount == 0` because of INSERT OR IGNORE silent-conflict): "Apply parent_uuid on duplicate if caller provided one and existing entity has none". After F12 removes `INSERT OR IGNORE`, this branch becomes unreachable. The behavior is **explicitly removed** as part of the F12 rewrite — not silently dropped. Callers that previously relied on this fixup (passing `parent_uuid=...` to `register_entity` after the entity already existed, expecting the parent to be backfilled) must now:
+1. Catch `EntityExistsError` and explicitly call `update_entity(parent_uuid=...)` separately, OR
+2. Use the existing `update_entity` API directly when the goal is to set parent_uuid on an existing entity.
+
+**FR-4 Python-caller audit extension:** the audit at AC-4.8 must surface any caller that depends on this fixup. Verification grep at implement time: `grep -B5 -A5 "register_entity(" plugins/pd/hooks/lib/ plugins/pd/mcp/ | grep -B5 -A5 "parent_uuid"` lists potential dependents. Each is either migrated to the catch-and-update pattern or documented as not needing the fixup. AC-4.7's IntegrityError audit is extended to also cover callers passing `parent_uuid=` on what they expected to be a no-op-on-conflict path.
+
 #### `EntityDatabase.upsert_entity` (new)
 
 ```python
@@ -432,6 +440,7 @@ def append_phase_event(
     type_id: str,
     event_type: str,  # one of 7: started|completed|skipped|backward|entity_created|entity_status_changed|entity_promoted
     *,
+    workspace_uuid: str | None = None,  # REQUIRED for entity_* event_types (entity_created/entity_status_changed/entity_promoted) to scope the entities UPDATE; OPTIONAL for workflow event types (started/completed/skipped/backward) where workflow_phases uses type_id as PK and workspace is implied
     project_id: str | None = None,
     phase: str | None = None,  # required for the 4 workflow event types; must be None for the 3 entity event types
     iterations: int | None = None,  # required for 'completed' only; must be None otherwise
@@ -448,8 +457,18 @@ def append_phase_event(
     Validates per-event-type column-domain (see spec FR-2 mapping table).
     Inside one transaction:
     1. INSERT INTO phase_events (...) returning id
-    2. For entity_* event types: UPDATE entities SET status, updated_at WHERE type_id = ?
-    3. For workflow event types: UPDATE workflow_phases SET workflow_phase, updated_at WHERE type_id = ?
+    2. For entity_* event types (entity_status_changed, entity_promoted):
+       UPDATE entities SET status = metadata['new_status'], updated_at = timestamp
+       WHERE workspace_uuid = ? AND type_id = ?   ← WORKSPACE-SCOPED (PRD Goal 1 invariant)
+       Requires workspace_uuid kwarg.
+       SKIP this UPDATE for event_type='entity_created' — the row was just INSERTed
+       by register_entity which set status to its final value already; a redundant
+       UPDATE here would overwrite updated_at with a slightly later timestamp,
+       breaking AC-2.7's entities.updated_at == phase_events.timestamp invariant.
+    3. For workflow event types (started/completed/skipped/backward):
+       UPDATE workflow_phases SET workflow_phase, updated_at WHERE type_id = ?
+       (workflow_phases has type_id as PK; workspace scoping is structurally
+       inherent via the type_id's workspace_uuid resolution chain.)
 
     Returns the new phase_events row id.
 
