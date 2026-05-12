@@ -4872,6 +4872,7 @@ class EntityDatabase:
         last_completed_phase=_UNSET,
         mode=_UNSET,
         backward_transition_reason=_UNSET,
+        workspace_uuid: str | None = None,
     ) -> dict:
         """Update mutable fields of an existing workflow_phases row.
 
@@ -4893,6 +4894,14 @@ class EntityDatabase:
             New mode value.
         backward_transition_reason:
             New backward transition reason value.
+        workspace_uuid:
+            Optional read-side workspace assertion (Feature 113 / FR-4.1).
+            When non-None, SELECTs the stored ``workspace_uuid`` from
+            ``workflow_phases`` and raises ``ValueError`` on mismatch BEFORE
+            the UPDATE proceeds. Does NOT appear in the UPDATE SET clause —
+            the column is immutable post-Migration-11 (autofill at INSERT
+            only via ``wp_autofill_workspace_uuid`` trigger). Default ``None``
+            preserves prior no-check behavior.
 
         Returns
         -------
@@ -4902,15 +4911,30 @@ class EntityDatabase:
         Raises
         ------
         ValueError
-            If the row does not exist or a CHECK constraint is violated.
+            If the row does not exist, a CHECK constraint is violated, or
+            ``workspace_uuid`` is provided and differs from the stored value.
         """
-        # Existence check
+        # Existence check + (FR-4.1) workspace_uuid mismatch assertion
+        # in a single SELECT.
         row = self._conn.execute(
-            "SELECT type_id FROM workflow_phases WHERE type_id = ?",
+            "SELECT type_id, workspace_uuid FROM workflow_phases "
+            "WHERE type_id = ?",
             (type_id,),
         ).fetchone()
         if row is None:
             raise ValueError(f"Workflow phase not found: {type_id}")
+
+        # Feature 113 / FR-4.1: read-side workspace assertion. The kwarg is
+        # only checked when the caller opts in by passing a non-None value.
+        # The column itself is NOT added to the UPDATE SET clause — it is
+        # immutable post-Migration-11.
+        if workspace_uuid is not None:
+            existing_ws = row["workspace_uuid"]
+            if existing_ws != workspace_uuid:
+                raise ValueError(
+                    f"workspace_uuid mismatch for {type_id}: "
+                    f"stored={existing_ws!r}, provided={workspace_uuid!r}"
+                )
 
         set_parts: list[str] = ["updated_at = ?"]
         params: list = [self._now_iso()]
