@@ -502,6 +502,10 @@ def test_no_production_fts5_insert_references_entity_type() -> None:
         "_migration_10_phase_events",
         "_migration_11_workspace_identity",
         "_migration_11_workspace_identity_down",
+        # Feature 109 down-migration restores entity_type via FTS5 rebuild
+        # per spec AC-5.1; the INSERT INTO entities_fts(...entity_type)
+        # inside this function is the canonical down-restoration site.
+        "_migration_12_polymorphic_taxonomy_and_events_down",
     }
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name in HISTORICAL_NAMES:

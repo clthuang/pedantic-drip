@@ -532,3 +532,112 @@ def test_dependency_duplicate_noop(db):
         f"Expected 1 entity_dependencies row after 3 duplicate adds, "
         f"found {count}"
     )
+
+
+# ---------------------------------------------------------------------------
+# AC-4.8: 1-to-1 F12 audit comment coverage (Group 15.7)
+# ---------------------------------------------------------------------------
+
+
+def test_f12_audit_one_to_one_coverage():
+    """AC-4.8: every production register_entity / upsert_entity call site has a
+    preceding ``# F12 audit:`` comment with a routing rationale.
+
+    Scope: production code under ``plugins/pd/hooks/lib/`` and
+    ``plugins/pd/mcp/`` — EXCLUDING:
+
+    - Test files (filename matches ``test_*.py``)
+    - ``def register_entity`` / ``def upsert_entity`` declarations
+    - The internal ``upsert_entity → register_entity`` call inside
+      ``EntityDatabase.upsert_entity`` itself (file: database.py) — this is
+      not a caller, it's the helper plumbing for the insert branch.
+
+    The audit comment marker is the literal string ``F12 audit:`` per
+    spec FR-4 / AC-4.8.
+    """
+    # Search roots
+    roots = [
+        _PLUGIN_ROOT / "hooks" / "lib",
+        _PLUGIN_ROOT / "mcp",
+    ]
+    # Collect lines: file:lineno:content
+    proc = subprocess.run(
+        [
+            "grep", "-rnE", r"\b(register_entity|upsert_entity)\(",
+            *(str(r) for r in roots),
+            "--include=*.py",
+        ],
+        capture_output=True, text=True, check=False,
+    )
+    lines = proc.stdout.splitlines()
+
+    # Filter to actual production call sites.
+    call_sites: list[tuple[str, int]] = []
+    for line in lines:
+        # Format: "/abs/path.py:NN:    code..."
+        try:
+            path_part, lineno_str, content = line.split(":", 2)
+        except ValueError:
+            continue
+        # Exclude test files.
+        if "/test_" in path_part or path_part.endswith("_test.py"):
+            continue
+        # Exclude function defs.
+        if "def register_entity(" in content or "def upsert_entity(" in content:
+            continue
+        # Exclude the internal upsert→register self-call inside upsert_entity.
+        if path_part.endswith("entity_registry/database.py") and (
+            "return self.register_entity(" in content
+        ):
+            continue
+        # Exclude matches inside string literals — heuristic: the function
+        # name appears after an unescaped quote earlier on the same line
+        # (e.g. ``warnings.warn("register_entity() received both ...")``).
+        stripped_content = content.lstrip()
+        if stripped_content.startswith('"') or stripped_content.startswith("'"):
+            continue
+        # If the call appears inside a quoted string, the function name is
+        # preceded by a quote on the same line.
+        m_idx = max(
+            content.find("register_entity("),
+            content.find("upsert_entity("),
+        )
+        if m_idx > 0:
+            prefix = content[:m_idx]
+            # Count unescaped double-quotes before the match.
+            dq = prefix.count('"') - prefix.count('\\"')
+            sq = prefix.count("'") - prefix.count("\\'")
+            if dq % 2 == 1 or sq % 2 == 1:
+                # Inside a string literal — skip.
+                continue
+        call_sites.append((path_part, int(lineno_str)))
+
+    assert call_sites, "expected at least one register/upsert call site"
+
+    # For each call site, walk backward up to 12 lines looking for a
+    # "F12 audit:" comment. The audit comment may be separated from the call
+    # by a ``try:`` wrapper and several preamble comment lines.
+    violations: list[str] = []
+    file_cache: dict[str, list[str]] = {}
+    for path_part, lineno in call_sites:
+        if path_part not in file_cache:
+            file_cache[path_part] = Path(path_part).read_text().splitlines()
+        file_lines = file_cache[path_part]
+        found = False
+        for offset in range(1, 13):
+            idx = lineno - 1 - offset
+            if idx < 0:
+                break
+            prior = file_lines[idx]
+            if "F12 audit:" in prior:
+                found = True
+                break
+        if not found:
+            violations.append(f"{path_part}:{lineno}")
+
+    assert not violations, (
+        "F12 audit comment missing at call sites:\n  "
+        + "\n  ".join(violations)
+        + "\n\nEach production register_entity / upsert_entity call site must "
+        "be preceded by a `# F12 audit: ...` comment per spec FR-4 / AC-4.8."
+    )

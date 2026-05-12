@@ -3503,6 +3503,415 @@ def _migration_12_polymorphic_taxonomy_and_events(
         )
 
 
+def _migration_12_polymorphic_taxonomy_and_events_down(
+    conn: sqlite3.Connection,
+) -> None:
+    """Reverse Migration 12 (feature 109 FR-5 / design TD-9).
+
+    One-shot rollback only — restores runtime schema state to the v11
+    baseline. Source-code state (trigger definitions, register_entity SQL,
+    upsert_entity / promote_entity / append_phase_event helpers) is NOT
+    touched — operators restore source via git-history per spec AC-5.1.
+
+    Reverse sub-steps (mirror forward §1 in REVERSE order):
+      1. PRAGMA foreign_keys = OFF outside try; BEGIN IMMEDIATE inside try.
+      2. Idempotency check: if schema_version <= 11, no-op early-return.
+      3. Drop ``idx_entities_type_kind``.
+      4. ADD COLUMN ``entity_type`` to entities; backfill from ``kind`` via
+         the REVERSE mapping (kind='feature' → 'feature', kind='backlog' →
+         'backlog', kind='project' → 'project', kind='brainstorm' →
+         'brainstorm', kind='workspace' → 'workspace').
+      5. Rebuild ``entities_fts`` to use the legacy ``entity_type`` column
+         instead of ``kind``.
+      6. Drop new entities columns (type, kind, lifecycle_class) via
+         copy-rename.
+      7. Reverse phase_events copy-rename: narrow CHECK back to the 4
+         legacy event_types, restore ``phase NOT NULL``, drop ``metadata``
+         column.
+      8. Recreate ``enforce_immutable_entity_type`` and
+         ``enforce_immutable_type_id`` triggers at ONE canonical site each
+         (runtime DDL only; not 6 source-code definitions — those are
+         git-history-restored).
+      9. Stamp ``schema_version=11`` inside the transaction; COMMIT.
+     10. Finally: PRAGMA foreign_keys = ON.
+
+    Raises:
+        RuntimeError on FK violations or in-transaction failures.
+    """
+    # ----------------------------------------------------------------------
+    # Step 1: PRAGMA foreign_keys = OFF (outside transaction)
+    # ----------------------------------------------------------------------
+    conn.execute("PRAGMA foreign_keys = OFF")
+    fk_status = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+    if fk_status != 0:
+        raise RuntimeError(
+            "PRAGMA foreign_keys = OFF did not take effect — "
+            "aborting migration 12 reverse"
+        )
+
+    try:
+        # ------------------------------------------------------------------
+        # Step 2: BEGIN IMMEDIATE; idempotency check
+        # ------------------------------------------------------------------
+        conn.execute("BEGIN IMMEDIATE")
+        v_row = conn.execute(
+            "SELECT value FROM _metadata WHERE key='schema_version'"
+        ).fetchone()
+        if v_row is None:
+            raise RuntimeError(
+                "Migration 12 reverse: _metadata.schema_version missing"
+            )
+        try:
+            current_version = int(v_row[0])
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"Migration 12 reverse: invalid schema_version {v_row[0]!r}"
+            ) from exc
+        if current_version <= 11:
+            conn.rollback()
+            return
+
+        # ------------------------------------------------------------------
+        # Step 3: drop idx_entities_type_kind
+        # ------------------------------------------------------------------
+        conn.execute("DROP INDEX IF EXISTS idx_entities_type_kind")
+
+        # ------------------------------------------------------------------
+        # Step 4: restore entity_type column + backfill from kind
+        # ------------------------------------------------------------------
+        existing_cols = {
+            r[1] for r in conn.execute(
+                "PRAGMA table_info(entities)"
+            ).fetchall()
+        }
+        if "entity_type" not in existing_cols:
+            # ALTER TABLE ADD COLUMN with a placeholder default so NOT NULL
+            # constraint is satisfied during the ADD (live rows backfill
+            # immediately below).
+            conn.execute(
+                "ALTER TABLE entities ADD COLUMN entity_type TEXT "
+                "NOT NULL DEFAULT 'feature'"
+            )
+        # Backfill via REVERSE mapping. kind 'feature'/'backlog'/'project'/
+        # 'brainstorm'/'workspace' → entity_type with the same value (the
+        # forward mapping was lossy on type=work split into kind=feature vs
+        # kind=backlog; reversing just uses kind directly as entity_type).
+        conn.execute(
+            "UPDATE entities SET entity_type = kind "
+            "WHERE kind IN ('feature', 'backlog', 'project', 'brainstorm', "
+            "'workspace')"
+        )
+
+        # ------------------------------------------------------------------
+        # Step 5: (entities_fts rebuild deferred — performed below in
+        # step 6 after the entities table swap, because the FTS5
+        # contentless rowids must re-link to the post-rename entities.)
+        # ------------------------------------------------------------------
+
+        # ------------------------------------------------------------------
+        # Step 6: drop new columns (type, kind, lifecycle_class) via
+        # copy-rename. ALTER TABLE DROP COLUMN is blocked by the composite
+        # CHECK constraint that references (type, kind), so we rebuild the
+        # entities table without those columns and without the CHECK.
+        # ------------------------------------------------------------------
+        # Capture entities-related indexes and triggers so we can rebuild
+        # them on the new table.
+        ent_saved_indexes = [
+            (r[0], r[1])
+            for r in conn.execute(
+                "SELECT name, sql FROM sqlite_master "
+                "WHERE type='index' AND tbl_name='entities' "
+                "AND sql IS NOT NULL"
+            ).fetchall()
+        ]
+        ent_saved_triggers = [
+            (r[0], r[1])
+            for r in conn.execute(
+                "SELECT name, sql FROM sqlite_master "
+                "WHERE type='trigger' AND tbl_name='entities' "
+                "AND sql IS NOT NULL"
+            ).fetchall()
+        ]
+        ent_pre_count = conn.execute(
+            "SELECT COUNT(*) FROM entities"
+        ).fetchone()[0]
+
+        # Recreate the pre-12 entities shape: uuid PK, workspace_uuid FK,
+        # type_id, entity_id, entity_type, name, status, parent_uuid (FK to
+        # entities.uuid), artifact_path, created_at, updated_at, metadata.
+        conn.execute("""
+            CREATE TABLE entities_old (
+                uuid           TEXT NOT NULL PRIMARY KEY,
+                workspace_uuid TEXT NOT NULL
+                               REFERENCES workspaces(uuid),
+                type_id        TEXT NOT NULL,
+                entity_id      TEXT NOT NULL,
+                entity_type    TEXT NOT NULL,
+                name           TEXT NOT NULL,
+                status         TEXT,
+                parent_uuid    TEXT REFERENCES entities_old(uuid),
+                artifact_path  TEXT,
+                created_at     TEXT NOT NULL,
+                updated_at     TEXT NOT NULL,
+                metadata       TEXT,
+                UNIQUE(workspace_uuid, type_id)
+            )
+        """)
+        conn.execute(
+            "INSERT INTO entities_old "
+            "(uuid, workspace_uuid, type_id, entity_id, entity_type, name, "
+            "status, parent_uuid, artifact_path, created_at, updated_at, "
+            "metadata) "
+            "SELECT uuid, workspace_uuid, type_id, entity_id, entity_type, "
+            "name, status, parent_uuid, artifact_path, created_at, "
+            "updated_at, metadata "
+            "FROM entities"
+        )
+        ent_post_count = conn.execute(
+            "SELECT COUNT(*) FROM entities_old"
+        ).fetchone()[0]
+        if ent_post_count != ent_pre_count:
+            raise RuntimeError(
+                f"Migration 12 reverse entities copy-rename row-count "
+                f"mismatch: pre={ent_pre_count}, post={ent_post_count}"
+            )
+
+        # Drop entities_fts since its rowid links to the old entities;
+        # we rebuild against the renamed table below.
+        conn.execute("DROP TABLE IF EXISTS entities_fts")
+
+        # Drop triggers on workflow_phases that reference entities via
+        # subquery — SQLite re-validates these during DROP TABLE entities
+        # and complains "no such table: main.entities". Capture their
+        # source so we recreate them after the rename.
+        wp_saved_triggers = [
+            (r[0], r[1])
+            for r in conn.execute(
+                "SELECT name, sql FROM sqlite_master "
+                "WHERE type='trigger' AND tbl_name='workflow_phases' "
+                "AND sql IS NOT NULL"
+            ).fetchall()
+        ]
+        for trg_name, _trg_sql in wp_saved_triggers:
+            conn.execute(f"DROP TRIGGER IF EXISTS {trg_name}")
+
+        # Swap tables — DROP old entities and rename. Note FK references
+        # to entities (e.g. workflow_phases via direct type_id text and
+        # several triggers) survive because they are reference-by-name
+        # rather than table_oid.
+        conn.execute("DROP TABLE entities")
+        conn.execute("ALTER TABLE entities_old RENAME TO entities")
+
+        # Recreate workflow_phases triggers.
+        for _trg_name, trg_sql in wp_saved_triggers:
+            if trg_sql:
+                conn.execute(trg_sql)
+
+        # Recreate captured entities indexes that don't reference dropped
+        # columns. idx_entities_type_kind (already dropped in step 3) is
+        # filtered out by name; the rest are restored verbatim.
+        for idx_name, idx_sql in ent_saved_indexes:
+            if not idx_sql:
+                continue
+            if idx_name == "idx_entities_type_kind":
+                continue
+            # Skip any index whose SQL references the dropped columns.
+            if " type " in idx_sql or " kind " in idx_sql or " lifecycle_class " in idx_sql:
+                continue
+            conn.execute(idx_sql)
+
+        # Recreate captured entities triggers (other than the immutable
+        # triggers we re-add in step 8). Filter the immutable pair out so
+        # the step-8 recreate is the canonical site.
+        for trg_name, trg_sql in ent_saved_triggers:
+            if not trg_sql:
+                continue
+            if trg_name in (
+                "enforce_immutable_entity_type",
+                "enforce_immutable_type_id",
+            ):
+                continue
+            conn.execute(trg_sql)
+
+        # Rebuild entities_fts (pre-12 shape with entity_type) since the
+        # entities table was swapped — its FTS5 contentless rowids must
+        # re-link to the new table.
+        try:
+            conn.execute(
+                "CREATE VIRTUAL TABLE entities_fts USING fts5("
+                "name, entity_id, entity_type, status, metadata_text)"
+            )
+        except sqlite3.OperationalError as exc:
+            if "no such module: fts5" in str(exc):
+                raise RuntimeError(
+                    "FTS5 extension not available — "
+                    "cannot complete migration 12 reverse FTS5 rebuild"
+                ) from exc
+            raise
+        fts_rebuild_rows = conn.execute(
+            "SELECT rowid, name, entity_id, entity_type, status, metadata "
+            "FROM entities"
+        ).fetchall()
+        for row in fts_rebuild_rows:
+            md = row[5]
+            metadata_text = flatten_metadata(
+                json.loads(md) if md else None
+            )
+            conn.execute(
+                "INSERT INTO entities_fts ("
+                "rowid, name, entity_id, entity_type, status, metadata_text"
+                ") VALUES (?, ?, ?, ?, ?, ?)",
+                (row[0], row[1], row[2], row[3], row[4], metadata_text),
+            )
+
+        # ------------------------------------------------------------------
+        # Step 7: reverse phase_events copy-rename — narrow CHECK + restore
+        # phase NOT NULL + drop metadata column.
+        # ------------------------------------------------------------------
+        # Discover existing phase_events indexes/triggers so we can rebuild
+        # them on the new table.
+        pe_pre_count = conn.execute(
+            "SELECT COUNT(*) FROM phase_events"
+        ).fetchone()[0]
+        pe_saved_indexes = [
+            (r[0], r[1])
+            for r in conn.execute(
+                "SELECT name, sql FROM sqlite_master "
+                "WHERE type='index' AND tbl_name='phase_events' "
+                "AND sql IS NOT NULL"
+            ).fetchall()
+        ]
+        pe_saved_triggers = [
+            (r[0], r[1])
+            for r in conn.execute(
+                "SELECT name, sql FROM sqlite_master "
+                "WHERE type='trigger' AND tbl_name='phase_events' "
+                "AND sql IS NOT NULL"
+            ).fetchall()
+        ]
+
+        # Pre-down assertion: every existing row must have a non-NULL phase
+        # and an event_type in the legacy 4-value set — otherwise the
+        # narrowed schema would reject the INSERT-SELECT below.
+        bad_rows = conn.execute(
+            "SELECT COUNT(*) FROM phase_events "
+            "WHERE phase IS NULL OR event_type NOT IN ("
+            "  'started', 'completed', 'skipped', 'backward'"
+            ")"
+        ).fetchone()[0]
+        if bad_rows > 0:
+            raise RuntimeError(
+                f"Migration 12 reverse: {bad_rows} phase_events row(s) "
+                "incompatible with v11 schema (NULL phase or new "
+                "event_type). Operator must prune them before reversing."
+            )
+
+        conn.execute("""
+            CREATE TABLE phase_events_old (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                type_id         TEXT NOT NULL,
+                project_id      TEXT NOT NULL,
+                phase           TEXT NOT NULL,
+                event_type      TEXT NOT NULL CHECK(event_type IN (
+                    'started', 'completed', 'skipped', 'backward'
+                )),
+                timestamp       TEXT NOT NULL,
+                iterations      INTEGER,
+                reviewer_notes  TEXT,
+                backward_reason TEXT,
+                backward_target TEXT,
+                source          TEXT NOT NULL DEFAULT 'live' CHECK(
+                    source IN ('live', 'backfill')
+                ),
+                created_at      TEXT NOT NULL
+            )
+        """)
+        conn.execute(
+            "INSERT INTO phase_events_old "
+            "(id, type_id, project_id, phase, event_type, timestamp, "
+            "iterations, reviewer_notes, backward_reason, "
+            "backward_target, source, created_at) "
+            "SELECT id, type_id, project_id, phase, event_type, "
+            "timestamp, iterations, reviewer_notes, backward_reason, "
+            "backward_target, source, created_at "
+            "FROM phase_events"
+        )
+        pe_post_count = conn.execute(
+            "SELECT COUNT(*) FROM phase_events_old"
+        ).fetchone()[0]
+        if pe_post_count != pe_pre_count:
+            raise RuntimeError(
+                f"Migration 12 reverse phase_events copy-rename row-count "
+                f"mismatch: pre={pe_pre_count}, post={pe_post_count}"
+            )
+        conn.execute("DROP TABLE phase_events")
+        conn.execute(
+            "ALTER TABLE phase_events_old RENAME TO phase_events"
+        )
+        # Recreate captured indexes verbatim.
+        for idx_name, idx_sql in pe_saved_indexes:
+            if idx_sql:
+                conn.execute(idx_sql)
+        # Recreate captured triggers verbatim.
+        for trg_name, trg_sql in pe_saved_triggers:
+            if trg_sql:
+                conn.execute(trg_sql)
+
+        # ------------------------------------------------------------------
+        # Step 8: recreate immutable triggers at ONE canonical site each
+        # ------------------------------------------------------------------
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS enforce_immutable_entity_type
+            BEFORE UPDATE OF entity_type ON entities
+            BEGIN
+                SELECT RAISE(ABORT, 'entity_type is immutable');
+            END
+        """)
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS enforce_immutable_type_id
+            BEFORE UPDATE OF type_id ON entities
+            BEGIN
+                SELECT RAISE(ABORT, 'type_id is immutable');
+            END
+        """)
+
+        # ------------------------------------------------------------------
+        # Step 9: in-transaction FK check + stamp schema_version=11
+        # ------------------------------------------------------------------
+        in_tx_fk_violations = conn.execute(
+            "PRAGMA foreign_key_check"
+        ).fetchall()
+        if in_tx_fk_violations:
+            raise RuntimeError(
+                f"Migration 12 reverse in-transaction FK check non-empty: "
+                f"{in_tx_fk_violations}"
+            )
+        conn.execute(
+            "INSERT OR REPLACE INTO _metadata (key, value) "
+            "VALUES ('schema_version', '11')"
+        )
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except sqlite3.Error:
+            pass
+        raise
+    finally:
+        # Step 10: re-enable FKs whether success or failure.
+        conn.execute("PRAGMA foreign_keys = ON")
+
+    # ----------------------------------------------------------------------
+    # Post-transaction defensive FK check
+    # ----------------------------------------------------------------------
+    post_violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+    if post_violations:
+        raise RuntimeError(
+            f"Migration 12 reverse post-FK check non-empty: "
+            f"{post_violations}"
+        )
+
+
 # Ordered mapping of version -> migration function.
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _create_initial_schema,
@@ -3521,9 +3930,10 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
 
 # Reverse-migration registry (FR-8 / design §6.7). Migrations 1-10 are
 # forward-only; calling _migrate_down() with target_version < 10 raises
-# NotImplementedError. Currently only schema_version 11 is reversible.
+# NotImplementedError. Schema versions 11 and 12 are reversible.
 MIGRATIONS_DOWN: dict[int, Callable[[sqlite3.Connection], None]] = {
     11: _migration_11_workspace_identity_down,
+    12: _migration_12_polymorphic_taxonomy_and_events_down,
 }
 
 
@@ -6978,6 +7388,7 @@ class EntityDatabase:
                 parent_uuid = ent.get("parent_uuid")
                 metadata = ent.get("metadata")
 
+                # F12 audit: idempotent bulk backfill → upsert_entity
                 row_uuid = self.upsert_entity(
                     entity_type, entity_id, name,
                     workspace_uuid=ws_uuid,

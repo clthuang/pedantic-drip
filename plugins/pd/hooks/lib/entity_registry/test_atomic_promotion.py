@@ -53,11 +53,15 @@ _DATABASE_PY = Path(__file__).resolve().parent / "database.py"
 
 def _grep_create_trigger(trigger_name: str) -> list[str]:
     """Return CREATE TRIGGER lines mentioning ``trigger_name`` from
-    ``database.py``, EXCLUDING ``DROP TRIGGER`` lines (those are
-    permitted defensive guards inside migration 12).
+    ``database.py``, EXCLUDING:
 
-    The returned list is the violation set — empty means the source
-    has no remaining definitions.
+    - ``DROP TRIGGER`` lines (permitted defensive guards inside migration 12).
+    - Lines inside ``_migration_12_polymorphic_taxonomy_and_events_down``
+      (the canonical down-migration recreation site permitted by spec
+      AC-5.1 / design TD-9).
+
+    The returned list is the violation set — empty means the source has
+    no remaining forward-migration definitions.
     """
     # Use `grep -n` so violation messages include line numbers for
     # bisect-friendly output.
@@ -80,13 +84,40 @@ def _grep_create_trigger(trigger_name: str) -> list[str]:
             f"grep failed (rc={result.returncode}): {result.stderr!r}"
         )
 
+    # Compute the line range of the down-migration function so we can
+    # filter out lines that fall inside it (permitted by AC-5.1).
+    src_text = _DATABASE_PY.read_text()
+    src_lines = src_text.splitlines()
+    down_start = None
+    down_end = None
+    for idx, line in enumerate(src_lines, start=1):
+        if line.startswith(
+            "def _migration_12_polymorphic_taxonomy_and_events_down"
+        ):
+            down_start = idx
+        elif down_start and down_end is None and line.startswith("def "):
+            down_end = idx - 1
+            break
+    if down_start and down_end is None:
+        down_end = len(src_lines)
+
     lines = result.stdout.splitlines()
     # Filter: ``DROP TRIGGER IF EXISTS <name>`` lines may also include
-    # the name but are not CREATE statements; they are the migration-12
-    # defensive guards. The grep pattern already restricts to CREATE
-    # TRIGGER, but keep this filter as belt-and-suspenders in case a
-    # future edit puts both keywords on one line.
-    return [ln for ln in lines if "DROP TRIGGER" not in ln]
+    # the name but are not CREATE statements. Also exclude lines inside
+    # the down-migration function.
+    out: list[str] = []
+    for ln in lines:
+        if "DROP TRIGGER" in ln:
+            continue
+        try:
+            lineno = int(ln.split(":", 1)[0])
+        except (ValueError, IndexError):
+            out.append(ln)
+            continue
+        if down_start and down_start <= lineno <= (down_end or lineno):
+            continue
+        out.append(ln)
+    return out
 
 
 # ---------------------------------------------------------------------------

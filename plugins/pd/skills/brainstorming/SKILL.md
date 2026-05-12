@@ -259,7 +259,12 @@ Analyze this problem from your advisory perspective. Return JSON per the advisor
      name="Backlog #{id}"
    )
    ```
-   If duplicate error (already registered by add-to-backlog), swallow and continue.
+   The MCP entity_server translates `EntityExistsError` to a structured
+   JSON error (`error_type=entity_exists`, with `recovery_hint`) per
+   feature 109 design §3.5. If `add-to-backlog` already registered this
+   backlog id, the response contains `error_type=entity_exists` — swallow
+   it and continue. (Future callers may prefer `upsert_entity` for
+   explicit idempotency.)
 
    ```
    init_entity_workflow(
@@ -283,6 +288,10 @@ Analyze this problem from your advisory perspective. Return JSON per the advisor
 4. **Register brainstorm entity:**
    Extract the title from the PRD first heading (e.g., `# PRD: API Caching` -> `API Caching`).
    If a backlog parent was found in step 3, first resolve it: `get_entity(ref="backlog:{5-digit backlog id}")` → capture `uuid` as `backlog_uuid`.
+   The MCP entity_server translates `EntityExistsError` to a structured
+   JSON error (`error_type=entity_exists`) per feature 109 design §3.5;
+   if the brainstorm entity already exists, surface the error or fall
+   back to `upsert_entity`:
    ```
    register_entity(
      entity_type="brainstorm",

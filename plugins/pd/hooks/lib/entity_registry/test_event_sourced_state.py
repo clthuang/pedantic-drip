@@ -415,7 +415,6 @@ def test_entity_created_emits_one_event_no_redundant_update(db):
     assert after["updated_at"] == before["updated_at"]
 
 
-@pytest.mark.skip(reason="F12 caller-migration pending in feature 109 Group 15 — register_entity now emits an entity_created phase_event (spec line 104). This test's assertion `len(pe_rows) == 1` is stale; it should filter to event_type='entity_status_changed' or count rows-emitted-after-register. Mechanical fix slated for Group 15 cleanup.")
 def test_entity_status_changed_emits_event_and_updates_status(db):
     """For ``event_type='entity_status_changed'`` the helper INSERTs the
     phase_events row AND issues a workspace-scoped UPDATE on entities to
@@ -440,8 +439,11 @@ def test_entity_status_changed_emits_event_and_updates_status(db):
         timestamp=new_ts,
     )
 
+    # F12 (feature 109): register_entity emits an entity_created event, so
+    # filter to the event_type under test instead of asserting total count.
     pe_rows = db._conn.execute(
-        "SELECT event_type, metadata FROM phase_events WHERE type_id = ?",
+        "SELECT event_type, metadata FROM phase_events "
+        "WHERE type_id = ? AND event_type = 'entity_status_changed'",
         (type_id,),
     ).fetchall()
     assert len(pe_rows) == 1

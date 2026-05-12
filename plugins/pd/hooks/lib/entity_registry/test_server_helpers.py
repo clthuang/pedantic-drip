@@ -888,7 +888,6 @@ class TestRegisterEntityDualIdentityMessage:
             f"UUID found in message, should be type_id only: {result}"
         )
 
-    @pytest.mark.skip(reason="F12 caller-migration pending in feature 109 Group 15.2 — server_helpers.py _process_register_entity must be updated to translate EntityExistsError into the 'Already existed: ...' message. Caller migration tracked in spec FR-4 audit table (server_helpers.py = 2 sites).")
     def test_register_existing_entity_message_still_concise(
         self, db: EntityDatabase,
     ):
@@ -911,7 +910,6 @@ class TestRegisterEntityDualIdentityMessage:
         # Then message indicates already existed
         assert second_result == "Already existed: feature:f1 \u2014 no changes"
 
-    @pytest.mark.skip(reason="F12 caller-migration pending in feature 109 Group 15.2 — register_entity removed the on-duplicate parent_uuid fixup (design §3.1 'Behavior change: removed on-duplicate parent_uuid fixup'). _process_register_entity must catch EntityExistsError and call set_parent explicitly for the parent-on-duplicate path.")
     def test_register_existing_entity_with_parent_applied(
         self, db: EntityDatabase,
     ):

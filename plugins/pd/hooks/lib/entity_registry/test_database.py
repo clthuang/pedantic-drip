@@ -12,6 +12,7 @@ import pytest
 
 from entity_registry.database import (
     EntityDatabase,
+    EntityExistsError,
     MIGRATIONS,
     _UUID_V4_RE,
     _add_project_scoping,
@@ -698,16 +699,21 @@ class TestRegisterEntity:
         ).fetchone()
         assert row["type_id"] == "backlog:item-42"
 
-    @pytest.mark.skip(reason="F12 caller-migration pending in feature 109 Group 15 — register_entity now raises EntityExistsError; rewrite test to use upsert_entity (idempotent semantics moved there).")
     def test_insert_or_ignore_idempotency(self, db: EntityDatabase):
-        """Registering the same entity twice should not raise."""
-        uuid1 = db.register_entity("project", "proj-1", "Project One", project_id="__unknown__")
-        uuid2 = db.register_entity("project", "proj-1", "Project One Updated", project_id="__unknown__")
+        """Upserting the same entity twice should be idempotent.
+
+        F12 audit: idempotent semantics moved from ``register_entity`` (which
+        now raises ``EntityExistsError``) to ``upsert_entity``. Per spec FR-4
+        and AC-4.4, ``upsert_entity`` does NOT update ``name`` on conflict —
+        callers needing a name update use ``update_entity``.
+        """
+        uuid1 = db.upsert_entity("project", "proj-1", "Project One", project_id="__unknown__")
+        uuid2 = db.upsert_entity("project", "proj-1", "Project One Updated", project_id="__unknown__")
         assert _UUID_V4_RE.match(uuid1)
         assert uuid1 == uuid2
         cur = db._conn.execute("SELECT COUNT(*) FROM entities")
         assert cur.fetchone()[0] == 1
-        # Name should remain the original (INSERT OR IGNORE)
+        # Name remains the original — upsert is status-only per AC-4.4.
         cur = db._conn.execute(
             "SELECT name FROM entities WHERE type_id = 'project:proj-1'"
         )
@@ -945,30 +951,41 @@ class TestImmutableTriggers:
 
 
 # ---------------------------------------------------------------------------
-# register_entity: parent-on-duplicate behavior
+# register_entity / upsert_entity: post-F12 parent-on-duplicate behavior
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skip(reason="F12 caller-migration pending in feature 109 Group 15 — register_entity now raises EntityExistsError; on-duplicate parent_uuid fixup was removed (design §3.1 'Behavior change: removed on-duplicate parent_uuid fixup'). Tests need rewrite to use update_entity / set_parent on conflict.")
 class TestRegisterEntityParentOnDuplicate:
-    """Verify register_entity applies parent_type_id when re-registering
-    an existing entity that has no parent."""
+    """Verify the F12 post-split contract:
 
-    def test_apply_parent_on_duplicate(self, db: EntityDatabase):
-        """Register without parent, then with parent → parent is set."""
+    The pre-F12 ``register_entity`` had an on-duplicate parent_uuid fixup
+    (silent UPDATE when a re-register call supplied parent_uuid on an
+    existing parentless entity). That fixup was removed in feature 109
+    (design §3.1 — "Behavior change: removed on-duplicate parent_uuid
+    fixup"). Callers wanting parent-on-duplicate semantics now catch
+    ``EntityExistsError`` and call ``set_parent`` (or ``update_entity``)
+    explicitly. ``upsert_entity`` is status-only on conflict per AC-4.4
+    and does NOT update parent_uuid either.
+    """
+
+    def test_apply_parent_via_catch_and_set_parent(self, db: EntityDatabase):
+        """register raises on duplicate → caller catches and set_parent works."""
         db.register_entity("project", "parent-proj", "Parent", project_id="__unknown__")
         db.register_entity("feature", "child-feat", "Child", project_id="__unknown__")
-        # Re-register with parent
-        db.register_entity(
-            "feature", "child-feat", "Child",
-            parent_type_id="project:parent-proj",
-            project_id="__unknown__",
-        )
+        # Re-register with parent: now raises EntityExistsError.
+        with pytest.raises(EntityExistsError):
+            db.register_entity(
+                "feature", "child-feat", "Child",
+                parent_type_id="project:parent-proj",
+                project_id="__unknown__",
+            )
+        # New contract: caller applies parent explicitly via set_parent.
+        db.set_parent("feature:child-feat", "project:parent-proj")
         entity = db.get_entity("feature:child-feat")
         assert entity["parent_type_id"] == "project:parent-proj"
 
-    def test_no_overwrite_existing_parent(self, db: EntityDatabase):
-        """Register with parent A, then with parent B → parent A preserved."""
+    def test_existing_parent_preserved_on_register_conflict(self, db: EntityDatabase):
+        """Once a parent is set, register conflict does not touch it."""
         db.register_entity("project", "proj-a", "A", project_id="__unknown__")
         db.register_entity("project", "proj-b", "B", project_id="__unknown__")
         db.register_entity(
@@ -976,20 +993,21 @@ class TestRegisterEntityParentOnDuplicate:
             parent_type_id="project:proj-a",
             project_id="__unknown__",
         )
-        # Re-register with different parent
-        db.register_entity(
-            "feature", "child-feat", "Child",
-            parent_type_id="project:proj-b",
-            project_id="__unknown__",
-        )
+        # Re-register with different parent now raises; existing parent untouched.
+        with pytest.raises(EntityExistsError):
+            db.register_entity(
+                "feature", "child-feat", "Child",
+                parent_type_id="project:proj-b",
+                project_id="__unknown__",
+            )
         entity = db.get_entity("feature:child-feat")
         assert entity["parent_type_id"] == "project:proj-a"
 
-    def test_nonexistent_parent_on_duplicate(self, db: EntityDatabase):
-        """Register without parent, then with nonexistent parent → stays NULL."""
-        db.register_entity("feature", "child-feat", "Child", project_id="__unknown__")
-        # Re-register with nonexistent parent (parent_uuid will be None)
-        db.register_entity(
+    def test_upsert_no_parent_change_on_conflict(self, db: EntityDatabase):
+        """upsert_entity is status-only on conflict — does NOT update parent_uuid."""
+        db.upsert_entity("feature", "child-feat", "Child", project_id="__unknown__")
+        # Upsert again with a nonexistent parent_type_id: parent stays None.
+        db.upsert_entity(
             "feature", "child-feat", "Child",
             parent_type_id="project:does-not-exist",
             project_id="__unknown__",
@@ -997,13 +1015,14 @@ class TestRegisterEntityParentOnDuplicate:
         entity = db.get_entity("feature:child-feat")
         assert entity["parent_type_id"] is None
 
-    def test_idempotent_no_parent(self, db: EntityDatabase):
-        """Register twice without parent → no error, no changes."""
-        db.register_entity("feature", "child-feat", "Child", project_id="__unknown__")
-        uuid2 = db.register_entity("feature", "child-feat", "Child", project_id="__unknown__")
+    def test_idempotent_no_parent_via_upsert(self, db: EntityDatabase):
+        """upsert_entity twice without parent → no error, no changes, same uuid."""
+        uuid1 = db.upsert_entity("feature", "child-feat", "Child", project_id="__unknown__")
+        uuid2 = db.upsert_entity("feature", "child-feat", "Child", project_id="__unknown__")
         entity = db.get_entity("feature:child-feat")
         assert entity["parent_type_id"] is None
         assert entity["uuid"] == uuid2
+        assert uuid1 == uuid2
 
 
 # Task 1.8: set_parent tests
@@ -1900,11 +1919,10 @@ class TestRegisterEntityUUID:
         result = db.register_entity("feature", "test", "Test", project_id="__unknown__")
         assert _UUID_V4_RE.match(result), f"Expected UUID v4, got {result!r}"
 
-    @pytest.mark.skip(reason="F12 caller-migration pending in feature 109 Group 15 — register_entity now raises EntityExistsError; rewrite test to use upsert_entity.")
     def test_register_duplicate_returns_existing_uuid(self, db: EntityDatabase):
-        """Registering same entity twice should return the same UUID."""
-        uuid1 = db.register_entity("project", "proj-1", "Project One", project_id="__unknown__")
-        uuid2 = db.register_entity("project", "proj-1", "Project One Updated", project_id="__unknown__")
+        """Upserting same entity twice returns the same UUID (F12 idempotent path)."""
+        uuid1 = db.upsert_entity("project", "proj-1", "Project One", project_id="__unknown__")
+        uuid2 = db.upsert_entity("project", "proj-1", "Project One Updated", project_id="__unknown__")
         assert uuid1 == uuid2
 
 
@@ -6169,13 +6187,12 @@ class TestResolveRefAndPrefixProject:
 class TestRegisterEntityProject:
     """T3.3: register_entity with project_id."""
 
-    @pytest.mark.skip(reason="F12 caller-migration pending in feature 109 Group 15 — register_entity now raises EntityExistsError; rewrite test to use upsert_entity for idempotent semantics.")
     def test_idempotency_same_project(self, mem_db):
-        """Same type_id + project returns existing UUID."""
-        uid1 = mem_db.register_entity(
+        """Same type_id + project returns existing UUID via upsert_entity (F12)."""
+        uid1 = mem_db.upsert_entity(
             "feature", "f1", "F1", project_id=TEST_PROJECT_ID
         )
-        uid2 = mem_db.register_entity(
+        uid2 = mem_db.upsert_entity(
             "feature", "f1", "F1", project_id=TEST_PROJECT_ID
         )
         assert uid1 == uid2
@@ -7493,9 +7510,13 @@ class TestMigrationsDownDispatcher:
     """Phase C Task 3.1: MIGRATIONS_DOWN dispatcher behaviour."""
 
     def test_migrations_down_contains_only_11(self):
-        """Phase C ships only the reverse Migration 11."""
+        """Reverse migrations registered: 11 (feature 108) and 12 (feature 109).
+
+        Test name preserved for git-blame continuity; the assertion is
+        updated as each new reverse migration ships.
+        """
         from entity_registry.database import MIGRATIONS_DOWN
-        assert list(MIGRATIONS_DOWN.keys()) == [11]
+        assert sorted(MIGRATIONS_DOWN.keys()) == [11, 12]
 
     def test_migrate_down_raises_on_unsupported_target_version(self, tmp_path):
         """Reversing past 10 raises NotImplementedError."""

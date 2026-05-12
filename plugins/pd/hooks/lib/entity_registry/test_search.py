@@ -215,11 +215,10 @@ class TestFTSSync:
         ).fetchall()
         assert len(rows) == 1
 
-    @pytest.mark.skip(reason="F12 caller-migration pending in feature 109 Group 15 — register_entity now raises EntityExistsError. Rewrite to use upsert_entity for the duplicate-call branch.")
     def test_duplicate_register_no_fts_corruption(self, db):
-        """INSERT OR IGNORE skip doesn't double-insert FTS."""
-        db.register_entity("feature", "dup-test", "Dup Test", project_id="__unknown__")
-        db.register_entity("feature", "dup-test", "Dup Test", project_id="__unknown__")
+        """upsert_entity (F12 idempotent path) doesn't double-insert FTS."""
+        db.upsert_entity("feature", "dup-test", "Dup Test", project_id="__unknown__")
+        db.upsert_entity("feature", "dup-test", "Dup Test", project_id="__unknown__")
         rows = db._conn.execute(
             "SELECT rowid FROM entities_fts WHERE entities_fts MATCH 'Dup'"
         ).fetchall()
@@ -671,13 +670,17 @@ class TestSearchAdversarial:
         assert len(results) == 1
         assert results[0]["name"] == "NoMetaEntity"
 
-    @pytest.mark.skip(reason="F12 caller-migration pending in feature 109 Group 15 — register_entity now raises EntityExistsError; rewrite to use upsert_entity (which also preserves name on conflict per AC-4.4 status-only rule).")
     def test_duplicate_register_different_name_keeps_original(self, db):
-        """derived_from: dimension:adversarial — duplicate register doesn't update."""
+        """derived_from: dimension:adversarial — upsert_entity preserves name on conflict.
+
+        F12 (feature 109): per AC-4.4 status-only rule, ``upsert_entity`` does
+        NOT update ``name`` on the conflict branch — callers needing name
+        updates use ``update_entity`` explicitly.
+        """
         # Given an entity already registered
-        db.register_entity("feature", "dup-adv", "OriginalName", project_id="__unknown__")
-        # When registering again with a different name (INSERT OR IGNORE)
-        db.register_entity("feature", "dup-adv", "DifferentName", project_id="__unknown__")
+        db.upsert_entity("feature", "dup-adv", "OriginalName", project_id="__unknown__")
+        # When upserting again with a different name (status-only conflict path)
+        db.upsert_entity("feature", "dup-adv", "DifferentName", project_id="__unknown__")
         # Then original name is still searchable, new name is not
         results = db.search_entities("OriginalName")
         assert len(results) == 1
@@ -877,13 +880,15 @@ class TestSearchMutationMindset:
             db.search_entities("")
         db._conn.close()
 
-    @pytest.mark.skip(reason="F12 caller-migration pending in feature 109 Group 15 — register_entity now raises EntityExistsError; FTS uniqueness is preserved by upsert_entity's no-op branch. Rewrite to use upsert_entity.")
     def test_rowcount_guards_duplicate_fts_insert(self, db):
-        """derived_from: dimension:mutation_mindset — rowcount==0 skips FTS insert."""
+        """derived_from: dimension:mutation_mindset — upsert no-op branch skips FTS insert.
+
+        F12: ``upsert_entity`` is status-only on conflict — no second FTS row.
+        """
         # Given an entity is registered
-        db.register_entity("feature", "rc-mut", "RowcountMut", project_id="__unknown__")
-        # When registering duplicate (INSERT OR IGNORE)
-        db.register_entity("feature", "rc-mut", "RowcountMut", project_id="__unknown__")
+        db.upsert_entity("feature", "rc-mut", "RowcountMut", project_id="__unknown__")
+        # When upserting duplicate (no-op conflict branch)
+        db.upsert_entity("feature", "rc-mut", "RowcountMut", project_id="__unknown__")
         # Then FTS should still have exactly 1 entry (not 2)
         rows = db._conn.execute(
             "SELECT rowid FROM entities_fts WHERE entities_fts MATCH 'RowcountMut'"

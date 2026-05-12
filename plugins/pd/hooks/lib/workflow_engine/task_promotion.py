@@ -13,6 +13,7 @@ import os
 import re
 from typing import TYPE_CHECKING
 
+from entity_registry.database import EntityExistsError
 from entity_registry.dependencies import DependencyManager
 from entity_registry.id_generator import generate_entity_id
 from entity_registry.project_identity import _compute_legacy_project_id
@@ -345,16 +346,22 @@ def promote_task(
     # exist) earlier in this function for the artifact_path validation.
     parent_entity = db.get_entity(feature_type_id)
     parent_uuid = parent_entity["uuid"] if parent_entity else None
-    task_uuid = db.register_entity(
-        entity_type="task",
-        entity_id=task_entity_id,
-        name=matched_heading,
-        status="planned",
-        parent_uuid=parent_uuid,
-        metadata=task_metadata,
-        workspace_uuid=workspace_uuid,
-        project_id=_project_id if workspace_uuid is None else None,
-    )
+    # F12 audit: conflict-is-error → register_entity, EntityExistsError handled
+    try:
+        task_uuid = db.register_entity(
+            entity_type="task",
+            entity_id=task_entity_id,
+            name=matched_heading,
+            status="planned",
+            parent_uuid=parent_uuid,
+            metadata=task_metadata,
+            workspace_uuid=workspace_uuid,
+            project_id=_project_id if workspace_uuid is None else None,
+        )
+    except EntityExistsError as e:
+        raise RuntimeError(
+            f"Task registration conflict for {task_type_id}"
+        ) from e
 
     # 9. Create workflow_phase row for the task
     db.create_workflow_phase(task_type_id, mode=mode)

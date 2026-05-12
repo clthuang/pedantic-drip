@@ -9447,7 +9447,6 @@ class TestFeature088BundleE:
             captured.err,
         ), f"stderr did not match expected pattern: {captured.err!r}"
 
-    @pytest.mark.skip(reason="F12 caller-migration pending in feature 109 Group 15 — register_entity now emits an entity_created phase_event (spec line 104). This test asserts `rows == []` which is stale; rewrite to filter to event_type != 'entity_created' or assert exactly the entity_created baseline row exists.")
     def test_complete_phase_rejects_oversized_reviewer_notes(
         self, fresh_setup,
     ):
@@ -9465,9 +9464,12 @@ class TestFeature088BundleE:
         assert data.get("error_type") == "oversized_reviewer_notes"
         assert "exceeds 10000" in data.get("message", "")
 
-        # No phase_events row was written (validation returned early).
+        # F12 (feature 109): register_entity emits an entity_created phase_event,
+        # so the relevant assertion is that no NEW non-entity-created row was
+        # written by the rejected complete_phase call.
         rows = db.query_phase_events(type_id="feature:e-001")
-        assert rows == []
+        non_created = [r for r in rows if r.get("event_type") != "entity_created"]
+        assert non_created == []
 
     def test_complete_phase_rejects_malformed_json_reviewer_notes(
         self, fresh_setup,
@@ -10098,7 +10100,6 @@ class TestFeature089BundleE:
 
     # ---- AC-23 (#00165): dual-write failure row stays missing across runs ----
 
-    @pytest.mark.skip(reason="F12 caller-migration pending in feature 109 Group 15 — register_entity now emits an entity_created phase_event. Test assertion `len(rows) == 1` is stale; rewrite to assert `len(rows) == 2` (entity_created + design 'started') or filter on event_type='started'.")
     def test_dual_write_failure_row_remains_missing_after_subsequent_transition(
         self, tmp_path, monkeypatch,
     ):
@@ -10165,12 +10166,15 @@ class TestFeature089BundleE:
             f"second transition should not have flagged a failure: {data2!r}"
         )
 
-        # Phase_events table MUST have EXACTLY ONE row for this feature —
-        # the design transition's 'started' event.  The specify transition's
-        # started row is permanently missing (not retroactively backfilled).
-        rows = db.query_phase_events(type_id="feature:089-e-23")
+        # Phase_events table MUST have EXACTLY ONE 'started' row for this
+        # feature — the design transition.  The specify transition's started
+        # row is permanently missing (not retroactively backfilled).
+        # F12 (feature 109): register_entity also emits an entity_created
+        # event, so filter to 'started' before counting.
+        all_rows = db.query_phase_events(type_id="feature:089-e-23")
+        rows = [r for r in all_rows if r["event_type"] == "started"]
         assert len(rows) == 1, (
-            f"expected exactly 1 phase_events row (design only); got "
+            f"expected exactly 1 started phase_events row (design only); got "
             f"{len(rows)}: {rows!r}"
         )
         assert rows[0]["phase"] == "design"

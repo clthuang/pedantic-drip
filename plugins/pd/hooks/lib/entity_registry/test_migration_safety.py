@@ -13,17 +13,38 @@ Scope:
   - ``test_migration_12_cleans_malformed_feature_row`` (Task 1.3 DoD, AC-5.3):
     asserts the migration removes the known malformed ``workflow_phases`` row
     with ``type_id='feature:'`` and emits an INFO log entry to stderr.
+
+Group 16 additions:
+  - ``test_migration_12_end_to_end`` (Task 16.4): exercises the full forward
+    migration against a v11 baseline and verifies all expected schema state
+    plus FK cleanliness.
+  - ``test_migration_12_idempotent`` (Task 16.4a, AC-5.2): re-running
+    migration 12 on a v12 database is a no-op with zero schema drift.
+  - ``test_migration_12_lock_failure`` (Task 16.4b, AC-5.4 + AC-2.5): when
+    another connection holds an exclusive lock, the migration raises
+    OperationalError rather than silently swallowing it.
+  - ``test_migration_12_down`` (Task 16.5b, AC-5.1): the down migration
+    restores runtime v11 schema state (entity_type column, immutable
+    triggers, narrowed phase_events CHECK, NULL-able phase removed).
 """
 from __future__ import annotations
 
 import inspect
 import sqlite3
+import tempfile
+import threading
+import time
 import uuid as _uuid
+from pathlib import Path
+
+import pytest
 
 from entity_registry.database import (
+    MIGRATIONS,
+    MIGRATIONS_DOWN,
     _migration_12_polymorphic_taxonomy_and_events,
 )
-from entity_registry.test_helpers import make_v11_db
+from entity_registry.test_helpers import make_v11_db, make_v12_db
 
 
 def test_v12_stub_has_fk_check() -> None:
@@ -239,4 +260,256 @@ def test_migration_12_cleans_malformed_feature_row(capsys) -> None:
     ]
     assert len(matching) == 1, (
         f"Expected exactly one AC-5.3 cleanup INFO line, got {matching!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Group 16: end-to-end migration verification
+# ---------------------------------------------------------------------------
+
+
+def test_migration_12_end_to_end() -> None:
+    """Task 16.4: full forward migration verification on a v11 baseline.
+
+    Assert:
+      - schema_version stamped to '12'
+      - 3 new columns (type, kind, lifecycle_class) present on entities
+      - legacy entity_type column ABSENT
+      - phase_events.event_type CHECK accepts all 7 values
+      - phase_events.phase is nullable (NOT NULL relaxed)
+      - phase_events has metadata column
+      - Both immutable triggers absent from sqlite_master
+      - entities_fts has `kind` (not `entity_type`) in column list
+      - idx_entities_type_kind index exists
+      - FK check clean (no violations)
+    """
+    conn = make_v11_db()
+    _migration_12_polymorphic_taxonomy_and_events(conn)
+
+    # schema_version stamped
+    v = conn.execute(
+        "SELECT value FROM _metadata WHERE key='schema_version'"
+    ).fetchone()
+    assert v is not None and v[0] == "12"
+
+    # 3 new columns present on entities
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(entities)").fetchall()}
+    assert "type" in cols
+    assert "kind" in cols
+    assert "lifecycle_class" in cols
+
+    # entity_type column absent
+    assert "entity_type" not in cols, (
+        "Migration 12 must DROP entities.entity_type (AC-1.4); still present"
+    )
+
+    # phase_events.event_type CHECK accepts 7 values — synthetic insert per
+    # event_type proves the constraint is permissive enough.
+    pe_create_sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE name='phase_events'"
+    ).fetchone()[0]
+    for ev in (
+        "started", "completed", "skipped", "backward",
+        "entity_created", "entity_status_changed", "entity_promoted",
+    ):
+        assert f"'{ev}'" in pe_create_sql, (
+            f"phase_events CHECK missing event_type {ev!r}: {pe_create_sql}"
+        )
+
+    # phase column is now NULL-able (was NOT NULL pre-migration).
+    pe_cols = conn.execute("PRAGMA table_info(phase_events)").fetchall()
+    phase_col = next(c for c in pe_cols if c[1] == "phase")
+    # PRAGMA table_info columns: cid, name, type, notnull, dflt_value, pk
+    assert phase_col[3] == 0, (
+        f"phase column notnull flag should be 0 (NULL-able), got {phase_col[3]}"
+    )
+
+    # phase_events has metadata column
+    pe_col_names = {c[1] for c in pe_cols}
+    assert "metadata" in pe_col_names
+
+    # Both immutable triggers absent from sqlite_master
+    trig_rows = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='trigger' AND name IN ("
+        "'enforce_immutable_entity_type', 'enforce_immutable_type_id')"
+    ).fetchall()
+    assert trig_rows == [], (
+        f"Immutable triggers must be dropped (AC-3.1); still present: {trig_rows}"
+    )
+
+    # entities_fts uses 'kind' instead of 'entity_type'
+    fts_sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE name='entities_fts'"
+    ).fetchone()[0]
+    assert "kind" in fts_sql, f"entities_fts schema missing kind: {fts_sql}"
+    assert "entity_type" not in fts_sql, (
+        f"entities_fts must not reference entity_type post-migration: {fts_sql}"
+    )
+
+    # idx_entities_type_kind index exists
+    idx_row = conn.execute(
+        "SELECT name FROM sqlite_master "
+        "WHERE type='index' AND name='idx_entities_type_kind'"
+    ).fetchone()
+    assert idx_row is not None, (
+        "idx_entities_type_kind index must exist post-migration (AC-1.6)"
+    )
+
+    # FK check clean
+    fk_violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+    assert fk_violations == [], (
+        f"Post-migration FK violations: {fk_violations}"
+    )
+
+
+def test_migration_12_idempotent() -> None:
+    """Task 16.4a / AC-5.2: running migration 12 twice produces no error and
+    no schema drift.
+    """
+    conn = make_v12_db()
+    schema_before = conn.execute(
+        "SELECT name, sql FROM sqlite_master ORDER BY name"
+    ).fetchall()
+    schema_before_norm = [(r[0], r[1]) for r in schema_before]
+
+    MIGRATIONS[12](conn)
+
+    schema_after = conn.execute(
+        "SELECT name, sql FROM sqlite_master ORDER BY name"
+    ).fetchall()
+    schema_after_norm = [(r[0], r[1]) for r in schema_after]
+    assert schema_before_norm == schema_after_norm, (
+        "Migration 12 must be idempotent — schema_after != schema_before"
+    )
+
+
+def test_migration_12_lock_failure(tmp_path: Path) -> None:
+    """Task 16.4b / AC-5.4 + AC-2.5: when another connection holds an
+    exclusive lock, migration 12 raises OperationalError rather than
+    silently swallowing it.
+    """
+    db_path = tmp_path / "lock_test.db"
+    # Build a v11 DB at the file path so the migration has something to
+    # operate against.
+    setup_conn = make_v11_db(db_path)
+    setup_conn.close()
+
+    # Hold an exclusive lock from a separate connection.
+    holder = sqlite3.connect(str(db_path), timeout=0.0)
+    holder.execute("PRAGMA busy_timeout = 0")
+    holder.execute("BEGIN EXCLUSIVE")
+    try:
+        # Open a second connection with a short busy_timeout and attempt
+        # migration 12.
+        attacker = sqlite3.connect(str(db_path), timeout=0.0)
+        attacker.row_factory = sqlite3.Row
+        attacker.execute("PRAGMA busy_timeout = 100")
+        with pytest.raises(sqlite3.OperationalError) as excinfo:
+            _migration_12_polymorphic_taxonomy_and_events(attacker)
+        # Loud failure surface: the error message mentions the lock.
+        assert "lock" in str(excinfo.value).lower() or "busy" in str(
+            excinfo.value
+        ).lower(), (
+            f"Expected lock/busy in error message, got: {excinfo.value!r}"
+        )
+        attacker.close()
+    finally:
+        try:
+            holder.rollback()
+        except sqlite3.Error:
+            pass
+        holder.close()
+
+
+# ---------------------------------------------------------------------------
+# Group 16.5b: down-migration verification
+# ---------------------------------------------------------------------------
+
+
+def test_migration_12_down() -> None:
+    """Task 16.5b / AC-5.1: down migration restores runtime v11 schema state.
+
+    Assert after running down on a v12 DB:
+      - schema_version = '11'
+      - entity_type column restored on entities
+      - new columns (type, kind, lifecycle_class) absent
+      - Both immutable triggers present in sqlite_master
+      - phase_events.event_type CHECK narrowed back to 4 values
+      - phase_events.phase NOT NULL again
+      - phase_events.metadata column absent
+      - idx_entities_type_kind index absent
+      - entities_fts references entity_type (not kind)
+    """
+    conn = make_v12_db()
+    # Sanity: confirm v12 state before applying down.
+    cols_v12 = {r[1] for r in conn.execute("PRAGMA table_info(entities)").fetchall()}
+    assert "kind" in cols_v12 and "entity_type" not in cols_v12
+
+    MIGRATIONS_DOWN[12](conn)
+
+    # schema_version stamped back to 11
+    v = conn.execute(
+        "SELECT value FROM _metadata WHERE key='schema_version'"
+    ).fetchone()
+    assert v is not None and v[0] == "11"
+
+    # entity_type column restored; new columns absent.
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(entities)").fetchall()}
+    assert "entity_type" in cols
+    assert "type" not in cols
+    assert "kind" not in cols
+    assert "lifecycle_class" not in cols
+
+    # Both immutable triggers present.
+    trig_rows = {
+        r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger' AND name IN ("
+            "'enforce_immutable_entity_type', 'enforce_immutable_type_id')"
+        ).fetchall()
+    }
+    assert trig_rows == {
+        "enforce_immutable_entity_type",
+        "enforce_immutable_type_id",
+    }, f"Immutable triggers must be re-created; got {trig_rows!r}"
+
+    # phase_events.event_type CHECK narrowed.
+    pe_sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE name='phase_events'"
+    ).fetchone()[0]
+    for ev in ("started", "completed", "skipped", "backward"):
+        assert f"'{ev}'" in pe_sql
+    for ev in ("entity_created", "entity_status_changed", "entity_promoted"):
+        assert f"'{ev}'" not in pe_sql, (
+            f"phase_events CHECK must narrow back; still allows {ev!r}: {pe_sql}"
+        )
+
+    # phase column NOT NULL again.
+    pe_cols = conn.execute("PRAGMA table_info(phase_events)").fetchall()
+    phase_col = next(c for c in pe_cols if c[1] == "phase")
+    assert phase_col[3] == 1, (
+        f"phase column notnull flag should be 1 after down, got {phase_col[3]}"
+    )
+
+    # metadata column absent.
+    pe_col_names = {c[1] for c in pe_cols}
+    assert "metadata" not in pe_col_names
+
+    # idx_entities_type_kind absent.
+    idx_row = conn.execute(
+        "SELECT name FROM sqlite_master "
+        "WHERE type='index' AND name='idx_entities_type_kind'"
+    ).fetchone()
+    assert idx_row is None, (
+        "idx_entities_type_kind must be dropped on down"
+    )
+
+    # entities_fts references entity_type (not kind).
+    fts_sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE name='entities_fts'"
+    ).fetchone()[0]
+    assert "entity_type" in fts_sql, (
+        f"entities_fts must reference entity_type after down: {fts_sql}"
+    )
+    assert "kind" not in fts_sql, (
+        f"entities_fts must not reference kind after down: {fts_sql}"
     )

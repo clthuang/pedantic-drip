@@ -239,7 +239,11 @@ For each feature in `execution_order`:
 
    First resolve the project parent: `get_entity(ref="project:{project P-ID}")` → capture `uuid` as `project_uuid`.
 
-   Call `register_entity` MCP tool:
+   Call `register_entity` MCP tool. The MCP entity_server translates
+   `EntityExistsError` to a structured JSON error (`error_type=entity_exists`,
+   with `recovery_hint` pointing at `upsert_entity`) per feature 109 design
+   §3.5 — if a feature was previously registered, the response surfaces
+   the conflict so the caller can choose to upsert or fall through:
    ```
    register_entity(
      entity_type="feature",

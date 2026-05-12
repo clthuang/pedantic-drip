@@ -77,7 +77,10 @@ Extract the brainstorm filename stem from the `--prd` path (e.g., `20260227-0540
 
 ### 2. Register Backlog Entity (if backlog marker found)
 
-If the backlog source pattern matched:
+If the backlog source pattern matched. The MCP entity_server translates
+`EntityExistsError` to a structured JSON error (`error_type=entity_exists`,
+with `recovery_hint`) per feature 109 design §3.5; if the backlog id is
+already registered, surface the error or fall back to `upsert_entity`:
 
 ```
 register_entity(
@@ -99,6 +102,9 @@ set_parent(
 ### 3. Register Brainstorm Entity
 
 Extract the title from the PRD first heading (e.g., `# PRD: Feature Name` -> `Feature Name`).
+The MCP entity_server translates `EntityExistsError` to structured JSON
+(`error_type=entity_exists`) per feature 109 design §3.5; on conflict,
+surface the error or fall back to `upsert_entity`:
 
 ```
 register_entity(
@@ -112,6 +118,8 @@ register_entity(
 ### 4. Register Project Entity
 
 First resolve the brainstorm parent: `get_entity(ref="brainstorm:{filename-stem}")` → capture `uuid` as `brainstorm_uuid`.
+Same MCP routing: `EntityExistsError` returns structured JSON per
+feature 109 design §3.5:
 
 ```
 register_entity(
