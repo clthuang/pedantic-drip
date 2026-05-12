@@ -1,7 +1,7 @@
 # Feature 113 — Feature 112 QA-Gate Followups
 
 ## Status
-- Phase: specify (iter 4)
+- Phase: specify (iter 5)
 - Mode: standard
 - Source: 11 MED-severity findings filed in `docs/backlog.md` under "From Feature 112 Pre-Release QA Findings (2026-05-12)" section (entries #00391 through #00401)
 - Brainstorm: skipped — scope is well-specified by backlog entries with concrete file:line targets and fix descriptions
@@ -400,15 +400,15 @@ AC-12 is satisfied iff post-implementation `diff <(grep '^FAILED' baseline.log |
 |----|---------------------|-----------|
 | AC-1 | JSON shape + validator unit test | `qa_gate/test_emitter.py::test_emit_qa_gate_rejects_invalid_status` |
 | AC-2 | grep section headers | `bash-version.log` |
-| AC-3 | pytest 5 tests + ValueError pin | `test_workflow_state_server.py` |
-| AC-4 | pytest 2 tests + mismatch ValueError pin | `test_engine.py` |
+| AC-3 | pytest 6 tests (2 existing + 4 new) + ValueError pin on both handlers | `test_workflow_state_server.py` |
+| AC-4 | pytest 4 new tests (3 engine + 1 database) + mismatch ValueError pin + UPDATE SET immutability pin | `test_engine.py`, `test_database.py` |
 | AC-5 | pytest 1 test + symmetric propagation pin | `test_entity_lifecycle.py` |
-| AC-6 | pytest 1 test + or-None mutation pin | `test_workflow_state_server.py` |
+| AC-6 | pytest 2 parametrized sub-tests + 2 or-None mutation pins (lines 657 + 1280) | `test_workflow_state_server.py` |
 | AC-7 | pytest 2 tests (Operational + Runtime) + grep | `test_workflow_state_server.py` |
 | AC-8 | pytest 2 tests + stderr capture | `test_server_helpers.py` |
 | AC-9 | pytest 1 test + missing-parent check pin | `test_entity_server.py` |
 | AC-10 | pytest 4 parametrized + DeprecationWarning capture | `test_entity_status.py` |
-| AC-11 | pytest 3 tests (one per reconcile_* handler) | `test_workflow_state_server.py` |
+| AC-11 | pytest 6 tests (3 boundary + 2 internal-forwarding + 1 scope-scan) | `test_workflow_state_server.py`, `test_reconciliation.py`, `test_frontmatter_sync.py` |
 | AC-12 | full plugin pytest, diff against pinned baseline | `agent_sandbox/{date}/113-validation/` |
 | AC-13 | dogfood emit at finish-feature | feature 113's own `.qa-gate.json` |
 
