@@ -782,3 +782,26 @@ When a review session may compact mid-stream, save iter-N findings to a sidecar 
 - Confidence: high
 - Last observed: Feature #112
 - Observation count: 1
+
+### Pattern: TDD Tests+X/Impl+X Pairing Per PI Yields First-Pass Approval
+TDD Tests+X/Impl+X plan pairing per PI produces first-pass reviewer approval. When each PI is structured as a Tests-first task followed by Implementation tasks (e.g., Tests+1 then Impl+1, Tests+2 then Impl+2), reviewers can trace AC coverage → test code → implementation in a single linear pass.
+- Observed in: Feature #113 — 4/4 reviewers (implementation, relevance, code-quality, security) PASS iter 1 across 8 PI dispatches; AC-12 baseline diff empty
+- Reasoning: Pairing test and impl tasks within the same PI makes each commit self-contained, eliminating cross-PI context-switching that drives extra reviewer rounds
+- Confidence: high
+- Last observed: Feature #113
+- Observation count: 1
+
+### Pattern: Two-Tier Plan Review (Plan-Reviewer + Task-Reviewer)
+Plan-reviewer (architecture/sequencing) and task-reviewer (mechanical task integrity) catch distinct defect classes. Plan-reviewer focuses on dependencies, AC coverage, phase alignment; task-reviewer catches dangling task IDs, missing wiring tasks, unassigned shell variables. Both passes are necessary — collapsing them misses mechanical-integrity defects.
+- Observed in: Feature #113 — plan-reviewer PASS after 3 iters; task-reviewer iter 1 still found 3 fresh blockers (T7b.1 referenced non-existent T7a.4, missing finish-feature.md emitter wiring task, unassigned FINAL_FAIL_COUNT shell var)
+- Confidence: high
+- Last observed: Feature #113
+- Observation count: 1
+
+### Pattern: Mutation-Pin .MUT Gates for Observability PIs
+Mutation-pin observability gates (named PI-N.MUT tasks) provide explicit verification for emitter/hook/observability path changes. The procedure: temporarily mutate the load-bearing line, run the test, capture failure mode, restore. Recording gate execution in the per-PI commit body creates durable traceability.
+- Observed in: Feature #113 PI-3.MUT (qa_gate emitter empty-string normalization at lines 657 and 1280) and PI-6a.MUT (engine.py except sqlite3.Error non-swallow of ValueError)
+- Reasoning: Observability code is structurally hard to test — a malformed emitter still 'works' from caller's perspective; mutation gates force explicit output-shape verification
+- Confidence: medium
+- Last observed: Feature #113
+- Observation count: 1

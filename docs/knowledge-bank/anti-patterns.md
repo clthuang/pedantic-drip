@@ -736,3 +736,19 @@ Don't split tightly-coupled call-site/definition changes across non-adjacent pha
 - Confidence: high
 - Last observed: Feature #112
 - Observation count: 1
+
+### Anti-Pattern: Asserting Existing-Code Facts in Spec Without Grep/SQL Verification
+Specs that claim 'column X does not exist' or 'function Y has no Z argument' must be backed by a grep/SQL check before submission. Reviewers cannot distinguish 'asserted' from 'verified' facts in prose, so unverified claims become reviewer round-trips.
+- Observed in: Feature #113 specify phase — FR-4.1 wrongly claimed Migration 11 didn't add workspace_uuid to workflow_phases; column existed at database.py:2041-2092. Specify ran 5 spec-reviewer + 3 phase-reviewer iters largely correcting this and adjacent factual errors.
+- Fix: specifying-feature skill should require a "Verification Checklist" preamble — every concrete claim about existing code (column names, function signatures, file paths, migration numbers) gets a grep/SELECT before spec submission
+- Confidence: high
+- Last observed: Feature #113
+- Observation count: 1
+
+### Anti-Pattern: Implementer Agents Without Scope-Creep Diff Sentinel
+Trusting implementer agents to stay within PI scope without an automated diff sentinel. Agents can produce out-of-scope destructive edits (e.g., truncating an 845-line module to 3 lines) that downstream reviewers miss because reviewer focus is on the PI's declared scope, not arbitrary file changes.
+- Observed in: Feature #113 PI-1 — implementer overwrote plugins/pd/hooks/lib/semantic_memory/maintenance.py (845 → 3 lines), out of FR-1/FR-2 scope. Caught manually via git status review, not by automated tooling.
+- Fix: Add PostToolUse hook or implementing-skill check that flags any file modification (a) not in PI scope OR (b) net line change < -50% of original size. Surface as blocker for human acknowledgment.
+- Confidence: high
+- Last observed: Feature #113
+- Observation count: 1
