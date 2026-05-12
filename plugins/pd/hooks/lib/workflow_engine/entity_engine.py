@@ -30,11 +30,21 @@ from .templates import get_template
 
 
 
-# 5D entity types use phase-sequence-only transitions (no artifact prereqs).
-# Features use the frozen WorkflowStateEngine with full guard model.
-FIVE_D_ENTITY_TYPES: frozenset[str] = frozenset(
-    {"initiative", "objective", "key_result", "project", "task"}
-)
+# Feature 109 AC-1.5: the legacy frozenset of phase-sequence kinds was
+# removed per spec §1. The dispatch logic now reads ``entity["kind"]``
+# directly (kind values are byte-identical to the legacy entity_type
+# strings for the 5 production kinds per FR-1; the 4 historical
+# phase-sequence kinds — initiative/objective/key_result/task — have 0
+# production rows but remain supported as test fixtures and forward-compat
+# with feature 111 issue_spawn).
+#
+# Helper predicate (preserved for clarity at call sites): "is this kind
+# handled by the phase-sequence backend?". Only ``project`` has
+# production rows; the other 4 surface only in unit tests.
+def _is_phase_sequence_kind(kind: str) -> bool:
+    """Return True if the entity's kind is dispatched to FiveDBackend."""
+    return kind in ("initiative", "objective", "key_result", "project", "task")
+
 
 # Deliver-phase mapping: the phase where blocked_by is enforced.
 # Features use "implement", 5D entities use "deliver".
@@ -139,7 +149,11 @@ class EntityWorkflowEngine:
         if entity is None:
             raise ValueError(f"Entity not found: {entity_uuid}")
 
-        entity_type = entity["entity_type"]
+        # F11 (feature 109 AC-1.5): dispatch on kind (entity_type column
+        # was dropped by migration 12 Group 7; kind is its semantic
+        # successor). The entity dict still surfaces ``entity_type`` as a
+        # synonym for caller compatibility.
+        entity_type = entity["kind"]
         type_id = entity["type_id"]
 
         # Phase A: completion — route by backend
@@ -148,7 +162,7 @@ class EntityWorkflowEngine:
             state = self._feature_complete(
                 type_id, phase, workspace_uuid=workspace_uuid,
             )
-        elif entity_type in FIVE_D_ENTITY_TYPES:
+        elif _is_phase_sequence_kind(entity_type):
             # Five-D entities: internal helper writes scope via the parent
             # entity row's existing workspace; no kwarg needed.
             state = self._fived_complete(entity, phase)
@@ -216,7 +230,10 @@ class EntityWorkflowEngine:
         if entity is None:
             raise ValueError(f"Entity not found: {entity_uuid}")
 
-        entity_type = entity["entity_type"]
+        # F11 (feature 109 AC-1.5): dispatch on kind (entity_type column
+        # was dropped by migration 12 Group 7; kind is its semantic
+        # successor).
+        entity_type = entity["kind"]
         type_id = entity["type_id"]
 
         # Check blocked_by at deliver phase (implement for features,
@@ -248,7 +265,7 @@ class EntityWorkflowEngine:
                 type_id, target_phase, workspace_uuid=workspace_uuid,
             )
 
-        if entity_type in FIVE_D_ENTITY_TYPES:
+        if _is_phase_sequence_kind(entity_type):
             # Five-D entities (objective/initiative/etc.): internal helper
             # writes scope via the parent entity row's existing workspace
             # (queried inline via _db.get_entity_by_uuid); no kwarg needed.

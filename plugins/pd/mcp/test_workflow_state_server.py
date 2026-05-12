@@ -35,7 +35,7 @@ from entity_registry.entity_lifecycle import ENTITY_MACHINES
 def _bootstrap_test_workspace(db, legacy_id: str) -> str:
     """Insert a workspaces row for ``legacy_id`` (post-Migration-11 prereq).
 
-    Feature 108: ``register_entity``/``insert_phase_event`` resolve their
+    Feature 108: ``register_entity``/``append_phase_event`` resolve their
     ``project_id`` kwarg via ``workspaces.project_id_legacy``; tests passing
     a non-``__unknown__`` project_id must pre-register a matching row.
 
@@ -3256,14 +3256,17 @@ class TestReconcilePhaseEventsDrift:
         type_id = self._seed_feature_with_phase_timing_drift(db, tmp_path, slug)
 
         # Seed a few unrelated phase_events rows so we can count pre/post.
-        for phase, ev, ts in [
-            ("brainstorm", "started", "2026-04-17T00:00:00Z"),
-            ("brainstorm", "completed", "2026-04-17T01:00:00Z"),
-            ("specify", "started", "2026-04-17T02:00:00Z"),
+        # Per feature 109 Group 9 ``_REQUIRED_PARAMS``, ``completed`` requires
+        # ``iterations``. Tuple: (phase, event_type, timestamp, extras).
+        for phase, ev, ts, extras in [
+            ("brainstorm", "started", "2026-04-17T00:00:00Z", {}),
+            ("brainstorm", "completed", "2026-04-17T01:00:00Z",
+             {"iterations": 1}),
+            ("specify", "started", "2026-04-17T02:00:00Z", {}),
         ]:
-            db.insert_phase_event(
+            db.append_phase_event(
                 type_id=type_id, project_id="__unknown__", phase=phase,
-                event_type=ev, timestamp=ts, source="live",
+                event_type=ev, timestamp=ts, source="live", **extras,
             )
 
         pre_rows = db.query_phase_events(type_id=type_id, limit=500)
@@ -3335,10 +3338,11 @@ class TestFeature089BundleBDetection:
 
         # Seed a phase_events row for specify:completed so we can verify it
         # is NOT flagged as drift (negative control for the detector).
-        db.insert_phase_event(
+        # Feature 109 Group 9 requires ``iterations`` for completed events.
+        db.append_phase_event(
             type_id=type_id, project_id="__unknown__", phase="specify",
             event_type="completed", timestamp="2026-03-31T00:00:00Z",
-            source="live",
+            source="live", iterations=1,
         )
 
         existing = db.get_entity(type_id)
@@ -8891,7 +8895,7 @@ class TestPhaseEventsDualWrite:
         def raise_on_insert(**kwargs):
             raise RuntimeError("simulated INSERT failure")
 
-        monkeypatch.setattr(db, "insert_phase_event", raise_on_insert)
+        monkeypatch.setattr(db, "append_phase_event", raise_on_insert)
 
         result = _process_transition_phase(
             engine, "feature:dw-001", "specify", False,
@@ -9011,67 +9015,67 @@ class TestQueryPhaseAnalytics:
 
         # Seed events with known timestamps
         # Feature A - brainstorm: 1 hour
-        db.insert_phase_event(
+        db.append_phase_event(
             type_id="feature:a-001", project_id="P001",
             phase="brainstorm", event_type="started",
             timestamp="2026-01-01T10:00:00Z",
         )
-        db.insert_phase_event(
+        db.append_phase_event(
             type_id="feature:a-001", project_id="P001",
             phase="brainstorm", event_type="completed",
             timestamp="2026-01-01T11:00:00Z",
             iterations=2,
         )
         # Feature A - specify: 2 hours
-        db.insert_phase_event(
+        db.append_phase_event(
             type_id="feature:a-001", project_id="P001",
             phase="specify", event_type="started",
             timestamp="2026-01-01T12:00:00Z",
         )
-        db.insert_phase_event(
+        db.append_phase_event(
             type_id="feature:a-001", project_id="P001",
             phase="specify", event_type="completed",
             timestamp="2026-01-01T14:00:00Z",
             iterations=4,
         )
         # Feature A - specify SECOND cycle (re-entry): 30 min
-        db.insert_phase_event(
+        db.append_phase_event(
             type_id="feature:a-001", project_id="P001",
             phase="specify", event_type="started",
             timestamp="2026-01-02T10:00:00Z",
         )
-        db.insert_phase_event(
+        db.append_phase_event(
             type_id="feature:a-001", project_id="P001",
             phase="specify", event_type="completed",
             timestamp="2026-01-02T10:30:00Z",
             iterations=1,
         )
         # Feature B - P002 project
-        db.insert_phase_event(
+        db.append_phase_event(
             type_id="feature:b-002", project_id="P002",
             phase="brainstorm", event_type="started",
             timestamp="2026-01-03T10:00:00Z",
         )
-        db.insert_phase_event(
+        db.append_phase_event(
             type_id="feature:b-002", project_id="P002",
             phase="brainstorm", event_type="completed",
             timestamp="2026-01-03T12:00:00Z",
             iterations=3,
         )
         # Backward events
-        db.insert_phase_event(
+        db.append_phase_event(
             type_id="feature:a-001", project_id="P001",
             phase="design", event_type="backward",
             timestamp="2026-01-01T15:00:00Z",
             backward_reason="scope gap", backward_target="specify",
         )
-        db.insert_phase_event(
+        db.append_phase_event(
             type_id="feature:a-001", project_id="P001",
             phase="design", event_type="backward",
             timestamp="2026-01-02T15:00:00Z",
             backward_reason="another gap", backward_target="specify",
         )
-        db.insert_phase_event(
+        db.append_phase_event(
             type_id="feature:b-002", project_id="P002",
             phase="specify", event_type="backward",
             timestamp="2026-01-03T15:00:00Z",
@@ -9228,23 +9232,23 @@ class TestFeature088BundleD:
 
         db = EntityDatabase(":memory:")
         # Seed two projects.
-        db.insert_phase_event(
+        db.append_phase_event(
             type_id="feature:a-001", project_id="ProjA",
             phase="design", event_type="started",
             timestamp="2026-04-01T10:00:00Z",
         )
-        db.insert_phase_event(
+        db.append_phase_event(
             type_id="feature:a-001", project_id="ProjA",
             phase="design", event_type="completed",
             timestamp="2026-04-01T11:00:00Z",
             iterations=1,
         )
-        db.insert_phase_event(
+        db.append_phase_event(
             type_id="feature:b-002", project_id="ProjB",
             phase="design", event_type="started",
             timestamp="2026-04-02T10:00:00Z",
         )
-        db.insert_phase_event(
+        db.append_phase_event(
             type_id="feature:b-002", project_id="ProjB",
             phase="design", event_type="completed",
             timestamp="2026-04-02T11:00:00Z",
@@ -9406,7 +9410,7 @@ class TestFeature088BundleE:
     ):
         """AC-15 (FR-5.1): phase_events failure must NOT roll back entity update.
 
-        Monkeypatches ``insert_phase_event`` to raise ``sqlite3.IntegrityError``,
+        Monkeypatches ``append_phase_event`` to raise ``sqlite3.IntegrityError``,
         calls ``transition_phase``, and asserts:
         - entity metadata update persisted (query back)
         - response has ``phase_events_write_failed: true``
@@ -9418,7 +9422,7 @@ class TestFeature088BundleE:
         def raise_integrity_error(**kwargs):
             raise sqlite3.IntegrityError("simulated UNIQUE violation")
 
-        monkeypatch.setattr(db, "insert_phase_event", raise_integrity_error)
+        monkeypatch.setattr(db, "append_phase_event", raise_integrity_error)
 
         result = _process_transition_phase(
             engine, "feature:e-001", "specify", False, db=db,
@@ -9460,9 +9464,12 @@ class TestFeature088BundleE:
         assert data.get("error_type") == "oversized_reviewer_notes"
         assert "exceeds 10000" in data.get("message", "")
 
-        # No phase_events row was written (validation returned early).
+        # F12 (feature 109): register_entity emits an entity_created phase_event,
+        # so the relevant assertion is that no NEW non-entity-created row was
+        # written by the rejected complete_phase call.
         rows = db.query_phase_events(type_id="feature:e-001")
-        assert rows == []
+        non_created = [r for r in rows if r.get("event_type") != "entity_created"]
+        assert non_created == []
 
     def test_complete_phase_rejects_malformed_json_reviewer_notes(
         self, fresh_setup,
@@ -9513,13 +9520,13 @@ class TestFeature088BundleF:
 
         db = EntityDatabase(":memory:")
         # Seed only completed events — NO started rows.
-        db.insert_phase_event(
+        db.append_phase_event(
             type_id="feature:x-001", project_id="Px",
             phase="design", event_type="completed",
             timestamp="2026-04-01T10:00:00Z",
             iterations=1,
         )
-        db.insert_phase_event(
+        db.append_phase_event(
             type_id="feature:x-001", project_id="Px",
             phase="design", event_type="completed",
             timestamp="2026-04-01T11:00:00Z",
@@ -9566,19 +9573,19 @@ class TestFeature088BundleF:
             "2026-04-01T12:00:00Z",
             "2026-04-01T14:00:00Z",
         ], start=1):
-            db.insert_phase_event(
+            db.append_phase_event(
                 type_id="feature:y-002", project_id="Py",
                 phase="design", event_type="started",
                 timestamp=ts,
             )
         # Only 2 completed (pair with started[0] and started[1]).
-        db.insert_phase_event(
+        db.append_phase_event(
             type_id="feature:y-002", project_id="Py",
             phase="design", event_type="completed",
             timestamp="2026-04-01T11:00:00Z",  # paired with 10:00 started
             iterations=1,
         )
-        db.insert_phase_event(
+        db.append_phase_event(
             type_id="feature:y-002", project_id="Py",
             phase="design", event_type="completed",
             timestamp="2026-04-01T13:00:00Z",  # paired with 12:00 started
@@ -9705,15 +9712,25 @@ class TestFeature088BundleF:
         # query_phase_events orders DESC timestamp, so later timestamps come
         # first. Put iterations=None rows at the LATER timestamps to make them
         # dominate a naive limit=5 fetch.
+        #
+        # NOTE: ``append_phase_event`` rejects iterations=None for completed
+        # events post-feature-109 (per ``_REQUIRED_PARAMS``). This test
+        # exercises the analytics filter against pre-existing legacy rows
+        # with NULL iterations — so we direct-INSERT those rows to set up
+        # the historical-data scenario the filter is designed to handle.
+        now = "2026-05-02T00:00:00Z"
         for i in range(5):
-            db.insert_phase_event(
-                type_id=f"feature:it-{i:03d}", project_id="Piter",
-                phase="design", event_type="completed",
-                timestamp=f"2026-05-02T1{i}:00:00Z",
-                iterations=None,
+            db._conn.execute(
+                "INSERT INTO phase_events "
+                "(type_id, project_id, phase, event_type, timestamp, "
+                "iterations, source, created_at) "
+                "VALUES (?, ?, 'design', 'completed', ?, NULL, 'live', ?)",
+                (f"feature:it-{i:03d}", "Piter",
+                 f"2026-05-02T1{i}:00:00Z", now),
             )
+        db._conn.commit()
         for i in range(5):
-            db.insert_phase_event(
+            db.append_phase_event(
                 type_id=f"feature:it-{i+100:03d}", project_id="Piter",
                 phase="design", event_type="completed",
                 timestamp=f"2026-05-01T0{i}:00:00Z",
@@ -9762,7 +9779,7 @@ class TestFeature088BundleH4:
       pins the FR-4.1/FR-4.2 union-of-keys + zip_longest behavior for mixed
       imbalanced cases (e.g., 2 started, 3 completed).
     - ``test_record_backward_event_returns_error_json_under_db_lock`` —
-      DB lock during ``insert_phase_event`` surfaces as ``_make_error`` JSON.
+      DB lock during ``append_phase_event`` surfaces as ``_make_error`` JSON.
     - ``test_dual_write_metadata_and_phase_events_consistency_on_partial_failure``
       — metadata commit persists when phase_events raises; response flag is
       honored.
@@ -9801,7 +9818,7 @@ class TestFeature088BundleH4:
         db = EntityDatabase(":memory:")
         # 2 started (paired to the first 2 completed by sorted timestamp).
         for ts in ("2026-04-01T10:00:00Z", "2026-04-01T12:00:00Z"):
-            db.insert_phase_event(
+            db.append_phase_event(
                 type_id="feature:mis-001", project_id="Pmis",
                 phase="design", event_type="started",
                 timestamp=ts,
@@ -9812,7 +9829,7 @@ class TestFeature088BundleH4:
             "2026-04-01T13:00:00Z",  # pairs with 12:00 → 3600s
             "2026-04-01T15:00:00Z",  # unpaired
         ):
-            db.insert_phase_event(
+            db.append_phase_event(
                 type_id="feature:mis-001", project_id="Pmis",
                 phase="design", event_type="completed",
                 timestamp=ts,
@@ -9869,7 +9886,7 @@ class TestFeature088BundleH4:
         def _raise_locked(**kwargs):
             raise sqlite3.OperationalError("database is locked")
 
-        monkeypatch.setattr(db, "insert_phase_event", _raise_locked)
+        monkeypatch.setattr(db, "append_phase_event", _raise_locked)
         wss._db = db
 
         result_str = asyncio.run(
@@ -9907,7 +9924,7 @@ class TestFeature088BundleH4:
         def raise_on_insert(**kwargs):
             raise sqlite3.OperationalError("simulated lock")
 
-        monkeypatch.setattr(db, "insert_phase_event", raise_on_insert)
+        monkeypatch.setattr(db, "append_phase_event", raise_on_insert)
 
         result = _process_complete_phase(
             engine, "feature:h4-001", "brainstorm",
@@ -9962,7 +9979,7 @@ class TestFeature089BundleA:
 
         # Seed a real DB so the wildcard call can succeed past validation.
         db = EntityDatabase(":memory:")
-        db.insert_phase_event(
+        db.append_phase_event(
             type_id="feature:z-001", project_id="ProjZ",
             phase="design", event_type="started",
             timestamp="2026-04-10T10:00:00Z",
@@ -10119,7 +10136,7 @@ class TestFeature089BundleE:
 
         # Monkeypatch insert_phase_event to raise on the FIRST call only.
         call_count = [0]
-        real_insert = db.insert_phase_event
+        real_insert = db.append_phase_event
 
         def failing_then_succeeding(**kwargs):
             call_count[0] += 1
@@ -10127,7 +10144,7 @@ class TestFeature089BundleE:
                 raise sqlite3.IntegrityError("simulated first-call failure")
             return real_insert(**kwargs)
 
-        monkeypatch.setattr(db, "insert_phase_event", failing_then_succeeding)
+        monkeypatch.setattr(db, "append_phase_event", failing_then_succeeding)
 
         # Transition 1: brainstorm → specify.  First insert fails.
         result1 = _process_transition_phase(
@@ -10149,12 +10166,15 @@ class TestFeature089BundleE:
             f"second transition should not have flagged a failure: {data2!r}"
         )
 
-        # Phase_events table MUST have EXACTLY ONE row for this feature —
-        # the design transition's 'started' event.  The specify transition's
-        # started row is permanently missing (not retroactively backfilled).
-        rows = db.query_phase_events(type_id="feature:089-e-23")
+        # Phase_events table MUST have EXACTLY ONE 'started' row for this
+        # feature — the design transition.  The specify transition's started
+        # row is permanently missing (not retroactively backfilled).
+        # F12 (feature 109): register_entity also emits an entity_created
+        # event, so filter to 'started' before counting.
+        all_rows = db.query_phase_events(type_id="feature:089-e-23")
+        rows = [r for r in all_rows if r["event_type"] == "started"]
         assert len(rows) == 1, (
-            f"expected exactly 1 phase_events row (design only); got "
+            f"expected exactly 1 started phase_events row (design only); got "
             f"{len(rows)}: {rows!r}"
         )
         assert rows[0]["phase"] == "design"
@@ -10229,11 +10249,12 @@ class TestFeature089BundleE:
         # Operator manually inserts the missing row (matching timestamp
         # and 'live' source — the detector matches on tuple membership,
         # not source, so 'live' is fine here).
-        db.insert_phase_event(
+        # Feature 109 Group 9 requires ``iterations`` for completed events.
+        db.append_phase_event(
             type_id="feature:089-e-25", project_id="P-e25",
             phase="design", event_type="completed",
             timestamp="2026-04-01T00:00:00Z",
-            source="live",
+            source="live", iterations=1,
         )
 
         # Second reconcile_check: no drift for this (type_id, phase).
@@ -10420,7 +10441,7 @@ class TestFeature089BundleE:
         """AC-29 (#00171).
 
         End-to-end integration:
-        1. Call ``transition_phase`` with ``insert_phase_event``
+        1. Call ``transition_phase`` with ``append_phase_event``
            monkeypatched to raise ``sqlite3.IntegrityError``.
         2. Main transaction commits → ``metadata.phase_timing.specify.started``
            persists, but phase_events has NO ``started`` row.
@@ -10451,7 +10472,7 @@ class TestFeature089BundleE:
         def _raise_integrity(**kwargs):
             raise sqlite3.IntegrityError("simulated failure")
 
-        monkeypatch.setattr(db, "insert_phase_event", _raise_integrity)
+        monkeypatch.setattr(db, "append_phase_event", _raise_integrity)
 
         transition_result = _process_transition_phase(
             engine, "feature:089-e-29", "specify", False, db=db,

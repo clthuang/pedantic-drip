@@ -809,7 +809,11 @@ Propose parent linkage using Triage results:
 
 #### Step C3: REGISTER
 
-Create the entity in the registry:
+Create the entity in the registry. The MCP entity_server translates
+`EntityExistsError` to a structured JSON error (`error_type=entity_exists`,
+with `recovery_hint` pointing at `upsert_entity`) per feature 109 design
+§3.5 — on conflict, surface the error to the user or fall back to
+`upsert_entity` for an idempotent re-register:
 
 ```
 Call register_entity with:

@@ -135,14 +135,31 @@ class TestRecoveryLogsBackfillSkipped:
                 thread = entity_server._start_recovery_thread(
                     db_path, poll_interval=0.05
                 )
-                # Wait for recovery
+                # Wait for recovery. The recovery thread sets
+                # ``_db_unavailable=False`` *before* emitting the
+                # "backfill skipped" log line; polling solely on the
+                # availability flag introduces a race where the assertion
+                # runs before the log emit completes. We additionally
+                # wait until the expected log line appears in
+                # ``caplog.records`` (bounded by the same 2.0s deadline).
                 deadline = time.time() + 2.0
-                while entity_server._db_unavailable and time.time() < deadline:
+
+                def _log_recorded() -> bool:
+                    return any(
+                        "backfill skipped" in r.message
+                        for r in caplog.records
+                    )
+
+                while (
+                    (entity_server._db_unavailable or not _log_recorded())
+                    and time.time() < deadline
+                ):
                     time.sleep(0.05)
 
-                assert any(
-                    "backfill skipped" in record.message for record in caplog.records
-                ), f"Expected 'backfill skipped' in logs, got: {[r.message for r in caplog.records]}"
+                assert _log_recorded(), (
+                    f"Expected 'backfill skipped' in logs, got: "
+                    f"{[r.message for r in caplog.records]}"
+                )
         finally:
             entity_server._db = old_db
             entity_server._db_unavailable = old_unavailable

@@ -216,9 +216,9 @@ class TestFTSSync:
         assert len(rows) == 1
 
     def test_duplicate_register_no_fts_corruption(self, db):
-        """INSERT OR IGNORE skip doesn't double-insert FTS."""
-        db.register_entity("feature", "dup-test", "Dup Test", project_id="__unknown__")
-        db.register_entity("feature", "dup-test", "Dup Test", project_id="__unknown__")
+        """upsert_entity (F12 idempotent path) doesn't double-insert FTS."""
+        db.upsert_entity("feature", "dup-test", "Dup Test", project_id="__unknown__")
+        db.upsert_entity("feature", "dup-test", "Dup Test", project_id="__unknown__")
         rows = db._conn.execute(
             "SELECT rowid FROM entities_fts WHERE entities_fts MATCH 'Dup'"
         ).fetchall()
@@ -237,14 +237,26 @@ class TestFTSSync:
         assert len(rows) == 1
 
     def test_insert_or_ignore_rowcount_zero_on_skip(self, db):
-        """cursor.rowcount == 0 for duplicate."""
+        """cursor.rowcount == 0 for duplicate.
+
+        F11 (feature 109): entity_type column dropped; kind replaces it
+        alongside the (type, lifecycle_class) discriminators per FR-1.
+        """
         db.register_entity("feature", "rc-test", "RC Test", project_id="__unknown__")
+        # Read the existing entity's workspace_uuid so the duplicate INSERT
+        # OR IGNORE collides on the (workspace_uuid, type_id) UNIQUE
+        # constraint exactly the way the pre-feature-109 fixture did.
+        ws_uuid = db._conn.execute(
+            "SELECT workspace_uuid FROM entities WHERE type_id = ?",
+            ("feature:rc-test",),
+        ).fetchone()[0]
         cursor = db._conn.execute(
             "INSERT OR IGNORE INTO entities "
-            "(uuid, type_id, entity_type, entity_id, name, "
-            "created_at, updated_at) "
-            "VALUES ('new-uuid', 'feature:rc-test', 'feature', 'rc-test', "
-            "'RC Test', '2026-01-01', '2026-01-01')"
+            "(uuid, workspace_uuid, type_id, kind, entity_id, name, "
+            "created_at, updated_at, type, lifecycle_class) "
+            "VALUES ('new-uuid', ?, 'feature:rc-test', 'feature', 'rc-test', "
+            "'RC Test', '2026-01-01', '2026-01-01', 'work', 'feature_flow')",
+            (ws_uuid,),
         )
         assert cursor.rowcount == 0
         db._conn.rollback()
@@ -659,11 +671,16 @@ class TestSearchAdversarial:
         assert results[0]["name"] == "NoMetaEntity"
 
     def test_duplicate_register_different_name_keeps_original(self, db):
-        """derived_from: dimension:adversarial — duplicate register doesn't update."""
+        """derived_from: dimension:adversarial — upsert_entity preserves name on conflict.
+
+        F12 (feature 109): per AC-4.4 status-only rule, ``upsert_entity`` does
+        NOT update ``name`` on the conflict branch — callers needing name
+        updates use ``update_entity`` explicitly.
+        """
         # Given an entity already registered
-        db.register_entity("feature", "dup-adv", "OriginalName", project_id="__unknown__")
-        # When registering again with a different name (INSERT OR IGNORE)
-        db.register_entity("feature", "dup-adv", "DifferentName", project_id="__unknown__")
+        db.upsert_entity("feature", "dup-adv", "OriginalName", project_id="__unknown__")
+        # When upserting again with a different name (status-only conflict path)
+        db.upsert_entity("feature", "dup-adv", "DifferentName", project_id="__unknown__")
         # Then original name is still searchable, new name is not
         results = db.search_entities("OriginalName")
         assert len(results) == 1
@@ -864,11 +881,14 @@ class TestSearchMutationMindset:
         db._conn.close()
 
     def test_rowcount_guards_duplicate_fts_insert(self, db):
-        """derived_from: dimension:mutation_mindset — rowcount==0 skips FTS insert."""
+        """derived_from: dimension:mutation_mindset — upsert no-op branch skips FTS insert.
+
+        F12: ``upsert_entity`` is status-only on conflict — no second FTS row.
+        """
         # Given an entity is registered
-        db.register_entity("feature", "rc-mut", "RowcountMut", project_id="__unknown__")
-        # When registering duplicate (INSERT OR IGNORE)
-        db.register_entity("feature", "rc-mut", "RowcountMut", project_id="__unknown__")
+        db.upsert_entity("feature", "rc-mut", "RowcountMut", project_id="__unknown__")
+        # When upserting duplicate (no-op conflict branch)
+        db.upsert_entity("feature", "rc-mut", "RowcountMut", project_id="__unknown__")
         # Then FTS should still have exactly 1 entry (not 2)
         rows = db._conn.execute(
             "SELECT rowid FROM entities_fts WHERE entities_fts MATCH 'RowcountMut'"

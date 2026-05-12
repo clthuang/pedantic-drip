@@ -29,6 +29,11 @@ Add an item to the centralized backlog at `{pd_artifacts_root}/backlog.md`.
 
 5. **Register entity with auto-generated ID:**
    - Derive title: if description > 80 chars, truncate at last word boundary before char 80 and append "..."; otherwise use description as-is
+   - The MCP entity_server translates `EntityExistsError` to a structured
+     JSON error (`error_type=entity_exists`, with `recovery_hint` pointing
+     at `upsert_entity`) per feature 109 design §3.5. Since
+     `auto_id=true` generates a fresh sequential id, conflicts are not
+     expected here; if one occurs, surface the error and stop.
    ```
    register_entity(
      entity_type="backlog",

@@ -20,7 +20,11 @@ if _hooks_lib not in (os.path.normpath(p) for p in sys.path):
     sys.path.insert(0, _hooks_lib)
 
 from entity_registry.backfill import run_backfill
-from entity_registry.database import EntityDatabase
+from entity_registry.database import (
+    EntityDatabase,
+    EntityExistsError,
+    PromotionConflictError,
+)
 from entity_registry.id_generator import generate_entity_id
 from entity_registry.project_identity import (
     GitProjectInfo,
@@ -453,15 +457,29 @@ def _process_create_key_result(
         # at entity_server.py:1136-1137 → returns JSON error to caller.
         raise ValueError(f"Parent entity not found: {parent_type_id!r}")
     parent_uuid = parent_entity["uuid"]
-    uuid = db.register_entity(
-        entity_type="key_result",
-        entity_id=eid,
-        name=name,
-        status=status,
-        parent_uuid=parent_uuid,
-        metadata=metadata_json,
-        project_id=project_id,
-    )
+    # F12 audit: conflict-is-error → register_entity, EntityExistsError translated to MCP JSON
+    try:
+        uuid = db.register_entity(
+            entity_type="key_result",
+            entity_id=eid,
+            name=name,
+            status=status,
+            parent_uuid=parent_uuid,
+            metadata=metadata_json,
+            project_id=project_id,
+        )
+    except EntityExistsError as e:
+        return json.dumps({
+            "error": True,
+            "error_type": "entity_exists",
+            "message": str(e),
+            "workspace_uuid": e.workspace_uuid,
+            "type_id": e.type_id,
+            "recovery_hint": (
+                "Use upsert_entity for idempotent registration, or check "
+                "workspace context."
+            ),
+        })
     return json.dumps({"uuid": uuid, "type_id": f"key_result:{eid}", "weight": weight})
 
 
@@ -557,6 +575,11 @@ async def register_entity(
     # database.py register_entity still keys on project_id; the
     # workspace_uuid surface is captured in metadata until the DB-layer
     # signature flip lands (out of scope for this dispatch).
+    # F12 audit: conflict-is-error → register_entity, EntityExistsError translated to MCP JSON
+    # (translation happens inside _process_register_entity which returns the
+    # legacy "Already existed: ..." concise format on EntityExistsError per
+    # server_helpers.py — see design §3.5 for the structured JSON shape used
+    # by other MCP tool sites.)
     return _process_register_entity(
         _db, entity_type, entity_id, name,
         artifact_path, status, None,  # parent_type_id removed (FR-13 AC).

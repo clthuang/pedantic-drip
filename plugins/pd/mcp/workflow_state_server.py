@@ -726,20 +726,25 @@ def _process_transition_phase(
         # Feature 089 FR-2.3 (#00151): distinguish missing vs empty project_id.
         project_id = _resolve_project_id(entity)
         try:
-            db.insert_phase_event(
+            # Feature 109 Group 9.6: pass workspace_uuid for consistency
+            # (optional for workflow event types per design §3.1; the helper
+            # uses type_id-keyed UPDATE for workflow_phases).
+            db.append_phase_event(
                 type_id=feature_type_id,
                 project_id=project_id,
                 phase=target_phase,
                 event_type="started",
                 timestamp=ts,
+                workspace_uuid=_workspace_uuid or None,
             )
             for skipped in skipped_list:
-                db.insert_phase_event(
+                db.append_phase_event(
                     type_id=feature_type_id,
                     project_id=project_id,
                     phase=skipped,
                     event_type="skipped",
                     timestamp=ts,
+                    workspace_uuid=_workspace_uuid or None,
                 )
         except Exception as exc:
             phase_events_write_failed = True
@@ -923,7 +928,7 @@ def _process_complete_phase(
             metadata["last_completed_phase"] = phase
 
             # Feature 088 FR-5.1 (ordering swap): update_entity(metadata) MUST
-            # run INSIDE the transaction; insert_phase_event is dispatched
+            # run INSIDE the transaction; append_phase_event is dispatched
             # AFTER the transaction commits (below). This prevents a phase_events
             # failure from silently rolling back the primary workflow write.
             db.update_entity(
@@ -946,7 +951,9 @@ def _process_complete_phase(
         # Feature 089 FR-2.3 (#00151): distinguish missing vs empty project_id.
         project_id = _resolve_project_id(entity)
         try:
-            db.insert_phase_event(
+            # Feature 109 Group 9.6: pass workspace_uuid (optional for
+            # workflow event types per design §3.1).
+            db.append_phase_event(
                 type_id=feature_type_id,
                 project_id=project_id,
                 phase=phase,
@@ -956,6 +963,7 @@ def _process_complete_phase(
                 reviewer_notes=(
                     json.dumps(parsed_notes) if parsed_notes is not None else None
                 ),
+                workspace_uuid=_workspace_uuid or None,
             )
         except Exception as exc:
             phase_events_write_failed = True
@@ -2027,7 +2035,9 @@ async def record_backward_event(
 
     ts = _iso_now()
     try:
-        _db.insert_phase_event(
+        # Feature 109 Group 9.6: pass workspace_uuid (optional for workflow
+        # event types per design §3.1).
+        _db.append_phase_event(
             type_id=type_id,
             project_id=resolved_project_id,
             phase=source_phase,
@@ -2035,6 +2045,7 @@ async def record_backward_event(
             timestamp=ts,
             backward_reason=reason_capped,
             backward_target=target_capped,
+            workspace_uuid=_workspace_uuid or None,
         )
     except sqlite3.Error as e:
         print(

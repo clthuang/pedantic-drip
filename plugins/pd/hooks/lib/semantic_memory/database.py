@@ -589,35 +589,46 @@ class MemoryDatabase:
             # Reads the CURRENT confidence (post-auto-promote, if it ran)
             # to avoid the double-upgrade race where memory_auto_promote
             # already wrote a new tier — code-quality-reviewer iter 1, W3.
-            try:
-                from semantic_memory._confidence import _recompute_confidence
-                # Re-read confidence in case memory_auto_promote block updated it.
-                cur_row = self._conn.execute(
-                    "SELECT confidence FROM entries WHERE id = ?",
-                    (existing_id,),
-                ).fetchone()
-                cur_conf = cur_row["confidence"] if cur_row else entry["confidence"]
-                projected = {
-                    "confidence": cur_conf,
-                    "observation_count": entry["observation_count"] + 1,
-                    "influence_count": entry.get("influence_count", 0),
-                    "recall_count": entry.get("recall_count", 0),
-                    "_K_OBS": (config or {}).get(
-                        "memory_promote_min_observations", 3
-                    ),
-                    "_K_USE": (config or {}).get(
-                        "memory_promote_use_signal", 5
-                    ),
-                }
-                new_conf_fr4 = _recompute_confidence(projected)
-                if new_conf_fr4 and new_conf_fr4 != cur_conf:
-                    self._conn.execute(
-                        "UPDATE entries SET confidence = ? WHERE id = ?",
-                        (new_conf_fr4, existing_id),
-                    )
-            except Exception:
-                # Best-effort: never block merge on FR-4 upgrade calc.
-                pass
+            #
+            # Gated by memory_auto_promote: when the caller has disabled
+            # auto-promotion (or supplied source='import'), respect that
+            # decision and skip the FR-4 recompute as well — otherwise
+            # the recompute would promote despite the disable.
+            should_run_fr4 = (
+                config is not None
+                and config.get("memory_auto_promote")
+                and entry.get("source", "") != "import"
+            )
+            if should_run_fr4:
+                try:
+                    from semantic_memory._confidence import _recompute_confidence
+                    # Re-read confidence in case memory_auto_promote block updated it.
+                    cur_row = self._conn.execute(
+                        "SELECT confidence FROM entries WHERE id = ?",
+                        (existing_id,),
+                    ).fetchone()
+                    cur_conf = cur_row["confidence"] if cur_row else entry["confidence"]
+                    projected = {
+                        "confidence": cur_conf,
+                        "observation_count": entry["observation_count"] + 1,
+                        "influence_count": entry.get("influence_count", 0),
+                        "recall_count": entry.get("recall_count", 0),
+                        "_K_OBS": (config or {}).get(
+                            "memory_promote_min_observations", 3
+                        ),
+                        "_K_USE": (config or {}).get(
+                            "memory_promote_use_signal", 5
+                        ),
+                    }
+                    new_conf_fr4 = _recompute_confidence(projected)
+                    if new_conf_fr4 and new_conf_fr4 != cur_conf:
+                        self._conn.execute(
+                            "UPDATE entries SET confidence = ? WHERE id = ?",
+                            (new_conf_fr4, existing_id),
+                        )
+                except Exception:
+                    # Best-effort: never block merge on FR-4 upgrade calc.
+                    pass
 
             self._conn.commit()
         except Exception:

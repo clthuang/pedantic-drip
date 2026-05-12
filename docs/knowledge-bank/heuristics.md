@@ -815,3 +815,38 @@ Surgical-scope QA-followup features (no schema migration, ~150-250 LOC, scope pr
 - Confidence: medium
 - Last observed: Feature #113
 - Observation count: 1
+
+### Heuristic: Run codebase-explorer Before Spec Iter-1 for Schema-Migration Features
+For features touching DB schema, triggers, virtual tables (FTS5), or migration sequencing, dispatch a codebase-explorer pass before drafting spec iter-1 — grep all affected symbols, count sibling sites, list Python callers inline. Spec iter-2 SUT-verification will otherwise unmask the same blockers at higher cost.
+- Source: Feature #109 — spec iter-2 produced 5 structural blockers all annotated "verified via codebase grep"
+- Confidence: high
+- Last observed: Feature #109
+- Observation count: 1
+
+### Heuristic: Apply Skip-Marker Strategy When Migration Spans 10+ Groups
+For migrations spanning 10+ Groups with intermediate non-functional states, apply pytest skip markers as a "broken-window CI" containment strategy. Track the marker delta (applied → active → removed) as a progress meter. Skip markers should be removed in the same Group that completes the dependent migration step.
+- Source: Feature #109 implement phase — 19 markers applied at Group 13.8, 17 active mid-flight, 0 remaining at Group 15.7
+- Confidence: high
+- Last observed: Feature #109
+- Observation count: 1
+
+### Heuristic: Cap-3 Reached With Inline Resolution Counts as Clean Approval
+When design-reviewer or plan-reviewer hits cap-3 but all blockers/warnings are resolved inline in the cap revision, the cap-3 outcome is functionally a clean approval. Reviewer notes should explicitly state "cap-3 outcome: effectively clean approval" to distinguish from cap-3-with-unresolved-issues.
+- Source: Feature #109 design-reviewer iter-3 — reviewer note explicitly stated "Since all blockers were resolved inline, the cap-3 outcome is effectively clean approval"
+- Confidence: high
+- Last observed: Feature #109
+- Observation count: 1
+
+### Heuristic: Budget 5+4+5 Pre-Implement Reviewer Iterations for Multi-Group Schema Migrations
+Schema migrations spanning 10+ Groups with FTS5, trigger management, and Python-caller migration consistently consume 14 cumulative pre-implement reviewer iterations across 3 phases. Within budget per CLAUDE.md cap-3 (per reviewer role) and produces clean implementation.
+- Source: Feature #109 — 5+4+5 = 14 reviewer iters; implementation produced 2772 passing tests, 0 failures, 8 atomic commits, ~72 tasks
+- Confidence: medium
+- Last observed: Feature #109
+- Observation count: 1
+
+### Heuristic: Tool-Availability Friction Belongs in .meta.json, Not Just Review Notes
+When session-start tooling friction occurs (Codex CLI unavailable, MCP server stale, hook subprocess failure), record it as a structured entry in feature .meta.json (e.g., `tools_friction: [{tool, status, fallback, at}]`) so retros can detect patterns across features.
+- Source: Feature #109 — Codex CLI unavailable for entire session; all reviewer dispatches fell back to pd:Task; friction noted only in iter-1/iter-2/iter-3 spec-review headers (free-form, non-aggregable)
+- Confidence: medium
+- Last observed: Feature #109
+- Observation count: 1

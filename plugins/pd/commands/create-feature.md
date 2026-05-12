@@ -152,7 +152,12 @@ After Handle PRD Source and Handle Backlog Source sections complete, register en
 
 If `backlog_source` was found in the Handle Backlog Source step:
 
-Call `register_entity` MCP tool (idempotent — safe if entity already exists):
+Call `register_entity` MCP tool. The MCP entity_server translates
+`EntityExistsError` to a structured JSON error (`error_type=entity_exists`,
+with `recovery_hint` pointing at `upsert_entity`) per feature 109 design
+§3.5. On conflict, swallow the error and fall through to the `update_entity`
+call below to apply the promoted status (or fall back to `upsert_entity`
+for explicit idempotency):
 ```
 register_entity(
   entity_type="backlog",
@@ -162,7 +167,10 @@ register_entity(
 )
 ```
 
-Then promote the backlog entity (`register_entity` uses INSERT OR IGNORE, so `status="promoted"` is silently dropped when the entity already exists — this `update_entity` call is the corrective write):
+Then promote the backlog entity. Feature 109 removed the silent
+INSERT-OR-IGNORE on `register_entity` — on conflict, the entity_server
+returns `error_type=entity_exists` and the `status="promoted"` parameter
+above is NOT applied. This `update_entity` call is the corrective write:
 ```
 update_entity(
   type_id="backlog:{backlog_source id}",
@@ -177,7 +185,10 @@ If `brainstorm_source` was set (i.e., `--prd` was provided):
 
 Extract the filename stem from the brainstorm_source path (e.g., `20260227-054029-entity-lineage-tracking` from `{pd_artifacts_root}/brainstorms/20260227-054029-entity-lineage-tracking.prd.md`).
 
-Call `register_entity` MCP tool (idempotent):
+Call `register_entity` MCP tool. The MCP entity_server translates
+`EntityExistsError` to structured JSON (`error_type=entity_exists`) per
+feature 109 design §3.5; if the brainstorm is already registered, surface
+the error or fall back to `upsert_entity`:
 ```
 register_entity(
   entity_type="brainstorm",
@@ -213,7 +224,10 @@ Derive the parent reference (used at registration time to populate `parent_uuid`
 - Else if `backlog_source` exists (no brainstorm): `parent_ref = "backlog:{backlog_source id}"`
 - Else: `parent_ref = null` (no parent)
 
-Resolve `parent_ref` to a uuid via `get_entity(ref="{parent_ref}")` (skip if `parent_ref` is null), then call `register_entity` MCP tool:
+Resolve `parent_ref` to a uuid via `get_entity(ref="{parent_ref}")` (skip if `parent_ref` is null), then call `register_entity` MCP tool. The
+MCP entity_server translates `EntityExistsError` to structured JSON
+(`error_type=entity_exists`) per feature 109 design §3.5; on conflict,
+surface the error to the user:
 ```
 register_entity(
   entity_type="feature",

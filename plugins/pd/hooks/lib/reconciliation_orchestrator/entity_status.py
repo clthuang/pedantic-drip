@@ -182,7 +182,8 @@ def _sync_brainstorm_entities(
             continue
 
         artifact_path = os.path.join(artifacts_root, "brainstorms", filename)
-        db.register_entity(
+        # F12 audit: idempotent reconciliation → upsert_entity
+        db.upsert_entity(
             entity_type="brainstorm",
             entity_id=stem,
             name=stem,
@@ -331,7 +332,8 @@ def _sync_backlog_entities(db, full_artifacts_path, artifacts_root, project_id, 
         existing = existing_map.get(type_id)
 
         if existing is None:
-            db.register_entity(
+            # F12 audit: idempotent reconciliation → upsert_entity
+            db.upsert_entity(
                 entity_type="backlog",
                 entity_id=entity_id,
                 name=name,

@@ -107,3 +107,116 @@ def make_v10_db(path: Path | str | None = None) -> sqlite3.Connection:
         f"make_v10_db: expected schema_version=10, got {v}"
     )
     return conn
+
+
+def make_v11_db(path: Path | str | None = None) -> sqlite3.Connection:
+    """Build a SQLite connection at exactly schema_version=11.
+
+    Used by Migration 12 RED tests so they can exercise migration 12 against
+    a known pre-12 baseline. Mirrors :func:`make_v10_db` but iterates
+    ``MIGRATIONS[1..11]``.
+
+    Parameters
+    ----------
+    path:
+        File path or ``":memory:"``. ``None`` defaults to ``":memory:"``.
+
+    Returns
+    -------
+    sqlite3.Connection
+        Connection with row_factory set, busy_timeout pragma set, and the
+        full pre-12 schema applied. ``_metadata.schema_version`` is the
+        string ``'11'``.
+    """
+    from entity_registry.database import MIGRATIONS
+
+    db_path = ":memory:" if path is None else str(path)
+    conn = sqlite3.connect(db_path, timeout=5.0)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout = 15000")
+    conn.execute("PRAGMA foreign_keys = ON")
+
+    # Bootstrap the _metadata table that the outer _migrate() loop creates.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS _metadata "
+        "(key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+    )
+    conn.commit()
+
+    # Apply migrations 1-11 in order.
+    for version in sorted(MIGRATIONS.keys()):
+        if version > 11:
+            break
+        MIGRATIONS[version](conn)
+        conn.execute(
+            "INSERT INTO _metadata (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            ("schema_version", str(version)),
+        )
+        conn.commit()
+
+    # Sanity check.
+    v = conn.execute(
+        "SELECT value FROM _metadata WHERE key='schema_version'"
+    ).fetchone()
+    assert v is not None and v[0] == "11", (
+        f"make_v11_db: expected schema_version=11, got {v}"
+    )
+    return conn
+
+
+def make_v12_db(path: Path | str | None = None) -> sqlite3.Connection:
+    """Build a SQLite connection at exactly schema_version=12.
+
+    Used by feature 109 (polymorphic taxonomy + event-sourced state) tests.
+    Mirrors :func:`make_v10_db` but iterates ``MIGRATIONS[1..12]``. Migration
+    12 is currently a stub that only stamps ``schema_version=12``; subsequent
+    feature-109 tasks populate its body.
+
+    Parameters
+    ----------
+    path:
+        File path or ``":memory:"``. ``None`` defaults to ``":memory:"``.
+
+    Returns
+    -------
+    sqlite3.Connection
+        Connection with row_factory set, busy_timeout pragma set, and the
+        full v12 schema applied. ``_metadata.schema_version`` is the string
+        ``'12'``.
+    """
+    from entity_registry.database import MIGRATIONS
+
+    db_path = ":memory:" if path is None else str(path)
+    conn = sqlite3.connect(db_path, timeout=5.0)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout = 15000")
+    conn.execute("PRAGMA foreign_keys = ON")
+
+    # Bootstrap the _metadata table that the outer _migrate() loop creates.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS _metadata "
+        "(key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+    )
+    conn.commit()
+
+    # Apply migrations 1-12 in order.
+    for version in sorted(MIGRATIONS.keys()):
+        if version > 12:
+            break
+        MIGRATIONS[version](conn)
+        conn.execute(
+            "INSERT INTO _metadata (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            ("schema_version", str(version)),
+        )
+        conn.commit()
+
+    # Sanity check.
+    v = conn.execute(
+        "SELECT value FROM _metadata WHERE key='schema_version'"
+    ).fetchone()
+    assert v is not None and v[0] == "12", (
+        f"make_v12_db: expected schema_version=12, got {v}"
+    )
+    return conn
