@@ -127,17 +127,10 @@ def _create_initial_schema(conn: sqlite3.Connection) -> None:
         );
 
         -- Immutability triggers
-        CREATE TRIGGER IF NOT EXISTS enforce_immutable_type_id
-        BEFORE UPDATE OF type_id ON entities
-        BEGIN
-            SELECT RAISE(ABORT, 'type_id is immutable');
-        END;
-
-        CREATE TRIGGER IF NOT EXISTS enforce_immutable_entity_type
-        BEFORE UPDATE OF entity_type ON entities
-        BEGIN
-            SELECT RAISE(ABORT, 'entity_type is immutable');
-        END;
+        -- enforce_immutable_type_id and enforce_immutable_entity_type
+        -- triggers removed in migration 12 (feature 109 FR-3): they
+        -- blocked the type_id rewrite in promote_entity and the
+        -- entity_type → kind backfill in migration 12.
 
         CREATE TRIGGER IF NOT EXISTS enforce_immutable_created_at
         BEFORE UPDATE OF created_at ON entities
@@ -244,17 +237,9 @@ def _migrate_to_uuid_pk(conn):
         conn.execute("PRAGMA legacy_alter_table = OFF")
         conn.execute("ALTER TABLE entities_new RENAME TO entities")
 
-        # Recreate all 8 triggers
-        conn.execute("""
-            CREATE TRIGGER IF NOT EXISTS enforce_immutable_type_id
-            BEFORE UPDATE OF type_id ON entities
-            BEGIN SELECT RAISE(ABORT, 'type_id is immutable'); END
-        """)
-        conn.execute("""
-            CREATE TRIGGER IF NOT EXISTS enforce_immutable_entity_type
-            BEFORE UPDATE OF entity_type ON entities
-            BEGIN SELECT RAISE(ABORT, 'entity_type is immutable'); END
-        """)
+        # Recreate triggers (enforce_immutable_type_id and
+        # enforce_immutable_entity_type removed in migration 12 per
+        # feature 109 FR-3).
         conn.execute("""
             CREATE TRIGGER IF NOT EXISTS enforce_immutable_created_at
             BEFORE UPDATE OF created_at ON entities
@@ -645,17 +630,9 @@ def _schema_expansion_v6(conn: sqlite3.Connection) -> None:
         conn.execute("PRAGMA legacy_alter_table = OFF")
         conn.execute("ALTER TABLE entities_new RENAME TO entities")
 
-        # Recreate all 8 triggers on entities
-        conn.execute("""
-            CREATE TRIGGER enforce_immutable_type_id
-            BEFORE UPDATE OF type_id ON entities
-            BEGIN SELECT RAISE(ABORT, 'type_id is immutable'); END
-        """)
-        conn.execute("""
-            CREATE TRIGGER enforce_immutable_entity_type
-            BEFORE UPDATE OF entity_type ON entities
-            BEGIN SELECT RAISE(ABORT, 'entity_type is immutable'); END
-        """)
+        # Recreate triggers on entities (enforce_immutable_type_id and
+        # enforce_immutable_entity_type removed in migration 12 per
+        # feature 109 FR-3).
         conn.execute("""
             CREATE TRIGGER enforce_immutable_created_at
             BEFORE UPDATE OF created_at ON entities
@@ -1091,17 +1068,9 @@ def _add_project_scoping(conn: sqlite3.Connection) -> None:
         conn.execute("PRAGMA legacy_alter_table = OFF")
         conn.execute("ALTER TABLE entities_new RENAME TO entities")
 
-        # --- Step 8: Recreate 9 triggers ---
-        conn.execute("""
-            CREATE TRIGGER IF NOT EXISTS enforce_immutable_type_id
-            BEFORE UPDATE OF type_id ON entities
-            BEGIN SELECT RAISE(ABORT, 'type_id is immutable'); END
-        """)
-        conn.execute("""
-            CREATE TRIGGER IF NOT EXISTS enforce_immutable_entity_type
-            BEFORE UPDATE OF entity_type ON entities
-            BEGIN SELECT RAISE(ABORT, 'entity_type is immutable'); END
-        """)
+        # --- Step 8: Recreate triggers ---
+        # enforce_immutable_type_id and enforce_immutable_entity_type
+        # removed in migration 12 (feature 109 FR-3).
         conn.execute("""
             CREATE TRIGGER IF NOT EXISTS enforce_immutable_created_at
             BEFORE UPDATE OF created_at ON entities
@@ -1979,16 +1948,8 @@ def _migration_11_workspace_identity(conn: sqlite3.Connection) -> None:
             BEFORE UPDATE OF uuid ON entities
             BEGIN SELECT RAISE(ABORT, 'uuid is immutable'); END
         """)
-        conn.execute("""
-            CREATE TRIGGER enforce_immutable_type_id
-            BEFORE UPDATE OF type_id ON entities
-            BEGIN SELECT RAISE(ABORT, 'type_id is immutable'); END
-        """)
-        conn.execute("""
-            CREATE TRIGGER enforce_immutable_entity_type
-            BEFORE UPDATE OF entity_type ON entities
-            BEGIN SELECT RAISE(ABORT, 'entity_type is immutable'); END
-        """)
+        # enforce_immutable_type_id and enforce_immutable_entity_type
+        # removed in migration 12 (feature 109 FR-3).
         conn.execute("""
             CREATE TRIGGER enforce_immutable_created_at
             BEFORE UPDATE OF created_at ON entities
@@ -2405,16 +2366,10 @@ def _migration_11_workspace_identity_down(conn: sqlite3.Connection) -> None:
         conn.execute("DROP TRIGGER IF EXISTS enforce_no_self_parent_uuid_update")
 
         # 9 pre-11 triggers (mirrors post-Migration-8 trigger set):
-        conn.execute("""
-            CREATE TRIGGER IF NOT EXISTS enforce_immutable_type_id
-            BEFORE UPDATE OF type_id ON entities
-            BEGIN SELECT RAISE(ABORT, 'type_id is immutable'); END
-        """)
-        conn.execute("""
-            CREATE TRIGGER IF NOT EXISTS enforce_immutable_entity_type
-            BEFORE UPDATE OF entity_type ON entities
-            BEGIN SELECT RAISE(ABORT, 'entity_type is immutable'); END
-        """)
+        # enforce_immutable_type_id and enforce_immutable_entity_type
+        # removed in migration 12 (feature 109 FR-3). Per design TD-9,
+        # the down-migration does NOT restore them in source (only the
+        # runtime DROP TRIGGER guards in migration 12 are inverted).
         conn.execute("""
             CREATE TRIGGER IF NOT EXISTS enforce_immutable_created_at
             BEFORE UPDATE OF created_at ON entities
@@ -2846,6 +2801,211 @@ def _migration_12_polymorphic_taxonomy_and_events(
         if unmapped > 0:
             raise RuntimeError(
                 f"Migration 12: unmapped entity_type rows: {unmapped}"
+            )
+
+        # ------------------------------------------------------------------
+        # Step 5f: F11 composite CHECK via copy-rename + consolidated
+        #          immutable-trigger removal (Group 3, Tasks 3.2-3.4 +
+        #          consolidated FR-3 trigger drops; Group 4, Task 4.2
+        #          adds idx_entities_type_kind).
+        # ------------------------------------------------------------------
+        # SQLite cannot ALTER TABLE to add a CHECK constraint, so we
+        # rebuild ``entities`` with the composite (type, kind) clause via
+        # the documented copy-rename pattern
+        # (https://www.sqlite.org/lang_altertable.html § 8). This is the
+        # same idiom used by ``_expand_workflow_phase_check`` (migration 5
+        # at database.py:464-577).
+        #
+        # Per design §1 sub-step 5 the rebuild is dynamic: column list,
+        # indexes, and triggers are discovered from sqlite_master so the
+        # block is resilient to silent schema drift (e.g. a future column
+        # added by feature 108 that this design did not anticipate).
+        # The immutable triggers ``enforce_immutable_entity_type`` and
+        # ``enforce_immutable_type_id`` are intentionally OMITTED from
+        # the trigger-recreation loop — FR-3 drops them at all 12 source
+        # sites; this block ensures the runtime trigger registry matches.
+        #
+        # Idempotency: if the rebuild already ran (e.g. a previous
+        # interrupted v12 attempt left ``idx_entities_type_kind`` behind
+        # but stamped no version), the CHECK is already in place. We
+        # detect that by probing ``sqlite_master`` for the index name —
+        # the index is created at the END of this block so its presence
+        # implies the block completed previously.
+        idx_already = conn.execute(
+            "SELECT 1 FROM sqlite_master "
+            "WHERE type='index' AND name='idx_entities_type_kind'"
+        ).fetchone()
+        if idx_already is None:
+            # Capture pre-rebuild column metadata so we can build a
+            # dynamic INSERT-SELECT column list. (cid, name, type,
+            # notnull, dflt_value, pk) per the SQLite PRAGMA contract.
+            entities_cols = conn.execute(
+                "PRAGMA table_info(entities)"
+            ).fetchall()
+            col_names = [c[1] for c in entities_cols]
+            # Capture pre-rebuild row count for parity check.
+            pre_count = conn.execute(
+                "SELECT COUNT(*) FROM entities"
+            ).fetchone()[0]
+            # Capture user-defined indexes (auto-indexes from PRIMARY KEY
+            # / UNIQUE will be re-generated automatically by SQLite when
+            # the new table is created).
+            saved_indexes = [
+                (r[0], r[1])
+                for r in conn.execute(
+                    "SELECT name, sql FROM sqlite_master "
+                    "WHERE type='index' AND tbl_name='entities' "
+                    "AND sql IS NOT NULL"
+                ).fetchall()
+            ]
+            # Capture triggers, excluding the 2 immutable triggers that
+            # FR-3 drops (defense in depth — at this point they should
+            # already be absent from sqlite_master because Group-3
+            # source-level removal ran before make_v11_db built the
+            # baseline; but tests may inject them, so filter explicitly).
+            saved_triggers = [
+                (r[0], r[1])
+                for r in conn.execute(
+                    "SELECT name, sql FROM sqlite_master "
+                    "WHERE type='trigger' AND tbl_name='entities' "
+                    "AND sql IS NOT NULL "
+                    "AND name NOT IN ("
+                    "'enforce_immutable_entity_type', "
+                    "'enforce_immutable_type_id')"
+                ).fetchall()
+            ]
+
+            # Capture cross-table triggers that reference ``entities`` so
+            # we can re-create them after the rebuild. Migration 11 added
+            # ``wp_autofill_workspace_uuid`` and ``wp_reject_orphaned_insert``
+            # on ``workflow_phases`` whose bodies do
+            # ``SELECT ... FROM entities``; the SQLite RENAME-table
+            # validator scans every trigger SQL and aborts if any
+            # reference resolves to a missing table during the swap
+            # (intermediate state: old ``entities`` dropped, ``entities_new``
+            # not yet renamed). Drop them now; recreate after RENAME.
+            cross_triggers = [
+                (r[0], r[1])
+                for r in conn.execute(
+                    "SELECT name, sql FROM sqlite_master "
+                    "WHERE type='trigger' "
+                    "AND tbl_name <> 'entities' "
+                    "AND sql LIKE '%entities%' "
+                    "AND sql IS NOT NULL"
+                ).fetchall()
+            ]
+            for trg_name, _ in cross_triggers:
+                conn.execute(f"DROP TRIGGER IF EXISTS {trg_name}")
+
+            # Build entities_new with the composite CHECK constraint.
+            # The column list mirrors the v11 schema (preserved as-is —
+            # ``entity_type`` is dropped later by Group 7, NOT here) so
+            # the new table is a strict superset of the constraint set:
+            # original PRIMARY KEY, UNIQUE(workspace_uuid, type_id), FK
+            # to workspaces, plus the new composite CHECK on (type, kind).
+            conn.execute("""
+                CREATE TABLE entities_new (
+                    uuid           TEXT NOT NULL PRIMARY KEY,
+                    workspace_uuid TEXT NOT NULL
+                                   REFERENCES workspaces(uuid),
+                    type_id        TEXT NOT NULL,
+                    entity_type    TEXT NOT NULL,
+                    entity_id      TEXT NOT NULL,
+                    name           TEXT NOT NULL,
+                    status         TEXT,
+                    parent_uuid    TEXT REFERENCES entities_new(uuid),
+                    artifact_path  TEXT,
+                    created_at     TEXT NOT NULL,
+                    updated_at     TEXT NOT NULL,
+                    metadata       TEXT,
+                    type           TEXT NOT NULL DEFAULT 'work',
+                    kind           TEXT NOT NULL DEFAULT 'feature',
+                    lifecycle_class TEXT NOT NULL DEFAULT 'feature_flow',
+                    UNIQUE(workspace_uuid, type_id),
+                    CHECK (
+                        (type='workspace' AND kind='workspace') OR
+                        (type='brainstorm' AND kind='brainstorm') OR
+                        (type='container' AND kind='project') OR
+                        (type='work' AND kind IN ('feature','backlog'))
+                    )
+                )
+            """)
+            # Defensive: confirm the discovered column set is a subset
+            # of the new table's columns (otherwise the INSERT-SELECT
+            # would lose data). The new table's columns are the v11
+            # set + the 3 polymorphic columns; any column outside that
+            # set is unexpected (probably an in-flight migration race).
+            new_cols = {
+                r[1] for r in conn.execute(
+                    "PRAGMA table_info(entities_new)"
+                ).fetchall()
+            }
+            unknown_cols = [c for c in col_names if c not in new_cols]
+            if unknown_cols:
+                raise RuntimeError(
+                    f"Migration 12 copy-rename: unexpected columns in "
+                    f"existing entities table not present in entities_new: "
+                    f"{unknown_cols!r}"
+                )
+            # Build dynamic INSERT-SELECT: copy all old columns by name.
+            col_list_sql = ",".join(col_names)
+            conn.execute(
+                f"INSERT INTO entities_new ({col_list_sql}) "
+                f"SELECT {col_list_sql} FROM entities"
+            )
+            post_count = conn.execute(
+                "SELECT COUNT(*) FROM entities_new"
+            ).fetchone()[0]
+            if post_count != pre_count:
+                raise RuntimeError(
+                    f"Migration 12 copy-rename row-count mismatch: "
+                    f"pre={pre_count}, post={post_count}"
+                )
+
+            # Swap tables.
+            conn.execute("DROP TABLE entities")
+            conn.execute("PRAGMA legacy_alter_table = OFF")
+            conn.execute("ALTER TABLE entities_new RENAME TO entities")
+
+            # Recreate captured user-defined indexes verbatim from the
+            # stored ``sql`` text. SQLite stores CREATE INDEX statements
+            # without trailing semicolons; ``CREATE INDEX IF NOT EXISTS``
+            # variants (if any) are preserved as-stored.
+            for idx_name, idx_sql in saved_indexes:
+                if idx_sql:
+                    conn.execute(idx_sql)
+
+            # Recreate captured triggers (immutable triggers already
+            # filtered out by the SELECT above).
+            for trg_name, trg_sql in saved_triggers:
+                if trg_sql:
+                    conn.execute(trg_sql)
+
+            # Group 4 / Task 4.2: composite index for polymorphic
+            # queries (AC-1.6).
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_entities_type_kind "
+                "ON entities(type, kind)"
+            )
+
+            # Recreate cross-table triggers we temporarily dropped to
+            # allow the entities-table rename. The captured SQL still
+            # references the table name ``entities`` which is now the
+            # renamed table.
+            for _, trg_sql in cross_triggers:
+                if trg_sql:
+                    conn.execute(trg_sql)
+
+            # Defensive runtime DROP TRIGGER guards (FR-3 / Task 3.8):
+            # idempotent removal of any orphan immutable trigger that
+            # might survive the rebuild (e.g. via a CREATE TRIGGER ...
+            # IF NOT EXISTS reissued by a concurrent process between
+            # the BEGIN IMMEDIATE acquisition and the table rebuild).
+            conn.execute(
+                "DROP TRIGGER IF EXISTS enforce_immutable_entity_type"
+            )
+            conn.execute(
+                "DROP TRIGGER IF EXISTS enforce_immutable_type_id"
             )
 
         # ------------------------------------------------------------------

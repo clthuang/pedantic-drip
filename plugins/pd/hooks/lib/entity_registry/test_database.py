@@ -134,15 +134,14 @@ class TestMigration2:
         # parent_uuid column exists
         assert "parent_uuid" in col_map
 
-        # 8 triggers
+        # 6 triggers (feature 109 FR-3 removed enforce_immutable_type_id
+        # and enforce_immutable_entity_type at all 12 source sites).
         trigger_cur = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='trigger' ORDER BY name"
         )
         trigger_names = [row[0] for row in trigger_cur.fetchall()]
         assert trigger_names == [
             "enforce_immutable_created_at",
-            "enforce_immutable_entity_type",
-            "enforce_immutable_type_id",
             "enforce_immutable_uuid",
             "enforce_no_self_parent",
             "enforce_no_self_parent_update",
@@ -549,17 +548,19 @@ class TestSchemaCreation:
 
 
 class TestTriggers:
-    def test_has_ten_triggers(self, db: EntityDatabase):
+    def test_has_eight_triggers(self, db: EntityDatabase):
         # Feature 108 Migration 11: project_id triggers removed; replaced
         # by workspace_uuid auto-fill / orphan-rejection / immutability.
+        # Feature 109 Migration 12: enforce_immutable_entity_type and
+        # enforce_immutable_type_id triggers dropped (FR-3) to unblock
+        # the polymorphic-taxonomy backfill and promote_entity prefix
+        # rewrite.
         cur = db._conn.execute(
             "SELECT name FROM sqlite_master WHERE type='trigger' ORDER BY name"
         )
         trigger_names = [row[0] for row in cur.fetchall()]
         expected = [
             "enforce_immutable_created_at",
-            "enforce_immutable_entity_type",
-            "enforce_immutable_type_id",
             "enforce_immutable_uuid",
             "enforce_immutable_workspace_uuid",
             "enforce_immutable_wp_type_id",
@@ -586,6 +587,9 @@ class TestIndexes:
         expected = [
             "idx_ed_blocked_by_uuid",
             "idx_ed_entity_uuid",
+            # Feature 109 (AC-1.6): composite polymorphic-query index
+            # added to migration 12.
+            "idx_entities_type_kind",
             "idx_entity_type",
             "idx_eoa_entity_uuid",
             "idx_eoa_key_result_uuid",
@@ -803,23 +807,41 @@ class TestRegisterEntity:
 
 
 class TestImmutableTriggers:
-    def test_type_id_immutable(self, db: EntityDatabase):
-        """Attempting to change type_id should raise IntegrityError."""
-        db.register_entity("feature", "f1", "Feature One", project_id="__unknown__")
-        with pytest.raises(sqlite3.IntegrityError, match="type_id is immutable"):
-            db._conn.execute(
-                "UPDATE entities SET type_id = 'feature:f2' "
-                "WHERE type_id = 'feature:f1'"
-            )
+    def test_type_id_no_longer_immutable_at_db_layer(self, db: EntityDatabase):
+        """Feature 109 FR-3: ``enforce_immutable_type_id`` trigger dropped.
 
-    def test_entity_type_immutable(self, db: EntityDatabase):
-        """Attempting to change entity_type should raise IntegrityError."""
+        ``type_id`` rewrites are now permitted at the DB layer to support
+        ``promote_entity`` (backlog→feature prefix swap). Higher-level
+        callers must route through the promote_entity API for the event-
+        sourced state changes; the trigger no longer blocks raw UPDATEs.
+        """
         db.register_entity("feature", "f1", "Feature One", project_id="__unknown__")
-        with pytest.raises(sqlite3.IntegrityError, match="entity_type is immutable"):
-            db._conn.execute(
-                "UPDATE entities SET entity_type = 'project' "
-                "WHERE type_id = 'feature:f1'"
-            )
+        db._conn.execute(
+            "UPDATE entities SET type_id = 'feature:f2' "
+            "WHERE type_id = 'feature:f1'"
+        )
+        # UPDATE must succeed (no IntegrityError).
+        row = db._conn.execute(
+            "SELECT type_id FROM entities WHERE type_id='feature:f2'"
+        ).fetchone()
+        assert row is not None
+
+    def test_entity_type_no_longer_immutable_at_db_layer(self, db: EntityDatabase):
+        """Feature 109 FR-3: ``enforce_immutable_entity_type`` trigger dropped.
+
+        Migration 12 backfills ``entity_type → (type, kind, lifecycle_class)``
+        which requires the trigger to be absent. The trigger no longer
+        blocks ``entity_type`` UPDATEs.
+        """
+        db.register_entity("feature", "f1", "Feature One", project_id="__unknown__")
+        db._conn.execute(
+            "UPDATE entities SET entity_type = 'project' "
+            "WHERE type_id = 'feature:f1'"
+        )
+        row = db._conn.execute(
+            "SELECT entity_type FROM entities WHERE type_id='feature:f1'"
+        ).fetchone()
+        assert row[0] == "project"
 
     def test_created_at_immutable(self, db: EntityDatabase):
         """Attempting to change created_at should raise IntegrityError."""
@@ -2390,34 +2412,46 @@ class TestRootEntityParentUuidIsNone:
 class TestExistingImmutabilityTriggersStillFire:
     """BDD: AC-8 — existing immutability triggers survive migration.
     derived_from: spec:AC-8, dimension:mutation_mindset
+
+    Feature 109 FR-3 intentionally dropped two of these triggers
+    (``enforce_immutable_type_id``, ``enforce_immutable_entity_type``)
+    at all 12 source sites. The remaining trigger
+    (``enforce_immutable_created_at``) still fires; the two dropped
+    triggers' tests are inverted to assert the UPDATE succeeds.
     """
 
-    def test_type_id_immutable_via_uuid_lookup(self, db: EntityDatabase):
-        """type_id trigger fires even when entity was found via UUID.
-        Anticipate: If triggers were dropped during migration and not
-        recreated, this would succeed when it should fail.
+    def test_type_id_mutable_post_feature_109(self, db: EntityDatabase):
+        """Feature 109 FR-3: ``type_id`` UPDATE is no longer blocked at
+        the DB layer. ``promote_entity`` rewrites the ``type_id`` prefix
+        on backlog→feature promotion; the trigger that forbade this is
+        removed.
         """
-        # Given a registered entity
         entity_uuid = db.register_entity("feature", "immut", "Immutable Test", project_id="__unknown__")
-        # When attempting to change type_id using uuid in WHERE clause
-        with pytest.raises(sqlite3.IntegrityError, match="type_id is immutable"):
-            db._conn.execute(
-                "UPDATE entities SET type_id = 'feature:changed' WHERE uuid = ?",
-                (entity_uuid,),
-            )
+        db._conn.execute(
+            "UPDATE entities SET type_id = 'feature:changed' WHERE uuid = ?",
+            (entity_uuid,),
+        )
+        row = db._conn.execute(
+            "SELECT type_id FROM entities WHERE uuid = ?",
+            (entity_uuid,),
+        ).fetchone()
+        assert row[0] == "feature:changed"
 
-    def test_entity_type_immutable_post_migration(self, db: EntityDatabase):
-        """entity_type trigger fires on UUID-identified entity.
-        derived_from: spec:AC-8
+    def test_entity_type_mutable_post_feature_109(self, db: EntityDatabase):
+        """Feature 109 FR-3: ``entity_type`` UPDATE is no longer blocked.
+        Migration 12 backfills ``entity_type → (type, kind, lifecycle_class)``;
+        the immutability trigger was removed to permit this.
         """
         entity_uuid = db.register_entity("feature", "immut2", "Immutable Test 2", project_id="__unknown__")
-        with pytest.raises(
-            sqlite3.IntegrityError, match="entity_type is immutable"
-        ):
-            db._conn.execute(
-                "UPDATE entities SET entity_type = 'project' WHERE uuid = ?",
-                (entity_uuid,),
-            )
+        db._conn.execute(
+            "UPDATE entities SET entity_type = 'project' WHERE uuid = ?",
+            (entity_uuid,),
+        )
+        row = db._conn.execute(
+            "SELECT entity_type FROM entities WHERE uuid = ?",
+            (entity_uuid,),
+        ).fetchone()
+        assert row[0] == "project"
 
     def test_created_at_immutable_post_migration(self, db: EntityDatabase):
         """created_at trigger fires on UUID-identified entity.
@@ -5807,7 +5841,9 @@ class TestMigration8Data:
         conn.close()
 
     def test_migration_8_nine_triggers_exist(self):
-        """All 9 triggers exist after migration 8."""
+        """7 triggers exist after migration 8 (feature 109 FR-3 dropped
+        enforce_immutable_entity_type and enforce_immutable_type_id at
+        all 12 source sites, including this migration-8 schema epoch)."""
         conn = _build_v7_conn()
         _add_project_scoping(conn)
         triggers = conn.execute(
@@ -5816,8 +5852,6 @@ class TestMigration8Data:
         ).fetchall()
         trigger_names = {t[0] for t in triggers}
         expected = {
-            "enforce_immutable_type_id",
-            "enforce_immutable_entity_type",
             "enforce_immutable_created_at",
             "enforce_immutable_uuid",
             "enforce_immutable_project_id",
@@ -6738,10 +6772,11 @@ class TestMigration11TriggersAndIndexes:
                     "WHERE type='trigger' AND tbl_name='entities'"
                 )
             )
+            # Feature 109 Migration 12 removed enforce_immutable_type_id
+            # and enforce_immutable_entity_type at all 12 source sites,
+            # including the migration-11 site.
             expected = sorted([
                 "enforce_immutable_uuid",
-                "enforce_immutable_type_id",
-                "enforce_immutable_entity_type",
                 "enforce_immutable_created_at",
                 "enforce_immutable_workspace_uuid",
                 "enforce_no_self_parent_uuid_insert",

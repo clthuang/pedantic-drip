@@ -216,3 +216,124 @@ def test_migration_preserves_type_id_byte_identical() -> None:
         f"AC-1.7 violation: type_id values changed during migration 12. "
         f"pre={pre_values!r} post={post_values!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 3.1: AC-1.3 composite CHECK constraint rejection
+# ---------------------------------------------------------------------------
+
+
+def test_check_constraint_rejects_invalid_pairs() -> None:
+    """AC-1.3: composite CHECK on ``entities`` rejects invalid (type, kind) pairs.
+
+    Setup: post-v12 DB. Insert one row for each of the 5 spec-valid pairs
+    bypassing register_entity (raw INSERT). All 5 succeed.
+
+    Then attempt an invalid pair ``(type='work', kind='project')``; expect
+    ``sqlite3.IntegrityError`` matching "CHECK constraint failed".
+
+    The valid pairs (per FR-1 composite CHECK clause):
+      (workspace, workspace), (brainstorm, brainstorm),
+      (container, project), (work, feature), (work, backlog)
+    """
+    conn = make_v12_db()
+    ws_uuid = _bootstrap_workspace(conn)
+
+    valid_pairs = [
+        ("workspace", "workspace"),
+        ("brainstorm", "brainstorm"),
+        ("container", "project"),
+        ("work", "feature"),
+        ("work", "backlog"),
+    ]
+    now = "2026-05-12T00:00:00Z"
+
+    # Discover the entities column list dynamically so this test is
+    # resilient to future column additions during the v11→v12 transition
+    # window (the table currently retains ``entity_type`` since
+    # Group 7 has not yet dropped it).
+    cols = [
+        r[1] for r in conn.execute(
+            "PRAGMA table_info(entities)"
+        ).fetchall()
+    ]
+
+    def _insert(entity_type_val: str, type_val: str, kind_val: str,
+                entity_id: str, lifecycle_class_val: str = "feature_flow") -> None:
+        values = {
+            "uuid": str(_uuid.uuid4()),
+            "workspace_uuid": ws_uuid,
+            "type_id": f"{kind_val}:{entity_id}",
+            "entity_type": entity_type_val,
+            "entity_id": entity_id,
+            "name": f"synthetic-{entity_id}",
+            "status": None,
+            "parent_uuid": None,
+            "artifact_path": None,
+            "created_at": now,
+            "updated_at": now,
+            "metadata": None,
+            "type": type_val,
+            "kind": kind_val,
+            "lifecycle_class": lifecycle_class_val,
+        }
+        col_list = [c for c in cols if c in values]
+        placeholders = ",".join("?" for _ in col_list)
+        conn.execute(
+            f"INSERT INTO entities ({','.join(col_list)}) "
+            f"VALUES ({placeholders})",
+            tuple(values[c] for c in col_list),
+        )
+
+    # Insert each valid pair — all should succeed.
+    for i, (t, k) in enumerate(valid_pairs):
+        # entity_type column is still present in v12 (dropped later by
+        # Group 7); supply a coherent legacy value so any residual reads
+        # work. Use kind as the entity_type proxy (matches FR-1 inverse).
+        et_legacy = k  # workspace/brainstorm/project/feature/backlog
+        lc = {
+            "workspace": "none",
+            "brainstorm": "brainstorm_flow",
+            "project": "container_flow",
+            "feature": "feature_flow",
+            "backlog": "work_flow",
+        }[k]
+        _insert(
+            entity_type_val=et_legacy, type_val=t, kind_val=k,
+            entity_id=f"valid-{i}", lifecycle_class_val=lc,
+        )
+
+    # Invalid pair: (type='work', kind='project') is not in the union of
+    # allowed pairs.
+    with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed"):
+        _insert(
+            entity_type_val="project", type_val="work",
+            kind_val="project", entity_id="invalid-1",
+            lifecycle_class_val="container_flow",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Task 4.1: AC-1.6 polymorphic-query index usage
+# ---------------------------------------------------------------------------
+
+
+def test_polymorphic_query_uses_index() -> None:
+    """AC-1.6: ``EXPLAIN QUERY PLAN`` for ``WHERE type=? AND kind=?``
+    references the ``idx_entities_type_kind`` index.
+
+    The exact plan-row format is SQLite-version dependent; the assertion
+    looks for the substring ``idx_entities_type_kind`` anywhere in the
+    concatenated plan rows (typically appears as
+    ``USING INDEX idx_entities_type_kind`` or similar).
+    """
+    conn = make_v12_db()
+    plan_rows = conn.execute(
+        "EXPLAIN QUERY PLAN SELECT * FROM entities "
+        "WHERE type = 'work' AND kind = 'feature'"
+    ).fetchall()
+    plan_text = " ".join(str(row[-1]) for row in plan_rows)
+    assert "idx_entities_type_kind" in plan_text, (
+        f"AC-1.6 violation: polymorphic query plan does not reference "
+        f"idx_entities_type_kind. Got: {plan_text!r}"
+    )

@@ -502,6 +502,12 @@ class TestSyncBacklogEntities:
         ws_uuid = ws_row["uuid"]
         db._conn.execute("CREATE TABLE entities_bak AS SELECT * FROM entities")
         db._conn.execute("DROP TABLE entities")
+        # Feature 109 Migration 12 added 3 columns (type/kind/
+        # lifecycle_class). The fixture rebuilds the table without the
+        # UNIQUE(workspace_uuid, type_id) constraint for dedup testing
+        # but must mirror the post-v12 column layout so the
+        # ``INSERT INTO entities SELECT * FROM entities_bak`` row-shape
+        # match keeps working.
         db._conn.execute("""
             CREATE TABLE entities (
                 uuid TEXT NOT NULL PRIMARY KEY,
@@ -515,7 +521,10 @@ class TestSyncBacklogEntities:
                 artifact_path TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
-                metadata TEXT
+                metadata TEXT,
+                type TEXT NOT NULL DEFAULT 'work',
+                kind TEXT NOT NULL DEFAULT 'feature',
+                lifecycle_class TEXT NOT NULL DEFAULT 'feature_flow'
             )
         """)
         db._conn.execute("INSERT INTO entities SELECT * FROM entities_bak")
@@ -821,6 +830,12 @@ class TestDedupEdgeCases:
         ws_uuid = ws_row["uuid"]
         db._conn.execute("CREATE TABLE entities_bak AS SELECT * FROM entities")
         db._conn.execute("DROP TABLE entities")
+        # Feature 109 Migration 12 added 3 columns (type/kind/
+        # lifecycle_class). The fixture rebuilds the table without the
+        # UNIQUE(workspace_uuid, type_id) constraint for dedup testing
+        # but must mirror the post-v12 column layout so the
+        # ``INSERT INTO entities SELECT * FROM entities_bak`` row-shape
+        # match keeps working.
         db._conn.execute("""
             CREATE TABLE entities (
                 uuid TEXT NOT NULL PRIMARY KEY,
@@ -834,7 +849,10 @@ class TestDedupEdgeCases:
                 artifact_path TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
-                metadata TEXT
+                metadata TEXT,
+                type TEXT NOT NULL DEFAULT 'work',
+                kind TEXT NOT NULL DEFAULT 'feature',
+                lifecycle_class TEXT NOT NULL DEFAULT 'feature_flow'
             )
         """)
         db._conn.execute("INSERT INTO entities SELECT * FROM entities_bak")
