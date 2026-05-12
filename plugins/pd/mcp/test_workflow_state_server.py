@@ -7294,6 +7294,56 @@ class TestListFeaturesByDefaultSingleWorkspace:
             f"'*' should return cross-workspace results, got {slugs}"
         )
 
+    def test_list_features_handler_empty_project_id_treated_as_default(
+        self, tmp_path,
+    ):
+        """FR-3.0: empty-string project_id is normalized to None (single-workspace default).
+
+        Without normalization, ``project_id == ""`` falls into the JOIN-resolve
+        branch in ``_resolve_list_handler_workspace_filter``, fails to match any
+        ``workspaces.project_id_legacy`` row, and silently returns None
+        (cross-workspace fallback). The fix normalizes "" → None at the entry
+        point so the function falls through to the default-workspace branch.
+        """
+        import asyncio
+        import workflow_state_server as wss
+
+        db = EntityDatabase(str(tmp_path / "ws.db"))
+        from entity_registry.test_helpers import bootstrap_test_workspace
+        ws_a = bootstrap_test_workspace(db, "ws_a_legacy")
+        ws_b = bootstrap_test_workspace(db, "ws_b_legacy")
+
+        for ws_uuid, slug in [(ws_a, "alpha"), (ws_b, "beta")]:
+            db.register_entity(
+                entity_type="feature",
+                entity_id=f"003-{slug}",
+                name=slug,
+                status="active",
+                workspace_uuid=ws_uuid,
+            )
+            db.upsert_workflow_phase(
+                f"feature:003-{slug}", workflow_phase="design",
+                kanban_column="wip", workspace_uuid=ws_uuid,
+            )
+
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, "docs")
+        wss._workspace_uuid = ws_a
+        wss._project_id = "ws_a_legacy"
+
+        # Empty-string project_id must behave the same as omitted (single-workspace
+        # default), NOT fall through to cross-workspace via failed JOIN-resolve.
+        result = asyncio.run(
+            wss.list_features_by_phase("design", project_id="")
+        )
+        entries = json.loads(result)
+        slugs = sorted(e["feature_type_id"] for e in entries)
+        assert slugs == ["feature:003-alpha"], (
+            f"Empty project_id should default to current workspace (ws_a only), "
+            f"got {slugs}"
+        )
+
 
 class TestSerializeStateDegradedLogicDeepened:
     """Mutation tests for _serialize_state degraded flag logic.

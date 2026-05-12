@@ -1577,11 +1577,20 @@ def _resolve_list_handler_workspace_filter(
     str | None
         Workspace UUID to filter by, or ``None`` for cross-workspace.
     """
+    # FR-3.0: empty string → None at entry (treated as default-workspace).
+    # Without normalization, "" falls into the JOIN-resolve branch below,
+    # fails to match any workspaces.project_id_legacy row, and silently
+    # degrades to cross-workspace via ValueError → None. Forms one
+    # defensive contract with FR-6's workspace_uuid empty-string handling.
+    if project_id == "":
+        project_id = None
     if project_id == "*":
         return None
     if project_id is not None:
         # Caller-supplied legacy project_id → JOIN-resolve to workspace_uuid.
         if _db is None:
+            # Degraded-mode: no DB → cross-workspace fallback is intentional,
+            # surfaced via _check_db_available upstream
             return None
         try:
             return _db._resolve_optional_workspace_filter(
