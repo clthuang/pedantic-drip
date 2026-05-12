@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Feature 113 — Feature 112 QA-gate followups** (closes backlog #00391–#00401):
+  - **FR-1**: New `plugins/pd/hooks/lib/qa_gate/` package with canonical `emit_qa_gate()` emitter. Validates per-entry `status` against `STATUS_ENUM = frozenset({"passed", "deferred", "n_a", "conditional_skipped"})`, enforces `evidence ≤500 chars`, requires non-empty `condition` when `status == "conditional_skipped"`. `head_sha` idempotency: re-emit with same HEAD is a no-op. `finish-feature` Step 5b (via `docs/dev_guides/qa-gate-procedure.md`) now uses the emitter instead of inline `.qa-gate.json.tmp` heredoc.
+  - **FR-2**: New `plugins/pd/hooks/tests/bash-version-capture.sh` produces AC-12 evidence in canonical 3-section format (host bash, /bin/bash, /bin/bash test-hooks.sh exit code) with `trap '' PIPE` + EPIPE-safe wrappers.
+  - **FR-3.0**: `_resolve_list_handler_workspace_filter` normalizes `project_id == ""` → `None` at entry, treating empty string as default-workspace.
+  - **FR-3.2/3.3**: `_resolve_list_handler_workspace_filter` raises `ValueError` on invalid legacy hex (previously silent None → cross-workspace fallback). Both `list_features_by_phase` and `list_features_by_status` wrap with `try/except ValueError → _make_error(error_type="invalid_project_id")`.
+  - **FR-4.1**: `db.update_workflow_phase` gains `workspace_uuid: str | None = None` kwarg with read-side assertion. When non-None, SELECTs the stored workspace_uuid and raises `ValueError("workspace_uuid mismatch for {type_id}: stored={existing!r}, provided={workspace_uuid!r}")` on mismatch. Column is NOT added to UPDATE SET (immutable post-Migration-11).
+  - **FR-4.2**: `WorkflowStateEngine.transition_phase` and `complete_phase` (non-terminal path) now forward `workspace_uuid` to `db.update_workflow_phase`. Mismatch ValueError propagates past the narrow `except sqlite3.Error:` catch.
+  - **FR-5/5.2**: `transition_entity_phase` unconditionally adds `workspace_uuid` to the `update_kwargs` dict, achieving symmetric forwarding to both `db.update_entity` and `db.update_workflow_phase`.
+  - **FR-6**: Inline doc comments at `workflow_state_server.py` lines 657 + 1280 document the `_workspace_uuid or None` MCP-boundary normalization. 2 parametrized boundary tests pin the mutation.
+  - **FR-7**: `_filter_states_by_workspace` narrows `except (json.JSONDecodeError, Exception)` to `except json.JSONDecodeError` + `except sqlite3.OperationalError` (returns `_make_error("db_unavailable", ...)`). Other exceptions propagate (RuntimeError no longer swallowed).
+  - **FR-8**: `server_helpers.py` parent-resolution narrows `except Exception:` to `except sqlite3.OperationalError as exc:` with stderr warning + `import sys`. RuntimeError propagates.
+  - **FR-9**: `_process_create_key_result` adds explicit `if parent_entity is None: raise ValueError(f"Parent entity not found: {parent_type_id!r}")` check (was: silent orphan via ternary).
+  - **FR-10**: `entity_status.py` 4 `db.update_entity` call sites (lines 47, 72, 189, 320) now use conditional kwarg pattern `project_id=project_id if workspace_uuid is None else None, workspace_uuid=workspace_uuid` — eliminates `DeprecationWarning` on the post-FR-2 happy path.
+  - **FR-11**: `apply_workflow_reconciliation`, `scan_all`, `_process_reconcile_apply`, `_process_reconcile_frontmatter`, `_process_reconcile_status`, and the 3 async MCP handlers all thread `workspace_uuid` through. `scan_all` scopes its `db.list_entities` call to the workspace; `apply_workflow_reconciliation` forwards to both `db.update_workflow_phase` call sites.
+  - **AC-12 (regression baseline)**: zero net-new pytest failures vs feature-branch root commit; +33 new tests added (5 emitter, 4 FR-3.3, 5 FR-4.3, 1 FR-5.2, 2 FR-6, 2 FR-7.2, 2 FR-8.2, 1 FR-9.2, 4 FR-10.2 parametrized, 7 FR-11.5).
+
+### Removed
+
+- `.gitignore:63` line `docs/features/**/.qa-gate.json` (FR-1.4 — QA-gate JSON files are now committable evidence at `docs/features/{id}-{slug}/.qa-gate.json`). Existing `.qa-gate.json` files for features 096, 108, 112 added to git in their legacy schemas (informational only; not migrated to canonical schema per design TD-8).
+
 ## [4.17.1] - 2026-05-12
 
 ### Changed
