@@ -247,12 +247,16 @@ class TestMigrationSafety:
         Feature 108 Migration 11: ``project_id`` column dropped; the NOT NULL
         guarantee migrated to ``workspace_uuid``.
         """
+        # F11 (feature 109): entity_type column dropped; kind replaces it
+        # alongside the (type, lifecycle_class) discriminators per FR-1.
         with pytest.raises(sqlite3.IntegrityError):
             db._conn.execute(
-                "INSERT INTO entities (uuid, entity_type, entity_id, type_id, name, "
-                "workspace_uuid, metadata, status, created_at, updated_at) "
+                "INSERT INTO entities (uuid, kind, entity_id, type_id, name, "
+                "workspace_uuid, metadata, status, created_at, updated_at, "
+                "type, lifecycle_class) "
                 "VALUES (?, 'feature', 'null-proj', 'feature:null-proj', 'Null Project', "
-                "NULL, ?, 'active', datetime('now'), datetime('now'))",
+                "NULL, ?, 'active', datetime('now'), datetime('now'), "
+                "'work', 'feature_flow')",
                 (
                     str(uuid.uuid4()),
                     json.dumps({"phase_timing": {"brainstorm": {"started": "2026-01-01T00:00:00Z"}}}),

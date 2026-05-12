@@ -582,3 +582,94 @@ def test_no_production_fts5_insert_references_entity_type() -> None:
         f"still reference entity_type at:\n"
         + "\n".join(violations)
     )
+
+
+# ---------------------------------------------------------------------------
+# Group 7 / Task 7.1: AC-1.4 — entity_type column dropped post-v12
+# ---------------------------------------------------------------------------
+
+
+def test_entity_type_column_dropped() -> None:
+    """AC-1.4: post-v12 ``entities`` table no longer has ``entity_type``.
+
+    The column was retained through Groups 1-6 as a transitional state to
+    let the FTS5 rebuild (Group 5) read the legacy column while populating
+    ``kind``. Group 7 finally drops the column via ``ALTER TABLE entities
+    DROP COLUMN entity_type`` (SQLite 3.35+) or copy-rename fallback.
+
+    Assertion: ``PRAGMA table_info(entities)`` returns no ``entity_type``
+    column. The 3 polymorphic columns (``type``, ``kind``,
+    ``lifecycle_class``) are still present as a sanity check.
+    """
+    conn = make_v12_db()
+    cols = {
+        row[1] for row in conn.execute("PRAGMA table_info(entities)").fetchall()
+    }
+    assert "entity_type" not in cols, (
+        f"AC-1.4 violation: entities table still has entity_type column. "
+        f"Columns present: {sorted(cols)!r}"
+    )
+    # Sanity: the new polymorphic columns survived the drop.
+    for col in ("type", "kind", "lifecycle_class"):
+        assert col in cols, (
+            f"AC-1.4 collateral: post-drop {col!r} unexpectedly missing. "
+            f"Columns present: {sorted(cols)!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Group 7 / Task 7.2: AC-1.5 — FIVE_D_ENTITY_TYPES frozenset removed
+# ---------------------------------------------------------------------------
+
+
+def test_five_d_entity_types_removed() -> None:
+    """AC-1.5: ``FIVE_D_ENTITY_TYPES`` frozenset is removed from the codebase.
+
+    The frozenset at ``entity_engine.py:35-37`` and its 2 call sites at
+    lines 151 + 251 are re-keyed onto ``entities.type == 'container'``
+    membership (semantically equivalent post-F11 since the only production
+    rows belonging to that set are projects, which map to type='container').
+
+    Verification: subprocess grep across ``plugins/pd/hooks/lib/`` returns
+    zero matches for the literal token ``FIVE_D_ENTITY_TYPES``.
+    """
+    import subprocess
+    from pathlib import Path
+
+    # Locate plugins/pd/hooks/lib via the entity_registry module path so the
+    # test is independent of pytest's CWD.
+    import entity_registry.database as _db_mod
+    lib_root = Path(_db_mod.__file__).resolve().parents[1]
+    assert lib_root.name == "lib", (
+        f"unexpected lib_root layout: {lib_root!r}"
+    )
+
+    result = subprocess.run(
+        [
+            "grep", "-rn",
+            "--include=*.py",
+            "--exclude-dir=__pycache__",
+            "FIVE_D_ENTITY_TYPES",
+            str(lib_root),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    # grep returncode: 0 = matches found, 1 = no matches, 2 = error.
+    assert result.returncode in (0, 1), (
+        f"grep failed (rc={result.returncode}): {result.stderr!r}"
+    )
+
+    # Filter out test-file documentation references — this test itself
+    # mentions the token in its docstring/asserts but is not a production
+    # use. AC-1.5's contract is "no production hits"; tests are exempted
+    # by the same convention as AC-1.4 exception (c).
+    hits = [
+        line for line in result.stdout.splitlines()
+        if line.strip() and "/test_" not in line
+    ]
+    assert hits == [], (
+        f"AC-1.5 violation: FIVE_D_ENTITY_TYPES still present in "
+        f"plugins/pd/hooks/lib/ production code. Found:\n"
+        + "\n".join(hits)
+    )

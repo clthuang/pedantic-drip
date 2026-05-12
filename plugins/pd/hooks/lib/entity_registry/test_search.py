@@ -237,14 +237,26 @@ class TestFTSSync:
         assert len(rows) == 1
 
     def test_insert_or_ignore_rowcount_zero_on_skip(self, db):
-        """cursor.rowcount == 0 for duplicate."""
+        """cursor.rowcount == 0 for duplicate.
+
+        F11 (feature 109): entity_type column dropped; kind replaces it
+        alongside the (type, lifecycle_class) discriminators per FR-1.
+        """
         db.register_entity("feature", "rc-test", "RC Test", project_id="__unknown__")
+        # Read the existing entity's workspace_uuid so the duplicate INSERT
+        # OR IGNORE collides on the (workspace_uuid, type_id) UNIQUE
+        # constraint exactly the way the pre-feature-109 fixture did.
+        ws_uuid = db._conn.execute(
+            "SELECT workspace_uuid FROM entities WHERE type_id = ?",
+            ("feature:rc-test",),
+        ).fetchone()[0]
         cursor = db._conn.execute(
             "INSERT OR IGNORE INTO entities "
-            "(uuid, type_id, entity_type, entity_id, name, "
-            "created_at, updated_at) "
-            "VALUES ('new-uuid', 'feature:rc-test', 'feature', 'rc-test', "
-            "'RC Test', '2026-01-01', '2026-01-01')"
+            "(uuid, workspace_uuid, type_id, kind, entity_id, name, "
+            "created_at, updated_at, type, lifecycle_class) "
+            "VALUES ('new-uuid', ?, 'feature:rc-test', 'feature', 'rc-test', "
+            "'RC Test', '2026-01-01', '2026-01-01', 'work', 'feature_flow')",
+            (ws_uuid,),
         )
         assert cursor.rowcount == 0
         db._conn.rollback()

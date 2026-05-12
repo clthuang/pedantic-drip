@@ -31,6 +31,49 @@ _TAG_RE = re.compile(r'^[a-z0-9](?:[a-z0-9-]{0,48}[a-z0-9])?$')
 
 
 # ---------------------------------------------------------------------------
+# Feature 109 (polymorphic taxonomy): F11 mapping helpers.
+# ---------------------------------------------------------------------------
+# Migration 12 backfilled the legacy ``entity_type`` column into the new
+# (``type``, ``kind``, ``lifecycle_class``) triple per spec FR-1. After Group 7
+# drops the legacy column, production paths still accept ``entity_type`` as a
+# kwarg/parameter name (public API stability — see TD-8 / AC-1.4) but the
+# stored column is ``kind``. This mapping is the single source of truth for
+# deriving (type, lifecycle_class) from a legacy entity_type value at INSERT
+# time and for reconstructing the legacy ``entity_type`` field in result dicts
+# from the ``kind`` column.
+#
+# Note: ``entity_type`` and ``kind`` values are byte-identical for the 5
+# production kinds (feature/backlog/brainstorm/project/workspace) — see spec
+# FR-1 backfill table. The mapping below therefore uses kind as the key.
+_KIND_TO_TYPE_LIFECYCLE: dict[str, tuple[str, str]] = {
+    "feature":    ("work",       "feature_flow"),
+    "backlog":    ("work",       "work_flow"),
+    "brainstorm": ("brainstorm", "brainstorm_flow"),
+    "project":    ("container",  "container_flow"),
+    "workspace":  ("workspace",  "none"),
+    # 5D kinds (zero production rows per spec §1, retained in
+    # VALID_ENTITY_TYPES for test fixture / forward-compat with feature
+    # 111 issue_spawn). All map to type='work' which the composite CHECK
+    # constraint permits.
+    "initiative": ("work",       "work_flow"),
+    "objective":  ("work",       "work_flow"),
+    "key_result": ("work",       "work_flow"),
+    "task":       ("work",       "work_flow"),
+}
+
+
+def _derive_type_and_lifecycle(kind: str) -> tuple[str, str]:
+    """Return (type, lifecycle_class) for an F11 kind value.
+
+    See ``_KIND_TO_TYPE_LIFECYCLE`` for the full mapping table. Unknown
+    kinds fall back to ``type='work', lifecycle_class='work_flow'``;
+    the composite CHECK on ``entities`` will reject the INSERT loudly
+    if the kind is also not in the permitted enum.
+    """
+    return _KIND_TO_TYPE_LIFECYCLE.get(kind, ("work", "work_flow"))
+
+
+# ---------------------------------------------------------------------------
 # Feature 108 (workspace identity foundation): workspace constants & DDL.
 # ---------------------------------------------------------------------------
 # FR-4: deterministic UUID for production __unknown__ rows AND test fixtures.
@@ -2758,50 +2801,67 @@ def _migration_12_polymorphic_taxonomy_and_events(
         # Map the 4 production ``entity_type`` values plus the (unused at
         # v11 but defined for forward compat) ``workspace`` value onto
         # (type, kind, lifecycle_class) per spec FR-1 mapping table.
-        conn.execute(
-            "UPDATE entities SET type='work', kind='feature', "
-            "lifecycle_class='feature_flow' WHERE entity_type='feature'"
-        )
-        conn.execute(
-            "UPDATE entities SET type='work', kind='backlog', "
-            "lifecycle_class='work_flow' WHERE entity_type='backlog'"
-        )
-        conn.execute(
-            "UPDATE entities SET type='brainstorm', kind='brainstorm', "
-            "lifecycle_class='brainstorm_flow' WHERE entity_type='brainstorm'"
-        )
-        conn.execute(
-            "UPDATE entities SET type='container', kind='project', "
-            "lifecycle_class='container_flow' WHERE entity_type='project'"
-        )
-        conn.execute(
-            "UPDATE entities SET type='workspace', kind='workspace', "
-            "lifecycle_class='none' WHERE entity_type='workspace'"
-        )
-
-        # ------------------------------------------------------------------
-        # Step 5e: Defensive abort on unmapped entity_type rows (Task 2.5)
-        # ------------------------------------------------------------------
-        # If any row has an ``entity_type`` that the 5 UPDATEs above did not
-        # cover (e.g. a stray value like 'unknown' that bypassed
-        # register_entity validation), abort the migration loudly so the
-        # operator can investigate.
         #
-        # Note on implementation: the original spec wording proposed
-        # ``WHERE type IS NULL`` — but the ALTER TABLE statements above
-        # populate ``type`` for existing rows from the NOT NULL DEFAULT,
-        # so that predicate never fires. Detecting an unmapped row requires
-        # a direct check against the mapping enum, which is what the
-        # backfill UPDATEs use. The set of mapped ``entity_type`` values is
-        # fixed by FR-1; rows outside that set are the anomaly.
-        unmapped = conn.execute(
-            "SELECT COUNT(*) FROM entities WHERE entity_type NOT IN "
-            "('feature','backlog','brainstorm','project','workspace')"
-        ).fetchone()[0]
-        if unmapped > 0:
-            raise RuntimeError(
-                f"Migration 12: unmapped entity_type rows: {unmapped}"
+        # Concurrent-runner safety: Group 7 drops ``entity_type`` later in
+        # this same migration body. A racing peer process may have already
+        # completed migration 12 (column dropped, schema_version=12
+        # stamped) while this process was waiting on BEGIN IMMEDIATE.
+        # When that happens, the re-check guard above SHOULD short-circuit
+        # — but the BEGIN IMMEDIATE snapshot can predate the peer commit.
+        # Guard each entity_type read by introspecting the column list at
+        # runtime; skip the backfill when the column is already gone.
+        backfill_cols = {
+            r[1] for r in conn.execute(
+                "PRAGMA table_info(entities)"
+            ).fetchall()
+        }
+        entity_type_present = "entity_type" in backfill_cols
+
+        if entity_type_present:
+            conn.execute(
+                "UPDATE entities SET type='work', kind='feature', "
+                "lifecycle_class='feature_flow' WHERE entity_type='feature'"
             )
+            conn.execute(
+                "UPDATE entities SET type='work', kind='backlog', "
+                "lifecycle_class='work_flow' WHERE entity_type='backlog'"
+            )
+            conn.execute(
+                "UPDATE entities SET type='brainstorm', kind='brainstorm', "
+                "lifecycle_class='brainstorm_flow' WHERE entity_type='brainstorm'"
+            )
+            conn.execute(
+                "UPDATE entities SET type='container', kind='project', "
+                "lifecycle_class='container_flow' WHERE entity_type='project'"
+            )
+            conn.execute(
+                "UPDATE entities SET type='workspace', kind='workspace', "
+                "lifecycle_class='none' WHERE entity_type='workspace'"
+            )
+
+            # ------------------------------------------------------------------
+            # Step 5e: Defensive abort on unmapped entity_type rows (Task 2.5)
+            # ------------------------------------------------------------------
+            # If any row has an ``entity_type`` that the 5 UPDATEs above did not
+            # cover (e.g. a stray value like 'unknown' that bypassed
+            # register_entity validation), abort the migration loudly so the
+            # operator can investigate.
+            #
+            # Note on implementation: the original spec wording proposed
+            # ``WHERE type IS NULL`` — but the ALTER TABLE statements above
+            # populate ``type`` for existing rows from the NOT NULL DEFAULT,
+            # so that predicate never fires. Detecting an unmapped row requires
+            # a direct check against the mapping enum, which is what the
+            # backfill UPDATEs use. The set of mapped ``entity_type`` values is
+            # fixed by FR-1; rows outside that set are the anomaly.
+            unmapped = conn.execute(
+                "SELECT COUNT(*) FROM entities WHERE entity_type NOT IN "
+                "('feature','backlog','brainstorm','project','workspace')"
+            ).fetchone()[0]
+            if unmapped > 0:
+                raise RuntimeError(
+                    f"Migration 12: unmapped entity_type rows: {unmapped}"
+                )
 
         # ------------------------------------------------------------------
         # Step 5f: F11 composite CHECK via copy-rename + consolidated
@@ -2926,7 +2986,20 @@ def _migration_12_polymorphic_taxonomy_and_events(
                         (type='workspace' AND kind='workspace') OR
                         (type='brainstorm' AND kind='brainstorm') OR
                         (type='container' AND kind='project') OR
-                        (type='work' AND kind IN ('feature','backlog'))
+                        (type='work' AND kind IN (
+                            'feature','backlog',
+                            -- 5D kinds (initiative/objective/key_result/
+                            -- task) have 0 production rows per spec §1
+                            -- but VALID_ENTITY_TYPES retains them for
+                            -- forward compat (OKR alignment test
+                            -- fixtures, future feature 111 issue_spawn).
+                            -- Permit them under type='work' so
+                            -- register_entity callers using these
+                            -- legacy kinds satisfy the CHECK; feature
+                            -- 111 narrows this when bug/task get
+                            -- first-class CHECK pairs.
+                            'initiative','objective','key_result','task'
+                        ))
                     )
                 )
             """)
@@ -3117,6 +3190,140 @@ def _migration_12_polymorphic_taxonomy_and_events(
             for _, trg_sql in fts_cross_triggers:
                 if trg_sql:
                     conn.execute(trg_sql)
+
+        # ------------------------------------------------------------------
+        # Step 5h: F11 DROP COLUMN entity_type (Group 7, Task 7.3)
+        # ------------------------------------------------------------------
+        # AC-1.4: after the FTS5 rebuild (step 5g) has switched the search
+        # column from ``entity_type`` to ``kind``, the legacy
+        # ``entity_type`` column on ``entities`` is no longer needed —
+        # production readers (Group 6) now consult ``kind`` instead.
+        # Drop the column to enforce the cut-over at the schema level.
+        #
+        # SQLite 3.35.0+ supports native ``ALTER TABLE ... DROP COLUMN``.
+        # Older SQLite falls back to a copy-rename block. The check is
+        # performed at runtime against ``sqlite3.sqlite_version`` (the
+        # bundled engine version, not the Python ``sqlite3`` module
+        # version).
+        #
+        # Idempotency: probe ``PRAGMA table_info(entities)`` for the
+        # ``entity_type`` column — skip the DROP if already absent (e.g.
+        # a prior interrupted migration completed step 5h but failed
+        # before stamping schema_version=12).
+        entities_cols_post = {
+            r[1] for r in conn.execute(
+                "PRAGMA table_info(entities)"
+            ).fetchall()
+        }
+        if "entity_type" in entities_cols_post:
+            # Drop ``idx_entity_type`` first if present — SQLite refuses
+            # to DROP COLUMN if any index references the column, and the
+            # fallback CREATE TABLE block would also need this gone.
+            conn.execute(
+                "DROP INDEX IF EXISTS idx_entity_type"
+            )
+            # ``idx_workspace_entity_type`` (created by migration 11
+            # step 6) is a compound index spanning workspace_uuid +
+            # entity_type. SQLite refuses native DROP COLUMN while it
+            # exists. Drop it; if a compound index over the surviving
+            # columns is needed, that's spec FR-1's
+            # ``idx_entities_type_kind`` which step 5f already created.
+            conn.execute(
+                "DROP INDEX IF EXISTS idx_workspace_entity_type"
+            )
+            sqlite_version_tuple = tuple(
+                int(x) for x in sqlite3.sqlite_version.split(".")[:3]
+            )
+            if sqlite_version_tuple >= (3, 35, 0):
+                # Native DROP COLUMN (SQLite 3.35+ supports this directly).
+                conn.execute(
+                    "ALTER TABLE entities DROP COLUMN entity_type"
+                )
+            else:
+                # Copy-rename fallback for older SQLite. Build a new
+                # ``entities`` table omitting ``entity_type``, INSERT-SELECT
+                # the surviving columns, DROP old, RENAME new. Preserves
+                # the composite CHECK constraint, all indexes, and all
+                # triggers that step 5f's copy-rename already restored.
+                survive_cols = [
+                    c for c in conn.execute(
+                        "PRAGMA table_info(entities)"
+                    ).fetchall()
+                    if c[1] != "entity_type"
+                ]
+                survive_names = [c[1] for c in survive_cols]
+
+                # Capture indexes + triggers so we can restore them after
+                # the rebuild.
+                saved_indexes_2 = [
+                    (r[0], r[1])
+                    for r in conn.execute(
+                        "SELECT name, sql FROM sqlite_master "
+                        "WHERE type='index' AND tbl_name='entities' "
+                        "AND sql IS NOT NULL"
+                    ).fetchall()
+                ]
+                saved_triggers_2 = [
+                    (r[0], r[1])
+                    for r in conn.execute(
+                        "SELECT name, sql FROM sqlite_master "
+                        "WHERE type='trigger' AND tbl_name='entities' "
+                        "AND sql IS NOT NULL"
+                    ).fetchall()
+                ]
+
+                # Build the new CREATE TABLE statement with the same
+                # composite CHECK constraint from step 5f, omitting
+                # entity_type.
+                conn.execute("""
+                    CREATE TABLE entities_drop (
+                        uuid           TEXT NOT NULL PRIMARY KEY,
+                        workspace_uuid TEXT NOT NULL
+                                       REFERENCES workspaces(uuid),
+                        type_id        TEXT NOT NULL,
+                        entity_id      TEXT NOT NULL,
+                        name           TEXT NOT NULL,
+                        status         TEXT,
+                        parent_uuid    TEXT REFERENCES entities_drop(uuid),
+                        artifact_path  TEXT,
+                        created_at     TEXT NOT NULL,
+                        updated_at     TEXT NOT NULL,
+                        metadata       TEXT,
+                        type           TEXT NOT NULL DEFAULT 'work',
+                        kind           TEXT NOT NULL DEFAULT 'feature',
+                        lifecycle_class TEXT NOT NULL
+                                       DEFAULT 'feature_flow',
+                        UNIQUE(workspace_uuid, type_id),
+                        CHECK (
+                            (type='workspace' AND kind='workspace') OR
+                            (type='brainstorm' AND kind='brainstorm') OR
+                            (type='container' AND kind='project') OR
+                            (type='work' AND kind IN (
+                                'feature','backlog',
+                                'initiative','objective',
+                                'key_result','task'
+                            ))
+                        )
+                    )
+                """)
+                col_list_sql = ",".join(survive_names)
+                conn.execute(
+                    f"INSERT INTO entities_drop ({col_list_sql}) "
+                    f"SELECT {col_list_sql} FROM entities"
+                )
+                conn.execute("DROP TABLE entities")
+                conn.execute(
+                    "ALTER TABLE entities_drop RENAME TO entities"
+                )
+                # Recreate indexes + triggers (filter out
+                # ``idx_entity_type`` which references the dropped
+                # column — would fail to CREATE).
+                for idx_name, idx_sql in saved_indexes_2:
+                    if idx_sql and "entity_type" not in idx_sql:
+                        conn.execute(idx_sql)
+                for trg_name, trg_sql in saved_triggers_2:
+                    if trg_sql and "entity_type" not in trg_sql:
+                        conn.execute(trg_sql)
 
         # ------------------------------------------------------------------
         # Step N-2: in-transaction post-flight FK check
@@ -3543,7 +3750,8 @@ class EntityDatabase:
         even though Migration 11 dropped the underlying columns.
         """
         row = self._conn.execute(
-            "SELECT e.*, p.type_id AS parent_type_id, "
+            "SELECT e.*, e.kind AS entity_type, "
+            "p.type_id AS parent_type_id, "
             "w.project_id_legacy AS project_id "
             "FROM entities e "
             "LEFT JOIN entities p ON e.parent_uuid = p.uuid "
@@ -3644,8 +3852,10 @@ class EntityDatabase:
         list[dict]
             List of child entity dicts.  Empty list if no children found.
         """
+        # F11 (Group 6): project ``kind`` to the legacy ``entity_type`` dict
+        # key for caller compatibility (TD-8 public API surface).
         rows = self._conn.execute(
-            "SELECT * FROM entities WHERE parent_uuid = ?",
+            "SELECT *, kind AS entity_type FROM entities WHERE parent_uuid = ?",
             (parent_uuid,),
         ).fetchall()
         return [dict(r) for r in rows]
@@ -3824,11 +4034,14 @@ class EntityDatabase:
         list[dict]
             List of entity dicts for entities carrying this tag.
         """
+        # F11 (Group 6): project ``e.kind`` to the legacy ``entity_type``
+        # dict-key for caller compatibility (TD-8 public API surface).
         rows = self._conn.execute(
-            "SELECT e.* FROM entities e "
+            "SELECT e.*, e.kind AS entity_type "
+            "FROM entities e "
             "JOIN entity_tags et ON e.uuid = et.entity_uuid "
             "WHERE et.tag = ? "
-            "ORDER BY e.entity_type, e.name",
+            "ORDER BY e.kind, e.name",
             (tag,),
         ).fetchall()
         return [dict(row) for row in rows]
@@ -3878,8 +4091,11 @@ class EntityDatabase:
         list[dict]
             List of key_result entity dicts. Empty list if none found.
         """
+        # F11 (Group 6): project ``e.kind`` to the legacy ``entity_type``
+        # dict-key for caller compatibility (TD-8 public API surface).
         rows = self._conn.execute(
-            "SELECT e.* FROM entities e "
+            "SELECT e.*, e.kind AS entity_type "
+            "FROM entities e "
             "JOIN entity_okr_alignment eoa ON e.uuid = eoa.key_result_uuid "
             "WHERE eoa.entity_uuid = ? "
             "ORDER BY e.name",
@@ -3995,18 +4211,26 @@ class EntityDatabase:
                     # tolerant behaviour by leaving parent_uuid as NULL.
                     parent_uuid = None
 
+        # F11 derivation (feature 109 Group 6): the legacy ``entity_type``
+        # kwarg maps to (type, kind, lifecycle_class) via the FR-1 mapping.
+        # The kind column equals entity_type byte-identically for the 5
+        # production values (feature/backlog/brainstorm/project/workspace).
+        _type, _lifecycle = _derive_type_and_lifecycle(entity_type)
+
         # Audit 062: 2 write SQL statements — wrapped in transaction() for BEGIN IMMEDIATE
         entity_uuid = str(uuid_mod.uuid4())
         with self.transaction():
             cursor = self._conn.execute(
                 "INSERT OR IGNORE INTO entities "
-                "(uuid, workspace_uuid, type_id, entity_type, entity_id, "
+                "(uuid, workspace_uuid, type_id, kind, entity_id, "
                 "name, status, parent_uuid, artifact_path, "
-                "created_at, updated_at, metadata) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "created_at, updated_at, metadata, "
+                "type, lifecycle_class) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (entity_uuid, ws_uuid, type_id, entity_type, entity_id,
                  name, status, parent_uuid, artifact_path,
-                 now, now, metadata_json),
+                 now, now, metadata_json,
+                 _type, _lifecycle),
             )
             if cursor.rowcount == 1:
                 row = self._conn.execute(
@@ -4143,7 +4367,8 @@ class EntityDatabase:
         except ValueError:
             return None
         row = self._conn.execute(
-            "SELECT e.*, p.type_id AS parent_type_id, "
+            "SELECT e.*, e.kind AS entity_type, "
+            "p.type_id AS parent_type_id, "
             "w.project_id_legacy AS project_id "
             "FROM entities e "
             "LEFT JOIN entities p ON e.parent_uuid = p.uuid "
@@ -4185,7 +4410,10 @@ class EntityDatabase:
         conditions: list[str] = []
         params: list[str] = []
         if entity_type is not None:
-            conditions.append("e.entity_type = ?")
+            # F11: filter on kind (the legacy entity_type column was dropped
+            # by migration 12 Group 7; kind values are byte-identical to the
+            # 5 production entity_type values per FR-1).
+            conditions.append("e.kind = ?")
             params.append(entity_type)
         if ws_uuid is not None:
             conditions.append("e.workspace_uuid = ?")
@@ -4194,8 +4422,12 @@ class EntityDatabase:
         # Feature 108: enrich rows with resolved ``parent_type_id`` (via
         # parent_uuid JOIN) and ``project_id`` (via workspaces JOIN) so
         # callers retain the legacy fields post-Migration-11.
+        # Feature 109 Group 6: ``e.kind AS entity_type`` projects the
+        # F11 column back to the legacy dict-key name expected by
+        # downstream callers (TD-8: public API surface preserved).
         sql = (
-            "SELECT e.*, p.type_id AS parent_type_id, "
+            "SELECT e.*, e.kind AS entity_type, "
+            "p.type_id AS parent_type_id, "
             "w.project_id_legacy AS project_id "
             "FROM entities e "
             "LEFT JOIN entities p ON e.parent_uuid = p.uuid "
@@ -4349,9 +4581,11 @@ class EntityDatabase:
             type_id, project_id=project_id, workspace_uuid=workspace_uuid,
         )
 
-        # FTS sync: capture old values before UPDATE
+        # FTS sync: capture old values before UPDATE.
+        # F11 (feature 109 Group 6): ``kind`` replaces the legacy
+        # ``entity_type`` column.
         old_row = self._conn.execute(
-            "SELECT rowid, name, entity_id, entity_type, status, metadata "
+            "SELECT rowid, name, entity_id, kind, status, metadata "
             "FROM entities WHERE uuid = ?",
             (entity_uuid,),
         ).fetchone()
@@ -4390,14 +4624,18 @@ class EntityDatabase:
                 set_parts.append("metadata = ?")
                 params.append(json.dumps(existing_meta))
 
-                # Validate merged metadata
+                # Validate merged metadata. F11 (Group 6): the validator
+                # still takes the legacy entity_type string; we read it
+                # from ``kind`` (which holds the same value for the 5
+                # production kinds — feature/backlog/brainstorm/project/
+                # workspace — per FR-1).
                 entity_row = self._conn.execute(
-                    "SELECT entity_type FROM entities WHERE uuid = ?",
+                    "SELECT kind FROM entities WHERE uuid = ?",
                     (entity_uuid,),
                 ).fetchone()
                 if entity_row:
                     from entity_registry.metadata import validate_metadata
-                    for w in validate_metadata(entity_row["entity_type"], existing_meta):
+                    for w in validate_metadata(entity_row["kind"], existing_meta):
                         print(f"metadata warning: {w}", file=sys.stderr)
 
         # Audit 062: 3 write SQL statements — wrapped in transaction() for BEGIN IMMEDIATE
@@ -4411,8 +4649,9 @@ class EntityDatabase:
             # {}/clear, dict/shallow-merge) and uses the DB as single source of
             # truth. If new FTS-indexed fields are added, update both the
             # old-value SELECT and the FTS insert columns.
+            # F11 (Group 6): read ``kind`` in place of legacy ``entity_type``.
             new_row = self._conn.execute(
-                "SELECT name, entity_id, entity_type, status, metadata "
+                "SELECT name, entity_id, kind, status, metadata "
                 "FROM entities WHERE uuid = ?",
                 (entity_uuid,),
             ).fetchone()
@@ -4428,7 +4667,7 @@ class EntityDatabase:
                 "INSERT INTO entities_fts(rowid, name, entity_id, kind, "
                 "status, metadata_text) VALUES(?, ?, ?, ?, ?, ?)",
                 (old_row["rowid"], new_row["name"], new_row["entity_id"],
-                 new_row["entity_type"], new_row["status"] or "",
+                 new_row["kind"], new_row["status"] or "",
                  new_meta_text),
             )
             self._commit()  # no-op inside transaction(); commit handled by context manager
@@ -4785,7 +5024,10 @@ class EntityDatabase:
         )
         select_params: list = [_UNKNOWN_WORKSPACE_UUID]
         if entity_type is not None:
-            select_sql += " AND entity_type = ?"
+            # F11 (Group 6): the legacy ``entity_type`` column was dropped
+            # by migration 12; filter on ``kind`` instead (same value for
+            # the 5 production kinds per FR-1).
+            select_sql += " AND kind = ?"
             select_params.append(entity_type)
         select_sql += " ORDER BY created_at ASC"
         if limit is not None:
@@ -4910,11 +5152,14 @@ class EntityDatabase:
         )
 
         try:
-            # Build WHERE conditions beyond FTS MATCH
+            # Build WHERE conditions beyond FTS MATCH. F11 (Group 6): filter
+            # on ``kind`` since the legacy ``entity_type`` column was dropped
+            # by migration 12 (kind values equal the 5 production
+            # entity_type values per FR-1).
             extra_conditions: list[str] = []
             extra_params: list = []
             if entity_type is not None:
-                extra_conditions.append("e.entity_type = ?")
+                extra_conditions.append("e.kind = ?")
                 extra_params.append(entity_type)
             if ws_uuid is not None:
                 extra_conditions.append("e.workspace_uuid = ?")
@@ -4924,8 +5169,10 @@ class EntityDatabase:
             if extra_conditions:
                 where_clause += " AND " + " AND ".join(extra_conditions)
 
+            # Project ``e.kind`` back to the legacy ``entity_type`` dict
+            # key for caller compatibility (TD-8 public API surface).
             sql = (
-                "SELECT e.*, entities_fts.rank "
+                "SELECT e.*, e.kind AS entity_type, entities_fts.rank "
                 "FROM entities_fts "
                 "JOIN entities e ON entities_fts.rowid = e.rowid "
                 f"{where_clause} "
@@ -4988,13 +5235,13 @@ class EntityDatabase:
         if ws_uuid is not None:
             cur = self._conn.execute(
                 "SELECT uuid FROM entities WHERE parent_uuid IS NULL "
-                "AND workspace_uuid = ? ORDER BY entity_type, name",
+                "AND workspace_uuid = ? ORDER BY kind, name",
                 (ws_uuid,),
             )
         else:
             cur = self._conn.execute(
                 "SELECT uuid FROM entities WHERE parent_uuid IS NULL "
-                "ORDER BY entity_type, name"
+                "ORDER BY kind, name"
             )
         roots = [row["uuid"] for row in cur.fetchall()]
 
@@ -5030,9 +5277,9 @@ class EntityDatabase:
                 JOIN tree t ON e.parent_uuid = t.uid
                 WHERE t.depth < ?
             )
-            SELECT e.*, t.depth FROM tree t
+            SELECT e.*, e.kind AS entity_type, t.depth FROM tree t
             JOIN entities e ON e.uuid = t.uid
-            ORDER BY t.depth ASC, e.entity_type, e.name
+            ORDER BY t.depth ASC, e.kind, e.name
             """,
             (root_uuid, max_depth),
         )
@@ -5110,9 +5357,11 @@ class EntityDatabase:
         # Feature 108: post-Migration-11 schema has workspace_uuid + parent_uuid
         # instead of project_id + parent_type_id. JOIN back to recover legacy
         # values for export envelope consumers.
+        # F11 (Group 6): project ``e.kind`` to the legacy ``entity_type``
+        # dict-key for export envelope consumers (TD-8 public API surface).
         query = (
             "SELECT e.uuid AS uuid, e.type_id AS type_id, "
-            "e.entity_type AS entity_type, e.entity_id AS entity_id, "
+            "e.kind AS entity_type, e.entity_id AS entity_id, "
             "e.name AS name, e.status AS status, "
             "e.artifact_path AS artifact_path, "
             "p.type_id AS parent_type_id, "
@@ -5125,7 +5374,7 @@ class EntityDatabase:
         conditions: list[str] = []
         params: list[str] = []
         if entity_type is not None:
-            conditions.append("e.entity_type = ?")
+            conditions.append("e.kind = ?")
             params.append(entity_type)
         if status is not None:
             conditions.append("e.status = ?")
@@ -5683,8 +5932,10 @@ class EntityDatabase:
             clauses.append("wp.workflow_phase = ?")
             params.append(workflow_phase)
 
+        # F11 (Group 6): project ``e.kind`` to the legacy ``entity_type``
+        # result-set key for caller compatibility (TD-8 public API surface).
         sql = (
-            "SELECT wp.*, e.name AS entity_name, e.entity_type AS entity_type,"
+            "SELECT wp.*, e.name AS entity_name, e.kind AS entity_type,"
             " e.artifact_path AS entity_artifact_path"
             " FROM workflow_phases wp"
             " LEFT JOIN entities e ON wp.type_id = e.type_id"
@@ -5897,15 +6148,18 @@ class EntityDatabase:
         ws_uuid = self._resolve_optional_workspace_filter(
             workspace_uuid, project_id, _caller="scan_entity_ids"
         )
+        # F11 (Group 6): the legacy ``entity_type`` column was dropped by
+        # migration 12; filter on ``kind`` (same value for the 5 production
+        # kinds per FR-1).
         if ws_uuid is not None:
             rows = self._conn.execute(
                 "SELECT entity_id FROM entities "
-                "WHERE entity_type = ? AND workspace_uuid = ?",
+                "WHERE kind = ? AND workspace_uuid = ?",
                 (entity_type, ws_uuid),
             ).fetchall()
         else:
             rows = self._conn.execute(
-                "SELECT entity_id FROM entities WHERE entity_type = ?",
+                "SELECT entity_id FROM entities WHERE kind = ?",
                 (entity_type,),
             ).fetchall()
         return [row["entity_id"] for row in rows]
@@ -5957,10 +6211,13 @@ class EntityDatabase:
             ).fetchone()
 
             if row is None:
-                # Bootstrap: scan entities for max sequence prefix
+                # Bootstrap: scan entities for max sequence prefix.
+                # F11 (Group 6): the entities table no longer has an
+                # ``entity_type`` column; filter on ``kind`` (same value
+                # for the 5 production kinds per FR-1).
                 entity_rows = self._conn.execute(
                     "SELECT entity_id FROM entities "
-                    "WHERE workspace_uuid = ? AND entity_type = ?",
+                    "WHERE workspace_uuid = ? AND kind = ?",
                     (ws_uuid, entity_type),
                 ).fetchall()
                 max_seq = 0
@@ -6077,16 +6334,23 @@ class EntityDatabase:
                 metadata = ent.get("metadata")
                 metadata_json = json.dumps(metadata) if metadata is not None else None
 
+                # F11 (Group 6): derive (type, lifecycle_class) from the
+                # legacy ``entity_type`` value. ``kind`` is byte-identical
+                # to entity_type for the 5 production values per FR-1.
+                _type, _lifecycle = _derive_type_and_lifecycle(entity_type)
+
                 entity_uuid = str(uuid_mod.uuid4())
                 cursor = self._conn.execute(
                     "INSERT OR IGNORE INTO entities "
-                    "(uuid, workspace_uuid, type_id, entity_type, "
+                    "(uuid, workspace_uuid, type_id, kind, "
                     "entity_id, name, status, parent_uuid, "
-                    "artifact_path, created_at, updated_at, metadata) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "artifact_path, created_at, updated_at, metadata, "
+                    "type, lifecycle_class) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (entity_uuid, ws_uuid, type_id, entity_type,
                      entity_id, name, status, parent_uuid,
-                     artifact_path, now, now, metadata_json),
+                     artifact_path, now, now, metadata_json,
+                     _type, _lifecycle),
                 )
 
                 if cursor.rowcount == 1:

@@ -369,10 +369,11 @@ class TestMigration2:
 
         # Schema should be intact.
         # Feature 109 Migration 12 added 3 columns (type, kind,
-        # lifecycle_class) on top of the 12 columns set by Migration 11.
+        # lifecycle_class) on top of the 12 columns set by Migration 11
+        # and Group 7 dropped entity_type → 14 columns total.
         cur = db._conn.execute("PRAGMA table_info(entities)")
         columns = cur.fetchall()
-        assert len(columns) == 15
+        assert len(columns) == 14
 
         db.close()
 
@@ -466,22 +467,24 @@ class TestSchemaCreation:
         # Feature 108 Migration 11: dropped project_id + parent_type_id,
         # kept workspace_uuid + parent_uuid → 12 columns.
         # Feature 109 Migration 12: added type + kind + lifecycle_class
-        # → 15 columns total.
+        # (+3) and Group 7 dropped entity_type (-1) → 14 columns total.
         # (Test name retained for git-blame continuity; column count is
         # asserted in the body.)
         cur = db._conn.execute("PRAGMA table_info(entities)")
         columns = cur.fetchall()
-        assert len(columns) == 15
+        assert len(columns) == 14
 
     def test_entities_column_names(self, db: EntityDatabase):
         # Feature 109 Migration 12: post-migration column layout. The
         # three trailing columns (type, kind, lifecycle_class) were added
         # by ALTER TABLE ADD COLUMN so they appear at the tail of the
         # PRAGMA table_info ordering after Migration 11's base layout.
+        # Group 7 drops ``entity_type``; ``kind`` is its semantic
+        # successor.
         cur = db._conn.execute("PRAGMA table_info(entities)")
         col_names = [row[1] for row in cur.fetchall()]
         expected = [
-            "uuid", "workspace_uuid", "type_id", "entity_type", "entity_id",
+            "uuid", "workspace_uuid", "type_id", "entity_id",
             "name", "status", "parent_uuid",
             "artifact_path", "created_at", "updated_at", "metadata",
             "type", "kind", "lifecycle_class",
@@ -494,15 +497,20 @@ class TestSchemaCreation:
         assert col_map["uuid"][5] == 1  # pk flag
         assert col_map["type_id"][5] == 0  # type_id is NOT pk
 
-    def test_entity_type_no_sql_check_constraint(self, db: EntityDatabase):
-        """entity_type CHECK constraint removed in v6; Python validation only.
+    def test_kind_has_composite_check_constraint(self, db: EntityDatabase):
+        """Feature 109 (AC-1.3): post-v12 ``entities`` has a composite
+        CHECK on (type, kind). The legacy ``entity_type`` column was
+        dropped by Group 7; ``kind`` is its semantic successor and now
+        carries SQL-level enforcement of the FR-1 mapping table.
 
-        After migration 6, arbitrary entity_type values are accepted at the
-        SQL level. Validation is enforced by _validate_entity_type() in Python.
+        Inserting (type='work', kind='custom') must raise an IntegrityError
+        — this is the inverse of the pre-feature-109 v6-era invariant
+        that "arbitrary entity_type values are accepted at the SQL level".
+        Migration 12 ADDED CHECK enforcement; this test pins the new
+        semantics so accidental loosening surfaces immediately.
         """
         import uuid
 
-        # SQL-level insert with arbitrary entity_type should succeed.
         # Feature 108 Migration 11: workspace_uuid is now a NOT-NULL FK that
         # requires a workspaces row; the fixture pre-bootstraps __test__.
         from entity_registry.test_helpers import TEST_PROJECT_ID
@@ -511,18 +519,16 @@ class TestSchemaCreation:
             (TEST_PROJECT_ID,),
         ).fetchone()
         ws_uuid = ws_row["uuid"]
-        db._conn.execute(
-            "INSERT INTO entities (uuid, workspace_uuid, type_id, entity_type, "
-            "entity_id, name, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (str(uuid.uuid4()), ws_uuid, "custom:x", "custom", "x", "test",
-             "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
-        )
-        db._conn.commit()
-        row = db._conn.execute(
-            "SELECT entity_type FROM entities WHERE type_id = 'custom:x'"
-        ).fetchone()
-        assert row[0] == "custom"
+        with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed"):
+            db._conn.execute(
+                "INSERT INTO entities (uuid, workspace_uuid, type_id, kind, "
+                "entity_id, name, created_at, updated_at, "
+                "type, lifecycle_class) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (str(uuid.uuid4()), ws_uuid, "custom:x", "custom", "x", "test",
+                 "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z",
+                 "work", "work_flow"),
+            )
 
     def test_valid_entity_types_accepted(self, db: EntityDatabase):
         """All four valid entity types should be insertable."""
@@ -533,14 +539,26 @@ class TestSchemaCreation:
             (TEST_PROJECT_ID,),
         ).fetchone()
         ws_uuid = ws_row["uuid"]
+        # F11 (feature 109): entity_type column dropped; kind replaces it.
+        # The (type, lifecycle_class) values are derived per the FR-1
+        # mapping table.
+        _F11_MAP = {
+            "feature":    ("work",       "feature_flow"),
+            "backlog":    ("work",       "work_flow"),
+            "brainstorm": ("brainstorm", "brainstorm_flow"),
+            "project":    ("container",  "container_flow"),
+        }
         for etype in ("backlog", "brainstorm", "project", "feature"):
+            _type, _lc = _F11_MAP[etype]
             db._conn.execute(
                 "INSERT INTO entities (uuid, workspace_uuid, type_id, "
-                "entity_type, entity_id, name, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "kind, entity_id, name, created_at, updated_at, "
+                "type, lifecycle_class) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (str(uuid.uuid4()), ws_uuid, f"{etype}:test", etype, "test",
                  f"Test {etype}",
-                 "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
+                 "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z",
+                 _type, _lc),
             )
         db._conn.commit()
         cur = db._conn.execute("SELECT COUNT(*) FROM entities")
@@ -584,13 +602,14 @@ class TestIndexes:
         # idx_parent_type_id were dropped; idx_workspace_uuid /
         # idx_workspace_entity_type / idx_workspaces_legacy /
         # idx_wp_workspace_uuid added.
+        # Feature 109 Migration 12 Group 7: idx_entity_type and
+        # idx_workspace_entity_type dropped (entity_type column removed).
         expected = [
             "idx_ed_blocked_by_uuid",
             "idx_ed_entity_uuid",
             # Feature 109 (AC-1.6): composite polymorphic-query index
             # added to migration 12.
             "idx_entities_type_kind",
-            "idx_entity_type",
             "idx_eoa_entity_uuid",
             "idx_eoa_key_result_uuid",
             "idx_et_entity_uuid",
@@ -600,7 +619,6 @@ class TestIndexes:
             "idx_pe_project",
             "idx_pe_timestamp",
             "idx_status",
-            "idx_workspace_entity_type",
             "idx_workspace_uuid",
             "idx_workspaces_legacy",
             "idx_wp_kanban_column",
@@ -665,7 +683,8 @@ class TestRegisterEntity:
         )
         row = cur.fetchone()
         assert row is not None
-        assert row["entity_type"] == "feature"
+        # F11 (feature 109): entity_type column dropped; kind replaces it.
+        assert row["kind"] == "feature"
         assert row["entity_id"] == "feat-001"
         assert row["name"] == "My Feature"
 
@@ -711,11 +730,12 @@ class TestRegisterEntity:
             uuid_str = db.register_entity(etype, f"001-test-{etype}", f"Test {etype}", project_id="__unknown__")
             assert _UUID_V4_RE.match(uuid_str), f"{etype} should return valid UUID"
             # Verify entity is queryable
+            # F11 (feature 109): entity_type column dropped; kind replaces it.
             row = db._conn.execute(
-                "SELECT entity_type, entity_id FROM entities WHERE uuid = ?",
+                "SELECT kind, entity_id FROM entities WHERE uuid = ?",
                 (uuid_str,),
             ).fetchone()
-            assert row["entity_type"] == etype
+            assert row["kind"] == etype
             assert row["entity_id"] == f"001-test-{etype}"
 
     def test_optional_fields(self, db: EntityDatabase):
@@ -826,22 +846,25 @@ class TestImmutableTriggers:
         ).fetchone()
         assert row is not None
 
-    def test_entity_type_no_longer_immutable_at_db_layer(self, db: EntityDatabase):
+    def test_kind_no_longer_immutable_at_db_layer(self, db: EntityDatabase):
         """Feature 109 FR-3: ``enforce_immutable_entity_type`` trigger dropped.
 
-        Migration 12 backfills ``entity_type → (type, kind, lifecycle_class)``
-        which requires the trigger to be absent. The trigger no longer
-        blocks ``entity_type`` UPDATEs.
+        Migration 12 backfilled ``entity_type → (type, kind, lifecycle_class)``
+        and Group 7 dropped the legacy column entirely; this test verifies
+        the analogous ``kind`` column is mutable at the DB layer (the
+        trigger that previously guarded entity_type is gone, and no
+        replacement guard was added for kind because ``promote_entity``
+        is the canonical kind-rewrite path).
         """
         db.register_entity("feature", "f1", "Feature One", project_id="__unknown__")
         db._conn.execute(
-            "UPDATE entities SET entity_type = 'project' "
+            "UPDATE entities SET kind = 'backlog' "
             "WHERE type_id = 'feature:f1'"
         )
         row = db._conn.execute(
-            "SELECT entity_type FROM entities WHERE type_id='feature:f1'"
+            "SELECT kind FROM entities WHERE type_id='feature:f1'"
         ).fetchone()
-        assert row[0] == "project"
+        assert row[0] == "backlog"
 
     def test_created_at_immutable(self, db: EntityDatabase):
         """Attempting to change created_at should raise IntegrityError."""
@@ -868,14 +891,16 @@ class TestImmutableTriggers:
         ws_uuid = ws_row["uuid"]
 
         # Self-parent via parent_uuid (R12 trigger).
+        # F11 (feature 109): entity_type column dropped; kind replaces it.
         test_uuid = str(uuid.uuid4())
         with pytest.raises(sqlite3.IntegrityError, match="entity cannot be its own parent"):
             db._conn.execute(
                 "INSERT INTO entities (uuid, workspace_uuid, type_id, "
-                "entity_type, entity_id, name, parent_uuid, "
-                "created_at, updated_at) "
+                "kind, entity_id, name, parent_uuid, "
+                "created_at, updated_at, type, lifecycle_class) "
                 "VALUES (?, ?, 'feature:self2', 'feature', 'self2', 'Self2', "
-                "?, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                "?, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', "
+                "'work', 'feature_flow')",
                 (test_uuid, ws_uuid, test_uuid),
             )
 
@@ -2207,18 +2232,21 @@ class TestForeignKeyEnforcementPostMigration:
         invalid parent_uuid values would be accepted.
         derived_from: spec:AC-5, dimension:error_propagation
         """
-        # Given a database with foreign_keys ON
+        # Given a database with foreign_keys ON.
+        # F11 (feature 109): entity_type column dropped; kind replaces it.
         test_uuid = str(uuid.uuid4())
         fake_parent = str(uuid.uuid4())
         # When inserting with a nonexistent parent_uuid
         with pytest.raises(sqlite3.IntegrityError):
             db._conn.execute(
-                "INSERT INTO entities (uuid, type_id, entity_type, entity_id, "
-                "name, parent_uuid, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO entities (uuid, type_id, kind, entity_id, "
+                "name, parent_uuid, created_at, updated_at, "
+                "type, lifecycle_class) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (test_uuid, "feature:fk-test", "feature", "fk-test",
                  "FK Test", fake_parent,
-                 "2026-01-01T00:00:00", "2026-01-01T00:00:00"),
+                 "2026-01-01T00:00:00", "2026-01-01T00:00:00",
+                 "work", "feature_flow"),
             )
 
 
@@ -2437,21 +2465,24 @@ class TestExistingImmutabilityTriggersStillFire:
         ).fetchone()
         assert row[0] == "feature:changed"
 
-    def test_entity_type_mutable_post_feature_109(self, db: EntityDatabase):
-        """Feature 109 FR-3: ``entity_type`` UPDATE is no longer blocked.
-        Migration 12 backfills ``entity_type → (type, kind, lifecycle_class)``;
-        the immutability trigger was removed to permit this.
+    def test_kind_mutable_post_feature_109(self, db: EntityDatabase):
+        """Feature 109 FR-3: ``enforce_immutable_entity_type`` trigger
+        dropped. Migration 12 Group 7 also dropped the ``entity_type``
+        column itself; this test verifies the analogous ``kind`` column
+        can be updated at the DB layer (no replacement immutability
+        trigger was added since ``promote_entity`` is the canonical
+        kind-rewrite path).
         """
         entity_uuid = db.register_entity("feature", "immut2", "Immutable Test 2", project_id="__unknown__")
         db._conn.execute(
-            "UPDATE entities SET entity_type = 'project' WHERE uuid = ?",
+            "UPDATE entities SET kind = 'backlog' WHERE uuid = ?",
             (entity_uuid,),
         )
         row = db._conn.execute(
-            "SELECT entity_type FROM entities WHERE uuid = ?",
+            "SELECT kind FROM entities WHERE uuid = ?",
             (entity_uuid,),
         ).fetchone()
-        assert row[0] == "project"
+        assert row[0] == "backlog"
 
     def test_created_at_immutable_post_migration(self, db: EntityDatabase):
         """created_at trigger fires on UUID-identified entity.
@@ -4139,26 +4170,34 @@ class TestExportEntitiesJson:
             (TEST_PROJECT_ID,),
         ).fetchone()
         ws_uuid = ws_row["uuid"]
-        # Insert entities with controlled timestamps via direct SQL
+        # Insert entities with controlled timestamps via direct SQL.
+        # F11 (feature 109): entity_type column dropped; kind replaces it
+        # and the (type, lifecycle_class) discriminators are derived per
+        # the FR-1 mapping.
         rows = [
             (str(uuid.uuid4()), ws_uuid, "feature:f3", "feature", "f3", "Third",
              "active", None, None, "2026-01-03T00:00:00+00:00",
-             "2026-01-03T00:00:00+00:00", None),
+             "2026-01-03T00:00:00+00:00", None,
+             "work", "feature_flow"),
             (str(uuid.uuid4()), ws_uuid, "feature:f1", "feature", "f1", "First",
              "active", None, None, "2026-01-01T00:00:00+00:00",
-             "2026-01-01T00:00:00+00:00", None),
+             "2026-01-01T00:00:00+00:00", None,
+             "work", "feature_flow"),
             (str(uuid.uuid4()), ws_uuid, "project:p1", "project", "p1", "Also First",
              "active", None, None, "2026-01-01T00:00:00+00:00",
-             "2026-01-01T00:00:00+00:00", None),
+             "2026-01-01T00:00:00+00:00", None,
+             "container", "container_flow"),
             (str(uuid.uuid4()), ws_uuid, "feature:f2", "feature", "f2", "Second",
              "active", None, None, "2026-01-02T00:00:00+00:00",
-             "2026-01-02T00:00:00+00:00", None),
+             "2026-01-02T00:00:00+00:00", None,
+             "work", "feature_flow"),
         ]
         mem_db._conn.executemany(
-            "INSERT INTO entities (uuid, workspace_uuid, type_id, entity_type, "
+            "INSERT INTO entities (uuid, workspace_uuid, type_id, kind, "
             "entity_id, name, status, artifact_path, parent_uuid, "
-            "created_at, updated_at, metadata) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "created_at, updated_at, metadata, "
+            "type, lifecycle_class) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
         # Insert matching FTS entries. Post-feature-109 the FTS5 search
@@ -4230,29 +4269,31 @@ class TestExportEntitiesJson:
             (TEST_PROJECT_ID,),
         ).fetchone()
         ws_uuid = ws_row["uuid"]
+        # F11 (feature 109): entity_type column dropped; kind replaces it.
         rows = [
             (
                 str(uuid.uuid4()), ws_uuid, f"feature:{i:04d}", "feature",
                 f"{i:04d}", f"Entity {i}", "active",
                 None, None, now, now, None,
+                "work", "feature_flow",
             )
             for i in range(1000)
         ]
         mem_db._conn.executemany(
-            "INSERT INTO entities (uuid, workspace_uuid, type_id, entity_type, "
+            "INSERT INTO entities (uuid, workspace_uuid, type_id, kind, "
             "entity_id, name, status, artifact_path, parent_uuid, "
-            "created_at, updated_at, metadata) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "created_at, updated_at, metadata, "
+            "type, lifecycle_class) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
         # Insert matching FTS entries. Post-feature-109 the FTS5 search
-        # column is ``kind`` (was ``entity_type``). The entities table still
-        # has both columns through the v11→v12 transition window; we read
-        # kind here since that is the post-migration source of truth.
+        # column is ``kind`` (was ``entity_type``); the legacy column has
+        # been dropped by Group 7 entirely.
         fts_rows = []
         for row in mem_db._conn.execute(
             "SELECT rowid, name, entity_id, kind, status "
-            "FROM entities WHERE entity_type = 'feature'"
+            "FROM entities WHERE kind = 'feature'"
         ).fetchall():
             fts_rows.append(
                 (row[0], row[1], row[2], row[3], row[4] or "", ""),
@@ -5397,10 +5438,11 @@ class TestCommitHelper:
             "SELECT uuid FROM workspaces WHERE project_id_legacy = '__test__'"
         ).fetchone()
         ws_uuid = ws_row["uuid"]
-        # Insert a row via raw SQL (no auto-commit)
+        # Insert a row via raw SQL (no auto-commit).
+        # F11 (feature 109): entity_type column dropped; kind replaces it.
         db._conn.execute(
-            "INSERT INTO entities (uuid, workspace_uuid, type_id, entity_type, entity_id, name, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+            "INSERT INTO entities (uuid, workspace_uuid, type_id, kind, entity_id, name, created_at, updated_at, type, lifecycle_class) "
+            "VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), 'work', 'feature_flow')",
             (str(uuid.uuid4()), ws_uuid, "feature:commit-test", "feature", "commit-test", "CommitTest"),
         )
         db._commit()
@@ -5424,8 +5466,8 @@ class TestCommitHelper:
         db._in_transaction = True
         try:
             db._conn.execute(
-                "INSERT INTO entities (uuid, workspace_uuid, type_id, entity_type, entity_id, name, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+                "INSERT INTO entities (uuid, workspace_uuid, type_id, kind, entity_id, name, created_at, updated_at, type, lifecycle_class) "
+                "VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), 'work', 'feature_flow')",
                 (str(uuid.uuid4()), ws_uuid, "feature:suppress-test", "feature", "suppress-test", "SuppressTest"),
             )
             # _commit() should be a no-op
@@ -5453,8 +5495,8 @@ class TestTransactionContextManager:
         ws_uuid = ws_row["uuid"]
         with db.transaction():
             db._conn.execute(
-                "INSERT INTO entities (uuid, workspace_uuid, type_id, entity_type, entity_id, name, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+                "INSERT INTO entities (uuid, workspace_uuid, type_id, kind, entity_id, name, created_at, updated_at, type, lifecycle_class) "
+                "VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), 'work', 'feature_flow')",
                 (str(uuid.uuid4()), ws_uuid, "feature:txn-ok", "feature", "txn-ok", "TxnOK"),
             )
         # Verify persisted via second connection
@@ -5475,8 +5517,8 @@ class TestTransactionContextManager:
         with pytest.raises(ValueError, match="deliberate"):
             with db.transaction():
                 db._conn.execute(
-                    "INSERT INTO entities (uuid, workspace_uuid, type_id, entity_type, entity_id, name, created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+                    "INSERT INTO entities (uuid, workspace_uuid, type_id, kind, entity_id, name, created_at, updated_at, type, lifecycle_class) "
+                    "VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), 'work', 'feature_flow')",
                     (str(uuid.uuid4()), ws_uuid, "feature:txn-fail", "feature", "txn-fail", "TxnFail"),
                 )
                 raise ValueError("deliberate error")
@@ -5969,15 +6011,16 @@ class TestNextSequenceValue:
             from datetime import datetime, timezone
             now = datetime.now(timezone.utc).isoformat()
             db._conn.execute("PRAGMA foreign_keys = OFF")
+            # F11 (feature 109): entity_type column dropped; kind replaces it.
             for eid, name in [("005-alpha", "Alpha"), ("010-beta", "Beta")]:
                 uid = str(uuid.uuid4())
                 db._conn.execute(
                     "INSERT INTO entities "
-                    "(uuid, workspace_uuid, type_id, entity_type, entity_id, "
-                    "name, created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    "(uuid, workspace_uuid, type_id, kind, entity_id, "
+                    "name, created_at, updated_at, type, lifecycle_class) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (uid, ws_uuid, f"feature:{eid}", "feature", eid, name,
-                     now, now),
+                     now, now, "work", "feature_flow"),
                 )
             db._conn.commit()
             db._conn.execute("PRAGMA foreign_keys = ON")
