@@ -1199,7 +1199,7 @@ def _process_reconcile_apply(
 ) -> str:
     """Workflow reconciliation. Hardcodes meta_json_to_db direction, returns JSON string.
 
-    Feature 113 FR-11.3: forwards ``workspace_uuid`` to
+    Feature 113 FR-11: forwards ``workspace_uuid`` to
     ``apply_workflow_reconciliation`` so the FR-4.1 read-side assertion runs.
     """
     if feature_type_id is not None:
@@ -1238,7 +1238,7 @@ def _process_reconcile_frontmatter(
 ) -> str:
     """Frontmatter drift detection. Returns JSON string.
 
-    Feature 113 FR-11.4: forwards ``workspace_uuid`` to ``scan_all`` so the
+    Feature 113 FR-11: forwards ``workspace_uuid`` to ``scan_all`` so the
     bulk scan is workspace-scoped.
     """
     if feature_type_id is None:
@@ -1395,7 +1395,7 @@ def _process_reconcile_status(
     When summary_only=True, returns a compact 3-field response:
     {"healthy": bool, "workflow_drift_count": int, "frontmatter_drift_count": int}
 
-    Feature 113 FR-11.5: forwards ``workspace_uuid`` to ``scan_all`` so the
+    Feature 113 FR-11.3: forwards ``workspace_uuid`` to ``scan_all`` so the
     frontmatter scan is workspace-scoped.
     """
     # Workflow drift

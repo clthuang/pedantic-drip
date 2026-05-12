@@ -29,19 +29,10 @@ import datetime as _dt
 import json
 import os
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-# Allow `from qa_gate import STATUS_ENUM` regardless of how the package was
-# imported (PYTHONPATH=plugins/pd/hooks/lib OR direct path import).
-try:
-    from qa_gate import STATUS_ENUM
-except ImportError:  # pragma: no cover — fallback when invoked outside the package
-    _HERE = Path(__file__).resolve().parent
-    if str(_HERE.parent) not in sys.path:
-        sys.path.insert(0, str(_HERE.parent))
-    from qa_gate import STATUS_ENUM
+from . import STATUS_ENUM
 
 
 _EVIDENCE_MAX_CHARS = 500
