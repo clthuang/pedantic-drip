@@ -1,7 +1,7 @@
 # Feature 113 — Feature 112 QA-Gate Followups
 
 ## Status
-- Phase: specify (iter 2)
+- Phase: specify (iter 3)
 - Mode: standard
 - Source: 11 MED-severity findings filed in `docs/backlog.md` under "From Feature 112 Pre-Release QA Findings (2026-05-12)" section (entries #00391 through #00401)
 - Brainstorm: skipped — scope is well-specified by backlog entries with concrete file:line targets and fix descriptions
@@ -108,14 +108,17 @@ This ensures empty string falls through to the default-workspace branch and does
 
 **FR-3.1 (db-None retained, documented):** When `_db is None`: continue to return None (degraded mode — DB unavailable, can't filter). Add explicit comment: `# Degraded-mode: no DB → cross-workspace fallback is intentional, surfaced via _check_db_available upstream`.
 
-**FR-3.2 (invalid legacy hex raises):** When legacy hex doesn't match any `workspaces.project_id_legacy` row: change behavior from silent None to `raise ValueError(f"No workspace found for project_id={project_id!r}")`. Caller MCP handlers (`list_features_by_phase` at workflow_state_server.py:1637 and `list_features_by_status` at the parallel location) wrap the helper call in `try/except ValueError` and return `_make_error(error_type="invalid_project_id", message=str(exc), recovery_hint="Pass project_id='*' for cross-workspace OR omit for current-workspace default")`.
+**FR-3.2 (invalid legacy hex raises):** When legacy hex doesn't match any `workspaces.project_id_legacy` row: change behavior from silent None to `raise ValueError(f"No workspace found for project_id={project_id!r}")`. BOTH caller MCP handlers wrap the helper call in `try/except ValueError` and return `_make_error(error_type="invalid_project_id", message=str(exc), recovery_hint="Pass project_id='*' for cross-workspace OR omit for current-workspace default")`:
+- `list_features_by_phase` at `workflow_state_server.py:1619` (helper call at line 1637)
+- `list_features_by_status` at `workflow_state_server.py:1643` (helper call at line 1661)
 
-**FR-3.3 (test additions):** Add 3 new tests in `plugins/pd/mcp/test_workflow_state_server.py::TestListFeaturesByDefaultSingleWorkspace`:
-- `test_list_features_handler_db_none_returns_empty` (FR-3.1 pin — degraded mode returns []  rather than crashing)
-- `test_list_features_handler_invalid_legacy_hex_returns_error` (FR-3.2 pin — asserts `error_type == "invalid_project_id"` JSON)
+**FR-3.3 (test additions):** Add 4 new tests in `plugins/pd/mcp/test_workflow_state_server.py::TestListFeaturesByDefaultSingleWorkspace`:
+- `test_list_features_handler_db_none_returns_empty` (FR-3.1 pin — degraded mode returns [] rather than crashing)
+- `test_list_features_by_phase_invalid_legacy_hex_returns_error` (FR-3.2 pin for `list_features_by_phase` — asserts `error_type == "invalid_project_id"` JSON)
+- `test_list_features_by_status_invalid_legacy_hex_returns_error` (FR-3.2 pin for `list_features_by_status` — same shape, exercises second wrapper)
 - `test_list_features_handler_empty_project_id_treated_as_default` (FR-3.0 pin — empty string === None, single-workspace default)
 
-**Verification (AC-3):** `pytest plugins/pd/mcp/test_workflow_state_server.py::TestListFeaturesByDefaultSingleWorkspace -v` shows 5 passing tests (2 existing + 3 new). Mutation pin: removing the FR-3.2 ValueError raise breaks `test_list_features_handler_invalid_legacy_hex_returns_error`.
+**Verification (AC-3):** `pytest plugins/pd/mcp/test_workflow_state_server.py::TestListFeaturesByDefaultSingleWorkspace -v` shows 6 passing tests (2 existing + 4 new). Mutation pin: removing the FR-3.2 ValueError raise breaks BOTH `test_list_features_by_phase_invalid_legacy_hex_returns_error` AND `test_list_features_by_status_invalid_legacy_hex_returns_error`. Removing just one of the two try/except wrappers breaks only the corresponding test (provides per-handler isolation).
 
 ### FR-4 — `WorkflowStateEngine` workspace_uuid load-bearing forwarding (#00394)
 
@@ -138,19 +141,23 @@ This makes the kwarg load-bearing: it acts as a read-side workspace assertion th
 
 Existing terminal `db.update_entity` forwarding (line 173-174, `phase == "finish"` path) is unchanged.
 
-**FR-4.3 (test additions):** Add 2 tests in `plugins/pd/hooks/lib/workflow_engine/test_engine.py`:
+**FR-4.3 (test additions):** Add 3 tests in `plugins/pd/hooks/lib/workflow_engine/test_engine.py` + 1 test in `plugins/pd/hooks/lib/entity_registry/test_database.py`:
 - `test_transition_phase_workspace_uuid_mismatch_raises` — bootstraps two workspaces with same `type_id`, calls `engine.transition_phase(type_id, "design", workspace_uuid=ws_b)` where the row is scoped to ws_a; asserts ValueError raised with mismatch message.
 - `test_complete_phase_non_terminal_workspace_uuid_pinned` — same shape for non-terminal complete_phase.
+- `test_complete_phase_terminal_workspace_uuid_pinned` — same shape but for `phase == "finish"` to confirm forwarding works on the terminal path too.
+- `test_update_workflow_phase_does_not_mutate_workspace_uuid_column` (in `test_database.py`) — bootstrap a workflow_phases row with workspace_uuid=ws_a, call `update_workflow_phase(type_id, workspace_uuid=ws_a, workflow_phase='design')`, re-SELECT the row, assert `workspace_uuid` column byte-identical to pre-update value. Pins FR-4.1's immutability claim ("workspace_uuid column unchanged; not in UPDATE SET clause").
 
-**Verification (AC-4):** `pytest plugins/pd/hooks/lib/workflow_engine/test_engine.py -k 'workspace_uuid' -v` shows 2 new tests passing. Mutation pin (now semantically real): removing `workspace_uuid=workspace_uuid` forwarding at engine.py:100 OR engine.py:166 causes the mismatch tests to silently succeed when they should raise, failing the assertion.
+**Verification (AC-4):** `pytest plugins/pd/hooks/lib/workflow_engine/test_engine.py -k 'workspace_uuid' -v` shows 3 new tests passing, plus `pytest plugins/pd/hooks/lib/entity_registry/test_database.py -k 'does_not_mutate_workspace_uuid' -v` shows 1 new test passing. Mutation pins (all semantically real):
+1. Removing `workspace_uuid=workspace_uuid` forwarding at engine.py:100 OR engine.py:166 causes the mismatch tests to silently succeed when they should raise, failing the assertion.
+2. Adding `set_parts.append("workspace_uuid = ?")` and the value to `update_workflow_phase`'s UPDATE SET clause breaks `test_update_workflow_phase_does_not_mutate_workspace_uuid_column` (the pre-update SELECT and post-update SELECT would diverge).
 
 ### FR-5 — `transition_entity_phase` symmetric workspace_uuid (#00395)
 
-**Pre-state:** `plugins/pd/hooks/lib/entity_registry/entity_lifecycle.py:178-188` forwards `workspace_uuid` to `db.update_entity` at line 183 but NOT to `db.update_workflow_phase` at line 188.
+**Pre-state (verified at iter 3):** `plugins/pd/hooks/lib/entity_registry/entity_lifecycle.py:124-201` (function body). Forwards `workspace_uuid` to `db.update_entity` at line 183 but NOT to `db.update_workflow_phase` at line 193. (Note: line 188 in the body is `"kanban_column": kanban_column,` — a dict entry, not the call site. The actual `update_workflow_phase` call is at line 193.)
 
 **Post-state:**
 
-**FR-5.1 (symmetric forwarding):** Once FR-4.1 extends `update_workflow_phase` to accept `workspace_uuid`, `transition_entity_phase` forwards the kwarg to BOTH `db.update_entity` (line 183) AND `db.update_workflow_phase` (line 188). Symmetric scoping via the FR-4.1 mismatch check.
+**FR-5.1 (symmetric forwarding):** Once FR-4.1 extends `update_workflow_phase` to accept `workspace_uuid`, `transition_entity_phase` forwards the kwarg to BOTH `db.update_entity` (line 183) AND `db.update_workflow_phase` (line 193). Symmetric scoping via the FR-4.1 mismatch check.
 
 **FR-5.2 (test addition):** Add `test_transition_entity_phase_workspace_uuid_consistent` in `plugins/pd/hooks/lib/entity_registry/test_entity_lifecycle.py`. Bootstraps two workspaces; calls `transition_entity_phase(db, 'brainstorm:foo', 'promoted', workspace_uuid=ws_a)`. Asserts: (1) ws_a's entity status updated, (2) ws_a's workflow_phase row updated, (3) ws_b's parallel row UNCHANGED (no cross-workspace leak), (4) calling with `workspace_uuid=ws_b` against a ws_a row raises FR-4.1's ValueError.
 
@@ -158,23 +165,36 @@ Existing terminal `db.update_entity` forwarding (line 173-174, `phase == "finish
 
 ### FR-6 — Empty-string boundary coverage (#00396)
 
-**Pre-state:** No test exercises `_workspace_uuid == ""` at any of the 14 MCP write sites. (`project_id == ""` is covered by FR-3.0+FR-3.3 above.)
+**Pre-state (verified at iter 3):** No test exercises `_workspace_uuid == ""` at any of the 14 MCP write sites. (`project_id == ""` is covered by FR-3.0+FR-3.3 above.) Live audit shows `_workspace_uuid or None` occurs at lines 657, 669, 674, 706, 716, 871, 884, 889, 929, 1280, and others. The test entry points and the mutation-pin targets differ by code path — pinning the wrong line creates a vacuous mutation pin.
 
 **Post-state:**
 
-**FR-6.1 (representative write-site test):** Add `test_init_feature_state_unset_workspace_global_falls_back_to_project_id` in `plugins/pd/mcp/test_workflow_state_server.py`:
-- Sets `wss._workspace_uuid = ""` (unset state)
-- Calls `init_feature_state(...)`
-- Asserts the registered entity has `workspace_uuid == _UNKNOWN_WORKSPACE_UUID` (the canonical unknown workspace, resolved from `project_id="__unknown__"` fallback at server_helpers.py:262)
-- Pins the `_workspace_uuid or None` normalization at the kwarg boundary
+**FR-6.1 (parametrized write-site tests):** Add `test_workspace_uuid_empty_string_normalized_to_none` (parametrized across two MCP entry points) in `plugins/pd/mcp/test_workflow_state_server.py`:
 
-**FR-6.2 (doc comment):** Add an inline comment at the FIRST `_workspace_uuid or None` occurrence in `workflow_state_server.py` (around line 657):
+| Sub-test param | Entry point | `_workspace_uuid or None` line exercised |
+|----------------|-------------|------------------------------------------|
+| `init_feature_state` | `_process_init_feature_state` | workflow_state_server.py:1280 |
+| `transition_phase` | `_process_transition_phase` | workflow_state_server.py:657 |
+
+Each sub-test:
+- Sets `wss._workspace_uuid = ""` (unset state)
+- Calls the entry-point MCP tool with valid arguments
+- Asserts the underlying DB write resolves to `_UNKNOWN_WORKSPACE_UUID` (the canonical unknown workspace, resolved from `project_id="__unknown__"` fallback at server_helpers.py:262)
+- Pins the `_workspace_uuid or None` normalization at the corresponding line.
+
+**FR-6.2 (doc comments):** Add inline comments at BOTH:
+- Line 657 (first occurrence in physical line order, inside `_process_transition_phase`)
+- Line 1280 (first occurrence inside `_process_init_feature_state`)
+
+Comment text (same at both sites):
 ```python
 # Empty-string == unset == None at db.* kwarg boundary; downstream
 # defaults to project_id="__unknown__" → _UNKNOWN_WORKSPACE_UUID.
 ```
 
-**Verification (AC-6):** `pytest -k 'unset_workspace_global' plugins/pd/mcp/test_workflow_state_server.py -v` → 1 test passes. Mutation pin: replacing `_workspace_uuid or None` with `_workspace_uuid` (dropping the `or None`) at workflow_state_server.py:657 causes the FK constraint to fail on empty-string workspace_uuid, breaking the test.
+**Verification (AC-6):** `pytest -k 'workspace_uuid_empty_string_normalized_to_none' plugins/pd/mcp/test_workflow_state_server.py -v` → 2 parametrized sub-tests pass. Mutation pins (one per line):
+1. Replacing `_workspace_uuid or None` with `_workspace_uuid` at workflow_state_server.py:1280 breaks the `init_feature_state` sub-test (FK constraint failure on empty-string workspace_uuid).
+2. Replacing `_workspace_uuid or None` with `_workspace_uuid` at workflow_state_server.py:657 breaks the `transition_phase` sub-test (same shape on the transition path).
 
 ### FR-7 — Narrow `_filter_states_by_workspace` exception handler (#00397)
 
@@ -268,24 +288,45 @@ Parametrize to also exercise the archive branch (line 47), the brainstorm archiv
 
 ### FR-11 — `reconcile_*` MCP handlers thread workspace_uuid (#00401)
 
-**Pre-state:** `plugins/pd/mcp/workflow_state_server.py:1688-1712` — `reconcile_apply`, `reconcile_frontmatter`, `reconcile_status` MCP handlers do not forward `_workspace_uuid` to their `_process_*` helpers. Per handler-audit.md classification (`read+write`), they should.
+**Pre-state (verified at iter 3):** `plugins/pd/mcp/workflow_state_server.py`:
+- `reconcile_apply` (async wrapper at line 1678) → `_process_reconcile_apply` (line 1189) does not forward `_workspace_uuid` to `apply_workflow_reconciliation` (line 1199).
+- `reconcile_frontmatter` (async wrapper at line 1694) → `_process_reconcile_frontmatter` (line 1223) does not forward `_workspace_uuid` to `scan_all` (line 1230).
+- `reconcile_status` (async wrapper at line 1705) → `_process_reconcile_status` (line 1366) does not forward `_workspace_uuid` to `scan_all` (line 1381) or to `apply_workflow_reconciliation`.
+
+Concrete write sites inside the orchestrators (verified at iter 3):
+- `apply_workflow_reconciliation` (reconciliation.py:756): writes via `db.update_workflow_phase` at reconciliation.py:374 (meta_json_ahead branch) and reconciliation.py:462 (kanban-only drift branch); also `db.create_workflow_phase` at line 424 (meta_json_only branch, no workspace_uuid kwarg needed — workspace_uuid is supplied on INSERT via existing autofill trigger `wp_autofill_workspace_uuid`).
+- `scan_all` (frontmatter_sync.py:543): READ-ONLY function — no `db.update_*` writes inside. It calls `db.list_entities(entity_type="feature")` at line 570 and `detect_drift(...)` at line 581. Workspace scoping is achieved by passing workspace_uuid to `db.list_entities` to limit which features are scanned.
+
+Per handler-audit.md classification (`read+write`), the orchestrators should be workspace-scoped.
 
 **Post-state — option (a) chosen and locked: thread workspace_uuid through reconciliation:**
 
-**FR-11.1 (extend `apply_workflow_reconciliation`):** Add `workspace_uuid: str | None = None` kwarg to `apply_workflow_reconciliation(...)` in `workflow_engine/reconciliation.py`. Forward to every `db.update_entity` / `db.upsert_workflow_phase` call inside its body (concrete call sites identified during design phase).
+**FR-11.1 (extend `apply_workflow_reconciliation`):** Add `workspace_uuid: str | None = None` kwarg to `apply_workflow_reconciliation(...)` in `workflow_engine/reconciliation.py:756`. Forward to the two enumerated `db.update_workflow_phase` calls:
+- reconciliation.py:374 (`db.update_workflow_phase(feature_type_id, **kwargs)` → add `workspace_uuid=workspace_uuid` into the kwargs dict at line 367-373, OR pass as a separate kwarg)
+- reconciliation.py:462 (`db.update_workflow_phase(feature_type_id, kanban_column=expected_kanban)` → add `workspace_uuid=workspace_uuid`)
 
-**FR-11.2 (extend `scan_all`):** Add `workspace_uuid: str | None = None` kwarg to `scan_all(...)` in `entity_registry/frontmatter_sync.py`. Forward to every `db.update_entity` call inside. (Note: existing `ingest_header` already accepts the kwarg per feature 112 / FR-2.)
+Also forward through `check_workflow_drift(engine, db, artifacts_root, feature_type_id)` at line 789 IF that helper itself needs workspace scoping for its scan (design-phase decision; for now, drift-detection is read-only and uses `db.list_entities` which is workspace-aware).
 
-**FR-11.3 (extend `_process_reconcile_status`):** Add `workspace_uuid: str | None = None` kwarg. Forward to underlying engine calls.
+**FR-11.2 (extend `scan_all`):** Add `workspace_uuid: str | None = None` kwarg to `scan_all(...)` in `entity_registry/frontmatter_sync.py:543`. Forward to `db.list_entities(entity_type="feature", workspace_uuid=workspace_uuid)` at line 570 (scopes the scan). No internal `db.update_*` calls to thread through — `scan_all` is read-only. (Reconciliation apply flow uses `ingest_header` separately, which already accepts workspace_uuid per feature 112 / FR-2 at line 466.)
 
-**FR-11.4 (MCP handler forwarding):** `reconcile_apply`, `reconcile_frontmatter`, and `reconcile_status` MCP handlers each pass `workspace_uuid=_workspace_uuid or None` to their `_process_*` helpers.
+**FR-11.3 (extend `_process_reconcile_status`):** Add `workspace_uuid: str | None = None` kwarg to `_process_reconcile_status(...)` at workflow_state_server.py:1366. Forward to:
+- `scan_all(db, artifacts_root, workspace_uuid=workspace_uuid)` at line 1381 (post-FR-11.2 extended signature).
+- Internal `apply_workflow_reconciliation(...)` invocation if/when made.
 
-**FR-11.5 (test additions):** Add 3 tests in `plugins/pd/mcp/test_workflow_state_server.py`:
-- `test_reconcile_apply_forwards_workspace_uuid` — bootstrap, set `wss._workspace_uuid`, call `reconcile_apply()`, mock `apply_workflow_reconciliation` to capture kwarg; assert received workspace_uuid.
-- `test_reconcile_frontmatter_forwards_workspace_uuid` — same shape for frontmatter.
-- `test_reconcile_status_forwards_workspace_uuid` — same shape for status.
+**FR-11.4 (MCP handler forwarding):** `reconcile_apply`, `reconcile_frontmatter`, and `reconcile_status` async MCP handlers each pass `workspace_uuid=_workspace_uuid or None` to their `_process_*` helpers (handler bodies at workflow_state_server.py:1678-1693, 1694-1704, 1705+ respectively).
 
-**Verification (AC-11):** `pytest -k 'reconcile_.*_forwards_workspace_uuid' plugins/pd/mcp/test_workflow_state_server.py -v` → 3 new tests pass. Mutation pin: removing `workspace_uuid=_workspace_uuid or None` from any of the 3 handler bodies fails the corresponding test.
+**FR-11.5 (test additions — boundary AND internal-forwarding pins):** Add 5 tests in `plugins/pd/mcp/test_workflow_state_server.py` + 2 unit tests in the reconciliation lib:
+- `test_reconcile_apply_forwards_workspace_uuid` — set `wss._workspace_uuid`, mock `apply_workflow_reconciliation`, assert it received `workspace_uuid=ws_a` kwarg. (Boundary pin.)
+- `test_reconcile_frontmatter_forwards_workspace_uuid` — same shape for frontmatter; assert `scan_all` mock received the kwarg. (Boundary pin.)
+- `test_reconcile_status_forwards_workspace_uuid` — same shape for status. (Boundary pin.)
+- `test_apply_workflow_reconciliation_forwards_workspace_uuid_to_update_workflow_phase_meta_ahead` (in `plugins/pd/hooks/lib/workflow_engine/test_reconciliation.py`): bootstrap a meta_json_ahead row, call apply with workspace_uuid=ws_a, mock `db.update_workflow_phase`; assert the mock received `workspace_uuid=ws_a` kwarg (pins reconciliation.py:374 forwarding).
+- `test_apply_workflow_reconciliation_forwards_workspace_uuid_to_update_workflow_phase_kanban_drift` (same file): bootstrap a kanban-only-drift row; same shape (pins reconciliation.py:462 forwarding).
+- `test_scan_all_scopes_to_workspace` (in `plugins/pd/hooks/lib/entity_registry/test_frontmatter_sync.py`): bootstrap two workspaces with features; call `scan_all(db, artifacts_root, workspace_uuid=ws_a)`; assert returned reports cover ONLY ws_a's features.
+
+**Verification (AC-11):** `pytest -k 'reconcile_.*_forwards_workspace_uuid or apply_workflow_reconciliation_forwards or scan_all_scopes_to_workspace' plugins/pd/{mcp,hooks/lib}/ -v` → 6 new tests pass. Mutation pins:
+- Removing `workspace_uuid=_workspace_uuid or None` from any of the 3 async handler bodies fails the corresponding boundary test.
+- Dropping the `workspace_uuid` kwarg at reconciliation.py:374 (or :462) fails the corresponding internal-forwarding test.
+- Ignoring the `workspace_uuid` kwarg inside `scan_all` (e.g., not threading to `list_entities`) fails `test_scan_all_scopes_to_workspace`.
 
 ## Acceptance Criteria
 
@@ -327,6 +368,8 @@ PYTHONPATH=plugins/pd/hooks/lib plugins/pd/.venv/bin/python -m pytest plugins/pd
 AC-12 is satisfied iff post-implementation `diff <(grep '^FAILED' baseline.log | sort) <(grep '^FAILED' final.log | sort)` shows ZERO new lines added.
 
 **NFR-3 (no public API breakage):** All MCP tool signatures remain backward-compatible. `update_workflow_phase` gains a new optional `workspace_uuid` kwarg (default None preserves existing behavior). `register_entity` still accepts both `workspace_uuid` and `project_id`; FR-10's conditional pattern only changes WHICH gets sent.
+
+**NFR-3 narrowing — semantic-additive caveat (iter 3 audit):** The new kwarg on `update_workflow_phase` is signature-additive (default None) AND behavior-additive: when a caller passes `workspace_uuid != None`, FR-4.1 introduces a hard ValueError on mismatch. Today no caller passes `workspace_uuid` to `update_workflow_phase` — confirmed via `grep -rn 'update_workflow_phase' plugins/pd/ --include='*.py' | grep -v test_` (12 call sites — none currently pass the kwarg). The new behavior is therefore activated only for FR-4.2/FR-5.1 forwarding (which are net-new) and any future caller that opts in.
 
 **NFR-4 (gitignore minimization):** FR-1.4 REMOVES `docs/features/**/.qa-gate.json` from `.gitignore:63`. No new gitignore entries introduced.
 
@@ -378,4 +421,4 @@ AC-12 is satisfied iff post-implementation `diff <(grep '^FAILED' baseline.log |
 
 ## Open Questions
 
-None. All FRs are concrete with file:line targets and binary test verification. The two iter-1 deferrals (FR-1.4 gitignore, FR-4.2 option a/b, FR-11.1 a/b) are now locked at spec time.
+None. All FRs are concrete with file:line targets and binary test verification. The iter-1 deferrals (FR-1.4 gitignore, FR-4.2 option a/b, FR-11.1 a/b) are locked at spec time. The iter-2 reviewer warnings (FR-6 mutation-pin path, FR-5 line drift, FR-11 call-site enumeration, FR-4.1 immutability pin, FR-3.2 second handler site, NFR-3 narrowing acknowledgement) are addressed at spec time in iter 3.
