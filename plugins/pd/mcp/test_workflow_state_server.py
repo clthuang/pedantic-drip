@@ -7344,6 +7344,101 @@ class TestListFeaturesByDefaultSingleWorkspace:
             f"got {slugs}"
         )
 
+    def test_list_features_handler_db_none_returns_empty(self, tmp_path):
+        """FR-3.1 pin: _db is None → handler returns safe error envelope, not crash.
+
+        With ``_db = None`` and ``_db_unavailable = True``, the handler is
+        short-circuited via ``_check_db_available`` and returns the canonical
+        db-unavailable envelope (``{"error": "database temporarily unavailable"}``).
+        The contract guarded here: the helper must NOT crash, and must NOT
+        silently return cross-workspace data when the DB is unavailable.
+        """
+        import asyncio
+        import workflow_state_server as wss
+
+        wss._db = None
+        wss._db_unavailable = True
+        wss._engine = None
+        wss._workspace_uuid = ""
+
+        result = asyncio.run(
+            wss.list_features_by_phase("design", project_id="ffffffffffff")
+        )
+        data = json.loads(result)
+        assert isinstance(data, dict), (
+            f"db-None path should return a JSON object (error envelope), "
+            f"got {type(data).__name__}: {data!r}"
+        )
+        # _check_db_available envelope OR canonical _make_error envelope —
+        # either flavor satisfies the pin (no crash, no cross-workspace leak).
+        assert "error" in data, (
+            f"db-None path should surface an error key, got {data!r}"
+        )
+
+    def test_list_features_by_phase_invalid_legacy_hex_returns_error(
+        self, tmp_path,
+    ):
+        """FR-3.2 pin: invalid legacy hex on list_features_by_phase → _make_error.
+
+        Calling with a 12-char legacy hex that has no matching workspaces row
+        must surface an ``invalid_project_id`` error envelope rather than
+        silently degrading to cross-workspace.
+        """
+        import asyncio
+        import workflow_state_server as wss
+
+        db = EntityDatabase(str(tmp_path / "ws.db"))
+        from entity_registry.test_helpers import bootstrap_test_workspace
+        ws_a = bootstrap_test_workspace(db, "ws_a_legacy")
+
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, "docs")
+        wss._workspace_uuid = ws_a
+
+        result = asyncio.run(
+            wss.list_features_by_phase("design", project_id="ffffffffffff")
+        )
+        data = json.loads(result)
+        assert data.get("error") is True, (
+            f"Invalid legacy hex must return error envelope, got {data!r}"
+        )
+        assert data.get("error_type") == "invalid_project_id", (
+            f"Expected error_type='invalid_project_id', got {data!r}"
+        )
+
+    def test_list_features_by_status_invalid_legacy_hex_returns_error(
+        self, tmp_path,
+    ):
+        """FR-3.2 pin: invalid legacy hex on list_features_by_status → _make_error.
+
+        Same shape as the by_phase pin but exercises the second caller wrapper
+        so a future contributor cannot regress one site while leaving the
+        other intact.
+        """
+        import asyncio
+        import workflow_state_server as wss
+
+        db = EntityDatabase(str(tmp_path / "ws.db"))
+        from entity_registry.test_helpers import bootstrap_test_workspace
+        ws_a = bootstrap_test_workspace(db, "ws_a_legacy")
+
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, "docs")
+        wss._workspace_uuid = ws_a
+
+        result = asyncio.run(
+            wss.list_features_by_status("active", project_id="ffffffffffff")
+        )
+        data = json.loads(result)
+        assert data.get("error") is True, (
+            f"Invalid legacy hex must return error envelope, got {data!r}"
+        )
+        assert data.get("error_type") == "invalid_project_id", (
+            f"Expected error_type='invalid_project_id', got {data!r}"
+        )
+
 
 class TestFilterStatesByWorkspaceExceptionHandling:
     """FR-7: _filter_states_by_workspace narrows its except clause.

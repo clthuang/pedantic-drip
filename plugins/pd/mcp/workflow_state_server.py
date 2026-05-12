@@ -1592,13 +1592,15 @@ def _resolve_list_handler_workspace_filter(
             # Degraded-mode: no DB → cross-workspace fallback is intentional,
             # surfaced via _check_db_available upstream
             return None
-        try:
-            return _db._resolve_optional_workspace_filter(
-                workspace_uuid=None, project_id=project_id,
-                _caller="list_features_handler",
-            )
-        except ValueError:
-            return None
+        # FR-3.2: silent None → ValueError. Invalid legacy hex must surface
+        # as an MCP error envelope at the caller wrappers, not silently
+        # degrade to cross-workspace. Caller wrappers in list_features_by_phase
+        # and list_features_by_status catch this and return _make_error JSON
+        # with error_type="invalid_project_id".
+        return _db._resolve_optional_workspace_filter(
+            workspace_uuid=None, project_id=project_id,
+            _caller="list_features_handler",
+        )
     # Default: filter by current workspace.
     return _workspace_uuid or None
 
@@ -1649,7 +1651,15 @@ async def list_features_by_phase(phase: str, project_id: str | None = None) -> s
         return err
     if _engine is None:
         return _NOT_INITIALIZED
-    ws_filter = _resolve_list_handler_workspace_filter(project_id)
+    try:
+        ws_filter = _resolve_list_handler_workspace_filter(project_id)
+    except ValueError as exc:
+        # FR-3.2: invalid legacy project_id → surfaced as MCP error envelope.
+        return _make_error(
+            "invalid_project_id", str(exc),
+            "Pass project_id='*' for cross-workspace OR omit for "
+            "current-workspace default",
+        )
     results = _process_list_features_by_phase(_engine, phase)
     return _filter_states_by_workspace(results, ws_filter)
 
@@ -1673,7 +1683,15 @@ async def list_features_by_status(status: str, project_id: str | None = None) ->
         return err
     if _engine is None:
         return _NOT_INITIALIZED
-    ws_filter = _resolve_list_handler_workspace_filter(project_id)
+    try:
+        ws_filter = _resolve_list_handler_workspace_filter(project_id)
+    except ValueError as exc:
+        # FR-3.2: invalid legacy project_id → surfaced as MCP error envelope.
+        return _make_error(
+            "invalid_project_id", str(exc),
+            "Pass project_id='*' for cross-workspace OR omit for "
+            "current-workspace default",
+        )
     results = _process_list_features_by_status(_engine, status)
     return _filter_states_by_workspace(results, ws_filter)
 
