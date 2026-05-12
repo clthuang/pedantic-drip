@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import sys
 from collections import defaultdict
 
 from entity_registry.metadata import parse_metadata as _parse_metadata
@@ -250,9 +251,17 @@ def _process_register_entity(
                 parent_row = db.get_entity(parent_type_id)
                 if parent_row is not None:
                     parent_uuid = parent_row.get("uuid")
-            except Exception:
-                # Best-effort; fall through with parent_uuid=None.
-                pass
+            except sqlite3.OperationalError as exc:
+                # FR-8: narrow from bare-except. DB errors surface as orphan
+                # registration with a stderr warning; other exception types
+                # (ValueError, KeyError, RuntimeError, ...) PROPAGATE to the
+                # outer handler at the bottom of this function.
+                print(
+                    f"server_helpers: parent resolution failed under DB error: {exc} "
+                    f"— registering as orphan",
+                    file=sys.stderr,
+                )
+                # Fall through with parent_uuid=None
         # Normalize empty string → None so the deprecation-warning gate in
         # _resolve_workspace_uuid_kwargs only fires when BOTH kwargs are
         # genuinely supplied. Callers in the MCP layer coerce missing
