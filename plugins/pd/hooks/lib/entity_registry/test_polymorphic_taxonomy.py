@@ -337,3 +337,248 @@ def test_polymorphic_query_uses_index() -> None:
         f"AC-1.6 violation: polymorphic query plan does not reference "
         f"idx_entities_type_kind. Got: {plan_text!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Group 5 / Task 5.1: AC-1.8 FTS5 search-by-kind
+# ---------------------------------------------------------------------------
+
+
+def test_fts5_search_kind_matches_legacy_entity_type() -> None:
+    """AC-1.8: post-v12 ``entities_fts`` keys on ``kind`` (not ``entity_type``).
+
+    Setup: v11 DB with 2 features + 1 backlog inserted via raw SQL at the
+    v11 schema (which only has ``entity_type``). Run migration 12. The
+    migration's FTS5 rebuild block must DROP the v11-shape ``entities_fts``
+    and re-create it with ``kind`` replacing ``entity_type``.
+
+    Assertions:
+      (a) ``kind:feature`` matches 2 rows (the 2 feature inserts).
+      (b) ``kind:backlog`` matches 1 row (the backlog insert).
+      (c) ``kind:feature OR kind:backlog`` matches all 3 rows — proving
+          the new kind column is searchable for both legacy entity_type
+          values that map to ``type='work'``.
+      (d) ``entity_type:feature`` either errors (FTS5 unknown-column) or
+          returns 0 rows — proving the search column changed.
+
+    Note on the FR-1 mapping: ``entities.kind`` holds kind values
+    (``feature``/``backlog``/``brainstorm``/``project``/``workspace``), NOT
+    type values. Querying ``kind:work`` would return 0 rows because no
+    row has kind='work'; the task brief's example assertion was logically
+    inconsistent, so we substitute the equivalent assertion that covers
+    the same FR-1 mapping intent (both feature and backlog reachable via
+    the new kind column).
+    """
+    conn = make_v11_db()
+    ws_uuid = _bootstrap_workspace(conn)
+
+    # 2 features + 1 backlog inserted at v11 schema (raw SQL — feature 109's
+    # register_entity changes are out of Group 5's scope).
+    _insert_v11_entity(
+        conn, ws_uuid=ws_uuid, entity_type="feature",
+        entity_id="001-a", name="Foo",
+    )
+    _insert_v11_entity(
+        conn, ws_uuid=ws_uuid, entity_type="feature",
+        entity_id="002-b", name="Bar",
+    )
+    _insert_v11_entity(
+        conn, ws_uuid=ws_uuid, entity_type="backlog",
+        entity_id="00001", name="Baz",
+    )
+
+    _migration_12_polymorphic_taxonomy_and_events(conn)
+
+    # (a) kind:feature matches the 2 feature inserts.
+    rows = conn.execute(
+        "SELECT entity_id FROM entities_fts "
+        "WHERE entities_fts MATCH 'kind:feature'"
+    ).fetchall()
+    feature_ids = sorted(r[0] for r in rows)
+    assert feature_ids == ["001-a", "002-b"], (
+        f"AC-1.8 violation: kind:feature did not match the 2 feature "
+        f"rows. Got: {feature_ids!r}"
+    )
+
+    # (b) kind:backlog matches the 1 backlog insert.
+    rows = conn.execute(
+        "SELECT entity_id FROM entities_fts "
+        "WHERE entities_fts MATCH 'kind:backlog'"
+    ).fetchall()
+    backlog_ids = sorted(r[0] for r in rows)
+    assert backlog_ids == ["00001"], (
+        f"AC-1.8 violation: kind:backlog did not match the 1 backlog "
+        f"row. Got: {backlog_ids!r}"
+    )
+
+    # (c) kind:feature OR kind:backlog matches all 3 work-typed rows —
+    # proves the cumulative AC-1.8 spec-language intent that "the search
+    # column changes to kind" still surfaces both legacy entity_type
+    # values that map to type='work' in FR-1.
+    rows = conn.execute(
+        "SELECT entity_id FROM entities_fts "
+        "WHERE entities_fts MATCH 'kind:feature OR kind:backlog'"
+    ).fetchall()
+    all_ids = sorted(r[0] for r in rows)
+    assert all_ids == ["00001", "001-a", "002-b"], (
+        f"AC-1.8 violation: kind:feature OR kind:backlog did not match "
+        f"all 3 work-typed rows. Got: {all_ids!r}"
+    )
+
+    # (d) entity_type column is gone from FTS5; the column token is no
+    # longer recognized as a search-column predicate. FTS5 raises an
+    # error when a column-filter references a non-existent column; the
+    # error message contains "no such column". Either an exception or
+    # 0 rows is acceptable evidence that the column changed.
+    try:
+        rows = conn.execute(
+            "SELECT entity_id FROM entities_fts "
+            "WHERE entities_fts MATCH 'entity_type:feature'"
+        ).fetchall()
+        assert len(rows) == 0, (
+            f"AC-1.8 violation: entity_type:feature returned "
+            f"{len(rows)} rows post-migration (expected 0)."
+        )
+    except sqlite3.OperationalError as exc:
+        # FTS5 raises when a column filter references an absent column;
+        # this is the strongest possible evidence that the search column
+        # changed and is also acceptable.
+        assert (
+            "no such column" in str(exc).lower()
+            or "fts5" in str(exc).lower()
+        ), (
+            f"Unexpected sqlite error querying entity_type FTS column: {exc}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Group 5 / Task 5.2: grep-predicate AC-1.8 verification
+# ---------------------------------------------------------------------------
+
+
+def test_no_production_fts5_insert_references_entity_type() -> None:
+    """AC-1.8 (grep predicate): production INSERT INTO entities_fts
+    statements no longer reference ``entity_type``.
+
+    Historical ``_migrate_*`` functions (migrations 1-11) retain their
+    INSERTs as schema-creation epoch artifacts per AC-1.4 exception (b);
+    those are filtered out before asserting the count.
+
+    Filter strategy: line-range. The historical migration body lines all
+    lie before the start of migration 12. We capture each grep hit's line
+    number, then drop hits inside any ``def _migrate*`` or ``def
+    _create_fts_index`` / ``def _fix_fts_content_mode`` / ``def
+    _create_workflow_phases_table`` / ``def _schema_expansion_v6`` /
+    ``def _add_project_scoping`` / ``def _migration_*`` function body.
+
+    Simpler approach: derive the function range of each historical
+    migration via a single ``ast`` parse, then exclude grep hits that
+    fall inside one of those function spans.
+    """
+    import ast
+    import subprocess
+    from pathlib import Path
+
+    # Locate database.py via the same module-discovery path the migration
+    # uses; importing the module module-path is cleaner than a hard-coded
+    # filesystem path because pytest's CWD is workspace-dependent.
+    import entity_registry.database as _db_mod
+    db_path = Path(_db_mod.__file__).resolve()
+
+    # Find historical migration function ranges via AST.
+    src = db_path.read_text()
+    tree = ast.parse(src)
+    historical_ranges: list[tuple[int, int]] = []
+    HISTORICAL_NAMES = {
+        "_create_initial_schema",
+        "_migrate_to_uuid_pk",
+        "_create_workflow_phases_table",
+        "_create_fts_index",
+        "_expand_workflow_phase_check",
+        "_schema_expansion_v6",
+        "_fix_fts_content_mode",
+        "_add_project_scoping",
+        "_migration_9_remove_create_tasks",
+        "_migration_10_phase_events",
+        "_migration_11_workspace_identity",
+        "_migration_11_workspace_identity_down",
+    }
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name in HISTORICAL_NAMES:
+            end = getattr(node, "end_lineno", node.lineno)
+            historical_ranges.append((node.lineno, end))
+
+    # Two-pass detection:
+    #   (1) grep the spec-AC-1.8 literal predicate (single-line match)
+    #       — this catches single-line INSERT INTO entities_fts ... entity_type.
+    #   (2) Python multi-line scan — catches the wrapped-string form where
+    #       "INSERT INTO entities_fts(..." is on one line and the
+    #       ``entity_type`` column-name is on the immediately-following
+    #       continuation line(s). The 3 known production sites use this
+    #       wrapped form, so single-line grep alone would miss them.
+    result = subprocess.run(
+        [
+            "grep", "-nE",
+            r"INSERT INTO entities_fts.*entity_type",
+            str(db_path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    # grep exits 1 when no matches — that is success for this test.
+    # grep exits 2 on error.
+    assert result.returncode in (0, 1), (
+        f"grep failed (rc={result.returncode}): {result.stderr!r}"
+    )
+
+    # Pass (1) raw hits.
+    raw_hits: list[tuple[int, str]] = []
+    for line in result.stdout.splitlines():
+        if not line:
+            continue
+        try:
+            lineno_str, content = line.split(":", 1)
+            lineno = int(lineno_str)
+        except (ValueError, AttributeError):
+            continue
+        raw_hits.append((lineno, content))
+
+    # Pass (2) wrapped-string form: scan database.py for lines that contain
+    # "INSERT INTO entities_fts" and look up to 3 lines ahead for the
+    # token ``entity_type`` within an adjacent string literal in the same
+    # INSERT column list.
+    src_lines = src.splitlines()
+    for idx, line in enumerate(src_lines, start=1):
+        if "INSERT INTO entities_fts" not in line:
+            continue
+        # Window: check this line + next 2 continuation lines for entity_type.
+        window = src_lines[idx - 1 : idx + 2]
+        if any("entity_type" in w for w in window):
+            raw_hits.append((idx, line))
+
+    # Deduplicate by lineno (single-line hits + wrapped-form hits may
+    # collide at the same lineno).
+    seen: set[int] = set()
+    unique_hits: list[tuple[int, str]] = []
+    for ln, content in raw_hits:
+        if ln in seen:
+            continue
+        seen.add(ln)
+        unique_hits.append((ln, content))
+
+    # Filter: drop hits whose line number falls inside a historical
+    # migration function span. Surviving hits are production violations.
+    violations: list[str] = []
+    for ln, content in unique_hits:
+        in_historical = any(
+            start <= ln <= end
+            for (start, end) in historical_ranges
+        )
+        if not in_historical:
+            violations.append(f"{ln}:{content}")
+
+    assert violations == [], (
+        f"AC-1.8 violation: production INSERT INTO entities_fts statements "
+        f"still reference entity_type at:\n"
+        + "\n".join(violations)
+    )

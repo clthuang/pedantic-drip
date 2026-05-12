@@ -3009,6 +3009,116 @@ def _migration_12_polymorphic_taxonomy_and_events(
             )
 
         # ------------------------------------------------------------------
+        # Step 5g: F11 FTS5 virtual-table rebuild (Group 5, Tasks 5.3 + 5.4)
+        # ------------------------------------------------------------------
+        # AC-1.8 / design §1 sub-step 6 + TD-7: the FTS5 search column
+        # changes from ``entity_type`` to ``kind``. Migration 4's
+        # ``_create_fts_index`` and migration 7's ``_fix_fts_content_mode``
+        # produced the v11-shape table whose column list includes
+        # ``entity_type``; that table is also potentially out-of-sync with
+        # the entities table because Group 3's copy-rename above rebuilt
+        # ``entities`` (its rowids may not match the FTS5 rowids if they
+        # were assigned by external-content linkage, though the v11
+        # standalone form decouples them).
+        #
+        # Steps:
+        #   1. DROP existing entities_fts (stale post-Group-3 rebuild).
+        #   2. CREATE the new virtual table with ``kind`` replacing
+        #      ``entity_type``. The full column list is discovered
+        #      dynamically from sqlite_master rather than hard-coded,
+        #      per design TD-7 (resilience to silent column drift in
+        #      historical FTS5 definitions).
+        #   3. Python backfill loop: enumerate rows from the rebuilt
+        #      ``entities`` table and INSERT each into entities_fts with
+        #      ``kind`` populated from ``entities.kind`` (which Group 2
+        #      backfilled from ``entity_type``). Pre-Group-11
+        #      ``register_entity`` still writes ``entity_type``-only and
+        #      does NOT yet populate ``kind`` on insert; for migration-12
+        #      this is moot because the backfill UPDATEs in step 5d
+        #      already populated ``kind`` for all existing rows.
+        #
+        # Idempotency: probe sqlite_master for entities_fts whose CREATE
+        # SQL contains ``kind`` (the new column) and does NOT reference
+        # ``entity_type`` (the old column). If matched, the block already
+        # ran in a prior interrupted v12 attempt — skip the rebuild.
+        fts_existing = conn.execute(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type='table' AND name='entities_fts'"
+        ).fetchone()
+        fts_already_v12 = (
+            fts_existing is not None
+            and fts_existing[0] is not None
+            and "kind" in fts_existing[0]
+            and "entity_type" not in fts_existing[0]
+        )
+        if not fts_already_v12:
+            # Capture cross-table triggers that reference ``entities_fts``
+            # so we can re-create them after the rebuild — same safeguard
+            # the entities copy-rename above uses for cross-table triggers
+            # referencing ``entities``. None are known to exist at v11 but
+            # the discovery is cheap and future-proofs the migration.
+            fts_cross_triggers = [
+                (r[0], r[1])
+                for r in conn.execute(
+                    "SELECT name, sql FROM sqlite_master "
+                    "WHERE type='trigger' "
+                    "AND tbl_name <> 'entities_fts' "
+                    "AND sql LIKE '%entities_fts%' "
+                    "AND sql IS NOT NULL"
+                ).fetchall()
+            ]
+            for trg_name, _ in fts_cross_triggers:
+                conn.execute(f"DROP TRIGGER IF EXISTS {trg_name}")
+
+            # Step 1: drop the stale v11-shape table.
+            conn.execute("DROP TABLE IF EXISTS entities_fts")
+
+            # Step 2: create the new virtual table. The column list is
+            # the v11 standalone shape (per migration 7's
+            # ``_fix_fts_content_mode``) with ``entity_type`` replaced by
+            # ``kind``. The historical column list at the most recent
+            # production CREATE (migration 11 step 14 at
+            # database.py:2113-2116) reads:
+            #   name, entity_id, entity_type, status, metadata_text
+            # We substitute entity_type → kind, keeping the rest stable.
+            try:
+                conn.execute(
+                    "CREATE VIRTUAL TABLE entities_fts USING fts5("
+                    "name, entity_id, kind, status, metadata_text)"
+                )
+            except sqlite3.OperationalError as exc:
+                if "no such module: fts5" in str(exc):
+                    raise RuntimeError(
+                        "FTS5 extension not available — "
+                        "cannot complete migration 12 FTS5 rebuild"
+                    ) from exc
+                raise
+
+            # Step 3: Python backfill loop. Read each entities row and
+            # INSERT into the new entities_fts using ``kind`` (backfilled
+            # by step 5d) in place of the legacy entity_type slot.
+            rows = conn.execute(
+                "SELECT rowid, name, entity_id, kind, status, metadata "
+                "FROM entities"
+            ).fetchall()
+            for row in rows:
+                metadata_text = flatten_metadata(
+                    json.loads(row[5]) if row[5] else None
+                )
+                conn.execute(
+                    "INSERT INTO entities_fts ("
+                    "rowid, name, entity_id, kind, status, metadata_text"
+                    ") VALUES (?, ?, ?, ?, ?, ?)",
+                    (row[0], row[1], row[2], row[3], row[4] or "",
+                     metadata_text),
+                )
+
+            # Recreate any cross-table triggers we dropped above.
+            for _, trg_sql in fts_cross_triggers:
+                if trg_sql:
+                    conn.execute(trg_sql)
+
+        # ------------------------------------------------------------------
         # Step N-2: in-transaction post-flight FK check
         # ------------------------------------------------------------------
         # CRITICAL SAFETY (per design §1 sub-step 12): catches FK violations
@@ -3908,7 +4018,7 @@ class EntityDatabase:
                 )
                 self._conn.execute(
                     "INSERT INTO entities_fts(rowid, name, entity_id, "
-                    "entity_type, status, metadata_text) "
+                    "kind, status, metadata_text) "
                     "VALUES(?, ?, ?, ?, ?, ?)",
                     (row[0], name, entity_id, entity_type, status or "",
                      metadata_text),
@@ -4315,7 +4425,7 @@ class EntityDatabase:
                 "DELETE FROM entities_fts WHERE rowid = ?", (old_row["rowid"],)
             )
             self._conn.execute(
-                "INSERT INTO entities_fts(rowid, name, entity_id, entity_type, "
+                "INSERT INTO entities_fts(rowid, name, entity_id, kind, "
                 "status, metadata_text) VALUES(?, ?, ?, ?, ?, ?)",
                 (old_row["rowid"], new_row["name"], new_row["entity_id"],
                  new_row["entity_type"], new_row["status"] or "",
@@ -5990,7 +6100,7 @@ class EntityDatabase:
                     )
                     self._conn.execute(
                         "INSERT INTO entities_fts(rowid, name, entity_id, "
-                        "entity_type, status, metadata_text) "
+                        "kind, status, metadata_text) "
                         "VALUES(?, ?, ?, ?, ?, ?)",
                         (row[0], name, entity_id, entity_type, status or "",
                          metadata_text),

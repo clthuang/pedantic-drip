@@ -4161,17 +4161,21 @@ class TestExportEntitiesJson:
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
-        # Insert matching FTS entries
+        # Insert matching FTS entries. Post-feature-109 the FTS5 search
+        # column is ``kind`` (was ``entity_type``). The entities table still
+        # has both columns through the v11→v12 transition window (Group 7
+        # drops entity_type later); we read kind here since that is the
+        # post-migration source of truth for the FTS5 mapping.
         fts_rows = []
         for row in mem_db._conn.execute(
-            "SELECT rowid, name, entity_id, entity_type, status "
+            "SELECT rowid, name, entity_id, kind, status "
             "FROM entities"
         ).fetchall():
             fts_rows.append(
                 (row[0], row[1], row[2], row[3], row[4] or "", ""),
             )
         mem_db._conn.executemany(
-            "INSERT INTO entities_fts(rowid, name, entity_id, entity_type, "
+            "INSERT INTO entities_fts(rowid, name, entity_id, kind, "
             "status, metadata_text) VALUES(?, ?, ?, ?, ?, ?)",
             fts_rows,
         )
@@ -4241,17 +4245,20 @@ class TestExportEntitiesJson:
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
-        # Insert matching FTS entries
+        # Insert matching FTS entries. Post-feature-109 the FTS5 search
+        # column is ``kind`` (was ``entity_type``). The entities table still
+        # has both columns through the v11→v12 transition window; we read
+        # kind here since that is the post-migration source of truth.
         fts_rows = []
         for row in mem_db._conn.execute(
-            "SELECT rowid, name, entity_id, entity_type, status "
+            "SELECT rowid, name, entity_id, kind, status "
             "FROM entities WHERE entity_type = 'feature'"
         ).fetchall():
             fts_rows.append(
                 (row[0], row[1], row[2], row[3], row[4] or "", ""),
             )
         mem_db._conn.executemany(
-            "INSERT INTO entities_fts(rowid, name, entity_id, entity_type, "
+            "INSERT INTO entities_fts(rowid, name, entity_id, kind, "
             "status, metadata_text) VALUES(?, ?, ?, ?, ?, ?)",
             fts_rows,
         )
