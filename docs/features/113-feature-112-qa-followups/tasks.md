@@ -24,9 +24,10 @@ mkdir -p agent_sandbox/$(date +%Y-%m-%d)/113-validation
 ### T0.2 — Capture pre-implementation pytest baseline
 ```bash
 PYTHONPATH=plugins/pd/hooks/lib plugins/pd/.venv/bin/python -m pytest plugins/pd/{hooks/lib,mcp} --tb=line > agent_sandbox/$(date +%Y-%m-%d)/113-validation/baseline.log 2>&1 || true
+BASELINE_FAIL_COUNT=$(grep -c '^FAILED' agent_sandbox/$(date +%Y-%m-%d)/113-validation/baseline.log)
+echo "Baseline FAILED count: $BASELINE_FAIL_COUNT" | tee -a agent_sandbox/$(date +%Y-%m-%d)/113-validation/notes.txt
 ```
-Record `BASELINE_FAIL_COUNT=$(grep -c '^FAILED' agent_sandbox/$(date +%Y-%m-%d)/113-validation/baseline.log)`.
-**Done:** baseline.log exists; FAILED count recorded in a notes file.
+**Done:** baseline.log exists; notes.txt contains "Baseline FAILED count: N" line.
 **Time:** 5-10 min (pytest run).
 **Dependencies:** T0.1.
 
@@ -54,18 +55,38 @@ Record `BASELINE_FAIL_COUNT=$(grep -c '^FAILED' agent_sandbox/$(date +%Y-%m-%d)/
 **Time:** 20 min.
 **Dependencies:** T1a.1.
 
-### T1a.3 — Commit PI-1a
+### T1a.3 — Impl+1 GREEN (cont): wire emitter into finish-feature flow
+- Locate inline `.qa-gate.json.tmp` heredoc construction in `docs/dev_guides/qa-gate-procedure.md:213-249` and replace with:
+  ```python
+  from qa_gate.emitter import emit_qa_gate
+  emit_qa_gate(
+      feature=feature_slug,
+      feature_dir=f"docs/features/{feature_slug}",
+      ac_results=[...],  # built per the procedure doc
+      decision="approved" if all_pass else "deferred",
+      reviewers=[...],
+  )
+  ```
+- Update FR-2.3 output path: ensure `bash plugins/pd/hooks/tests/bash-version-capture.sh > docs/features/{id}-{slug}/bash-version.log` is invoked at the same Step 5b location (committable AC-12 evidence)
+- Verify: `grep -n 'json.dump\|\.qa-gate.json.tmp' docs/dev_guides/qa-gate-procedure.md` returns 0 matches (inline emit removed)
+**Done:** qa-gate-procedure.md uses `emit_qa_gate` import; bash-version-capture.sh wired into Step 5b evidence emission. → AC-1 emitter dogfooded
+**Time:** 12 min.
+**Dependencies:** T1a.2.
+
+### T1a.4 — Commit PI-1a
 ```bash
-git add plugins/pd/hooks/lib/qa_gate/ .gitignore
-git commit -m "feat(113/FR-1): qa_gate/emitter.py canonical schema + remove gitignore"
+git add plugins/pd/hooks/lib/qa_gate/ .gitignore docs/dev_guides/qa-gate-procedure.md
+git commit -m "feat(113/FR-1): qa_gate/emitter.py canonical schema + finish-feature wiring + remove gitignore"
 ```
 **Time:** 2 min.
 
 ### T1b.1 [P] — Tests+2 RED: bash-version-capture validation
-- In `plugins/pd/hooks/tests/test-hooks.sh` (or as a Python pytest in a suitable location), add a sub-test asserting:
-  - File `plugins/pd/hooks/tests/bash-version-capture.sh` exists and is executable
-  - Running it produces 3 lines matching `^=== `
-**Done (RED):** Test fails — script doesn't exist yet.
+Append a new test block to `plugins/pd/hooks/tests/test-hooks.sh` (the bash integration test runner) asserting:
+  - `[ -x plugins/pd/hooks/tests/bash-version-capture.sh ]` (file exists and is executable)
+  - Running `bash plugins/pd/hooks/tests/bash-version-capture.sh 2>&1 | grep -c '^=== '` returns `3`
+
+Use the existing test-hooks.sh test pattern (a `test_NN_description` function returning 0/non-0; runner aggregates pass/fail). Do NOT create a parallel pytest file — keep this within the existing bash test runner for consistency with the rest of the hook test infrastructure.
+**Done (RED):** Test fails — script doesn't exist yet; `[ -x ... ]` check returns 1.
 **Time:** 5 min.
 
 ### T1b.2 — Impl+2 GREEN: bash-version-capture.sh
@@ -242,25 +263,31 @@ with <captured error mode>; removing at line 657 fails transition_phase sub-test
 
 ## PI-4 — entity_status conditional-kwarg sweep (FR-10)
 
-### T4.1 — Tests+10 RED: parametrized no-DeprecationWarning test
-In `plugins/pd/hooks/lib/reconciliation_orchestrator/test_entity_status.py`, add parametrized `test_sync_entity_statuses_no_deprecation_warning_on_happy_path`. 4 sub-tests, one per fixed site:
-- Site 47 (`_sync_meta_json_entities` archive)
-- Site 72 (`_sync_meta_json_entities` status-change)
-- Site 189 (`_sync_brainstorm_entities` archive)
-- Site 320 (`_sync_backlog_md_entities` status-change)
+### T4.1a — Tests+10 RED part 1: meta_json sites (47 + 72)
+In `plugins/pd/hooks/lib/reconciliation_orchestrator/test_entity_status.py`, add 2 parametrized sub-tests for `test_sync_entity_statuses_no_deprecation_warning_on_happy_path`:
+- Site 47 (`_sync_meta_json_entities` archive branch — triggered by missing .meta.json file)
+- Site 72 (`_sync_meta_json_entities` status-change branch — triggered by .meta.json status differing from DB)
 
 Each: bootstrap real workspace_uuid via `bootstrap_test_workspace()`; trigger site-specific state; call `sync_entity_statuses(db, ..., workspace_uuid=ws_a)`; wrap in `warnings.catch_warnings()` + `simplefilter('error', DeprecationWarning)` per design R6 (scoped to the call, NOT module-level); assert no DeprecationWarning fires.
 
-If catch_warnings filter-bleeds: switch implementation to `recwarn` fixture per design R6 fallback.
-**Done (RED):** All 4 sub-tests fail today — DeprecationWarning fires at each site per FR-10 pre-state.
-**Time:** 25 min.
+**Decision rule:** Use catch_warnings as primary. If a sub-test exhibits filter-bleed into a sibling test (manifesting as the sibling failing for the wrong reason), switch THAT sub-test to `recwarn` fixture per design R6 fallback. Document the choice in the T4.3 commit message.
+**Done (RED):** Both sub-tests fail today — DeprecationWarning fires.
+**Time:** 12 min.
+
+### T4.1b — Tests+10 RED part 2: brainstorm + backlog sites (189 + 320)
+Same shape as T4.1a, for:
+- Site 189 (`_sync_brainstorm_entities` archive branch — triggered by missing .prd.md file)
+- Site 320 (`_sync_backlog_md_entities` status-change branch — triggered by backlog row status differing from DB)
+**Done (RED):** Both sub-tests fail today — DeprecationWarning fires.
+**Time:** 12 min.
+**Dependencies:** T4.1a (shares parametrize fixture).
 
 ### T4.2 — Impl+10 GREEN: apply conditional pattern at 4 sites
 Modify `plugins/pd/hooks/lib/reconciliation_orchestrator/entity_status.py` at lines 47, 72, 189, 320:
 Change `project_id=project_id, workspace_uuid=workspace_uuid` → `project_id=project_id if workspace_uuid is None else None, workspace_uuid=workspace_uuid`.
-**Done (GREEN):** T4.1's 4 sub-tests pass. `grep -nE 'project_id=project_id if workspace_uuid is None' plugins/pd/hooks/lib/reconciliation_orchestrator/entity_status.py | wc -l` returns 6 (4 new + 2 existing at lines 175, 316). → AC-10
+**Done (GREEN):** All 4 sub-tests from T4.1a + T4.1b pass. `grep -nE 'project_id=project_id if workspace_uuid is None' plugins/pd/hooks/lib/reconciliation_orchestrator/entity_status.py | wc -l` returns 6 (4 new + 2 existing at lines 175, 316). → AC-10
 **Time:** 8 min.
-**Dependencies:** T4.1.
+**Dependencies:** T4.1a, T4.1b.
 
 ### T4.3 — Commit PI-4
 ```bash
@@ -311,13 +338,15 @@ Note: spec.md amendment (FR-4.3 + AC-4 5-test count) lands in this commit per pl
 ### T6a.1 — Tests+4.2 RED: engine-level mismatch tests
 In `test_engine.py`, add 3 tests:
 - `test_transition_phase_workspace_uuid_mismatch_raises`:
-  - Bootstrap 2 workspaces via `bootstrap_test_workspace()`
-  - Create workflow_phases row scoped to ws_a
+  - Bootstrap 2 workspaces via `bootstrap_test_workspace(db, "ws_a")` and `bootstrap_test_workspace(db, "ws_b")` (per test_helpers.py:11-52 pattern; returns workspace UUIDs)
+  - Create the workflow_phases row scoped to ws_a using `db.create_workflow_phase(type_id, workspace_uuid=ws_a, workflow_phase="specify", ...)` directly (avoids the mismatch-check path during setup; create_workflow_phase doesn't perform mismatch logic per design TD-1)
   - `with pytest.raises(ValueError, match="workspace_uuid mismatch"): engine.transition_phase(type_id, "design", workspace_uuid=ws_b)`
-- `test_complete_phase_non_terminal_workspace_uuid_pinned` (same shape, non-terminal)
+- `test_complete_phase_non_terminal_workspace_uuid_pinned` (same shape, non-terminal complete_phase target)
 - `test_complete_phase_terminal_workspace_uuid_pinned` (same shape, `phase == "finish"`)
+
+Note: Do NOT use `engine.transition_phase(..., workspace_uuid=ws_a)` for setup — the engine's internal forwarding (post-Impl+4.2) would then re-check mismatch even on setup operations. Use `db.create_workflow_phase` directly for row creation.
 **Done (RED):** All 3 fail today — engine doesn't forward workspace_uuid, mismatch never checked.
-**Time:** 20 min.
+**Time:** 22 min.
 **Dependencies:** T5.3.
 
 ### T6a.2 — PI-6a.MUT: engine except-clause non-swallow verification
@@ -437,13 +466,13 @@ git commit -m "feat(113/FR-11.2): scan_all workspace_uuid kwarg + scope-scan tes
 **Time:** 2 min.
 
 ### T7b.1 [S:test_workflow_state_server.py with T2a.1, T2b.1, T3a.1, T3b.1] — Tests+11.3/4/5 RED: MCP boundary tests
+**Dependencies:** T7a.3, T7a2.3, T3b.4 (PI-7a lib commits must land first since the MCP handlers call into them; serializes on test_workflow_state_server.py).
 In `test_workflow_state_server.py`, add 3 boundary tests:
 - `test_reconcile_apply_forwards_workspace_uuid`: set `wss._workspace_uuid = ws_a`; mock `apply_workflow_reconciliation`; call async `reconcile_apply()`; assert mock received `workspace_uuid=ws_a`
 - `test_reconcile_frontmatter_forwards_workspace_uuid`: same shape; mock `scan_all`
 - `test_reconcile_status_forwards_workspace_uuid`: same shape
 **Done (RED):** All 3 fail today — MCP handlers don't forward `_workspace_uuid`.
 **Time:** 18 min.
-**Dependencies:** T7a.4, T3b.4 (serializes on test_workflow_state_server.py).
 
 ### T7b.2 — Impl+11.3/4/5 GREEN: MCP handler forwarding
 Modify `plugins/pd/mcp/workflow_state_server.py`:
@@ -475,10 +504,14 @@ PYTHONPATH=plugins/pd/hooks/lib plugins/pd/.venv/bin/python -m pytest plugins/pd
 
 ### T8.2 — AC-12 baseline diff
 ```bash
+FINAL_FAIL_COUNT=$(grep -c '^FAILED' agent_sandbox/$(date +%Y-%m-%d)/113-validation/final.log)
+echo "Final FAILED count: $FINAL_FAIL_COUNT" | tee -a agent_sandbox/$(date +%Y-%m-%d)/113-validation/notes.txt
+
 diff <(grep '^FAILED' agent_sandbox/$(date +%Y-%m-%d)/113-validation/baseline.log | sort) \
      <(grep '^FAILED' agent_sandbox/$(date +%Y-%m-%d)/113-validation/final.log | sort)
 ```
-**Done:** Output empty (no net-new failures). → AC-12
+Capture FINAL_FAIL_COUNT to notes.txt for inclusion in the T8.5 commit message.
+**Done:** Output of `diff` empty (no net-new failures); FINAL_FAIL_COUNT captured to notes. → AC-12
 **Time:** 2 min.
 
 ### T8.3 — CHANGELOG update
@@ -492,15 +525,20 @@ Add `[Unreleased]` entries, one bullet per FR (FR-1 through FR-11). Note `.gitig
 **Time:** 1 min.
 
 ### T8.5 — Commit PI-8
+Read the captured counts from `agent_sandbox/$(date +%Y-%m-%d)/113-validation/notes.txt` (populated by T0.2 + T8.2) and substitute into the commit body BEFORE invoking git commit (shell variables won't expand inside the heredoc body unless escaped).
+
 ```bash
+BASELINE=$(grep 'Baseline FAILED count' agent_sandbox/$(date +%Y-%m-%d)/113-validation/notes.txt | awk '{print $NF}')
+FINAL=$(grep 'Final FAILED count' agent_sandbox/$(date +%Y-%m-%d)/113-validation/notes.txt | awk '{print $NF}')
 git add CHANGELOG.md
 git commit -m "docs(113): CHANGELOG entries for feature 112 QA-followup fixes
 
 AC-12 baseline diff: empty (no net-new failures).
-Baseline FAIL count: $BASELINE_FAIL_COUNT; final FAIL count: $FINAL_FAIL_COUNT.
-"
+Baseline FAIL count: ${BASELINE}; final FAIL count: ${FINAL}."
 ```
-**Time:** 2 min.
+**Time:** 3 min.
+
+Note: T0.2 must capture the baseline count to notes.txt too: append `echo "Baseline FAILED count: $BASELINE_FAIL_COUNT" >> agent_sandbox/$(date +%Y-%m-%d)/113-validation/notes.txt` after the recording line in T0.2.
 
 ### T8.6 — AC-13 dogfood verification (runs at /pd:finish-feature)
 After `/pd:finish-feature` Step 5b emits the gate JSON, verify:
