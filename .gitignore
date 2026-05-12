@@ -59,7 +59,7 @@ agent_sandbox/
 .playwright-mcp/
 *.db
 
-# Feature 094: pre-release adversarial QA gate runtime sidecars (never committed)
-docs/features/**/.qa-gate.json
+# Feature 094: pre-release adversarial QA gate runtime sidecars
+# (.qa-gate.json removed from gitignore by feature 113 FR-1.4 — committable evidence)
 docs/features/**/.qa-gate.log
 docs/features/**/.qa-gate-low-findings.md
