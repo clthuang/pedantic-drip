@@ -5,7 +5,7 @@
   "status": "active",
   "created": "2026-05-12T06:22:22.428795+00:00",
   "branch": "feature/113-feature-112-qa-followups",
-  "lastCompletedPhase": "design",
+  "lastCompletedPhase": "create-plan",
   "phases": {
     "brainstorm": {
       "started": "2026-05-12T06:22:22.428601+00:00"
@@ -20,6 +20,11 @@
       "completed": "2026-05-12T07:06:05.652234+00:00",
       "iterations": 2,
       "reviewerNotes": "Design completed after 2 design-reviewer iters (iter 1: 3 blockers + 2 warnings + 3 suggestions; iter 2: clean PASS) and 2 phase-reviewer iters (iter 1: 2 warnings + 2 suggestions; iter 2: clean PASS). All blockers/warnings resolved at spec time, design time, or spec backward-travel (TD-8 schema enumeration backward-travelled to spec FR-1.2)."
+    },
+    "create-plan": {
+      "completed": "2026-05-12T07:25:50.302669+00:00",
+      "iterations": 2,
+      "reviewerNotes": "create-plan combined loop converged in 2 iterations. plan-reviewer: iter1 (2B+5W), iter2 (2W+2S), iter3 PASS. task-reviewer: iter1 (3B+3W+2S), iter2 PASS. phase-reviewer chain: iter1 (2W+2S), iter2 PASS. Spec backward-traveled: AC-4 5-test count + qa_gate root-fields enumeration."
     }
   }
 }
