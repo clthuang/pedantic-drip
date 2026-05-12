@@ -100,7 +100,9 @@ class WorkflowStateEngine:
             # Secondary defense: catch DB write failures
             try:
                 self.db.update_workflow_phase(
-                    feature_type_id, workflow_phase=target_phase
+                    feature_type_id,
+                    workflow_phase=target_phase,
+                    workspace_uuid=workspace_uuid,
                 )
             except sqlite3.Error as exc:
                 print(
@@ -171,6 +173,7 @@ class WorkflowStateEngine:
                 feature_type_id,
                 last_completed_phase=phase,
                 workflow_phase=next_phase,
+                workspace_uuid=workspace_uuid,
             )
             # Sync entities.status when terminal phase reached (Gap S1 fix)
             if phase == "finish":
