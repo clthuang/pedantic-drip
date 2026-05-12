@@ -38,11 +38,11 @@ atomic, MCP-path replaced by sandbox script as PRIMARY.
 **DoD:** Log contains `wall_clock_seconds=<float>`.
 
 ### Task 0.3 [B] Perf decision
-**Steps:** Read T0.2 result; append to this tasks.md:
-- If > 30s: HALT — file design-revision back to design phase.
-- If 5s < T0.2 ≤ 30s: log warning, proceed.
-- If ≤ 5s: proceed.
-**DoD:** Decision note appended.
+**Steps:** Read T0.2 result; write decision note to `agent_sandbox/2026-05-12/112-validation/perf-decision.txt`:
+- If > 30s: write `HALT: timing exceeds 30s budget; file design-revision back to design phase` AND stop further phases.
+- If 5s < T0.2 ≤ 30s: write `WARN: timing {X}s exceeds 5s heuristic threshold; proceed (test still passes AC-11 < 30s)`.
+- If ≤ 5s: write `OK: timing {X}s ≤ 5s threshold; proceed clean`.
+**DoD:** Sandbox decision file exists with one of the three lines.
 
 ### Task 0.4 [P] Re-grep handler-audit
 **Steps:** Run audit grep per design TD-3:
@@ -61,9 +61,10 @@ grep -nE 'db\.(register_entity|upsert_workflow_phase|update_entity|list_entities
 
 ### Task A.1 [B] task_promotion.py
 **File:** `plugins/pd/hooks/lib/workflow_engine/task_promotion.py:18,335`.
+**Verified at task-authoring time:** Line 335 is `_project_id = detect_project_id(os.environ.get("PROJECT_ROOT", os.getcwd()))`. Line 336 consumes `_project_id` via `generate_entity_id(db, "task", matched_heading, project_id=_project_id)`. The downstream `generate_entity_id` signature expects a 12-char-hex project_id (legacy shape). Therefore the replacement is `_compute_legacy_project_id` (value-parity preserving), NOT `resolve_workspace_uuid` (which would return a UUID and break downstream).
 **Steps:**
-1. Line 18: `from entity_registry.project_identity import detect_project_id` → `from entity_registry.project_identity import resolve_workspace_uuid`
-2. Line 335: `_project_id = detect_project_id(os.environ.get("PROJECT_ROOT", os.getcwd()))` → replace with `resolve_workspace_uuid(os.environ.get("PROJECT_ROOT", os.getcwd()))` assigned to appropriate variable (likely `_workspace_uuid`)
+1. Line 18: `from entity_registry.project_identity import detect_project_id` → `from entity_registry.project_identity import _compute_legacy_project_id`
+2. Line 335: `_project_id = detect_project_id(os.environ.get("PROJECT_ROOT", os.getcwd()))` → `_project_id = _compute_legacy_project_id(os.environ.get("PROJECT_ROOT", os.getcwd()))`. The variable name `_project_id` is RETAINED. Line 336 unchanged.
 **DoD:** `$PYPREFIX plugins/pd/hooks/lib/workflow_engine/test_task_promotion.py` green. `grep -n detect_project_id plugins/pd/hooks/lib/workflow_engine/task_promotion.py` returns 0.
 
 ### Task A.2 [P] doctor/fix_actions.py
@@ -95,7 +96,8 @@ grep -nE 'db\.(register_entity|upsert_workflow_phase|update_entity|list_entities
 **Steps:** `_tp_mod.detect_project_id` → `_tp_mod.resolve_workspace_uuid`.
 **DoD:** `$PYPREFIX plugins/pd/hooks/lib/workflow_engine/test_task_promotion.py` green.
 
-### Task A.7 [B] DELETE detect_project_id function (LAST commit after D.3+D.4 too)
+### Task A.7 [B] DELETE detect_project_id function (LAST commit — runs AFTER Phase D)
+**SCHEDULING NOTE:** Despite its A.7 label, this task does NOT execute at the end of Phase A. It runs AFTER Phase D.3 and D.4 have landed (which drop the `detect_project_id` callers in MCP files). Execution order: Phase A (A.1–A.6) → Phase C → Phase D → **A.7 here** → Phase E onward. An implementer running Phase A linearly MUST skip A.7 at the Phase A close and resume it after D.4 lands.
 **File:** `plugins/pd/hooks/lib/entity_registry/project_identity.py:499`.
 **Deps:** A.1-A.6 + D.3 + D.4 complete.
 **Steps:** Delete function definition; update module docstring (line 4).
@@ -131,7 +133,23 @@ grep -nE 'db\.(register_entity|upsert_workflow_phase|update_entity|list_entities
 
 ### Task C.2 [B] TDD red pre-tests (5 representative handlers)
 **File:** `plugins/pd/mcp/test_workflow_state_server.py`.
-**Steps:** Add 5 tests using **public-API assertion pattern** (no `db._conn`):
+**Helper definition (add to top of test file):**
+```python
+def _bootstrap_mcp_workspace(tmp_path):
+    """Create an EntityDatabase at tmp_path, bootstrap a workspace
+    via the existing test_helpers.bootstrap_test_workspace, and
+    return (db, ws_uuid). Mirrors the pattern in
+    test_workflow_state_server.py existing fixtures.
+    """
+    from entity_registry.database import EntityDatabase
+    from entity_registry.test_helpers import bootstrap_test_workspace
+    db_path = str(tmp_path / "entities.db")
+    db = EntityDatabase(db_path)
+    project_root = str(tmp_path)
+    ws_uuid = bootstrap_test_workspace(db, project_root)
+    return db, ws_uuid
+```
+**Steps:** Add 5 tests using public-API assertion pattern (no `db._conn`):
 ```python
 def test_init_feature_state_scopes_to_active_workspace(tmp_path):
     db, ws_uuid = _bootstrap_mcp_workspace(tmp_path)
@@ -147,7 +165,7 @@ def test_init_feature_state_scopes_to_active_workspace(tmp_path):
     assert entity["workspace_uuid"] == ws_uuid
 ```
 Repeat pattern for: `init_project_state`, `transition_entity_phase`, `record_backward_event`, `promote_task`.
-**DoD:** All 5 tests FAIL (red phase) pre-fix. `$PYPREFIX plugins/pd/mcp/test_workflow_state_server.py -k workspace` shows 5 failures.
+**DoD:** All 5 tests FAIL (red phase) pre-fix. `$PYPREFIX plugins/pd/mcp/test_workflow_state_server.py -k workspace` shows 5 failures. `_bootstrap_mcp_workspace` helper defined in the same file.
 
 ### Tasks C.3-C.14 — Engine fn signatures (parallel-safe within Phase C)
 
@@ -173,17 +191,28 @@ Common pattern for each task:
 | C.13 [P] | `plugins/pd/hooks/lib/entity_registry/frontmatter_sync.py` | `sync_frontmatter` | `$PYPREFIX plugins/pd/hooks/lib/entity_registry/test_frontmatter_sync.py` green |
 | C.14 [P] | `plugins/pd/hooks/lib/reconciliation_orchestrator/entity_status.py` | `reconcile_status` | `$PYPREFIX plugins/pd/hooks/lib/reconciliation_orchestrator/test_entity_status.py` green |
 
-### Task C.15 [B] workflow_state_server.py handler wiring
+### Task C.15a [B] workflow_state_server.py write-handler wiring (12 write + read+write handlers)
 **Deps:** C.3-C.14 complete.
 **File:** `plugins/pd/mcp/workflow_state_server.py`.
 **Steps:**
-1. For each `@mcp.tool()` per `handler-audit.md` table (21 handlers), find every `db.register_entity` / `db.upsert_workflow_phase` / `db.update_entity` call.
-2. Add `workspace_uuid=_workspace_uuid or None` kwarg.
-3. For `list_features_by_phase` (line 1533) and `list_features_by_status` (line 1567): change default behavior so `project_id != "*"` filters single-workspace; `project_id == "*"` opts into cross-workspace.
-4. Update engine call sites to pass `workspace_uuid=_workspace_uuid or None`.
+1. For each WRITE or READ+WRITE `@mcp.tool()` per `handler-audit.md` classification table (12 handlers), find every direct or engine-mediated `db.register_entity` / `db.upsert_workflow_phase` / `db.update_entity` call.
+2. Add `workspace_uuid=_workspace_uuid or None` kwarg (or pass it to the engine call which forwards per Phase C.3-C.14).
+3. Record commit body audit table: one row per call site with `line_no | call_signature | workspace_uuid_kwarg_present (Y/N)` — all rows must be Y at task close.
 **DoD:**
 - 5 tests from C.2 now PASS (TDD green).
-- `grep -nE 'db\.(register_entity|upsert_workflow_phase|update_entity)' plugins/pd/mcp/workflow_state_server.py` — every match line includes `workspace_uuid=_workspace_uuid or None` (manual line-by-line audit; commit body documents).
+- Commit body contains the audit table; every row Y.
+- `grep -nE 'db\.(register_entity|upsert_workflow_phase|update_entity)' plugins/pd/mcp/workflow_state_server.py` matches reviewed individually against the table (manual line-by-line audit captured in commit body).
+
+### Task C.15b [B] workflow_state_server.py read-handler default-behavior change
+**Deps:** C.15a complete.
+**File:** `plugins/pd/mcp/workflow_state_server.py`.
+**Steps:**
+1. `list_features_by_phase` (line 1533): change default behavior so `project_id != "*"` filters single-workspace via `_resolve_optional_workspace_filter`; `project_id == "*"` opts into cross-workspace (returns None filter).
+2. `list_features_by_status` (line 1567): same.
+3. Add 2 new tests in `test_workflow_state_server.py`: `test_list_features_by_phase_default_single_workspace`, `test_list_features_by_phase_star_cross_workspace`.
+**DoD:**
+- 2 new tests pass.
+- `grep -n '_resolve_optional_workspace_filter' plugins/pd/mcp/workflow_state_server.py` returns hits at both handler bodies.
 
 ### Task C.16 [P] Remove TODO(backlog:00361)
 **File:** `plugins/pd/mcp/workflow_state_server.py:99-111`.
@@ -263,7 +292,7 @@ Common pattern:
 | E.3 | `plugins/pd/hooks/lib/workflow_engine/reconciliation.py:50,314,331` | Batch-resolve at `reconcile_apply` entry; in-memory lookup per row. `$PYPREFIX plugins/pd/hooks/lib/workflow_engine/test_reconciliation.py` green |
 | E.4 | `plugins/pd/hooks/lib/entity_registry/server_helpers.py:262,439,457` | Per-file grep returns 0; test file green |
 | E.5 | `plugins/pd/hooks/lib/entity_registry/frontmatter_inject.py:227,236` | Both kwarg AND dict-key forms handled; `grep -nE "['\"]parent_type_id['\"]" plugins/pd/hooks/lib/entity_registry/frontmatter_inject.py` returns 0 |
-| E.6 | `plugins/pd/hooks/lib/entity_registry/frontmatter_sync.py:501,545,548,553,556,658,668,746,756,800` | Heaviest file; batch-resolve at sync entry; per-file kwarg + dict-key greps return 0; `$PYPREFIX plugins/pd/hooks/lib/entity_registry/test_frontmatter_sync.py` green |
+| E.6 | `plugins/pd/hooks/lib/entity_registry/frontmatter_sync.py:501,545,548,553,556,658,668,746,756,800` | Heaviest file; batch-resolve at sync entry; per-file kwarg + dict-key greps return 0; `$PYPREFIX plugins/pd/hooks/lib/entity_registry/test_frontmatter_sync.py` green. **Implementer may split:** E.6a = kwarg-form hits (501,545,548,553,556) + intermediate grep check; E.6b = dict-key hits (658,668,746,756,800) + final grep check. Sub-split discretionary based on observed wall-clock. |
 
 ### Task E.7 [B] Drop SELECT JOIN aliases + downstream readers (ATOMIC commit)
 **Files:** `database.py:2995,3595,3647,4567`; downstream readers.
@@ -295,12 +324,36 @@ Common pattern:
 
 **E.9b Rewrite script (PRIMARY path):**
 **File:** `agent_sandbox/2026-05-12/112-validation/meta-json-rewrite.py` (new).
-**Steps:** Author script that:
-1. Iterates over the audit file's hit list.
-2. For each .meta.json, opens file, parses JSON, resolves `parent_type_id` value to UUID via `db.resolve_ref()`, replaces with `parent_uuid` key.
-3. Writes file in-place using guard-fallback pattern: temporarily move `~/.claude/plugins/cache/*/pd*/*/.venv/.bootstrap-complete` sentinel; write files; restore sentinel.
-4. Logs each rewrite to `meta-json-rewrite.log`.
-**DoD:** Script runs without error; log captured.
+**Steps:** Author Python script with try/finally for sentinel safety:
+```python
+import glob, os, json, sys
+# 1. Locate the bootstrap sentinel (single match required)
+sentinels = glob.glob(os.path.expanduser(
+    "~/.claude/plugins/cache/*/pd*/*/.venv/.bootstrap-complete"))
+assert len(sentinels) == 1, f"Expected 1 sentinel, found {len(sentinels)}: {sentinels}"
+SENTINEL = sentinels[0]
+SENTINEL_BAK = SENTINEL + ".tmp-rewrite"
+
+os.rename(SENTINEL, SENTINEL_BAK)
+try:
+    for meta_path in <iterate audit hit list>:
+        with open(meta_path) as f:
+            meta = json.load(f)
+        if "parent_type_id" in meta:
+            # Resolve via db.resolve_ref() — invoke MCP / direct DB lookup
+            parent_uuid = ...  # populated by caller
+            meta["parent_uuid"] = parent_uuid
+            del meta["parent_type_id"]
+            with open(meta_path, "w") as f:
+                json.dump(meta, f, indent=2)
+            print(f"rewrote {meta_path}", flush=True)
+finally:
+    # ALWAYS restore the sentinel — even on exception
+    if os.path.exists(SENTINEL_BAK):
+        os.rename(SENTINEL_BAK, SENTINEL)
+    print("sentinel restored", flush=True)
+```
+**DoD:** Script runs; sentinel restored (verified post-run: `ls $SENTINEL` succeeds, `ls $SENTINEL.tmp-rewrite` returns no such file); rewrite log captured. If glob returns 0 or >1 sentinels: script aborts BEFORE moving anything (sentinel never touched).
 
 **E.9c Post-rewrite verify:**
 **Steps:** Re-run E.9a grep.
@@ -351,40 +404,54 @@ Common pattern:
 
 ## Phase G — FR-7 validation (explicit ordering)
 
-### Task G.1 [B] _seed_v10_entities helper
+### Task G.1 [B] _seed_v10_entities helper (no `db._conn` access)
 **File:** `plugins/pd/hooks/lib/entity_registry/test_database.py`.
-**Steps:** Add helper:
+**Steps:** Add helper that operates on the file path BEFORE EntityDatabase wraps it (avoids `db._conn` per CLAUDE.md):
 ```python
-def _seed_v10_entities(db, count: int) -> None:
-    """Seed `count` rows into pre-Migration-11 entities schema with
-    deterministic UUIDs. Every 5th row gets parent_type_id=first-row."""
-    for i in range(count):
-        uuid_val = f"test-uuid-{i:06d}"
-        parent_type_id = "feature:001-test" if i > 0 and i % 5 == 0 else None
-        db._conn.execute(  # test-only helper
-            "INSERT INTO entities (uuid, type_id, project_id, entity_type, entity_id, name, status, parent_type_id) "
-            "VALUES (?, ?, '__unknown__', 'feature', ?, ?, 'active', ?)",
-            (uuid_val, f"feature:{i:03d}-test", f"{i:03d}-test", f"Test {i}", parent_type_id),
-        )
-    db._conn.commit()
+import sqlite3
+def _seed_v10_entities(db_path: str, count: int) -> None:
+    """Seed `count` v10-schema rows directly via sqlite3.connect.
+    Pre-Migration-11 schema; caller invokes Migration 11 after seeding.
+    Deterministic UUIDs; every 5th row gets parent_type_id=first-row."""
+    conn = sqlite3.connect(db_path)
+    try:
+        for i in range(count):
+            uuid_val = f"test-uuid-{i:06d}"
+            parent_type_id = "feature:001-test" if i > 0 and i % 5 == 0 else None
+            conn.execute(
+                "INSERT INTO entities (uuid, type_id, project_id, entity_type, entity_id, name, status, parent_type_id) "
+                "VALUES (?, ?, '__unknown__', 'feature', ?, ?, 'active', ?)",
+                (uuid_val, f"feature:{i:03d}-test", f"{i:03d}-test", f"Test {i}", parent_type_id),
+            )
+        conn.commit()
+    finally:
+        conn.close()
 ```
-**DoD:** Helper added; standalone invocation seeds correctly.
+The helper takes a `db_path: str` (not `db`); test callers build the v10 schema via existing fixtures (e.g., `_make_v10_db` if it exists, or pattern from `test_checks.py::_make_db`) and pass the path. EntityDatabase wraps the populated path AFTER seeding. No `db._conn` access required.
+**DoD:** Helper added; standalone invocation seeds correctly. `grep -n 'db\._conn' plugins/pd/hooks/lib/entity_registry/test_database.py | grep -v '^[^:]*:.*#'` returns 0 hits ON the lines this task added (existing `db._conn` usages elsewhere in the file are not in scope).
 
 ### Task G.2 [B] test_migration_11_runtime
 **File:** `plugins/pd/hooks/lib/entity_registry/test_database.py`.
+**Verified at task-authoring time:** `make_v10_db(path: Path | str | None = None) -> sqlite3.Connection` exists at `plugins/pd/hooks/lib/entity_registry/test_helpers.py:55`. Returns a raw sqlite3.Connection at v10 schema. `MIGRATIONS[11](conn)` is invoked directly with a raw connection in existing tests (e.g., `test_database.py:6511`) — no need to expose `db._conn`.
 **Steps:** Add test:
 ```python
 import time, warnings
+from entity_registry.test_helpers import make_v10_db
+from entity_registry.database import MIGRATIONS
+
 def test_migration_11_runtime(tmp_path):
     db_path = str(tmp_path / "v10-test.db")
-    # Build v10 schema, seed 500 rows
-    conn = _make_v10_db(db_path)  # existing helper or _make_db from test_checks
-    _seed_v10_entities(EntityDatabase(db_path), 500)
-    # Time Migration 11
-    db = EntityDatabase(db_path)
+    # Build v10 schema (raw sqlite3.Connection — pre-encapsulation, no db._conn)
+    conn = make_v10_db(db_path)
+    # Seed 500 v10 rows via the helper from G.1 (operates on path, opens its own conn)
+    _seed_v10_entities(db_path, 500)
+    # Re-open the same DB and time Migration 11 forward on the raw conn
+    # (MIGRATIONS[11] expects a sqlite3.Connection; same pattern used at test_database.py:6511)
+    conn = sqlite3.connect(db_path)
     t0 = time.monotonic()
-    MIGRATIONS[11](db._conn)
+    MIGRATIONS[11](conn)
     elapsed = time.monotonic() - t0
+    conn.close()
     if elapsed > 2.0:
         warnings.warn(
             f"Migration 11 took {elapsed:.2f}s > 2s threshold",
@@ -392,7 +459,7 @@ def test_migration_11_runtime(tmp_path):
         )
     assert elapsed < 30.0, f"Migration 11 wall-clock {elapsed:.2f}s exceeded 30s budget"
 ```
-**DoD:** Test exists; runs locally; passes (elapsed < 30s); satisfies AC-11.
+**DoD:** Test exists; runs locally; passes (elapsed < 30s); satisfies AC-11. No `db._conn` access required (uses raw `sqlite3.connect` + `MIGRATIONS[11](conn)` pattern proven by `test_database.py:6511`).
 
 ### Task G.3 [P] test_migration_11_stress_benchmark
 **Steps:** Same as G.2 but with `count=10000` and `@pytest.mark.benchmark` decorator.
@@ -420,16 +487,18 @@ bash plugins/pd/hooks/tests/test-hooks.sh > agent_sandbox/2026-05-12/112-validat
 **DoD:** Both files exist; non-empty.
 
 ### Task G.6 [P with G.4] bash-version.log (AC-12)
-**Steps:**
+**Steps:** Capture exit code into an explicit variable BEFORE writing it to the log (avoids any ambiguity about whether `$?` reflects the cmd or the redirect):
 ```bash
-bash --version > agent_sandbox/2026-05-12/112-validation/bash-version.log
-echo "---" >> agent_sandbox/2026-05-12/112-validation/bash-version.log
-/bin/bash --version >> agent_sandbox/2026-05-12/112-validation/bash-version.log
-echo "---" >> agent_sandbox/2026-05-12/112-validation/bash-version.log
-/bin/bash plugins/pd/hooks/tests/test-hooks.sh >> agent_sandbox/2026-05-12/112-validation/bash-version.log 2>&1
-echo "exit=$?" >> agent_sandbox/2026-05-12/112-validation/bash-version.log
+LOG=agent_sandbox/2026-05-12/112-validation/bash-version.log
+bash --version > "$LOG"
+echo "---" >> "$LOG"
+/bin/bash --version >> "$LOG"
+echo "---" >> "$LOG"
+/bin/bash plugins/pd/hooks/tests/test-hooks.sh >> "$LOG" 2>&1
+RC=$?
+echo "exit=$RC" >> "$LOG"
 ```
-**DoD:** Log has 3 sections + exit code. If host shell is bash 4+ AND `/bin/bash` is bash 3.2, test-hooks.sh run with `/bin/bash` exit=0 (AC-12 evidence-of-conformance).
+**DoD:** Log has 3 sections + `exit=<int>` line with the actual /bin/bash test-hooks.sh exit code. If host shell is bash 4+ AND `/bin/bash` is bash 3.2, `exit=0` indicates AC-12 evidence-of-conformance.
 
 ### Task G.7 [B] Author .qa-gate.json
 **Deps:** G.2, G.4, G.5, G.6 complete.

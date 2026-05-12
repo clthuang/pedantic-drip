@@ -169,10 +169,15 @@ in `workflow_state_server.py` is on a line with
 lines for multi-line calls).
 
 ### C.16 Remove TODO + retain _workspace_uuid global
-Delete the TODO(backlog:00361) comment block at
-`workflow_state_server.py:99-111`. RETAIN the
-`_workspace_uuid: str = ""` declaration. RETAIN `_project_id` global
-(deferred per #00389).
+Delete ONLY the TODO(backlog:00361) comment lines at
+`workflow_state_server.py:99-109` (the comment-only lines preceding
+the `_workspace_uuid` declaration). The **`_workspace_uuid: str = ""`
+declaration at line 110 (or wherever it lands post-edit) is
+RETAINED** — it remains the canonical write-scope source. RETAIN
+`_project_id` global (deferred per #00389). DoD-grep:
+`grep -n 'TODO.*00361' plugins/pd/mcp/workflow_state_server.py`
+returns 0 AND `grep -n '_workspace_uuid: str = ""' plugins/pd/mcp/workflow_state_server.py`
+returns exactly 1 hit.
 
 ### C.17 CHANGELOG entry per NFR-5 #4 (list_features_by_* default change)
 
@@ -307,7 +312,7 @@ G.8 (NFR-2 diff) → G.9 (backlog annotation) → G.10 (MED reconciliation notes
 | G.5 | `bash plugins/pd/hooks/tests/test-hooks.sh > agent_sandbox/.../hooks-tests.log 2>&1`; `./validate.sh > agent_sandbox/.../validate.log 2>&1`; both files non-empty |
 | G.6 | `bash --version > agent_sandbox/.../bash-version.log`; append `/bin/bash --version`; append `/bin/bash plugins/pd/hooks/tests/test-hooks.sh` exit+tail (per AC-12) |
 | G.7 | Author `.qa-gate.json` (one-shot manual JSON, 41 entries per AC-9 schema). Validator: `python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert len(d)==41; assert all((e.get("evidence") or e.get("backlog_ref") or e.get("condition")) for e in d)' docs/features/112-workspace-identity-cleanup/.qa-gate.json` returns 0 |
-| G.8 | Diff G.4 logs against `baseline.log` (T0.1); `diff <(grep -E '^FAILED\|^ERROR' baseline.log)  <(grep -E '^FAILED\|^ERROR' all_phase_g_logs)` shows 0 net-new failures (AC-14) |
+| G.8 | Diff G.4 logs against `baseline.log` (T0.1). Use `comm -13 <(grep -E '^(FAILED\|ERROR)' baseline.log \| sort -u) <(cat all_phase_g_logs \| grep -E '^(FAILED\|ERROR)' \| sort -u)` returns empty (AC-14: 0 net-new failures). (Note: shell ERE pipe is `\|` only inside bare `\b\B\W...` contexts — here we use parenthesised `^(FAILED\|ERROR)` for clarity; alternation works without escape in `-E` mode.) |
 | G.9 | Annotate `docs/backlog.md` entries #00360-#00366: append `(fixed in feature:112-workspace-identity-cleanup)` to Description column |
 | G.10 | Per #00367-#00388 (22 MED), record (a) commit ref / (b) verification cmd showing resolved / (c) rationale ≥2 sentences + target feature in `docs/features/112-workspace-identity-cleanup/med-reconciliation-notes.md` (consumed by retro.md in /pd:finish-feature) |
 
@@ -316,7 +321,7 @@ G.8 (NFR-2 diff) → G.9 (backlog annotation) → G.10 (MED reconciliation notes
 ## Implementation Orchestration
 
 - **Phase 0:** single dispatch.
-- **Phase A ‖ Phase B:** can run in parallel via worktree-parallel implementer pattern (independent files).
+- **Phase A ‖ Phase B:** can run in parallel via worktree-parallel implementer pattern (independent files). **EXCEPTION:** A.4 and B.2 both touch `test_project_identity.py` — if running A and B in parallel worktrees, sequence A.4 BEFORE B.2 (or merge B.2 into A.4's commit since they modify the same test class).
 - **Phase C → D → E:** sequential single-agent (heavy dependencies).
   - Within Phase C: C.3-C.14 are parallel-safe (12 independent engine files), but C.1/C.2 must precede them, and C.15 depends on all of them.
 - **Phase F:** parallel-safe with Phase G (markdown-only, no runtime impact). Schedule after E for prose accuracy.
