@@ -180,9 +180,12 @@ def emit_qa_gate(
         "reviewers": list(reviewers),
     }
 
-    # Atomic write: temp file + os.replace.
     tmp_path = out_path.with_suffix(".json.tmp")
-    tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=False) + "\n")
-    os.replace(tmp_path, out_path)
+    try:
+        tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=False) + "\n")
+        os.replace(tmp_path, out_path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
     return str(out_path.resolve())
