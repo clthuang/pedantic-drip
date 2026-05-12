@@ -7440,6 +7440,115 @@ class TestListFeaturesByDefaultSingleWorkspace:
         )
 
 
+class TestWorkspaceUuidEmptyStringNormalization:
+    """FR-6: empty-string ``_workspace_uuid`` normalizes to None at db.* boundary.
+
+    The MCP server's module-level ``_workspace_uuid`` is initialized to ``""``
+    when the workspace is unset. Every ``db.*`` call site that forwards this
+    value uses ``workspace_uuid=_workspace_uuid or None`` to coerce the empty
+    string to ``None`` — which then falls through to the
+    ``project_id="__unknown__"`` → ``_UNKNOWN_WORKSPACE_UUID`` default.
+
+    Without the ``or None`` coercion, the empty string would propagate to
+    ``db.register_entity`` / ``db.update_entity`` / etc., where it fails
+    the workspaces FK (``""`` matches no row).
+
+    These tests pin the normalization at two distinct call sites (one per
+    code path), guarding both against future contributors removing the
+    ``or None`` suffix. Mutation-pin verification (see PI-3.MUT in tasks.md)
+    confirms both sites produce observable failures when the suffix is
+    removed.
+    """
+
+    @pytest.mark.parametrize("entry_point", ["init_feature_state", "transition_phase"])
+    def test_workspace_uuid_empty_string_normalized_to_none(
+        self, entry_point, tmp_path,
+    ):
+        """Pinned across two entry points (see class docstring for context)."""
+        import asyncio
+        import workflow_state_server as wss
+        from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
+
+        db = EntityDatabase(str(tmp_path / "ws.db"))
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, str(tmp_path))
+        wss._workspace_uuid = ""  # critical: unset → empty string
+        wss._project_id = ""
+        wss._artifacts_root = str(tmp_path)
+
+        if entry_point == "init_feature_state":
+            # Exercises workflow_state_server.py line 1280:
+            # _process_init_feature_state forwards _workspace_uuid via
+            # `workspace_uuid=_workspace_uuid or None` to _lib_init_feature_state.
+            feature_dir = os.path.join(str(tmp_path), "features", "200-empty-ws")
+            os.makedirs(feature_dir, exist_ok=True)
+            result = _process_init_feature_state(
+                db, wss._engine, feature_dir, "200", "empty-ws", "standard",
+                "feature/200-empty-ws", None, None, "active",
+                artifacts_root=str(tmp_path),
+            )
+            data = json.loads(result)
+            assert data.get("created") is True, (
+                f"init_feature_state should succeed with empty _workspace_uuid "
+                f"via the `or None` coercion, got {data!r}"
+            )
+
+            entity = db.get_entity("feature:200-empty-ws")
+            assert entity is not None, (
+                "feature:200-empty-ws should exist after init_feature_state"
+            )
+            assert entity["workspace_uuid"] == _UNKNOWN_WORKSPACE_UUID, (
+                f"Empty _workspace_uuid must normalize to None and resolve to "
+                f"_UNKNOWN_WORKSPACE_UUID via project_id='__unknown__'; got "
+                f"workspace_uuid={entity['workspace_uuid']!r}"
+            )
+        else:
+            # Exercises workflow_state_server.py line 657:
+            # _process_transition_phase forwards _workspace_uuid via
+            # `workspace_uuid=_workspace_uuid or None` to entity_engine.transition_phase.
+            # We must seed a feature first (via init_feature_state under the same
+            # `or None` contract) so transition_phase has a target row.
+            feature_dir = os.path.join(str(tmp_path), "features", "201-empty-ws-tx")
+            os.makedirs(feature_dir, exist_ok=True)
+            # Pre-create spec.md so G-08 hard prereq passes for design transition
+            with open(os.path.join(feature_dir, "spec.md"), "w") as f:
+                f.write("# Spec\n")
+
+            init_result = _process_init_feature_state(
+                db, wss._engine, feature_dir, "201", "empty-ws-tx", "standard",
+                "feature/201-empty-ws-tx", None, None, "active",
+                artifacts_root=str(tmp_path),
+            )
+            init_data = json.loads(init_result)
+            assert init_data.get("created") is True, (
+                f"setup: init_feature_state must succeed first, got {init_data!r}"
+            )
+
+            # Now transition; this is the actual line-657 exercise.
+            tx_result = asyncio.run(
+                wss.transition_phase(
+                    feature_type_id="feature:201-empty-ws-tx",
+                    target_phase="design",
+                )
+            )
+            tx_data = json.loads(tx_result)
+            assert tx_data.get("transitioned") is True, (
+                f"transition_phase should succeed with empty _workspace_uuid "
+                f"via the `or None` coercion, got {tx_data!r}"
+            )
+
+            wp_row = db.get_workflow_phase("feature:201-empty-ws-tx")
+            assert wp_row is not None, (
+                "workflow_phases row should exist after transition_phase"
+            )
+            assert wp_row["workspace_uuid"] == _UNKNOWN_WORKSPACE_UUID, (
+                f"Empty _workspace_uuid must normalize to None and resolve to "
+                f"_UNKNOWN_WORKSPACE_UUID via project_id='__unknown__'; got "
+                f"workflow_phase row workspace_uuid={wp_row['workspace_uuid']!r}"
+            )
+
+
 class TestFilterStatesByWorkspaceExceptionHandling:
     """FR-7: _filter_states_by_workspace narrows its except clause.
 

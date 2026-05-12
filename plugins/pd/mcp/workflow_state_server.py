@@ -652,6 +652,8 @@ def _process_transition_phase(
                 entity = db.get_entity(feature_type_id)
                 if entity is not None:
                     try:
+                        # FR-6.2: Empty-string == unset == None at db.* kwarg boundary;
+                        # downstream defaults to project_id="__unknown__" → _UNKNOWN_WORKSPACE_UUID.
                         response = entity_engine.transition_phase(
                             entity["uuid"], target_phase,
                             workspace_uuid=_workspace_uuid or None,
@@ -1277,6 +1279,8 @@ def _process_init_feature_state(
         brainstorm_source=brainstorm_source,
         backlog_source=backlog_source,
         status=status,
+        # FR-6.2: Empty-string == unset == None at db.* kwarg boundary;
+        # downstream defaults to project_id="__unknown__" → _UNKNOWN_WORKSPACE_UUID.
         workspace_uuid=_workspace_uuid or None,
     )
     warning = _project_meta_json(db, engine, result["feature_type_id"], feature_dir)
