@@ -3645,6 +3645,60 @@ _DISCRIMINATOR_KWARGS: tuple[str, ...] = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Custom exception classes (feature 109 FR-3 / FR-4 / TD-4)
+# ---------------------------------------------------------------------------
+#
+# Per design TD-4: custom exceptions live in their domain file (codebase
+# precedent — CycleError in dependencies.py, WorkspaceCorruptedError in
+# project_identity.py, FrontmatterUUIDMismatch in frontmatter.py). No shared
+# ``exceptions.py`` module exists.
+#
+# Base class is ``ValueError`` because both errors represent semantic-
+# validation failures (duplicate key, identity collision), not runtime
+# errors.
+
+
+class EntityExistsError(ValueError):
+    """Raised by ``register_entity`` when ``(workspace_uuid, type_id)`` conflict
+    occurs (feature 109 FR-4 / AC-4.1 / AC-4.2).
+
+    Replaces the pre-feature-109 silent ``INSERT OR IGNORE`` no-op. Callers
+    that need idempotent semantics use ``upsert_entity`` instead.
+    """
+
+    def __init__(self, workspace_uuid: str, type_id: str):
+        super().__init__(
+            f"Entity already exists: workspace_uuid={workspace_uuid!r}, "
+            f"type_id={type_id!r}"
+        )
+        self.workspace_uuid = workspace_uuid
+        self.type_id = type_id
+
+
+class PromotionConflictError(ValueError):
+    """Raised by ``promote_entity`` when the post-promotion ``type_id`` would
+    collide with an existing row in the same workspace (feature 109 FR-3 /
+    AC-3.6 / AC-4.1).
+    """
+
+    def __init__(
+        self,
+        workspace_uuid: str,
+        old_type_id: str,
+        new_type_id: str,
+    ):
+        super().__init__(
+            f"Promotion would create a UNIQUE conflict: "
+            f"workspace_uuid={workspace_uuid!r}, "
+            f"old_type_id={old_type_id!r}, "
+            f"new_type_id={new_type_id!r} (already exists)"
+        )
+        self.workspace_uuid = workspace_uuid
+        self.old_type_id = old_type_id
+        self.new_type_id = new_type_id
+
+
 class EntityDatabase:
     """SQLite-backed storage for entity registry.
 
@@ -4291,7 +4345,12 @@ class EntityDatabase:
         parent_type_id: str | None = None,
         metadata: dict | None = None,
     ) -> str:
-        """Register an entity with INSERT OR IGNORE semantics.
+        """Register a new entity. Raises :class:`EntityExistsError` on
+        ``(workspace_uuid, type_id)`` conflict.
+
+        Feature 109 FR-4 / AC-4.2: the pre-feature-109 silent
+        ``INSERT OR IGNORE`` no-op is removed. Callers that need idempotent
+        semantics use :meth:`upsert_entity` instead.
 
         Parameters
         ----------
@@ -4331,13 +4390,27 @@ class EntityDatabase:
         Returns
         -------
         str
-            The UUID of the registered (or already-existing) entity.
+            The UUID of the newly registered entity.
 
         Raises
         ------
         ValueError
             If neither ``workspace_uuid`` nor ``project_id`` is provided,
             or if ``parent_type_id`` cannot be resolved to an entity.
+        EntityExistsError
+            If ``(workspace_uuid, type_id)`` already exists. Callers that
+            relied on the pre-feature-109 silent no-op semantics must
+            migrate to :meth:`upsert_entity`.
+
+        Behavior change (feature 109 Group 13)
+        --------------------------------------
+        The previous on-duplicate ``parent_uuid`` fixup branch (which
+        backfilled ``parent_uuid`` on an existing row when caller supplied
+        one) is **removed**. The branch became unreachable after this
+        method began raising on conflict. Callers that need that
+        behaviour should catch ``EntityExistsError`` and call
+        :meth:`update_entity` explicitly, or use the existing
+        :meth:`set_parent` API.
         """
         self._validate_entity_type(entity_type)
         type_id = f"{entity_type}:{entity_id}"
@@ -4387,59 +4460,200 @@ class EntityDatabase:
         # production values (feature/backlog/brainstorm/project/workspace).
         _type, _lifecycle = _derive_type_and_lifecycle(entity_type)
 
-        # Audit 062: 2 write SQL statements — wrapped in transaction() for BEGIN IMMEDIATE
+        # Resolve a project_id label for the entity_created phase_event.
+        # Use the explicit project_id kwarg when provided; otherwise look up
+        # ``workspaces.project_id_legacy`` for the resolved workspace.
+        resolved_project_id = project_id
+        if resolved_project_id is None:
+            ws_row = self._conn.execute(
+                "SELECT project_id_legacy FROM workspaces WHERE uuid = ?",
+                (ws_uuid,),
+            ).fetchone()
+            if ws_row is not None and ws_row["project_id_legacy"]:
+                resolved_project_id = ws_row["project_id_legacy"]
+            else:
+                resolved_project_id = "__unknown__"
+
         entity_uuid = str(uuid_mod.uuid4())
         with self.transaction():
-            cursor = self._conn.execute(
-                "INSERT OR IGNORE INTO entities "
-                "(uuid, workspace_uuid, type_id, kind, entity_id, "
-                "name, status, parent_uuid, artifact_path, "
-                "created_at, updated_at, metadata, "
-                "type, lifecycle_class) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (entity_uuid, ws_uuid, type_id, entity_type, entity_id,
-                 name, status, parent_uuid, artifact_path,
-                 now, now, metadata_json,
-                 _type, _lifecycle),
-            )
-            if cursor.rowcount == 1:
-                row = self._conn.execute(
-                    "SELECT rowid FROM entities WHERE uuid = ?",
-                    (entity_uuid,),
-                ).fetchone()
-                metadata_text = flatten_metadata(
-                    json.loads(metadata_json) if metadata_json else None
-                )
+            # Plain INSERT (no OR IGNORE). UNIQUE conflict on
+            # (workspace_uuid, type_id) raises sqlite3.IntegrityError, which
+            # we translate to EntityExistsError. Per SQLite semantics
+            # (https://www.sqlite.org/lang_transaction.html) a failed
+            # statement inside an explicit BEGIN does NOT auto-rollback the
+            # transaction; the surrounding transaction() context manager
+            # propagates the exception and rolls back cleanly.
+            try:
                 self._conn.execute(
-                    "INSERT INTO entities_fts(rowid, name, entity_id, "
-                    "kind, status, metadata_text) "
-                    "VALUES(?, ?, ?, ?, ?, ?)",
-                    (row[0], name, entity_id, entity_type, status or "",
-                     metadata_text),
+                    "INSERT INTO entities "
+                    "(uuid, workspace_uuid, type_id, kind, entity_id, "
+                    "name, status, parent_uuid, artifact_path, "
+                    "created_at, updated_at, metadata, "
+                    "type, lifecycle_class) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (entity_uuid, ws_uuid, type_id, entity_type, entity_id,
+                     name, status, parent_uuid, artifact_path,
+                     now, now, metadata_json,
+                     _type, _lifecycle),
                 )
-            self._commit()  # no-op inside transaction(); commit handled by context manager
-        # Apply parent_uuid on duplicate if caller provided one and existing entity has none.
-        # Direct UPDATE keeps the on-duplicate path inside this method's
-        # single-statement boundary (no separate set_parent() call needed).
-        if cursor.rowcount == 0 and parent_uuid is not None:
-            existing_parent = self._conn.execute(
-                "SELECT parent_uuid FROM entities "
-                "WHERE workspace_uuid = ? AND type_id = ?",
-                (ws_uuid, type_id),
+            except sqlite3.IntegrityError as exc:
+                # Translate UNIQUE conflicts on (workspace_uuid, type_id) to
+                # the typed EntityExistsError. Other IntegrityError
+                # variants (e.g. NOT NULL violation, FK violation) bubble
+                # unchanged.
+                msg = str(exc).lower()
+                if "unique" in msg and (
+                    "type_id" in msg or "entities.type_id" in msg
+                    or "workspace_uuid" in msg
+                ):
+                    raise EntityExistsError(
+                        workspace_uuid=ws_uuid, type_id=type_id,
+                    ) from exc
+                raise
+
+            # FTS5 sync (only on successful INSERT).
+            row = self._conn.execute(
+                "SELECT rowid FROM entities WHERE uuid = ?",
+                (entity_uuid,),
             ).fetchone()
-            if existing_parent and existing_parent["parent_uuid"] is None:
-                self._conn.execute(
-                    "UPDATE entities SET parent_uuid = ?, updated_at = ? "
-                    "WHERE workspace_uuid = ? AND type_id = ?",
-                    (parent_uuid, self._now_iso(), ws_uuid, type_id),
+            metadata_text = flatten_metadata(
+                json.loads(metadata_json) if metadata_json else None
+            )
+            self._conn.execute(
+                "INSERT INTO entities_fts(rowid, name, entity_id, "
+                "kind, status, metadata_text) "
+                "VALUES(?, ?, ?, ?, ?, ?)",
+                (row[0], name, entity_id, entity_type, status or "",
+                 metadata_text),
+            )
+
+            # entity_created phase_event emission (feature 109 FR-2 /
+            # spec line 104). The append_phase_event helper INSERTs the
+            # event row WITHOUT redundantly UPDATE-ing entities.status —
+            # see helper docstring step 4 ("SKIP this UPDATE for
+            # event_type='entity_created'") which preserves the
+            # AC-2.7 ``entities.updated_at == phase_events.timestamp``
+            # invariant.
+            self.append_phase_event(
+                type_id=type_id,
+                project_id=resolved_project_id,
+                event_type="entity_created",
+                workspace_uuid=ws_uuid,
+                metadata={
+                    "kind": entity_type,
+                    "name": name,
+                    "status": status,
+                },
+                timestamp=now,
+            )
+
+        return entity_uuid
+
+    def upsert_entity(
+        self,
+        entity_type: str,
+        entity_id: str,
+        name: str,
+        *,
+        workspace_uuid: str | None = None,
+        project_id: str | None = None,
+        artifact_path: str | None = None,
+        status: str | None = None,
+        parent_uuid: str | None = None,
+        parent_type_id: str | None = None,
+        metadata: dict | None = None,
+    ) -> str:
+        """Idempotent insert-or-status-update. Signature byte-identical to
+        :meth:`register_entity` (feature 109 FR-4 / AC-4.3).
+
+        Three semantic branches (AC-4.4):
+
+        - **Insert branch** (no conflict): same as :meth:`register_entity`
+          — emits one ``entity_created`` phase_event.
+        - **Conflict + status change**: emits one ``entity_status_changed``
+          phase_event with ``metadata={'old_status': ..., 'new_status': ...}``;
+          ``entities.status`` and ``updated_at`` are updated via
+          :meth:`append_phase_event`.
+        - **Conflict + no status change**: no UPDATE issued, no
+          phase_event emitted, ``entities.updated_at`` unchanged.
+
+        Does NOT update ``name``, ``parent_uuid``, or ``metadata`` on the
+        conflict branch — callers needing those use :meth:`update_entity`.
+
+        Returns
+        -------
+        str
+            The entity's UUID (newly generated on insert branch; existing
+            on conflict branches).
+        """
+        type_id = f"{entity_type}:{entity_id}"
+        with self.transaction():
+            try:
+                # Try the insert branch via register_entity. On success,
+                # it emits entity_created and returns the new uuid.
+                return self.register_entity(
+                    entity_type, entity_id, name,
+                    workspace_uuid=workspace_uuid,
+                    project_id=project_id,
+                    artifact_path=artifact_path,
+                    status=status,
+                    parent_uuid=parent_uuid,
+                    parent_type_id=parent_type_id,
+                    metadata=metadata,
                 )
-                self._commit()
-        result = self._conn.execute(
-            "SELECT uuid FROM entities "
-            "WHERE workspace_uuid = ? AND type_id = ?",
-            (ws_uuid, type_id),
-        ).fetchone()
-        return result["uuid"]
+            except EntityExistsError:
+                # Conflict branch: workspace-scoped direct SELECT (PRD Goal 1
+                # workspace-isolation invariant). Do NOT use get_entity() —
+                # that helper raises ValueError on cross-workspace ambiguity
+                # (database.py get_entity body); upsert knows the workspace
+                # so we scope the lookup explicitly.
+                ws_uuid = self._resolve_workspace_uuid_kwargs(
+                    workspace_uuid, project_id, _caller="upsert_entity"
+                )
+                row = self._conn.execute(
+                    "SELECT uuid, status FROM entities "
+                    "WHERE workspace_uuid = ? AND type_id = ?",
+                    (ws_uuid, type_id),
+                ).fetchone()
+                if row is None:
+                    # Defensive: register raised EntityExistsError so the
+                    # row must exist. If it doesn't, the conflict was on
+                    # something else — re-raise.
+                    raise
+                existing_uuid = row["uuid"]
+                existing_status = row["status"]
+
+                # No-op branch: status unchanged (or caller passed None).
+                if status is None or existing_status == status:
+                    return existing_uuid
+
+                # Status-change branch: emit one entity_status_changed event.
+                # append_phase_event handles the entities.status UPDATE
+                # atomically (workspace-scoped per FR-2 helper step 3).
+                # Resolve project_id for the phase_events row.
+                resolved_project_id = project_id
+                if resolved_project_id is None:
+                    ws_row = self._conn.execute(
+                        "SELECT project_id_legacy FROM workspaces "
+                        "WHERE uuid = ?",
+                        (ws_uuid,),
+                    ).fetchone()
+                    if ws_row is not None and ws_row["project_id_legacy"]:
+                        resolved_project_id = ws_row["project_id_legacy"]
+                    else:
+                        resolved_project_id = "__unknown__"
+
+                self.append_phase_event(
+                    type_id=type_id,
+                    project_id=resolved_project_id,
+                    event_type="entity_status_changed",
+                    workspace_uuid=ws_uuid,
+                    metadata={
+                        "old_status": existing_status,
+                        "new_status": status,
+                    },
+                )
+                return existing_uuid
 
     def set_parent(
         self,
@@ -4521,6 +4735,132 @@ class EntityDatabase:
         )
         self._commit()
         return child_uuid
+
+    def promote_entity(
+        self,
+        uuid: str,
+        new_kind: str,
+        new_lifecycle_class: str,
+        *,
+        project_id: str | None = None,
+    ) -> dict:
+        """Atomic kind/lifecycle_class change with ``type_id`` prefix rewrite.
+
+        Feature 109 FR-3 / AC-3.2-AC-3.6. Performs in a single transaction:
+
+        1. Read existing row by ``uuid`` (via :meth:`get_entity_by_uuid`).
+        2. Derive ``new_type_id`` by splitting on the FIRST colon
+           (``type_id.split(":", 1)``); subsequent colons in the suffix are
+           preserved verbatim.
+        3. UNIQUE-safety pre-flight: raise :class:`PromotionConflictError`
+           if ``(workspace_uuid, new_type_id)`` already exists.
+        4. ``UPDATE entities SET kind, lifecycle_class, type_id, updated_at``.
+        5. Emit ``entity_promoted`` phase_event (via
+           :meth:`append_phase_event`) with the POST-promotion ``type_id``
+           and metadata containing both ``old_*`` and ``new_*`` fields.
+
+        The ``enforce_immutable_entity_type`` and ``enforce_immutable_type_id``
+        triggers are dropped in migration 12, so the UPDATE succeeds without
+        trigger interference.
+
+        Parameters
+        ----------
+        uuid:
+            The entity UUID to promote.
+        new_kind:
+            The post-promotion ``kind`` value (e.g. ``'feature'``).
+        new_lifecycle_class:
+            The post-promotion ``lifecycle_class`` value (e.g. ``'feature_flow'``).
+        project_id:
+            Optional legacy project_id; resolved to ``workspaces.project_id_legacy``
+            for the phase_events row. If ``None``, derived from the entity's
+            workspace_uuid.
+
+        Returns
+        -------
+        dict
+            The updated entity row (post-promotion state).
+
+        Raises
+        ------
+        ValueError
+            If ``uuid`` does not resolve to an entity.
+        PromotionConflictError
+            If ``(workspace_uuid, new_type_id)`` already exists in the same
+            workspace.
+        """
+        with self.transaction():
+            # Step 1: read existing via the EXISTING public helper.
+            existing = self.get_entity_by_uuid(uuid)
+            if not existing:
+                raise ValueError(f"Entity not found: {uuid}")
+
+            # Step 2: derive new_type_id (first-colon split rule).
+            old_type_id = existing["type_id"]
+            entity_id_suffix = old_type_id.split(":", 1)[1]
+            new_type_id = f"{new_kind}:{entity_id_suffix}"
+
+            ws_uuid = existing["workspace_uuid"]
+
+            # Step 3: UNIQUE-safety pre-flight (AC-3.6). Only check if the
+            # prefix actually changes — same-kind same-suffix is a no-op
+            # rewrite and cannot collide with a different row.
+            if old_type_id != new_type_id:
+                collision = self._conn.execute(
+                    "SELECT 1 FROM entities "
+                    "WHERE workspace_uuid = ? AND type_id = ? AND uuid != ?",
+                    (ws_uuid, new_type_id, uuid),
+                ).fetchone()
+                if collision:
+                    raise PromotionConflictError(
+                        workspace_uuid=ws_uuid,
+                        old_type_id=old_type_id,
+                        new_type_id=new_type_id,
+                    )
+
+            # Resolve project_id for the phase_events row. If the caller did
+            # not pass one, derive from the workspace's project_id_legacy.
+            resolved_project_id = project_id
+            if resolved_project_id is None:
+                ws_row = self._conn.execute(
+                    "SELECT project_id_legacy FROM workspaces WHERE uuid = ?",
+                    (ws_uuid,),
+                ).fetchone()
+                if ws_row is not None and ws_row["project_id_legacy"]:
+                    resolved_project_id = ws_row["project_id_legacy"]
+                else:
+                    # Fall back to a sentinel: phase_events.project_id is
+                    # NOT NULL; "__unknown__" is the canonical fallback.
+                    resolved_project_id = "__unknown__"
+
+            # Step 4: UPDATE entities.
+            self._conn.execute(
+                "UPDATE entities "
+                "SET kind = ?, lifecycle_class = ?, type_id = ?, "
+                "updated_at = ? "
+                "WHERE uuid = ?",
+                (new_kind, new_lifecycle_class, new_type_id,
+                 self._now_iso(), uuid),
+            )
+
+            # Step 5: emit entity_promoted event (post-promotion identity).
+            self.append_phase_event(
+                type_id=new_type_id,
+                project_id=resolved_project_id,
+                event_type="entity_promoted",
+                workspace_uuid=ws_uuid,
+                metadata={
+                    "old_kind": existing["kind"],
+                    "new_kind": new_kind,
+                    "old_lifecycle_class": existing["lifecycle_class"],
+                    "new_lifecycle_class": new_lifecycle_class,
+                    "old_type_id": old_type_id,
+                    "new_type_id": new_type_id,
+                },
+            )
+
+            # Step 6: return updated entity dict via EXISTING helper.
+            return self.get_entity_by_uuid(uuid)
 
     def get_entity(self, type_id: str) -> dict | None:
         """Retrieve a single entity by UUID or type_id.
@@ -6579,6 +6919,13 @@ class EntityDatabase:
     ) -> list[str]:
         """Register multiple entities in a single transaction.
 
+        Feature 109 Group 14 / AC-4.5: the raw ``INSERT OR IGNORE INTO
+        entities`` statement is replaced by a per-row loop calling
+        :meth:`upsert_entity`. Idempotency is preserved by ``upsert_entity``'s
+        three-branch semantics (insert / status-change / no-op). Each
+        newly-inserted row emits one ``entity_created`` phase_event for
+        event-stream parity (AC-2.2).
+
         Parameters
         ----------
         entities:
@@ -6597,99 +6944,50 @@ class EntityDatabase:
         Returns
         -------
         list[str]
-            UUIDs of all successfully registered entities.
+            UUIDs of all entities (newly inserted OR pre-existing) in batch
+            input order.
 
         Notes
         -----
         Invalid entity_type causes the entire batch to fail (none inserted).
-        Duplicate type_id entries are skipped via INSERT OR IGNORE.
-        Intra-batch parent references must pass ``parent_uuid`` directly;
-        callers are responsible for resolving type_id → uuid before
-        constructing the batch.
+        Duplicate (workspace_uuid, type_id) entries are no-ops via
+        ``upsert_entity``'s conflict branch (no new uuid generated, no
+        duplicate ``entity_created`` event emitted on replay).
         """
         if not entities:
             return []
 
-        # Validate all entity_types upfront
+        # Validate all entity_types upfront — fail fast on the entire batch.
         for ent in entities:
             self._validate_entity_type(ent["entity_type"])
 
+        # Resolve workspace_uuid once so we pass it consistently to
+        # upsert_entity (avoids per-row __unknown__ workspace bootstrap).
         ws_uuid = self._resolve_workspace_uuid_kwargs(
             workspace_uuid, project_id, _caller="register_entities_batch"
         )
 
-        self._conn.execute("BEGIN IMMEDIATE")
-        try:
-            now = self._now_iso()
+        with self.transaction():
             uuids: list[str] = []
-            # Track batch-local type_id -> uuid for intra-batch parent refs
-            batch_uuids: dict[str, str] = {}
-
             for ent in entities:
                 entity_type = ent["entity_type"]
                 entity_id = ent["entity_id"]
                 name = ent["name"]
-                type_id = f"{entity_type}:{entity_id}"
                 status = ent.get("status")
                 artifact_path = ent.get("artifact_path")
                 parent_uuid = ent.get("parent_uuid")
                 metadata = ent.get("metadata")
-                metadata_json = json.dumps(metadata) if metadata is not None else None
 
-                # F11 (Group 6): derive (type, lifecycle_class) from the
-                # legacy ``entity_type`` value. ``kind`` is byte-identical
-                # to entity_type for the 5 production values per FR-1.
-                _type, _lifecycle = _derive_type_and_lifecycle(entity_type)
-
-                entity_uuid = str(uuid_mod.uuid4())
-                cursor = self._conn.execute(
-                    "INSERT OR IGNORE INTO entities "
-                    "(uuid, workspace_uuid, type_id, kind, "
-                    "entity_id, name, status, parent_uuid, "
-                    "artifact_path, created_at, updated_at, metadata, "
-                    "type, lifecycle_class) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (entity_uuid, ws_uuid, type_id, entity_type,
-                     entity_id, name, status, parent_uuid,
-                     artifact_path, now, now, metadata_json,
-                     _type, _lifecycle),
+                row_uuid = self.upsert_entity(
+                    entity_type, entity_id, name,
+                    workspace_uuid=ws_uuid,
+                    status=status,
+                    artifact_path=artifact_path,
+                    parent_uuid=parent_uuid,
+                    metadata=metadata,
                 )
-
-                if cursor.rowcount == 1:
-                    # FTS update
-                    row = self._conn.execute(
-                        "SELECT rowid FROM entities WHERE uuid = ?",
-                        (entity_uuid,),
-                    ).fetchone()
-                    metadata_text = flatten_metadata(
-                        json.loads(metadata_json) if metadata_json else None
-                    )
-                    self._conn.execute(
-                        "INSERT INTO entities_fts(rowid, name, entity_id, "
-                        "kind, status, metadata_text) "
-                        "VALUES(?, ?, ?, ?, ?, ?)",
-                        (row[0], name, entity_id, entity_type, status or "",
-                         metadata_text),
-                    )
-                    batch_uuids[type_id] = entity_uuid
-                    uuids.append(entity_uuid)
-                else:
-                    # Already existed — fetch existing UUID
-                    existing = self._conn.execute(
-                        "SELECT uuid FROM entities "
-                        "WHERE workspace_uuid = ? AND type_id = ?",
-                        (ws_uuid, type_id),
-                    ).fetchone()
-                    if existing:
-                        batch_uuids[type_id] = existing["uuid"]
-                        uuids.append(existing["uuid"])
-
-            self._commit()
+                uuids.append(row_uuid)
             return uuids
-
-        except Exception:
-            self._conn.rollback()
-            raise
 
     # ------------------------------------------------------------------
     # Internal helpers

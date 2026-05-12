@@ -10,16 +10,38 @@ Scope (Group 3, Tasks 3.5+3.6 — trigger removal verification):
     against ``make_v12_db()``, ``sqlite_master`` lists neither
     ``enforce_immutable_entity_type`` nor ``enforce_immutable_type_id``.
 
-Subsequent FR-3 tasks (`promote_entity`, `PromotionConflictError`, etc.)
-are added by Groups 4+ — this file currently exercises only the
-trigger-removal slice.
+Scope (Group 12, Tasks 12.1-12.5 + 12.8 — promote_entity + PromotionConflictError):
+  - AC-3.2/AC-3.3: ``test_promotion_preserves_uuid`` — uuid stable, kind/
+    lifecycle_class/type_id rewritten, parent/workspace unchanged.
+  - AC-3.3(e): ``test_promotion_emits_entity_promoted_event`` — single
+    phase_events row with old_*/new_* metadata.
+  - AC-3.4: ``test_promotion_preserves_dependencies`` — entity_dependencies
+    FKs intact after promote.
+  - AC-3.5: ``test_promotion_rollback_on_partial_failure`` — monkey-patched
+    append_phase_event raises mid-promote; entity row reverts.
+  - AC-3.6: ``test_promotion_conflict_raises`` — pre-existing
+    ``feature:42`` collides with promote of ``backlog:42`` → feature:42 →
+    raises ``PromotionConflictError``; both rows untouched.
+  - FR-3 split rule: ``test_promote_entity_preserves_subsequent_colons`` —
+    only first-colon prefix changes; multi-colon suffix preserved.
 """
 from __future__ import annotations
 
 import subprocess
+import uuid as _uuid
 from pathlib import Path
 
-from entity_registry.test_helpers import make_v12_db
+import pytest
+
+from entity_registry.database import (
+    EntityDatabase,
+    PromotionConflictError,
+)
+from entity_registry.test_helpers import (
+    TEST_PROJECT_ID,
+    bootstrap_test_workspace,
+    make_v12_db,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -130,3 +152,286 @@ def test_immutable_triggers_dropped_at_runtime() -> None:
         f"AC-3.1 violation: immutable triggers still installed at runtime "
         f"after migration 12: {names!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Group 12: promote_entity + PromotionConflictError
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def db():
+    """Full EntityDatabase with workspace bootstrapped for TEST_PROJECT_ID."""
+    database = EntityDatabase(":memory:")
+    bootstrap_test_workspace(database)
+    yield database
+    database.close()
+
+
+def _register_backlog(db, entity_id: str, *, status: str | None = "planned"):
+    """Helper: register a backlog entity and return (uuid, type_id, ws_uuid)."""
+    type_id = f"backlog:{entity_id}"
+    db.register_entity(
+        "backlog", entity_id, f"Backlog {entity_id}",
+        project_id=TEST_PROJECT_ID, status=status,
+    )
+    row = db._conn.execute(
+        "SELECT uuid, workspace_uuid FROM entities WHERE type_id = ?",
+        (type_id,),
+    ).fetchone()
+    return row["uuid"], type_id, row["workspace_uuid"]
+
+
+def _register_feature(db, entity_id: str, *, status: str | None = "active"):
+    """Helper: register a feature entity and return (uuid, type_id, ws_uuid)."""
+    type_id = f"feature:{entity_id}"
+    db.register_entity(
+        "feature", entity_id, f"Feature {entity_id}",
+        project_id=TEST_PROJECT_ID, status=status,
+    )
+    row = db._conn.execute(
+        "SELECT uuid, workspace_uuid FROM entities WHERE type_id = ?",
+        (type_id,),
+    ).fetchone()
+    return row["uuid"], type_id, row["workspace_uuid"]
+
+
+# Task 12.1 ----------------------------------------------------------------
+
+
+def test_promotion_preserves_uuid(db):
+    """AC-3.2 / AC-3.3 — promote_entity:
+
+    (a) uuid unchanged,
+    (b) kind='feature',
+    (c) lifecycle_class='feature_flow',
+    (d) type_id rewritten from 'backlog:N' to 'feature:N' (suffix preserved),
+    (e) parent_uuid and workspace_uuid unchanged.
+    """
+    backlog_uuid, _, ws_uuid = _register_backlog(db, "preserve-uuid-001")
+
+    # Capture pre-promotion parent_uuid (may be None).
+    pre = db._conn.execute(
+        "SELECT parent_uuid FROM entities WHERE uuid = ?",
+        (backlog_uuid,),
+    ).fetchone()
+    pre_parent = pre["parent_uuid"]
+
+    updated = db.promote_entity(
+        backlog_uuid, "feature", "feature_flow",
+        project_id=TEST_PROJECT_ID,
+    )
+
+    assert updated["uuid"] == backlog_uuid  # (a)
+    assert updated["kind"] == "feature"  # (b)
+    assert updated["lifecycle_class"] == "feature_flow"  # (c)
+    assert updated["type_id"] == "feature:preserve-uuid-001"  # (d)
+    assert updated["parent_uuid"] == pre_parent  # (e1)
+    assert updated["workspace_uuid"] == ws_uuid  # (e2)
+
+
+# Task 12.2 ----------------------------------------------------------------
+
+
+def test_promotion_emits_entity_promoted_event(db):
+    """AC-3.3(e): phase_events has one row with event_type='entity_promoted'
+    keyed by the POST-promotion type_id, with metadata containing both
+    old_* and new_* fields.
+    """
+    backlog_uuid, old_type_id, _ = _register_backlog(db, "emit-event-002")
+
+    db.promote_entity(
+        backlog_uuid, "feature", "feature_flow",
+        project_id=TEST_PROJECT_ID,
+    )
+    new_type_id = "feature:emit-event-002"
+
+    rows = db._conn.execute(
+        "SELECT type_id, event_type, metadata FROM phase_events "
+        "WHERE event_type = 'entity_promoted' AND type_id = ?",
+        (new_type_id,),
+    ).fetchall()
+    assert len(rows) == 1, (
+        f"Expected 1 entity_promoted event for {new_type_id!r}, found {len(rows)}"
+    )
+    import json as _json
+    meta = _json.loads(rows[0]["metadata"])
+    # Verify both old_* and new_* fields present.
+    assert meta.get("old_kind") == "backlog"
+    assert meta.get("new_kind") == "feature"
+    assert meta.get("old_lifecycle_class") is not None  # whatever backlog's was
+    assert meta.get("new_lifecycle_class") == "feature_flow"
+    assert meta.get("old_type_id") == old_type_id
+    assert meta.get("new_type_id") == new_type_id
+
+
+# Task 12.3 ----------------------------------------------------------------
+
+
+def test_promotion_preserves_dependencies(db):
+    """AC-3.4: entity_dependencies referencing the promoted uuid (either as
+    from_uuid or to_uuid) remain valid because uuid is unchanged.
+    """
+    backlog_uuid, _, _ = _register_backlog(db, "fk-pres-003")
+    feature_uuid, _, _ = _register_feature(db, "fk-pres-other")
+
+    # Add dependency edge: backlog blocked by feature.
+    db.add_dependency(backlog_uuid, feature_uuid)
+
+    pre_count = db._conn.execute(
+        "SELECT COUNT(*) FROM entity_dependencies"
+    ).fetchone()[0]
+
+    db.promote_entity(
+        backlog_uuid, "feature", "feature_flow",
+        project_id=TEST_PROJECT_ID,
+    )
+
+    post_count = db._conn.execute(
+        "SELECT COUNT(*) FROM entity_dependencies"
+    ).fetchone()[0]
+    assert post_count == pre_count, (
+        "Dependency count changed after promotion — FK preservation failed"
+    )
+    # Endpoint resolvability: both rows still findable by uuid.
+    assert db.get_entity_by_uuid(backlog_uuid) is not None
+    assert db.get_entity_by_uuid(feature_uuid) is not None
+    # Dependency endpoints unchanged (uuids stable through promotion).
+    dep_row = db._conn.execute(
+        "SELECT entity_uuid, blocked_by_uuid FROM entity_dependencies "
+        "WHERE entity_uuid = ? AND blocked_by_uuid = ?",
+        (backlog_uuid, feature_uuid),
+    ).fetchone()
+    assert dep_row is not None
+
+
+# Task 12.4 ----------------------------------------------------------------
+
+
+def test_promotion_rollback_on_partial_failure(db, monkeypatch):
+    """AC-3.5: monkey-patch append_phase_event to raise mid-promote; assert
+    (kind, lifecycle_class, type_id) intact post-failure (transaction rolled
+    back). No orphan event row.
+    """
+    backlog_uuid, old_type_id, _ = _register_backlog(db, "rollback-004")
+    pre = db._conn.execute(
+        "SELECT kind, lifecycle_class, type_id FROM entities WHERE uuid = ?",
+        (backlog_uuid,),
+    ).fetchone()
+    pre_kind, pre_lifecycle, pre_type_id = (
+        pre["kind"], pre["lifecycle_class"], pre["type_id"],
+    )
+
+    original = db.append_phase_event
+
+    def boom(*args, **kwargs):
+        # Allow the test's own _register_backlog call (which happened before
+        # the patch was applied) to pass through normally — the patch is
+        # installed AFTER setup, so this branch only catches the
+        # promote_entity append.
+        raise RuntimeError("simulated mid-promote failure")
+
+    monkeypatch.setattr(db, "append_phase_event", boom)
+
+    with pytest.raises(RuntimeError, match="simulated mid-promote failure"):
+        db.promote_entity(
+            backlog_uuid, "feature", "feature_flow",
+            project_id=TEST_PROJECT_ID,
+        )
+
+    # Restore for any post-test cleanup that might use it.
+    monkeypatch.setattr(db, "append_phase_event", original)
+
+    post = db._conn.execute(
+        "SELECT kind, lifecycle_class, type_id FROM entities WHERE uuid = ?",
+        (backlog_uuid,),
+    ).fetchone()
+    assert post["kind"] == pre_kind
+    assert post["lifecycle_class"] == pre_lifecycle
+    assert post["type_id"] == pre_type_id == old_type_id
+    # No orphan entity_promoted event row.
+    orphan_count = db._conn.execute(
+        "SELECT COUNT(*) FROM phase_events WHERE event_type = 'entity_promoted'"
+    ).fetchone()[0]
+    assert orphan_count == 0
+
+
+# Task 12.5 ----------------------------------------------------------------
+
+
+def test_promotion_conflict_raises(db):
+    """AC-3.6: pre-create ``feature:42``; create ``backlog:42`` in the same
+    workspace; attempt promote backlog → feature; assert
+    PromotionConflictError raised AND both rows untouched.
+    """
+    # Pre-existing feature:42 in workspace W.
+    feature_uuid, feature_type_id, _ = _register_feature(db, "42")
+    # Conflicting backlog:42 in the same workspace.
+    backlog_uuid, backlog_type_id, _ = _register_backlog(db, "42")
+
+    with pytest.raises(PromotionConflictError) as exc_info:
+        db.promote_entity(
+            backlog_uuid, "feature", "feature_flow",
+            project_id=TEST_PROJECT_ID,
+        )
+
+    err = exc_info.value
+    assert err.old_type_id == "backlog:42"
+    assert err.new_type_id == "feature:42"
+    assert err.workspace_uuid  # populated
+
+    # Both rows untouched.
+    backlog_row = db._conn.execute(
+        "SELECT kind, lifecycle_class, type_id FROM entities WHERE uuid = ?",
+        (backlog_uuid,),
+    ).fetchone()
+    assert backlog_row["kind"] == "backlog"
+    assert backlog_row["type_id"] == "backlog:42"
+
+    feature_row = db._conn.execute(
+        "SELECT kind, type_id FROM entities WHERE uuid = ?",
+        (feature_uuid,),
+    ).fetchone()
+    assert feature_row["kind"] == "feature"
+    assert feature_row["type_id"] == "feature:42"
+
+
+# Task 12.8 ----------------------------------------------------------------
+
+
+def test_promote_entity_preserves_subsequent_colons(db):
+    """FR-3 split rule: ``type_id.split(":", 1)`` preserves all colons after
+    the first one. Synthetic multi-colon suffix passes through verbatim.
+
+    Bypasses register_entity validation by direct INSERT — the suffix
+    ``foo:bar:baz`` would not be produced by normal entity_id sanitization.
+    """
+    # Insert a synthetic multi-colon entity directly.
+    entity_uuid = str(_uuid.uuid4())
+    ws_uuid = bootstrap_test_workspace(db, legacy_id="__test_multicolon__")
+    now = db._now_iso()
+    db._conn.execute(
+        "INSERT INTO entities "
+        "(uuid, workspace_uuid, type_id, kind, entity_id, name, status, "
+        "parent_uuid, artifact_path, created_at, updated_at, metadata, "
+        "type, lifecycle_class) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (entity_uuid, ws_uuid, "backlog:foo:bar:baz", "backlog",
+         "foo:bar:baz", "Multi-colon Synth", "planned",
+         None, None, now, now, None,
+         "work", "backlog_flow"),
+    )
+    db._conn.commit()
+
+    db.promote_entity(
+        entity_uuid, "feature", "feature_flow",
+        project_id="__test_multicolon__",
+    )
+
+    row = db.get_entity_by_uuid(entity_uuid)
+    assert row["type_id"] == "feature:foo:bar:baz", (
+        f"split(':', 1) rule violated: {row['type_id']!r} "
+        f"(expected 'feature:foo:bar:baz')"
+    )
+    assert row["kind"] == "feature"
+    assert row["lifecycle_class"] == "feature_flow"
