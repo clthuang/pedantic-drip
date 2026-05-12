@@ -186,6 +186,10 @@ def transition_entity_phase(
     update_kwargs: dict = {
         "workflow_phase": target_phase,
         "kanban_column": kanban_column,
+        # FR-5.1 (feature 113): symmetric workspace_uuid forwarding —
+        # unconditional pass; FR-4.1 makes None a no-op so an unset caller
+        # path remains functionally identical.
+        "workspace_uuid": workspace_uuid,
     }
     if is_forward:
         update_kwargs["last_completed_phase"] = current_phase
