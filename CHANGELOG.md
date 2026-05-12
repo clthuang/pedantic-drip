@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.17.2] - 2026-05-12
+
 ### Added
 
 - **Feature 113 — Feature 112 QA-gate followups** (closes backlog #00391–#00401):
