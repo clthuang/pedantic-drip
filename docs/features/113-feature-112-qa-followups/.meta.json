@@ -2,10 +2,11 @@
   "id": "113",
   "slug": "feature-112-qa-followups",
   "mode": "standard",
-  "status": "active",
+  "status": "completed",
   "created": "2026-05-12T06:22:22.428795+00:00",
   "branch": "feature/113-feature-112-qa-followups",
-  "lastCompletedPhase": "implement",
+  "completed": "2026-05-12T09:48:05.296810+00:00",
+  "lastCompletedPhase": "finish",
   "phases": {
     "brainstorm": {
       "started": "2026-05-12T06:22:22.428601+00:00"
@@ -30,6 +31,11 @@
       "completed": "2026-05-12T09:24:12.194978+00:00",
       "iterations": 1,
       "reviewerNotes": "All 4 reviewers approved at iteration 1 (implementation, relevance, code-quality, security). Simplification pass applied (atomic write cleanup, hoist effective_project_id, direct relative import). Code-quality 2 suggestions applied. AC-12 baseline diff empty (3852 passed, +33 new tests, 0 net-new failures). 11 FR commits + simplification + code-quality + CHANGELOG landed."
+    },
+    "finish": {
+      "completed": "2026-05-12T09:48:05.296810+00:00",
+      "iterations": 1,
+      "reviewerNotes": "Finish-feature complete. AC-13 dogfood: .qa-gate.json emitted via qa_gate.emitter (validated). AC-2 dogfood: bash-version.log produced (3 sections, exit 0). QA gate: 0 HIGH, 4 MED filed to backlog #00402-#00405, 15 LOW folded to sidecar. validate.sh PASS (0 errors). Merged to develop. Released v4.17.2."
     }
   }
 }
