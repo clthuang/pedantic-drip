@@ -31,14 +31,27 @@ Feature 113 is **surgical**: it threads existing patterns through gaps, narrows 
 **Change shape by file count:**
 - Source modifications: 7 files (`database.py`, `engine.py`, `entity_lifecycle.py`, `entity_status.py`, `workflow_state_server.py`, `server_helpers.py`, `entity_server.py`)
 - Source additions: 2 new modules (`qa_gate/__init__.py`, `qa_gate/emitter.py`) + 1 new helper script (`bash-version-capture.sh`)
-- Test modifications/additions: 5 test files (`test_database.py`, `test_engine.py`, `test_entity_lifecycle.py`, `test_workflow_state_server.py`, `test_server_helpers.py`) + 3 new test files (`test_emitter.py`, `test_reconciliation.py` extension, `test_frontmatter_sync.py` extension, `test_entity_status.py` extension)
-- Total: ~150-250 LOC + ~16 new tests
+- Test extensions to existing files: 8 test files (`test_database.py`, `test_engine.py`, `test_entity_lifecycle.py`, `test_workflow_state_server.py`, `test_server_helpers.py`, `test_reconciliation.py`, `test_frontmatter_sync.py`, `test_entity_status.py`) — all exist today, gain new test cases
+- Test files newly created: 1 (`plugins/pd/hooks/lib/qa_gate/test_emitter.py` — paired with C1's new emitter module)
+- Total: ~150-250 LOC + ~17 new tests (3 from FR-3.3 + 4 from FR-4.3 + 1 from FR-5.2 + 2 from FR-6.1 + 2 from FR-7.2 + 2 from FR-8.2 + 1 from FR-9.2 + 4 from FR-10.2 parametrized sub-tests + 7 from FR-11.5 = 26 raw; ~17 unique test functions when parametrize is counted as 1)
 
 **Single architectural axis:** the workspace_uuid identity thread. Feature 112 introduced the column and pass-through patterns; feature 113 closes the asymmetries (FR-4/5/11), removes the silent fallbacks (FR-3/7/8/9), and adds defensive coverage (FR-6/10).
 
 ## Components
 
+**Implementation order (per NFR-5):**
+1. C1 + C2 (qa_gate package + bash-version-capture.sh) — independent of code changes
+2. C5 (FR-3.0) + C6 (FR-7/FR-8) + C7 (FR-9) — single-file defensive fixes, independent
+3. C5 (FR-3.2/3.3) — workspace filter ValueError; depends on C5 (FR-3.0) entry-point normalization
+4. C8 (FR-10) — entity_status conditional-kwarg sweep, independent
+5. C3 (FR-4.1) — extend `update_workflow_phase` signature (dependency anchor for C4)
+6. C4 (FR-4.2/4.3 + FR-5/5.2) — engine + lifecycle forwarding; depends on C3
+7. C9 (FR-11) — reconcile threading; depends on C3 (stable update_workflow_phase shape)
+
 ### C1 — `qa_gate/` package (new)
+
+**Depends on:** None (greenfield module).
+
 
 **Files:**
 - `plugins/pd/hooks/lib/qa_gate/__init__.py` — package marker + `STATUS_ENUM` export
@@ -61,6 +74,9 @@ Feature 113 is **surgical**: it threads existing patterns through gaps, narrows 
 
 ### C3 — `update_workflow_phase` extension (modified)
 
+**Depends on:** None (base signature extension). **Blocks:** C4, C9.
+
+
 **File:** `plugins/pd/hooks/lib/entity_registry/database.py:4866-4944`
 
 **Change:** Add `workspace_uuid: str | None = None` to the signature using the existing `_UNSET` sentinel idiom. When non-None, the method:
@@ -71,6 +87,9 @@ Feature 113 is **surgical**: it threads existing patterns through gaps, narrows 
 **Why mismatch-check rather than resolve-via-update_entity-style:** `workflow_phases` rows are keyed by `type_id` (the entity's). The workspace_uuid is fixed at row-creation by the autofill trigger `wp_autofill_workspace_uuid`. A mismatch indicates the caller has the wrong workspace context for the operation — silent acceptance would let cross-workspace writes proceed. The mismatch ValueError is the read-side workspace assertion.
 
 ### C4 — Engine + lifecycle forwarding (modified)
+
+**Depends on:** C3 (FR-4.1's signature extension).
+
 
 **Files:**
 - `plugins/pd/hooks/lib/workflow_engine/engine.py:100-103, 166-170` — `WorkflowStateEngine.transition_phase` and `complete_phase` non-terminal paths add `workspace_uuid=workspace_uuid` to `db.update_workflow_phase` calls
@@ -110,6 +129,9 @@ Feature 113 is **surgical**: it threads existing patterns through gaps, narrows 
 **Effect:** Eliminates the post-FR-2 happy-path `DeprecationWarning` emitted by `_resolve_workspace_uuid_kwargs` (database.py:2813-2819) when both kwargs are non-None.
 
 ### C9 — Reconcile workspace_uuid threading (modified)
+
+**Depends on:** C3 (FR-4.1's stable `update_workflow_phase` signature).
+
 
 **Files:**
 - `plugins/pd/hooks/lib/workflow_engine/reconciliation.py:756` — `apply_workflow_reconciliation` gains `workspace_uuid` kwarg; merges into the dict at lines 367-373 (NOT via `**kwargs, workspace_uuid=` syntax — avoids future duplicate-kwarg TypeError), and adds as separate kwarg at line 462 (single-kwarg call). See I9 for the exact shape.
@@ -530,22 +552,27 @@ async def reconcile_status(...) -> str:
 # Usage: bash plugins/pd/hooks/tests/bash-version-capture.sh > docs/features/{id}-{slug}/bash-version.log
 # Exit code: 0 if /bin/bash test-hooks.sh exits 0; otherwise propagates that exit code.
 
+# EPIPE safety (CLAUDE.md / feature 107): the trap is co-load-bearing with the
+# `|| true` guards below. Without the trap, the bash process is SIGPIPE-killed
+# before `|| true` can run when a downstream consumer closes the pipe early.
+trap '' PIPE
+
 # Intentional: no 'set -e' — emit each section even if a prior section command fails,
 # so partial evidence is captured. Only the test-hooks.sh exit code (section 3) propagates.
 set -u
-# Section 1: host bash
-echo "=== Host bash --version ==="
-bash --version
 
-# Section 2: /bin/bash
-echo "=== /bin/bash --version ==="
-/bin/bash --version
+# Each write is wrapped to swallow EPIPE-induced failures (the trap prevents kill;
+# the `|| true` prevents `set -u` from terminating on a transient write error).
+{ echo "=== Host bash --version ==="; } 2>/dev/null || true
+{ bash --version; } 2>/dev/null || true
 
-# Section 3: /bin/bash test-hooks.sh
+{ echo "=== /bin/bash --version ==="; } 2>/dev/null || true
+{ /bin/bash --version; } 2>/dev/null || true
+
 TEST_OUTPUT=$(/bin/bash plugins/pd/hooks/tests/test-hooks.sh 2>&1)
 RC=$?
-echo "=== /bin/bash plugins/pd/hooks/tests/test-hooks.sh (exit=${RC}) ==="
-echo "${TEST_OUTPUT}" | tail -20
+{ echo "=== /bin/bash plugins/pd/hooks/tests/test-hooks.sh (exit=${RC}) ==="; } 2>/dev/null || true
+{ echo "${TEST_OUTPUT}" | tail -20; } 2>/dev/null || true
 
 exit ${RC}
 ```
@@ -591,6 +618,20 @@ exit ${RC}
 ### R6 — DeprecationWarning suppression test (FR-10.2) introduces new pattern
 
 **Risk:** No prior code uses `warnings.catch_warnings()` + `simplefilter('error', DeprecationWarning)`. The pattern could conflict with pytest's global warning filters or pytest plugins.
+
+**Critical implementation note:** `warnings.catch_warnings()` MUST be used as a context manager scoped to the call under test, NOT applied at module level. Module-level filter activation can bleed into other tests running in the same pytest worker. Pattern:
+```python
+def test_X():
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        sync_entity_statuses(...)  # raises if any DeprecationWarning fires
+```
+NOT:
+```python
+warnings.simplefilter("error", DeprecationWarning)  # module-level — leaks
+def test_X():
+    sync_entity_statuses(...)
+```
 
 **Mitigation:** If the primary pattern fails, fall back to the `recwarn` pytest fixture:
 ```python
