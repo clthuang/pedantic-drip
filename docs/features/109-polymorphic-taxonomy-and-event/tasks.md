@@ -8,6 +8,17 @@
 - **Design:** `docs/features/109-polymorphic-taxonomy-and-event/design.md`
 - **Format note:** tasks use the `### Task N.M:` heading convention per the implementing skill's parser regex `/^(#{3,4})\s+Task\s+(\d+(?:\.\d+)*):?\s*(.+)$/`. Each task includes (1) mock/algorithm pattern, (2) assertion shape, (3) DoD per memory heuristic "Integration tasks need mock pattern + algorithm + assertion shape".
 
+**Revision 2 changes (plan-reviewer iteration 1 addressed):**
+- Group 0.2 (migration stub) now includes in-transaction `PRAGMA foreign_key_check` from day 1 (was previously deferred to Group 16.2). Group 16.2/16.3 reframed as verify-only.
+- **NEW Group 0.5** — pure rename `insert_phase_event` → `append_phase_event` with byte-identical signature, placed BEFORE Groups 2-8 so subsequent RED tests reference the new name without invalidating earlier tests.
+- **Group 3 consolidated** to include trigger removal (source-code + runtime DROP) alongside the entities copy-rename — previously split between Groups 3 and 11.
+- **Group 11 REMOVED** — work moved into Group 3 per atomic-commit-per-step discipline.
+- **Group 14 narrowed** to line-5525 only — line-3451 work is now solely in Group 13.6 (no redundant verify task).
+- **Group 13 expanded** with `@pytest.mark.skip` strategy to keep CI green during the Group 13 → Group 15 caller-migration window.
+- **Group 15.8 added** — skill/command MD audit (skill MD prose may reference register_entity).
+- **Group 6 / Group 9.7 / Group 15** call-site counts updated to empirical values (~18-21 reader files; ~46 test-caller sites in 3 files for insert_phase_event rename; 17 .py caller sites + ~5 MD caller files).
+- **All schema-introspection RED tests now run against BOTH `make_v11_db()` AND `make_v12_db()`** to assert the introspection invariant in either direction (RED on the post-migration baseline until the implementing task lands).
+
 ---
 
 ## Group 0: Pre-Migration Setup
@@ -21,14 +32,56 @@
 - **DoD:** `pytest plugins/pd/hooks/lib/entity_registry/test_helpers.py -k make_v12_db` passes (test added in this task).
 - **Dependencies:** none.
 
-### Task 0.2: Register migration 12 stub in MIGRATIONS dict
+### Task 0.2: Register migration 12 stub in MIGRATIONS dict WITH in-transaction FK check
 
 - **File:** `plugins/pd/hooks/lib/entity_registry/database.py`
-- **Action:** Add stub function `_migration_12_polymorphic_taxonomy_and_events(conn)` at appropriate location (after `_migration_11_workspace_identity`). Stub body: assert schema_version >= 11, BEGIN IMMEDIATE, stamp schema_version=12, COMMIT. Register in `MIGRATIONS` dict at line 2620: `12: _migration_12_polymorphic_taxonomy_and_events`.
-- **Pattern:** mirror `_migration_11_workspace_identity` skeleton (PRAGMA foreign_keys OFF outside, BEGIN IMMEDIATE inside try, stamp inside transaction).
+- **Action:** Add stub function `_migration_12_polymorphic_taxonomy_and_events(conn)` at appropriate location (after `_migration_11_workspace_identity`). Stub body: assert schema_version >= 11, PRAGMA foreign_keys OFF outside try, BEGIN IMMEDIATE inside try, **in-transaction `PRAGMA foreign_key_check` immediately before stamping schema_version=12**, stamp schema_version=12, COMMIT, finally PRAGMA foreign_keys = ON, post-commit defensive FK check. Register in `MIGRATIONS` dict at line 2620: `12: _migration_12_polymorphic_taxonomy_and_events`.
+- **Pattern:** mirror `_migration_11_workspace_identity` skeleton in full, including the FK-check disciplines that Groups 16.2/16.3 would otherwise add later. The in-transaction FK check is critical safety from commit 0.2 onwards.
 - **Assertion shape:** `db = EntityDatabase(':memory:'); assert db._conn.execute("SELECT value FROM _metadata WHERE key='schema_version'").fetchone()[0] == '12'` (full EntityDatabase init runs all migrations to current).
-- **DoD:** existing tests in `test_database.py` continue to pass (stub does nothing harmful); `make_v12_db()` returns connection at version 12.
+- **DoD:** existing tests in `test_database.py` continue to pass (stub does nothing harmful); `make_v12_db()` returns connection at version 12; FK check is verifiably present in migration body via source inspection.
 - **Dependencies:** Task 0.1.
+
+---
+
+## Group 0.5: Pure Rename `insert_phase_event` → `append_phase_event`
+
+**Rationale (per plan-reviewer iter-1 blocker):** the rename is mechanically separable from the signature extension. Moving the pure rename here (before any RED tests that touch event emission) avoids invalidating Groups 2-8 tests at Group 9 time.
+
+### Task 0.5.1: Write rename-only RED test
+
+- **File:** `plugins/pd/hooks/lib/entity_registry/test_event_sourced_state.py`
+- **Action:** Write `test_no_production_insert_phase_event_callers` — subprocess grep `insert_phase_event(` across `plugins/pd/` excluding `def insert_phase_event` and `test_` paths; assert 0 matches.
+- **Algorithm:** subprocess + filter.
+- **Assertion shape:** `assert len(production_matches) == 0`.
+- **DoD:** RED — currently 4 production matches in workflow_state_server.py.
+- **Dependencies:** Group 0.
+
+### Task 0.5.2: Rename method definition at database.py:4630
+
+- **File:** `plugins/pd/hooks/lib/entity_registry/database.py`
+- **Action:** Rename `def insert_phase_event(...)` → `def append_phase_event(...)` at line 4630 (verify exact line at implement time). Signature UNCHANGED at this step — only the symbol name.
+- **Algorithm:** single rename.
+- **Assertion shape:** `grep -n 'def append_phase_event' database.py` returns 1; `grep -n 'def insert_phase_event' database.py` returns 0.
+- **DoD:** definition renamed; tests at 0.5.4 must still pass after the caller renames.
+- **Dependencies:** Task 0.5.1.
+
+### Task 0.5.3: Rename 4 production callers in workflow_state_server.py
+
+- **File:** `plugins/pd/mcp/workflow_state_server.py`
+- **Action:** At lines 729, 737, 949, 2030 (verify at implement time), rename `insert_phase_event(` → `append_phase_event(`. No parameter changes.
+- **Algorithm:** mechanical rename.
+- **Assertion shape:** `grep -n 'insert_phase_event(' workflow_state_server.py` returns 0.
+- **DoD:** 4 sites updated.
+- **Dependencies:** Task 0.5.2.
+
+### Task 0.5.4: Rename ~46 test callers across 3 test files
+
+- **File:** `plugins/pd/mcp/test_workflow_state_server.py` (~28 sites), `plugins/pd/hooks/lib/entity_registry/test_phase_events.py` (~6 sites), `plugins/pd/hooks/lib/entity_registry/test_phase_events_adversarial.py` (~12 sites). **Empirical count from plan-reviewer iter-1 verification.**
+- **Action:** Mechanical rename in all 3 files.
+- **Algorithm:** sed-style rename in 3 files.
+- **Assertion shape:** Task 0.5.1 test passes; all 3 test files' existing tests still pass.
+- **DoD:** all sites renamed; test suite green; Task 0.5.1 passes.
+- **Dependencies:** Task 0.5.3.
 
 ---
 
@@ -110,7 +163,9 @@
 
 ---
 
-## Group 3: Composite CHECK Constraint via copy-rename
+## Group 3: Composite CHECK Constraint via copy-rename + Consolidated Trigger Removal
+
+**Note (plan-reviewer iter-1 blocker resolution):** Trigger removal work originally split between Groups 3 and 11 is consolidated here. Group 11 is REMOVED. Add tasks 3.5-3.8 below for the trigger-removal sub-work.
 
 ### Task 3.1: Write CHECK-rejection RED test
 
@@ -147,6 +202,36 @@
 - **Assertion shape:** `assert pre_count == post_count`.
 - **DoD:** row count parity confirmed.
 - **Dependencies:** Task 3.3.
+
+### Task 3.5: Write source-grep RED tests for both immutable triggers
+
+- **File:** `plugins/pd/hooks/lib/entity_registry/test_atomic_promotion.py` (new file at this point)
+- **Action:** Write `test_enforce_immutable_entity_type_source_removed` AND `test_enforce_immutable_type_id_source_removed` — each greps the respective trigger name in database.py and asserts 0 production matches.
+- **Assertion shape:** subprocess grep + count == 0.
+- **DoD:** RED — current code has 6 occurrences of each.
+- **Dependencies:** Task 3.4.
+
+### Task 3.6: Write runtime-trigger-zero RED test
+
+- **File:** `plugins/pd/hooks/lib/entity_registry/test_atomic_promotion.py`
+- **Action:** Write `test_immutable_triggers_dropped_at_runtime` against `make_v12_db()` — `SELECT name FROM sqlite_master WHERE type='trigger' AND name IN ('enforce_immutable_entity_type', 'enforce_immutable_type_id')` returns empty.
+- **Assertion shape:** empty result.
+- **DoD:** RED — triggers still exist in v11→v12 transition state.
+- **Dependencies:** Task 3.5.
+
+### Task 3.7: Remove 6 enforce_immutable_entity_type source definitions
+
+- **File:** `plugins/pd/hooks/lib/entity_registry/database.py`
+- **Action:** Remove `CREATE TRIGGER ... enforce_immutable_entity_type ...` blocks at lines 136, 254, 655, 1101, 1988, 2414 (verify at implement time).
+- **DoD:** Task 3.5 first assertion passes.
+- **Dependencies:** Task 3.6.
+
+### Task 3.8: Remove 6 enforce_immutable_type_id source definitions + add DROP TRIGGER guards
+
+- **File:** `plugins/pd/hooks/lib/entity_registry/database.py`
+- **Action:** Remove `CREATE TRIGGER ... enforce_immutable_type_id ...` blocks at lines 130, 249, 650, 1096, 1983, 2409 (verify at implement time). Inside migration 12 body (after the entities copy-rename block from Task 3.2), add `conn.execute("DROP TRIGGER IF EXISTS enforce_immutable_entity_type")` and `conn.execute("DROP TRIGGER IF EXISTS enforce_immutable_type_id")` as defensive guards against any orphan triggers.
+- **DoD:** Task 3.5 second assertion + Task 3.6 pass; both triggers absent from runtime + source.
+- **Dependencies:** Task 3.7.
 
 ---
 
@@ -368,41 +453,59 @@
 - **DoD:** RED.
 - **Dependencies:** Task 9.3.
 
-### Task 9.5: Implement append_phase_event helper (rename + extend)
+### Task 9.5: EXTEND append_phase_event signature (rename already happened in Group 0.5)
 
-- **File:** `plugins/pd/hooks/lib/entity_registry/database.py` (rename existing `insert_phase_event` at line 4630)
-- **Action:** Rename method to `append_phase_event`. Add `workspace_uuid` kwarg (required for entity_* event types). Add `metadata: dict | None` kwarg. Add `timestamp: str | None` kwarg (auto-generates _iso_now() when None). Add `_VALID_PARAMS` and `_REQUIRED_PARAMS` module-level dicts. Implement validation (raise ValueError on shape mismatch). Implement operation order per design §3.1:
-  1. Validate per-event-type params.
-  2. INSERT INTO phase_events (...) RETURNING id.
-  3. If event_type in {entity_status_changed, entity_promoted}: UPDATE entities SET status, updated_at WHERE workspace_uuid = ? AND type_id = ?.
-  4. If event_type='entity_created': skip step 3 (INSERT already wrote status).
-  5. If event_type in {started, completed, skipped, backward}: UPDATE workflow_phases SET workflow_phase, updated_at WHERE type_id = ?.
+- **File:** `plugins/pd/hooks/lib/entity_registry/database.py` (at `append_phase_event` definition — renamed in Group 0.5)
+- **Action:** **The pure rename was already done in Group 0.5.** This task ADDS the new signature components:
+  - Add `workspace_uuid: str | None = None` kwarg (required for entity_* event types).
+  - Add `metadata: dict | None = None` kwarg.
+  - Add `timestamp: str | None = None` kwarg (auto-generates _iso_now() when None).
+  - Add `_VALID_PARAMS` and `_REQUIRED_PARAMS` module-level dicts (with base-param coverage note per design §3.1).
+  - Implement validation logic (raise ValueError on shape mismatch).
+  - Implement operation order per design §3.1:
+    1. Validate per-event-type params.
+    2. INSERT INTO phase_events (...) RETURNING id.
+    3. If event_type in {entity_status_changed, entity_promoted}: UPDATE entities SET status, updated_at WHERE workspace_uuid = ? AND type_id = ?.
+    4. If event_type='entity_created': skip step 3 (INSERT already wrote status).
+    5. If event_type in {started, completed, skipped, backward}: UPDATE workflow_phases SET workflow_phase, updated_at WHERE type_id = ?.
+- **Signature BEFORE/AFTER (per plan-reviewer iter-1 warning):**
+  - **BEFORE (post-0.5 rename, pre-9.5 extension):** `def append_phase_event(self, type_id, event_type, *, project_id=None, phase, iterations=None, reviewer_notes=None, backward_reason=None, backward_target=None, source='live', timestamp=None)` — byte-identical to current insert_phase_event.
+  - **AFTER (post-9.5):** same positional order, adds `workspace_uuid: str | None = None` and `metadata: dict | None = None` as keyword-only after the existing kwargs. **No positional reorder** — existing positional callers in workflow_state_server.py:729/737/949/2030 continue to work.
 - **Algorithm:** see design TD-2 + §3.1.
 - **Assertion shape:** Tasks 9.1, 9.2, 9.3, 9.4 all pass.
-- **DoD:** all 4 RED tests pass.
+- **DoD:** all 4 RED tests pass; signature BEFORE/AFTER recorded in code docstring.
 - **Dependencies:** Task 9.4.
 
-### Task 9.6: Update 4 MCP production callers
+### Task 9.6: Update production callers in workflow_state_server.py to pass workspace_uuid
 
 - **File:** `plugins/pd/mcp/workflow_state_server.py`
-- **Action:** At lines 729, 737, 949, 2030 (verify exact lines at implement time), rename `insert_phase_event(` to `append_phase_event(`. Add `workspace_uuid=...` to each call (callers already have workspace context via the MCP request).
-- **Algorithm:** mechanical rename + param add.
-- **Assertion shape:** `grep -n 'insert_phase_event(' plugins/pd/mcp/workflow_state_server.py` returns 0.
-- **DoD:** grep returns 0; existing workflow_state_server tests pass.
+- **Action:** At the 4 production sites (renamed to append_phase_event in Group 0.5), add `workspace_uuid=...` kwarg (callers already have workspace context via the MCP request).
+- **Algorithm:** mechanical kwarg add.
+- **Assertion shape:** existing workflow_state_server tests pass under new validation rules.
+- **DoD:** all 4 sites pass workspace_uuid; tests pass.
 - **Dependencies:** Task 9.5.
 
-### Task 9.7: Update ~28 test callers in test_workflow_state_server.py
+### Task 9.7: Update test callers to pass workspace_uuid for entity_* events
 
-- **File:** `plugins/pd/mcp/test_workflow_state_server.py`
-- **Action:** Rename all `insert_phase_event(` calls in test file; pass `workspace_uuid` as required.
-- **Algorithm:** mechanical rename + param add.
-- **Assertion shape:** `grep -n 'insert_phase_event(' plugins/pd/mcp/test_workflow_state_server.py` returns 0.
-- **DoD:** grep returns 0; all tests in this file pass.
+- **File:** ~46 test sites across `plugins/pd/mcp/test_workflow_state_server.py`, `plugins/pd/hooks/lib/entity_registry/test_phase_events.py`, `plugins/pd/hooks/lib/entity_registry/test_phase_events_adversarial.py`. **Per plan-reviewer iter-1 verified empirical count.**
+- **Action:** For tests that exercise entity_* event types, add `workspace_uuid=...` kwarg. Tests exercising workflow event types (started/completed/skipped/backward) don't need the new kwarg (it's optional for those).
+- **Algorithm:** identify entity_* event_type calls + add kwarg.
+- **Assertion shape:** all 3 test files pass.
+- **DoD:** tests pass; entity_* events get workspace_uuid; workflow events still work without it.
 - **Dependencies:** Task 9.6.
 
 ---
 
 ## Group 10: Python-Layer Enforcement Test + Doctor Check
+
+### Task 10.0: DISCOVERY — enumerate doctor check registry mechanism
+
+- **File:** none (output captured to `.review-history.md`)
+- **Action:** Run `ls plugins/pd/hooks/lib/doctor/ && grep -rn 'register_check\|CHECKS\b\|def check_' plugins/pd/hooks/lib/doctor/` to discover the doctor's check registry mechanism (whether checks are registered via decorator, list, dict, or convention).
+- **Algorithm:** filesystem listing + grep.
+- **Assertion shape:** registry mechanism documented (e.g., "checks are functions named `check_*` discovered via reflection in `__init__.py`").
+- **DoD:** registry mechanism pinned; Task 10.3's implementation uses the discovered pattern.
+- **Dependencies:** Group 9.
 
 ### Task 10.1: Implement static-grep enforcement test
 
@@ -433,54 +536,11 @@
 
 ---
 
-## Group 11: Drop Both Immutable Triggers
+## Group 11: REMOVED — Consolidated into Group 3
 
-### Task 11.1: Write enforce_immutable_entity_type-zero RED test
+Per plan-reviewer iteration 1 blocker, the trigger-removal work originally planned for Group 11 was split across two non-adjacent commits (Groups 3 + 11), violating atomic-commit discipline. All trigger-removal tasks are now in Group 3 (tasks 3.5-3.8).
 
-- **File:** `plugins/pd/hooks/lib/entity_registry/test_atomic_promotion.py` (new file)
-- **Action:** Write `test_enforce_immutable_entity_type_source_removed` — subprocess grep, assert 0 production matches.
-- **DoD:** RED.
-- **Dependencies:** Group 10.
-
-### Task 11.2: Write enforce_immutable_type_id-zero RED test
-
-- **File:** `plugins/pd/hooks/lib/entity_registry/test_atomic_promotion.py`
-- **Action:** Write `test_enforce_immutable_type_id_source_removed` — subprocess grep, assert 0 production matches.
-- **DoD:** RED.
-- **Dependencies:** Task 11.1.
-
-### Task 11.3: Write runtime-trigger-zero RED test
-
-- **File:** `plugins/pd/hooks/lib/entity_registry/test_atomic_promotion.py`
-- **Action:** Write `test_immutable_triggers_dropped_at_runtime` — `db._conn.execute("SELECT name FROM sqlite_master WHERE type='trigger' AND name IN ('enforce_immutable_entity_type', 'enforce_immutable_type_id')").fetchall() == []`.
-- **DoD:** RED.
-- **Dependencies:** Task 11.2.
-
-### Task 11.4: Remove 6 enforce_immutable_entity_type source definitions
-
-- **File:** `plugins/pd/hooks/lib/entity_registry/database.py`
-- **Action:** Remove `CREATE TRIGGER ... enforce_immutable_entity_type ...` blocks at lines 136, 254, 655, 1101, 1988, 2414 (verify at implement time — line numbers may shift after Groups 3, 8 copy-renames).
-- **Algorithm:** 6 mechanical deletions; each spans 3-5 lines.
-- **Assertion shape:** Task 11.1 passes.
-- **DoD:** Task 11.1 passes.
-- **Dependencies:** Task 11.3.
-
-### Task 11.5: Remove 6 enforce_immutable_type_id source definitions
-
-- **File:** `plugins/pd/hooks/lib/entity_registry/database.py`
-- **Action:** Remove `CREATE TRIGGER ... enforce_immutable_type_id ...` blocks at lines 130, 249, 650, 1096, 1983, 2409 (verify at implement time).
-- **Algorithm:** 6 mechanical deletions.
-- **Assertion shape:** Task 11.2 passes.
-- **DoD:** Task 11.2 passes.
-- **Dependencies:** Task 11.4.
-
-### Task 11.6: Add DROP TRIGGER to migration 12
-
-- **File:** `plugins/pd/hooks/lib/entity_registry/database.py` (inside migration 12, after Group 3 entities rebuild)
-- **Action:** Add `conn.execute("DROP TRIGGER IF EXISTS enforce_immutable_entity_type")` and same for `enforce_immutable_type_id`. Idempotent guard — Group 3's rebuild should have already dropped them by not recreating, but DROP IF EXISTS catches any orphan.
-- **Assertion shape:** Task 11.3 passes.
-- **DoD:** Task 11.3 passes.
-- **Dependencies:** Task 11.5.
+This section is preserved for traceability. **No new tasks ship in Group 11.**
 
 ---
 
@@ -576,10 +636,19 @@
 - **DoD:** import works.
 - **Dependencies:** Task 13.4.
 
+### Task 13.0: PRE-AUDIT — enumerate affected test sites for skip-marker strategy
+
+- **File:** none (output captured to `.review-history.md`)
+- **Action:** Run `grep -rn 'register_entity(' plugins/pd/ | grep test_` and cross-reference with the 7-file production caller list. Capture the full affected-test list. This is the source-of-truth for the skip-marker application in Task 13.8.
+- **Algorithm:** grep + filter.
+- **Assertion shape:** captured list documented.
+- **DoD:** affected-test list committed to .review-history.md.
+- **Dependencies:** Task 13.4.
+
 ### Task 13.6: Modify register_entity (remove INSERT OR IGNORE + parent_uuid fixup)
 
 - **File:** `plugins/pd/hooks/lib/entity_registry/database.py` at line 3443+
-- **Action:** Remove `OR IGNORE` from line 3451. Wrap INSERT in try/except sqlite3.IntegrityError → raise EntityExistsError. Remove the on-duplicate parent_uuid fixup block at lines 3479-3493 (becomes unreachable). Add the `entity_created` phase_events emission after successful INSERT + FTS5 sync.
+- **Action:** Remove `OR IGNORE` from line 3451. Wrap INSERT in try/except sqlite3.IntegrityError → raise EntityExistsError. Remove the on-duplicate parent_uuid fixup block at lines 3479-3493 (becomes unreachable). Add the `entity_created` phase_events emission after successful INSERT + FTS5 sync. **This task includes the actual SQL line-3451 modification — Group 14 no longer duplicates this.**
 - **Algorithm:** edit existing method per design §3.1.
 - **Assertion shape:** Task 13.1 passes.
 - **DoD:** Task 13.1 passes.
@@ -594,15 +663,26 @@
 - **DoD:** all 4 RED tests pass.
 - **Dependencies:** Task 13.6.
 
+### Task 13.8: Apply pytest skip markers to affected tests (broken-window mitigation)
+
+- **File:** affected test files identified in Task 13.0
+- **Action:** For each test that exercises a register_entity caller from the 7-file production list, add `@pytest.mark.skip(reason="F12 caller-migration pending in feature 109 Group 15.{N}")` where N identifies the corresponding Group 15 sub-task that will remove the skip. CI must pass at this commit boundary.
+- **Algorithm:** decorator add per affected test method.
+- **Assertion shape:** `pytest plugins/pd/` exit code 0 (skipped tests do not fail).
+- **DoD:** CI green at end of Group 13 commit; skip-marker count matches the affected-test list from Task 13.0.
+- **Dependencies:** Task 13.7.
+
 ---
 
-## Group 14: Re-route SQL line-3451 and line-5525
+## Group 14: Re-route SQL line-5525 register_entities_batch only
+
+**Note (plan-reviewer iter-1 blocker resolution):** Line-3451 work is solely in Task 13.6 — Group 14 no longer duplicates it.
 
 ### Task 14.1: Write INSERT-OR-IGNORE-INTO-entities-zero RED test
 
 - **File:** `plugins/pd/hooks/lib/entity_registry/test_register_upsert_split.py`
 - **Action:** Write `test_no_production_insert_or_ignore_into_entities` — subprocess grep, assert 0 production matches.
-- **DoD:** Already RED after Task 13.6 removed line 3451's OR IGNORE; line 5525 still present.
+- **DoD:** RED only against line-5525 at Group 14 start (line-3451 was already removed by Task 13.6). After Task 14.3, this test passes.
 - **Dependencies:** Group 13.
 
 ### Task 14.2: Write register_entities_batch upsert RED test
@@ -679,13 +759,22 @@
 - **DoD:** entity_server tests pass with the new JSON error shape.
 - **Dependencies:** Task 15.5.
 
-### Task 15.7: Verify AC-4.8 1-to-1 coverage assertion
+### Task 15.7: Verify AC-4.8 1-to-1 coverage assertion + remove Group 13.8 skip markers
 
 - **File:** `plugins/pd/hooks/lib/entity_registry/test_register_upsert_split.py`
-- **Action:** Write `test_f12_audit_one_to_one_coverage` — zip grep of all register_entity/upsert_entity production call sites with grep for `F12 audit` comments preceding them; assert 1-to-1 coverage.
-- **Assertion shape:** counts match.
-- **DoD:** test passes.
+- **Action:** Write `test_f12_audit_one_to_one_coverage` — zip grep of all register_entity/upsert_entity production call sites with grep for `F12 audit` comments preceding them; assert 1-to-1 coverage. **Also remove ALL remaining `@pytest.mark.skip(reason="F12 caller-migration pending...")` markers added in Task 13.8** — by this point every caller has been migrated and tests should run.
+- **Assertion shape:** counts match; `grep -rn 'F12 caller-migration pending' plugins/pd/` returns 0.
+- **DoD:** test passes; no skip markers remain; CI green with full test surface.
 - **Dependencies:** Task 15.6.
+
+### Task 15.8: Skill/Command MD audit (per plan-reviewer iter-1 blocker)
+
+- **File:** `plugins/pd/skills/**/*.md`, `plugins/pd/commands/**/*.md`
+- **Action:** Run `grep -rln 'register_entity' plugins/pd/skills/ plugins/pd/commands/` to enumerate MD files that reference `register_entity` in prose. For each: either (a) update the prose to add explicit instruction "on EntityExistsError, fall back to upsert_entity or surface as user-facing error"; or (b) verify the MD prose routes through the MCP entity_server (which already translates EntityExistsError per design §3.5 to a JSON error), in which case no prose update is needed but the routing rationale must be added as a brief inline comment in the MD.
+- **Algorithm:** grep + per-file decision.
+- **Assertion shape:** every MD reference to register_entity either has updated handling prose OR a documented MCP-routing rationale.
+- **DoD:** all affected MD files committed with the chosen routing; no silent semantic break.
+- **Dependencies:** Task 15.7.
 
 ---
 
@@ -698,19 +787,21 @@
 - **DoD:** session-start runs the check; doctor reports it in its output.
 - **Dependencies:** Group 15.
 
-### Task 16.2: Add in-transaction FK check before COMMIT
+### Task 16.2: VERIFY in-transaction FK check is present (added in Group 0.2)
 
-- **File:** `plugins/pd/hooks/lib/entity_registry/database.py` (inside migration 12)
-- **Action:** After all schema changes, before the schema_version stamp: `post_violations = conn.execute("PRAGMA foreign_key_check").fetchall(); if post_violations: raise RuntimeError(...)`. The existing except block then rolls back.
-- **Assertion shape:** synthetic FK-violating row before migration triggers the check.
-- **DoD:** test asserts rollback on FK violation.
+- **File:** `plugins/pd/hooks/lib/entity_registry/database.py` (verify migration 12 body)
+- **Action:** **VERIFY-ONLY task per plan-reviewer iter-1.** The in-transaction `PRAGMA foreign_key_check` was added in Task 0.2 from day 1 of the feature. Confirm it's still present in migration 12 body just before the COMMIT and schema_version stamp.
+- **Algorithm:** read migration 12 source, grep for `foreign_key_check` inside the BEGIN IMMEDIATE block.
+- **Assertion shape:** `grep -A2 'BEGIN IMMEDIATE' database.py | grep 'foreign_key_check'` matches inside migration 12 body.
+- **DoD:** verified present; no new code written.
 - **Dependencies:** Task 16.1.
 
-### Task 16.3: Add post-commit defensive FK check
+### Task 16.3: VERIFY post-commit defensive FK check is present (added in Group 0.2)
 
-- **File:** `plugins/pd/hooks/lib/entity_registry/database.py` (after the try/finally of migration 12)
-- **Action:** Final `PRAGMA foreign_key_check` outside the transaction; raises RuntimeError on violation (concurrent-modification detection).
-- **DoD:** defensive check present.
+- **File:** `plugins/pd/hooks/lib/entity_registry/database.py` (verify migration 12 body)
+- **Action:** **VERIFY-ONLY task per plan-reviewer iter-1.** The post-commit defensive FK check was added in Task 0.2. Confirm it's outside the try/finally block.
+- **Assertion shape:** post-finally FK check matches source pattern from design §3.3.
+- **DoD:** verified present; no new code written.
 - **Dependencies:** Task 16.2.
 
 ### Task 16.4: Write end-to-end migration integration test
