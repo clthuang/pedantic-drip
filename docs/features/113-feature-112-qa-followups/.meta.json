@@ -1,0 +1,35 @@
+{
+  "id": "113",
+  "slug": "feature-112-qa-followups",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-05-12T06:22:22.428795+00:00",
+  "branch": "feature/113-feature-112-qa-followups",
+  "lastCompletedPhase": "implement",
+  "phases": {
+    "brainstorm": {
+      "started": "2026-05-12T06:22:22.428601+00:00"
+    },
+    "specify": {
+      "started": "2026-05-12T06:34:44.270977+00:00",
+      "completed": "2026-05-12T06:50:53.213718+00:00",
+      "iterations": 5,
+      "reviewerNotes": "Specify completed after 5 spec-reviewer iters + 3 phase-reviewer iters. Final state: approved with 1 residual suggestion on FR-3.3 test naming (db_none return value \u2014 empty list vs unfiltered list)."
+    },
+    "design": {
+      "completed": "2026-05-12T07:06:05.652234+00:00",
+      "iterations": 2,
+      "reviewerNotes": "Design completed after 2 design-reviewer iters (iter 1: 3 blockers + 2 warnings + 3 suggestions; iter 2: clean PASS) and 2 phase-reviewer iters (iter 1: 2 warnings + 2 suggestions; iter 2: clean PASS). All blockers/warnings resolved at spec time, design time, or spec backward-travel (TD-8 schema enumeration backward-travelled to spec FR-1.2)."
+    },
+    "create-plan": {
+      "completed": "2026-05-12T07:25:50.302669+00:00",
+      "iterations": 2,
+      "reviewerNotes": "create-plan combined loop converged in 2 iterations. plan-reviewer: iter1 (2B+5W), iter2 (2W+2S), iter3 PASS. task-reviewer: iter1 (3B+3W+2S), iter2 PASS. phase-reviewer chain: iter1 (2W+2S), iter2 PASS. Spec backward-traveled: AC-4 5-test count + qa_gate root-fields enumeration."
+    },
+    "implement": {
+      "completed": "2026-05-12T09:24:12.194978+00:00",
+      "iterations": 1,
+      "reviewerNotes": "All 4 reviewers approved at iteration 1 (implementation, relevance, code-quality, security). Simplification pass applied (atomic write cleanup, hoist effective_project_id, direct relative import). Code-quality 2 suggestions applied. AC-12 baseline diff empty (3852 passed, +33 new tests, 0 net-new failures). 11 FR commits + simplification + code-quality + CHANGELOG landed."
+    }
+  }
+}

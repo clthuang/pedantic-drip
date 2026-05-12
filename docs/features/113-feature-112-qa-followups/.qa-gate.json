@@ -1,0 +1,105 @@
+{
+  "feature": "113-feature-112-qa-followups",
+  "head_sha": "92be5d5449eddcec632f478e0f92e640ad87e0df",
+  "gate_run_at": "2026-05-12T09:44:24Z",
+  "ac_results": [
+    {
+      "id": "AC-1",
+      "status": "passed",
+      "evidence": "qa_gate/test_emitter.py: 5 tests pass. .gitignore:63 line removed. /pd:finish-feature emit dogfooded (this very file).",
+      "condition": "",
+      "backlog_ref": null
+    },
+    {
+      "id": "AC-2",
+      "status": "passed",
+      "evidence": "bash plugins/pd/hooks/tests/bash-version-capture.sh produces 3 === headers. trap '' PIPE + EPIPE wrappers per design I10.",
+      "condition": "",
+      "backlog_ref": null
+    },
+    {
+      "id": "AC-3",
+      "status": "passed",
+      "evidence": "test_workflow_state_server.py::TestListFeaturesByDefaultSingleWorkspace 6 tests pass. Invalid hex raises ValueError \u2192 _make_error JSON.",
+      "condition": "",
+      "backlog_ref": null
+    },
+    {
+      "id": "AC-4",
+      "status": "passed",
+      "evidence": "5 new tests pass: 3 engine + 2 database. Mismatch ValueError pinned at both layers; UPDATE SET immutability pinned.",
+      "condition": "",
+      "backlog_ref": null
+    },
+    {
+      "id": "AC-5",
+      "status": "passed",
+      "evidence": "test_transition_entity_phase_workspace_uuid_consistent pins symmetric forwarding to db.update_entity AND db.update_workflow_phase.",
+      "condition": "",
+      "backlog_ref": null
+    },
+    {
+      "id": "AC-6",
+      "status": "passed",
+      "evidence": "2 parametrized sub-tests pass. PI-3.MUT verified: removing 'or None' at line 1280 \u2192 FK constraint failure on init_feature_state sub-test.",
+      "condition": "",
+      "backlog_ref": null
+    },
+    {
+      "id": "AC-7",
+      "status": "passed",
+      "evidence": "test_filter_states_db_error_returns_error_json + test_filter_states_unexpected_error_propagates pass. RuntimeError propagates; OperationalError \u2192 _make_error JSON.",
+      "condition": "",
+      "backlog_ref": null
+    },
+    {
+      "id": "AC-8",
+      "status": "passed",
+      "evidence": "2 parent_resolution tests pass. OperationalError \u2192 orphan with stderr warning; RuntimeError propagates.",
+      "condition": "",
+      "backlog_ref": null
+    },
+    {
+      "id": "AC-9",
+      "status": "passed",
+      "evidence": "test_create_key_result_missing_parent_raises pins explicit ValueError raise; replaces silent-orphan ternary.",
+      "condition": "",
+      "backlog_ref": null
+    },
+    {
+      "id": "AC-10",
+      "status": "passed",
+      "evidence": "4 parametrized sub-tests pass with simplefilter('error', DeprecationWarning) \u2014 no warning fires at sites 47/72/189/320.",
+      "condition": "",
+      "backlog_ref": null
+    },
+    {
+      "id": "AC-11",
+      "status": "passed",
+      "evidence": "7 new tests pass: 3 boundary + 2 internal-forwarding + 2 scope-scan (scoped + default-unscoped NFR-3 regression pin).",
+      "condition": "",
+      "backlog_ref": null
+    },
+    {
+      "id": "AC-12",
+      "status": "passed",
+      "evidence": "agent_sandbox/2026-05-12/113-validation/{baseline,final}.log: diff empty. 3852 passed (+33 from baseline 3819), 0 net-new failures, same 2 pre-existing semantic_memory failures.",
+      "condition": "",
+      "backlog_ref": null
+    },
+    {
+      "id": "AC-13",
+      "status": "passed",
+      "evidence": "This very .qa-gate.json file produced via qa_gate.emitter.emit_qa_gate per FR-1.1/1.2/1.3 \u2014 STATUS_ENUM validated, per-entry keys present, head_sha matches HEAD.",
+      "condition": "",
+      "backlog_ref": null
+    }
+  ],
+  "decision": "approved",
+  "reviewers": [
+    "pd:security-reviewer",
+    "pd:code-quality-reviewer",
+    "pd:implementation-reviewer",
+    "pd:test-deepener"
+  ]
+}

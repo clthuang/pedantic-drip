@@ -457,6 +457,34 @@ test_qa_gate_procedure_doc_exists() {
     log_pass
 }
 
+# Feature 113 FR-2: AC-12 evidence helper script must be executable and emit
+# exactly 3 '=== ... ===' section headers (host bash, /bin/bash, test-hooks.sh).
+# Recursion guard: bash-version-capture.sh invokes test-hooks.sh in its 3rd
+# section. Without the env-var sentinel, we'd infinite-loop: test-hooks → cap
+# → test-hooks → cap → ... When BASH_VERSION_CAPTURE_RUNNING=1, this test
+# skips itself (the outer cap invocation captures the result instead).
+test_bash_version_capture_script_emits_three_sections() {
+    log_test "bash-version-capture.sh is executable and emits 3 section headers"
+    if [[ "${BASH_VERSION_CAPTURE_RUNNING:-0}" == "1" ]]; then
+        log_skip "recursion guard (invoked from bash-version-capture.sh)"
+        return
+    fi
+    local script="${PROJECT_ROOT}/plugins/pd/hooks/tests/bash-version-capture.sh"
+    if [[ ! -x "$script" ]]; then
+        log_fail "bash-version-capture.sh missing or not executable: $script"
+        return
+    fi
+    local out
+    out=$("$script" 2>&1 || true)
+    local count
+    count=$(printf '%s\n' "$out" | grep -c '^=== ' || true)
+    if [[ "$count" -eq 3 ]]; then
+        log_pass
+    else
+        log_fail "expected 3 section headers, got $count"
+    fi
+}
+
 # === YOLO Hook Tests ===
 
 # Helper: create temp YOLO config
@@ -3451,6 +3479,7 @@ main() {
     test_finish_feature_step_5b_present
     test_finish_feature_under_600_lines
     test_qa_gate_procedure_doc_exists
+    test_bash_version_capture_script_emits_three_sections
 
     echo ""
     echo "--- YOLO Hook Tests ---"

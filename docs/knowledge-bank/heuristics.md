@@ -801,3 +801,17 @@ When MCP tool descriptions say 'JSON-serializable payload' but the tool actually
 - Confidence: high
 - Last observed: Feature #112
 - Observation count: 1
+
+### Heuristic: 3-Iter Meta-Review — Artifact Wrong or Recurring Issue Class?
+After 3 reviewer iterations in any single phase, pause and ask: 'Is the artifact wrong, or is the review surfacing the same class of issue repeatedly?' If recurring class → address upstream (spec/design verification process). If artifact wrong → summarize remaining issues and seek user guidance per the 3-iter hard cap. Continuing past 3 iters without diagnosing which case applies wastes context.
+- Source: Feature #113 specify phase — 5 spec-reviewer iters spent largely on factual-verification corrections (a recurring class) that should have triggered meta-review at iter 3 to add upstream verification step
+- Confidence: high
+- Last observed: Feature #113
+- Observation count: 1
+
+### Heuristic: Surgical-Scope QA-Followup Features Should Hit First-Pass Implement
+Surgical-scope QA-followup features (no schema migration, ~150-250 LOC, scope pre-enumerated from upstream QA gate) should target Standard mode with TDD per-PI pairing and expect first-pass implement approval. Deviation from this is a signal that scope is creeping.
+- Source: Feature #113 — addressed 11 MED findings (#00391-#00401) from feature 112 QA gate; held to ~150-250 LOC source + 33 new tests, no schema migration; achieved 4/4 first-pass implement approval and zero baseline regressions across 8 PIs
+- Confidence: medium
+- Last observed: Feature #113
+- Observation count: 1

@@ -1,0 +1,52 @@
+{
+  "feature": "112-workspace-identity-cleanup",
+  "head_sha": "0fae9ca813b638fe22530b9a49d56459ec281316",
+  "gate_run_at": "2026-05-12",
+  "decision": "pass-after-fixes",
+  "reviewers": {
+    "security-reviewer": {"approved": true, "high": 0, "med": 0, "low": 2},
+    "code-quality-reviewer": {"approved": false, "high_at_dispatch": 3, "med_at_dispatch": 4, "low_at_dispatch": 2, "high_after_fix": 0},
+    "implementation-reviewer": {"approved": false, "high_at_dispatch": 1, "med_at_dispatch": 3, "low_at_dispatch": 1, "high_after_fix": 0},
+    "test-deepener": {"approved": null, "blocker_gaps_at_dispatch": 4, "warning_gaps_at_dispatch": 11, "suggestion_gaps_at_dispatch": 3, "high_after_remap": 2, "high_after_fix": 0}
+  },
+  "high_findings_resolved_inline": [
+    {"id": "HF-1", "source": "code-quality-reviewer + test-deepener (cross-confirmed)", "description": "entity_engine.complete_phase / transition_phase silently dropped workspace_uuid kwarg", "location": "plugins/pd/hooks/lib/workflow_engine/entity_engine.py:110-247", "fix": "Forwarded workspace_uuid to _frozen_engine.complete_phase / _frozen_engine.transition_phase + extended _feature_complete with workspace_uuid kwarg. _fived_* helpers remain unscoped (parent entity row supplies workspace_uuid; documented inline)."},
+    {"id": "HF-2", "source": "code-quality-reviewer + test-deepener (cross-confirmed)", "description": "AC-11 test name + threshold mismatch — implementation used test_migration_11_runtime_under_2s with hard <2s gate; spec requires test_migration_11_runtime with <30s hard + >2s warn", "location": "plugins/pd/hooks/lib/entity_registry/test_database.py:7867", "fix": "Renamed class TestMigration11Timing.test_migration_11_runtime (exact spec name). Replaced `assert elapsed < 2.0` with conditional `warnings.warn(...)` at >2s + `assert elapsed < 30.0` hard gate."},
+    {"id": "HF-3", "source": "code-quality-reviewer", "description": "Missing test_migration_11_stress_benchmark (10000 rows, @pytest.mark.benchmark) required by AC-11", "location": "plugins/pd/hooks/lib/entity_registry/test_database.py", "fix": "Added TestMigration11StressBenchmark class with test_migration_11_stress_benchmark. Registered `benchmark` marker in pyproject.toml under [tool.pytest.ini_options]."},
+    {"id": "HF-4", "source": "implementation-reviewer", "description": "AC-4 markdown sweep incomplete — 3 hits remained in plugins/pd/skills/{brainstorming,decomposing}/SKILL.md beyond the 14 hits in plugins/pd/commands/", "location": "plugins/pd/skills/brainstorming/SKILL.md:281,291 and plugins/pd/skills/decomposing/SKILL.md:248", "fix": "Rewrote both files to use parent_uuid (resolved via get_entity(ref=...)) instead of parent_type_id. grep -rn 'parent_type_id' plugins/pd/{commands,skills} --include='*.md' returns 0."}
+  ],
+  "med_findings_filed_to_backlog": [
+    {"backlog_ref": "00391", "description": ".qa-gate.json location + schema drift"},
+    {"backlog_ref": "00392", "description": "AC-12 bash-version.log incomplete"},
+    {"backlog_ref": "00393", "description": "_resolve_list_handler_workspace_filter path coverage gaps"},
+    {"backlog_ref": "00394", "description": "WorkflowStateEngine.transition_phase dead workspace_uuid kwarg on non-terminal paths"},
+    {"backlog_ref": "00395", "description": "transition_entity_phase asymmetric workspace_uuid propagation"},
+    {"backlog_ref": "00396", "description": "Empty-string boundary coverage for _workspace_uuid / project_id"},
+    {"backlog_ref": "00397", "description": "_filter_states_by_workspace bare-except silently bypasses workspace isolation under DB errors"},
+    {"backlog_ref": "00398", "description": "server_helpers.py bare-except in parent_type_id resolution"},
+    {"backlog_ref": "00399", "description": "entity_server.py _process_create_key_result silent None on missing parent"},
+    {"backlog_ref": "00400", "description": "_sync_meta_json_entities dual-kwarg pattern trips DeprecationWarning"},
+    {"backlog_ref": "00401", "description": "reconcile_apply/reconcile_frontmatter/reconcile_status missing workspace_uuid wiring"}
+  ],
+  "low_findings_sidecar": "docs/features/112-workspace-identity-cleanup/.qa-gate-low-findings.md",
+  "regression_post_fixes": {
+    "baseline": "80 failed, 4189 passed, 3 skipped (feature 108 release)",
+    "current": "2 failed, 3819 passed, 3 skipped (plugins/pd/hooks/lib + plugins/pd/mcp scope)",
+    "net_new_regressions": 0,
+    "pre_existing_failures_retained": 2,
+    "delta": "+2 tests added (AC-11 timing + AC-11 stress benchmark), 1 pre-existing recon_orch failure repaired"
+  },
+  "ac_status_summary": {
+    "ac_total": 41,
+    "ac_pass": 36,
+    "ac_partial": 2,
+    "ac_deferred": 3,
+    "ac_partial_details": [
+      "AC-17 partial (entity_server.py _project_id retained — backlog #00389)",
+      "AC-31 partial (register_entity parent_type_id alias retained — backlog #00390)"
+    ],
+    "ac_deferred_details": [
+      "AC-24/AC-25/AC-33 deferred (F6 uuid7 — backlog #00359, gated on Python 3.14+)"
+    ]
+  }
+}

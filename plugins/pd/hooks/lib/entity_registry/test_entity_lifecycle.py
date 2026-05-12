@@ -270,3 +270,155 @@ class TestTransitionEntityPhase:
         assert result["to_phase"] == "promoted"
         row = db.get_workflow_phase(type_id)
         assert row["last_completed_phase"] == "triaged"
+
+    # ------------------------------------------------------------------
+    # Feature 113 / FR-5 / FR-5.2: symmetric workspace_uuid forwarding
+    # ------------------------------------------------------------------
+
+    def test_transition_entity_phase_workspace_uuid_consistent(self, db):
+        """Pin: transition_entity_phase forwards workspace_uuid SYMMETRICALLY
+        to BOTH db.update_entity AND db.update_workflow_phase (FR-5.1).
+
+        Setup bootstraps two workspaces. The brainstorm entity 'foo' is
+        registered in ws_a with a workflow_phases row scoped to ws_a. A
+        parallel 'brainstorm:other' entity is registered in ws_b as a
+        cross-workspace isolation witness.
+
+        Test instruments db.update_workflow_phase via monkeypatch to capture
+        the kwargs it receives — pins that workspace_uuid is forwarded into
+        the call (NOT just into db.update_entity).
+
+        Assertions:
+          (1) Success with workspace_uuid=ws_a: ws_a's entity status →
+              'promoted'; workflow_phase row → 'promoted' / 'completed'.
+          (2) ws_b's parallel entity UNCHANGED (no cross-workspace leak).
+          (3) db.update_workflow_phase received workspace_uuid=ws_a kwarg —
+              direct pin on the FR-5.1 forwarding line (entity_lifecycle.py
+              update_kwargs dict).
+          (4) Mismatch path with workspace_uuid=ws_b against a ws_a-scoped
+              entity raises ValueError (FR-5.1 symmetric scope rejection).
+        """
+        from entity_registry.test_helpers import bootstrap_test_workspace
+
+        ws_a_uuid = bootstrap_test_workspace(db, "ws-a-lifecycle")
+        ws_b_uuid = bootstrap_test_workspace(db, "ws-b-lifecycle")
+
+        # ws_a: 'brainstorm:foo' + workflow_phase row.
+        db.register_entity(
+            entity_type="brainstorm",
+            entity_id="foo",
+            name="Foo brainstorm in ws-a",
+            status="draft",
+            workspace_uuid=ws_a_uuid,
+        )
+        db.upsert_workflow_phase(
+            "brainstorm:foo",
+            workflow_phase="draft",
+            kanban_column="wip",
+            workspace_uuid=ws_a_uuid,
+        )
+        # Sanity: stored workflow_phases.workspace_uuid is ws_a.
+        wp_row = db._conn.execute(
+            "SELECT workspace_uuid FROM workflow_phases WHERE type_id = ?",
+            ("brainstorm:foo",),
+        ).fetchone()
+        assert wp_row["workspace_uuid"] == ws_a_uuid
+
+        # ws_b: an unrelated 'brainstorm:other' entity used as the
+        # cross-workspace isolation witness.
+        db.register_entity(
+            entity_type="brainstorm",
+            entity_id="other",
+            name="Other brainstorm in ws-b",
+            status="draft",
+            workspace_uuid=ws_b_uuid,
+        )
+
+        # Instrument db.update_workflow_phase to capture kwargs. The pin is
+        # specifically on the 'workspace_uuid' kwarg in update_kwargs dict
+        # at entity_lifecycle.py:185-193. We wrap the real method (not a
+        # mock) so the actual DB writes still happen and assertions (1)/(2)
+        # remain meaningful.
+        captured_update_kwargs: list[dict] = []
+        real_update_workflow_phase = db.update_workflow_phase
+
+        def _spy_update_workflow_phase(type_id, **kwargs):
+            captured_update_kwargs.append({"type_id": type_id, **kwargs})
+            return real_update_workflow_phase(type_id, **kwargs)
+
+        db.update_workflow_phase = _spy_update_workflow_phase  # type: ignore[method-assign]
+
+        try:
+            # (1) Success path: workspace_uuid=ws_a → both writes land.
+            result = transition_entity_phase(
+                db, "brainstorm:foo", "promoted", workspace_uuid=ws_a_uuid,
+            )
+        finally:
+            db.update_workflow_phase = real_update_workflow_phase  # type: ignore[method-assign]
+
+        assert result["transitioned"] is True
+        assert result["to_phase"] == "promoted"
+
+        # ws_a entity status updated to 'promoted'.
+        ws_a_entity = db._conn.execute(
+            "SELECT status FROM entities "
+            "WHERE type_id = ? AND workspace_uuid = ?",
+            ("brainstorm:foo", ws_a_uuid),
+        ).fetchone()
+        assert ws_a_entity["status"] == "promoted"
+
+        # workflow_phase row updated (advanced + kanban changed).
+        wp_after = db.get_workflow_phase("brainstorm:foo")
+        assert wp_after["workflow_phase"] == "promoted"
+        assert wp_after["kanban_column"] == "completed"
+
+        # (2) ws_b's unrelated entity UNCHANGED — no cross-workspace leak.
+        ws_b_entity = db._conn.execute(
+            "SELECT status FROM entities "
+            "WHERE type_id = ? AND workspace_uuid = ?",
+            ("brainstorm:other", ws_b_uuid),
+        ).fetchone()
+        assert ws_b_entity["status"] == "draft", (
+            "ws_b entity status should be UNCHANGED — "
+            f"got {ws_b_entity['status']!r}"
+        )
+
+        # (3) FR-5.1 mutation pin: db.update_workflow_phase received
+        # workspace_uuid=ws_a as a forwarded kwarg. Without the
+        # `"workspace_uuid": workspace_uuid` entry in the update_kwargs dict
+        # at entity_lifecycle.py:185-193, this assertion fails (kwarg absent
+        # from captured call).
+        assert len(captured_update_kwargs) == 1, captured_update_kwargs
+        call_kwargs = captured_update_kwargs[0]
+        assert "workspace_uuid" in call_kwargs, (
+            "transition_entity_phase must forward workspace_uuid to "
+            f"db.update_workflow_phase; got kwargs: {call_kwargs!r}"
+        )
+        assert call_kwargs["workspace_uuid"] == ws_a_uuid, (
+            f"Forwarded workspace_uuid should equal ws_a; got "
+            f"{call_kwargs['workspace_uuid']!r}"
+        )
+
+        # (4) Mismatch path: register a SECOND brainstorm in ws_a, init its
+        # workflow_phase, then attempt transition with workspace_uuid=ws_b
+        # (wrong workspace). db.update_entity's workspace-scoped lookup
+        # rejects the ws_a entity from a ws_b perspective — pins the
+        # symmetric scope rejection contract.
+        db.register_entity(
+            entity_type="brainstorm",
+            entity_id="bar",
+            name="Bar brainstorm in ws-a",
+            status="draft",
+            workspace_uuid=ws_a_uuid,
+        )
+        db.upsert_workflow_phase(
+            "brainstorm:bar",
+            workflow_phase="draft",
+            kanban_column="wip",
+            workspace_uuid=ws_a_uuid,
+        )
+
+        with pytest.raises(ValueError):
+            transition_entity_phase(
+                db, "brainstorm:bar", "reviewing", workspace_uuid=ws_b_uuid,
+            )

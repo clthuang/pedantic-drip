@@ -2,11 +2,13 @@
 import json
 import os
 import tempfile
+import warnings
 from unittest.mock import patch
 
 import pytest
 
 from entity_registry.database import EntityDatabase
+from entity_registry.test_helpers import bootstrap_test_workspace
 from reconciliation_orchestrator import entity_status
 from reconciliation_orchestrator.entity_status import sync_entity_statuses
 
@@ -1029,3 +1031,195 @@ class TestUnifiedSync:
         assert result["registered"] >= 2
         assert db.get_entity("brainstorm:bar") is not None
         assert db.get_entity("backlog:00099") is not None
+
+
+# ---------------------------------------------------------------------------
+# FR-10: conditional-kwarg pattern at 4 update_entity sites (no DeprecationWarning)
+# ---------------------------------------------------------------------------
+
+
+def _setup_site_47_meta_json_archive(db, ws_uuid, tmp_path):
+    """Site 47: _sync_meta_json_entities archive branch (missing .meta.json file).
+
+    Register a feature entity scoped to ws_uuid; create the feature folder
+    but do NOT write .meta.json. sync_entity_statuses will hit the archive
+    branch (line 47) and call db.update_entity(status="archived", ...).
+
+    Returns a verification callable: (db, result) -> bool asserting the
+    operation actually happened (proves the DeprecationWarning didn't
+    short-circuit the write via the outer try/except).
+    """
+    folder = "042-archive-me"
+    db.register_entity(
+        entity_type="feature",
+        entity_id=folder,
+        name=folder,
+        status="active",
+        workspace_uuid=ws_uuid,
+    )
+    # Folder exists, .meta.json missing → archive branch
+    (tmp_path / "features" / folder).mkdir(parents=True)
+
+    def verify(db, result):
+        entity = db.get_entity(f"feature:{folder}")
+        assert entity["status"] == "archived", (
+            f"site 47 archive branch did not fire: entity status={entity['status']!r}, "
+            f"result={result!r}"
+        )
+
+    return verify
+
+
+def _setup_site_72_meta_json_status_change(db, ws_uuid, tmp_path):
+    """Site 72: _sync_meta_json_entities status-change branch (.meta.json status differs from DB).
+
+    Register a feature entity with status=active scoped to ws_uuid; write
+    .meta.json with status=completed. sync_entity_statuses will hit the
+    status-change branch (line 72) and call db.update_entity(status="completed", ...).
+    """
+    folder = "043-drift-me"
+    db.register_entity(
+        entity_type="feature",
+        entity_id=folder,
+        name=folder,
+        status="active",
+        workspace_uuid=ws_uuid,
+    )
+    features_dir = tmp_path / "features" / folder
+    write_meta_json(str(features_dir), status="completed")
+
+    def verify(db, result):
+        entity = db.get_entity(f"feature:{folder}")
+        assert entity["status"] == "completed", (
+            f"site 72 status-change branch did not fire: entity status="
+            f"{entity['status']!r}, result={result!r}"
+        )
+
+    return verify
+
+
+def _setup_site_189_brainstorm_archive(db, ws_uuid, tmp_path):
+    """Site 189: _sync_brainstorm_entities archive branch (missing .prd.md file).
+
+    Register a brainstorm entity scoped to ws_uuid with an artifact_path
+    pointing to a .prd.md that does not exist on disk. brainstorms/ dir
+    exists but the file is missing — archive branch fires (line 189).
+    """
+    db.register_entity(
+        entity_type="brainstorm",
+        entity_id="archived-bs",
+        name="archived-bs",
+        status="active",
+        artifact_path="docs/brainstorms/archived-bs.prd.md",
+        workspace_uuid=ws_uuid,
+    )
+    # brainstorms dir must exist for scan to proceed; .prd.md absent
+    (tmp_path / "brainstorms").mkdir()
+
+    def verify(db, result):
+        entity = db.get_entity("brainstorm:archived-bs")
+        assert entity["status"] == "archived", (
+            f"site 189 brainstorm archive did not fire: entity status="
+            f"{entity['status']!r}, result={result!r}"
+        )
+
+    return verify
+
+
+def _setup_site_320_backlog_status_change(db, ws_uuid, tmp_path):
+    """Site 320: _sync_backlog_entities status-change branch (backlog row status differs from DB).
+
+    Register a backlog entity with status=open scoped to ws_uuid; write
+    backlog.md with the same id but a (closed: ...) marker → status maps
+    to dropped → status-change branch fires (line 320).
+    """
+    db.register_entity(
+        entity_type="backlog",
+        entity_id="00077",
+        name="00077",
+        status="open",
+        artifact_path="docs/backlog.md",
+        workspace_uuid=ws_uuid,
+    )
+    write_backlog_md(tmp_path, [
+        ("00077", "2026-01-01T00:00:00Z", "Some item (closed: not needed)"),
+    ])
+
+    def verify(db, result):
+        entity = db.get_entity("backlog:00077")
+        assert entity["status"] == "dropped", (
+            f"site 320 backlog status-change did not fire: entity status="
+            f"{entity['status']!r}, result={result!r}"
+        )
+
+    return verify
+
+
+SITE_SETUPS = {
+    "site_47_meta_json_archive": _setup_site_47_meta_json_archive,
+    "site_72_meta_json_status_change": _setup_site_72_meta_json_status_change,
+    "site_189_brainstorm_archive": _setup_site_189_brainstorm_archive,
+    "site_320_backlog_status_change": _setup_site_320_backlog_status_change,
+}
+
+
+class TestNoDeprecationWarningOnHappyPath:
+    """FR-10: no DeprecationWarning fires when sync_entity_statuses is called
+    with a real workspace_uuid at any of the 4 update_entity sites that
+    previously passed both project_id and workspace_uuid unconditionally.
+
+    Per design R6: warnings.catch_warnings() + simplefilter('error',
+    DeprecationWarning) is scoped to the call body, NOT module-level, to
+    prevent filter-bleed into sibling tests.
+
+    Each sub-test also asserts the underlying write actually happened — the
+    outer try/except Exception in sync_entity_statuses would otherwise
+    swallow the DeprecationWarning-as-error and the test would pass
+    vacuously. The site-specific entity-state assertion is the load-bearing
+    behavioral pin.
+    """
+
+    @pytest.mark.parametrize("site_key", list(SITE_SETUPS.keys()))
+    def test_sync_entity_statuses_no_deprecation_warning_on_happy_path(
+        self, tmp_path, site_key
+    ):
+        # Bootstrap a real workspace_uuid (not __unknown__). We use a legacy
+        # id (`ws-a-legacy`) so that the brainstorm/backlog helpers'
+        # `list_entities(project_id=...)` calls resolve to the same
+        # workspace_uuid we register the test entity under.
+        legacy_id = "ws-a-legacy"
+        db = EntityDatabase(":memory:")
+        ws_a = bootstrap_test_workspace(db, legacy_id)
+
+        # Trigger the site-specific state; receive a verify callable that
+        # asserts the underlying write actually happened post-call.
+        verify = SITE_SETUPS[site_key](db, ws_a, tmp_path)
+
+        # Wrap the call in a scoped filter so any DeprecationWarning fires
+        # as an exception. Scoped to this block per design R6.
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            result = sync_entity_statuses(
+                db,
+                str(tmp_path),
+                project_id=legacy_id,
+                workspace_uuid=ws_a,
+            )
+
+        # Behavioral assertion: the operation that should have happened did
+        # happen. If the conditional-kwarg pattern is missing, the inner
+        # update_entity raises DeprecationWarning-as-error and the outer
+        # try/except in sync_entity_statuses swallows it into
+        # result["warnings"], leaving the entity in its pre-call state.
+        verify(db, result)
+
+        # Pin: no entry in result["warnings"] should mention the
+        # DeprecationWarning text (extra safety against silent swallow).
+        deprecation_warnings = [
+            w for w in result["warnings"]
+            if "deprecated" in w.lower() or "workspace_uuid wins" in w
+        ]
+        assert deprecation_warnings == [], (
+            f"Unexpected DeprecationWarning-derived entries in result['warnings']: "
+            f"{deprecation_warnings}"
+        )

@@ -447,7 +447,12 @@ def _process_create_key_result(
     parent_uuid kwarg.
     """
     parent_entity = db.get_entity(parent_type_id)
-    parent_uuid = parent_entity["uuid"] if parent_entity else None
+    if parent_entity is None:
+        # FR-9: explicit missing-parent surfacing (was: silent orphan).
+        # Caught by the MCP create_key_result wrapper's except Exception
+        # at entity_server.py:1136-1137 → returns JSON error to caller.
+        raise ValueError(f"Parent entity not found: {parent_type_id!r}")
+    parent_uuid = parent_entity["uuid"]
     uuid = db.register_entity(
         entity_type="key_result",
         entity_id=eid,

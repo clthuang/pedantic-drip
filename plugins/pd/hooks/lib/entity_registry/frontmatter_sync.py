@@ -543,6 +543,8 @@ def backfill_headers(
 def scan_all(
     db: EntityDatabase,
     artifacts_root: str,
+    *,
+    workspace_uuid: str | None = None,
 ) -> list[DriftReport]:
     """Drift-scan all registered feature entities' artifact files.
 
@@ -560,6 +562,10 @@ def scan_all(
         Entity database instance.
     artifacts_root:
         Root directory for artifact files (e.g. "docs").
+    workspace_uuid:
+        Feature 113 FR-11.2: when provided, restrict the scan to features
+        in that workspace. Forwarded to ``db.list_entities``. Default
+        ``None`` preserves cross-workspace behavior (NFR-3).
 
     Returns
     -------
@@ -567,7 +573,9 @@ def scan_all(
         One report per file examined. Callers can filter by ``status``.
     """
     reports: list[DriftReport] = []
-    features = db.list_entities(entity_type="feature")
+    features = db.list_entities(
+        entity_type="feature", workspace_uuid=workspace_uuid,
+    )
 
     for entity in features:
         feat_dir = _derive_feature_directory(entity, artifacts_root)

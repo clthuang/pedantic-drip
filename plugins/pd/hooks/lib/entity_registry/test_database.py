@@ -3751,6 +3751,110 @@ class TestUpdateWorkflowPhaseAllFieldsSimultaneously:
 
 
 # ---------------------------------------------------------------------------
+# Feature 113 / FR-4.1 — update_workflow_phase workspace_uuid read-side assertion
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateWorkflowPhaseWorkspaceUuidAssertion:
+    """Feature 113 / FR-4.1: workspace_uuid kwarg on update_workflow_phase.
+
+    When provided non-None, the implementation SELECTs the stored
+    workspace_uuid and raises ValueError on mismatch. The column itself is
+    immutable post-Migration-11 (autofill at INSERT only) — the kwarg does
+    NOT appear in the UPDATE SET clause.
+    """
+
+    def test_update_workflow_phase_workspace_uuid_mismatch_raises_value_error(
+        self, db: EntityDatabase,
+    ):
+        """Passing workspace_uuid != stored value raises ValueError.
+
+        Pins FR-4.1 mismatch behavior at the database layer, independent of
+        engine-level forwarding.
+        """
+        # Two distinct workspaces (ws_a default __test__ pre-bootstrapped; ws_b
+        # via _bootstrap_test_workspace with a fresh legacy id).
+        ws_a_uuid = _bootstrap_test_workspace(db, "ws-a")
+        ws_b_uuid = _bootstrap_test_workspace(db, "ws-b")
+
+        # Register the entity in ws_a; create the workflow_phases row.
+        # The autofill trigger populates workflow_phases.workspace_uuid = ws_a.
+        db.register_entity(
+            "feature", "fr4-mismatch", "FR-4 Mismatch",
+            workspace_uuid=ws_a_uuid,
+        )
+        db.create_workflow_phase(
+            "feature:fr4-mismatch",
+            kanban_column="backlog",
+            workflow_phase="specify",
+        )
+
+        # Sanity: stored workspace_uuid is ws_a.
+        stored = db._conn.execute(
+            "SELECT workspace_uuid FROM workflow_phases WHERE type_id = ?",
+            ("feature:fr4-mismatch",),
+        ).fetchone()
+        assert stored["workspace_uuid"] == ws_a_uuid
+
+        # Calling update_workflow_phase with workspace_uuid=ws_b must raise
+        # ValueError, not silently update the row.
+        with pytest.raises(ValueError, match="workspace_uuid mismatch"):
+            db.update_workflow_phase(
+                "feature:fr4-mismatch",
+                workspace_uuid=ws_b_uuid,
+                workflow_phase="design",
+            )
+
+    def test_update_workflow_phase_does_not_mutate_workspace_uuid_column(
+        self, db: EntityDatabase,
+    ):
+        """A matching workspace_uuid kwarg leaves the column byte-identical.
+
+        Pins FR-4.1's immutability claim: workspace_uuid is NOT in the
+        UPDATE SET clause. The kwarg is a read-side assertion only.
+        """
+        ws_a_uuid = _bootstrap_test_workspace(db, "ws-a-immut")
+
+        db.register_entity(
+            "feature", "fr4-immut", "FR-4 Immutability",
+            workspace_uuid=ws_a_uuid,
+        )
+        db.create_workflow_phase(
+            "feature:fr4-immut",
+            kanban_column="backlog",
+            workflow_phase="specify",
+        )
+
+        # Pre-update SELECT: capture the workspace_uuid value.
+        pre_row = db._conn.execute(
+            "SELECT workspace_uuid FROM workflow_phases WHERE type_id = ?",
+            ("feature:fr4-immut",),
+        ).fetchone()
+        pre_value = pre_row["workspace_uuid"]
+        assert pre_value == ws_a_uuid
+
+        # Call update_workflow_phase with matching workspace_uuid + a real
+        # field change. The mismatch check should pass; the workflow_phase
+        # column should update; the workspace_uuid column must remain
+        # byte-identical.
+        db.update_workflow_phase(
+            "feature:fr4-immut",
+            workspace_uuid=ws_a_uuid,
+            workflow_phase="design",
+        )
+
+        post_row = db._conn.execute(
+            "SELECT workspace_uuid, workflow_phase FROM workflow_phases "
+            "WHERE type_id = ?",
+            ("feature:fr4-immut",),
+        ).fetchone()
+        # workspace_uuid column unchanged.
+        assert post_row["workspace_uuid"] == pre_value
+        # Sanity: the real update did land.
+        assert post_row["workflow_phase"] == "design"
+
+
+# ---------------------------------------------------------------------------
 # export_entities_json tests
 # ---------------------------------------------------------------------------
 

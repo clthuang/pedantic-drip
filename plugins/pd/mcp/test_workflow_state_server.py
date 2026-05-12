@@ -7294,6 +7294,341 @@ class TestListFeaturesByDefaultSingleWorkspace:
             f"'*' should return cross-workspace results, got {slugs}"
         )
 
+    def test_list_features_handler_empty_project_id_treated_as_default(
+        self, tmp_path,
+    ):
+        """FR-3.0: empty-string project_id is normalized to None (single-workspace default).
+
+        Without normalization, ``project_id == ""`` falls into the JOIN-resolve
+        branch in ``_resolve_list_handler_workspace_filter``, fails to match any
+        ``workspaces.project_id_legacy`` row, and silently returns None
+        (cross-workspace fallback). The fix normalizes "" → None at the entry
+        point so the function falls through to the default-workspace branch.
+        """
+        import asyncio
+        import workflow_state_server as wss
+
+        db = EntityDatabase(str(tmp_path / "ws.db"))
+        from entity_registry.test_helpers import bootstrap_test_workspace
+        ws_a = bootstrap_test_workspace(db, "ws_a_legacy")
+        ws_b = bootstrap_test_workspace(db, "ws_b_legacy")
+
+        for ws_uuid, slug in [(ws_a, "alpha"), (ws_b, "beta")]:
+            db.register_entity(
+                entity_type="feature",
+                entity_id=f"003-{slug}",
+                name=slug,
+                status="active",
+                workspace_uuid=ws_uuid,
+            )
+            db.upsert_workflow_phase(
+                f"feature:003-{slug}", workflow_phase="design",
+                kanban_column="wip", workspace_uuid=ws_uuid,
+            )
+
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, "docs")
+        wss._workspace_uuid = ws_a
+        wss._project_id = "ws_a_legacy"
+
+        # Empty-string project_id must behave the same as omitted (single-workspace
+        # default), NOT fall through to cross-workspace via failed JOIN-resolve.
+        result = asyncio.run(
+            wss.list_features_by_phase("design", project_id="")
+        )
+        entries = json.loads(result)
+        slugs = sorted(e["feature_type_id"] for e in entries)
+        assert slugs == ["feature:003-alpha"], (
+            f"Empty project_id should default to current workspace (ws_a only), "
+            f"got {slugs}"
+        )
+
+    def test_list_features_handler_db_none_returns_empty(self, tmp_path):
+        """FR-3.1 pin: _db is None → handler returns safe error envelope, not crash.
+
+        With ``_db = None`` and ``_db_unavailable = True``, the handler is
+        short-circuited via ``_check_db_available`` and returns the canonical
+        db-unavailable envelope (``{"error": "database temporarily unavailable"}``).
+        The contract guarded here: the helper must NOT crash, and must NOT
+        silently return cross-workspace data when the DB is unavailable.
+        """
+        import asyncio
+        import workflow_state_server as wss
+
+        wss._db = None
+        wss._db_unavailable = True
+        wss._engine = None
+        wss._workspace_uuid = ""
+
+        result = asyncio.run(
+            wss.list_features_by_phase("design", project_id="ffffffffffff")
+        )
+        data = json.loads(result)
+        assert isinstance(data, dict), (
+            f"db-None path should return a JSON object (error envelope), "
+            f"got {type(data).__name__}: {data!r}"
+        )
+        # _check_db_available envelope OR canonical _make_error envelope —
+        # either flavor satisfies the pin (no crash, no cross-workspace leak).
+        assert "error" in data, (
+            f"db-None path should surface an error key, got {data!r}"
+        )
+
+    def test_list_features_by_phase_invalid_legacy_hex_returns_error(
+        self, tmp_path,
+    ):
+        """FR-3.2 pin: invalid legacy hex on list_features_by_phase → _make_error.
+
+        Calling with a 12-char legacy hex that has no matching workspaces row
+        must surface an ``invalid_project_id`` error envelope rather than
+        silently degrading to cross-workspace.
+        """
+        import asyncio
+        import workflow_state_server as wss
+
+        db = EntityDatabase(str(tmp_path / "ws.db"))
+        from entity_registry.test_helpers import bootstrap_test_workspace
+        ws_a = bootstrap_test_workspace(db, "ws_a_legacy")
+
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, "docs")
+        wss._workspace_uuid = ws_a
+
+        result = asyncio.run(
+            wss.list_features_by_phase("design", project_id="ffffffffffff")
+        )
+        data = json.loads(result)
+        assert data.get("error") is True, (
+            f"Invalid legacy hex must return error envelope, got {data!r}"
+        )
+        assert data.get("error_type") == "invalid_project_id", (
+            f"Expected error_type='invalid_project_id', got {data!r}"
+        )
+
+    def test_list_features_by_status_invalid_legacy_hex_returns_error(
+        self, tmp_path,
+    ):
+        """FR-3.2 pin: invalid legacy hex on list_features_by_status → _make_error.
+
+        Same shape as the by_phase pin but exercises the second caller wrapper
+        so a future contributor cannot regress one site while leaving the
+        other intact.
+        """
+        import asyncio
+        import workflow_state_server as wss
+
+        db = EntityDatabase(str(tmp_path / "ws.db"))
+        from entity_registry.test_helpers import bootstrap_test_workspace
+        ws_a = bootstrap_test_workspace(db, "ws_a_legacy")
+
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, "docs")
+        wss._workspace_uuid = ws_a
+
+        result = asyncio.run(
+            wss.list_features_by_status("active", project_id="ffffffffffff")
+        )
+        data = json.loads(result)
+        assert data.get("error") is True, (
+            f"Invalid legacy hex must return error envelope, got {data!r}"
+        )
+        assert data.get("error_type") == "invalid_project_id", (
+            f"Expected error_type='invalid_project_id', got {data!r}"
+        )
+
+
+class TestWorkspaceUuidEmptyStringNormalization:
+    """FR-6: empty-string ``_workspace_uuid`` normalizes to None at db.* boundary.
+
+    The MCP server's module-level ``_workspace_uuid`` is initialized to ``""``
+    when the workspace is unset. Every ``db.*`` call site that forwards this
+    value uses ``workspace_uuid=_workspace_uuid or None`` to coerce the empty
+    string to ``None`` — which then falls through to the
+    ``project_id="__unknown__"`` → ``_UNKNOWN_WORKSPACE_UUID`` default.
+
+    Without the ``or None`` coercion, the empty string would propagate to
+    ``db.register_entity`` / ``db.update_entity`` / etc., where it fails
+    the workspaces FK (``""`` matches no row).
+
+    These tests pin the normalization at two distinct call sites (one per
+    code path), guarding both against future contributors removing the
+    ``or None`` suffix. Mutation-pin verification (see PI-3.MUT in tasks.md)
+    confirms both sites produce observable failures when the suffix is
+    removed.
+    """
+
+    @pytest.mark.parametrize("entry_point", ["init_feature_state", "transition_phase"])
+    def test_workspace_uuid_empty_string_normalized_to_none(
+        self, entry_point, tmp_path,
+    ):
+        """Pinned across two entry points (see class docstring for context)."""
+        import asyncio
+        import workflow_state_server as wss
+        from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
+
+        db = EntityDatabase(str(tmp_path / "ws.db"))
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, str(tmp_path))
+        wss._workspace_uuid = ""  # critical: unset → empty string
+        wss._project_id = ""
+        wss._artifacts_root = str(tmp_path)
+
+        if entry_point == "init_feature_state":
+            # Exercises workflow_state_server.py line 1280:
+            # _process_init_feature_state forwards _workspace_uuid via
+            # `workspace_uuid=_workspace_uuid or None` to _lib_init_feature_state.
+            feature_dir = os.path.join(str(tmp_path), "features", "200-empty-ws")
+            os.makedirs(feature_dir, exist_ok=True)
+            result = _process_init_feature_state(
+                db, wss._engine, feature_dir, "200", "empty-ws", "standard",
+                "feature/200-empty-ws", None, None, "active",
+                artifacts_root=str(tmp_path),
+            )
+            data = json.loads(result)
+            assert data.get("created") is True, (
+                f"init_feature_state should succeed with empty _workspace_uuid "
+                f"via the `or None` coercion, got {data!r}"
+            )
+
+            entity = db.get_entity("feature:200-empty-ws")
+            assert entity is not None, (
+                "feature:200-empty-ws should exist after init_feature_state"
+            )
+            assert entity["workspace_uuid"] == _UNKNOWN_WORKSPACE_UUID, (
+                f"Empty _workspace_uuid must normalize to None and resolve to "
+                f"_UNKNOWN_WORKSPACE_UUID via project_id='__unknown__'; got "
+                f"workspace_uuid={entity['workspace_uuid']!r}"
+            )
+        else:
+            # Exercises workflow_state_server.py line 657:
+            # _process_transition_phase forwards _workspace_uuid via
+            # `workspace_uuid=_workspace_uuid or None` to entity_engine.transition_phase.
+            # We must seed a feature first (via init_feature_state under the same
+            # `or None` contract) so transition_phase has a target row.
+            feature_dir = os.path.join(str(tmp_path), "features", "201-empty-ws-tx")
+            os.makedirs(feature_dir, exist_ok=True)
+            # Pre-create spec.md so G-08 hard prereq passes for design transition
+            with open(os.path.join(feature_dir, "spec.md"), "w") as f:
+                f.write("# Spec\n")
+
+            init_result = _process_init_feature_state(
+                db, wss._engine, feature_dir, "201", "empty-ws-tx", "standard",
+                "feature/201-empty-ws-tx", None, None, "active",
+                artifacts_root=str(tmp_path),
+            )
+            init_data = json.loads(init_result)
+            assert init_data.get("created") is True, (
+                f"setup: init_feature_state must succeed first, got {init_data!r}"
+            )
+
+            # Now transition; this is the actual line-657 exercise.
+            tx_result = asyncio.run(
+                wss.transition_phase(
+                    feature_type_id="feature:201-empty-ws-tx",
+                    target_phase="design",
+                )
+            )
+            tx_data = json.loads(tx_result)
+            assert tx_data.get("transitioned") is True, (
+                f"transition_phase should succeed with empty _workspace_uuid "
+                f"via the `or None` coercion, got {tx_data!r}"
+            )
+
+            wp_row = db.get_workflow_phase("feature:201-empty-ws-tx")
+            assert wp_row is not None, (
+                "workflow_phases row should exist after transition_phase"
+            )
+            assert wp_row["workspace_uuid"] == _UNKNOWN_WORKSPACE_UUID, (
+                f"Empty _workspace_uuid must normalize to None and resolve to "
+                f"_UNKNOWN_WORKSPACE_UUID via project_id='__unknown__'; got "
+                f"workflow_phase row workspace_uuid={wp_row['workspace_uuid']!r}"
+            )
+
+
+class TestFilterStatesByWorkspaceExceptionHandling:
+    """FR-7: _filter_states_by_workspace narrows its except clause.
+
+    Pre-fix: ``except (json.JSONDecodeError, Exception):`` swallowed every
+    exception (including DB errors and bugs) and silently returned the
+    unfiltered cross-workspace JSON.
+
+    Post-fix:
+        - ``json.JSONDecodeError`` → return as-is (malformed engine output)
+        - ``sqlite3.OperationalError`` → ``_make_error`` JSON (db_unavailable)
+        - All other exceptions PROPAGATE to caller.
+    """
+
+    def test_filter_states_db_error_returns_error_json(
+        self, tmp_path, monkeypatch,
+    ):
+        """OperationalError from db.get_entity → _make_error JSON (FR-7.1)."""
+        import workflow_state_server as wss
+
+        db = EntityDatabase(str(tmp_path / "ws.db"))
+        from entity_registry.test_helpers import bootstrap_test_workspace
+        ws_a = bootstrap_test_workspace(db, "ws_a")
+        db.register_entity(
+            entity_type="feature",
+            entity_id="010-foo",
+            name="foo",
+            status="active",
+            workspace_uuid=ws_a,
+        )
+
+        def _boom(*args, **kwargs):
+            raise sqlite3.OperationalError("database is locked")
+
+        monkeypatch.setattr(db, "get_entity", _boom)
+        monkeypatch.setattr(wss, "_db", db)
+
+        results_json = json.dumps([
+            {"feature_type_id": "feature:010-foo"},
+        ])
+        out = wss._filter_states_by_workspace(results_json, ws_a)
+        parsed = json.loads(out)
+        assert parsed.get("error") is True, (
+            f"Expected _make_error JSON, got: {parsed!r}"
+        )
+        assert parsed.get("error_type") == "db_unavailable", (
+            f"Expected error_type='db_unavailable', got: {parsed!r}"
+        )
+        assert "database is locked" in parsed.get("message", ""), (
+            f"Expected exc message in response, got: {parsed!r}"
+        )
+
+    def test_filter_states_unexpected_error_propagates(
+        self, tmp_path, monkeypatch,
+    ):
+        """RuntimeError from db.get_entity must propagate (FR-7.1)."""
+        import workflow_state_server as wss
+
+        db = EntityDatabase(str(tmp_path / "ws.db"))
+        from entity_registry.test_helpers import bootstrap_test_workspace
+        ws_a = bootstrap_test_workspace(db, "ws_a")
+        db.register_entity(
+            entity_type="feature",
+            entity_id="011-bar",
+            name="bar",
+            status="active",
+            workspace_uuid=ws_a,
+        )
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("unexpected")
+
+        monkeypatch.setattr(db, "get_entity", _boom)
+        monkeypatch.setattr(wss, "_db", db)
+
+        results_json = json.dumps([
+            {"feature_type_id": "feature:011-bar"},
+        ])
+        with pytest.raises(RuntimeError, match="unexpected"):
+            wss._filter_states_by_workspace(results_json, ws_a)
+
 
 class TestSerializeStateDegradedLogicDeepened:
     """Mutation tests for _serialize_state degraded flag logic.
@@ -7359,7 +7694,11 @@ class TestReconcileApplyNoDirectionParamDeepened:
             "direction is hardcoded to meta_json_to_db per spec AC-14"
         )
         # And it must have exactly these params
-        expected_params = {"engine", "db", "artifacts_root", "feature_type_id", "dry_run"}
+        # Feature 113 FR-11.3: workspace_uuid kwarg added.
+        expected_params = {
+            "engine", "db", "artifacts_root", "feature_type_id", "dry_run",
+            "workspace_uuid",
+        }
         assert param_names == expected_params, (
             f"Unexpected params: {param_names - expected_params}"
         )
@@ -10159,3 +10498,138 @@ class TestFeature089BundleE:
             f"{drift!r}"
         )
         db.close()
+
+
+# ---------------------------------------------------------------------------
+# Feature 113 FR-11.3/4/5: reconcile_* MCP handlers thread workspace_uuid
+# ---------------------------------------------------------------------------
+
+
+class TestReconcileHandlersForwardWorkspaceUuid:
+    """FR-11.3/4/5 boundary pins: each reconcile_* MCP handler forwards
+    its module-level ``_workspace_uuid`` to the underlying orchestrator
+    (``apply_workflow_reconciliation`` / ``scan_all``).
+
+    Mutation pin: removing ``workspace_uuid=_workspace_uuid or None`` from
+    any of the 3 async handler bodies fails the corresponding test.
+    """
+
+    def test_reconcile_apply_forwards_workspace_uuid(self, tmp_path, monkeypatch):
+        """FR-11.3 pin: reconcile_apply → _process_reconcile_apply →
+        apply_workflow_reconciliation receives workspace_uuid kwarg.
+        """
+        import asyncio
+        import workflow_state_server as wss
+
+        db = EntityDatabase(str(tmp_path / "ws.db"))
+        from entity_registry.test_helpers import bootstrap_test_workspace
+        ws_a = bootstrap_test_workspace(db, "ws_a_recapply")
+
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, str(tmp_path))
+        wss._workspace_uuid = ws_a
+        wss._artifacts_root = str(tmp_path)
+
+        captured: list[dict] = []
+
+        def capture_apply(*args, **kwargs):
+            captured.append(dict(kwargs))
+            # Return a minimal ReconciliationResult-shaped object so the
+            # caller's JSON serialization step still succeeds.
+            from workflow_engine.reconciliation import ReconciliationResult
+            return ReconciliationResult(
+                actions=(),
+                summary={
+                    "reconciled": 0, "created": 0, "skipped": 0,
+                    "error": 0, "dry_run": 0, "kanban_fixed": 0,
+                    "cascades_recovered": 0,
+                },
+            )
+
+        monkeypatch.setattr(wss, "apply_workflow_reconciliation", capture_apply)
+
+        result = asyncio.run(wss.reconcile_apply())
+        # Sanity: handler did not error out before reaching apply.
+        data = json.loads(result)
+        assert "error" not in data, f"handler errored: {data!r}"
+
+        assert captured, "apply_workflow_reconciliation was never invoked"
+        assert captured[0].get("workspace_uuid") == ws_a, (
+            f"workspace_uuid not forwarded from reconcile_apply; "
+            f"captured kwargs={captured!r}"
+        )
+
+    def test_reconcile_frontmatter_forwards_workspace_uuid(
+        self, tmp_path, monkeypatch,
+    ):
+        """FR-11.4 pin: reconcile_frontmatter → _process_reconcile_frontmatter →
+        scan_all receives workspace_uuid kwarg.
+        """
+        import asyncio
+        import workflow_state_server as wss
+
+        db = EntityDatabase(str(tmp_path / "ws.db"))
+        from entity_registry.test_helpers import bootstrap_test_workspace
+        ws_a = bootstrap_test_workspace(db, "ws_a_recfm")
+
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, str(tmp_path))
+        wss._workspace_uuid = ws_a
+        wss._artifacts_root = str(tmp_path)
+
+        captured: list[dict] = []
+
+        def capture_scan(*args, **kwargs):
+            captured.append(dict(kwargs))
+            return []  # empty list of DriftReport
+
+        monkeypatch.setattr(wss, "scan_all", capture_scan)
+
+        result = asyncio.run(wss.reconcile_frontmatter())
+        data = json.loads(result)
+        assert "error" not in data, f"handler errored: {data!r}"
+
+        assert captured, "scan_all was never invoked"
+        assert captured[0].get("workspace_uuid") == ws_a, (
+            f"workspace_uuid not forwarded from reconcile_frontmatter; "
+            f"captured kwargs={captured!r}"
+        )
+
+    def test_reconcile_status_forwards_workspace_uuid(
+        self, tmp_path, monkeypatch,
+    ):
+        """FR-11.5 pin: reconcile_status → _process_reconcile_status →
+        scan_all receives workspace_uuid kwarg.
+        """
+        import asyncio
+        import workflow_state_server as wss
+
+        db = EntityDatabase(str(tmp_path / "ws.db"))
+        from entity_registry.test_helpers import bootstrap_test_workspace
+        ws_a = bootstrap_test_workspace(db, "ws_a_recstatus")
+
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, str(tmp_path))
+        wss._workspace_uuid = ws_a
+        wss._artifacts_root = str(tmp_path)
+
+        captured: list[dict] = []
+
+        def capture_scan(*args, **kwargs):
+            captured.append(dict(kwargs))
+            return []
+
+        monkeypatch.setattr(wss, "scan_all", capture_scan)
+
+        result = asyncio.run(wss.reconcile_status())
+        data = json.loads(result)
+        assert "error" not in data, f"handler errored: {data!r}"
+
+        assert captured, "scan_all was never invoked from reconcile_status"
+        assert captured[0].get("workspace_uuid") == ws_a, (
+            f"workspace_uuid not forwarded from reconcile_status; "
+            f"captured kwargs={captured!r}"
+        )

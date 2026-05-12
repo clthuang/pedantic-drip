@@ -336,11 +336,17 @@ def _reconcile_single_feature(
     db: EntityDatabase,
     report: WorkflowDriftReport,
     dry_run: bool,
+    *,
+    workspace_uuid: str | None = None,
 ) -> ReconcileAction:
     """Execute reconciliation for one feature based on its drift report.
 
     report.meta_json contains all needed .meta.json data -- separate meta
     parameter unnecessary since drift detection already derived the state.
+
+    Feature 113 FR-11.1: ``workspace_uuid`` is forwarded to
+    ``db.update_workflow_phase`` calls so the FR-4.1 read-side assertion
+    runs (None is a no-op).
     """
     direction = "meta_json_to_db"
     feature_type_id = report.feature_type_id
@@ -371,6 +377,8 @@ def _reconcile_single_feature(
                 )
                 if expected_kanban is not None:
                     kwargs["kanban_column"] = expected_kanban
+                # FR-11.1: forward workspace_uuid (None is a no-op per FR-4.1).
+                kwargs["workspace_uuid"] = workspace_uuid
                 db.update_workflow_phase(feature_type_id, **kwargs)
             except ValueError as exc:
                 return ReconcileAction(
@@ -459,8 +467,10 @@ def _reconcile_single_feature(
                             status=meta.get("status"),
                         )
                         if expected_kanban is not None:
+                            # FR-11.1: forward workspace_uuid.
                             db.update_workflow_phase(
                                 feature_type_id, kanban_column=expected_kanban,
+                                workspace_uuid=workspace_uuid,
                             )
                 except ValueError as exc:
                     return ReconcileAction(
@@ -759,6 +769,8 @@ def apply_workflow_reconciliation(
     artifacts_root: str,
     feature_type_id: str | None = None,
     dry_run: bool = False,
+    *,
+    workspace_uuid: str | None = None,
 ) -> ReconciliationResult:
     """Sync .meta.json workflow state to DB for drifted features.
 
@@ -777,6 +789,10 @@ def apply_workflow_reconciliation(
         If provided, reconcile single feature. If None, reconcile all.
     dry_run : bool
         If True, compute changes without applying.
+    workspace_uuid : str | None
+        Feature 113 FR-11.1: forwarded to ``db.update_workflow_phase`` so
+        the FR-4.1 read-side assertion runs. ``None`` is a no-op
+        (preserves NFR-3 backward compatibility).
 
     Returns
     -------
@@ -791,7 +807,9 @@ def apply_workflow_reconciliation(
     actions: list[ReconcileAction] = []
     for report in drift_result.features:
         try:
-            action = _reconcile_single_feature(db, report, dry_run)
+            action = _reconcile_single_feature(
+                db, report, dry_run, workspace_uuid=workspace_uuid,
+            )
             actions.append(action)
         except Exception as exc:
             actions.append(ReconcileAction(
