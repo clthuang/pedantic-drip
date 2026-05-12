@@ -1,6 +1,6 @@
 ---
-last-updated: 2026-04-29T00:00:00Z
-source-feature: 078-cc-native-integration
+last-updated: 2026-05-13T00:00:00Z
+source-feature: 109-polymorphic-taxonomy-and-event
 audit-feature: 098-tier-doc-frontmatter-sweep
 ---
 
@@ -125,6 +125,64 @@ Shared procedural library included by all phase commands. Two primary functions:
 Centralizes metadata parsing and schema validation for entity types. `parse_metadata()` always returns `{}` for None/invalid input. `validate_metadata()` is warn-only.
 
 `METADATA_SCHEMAS['feature']` defines expected keys including `phase_summaries: list` (added in feature 075).
+
+## Polymorphic Entity Taxonomy (Feature 109)
+
+Feature 109 replaces the flat `entity_type` string column with a three-column discriminator, moves all state writes through a single event-append helper, and adds atomic promotion.
+
+### Entity Discriminator Columns
+
+The `entities` table no longer carries an `entity_type` column. Entities are identified by three columns added in migration 12:
+
+| Column | Type | Domain | Purpose |
+|--------|------|--------|---------|
+| `type` | TEXT NOT NULL | `workspace`, `work`, `container`, `brainstorm` | Top-level polymorphic discriminator (storage shape) |
+| `kind` | TEXT NOT NULL | per-`type`; e.g., `feature`, `backlog`, `project`, `brainstorm`, `workspace` | Semantic subtype |
+| `lifecycle_class` | TEXT NOT NULL | `feature_flow`, `work_flow`, `container_flow`, `brainstorm_flow`, `none` | State-machine selector (routing deferred to feature 110) |
+
+A composite CHECK constraint enforces valid `(type, kind)` pairs at the schema level. An index `idx_entities_type_kind ON entities(type, kind)` supports polymorphic-query workloads.
+
+The `(workspace_uuid, type_id)` UNIQUE constraint from feature 108 is preserved. `type_id` format is unchanged (`{kind}:{entity_id}`).
+
+**Backfill mapping (migration 12):**
+
+| Legacy `entity_type` | `type` | `kind` | `lifecycle_class` |
+|----------------------|--------|--------|------------------|
+| `feature` | `work` | `feature` | `feature_flow` |
+| `backlog` | `work` | `backlog` | `work_flow` |
+| `brainstorm` | `brainstorm` | `brainstorm` | `brainstorm_flow` |
+| `project` | `container` | `project` | `container_flow` |
+| `workspace` | `workspace` | `workspace` | `none` |
+
+`entities_fts` (FTS5 virtual table) was rebuilt in migration 12 to use `kind` as the search column in place of `entity_type`.
+
+### Migration 12 — Single-Transaction Pattern
+
+`_migration_12_polymorphic_taxonomy_and_events` follows the established migration discipline:
+
+- `PRAGMA foreign_keys = OFF` is set **outside** the transaction.
+- A single `BEGIN IMMEDIATE` transaction wraps all sub-steps: column additions, backfill UPDATEs, CHECK expansion via copy-rename, FTS5 rebuild, `entity_type` column drop, `phase_events` schema changes via copy-rename, trigger drops, index creation, and `schema_version = 12` stamp.
+- `foreign_key_check` runs pre- and post-migration inside the transaction; any violation aborts with rollback.
+- A one-shot rollback function (`_migration_12_..._down`) is registered in `MIGRATIONS_DOWN[12]`, consistent with the feature 108 precedent.
+
+Column-set and trigger-set discovery use `PRAGMA table_info(entities)` and `SELECT name, sql FROM sqlite_master WHERE type='trigger'` at runtime (not hard-coded column lists), protecting against undetected schema drift from prior migrations.
+
+**SQLite version–aware `DROP COLUMN`:** migration 12 issues `ALTER TABLE entities DROP COLUMN entity_type` directly. SQLite 3.35+ supports this natively; if an older SQLite is detected at runtime, the migration falls back to a second copy-rename pass.
+
+### Trigger Enforcement → Python-Layer Enforcement
+
+12 trigger definitions were removed in migration 12:
+
+| Trigger | Prior source-code sites | Reason removed |
+|---------|------------------------|----------------|
+| `enforce_immutable_entity_type` | 6 (lines 136, 254, 655, 1101, 1988, 2414 in `database.py`) | Blocked the F11 `entity_type → kind` backfill UPDATE and F3 `promote_entity` kind rewrite |
+| `enforce_immutable_type_id` | 6 (lines 130, 249, 650, 1096, 1983, 2409 in `database.py`) | Blocked F3 `type_id` prefix rewrite in `promote_entity` |
+
+Immutability of `entities.status` and `workflow_phases.workflow_phase` is now enforced at the **Python layer** via three complementary mechanisms (spec FR-2, TD-1):
+
+1. `EntityDatabase.append_phase_event(...)` is the **only** public method that writes `entities.status` or `workflow_phases.workflow_phase`. All other public methods delegate through it.
+2. A static-grep CI test (`test_no_direct_status_updates`) asserts 0 matches for `UPDATE entities SET status` outside the `append_phase_event` body.
+3. The doctor session-start health check `check_status_write_path` (see doctor section) runs the same grep at session start and warns on violations.
 
 ## Phase Summaries (Feature 075)
 
