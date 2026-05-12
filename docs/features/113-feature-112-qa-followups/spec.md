@@ -313,7 +313,8 @@ No workspace_uuid threading needed for `check_workflow_drift(engine, db, artifac
 
 **FR-11.3 (extend `_process_reconcile_status`):** Add `workspace_uuid: str | None = None` kwarg to `_process_reconcile_status(...)` at workflow_state_server.py:1366. Forward to:
 - `scan_all(db, artifacts_root, workspace_uuid=workspace_uuid)` at line 1381 (post-FR-11.2 extended signature).
-- Internal `apply_workflow_reconciliation(...)` invocation if/when made.
+
+No `apply_workflow_reconciliation` forwarding needed here — verified at phase-review iter 2: `apply_workflow_reconciliation` is only invoked at workflow_state_server.py:1199 (inside `_process_reconcile_apply`), NOT inside `_process_reconcile_status`. Decision locked at spec time.
 
 **FR-11.4 (MCP handler forwarding):** `reconcile_apply`, `reconcile_frontmatter`, and `reconcile_status` async MCP handlers each pass `workspace_uuid=_workspace_uuid or None` to their `_process_*` helpers (handler bodies at workflow_state_server.py:1678-1693, 1694-1704, 1705+ respectively).
 
