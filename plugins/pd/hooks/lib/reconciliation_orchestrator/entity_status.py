@@ -44,7 +44,12 @@ def _sync_meta_json_entities(db, full_artifacts_path, subdir, entity_type, proje
         if not os.path.isfile(meta_path):
             # .meta.json deleted — archive entity if it exists
             try:
-                db.update_entity(type_id, status="archived", project_id=project_id, workspace_uuid=workspace_uuid)
+                db.update_entity(
+                    type_id,
+                    status="archived",
+                    project_id=project_id if workspace_uuid is None else None,
+                    workspace_uuid=workspace_uuid,
+                )
                 results["archived"] += 1
             except ValueError:
                 pass  # entity not in registry, skip
@@ -69,7 +74,12 @@ def _sync_meta_json_entities(db, full_artifacts_path, subdir, entity_type, proje
             continue
 
         if entity["status"] != meta_status:
-            db.update_entity(type_id, status=meta_status, project_id=project_id, workspace_uuid=workspace_uuid)
+            db.update_entity(
+                type_id,
+                status=meta_status,
+                project_id=project_id if workspace_uuid is None else None,
+                workspace_uuid=workspace_uuid,
+            )
             results["updated"] += 1
         else:
             results["skipped"] += 1
@@ -186,7 +196,12 @@ def _sync_brainstorm_entities(
         if not entity.get("artifact_path"):
             continue
         try:
-            db.update_entity(entity["type_id"], status="archived", project_id=project_id, workspace_uuid=workspace_uuid)
+            db.update_entity(
+                entity["type_id"],
+                status="archived",
+                project_id=project_id if workspace_uuid is None else None,
+                workspace_uuid=workspace_uuid,
+            )
             results["archived"] += 1
         except ValueError:
             pass  # entity disappeared between list and update, skip
@@ -317,7 +332,12 @@ def _sync_backlog_entities(db, full_artifacts_path, artifacts_root, project_id, 
             )
             results["registered"] += 1
         elif existing["status"] != status:
-            db.update_entity(type_id, status=status, project_id=project_id, workspace_uuid=workspace_uuid)
+            db.update_entity(
+                type_id,
+                status=status,
+                project_id=project_id if workspace_uuid is None else None,
+                workspace_uuid=workspace_uuid,
+            )
             results["updated"] += 1
         else:
             results["skipped"] += 1
