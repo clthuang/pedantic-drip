@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.17.3] - 2026-05-13
+
+### Added
+
+- **`upsert_entity` MCP tool** (feature 109) — idempotent insert-or-status-update for entity registry; three-branch semantics: create if absent, update status if changed, no-op if identical. Use this when callers want pre-feature-109 silent-insert behavior.
+- **`promote_entity` MCP tool** (feature 109) — atomic entity-lifecycle promotion with parent-rewrite. Replaces caller-side parent-rewrite chains.
+- **`check_status_write_path` doctor health check** (feature 109) — AST-based enforcement that `status` and `workflow_phases` writes only go through `append_phase_event`. Brings the total doctor check count from 14 to 15.
+
+### Changed
+
+- **`register_entity` conflict behavior** (feature 109) — now raises `EntityExistsError` on `(workspace_uuid, type_id)` conflict instead of silently ignoring the insert (`INSERT OR IGNORE`). Callers that want idempotent behavior should switch to `upsert_entity`.
+- **Polymorphic entity taxonomy** (feature 109) — entities are now typed via `type` + `kind` + `lifecycle_class` discriminators; the `entity_type` column has been dropped. Workspace isolation is enforced by a `UNIQUE(workspace_uuid, type_id)` composite constraint.
+- **`phase_events` schema** (feature 109) — extended with `workspace_uuid` and `metadata` columns; `phase` column made nullable; CHECK constraint widened to cover 7 event types (previously 4), including the new `entity_promoted` type.
+
+### Removed
+
+- **12 SQLite triggers** (feature 109) — `enforce_immutable_entity_type` and `enforce_immutable_type_id` (6 sites each) removed. Immutability is now enforced at the Python layer.
+
 ## [4.17.2] - 2026-05-12
 
 ### Added

@@ -8,6 +8,7 @@ import os
 import sqlite3
 import time
 
+from doctor.check_status_write_path import check_status_write_path
 from doctor.checks import (
     _build_local_entity_set,
     check_backlog_status,
@@ -44,6 +45,9 @@ CHECK_ORDER = [
     check_config_validity,
     check_security_review_command,
     check_stale_worktrees,
+    # Feature 109 / AC-2.1 + AC-2.6 (Group 10): static-grep audit for
+    # direct status writes that bypass the append_phase_event sole-writer.
+    check_status_write_path,
 ]
 
 # Checks that require entity DB

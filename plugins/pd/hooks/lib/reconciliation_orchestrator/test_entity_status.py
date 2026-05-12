@@ -502,12 +502,17 @@ class TestSyncBacklogEntities:
         ws_uuid = ws_row["uuid"]
         db._conn.execute("CREATE TABLE entities_bak AS SELECT * FROM entities")
         db._conn.execute("DROP TABLE entities")
+        # Feature 109 Migration 12 added 3 columns (type/kind/
+        # lifecycle_class) and Group 7 dropped entity_type. The fixture
+        # rebuilds the table without the UNIQUE(workspace_uuid, type_id)
+        # constraint for dedup testing but must mirror the post-v12
+        # column layout so the ``INSERT INTO entities SELECT * FROM
+        # entities_bak`` row-shape match keeps working.
         db._conn.execute("""
             CREATE TABLE entities (
                 uuid TEXT NOT NULL PRIMARY KEY,
                 workspace_uuid TEXT NOT NULL,
                 type_id TEXT NOT NULL,
-                entity_type TEXT NOT NULL,
                 entity_id TEXT NOT NULL,
                 name TEXT NOT NULL,
                 status TEXT,
@@ -515,16 +520,23 @@ class TestSyncBacklogEntities:
                 artifact_path TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
-                metadata TEXT
+                metadata TEXT,
+                type TEXT NOT NULL DEFAULT 'work',
+                kind TEXT NOT NULL DEFAULT 'feature',
+                lifecycle_class TEXT NOT NULL DEFAULT 'feature_flow'
             )
         """)
         db._conn.execute("INSERT INTO entities SELECT * FROM entities_bak")
         db._conn.execute("DROP TABLE entities_bak")
-        # Now insert the duplicate (same workspace_uuid + type_id, different uuid).
+        # Now insert the duplicate (same workspace_uuid + type_id,
+        # different uuid). F11 (Group 7): kind replaces entity_type;
+        # supply the (type, lifecycle_class) discriminators per FR-1.
         db._conn.execute(
-            "INSERT INTO entities (uuid, entity_type, entity_id, type_id, name, "
-            "artifact_path, status, workspace_uuid, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+            "INSERT INTO entities (uuid, kind, entity_id, type_id, name, "
+            "artifact_path, status, workspace_uuid, created_at, updated_at, "
+            "type, lifecycle_class) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), "
+            "'work', 'work_flow')",
             (str(uuid_mod.uuid4()), "backlog", "00020", "backlog:00020",
              "00020", "docs/backlog.md", None, ws_uuid),
         )
@@ -821,12 +833,17 @@ class TestDedupEdgeCases:
         ws_uuid = ws_row["uuid"]
         db._conn.execute("CREATE TABLE entities_bak AS SELECT * FROM entities")
         db._conn.execute("DROP TABLE entities")
+        # Feature 109 Migration 12 added 3 columns (type/kind/
+        # lifecycle_class) and Group 7 dropped entity_type. The fixture
+        # rebuilds the table without the UNIQUE(workspace_uuid, type_id)
+        # constraint for dedup testing but must mirror the post-v12
+        # column layout so the ``INSERT INTO entities SELECT * FROM
+        # entities_bak`` row-shape match keeps working.
         db._conn.execute("""
             CREATE TABLE entities (
                 uuid TEXT NOT NULL PRIMARY KEY,
                 workspace_uuid TEXT NOT NULL,
                 type_id TEXT NOT NULL,
-                entity_type TEXT NOT NULL,
                 entity_id TEXT NOT NULL,
                 name TEXT NOT NULL,
                 status TEXT,
@@ -834,18 +851,24 @@ class TestDedupEdgeCases:
                 artifact_path TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
-                metadata TEXT
+                metadata TEXT,
+                type TEXT NOT NULL DEFAULT 'work',
+                kind TEXT NOT NULL DEFAULT 'feature',
+                lifecycle_class TEXT NOT NULL DEFAULT 'feature_flow'
             )
         """)
         db._conn.execute("INSERT INTO entities SELECT * FROM entities_bak")
         db._conn.execute("DROP TABLE entities_bak")
 
-        # Insert two entities with null status
+        # Insert two entities with null status. F11 (Group 7): kind
+        # replaces entity_type; supply (type, lifecycle_class) per FR-1.
         for _ in range(2):
             db._conn.execute(
-                "INSERT INTO entities (uuid, entity_type, entity_id, type_id, name, "
-                "artifact_path, status, workspace_uuid, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+                "INSERT INTO entities (uuid, kind, entity_id, type_id, name, "
+                "artifact_path, status, workspace_uuid, created_at, updated_at, "
+                "type, lifecycle_class) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), "
+                "'work', 'work_flow')",
                 (str(uuid_mod.uuid4()), "backlog", "00050", "backlog:00050",
                  "Test item", "docs/backlog.md", None, ws_uuid),
             )

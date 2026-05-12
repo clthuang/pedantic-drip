@@ -440,9 +440,10 @@ class TestIdempotencyAndPriority:
             entity = db.get_entity("brainstorm:20260227-dup")
             assert entity is not None
 
-            # Count all brainstorm entities
+            # Count all brainstorm entities. F11 (feature 109): entity_type
+            # column dropped; kind replaces it.
             cur = db._conn.execute(
-                "SELECT COUNT(*) FROM entities WHERE entity_type = 'brainstorm'"
+                "SELECT COUNT(*) FROM entities WHERE kind = 'brainstorm'"
             )
             count = cur.fetchone()[0]
             assert count == 1  # only one brainstorm registered

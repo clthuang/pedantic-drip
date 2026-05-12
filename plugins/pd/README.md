@@ -58,7 +58,7 @@ flowchart TD
 | Agents | 29 |
 | Commands | 35 |
 | Hooks | 19 |
-| MCP Tools | 44 |
+| MCP Tools | 46 |
 
 ## Commands
 
@@ -90,7 +90,7 @@ flowchart TD
 | `/pd:retrospect` | Capture learnings |
 | `/pd:add-to-backlog <idea>` | Capture ideas for later |
 | `/pd:cleanup-brainstorms` | Delete old scratch files |
-| `/pd:doctor` | Run 14 diagnostic checks on pd workspace health (incl. security-review command and stale worktrees) |
+| `/pd:doctor` | Run 15 diagnostic checks on pd workspace health (incl. security-review command and stale worktrees) |
 | `/pd:sync-cache` | Reload plugin after changes |
 | `/pd:secretary` | Intelligent task routing to commands, agents, and skills |
 | `/pd:root-cause-analysis` | Investigate bugs and failures to find all root causes |
@@ -228,11 +228,13 @@ $PLUGIN_ROOT/.venv/bin/pip install "google-genai>=1.0,<2"
 
 ### Entity Registry Server
 
-The entity registry server (`mcp/entity_server.py`) exposes eight tools for entity lineage tracking:
+The entity registry server (`mcp/entity_server.py`) exposes ten tools for entity lineage tracking:
 
 | Tool | Purpose |
 |------|---------|
-| `register_entity` | Register a new entity (feature, project, brainstorm) with type and status |
+| `register_entity` | Register a new entity (feature, project, brainstorm) with type and status; raises `EntityExistsError` on `(workspace_uuid, type_id)` conflict |
+| `upsert_entity` | Idempotent insert-or-status-update; use when pre-existing entities should be updated rather than rejected |
+| `promote_entity` | Atomically promote an entity's lifecycle phase and rewrite parent relationships |
 | `set_parent` | Set a parent-child relationship between two entities |
 | `get_entity` | Retrieve entity details by type_id |
 | `get_lineage` | Get the full lineage tree for an entity (ancestors and descendants) |

@@ -1,6 +1,6 @@
 ---
-last-updated: 2026-04-29T00:00:00Z
-source-feature: codebase-analysis
+last-updated: 2026-05-13T00:00:00Z
+source-feature: 109-polymorphic-taxonomy-and-event
 audit-feature: 098-tier-doc-frontmatter-sweep
 ---
 
@@ -73,15 +73,69 @@ reconcile_apply(type_id: str, dry_run: bool) -> {"applied": list[str], "errors":
 
 ### register_entity
 
+Raises `EntityExistsError` on `(workspace_uuid, type_id)` conflict — no silent ignore (feature 109, FR-4).
+
 ```
 register_entity(
-    type_id: str,           # "{entity_type}:{entity_id}", colon separator (not slash)
+    type_id: str,           # "{kind}:{entity_id}", colon separator (not slash)
     name: str,
     artifact_path: str | None,
     parent_type_id: str | None,
     metadata: dict | str,   # dict preferred; auto-coerced to JSON string
-)
+) -> str                    # entity uuid
 ```
+
+**Exception:** `EntityExistsError(ValueError)` — raised when the `(workspace_uuid, type_id)` pair already exists. Carries `.workspace_uuid` and `.type_id` attributes for caller inspection. Defined in `database.py` (not a separate `exceptions.py`).
+
+### upsert_entity
+
+Idempotent insert-or-status-update. Byte-identical signature to `register_entity` (feature 109, FR-4).
+
+```
+upsert_entity(
+    type_id: str,
+    name: str,
+    artifact_path: str | None,
+    parent_type_id: str | None,
+    metadata: dict | str,
+) -> str                    # entity uuid (existing or newly created)
+```
+
+**Semantics (three branches):**
+
+| Branch | Condition | Side effects |
+|--------|-----------|-------------|
+| Insert | No existing `(workspace_uuid, type_id)` row | INSERT + emit `entity_created` phase_event (identical to `register_entity`) |
+| Conflict + status change | Row exists, `status` differs | UPDATE `status` + `updated_at`, emit `entity_status_changed` phase_event with `metadata={"old_status": ..., "new_status": ...}` |
+| Conflict + no status change | Row exists, `status` same or not passed | No-op — no UPDATE, no event emitted, `updated_at` unchanged |
+
+`name`, `parent_uuid`, and `metadata` are **never updated** on the conflict branch. Use `update_entity` for those fields.
+
+### promote_entity
+
+Atomically promotes an entity to a new kind within the same workspace, rewriting the `type_id` prefix (feature 109, FR-3).
+
+```
+promote_entity(
+    uuid: str,
+    new_kind: str,
+    new_lifecycle_class: str,
+    project_id: str | None = None,
+) -> dict                   # updated entity row
+```
+
+**Operation (single transaction):**
+
+1. Pre-flight: read existing row by `uuid`; if the new `type_id` would collide with an existing `(workspace_uuid, new_type_id)` row, raise `PromotionConflictError`.
+2. `UPDATE entities SET kind = ?, lifecycle_class = ?, type_id = ?, updated_at = ?`; the `type_id` prefix is rewritten using first-colon split (`backlog:42` → `feature:42`; subsequent colons in the suffix are preserved verbatim).
+3. Append `entity_promoted` phase_event via `append_phase_event`, keyed on the new `type_id`. Metadata payload: `{"old_kind", "new_kind", "old_lifecycle_class", "new_lifecycle_class", "old_type_id", "new_type_id"}`.
+4. Return updated entity dict.
+
+The `uuid` and `workspace_uuid` are never changed. Dependencies referencing the uuid remain valid.
+
+**Exception:** `PromotionConflictError(ValueError)` — raised on `(workspace_uuid, new_type_id)` collision. Carries `.workspace_uuid`, `.old_type_id`, `.new_type_id`. Defined in `database.py`.
+
+**Allowed transitions:** any `(new_kind, new_lifecycle_class)` pair that satisfies the FR-1 composite CHECK constraint. Business-logic restrictions (e.g., only `backlog → feature`) must be enforced by callers.
 
 ### update_entity
 
@@ -117,6 +171,51 @@ get_lineage(
 ```
 
 Returns a human-readable formatted tree, not a structured list. Parse caller-side if structured access is needed.
+
+### append_phase_event
+
+Sole write path for `entities.status` and `workflow_phases.workflow_phase` mutations (feature 109, FR-2 Path A). Returns the event uuid.
+
+```
+append_phase_event(
+    type_id: str,
+    event_type: str,                # see domain table below
+    *,
+    metadata: dict | None = None,   # event-specific JSON payload
+    project_id: str | None = None,
+    iterations: int | None = None,
+    reviewer_notes: str | None = None,
+) -> str                            # event uuid
+```
+
+**Event type domain (expanded from 4 → 7 values in feature 109):**
+
+| `event_type` | `phase` | `metadata` | Projection target |
+|-------------|---------|-----------|------------------|
+| `started` | required | NULL | `workflow_phases.workflow_phase` |
+| `completed` | required | NULL | `workflow_phases.workflow_phase` |
+| `skipped` | required | NULL | `workflow_phases.workflow_phase` |
+| `backward` | required (target phase) | NULL | `workflow_phases.workflow_phase` |
+| `entity_created` | NULL | optional (creation context) | `entities.status` |
+| `entity_status_changed` | NULL | **required** `{"old_status": ..., "new_status": ...}` | `entities.status` |
+| `entity_promoted` | NULL | **required** `{"old_kind", "new_kind", "old_lifecycle_class", "new_lifecycle_class", "old_type_id", "new_type_id"}` | `entities.status` |
+
+**Operation order (single transaction):** INSERT phase_events row → UPDATE `entities.status` (entity_* event types only) → UPDATE `workflow_phases.workflow_phase` (workflow event types only). If any UPDATE step raises, the transaction rolls back and the event row is also discarded.
+
+Passing params that are invalid for the given `event_type` (e.g., `iterations=1` with `event_type='entity_created'`) raises `ValueError`.
+
+## phase_events Schema (Feature 109)
+
+Migration 12 extends the `phase_events` table via copy-rename:
+
+| Column | Change | Notes |
+|--------|--------|-------|
+| `event_type` CHECK | Expanded 4 → 7 values | Adds `entity_created`, `entity_status_changed`, `entity_promoted` |
+| `phase` | Relaxed `NOT NULL` → NULL-able | New entity event types have no meaningful `phase` value |
+| `metadata` | **New column** `TEXT` (JSON), NULL-able | Event-specific payload; required for `entity_status_changed` and `entity_promoted` |
+| `workspace_uuid` | **New column** `TEXT`, NULL-able | Workspace scope for entity events; NULL for workflow phase events |
+
+Existing rows (`started`, `completed`, `skipped`, `backward`) remain valid after the migration — legacy data is preserved unchanged (append-only event log).
 
 ## Entity Metadata Contracts
 

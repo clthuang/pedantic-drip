@@ -11,6 +11,7 @@ import sqlite3
 import sys
 from collections import defaultdict
 
+from entity_registry.database import EntityExistsError
 from entity_registry.metadata import parse_metadata as _parse_metadata
 from sqlite_retry import with_retry
 
@@ -267,17 +268,45 @@ def _process_register_entity(
         # genuinely supplied. Callers in the MCP layer coerce missing
         # workspace identity to "" before reaching this wrapper.
         ws_uuid_kwarg = workspace_uuid or None
-        db.register_entity(
-            entity_type=entity_type,
-            entity_id=entity_id,
-            name=name,
-            artifact_path=artifact_path,
-            status=status,
-            parent_uuid=parent_uuid,
-            metadata=metadata,
-            project_id=project_id if ws_uuid_kwarg is None else None,
-            workspace_uuid=ws_uuid_kwarg,
-        )
+        # F12 audit: conflict-is-error -> register_entity, EntityExistsError handled
+        # Server-helpers wraps register_entity so MCP callers see the legacy
+        # "Already existed: ..." concise format (rather than the structured
+        # JSON error from design \u00a73.5 \u2014 that shape is reserved for direct MCP
+        # tool entry points in entity_server.py).
+        try:
+            db.register_entity(
+                entity_type=entity_type,
+                entity_id=entity_id,
+                name=name,
+                artifact_path=artifact_path,
+                status=status,
+                parent_uuid=parent_uuid,
+                metadata=metadata,
+                project_id=project_id if ws_uuid_kwarg is None else None,
+                workspace_uuid=ws_uuid_kwarg,
+            )
+        except EntityExistsError:
+            # F12 audit: register_entity removed the on-duplicate parent_uuid
+            # fixup (design \u00a73.1). Replicate the legacy parent-application
+            # behavior here by explicitly calling set_parent on the parentless
+            # existing entity when caller supplied parent_type_id.
+            if parent_type_id and existing_parent is None:
+                try:
+                    db.set_parent(type_id, parent_type_id=parent_type_id)
+                except Exception as set_exc:
+                    print(
+                        f"server_helpers: set_parent on duplicate failed: {set_exc}",
+                        file=sys.stderr,
+                    )
+            updated = db.get_entity(type_id)
+            if (
+                parent_type_id
+                and existing_parent is None
+                and updated
+                and updated.get("parent_type_id") == parent_type_id
+            ):
+                return f"Already existed: {type_id} \u2014 parent applied ({parent_type_id})"
+            return f"Already existed: {type_id} \u2014 no changes"
         if existing is None:
             return f"Registered: {type_id}"
         if parent_type_id and existing_parent is None:

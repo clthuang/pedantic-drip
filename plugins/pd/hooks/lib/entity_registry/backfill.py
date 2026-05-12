@@ -399,7 +399,8 @@ def _scan_backlog(db: EntityDatabase, artifacts_root: str, project_id: str = "__
             truncated = description[:80].rsplit(" ", 1)[0]
             title = (truncated if truncated != description[:80] else description[:80]) + "\u2026"
 
-        db.register_entity(
+        # F12 audit: idempotent backfill → upsert_entity
+        db.upsert_entity(
             entity_type="backlog",
             entity_id=item_id,
             name=title,
@@ -490,7 +491,8 @@ def _scan_projects(db: EntityDatabase, artifacts_root: str, project_id: str = "_
         proj_entity_id = meta.get("id", "")
         name = meta.get("name", proj_entity_id)
 
-        db.register_entity(
+        # F12 audit: idempotent backfill → upsert_entity
+        db.upsert_entity(
             entity_type="project",
             entity_id=proj_entity_id,
             name=name,
@@ -527,7 +529,8 @@ def _scan_features(db: EntityDatabase, artifacts_root: str, project_id: str = "_
         if "depends_on_features" in meta:
             entity_meta = {"depends_on_features": meta["depends_on_features"]}
 
-        type_id = db.register_entity(
+        # F12 audit: idempotent backfill → upsert_entity
+        type_id = db.upsert_entity(
             entity_type="feature",
             entity_id=entity_id,
             name=name,
@@ -644,7 +647,8 @@ def _register_synthetic(
 
     Returns the constructed type_id.
     """
-    return db.register_entity(
+    # F12 audit: idempotent backfill → upsert_entity
+    return db.upsert_entity(
         entity_type=entity_type,
         entity_id=entity_id,
         name=name,
@@ -745,7 +749,8 @@ def _register_brainstorm(db: EntityDatabase, path: str, stem: str, project_id: s
     title = _extract_prd_title(content, stem)
     parent_type_id = _derive_parent("brainstorm", {}, content)
 
-    db.register_entity(
+    # F12 audit: idempotent backfill → upsert_entity
+    db.upsert_entity(
         entity_type="brainstorm",
         entity_id=stem,
         name=title,

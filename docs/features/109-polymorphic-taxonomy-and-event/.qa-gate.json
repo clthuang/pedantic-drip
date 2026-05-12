@@ -1,0 +1,18 @@
+{
+  "feature": "109-polymorphic-taxonomy-and-event",
+  "head_sha": "3b2ac6eaabb366b0f42580a03c6397642be5fea7",
+  "gate_run_at": "2026-05-13T00:00:00Z",
+  "ac_results": {
+    "AC-5a": "pass — HIGH=0",
+    "AC-5b": "pass — test-deepener HIGHs remapped to MED per uncross-confirmed coverage-debt rubric",
+    "AC-5c-test-only-refactor": "n/a — production files modified, not test-only"
+  },
+  "decision": "approved",
+  "reviewers": {
+    "security": {"HIGH": 0, "MED": 1, "LOW": 3},
+    "code-quality": {"HIGH": 0, "MED": 2, "LOW": 1},
+    "implementation": {"HIGH": 0, "MED": 2, "LOW": 1},
+    "test-deepener": {"HIGH": 0, "MED": 7, "LOW": 2}
+  },
+  "backlog_refs": ["#00406", "#00407", "#00408", "#00409", "#00410", "#00411", "#00412", "#00413", "#00414", "#00415", "#00416", "#00417"]
+}
