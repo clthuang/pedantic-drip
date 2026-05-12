@@ -191,7 +191,7 @@ If brainstorm has a backlog parent (backlog_source was found), set the parent re
 ```
 set_parent(
   type_id="brainstorm:{filename-stem}",
-  parent_type_id="backlog:{backlog_source id}"
+  parent_ref="backlog:{backlog_source id}"
 )
 ```
 
@@ -208,12 +208,12 @@ If the call fails, warn `"Brainstorm promotion failed: {error}"` but do NOT bloc
 
 ### 3. Register Feature Entity
 
-Derive the parent_type_id:
-- If `brainstorm_source` exists: `parent_type_id = "brainstorm:{filename-stem}"`
-- Else if `backlog_source` exists (no brainstorm): `parent_type_id = "backlog:{backlog_source id}"`
-- Else: `parent_type_id = null` (no parent)
+Derive the parent reference (used at registration time to populate `parent_uuid`):
+- If `brainstorm_source` exists: `parent_ref = "brainstorm:{filename-stem}"`
+- Else if `backlog_source` exists (no brainstorm): `parent_ref = "backlog:{backlog_source id}"`
+- Else: `parent_ref = null` (no parent)
 
-Call `register_entity` MCP tool:
+Resolve `parent_ref` to a uuid via `get_entity(ref="{parent_ref}")` (skip if `parent_ref` is null), then call `register_entity` MCP tool:
 ```
 register_entity(
   entity_type="feature",
@@ -221,7 +221,7 @@ register_entity(
   name="{slug}",
   artifact_path="{pd_artifacts_root}/features/{id}-{slug}/",
   status="active",
-  parent_type_id="{derived parent_type_id}"
+  parent_uuid="{resolved parent uuid, or omit if null}"
 )
 ```
 

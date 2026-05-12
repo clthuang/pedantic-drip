@@ -237,6 +237,8 @@ For each feature in `execution_order`:
 
    Build the `depends_on_features` metadata as a list of `"feature:{dep-id}-{dep-slug}"` strings from the feature's `depends_on` array.
 
+   First resolve the project parent: `get_entity(ref="project:{project P-ID}")` → capture `uuid` as `project_uuid`.
+
    Call `register_entity` MCP tool:
    ```
    register_entity(
@@ -245,7 +247,7 @@ For each feature in `execution_order`:
      name="{feature name from decomposition}",
      artifact_path="{pd_artifacts_root}/features/{id}-{slug}/",
      status="planned",
-     parent_type_id="project:{project P-ID}",
+     parent_uuid="{project_uuid}",
      metadata='{"depends_on_features": ["feature:{dep-id}-{dep-slug}", ...]}'
    )
    ```

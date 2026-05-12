@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from entity_registry.dependencies import DependencyManager
 from entity_registry.id_generator import generate_entity_id
-from entity_registry.project_identity import detect_project_id
+from entity_registry.project_identity import _compute_legacy_project_id
 from workflow_engine.templates import get_template
 
 if TYPE_CHECKING:
@@ -248,6 +248,8 @@ def promote_task(
     db: "EntityDatabase",
     feature_ref: str,
     task_heading: str,
+    *,
+    workspace_uuid: str | None = None,
 ) -> dict:
     """Promote a task from tasks.md to a tracked entity.
 
@@ -332,20 +334,26 @@ def promote_task(
     mode = wp["mode"] if wp and wp.get("mode") else "standard"
 
     # 7. Generate task entity ID
-    _project_id = detect_project_id(os.environ.get("PROJECT_ROOT", os.getcwd()))
+    _project_id = _compute_legacy_project_id(os.environ.get("PROJECT_ROOT", os.getcwd()))
     task_entity_id = generate_entity_id(db, "task", matched_heading, project_id=_project_id)
     task_type_id = f"task:{task_entity_id}"
 
     # 8. Register task entity
     task_metadata = {"source_heading": matched_heading}
+    # Feature 112 / FR-4: resolve parent at the call site and pass parent_uuid
+    # directly. The parent feature entity was already fetched (and required to
+    # exist) earlier in this function for the artifact_path validation.
+    parent_entity = db.get_entity(feature_type_id)
+    parent_uuid = parent_entity["uuid"] if parent_entity else None
     task_uuid = db.register_entity(
         entity_type="task",
         entity_id=task_entity_id,
         name=matched_heading,
         status="planned",
-        parent_type_id=feature_type_id,
+        parent_uuid=parent_uuid,
         metadata=task_metadata,
-        project_id=_project_id,
+        workspace_uuid=workspace_uuid,
+        project_id=_project_id if workspace_uuid is None else None,
     )
 
     # 9. Create workflow_phase row for the task

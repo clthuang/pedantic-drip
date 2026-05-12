@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **workflow_state_server MCP** (feature 112 / FR-2) — `_workspace_uuid` lazy
+  global is now forwarded to engine functions (`init_feature_state`,
+  `init_project_state`, `activate_feature`, `init_entity_workflow`,
+  `transition_entity_phase`, `complete_phase`, `transition_phase`,
+  `promote_task`) and to inline `db.update_entity` calls inside
+  `_process_complete_phase` / `_process_transition_phase`. Writes now route
+  through the canonical workspace_uuid path instead of relying on the
+  database-layer `project_id` deprecation shim.
+- **`list_features_by_phase` / `list_features_by_status`** MCP tools default
+  to single-workspace results (current `_workspace_uuid`). Pass
+  `project_id="*"` for the legacy cross-workspace behavior; pass a specific
+  12-char project_id to JOIN-resolve through `workspaces.project_id_legacy`
+  for backward compat.
+- **`register_entity` call sites** (feature 112 / FR-4 partial) —
+  `task_promotion.py`, `server_helpers.py`, and `entity_server.py`
+  (`_process_create_key_result`) converted from `parent_type_id=` to
+  `parent_uuid=`. Remaining alias-drop and 30-site test migration deferred
+  to backlog #00390.
+- **`session-start.sh` workspace affiliation** (feature 112 / FR-6) — reads
+  `workspace_uuid` from `.meta.json` (not legacy `project_id`); exports
+  `workspace_uuid_short` (first 8 chars) for the session header line.
+
+### Removed
+
+- `ENTITY_PROJECT_ID` env-var override (feature 112 / FR-3). Use
+  `ENTITY_WORKSPACE_UUID` instead — consulted by `resolve_workspace_uuid`
+  per the workspace identity precedence chain.
+- **`parent_type_id` references in command prompts** (feature 112 / FR-5) —
+  14 stale `parent_type_id` references removed from `create-feature.md`,
+  `secretary.md`, and `create-project.md`. Commands now pass `parent_uuid`
+  to `register_entity`.
+
 ## [4.17.0] - 2026-05-11
 
 ### Added

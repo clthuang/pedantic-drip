@@ -1,0 +1,35 @@
+{
+  "id": "112",
+  "slug": "workspace-identity-cleanup",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-05-12T03:35:01.539254+00:00",
+  "branch": "feature/112-workspace-identity-cleanup",
+  "lastCompletedPhase": "implement",
+  "phases": {
+    "brainstorm": {
+      "started": "2026-05-12T03:35:01.539119+00:00"
+    },
+    "specify": {
+      "started": "2026-05-12T03:35:58.693955+00:00",
+      "completed": "2026-05-12T03:45:08.795978+00:00",
+      "iterations": 2,
+      "reviewerNotes": "spec-reviewer APPROVED iter 2/5 after 5 blockers + 5 warnings + 2 suggestions resolved from iter 1. phase-reviewer APPROVED iter 1/5 with 2 warnings + 2 suggestions; all 4 applied. Total: 1 reviewer iteration cycle (iter 1 spec-rev + revision + iter 2 spec-rev verify + iter 1 phase-rev + revision). Spec ready for design."
+    },
+    "design": {
+      "completed": "2026-05-12T03:57:22.857074+00:00",
+      "iterations": 3,
+      "reviewerNotes": "design-reviewer APPROVED iter 2/5 after 4 blockers + 5 warnings + 2 suggestions in iter 1 (I-3 factual error fixed; C3b synthesized JOIN columns added; C2b engine-layer signature propagation added; TD-7 pytest.ini path dropped; C4b .meta.json schema bump added; TD-6 design-time measurement added; C6 walker construction specified; TD-3 re-verification added; C2 list_features_by_* default-behavior change documented; AC-11 _seed_v10_entities helper specified; Open Questions populated). phase-reviewer APPROVED iter 1/5 with 2 warnings + 2 suggestions, all explicitly plan-phase concerns: reconcile C2b vs handler-audit engine table, test-only db._conn exception note, update_entity capability pre-check, FR-5 sequencing. Carry-forward to plan tasks. Design ready for create-plan."
+    },
+    "create-plan": {
+      "started": "2026-05-12T03:57:56.453767+00:00",
+      "completed": "2026-05-12T04:20:14.006369+00:00",
+      "iterations": 3,
+      "reviewerNotes": "3-reviewer combined loop completed iter 3. Plan-reviewer APPROVED iter 2/5 (3 suggestions, all addressed iter 3). Task-reviewer APPROVED iter 3/5 (zero blockers; 2 suggestions: G.1 grep scope phrasing, G.2 conn cleanup). Phase-reviewer APPROVED iter 3/5 (2 warnings A.5/A.6 monkeypatch targets \u2014 both addressed in commit before complete; 2 suggestions G.1/E.9b clarity remain). Net: all blockers resolved across 3 iterations. Plan ready for implementation."
+    },
+    "implement": {
+      "completed": "2026-05-12T05:22:00.084677+00:00",
+      "reviewerNotes": "FR-1/2/3/5/6/7 implemented; FR-4 partial (E.1 done, E.2/E.3 deferred to backlog #00390); 7 commits; regression 79/4193/3 vs baseline 80/4189/3 (+4 pass, -1 pre-existing fix, zero new regressions); qa-gate.json walks 41 ACs (35 pass, 3 partial, 3 deferred); bash-3.2 hook tests 114/114; AC-32 timing 0.0063s vs 2s budget."
+    }
+  }
+}

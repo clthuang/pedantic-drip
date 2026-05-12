@@ -291,10 +291,10 @@ class TestProjectStartup:
     """T4.1: entity_server startup with project_id detection."""
 
     def test_project_id_set_after_detection(self, db, monkeypatch):
-        """Monkeypatch detect_project_id and verify _project_id is set."""
+        """Monkeypatch _compute_legacy_project_id and verify _project_id is set."""
         monkeypatch.setattr(entity_server, "_project_id", "")
         monkeypatch.setattr(
-            "entity_server.detect_project_id", lambda _root: "abc123def456"
+            "entity_server._compute_legacy_project_id", lambda _root: "abc123def456"
         )
         monkeypatch.setattr(
             "entity_server.collect_git_info",
@@ -313,7 +313,7 @@ class TestProjectStartup:
             ),
         )
         # Simulate the startup sequence
-        entity_server._project_id = entity_server.detect_project_id("/tmp/test")
+        entity_server._project_id = entity_server._compute_legacy_project_id("/tmp/test")
         info = entity_server.collect_git_info("/tmp/test")
         entity_server._upsert_project(db, info)
 

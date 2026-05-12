@@ -335,7 +335,7 @@ class TestDegradedMode:
         # frozen engine's complete_phase by patching the health check
         original_complete = engine._frozen_engine.complete_phase
 
-        def degraded_complete(type_id, phase):
+        def degraded_complete(type_id, phase, **kwargs):
             """Simulate frozen engine returning meta_json_fallback state."""
             return FeatureWorkflowState(
                 feature_type_id=type_id,

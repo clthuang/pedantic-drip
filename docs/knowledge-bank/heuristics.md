@@ -773,3 +773,31 @@ When the feature is test-only-equivalent and FRs reference library state (regex 
 - Confidence: high
 - Last observed: Feature #097
 - Observation count: 1
+
+### Heuristic: Repeated Point-Fixes Signal a Missing Class-Fix
+If you find yourself making the same fix multiple times across artifacts during iter N+1, the original review didn't class-fix. Stop and re-scan the artifact for sibling instances before publishing the revision.
+- Source: Feature #112 plan iter 2 — db._conn fix in C.2 did not propagate to G.1; 4 new blockers introduced from incomplete consolidation
+- Confidence: high
+- Last observed: Feature #112
+- Observation count: 1
+
+### Heuristic: Cite Exact File:Line References in Specs/Designs
+Specs and designs that cite code locations must include the exact file:line reference verified by grep. Vague references like 'in the registration helper' should be rejected at review time — they hide factual errors that surface only when implementation begins.
+- Source: Feature #112 design iter 1 — I-3 claimed parent_type_id resolution in shim location; actual location was register_entity body at database.py:3343-3445 (wrong by 100+ lines)
+- Confidence: high
+- Last observed: Feature #112
+- Observation count: 1
+
+### Heuristic: User Pushback on Context Budget Is Often Correct
+Context budget pushback from the user ('we used 56%, continue') is often correct. The model tends toward conservative compaction recommendations that may not match actual headroom. When in doubt, save mid-stream artifacts to disk and continue.
+- Source: Feature #112 create-plan phase — user overrode budget conservatism, .plan-review-iter1.md saved, iter 2/3 proceeded successfully without context exhaustion
+- Confidence: medium
+- Last observed: Feature #112
+- Observation count: 1
+
+### Heuristic: MCP Tool Contract Mismatches Are Bugs, Not Usage Errors
+When MCP tool descriptions say 'JSON-serializable payload' but the tool actually requires a pre-encoded string, treat that as a tool-contract bug, not a usage error. File a backlog item; don't memorize the workaround.
+- Source: Feature #112 completion — complete_phase reviewer_notes accepted only quoted string literals despite description claiming JSON-serializable; three attempts wasted before finding working form
+- Confidence: high
+- Last observed: Feature #112
+- Observation count: 1

@@ -241,27 +241,33 @@ def _process_register_entity(
         type_id = f"{entity_type}:{entity_id}"
         existing = db.get_entity(type_id)
         existing_parent = existing["parent_type_id"] if existing else None
-        # Feature 108 FR-13: caller may pass parent_uuid (preferred) or
-        # legacy parent_type_id. If only parent_uuid is given, look up the
-        # parent's type_id for the underlying database layer (which still
-        # keys on parent_type_id pre-Migration-11 callsite flip).
-        if parent_uuid and parent_type_id is None:
+        # Feature 112 / FR-4: parent_uuid is the canonical kwarg passed to
+        # ``db.register_entity``. Callers may still supply ``parent_type_id``
+        # for compat at this wrapper boundary; we resolve it to parent_uuid
+        # here so the underlying register_entity does not need the alias.
+        if parent_type_id and parent_uuid is None:
             try:
-                parent_row = db.get_entity_by_uuid(parent_uuid)
+                parent_row = db.get_entity(parent_type_id)
                 if parent_row is not None:
-                    parent_type_id = parent_row.get("type_id")
+                    parent_uuid = parent_row.get("uuid")
             except Exception:
-                # Best-effort; fall through with parent_type_id=None.
+                # Best-effort; fall through with parent_uuid=None.
                 pass
+        # Normalize empty string → None so the deprecation-warning gate in
+        # _resolve_workspace_uuid_kwargs only fires when BOTH kwargs are
+        # genuinely supplied. Callers in the MCP layer coerce missing
+        # workspace identity to "" before reaching this wrapper.
+        ws_uuid_kwarg = workspace_uuid or None
         db.register_entity(
             entity_type=entity_type,
             entity_id=entity_id,
             name=name,
             artifact_path=artifact_path,
             status=status,
-            parent_type_id=parent_type_id,
+            parent_uuid=parent_uuid,
             metadata=metadata,
-            project_id=project_id,
+            project_id=project_id if ws_uuid_kwarg is None else None,
+            workspace_uuid=ws_uuid_kwarg,
         )
         if existing is None:
             return f"Registered: {type_id}"
