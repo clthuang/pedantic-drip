@@ -1,10 +1,17 @@
 {
   "id": "109",
   "slug": "polymorphic-taxonomy-and-event",
-  "mode": "standard",
-  "status": "planned",
+  "mode": "full",
+  "status": "active",
   "created": "2026-05-10T07:38:17.810513+00:00",
   "branch": "planned",
-  "lastCompletedPhase": null,
-  "phases": {}
+  "lastCompletedPhase": "brainstorm",
+  "phases": {
+    "brainstorm": {
+      "started": "2026-05-12T12:15:08.034913+00:00",
+      "completed": "2026-05-12T12:15:12.317855+00:00",
+      "iterations": 1,
+      "reviewerNotes": "Brainstorm artifact = parent project PRD at docs/projects/P003-entity-system-redesign/prd.md. Scope crystallized via project decomposition: F11 (6-type taxonomy with kind + lifecycle_class), F2 (phase_events as sole state-change primitive), F3 (atomic promotion + drop enforce_immutable_entity_type trigger), F12 (split register_entity raises-on-conflict from upsert_entity idempotent; audit 14+ call sites). Same pattern as predecessor feature 108."
+    }
+  }
 }
