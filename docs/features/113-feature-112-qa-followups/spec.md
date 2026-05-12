@@ -317,7 +317,7 @@ Also forward through `check_workflow_drift(engine, db, artifacts_root, feature_t
 
 **FR-11.4 (MCP handler forwarding):** `reconcile_apply`, `reconcile_frontmatter`, and `reconcile_status` async MCP handlers each pass `workspace_uuid=_workspace_uuid or None` to their `_process_*` helpers (handler bodies at workflow_state_server.py:1678-1693, 1694-1704, 1705+ respectively).
 
-**FR-11.5 (test additions — boundary AND internal-forwarding pins):** Add 5 tests in `plugins/pd/mcp/test_workflow_state_server.py` + 2 unit tests in the reconciliation lib:
+**FR-11.5 (test additions — boundary AND internal-forwarding pins):** Add 6 tests total (3 boundary-pin tests in `plugins/pd/mcp/test_workflow_state_server.py` + 2 internal-forwarding tests in `plugins/pd/hooks/lib/workflow_engine/test_reconciliation.py` + 1 scope-scan test in `plugins/pd/hooks/lib/entity_registry/test_frontmatter_sync.py`):
 - `test_reconcile_apply_forwards_workspace_uuid` — set `wss._workspace_uuid`, mock `apply_workflow_reconciliation`, assert it received `workspace_uuid=ws_a` kwarg. (Boundary pin.)
 - `test_reconcile_frontmatter_forwards_workspace_uuid` — same shape for frontmatter; assert `scan_all` mock received the kwarg. (Boundary pin.)
 - `test_reconcile_status_forwards_workspace_uuid` — same shape for status. (Boundary pin.)
