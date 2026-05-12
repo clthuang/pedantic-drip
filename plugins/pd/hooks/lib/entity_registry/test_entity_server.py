@@ -415,3 +415,31 @@ class TestSearchProjectFiltering:
         result = await entity_server.search_entities(query="Feature", project_id="*")
         assert "proj-a-feat" in result
         assert "proj-b-feat" in result
+
+
+class TestCreateKeyResultMissingParent:
+    """FR-9: ``_process_create_key_result`` raises ValueError on missing parent.
+
+    Pre-fix: ``parent_uuid = parent_entity["uuid"] if parent_entity else None``
+    silently registered the KR as an orphan when the parent objective did not
+    exist — violating AC-3c (canonical parent_uuid contract).
+
+    Post-fix: explicit ``if parent_entity is None: raise ValueError(...)``.
+    """
+
+    def test_create_key_result_missing_parent_raises(self, db):
+        """Missing parent objective → ValueError with explicit message."""
+        from entity_server import _process_create_key_result
+
+        # No parent objective registered. Calling _process_create_key_result
+        # with a non-existent parent_type_id must raise ValueError.
+        with pytest.raises(ValueError, match="Parent entity not found"):
+            _process_create_key_result(
+                db,
+                parent_type_id="objective:nonexistent",
+                eid="missing-parent-kr",
+                name="KR Without Parent",
+                status="active",
+                metadata_json=json.dumps({"score": 0.0}),
+                weight=1.0,
+            )
