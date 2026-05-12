@@ -88,13 +88,13 @@ grep -nE 'db\.(register_entity|upsert_workflow_phase|update_entity|list_entities
 
 ### Task A.5 [P] test_entity_server.py monkeypatch
 **File:** `plugins/pd/hooks/lib/entity_registry/test_entity_server.py:294,297,316`.
-**Steps:** `entity_server.detect_project_id` → `entity_server.resolve_workspace_uuid` (or replace with `_compute_legacy_project_id` if test specifically targets legacy path).
-**DoD:** `$PYPREFIX plugins/pd/hooks/lib/entity_registry/test_entity_server.py` green (full file, not just fixture load).
+**Steps:** `entity_server.detect_project_id` → `entity_server._compute_legacy_project_id` (value-parity match with Phase D.3 production replacement of `entity_server.py:218` `detect_project_id` → `_compute_legacy_project_id`). The test monkeypatch must target the same symbol the production code now calls.
+**DoD:** `$PYPREFIX plugins/pd/hooks/lib/entity_registry/test_entity_server.py` green (full file, not just fixture load). `grep -n 'entity_server\.detect_project_id' plugins/pd/hooks/lib/entity_registry/test_entity_server.py` returns 0.
 
 ### Task A.6 [P] test_task_promotion.py monkeypatch
 **File:** `plugins/pd/hooks/lib/workflow_engine/test_task_promotion.py:30,31,33`.
-**Steps:** `_tp_mod.detect_project_id` → `_tp_mod.resolve_workspace_uuid`.
-**DoD:** `$PYPREFIX plugins/pd/hooks/lib/workflow_engine/test_task_promotion.py` green.
+**Steps:** `_tp_mod.detect_project_id` → `_tp_mod._compute_legacy_project_id` (value-parity match with Phase A.1 production replacement at `task_promotion.py:335`. The downstream `generate_entity_id(project_id=_project_id)` consumes legacy hex shape, not UUID).
+**DoD:** `$PYPREFIX plugins/pd/hooks/lib/workflow_engine/test_task_promotion.py` green. `grep -n '_tp_mod\.detect_project_id\|_tp_mod\.resolve_workspace_uuid' plugins/pd/hooks/lib/workflow_engine/test_task_promotion.py` returns 0.
 
 ### Task A.7 [B] DELETE detect_project_id function (LAST commit — runs AFTER Phase D)
 **SCHEDULING NOTE:** Despite its A.7 label, this task does NOT execute at the end of Phase A. It runs AFTER Phase D.3 and D.4 have landed (which drop the `detect_project_id` callers in MCP files). Execution order: Phase A (A.1–A.6) → Phase C → Phase D → **A.7 here** → Phase E onward. An implementer running Phase A linearly MUST skip A.7 at the Phase A close and resume it after D.4 lands.
