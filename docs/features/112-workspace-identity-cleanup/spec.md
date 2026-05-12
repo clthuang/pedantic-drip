@@ -88,7 +88,7 @@ documentation.
 | 4 | `plugins/pd/hooks/lib/workflow_engine/task_promotion.py:18,335` | import + caller | replace with `resolve_workspace_uuid` |
 | 5 | `plugins/pd/hooks/lib/doctor/fix_actions.py:332,334` | lazy import + caller | replace with `resolve_workspace_uuid` |
 | 6 | `plugins/pd/hooks/lib/reconciliation_orchestrator/__main__.py:23,112` | import + caller | replace with `resolve_workspace_uuid` |
-| 7 | `plugins/pd/hooks/lib/entity_registry/test_project_identity.py:68,73,77,79` (and related test cases) | tests | rename to target `resolve_workspace_uuid`; delete removed-function tests |
+| 7 | `plugins/pd/hooks/lib/entity_registry/test_project_identity.py` — `TestDetectProjectId` class spanning lines 68+ (full grep at FR-time; current hits at lines 68, 73, 77, 79, 83, 86, 89, 90, 97, 120, 132, 141, 144, 149+) | tests | rename to target `resolve_workspace_uuid`; delete removed-function tests |
 | 8 | `plugins/pd/hooks/lib/entity_registry/test_entity_server.py:294,297,316` | tests | monkeypatch `resolve_workspace_uuid` instead |
 | 9 | `plugins/pd/hooks/lib/workflow_engine/test_task_promotion.py:30,31,33` | test fixture | monkeypatch `resolve_workspace_uuid` instead |
 
@@ -128,6 +128,10 @@ which already returns `None` (no filter) when `project_id == "*"`.
 to `docs/features/112-workspace-identity-cleanup/handler-audit.md`
 listing every `@mcp.tool()` in `workflow_state_server.py` with its
 classification, and per-call-site verification of the rules above.
+**Sequencing:** `handler-audit.md` MUST be produced during the design
+phase (or at minimum before FR-2 code changes begin), so the engineer
+has the classification in hand when authoring the AC-8 pre-test (TDD
+red phase).
 
 **Pattern reference:** `plugins/pd/mcp/entity_server.py:151,530`
 (`_upsert_project` and `register_entity`) demonstrate the write-path
@@ -299,8 +303,10 @@ timing test; no `bash --version` verification log.
 
 - **AC-1** `grep -rn 'detect_project_id' plugins/pd/ --include='*.py'`
   returns 0 hits after FR-1.
-- **AC-2** `grep -rn 'ENTITY_PROJECT_ID' plugins/pd/` returns 0 hits
-  after FR-3.
+- **AC-2** `grep -rn 'ENTITY_PROJECT_ID' plugins/pd/ --include='*.py'`
+  returns 0 hits after FR-3. (CHANGELOG/historical markdown references
+  outside `plugins/pd/` are out of scope; CHANGELOG retains the
+  removal note.)
 - **AC-2b** `test_resolve_workspace_uuid_env_override` exists in
   `plugins/pd/hooks/lib/entity_registry/test_project_identity.py`,
   asserts that setting `ENTITY_WORKSPACE_UUID=<uuid>` overrides the
@@ -322,6 +328,9 @@ timing test; no `bash --version` verification log.
   plugins/pd/mcp/entity_server.py plugins/pd/hooks/session-start.sh`
   returns hits only inside Migration 11 source / legacy projects-table
   operations after FR-6.
+- **AC-5b** `grep -n 'workspace_uuid_short' plugins/pd/hooks/session-start.sh`
+  returns at least one hit in the 460–490 line range (the renamed
+  context-string render path).
 - **AC-6** `grep -nE '^_project_id\s*[:=]|\b_project_id\s*=\s*detect_project_id|\b_project_id\s*=\s*resolve_workspace_uuid' plugins/pd/mcp/entity_server.py`
   returns 0 hits after FR-6 (the lazy-global declaration and
   reassignment patterns are gone).
@@ -382,8 +391,8 @@ timing test; no `bash --version` verification log.
   `validate.log`, `bash-version.log`, `baseline.log`. All files
   non-empty.
 - **AC-11** `test_migration_11_runtime` (with this exact name) exists
-  in `plugins/pd/hooks/lib/entity_registry/test_database.py` (or the
-  Migration-11 test module), runs Migration 11 against a 500-row
+  in `plugins/pd/hooks/lib/entity_registry/test_database.py`, runs
+  Migration 11 against a 500-row
   synthetic dataset (matching feature 108 AC-32 baseline), and
   asserts wall clock < 30 s. It emits a `pytest.warns(...)` or
   equivalent warning when > 2 s. There is **no CI-flakiness
@@ -461,8 +470,15 @@ timing test; no `bash --version` verification log.
   This feature does not touch Migration 11 forward or reverse logic.
 
 - **NFR-5 (Doc sync):** README, README_FOR_DEV, and CHANGELOG entries
-  are updated for every user-visible surface change (env var removal,
-  kwarg signature change).
+  are updated for every user-visible surface change. Expected
+  CHANGELOG entries (Keep-a-Changelog format under `[Unreleased]`):
+  1. **Removed:** `ENTITY_PROJECT_ID` env-var override (FR-3).
+  2. **Removed:** `parent_type_id` kwarg from
+     `EntityDatabase.register_entity` and `register_entities_batch`
+     (FR-4).
+  3. **Changed:** session-start context path format from
+     `${project_id}-${project_slug}` to
+     `${workspace_uuid_short}-${project_slug}` (FR-6).
 
 ---
 
