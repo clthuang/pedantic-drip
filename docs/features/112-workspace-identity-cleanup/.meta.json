@@ -5,7 +5,7 @@
   "status": "active",
   "created": "2026-05-12T03:35:01.539254+00:00",
   "branch": "feature/112-workspace-identity-cleanup",
-  "lastCompletedPhase": "specify",
+  "lastCompletedPhase": "design",
   "phases": {
     "brainstorm": {
       "started": "2026-05-12T03:35:01.539119+00:00"
@@ -15,6 +15,14 @@
       "completed": "2026-05-12T03:45:08.795978+00:00",
       "iterations": 2,
       "reviewerNotes": "spec-reviewer APPROVED iter 2/5 after 5 blockers + 5 warnings + 2 suggestions resolved from iter 1. phase-reviewer APPROVED iter 1/5 with 2 warnings + 2 suggestions; all 4 applied. Total: 1 reviewer iteration cycle (iter 1 spec-rev + revision + iter 2 spec-rev verify + iter 1 phase-rev + revision). Spec ready for design."
+    },
+    "design": {
+      "completed": "2026-05-12T03:57:22.857074+00:00",
+      "iterations": 3,
+      "reviewerNotes": "design-reviewer APPROVED iter 2/5 after 4 blockers + 5 warnings + 2 suggestions in iter 1 (I-3 factual error fixed; C3b synthesized JOIN columns added; C2b engine-layer signature propagation added; TD-7 pytest.ini path dropped; C4b .meta.json schema bump added; TD-6 design-time measurement added; C6 walker construction specified; TD-3 re-verification added; C2 list_features_by_* default-behavior change documented; AC-11 _seed_v10_entities helper specified; Open Questions populated). phase-reviewer APPROVED iter 1/5 with 2 warnings + 2 suggestions, all explicitly plan-phase concerns: reconcile C2b vs handler-audit engine table, test-only db._conn exception note, update_entity capability pre-check, FR-5 sequencing. Carry-forward to plan tasks. Design ready for create-plan."
+    },
+    "create-plan": {
+      "started": "2026-05-12T03:57:56.453767+00:00"
     }
   }
 }

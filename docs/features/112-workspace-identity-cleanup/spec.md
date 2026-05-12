@@ -238,23 +238,45 @@ hits.
 
 ### FR-6 — FR-10 (project_id rendering) cleanup (#00365)
 
-**Pre-state:**
+**Scope narrowing (post-iter-1 plan review):** Live grep
+(`grep -c _project_id plugins/pd/mcp/entity_server.py`) returns 48
+occurrences across read filters, `_effective_project_id()`, all
+`_resolve_ref_param` call sites, all read handlers, etc. Removing the
+`_project_id` lazy global from `entity_server.py` is its own
+multi-day refactor and exceeds this feature's per-method incremental
+budget. **Deferred to follow-up feature 113 (or later) and filed as
+backlog #00389**.
+
+This feature's FR-6 narrows to the session-start render change
++ removing the `detect_project_id`-based assignment in
+`entity_server.py:218` (the line itself stays; the call switches to
+`_compute_legacy_project_id` for value parity).
+
+**Pre-state (narrowed):**
 - `plugins/pd/hooks/session-start.sh:129` reads
   `meta.get('project_id', '')`.
 - `session-start.sh:463-485` renders `${project_id}-${project_slug}` in
   the user-visible context string.
-- `plugins/pd/mcp/entity_server.py:55,218,531` defines and uses the
-  `_project_id` lazy global.
+- `plugins/pd/mcp/entity_server.py:218` populates `_project_id` via
+  `detect_project_id(_project_root)` — this is the line FR-1 cannot
+  remove without breaking 48 callers.
 
-**Post-state:**
+**Post-state (narrowed):**
 - `session-start.sh:129` reads `meta.get('workspace_uuid', '')`.
 - `session-start.sh:463-485` renders
   `workspace_uuid_short=${WORKSPACE_UUID:0:8}` then
   `${workspace_uuid_short}-${project_slug}`.
-- `entity_server.py` `_project_id` lazy global dropped; the
-  `detect_project_id` call at line 218 (handled by FR-1) is removed in
-  the same commit; all internal callers route via `_workspace_uuid`
-  only. The `_project_id` declaration at line 55 is deleted.
+- `entity_server.py:218` `_project_id = detect_project_id(_project_root)`
+  → `_project_id = _compute_legacy_project_id(_project_root)`
+  (same value, drops the `detect_project_id` dependency, retains
+  the 48 read-path callers unchanged for follow-up feature).
+- `entity_server.py:55` declaration UNCHANGED (deferred to backlog
+  #00389).
+- `entity_server.py:531` `_project_id` usage UNCHANGED (deferred).
+
+**Out of scope (this feature):** Removing the `_project_id` lazy
+global from `entity_server.py:55,531` and migrating all 48 read-path
+callers to use `_workspace_uuid` directly. Filed as backlog #00389.
 
 **Verification (AC-5):** `grep -nE '\bproject_id\b'
 plugins/pd/hooks/session-start.sh` returns hits only inside the
@@ -331,9 +353,11 @@ timing test; no `bash --version` verification log.
 - **AC-5b** `grep -n 'workspace_uuid_short' plugins/pd/hooks/session-start.sh`
   returns at least one hit in the 460–490 line range (the renamed
   context-string render path).
-- **AC-6** `grep -nE '^_project_id\s*[:=]|\b_project_id\s*=\s*detect_project_id|\b_project_id\s*=\s*resolve_workspace_uuid' plugins/pd/mcp/entity_server.py`
-  returns 0 hits after FR-6 (the lazy-global declaration and
-  reassignment patterns are gone).
+- **AC-6 (narrowed)** `grep -nE '\b_project_id\s*=\s*detect_project_id' plugins/pd/mcp/entity_server.py`
+  returns 0 hits after FR-6. The `_project_id` declaration at line 55
+  is RETAINED (scope deferred to feature 113 / backlog #00389). The
+  detect_project_id-based assignment is replaced with
+  `_project_id = _compute_legacy_project_id(_project_root)`.
 
 ### Block B — `_workspace_uuid` canonical scoping (FR-2)
 
@@ -500,6 +524,15 @@ timing test; no `bash --version` verification log.
   bump, separate feature). F6-conditional ACs (AC-24, AC-25, AC-33
   per feature 108 spec) inherit `status="conditional_skipped"` in
   the AC-9 schema while #00359 remains open.
+- **`_project_id` lazy global removal** from
+  `plugins/pd/mcp/entity_server.py:55,531` and the 48 read-path
+  callers (`_effective_project_id()`, `_resolve_ref_param` call
+  sites, read handlers, `_backfill_project_ids`). Filed as backlog
+  **#00389** — post-iter-1 plan-review scope narrowing. This
+  feature's FR-6 narrows to: (a) `session-start.sh` render change,
+  (b) `entity_server.py:218` switch from `detect_project_id` to
+  `_compute_legacy_project_id` (drops the dependency, retains the
+  value semantics).
 
 ---
 
