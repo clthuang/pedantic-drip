@@ -819,6 +819,97 @@ class TestScanAll:
         reports = scan_all(db, artifacts_root)
         assert reports == []
 
+    # ---------------------------------------------------------------------
+    # Feature 113 FR-11.2: workspace_uuid scoping (scoped + default-unscoped)
+    # ---------------------------------------------------------------------
+
+    def test_scan_all_scopes_to_workspace(self, tmp_path):
+        """FR-11.2 mutation pin: scan_all(workspace_uuid=ws_a) returns only
+        ws_a's features (not ws_b's).
+
+        Pin: drops the workspace_uuid kwarg forwarding to db.list_entities
+        if a future refactor strips the threading.
+        """
+        from entity_registry.database import EntityDatabase
+        from entity_registry.frontmatter_sync import scan_all
+        from entity_registry.test_helpers import bootstrap_test_workspace
+
+        db = EntityDatabase(":memory:")
+        artifacts_root = str(tmp_path)
+        ws_a = bootstrap_test_workspace(db, "ws-a-fr112")
+        ws_b = bootstrap_test_workspace(db, "ws-b-fr112")
+
+        # Workspace A: 1 feature with spec.md (no frontmatter -> db_only)
+        db.register_entity(
+            "feature", "100-a", "Feature A",
+            status="active", workspace_uuid=ws_a,
+        )
+        feat_dir_a = tmp_path / "features" / "100-a"
+        feat_dir_a.mkdir(parents=True)
+        (feat_dir_a / "spec.md").write_text("# Spec A\n")
+
+        # Workspace B: 1 feature with spec.md (no frontmatter -> db_only)
+        db.register_entity(
+            "feature", "200-b", "Feature B",
+            status="active", workspace_uuid=ws_b,
+        )
+        feat_dir_b = tmp_path / "features" / "200-b"
+        feat_dir_b.mkdir(parents=True)
+        (feat_dir_b / "spec.md").write_text("# Spec B\n")
+
+        reports = scan_all(db, artifacts_root, workspace_uuid=ws_a)
+
+        type_ids = {r.type_id for r in reports}
+        assert "feature:100-a" in type_ids, (
+            f"Expected ws_a's feature in scoped scan; got {type_ids}"
+        )
+        assert "feature:200-b" not in type_ids, (
+            f"ws_b feature leaked into ws_a-scoped scan; got {type_ids}"
+        )
+
+    def test_scan_all_default_unscoped_returns_all_workspace_features(
+        self, tmp_path
+    ):
+        """FR-11.2 NFR-3 regression pin: default (no workspace_uuid kwarg)
+        returns features from ALL workspaces.
+
+        Pin: changing the default from None to a specific UUID breaks this.
+        """
+        from entity_registry.database import EntityDatabase
+        from entity_registry.frontmatter_sync import scan_all
+        from entity_registry.test_helpers import bootstrap_test_workspace
+
+        db = EntityDatabase(":memory:")
+        artifacts_root = str(tmp_path)
+        ws_a = bootstrap_test_workspace(db, "ws-a-fr112-default")
+        ws_b = bootstrap_test_workspace(db, "ws-b-fr112-default")
+
+        db.register_entity(
+            "feature", "100-a", "Feature A",
+            status="active", workspace_uuid=ws_a,
+        )
+        feat_dir_a = tmp_path / "features" / "100-a"
+        feat_dir_a.mkdir(parents=True)
+        (feat_dir_a / "spec.md").write_text("# Spec A\n")
+
+        db.register_entity(
+            "feature", "200-b", "Feature B",
+            status="active", workspace_uuid=ws_b,
+        )
+        feat_dir_b = tmp_path / "features" / "200-b"
+        feat_dir_b.mkdir(parents=True)
+        (feat_dir_b / "spec.md").write_text("# Spec B\n")
+
+        reports = scan_all(db, artifacts_root)  # no workspace_uuid kwarg
+
+        type_ids = {r.type_id for r in reports}
+        assert "feature:100-a" in type_ids, (
+            f"ws_a missing from default-unscoped scan; got {type_ids}"
+        )
+        assert "feature:200-b" in type_ids, (
+            f"ws_b missing from default-unscoped scan; got {type_ids}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Phase 5: Integration tests (tasks 5.1a, 5.2a, 5.3)
