@@ -5,13 +5,28 @@
   "status": "active",
   "created": "2026-05-10T07:38:17.810513+00:00",
   "branch": "planned",
-  "lastCompletedPhase": "brainstorm",
+  "lastCompletedPhase": "create-plan",
   "phases": {
     "brainstorm": {
       "started": "2026-05-12T12:15:08.034913+00:00",
       "completed": "2026-05-12T12:15:12.317855+00:00",
       "iterations": 1,
       "reviewerNotes": "Brainstorm artifact = parent project PRD at docs/projects/P003-entity-system-redesign/prd.md. Scope crystallized via project decomposition: F11 (6-type taxonomy with kind + lifecycle_class), F2 (phase_events as sole state-change primitive), F3 (atomic promotion + drop enforce_immutable_entity_type trigger), F12 (split register_entity raises-on-conflict from upsert_entity idempotent; audit 14+ call sites). Same pattern as predecessor feature 108."
+    },
+    "specify": {
+      "completed": "2026-05-12T12:44:00.547749+00:00",
+      "iterations": 5,
+      "reviewerNotes": "Spec-reviewer: 3 iterations (9 blockers + 17 warnings cumulatively, all resolved). Phase-reviewer: 2 iterations (3 warnings + 1 suggestion in iter 1, 2 warnings in iter 2 \u2014 all resolved in-line). Final approved with no unresolved issues."
+    },
+    "design": {
+      "completed": "2026-05-12T13:07:10.938094+00:00",
+      "iterations": 4,
+      "reviewerNotes": "Design-reviewer: 3 iterations (cap-3 reached, 2 cumulative blockers + 5 warnings all resolved inline in rev 4 \u2014 workspace_uuid plumbing in append_phase_event, register_entity parent_uuid fixup removal documented, FTS5 line citations corrected). Phase-reviewer: 1 iteration (3 warnings fixed inline: AC-4.1 exception location, \u00a79 three-branch, plus 2 plan-scope suggestions). Cross-phase spec patch in iter-1 of design: FR-4 body reconciled with AC-4.4 status-only update. Plan-phase scope carried: reader-rewrite file list discovery (grep + sizing), SQLite version check for ALTER TABLE DROP COLUMN, insert_phase_event rename commit-step placement."
+    },
+    "create-plan": {
+      "completed": "2026-05-12T13:37:48.626751+00:00",
+      "iterations": 5,
+      "reviewerNotes": "Plan-reviewer: 2 iterations (6 + 1 blockers resolved cumulatively). Task-reviewer: 1 iteration (5 blockers resolved inline). Phase-reviewer: 1 iteration (3 blockers + 5 warnings all resolved inline in tasks rev 5). NEW tasks added: 2.6 type_id byte-identity, 13.7.1 inspect.signature byte-identity, 14.4 5 non-entities idempotency tests, 16.4a idempotency test, 16.4b lock-failure test, expanded Task 10.1 with workflow_phases grep. Group 12 dependency corrected from Group 11 (REMOVED) to Group 10. Plan covers 16 Groups + Group 0.5 rename + Group 11 REMOVED placeholder. ~70 total tasks. Cross-phase patches applied to spec (FR-4 body status-only) during design phase still in effect."
     }
   }
 }

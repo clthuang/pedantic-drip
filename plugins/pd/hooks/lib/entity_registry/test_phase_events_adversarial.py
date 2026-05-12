@@ -300,7 +300,7 @@ class TestInsertPhaseEventEdgeCases:
     def test_invalid_event_type_rejected(self, db):
         """Invalid event_type should be rejected by CHECK constraint."""
         with pytest.raises(sqlite3.IntegrityError):
-            db.insert_phase_event(
+            db.append_phase_event(
                 type_id="feature:bad-type",
                 project_id=TEST_PROJECT_ID,
                 phase="brainstorm",
@@ -311,7 +311,7 @@ class TestInsertPhaseEventEdgeCases:
     def test_invalid_source_rejected(self, db):
         """Invalid source should be rejected by CHECK constraint."""
         with pytest.raises(sqlite3.IntegrityError):
-            db.insert_phase_event(
+            db.append_phase_event(
                 type_id="feature:bad-source",
                 project_id=TEST_PROJECT_ID,
                 phase="brainstorm",
@@ -352,7 +352,7 @@ class TestInsertPhaseEventEdgeCases:
     def test_very_long_strings(self, db):
         """Very long type_id, phase, backward_reason strings. Should not crash."""
         long_str = "x" * 10000
-        db.insert_phase_event(
+        db.append_phase_event(
             type_id=f"feature:{long_str}",
             project_id=TEST_PROJECT_ID,
             phase=long_str,
@@ -369,7 +369,7 @@ class TestInsertPhaseEventEdgeCases:
     def test_empty_string_event_type(self, db):
         """Empty string event_type — should be rejected by CHECK constraint."""
         with pytest.raises(sqlite3.IntegrityError):
-            db.insert_phase_event(
+            db.append_phase_event(
                 type_id="feature:empty-evt",
                 project_id=TEST_PROJECT_ID,
                 phase="brainstorm",
@@ -392,7 +392,7 @@ class TestQueryPhaseEventsEdgeCases:
 
     def test_all_filters_none_returns_all(self, db):
         """All filters None should return all rows (up to limit)."""
-        db.insert_phase_event(
+        db.append_phase_event(
             type_id="feature:all-none",
             project_id=TEST_PROJECT_ID,
             phase="brainstorm",
@@ -404,7 +404,7 @@ class TestQueryPhaseEventsEdgeCases:
 
     def test_limit_zero(self, db):
         """limit=0 — should return 0 rows or behave reasonably."""
-        db.insert_phase_event(
+        db.append_phase_event(
             type_id="feature:lim-zero",
             project_id=TEST_PROJECT_ID,
             phase="brainstorm",
@@ -419,7 +419,7 @@ class TestQueryPhaseEventsEdgeCases:
         """limit=-1 — SQLite treats LIMIT -1 as unlimited.
         BUG CANDIDATE: min(-1, 500) = -1, so LIMIT -1 returns ALL rows."""
         for i in range(10):
-            db.insert_phase_event(
+            db.append_phase_event(
                 type_id=f"feature:neg-{i}",
                 project_id=TEST_PROJECT_ID,
                 phase="brainstorm",
@@ -444,7 +444,7 @@ class TestQueryPhaseEventsEdgeCases:
 
     def test_sql_injection_via_type_id(self, db):
         """SQL injection attempt via type_id filter — should be parameterized."""
-        db.insert_phase_event(
+        db.append_phase_event(
             type_id="feature:safe",
             project_id=TEST_PROJECT_ID,
             phase="brainstorm",
@@ -464,7 +464,7 @@ class TestQueryPhaseEventsEdgeCases:
 
     def test_sql_injection_via_phase(self, db):
         """SQL injection attempt via phase filter."""
-        db.insert_phase_event(
+        db.append_phase_event(
             type_id="feature:inj-phase",
             project_id=TEST_PROJECT_ID,
             phase="brainstorm",
@@ -479,7 +479,7 @@ class TestQueryPhaseEventsEdgeCases:
     def test_empty_string_filter_treated_as_falsy(self, db):
         """Empty string filter — truthy in most langs but '' is falsy in Python.
         BUG CANDIDATE: 'if type_id:' skips empty string, treating it as 'no filter'."""
-        db.insert_phase_event(
+        db.append_phase_event(
             type_id="feature:empty-filter",
             project_id=TEST_PROJECT_ID,
             phase="brainstorm",
@@ -532,7 +532,7 @@ class TestCombinationAttacks:
 
     def test_insert_then_query_roundtrip_preserves_data(self, db):
         """Insert with all fields, query back, verify all fields preserved."""
-        db.insert_phase_event(
+        db.append_phase_event(
             type_id="feature:roundtrip",
             project_id="proj-RT",
             phase="design",

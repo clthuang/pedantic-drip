@@ -726,7 +726,7 @@ def _process_transition_phase(
         # Feature 089 FR-2.3 (#00151): distinguish missing vs empty project_id.
         project_id = _resolve_project_id(entity)
         try:
-            db.insert_phase_event(
+            db.append_phase_event(
                 type_id=feature_type_id,
                 project_id=project_id,
                 phase=target_phase,
@@ -734,7 +734,7 @@ def _process_transition_phase(
                 timestamp=ts,
             )
             for skipped in skipped_list:
-                db.insert_phase_event(
+                db.append_phase_event(
                     type_id=feature_type_id,
                     project_id=project_id,
                     phase=skipped,
@@ -923,7 +923,7 @@ def _process_complete_phase(
             metadata["last_completed_phase"] = phase
 
             # Feature 088 FR-5.1 (ordering swap): update_entity(metadata) MUST
-            # run INSIDE the transaction; insert_phase_event is dispatched
+            # run INSIDE the transaction; append_phase_event is dispatched
             # AFTER the transaction commits (below). This prevents a phase_events
             # failure from silently rolling back the primary workflow write.
             db.update_entity(
@@ -946,7 +946,7 @@ def _process_complete_phase(
         # Feature 089 FR-2.3 (#00151): distinguish missing vs empty project_id.
         project_id = _resolve_project_id(entity)
         try:
-            db.insert_phase_event(
+            db.append_phase_event(
                 type_id=feature_type_id,
                 project_id=project_id,
                 phase=phase,
@@ -2027,7 +2027,7 @@ async def record_backward_event(
 
     ts = _iso_now()
     try:
-        _db.insert_phase_event(
+        _db.append_phase_event(
             type_id=type_id,
             project_id=resolved_project_id,
             phase=source_phase,

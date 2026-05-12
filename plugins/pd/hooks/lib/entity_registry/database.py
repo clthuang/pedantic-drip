@@ -2616,6 +2616,161 @@ def _migration_11_workspace_identity_down(conn: sqlite3.Connection) -> None:
         )
 
 
+def _migration_12_polymorphic_taxonomy_and_events(
+    conn: sqlite3.Connection,
+) -> None:
+    """Migration 12: polymorphic taxonomy (F11) + event-sourced state (F2/F3/F12).
+
+    **Stub body — Feature 109 Group 0 (Task 0.2).** This stub establishes the
+    transaction envelope, idempotency guard, concurrent re-check, pre-/post-flight
+    FK checks, and ``schema_version=12`` stamp. The actual schema changes
+    (type/kind/lifecycle_class columns, phase_events CHECK expansion, trigger
+    drops, ``upsert_entity`` / ``promote_entity`` API additions) are filled in
+    by subsequent Groups 1-11 of feature 109.
+
+    Skeleton mirrors :func:`_migration_11_workspace_identity` exactly:
+      - Pre-step: idempotency early-return (read schema_version >= 12 → return).
+      - Step 1: ``PRAGMA foreign_keys = OFF`` outside try, verify it took effect.
+      - Step 2: ``BEGIN IMMEDIATE`` inside try.
+      - Step 3: concurrent re-check guard (re-read schema_version in tx).
+      - Step 4: pre-migration ``PRAGMA foreign_key_check`` (raise on violations).
+      - Step 5: (RESERVED for body — currently empty.)
+      - Step N-2: in-transaction post-flight ``PRAGMA foreign_key_check``
+        immediately before stamping schema_version=12 (critical safety from
+        commit 0.2 onwards — guards against any future body addition that
+        creates FK violations).
+      - Step N-1: stamp ``schema_version=12`` INSIDE the transaction.
+      - Step N: COMMIT.
+      - except → ROLLBACK + raise.
+      - finally → ``PRAGMA foreign_keys = ON``.
+      - Post-commit: defensive post-flight ``PRAGMA foreign_key_check`` outside
+        the transaction.
+
+    Raises:
+        RuntimeError on FK violations (pre, in-transaction, or post) or
+        any in-transaction failure.
+    """
+    # ----------------------------------------------------------------------
+    # Pre-step 0: outer-level idempotency early-return guard.
+    # ----------------------------------------------------------------------
+    try:
+        v_row = conn.execute(
+            "SELECT value FROM _metadata WHERE key='schema_version'"
+        ).fetchone()
+        if v_row is not None:
+            try:
+                current_version = int(v_row[0])
+            except (TypeError, ValueError):
+                current_version = 0
+            if current_version >= 12:
+                return
+    except sqlite3.OperationalError as e:
+        if "no such table" not in str(e).lower():
+            raise
+
+    # ----------------------------------------------------------------------
+    # Step 1: PRAGMA foreign_keys = OFF (outside transaction)
+    # ----------------------------------------------------------------------
+    conn.execute("PRAGMA foreign_keys = OFF")
+    fk_status = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+    if fk_status != 0:
+        raise RuntimeError(
+            "PRAGMA foreign_keys = OFF did not take effect — "
+            "aborting migration 12"
+        )
+
+    try:
+        # ------------------------------------------------------------------
+        # Step 2: BEGIN IMMEDIATE
+        # ------------------------------------------------------------------
+        conn.execute("BEGIN IMMEDIATE")
+
+        # ------------------------------------------------------------------
+        # Step 3: concurrent re-check guard
+        # ------------------------------------------------------------------
+        try:
+            v_row = conn.execute(
+                "SELECT value FROM _metadata WHERE key='schema_version'"
+            ).fetchone()
+            if v_row is not None:
+                try:
+                    current_version = int(v_row[0])
+                except (TypeError, ValueError):
+                    current_version = 0
+                if current_version >= 12:
+                    conn.rollback()
+                    return
+        except sqlite3.OperationalError as e:
+            if "no such table" not in str(e).lower():
+                raise
+
+        # ------------------------------------------------------------------
+        # Step 4: pre-migration FK check (must be empty)
+        # ------------------------------------------------------------------
+        fk_violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if fk_violations:
+            raise RuntimeError(
+                f"Migration 12 pre-FK check non-empty: {fk_violations}"
+            )
+
+        # ------------------------------------------------------------------
+        # Step 5: (RESERVED for body — populated by Groups 1-11 of feature 109)
+        # ------------------------------------------------------------------
+        # Pre-flight collision audit (Group 1), AC-5.3 cleanup (Group 1),
+        # type/kind/lifecycle_class column adds + backfill (Group 2),
+        # composite CHECK via copy-rename + trigger removal (Group 3),
+        # idx_entities_type_kind (Group 4), FTS5 rebuild (Group 5),
+        # entity_type column drop (Group 6), phase_events schema expansion
+        # (Group 7), etc.
+
+        # ------------------------------------------------------------------
+        # Step N-2: in-transaction post-flight FK check
+        # ------------------------------------------------------------------
+        # CRITICAL SAFETY (per design §1 sub-step 12): catches FK violations
+        # introduced by the migration body BEFORE the schema_version stamp.
+        # Any future body addition that creates FK violations will fail here
+        # rather than leaving the DB in a half-migrated state.
+        in_tx_fk_violations = conn.execute(
+            "PRAGMA foreign_key_check"
+        ).fetchall()
+        if in_tx_fk_violations:
+            raise RuntimeError(
+                f"Migration 12 in-transaction FK check non-empty: "
+                f"{in_tx_fk_violations}"
+            )
+
+        # ------------------------------------------------------------------
+        # Step N-1: stamp schema_version=12 INSIDE the transaction
+        # ------------------------------------------------------------------
+        conn.execute(
+            "INSERT OR REPLACE INTO _metadata (key, value) "
+            "VALUES ('schema_version', '12')"
+        )
+
+        # ------------------------------------------------------------------
+        # Step N: COMMIT
+        # ------------------------------------------------------------------
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except sqlite3.Error:
+            pass
+        raise
+    finally:
+        # Re-enable FKs whether success or failure.
+        conn.execute("PRAGMA foreign_keys = ON")
+
+    # ----------------------------------------------------------------------
+    # Post-transaction defensive FK check
+    # ----------------------------------------------------------------------
+    post_violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+    if post_violations:
+        raise RuntimeError(
+            f"Migration 12 post-FK check non-empty: {post_violations}"
+        )
+
+
 # Ordered mapping of version -> migration function.
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _create_initial_schema,
@@ -2629,6 +2784,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     9: _migration_9_remove_create_tasks,
     10: _migration_10_phase_events,
     11: _migration_11_workspace_identity,
+    12: _migration_12_polymorphic_taxonomy_and_events,
 }
 
 # Reverse-migration registry (FR-8 / design §6.7). Migrations 1-10 are
@@ -4627,7 +4783,7 @@ class EntityDatabase:
     # Phase Events (append-only analytics log)
     # ------------------------------------------------------------------
 
-    def insert_phase_event(
+    def append_phase_event(
         self,
         *,
         type_id: str,
@@ -4641,7 +4797,13 @@ class EntityDatabase:
         backward_target: str | None = None,
         source: str = "live",
     ) -> None:
-        """Insert a phase event record into the append-only event log."""
+        """Append a phase event record to the append-only event log.
+
+        Renamed from ``insert_phase_event`` by feature 109 Group 0.5 (pure
+        rename — signature unchanged). The new name matches event-sourcing
+        vocabulary and aligns with feature 109's promotion of ``phase_events``
+        to the canonical state-change primitive (spec FR-2).
+        """
         # Feature 088 FR-2.4 (defense-in-depth): DB-layer reviewer_notes cap.
         # The MCP entry point in ``_process_complete_phase`` also validates
         # size, but direct callers bypassing the MCP tool still get protected.
