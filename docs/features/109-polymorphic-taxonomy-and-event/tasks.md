@@ -118,6 +118,27 @@
 - **DoD:** Task 1.1 test passes; migration runs without aborting on collisions.
 - **Dependencies:** Task 1.1.
 
+### Task 1.3: AC-5.3 — Write pre-migration orphan cleanup RED test
+
+- **File:** `plugins/pd/hooks/lib/entity_registry/test_migration_safety.py`
+- **Action:** Write `test_migration_12_cleans_malformed_feature_row` — pre-migration: insert a synthetic row into workflow_phases with `type_id='feature:'` (empty after colon — matches the known live DB anomaly per spec §1); run migration 12; post-migration assert (a) `SELECT COUNT(*) FROM workflow_phases WHERE type_id='feature:'` returns 0, AND (b) a one-line INFO log entry was emitted to stderr matching `INFO: Migration 12 removed malformed workflow_phases row: feature:`.
+- **Mock pattern:** capsys captures stderr; pre-migration synthetic row inserted directly via raw sqlite3.
+- **Assertion shape:** row count == 0; capsys.readouterr().err contains the audit log substring.
+- **DoD:** RED — migration 12 stub does not yet perform this cleanup.
+- **Dependencies:** Task 1.2.
+
+### Task 1.4: AC-5.3 — Implement pre-migration orphan cleanup
+
+- **File:** `plugins/pd/hooks/lib/entity_registry/database.py` (inside `_migration_12_polymorphic_taxonomy_and_events`, after Task 1.2 collision-audit logging, before any schema change)
+- **Action:** Add the cleanup step per design §1 sub-step 2:
+  1. Run `SELECT COUNT(*) FROM workflow_phases WHERE type_id = 'feature:'` to detect orphans.
+  2. If count > 0: emit `print(f"INFO: Migration 12 removed malformed workflow_phases row: feature: (count={count})", file=sys.stderr)`.
+  3. Execute `DELETE FROM workflow_phases WHERE type_id = 'feature:'`.
+- **Algorithm:** SELECT + conditional INFO log + DELETE, all inside the migration's BEGIN IMMEDIATE transaction.
+- **Assertion shape:** Task 1.3 test passes (row removed + audit log emitted).
+- **DoD:** Task 1.3 passes; AC-5.3 covered.
+- **Dependencies:** Task 1.3.
+
 ---
 
 ## Group 2: type/kind/lifecycle_class Columns + Backfill
