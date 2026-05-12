@@ -1,7 +1,7 @@
 # Feature 113 — Feature 112 QA-Gate Followups
 
 ## Status
-- Phase: specify (iter 3)
+- Phase: specify (iter 4)
 - Mode: standard
 - Source: 11 MED-severity findings filed in `docs/backlog.md` under "From Feature 112 Pre-Release QA Findings (2026-05-12)" section (entries #00391 through #00401)
 - Brainstorm: skipped — scope is well-specified by backlog entries with concrete file:line targets and fix descriptions
@@ -165,7 +165,9 @@ Existing terminal `db.update_entity` forwarding (line 173-174, `phase == "finish
 
 ### FR-6 — Empty-string boundary coverage (#00396)
 
-**Pre-state (verified at iter 3):** No test exercises `_workspace_uuid == ""` at any of the 14 MCP write sites. (`project_id == ""` is covered by FR-3.0+FR-3.3 above.) Live audit shows `_workspace_uuid or None` occurs at lines 657, 669, 674, 706, 716, 871, 884, 889, 929, 1280, and others. The test entry points and the mutation-pin targets differ by code path — pinning the wrong line creates a vacuous mutation pin.
+**Pre-state (verified at iter 3):** No test exercises `_workspace_uuid == ""` at any of the 14 MCP write sites. (`project_id == ""` is covered by FR-3.0+FR-3.3 above.)
+
+**Coordinated defensive contract:** Empty-string normalization at both the `project_id` boundary (FR-3.0, helper entry point) and the `workspace_uuid` boundary (FR-6, MCP write sites) form one defensive contract — neither alone is sufficient; both are required to prevent the empty-string → cross-workspace fallback that #00393 + #00396 collectively flagged. Live audit shows `_workspace_uuid or None` occurs at lines 657, 669, 674, 706, 716, 871, 884, 889, 929, 1280, and others. The test entry points and the mutation-pin targets differ by code path — pinning the wrong line creates a vacuous mutation pin.
 
 **Post-state:**
 
@@ -334,13 +336,13 @@ Also forward through `check_workflow_drift(engine, db, artifacts_root, feature_t
 
 **AC-2:** `bash-version.log` for feature 113 contains exactly 3 `=== ... ===` section headers (host bash, /bin/bash, /bin/bash test-hooks.sh exit code). `grep -c '^=== ' bash-version.log` returns `3`.
 
-**AC-3:** `pytest plugins/pd/mcp/test_workflow_state_server.py::TestListFeaturesByDefaultSingleWorkspace -v` → 5 tests pass (2 existing + 3 new from FR-3.3). Invalid-legacy-hex test asserts `_make_error` JSON with `error_type="invalid_project_id"`.
+**AC-3:** `pytest plugins/pd/mcp/test_workflow_state_server.py::TestListFeaturesByDefaultSingleWorkspace -v` → 6 tests pass (2 existing + 4 new from FR-3.3: `test_list_features_handler_db_none_returns_empty`, `test_list_features_by_phase_invalid_legacy_hex_returns_error`, `test_list_features_by_status_invalid_legacy_hex_returns_error`, `test_list_features_handler_empty_project_id_treated_as_default`). Both invalid-legacy-hex tests assert `_make_error` JSON with `error_type="invalid_project_id"` on the by_phase AND by_status handlers (per FR-3.2 enumeration).
 
-**AC-4:** `pytest plugins/pd/hooks/lib/workflow_engine/test_engine.py -k 'workspace_uuid' -v` → 2 new tests pass. Mismatch test raises FR-4.1's ValueError when invoked with a workspace_uuid not matching the existing workflow_phases row.
+**AC-4:** `pytest plugins/pd/hooks/lib/workflow_engine/test_engine.py -k 'workspace_uuid' -v` shows 3 new tests passing AND `pytest plugins/pd/hooks/lib/entity_registry/test_database.py -k 'does_not_mutate_workspace_uuid' -v` shows 1 new test passing (4 new tests total per FR-4.3). Mismatch tests raise FR-4.1's ValueError when invoked with a workspace_uuid not matching the existing workflow_phases row; column-immutability test pins `update_workflow_phase` not adding `workspace_uuid` to the UPDATE SET clause.
 
 **AC-5:** `pytest plugins/pd/hooks/lib/entity_registry/test_entity_lifecycle.py::test_transition_entity_phase_workspace_uuid_consistent -v` → 1 test passes. Asserts symmetric workspace_uuid propagation across both `db.update_entity` and `db.update_workflow_phase` calls inside `transition_entity_phase`.
 
-**AC-6:** `pytest -k 'unset_workspace_global' plugins/pd/mcp/test_workflow_state_server.py -v` → 1 test passes. Mutation: removing `or None` from `_workspace_uuid or None` at workflow_state_server.py:657 fails the test (FK constraint failure on empty-string workspace_uuid).
+**AC-6:** `pytest -k 'workspace_uuid_empty_string_normalized_to_none' plugins/pd/mcp/test_workflow_state_server.py -v` → 2 parametrized sub-tests pass (one per code path: `init_feature_state` exercises line 1280; `transition_phase` exercises line 657). Mutation pins (one per line): (a) removing `or None` from `_workspace_uuid or None` at workflow_state_server.py:1280 fails the `init_feature_state` sub-test (FK constraint failure on empty-string workspace_uuid); (b) removing it at line 657 fails the `transition_phase` sub-test. Implementation verifies the failure mode is FK-or-equivalent observable error (not silent pass) before merging — if it's a different observable failure, the AC-6 text is updated to describe the actual mode.
 
 **AC-7:** `pytest -k 'filter_states_' plugins/pd/mcp/test_workflow_state_server.py -v` → 2 new tests pass. Behavioral pin: `OperationalError` → `_make_error` JSON; `RuntimeError` → propagates (the narrow-except contract). Structural pin: `grep -nE 'except.*Exception' plugins/pd/mcp/workflow_state_server.py:1614-1620` returns 0 matches.
 
@@ -350,7 +352,7 @@ Also forward through `check_workflow_drift(engine, db, artifacts_root, feature_t
 
 **AC-10:** `pytest -k 'no_deprecation_warning' plugins/pd/hooks/lib/reconciliation_orchestrator/test_entity_status.py -v` → 4 parametrized sub-tests pass (one per fixed site at lines 47, 72, 189, 320). Wrapped in `simplefilter('error', DeprecationWarning)`.
 
-**AC-11:** `pytest -k 'reconcile_.*_forwards_workspace_uuid' plugins/pd/mcp/test_workflow_state_server.py -v` → 3 new tests pass. Mutation pin: removing `workspace_uuid=_workspace_uuid or None` from any of the 3 MCP handler bodies fails the corresponding test.
+**AC-11:** `pytest -k 'reconcile_.*_forwards_workspace_uuid or apply_workflow_reconciliation_forwards or scan_all_scopes_to_workspace' plugins/pd/{mcp,hooks/lib}/ -v` → 6 new tests pass (3 boundary-handler pins in `test_workflow_state_server.py` + 2 internal-forwarding pins in `test_reconciliation.py` + 1 scope-scan pin in `test_frontmatter_sync.py`). Mutation pins: removing `workspace_uuid=_workspace_uuid or None` from any of the 3 MCP handler bodies fails the corresponding boundary test; dropping the `workspace_uuid` kwarg at reconciliation.py:374 or :462 fails the corresponding internal-forwarding test; ignoring the kwarg inside `scan_all` (not threading to `list_entities`) fails the scope-scan test.
 
 **AC-12 (regression baseline, pinned):** Per NFR-2 below, a baseline is captured at the feature branch root commit and stored at `agent_sandbox/{date}/113-validation/baseline.log`. AC-12 is satisfied iff post-implementation full pytest run shows no test_id transitioning from pass→fail vs the baseline log. Net-new failures = 0. New tests added by FR-3 through FR-11 (~15+ tests) all pass.
 
