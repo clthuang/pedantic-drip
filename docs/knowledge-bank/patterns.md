@@ -805,3 +805,27 @@ Mutation-pin observability gates (named PI-N.MUT tasks) provide explicit verific
 - Confidence: medium
 - Last observed: Feature #113
 - Observation count: 1
+
+### Pattern: SUT-Verification Pass Between Spec Iter-1 and Iter-2 Unmasks Structural Blockers
+For schema-migration / multi-trigger / FTS5 features, running an explicit codebase-explorer or grep verification pass between spec iter-1 and iter-2 unmasks an entire class of structural blockers (sibling triggers, virtual-table column dependencies, incorrect path references, unaudited Python callers) that prose-level review cannot detect.
+- Observed in: Feature #109 specify phase — iter-2 produced 5 new structural blockers all annotated "verified via codebase grep" (parallel enforce_immutable_type_id at 6 sites, entities_fts FTS5 column dependency, plugins/pd/mcp_server/ vs plugins/pd/mcp/, ~17 Python register_entity callers unaudited, SQL trigger feasibility)
+- Reasoning: Prose-level review checks logical coherence within the spec; structural correctness requires the spec's claims to be projected against the actual source tree. Without SUT-verification, structural blockers leak into design/plan/implement where they are 10-100x more expensive.
+- Confidence: high
+- Last observed: Feature #109
+- Observation count: 1
+
+### Pattern: Cross-Phase Spec Patch in Lieu of Backward-Travel for Single-Line Inconsistencies
+When design review surfaces a one-line spec-design contradiction, edit the spec inline during the design phase and document the patch in `.review-history.md` rather than triggering full backward-travel to specify. Preserves iteration-cap budget without sacrificing correctness audit trail.
+- Observed in: Feature #109 design iter-1 — FR-4 body line ~193 contradicted AC-4.4; spec patched inline with explicit `.review-history.md` documentation
+- Reasoning: Full backward-travel re-runs spec-review + phase-review iteration budgets for a fix that takes one edit. Documenting the patch inline preserves the audit trail without paying the iteration tax.
+- Confidence: high
+- Last observed: Feature #109
+- Observation count: 1
+
+### Pattern: Skip-Marker Strategy for Broken-Window CI During Long Multi-Group Migrations
+For migrations spanning N call-sites across M groups where intermediate states are intentionally non-functional, apply pytest skip markers at the start of the migration window and remove them at the end. The marker count itself becomes a progress meter (19 applied → 17 active mid-flight → 0 remaining at completion).
+- Observed in: Feature #109 implement phase — 19 skip markers applied at Group 13.8, 17 active, all removed at Group 15.7
+- Reasoning: Without skip markers, CI is red for the entire migration window, masking new failures. With skip markers, only the migration-targeted tests are silenced; new regressions still surface.
+- Confidence: high
+- Last observed: Feature #109
+- Observation count: 1

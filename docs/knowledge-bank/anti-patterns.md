@@ -752,3 +752,39 @@ Trusting implementer agents to stay within PI scope without an automated diff se
 - Confidence: high
 - Last observed: Feature #113
 - Observation count: 1
+
+### Anti-Pattern: Point-Fix on Workspace-Scoping Bug Without Sibling-Sweep
+When a workspace-isolation bug is identified in one helper (e.g., cross-workspace ambiguous `WHERE type_id = ?`), fixing only the flagged call site without grepping for sibling unscoped patterns guarantees the same defect class recurs in the next review iteration.
+- Observed in: Feature #109 design iters 2-3 — iter-2 fixed get_entity workspace-scoping; iter-3 surfaced same defect class in append_phase_event WHERE clause
+- Cost: 1 extra design review iteration on a class-fix-able defect
+- Instead: After fixing any workspace-scoping bug, grep for `WHERE type_id` (without `workspace_uuid`) across the helper surface; class-fix all instances in the same revision
+- Confidence: high
+- Last observed: Feature #109
+- Observation count: 1
+
+### Anti-Pattern: Static Pre-Migration Caller Count Estimates Drift From Empirical Counts
+Spec / plan estimates of caller counts drift from the empirical count by implementation time as prior task commits add or remove caller patterns.
+- Observed in: Feature #109 — F12 audit 1-to-1 coverage assertion passed at 14 production sites (empirical) vs 17 estimate from spec
+- Cost: No direct iteration loss (AC was written count-agnostic per iter-3 fix), but the estimate created false reviewer expectation
+- Instead: Spec ACs touching caller counts must be written as "1-to-1 coverage of grep result at implement time" (count-agnostic), with grep predicate inline
+- Confidence: medium
+- Last observed: Feature #109
+- Observation count: 1
+
+### Anti-Pattern: Hardcoded Schema Column Lists in Migration Steps
+Hardcoding the column list (or trigger list, or index list) in a migration sub-step instead of using `PRAGMA table_info()` / `sqlite_master` runtime discovery guarantees drift between the migration code and the actual schema.
+- Observed in: Feature #109 design iter-2 — sub-step 5 hardcoded column enumeration replaced with PRAGMA table_info() runtime discovery; WAL read-snapshot concurrent-migration issue (Groups 1+2) required idempotency mitigation
+- Cost: 1 design review iteration; potential implementation-time WAL concurrency issue
+- Instead: All migration sub-steps that enumerate schema artifacts (columns, triggers, indexes) must use sqlite_master / PRAGMA queries at runtime
+- Confidence: high
+- Last observed: Feature #109
+- Observation count: 1
+
+### Anti-Pattern: Deferring Stale Pre-Existing Test Failures Without Backlog Capture
+Implementer notes "N pre-existing test failures, out of scope per task brief" and the scope deferral is honored, but the failures are not promoted to a backlog item. They become permanent CI noise until the next feature touching the same surface accidentally inherits them.
+- Observed in: Feature #109 — 77 pre-existing failures (32 UI + 45 hooks/tests) referenced dropped entity_type column; flagged as out-of-scope; no backlog item filed
+- Cost: Future feature on entity surface will inherit these as in-scope or be forced to triage at handoff time
+- Instead: Any deferral note in implementation-log / finish-feature output must round-trip to /pd:add-to-backlog within the same session
+- Confidence: high
+- Last observed: Feature #109
+- Observation count: 1
