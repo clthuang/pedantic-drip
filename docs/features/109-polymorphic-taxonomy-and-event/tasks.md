@@ -23,6 +23,16 @@
 
 ## Group 0: Pre-Migration Setup
 
+### Task 0.0: DISCOVERY — pre-existing FK violation check on live DB
+
+- **File:** none (output captured to `.review-history.md`)
+- **Action:** Run `sqlite3 ~/.claude/pd/entities/entities.db 'PRAGMA foreign_key_check'` against the current live DB. (Plan-reviewer iter-2 flagged risk: the PRD evidence notes 4 stale workflow_phases rows + 6 duplicate projects + 120 unsynced backlog rows — some may be FK violations that would block Group 0.2's stub migration at session start.)
+- **Decision tree:**
+  - If output is empty: proceed to Task 0.1.
+  - If non-empty: (a) clean up violations via a prerequisite commit (pre-Group-0 stabilization); OR (b) document violations as expected pre-state and adjust the in-transaction FK check in Group 0.2 to log-warn rather than abort.
+- **DoD:** live DB FK-check output committed to .review-history.md; recovery path chosen and applied.
+- **Dependencies:** none (must run first).
+
 ### Task 0.1: Add `make_v12_db()` helper to test_helpers.py
 
 - **File:** `plugins/pd/hooks/lib/entity_registry/test_helpers.py`
@@ -74,9 +84,9 @@
 - **DoD:** 4 sites updated.
 - **Dependencies:** Task 0.5.2.
 
-### Task 0.5.4: Rename ~46 test callers across 3 test files
+### Task 0.5.4: Rename ~50 test callers across 3 test files
 
-- **File:** `plugins/pd/mcp/test_workflow_state_server.py` (~28 sites), `plugins/pd/hooks/lib/entity_registry/test_phase_events.py` (~6 sites), `plugins/pd/hooks/lib/entity_registry/test_phase_events_adversarial.py` (~12 sites). **Empirical count from plan-reviewer iter-1 verification.**
+- **File:** `plugins/pd/mcp/test_workflow_state_server.py` (28 sites), `plugins/pd/hooks/lib/entity_registry/test_phase_events.py` (11 sites), `plugins/pd/hooks/lib/entity_registry/test_phase_events_adversarial.py` (11 sites). **Empirical count corrected per plan-reviewer iter-2 verification** (iter-1 listed ~6 for test_phase_events.py; actual is 11). Total: 50 test callers.
 - **Action:** Mechanical rename in all 3 files.
 - **Algorithm:** sed-style rename in 3 files.
 - **Assertion shape:** Task 0.5.1 test passes; all 3 test files' existing tests still pass.
@@ -636,13 +646,15 @@ This section is preserved for traceability. **No new tasks ship in Group 11.**
 - **DoD:** import works.
 - **Dependencies:** Task 13.4.
 
-### Task 13.0: PRE-AUDIT — enumerate affected test sites for skip-marker strategy
+### Task 13.0: PRE-AUDIT — enumerate affected test sites for skip-marker strategy (two-pass)
 
 - **File:** none (output captured to `.review-history.md`)
-- **Action:** Run `grep -rn 'register_entity(' plugins/pd/ | grep test_` and cross-reference with the 7-file production caller list. Capture the full affected-test list. This is the source-of-truth for the skip-marker application in Task 13.8.
-- **Algorithm:** grep + filter.
-- **Assertion shape:** captured list documented.
-- **DoD:** affected-test list committed to .review-history.md.
+- **Action:** Two-pass audit:
+  - **Pass 1 (direct callers):** Run `grep -rn 'register_entity(' plugins/pd/ | grep test_` to capture explicit register_entity caller tests.
+  - **Pass 2 (indirect catch):** Apply Task 13.6 + 13.7 implementations locally (in a scratch branch or staged commit), then run `pytest plugins/pd/` and collect EVERY failing test. The union of pass 1 + pass 2 is the full skip-marker target list. (Plan-reviewer iter-2 flagged that grep alone misses tests calling helpers that internally use register_entity.)
+- **Algorithm:** grep + experimental pytest run + union.
+- **Assertion shape:** captured union list documented.
+- **DoD:** complete affected-test list committed to .review-history.md; both passes covered.
 - **Dependencies:** Task 13.4.
 
 ### Task 13.6: Modify register_entity (remove INSERT OR IGNORE + parent_uuid fixup)
@@ -767,14 +779,21 @@ This section is preserved for traceability. **No new tasks ship in Group 11.**
 - **DoD:** test passes; no skip markers remain; CI green with full test surface.
 - **Dependencies:** Task 15.6.
 
+### Task 15.8.0: DISCOVERY — enumerate skill/command MD files referencing register_entity
+
+- **File:** none (output captured to `.review-history.md`)
+- **Action:** Run `grep -rln 'register_entity' plugins/pd/skills/ plugins/pd/commands/` to enumerate the actual MD files. Commit the empirical file list to `.review-history.md`. (Per plan-reviewer iter-2 warning: the iter-1 plan's "expected files" list was hedged; replace with verified list.)
+- **DoD:** verified MD file list captured.
+- **Dependencies:** Task 15.7.
+
 ### Task 15.8: Skill/Command MD audit (per plan-reviewer iter-1 blocker)
 
-- **File:** `plugins/pd/skills/**/*.md`, `plugins/pd/commands/**/*.md`
-- **Action:** Run `grep -rln 'register_entity' plugins/pd/skills/ plugins/pd/commands/` to enumerate MD files that reference `register_entity` in prose. For each: either (a) update the prose to add explicit instruction "on EntityExistsError, fall back to upsert_entity or surface as user-facing error"; or (b) verify the MD prose routes through the MCP entity_server (which already translates EntityExistsError per design §3.5 to a JSON error), in which case no prose update is needed but the routing rationale must be added as a brief inline comment in the MD.
-- **Algorithm:** grep + per-file decision.
+- **File:** files identified in Task 15.8.0
+- **Action:** For each MD file from 15.8.0: either (a) update the prose to add explicit instruction "on EntityExistsError, fall back to upsert_entity or surface as user-facing error"; or (b) verify the MD prose routes through the MCP entity_server (which already translates EntityExistsError per design §3.5 to a JSON error), in which case no prose update is needed but the routing rationale must be added as a brief inline comment in the MD.
+- **Algorithm:** per-file decision.
 - **Assertion shape:** every MD reference to register_entity either has updated handling prose OR a documented MCP-routing rationale.
 - **DoD:** all affected MD files committed with the chosen routing; no silent semantic break.
-- **Dependencies:** Task 15.7.
+- **Dependencies:** Task 15.8.0.
 
 ---
 

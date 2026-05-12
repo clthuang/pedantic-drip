@@ -3,7 +3,7 @@
 - **Project:** P003-entity-system-redesign
 - **Feature:** 109-polymorphic-taxonomy-and-event
 - **Mode:** full
-- **Status:** Draft (revision 2 after plan-reviewer iteration 1)
+- **Status:** Draft (revision 3 after plan-reviewer iterations 1+2)
 - **Created:** 2026-05-12
 - **Spec:** `docs/features/109-polymorphic-taxonomy-and-event/spec.md` (revision 4)
 - **Design:** `docs/features/109-polymorphic-taxonomy-and-event/design.md` (revision 4)
@@ -90,7 +90,7 @@ All other Groups are strictly sequential due to schema dependencies.
 
 **Goal:** Establish baseline state and create the migration scaffold WITH in-transaction FK check from day 1.
 
-**Tasks:** 0.1 (test_helpers `make_v12_db`), 0.2 (migration 12 stub registration WITH in-transaction `PRAGMA foreign_key_check` immediately before COMMIT — present from this commit forward; per design §3.3 reference impl; addresses Group 16.2 placement warning).
+**Tasks:** 0.0 (PRE-EXISTING FK violation check on live DB — see Task 0.0 in tasks.md; recovery path chosen if violations found), 0.1 (test_helpers `make_v12_db`), 0.2 (migration 12 stub registration WITH in-transaction `PRAGMA foreign_key_check` immediately before COMMIT — present from this commit forward; per design §3.3 reference impl; addresses Group 16.2 placement warning).
 
 **Dependencies:** none.
 
@@ -198,6 +198,8 @@ All other Groups are strictly sequential due to schema dependencies.
 
 **Dependencies:** Group 5. **Must precede Group 7.**
 
+**Group 5 / Group 6 database.py edit coordination (per plan-reviewer iter-2 warning):** Group 5 task 5.5 updates 3 FTS5 sync INSERT sites in database.py (lines 3469, 3877, 5545) to write `kind` instead of `entity_type`. Group 6's per-file rewrite of database.py must NOT revert those 3 lines. The Group 6 sub-task for database.py explicitly skips the 3 already-converted FTS5 sync sites; the implementer captures the line numbers from Group 5's commit diff to enable a precise per-file rewrite that touches only remaining `entity_type` references.
+
 **DoD:** `grep -rn '\bentity_type\b' plugins/pd/hooks/lib/ plugins/pd/mcp/` returns 0 production references (allowed exceptions per AC-1.4); all updated files' tests pass.
 
 ### Group 7: DROP entity_type Column (AC-1.4 final step + AC-1.5)
@@ -285,7 +287,7 @@ Group 11 is preserved as a placeholder for backward reference but ships no new c
 - 12.7 (implement `promote_entity(uuid, new_kind, new_lifecycle_class, *, project_id=None)` per design TD-6 pseudocode)
 - 12.8 (verify type_id split rule for colons-in-suffix — `type_id.split(":", 1)`)
 
-**Dependencies:** Group 11 (both triggers must be dropped first).
+**Dependencies:** Group 10 (last Group with new commits). Group 11 was REMOVED in revision 2; the trigger-drop precondition that `promote_entity` requires is satisfied by Group 3 (which consolidated the trigger-removal work alongside the entities copy-rename).
 
 **DoD:** all 5 RED tests pass.
 
@@ -360,7 +362,7 @@ Group 11 is preserved as a placeholder for backward reference but ships no new c
 ## 4. Risk-Driven Sequencing Rationale
 
 **Why this order matters:**
-1. **Trigger drops (Group 11) must precede promote_entity (Group 12)** — promote_entity's UPDATE on `entity_type` (now `kind`) and `type_id` would be blocked by the existing triggers.
+1. **Trigger drops (Group 3 — formerly Group 11, consolidated) must precede promote_entity (Group 12)** — promote_entity's UPDATE on `entity_type` (now `kind`) and `type_id` would be blocked by the existing triggers.
 2. **FTS5 rebuild (Group 5) must precede column drop (Group 7)** — FTS5 reads `entity_type` during the rebuild backfill loop.
 3. **Reader rewrite (Group 6) must precede column drop (Group 7)** — readers must use `kind` before the column disappears.
 4. **register_entity split (Group 13) must precede SQL/Python audits (Groups 14, 15)** — auditing depends on the new API surface.
