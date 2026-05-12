@@ -368,10 +368,12 @@ class TestMigration2:
         db = EntityDatabase(db_path)
         assert db.get_metadata("schema_version") == "12"
 
-        # Schema should be intact
+        # Schema should be intact.
+        # Feature 109 Migration 12 added 3 columns (type, kind,
+        # lifecycle_class) on top of the 12 columns set by Migration 11.
         cur = db._conn.execute("PRAGMA table_info(entities)")
         columns = cur.fetchall()
-        assert len(columns) == 12
+        assert len(columns) == 15
 
         db.close()
 
@@ -463,19 +465,27 @@ class TestSchemaCreation:
 
     def test_entities_has_13_columns(self, db: EntityDatabase):
         # Feature 108 Migration 11: dropped project_id + parent_type_id,
-        # kept workspace_uuid + parent_uuid → 12 columns total.
+        # kept workspace_uuid + parent_uuid → 12 columns.
+        # Feature 109 Migration 12: added type + kind + lifecycle_class
+        # → 15 columns total.
+        # (Test name retained for git-blame continuity; column count is
+        # asserted in the body.)
         cur = db._conn.execute("PRAGMA table_info(entities)")
         columns = cur.fetchall()
-        assert len(columns) == 12
+        assert len(columns) == 15
 
     def test_entities_column_names(self, db: EntityDatabase):
-        # Feature 108 Migration 11: post-migration column layout.
+        # Feature 109 Migration 12: post-migration column layout. The
+        # three trailing columns (type, kind, lifecycle_class) were added
+        # by ALTER TABLE ADD COLUMN so they appear at the tail of the
+        # PRAGMA table_info ordering after Migration 11's base layout.
         cur = db._conn.execute("PRAGMA table_info(entities)")
         col_names = [row[1] for row in cur.fetchall()]
         expected = [
             "uuid", "workspace_uuid", "type_id", "entity_type", "entity_id",
             "name", "status", "parent_uuid",
             "artifact_path", "created_at", "updated_at", "metadata",
+            "type", "kind", "lifecycle_class",
         ]
         assert col_names == expected
 

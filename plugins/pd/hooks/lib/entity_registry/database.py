@@ -2714,14 +2714,139 @@ def _migration_12_polymorphic_taxonomy_and_events(
             )
 
         # ------------------------------------------------------------------
-        # Step 5: (RESERVED for body — populated by Groups 1-11 of feature 109)
+        # Step 5a: Pre-flight collision audit (Group 1, Task 1.2, AC-1.10)
         # ------------------------------------------------------------------
-        # Pre-flight collision audit (Group 1), AC-5.3 cleanup (Group 1),
-        # type/kind/lifecycle_class column adds + backfill (Group 2),
-        # composite CHECK via copy-rename + trigger removal (Group 3),
-        # idx_entities_type_kind (Group 4), FTS5 rebuild (Group 5),
-        # entity_type column drop (Group 6), phase_events schema expansion
-        # (Group 7), etc.
+        # Detect (workspace_uuid, numeric suffix) collisions between backlog
+        # and feature entities. Non-blocking — emit one INFO line per
+        # collision to stderr so operators see them up-front; AC-3.6 raises
+        # ``PromotionConflictError`` at promotion time for the same case.
+        collision_rows = conn.execute(
+            "SELECT workspace_uuid, "
+            "SUBSTR(type_id, INSTR(type_id, ':') + 1) AS suffix "
+            "FROM entities WHERE type_id LIKE 'backlog:%' "
+            "INTERSECT "
+            "SELECT workspace_uuid, "
+            "SUBSTR(type_id, INSTR(type_id, ':') + 1) AS suffix "
+            "FROM entities WHERE type_id LIKE 'feature:%'"
+        ).fetchall()
+        for row in collision_rows:
+            ws = row[0]
+            suffix = row[1]
+            print(
+                f"INFO: Migration 12 pre-flight collision: "
+                f"workspace={ws}, suffix={suffix}",
+                file=sys.stderr,
+            )
+
+        # ------------------------------------------------------------------
+        # Step 5b: AC-5.3 pre-migration cleanup (Group 1, Task 1.4)
+        # ------------------------------------------------------------------
+        # Remove the known malformed ``workflow_phases`` row whose type_id is
+        # the literal string 'feature:' (empty after colon — observed in
+        # the live DB on 2026-05-12). Detection runs first so we can emit a
+        # single audit log entry; the DELETE is unconditional but a no-op
+        # when no malformed row exists.
+        malformed_count = conn.execute(
+            "SELECT COUNT(*) FROM workflow_phases WHERE type_id = 'feature:'"
+        ).fetchone()[0]
+        if malformed_count > 0:
+            print(
+                f"INFO: Migration 12 removed malformed workflow_phases row: "
+                f"feature: (count={malformed_count})",
+                file=sys.stderr,
+            )
+        conn.execute(
+            "DELETE FROM workflow_phases WHERE type_id = 'feature:'"
+        )
+
+        # ------------------------------------------------------------------
+        # Step 5c: F11 column additions (Group 2, Task 2.3)
+        # ------------------------------------------------------------------
+        # Add ``type``, ``kind``, ``lifecycle_class`` columns to ``entities``
+        # with placeholder NOT NULL DEFAULTs. Defaults are corrected by the
+        # backfill UPDATEs in step 5d. The composite CHECK constraint is
+        # added later by Group 3's copy-rename.
+        #
+        # Concurrent-runner safety: SQLite has no ``ADD COLUMN IF NOT
+        # EXISTS``. Under WAL-mode concurrent migration (multiple processes
+        # racing v11→v12 init), the in-tx re-check above can miss a freshly
+        # committed peer because the read snapshot is established at
+        # BEGIN IMMEDIATE acquisition. We additionally guard each ALTER by
+        # introspecting ``PRAGMA table_info(entities)`` so a losing-racer
+        # skips the column add idempotently. The cross-process safety is
+        # otherwise unchanged — only one writer can hold the lock at a
+        # time; the loser just no-ops its body.
+        existing_cols = {
+            r[1] for r in conn.execute(
+                "PRAGMA table_info(entities)"
+            ).fetchall()
+        }
+        if "type" not in existing_cols:
+            conn.execute(
+                "ALTER TABLE entities ADD COLUMN type TEXT NOT NULL "
+                "DEFAULT 'work'"
+            )
+        if "kind" not in existing_cols:
+            conn.execute(
+                "ALTER TABLE entities ADD COLUMN kind TEXT NOT NULL "
+                "DEFAULT 'feature'"
+            )
+        if "lifecycle_class" not in existing_cols:
+            conn.execute(
+                "ALTER TABLE entities ADD COLUMN lifecycle_class TEXT "
+                "NOT NULL DEFAULT 'feature_flow'"
+            )
+
+        # ------------------------------------------------------------------
+        # Step 5d: F11 backfill UPDATEs (Group 2, Task 2.4)
+        # ------------------------------------------------------------------
+        # Map the 4 production ``entity_type`` values plus the (unused at
+        # v11 but defined for forward compat) ``workspace`` value onto
+        # (type, kind, lifecycle_class) per spec FR-1 mapping table.
+        conn.execute(
+            "UPDATE entities SET type='work', kind='feature', "
+            "lifecycle_class='feature_flow' WHERE entity_type='feature'"
+        )
+        conn.execute(
+            "UPDATE entities SET type='work', kind='backlog', "
+            "lifecycle_class='work_flow' WHERE entity_type='backlog'"
+        )
+        conn.execute(
+            "UPDATE entities SET type='brainstorm', kind='brainstorm', "
+            "lifecycle_class='brainstorm_flow' WHERE entity_type='brainstorm'"
+        )
+        conn.execute(
+            "UPDATE entities SET type='container', kind='project', "
+            "lifecycle_class='container_flow' WHERE entity_type='project'"
+        )
+        conn.execute(
+            "UPDATE entities SET type='workspace', kind='workspace', "
+            "lifecycle_class='none' WHERE entity_type='workspace'"
+        )
+
+        # ------------------------------------------------------------------
+        # Step 5e: Defensive abort on unmapped entity_type rows (Task 2.5)
+        # ------------------------------------------------------------------
+        # If any row has an ``entity_type`` that the 5 UPDATEs above did not
+        # cover (e.g. a stray value like 'unknown' that bypassed
+        # register_entity validation), abort the migration loudly so the
+        # operator can investigate.
+        #
+        # Note on implementation: the original spec wording proposed
+        # ``WHERE type IS NULL`` — but the ALTER TABLE statements above
+        # populate ``type`` for existing rows from the NOT NULL DEFAULT,
+        # so that predicate never fires. Detecting an unmapped row requires
+        # a direct check against the mapping enum, which is what the
+        # backfill UPDATEs use. The set of mapped ``entity_type`` values is
+        # fixed by FR-1; rows outside that set are the anomaly.
+        unmapped = conn.execute(
+            "SELECT COUNT(*) FROM entities WHERE entity_type NOT IN "
+            "('feature','backlog','brainstorm','project','workspace')"
+        ).fetchone()[0]
+        if unmapped > 0:
+            raise RuntimeError(
+                f"Migration 12: unmapped entity_type rows: {unmapped}"
+            )
 
         # ------------------------------------------------------------------
         # Step N-2: in-transaction post-flight FK check
