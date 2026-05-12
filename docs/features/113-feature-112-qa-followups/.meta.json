@@ -1,0 +1,17 @@
+{
+  "id": "113",
+  "slug": "feature-112-qa-followups",
+  "mode": "standard",
+  "status": "active",
+  "created": "2026-05-12T06:22:22.428795+00:00",
+  "branch": "feature/113-feature-112-qa-followups",
+  "lastCompletedPhase": null,
+  "phases": {
+    "brainstorm": {
+      "started": "2026-05-12T06:22:22.428601+00:00"
+    },
+    "specify": {
+      "started": "2026-05-12T06:34:44.270977+00:00"
+    }
+  }
+}
