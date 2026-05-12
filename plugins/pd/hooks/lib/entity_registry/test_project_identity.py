@@ -165,6 +165,29 @@ class TestComputeLegacyProjectId:
         ).hexdigest()[:12]
         assert result == expected
 
+    def test_ignores_entity_project_id_env(self, monkeypatch, tmp_path):
+        """FR-3 / AC-2: ENTITY_PROJECT_ID is no longer honored.
+
+        Setting the legacy env var must NOT influence the helper —
+        callers wanting an override use ENTITY_WORKSPACE_UUID via
+        ``resolve_workspace_uuid``.
+        """
+        from entity_registry.project_identity import _compute_legacy_project_id
+
+        monkeypatch.setenv("ENTITY_PROJECT_ID", "custom_proj_id")
+        # No git mock — falls to path-hash branch.
+        def _no_git(cmd, **kwargs):
+            raise FileNotFoundError("git not found")
+        monkeypatch.setattr(subprocess, "run", _no_git)
+
+        result = _compute_legacy_project_id(str(tmp_path))
+        # Env var must NOT win; result is path-hash.
+        expected = hashlib.sha256(
+            os.path.abspath(str(tmp_path)).encode()
+        ).hexdigest()[:12]
+        assert result == expected
+        assert result != "custom_proj_id"
+
 
 # ---------------------------------------------------------------------------
 # T1.5: GitProjectInfo + collect_git_info tests
@@ -265,6 +288,19 @@ class TestResolveWorkspaceUuidPrecedence:
         # Even with no .claude/pd, env var wins.
         result = resolve_workspace_uuid(str(tmp_path))
         assert result == custom
+
+    def test_resolve_workspace_uuid_env_override(self, monkeypatch, tmp_path):
+        """FR-3 / AC-2b: ENTITY_WORKSPACE_UUID is the supported override.
+
+        Successor to the deleted ``test_detect_project_id_env_override``
+        (legacy ENTITY_PROJECT_ID). Documents the rename and asserts
+        the precedence chain honors a well-formed UUID.
+        """
+        from entity_registry.project_identity import resolve_workspace_uuid
+
+        sample = "22222222-3333-4444-8555-666666666666"
+        monkeypatch.setenv("ENTITY_WORKSPACE_UUID", sample)
+        assert resolve_workspace_uuid(str(tmp_path)) == sample
 
     def test_resolve_workspace_uuid_env_var_malformed_raises(
         self, monkeypatch, tmp_path

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- `ENTITY_PROJECT_ID` env-var override (feature 112 / FR-3). Use
+  `ENTITY_WORKSPACE_UUID` instead — consulted by `resolve_workspace_uuid`
+  per the workspace identity precedence chain.
+
 ## [4.17.0] - 2026-05-11
 
 ### Added

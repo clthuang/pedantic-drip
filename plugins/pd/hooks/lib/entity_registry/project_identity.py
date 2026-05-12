@@ -502,17 +502,12 @@ def detect_project_id(working_dir: str | None = None) -> str:
     Compatibility alias retained for Phase A — the rename to
     ``resolve_workspace_uuid`` happens in Phase D (FR-3 / Decision 5).
     For Phase A we keep this thin wrapper that delegates to
-    ``_compute_legacy_project_id`` and preserves the existing
-    ``ENTITY_PROJECT_ID`` env-var override behaviour. After Phase D,
-    ``ENTITY_PROJECT_ID`` is removed entirely.
+    ``_compute_legacy_project_id``. Feature 112 / FR-3 removed the
+    ``ENTITY_PROJECT_ID`` env-var override; ``ENTITY_WORKSPACE_UUID`` is
+    the supported runtime override (consult ``resolve_workspace_uuid``).
 
     Cached per-process via ``lru_cache(maxsize=1)``.
     """
-    # Env var override (preserved for Phase A; removed in Phase D).
-    env_id = os.environ.get("ENTITY_PROJECT_ID")
-    if env_id:
-        return env_id
-
     return _compute_legacy_project_id(working_dir)
 
 
