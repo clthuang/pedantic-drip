@@ -50,8 +50,9 @@ PI-0   Baseline capture (NFR-2, artifact-only)
    │   └── Tests+5  → Impl+5
    │
    ├── PI-7   Reconcile threading (depends on PI-5)
-   │   ├── Tests+11.1/11.2 → Impl+11.1/11.2 (lib extensions)
-   │   └── Tests+11.3/4/5 → Impl+11.3/4/5 (MCP + test additions)
+   │   ├── Tests+11.1 → Impl+11.1 [P] (apply_workflow_reconciliation)
+   │   ├── Tests+11.2 → Impl+11.2 [P] (scan_all)
+   │   └── Tests+11.3/4/5 → Impl+11.3/4/5 [S:test_workflow_state_server.py] (MCP handlers)
    │
    └── PI-8   Regression + dogfood (depends on all)
        ├── Final pytest pass + baseline diff (AC-12)

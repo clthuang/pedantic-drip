@@ -86,7 +86,7 @@ git commit -m "feat(113/FR-2): bash-version-capture.sh AC-12 evidence helper"
 
 ## PI-2 — Defensive fixes (FR-3.0, FR-7, FR-8, FR-9)
 
-### T2a.1 [S:test_workflow_state_server.py] — Tests+3.0 RED
+### T2a.1 [S:test_workflow_state_server.py with T2b.1, T3a.1, T3b.1, T7b.1] — Tests+3.0 RED
 In `plugins/pd/mcp/test_workflow_state_server.py::TestListFeaturesByDefaultSingleWorkspace`, add `test_list_features_handler_empty_project_id_treated_as_default`. Set `_workspace_uuid` to a known value; call `list_features_by_phase(phase="design", project_id="")`; assert results scoped to that workspace.
 **Done (RED):** Test fails — current helper falls into JOIN-resolve and returns None.
 **Time:** 10 min.
@@ -379,7 +379,7 @@ git commit -m "feat(113/FR-5): transition_entity_phase symmetric workspace_uuid 
 
 ## PI-7 — Reconcile workspace_uuid threading
 
-### T7a.1 — Tests+11.1/11.2 RED: internal-forwarding + scope-scan tests
+### T7a.1 [P] — Tests+11.1 RED: apply_workflow_reconciliation internal-forwarding tests
 In `plugins/pd/hooks/lib/workflow_engine/test_reconciliation.py`, add 2 tests:
 - `test_apply_workflow_reconciliation_forwards_workspace_uuid_to_update_workflow_phase_meta_ahead`:
   - Bootstrap meta_json_ahead row
@@ -388,7 +388,27 @@ In `plugins/pd/hooks/lib/workflow_engine/test_reconciliation.py`, add 2 tests:
   - Assert mock received `workspace_uuid=ws_a` kwarg
 - `test_apply_workflow_reconciliation_forwards_workspace_uuid_to_update_workflow_phase_kanban_drift`:
   - Same shape, kanban-only-drift row
+**Done (RED):** Both fail today — `apply_workflow_reconciliation` doesn't accept workspace_uuid (TypeError).
+**Time:** 15 min.
+**Dependencies:** T5.3.
 
+### T7a.2 — Impl+11.1 GREEN: extend apply_workflow_reconciliation
+Modify `plugins/pd/hooks/lib/workflow_engine/reconciliation.py:756`:
+- Add `workspace_uuid: str | None = None` kwarg to signature
+- At lines 367-374: merge into kwargs dict per design I9 (`kwargs["workspace_uuid"] = workspace_uuid` BEFORE `db.update_workflow_phase(feature_type_id, **kwargs)`)
+- At line 462: add `workspace_uuid=workspace_uuid` to single-kwarg call
+**Done (GREEN):** T7a.1's 2 tests pass.
+**Time:** 10 min.
+**Dependencies:** T7a.1.
+
+### T7a.3 — Commit PI-7a (FR-11.1)
+```bash
+git add plugins/pd/hooks/lib/workflow_engine/reconciliation.py plugins/pd/hooks/lib/workflow_engine/test_reconciliation.py
+git commit -m "feat(113/FR-11.1): apply_workflow_reconciliation workspace_uuid kwarg + internal-forwarding tests"
+```
+**Time:** 2 min.
+
+### T7a2.1 [P] — Tests+11.2 RED: scan_all scope-scan tests
 In `plugins/pd/hooks/lib/entity_registry/test_frontmatter_sync.py`, add 2 tests:
 - `test_scan_all_scopes_to_workspace`:
   - Bootstrap 2 workspaces with features
@@ -397,35 +417,26 @@ In `plugins/pd/hooks/lib/entity_registry/test_frontmatter_sync.py`, add 2 tests:
 - `test_scan_all_default_unscoped_returns_all_workspace_features` (NFR-3 regression pin):
   - Same fixture; call `scan_all(db, artifacts_root)` (no kwarg)
   - Assert reports cover BOTH workspaces
-**Done (RED):** All 4 fail today — `apply_workflow_reconciliation` and `scan_all` don't accept workspace_uuid (TypeError).
-**Time:** 25 min.
+**Done (RED):** Both fail today — `scan_all` doesn't accept workspace_uuid (TypeError on T7a2.1's scoped test) and the default test fails because the scoped test errors first.
+**Time:** 12 min.
 **Dependencies:** T5.3.
 
-### T7a.2 — Impl+11.1 GREEN: extend apply_workflow_reconciliation
-Modify `plugins/pd/hooks/lib/workflow_engine/reconciliation.py:756`:
-- Add `workspace_uuid: str | None = None` kwarg to signature
-- At lines 367-374: merge into kwargs dict per design I9 (`kwargs["workspace_uuid"] = workspace_uuid` BEFORE `db.update_workflow_phase(feature_type_id, **kwargs)`)
-- At line 462: add `workspace_uuid=workspace_uuid` to single-kwarg call
-**Done:** T7a.1's reconciliation tests (2 of 4) pass.
-**Time:** 10 min.
-**Dependencies:** T7a.1.
-
-### T7a.3 — Impl+11.2 GREEN: extend scan_all
+### T7a2.2 — Impl+11.2 GREEN: extend scan_all
 Modify `plugins/pd/hooks/lib/entity_registry/frontmatter_sync.py:543`:
 - Add `workspace_uuid: str | None = None` kwarg to signature
 - At line 570: forward to `db.list_entities(entity_type="feature", workspace_uuid=workspace_uuid)`
-**Done:** T7a.1's frontmatter_sync tests (2 of 4) pass. All 4 RED tests now GREEN.
+**Done (GREEN):** T7a2.1's 2 tests pass.
 **Time:** 5 min.
-**Dependencies:** T7a.1.
+**Dependencies:** T7a2.1.
 
-### T7a.4 — Commit PI-7a
+### T7a2.3 — Commit PI-7a2 (FR-11.2)
 ```bash
-git add plugins/pd/hooks/lib/workflow_engine/reconciliation.py plugins/pd/hooks/lib/workflow_engine/test_reconciliation.py plugins/pd/hooks/lib/entity_registry/frontmatter_sync.py plugins/pd/hooks/lib/entity_registry/test_frontmatter_sync.py
-git commit -m "feat(113/FR-11.1-2): apply_workflow_reconciliation + scan_all workspace_uuid kwargs"
+git add plugins/pd/hooks/lib/entity_registry/frontmatter_sync.py plugins/pd/hooks/lib/entity_registry/test_frontmatter_sync.py
+git commit -m "feat(113/FR-11.2): scan_all workspace_uuid kwarg + scope-scan tests"
 ```
 **Time:** 2 min.
 
-### T7b.1 [S:test_workflow_state_server.py] — Tests+11.3/4/5 RED: MCP boundary tests
+### T7b.1 [S:test_workflow_state_server.py with T2a.1, T2b.1, T3a.1, T3b.1] — Tests+11.3/4/5 RED: MCP boundary tests
 In `test_workflow_state_server.py`, add 3 boundary tests:
 - `test_reconcile_apply_forwards_workspace_uuid`: set `wss._workspace_uuid = ws_a`; mock `apply_workflow_reconciliation`; call async `reconcile_apply()`; assert mock received `workspace_uuid=ws_a`
 - `test_reconcile_frontmatter_forwards_workspace_uuid`: same shape; mock `scan_all`
