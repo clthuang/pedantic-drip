@@ -233,7 +233,7 @@ Making `register_entity` raise on conflict changes the contract for every existi
 
 **Acceptance Criteria:**
 
-- **AC-4.1:** `EntityExistsError` exists as a named exception class in `plugins/pd/hooks/lib/entity_registry/exceptions.py` (or chosen module; design phase locks the file). Test: import succeeds; `issubclass(EntityExistsError, Exception)` is True; exception carries `workspace_uuid` and `type_id` attributes for caller inspection.
+- **AC-4.1:** `EntityExistsError` exists as a named exception class. Per design TD-4 (which the codebase precedent supports — see CycleError in dependencies.py, etc.), the exception class lives in `database.py` near other module-level definitions (no new `exceptions.py` module is introduced). Test: import succeeds; `issubclass(EntityExistsError, ValueError)` is True; exception carries `workspace_uuid` and `type_id` attributes for caller inspection. Same applies to `PromotionConflictError`.
 - **AC-4.2:** `register_entity` raises `EntityExistsError` on `(workspace_uuid, type_id)` conflict. Synthetic test: register entity A; second `register_entity` call with same `(workspace_uuid, type_id)` raises; first row untouched (no UPDATE, no second uuid generated, no `entity_status_changed` event emitted).
 - **AC-4.3:** `upsert_entity` exists as a public DB method. Signature is **byte-identical to `register_entity`** as currently declared at `database.py:3343` (including keyword-only params and defaults). Verification at implement time: `python -c "import inspect; from plugins.pd.hooks.lib.entity_registry.database import EntityDB; assert inspect.signature(EntityDB.register_entity).parameters.keys() == inspect.signature(EntityDB.upsert_entity).parameters.keys()"`. Returns the entity uuid in both insert and update cases. If the implementer deliberately diverges (e.g., adds an `upsert`-specific keyword-only param), the divergence must be documented in the docstring and noted in `.review-history.md` so the audit at AC-4.8 stays accurate.
 - **AC-4.4:** `upsert_entity` event semantics (3 distinct branches; the previous "4th branch" of non-status mutations is removed — `upsert_entity` does not handle those, see FR-4 body):
@@ -404,7 +404,7 @@ The taskify phase will expand these; spec lists the must-have test surfaces:
 - `test_polymorphic_taxonomy.py` — schema add, backfill, CHECK constraint rejection, index existence, `FIVE_D_ENTITY_TYPES` removal verification, `entity_type` reader audit.
 - `test_event_sourced_state.py` — every state change emits event; projection consistency; expanded `event_type` CHECK accepts new values; direct UPDATE outside helper raises; `append_phase_event` is atomic.
 - `test_atomic_promotion.py` — promotion preserves uuid; trigger drop at all 6 sites; transaction rollback under partial failure; FK preservation; type_id prefix update; PromotionConflictError on UNIQUE collision.
-- `test_register_upsert_split.py` — `EntityExistsError` raised on conflict; `upsert_entity` four-branch event semantics; one test per audited call site; `INSERT OR IGNORE INTO entities` grep returns 0.
+- `test_register_upsert_split.py` — `EntityExistsError` raised on conflict; `upsert_entity` **three-branch** event semantics (insert / conflict+status-change / conflict+no-change — per AC-4.4 after cross-phase patch); one test per audited call site; `INSERT OR IGNORE INTO entities` grep returns 0.
 - `test_migration_safety.py` — up/down reversible; idempotent; orphan cleanup; WAL lock acquisition.
 
 ---
