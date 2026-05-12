@@ -440,13 +440,20 @@ def _process_create_key_result(
     weight: float,
     project_id: str = "__unknown__",
 ) -> str:
-    """Register a key_result entity with parent linkage (retryable)."""
+    """Register a key_result entity with parent linkage (retryable).
+
+    Feature 112 / FR-4: parent_type_id is resolved to parent_uuid at this
+    call site; ``db.register_entity`` is invoked with the canonical
+    parent_uuid kwarg.
+    """
+    parent_entity = db.get_entity(parent_type_id)
+    parent_uuid = parent_entity["uuid"] if parent_entity else None
     uuid = db.register_entity(
         entity_type="key_result",
         entity_id=eid,
         name=name,
         status=status,
-        parent_type_id=parent_type_id,
+        parent_uuid=parent_uuid,
         metadata=metadata_json,
         project_id=project_id,
     )

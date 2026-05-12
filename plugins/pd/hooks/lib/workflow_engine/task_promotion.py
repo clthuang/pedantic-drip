@@ -340,12 +340,17 @@ def promote_task(
 
     # 8. Register task entity
     task_metadata = {"source_heading": matched_heading}
+    # Feature 112 / FR-4: resolve parent at the call site and pass parent_uuid
+    # directly. The parent feature entity was already fetched (and required to
+    # exist) earlier in this function for the artifact_path validation.
+    parent_entity = db.get_entity(feature_type_id)
+    parent_uuid = parent_entity["uuid"] if parent_entity else None
     task_uuid = db.register_entity(
         entity_type="task",
         entity_id=task_entity_id,
         name=matched_heading,
         status="planned",
-        parent_type_id=feature_type_id,
+        parent_uuid=parent_uuid,
         metadata=task_metadata,
         workspace_uuid=workspace_uuid,
         project_id=_project_id if workspace_uuid is None else None,
