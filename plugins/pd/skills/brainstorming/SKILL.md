@@ -278,17 +278,18 @@ Analyze this problem from your advisory perspective. Return JSON per the advisor
    ```
    If MCP call fails (e.g., already triaged or entity missing), warn "Backlog transition failed: {error}" but do NOT block brainstorm creation.
 
-   Set `parent_type_id` for the brainstorm to `"backlog:{5-digit backlog id}"` in step 4.
+   Note the backlog parent ref `"backlog:{5-digit backlog id}"` for resolution in step 4.
 
 4. **Register brainstorm entity:**
    Extract the title from the PRD first heading (e.g., `# PRD: API Caching` -> `API Caching`).
+   If a backlog parent was found in step 3, first resolve it: `get_entity(ref="backlog:{5-digit backlog id}")` → capture `uuid` as `backlog_uuid`.
    ```
    register_entity(
      entity_type="brainstorm",
      entity_id="{stem}",
      name="{title from PRD}",
      artifact_path="{pd_artifacts_root}/brainstorms/{filename}",
-     parent_type_id="{backlog parent if found, otherwise omit}"
+     parent_uuid="{backlog_uuid if found, otherwise omit}"
    )
    ```
 
