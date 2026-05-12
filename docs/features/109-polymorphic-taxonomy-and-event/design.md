@@ -4,7 +4,7 @@
 - **Feature:** 109-polymorphic-taxonomy-and-event
 - **Phase:** Phase 2 of project roadmap
 - **Mode:** full
-- **Status:** Draft
+- **Status:** Draft (revision 2 after design-reviewer iteration 1)
 - **Created:** 2026-05-12
 - **Last updated:** 2026-05-12
 - **Spec reference:** `docs/features/109-polymorphic-taxonomy-and-event/spec.md`
@@ -82,8 +82,8 @@ Migration 12 executes as one BEGIN IMMEDIATE transaction (with the `PRAGMA forei
 2. **AC-5.3 cleanup:** `DELETE FROM workflow_phases WHERE type_id = 'feature:'` (the one known malformed row); emit one-line audit log.
 3. **F11 column additions:** `ALTER TABLE entities ADD COLUMN type TEXT NOT NULL DEFAULT 'work'`, same for `kind` (DEFAULT 'feature'), same for `lifecycle_class` (DEFAULT 'feature_flow'). The defaults are placeholders; backfill in step 4 corrects them.
 4. **F11 backfill via UPDATE:** five UPDATEs (one per `entity_type → (type, kind, lifecycle_class)` mapping in spec FR-1 table). Defensive: assert every row's `entity_type` lands in the mapping (any unmapped row aborts the migration).
-5. **F11 CHECK constraint via copy-rename:** rebuild `entities` with the new composite CHECK (the only way to add a CHECK in SQLite). Copy-rename pattern from `_expand_workflow_phase_check` migration 5 (`database.py:464-577`) is the template. After the rebuild, the 12 trigger definitions across entities-recreation sites in the migration itself MUST exclude both `enforce_immutable_entity_type` and `enforce_immutable_type_id` (F11 + F3 simultaneous).
-6. **F11 FTS5 rebuild:** drop and recreate `entities_fts` with `kind` replacing `entity_type` in the column list. Use migration 4 (`database.py:421`) as the canonical template. Python backfill loop reads `entities` and INSERTs into the new FTS5 table. (This sub-step is in **one place** in migration 12, not 6 places — the historical 6 are inside earlier `_migrate_*` functions that don't execute against current schema.)
+5. **F11 CHECK constraint via copy-rename:** rebuild `entities` with the new composite CHECK (the only way to add a CHECK in SQLite). Copy-rename pattern from `_expand_workflow_phase_check` migration 5 (`database.py:464-577`) is the template. **Critical ordering note:** the rebuilt `entities` table at this sub-step **retains the `entity_type` column** (still populated from the backfill in sub-step 4) — `entity_type` is NOT dropped until sub-step 8. This allows sub-step 6's FTS5 rebuild to read `entity_type` values while building the new `kind`-keyed FTS5 index (transition state). The `INSERT INTO entities_new SELECT uuid, workspace_uuid, type_id, entity_type, entity_id, name, status, parent_uuid, artifact_path, created_at, updated_at, metadata, type, kind, lifecycle_class FROM entities` preserves all columns. After the rebuild, the 12 trigger definitions across entities-recreation sites in the migration itself MUST exclude both `enforce_immutable_entity_type` and `enforce_immutable_type_id` (F11 + F3 simultaneous). All other triggers (`enforce_immutable_uuid`, `enforce_immutable_created_at`, `enforce_no_self_parent*`) ARE recreated on the rebuilt table — design contract: capture `SELECT sql FROM sqlite_master WHERE tbl_name='entities'` pre-migration to enumerate the trigger list, then recreate all minus the 2 immutable triggers.
+6. **F11 FTS5 rebuild:** drop and recreate `entities_fts` with `kind` replacing `entity_type` in the column list. Use migration 4 (`database.py:421`) as the canonical template. Python backfill loop reads `entities.kind` (which is now populated by sub-step 4 backfill) and INSERTs into the new FTS5 table. (This sub-step is in **one place** in migration 12, not 6 places — the historical 6 are inside earlier `_migrate_*` functions that don't execute against current schema.)
 7. **F11 readers rewrite:** in-source modifications (not done by migration, done by the implementation diff) — all production `entity_type` reads route through `kind`/`type` per AC-1.4.
 8. **F11 column drop:** `ALTER TABLE entities DROP COLUMN entity_type` (SQLite 3.35+ supports this directly; if older, falls back to copy-rename — verify SQLite version at implement time).
 9. **F11 index:** `CREATE INDEX idx_entities_type_kind ON entities(type, kind)`.
@@ -117,9 +117,11 @@ The spec commits to Path A (FR-2). Design confirms: SQLite triggers cannot relia
 
 The spec calls the new helper `append_phase_event`. The codebase already has `insert_phase_event` at `database.py:4630` as the sole write path to `phase_events`. Design decision: **rename the existing `insert_phase_event` to `append_phase_event`** (keeping the spec's terminology — "append" matches event-sourcing vocabulary better than "insert") and extend its signature to handle the new event types.
 
-The rename is a single-commit step (commit 9 in spec NFR-3) with the new param surface; existing `insert_phase_event` callers (search: `grep -n 'insert_phase_event(' plugins/pd/hooks/lib/`) are updated in the same commit. This is consistent with the "no backward compat" project constraint.
+The rename is a single-commit step (commit 9 in spec NFR-3) with the new param surface. Call-site sizing: `grep -rn 'insert_phase_event(' plugins/pd/ | grep -v 'def insert_phase_event'` is run at implement time to enumerate every caller; expected count is the 4 internal backfill helper sites (`database.py:1587, 1603, 1630, 1657` per spec FR-4 audit table) plus any test fixtures. All such callers are renamed and parameter-shape-migrated in the same commit. This is consistent with the "no backward compat" project constraint.
 
-**Alternative considered (rejected):** Keep both `insert_phase_event` (legacy phase-event-only) and `append_phase_event` (new, handles all event types). Rejected because: (a) two functions with overlapping intent create future ambiguity; (b) the spec's per-event-type column-domain table already specifies the unified signature.
+**Scope acknowledgement:** the rename is an additional code-surface change beyond the spec's literal FR list. Spec FR-2 introduces `append_phase_event` as the new helper; design TD-2 chooses to consolidate by renaming the existing precedent rather than introducing a separate symbol. This is a design-phase scope choice (not a spec violation) — the choice is documented here for traceability.
+
+**Alternative considered (rejected):** Keep both `insert_phase_event` (legacy phase-event-only) and `append_phase_event` (new, handles all event types). Rejected because: (a) two functions with overlapping intent create future ambiguity; (b) the spec's per-event-type column-domain table already specifies the unified signature; (c) the existing `insert_phase_event` callers are all in this feature's audit scope so the rename is bounded.
 
 ### TD-3: Migration is a single `BEGIN IMMEDIATE` transaction wrapping all sub-steps
 
@@ -146,39 +148,53 @@ The migration follows the established pattern (e.g. `_migration_11_workspace_ide
 **Adaptation for `upsert_entity`:** the upsert semantics in the spec differ from `upsert_workflow_phase` in one key respect — `upsert_entity` emits a `phase_events` row on the insert branch and conditionally on the conflict branch (only on status change). So the pattern is:
 
 ```python
-def upsert_entity(self, workspace_uuid, type_id, name, *, status='planned', parent_uuid=None, metadata=None) -> str:
+def upsert_entity(self, kind, entity_id, name, *, workspace_uuid=None, status=None, parent_uuid=None, parent_type_id=None, metadata=None, **other_kwargs) -> str:
+    type_id = f"{kind}:{entity_id}"
     with self.transaction():
-        # Try INSERT first
+        # Try INSERT first via register_entity (which now raises on conflict)
         try:
-            uuid = self.register_entity(workspace_uuid, type_id, name, status=status,
-                                         parent_uuid=parent_uuid, metadata=metadata)
-            # register_entity already emits entity_created via append_phase_event
-            return uuid
+            return self.register_entity(
+                kind, entity_id, name,
+                workspace_uuid=workspace_uuid, status=status,
+                parent_uuid=parent_uuid, parent_type_id=parent_type_id,
+                metadata=metadata, **other_kwargs,
+            )
+            # register_entity emits entity_created via append_phase_event internally
         except EntityExistsError:
-            # Conflict path: read existing, compare status, optionally update + emit event
-            existing = self._fetch_entity_by_workspace_and_type_id(workspace_uuid, type_id)
-            if existing['status'] == status:
-                # No-op
+            # Conflict path: read existing via the EXISTING public get_entity method
+            existing = self.get_entity(type_id=type_id)  # database.py:3580
+            if existing is None:
+                # Should not happen — register raised EntityExistsError so a row must exist
+                raise
+            if existing['status'] == status or status is None:
+                # No status change → no-op (do not UPDATE name/parent_uuid/metadata per spec FR-4 status-only rule)
                 return existing['uuid']
-            # Status changed → emit entity_status_changed event + update status only
+            # Status changed → emit entity_status_changed event
+            # append_phase_event INSERTs the event row AND updates entities.status + updated_at atomically
             self.append_phase_event(
                 type_id=type_id,
                 event_type='entity_status_changed',
                 metadata={'old_status': existing['status'], 'new_status': status},
             )
-            # append_phase_event handles the UPDATE entities SET status, updated_at
             return existing['uuid']
 ```
 
-`upsert_entity` does NOT update `name`, `parent_uuid`, or `metadata` on the conflict branch (per spec FR-4 — callers needing those use the existing `update_entity` API).
+**SQLite transaction semantics note (per "Pre-Research SQLite Transaction Facts at Design" memory):** A failed INSERT inside an explicit transaction does NOT auto-rollback the transaction in SQLite. When `register_entity` raises `EntityExistsError` (after catching the underlying `sqlite3.IntegrityError`), the outer `with self.transaction():` block remains open and in a clean state — the failed INSERT statement has been individually rejected by SQLite, but no implicit ROLLBACK was issued. The subsequent `get_entity` read and `append_phase_event` write therefore proceed normally within the same transaction. Reference: https://www.sqlite.org/lang_transaction.html.
+
+`upsert_entity` does NOT update `name`, `parent_uuid`, or `metadata` on the conflict branch (per spec FR-4 corrected body and AC-4.4 — callers needing those use the existing `update_entity` API).
+
+**Existing helpers used (not new):**
+- `self.get_entity(type_id=...)` exists at `database.py:3580` — returns the entity dict or None.
+- `self.get_entity_by_uuid(uuid)` exists at `database.py:2984` — returns the entity dict or None.
+- No new private `_fetch_*` helpers are introduced — the design reuses these existing public methods.
 
 ### TD-6: `promote_entity` operation order and UNIQUE-safety pre-flight
 
 ```python
 def promote_entity(self, uuid: str, new_kind: str, new_lifecycle_class: str, *, project_id=None) -> dict:
     with self.transaction():
-        # Step 1: read existing
-        existing = self._fetch_entity_by_uuid(uuid)
+        # Step 1: read existing via EXISTING public helper (not a new private method)
+        existing = self.get_entity_by_uuid(uuid)  # database.py:2984
         if not existing:
             raise ValueError(f"Entity not found: {uuid}")
 
@@ -220,8 +236,8 @@ def promote_entity(self, uuid: str, new_kind: str, new_lifecycle_class: str, *, 
             },
         )
 
-        # Step 6: return updated entity dict
-        return self._fetch_entity_by_uuid(uuid)
+        # Step 6: return updated entity dict via EXISTING helper
+        return self.get_entity_by_uuid(uuid)  # database.py:2984
 ```
 
 The UNIQUE-safety pre-flight runs against the live row count (not a snapshot), and the read-then-write race is acceptable because the entire function is wrapped in `BEGIN IMMEDIATE` (via `self.transaction()`), so concurrent writers are serialized. SQLite's WAL mode + busy_timeout ensures no other connection can interleave.
@@ -260,25 +276,35 @@ Two reasonable locations: (a) inside `plugins/pd/hooks/lib/doctor/` (existing do
 
 #### `EntityDatabase.register_entity` (behavior change)
 
+The post-feature-109 signature **preserves the existing positional shape** at `database.py:3343` — the first positional parameter is renamed from `entity_type` to `kind` (per F11), all other parameters unchanged including the keyword-only `parent_type_id` deprecated alias:
+
 ```python
 def register_entity(
     self,
-    *,
-    workspace_uuid: str,
-    type_id: str,
+    kind: str,           # post-F11: was `entity_type`; one of {feature, backlog, project, brainstorm, workspace}
+    entity_id: str,
     name: str,
-    status: str = 'planned',
+    *,
+    workspace_uuid: str | None = None,
+    project_id: str | None = None,
+    artifact_path: str | None = None,
+    status: str | None = None,
     parent_uuid: str | None = None,
-    metadata: dict | str | None = None,
-    project_id: str | None = None,  # deprecated; will be removed in feature 110+
+    parent_type_id: str | None = None,  # deprecated alias kept for transition compat (feature 108 introduced; cleanup deferred to 110+)
+    metadata: dict | None = None,
 ) -> str:
     """
     Register a new entity. Raises EntityExistsError on (workspace_uuid, type_id) conflict.
 
+    Internally:
+    - Derives `type` from `kind` via the F11 mapping table (kind 'feature'/'backlog' → type 'work', etc.).
+    - Derives `lifecycle_class` from `kind` (per F11 mapping).
+    - Builds `type_id` as f"{kind}:{entity_id}".
+
     Returns the new entity's uuid.
 
     Side effects:
-    - INSERT INTO entities (no INSERT OR IGNORE; raises on conflict)
+    - INSERT INTO entities (no INSERT OR IGNORE; raises EntityExistsError on conflict)
     - INSERT INTO entities_fts (FTS5 sync)
     - append_phase_event(type_id, 'entity_created', metadata={...creation context...})
 
@@ -287,37 +313,45 @@ def register_entity(
     """
 ```
 
-**Breaking change:** previously silently no-op'd on conflict; now raises. Callers per the FR-4 Python-caller audit table either explicitly catch `EntityExistsError` (when conflict-is-real-error) or migrate to `upsert_entity`.
+**Parameter shape continuity:** the rename `entity_type → kind` is mechanically backward-compatible for callers that pass the parameter positionally (e.g. `register_entity('feature', '042-foo', 'My Feature')`). Callers that pass `entity_type=` as a kwarg will TypeError; per the FR-4 Python-caller audit table, the 17 production call sites are visited in the implementation diff and updated as part of the routing decision (either renamed to `kind=` or kept positional). Tests under `plugins/pd/hooks/lib/entity_registry/tests/` that pass `entity_type=` are similarly updated.
+
+**`parent_type_id` deprecated alias:** kept as-is (no behavior change in this feature). It was introduced by feature 108 as a transition tool and will be removed by feature 110+. The implementation diff does NOT touch this parameter. Caller audit: `grep -rn 'parent_type_id=' plugins/pd/` at implement time confirms current usage; if zero, the parameter can be safely dropped instead (decision deferred to implementer per the spec FR-4 audit-at-implement-time pattern).
+
+**Breaking change:** previously silently no-op'd on conflict; now raises `EntityExistsError`. Callers per the FR-4 Python-caller audit table either explicitly catch `EntityExistsError` (when conflict-is-real-error) or migrate to `upsert_entity`.
 
 #### `EntityDatabase.upsert_entity` (new)
 
 ```python
 def upsert_entity(
     self,
-    *,
-    workspace_uuid: str,
-    type_id: str,
+    kind: str,
+    entity_id: str,
     name: str,
-    status: str = 'planned',
-    parent_uuid: str | None = None,
-    metadata: dict | str | None = None,
+    *,
+    workspace_uuid: str | None = None,
     project_id: str | None = None,
+    artifact_path: str | None = None,
+    status: str | None = None,
+    parent_uuid: str | None = None,
+    parent_type_id: str | None = None,  # deprecated alias, same as register_entity
+    metadata: dict | None = None,
 ) -> str:
     """
-    Idempotent insert-or-status-update.
+    Idempotent insert-or-status-update. Signature byte-identical to register_entity.
 
-    Insert branch: same as register_entity (emits entity_created event).
-    Conflict + status change: emits entity_status_changed event; updates status only.
+    Insert branch (no conflict): same as register_entity (emits entity_created event).
+    Conflict + status change: emits entity_status_changed event; updates status + updated_at only.
     Conflict + no status change: no-op.
 
     Returns the entity's uuid in all branches.
 
     Does NOT update name, parent_uuid, or metadata on conflict — callers needing those
-    use the existing update_entity API.
+    use the existing update_entity API. (Aligns with spec FR-4 / AC-4.4 after the
+    iteration-1-of-design cross-phase patch to spec FR-4 body.)
     """
 ```
 
-Signature is byte-identical to `register_entity` (per AC-4.3).
+Signature is byte-identical to `register_entity` (per AC-4.3 — verified at implement time via `inspect.signature` equality assertion).
 
 #### `EntityDatabase.promote_entity` (new)
 
@@ -366,6 +400,7 @@ def append_phase_event(
     backward_target: str | None = None,  # required for 'backward' only
     metadata: dict | None = None,  # required for 'entity_status_changed' and 'entity_promoted'; optional for 'entity_created'; must be None for workflow events
     source: str = 'live',
+    timestamp: str | None = None,  # auto-generated via _iso_now() when None; tests inject controlled timestamps for deterministic ordering assertions (AC-2.2, AC-2.7)
 ) -> int:
     """
     Sole write path for phase_events INSERTs.
@@ -520,7 +555,40 @@ def make_v12_db(path=None):
     return conn
 ```
 
-### 3.5 Doctor check
+### 3.5 MCP error contracts
+
+The MCP `register_entity` tool surface (3 call sites in `plugins/pd/mcp/entity_server.py` per spec FR-4 audit) translates `EntityExistsError` and `PromotionConflictError` to structured JSON errors. The shape mirrors the existing MCP error pattern in `entity_server.py` (verify exact shape at implement time; if no precedent, use this design contract):
+
+**`EntityExistsError` → MCP response:**
+```json
+{
+  "error": true,
+  "error_type": "entity_exists",
+  "message": "Entity already exists: workspace_uuid='...', type_id='...'",
+  "workspace_uuid": "...",
+  "type_id": "...",
+  "recovery_hint": "Use upsert_entity for idempotent registration, or check workspace context."
+}
+```
+
+**`PromotionConflictError` → MCP response:**
+```json
+{
+  "error": true,
+  "error_type": "promotion_conflict",
+  "message": "Promotion would create a UNIQUE conflict: workspace_uuid='...', old_type_id='...', new_type_id='...' (already exists)",
+  "workspace_uuid": "...",
+  "old_type_id": "...",
+  "new_type_id": "...",
+  "recovery_hint": "Resolve the existing entity at new_type_id before promoting, or pick a different new_kind."
+}
+```
+
+Both error shapes follow the existing MCP error convention: `{"error": true, "error_type": "...", "message": "...", "recovery_hint": "..."}` with feature-specific fields appended. Skills/commands that call these MCP tools parse `error_type` for branching.
+
+The MCP tool error contracts are public — once shipped, future skill/command code may depend on them. Locking them in design (rather than deferring to plan) prevents downstream churn.
+
+### 3.6 Doctor check
 
 ```python
 # In plugins/pd/hooks/lib/doctor/ (extends existing doctor surface)
@@ -575,7 +643,7 @@ These are HOW questions for the plan phase, not blocking design completion:
 1. **Doctor check registry location** — verify at implement time the exact file where doctor health checks are registered (likely `plugins/pd/hooks/lib/doctor/__init__.py` or `doctor.py`).
 2. **`SQLite version check` for ALTER TABLE DROP COLUMN** — verify whether the production environment runs SQLite 3.35+ (which supports DROP COLUMN directly). If not, fall back to copy-rename for the `entity_type` column drop. Empirical check at implement time: `>>> import sqlite3; sqlite3.sqlite_version → '3.35.0'` or later — most macOS 13+ ships with 3.39+.
 3. **Reader rewrite file list** — `grep -rln '\bentity_type\b' plugins/pd/hooks/lib/ plugins/pd/mcp/` (filtered to non-migration, non-test). Expected ~6-10 files; exact list captured by the plan phase.
-4. **MCP entity_server.py `register_entity` MCP tool** — confirm whether the MCP tool surface translates `EntityExistsError` to a structured JSON error in the MCP response (likely via existing error-handling pattern in entity_server.py). Plan phase locks the MCP error shape.
+4. **MCP entity_server.py error contract precedent** — verify at implement time that the JSON shape in §3.5 matches the existing MCP error pattern in entity_server.py. The contract values are locked in §3.5; only the format (e.g., `error_type` vs `error_kind` key name) may shift to match precedent.
 
 ---
 
