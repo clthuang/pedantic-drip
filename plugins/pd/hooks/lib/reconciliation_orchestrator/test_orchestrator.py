@@ -124,6 +124,10 @@ class TestFullRunOutputsValidJson:
         feature_dir.mkdir(parents=True)
         (feature_dir / ".meta.json").write_text(json.dumps({"status": "active"}))
 
+        # Workspace identity foundation: resolve_workspace_uuid requires
+        # .claude/ to exist for the precedence chain to bootstrap a workspace.
+        (tmp_path / ".claude").mkdir()
+
         result = _run_cli(
             project_root=str(tmp_path),
             artifacts_root="docs",

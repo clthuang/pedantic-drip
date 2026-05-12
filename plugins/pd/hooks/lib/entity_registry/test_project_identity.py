@@ -65,108 +65,71 @@ class TestNormalizeRemoteUrl:
 
 
 # ---------------------------------------------------------------------------
-# T1.3: detect_project_id tests
+# T1.3: _compute_legacy_project_id tests (legacy hex shape; migration-only)
 # ---------------------------------------------------------------------------
 
 
-class TestDetectProjectId:
-    """Tests for detect_project_id (spec FS-1.1, AC-1.1.1 through AC-1.1.7)."""
+class TestComputeLegacyProjectId:
+    """Tests for _compute_legacy_project_id (migration-only helper).
 
-    def setup_method(self):
-        """Clear lru_cache before each test."""
-        from entity_registry.project_identity import detect_project_id
-
-        detect_project_id.cache_clear()
+    Preserves the legacy 12-char hex project_id fallback chain used by
+    Migration 11 to populate ``workspaces.project_id_legacy``. Not cached;
+    not consulted by the runtime ``resolve_workspace_uuid`` precedence chain.
+    """
 
     def test_git_repo_returns_12_char_hex_from_root_commit(self, tmp_path):
-        """AC-1.1.1: Returns 12-char hex string derived from root commit."""
-        from entity_registry.project_identity import detect_project_id
+        """Returns 12-char hex string derived from root commit."""
+        from entity_registry.project_identity import _compute_legacy_project_id
 
-        # Use the real repo for this test
-        result = detect_project_id(str(tmp_path.parent))
-        # The real repo may or may not be available from tmp_path parent,
-        # so test with current working dir which IS a git repo
-        detect_project_id.cache_clear()
-        result = detect_project_id(os.getcwd())
+        # The real repo IS a git repo; test against cwd.
+        result = _compute_legacy_project_id(os.getcwd())
         assert len(result) == 12
         # Must be valid hex
         int(result, 16)
 
     def test_shallow_clone_falls_back_to_head(self, monkeypatch, tmp_path):
-        """AC-1.1.4: Shallow clone falls back to HEAD SHA."""
-        from entity_registry.project_identity import detect_project_id
+        """Shallow clone falls back to HEAD SHA."""
+        from entity_registry.project_identity import _compute_legacy_project_id
 
-        call_count = {"n": 0}
         original_run = subprocess.run
 
         def mock_run(cmd, **kwargs):
-            call_count["n"] += 1
             cmd_str = " ".join(cmd) if isinstance(cmd, list) else cmd
             # is-shallow-repository returns "true"
             if "is-shallow-repository" in cmd_str:
-                result = subprocess.CompletedProcess(
+                return subprocess.CompletedProcess(
                     cmd, 0, stdout="true\n", stderr=""
                 )
-                return result
             # rev-parse HEAD returns a known SHA
             if "rev-parse" in cmd_str and "HEAD" in cmd_str and "is-shallow" not in cmd_str:
-                result = subprocess.CompletedProcess(
+                return subprocess.CompletedProcess(
                     cmd, 0, stdout="abcdef123456789\n", stderr=""
                 )
-                return result
             return original_run(cmd, **kwargs)
 
         monkeypatch.setattr(subprocess, "run", mock_run)
-        result = detect_project_id(str(tmp_path))
+        result = _compute_legacy_project_id(str(tmp_path))
         assert result == "abcdef123456"
         assert len(result) == 12
 
     def test_no_git_falls_back_to_path_hash(self, monkeypatch, tmp_path):
-        """AC-1.1.5: No git binary -> SHA-256 of abs path truncated to 12."""
-        from entity_registry.project_identity import detect_project_id
+        """No git binary -> SHA-256 of abs path truncated to 12."""
+        from entity_registry.project_identity import _compute_legacy_project_id
 
         def mock_run(cmd, **kwargs):
             raise FileNotFoundError("git not found")
 
         monkeypatch.setattr(subprocess, "run", mock_run)
-        result = detect_project_id(str(tmp_path))
+        result = _compute_legacy_project_id(str(tmp_path))
         expected = hashlib.sha256(
             os.path.abspath(str(tmp_path)).encode()
         ).hexdigest()[:12]
         assert result == expected
         assert len(result) == 12
 
-    def test_env_var_override(self, monkeypatch, tmp_path):
-        """AC-1.1.6: ENTITY_PROJECT_ID env var overrides all detection."""
-        from entity_registry.project_identity import detect_project_id
-
-        monkeypatch.setenv("ENTITY_PROJECT_ID", "custom_proj_id")
-        result = detect_project_id(str(tmp_path))
-        assert result == "custom_proj_id"
-
-    def test_lru_cache_prevents_second_subprocess(self, monkeypatch):
-        """AC-1.1.7: Second call with same args returns cached result."""
-        from entity_registry.project_identity import detect_project_id
-
-        call_count = {"n": 0}
-        original_run = subprocess.run
-
-        def mock_run(cmd, **kwargs):
-            call_count["n"] += 1
-            return original_run(cmd, **kwargs)
-
-        monkeypatch.setattr(subprocess, "run", mock_run)
-        working_dir = os.getcwd()
-        result1 = detect_project_id(working_dir)
-        count_after_first = call_count["n"]
-        result2 = detect_project_id(working_dir)
-        assert result1 == result2
-        # No additional subprocess calls on second invocation
-        assert call_count["n"] == count_after_first
-
     def test_multiple_root_commits_takes_first(self, monkeypatch, tmp_path):
         """Multiple root commits: takes first line."""
-        from entity_registry.project_identity import detect_project_id
+        from entity_registry.project_identity import _compute_legacy_project_id
 
         def mock_run(cmd, **kwargs):
             cmd_str = " ".join(cmd) if isinstance(cmd, list) else cmd
@@ -184,18 +147,18 @@ class TestDetectProjectId:
             raise FileNotFoundError("unexpected command")
 
         monkeypatch.setattr(subprocess, "run", mock_run)
-        result = detect_project_id(str(tmp_path))
+        result = _compute_legacy_project_id(str(tmp_path))
         assert result == "aaaa11112222"
 
     def test_timeout_falls_to_next_fallback(self, monkeypatch, tmp_path):
         """Timeout on subprocess -> falls to next fallback in chain."""
-        from entity_registry.project_identity import detect_project_id
+        from entity_registry.project_identity import _compute_legacy_project_id
 
         def mock_run(cmd, **kwargs):
             raise subprocess.TimeoutExpired(cmd, 5)
 
         monkeypatch.setattr(subprocess, "run", mock_run)
-        result = detect_project_id(str(tmp_path))
+        result = _compute_legacy_project_id(str(tmp_path))
         # Should fall back to path hash
         expected = hashlib.sha256(
             os.path.abspath(str(tmp_path)).encode()
@@ -210,12 +173,6 @@ class TestDetectProjectId:
 
 class TestCollectGitInfo:
     """Tests for collect_git_info and GitProjectInfo (spec FS-1.2)."""
-
-    def setup_method(self):
-        """Clear lru_cache before each test."""
-        from entity_registry.project_identity import detect_project_id
-
-        detect_project_id.cache_clear()
 
     def test_full_info_real_git_repo(self):
         """AC-1.2.1/AC-1.2.2: Real git repo populates all fields."""

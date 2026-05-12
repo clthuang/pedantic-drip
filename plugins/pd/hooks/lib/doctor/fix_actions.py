@@ -329,9 +329,9 @@ def _fix_project_attribution(ctx: FixContext, issue: Issue) -> str:
     if not ctx.project_root:
         raise ValueError("No project_root available")
 
-    from entity_registry.project_identity import detect_project_id
+    from entity_registry.project_identity import _compute_legacy_project_id
 
-    project_id = detect_project_id(ctx.project_root)
+    project_id = _compute_legacy_project_id(ctx.project_root)
     count = ctx.db.backfill_project_ids(ctx.project_root, project_id)
     return f"Backfilled project_id for {count} entities (project={project_id})"
 

@@ -28,9 +28,9 @@ from workflow_engine.task_promotion import (
 
 @pytest.fixture(autouse=True)
 def _patch_detect_project_id(monkeypatch):
-    """Ensure detect_project_id returns TEST_PROJECT_ID in all tests."""
+    """Ensure _compute_legacy_project_id returns TEST_PROJECT_ID in all tests."""
     import workflow_engine.task_promotion as _tp_mod
-    monkeypatch.setattr(_tp_mod, "detect_project_id", lambda *a, **kw: TEST_PROJECT_ID)
+    monkeypatch.setattr(_tp_mod, "_compute_legacy_project_id", lambda *a, **kw: TEST_PROJECT_ID)
 
 
 def _make_db() -> EntityDatabase:

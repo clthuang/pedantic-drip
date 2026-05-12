@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from entity_registry.dependencies import DependencyManager
 from entity_registry.id_generator import generate_entity_id
-from entity_registry.project_identity import detect_project_id
+from entity_registry.project_identity import _compute_legacy_project_id
 from workflow_engine.templates import get_template
 
 if TYPE_CHECKING:
@@ -332,7 +332,7 @@ def promote_task(
     mode = wp["mode"] if wp and wp.get("mode") else "standard"
 
     # 7. Generate task entity ID
-    _project_id = detect_project_id(os.environ.get("PROJECT_ROOT", os.getcwd()))
+    _project_id = _compute_legacy_project_id(os.environ.get("PROJECT_ROOT", os.getcwd()))
     task_entity_id = generate_entity_id(db, "task", matched_heading, project_id=_project_id)
     task_type_id = f"task:{task_entity_id}"
 
