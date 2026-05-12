@@ -164,6 +164,15 @@
 - **DoD:** Task 2.2 test passes.
 - **Dependencies:** Task 2.3.
 
+### Task 2.6: AC-1.7 type_id byte-identity verification
+
+- **File:** `plugins/pd/hooks/lib/entity_registry/test_polymorphic_taxonomy.py`
+- **Action:** Write `test_migration_preserves_type_id_byte_identical` — pre-migration: `pre = conn.execute("SELECT type_id FROM entities ORDER BY type_id").fetchall()`; run migration 12 (Tasks 2.1-2.5 plus future Groups); post-migration: `post = conn.execute("SELECT type_id FROM entities ORDER BY type_id").fetchall()`; assert `pre == post`.
+- **Mock pattern:** make_v11_db + register a few synthetic entities + run migration.
+- **Assertion shape:** `assert pre == post`.
+- **DoD:** test passes (no type_id values rewritten during backfill — AC-1.7 invariant verified).
+- **Dependencies:** Task 2.5.
+
 ### Task 2.5: Implement defensive abort test + impl
 
 - **File:** `plugins/pd/hooks/lib/entity_registry/test_polymorphic_taxonomy.py` + `database.py`
@@ -522,13 +531,15 @@
 - **DoD:** registry mechanism pinned; Task 10.3's implementation uses the discovered pattern.
 - **Dependencies:** Group 9.
 
-### Task 10.1: Implement static-grep enforcement test
+### Task 10.1: Implement static-grep enforcement tests (entities AND workflow_phases per AC-2.1 + AC-2.6)
 
 - **File:** `plugins/pd/hooks/lib/entity_registry/test_event_sourced_state.py`
-- **Action:** Write `test_no_direct_status_updates` — subprocess grep for `UPDATE entities SET status` in plugins/pd/hooks/lib/ and plugins/pd/mcp/, filter out append_phase_event body and _migrate_* functions and test_ files, assert 0 production matches.
-- **Algorithm:** subprocess + line filter.
-- **Assertion shape:** filtered count == 0.
-- **DoD:** test passes against current codebase.
+- **Action:** Write TWO tests:
+  1. `test_no_direct_status_updates` — subprocess grep for `UPDATE entities SET status` in plugins/pd/hooks/lib/ and plugins/pd/mcp/, filter out append_phase_event body and _migrate_* functions and test_ files, assert 0 production matches. (AC-2.1)
+  2. `test_no_direct_workflow_phases_updates` — subprocess grep for `UPDATE workflow_phases` in plugins/pd/hooks/lib/ and plugins/pd/mcp/, same filter rules, assert 0 production matches. (AC-2.6)
+- **Algorithm:** subprocess + line filter (parameterized over two grep patterns).
+- **Assertion shape:** both tests: filtered count == 0.
+- **DoD:** both tests pass against current codebase post-Group-9 (which routes all complete_phase / transition_phase MCP calls through append_phase_event).
 - **Dependencies:** Group 9.
 
 ### Task 10.2: Write doctor-check RED test
@@ -566,7 +577,7 @@ This section is preserved for traceability. **No new tasks ship in Group 11.**
 - **File:** `plugins/pd/hooks/lib/entity_registry/test_atomic_promotion.py`
 - **Action:** Write `test_promotion_preserves_uuid` — register backlog, capture uuid, call promote, assert uuid unchanged AND (kind, lifecycle_class, type_id) updated.
 - **DoD:** RED — promote_entity doesn't exist.
-- **Dependencies:** Group 11.
+- **Dependencies:** Group 10 (Group 11 was REMOVED; trigger-drop precondition satisfied by Group 3).
 
 ### Task 12.2: Write promotion-emits-event RED test
 
@@ -683,6 +694,15 @@ This section is preserved for traceability. **No new tasks ship in Group 11.**
 - **DoD:** Task 13.1 passes.
 - **Dependencies:** Task 13.5.
 
+### Task 13.7.1: AC-4.3 signature byte-identity verification
+
+- **File:** `plugins/pd/hooks/lib/entity_registry/test_register_upsert_split.py`
+- **Action:** Write `test_register_and_upsert_signatures_byte_identical` — `import inspect`; `assert inspect.signature(EntityDatabase.register_entity).parameters.keys() == inspect.signature(EntityDatabase.upsert_entity).parameters.keys()`.
+- **Algorithm:** inspect.signature comparison.
+- **Assertion shape:** parameter keys equality.
+- **DoD:** test passes; signatures are byte-identical per AC-4.3.
+- **Dependencies:** Task 13.7.
+
 ### Task 13.7: Implement upsert_entity method
 
 - **File:** `plugins/pd/hooks/lib/entity_registry/database.py`
@@ -729,6 +749,20 @@ This section is preserved for traceability. **No new tasks ship in Group 11.**
 - **Assertion shape:** Tasks 14.1 + 14.2 pass.
 - **DoD:** both tests pass; AC-4.5 grep returns 0.
 - **Dependencies:** Task 14.2.
+
+### Task 14.4: Non-entities INSERT OR IGNORE idempotency tests (AC-4.6, 5 tables)
+
+- **File:** `plugins/pd/hooks/lib/entity_registry/test_register_upsert_split.py`
+- **Action:** Spec AC-4.6 requires a unit test per non-entities INSERT OR IGNORE site. Write 5 small tests:
+  1. `test_phase_events_backfill_dedup_no_duplicates` — call the backfill helper twice with the same input; assert `SELECT COUNT(*) FROM phase_events WHERE source='backfill'` is unchanged after the second call (partial-UNIQUE `phase_events_backfill_dedup` index enforces this; lines 1587, 1603, 1630, 1657).
+  2. `test_entity_tag_duplicate_attach_noop` — call `add_entity_tag(entity_uuid, 'tagA')` twice; assert `SELECT COUNT(*) FROM entity_tags WHERE entity_uuid=? AND tag='tagA'` == 1 (line 3241).
+  3. `test_okr_alignment_duplicate_noop` — call `add_okr_alignment(...)` twice with same args; assert single row (line 3302).
+  4. `test_workflow_phases_init_duplicate_noop` — call `init_entity_workflow(type_id)` twice; assert single row in workflow_phases (line 5058).
+  5. `test_dependency_duplicate_noop` — call `add_dependency(from_uuid, to_uuid, 'blocks')` twice; assert single edge (line 5176).
+- **Algorithm:** simple double-call + count assertion per test.
+- **Assertion shape:** 5 separate `count == 1` (or equivalent stable-count) assertions, one per test.
+- **DoD:** all 5 tests pass; AC-4.6 explicit per-site coverage complete.
+- **Dependencies:** Task 14.3.
 
 ---
 
@@ -856,6 +890,24 @@ This section is preserved for traceability. **No new tasks ship in Group 11.**
 - **Assertion shape:** post-finally FK check matches source pattern from design §3.3.
 - **DoD:** verified present; no new code written.
 - **Dependencies:** Task 16.2.
+
+### Task 16.4a: AC-5.2 migration idempotency test
+
+- **File:** `plugins/pd/hooks/lib/entity_registry/test_migration_safety.py`
+- **Action:** Write `test_migration_12_idempotent` — `conn = make_v12_db()`; `schema_before = conn.execute("SELECT name, sql FROM sqlite_master ORDER BY name").fetchall()`; `MIGRATIONS[12](conn)`; `schema_after = conn.execute("SELECT name, sql FROM sqlite_master ORDER BY name").fetchall()`; assert `schema_before == schema_after` AND no exception raised.
+- **Algorithm:** schema snapshot before + after second migration run.
+- **Assertion shape:** equality of sqlite_master output.
+- **DoD:** test passes; AC-5.2 idempotency verified.
+- **Dependencies:** Task 16.3.
+
+### Task 16.4b: AC-5.4 + AC-2.5 WAL lock-failure test
+
+- **File:** `plugins/pd/hooks/lib/entity_registry/test_migration_safety.py`
+- **Action:** Write `test_migration_12_lock_failure` — open a holding `sqlite3.connect(db_path)` with `BEGIN EXCLUSIVE`; in a second connection with `PRAGMA busy_timeout=100`, attempt to run MIGRATIONS[12]; assert `sqlite3.OperationalError` raised with helpful error string ("database is locked" + guidance per CLAUDE.md SQLite lock recovery).
+- **Algorithm:** lock-holding fixture + assert exception.
+- **Assertion shape:** exception type + message substring check.
+- **DoD:** test passes; AC-5.4 + AC-2.5 lock-failure path verified.
+- **Dependencies:** Task 16.4a.
 
 ### Task 16.4: Write end-to-end migration integration test
 

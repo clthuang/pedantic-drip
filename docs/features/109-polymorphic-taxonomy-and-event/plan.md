@@ -3,7 +3,7 @@
 - **Project:** P003-entity-system-redesign
 - **Feature:** 109-polymorphic-taxonomy-and-event
 - **Mode:** full
-- **Status:** Draft (revision 3 after plan-reviewer iterations 1+2)
+- **Status:** Draft (revision 3 after plan-reviewer + task-reviewer + phase-reviewer iterations; companion tasks.md at revision 5 with all phase-reviewer blockers + critical warnings resolved inline)
 - **Created:** 2026-05-12
 - **Spec:** `docs/features/109-polymorphic-taxonomy-and-event/spec.md` (revision 4)
 - **Design:** `docs/features/109-polymorphic-taxonomy-and-event/design.md` (revision 4)
