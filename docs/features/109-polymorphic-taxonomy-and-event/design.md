@@ -4,7 +4,7 @@
 - **Feature:** 109-polymorphic-taxonomy-and-event
 - **Phase:** Phase 2 of project roadmap
 - **Mode:** full
-- **Status:** Draft (revision 2 after design-reviewer iteration 1)
+- **Status:** Draft (revision 3 after design-reviewer iterations 1+2)
 - **Created:** 2026-05-12
 - **Last updated:** 2026-05-12
 - **Spec reference:** `docs/features/109-polymorphic-taxonomy-and-event/spec.md`
@@ -82,7 +82,13 @@ Migration 12 executes as one BEGIN IMMEDIATE transaction (with the `PRAGMA forei
 2. **AC-5.3 cleanup:** `DELETE FROM workflow_phases WHERE type_id = 'feature:'` (the one known malformed row); emit one-line audit log.
 3. **F11 column additions:** `ALTER TABLE entities ADD COLUMN type TEXT NOT NULL DEFAULT 'work'`, same for `kind` (DEFAULT 'feature'), same for `lifecycle_class` (DEFAULT 'feature_flow'). The defaults are placeholders; backfill in step 4 corrects them.
 4. **F11 backfill via UPDATE:** five UPDATEs (one per `entity_type → (type, kind, lifecycle_class)` mapping in spec FR-1 table). Defensive: assert every row's `entity_type` lands in the mapping (any unmapped row aborts the migration).
-5. **F11 CHECK constraint via copy-rename:** rebuild `entities` with the new composite CHECK (the only way to add a CHECK in SQLite). Copy-rename pattern from `_expand_workflow_phase_check` migration 5 (`database.py:464-577`) is the template. **Critical ordering note:** the rebuilt `entities` table at this sub-step **retains the `entity_type` column** (still populated from the backfill in sub-step 4) — `entity_type` is NOT dropped until sub-step 8. This allows sub-step 6's FTS5 rebuild to read `entity_type` values while building the new `kind`-keyed FTS5 index (transition state). The `INSERT INTO entities_new SELECT uuid, workspace_uuid, type_id, entity_type, entity_id, name, status, parent_uuid, artifact_path, created_at, updated_at, metadata, type, kind, lifecycle_class FROM entities` preserves all columns. After the rebuild, the 12 trigger definitions across entities-recreation sites in the migration itself MUST exclude both `enforce_immutable_entity_type` and `enforce_immutable_type_id` (F11 + F3 simultaneous). All other triggers (`enforce_immutable_uuid`, `enforce_immutable_created_at`, `enforce_no_self_parent*`) ARE recreated on the rebuilt table — design contract: capture `SELECT sql FROM sqlite_master WHERE tbl_name='entities'` pre-migration to enumerate the trigger list, then recreate all minus the 2 immutable triggers.
+5. **F11 CHECK constraint via copy-rename:** rebuild `entities` with the new composite CHECK (the only way to add a CHECK in SQLite). Copy-rename pattern from `_expand_workflow_phase_check` migration 5 (`database.py:464-577`) is the template. **Critical ordering note:** the rebuilt `entities` table at this sub-step **retains the `entity_type` column** (still populated from the backfill in sub-step 4) — `entity_type` is NOT dropped until sub-step 8. This allows sub-step 6's FTS5 rebuild to read `entity_type` values while building the new `kind`-keyed FTS5 index (transition state).
+
+   **Column-set discovery (not hard-coded):** the migration uses `PRAGMA table_info(entities)` at runtime to enumerate the current column set, then builds the INSERT-SELECT column list dynamically (current columns + 3 new). This protects against silent schema drift if feature 108's migration 11 added any columns the design did not anticipate (e.g., `display_seq`, `display_slug` — verify absent at implement time; reserved for feature 110 if added). Verification: capture `PRAGMA table_info(entities)` output pre-migration, log to migration audit output, then build INSERT-SELECT against that captured list. If the column set differs from expected (e.g., extra `display_*` columns), the migration logs them and continues with the dynamic list — no abort needed because copy-rename preserves all columns by construction.
+
+   **Trigger recreation (also discovered, not hard-coded):** capture `SELECT name, sql FROM sqlite_master WHERE type='trigger' AND tbl_name='entities'` pre-migration to enumerate the current trigger list. Recreate ALL triggers on the rebuilt table EXCEPT the 2 explicitly dropped (`enforce_immutable_entity_type`, `enforce_immutable_type_id`). The 6 source-code definitions of each dropped trigger are removed from `database.py` source as part of the implementation diff; the runtime DROP TRIGGER in step 11 below catches any orphan that survives the table rebuild.
+
+   Other triggers expected to be preserved (verified pre-migration): `enforce_immutable_uuid`, `enforce_immutable_created_at`, `enforce_no_self_parent`, `enforce_no_self_parent_update`, `enforce_no_self_parent_uuid_insert`, `enforce_no_self_parent_uuid_update` — 6 triggers per the codebase-explorer findings (database.py:249-293).
 6. **F11 FTS5 rebuild:** drop and recreate `entities_fts` with `kind` replacing `entity_type` in the column list. Use migration 4 (`database.py:421`) as the canonical template. Python backfill loop reads `entities.kind` (which is now populated by sub-step 4 backfill) and INSERTs into the new FTS5 table. (This sub-step is in **one place** in migration 12, not 6 places — the historical 6 are inside earlier `_migrate_*` functions that don't execute against current schema.)
 7. **F11 readers rewrite:** in-source modifications (not done by migration, done by the implementation diff) — all production `entity_type` reads route through `kind`/`type` per AC-1.4.
 8. **F11 column drop:** `ALTER TABLE entities DROP COLUMN entity_type` (SQLite 3.35+ supports this directly; if older, falls back to copy-rename — verify SQLite version at implement time).
@@ -117,7 +123,13 @@ The spec commits to Path A (FR-2). Design confirms: SQLite triggers cannot relia
 
 The spec calls the new helper `append_phase_event`. The codebase already has `insert_phase_event` at `database.py:4630` as the sole write path to `phase_events`. Design decision: **rename the existing `insert_phase_event` to `append_phase_event`** (keeping the spec's terminology — "append" matches event-sourcing vocabulary better than "insert") and extend its signature to handle the new event types.
 
-The rename is a single-commit step (commit 9 in spec NFR-3) with the new param surface. Call-site sizing: `grep -rn 'insert_phase_event(' plugins/pd/ | grep -v 'def insert_phase_event'` is run at implement time to enumerate every caller; expected count is the 4 internal backfill helper sites (`database.py:1587, 1603, 1630, 1657` per spec FR-4 audit table) plus any test fixtures. All such callers are renamed and parameter-shape-migrated in the same commit. This is consistent with the "no backward compat" project constraint.
+The rename is a single-commit step (commit 9 in spec NFR-3) with the new param surface. **Call-site sizing (verified 2026-05-12):** `grep -rn 'insert_phase_event(' plugins/pd/ | grep -v 'def insert_phase_event' | grep -v test_` returns **4 production Python callers** in `plugins/pd/mcp/workflow_state_server.py` at lines **729, 737, 949, 2030**. These are the MCP `complete_phase` / `transition_phase` entry-point implementations that emit workflow phase_events. Per spec FR-2 they must route through `append_phase_event(...)` (the renamed helper) instead of any direct UPDATEs on `workflow_phases`. The rename + parameter-shape migration touches these 4 call sites + any tests.
+
+**Important clarification of iteration-1 mis-citation:** the 4 lines I cited earlier (`database.py:1587, 1603, 1630, 1657`) are **SQL `INSERT OR IGNORE INTO phase_events` statements** inside the backfill helper, NOT Python method calls of `insert_phase_event`. Those SQL statements stay in place (they are the backfill helper's own raw SQL — see spec FR-4 audit table rows 1587/1603/1630/1657 routing to "upsert via direct INSERT — phase_events has its own dedup index"). The rename only affects Python call sites, which are exclusively in `workflow_state_server.py` plus tests.
+
+**Test caller scope (sized at implement time):** `grep -rn 'insert_phase_event(' plugins/pd/hooks/lib/entity_registry/test_*.py` enumerates test fixtures using the old name; these are renamed in the same commit.
+
+All such callers are renamed and parameter-shape-migrated in the same commit. This is consistent with the "no backward compat" project constraint.
 
 **Scope acknowledgement:** the rename is an additional code-surface change beyond the spec's literal FR list. Spec FR-2 introduces `append_phase_event` as the new helper; design TD-2 chooses to consolidate by renaming the existing precedent rather than introducing a separate symbol. This is a design-phase scope choice (not a spec violation) — the choice is documented here for traceability.
 
@@ -161,22 +173,30 @@ def upsert_entity(self, kind, entity_id, name, *, workspace_uuid=None, status=No
             )
             # register_entity emits entity_created via append_phase_event internally
         except EntityExistsError:
-            # Conflict path: read existing via the EXISTING public get_entity method
-            existing = self.get_entity(type_id=type_id)  # database.py:3580
-            if existing is None:
+            # Conflict path: read existing via WORKSPACE-SCOPED direct query
+            # (NOT self.get_entity(type_id=...) — that helper raises ValueError on
+            #  cross-workspace ambiguity per database.py:2974-2978; upsert knows
+            #  the workspace_uuid so we scope the lookup explicitly to preserve
+            #  PRD Goal 1 workspace isolation invariant).
+            row = self._conn.execute(
+                "SELECT uuid, status FROM entities WHERE workspace_uuid = ? AND type_id = ?",
+                (workspace_uuid, type_id),
+            ).fetchone()
+            if row is None:
                 # Should not happen — register raised EntityExistsError so a row must exist
                 raise
-            if existing['status'] == status or status is None:
+            existing_uuid, existing_status = row['uuid'], row['status']
+            if existing_status == status or status is None:
                 # No status change → no-op (do not UPDATE name/parent_uuid/metadata per spec FR-4 status-only rule)
-                return existing['uuid']
+                return existing_uuid
             # Status changed → emit entity_status_changed event
             # append_phase_event INSERTs the event row AND updates entities.status + updated_at atomically
             self.append_phase_event(
                 type_id=type_id,
                 event_type='entity_status_changed',
-                metadata={'old_status': existing['status'], 'new_status': status},
+                metadata={'old_status': existing_status, 'new_status': status},
             )
-            return existing['uuid']
+            return existing_uuid
 ```
 
 **SQLite transaction semantics note (per "Pre-Research SQLite Transaction Facts at Design" memory):** A failed INSERT inside an explicit transaction does NOT auto-rollback the transaction in SQLite. When `register_entity` raises `EntityExistsError` (after catching the underlying `sqlite3.IntegrityError`), the outer `with self.transaction():` block remains open and in a clean state — the failed INSERT statement has been individually rejected by SQLite, but no implicit ROLLBACK was issued. The subsequent `get_entity` read and `append_phase_event` write therefore proceed normally within the same transaction. Reference: https://www.sqlite.org/lang_transaction.html.
@@ -250,6 +270,8 @@ The 6 historical `CREATE VIRTUAL TABLE entities_fts` definitions live inside `_m
 
 **What migration 12 changes:** only its own new FTS5 CREATE block, and the production-path INSERT/DELETE statements at `database.py:3469, 5544, 3874, 4142` (the runtime sync paths, not the historical schema-creation paths). Per AC-1.8's grep-predicate verification.
 
+**Spec/design alignment on AC-1.8 wording:** spec AC-1.8 says "all 6 `CREATE VIRTUAL TABLE entities_fts` definitions in `database.py` (lines 430, 794, 973, 1257, 2153, 2556) are rewritten to use `kind` as the search column." Design TD-7 reads this as: the **conceptual** rewrite is at all 6 sites, but the **practical** source-code change is only at the runtime production CREATE (in migration 12). The 6 historical CREATEs inside `_migrate_*` functions retain `entity_type` per AC-1.4 exception (b) (historical schema epochs are not rewritten). AC-1.8's grep-predicate verification (`grep -nE "INSERT INTO entities_fts.*entity_type"`) covers only sync paths, not historical CREATE definitions — so the AC verification passes without rewriting the historical CREATEs. This is the design's resolution of the spec-AC-1.8 "all 6 ... rewritten" phrasing: it means "the cumulative search-column semantics across the migration sequence end at `kind`", not "every historical CREATE statement is edited to use kind".
+
 ### TD-8: Reader rewrites (AC-1.4) are mechanical and bounded
 
 The audit boundary in AC-1.4 says `grep -rn '\bentity_type\b' plugins/pd/hooks/lib/ plugins/pd/mcp/` returns 0 production references, with explicit exceptions for migration functions and test fixtures. Design decision: do this rewrite as **a single commit per file**, not as a single mega-commit, so each file's rewrite is independently bisectable. Concretely: one commit per affected file under `plugins/pd/hooks/lib/entity_registry/` and `plugins/pd/mcp/`.
@@ -258,9 +280,15 @@ The list of affected files comes from `grep -rln '\bentity_type\b' plugins/pd/ho
 
 ### TD-9: Reverse migration (MIGRATIONS_DOWN[12]) is implemented but one-shot
 
-Following the precedent set by `_migration_11_workspace_identity_down`, migration 12 also has a down-migration. It is **one-shot** per spec AC-5.1 — running `up → down → up` is not supported. The down restores one canonical trigger per name (not all 6), narrows the `phase_events.event_type` CHECK, removes the new columns, re-adds `entity_type`, and reverts the FTS5 column.
+Following the precedent set by `_migration_11_workspace_identity_down`, migration 12 also has a down-migration. It is **one-shot** per spec AC-5.1 — running `up → down → up` is not supported.
 
-The reverse migration is tested on a copy-of-live-DB scenario in `test_migration_12_safety.py` (per AC-5.1 and the test_helpers.py precedent).
+**Restore semantics:** the down-migration restores the trigger **at runtime only** via `CREATE TRIGGER` DDL in the down-migration function body. The source code is NOT modified by the down-migration — the 6 source-code definitions that the up-migration removed remain absent. Operators relying on this rollback must restore source code from git history before re-applying the up-migration. Concretely:
+
+- **Runtime state after down:** one `enforce_immutable_entity_type` trigger exists in the live DB (re-created by the down-migration function); same for `enforce_immutable_type_id`.
+- **Source code state after down:** zero `enforce_immutable_*` definitions in `database.py` (the up-migration removed them; down does not put them back).
+- **Implication:** if someone calls `_create_initial_schema` or rebuilds the DB from scratch after a down-migration, the resulting DB will NOT have the immutable triggers. This is acceptable because the operational scenario is "emergency revert before next release", not "indefinite operation in the rolled-back state".
+
+The reverse migration is tested on a copy-of-live-DB scenario in `test_migration_12_safety.py` (per AC-5.1 and the test_helpers.py precedent). The test exercises ONLY the runtime-state invariants — source-code state is git-history-tracked and not asserted by tests.
 
 ### TD-10: Doctor health check placement
 
@@ -303,13 +331,25 @@ def register_entity(
 
     Returns the new entity's uuid.
 
-    Side effects:
-    - INSERT INTO entities (no INSERT OR IGNORE; raises EntityExistsError on conflict)
-    - INSERT INTO entities_fts (FTS5 sync)
-    - append_phase_event(type_id, 'entity_created', metadata={...creation context...})
+    Operation order (inside self.transaction()):
+    1. INSERT INTO entities (plain INSERT, NO `OR IGNORE`).
+       - On sqlite3.IntegrityError (UNIQUE conflict): catch and re-raise as EntityExistsError.
+       - The failed INSERT does NOT auto-rollback the transaction (per SQLite semantics, https://www.sqlite.org/lang_transaction.html).
+       - If outer caller wraps in another self.transaction() (re-entrant), the EntityExistsError
+         propagates without affecting the outer transaction state.
+    2. Only if step 1 succeeded: INSERT INTO entities_fts (FTS5 sync).
+    3. Only if steps 1 and 2 succeeded: self.append_phase_event(type_id, 'entity_created', metadata={...creation context...}).
+
+    If any of steps 1-3 raise after EntityExistsError handling, the transaction rolls back
+    as a unit (this is the case where an unanticipated error occurs after INSERT succeeds).
+
+    Side effects (on success):
+    - One row in entities table
+    - One row in entities_fts table
+    - One 'entity_created' row in phase_events
 
     Raises:
-    - EntityExistsError: if (workspace_uuid, type_id) already exists in entities.
+    - EntityExistsError: if (workspace_uuid, type_id) already exists in entities (after step 1).
     """
 ```
 
@@ -422,6 +462,10 @@ def append_phase_event(
 **Validation table** (per spec FR-2 column-domain mapping):
 
 ```python
+# Base parameters accepted for ALL event_types (identity-and-time context, not semantic shape):
+#   type_id (positional, required), event_type (positional, required),
+#   project_id, source, timestamp — accepted for every event_type, never raise.
+# Per-event-type discriminator parameters:
 _VALID_PARAMS = {
     'started':              {'phase'},
     'completed':            {'phase', 'iterations', 'reviewer_notes'},
@@ -439,7 +483,9 @@ _REQUIRED_PARAMS = {
 }
 ```
 
-If `event_type` is invalid, `KeyError` rather than `ValueError` is appropriate (raised at dict lookup). If params do not satisfy `_VALID_PARAMS` (irrelevant param passed) or `_REQUIRED_PARAMS` (required param missing), raise `ValueError` with a clear message naming the violation.
+**Important:** `project_id`, `source`, and `timestamp` are **base parameters** accepted for every event_type — they describe the event's identity-and-time context, not its semantic shape. Passing `project_id=foo` with `event_type='entity_created'` MUST succeed (it identifies which project the entity belongs to). The validation logic must check only the **discriminator** params against `_VALID_PARAMS` and `_REQUIRED_PARAMS`; base params are unconditionally allowed.
+
+If `event_type` is invalid, `KeyError` rather than `ValueError` is appropriate (raised at dict lookup). If params do not satisfy `_VALID_PARAMS` (irrelevant discriminator param passed for the event_type) or `_REQUIRED_PARAMS` (required discriminator param missing), raise `ValueError` with a clear message naming the violation.
 
 ### 3.2 Exception classes
 
@@ -518,7 +564,13 @@ def _migration_12_polymorphic_taxonomy_and_events(conn: sqlite3.Connection) -> N
             # Step 9: F2 phase_events copy-rename (see sub-step 10 in §1)
             ...
 
-            # Step 10: Stamp schema_version
+            # Step 10: Pre-commit FK check INSIDE the transaction (so violations trigger ROLLBACK,
+            # not leave a stamped-but-corrupt schema_version=12 behind).
+            post_violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+            if post_violations:
+                raise RuntimeError(f"Migration 12 FK violations: {post_violations}")
+
+            # Step 11: Stamp schema_version (only after FK check passes)
             conn.execute(
                 "INSERT OR REPLACE INTO _metadata(key, value) VALUES ('schema_version', '12')"
             )
@@ -529,11 +581,18 @@ def _migration_12_polymorphic_taxonomy_and_events(conn: sqlite3.Connection) -> N
     finally:
         conn.execute("PRAGMA foreign_keys = ON")
 
-    # Post-flight FK check (outside transaction, per pattern)
-    post_violations = conn.execute("PRAGMA foreign_key_check").fetchall()
-    if post_violations:
-        raise RuntimeError(f"Migration 12 post-FK violations: {post_violations}")
+    # Final post-flight check (defensive — should never trigger because the in-transaction
+    # check already ran. If this trips, it indicates a SQLite bug or external concurrent
+    # modification — operator must investigate manually since the migration has committed.)
+    final_violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+    if final_violations:
+        raise RuntimeError(
+            f"Migration 12 post-commit FK violations (unexpected, manual recovery required): "
+            f"{final_violations}"
+        )
 ```
+
+**FK check timing rationale:** the previous design draft placed the post-flight FK check outside the try/finally and after `PRAGMA foreign_keys = ON`, which meant the check fired AFTER COMMIT — too late to roll back. The revised pattern runs the FK check inside the transaction (just before COMMIT) so a violation triggers the existing except-block ROLLBACK and the schema_version=12 stamp is not persisted. The post-commit check is retained as a defensive observation; if it ever trips, it indicates concurrent modification (external writer between COMMIT and the check) or a SQLite bug — operator investigation required.
 
 The `...` placeholders are intentional design omissions — the implementation phase fills them with the SQL/Python per spec FR-1, FR-2, FR-3 and the sub-step order in §1. Design contract is that **each sub-step is in this function body**, not split across helpers (matches `_migration_11_workspace_identity` pattern).
 
