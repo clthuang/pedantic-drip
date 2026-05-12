@@ -256,7 +256,7 @@ if parent_entity is None:
 ```
 The MCP `create_key_result` tool catches this ValueError at entity_server.py:1129-1130 (existing `except Exception` clause) and returns the error JSON. No new error-path code needed at the MCP layer.
 
-**FR-9.2 (test addition):** Add `test_create_key_result_missing_parent_raises` in `plugins/pd/hooks/lib/entity_registry/test_entity_server.py`:
+**FR-9.2 (test addition):** Add `test_create_key_result_missing_parent_raises` in `plugins/pd/hooks/lib/entity_registry/test_entity_server.py`. (Note: this test file path looks anomalous — the source file lives at `plugins/pd/mcp/entity_server.py` — but the existing test file at this location already tests the MCP `entity_server.py` via sys.path injection at lines 12-14, importing via `import entity_server`. We follow the existing pattern rather than create a parallel test file.):
 - Bootstrap DB without registering the parent objective
 - Call `_process_create_key_result(db, parent_type_id="objective:nonexistent", ...)`
 - Assert `ValueError` raised with the expected message
@@ -307,7 +307,7 @@ Per handler-audit.md classification (`read+write`), the orchestrators should be 
 - reconciliation.py:374 (`db.update_workflow_phase(feature_type_id, **kwargs)` → add `workspace_uuid=workspace_uuid` into the kwargs dict at line 367-373, OR pass as a separate kwarg)
 - reconciliation.py:462 (`db.update_workflow_phase(feature_type_id, kanban_column=expected_kanban)` → add `workspace_uuid=workspace_uuid`)
 
-Also forward through `check_workflow_drift(engine, db, artifacts_root, feature_type_id)` at line 789 IF that helper itself needs workspace scoping for its scan (design-phase decision; for now, drift-detection is read-only and uses `db.list_entities` which is workspace-aware).
+No workspace_uuid threading needed for `check_workflow_drift(engine, db, artifacts_root, feature_type_id)` at reconciliation.py:634-755: verified read-only at iter-2 of phase-review (zero `db.update_*` / `db.create_*` / `db.insert_*` / `db.delete_*` calls in its body) and it already scopes via `db.list_entities` which is workspace-aware. Decision locked at spec time.
 
 **FR-11.2 (extend `scan_all`):** Add `workspace_uuid: str | None = None` kwarg to `scan_all(...)` in `entity_registry/frontmatter_sync.py:543`. Forward to `db.list_entities(entity_type="feature", workspace_uuid=workspace_uuid)` at line 570 (scopes the scan). No internal `db.update_*` calls to thread through — `scan_all` is read-only. (Reconciliation apply flow uses `ingest_header` separately, which already accepts workspace_uuid per feature 112 / FR-2 at line 466.)
 
@@ -342,7 +342,7 @@ Also forward through `check_workflow_drift(engine, db, artifacts_root, feature_t
 
 **AC-5:** `pytest plugins/pd/hooks/lib/entity_registry/test_entity_lifecycle.py::test_transition_entity_phase_workspace_uuid_consistent -v` → 1 test passes. Asserts symmetric workspace_uuid propagation across both `db.update_entity` and `db.update_workflow_phase` calls inside `transition_entity_phase`.
 
-**AC-6:** `pytest -k 'workspace_uuid_empty_string_normalized_to_none' plugins/pd/mcp/test_workflow_state_server.py -v` → 2 parametrized sub-tests pass (one per code path: `init_feature_state` exercises line 1280; `transition_phase` exercises line 657). Mutation pins (one per line): (a) removing `or None` from `_workspace_uuid or None` at workflow_state_server.py:1280 fails the `init_feature_state` sub-test (FK constraint failure on empty-string workspace_uuid); (b) removing it at line 657 fails the `transition_phase` sub-test. Implementation verifies the failure mode is FK-or-equivalent observable error (not silent pass) before merging — if it's a different observable failure, the AC-6 text is updated to describe the actual mode.
+**AC-6:** `pytest -k 'workspace_uuid_empty_string_normalized_to_none' plugins/pd/mcp/test_workflow_state_server.py -v` → 2 parametrized sub-tests pass (one per code path: `init_feature_state` exercises line 1280; `transition_phase` exercises line 657). Mutation pins (one per line): (a) removing `or None` from `_workspace_uuid or None` at workflow_state_server.py:1280 fails the `init_feature_state` sub-test (FK constraint failure on empty-string workspace_uuid); (b) removing it at line 657 fails the `transition_phase` sub-test. Implementation verifies the failure mode is FK-or-equivalent observable error (not silent pass) before merging. Fallback: if the FK constraint is not the actual observable failure mode, the mutation pin remains valid as long as the test fails with ANY observable assertion error when `or None` is removed; the AC-6 text is updated in the same commit to describe the actual mode.
 
 **AC-7:** `pytest -k 'filter_states_' plugins/pd/mcp/test_workflow_state_server.py -v` → 2 new tests pass. Behavioral pin: `OperationalError` → `_make_error` JSON; `RuntimeError` → propagates (the narrow-except contract). Structural pin: `grep -nE 'except.*Exception' plugins/pd/mcp/workflow_state_server.py:1614-1620` returns 0 matches.
 
