@@ -1620,8 +1620,14 @@ def _filter_states_by_workspace(
             if entity and entity.get("workspace_uuid") == target_ws_uuid:
                 filtered.append(s)
         return json.dumps(filtered)
-    except (json.JSONDecodeError, Exception):
-        return results_json
+    except json.JSONDecodeError:
+        return results_json  # malformed JSON from engine — return as-is
+    except sqlite3.OperationalError as exc:
+        return _make_error(
+            "db_unavailable", str(exc),
+            "Database temporarily unavailable; retry shortly",
+        )
+    # FR-7: other exceptions PROPAGATE (no except Exception clause).
 
 
 @mcp.tool()

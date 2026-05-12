@@ -7345,6 +7345,87 @@ class TestListFeaturesByDefaultSingleWorkspace:
         )
 
 
+class TestFilterStatesByWorkspaceExceptionHandling:
+    """FR-7: _filter_states_by_workspace narrows its except clause.
+
+    Pre-fix: ``except (json.JSONDecodeError, Exception):`` swallowed every
+    exception (including DB errors and bugs) and silently returned the
+    unfiltered cross-workspace JSON.
+
+    Post-fix:
+        - ``json.JSONDecodeError`` → return as-is (malformed engine output)
+        - ``sqlite3.OperationalError`` → ``_make_error`` JSON (db_unavailable)
+        - All other exceptions PROPAGATE to caller.
+    """
+
+    def test_filter_states_db_error_returns_error_json(
+        self, tmp_path, monkeypatch,
+    ):
+        """OperationalError from db.get_entity → _make_error JSON (FR-7.1)."""
+        import workflow_state_server as wss
+
+        db = EntityDatabase(str(tmp_path / "ws.db"))
+        from entity_registry.test_helpers import bootstrap_test_workspace
+        ws_a = bootstrap_test_workspace(db, "ws_a")
+        db.register_entity(
+            entity_type="feature",
+            entity_id="010-foo",
+            name="foo",
+            status="active",
+            workspace_uuid=ws_a,
+        )
+
+        def _boom(*args, **kwargs):
+            raise sqlite3.OperationalError("database is locked")
+
+        monkeypatch.setattr(db, "get_entity", _boom)
+        monkeypatch.setattr(wss, "_db", db)
+
+        results_json = json.dumps([
+            {"feature_type_id": "feature:010-foo"},
+        ])
+        out = wss._filter_states_by_workspace(results_json, ws_a)
+        parsed = json.loads(out)
+        assert parsed.get("error") is True, (
+            f"Expected _make_error JSON, got: {parsed!r}"
+        )
+        assert parsed.get("error_type") == "db_unavailable", (
+            f"Expected error_type='db_unavailable', got: {parsed!r}"
+        )
+        assert "database is locked" in parsed.get("message", ""), (
+            f"Expected exc message in response, got: {parsed!r}"
+        )
+
+    def test_filter_states_unexpected_error_propagates(
+        self, tmp_path, monkeypatch,
+    ):
+        """RuntimeError from db.get_entity must propagate (FR-7.1)."""
+        import workflow_state_server as wss
+
+        db = EntityDatabase(str(tmp_path / "ws.db"))
+        from entity_registry.test_helpers import bootstrap_test_workspace
+        ws_a = bootstrap_test_workspace(db, "ws_a")
+        db.register_entity(
+            entity_type="feature",
+            entity_id="011-bar",
+            name="bar",
+            status="active",
+            workspace_uuid=ws_a,
+        )
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("unexpected")
+
+        monkeypatch.setattr(db, "get_entity", _boom)
+        monkeypatch.setattr(wss, "_db", db)
+
+        results_json = json.dumps([
+            {"feature_type_id": "feature:011-bar"},
+        ])
+        with pytest.raises(RuntimeError, match="unexpected"):
+            wss._filter_states_by_workspace(results_json, ws_a)
+
+
 class TestSerializeStateDegradedLogicDeepened:
     """Mutation tests for _serialize_state degraded flag logic.
     derived_from: spec:AC-6 (degraded only for meta_json_fallback),
