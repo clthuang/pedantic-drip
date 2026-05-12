@@ -317,10 +317,19 @@ on disk.
   equivalent) to accept ONLY `parent_uuid:` going forward; an old
   `parent_type_id:` is treated as a parse error (per NFR-1, no
   backward compat).
-- The script lives at
-  `agent_sandbox/{today}/112-validation/meta-json-rewrite.py` and is
-  invoked once. Its output is logged. After invocation, AC-3b's grep
-  passes against on-disk state.
+- **Path choice (per user memory `use-mcp-not-manual-json`):**
+  PRIMARY path is the MCP route — `update_entity(type_id=...,
+  metadata=...)` per file, reusing the existing
+  `mcp__plugin_pd_entity-registry__update_entity` surface. Each
+  affected .meta.json is rewritten via MCP, which propagates through
+  the meta-json-guard correctly (no fallback needed).
+  CONTINGENCY path: if MCP cannot batch-rewrite (e.g., `update_entity`
+  doesn't accept a top-level key delete), the FR-4 implementer
+  authors `agent_sandbox/{today}/112-validation/meta-json-rewrite.py`
+  and uses the guard-fallback (temporarily move the bootstrap
+  sentinel to permit direct writes, per the pattern used during
+  feature 108 cleanup).
+- After invocation, AC-3b's grep passes against on-disk state.
 
 **Verification (extension to AC-3b):** After FR-4 lands AND the
 rewrite script has run, `grep -rn 'parent_type_id' docs/features/

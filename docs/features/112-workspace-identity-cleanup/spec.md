@@ -479,6 +479,10 @@ timing test; no `bash --version` verification log.
   3. **Changed:** session-start context path format from
      `${project_id}-${project_slug}` to
      `${workspace_uuid_short}-${project_slug}` (FR-6).
+  4. **Changed:** `list_features_by_phase` and
+     `list_features_by_status` MCP tools default to single-workspace
+     queries (post-FR-2). Pass `project_id="*"` to opt into the
+     legacy cross-workspace behavior.
 
 ---
 
