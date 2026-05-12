@@ -24,8 +24,8 @@ from entity_registry.database import EntityDatabase
 from entity_registry.id_generator import generate_entity_id
 from entity_registry.project_identity import (
     GitProjectInfo,
+    _compute_legacy_project_id,
     collect_git_info,
-    detect_project_id,
     resolve_workspace_uuid,
 )
 from entity_registry.server_helpers import (
@@ -215,7 +215,7 @@ async def lifespan(server):
         _artifacts_root = os.path.join(project_root, str(config.get("artifacts_root", "docs")))
 
         # Detect project identity and register in DB.
-        _project_id = detect_project_id(_project_root)
+        _project_id = _compute_legacy_project_id(_project_root)
         # Phase E Task 5.5: populate the workspace_uuid lazy global with
         # FR-3 / Decision 11 precedence:
         #   ENTITY_WORKSPACE_UUID env (test override / explicit)

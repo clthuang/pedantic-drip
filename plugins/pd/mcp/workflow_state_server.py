@@ -33,7 +33,7 @@ from server_lifecycle import write_pid, remove_pid, start_parent_watchdog
 from sqlite_retry import with_retry, is_transient
 
 from entity_registry.database import EntityDatabase
-from entity_registry.project_identity import detect_project_id, resolve_workspace_uuid
+from entity_registry.project_identity import _compute_legacy_project_id, resolve_workspace_uuid
 from entity_registry.entity_lifecycle import (
     init_entity_workflow as _lib_init_entity_workflow,
     transition_entity_phase as _lib_transition_entity_phase,
@@ -204,7 +204,7 @@ async def lifespan(server):
     else:
         project_root = os.environ.get("PROJECT_ROOT", os.getcwd())
         _project_root = project_root
-        _project_id = detect_project_id(project_root)
+        _project_id = _compute_legacy_project_id(project_root)
         # Feature 108 Phase E: populate workspace_uuid lazy global with the
         # same FR-3 / Decision 11 precedence as mcp/entity_server.py:
         #   ENTITY_WORKSPACE_UUID env (test override / explicit)

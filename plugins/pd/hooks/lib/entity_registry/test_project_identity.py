@@ -292,9 +292,9 @@ class TestResolveWorkspaceUuidPrecedence:
     def test_resolve_workspace_uuid_env_override(self, monkeypatch, tmp_path):
         """FR-3 / AC-2b: ENTITY_WORKSPACE_UUID is the supported override.
 
-        Successor to the deleted ``test_detect_project_id_env_override``
-        (legacy ENTITY_PROJECT_ID). Documents the rename and asserts
-        the precedence chain honors a well-formed UUID.
+        Successor to the deleted legacy ENTITY_PROJECT_ID env-override
+        test. Documents the rename and asserts the precedence chain
+        honors a well-formed UUID.
         """
         from entity_registry.project_identity import resolve_workspace_uuid
 

@@ -126,7 +126,7 @@ with open(sys.argv[1]) as f:
     print(meta.get("slug", meta.get("name", "unknown")))
     print(meta.get("mode", "Standard"))
     print(meta.get("branch", ""))
-    print(meta.get("project_id", ""))
+    print(meta.get("workspace_uuid", ""))
 ' "$meta_file" 2>/dev/null
 }
 
@@ -460,29 +460,42 @@ build_context() {
             name=$(echo "$meta_output" | sed -n '2p')
             mode=$(echo "$meta_output" | sed -n '3p')
             branch=$(echo "$meta_output" | sed -n '4p')
-            project_id=$(echo "$meta_output" | sed -n '5p')
+            feature_workspace_uuid=$(echo "$meta_output" | sed -n '5p')
             phase=$(detect_phase "$feature_dir")
             next_cmd=$(get_next_command "$phase")
 
             context="You're working on feature ${id}-${name} (${mode} mode).\n"
             context+="Current phase: ${phase}\n"
 
-            # Show project affiliation if present
-            if [[ -n "$project_id" ]]; then
-                local project_slug
+            # Show workspace affiliation if present (feature 112 / FR-6).
+            # Display short prefix from the session WORKSPACE_UUID env var
+            # (exported by session-start.sh via ensure_workspace_uuid).
+            if [[ -n "$feature_workspace_uuid" ]]; then
+                local workspace_uuid_short project_slug
                 local artifacts_root_val
+                workspace_uuid_short="${WORKSPACE_UUID:0:8}"
                 artifacts_root_val=$(resolve_artifacts_root)
                 # FR-1.1: single-quoted Python source + positional args (no bash expansion).
                 project_slug=$(python3 -c '
 import os, json, glob, sys
-dirs = glob.glob(os.path.join(sys.argv[1], sys.argv[3], "projects", sys.argv[2] + "-*/"))
-if dirs:
-    with open(os.path.join(dirs[0], ".meta.json")) as f:
-        print(json.load(f).get("slug", "unknown"))
+dirs = glob.glob(os.path.join(sys.argv[1], sys.argv[3], "projects", "*/"))
+target_ws = sys.argv[2]
+for d in dirs:
+    meta_path = os.path.join(d, ".meta.json")
+    if not os.path.isfile(meta_path):
+        continue
+    try:
+        with open(meta_path) as f:
+            meta = json.load(f)
+    except Exception:
+        continue
+    if meta.get("workspace_uuid") == target_ws:
+        print(meta.get("slug", "unknown"))
+        break
 else:
     print("unknown")
-' "$PROJECT_ROOT" "$project_id" "$artifacts_root_val" 2>/dev/null)
-                context+="Project: ${project_id}-${project_slug}\n"
+' "$PROJECT_ROOT" "$feature_workspace_uuid" "$artifacts_root_val" 2>/dev/null)
+                context+="Workspace: ${workspace_uuid_short}-${project_slug}\n"
             fi
 
             # Check branch mismatch and add warning
