@@ -2,10 +2,11 @@
   "id": "109",
   "slug": "polymorphic-taxonomy-and-event",
   "mode": "full",
-  "status": "active",
+  "status": "completed",
   "created": "2026-05-10T07:38:17.810513+00:00",
   "branch": "planned",
-  "lastCompletedPhase": "create-plan",
+  "completed": "2026-05-12T17:22:32.005667+00:00",
+  "lastCompletedPhase": "finish",
   "phases": {
     "brainstorm": {
       "started": "2026-05-12T12:15:08.034913+00:00",
@@ -27,6 +28,14 @@
       "completed": "2026-05-12T13:37:48.626751+00:00",
       "iterations": 5,
       "reviewerNotes": "Plan-reviewer: 2 iterations (6 + 1 blockers resolved cumulatively). Task-reviewer: 1 iteration (5 blockers resolved inline). Phase-reviewer: 1 iteration (3 blockers + 5 warnings all resolved inline in tasks rev 5). NEW tasks added: 2.6 type_id byte-identity, 13.7.1 inspect.signature byte-identity, 14.4 5 non-entities idempotency tests, 16.4a idempotency test, 16.4b lock-failure test, expanded Task 10.1 with workflow_phases grep. Group 12 dependency corrected from Group 11 (REMOVED) to Group 10. Plan covers 16 Groups + Group 0.5 rename + Group 11 REMOVED placeholder. ~70 total tasks. Cross-phase patches applied to spec (FR-4 body status-only) during design phase still in effect."
+    },
+    "implement": {
+      "completed": "2026-05-12T17:22:27.075868+00:00",
+      "iterations": 1
+    },
+    "finish": {
+      "completed": "2026-05-12T17:22:32.005667+00:00",
+      "iterations": 1
     }
   }
 }
