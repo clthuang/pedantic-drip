@@ -3326,6 +3326,136 @@ def _migration_12_polymorphic_taxonomy_and_events(
                         conn.execute(trg_sql)
 
         # ------------------------------------------------------------------
+        # Step 5i: F2 phase_events copy-rename (Group 8, Tasks 8.4 + 8.5)
+        # ------------------------------------------------------------------
+        # Expand ``phase_events`` schema along three dimensions:
+        #   1. ``event_type`` CHECK widens from 4 → 7 values: adds the three
+        #      entity_* discriminators (entity_created, entity_status_changed,
+        #      entity_promoted) per spec FR-2 / AC-2.4.
+        #   2. ``phase`` is relaxed from NOT NULL to NULL-able (the new
+        #      entity_* event types have no meaningful phase value per the
+        #      per-event-type column-domain table).
+        #   3. NEW ``metadata`` TEXT NULL column — JSON payload for the new
+        #      event types (e.g. ``{"old_status": ..., "new_status": ...}``).
+        #
+        # SQLite cannot ALTER TABLE to widen a CHECK or relax NOT NULL, so we
+        # use the documented copy-rename idiom
+        # (https://www.sqlite.org/lang_altertable.html § 8).
+        #
+        # Idempotency: probe ``PRAGMA table_info(phase_events)`` for the
+        # ``metadata`` column AND inspect the CHECK SQL from ``sqlite_master``
+        # for the new entity_* values. If both are present, the block already
+        # ran in a prior interrupted v12 attempt — skip the rebuild.
+        pe_cols = {
+            r[1] for r in conn.execute(
+                "PRAGMA table_info(phase_events)"
+            ).fetchall()
+        }
+        pe_master = conn.execute(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type='table' AND name='phase_events'"
+        ).fetchone()
+        pe_check_sql = pe_master[0] if pe_master else ""
+        pe_has_metadata = "metadata" in pe_cols
+        pe_has_entity_created = (
+            "entity_created" in (pe_check_sql or "")
+        )
+        if not (pe_has_metadata and pe_has_entity_created):
+            # Capture pre-rebuild row count for parity check.
+            pe_pre_count = conn.execute(
+                "SELECT COUNT(*) FROM phase_events"
+            ).fetchone()[0]
+            # Capture user-defined indexes (incl. the partial-UNIQUE
+            # backfill-dedup index) so we can recreate them post-RENAME.
+            # SQLite auto-drops indexes when the underlying table is
+            # dropped; CREATE INDEX statements stored in sqlite_master are
+            # the canonical source we re-issue.
+            pe_saved_indexes = [
+                (r[0], r[1])
+                for r in conn.execute(
+                    "SELECT name, sql FROM sqlite_master "
+                    "WHERE type='index' AND tbl_name='phase_events' "
+                    "AND sql IS NOT NULL"
+                ).fetchall()
+            ]
+            # Capture triggers on phase_events (none expected at v11, but
+            # discover-don't-hardcode per design §1 sub-step 5).
+            pe_saved_triggers = [
+                (r[0], r[1])
+                for r in conn.execute(
+                    "SELECT name, sql FROM sqlite_master "
+                    "WHERE type='trigger' AND tbl_name='phase_events' "
+                    "AND sql IS NOT NULL"
+                ).fetchall()
+            ]
+
+            # Build phase_events_new with widened CHECK, NULL-able phase,
+            # and the new metadata TEXT column. Column order preserves the
+            # legacy layout for the INSERT-SELECT below, then appends
+            # ``metadata`` as the last column.
+            conn.execute("""
+                CREATE TABLE phase_events_new (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    type_id         TEXT NOT NULL,
+                    project_id      TEXT NOT NULL,
+                    phase           TEXT,
+                    event_type      TEXT NOT NULL CHECK(event_type IN (
+                        'started', 'completed', 'skipped', 'backward',
+                        'entity_created', 'entity_status_changed',
+                        'entity_promoted'
+                    )),
+                    timestamp       TEXT NOT NULL,
+                    iterations      INTEGER,
+                    reviewer_notes  TEXT,
+                    backward_reason TEXT,
+                    backward_target TEXT,
+                    source          TEXT NOT NULL DEFAULT 'live' CHECK(
+                        source IN ('live', 'backfill')
+                    ),
+                    created_at      TEXT NOT NULL,
+                    metadata        TEXT
+                )
+            """)
+            # INSERT-SELECT preserves all existing rows; metadata defaults
+            # to NULL for legacy rows.
+            conn.execute(
+                "INSERT INTO phase_events_new "
+                "(id, type_id, project_id, phase, event_type, timestamp, "
+                "iterations, reviewer_notes, backward_reason, "
+                "backward_target, source, created_at, metadata) "
+                "SELECT id, type_id, project_id, phase, event_type, "
+                "timestamp, iterations, reviewer_notes, backward_reason, "
+                "backward_target, source, created_at, NULL "
+                "FROM phase_events"
+            )
+            pe_post_count = conn.execute(
+                "SELECT COUNT(*) FROM phase_events_new"
+            ).fetchone()[0]
+            if pe_post_count != pe_pre_count:
+                raise RuntimeError(
+                    f"Migration 12 phase_events copy-rename row-count "
+                    f"mismatch: pre={pe_pre_count}, post={pe_post_count}"
+                )
+
+            # Swap tables.
+            conn.execute("DROP TABLE phase_events")
+            conn.execute(
+                "ALTER TABLE phase_events_new RENAME TO phase_events"
+            )
+
+            # Recreate captured indexes verbatim (the partial-UNIQUE
+            # ``phase_events_backfill_dedup`` is included in this set per
+            # the original migration-10 DDL at database.py:1517-1532).
+            for idx_name, idx_sql in pe_saved_indexes:
+                if idx_sql:
+                    conn.execute(idx_sql)
+
+            # Recreate captured triggers (none expected; future-proof).
+            for trg_name, trg_sql in pe_saved_triggers:
+                if trg_sql:
+                    conn.execute(trg_sql)
+
+        # ------------------------------------------------------------------
         # Step N-2: in-transaction post-flight FK check
         # ------------------------------------------------------------------
         # CRITICAL SAFETY (per design §1 sub-step 12): catches FK violations
@@ -3468,10 +3598,50 @@ EXPORT_SCHEMA_VERSION = 1
 
 # FR-6.2 (feature 088): explicit column list for phase_events SELECTs.
 # Replaces ``SELECT *`` so schema evolution cannot silently leak columns.
+# Feature 109 Group 8 added ``metadata`` (TEXT NULL) — included here so all
+# query paths surface it for the new entity_* event types.
 PHASE_EVENTS_COLS = (
     "id, type_id, project_id, phase, event_type, timestamp, "
     "iterations, reviewer_notes, backward_reason, backward_target, "
-    "source, created_at"
+    "source, created_at, metadata"
+)
+
+
+# Feature 109 Group 9 — per-event-type discriminator validation (design §3.1).
+#
+# ``_VALID_PARAMS`` enumerates the discriminator kwargs that ARE allowed for
+# each event_type. Base parameters (``project_id``, ``source``, ``timestamp``)
+# are accepted for every event_type and are NOT listed here.
+#
+# ``_REQUIRED_PARAMS`` enumerates the subset of discriminator kwargs that
+# MUST be present (non-None) for each event_type. Passing one of the keys in
+# ``_VALID_PARAMS[event_type]`` but with value None is allowed unless the key
+# is also in ``_REQUIRED_PARAMS[event_type]``.
+_VALID_PARAMS: dict[str, set[str]] = {
+    "started":              {"phase", "iterations", "reviewer_notes"},
+    "completed":            {"phase", "iterations", "reviewer_notes"},
+    "skipped":              {"phase", "reviewer_notes"},
+    "backward":             {"phase", "reviewer_notes",
+                             "backward_reason", "backward_target"},
+    "entity_created":       {"metadata"},
+    "entity_status_changed":{"metadata"},
+    "entity_promoted":      {"metadata"},
+}
+_REQUIRED_PARAMS: dict[str, set[str]] = {
+    "started":              {"phase"},
+    "completed":            {"phase", "iterations"},
+    "skipped":              {"phase"},
+    "backward":             {"phase", "backward_reason", "backward_target"},
+    "entity_status_changed":{"metadata"},
+    "entity_promoted":      {"metadata"},
+}
+
+# Discriminator kwargs visible to validation (must match the union of all
+# values in ``_VALID_PARAMS`` plus any historical discriminator). This is
+# the closed set the validation logic iterates over.
+_DISCRIMINATOR_KWARGS: tuple[str, ...] = (
+    "phase", "iterations", "reviewer_notes",
+    "backward_reason", "backward_target", "metadata",
 )
 
 
@@ -5432,40 +5602,172 @@ class EntityDatabase:
         *,
         type_id: str,
         project_id: str,
-        phase: str,
         event_type: str,
-        timestamp: str,
+        timestamp: str | None = None,
+        phase: str | None = None,
         iterations: int | None = None,
         reviewer_notes: str | None = None,
         backward_reason: str | None = None,
         backward_target: str | None = None,
         source: str = "live",
+        workspace_uuid: str | None = None,
+        metadata: dict | None = None,
     ) -> None:
-        """Append a phase event record to the append-only event log.
+        """Append a phase event record AND project to the relevant state.
 
-        Renamed from ``insert_phase_event`` by feature 109 Group 0.5 (pure
-        rename — signature unchanged). The new name matches event-sourcing
-        vocabulary and aligns with feature 109's promotion of ``phase_events``
-        to the canonical state-change primitive (spec FR-2).
+        **Signature history (feature 109):**
+
+        - BEFORE (post-Group-0.5 rename, pre-Group-9 extension): byte-identical
+          to legacy ``insert_phase_event`` —
+          ``(type_id, project_id, phase, event_type, timestamp, iterations=None,
+            reviewer_notes=None, backward_reason=None, backward_target=None,
+            source='live')``.
+          ``phase`` was positional-required.
+        - AFTER (post-Group-9.5): adds ``workspace_uuid`` and ``metadata`` as
+          keyword-only kwargs; relaxes ``phase`` to NULL-able (the new
+          entity_* event types have no meaningful phase); ``timestamp``
+          auto-generates ``_now_iso()`` when None.
+
+        **Validation:** per spec FR-2 / design §3.1, each ``event_type`` accepts
+        a closed set of discriminator kwargs (``_VALID_PARAMS``) and may require
+        a non-None value for a subset (``_REQUIRED_PARAMS``). Base parameters
+        (``project_id``, ``source``, ``timestamp``) are accepted for every
+        event_type.
+
+        **Operation order (inside a single ``self.transaction()`` block):**
+
+        1. Validate per-event-type discriminator params (raise ValueError on
+           mismatch).
+        2. INSERT INTO phase_events.
+        3. If ``event_type in {entity_status_changed, entity_promoted}``:
+           UPDATE entities SET status, updated_at
+           WHERE workspace_uuid = ? AND type_id = ?  ← workspace-scoped per
+           PRD Goal 1 (prevent cross-workspace contamination).
+        4. If ``event_type == 'entity_created'``: SKIP the entities UPDATE —
+           ``register_entity`` already INSERTed the row with its final status
+           and updated_at; a redundant UPDATE would overwrite ``updated_at``
+           with a slightly later timestamp and break the
+           ``entities.updated_at == phase_events.timestamp`` invariant.
+        5. If ``event_type in {started, completed, skipped, backward}``:
+           UPDATE workflow_phases SET workflow_phase, updated_at
+           WHERE type_id = ?.
+
+        Raises
+        ------
+        ValueError
+            If ``event_type`` is unknown OR a kwarg violates ``_VALID_PARAMS``
+            / ``_REQUIRED_PARAMS`` for the event_type.
         """
+        # ------------------------------------------------------------------
+        # Step 1: validate event_type + per-event-type discriminator shape
+        # ------------------------------------------------------------------
+        if event_type not in _VALID_PARAMS:
+            raise ValueError(
+                f"Invalid event_type {event_type!r}. Must be one of "
+                f"{sorted(_VALID_PARAMS.keys())}"
+            )
+
+        # Bundle the discriminator kwargs by name so we can iterate.
+        disc_values = {
+            "phase": phase,
+            "iterations": iterations,
+            "reviewer_notes": reviewer_notes,
+            "backward_reason": backward_reason,
+            "backward_target": backward_target,
+            "metadata": metadata,
+        }
+        allowed = _VALID_PARAMS[event_type]
+        required = _REQUIRED_PARAMS.get(event_type, set())
+
+        # (a) Disallow any non-None discriminator kwarg that is NOT in the
+        # allowed set for this event_type.
+        for key in _DISCRIMINATOR_KWARGS:
+            if disc_values[key] is not None and key not in allowed:
+                raise ValueError(
+                    f"{key!r} is not valid for event_type={event_type!r}"
+                )
+        # (b) Require non-None for any kwarg in the required set.
+        for key in required:
+            if disc_values[key] is None:
+                raise ValueError(
+                    f"{key!r} is required for event_type={event_type!r}"
+                )
+
         # Feature 088 FR-2.4 (defense-in-depth): DB-layer reviewer_notes cap.
-        # The MCP entry point in ``_process_complete_phase`` also validates
-        # size, but direct callers bypassing the MCP tool still get protected.
         if reviewer_notes is not None and len(reviewer_notes) > 10000:
             raise ValueError("reviewer_notes exceeds 10000 chars")
-        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        self._conn.execute(
-            "INSERT INTO phase_events "
-            "(type_id, project_id, phase, event_type, timestamp, iterations, "
-            "reviewer_notes, backward_reason, backward_target, source, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                type_id, project_id, phase, event_type, timestamp,
-                iterations, reviewer_notes, backward_reason, backward_target,
-                source, now,
-            ),
+
+        # workspace_uuid requirement for entity_* event types: needed for the
+        # workspace-scoped UPDATE entities WHERE clause (PRD Goal 1).
+        # entity_created is the exception — no UPDATE is issued for that
+        # type, so workspace_uuid is informational only.
+        if (
+            event_type in ("entity_status_changed", "entity_promoted")
+            and not workspace_uuid
+        ):
+            raise ValueError(
+                f"workspace_uuid is required for event_type={event_type!r}"
+            )
+
+        # Resolve timestamp + JSON-encode metadata.
+        if timestamp is None:
+            timestamp = self._now_iso()
+        metadata_json = (
+            json.dumps(metadata) if metadata is not None else None
         )
-        self._commit()
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        # ------------------------------------------------------------------
+        # Steps 2-5: atomic INSERT + projection UPDATE inside one transaction.
+        # ------------------------------------------------------------------
+        with self.transaction():
+            # Step 2: INSERT INTO phase_events.
+            self._conn.execute(
+                "INSERT INTO phase_events "
+                "(type_id, project_id, phase, event_type, timestamp, "
+                "iterations, reviewer_notes, backward_reason, "
+                "backward_target, source, created_at, metadata) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    type_id, project_id, phase, event_type, timestamp,
+                    iterations, reviewer_notes, backward_reason,
+                    backward_target, source, now, metadata_json,
+                ),
+            )
+
+            # Step 3: project entities.status for the two state-change
+            # event types. entity_created is intentionally excluded — the
+            # row was just INSERTed by register_entity with its final
+            # status; a redundant UPDATE here would overwrite updated_at.
+            if event_type in ("entity_status_changed", "entity_promoted"):
+                # Both event types carry new_status in metadata (per the
+                # per-event-type column-domain table) for status_changed;
+                # entity_promoted does NOT necessarily carry a new_status
+                # (it carries new_kind/new_lifecycle_class/new_type_id).
+                # Only issue the status UPDATE when metadata['new_status']
+                # is present.
+                new_status = (metadata or {}).get("new_status")
+                if new_status is not None:
+                    self._conn.execute(
+                        "UPDATE entities "
+                        "SET status = ?, updated_at = ? "
+                        "WHERE workspace_uuid = ? AND type_id = ?",
+                        (new_status, timestamp, workspace_uuid, type_id),
+                    )
+
+            # Step 5: project workflow_phases.workflow_phase for the 4
+            # workflow event types.
+            elif event_type in (
+                "started", "completed", "skipped", "backward"
+            ):
+                self._conn.execute(
+                    "UPDATE workflow_phases "
+                    "SET workflow_phase = ?, updated_at = ? "
+                    "WHERE type_id = ?",
+                    (phase, timestamp, type_id),
+                )
+
+        return None
 
     def query_phase_events(
         self,

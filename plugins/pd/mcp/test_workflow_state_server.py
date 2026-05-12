@@ -3256,14 +3256,17 @@ class TestReconcilePhaseEventsDrift:
         type_id = self._seed_feature_with_phase_timing_drift(db, tmp_path, slug)
 
         # Seed a few unrelated phase_events rows so we can count pre/post.
-        for phase, ev, ts in [
-            ("brainstorm", "started", "2026-04-17T00:00:00Z"),
-            ("brainstorm", "completed", "2026-04-17T01:00:00Z"),
-            ("specify", "started", "2026-04-17T02:00:00Z"),
+        # Per feature 109 Group 9 ``_REQUIRED_PARAMS``, ``completed`` requires
+        # ``iterations``. Tuple: (phase, event_type, timestamp, extras).
+        for phase, ev, ts, extras in [
+            ("brainstorm", "started", "2026-04-17T00:00:00Z", {}),
+            ("brainstorm", "completed", "2026-04-17T01:00:00Z",
+             {"iterations": 1}),
+            ("specify", "started", "2026-04-17T02:00:00Z", {}),
         ]:
             db.append_phase_event(
                 type_id=type_id, project_id="__unknown__", phase=phase,
-                event_type=ev, timestamp=ts, source="live",
+                event_type=ev, timestamp=ts, source="live", **extras,
             )
 
         pre_rows = db.query_phase_events(type_id=type_id, limit=500)
@@ -3335,10 +3338,11 @@ class TestFeature089BundleBDetection:
 
         # Seed a phase_events row for specify:completed so we can verify it
         # is NOT flagged as drift (negative control for the detector).
+        # Feature 109 Group 9 requires ``iterations`` for completed events.
         db.append_phase_event(
             type_id=type_id, project_id="__unknown__", phase="specify",
             event_type="completed", timestamp="2026-03-31T00:00:00Z",
-            source="live",
+            source="live", iterations=1,
         )
 
         existing = db.get_entity(type_id)
@@ -9705,13 +9709,23 @@ class TestFeature088BundleF:
         # query_phase_events orders DESC timestamp, so later timestamps come
         # first. Put iterations=None rows at the LATER timestamps to make them
         # dominate a naive limit=5 fetch.
+        #
+        # NOTE: ``append_phase_event`` rejects iterations=None for completed
+        # events post-feature-109 (per ``_REQUIRED_PARAMS``). This test
+        # exercises the analytics filter against pre-existing legacy rows
+        # with NULL iterations — so we direct-INSERT those rows to set up
+        # the historical-data scenario the filter is designed to handle.
+        now = "2026-05-02T00:00:00Z"
         for i in range(5):
-            db.append_phase_event(
-                type_id=f"feature:it-{i:03d}", project_id="Piter",
-                phase="design", event_type="completed",
-                timestamp=f"2026-05-02T1{i}:00:00Z",
-                iterations=None,
+            db._conn.execute(
+                "INSERT INTO phase_events "
+                "(type_id, project_id, phase, event_type, timestamp, "
+                "iterations, source, created_at) "
+                "VALUES (?, ?, 'design', 'completed', ?, NULL, 'live', ?)",
+                (f"feature:it-{i:03d}", "Piter",
+                 f"2026-05-02T1{i}:00:00Z", now),
             )
+        db._conn.commit()
         for i in range(5):
             db.append_phase_event(
                 type_id=f"feature:it-{i+100:03d}", project_id="Piter",
@@ -10229,11 +10243,12 @@ class TestFeature089BundleE:
         # Operator manually inserts the missing row (matching timestamp
         # and 'live' source — the detector matches on tuple membership,
         # not source, so 'live' is fine here).
+        # Feature 109 Group 9 requires ``iterations`` for completed events.
         db.append_phase_event(
             type_id="feature:089-e-25", project_id="P-e25",
             phase="design", event_type="completed",
             timestamp="2026-04-01T00:00:00Z",
-            source="live",
+            source="live", iterations=1,
         )
 
         # Second reconcile_check: no drift for this (type_id, phase).

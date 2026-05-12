@@ -302,8 +302,12 @@ class TestInsertPhaseEventEdgeCases:
     """Attack vector 3: insert_phase_event boundary conditions."""
 
     def test_invalid_event_type_rejected(self, db):
-        """Invalid event_type should be rejected by CHECK constraint."""
-        with pytest.raises(sqlite3.IntegrityError):
+        """Invalid event_type rejected at the Python layer (feature 109
+        Group 9). Pre-109 this was a SQL CHECK violation; post-109 the
+        Python helper raises ValueError before any SQL is issued. The SQL
+        CHECK still backs the constraint as a second line of defense.
+        """
+        with pytest.raises(ValueError, match="Invalid event_type"):
             db.append_phase_event(
                 type_id="feature:bad-type",
                 project_id=TEST_PROJECT_ID,
@@ -371,8 +375,11 @@ class TestInsertPhaseEventEdgeCases:
         assert len(rows) == 1
 
     def test_empty_string_event_type(self, db):
-        """Empty string event_type — should be rejected by CHECK constraint."""
-        with pytest.raises(sqlite3.IntegrityError):
+        """Empty-string event_type rejected at the Python layer (feature
+        109 Group 9). Pre-109 this was a SQL CHECK violation; post-109
+        the Python helper raises ValueError before any SQL is issued.
+        """
+        with pytest.raises(ValueError, match="Invalid event_type"):
             db.append_phase_event(
                 type_id="feature:empty-evt",
                 project_id=TEST_PROJECT_ID,

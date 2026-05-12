@@ -131,16 +131,21 @@ class TestMigration10:
         assert row is not None
 
     def test_ac2_schema_correct(self, db):
-        """AC-2: 12 columns with correct names/types."""
+        """AC-2: phase_events columns include the migration-10 baseline plus
+        the migration-12 ``metadata`` TEXT NULL column added by feature 109
+        Group 8 (spec FR-2 / AC-2.5).
+        """
         cols = db._conn.execute("PRAGMA table_info(phase_events)").fetchall()
         col_names = [c["name"] for c in cols]
         expected = [
             "id", "type_id", "project_id", "phase", "event_type",
             "timestamp", "iterations", "reviewer_notes", "backward_reason",
             "backward_target", "source", "created_at",
+            # Added by migration 12 (feature 109 Group 8).
+            "metadata",
         ]
         assert col_names == expected
-        assert len(cols) == 12
+        assert len(cols) == 13
 
     def test_ac3_indexes_exist(self, db):
         """AC-3: 3 composite indexes exist."""
@@ -305,18 +310,30 @@ class TestQueryPhaseEvents:
 
     @pytest.fixture(autouse=True)
     def seed_events(self, db):
-        """Seed multiple events for query testing."""
+        """Seed multiple events for query testing.
+
+        Per feature 109 Group 9 ``_REQUIRED_PARAMS``: ``completed`` requires
+        ``iterations``; ``backward`` requires ``backward_reason`` +
+        ``backward_target``. Tuple per row:
+        (type_id, project, phase, event, timestamp, extras_kwargs).
+        """
         events = [
-            ("feature:q-001", "proj-A", "brainstorm", "started", "2026-01-01T00:00:00Z"),
-            ("feature:q-001", "proj-A", "brainstorm", "completed", "2026-01-01T01:00:00Z"),
-            ("feature:q-001", "proj-A", "specify", "started", "2026-01-01T02:00:00Z"),
-            ("feature:q-002", "proj-B", "brainstorm", "started", "2026-01-02T00:00:00Z"),
-            ("feature:q-002", "proj-B", "design", "backward", "2026-01-02T03:00:00Z"),
+            ("feature:q-001", "proj-A", "brainstorm", "started",
+             "2026-01-01T00:00:00Z", {}),
+            ("feature:q-001", "proj-A", "brainstorm", "completed",
+             "2026-01-01T01:00:00Z", {"iterations": 1}),
+            ("feature:q-001", "proj-A", "specify", "started",
+             "2026-01-01T02:00:00Z", {}),
+            ("feature:q-002", "proj-B", "brainstorm", "started",
+             "2026-01-02T00:00:00Z", {}),
+            ("feature:q-002", "proj-B", "design", "backward",
+             "2026-01-02T03:00:00Z",
+             {"backward_reason": "scope gap", "backward_target": "brainstorm"}),
         ]
-        for type_id, proj, phase, evt, ts in events:
+        for type_id, proj, phase, evt, ts, extras in events:
             db.append_phase_event(
                 type_id=type_id, project_id=proj, phase=phase,
-                event_type=evt, timestamp=ts,
+                event_type=evt, timestamp=ts, **extras,
             )
 
     def test_filter_by_type_id(self, db):
@@ -388,16 +405,25 @@ class TestFeature090BulkEventTypesContract:
 
     @pytest.fixture(autouse=True)
     def seed_events(self, db):
+        # Per feature 109 Group 9 ``_REQUIRED_PARAMS``: completed requires
+        # ``iterations``; backward requires ``backward_reason`` +
+        # ``backward_target``. Tuple per row:
+        # (type_id, project, phase, event, timestamp, extras_kwargs).
         events = [
-            ("feature:bulk-001", "proj-A", "brainstorm", "started", "2026-04-01T00:00:00Z"),
-            ("feature:bulk-001", "proj-A", "brainstorm", "completed", "2026-04-01T01:00:00Z"),
-            ("feature:bulk-001", "proj-A", "specify", "started", "2026-04-01T02:00:00Z"),
-            ("feature:bulk-002", "proj-A", "design", "backward", "2026-04-02T00:00:00Z"),
+            ("feature:bulk-001", "proj-A", "brainstorm", "started",
+             "2026-04-01T00:00:00Z", {}),
+            ("feature:bulk-001", "proj-A", "brainstorm", "completed",
+             "2026-04-01T01:00:00Z", {"iterations": 1}),
+            ("feature:bulk-001", "proj-A", "specify", "started",
+             "2026-04-01T02:00:00Z", {}),
+            ("feature:bulk-002", "proj-A", "design", "backward",
+             "2026-04-02T00:00:00Z",
+             {"backward_reason": "scope gap", "backward_target": "brainstorm"}),
         ]
-        for type_id, proj, phase, evt, ts in events:
+        for type_id, proj, phase, evt, ts, extras in events:
             db.append_phase_event(
                 type_id=type_id, project_id=proj, phase=phase,
-                event_type=evt, timestamp=ts,
+                event_type=evt, timestamp=ts, **extras,
             )
 
     def test_empty_event_types_returns_empty_list(self, db):
@@ -670,6 +696,11 @@ class TestFeature088BundleE:
     def test_insert_phase_event_rejects_oversized_reviewer_notes(self, db):
         """FR-2.4 DB-layer defense: reviewer_notes >10000 chars raises
         ``ValueError`` before SQL execution.
+
+        Note: per feature 109 Group 9 ``_REQUIRED_PARAMS``, ``completed``
+        events require ``iterations``. We pass ``iterations=1`` so the
+        per-event-type validation passes and the reviewer_notes-length
+        check fires.
         """
         oversized = "x" * 10001
         with pytest.raises(ValueError, match="reviewer_notes exceeds 10000 chars"):
@@ -679,6 +710,7 @@ class TestFeature088BundleE:
                 phase="specify",
                 event_type="completed",
                 timestamp="2026-04-01T10:00:00Z",
+                iterations=1,
                 reviewer_notes=oversized,
             )
 
@@ -696,6 +728,7 @@ class TestFeature088BundleE:
             phase="specify",
             event_type="completed",
             timestamp="2026-04-01T10:00:00Z",
+            iterations=1,
             reviewer_notes=at_boundary,
         )
         rows_ok = db._conn.execute(
@@ -760,23 +793,23 @@ class TestFeature088BundleH4PhaseEvents:
     def test_insert_phase_event_rejects_invalid_event_type_and_source(self, db):
         """AC-43 (FR-10.10): CHECK constraint negative test.
 
-        The ``phase_events.event_type`` column is CHECK-constrained to
-        ``('started', 'completed', 'skipped', 'backward')`` and
-        ``phase_events.source`` is CHECK-constrained to
-        ``('live', 'backfill')``. Inserts violating either constraint MUST
-        raise ``sqlite3.IntegrityError``.
+        Post-feature-109 Group 9: invalid ``event_type`` is rejected at the
+        Python layer (ValueError, before any SQL is issued). Invalid
+        ``source`` still falls through to SQL and trips the CHECK on the
+        ``source`` column (sqlite3.IntegrityError). Both layers protect the
+        write path; both kinds of rejection are tested here.
         """
-        # Invalid event_type.
-        with pytest.raises(sqlite3.IntegrityError):
+        # Invalid event_type — Python-layer rejection.
+        with pytest.raises(ValueError, match="Invalid event_type"):
             db.append_phase_event(
                 type_id="feature:bad-et-001",
                 project_id=TEST_PROJECT_ID,
                 phase="design",
-                event_type="gibberish",  # NOT in the CHECK set
+                event_type="gibberish",  # NOT in the allowed Python set
                 timestamp="2026-04-01T10:00:00Z",
             )
 
-        # Invalid source.
+        # Invalid source — SQL CHECK rejection.
         with pytest.raises(sqlite3.IntegrityError):
             db.append_phase_event(
                 type_id="feature:bad-src-001",
