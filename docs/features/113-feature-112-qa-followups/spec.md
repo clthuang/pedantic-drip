@@ -151,15 +151,17 @@ This makes the kwarg load-bearing: it acts as a read-side workspace assertion th
 
 Existing terminal `db.update_entity` forwarding (line 173-174, `phase == "finish"` path) is unchanged.
 
-**FR-4.3 (test additions):** Add 3 tests in `plugins/pd/hooks/lib/workflow_engine/test_engine.py` + 1 test in `plugins/pd/hooks/lib/entity_registry/test_database.py`:
+**FR-4.3 (test additions):** Add 3 tests in `plugins/pd/hooks/lib/workflow_engine/test_engine.py` + 2 tests in `plugins/pd/hooks/lib/entity_registry/test_database.py`:
 - `test_transition_phase_workspace_uuid_mismatch_raises` — bootstraps two workspaces with same `type_id`, calls `engine.transition_phase(type_id, "design", workspace_uuid=ws_b)` where the row is scoped to ws_a; asserts ValueError raised with mismatch message.
 - `test_complete_phase_non_terminal_workspace_uuid_pinned` — same shape for non-terminal complete_phase.
 - `test_complete_phase_terminal_workspace_uuid_pinned` — same shape but for `phase == "finish"` to confirm forwarding works on the terminal path too.
+- `test_update_workflow_phase_workspace_uuid_mismatch_raises_value_error` (in `test_database.py`, ADDED per plan-reviewer iter-1 B2) — bootstrap workflow_phases row scoped to ws_a; call `db.update_workflow_phase(type_id, workspace_uuid=ws_b, workflow_phase='design')` DIRECTLY (not via engine); assert `pytest.raises(ValueError, match='workspace_uuid mismatch')`. Pins FR-4.1's own mismatch behavior at the database layer, independent of engine forwarding.
 - `test_update_workflow_phase_does_not_mutate_workspace_uuid_column` (in `test_database.py`) — bootstrap a workflow_phases row with workspace_uuid=ws_a, call `update_workflow_phase(type_id, workspace_uuid=ws_a, workflow_phase='design')`, re-SELECT the row, assert `workspace_uuid` column byte-identical to pre-update value. Pins FR-4.1's immutability claim ("workspace_uuid column unchanged; not in UPDATE SET clause").
 
-**Verification (AC-4):** `pytest plugins/pd/hooks/lib/workflow_engine/test_engine.py -k 'workspace_uuid' -v` shows 3 new tests passing, plus `pytest plugins/pd/hooks/lib/entity_registry/test_database.py -k 'does_not_mutate_workspace_uuid' -v` shows 1 new test passing. Mutation pins (all semantically real):
-1. Removing `workspace_uuid=workspace_uuid` forwarding at engine.py:100 OR engine.py:166 causes the mismatch tests to silently succeed when they should raise, failing the assertion.
-2. Adding `set_parts.append("workspace_uuid = ?")` and the value to `update_workflow_phase`'s UPDATE SET clause breaks `test_update_workflow_phase_does_not_mutate_workspace_uuid_column` (the pre-update SELECT and post-update SELECT would diverge).
+**Verification (AC-4):** `pytest plugins/pd/hooks/lib/workflow_engine/test_engine.py -k 'workspace_uuid' -v` shows 3 new tests passing, plus `pytest plugins/pd/hooks/lib/entity_registry/test_database.py -k 'workspace_uuid_mismatch or does_not_mutate_workspace_uuid' -v` shows 2 new tests passing. Mutation pins (all semantically real):
+1. Removing `workspace_uuid=workspace_uuid` forwarding at engine.py:100 OR engine.py:166 causes the engine mismatch tests to silently succeed when they should raise, failing the assertion.
+2. Removing the FR-4.1 mismatch SELECT + ValueError raise in `update_workflow_phase` breaks `test_update_workflow_phase_workspace_uuid_mismatch_raises_value_error` (direct database-layer pin, independent of engine forwarding).
+3. Adding `set_parts.append("workspace_uuid = ?")` and the value to `update_workflow_phase`'s UPDATE SET clause breaks `test_update_workflow_phase_does_not_mutate_workspace_uuid_column` (the pre-update SELECT and post-update SELECT would diverge).
 
 ### FR-5 — `transition_entity_phase` symmetric workspace_uuid (#00395)
 
@@ -350,7 +352,7 @@ No `apply_workflow_reconciliation` forwarding needed here — verified at phase-
 
 **AC-3:** `pytest plugins/pd/mcp/test_workflow_state_server.py::TestListFeaturesByDefaultSingleWorkspace -v` → 6 tests pass (2 existing + 4 new from FR-3.3: `test_list_features_handler_db_none_returns_empty`, `test_list_features_by_phase_invalid_legacy_hex_returns_error`, `test_list_features_by_status_invalid_legacy_hex_returns_error`, `test_list_features_handler_empty_project_id_treated_as_default`). Both invalid-legacy-hex tests assert `_make_error` JSON with `error_type="invalid_project_id"` on the by_phase AND by_status handlers (per FR-3.2 enumeration).
 
-**AC-4:** `pytest plugins/pd/hooks/lib/workflow_engine/test_engine.py -k 'workspace_uuid' -v` shows 3 new tests passing AND `pytest plugins/pd/hooks/lib/entity_registry/test_database.py -k 'does_not_mutate_workspace_uuid' -v` shows 1 new test passing (4 new tests total per FR-4.3). Mismatch tests raise FR-4.1's ValueError when invoked with a workspace_uuid not matching the existing workflow_phases row; column-immutability test pins `update_workflow_phase` not adding `workspace_uuid` to the UPDATE SET clause.
+**AC-4:** `pytest plugins/pd/hooks/lib/workflow_engine/test_engine.py -k 'workspace_uuid' -v` shows 3 new tests passing AND `pytest plugins/pd/hooks/lib/entity_registry/test_database.py -k 'workspace_uuid_mismatch or does_not_mutate_workspace_uuid' -v` shows 2 new tests passing (5 new tests total per FR-4.3). Engine mismatch tests raise FR-4.1's ValueError via transition_phase/complete_phase forwarding; direct database mismatch test pins FR-4.1's own logic independent of engine layer; column-immutability test pins `update_workflow_phase` not adding `workspace_uuid` to the UPDATE SET clause.
 
 **AC-5:** `pytest plugins/pd/hooks/lib/entity_registry/test_entity_lifecycle.py::test_transition_entity_phase_workspace_uuid_consistent -v` → 1 test passes. Asserts symmetric workspace_uuid propagation across both `db.update_entity` and `db.update_workflow_phase` calls inside `transition_entity_phase`.
 
@@ -413,7 +415,7 @@ AC-12 is satisfied iff post-implementation `diff <(grep '^FAILED' baseline.log |
 | AC-1 | JSON shape + validator unit test | `qa_gate/test_emitter.py::test_emit_qa_gate_rejects_invalid_status` |
 | AC-2 | grep section headers | `bash-version.log` |
 | AC-3 | pytest 6 tests (2 existing + 4 new) + ValueError pin on both handlers | `test_workflow_state_server.py` |
-| AC-4 | pytest 4 new tests (3 engine + 1 database) + mismatch ValueError pin + UPDATE SET immutability pin | `test_engine.py`, `test_database.py` |
+| AC-4 | pytest 5 new tests (3 engine + 2 database) + mismatch ValueError pin (engine + direct) + UPDATE SET immutability pin | `test_engine.py`, `test_database.py` |
 | AC-5 | pytest 1 test + symmetric propagation pin | `test_entity_lifecycle.py` |
 | AC-6 | pytest 2 parametrized sub-tests + 2 or-None mutation pins (lines 657 + 1280) | `test_workflow_state_server.py` |
 | AC-7 | pytest 2 tests (Operational + Runtime) + grep | `test_workflow_state_server.py` |

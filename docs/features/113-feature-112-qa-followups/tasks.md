@@ -1,11 +1,14 @@
-# Feature 113 — Tasks
+# Feature 113 — Tasks (iter 2, TDD-ordered)
 
-Discrete 5-15 min tasks ordered by NFR-5 dependency graph. Each task has explicit acceptance criteria (binary pass/fail).
+Discrete 5-15 min tasks paired Tests+X (RED) → Impl+X (GREEN) per NFR-5. Each task has explicit acceptance criteria (binary pass/fail).
 
-Legend:
-- `[P]` = parallel-safe with siblings in the same PI
-- `[B]` = blocker for downstream PIs (gating dependency)
-- `→ AC-N` = acceptance criterion satisfied by this task
+**Legend:**
+- `[P]` = parallel-safe with siblings (no shared file)
+- `[S:<file>]` = serializes on the named file (no concurrent dispatch)
+- `[B]` = blocker for downstream PIs
+- `→ AC-N` = acceptance criterion satisfied
+- `RED` = test must be failing before this task's commit
+- `GREEN` = implementation must make the prior RED test pass
 
 ---
 
@@ -15,15 +18,15 @@ Legend:
 ```bash
 mkdir -p agent_sandbox/$(date +%Y-%m-%d)/113-validation
 ```
-**Done:** Directory exists, `ls -la` returns it.
+**Done:** Directory exists.
 **Time:** 1 min.
 
 ### T0.2 — Capture pre-implementation pytest baseline
-Run from project root:
 ```bash
 PYTHONPATH=plugins/pd/hooks/lib plugins/pd/.venv/bin/python -m pytest plugins/pd/{hooks/lib,mcp} --tb=line > agent_sandbox/$(date +%Y-%m-%d)/113-validation/baseline.log 2>&1 || true
 ```
-**Done:** `baseline.log` file exists; `grep -c '^FAILED' baseline.log` returns a known number (record it).
+Record `BASELINE_FAIL_COUNT=$(grep -c '^FAILED' agent_sandbox/$(date +%Y-%m-%d)/113-validation/baseline.log)`.
+**Done:** baseline.log exists; FAILED count recorded in a notes file.
 **Time:** 5-10 min (pytest run).
 **Dependencies:** T0.1.
 
@@ -31,174 +34,133 @@ PYTHONPATH=plugins/pd/hooks/lib plugins/pd/.venv/bin/python -m pytest plugins/pd
 
 ## PI-1 — Validation artifacts (FR-1 + FR-2)
 
-### T1.1 [P] — Scaffold `qa_gate/` package
-Create:
-- `plugins/pd/hooks/lib/qa_gate/__init__.py` with `STATUS_ENUM = frozenset({"passed", "deferred", "n_a", "conditional_skipped"})`
-- `plugins/pd/hooks/lib/qa_gate/emitter.py` skeleton (no body yet) per design I1 signature
-- `plugins/pd/hooks/lib/qa_gate/test_emitter.py` skeleton (empty test file with imports)
-
-**Done:** `ls plugins/pd/hooks/lib/qa_gate/` shows 3 files; `pytest plugins/pd/hooks/lib/qa_gate/test_emitter.py --collect-only` exits 0.
-**Time:** 5 min.
-
-### T1.2 — Write `test_emit_qa_gate_rejects_invalid_status` (TDD red)
-In `test_emitter.py`, write test asserting `emit_qa_gate(...)` raises `ValueError` when an entry's status is `"invalid"`.
-**Done:** `pytest plugins/pd/hooks/lib/qa_gate/test_emitter.py -v` shows 1 failure (NotImplementedError or similar — TDD red).
-**Time:** 10 min.
-**Dependencies:** T1.1.
-
-### T1.3 — Implement `emit_qa_gate` per design I1
-Body: validate status enum, validate per-entry keys, resolve head_sha if not provided, compute idempotency, write JSON.
-**Done:** T1.2's test now passes. → AC-1 partial
+### T1a.1 — Tests+1 RED: scaffold + 5 failing tests
+- Create `plugins/pd/hooks/lib/qa_gate/__init__.py` (empty `frozenset()` for STATUS_ENUM placeholder)
+- Create `plugins/pd/hooks/lib/qa_gate/emitter.py` stub: `def emit_qa_gate(*args, **kwargs): raise NotImplementedError`
+- Create `plugins/pd/hooks/lib/qa_gate/test_emitter.py` with 5 test functions:
+  - `test_emit_qa_gate_rejects_invalid_status`
+  - `test_emit_qa_gate_requires_id_status_evidence`
+  - `test_emit_qa_gate_rejects_evidence_over_500_chars`
+  - `test_emit_qa_gate_rejects_conditional_skipped_with_empty_condition`
+  - `test_emit_qa_gate_head_sha_idempotent`
+**Done (RED):** `pytest plugins/pd/hooks/lib/qa_gate/test_emitter.py -v` → all 5 fail with NotImplementedError.
 **Time:** 15 min.
-**Dependencies:** T1.2.
 
-### T1.4 — Add per-entry key validator tests
-Add 3 more tests:
-- `test_emit_qa_gate_requires_id_status_evidence` (missing required key raises)
-- `test_emit_qa_gate_rejects_evidence_over_500_chars`
-- `test_emit_qa_gate_rejects_conditional_skipped_with_empty_condition`
+### T1a.2 [B] — Impl+1 GREEN: emitter + .gitignore removal
+- Populate `STATUS_ENUM = frozenset({"passed", "deferred", "n_a", "conditional_skipped"})`
+- Implement `emit_qa_gate(...)` per design I1 (validation + idempotency + JSON write)
+- Remove `.gitignore:63` line `docs/features/**/.qa-gate.json`
+**Done (GREEN):** `pytest plugins/pd/hooks/lib/qa_gate/test_emitter.py -v` → all 5 pass. `grep -n 'docs/features/\*\*/.qa-gate.json' .gitignore` → 0 matches. → AC-1 partial
+**Time:** 20 min.
+**Dependencies:** T1a.1.
 
-**Done:** All 4 tests in `test_emitter.py` pass.
-**Time:** 10 min.
-**Dependencies:** T1.3.
-
-### T1.5 — Add head_sha idempotency test
-Test: calling `emit_qa_gate` twice with same `head_sha` is a no-op (returns same path, doesn't rewrite).
-**Done:** Test passes. → AC-1 partial
-**Time:** 5 min.
-**Dependencies:** T1.3.
-
-### T1.6 [B] — Remove `.gitignore:63` line
-Delete the line `docs/features/**/.qa-gate.json` from `.gitignore`.
-**Done:** `grep -n 'qa-gate' .gitignore` returns 0 matches for `docs/features/**`. → AC-1 partial; FR-1.4 satisfied
-**Time:** 1 min.
-**Dependencies:** None.
-
-### T1.7 — Commit PI-1a (qa_gate package)
+### T1a.3 — Commit PI-1a
 ```bash
 git add plugins/pd/hooks/lib/qa_gate/ .gitignore
 git commit -m "feat(113/FR-1): qa_gate/emitter.py canonical schema + remove gitignore"
 ```
-**Done:** Commit lands; pre-commit hooks pass.
 **Time:** 2 min.
-**Dependencies:** T1.4, T1.5, T1.6.
 
-### T1.8 [P] — Create `bash-version-capture.sh` per design I10
-Write the script with `trap '' PIPE`, `set -u`, no `set -e`, and `{ ...; } 2>/dev/null || true` wrappers per design.
-**Done:** `bash -n plugins/pd/hooks/tests/bash-version-capture.sh` reports no syntax errors; file is `chmod +x`.
+### T1b.1 [P] — Tests+2 RED: bash-version-capture validation
+- In `plugins/pd/hooks/tests/test-hooks.sh` (or as a Python pytest in a suitable location), add a sub-test asserting:
+  - File `plugins/pd/hooks/tests/bash-version-capture.sh` exists and is executable
+  - Running it produces 3 lines matching `^=== `
+**Done (RED):** Test fails — script doesn't exist yet.
 **Time:** 5 min.
-**Dependencies:** None.
 
-### T1.9 — Test bash-version-capture.sh end-to-end
-Run: `bash plugins/pd/hooks/tests/bash-version-capture.sh > /tmp/bv.log 2>&1`
-Verify: `grep -c '^=== ' /tmp/bv.log` returns `3`.
-**Done:** Exit code matches the embedded test-hooks.sh result; 3-section format confirmed. → AC-2
-**Time:** 3 min.
-**Dependencies:** T1.8.
+### T1b.2 — Impl+2 GREEN: bash-version-capture.sh
+- Create script per design I10 with `trap '' PIPE`, `set -u`, `{ ...; } 2>/dev/null || true` wrappers
+- `chmod +x plugins/pd/hooks/tests/bash-version-capture.sh`
+**Done (GREEN):** `bash plugins/pd/hooks/tests/bash-version-capture.sh > /tmp/bv.log 2>&1`; `grep -c '^=== ' /tmp/bv.log` returns 3. → AC-2
+**Time:** 8 min.
+**Dependencies:** T1b.1.
 
-### T1.10 — Commit PI-1b (bash-version-capture.sh)
+### T1b.3 — Commit PI-1b
 ```bash
-git add plugins/pd/hooks/tests/bash-version-capture.sh
+git add plugins/pd/hooks/tests/bash-version-capture.sh plugins/pd/hooks/tests/test-hooks.sh
 git commit -m "feat(113/FR-2): bash-version-capture.sh AC-12 evidence helper"
 ```
-**Done:** Commit lands; hook tests still pass.
 **Time:** 2 min.
-**Dependencies:** T1.9.
 
 ---
 
 ## PI-2 — Defensive fixes (FR-3.0, FR-7, FR-8, FR-9)
 
-### T2a.1 [P] — Apply FR-3.0 entry-point normalization
-At `workflow_state_server.py:_resolve_list_handler_workspace_filter` top (before `== "*"` check), add `if project_id == "": project_id = None`. Add comment for FR-3.1's `_db is None` retain branch.
-**Done:** `grep -n 'project_id == ""' plugins/pd/mcp/workflow_state_server.py` returns the new line.
-**Time:** 3 min.
-
-### T2a.2 — Add `test_list_features_handler_empty_project_id_treated_as_default`
-TDD pass: test fails before T2a.1 applied (if applied via separate branch), but in linear flow it's already applied. Test asserts: setting `_workspace_uuid` to a known value, calling `list_features_by_phase(phase="design", project_id="")`, expects results scoped to that workspace.
-**Done:** `pytest -k 'empty_project_id_treated_as_default' -v` → pass. → AC-3 partial
+### T2a.1 [S:test_workflow_state_server.py] — Tests+3.0 RED
+In `plugins/pd/mcp/test_workflow_state_server.py::TestListFeaturesByDefaultSingleWorkspace`, add `test_list_features_handler_empty_project_id_treated_as_default`. Set `_workspace_uuid` to a known value; call `list_features_by_phase(phase="design", project_id="")`; assert results scoped to that workspace.
+**Done (RED):** Test fails — current helper falls into JOIN-resolve and returns None.
 **Time:** 10 min.
+
+### T2a.2 — Impl+3.0 GREEN
+In `workflow_state_server.py:_resolve_list_handler_workspace_filter` top, BEFORE `== "*"` check, add `if project_id == "": project_id = None`. Add comment for `_db is None` retain branch per design I5.
+**Done (GREEN):** T2a.1's test passes. → AC-3 partial (1 of 4 new)
+**Time:** 5 min.
 **Dependencies:** T2a.1.
 
-### T2a.3 — Commit PI-2a (FR-3.0)
+### T2a.3 — Commit PI-2a
 ```bash
 git add plugins/pd/mcp/workflow_state_server.py plugins/pd/mcp/test_workflow_state_server.py
 git commit -m "feat(113/FR-3.0): empty-string project_id normalization at workspace_filter entry"
 ```
 **Time:** 2 min.
 
-### T2b.1 [P] — Narrow `_filter_states_by_workspace` except (workflow_state_server.py:1614-1615)
-Replace `except (json.JSONDecodeError, Exception):` with split clauses per design I6.
-**Done:** `grep -nE 'except.*Exception' plugins/pd/mcp/workflow_state_server.py:1614-1620` returns 0 matches.
-**Time:** 3 min.
+### T2b.1 [S:test_workflow_state_server.py] — Tests+7 RED
+In `test_workflow_state_server.py`, add 2 tests:
+- `test_filter_states_db_error_returns_error_json` (mock `_db.get_entity` → `sqlite3.OperationalError`; assert `_make_error` JSON)
+- `test_filter_states_unexpected_error_propagates` (mock → `RuntimeError`; assert `pytest.raises(RuntimeError)`)
+**Done (RED):** Both fail today (bare-except swallows RuntimeError; OperationalError path returns unfiltered JSON).
+**Time:** 12 min.
+**Dependencies:** T2a.3 (serializes on test_workflow_state_server.py).
 
-### T2b.2 — Add `test_filter_states_db_error_returns_error_json`
-Mock `_db.get_entity` to raise `sqlite3.OperationalError`; assert `_make_error` JSON returned.
-**Done:** Test passes. → AC-7 partial
-**Time:** 8 min.
-**Dependencies:** T2b.1.
-
-### T2b.3 — Add `test_filter_states_unexpected_error_propagates`
-Mock `_db.get_entity` to raise `RuntimeError("unexpected")`; assert `pytest.raises(RuntimeError)` triggers.
-**Done:** Test passes. → AC-7 partial
+### T2b.2 — Impl+7 GREEN
+Replace `except (json.JSONDecodeError, Exception):` at workflow_state_server.py:1614-1615 with split clauses per design I6.
+**Done (GREEN):** T2b.1's tests pass. `grep -nE 'except.*Exception' plugins/pd/mcp/workflow_state_server.py | awk -F: '$2 >= 1614 && $2 <= 1620'` returns 0. → AC-7
 **Time:** 5 min.
 **Dependencies:** T2b.1.
 
-### T2b.4 — Commit PI-2b (FR-7)
+### T2b.3 — Commit PI-2b
 ```bash
 git add plugins/pd/mcp/workflow_state_server.py plugins/pd/mcp/test_workflow_state_server.py
 git commit -m "feat(113/FR-7): narrow _filter_states_by_workspace except clause"
 ```
 **Time:** 2 min.
 
-### T2c.1 [P] — Verify imports in server_helpers.py
-Check `plugins/pd/hooks/lib/entity_registry/server_helpers.py` has `import sys` and `import sqlite3` at top; add if missing.
-**Done:** Both imports present.
-**Time:** 2 min.
+### T2c.1 [P] — Tests+8 RED
+In `plugins/pd/hooks/lib/entity_registry/test_server_helpers.py`, add:
+- `test_register_entity_parent_resolution_db_error_orphans_with_warning` — mock `db.get_entity` → `sqlite3.OperationalError`; use `capsys`; assert entity registers with `parent_uuid=None` AND stderr contains "server_helpers: parent resolution failed"
+- `test_register_entity_parent_resolution_unexpected_error_propagates` — mock → `RuntimeError`; assert propagation
+**Done (RED):** Both fail today (bare-except swallows both).
+**Time:** 12 min.
 
-### T2c.2 — Narrow server_helpers.py parent resolution except (lines 248-255)
-Replace `except Exception:` with `except sqlite3.OperationalError as exc:` block + stderr warning per design I6.
-**Done:** `grep -nE 'except Exception' plugins/pd/hooks/lib/entity_registry/server_helpers.py:248-260` returns 0 matches.
-**Time:** 5 min.
+### T2c.2 — Impl+8 GREEN: add import sys + narrow except
+- Add `import sys` to top of `server_helpers.py` (currently absent — verified at iter 2; `sqlite3` already imported at line 10)
+- Replace `except Exception:` at lines 248-255 with `except sqlite3.OperationalError as exc:` block per design I6
+**Done (GREEN):** T2c.1's tests pass. → AC-8
+**Time:** 8 min.
 **Dependencies:** T2c.1.
 
-### T2c.3 — Add `test_register_entity_parent_resolution_db_error_orphans_with_warning`
-Mock `db.get_entity` to raise `sqlite3.OperationalError`. Use `capsys` fixture. Assert: entity registers with `parent_uuid=None` AND stderr contains "server_helpers: parent resolution failed".
-**Done:** Test passes. → AC-8 partial
-**Time:** 10 min.
-**Dependencies:** T2c.2.
-
-### T2c.4 — Add `test_register_entity_parent_resolution_unexpected_error_propagates`
-Mock `db.get_entity` to raise `RuntimeError`; assert propagation.
-**Done:** Test passes. → AC-8 partial
-**Time:** 5 min.
-**Dependencies:** T2c.2.
-
-### T2c.5 — Commit PI-2c (FR-8)
+### T2c.3 — Commit PI-2c
 ```bash
 git add plugins/pd/hooks/lib/entity_registry/server_helpers.py plugins/pd/hooks/lib/entity_registry/test_server_helpers.py
-git commit -m "feat(113/FR-8): narrow server_helpers parent resolution except"
+git commit -m "feat(113/FR-8): narrow server_helpers parent resolution except + import sys"
 ```
 **Time:** 2 min.
 
-### T2d.1 [P] — Verify current entity_server.py:450 silent-orphan behavior
-Confirm line 450 is `parent_uuid = parent_entity["uuid"] if parent_entity else None`.
-**Done:** `sed -n '450p' plugins/pd/mcp/entity_server.py` shows the ternary.
-**Time:** 1 min.
+### T2d.1 [P] — Tests+9 RED
+In `plugins/pd/hooks/lib/entity_registry/test_entity_server.py` (existing file with sys.path injection at lines 12-14 importing MCP entity_server), add `test_create_key_result_missing_parent_raises`:
+- Bootstrap DB without parent objective
+- Call `_process_create_key_result(...)`
+- Assert `pytest.raises(ValueError, match="Parent entity not found")` triggers
+**Done (RED):** Test fails — current ternary at line 450 silently sets parent_uuid=None.
+**Time:** 10 min.
 
-### T2d.2 — Replace ternary with explicit ValueError raise
-Per design I7: add `if parent_entity is None: raise ValueError(f"Parent entity not found: {parent_type_id!r}")` before the parent_uuid assignment; change line 450 to `parent_uuid = parent_entity["uuid"]`.
-**Done:** `grep -A1 'parent_entity = db.get_entity' plugins/pd/mcp/entity_server.py` shows the explicit check.
-**Time:** 3 min.
+### T2d.2 — Impl+9 GREEN
+Per design I7: in entity_server.py:449-450, add `if parent_entity is None: raise ValueError(f"Parent entity not found: {parent_type_id!r}")` BEFORE the assignment; change line 450 to `parent_uuid = parent_entity["uuid"]`.
+**Done (GREEN):** T2d.1's test passes. → AC-9
+**Time:** 5 min.
 **Dependencies:** T2d.1.
 
-### T2d.3 — Add `test_create_key_result_missing_parent_raises`
-In `plugins/pd/hooks/lib/entity_registry/test_entity_server.py` (existing file that already imports MCP entity_server via sys.path injection per spec FR-9.2 inline note), bootstrap DB without parent objective; call `_process_create_key_result(...)`; assert `ValueError` raised.
-**Done:** Test passes. → AC-9
-**Time:** 10 min.
-**Dependencies:** T2d.2.
-
-### T2d.4 — Commit PI-2d (FR-9)
+### T2d.3 — Commit PI-2d
 ```bash
 git add plugins/pd/mcp/entity_server.py plugins/pd/hooks/lib/entity_registry/test_entity_server.py
 git commit -m "feat(113/FR-9): _process_create_key_result missing-parent ValueError"
@@ -209,101 +171,98 @@ git commit -m "feat(113/FR-9): _process_create_key_result missing-parent ValueEr
 
 ## PI-3 — Workspace filter ValueError + empty-string boundary (FR-3.2/3.3, FR-6)
 
-### T3a.1 — Modify `_resolve_list_handler_workspace_filter` to raise on invalid hex
-Replace silent `None` return on no-matching-row with `raise ValueError(f"No workspace found for project_id={project_id!r}")`.
-**Done:** `grep -n 'No workspace found for project_id' plugins/pd/mcp/workflow_state_server.py` returns 1 match.
-**Time:** 3 min.
-**Dependencies:** T2a.3 (FR-3.0 in place).
+### T3a.1 [S:test_workflow_state_server.py] — Tests+3.2 RED
+In `test_workflow_state_server.py`, add 3 tests:
+- `test_list_features_handler_db_none_returns_empty` (FR-3.1 pin)
+- `test_list_features_by_phase_invalid_legacy_hex_returns_error` (calls with `project_id="ffffffffffff"`; asserts `error_type="invalid_project_id"`)
+- `test_list_features_by_status_invalid_legacy_hex_returns_error` (same shape, list_features_by_status)
+**Done (RED):** All 3 fail today (helper returns None silently; no error JSON).
+**Time:** 15 min.
+**Dependencies:** T2b.3 (serializes on test_workflow_state_server.py).
 
-### T3a.2 — Wrap `list_features_by_phase` caller (workflow_state_server.py:1619)
-Add `try/except ValueError` returning `_make_error(error_type="invalid_project_id", ...)` per design TD-6.
-**Done:** Verifying by inspection.
-**Time:** 5 min.
+### T3a.2 — Impl+3.2 GREEN
+- Modify `_resolve_list_handler_workspace_filter` to raise `ValueError(f"No workspace found for project_id={project_id!r}")` on no-matching-row
+- Wrap `list_features_by_phase` at workflow_state_server.py:1619 and `list_features_by_status` at :1643 with `try/except ValueError → _make_error(error_type="invalid_project_id", ...)`
+**Done (GREEN):** T3a.1's 3 tests pass. Total with T2a.2's test = 4 new from FR-3.3. → AC-3 (6 tests total)
+**Time:** 10 min.
 **Dependencies:** T3a.1.
 
-### T3a.3 — Wrap `list_features_by_status` caller (workflow_state_server.py:1643)
-Same wrapper as T3a.2.
-**Done:** Verifying by inspection.
-**Time:** 5 min.
-**Dependencies:** T3a.1.
-
-### T3a.4 — Add `test_list_features_handler_db_none_returns_empty`
-Set `_db = None`; call helper; assert returns None or empty list (FR-3.1 pin).
-**Done:** Test passes. → AC-3 partial
-**Time:** 5 min.
-
-### T3a.5 — Add `test_list_features_by_phase_invalid_legacy_hex_returns_error`
-Call `list_features_by_phase(phase="design", project_id="ffffffffffff")` (12-char hex with no matching row); assert returned JSON has `error_type="invalid_project_id"`.
-**Done:** Test passes. → AC-3 partial
-**Time:** 7 min.
-**Dependencies:** T3a.2.
-
-### T3a.6 — Add `test_list_features_by_status_invalid_legacy_hex_returns_error`
-Mirror T3a.5 for `list_features_by_status`.
-**Done:** Test passes. → AC-3 partial
-**Time:** 5 min.
-**Dependencies:** T3a.3.
-
-### T3a.7 — Commit PI-3a (FR-3.2/3.3)
+### T3a.3 — Commit PI-3a
 ```bash
 git add plugins/pd/mcp/workflow_state_server.py plugins/pd/mcp/test_workflow_state_server.py
-git commit -m "feat(113/FR-3.2): invalid project_id raises ValueError; handlers return _make_error JSON"
+git commit -m "feat(113/FR-3.2): invalid project_id raises; handlers return _make_error JSON"
 ```
 **Time:** 2 min.
 
-### T3b.1 — Add FR-6.2 inline comments at workflow_state_server.py lines 657 + 1280
-Per design I6.2: add `# Empty-string == unset == None at db.* kwarg boundary; downstream defaults to project_id="__unknown__" → _UNKNOWN_WORKSPACE_UUID.` at both lines.
-**Done:** `grep -B0 -A0 'Empty-string == unset' plugins/pd/mcp/workflow_state_server.py | wc -l` returns 2.
-**Time:** 3 min.
+### T3b.1 [S:test_workflow_state_server.py] — Tests+6 RED
+In `test_workflow_state_server.py`, add parametrized `test_workspace_uuid_empty_string_normalized_to_none`:
+- Param 1 (`init_feature_state`): exercises line 1280
+- Param 2 (`transition_phase`): exercises line 657
 
-### T3b.2 — Add parametrized test `test_workspace_uuid_empty_string_normalized_to_none`
-Two sub-tests:
-- param `init_feature_state`: exercises line 1280
-- param `transition_phase`: exercises line 657
+Each: set `wss._workspace_uuid = ""`; call entry-point with valid args; assert resolved entity/state has `workspace_uuid == _UNKNOWN_WORKSPACE_UUID`.
+**Done (RED, expected PASS today):** Both sub-tests pass today (current code is correct with `or None`). RED-state instead asserted via PI-3.MUT below.
+**Time:** 15 min.
+**Dependencies:** T3a.3.
 
-Each: set `wss._workspace_uuid = ""`, call entry-point, assert entity registered with workspace_uuid == `_UNKNOWN_WORKSPACE_UUID`.
-**Done:** Both sub-tests pass.
-**Time:** 12 min.
+### T3b.2 — PI-3.MUT: Mutation-pin observability gate
+**Procedure (manual, MUST execute before T3b.3 commit):**
+1. `cp plugins/pd/mcp/workflow_state_server.py /tmp/wss.bak` (backup)
+2. Edit line 1280: change `workspace_uuid=_workspace_uuid or None` → `workspace_uuid=_workspace_uuid`
+3. Run `pytest plugins/pd/mcp/test_workflow_state_server.py -k 'workspace_uuid_empty_string_normalized_to_none and init_feature_state' -v`
+4. Capture: PASS or FAIL with observable assertion error?
+5. Restore: `cp /tmp/wss.bak plugins/pd/mcp/workflow_state_server.py`
+6. Repeat steps 2-5 for line 657 (transition_phase sub-test)
 
-### T3b.3 — Pre-impl mutation pin verification (AC-6 fallback clause)
-Manually: temporarily remove `or None` at line 1280, run init_feature_state sub-test, confirm it fails with FK-or-equivalent observable error. Note the actual failure mode in commit message. Revert mutation.
-**Done:** Observable error confirmed; AC-6 text updated in same commit if mode differs from FK constraint failure. → AC-6
-**Time:** 8 min.
+**Gate condition:**
+- If both mutations cause observable test failures → AC-6 mutation pins are valid; proceed
+- If either mutation results in silent test PASS → that mutation pin is vacuous; halt and amend the AC-6 spec text to describe the actual fail mode (or remove the vacuous pin from the spec) in the same Impl+6 commit
+**Done:** Captured failure modes for both lines; documented in T3b.3 commit message body.
+**Time:** 10 min.
+**Dependencies:** T3b.1.
+
+### T3b.3 — Impl+6 GREEN: add FR-6.2 inline doc comments
+- Add `# Empty-string == unset == None at db.* kwarg boundary; downstream defaults to project_id="__unknown__" → _UNKNOWN_WORKSPACE_UUID.` at workflow_state_server.py:657 AND at line 1280
+- Verify both T3b.1 sub-tests still pass (Impl+6 is documentation only)
+**Done (GREEN):** Both sub-tests pass; PI-3.MUT outcome documented in commit body. → AC-6
+**Time:** 5 min.
 **Dependencies:** T3b.2.
 
-### T3b.4 — Commit PI-3b (FR-6)
+### T3b.4 — Commit PI-3b
 ```bash
 git add plugins/pd/mcp/workflow_state_server.py plugins/pd/mcp/test_workflow_state_server.py
-git commit -m "feat(113/FR-6): empty-string workspace_uuid normalization tests + doc comments"
+git commit -m "feat(113/FR-6): empty-string workspace_uuid normalization tests + doc comments
+
+PI-3.MUT verification: removing 'or None' at line 1280 fails init_feature_state sub-test
+with <captured error mode>; removing at line 657 fails transition_phase sub-test with
+<captured error mode>. Both mutation pins observable."
 ```
 **Time:** 2 min.
 
 ---
 
-## PI-4 — `entity_status.py` conditional-kwarg sweep (FR-10)
+## PI-4 — entity_status conditional-kwarg sweep (FR-10)
 
-### T4.1 — Apply conditional pattern at 4 sites
-Modify `plugins/pd/hooks/lib/reconciliation_orchestrator/entity_status.py` at lines 47, 72, 189, 320 per design I8:
+### T4.1 — Tests+10 RED: parametrized no-DeprecationWarning test
+In `plugins/pd/hooks/lib/reconciliation_orchestrator/test_entity_status.py`, add parametrized `test_sync_entity_statuses_no_deprecation_warning_on_happy_path`. 4 sub-tests, one per fixed site:
+- Site 47 (`_sync_meta_json_entities` archive)
+- Site 72 (`_sync_meta_json_entities` status-change)
+- Site 189 (`_sync_brainstorm_entities` archive)
+- Site 320 (`_sync_backlog_md_entities` status-change)
+
+Each: bootstrap real workspace_uuid via `bootstrap_test_workspace()`; trigger site-specific state; call `sync_entity_statuses(db, ..., workspace_uuid=ws_a)`; wrap in `warnings.catch_warnings()` + `simplefilter('error', DeprecationWarning)` per design R6 (scoped to the call, NOT module-level); assert no DeprecationWarning fires.
+
+If catch_warnings filter-bleeds: switch implementation to `recwarn` fixture per design R6 fallback.
+**Done (RED):** All 4 sub-tests fail today — DeprecationWarning fires at each site per FR-10 pre-state.
+**Time:** 25 min.
+
+### T4.2 — Impl+10 GREEN: apply conditional pattern at 4 sites
+Modify `plugins/pd/hooks/lib/reconciliation_orchestrator/entity_status.py` at lines 47, 72, 189, 320:
 Change `project_id=project_id, workspace_uuid=workspace_uuid` → `project_id=project_id if workspace_uuid is None else None, workspace_uuid=workspace_uuid`.
-**Done:** `grep -nE 'project_id=project_id if workspace_uuid is None' plugins/pd/hooks/lib/reconciliation_orchestrator/entity_status.py | wc -l` returns 6 (4 new + 2 existing at 175, 316).
-**Time:** 5 min.
-
-### T4.2 — Add parametrized `test_sync_entity_statuses_no_deprecation_warning_on_happy_path`
-4 sub-tests, one per fixed site (47 update_entity meta_json archive, 72 update_entity status-change, 189 update_entity brainstorm archive, 320 update_entity backlog status-change).
-
-Each:
-- Bootstrap DB with real workspace_uuid via `bootstrap_test_workspace()`
-- Set up the path-specific state (e.g., for line 72, write a meta.json that triggers status change)
-- Call `sync_entity_statuses(db, ..., workspace_uuid=ws_a)`
-- Wrap in `warnings.catch_warnings()` + `simplefilter('error', DeprecationWarning)` (scoped to call per design R6 critical note)
-- Assert no DeprecationWarning fires
-
-If `catch_warnings` filter-bleeds, fallback to `recwarn` fixture per design R6.
-**Done:** All 4 sub-tests pass. → AC-10
-**Time:** 20 min.
+**Done (GREEN):** T4.1's 4 sub-tests pass. `grep -nE 'project_id=project_id if workspace_uuid is None' plugins/pd/hooks/lib/reconciliation_orchestrator/entity_status.py | wc -l` returns 6 (4 new + 2 existing at lines 175, 316). → AC-10
+**Time:** 8 min.
 **Dependencies:** T4.1.
 
-### T4.3 — Commit PI-4 (FR-10)
+### T4.3 — Commit PI-4
 ```bash
 git add plugins/pd/hooks/lib/reconciliation_orchestrator/entity_status.py plugins/pd/hooks/lib/reconciliation_orchestrator/test_entity_status.py
 git commit -m "feat(113/FR-10): entity_status conditional-kwarg pattern at 4 sites"
@@ -312,101 +271,104 @@ git commit -m "feat(113/FR-10): entity_status conditional-kwarg pattern at 4 sit
 
 ---
 
-## PI-5 — `update_workflow_phase` signature extension (FR-4.1)
+## PI-5 — FR-4.1 anchor
 
-### T5.1 [B] — Add `workspace_uuid` to `update_workflow_phase` signature
-Modify `plugins/pd/hooks/lib/entity_registry/database.py:4866`:
-- Add `workspace_uuid: str | None = None` (after the `_UNSET`-sentinel kwargs)
-- When non-None: pre-UPDATE SELECT of stored workspace_uuid; raise `ValueError(f"workspace_uuid mismatch for {type_id}: stored={existing!r}, provided={workspace_uuid!r}")` on mismatch
-- Do NOT add workspace_uuid to the UPDATE SET parts
-**Done:** Method accepts kwarg; running existing tests with kwarg unset still passes. Mismatch case raises ValueError.
+### T5.1 [B] — Tests+4.1 RED: direct database-layer tests
+In `plugins/pd/hooks/lib/entity_registry/test_database.py`, add 2 tests:
+- `test_update_workflow_phase_workspace_uuid_mismatch_raises_value_error`:
+  - Bootstrap workflow_phases row with `workspace_uuid=ws_a` (via `bootstrap_test_workspace()`)
+  - Call `db.update_workflow_phase(type_id, workspace_uuid=ws_b, workflow_phase='design')`
+  - Assert `pytest.raises(ValueError, match="workspace_uuid mismatch")`
+- `test_update_workflow_phase_does_not_mutate_workspace_uuid_column`:
+  - Bootstrap workflow_phases row with workspace_uuid=ws_a
+  - Pre-update SELECT: capture workspace_uuid
+  - Call `db.update_workflow_phase(type_id, workspace_uuid=ws_a, workflow_phase='design')`
+  - Post-update SELECT: assert workspace_uuid byte-identical
+**Done (RED):** Both fail today — `db.update_workflow_phase` doesn't accept `workspace_uuid` kwarg (TypeError).
 **Time:** 15 min.
 
-### T5.2 — Add `test_update_workflow_phase_does_not_mutate_workspace_uuid_column`
-In `test_database.py`:
-- Bootstrap workflow_phases row with `workspace_uuid=ws_a`
-- Pre-update SELECT: capture workspace_uuid
-- Call `update_workflow_phase(type_id, workspace_uuid=ws_a, workflow_phase="design")`
-- Post-update SELECT: assert workspace_uuid byte-identical
-**Done:** Test passes. → AC-4 partial
-**Time:** 10 min.
+### T5.2 [B] — Impl+4.1 GREEN: extend signature + mismatch check
+Modify `plugins/pd/hooks/lib/entity_registry/database.py:4866-4944` per design I2:
+- Add `workspace_uuid: str | None = None` to signature
+- When non-None: `SELECT workspace_uuid FROM workflow_phases WHERE type_id = ?`; raise `ValueError(f"workspace_uuid mismatch for {type_id}: stored={existing!r}, provided={workspace_uuid!r}")` on mismatch
+- Do NOT add workspace_uuid to UPDATE SET clause
+**Done (GREEN):** T5.1's 2 tests pass. Existing tests still pass. → AC-4 partial (2 of 5)
+**Time:** 20 min.
 **Dependencies:** T5.1.
 
-### T5.3 — Commit PI-5 (FR-4.1)
+### T5.3 — Commit PI-5 (with spec amendment)
 ```bash
-git add plugins/pd/hooks/lib/entity_registry/database.py plugins/pd/hooks/lib/entity_registry/test_database.py
-git commit -m "feat(113/FR-4.1): update_workflow_phase workspace_uuid read-side assertion"
+git add plugins/pd/hooks/lib/entity_registry/database.py plugins/pd/hooks/lib/entity_registry/test_database.py docs/features/113-feature-112-qa-followups/spec.md
+git commit -m "feat(113/FR-4.1): update_workflow_phase workspace_uuid read-side assertion (+spec AC-4: 5 tests)"
 ```
-**Time:** 2 min.
+Note: spec.md amendment (FR-4.3 + AC-4 5-test count) lands in this commit per plan-reviewer iter-1 B2.
+**Time:** 3 min.
 
 ---
 
-## PI-6 — Engine + lifecycle forwarding (FR-4.2/4.3 + FR-5/5.2)
+## PI-6 — Engine + lifecycle forwarding
 
-### T6a.1 — Forward `workspace_uuid` at engine.py:100-103 (transition_phase)
-Add `workspace_uuid=workspace_uuid` to the `db.update_workflow_phase` call.
-**Done:** `grep -A3 'transition_phase' plugins/pd/hooks/lib/workflow_engine/engine.py | grep workspace_uuid` shows the new kwarg.
-**Time:** 3 min.
+### T6a.1 — Tests+4.2 RED: engine-level mismatch tests
+In `test_engine.py`, add 3 tests:
+- `test_transition_phase_workspace_uuid_mismatch_raises`:
+  - Bootstrap 2 workspaces via `bootstrap_test_workspace()`
+  - Create workflow_phases row scoped to ws_a
+  - `with pytest.raises(ValueError, match="workspace_uuid mismatch"): engine.transition_phase(type_id, "design", workspace_uuid=ws_b)`
+- `test_complete_phase_non_terminal_workspace_uuid_pinned` (same shape, non-terminal)
+- `test_complete_phase_terminal_workspace_uuid_pinned` (same shape, `phase == "finish"`)
+**Done (RED):** All 3 fail today — engine doesn't forward workspace_uuid, mismatch never checked.
+**Time:** 20 min.
 **Dependencies:** T5.3.
 
-### T6a.2 — Forward `workspace_uuid` at engine.py:166-170 (complete_phase non-terminal)
-Same shape.
-**Done:** Confirming via inspection.
-**Time:** 3 min.
-**Dependencies:** T5.3.
+### T6a.2 — PI-6a.MUT: engine except-clause non-swallow verification
+**Procedure (manual, MUST execute before T6a.4 commit):**
+1. `cp plugins/pd/hooks/lib/workflow_engine/engine.py /tmp/engine.bak`
+2. Temporarily widen except at lines 105 + 178: `except sqlite3.Error:` → `except (sqlite3.Error, ValueError):`
+3. Run `pytest plugins/pd/hooks/lib/workflow_engine/test_engine.py -k 'workspace_uuid_mismatch or workspace_uuid_pinned' -v`
+4. Confirm all 3 tests FAIL (ValueError swallowed)
+5. Restore: `cp /tmp/engine.bak plugins/pd/hooks/lib/workflow_engine/engine.py`
+6. Re-run tests — confirm all 3 PASS
 
-### T6a.3 — Add `test_transition_phase_workspace_uuid_mismatch_raises`
-- Bootstrap two workspaces with `bootstrap_test_workspace()`
-- Create a workflow_phases row scoped to ws_a
-- Call `engine.transition_phase(type_id, "design", workspace_uuid=ws_b)`
-- Assert: `pytest.raises(ValueError, match="workspace_uuid mismatch")` triggers
-**Done:** Test passes. → AC-4 partial
-**Time:** 15 min.
+**Gate condition:** Tests fail when except is widened to catch ValueError; pass when except is narrow.
+**Done:** Procedure outcomes captured for commit body.
+**Time:** 8 min.
 **Dependencies:** T6a.1.
 
-### T6a.4 — Add `test_complete_phase_non_terminal_workspace_uuid_pinned`
-Same shape for non-terminal `complete_phase` call.
-**Done:** Test passes. → AC-4 partial
-**Time:** 10 min.
-**Dependencies:** T6a.2.
-
-### T6a.5 — Add `test_complete_phase_terminal_workspace_uuid_pinned`
-For `phase == "finish"` path; verify the terminal `db.update_entity` already-correct forwarding still works.
-**Done:** Test passes. → AC-4 partial
-**Time:** 10 min.
-**Dependencies:** T6a.2.
-
-### T6a.6 — Pre-impl propagation verification (design C4 contract)
-Manually: temporarily widen `engine.py`'s `except sqlite3.Error` to `except (sqlite3.Error, ValueError):`. Run T6a.3's test. Confirm it FAILS (ValueError now swallowed). Revert widening before committing.
-**Done:** Mutation produces test failure as expected.
+### T6a.3 — Impl+4.2 GREEN: forward workspace_uuid at engine.py
+Modify `plugins/pd/hooks/lib/workflow_engine/engine.py`:
+- Line 100-103 (transition_phase): add `workspace_uuid=workspace_uuid` to `db.update_workflow_phase` call
+- Line 166-170 (complete_phase non-terminal): same
+**Done (GREEN):** T6a.1's 3 tests pass. → AC-4 partial (3 more, 5 total)
 **Time:** 5 min.
-**Dependencies:** T6a.3, T6a.4, T6a.5.
+**Dependencies:** T6a.1, T6a.2 (mutation gate).
 
-### T6a.7 — Commit PI-6a (FR-4.2/4.3)
+### T6a.4 — Commit PI-6a
 ```bash
 git add plugins/pd/hooks/lib/workflow_engine/engine.py plugins/pd/hooks/lib/workflow_engine/test_engine.py
-git commit -m "feat(113/FR-4.2): engine.py transition_phase + complete_phase workspace_uuid forwarding + mismatch tests"
-```
-**Time:** 2 min.
+git commit -m "feat(113/FR-4.2): engine.py workspace_uuid forwarding + mismatch tests
 
-### T6b.1 — Add `workspace_uuid` unconditionally to entity_lifecycle.py update_kwargs dict
-Modify `plugins/pd/hooks/lib/entity_registry/entity_lifecycle.py:185-193`:
-Add `"workspace_uuid": workspace_uuid` to the `update_kwargs` dict literal per design I4 (locked unconditional form).
-**Done:** `grep -A8 'update_kwargs: dict' plugins/pd/hooks/lib/entity_registry/entity_lifecycle.py | grep workspace_uuid` shows the new entry.
+PI-6a.MUT verification: widening except sqlite3.Error → except (sqlite3.Error, ValueError)
+fails all 3 mismatch tests as expected. Narrow except keeps tests passing."
+```
 **Time:** 3 min.
+
+### T6b.1 — Tests+5 RED: transition_entity_phase symmetric forwarding test
+In `plugins/pd/hooks/lib/entity_registry/test_entity_lifecycle.py`, add `test_transition_entity_phase_workspace_uuid_consistent`:
+- Bootstrap 2 workspaces
+- Call `transition_entity_phase(db, 'brainstorm:foo', 'promoted', workspace_uuid=ws_a)`
+- Assert: (1) ws_a entity status updated, (2) ws_a workflow_phase row updated, (3) ws_b parallel row UNCHANGED, (4) calling with `workspace_uuid=ws_b` against ws_a row raises FR-4.1 ValueError
+**Done (RED):** Test fails today — entity_lifecycle.py:193 doesn't forward workspace_uuid.
+**Time:** 18 min.
 **Dependencies:** T5.3.
 
-### T6b.2 — Add `test_transition_entity_phase_workspace_uuid_consistent`
-Bootstrap two workspaces; call `transition_entity_phase(db, 'brainstorm:foo', 'promoted', workspace_uuid=ws_a)`. Assert:
-1. ws_a's entity status updated
-2. ws_a's workflow_phase row updated
-3. ws_b's parallel row UNCHANGED
-4. Calling with `workspace_uuid=ws_b` against ws_a row raises FR-4.1 ValueError
-**Done:** Test passes. → AC-5
-**Time:** 15 min.
-**Dependencies:** T6b.1, T5.3.
+### T6b.2 — Impl+5 GREEN: entity_lifecycle.py kwarg dict extension
+Modify `plugins/pd/hooks/lib/entity_registry/entity_lifecycle.py:185-193` per design I4 (unconditional):
+Add `"workspace_uuid": workspace_uuid` to the `update_kwargs` dict.
+**Done (GREEN):** T6b.1's test passes. → AC-5
+**Time:** 3 min.
+**Dependencies:** T6b.1.
 
-### T6b.3 — Commit PI-6b (FR-5/5.2)
+### T6b.3 — Commit PI-6b
 ```bash
 git add plugins/pd/hooks/lib/entity_registry/entity_lifecycle.py plugins/pd/hooks/lib/entity_registry/test_entity_lifecycle.py
 git commit -m "feat(113/FR-5): transition_entity_phase symmetric workspace_uuid forwarding"
@@ -415,151 +377,138 @@ git commit -m "feat(113/FR-5): transition_entity_phase symmetric workspace_uuid 
 
 ---
 
-## PI-7 — Reconcile workspace_uuid threading (FR-11)
+## PI-7 — Reconcile workspace_uuid threading
 
-### T7a.1 — Extend `apply_workflow_reconciliation` signature
-Add `workspace_uuid: str | None = None` kwarg to `apply_workflow_reconciliation` at `plugins/pd/hooks/lib/workflow_engine/reconciliation.py:756`.
-**Done:** Signature includes kwarg.
-**Time:** 3 min.
+### T7a.1 — Tests+11.1/11.2 RED: internal-forwarding + scope-scan tests
+In `plugins/pd/hooks/lib/workflow_engine/test_reconciliation.py`, add 2 tests:
+- `test_apply_workflow_reconciliation_forwards_workspace_uuid_to_update_workflow_phase_meta_ahead`:
+  - Bootstrap meta_json_ahead row
+  - Mock `db.update_workflow_phase`
+  - Call `apply_workflow_reconciliation(engine, db, artifacts_root, workspace_uuid=ws_a)`
+  - Assert mock received `workspace_uuid=ws_a` kwarg
+- `test_apply_workflow_reconciliation_forwards_workspace_uuid_to_update_workflow_phase_kanban_drift`:
+  - Same shape, kanban-only-drift row
+
+In `plugins/pd/hooks/lib/entity_registry/test_frontmatter_sync.py`, add 2 tests:
+- `test_scan_all_scopes_to_workspace`:
+  - Bootstrap 2 workspaces with features
+  - Call `scan_all(db, artifacts_root, workspace_uuid=ws_a)`
+  - Assert reports cover ONLY ws_a's features
+- `test_scan_all_default_unscoped_returns_all_workspace_features` (NFR-3 regression pin):
+  - Same fixture; call `scan_all(db, artifacts_root)` (no kwarg)
+  - Assert reports cover BOTH workspaces
+**Done (RED):** All 4 fail today — `apply_workflow_reconciliation` and `scan_all` don't accept workspace_uuid (TypeError).
+**Time:** 25 min.
 **Dependencies:** T5.3.
 
-### T7a.2 — Merge workspace_uuid into kwargs dict at reconciliation.py:367-374
-Per design I9: `kwargs["workspace_uuid"] = workspace_uuid` BEFORE `db.update_workflow_phase(feature_type_id, **kwargs)`.
-**Done:** `grep -B2 'db.update_workflow_phase' plugins/pd/hooks/lib/workflow_engine/reconciliation.py:370-375` shows kwarg assignment.
-**Time:** 3 min.
+### T7a.2 — Impl+11.1 GREEN: extend apply_workflow_reconciliation
+Modify `plugins/pd/hooks/lib/workflow_engine/reconciliation.py:756`:
+- Add `workspace_uuid: str | None = None` kwarg to signature
+- At lines 367-374: merge into kwargs dict per design I9 (`kwargs["workspace_uuid"] = workspace_uuid` BEFORE `db.update_workflow_phase(feature_type_id, **kwargs)`)
+- At line 462: add `workspace_uuid=workspace_uuid` to single-kwarg call
+**Done:** T7a.1's reconciliation tests (2 of 4) pass.
+**Time:** 10 min.
 **Dependencies:** T7a.1.
 
-### T7a.3 — Add workspace_uuid kwarg at reconciliation.py:462
-Add `workspace_uuid=workspace_uuid` to the single-kwarg `db.update_workflow_phase` call.
-**Done:** Inspection.
-**Time:** 2 min.
-**Dependencies:** T7a.1.
-
-### T7a.4 — Extend `scan_all` signature
-Add `workspace_uuid: str | None = None` kwarg at `plugins/pd/hooks/lib/entity_registry/frontmatter_sync.py:543`. Forward to `db.list_entities(entity_type="feature", workspace_uuid=workspace_uuid)` at line 570.
-**Done:** Signature + forwarding confirmed.
+### T7a.3 — Impl+11.2 GREEN: extend scan_all
+Modify `plugins/pd/hooks/lib/entity_registry/frontmatter_sync.py:543`:
+- Add `workspace_uuid: str | None = None` kwarg to signature
+- At line 570: forward to `db.list_entities(entity_type="feature", workspace_uuid=workspace_uuid)`
+**Done:** T7a.1's frontmatter_sync tests (2 of 4) pass. All 4 RED tests now GREEN.
 **Time:** 5 min.
+**Dependencies:** T7a.1.
 
-### T7a.5 — Commit PI-7a (FR-11.1, FR-11.2 lib extensions)
+### T7a.4 — Commit PI-7a
 ```bash
-git add plugins/pd/hooks/lib/workflow_engine/reconciliation.py plugins/pd/hooks/lib/entity_registry/frontmatter_sync.py
-git commit -m "feat(113/FR-11): apply_workflow_reconciliation + scan_all workspace_uuid kwargs"
+git add plugins/pd/hooks/lib/workflow_engine/reconciliation.py plugins/pd/hooks/lib/workflow_engine/test_reconciliation.py plugins/pd/hooks/lib/entity_registry/frontmatter_sync.py plugins/pd/hooks/lib/entity_registry/test_frontmatter_sync.py
+git commit -m "feat(113/FR-11.1-2): apply_workflow_reconciliation + scan_all workspace_uuid kwargs"
 ```
 **Time:** 2 min.
 
-### T7b.1 — Extend `_process_reconcile_apply` (workflow_state_server.py:1189)
-Accept and forward `workspace_uuid` to `apply_workflow_reconciliation`.
-**Done:** Inspection.
-**Time:** 3 min.
-**Dependencies:** T7a.5.
+### T7b.1 [S:test_workflow_state_server.py] — Tests+11.3/4/5 RED: MCP boundary tests
+In `test_workflow_state_server.py`, add 3 boundary tests:
+- `test_reconcile_apply_forwards_workspace_uuid`: set `wss._workspace_uuid = ws_a`; mock `apply_workflow_reconciliation`; call async `reconcile_apply()`; assert mock received `workspace_uuid=ws_a`
+- `test_reconcile_frontmatter_forwards_workspace_uuid`: same shape; mock `scan_all`
+- `test_reconcile_status_forwards_workspace_uuid`: same shape
+**Done (RED):** All 3 fail today — MCP handlers don't forward `_workspace_uuid`.
+**Time:** 18 min.
+**Dependencies:** T7a.4, T3b.4 (serializes on test_workflow_state_server.py).
 
-### T7b.2 — Extend `_process_reconcile_frontmatter` (workflow_state_server.py:1223)
-Accept and forward `workspace_uuid` to `scan_all`.
-**Done:** Inspection.
-**Time:** 3 min.
-
-### T7b.3 — Extend `_process_reconcile_status` (workflow_state_server.py:1366)
-Accept and forward `workspace_uuid` to `scan_all` at line 1381.
-**Done:** Inspection.
-**Time:** 3 min.
-
-### T7b.4 — Update async handlers (workflow_state_server.py:1678, 1694, 1705)
-Each handler passes `workspace_uuid=_workspace_uuid or None` to its `_process_*` helper.
-**Done:** 3 handler bodies updated.
-**Time:** 5 min.
-
-### T7c.1 — Add `test_reconcile_apply_forwards_workspace_uuid`
-Set `wss._workspace_uuid = ws_a`; mock `apply_workflow_reconciliation`; call async `reconcile_apply()`; assert mock received `workspace_uuid=ws_a` kwarg.
-**Done:** Test passes. → AC-11 partial
-**Time:** 10 min.
-
-### T7c.2 — Add `test_reconcile_frontmatter_forwards_workspace_uuid`
-Same shape for `reconcile_frontmatter`; mock `scan_all`.
-**Done:** Test passes. → AC-11 partial
-**Time:** 8 min.
-
-### T7c.3 — Add `test_reconcile_status_forwards_workspace_uuid`
-Same shape for `reconcile_status`.
-**Done:** Test passes. → AC-11 partial
-**Time:** 8 min.
-
-### T7c.4 — Add `test_apply_workflow_reconciliation_forwards_workspace_uuid_to_update_workflow_phase_meta_ahead`
-In `plugins/pd/hooks/lib/workflow_engine/test_reconciliation.py`: bootstrap meta_json_ahead row; call apply with `workspace_uuid=ws_a`; mock `db.update_workflow_phase`; assert mock received the kwarg (pins reconciliation.py:374).
-**Done:** Test passes. → AC-11 partial
+### T7b.2 — Impl+11.3/4/5 GREEN: MCP handler forwarding
+Modify `plugins/pd/mcp/workflow_state_server.py`:
+- Line 1189 `_process_reconcile_apply`: accept and forward `workspace_uuid` to `apply_workflow_reconciliation`
+- Line 1223 `_process_reconcile_frontmatter`: accept and forward to `scan_all`
+- Line 1366 `_process_reconcile_status`: accept and forward to `scan_all` at line 1381
+- Lines 1678, 1694, 1705 (async handlers): pass `workspace_uuid=_workspace_uuid or None`
+**Done (GREEN):** T7b.1's 3 tests pass. Total 7 tests for AC-11. → AC-11
 **Time:** 12 min.
+**Dependencies:** T7b.1.
 
-### T7c.5 — Add `test_apply_workflow_reconciliation_forwards_workspace_uuid_to_update_workflow_phase_kanban_drift`
-Same shape; bootstrap kanban-only-drift row; pins reconciliation.py:462.
-**Done:** Test passes. → AC-11 partial
-**Time:** 10 min.
-
-### T7c.6 — Add `test_scan_all_scopes_to_workspace`
-In `plugins/pd/hooks/lib/entity_registry/test_frontmatter_sync.py`: bootstrap two workspaces with features; call `scan_all(db, artifacts_root, workspace_uuid=ws_a)`; assert reports cover ONLY ws_a's features.
-**Done:** Test passes. → AC-11 partial
-**Time:** 12 min.
-
-### T7c.7 — Add `test_scan_all_default_unscoped_returns_all_workspace_features`
-NFR-3 regression pin: same fixture; call `scan_all(db, artifacts_root)` with NO workspace_uuid kwarg; assert reports cover BOTH workspaces.
-**Done:** Test passes. → AC-11 partial (default behavior pin)
-**Time:** 8 min.
-
-### T7c.8 — Commit PI-7b/c (FR-11.3/4/5)
+### T7b.3 — Commit PI-7b
 ```bash
-git add plugins/pd/mcp/workflow_state_server.py plugins/pd/mcp/test_workflow_state_server.py plugins/pd/hooks/lib/workflow_engine/test_reconciliation.py plugins/pd/hooks/lib/entity_registry/test_frontmatter_sync.py
-git commit -m "feat(113/FR-11): reconcile_* MCP handlers workspace_uuid forwarding + 7 pin tests"
+git add plugins/pd/mcp/workflow_state_server.py plugins/pd/mcp/test_workflow_state_server.py
+git commit -m "feat(113/FR-11.3-5): reconcile_* MCP handlers workspace_uuid forwarding + boundary tests"
 ```
 **Time:** 2 min.
 
 ---
 
-## PI-8 — Regression + cleanup
+## PI-8 — Regression + dogfood + cleanup
 
 ### T8.1 — Final pytest run
 ```bash
 PYTHONPATH=plugins/pd/hooks/lib plugins/pd/.venv/bin/python -m pytest plugins/pd/{hooks/lib,mcp} --tb=line > agent_sandbox/$(date +%Y-%m-%d)/113-validation/final.log 2>&1 || true
 ```
-**Done:** `final.log` exists.
+**Done:** final.log exists.
 **Time:** 5-10 min.
 
-### T8.2 — Baseline diff (AC-12)
+### T8.2 — AC-12 baseline diff
 ```bash
 diff <(grep '^FAILED' agent_sandbox/$(date +%Y-%m-%d)/113-validation/baseline.log | sort) \
      <(grep '^FAILED' agent_sandbox/$(date +%Y-%m-%d)/113-validation/final.log | sort)
 ```
-**Done:** Output is empty (no net-new failures). → AC-12
+**Done:** Output empty (no net-new failures). → AC-12
 **Time:** 2 min.
-**Dependencies:** T8.1.
 
-### T8.3 — Update CHANGELOG.md
-Add `[Unreleased]` section entries (or extend the existing one), one bullet per FR:
-- FR-1: qa_gate/emitter.py + .gitignore:63 removal
-- FR-2: bash-version-capture.sh
-- FR-3: workspace filter narrow-fail + caller wrappers
-- FR-4: update_workflow_phase workspace_uuid read-side assertion + engine forwarding
-- FR-5: transition_entity_phase symmetric forwarding
-- FR-6: empty-string workspace_uuid normalization tests
-- FR-7: narrow _filter_states_by_workspace except
-- FR-8: narrow server_helpers parent resolution except
-- FR-9: _process_create_key_result missing-parent ValueError
-- FR-10: entity_status conditional-kwarg sweep
-- FR-11: reconcile_* handler workspace_uuid threading
-- Removed: `docs/features/**/.qa-gate.json` from `.gitignore` (FR-1.4)
-**Done:** CHANGELOG.md shows all 12 entries (11 FRs + removal note).
+### T8.3 — CHANGELOG update
+Add `[Unreleased]` entries, one bullet per FR (FR-1 through FR-11). Note `.gitignore:63` removal under "Removed".
+**Done:** All 12 entries present.
 **Time:** 10 min.
 
 ### T8.4 — Pre-finish sanity check
-- `grep -n 'qa-gate' .gitignore` returns no `docs/features/**` match
-- Count of new tests roughly matches AC totals (run `pytest --co -q plugins/pd/ | wc -l` and compare vs baseline)
-**Done:** Both checks pass.
-**Time:** 3 min.
+- `grep -nE 'docs/features/\*\*/.qa-gate.json' .gitignore` → 0 matches (FR-1.4 confirmation)
+**Done:** Check passes.
+**Time:** 1 min.
 
-### T8.5 — Commit PI-8 (CHANGELOG + verification)
+### T8.5 — Commit PI-8
 ```bash
 git add CHANGELOG.md
-git commit -m "docs(113): CHANGELOG entries for feature 112 QA-followup fixes"
+git commit -m "docs(113): CHANGELOG entries for feature 112 QA-followup fixes
+
+AC-12 baseline diff: empty (no net-new failures).
+Baseline FAIL count: $BASELINE_FAIL_COUNT; final FAIL count: $FINAL_FAIL_COUNT.
+"
 ```
-**Done:** Commit lands; verification log noted in commit body.
 **Time:** 2 min.
+
+### T8.6 — AC-13 dogfood verification (runs at /pd:finish-feature)
+After `/pd:finish-feature` Step 5b emits the gate JSON, verify:
+```python
+python -c "
+import json, subprocess
+d = json.load(open('docs/features/113-feature-112-qa-followups/.qa-gate.json'))
+head = subprocess.check_output(['git','rev-parse','HEAD']).decode().strip()
+assert set(d.keys()) >= {'feature','head_sha','gate_run_at','ac_results','decision','reviewers'}, d.keys()
+assert d['head_sha'] == head, (d['head_sha'], head)
+STATUS_ENUM = {'passed', 'deferred', 'n_a', 'conditional_skipped'}
+for r in d['ac_results']:
+    assert r['status'] in STATUS_ENUM, r
+print('AC-13 OK')
+"
+```
+**Done:** Prints `AC-13 OK`. → AC-13
+**Time:** 5 min.
+**Dependencies:** T8.5.
 
 ---
 
@@ -568,15 +517,34 @@ git commit -m "docs(113): CHANGELOG entries for feature 112 QA-followup fixes"
 | PI | # Tasks | Est. Duration |
 |----|---------|----------------|
 | PI-0 | 2 | 10 min |
-| PI-1 | 10 | 55 min |
-| PI-2 | 14 | 60 min |
-| PI-3 | 11 | 60 min |
-| PI-4 | 3 | 27 min |
-| PI-5 | 3 | 27 min |
-| PI-6 | 10 | 80 min |
-| PI-7 | 15 | 95 min |
-| PI-8 | 5 | 32 min |
-| **Total** | **73** | **~7 hours** |
+| PI-1 | 6 | 50 min |
+| PI-2 | 11 | 70 min |
+| PI-3 | 7 | 60 min |
+| PI-4 | 3 | 35 min |
+| PI-5 | 3 | 40 min |
+| PI-6 | 7 | 65 min |
+| PI-7 | 7 | 75 min |
+| PI-8 | 6 | 35 min |
+| **Total** | **52** | **~7 hours** |
+
+## Test Count Reconciliation
+
+Per spec Verification Plan Summary (canonical source):
+- AC-1: 5 tests (in qa_gate/test_emitter.py)
+- AC-2: 1 script execution
+- AC-3: 4 new tests
+- AC-4: 5 new tests
+- AC-5: 1 new test
+- AC-6: 2 parametrized sub-tests
+- AC-7: 2 new tests
+- AC-8: 2 new tests
+- AC-9: 1 new test
+- AC-10: 4 parametrized sub-tests
+- AC-11: 7 new tests
+- AC-12: regression baseline diff (no new test)
+- AC-13: dogfood verification (Python snippet)
+
+**Total new test functions ≈ 33** (counting parametrized as separate sub-tests). Some collapse to ~17 unique test functions when parametrize is collapsed to 1.
 
 ## Cross-References
 
