@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.17.1] - 2026-05-12
+
 ### Changed
 
 - **workflow_state_server MCP** (feature 112 / FR-2) — `_workspace_uuid` lazy
