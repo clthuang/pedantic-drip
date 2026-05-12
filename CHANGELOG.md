@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.17.3] - 2026-05-13
+
 ### Added
 
 - **`upsert_entity` MCP tool** (feature 109) — idempotent insert-or-status-update for entity registry; three-branch semantics: create if absent, update status if changed, no-op if identical. Use this when callers want pre-feature-109 silent-insert behavior.
