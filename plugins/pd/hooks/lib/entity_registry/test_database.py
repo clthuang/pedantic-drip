@@ -7857,3 +7857,76 @@ class TestFeature108QueryDependenciesWorkspaceFilter:
 
         all_deps = db.query_dependencies()
         assert len(all_deps) == 2
+
+
+# ---------------------------------------------------------------------------
+# Feature 112 / FR-7 — AC-32 migration timing assertion
+# ---------------------------------------------------------------------------
+
+
+class TestMigration11Timing:
+    """Feature 112 / AC-32: MIGRATIONS[11] wall-clock under 2s on 500 v10 rows.
+
+    The design-time perf baseline (committed at
+    ``agent_sandbox/2026-05-12/112-validation/migration-timing-baseline.log``)
+    measured 0.0063s on the dev workstation. The 2s budget is the spec AC
+    threshold and gives ~300× headroom for slower CI hosts.
+    """
+
+    def test_migration_11_runtime_under_2s(self, tmp_path):
+        """AC-32: 500 seeded v10 entities → MIGRATIONS[11] completes < 2s."""
+        import time
+        import uuid as _uuid_mod
+        from entity_registry.database import MIGRATIONS
+        from entity_registry.test_helpers import make_v10_db
+
+        db_path = tmp_path / "perf-v10.db"
+        conn = make_v10_db(db_path)
+        try:
+            now = "2026-05-10T00:00:00+00:00"
+            project_ids = [f"ws_perf_{i:02d}" for i in range(5)]
+            rows = []
+            for i in range(500):
+                pid = project_ids[i % len(project_ids)]
+                rows.append((
+                    str(_uuid_mod.uuid4()),
+                    f"feature:{i:04d}-x",
+                    pid,
+                    "feature",
+                    f"{i:04d}-x",
+                    f"feature-{i:04d}",
+                    now,
+                    now,
+                ))
+            conn.executemany(
+                "INSERT INTO entities (uuid, type_id, project_id, "
+                "entity_type, entity_id, name, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                rows,
+            )
+            conn.commit()
+
+            assert conn.execute(
+                "SELECT COUNT(*) FROM entities"
+            ).fetchone()[0] == 500
+
+            t0 = time.perf_counter()
+            MIGRATIONS[11](conn)
+            elapsed = time.perf_counter() - t0
+            conn.execute(
+                "INSERT INTO _metadata (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                ("schema_version", "11"),
+            )
+            conn.commit()
+
+            assert elapsed < 2.0, (
+                f"Migration 11 took {elapsed:.4f}s on 500 rows; "
+                f"AC-32 budget is 2.0s"
+            )
+            # Sanity: rows preserved post-migration.
+            assert conn.execute(
+                "SELECT COUNT(*) FROM entities"
+            ).fetchone()[0] == 500
+        finally:
+            conn.close()
