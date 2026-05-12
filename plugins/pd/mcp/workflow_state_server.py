@@ -1194,12 +1194,19 @@ def _process_reconcile_apply(
     artifacts_root: str,
     feature_type_id: str | None,
     dry_run: bool,
+    *,
+    workspace_uuid: str | None = None,
 ) -> str:
-    """Workflow reconciliation. Hardcodes meta_json_to_db direction, returns JSON string."""
+    """Workflow reconciliation. Hardcodes meta_json_to_db direction, returns JSON string.
+
+    Feature 113 FR-11.3: forwards ``workspace_uuid`` to
+    ``apply_workflow_reconciliation`` so the FR-4.1 read-side assertion runs.
+    """
     if feature_type_id is not None:
         _validate_feature_type_id(feature_type_id, artifacts_root)
     result = apply_workflow_reconciliation(
-        engine, db, artifacts_root, feature_type_id, dry_run
+        engine, db, artifacts_root, feature_type_id, dry_run,
+        workspace_uuid=workspace_uuid,
     )
     # Feature 088 FR-10.9 / AC-42b: detect phase_events-vs-metadata drift and
     # emit stderr warnings. We do NOT auto-insert phase_events rows — drift of
@@ -1226,10 +1233,18 @@ def _process_reconcile_frontmatter(
     db: EntityDatabase,
     artifacts_root: str,
     feature_type_id: str | None,
+    *,
+    workspace_uuid: str | None = None,
 ) -> str:
-    """Frontmatter drift detection. Returns JSON string."""
+    """Frontmatter drift detection. Returns JSON string.
+
+    Feature 113 FR-11.4: forwards ``workspace_uuid`` to ``scan_all`` so the
+    bulk scan is workspace-scoped.
+    """
     if feature_type_id is None:
-        reports: list[DriftReport] = scan_all(db, artifacts_root)
+        reports: list[DriftReport] = scan_all(
+            db, artifacts_root, workspace_uuid=workspace_uuid,
+        )
     else:
         slug = _validate_feature_type_id(feature_type_id, artifacts_root)
         feat_dir = os.path.join(artifacts_root, "features", slug)
@@ -1372,17 +1387,24 @@ def _process_reconcile_status(
     db: EntityDatabase,
     artifacts_root: str,
     summary_only: bool = False,
+    *,
+    workspace_uuid: str | None = None,
 ) -> str:
     """Combined drift report. Returns JSON string.
 
     When summary_only=True, returns a compact 3-field response:
     {"healthy": bool, "workflow_drift_count": int, "frontmatter_drift_count": int}
+
+    Feature 113 FR-11.5: forwards ``workspace_uuid`` to ``scan_all`` so the
+    frontmatter scan is workspace-scoped.
     """
     # Workflow drift
     workflow_result = check_workflow_drift(engine, db, artifacts_root)
 
     # Frontmatter drift
-    frontmatter_reports = scan_all(db, artifacts_root)
+    frontmatter_reports = scan_all(
+        db, artifacts_root, workspace_uuid=workspace_uuid,
+    )
 
     if summary_only:
         wf_drift = sum(
@@ -1723,7 +1745,9 @@ async def reconcile_apply(
     if _engine is None or _db is None:
         return _NOT_INITIALIZED
     return _process_reconcile_apply(
-        _engine, _db, _artifacts_root, feature_type_id, dry_run
+        _engine, _db, _artifacts_root, feature_type_id, dry_run,
+        # FR-11.3: thread workspace_uuid; empty string == unset → None.
+        workspace_uuid=_workspace_uuid or None,
     )
 
 
@@ -1735,7 +1759,11 @@ async def reconcile_frontmatter(feature_type_id: str | None = None) -> str:
         return err
     if _db is None:
         return _NOT_INITIALIZED
-    return _process_reconcile_frontmatter(_db, _artifacts_root, feature_type_id)
+    return _process_reconcile_frontmatter(
+        _db, _artifacts_root, feature_type_id,
+        # FR-11.4: thread workspace_uuid; empty string == unset → None.
+        workspace_uuid=_workspace_uuid or None,
+    )
 
 
 @mcp.tool()
@@ -1746,7 +1774,11 @@ async def reconcile_status(summary_only: bool = False) -> str:
         return err
     if _engine is None or _db is None:
         return _NOT_INITIALIZED
-    return _process_reconcile_status(_engine, _db, _artifacts_root, summary_only=summary_only)
+    return _process_reconcile_status(
+        _engine, _db, _artifacts_root, summary_only=summary_only,
+        # FR-11.5: thread workspace_uuid; empty string == unset → None.
+        workspace_uuid=_workspace_uuid or None,
+    )
 
 
 @mcp.tool()

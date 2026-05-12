@@ -7694,7 +7694,11 @@ class TestReconcileApplyNoDirectionParamDeepened:
             "direction is hardcoded to meta_json_to_db per spec AC-14"
         )
         # And it must have exactly these params
-        expected_params = {"engine", "db", "artifacts_root", "feature_type_id", "dry_run"}
+        # Feature 113 FR-11.3: workspace_uuid kwarg added.
+        expected_params = {
+            "engine", "db", "artifacts_root", "feature_type_id", "dry_run",
+            "workspace_uuid",
+        }
         assert param_names == expected_params, (
             f"Unexpected params: {param_names - expected_params}"
         )
@@ -10494,3 +10498,138 @@ class TestFeature089BundleE:
             f"{drift!r}"
         )
         db.close()
+
+
+# ---------------------------------------------------------------------------
+# Feature 113 FR-11.3/4/5: reconcile_* MCP handlers thread workspace_uuid
+# ---------------------------------------------------------------------------
+
+
+class TestReconcileHandlersForwardWorkspaceUuid:
+    """FR-11.3/4/5 boundary pins: each reconcile_* MCP handler forwards
+    its module-level ``_workspace_uuid`` to the underlying orchestrator
+    (``apply_workflow_reconciliation`` / ``scan_all``).
+
+    Mutation pin: removing ``workspace_uuid=_workspace_uuid or None`` from
+    any of the 3 async handler bodies fails the corresponding test.
+    """
+
+    def test_reconcile_apply_forwards_workspace_uuid(self, tmp_path, monkeypatch):
+        """FR-11.3 pin: reconcile_apply → _process_reconcile_apply →
+        apply_workflow_reconciliation receives workspace_uuid kwarg.
+        """
+        import asyncio
+        import workflow_state_server as wss
+
+        db = EntityDatabase(str(tmp_path / "ws.db"))
+        from entity_registry.test_helpers import bootstrap_test_workspace
+        ws_a = bootstrap_test_workspace(db, "ws_a_recapply")
+
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, str(tmp_path))
+        wss._workspace_uuid = ws_a
+        wss._artifacts_root = str(tmp_path)
+
+        captured: list[dict] = []
+
+        def capture_apply(*args, **kwargs):
+            captured.append(dict(kwargs))
+            # Return a minimal ReconciliationResult-shaped object so the
+            # caller's JSON serialization step still succeeds.
+            from workflow_engine.reconciliation import ReconciliationResult
+            return ReconciliationResult(
+                actions=(),
+                summary={
+                    "reconciled": 0, "created": 0, "skipped": 0,
+                    "error": 0, "dry_run": 0, "kanban_fixed": 0,
+                    "cascades_recovered": 0,
+                },
+            )
+
+        monkeypatch.setattr(wss, "apply_workflow_reconciliation", capture_apply)
+
+        result = asyncio.run(wss.reconcile_apply())
+        # Sanity: handler did not error out before reaching apply.
+        data = json.loads(result)
+        assert "error" not in data, f"handler errored: {data!r}"
+
+        assert captured, "apply_workflow_reconciliation was never invoked"
+        assert captured[0].get("workspace_uuid") == ws_a, (
+            f"workspace_uuid not forwarded from reconcile_apply; "
+            f"captured kwargs={captured!r}"
+        )
+
+    def test_reconcile_frontmatter_forwards_workspace_uuid(
+        self, tmp_path, monkeypatch,
+    ):
+        """FR-11.4 pin: reconcile_frontmatter → _process_reconcile_frontmatter →
+        scan_all receives workspace_uuid kwarg.
+        """
+        import asyncio
+        import workflow_state_server as wss
+
+        db = EntityDatabase(str(tmp_path / "ws.db"))
+        from entity_registry.test_helpers import bootstrap_test_workspace
+        ws_a = bootstrap_test_workspace(db, "ws_a_recfm")
+
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, str(tmp_path))
+        wss._workspace_uuid = ws_a
+        wss._artifacts_root = str(tmp_path)
+
+        captured: list[dict] = []
+
+        def capture_scan(*args, **kwargs):
+            captured.append(dict(kwargs))
+            return []  # empty list of DriftReport
+
+        monkeypatch.setattr(wss, "scan_all", capture_scan)
+
+        result = asyncio.run(wss.reconcile_frontmatter())
+        data = json.loads(result)
+        assert "error" not in data, f"handler errored: {data!r}"
+
+        assert captured, "scan_all was never invoked"
+        assert captured[0].get("workspace_uuid") == ws_a, (
+            f"workspace_uuid not forwarded from reconcile_frontmatter; "
+            f"captured kwargs={captured!r}"
+        )
+
+    def test_reconcile_status_forwards_workspace_uuid(
+        self, tmp_path, monkeypatch,
+    ):
+        """FR-11.5 pin: reconcile_status → _process_reconcile_status →
+        scan_all receives workspace_uuid kwarg.
+        """
+        import asyncio
+        import workflow_state_server as wss
+
+        db = EntityDatabase(str(tmp_path / "ws.db"))
+        from entity_registry.test_helpers import bootstrap_test_workspace
+        ws_a = bootstrap_test_workspace(db, "ws_a_recstatus")
+
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, str(tmp_path))
+        wss._workspace_uuid = ws_a
+        wss._artifacts_root = str(tmp_path)
+
+        captured: list[dict] = []
+
+        def capture_scan(*args, **kwargs):
+            captured.append(dict(kwargs))
+            return []
+
+        monkeypatch.setattr(wss, "scan_all", capture_scan)
+
+        result = asyncio.run(wss.reconcile_status())
+        data = json.loads(result)
+        assert "error" not in data, f"handler errored: {data!r}"
+
+        assert captured, "scan_all was never invoked from reconcile_status"
+        assert captured[0].get("workspace_uuid") == ws_a, (
+            f"workspace_uuid not forwarded from reconcile_status; "
+            f"captured kwargs={captured!r}"
+        )
