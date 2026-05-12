@@ -2,10 +2,11 @@
   "id": "112",
   "slug": "workspace-identity-cleanup",
   "mode": "standard",
-  "status": "active",
+  "status": "completed",
   "created": "2026-05-12T03:35:01.539254+00:00",
   "branch": "feature/112-workspace-identity-cleanup",
-  "lastCompletedPhase": "implement",
+  "completed": "2026-05-12T05:51:35.963608+00:00",
+  "lastCompletedPhase": "finish",
   "phases": {
     "brainstorm": {
       "started": "2026-05-12T03:35:01.539119+00:00"
@@ -30,6 +31,10 @@
     "implement": {
       "completed": "2026-05-12T05:22:00.084677+00:00",
       "reviewerNotes": "FR-1/2/3/5/6/7 implemented; FR-4 partial (E.1 done, E.2/E.3 deferred to backlog #00390); 7 commits; regression 79/4193/3 vs baseline 80/4189/3 (+4 pass, -1 pre-existing fix, zero new regressions); qa-gate.json walks 41 ACs (35 pass, 3 partial, 3 deferred); bash-3.2 hook tests 114/114; AC-32 timing 0.0063s vs 2s budget."
+    },
+    "finish": {
+      "completed": "2026-05-12T05:51:35.963608+00:00",
+      "reviewerNotes": "QA gate pass-after-fixes: 4 HIGH findings resolved inline (entity_engine workspace_uuid forwarding; AC-11 test name + 30s/2s gate; test_migration_11_stress_benchmark added; AC-4 skills/ sweep). 11 MED filed to backlog #00391-#00401. 8 LOW folded to .qa-gate-low-findings.md sidecar. security-reviewer APPROVED (2 LOW only). Final regression: 3819 pass / 2 baseline-fail / 3 skip \u2014 zero net new regressions. Released v4.17.1 (develop \u2192 main, tag pushed)."
     }
   }
 }

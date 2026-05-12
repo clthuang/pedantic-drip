@@ -652,6 +652,8 @@ def _process_transition_phase(
                 entity = db.get_entity(feature_type_id)
                 if entity is not None:
                     try:
+                        # FR-6.2: Empty-string == unset == None at db.* kwarg boundary;
+                        # downstream defaults to project_id="__unknown__" → _UNKNOWN_WORKSPACE_UUID.
                         response = entity_engine.transition_phase(
                             entity["uuid"], target_phase,
                             workspace_uuid=_workspace_uuid or None,
@@ -1192,12 +1194,19 @@ def _process_reconcile_apply(
     artifacts_root: str,
     feature_type_id: str | None,
     dry_run: bool,
+    *,
+    workspace_uuid: str | None = None,
 ) -> str:
-    """Workflow reconciliation. Hardcodes meta_json_to_db direction, returns JSON string."""
+    """Workflow reconciliation. Hardcodes meta_json_to_db direction, returns JSON string.
+
+    Feature 113 FR-11: forwards ``workspace_uuid`` to
+    ``apply_workflow_reconciliation`` so the FR-4.1 read-side assertion runs.
+    """
     if feature_type_id is not None:
         _validate_feature_type_id(feature_type_id, artifacts_root)
     result = apply_workflow_reconciliation(
-        engine, db, artifacts_root, feature_type_id, dry_run
+        engine, db, artifacts_root, feature_type_id, dry_run,
+        workspace_uuid=workspace_uuid,
     )
     # Feature 088 FR-10.9 / AC-42b: detect phase_events-vs-metadata drift and
     # emit stderr warnings. We do NOT auto-insert phase_events rows — drift of
@@ -1224,10 +1233,18 @@ def _process_reconcile_frontmatter(
     db: EntityDatabase,
     artifacts_root: str,
     feature_type_id: str | None,
+    *,
+    workspace_uuid: str | None = None,
 ) -> str:
-    """Frontmatter drift detection. Returns JSON string."""
+    """Frontmatter drift detection. Returns JSON string.
+
+    Feature 113 FR-11: forwards ``workspace_uuid`` to ``scan_all`` so the
+    bulk scan is workspace-scoped.
+    """
     if feature_type_id is None:
-        reports: list[DriftReport] = scan_all(db, artifacts_root)
+        reports: list[DriftReport] = scan_all(
+            db, artifacts_root, workspace_uuid=workspace_uuid,
+        )
     else:
         slug = _validate_feature_type_id(feature_type_id, artifacts_root)
         feat_dir = os.path.join(artifacts_root, "features", slug)
@@ -1277,6 +1294,8 @@ def _process_init_feature_state(
         brainstorm_source=brainstorm_source,
         backlog_source=backlog_source,
         status=status,
+        # FR-6.2: Empty-string == unset == None at db.* kwarg boundary;
+        # downstream defaults to project_id="__unknown__" → _UNKNOWN_WORKSPACE_UUID.
         workspace_uuid=_workspace_uuid or None,
     )
     warning = _project_meta_json(db, engine, result["feature_type_id"], feature_dir)
@@ -1368,17 +1387,24 @@ def _process_reconcile_status(
     db: EntityDatabase,
     artifacts_root: str,
     summary_only: bool = False,
+    *,
+    workspace_uuid: str | None = None,
 ) -> str:
     """Combined drift report. Returns JSON string.
 
     When summary_only=True, returns a compact 3-field response:
     {"healthy": bool, "workflow_drift_count": int, "frontmatter_drift_count": int}
+
+    Feature 113 FR-11.3: forwards ``workspace_uuid`` to ``scan_all`` so the
+    frontmatter scan is workspace-scoped.
     """
     # Workflow drift
     workflow_result = check_workflow_drift(engine, db, artifacts_root)
 
     # Frontmatter drift
-    frontmatter_reports = scan_all(db, artifacts_root)
+    frontmatter_reports = scan_all(
+        db, artifacts_root, workspace_uuid=workspace_uuid,
+    )
 
     if summary_only:
         wf_drift = sum(
@@ -1577,19 +1603,30 @@ def _resolve_list_handler_workspace_filter(
     str | None
         Workspace UUID to filter by, or ``None`` for cross-workspace.
     """
+    # FR-3.0: empty string → None at entry (treated as default-workspace).
+    # Without normalization, "" falls into the JOIN-resolve branch below,
+    # fails to match any workspaces.project_id_legacy row, and silently
+    # degrades to cross-workspace via ValueError → None. Forms one
+    # defensive contract with FR-6's workspace_uuid empty-string handling.
+    if project_id == "":
+        project_id = None
     if project_id == "*":
         return None
     if project_id is not None:
         # Caller-supplied legacy project_id → JOIN-resolve to workspace_uuid.
         if _db is None:
+            # Degraded-mode: no DB → cross-workspace fallback is intentional,
+            # surfaced via _check_db_available upstream
             return None
-        try:
-            return _db._resolve_optional_workspace_filter(
-                workspace_uuid=None, project_id=project_id,
-                _caller="list_features_handler",
-            )
-        except ValueError:
-            return None
+        # FR-3.2: silent None → ValueError. Invalid legacy hex must surface
+        # as an MCP error envelope at the caller wrappers, not silently
+        # degrade to cross-workspace. Caller wrappers in list_features_by_phase
+        # and list_features_by_status catch this and return _make_error JSON
+        # with error_type="invalid_project_id".
+        return _db._resolve_optional_workspace_filter(
+            workspace_uuid=None, project_id=project_id,
+            _caller="list_features_handler",
+        )
     # Default: filter by current workspace.
     return _workspace_uuid or None
 
@@ -1611,8 +1648,14 @@ def _filter_states_by_workspace(
             if entity and entity.get("workspace_uuid") == target_ws_uuid:
                 filtered.append(s)
         return json.dumps(filtered)
-    except (json.JSONDecodeError, Exception):
-        return results_json
+    except json.JSONDecodeError:
+        return results_json  # malformed JSON from engine — return as-is
+    except sqlite3.OperationalError as exc:
+        return _make_error(
+            "db_unavailable", str(exc),
+            "Database temporarily unavailable; retry shortly",
+        )
+    # FR-7: other exceptions PROPAGATE (no except Exception clause).
 
 
 @mcp.tool()
@@ -1634,7 +1677,15 @@ async def list_features_by_phase(phase: str, project_id: str | None = None) -> s
         return err
     if _engine is None:
         return _NOT_INITIALIZED
-    ws_filter = _resolve_list_handler_workspace_filter(project_id)
+    try:
+        ws_filter = _resolve_list_handler_workspace_filter(project_id)
+    except ValueError as exc:
+        # FR-3.2: invalid legacy project_id → surfaced as MCP error envelope.
+        return _make_error(
+            "invalid_project_id", str(exc),
+            "Pass project_id='*' for cross-workspace OR omit for "
+            "current-workspace default",
+        )
     results = _process_list_features_by_phase(_engine, phase)
     return _filter_states_by_workspace(results, ws_filter)
 
@@ -1658,7 +1709,15 @@ async def list_features_by_status(status: str, project_id: str | None = None) ->
         return err
     if _engine is None:
         return _NOT_INITIALIZED
-    ws_filter = _resolve_list_handler_workspace_filter(project_id)
+    try:
+        ws_filter = _resolve_list_handler_workspace_filter(project_id)
+    except ValueError as exc:
+        # FR-3.2: invalid legacy project_id → surfaced as MCP error envelope.
+        return _make_error(
+            "invalid_project_id", str(exc),
+            "Pass project_id='*' for cross-workspace OR omit for "
+            "current-workspace default",
+        )
     results = _process_list_features_by_status(_engine, status)
     return _filter_states_by_workspace(results, ws_filter)
 
@@ -1686,7 +1745,9 @@ async def reconcile_apply(
     if _engine is None or _db is None:
         return _NOT_INITIALIZED
     return _process_reconcile_apply(
-        _engine, _db, _artifacts_root, feature_type_id, dry_run
+        _engine, _db, _artifacts_root, feature_type_id, dry_run,
+        # FR-11.3: thread workspace_uuid; empty string == unset → None.
+        workspace_uuid=_workspace_uuid or None,
     )
 
 
@@ -1698,7 +1759,11 @@ async def reconcile_frontmatter(feature_type_id: str | None = None) -> str:
         return err
     if _db is None:
         return _NOT_INITIALIZED
-    return _process_reconcile_frontmatter(_db, _artifacts_root, feature_type_id)
+    return _process_reconcile_frontmatter(
+        _db, _artifacts_root, feature_type_id,
+        # FR-11.4: thread workspace_uuid; empty string == unset → None.
+        workspace_uuid=_workspace_uuid or None,
+    )
 
 
 @mcp.tool()
@@ -1709,7 +1774,11 @@ async def reconcile_status(summary_only: bool = False) -> str:
         return err
     if _engine is None or _db is None:
         return _NOT_INITIALIZED
-    return _process_reconcile_status(_engine, _db, _artifacts_root, summary_only=summary_only)
+    return _process_reconcile_status(
+        _engine, _db, _artifacts_root, summary_only=summary_only,
+        # FR-11.5: thread workspace_uuid; empty string == unset → None.
+        workspace_uuid=_workspace_uuid or None,
+    )
 
 
 @mcp.tool()

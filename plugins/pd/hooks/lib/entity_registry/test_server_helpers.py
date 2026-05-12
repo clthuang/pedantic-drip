@@ -1743,3 +1743,119 @@ class TestProcessExportEntitiesFieldsDeepened:
         # Re-encode with compact separators and compare
         expected_compact = json_mod.dumps(parsed, separators=(",", ":"), ensure_ascii=False)
         assert result == expected_compact
+
+
+# ---------------------------------------------------------------------------
+# FR-8: server_helpers.py parent-resolution narrow exception handler
+# ---------------------------------------------------------------------------
+
+
+class TestParentResolutionNarrowExcept:
+    """FR-8: parent_type_id → parent_uuid resolution narrows its except.
+
+    Pre-fix: bare ``except Exception:`` at server_helpers.py:248-255 swallowed
+    every exception (including DB errors and bugs) and registered the entity
+    as an orphan silently.
+
+    Post-fix:
+        - ``sqlite3.OperationalError`` → log to stderr, register as orphan
+        - All other exceptions PROPAGATE to caller.
+    """
+
+    def test_register_entity_parent_resolution_db_error_orphans_with_warning(
+        self, db, monkeypatch, capsys,
+    ):
+        """OperationalError → orphan + stderr warning (FR-8.1)."""
+        import sqlite3 as _sqlite3
+
+        # Bootstrap a parent so resolution would otherwise succeed.
+        db.register_entity(
+            "project", "parent-db-err", "Parent",
+            project_id="__unknown__",
+        )
+
+        # Mock get_entity to raise OperationalError ONLY for the parent lookup.
+        # The first get_entity() call (the "existing?" check inside
+        # _process_register_entity) uses the child's type_id, which is what
+        # we filter on. Match parent_type_id explicitly.
+        real_get_entity = db.get_entity
+
+        def _boom(type_id, *args, **kwargs):
+            if type_id == "project:parent-db-err":
+                raise _sqlite3.OperationalError("database is locked")
+            return real_get_entity(type_id, *args, **kwargs)
+
+        monkeypatch.setattr(db, "get_entity", _boom)
+
+        result = _process_register_entity(
+            db,
+            entity_type="feature",
+            entity_id="db-err-child",
+            name="Child",
+            artifact_path=None,
+            status=None,
+            parent_type_id="project:parent-db-err",
+            metadata=None,
+        )
+
+        # Entity registered (orphan path; not an error string).
+        assert result == "Registered: feature:db-err-child", (
+            f"Expected orphan registration to succeed, got: {result!r}"
+        )
+
+        # Verify parent_uuid is None on the stored row.
+        # (Restore real get_entity since monkeypatch is scoped to test.)
+        monkeypatch.setattr(db, "get_entity", real_get_entity)
+        row = db.get_entity("feature:db-err-child")
+        assert row is not None
+        assert row.get("parent_uuid") is None, (
+            f"Expected orphan (parent_uuid=None) after DB error, "
+            f"got: {row.get('parent_uuid')!r}"
+        )
+
+        # Stderr contains the warning.
+        captured = capsys.readouterr()
+        assert "server_helpers: parent resolution failed" in captured.err, (
+            f"Expected warning in stderr, got: {captured.err!r}"
+        )
+
+    def test_register_entity_parent_resolution_unexpected_error_propagates(
+        self, db, monkeypatch,
+    ):
+        """RuntimeError from parent lookup must propagate (FR-8.1)."""
+        # Bootstrap so the wrapper's outer try/except can't intercept early.
+        db.register_entity(
+            "project", "parent-runtime", "Parent",
+            project_id="__unknown__",
+        )
+
+        real_get_entity = db.get_entity
+
+        def _boom(type_id, *args, **kwargs):
+            if type_id == "project:parent-runtime":
+                raise RuntimeError("unexpected resolution error")
+            return real_get_entity(type_id, *args, **kwargs)
+
+        monkeypatch.setattr(db, "get_entity", _boom)
+
+        # The outer try/except in _process_register_entity catches Exception
+        # and returns "Error registering entity: ...". After the FR-8 fix the
+        # RuntimeError propagates out of the narrow except and is caught by
+        # that outer handler — observable as the formatted error string.
+        result = _process_register_entity(
+            db,
+            entity_type="feature",
+            entity_id="runtime-child",
+            name="Child",
+            artifact_path=None,
+            status=None,
+            parent_type_id="project:parent-runtime",
+            metadata=None,
+        )
+        assert result.startswith("Error registering entity:"), (
+            f"Expected outer wrapper to format propagated error, got: {result!r}"
+        )
+        assert "unexpected resolution error" in result, (
+            f"Expected RuntimeError message to propagate to outer handler, "
+            f"got: {result!r}"
+        )

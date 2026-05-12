@@ -182,10 +182,12 @@ def transition_entity_phase(
     # 8. Update entities.status via public API
     db.update_entity(type_id, status=target_phase, workspace_uuid=workspace_uuid)
 
-    # 9. Update workflow_phases via public API
+    # 9. Update workflow_phases via public API.
+    # workspace_uuid is unconditional; None is a no-op in update_workflow_phase.
     update_kwargs: dict = {
         "workflow_phase": target_phase,
         "kanban_column": kanban_column,
+        "workspace_uuid": workspace_uuid,
     }
     if is_forward:
         update_kwargs["last_completed_phase"] = current_phase

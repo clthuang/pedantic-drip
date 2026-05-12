@@ -210,37 +210,61 @@ Append-only sections; consumed and deleted by `pd:retrospecting` skill (Step 2c)
 
 ## §7 — Idempotency cache (FR-8, TD-5)
 
-### `.qa-gate.json` schema
+### `.qa-gate.json` schema (canonical, feature 113 FR-1.2 / design TD-8)
 
 ```json
 {
+  "feature": "{id}-{slug}",
   "head_sha": "abcdef0123456789...",
-  "gate_passed_at": "2026-04-29T03:14:00Z",
-  "summary": {"high": 0, "med": 2, "low": 5}
+  "gate_run_at": "2026-04-29T03:14:00Z",
+  "ac_results": [
+    {
+      "id": "AC-N",
+      "status": "passed | deferred | n_a | conditional_skipped",
+      "evidence": "<≤500 chars: test path or grep result>",
+      "condition": "<non-empty when status == conditional_skipped, else ''>",
+      "backlog_ref": "<5-digit backlog ID> | null"
+    }
+  ],
+  "decision": "approved | deferred",
+  "reviewers": ["pd:adversarial-reviewer", ...]
 }
 ```
+
+Legacy schemas from features ≤112 (root-level `summary` + `gate_passed_at`) are
+informational only — feature 113 onward uses the per-AC array.
 
 ### Logic
 
 1. Compute current HEAD SHA: `git rev-parse HEAD`.
 2. If `.qa-gate.json` exists AND parses as JSON AND has all required fields AND `head_sha` matches current → SKIP dispatch, append `skip: HEAD {sha} at {iso}` line to `.qa-gate.log`, proceed to Step 5a-bis.
-3. **Corruption handling:** if `.qa-gate.json` exists but does not parse as JSON OR is missing `head_sha`/`gate_passed_at`/`summary` → treat as cache-miss, re-dispatch, append `cache-corrupt: re-dispatching at HEAD {sha}` to `.qa-gate.log`.
-4. Cache miss (HEAD differs OR file absent OR corrupt): dispatch reviewers. **Do NOT delete existing `.qa-gate.json` yet.** Only on PASS, atomically overwrite via temp file + `mv`. Pass values via env vars (NOT shell-string interpolation — OWASP anti-pattern for future maintainers):
+3. **Corruption handling:** if `.qa-gate.json` exists but does not parse as JSON OR is missing `feature`/`head_sha`/`gate_run_at`/`ac_results`/`decision`/`reviewers` → treat as cache-miss, re-dispatch, append `cache-corrupt: re-dispatching at HEAD {sha}` to `.qa-gate.log`.
+4. Cache miss (HEAD differs OR file absent OR corrupt): dispatch reviewers. **Do NOT delete existing `.qa-gate.json` yet.** Only on PASS, write the canonical JSON via the `qa_gate.emitter` module (feature 113 FR-1.0). The emitter handles validation, atomic temp-file + `os.replace` write, and head_sha idempotency:
 
 ```bash
-HEAD="$(git rev-parse HEAD)" ISO="$(date -u +%Y-%m-%dT%H:%M:%SZ)" H="$h_count" M="$m_count" L="$l_count" \
-python3 -c '
-import json, os
-print(json.dumps({
-    "head_sha": os.environ["HEAD"],
-    "gate_passed_at": os.environ["ISO"],
-    "summary": {"high": int(os.environ["H"]), "med": int(os.environ["M"]), "low": int(os.environ["L"])}
-}))
-' > .qa-gate.json.tmp
-mv .qa-gate.json.tmp .qa-gate.json
+PYTHONPATH=plugins/pd/hooks/lib plugins/pd/.venv/bin/python -c '
+from qa_gate.emitter import emit_qa_gate
+emit_qa_gate(
+    feature="113-feature-112-qa-followups",
+    feature_dir="docs/features/113-feature-112-qa-followups",
+    ac_results=[
+        # Built from reviewer-returned JSON; per-entry shape:
+        # {"id": "AC-1", "status": "passed",
+        #  "evidence": "<test path or grep result, ≤500 chars>",
+        #  "condition": "",          # non-empty iff status == conditional_skipped
+        #  "backlog_ref": None,      # 5-digit ID when applicable
+        # }
+    ],
+    decision="approved",            # or "deferred" if any AC deferred
+    reviewers=["pd:adversarial-reviewer", "pd:security-reviewer", ...],
+)
+'
 ```
 
-This pattern eliminates shell→python3 string-interpolation surface even for future extensions that may add reviewer-supplied descriptions to the cache.
+The emitter raises `ValueError` on schema violations (invalid status, missing
+required keys, evidence >500 chars, conditional_skipped with empty condition).
+This replaces the previous inline `python3 -c` heredoc + `mv` pattern and
+eliminates the shell→python string-interpolation surface entirely.
 
 5. On INCOMPLETE or HIGH-block, leave previous cache untouched (re-run on a subsequent fix-commit will mismatch SHA and re-dispatch).
 

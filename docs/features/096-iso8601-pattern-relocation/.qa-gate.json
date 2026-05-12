@@ -1,0 +1,9 @@
+{
+  "head_sha": "4356866a52e6421e566cca57623368071b93ee86",
+  "feature": "096-iso8601-pattern-relocation",
+  "run_at": "2026-04-29",
+  "reviewers_dispatched": 4,
+  "verdict": "PASS",
+  "aggregate": {"HIGH": 0, "MED": 0, "LOW": 5},
+  "narrowed_remap_applied": false
+}

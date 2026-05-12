@@ -4347,3 +4347,97 @@ class TestDegradedModeBackfillSetsKanbanFromPhaseDeepened:
         row = db.get_workflow_phase(type_id)
         assert row is not None
         assert row["kanban_column"] == "documenting"
+
+
+# ===========================================================================
+# Feature 113 / FR-4.2: engine workspace_uuid forwarding tests
+# ===========================================================================
+
+
+class TestEngineWorkspaceUuidForwarding:
+    """Pin: engine.transition_phase / complete_phase forward workspace_uuid
+    to db.update_workflow_phase, triggering FR-4.1's mismatch check.
+
+    Tests bootstrap two workspaces and create a workflow_phases row scoped to
+    ws_a. The engine call then provides workspace_uuid=ws_b — the mismatch
+    must raise ValueError (NOT a sqlite3.Error subclass, so it must propagate
+    through engine.py's narrow `except sqlite3.Error:` handlers).
+    """
+
+    def _setup_two_workspaces(
+        self, tmp_path, slug: str = "008-ws-mismatch",
+        *,
+        workflow_phase: str = "specify",
+        last_completed_phase: str | None = None,
+    ) -> tuple[WorkflowStateEngine, EntityDatabase, str, str, str]:
+        """Create db with ws_a + ws_b, register entity in ws_a, create
+        workflow_phases row scoped to ws_a. Returns (engine, db, type_id,
+        ws_a_uuid, ws_b_uuid).
+        """
+        from entity_registry.test_helpers import bootstrap_test_workspace
+
+        db = _make_db()
+        ws_a_uuid = bootstrap_test_workspace(db, "ws-a")
+        ws_b_uuid = bootstrap_test_workspace(db, "ws-b")
+
+        type_id = f"feature:{slug}"
+        db.register_entity(
+            entity_type="feature",
+            entity_id=slug,
+            name=f"Test Feature {slug}",
+            status="active",
+            workspace_uuid=ws_a_uuid,
+        )
+        # Direct create_workflow_phase: bypasses any engine internal
+        # forwarding; autofill trigger populates workspace_uuid from entity
+        # (which is ws_a).
+        db.create_workflow_phase(
+            type_id,
+            workflow_phase=workflow_phase,
+            last_completed_phase=last_completed_phase,
+            mode="standard",
+        )
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        return engine, db, type_id, ws_a_uuid, ws_b_uuid
+
+    def test_transition_phase_workspace_uuid_mismatch_raises(self, tmp_path):
+        """transition_phase forwards workspace_uuid; FR-4.1 mismatch raises."""
+        engine, db, type_id, ws_a_uuid, ws_b_uuid = self._setup_two_workspaces(
+            tmp_path,
+            workflow_phase="specify",
+            last_completed_phase="brainstorm",
+        )
+        # Satisfy hard-prerequisite (spec.md) so all gates pass and the
+        # transition reaches db.update_workflow_phase where the mismatch check
+        # lives.
+        feature_dir = tmp_path / "features" / "008-ws-mismatch"
+        feature_dir.mkdir(parents=True, exist_ok=True)
+        (feature_dir / "spec.md").write_text("# Spec")
+
+        # ws_b_uuid != stored ws_a_uuid → FR-4.1 ValueError must propagate
+        # through engine.py's `except sqlite3.Error:` (narrow — ValueError is
+        # not a sqlite3.Error subclass).
+        with pytest.raises(ValueError, match="workspace_uuid mismatch"):
+            engine.transition_phase(
+                type_id, "design", workspace_uuid=ws_b_uuid,
+            )
+
+    def test_complete_phase_non_terminal_workspace_uuid_pinned(self, tmp_path):
+        """complete_phase (non-terminal) forwards workspace_uuid; mismatch raises."""
+        engine, db, type_id, ws_a_uuid, ws_b_uuid = self._setup_two_workspaces(
+            tmp_path,
+            workflow_phase="specify",
+            last_completed_phase="brainstorm",
+        )
+        with pytest.raises(ValueError, match="workspace_uuid mismatch"):
+            engine.complete_phase(type_id, "specify", workspace_uuid=ws_b_uuid)
+
+    def test_complete_phase_terminal_workspace_uuid_pinned(self, tmp_path):
+        """complete_phase (phase == 'finish') forwards workspace_uuid; mismatch raises."""
+        engine, db, type_id, ws_a_uuid, ws_b_uuid = self._setup_two_workspaces(
+            tmp_path,
+            workflow_phase="finish",
+            last_completed_phase="implement",
+        )
+        with pytest.raises(ValueError, match="workspace_uuid mismatch"):
+            engine.complete_phase(type_id, "finish", workspace_uuid=ws_b_uuid)
