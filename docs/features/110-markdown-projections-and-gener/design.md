@@ -3,7 +3,7 @@
 - **Project:** P003-entity-system-redesign M3
 - **Spec:** docs/features/110-markdown-projections-and-gener/spec.md (rev 4)
 - **Schema baseline:** post-migration-12 (entities has type/kind/lifecycle_class, no entity_type)
-- **Status:** revision 2 (6 design-iter-1 blockers resolved inline)
+- **Status:** revision 3 (iter-2: 3 factual blockers + 3 warnings resolved inline; cap-3 reached at design-reviewer)
 
 ## §0 Prior Art Research — including AST orthogonality with feature-109
 
@@ -133,12 +133,11 @@ Feature 110 lands three loosely-coupled sub-features under a single feature dire
 | `plugins/pd/hooks/lib/entity_registry/backfill.py` | Replace `entity_id` parsing with `entity_display` queries. |
 | `plugins/pd/hooks/lib/workflow_engine/engine.py` | Add `# F4-AUDIT: degraded-mode-only` comment near `_write_meta_json_fallback`. |
 | `plugins/pd/hooks/lib/workflow_engine/feature_lifecycle.py` | Add `# F4-AUDIT: project-type schema; ported to feature 111` near `init_project_state`. |
-| `plugins/pd/hooks/lib/doctor/fix_actions.py` | Replace `_fix_update_meta_json` body with MCP-invoking wrapper; `_fix_annotate_backlog` add `# F4-AUDIT: annotation-only` comment. |
+| `plugins/pd/hooks/lib/doctor/fix_actions.py` | **Corrected (iter-2):** Empirical SUT pin reveals TWO functions write `.meta.json`: `_fix_last_completed_phase` (line 52) AND `_fix_completed_timestamp` (line 87). BOTH replaced with MCP-invoking wrappers per TD-11. The backlog writer is `_fix_backlog_annotation` (line 149) — add `# F4-AUDIT: annotation-only` comment (annotation, not state mutation). FR-4.1 allow-list updated to include both fix-action symbol names. |
 | `plugins/pd/skills/add-to-backlog.md` (command) | Replace direct `Write` call with: `register_entity(entity_type='backlog', ...)` then call to projection. |
 | `plugins/pd/commands/finish-feature.md` Step 5b MED-finding emission | Same pattern: register backlog entries via DB then re-project. |
-| `plugins/pd/scripts/cleanup_backlog.py` | **Modified, NOT removed.** Continues to perform archival but ROUTES THROUGH NEW MCP `archive_entity(uuid)` instead of file writes. After archival, calls `_project_backlog_md` to regenerate `docs/backlog.md` (which excludes `status='archived'` rows). |
-| `plugins/pd/mcp/entity_server.py` | **Modified.** Add new MCP tool `archive_entity(type_id)` that transitions entity `status='active' \| 'open'` → `'archived'` via `update_entity` + appends `entity_status_changed` phase_event. This is the canonical active→archived transition trigger. |
-| `plugins/pd/hooks/lib/entity_registry/database.py register_entity` | **Modified.** ALSO inserts into `entity_display(uuid, seq, slug)` parsing seq/slug from entity_id. Same transaction as the existing entities INSERT. Maintains AC-8.2 1:1 invariant for NEW entities post-migration-13. `register_entities_batch` similarly modified. |
+| `plugins/pd/scripts/cleanup_backlog.py` | **Modified, NOT removed.** Continues to perform archival but ROUTES THROUGH existing `update_entity(type_id, status='archived')` MCP (precedent at `cleanup-brainstorms.md:78`). NO new MCP tool added. After archival, calls `_project_backlog_md` to regenerate `docs/backlog.md` (excludes `status='archived'` rows). |
+| `plugins/pd/hooks/lib/entity_registry/database.py register_entity` | **Modified.** ALSO inserts into `entity_display(uuid, seq, slug)` parsing seq/slug from entity_id. Same transaction as the existing entities INSERT. Maintains AC-8.2 1:1 invariant for NEW entities post-migration-13. **Fail-fast precondition:** If `entity_id` does not match `^\d+-.+` regex (e.g., test fixtures with `entity_id='test-fixture'`), `register_entity` raises `EntityIdFormatError` BEFORE the entities INSERT (no partial state). `register_entities_batch` similarly modified. Plan-phase adds AC for this contract. Existing test fixtures with non-standard entity_ids must be migrated to the `{seq}-{slug}` format OR explicitly skip entity_display creation via a `_register_entity_no_display` test-only helper. |
 | `plugins/pd/commands/show-status.md` | Update prose to reference `entity_display` (FR-8.3 skill update). |
 
 ### 2.4 Configuration files
@@ -286,13 +285,13 @@ grep -rnE '\.split\(":"\)|\.partition\(":"\)|substr\(.*entity_id|instr\(.*entity
 
 ### TD-9 — pd-state.diff.md output format
 
-**Decision:** Markdown table with 5 columns: `uuid`, `type_id`, `status`, `workflow_phase`, `parent_type_id`. Status-change marker column (`(added)` | `(removed)` | `(changed: <field>)`).
+**Decision:** Markdown table with 5 columns: `uuid`, `type_id`, `status`, `workflow_phase`, `parent_uuid`. Status-change marker column (`(added)` | `(removed)` | `(changed: <field>)`).
 
 **Output template:**
 ```markdown
 # pd-state diff vs {base}
 
-| uuid (short) | type_id | status | workflow_phase | parent_type_id | change |
+| uuid (short) | type_id | status | workflow_phase | parent_uuid | change |
 |---|---|---|---|---|---|
 | 6c4a... | feature:043-foo | active | implement | project:P002-bar | (changed: workflow_phase) |
 | 2bd1... | backlog:00400 | open | — | feature:108-baz | (added) |
@@ -306,10 +305,21 @@ If no changes: `No entity state changes vs {base}`. uuid truncated to first 8 ch
 
 **Decision:** `_project_backlog_md` emits a flat top-level table matching the EXISTING `docs/backlog.md` shape byte-for-byte (verified against current file: single `| ID | Timestamp | Description |` table sorted by ID ascending; per-feature `## From Feature N ...` sections appear lower as additional sections AFTER the main table, with rows in that section also in ID order).
 
-**Section structure (v1 — matches existing file):**
-- `# Backlog` header
-- `| ID | Timestamp | Description |` flat top-level table — ALL non-section rows sorted by ID ascending. Description column contains any free-text annotations (e.g., `(closed: ...)`, `(promoted → feature:N)`).
-- `## From Feature {N} Pre-Release QA Findings ({date})` sections — per-feature-grouped MED findings, sorted by ID ascending within section, sections in order of appearance in DB (oldest section first).
+**Section structure (v1 — matches existing file format families):**
+
+The existing `docs/backlog.md` uses TWO distinct item formats:
+1. **Flat top-level table** (lines ~5-50): `| ID | Timestamp | Description |` pipe-table rows for general backlog items.
+2. **Per-feature bullet sections** (lines ~70+): `## From Feature N ...` headers with bullet-list items (`- **#00367** [SEVERITY/category] description`) — usually with introductory prose paragraphs and sometimes `### HIGH-cluster deferrals` / `### MED findings` sub-headers.
+
+`_project_backlog_md` v1 emits BOTH formats, controlled by `entities.metadata.format` JSON field:
+- `metadata.format = "table_row"` (default for general backlog): emitted as pipe-table row in the flat top table.
+- `metadata.format = "bullet_item"`: emitted as bullet item under the `## From Feature N ...` section identified by `metadata.section`.
+- `metadata.section_intro` (optional): prose paragraph(s) emitted between `## From Feature N` header and the first item in that section.
+- `metadata.subsection` (optional): `### HIGH-cluster deferrals` / `### MED findings` grouping header.
+
+**Backfill rule for `metadata.format` / `metadata.section_intro` / `metadata.subsection`:** A one-shot parser reads existing `docs/backlog.md` during migration 13. For each row found:
+- Top-table rows: `format="table_row"`, `section=null`.
+- Per-feature section bullets: `format="bullet_item"`, `section="<section heading text>"`, `section_intro=<intro paragraph if any>`, `subsection=<sub-heading if any>`.
 
 **No `## Archived` separate section in v1.** Archive logic deferred to per-row `(closed: ...)` annotation in description text (matches existing convention). The `status='archived'` flag (FR-4.3 `cleanup_backlog.py` archival behavior) controls whether the row appears in the main table; archived rows are EXCLUDED from the main table output (matching existing cleanup behavior where archived rows are moved to `docs/backlog-archive.md`).
 
@@ -324,7 +334,7 @@ If no changes: `No entity state changes vs {base}`. uuid truncated to first 8 ch
 - Otherwise (top-level table), set `metadata.section = null`.
 Parser runs as part of migration 13 (or as a separate Group 0 task — plan-phase decides Group placement, NOT algorithm choice).
 
-**Byte-equality verification:** A pre-merge AC (AC-4.2a, added to spec via design phase) requires that running `_project_backlog_md` against the post-migration DB produces a file whose `diff -u` against the current `docs/backlog.md` shows ONLY pre-enumerated intentional changes (e.g., no whitespace drift). The current file is the authoritative shape baseline.
+**Byte-equality verification (relaxed):** AC-4.2a (added to spec via design phase) requires that `_project_backlog_md` against the post-migration DB produces a file whose `diff -u` against the current `docs/backlog.md` shows only WHITESPACE-LEVEL differences (no semantic content drift). EXACT byte-equality is NOT required because the existing file has minor irregularities (variable bullet indentation, trailing whitespace) that the projection normalizes deterministically. Plan-phase delivers a `compare_backlog_projection.py` script that diff-compares projection output against current `docs/backlog.md` with whitespace-normalized comparison; a failing diff blocks the migration commit.
 
 ### TD-11 — Doctor autofix replacement strategy (drift classes enumerated)
 
@@ -356,13 +366,14 @@ The DB is the source of truth. `.meta.json` is gitignored so file-diff is imposs
 1. Resolve `base_commit_ts` = output of `git log -1 --format=%aI <base>` (ISO 8601 timestamp of HEAD on base branch).
 2. Query current entity state from DB:
    ```sql
-   SELECT e.uuid, e.type_id, e.status, e.parent_type_id,
+   SELECT e.uuid, e.type_id, e.status, e.parent_uuid,
           wp.workflow_phase, e.updated_at
    FROM entities e
    LEFT JOIN workflow_phases wp ON wp.type_id = e.type_id
    ORDER BY e.uuid
    ```
-3. For each entity, compute base-time state by replaying `phase_events`:
+3. **Backfilled-entity defense (new):** If `entities.created_at <= base_commit_ts` AND no `phase_events` row exists for entity_uuid where `event_type='entity_created'`, treat base-time state as the CURRENT entity row (assume no change since base — entity was backfilled, has no synthetic creation event). Skip replay for these rows.
+4. For all other entities, compute base-time state by replaying `phase_events`:
    ```sql
    SELECT event_type, payload, phase, timestamp
    FROM phase_events
@@ -460,6 +471,7 @@ Both wrapped in `BEGIN IMMEDIATE` + `PRAGMA foreign_key_check` per feature-109 p
 | Invariant | Verification |
 |---|---|
 | `.meta.json` content is deterministic function of DB | AC-4.1 — hash-equality two consecutive projections |
+| entity_id parsing audit | `grep -rnE '\.split\(":"\)\|substr\(.*entity_id\|instr\(.*entity_id'` against `plugins/pd/hooks/lib/`, `plugins/pd/mcp/` hits ONLY in `_migration_13_*` functions AND `test_*.py` files. TD-7b lint AC (plan-phase to add). |
 | `docs/backlog.md` content is deterministic function of DB | AC-4.2 |
 | `data_file_guards.json` schema matches dispatcher expectations | AC-7.1 — dispatcher fails fast on schema violation |
 | `entity_display` row count == entities row count | AC-8.2 — `NOT IN` subquery returns 0 |
