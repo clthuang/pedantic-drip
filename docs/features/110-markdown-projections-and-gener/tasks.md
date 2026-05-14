@@ -3,7 +3,8 @@
 - **Project:** P003-entity-system-redesign M3
 - **Plan:** plan.md rev 1 | **Spec:** spec.md rev 4 | **Design:** design.md rev 3
 - **Format note:** tasks use `### Task N.M:` heading convention per implementing-skill parser regex `/^(#{3,4})\s+Task\s+(\d+(?:\.\d+)*):?\s*(.+)$/`
-- **Status:** revision 1
+- **Status:** revision 2 (plan-reviewer iter-1 blockers/warnings resolved)
+- **TDD discipline (mandatory):** Within each Group, tasks are listed in logical order grouped by concern (schema, port, test). Implementers MUST execute RED tests first — write the failing test, run it, confirm it fails, then write the implementation task that makes it pass. Tasks tagged with `**DoD:**` assertions express the GREEN-state contract. The Group's full set of test tasks (e.g., 2.3-2.7) should be written as RED skeletons BEFORE the implementation tasks (e.g., 2.1-2.2) are touched. Implementer-skill is responsible for enforcing this ordering at execution time. Where a test cannot fail-before-scaffold (e.g., it imports a not-yet-defined function), the RED skeleton asserts the import fails — that's the initial RED state.
 
 ## Group 0 — Scaffolding
 
@@ -69,6 +70,14 @@
 - **Why:** AC-5.3
 - **DoD:** Post-migration `PRAGMA user_version = 13` AND `SELECT MAX(version) FROM schema_version = 13` AND `(13, ISO_TS)` row exists.
 
+### Task 2.8: Test single-tx BEGIN IMMEDIATE + FK check pre/post
+- **Why:** AC-5.1
+- **DoD:** Inspect migration function source: BEGIN IMMEDIATE present; PRAGMA foreign_key_check called before AND after the DDL block; both calls return zero rows in healthy fixture; partial-state DB rolls back cleanly on synthetic FK violation.
+
+### Task 2.9: Test runtime PRAGMA table_info introspection aborts on missing column
+- **Why:** AC-5.7
+- **DoD:** Synthetic fixture DB with `metadata` column dropped from entities; migration ABORTS with column-missing error; entity_display table NOT created.
+
 ## Group 3 — Pre-audit + migration_audit_log
 
 ### Task 3.1: Create migration_audit_log table
@@ -115,6 +124,22 @@
 ### Task 5.2: Test _project_meta_json reads from entity_display
 - **Why:** AC-8.5
 - **DoD:** Test deletes `id`/`slug` from `metadata` JSON post-migration, re-projects, asserts `.meta.json` output byte-identical to pre-edit.
+
+### Task 5.3: Test _project_meta_json byte-deterministic
+- **Why:** AC-4.1 (analog to AC-4.2 backlog test)
+- **DoD:** Two consecutive `_project_meta_json(db, engine, type_id)` invocations against unchanged DB state produce byte-identical bytes (SHA256 hash equality). Static-check grep: `_project_meta_json` body contains no `datetime.utcnow()` / `datetime.now()` calls.
+
+### Task 5.4: Test delete .meta.json then regenerate matches pre-delete bytes
+- **Why:** AC-4.3
+- **DoD:** Capture `.meta.json` bytes; delete file; re-invoke `_project_meta_json`; compare bytes byte-for-byte.
+
+### Task 5.5: Test tamper safety — manual edit doesn't affect DB
+- **Why:** AC-4.5
+- **DoD:** Append `"tampered": true` to `.meta.json`. Read `SELECT status FROM entities WHERE type_id = ?` before and after; equal. Re-invoke projection: file content reverts to canonical (no `tampered` key).
+
+### Task 5.6: Test _project_backlog_md import smoke
+- **Why:** AC-1.3
+- **DoD:** `python3 -c "from workflow_state_server import _project_backlog_md; print(callable(_project_backlog_md))"` prints `True`.
 
 ## Group 6 — backfill.py port
 
@@ -184,6 +209,10 @@
 - **Why:** Plan Group 9.6
 - **DoD:** pytest invokes probe + asserts exit 0; OR pytest directly asserts each TD-1 matrix row.
 
+### Task 9.7: Test data_file_guards.json schema parse smoke
+- **Why:** AC-7.1
+- **DoD:** Test `json.loads(open('plugins/pd/hooks/data_file_guards.json').read())` succeeds; result is list with ≥ 2 entries; first entry has `pattern`, `exclude_patterns`, `decision_module`, `mcp_tool_hint` keys.
+
 ## Group 10 — data-file-guard.sh + hooks.json + test migration
 
 ### Task 10.1: Create data-file-guard.sh entrypoint
@@ -205,6 +234,14 @@
 ### Task 10.5: Remove migrated meta-json-guard tests from test-hooks.sh
 - **Why:** Plan Group 10.5
 - **DoD:** `grep -c "meta_json_guard" plugins/pd/hooks/tests/test-hooks.sh` returns 0 post-edit. Total test count in test-hooks.sh reduced by 4.
+
+### Task 10.6: Test hooks.json data-file-guard registered exactly once + meta-json-guard absent
+- **Why:** AC-7.2, AC-7.6
+- **DoD:** `grep -c '"data-file-guard.sh"' plugins/pd/hooks/hooks.json` returns 1; `grep -c '"meta-json-guard.sh"' plugins/pd/hooks/hooks.json` returns 0; `test -f plugins/pd/hooks/meta-json-guard.sh` returns nonzero.
+
+### Task 10.7: Test meta-json deny path (AC-7.3)
+- **Why:** AC-7.3 (parallel to AC-7.4 backlog deny tested in Task 10.4)
+- **DoD:** Hook integration test in `test-data-file-guard.sh`: stdin Write tool call with file_path matching `*.meta.json` (outside projection path) → assert `permissionDecision=deny` AND reason text contains `complete_phase / transition_phase`.
 
 ## Group 11 — AST audit + F4-AUDIT comments
 
@@ -313,6 +350,10 @@
 ### Task 14.8: Test backfilled-entity defense (no entity_created event)
 - **Why:** Plan Group 14.8; Design §4.1 step 3 fallback
 - **DoD:** Fixture entity with `created_at <= base_commit_ts` AND no `phase_events` row with `event_type='entity_created'`; script treats as no-change (does NOT emit row).
+
+### Task 14.9: Test empty-tree branch run emits literal no-changes line
+- **Why:** AC-6.4
+- **DoD:** Fresh repo with empty DB (zero entities); run script; output is the literal `No entity state changes vs {base}` line.
 
 ## Group 15 — Down-migration + AC-5.5 round-trip + TD-7b lint
 

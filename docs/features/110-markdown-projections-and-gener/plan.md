@@ -3,7 +3,7 @@
 - **Spec:** rev 4 | **Design:** rev 3
 - **Sub-features:** F4 (sealed projection write path), F7 (generalized data-file guard), F8 (entity_display table)
 - **Schema baseline:** post-migration-12 (entity_type column dropped; type/kind/lifecycle_class present)
-- **Status:** revision 1
+- **Status:** revision 2 (3 blockers + 7 warnings + 3 suggestions resolved inline)
 
 ## Dependency Graph
 
@@ -28,9 +28,9 @@ Group 8 (_project_backlog_md) ──► Group 12 (backlog writer port + cleanup_
 
 Group 9 (data_file_guards package) ──► Group 10 (data-file-guard.sh + hooks.json)
                                               │
-                                              └──► Group 11 (AST audit + F4-AUDIT comments)
+                                              └──► Group 11 (AST audit + F4-AUDIT comments) [also depends on Groups 8, 12]
 
-Group 14 (pd_state_diff.py + pre-commit modify) — independent of 9/10/11; depends on 5
+Group 14 (pd_state_diff.py + pre-commit modify) — independent of all other Groups (depends only on post-12 schema baseline)
 
 Group 15 (down-migration + AC-5.5 round-trip) — depends on 2,3
 ```
@@ -87,22 +87,23 @@ Group 15 (down-migration + AC-5.5 round-trip) — depends on 2,3
 ### Group 6 — backfill.py port (~20 min)
 - **6.1** Modify `plugins/pd/hooks/lib/entity_registry/backfill.py` to query `entity_display` instead of parsing `entity_id`. Exact old/new text pairs:
 
-**Old (backfill.py — find via grep `re\.match.*entity_id|substr.*entity_id`):**
+**Correction from plan-reviewer iter-1:** Empirical grep confirms `backfill.py` does NOT parse seq/slug from entity_id today. It reads `meta.get("id", "")` at line 491 and `meta.get("slug", ...)` elsewhere (slug comes from metadata JSON). The actual port target is replacing `meta.get("id")`/`meta.get("slug")` reads with entity_display table joins at `backfill.py:491`.
+
+**Old (line 491, verified):**
 ```python
-match = re.match(r"^(\d+)-(.+)", entity_id)
-seq, slug = int(match.group(1)), match.group(2)
+proj_entity_id = meta.get("id", "")
 ```
 
 **New:**
 ```python
-row = conn.execute("SELECT seq, slug FROM entity_display WHERE uuid = ?", (uuid,)).fetchone()
-if row is None:
-    log.warning(f"entity_display row missing for {uuid}; falling back to entity_id parse")
-    match = re.match(r"^(\d+)-(.+)", entity_id)
-    seq, slug = int(match.group(1)), match.group(2)
-else:
-    seq, slug = row["seq"], row["slug"]
+# F4-AUDIT: read seq from entity_display table (FR-8.3c)
+row = conn.execute(
+    "SELECT seq FROM entity_display WHERE uuid = ?", (entity_uuid,)
+).fetchone()
+proj_entity_id = str(row["seq"]) if row else meta.get("id", "")
 ```
+
+**Verification grep post-edit:** `grep -n "meta\.get\(['\"]id\|meta\.get\(['\"]slug" plugins/pd/hooks/lib/entity_registry/backfill.py` returns hits only inside fallback branches (`if row is None`).
 
 ### Group 7 — Rename test + AC-8.6 (~30 min)
 - **7.1** Test `test_entity_display_table.py::test_slug_rename_no_entities_table_drift` (AC-8.6): `UPDATE entity_display SET slug='renamed' WHERE uuid = ?` → assert sqlite3 `.dump` of `entities WHERE uuid = ?` byte-identical pre/post; assert full `phase_events` dump byte-identical.
@@ -129,19 +130,19 @@ else:
 - **10.2** DELETE `plugins/pd/hooks/meta-json-guard.sh` (FR-7.3, AC-7.6).
 - **10.3** Modify `plugins/pd/hooks/hooks.json` (NOT `.claude-plugin/hooks.json` per spec rev-4 correction). Exact old/new:
 
-**Old (find via grep `meta-json-guard`):**
+**Correction from plan-reviewer iter-1:** Empirical grep of `plugins/pd/hooks/hooks.json` reveals env var is `${CLAUDE_PLUGIN_ROOT}` (not `${CLAUDE_PROJECT_DIR}`). The hook path is also relative to plugin root (`hooks/...` not `plugins/pd/hooks/...`).
+
+**Old (verified literal from hooks.json):**
 ```json
-{
-  "hooks": [{"type": "command", "command": "${CLAUDE_PROJECT_DIR}/plugins/pd/hooks/meta-json-guard.sh"}]
-}
+"command": "${CLAUDE_PLUGIN_ROOT}/hooks/meta-json-guard.sh"
 ```
 
 **New:**
 ```json
-{
-  "hooks": [{"type": "command", "command": "${CLAUDE_PROJECT_DIR}/plugins/pd/hooks/data-file-guard.sh"}]
-}
+"command": "${CLAUDE_PLUGIN_ROOT}/hooks/data-file-guard.sh"
 ```
+
+Edit context: include enough surrounding lines (the matcher block) to disambiguate from other hook entries. Use the existing `meta-json-guard.sh` entry's full JSON block as `old_string` for the Edit tool to find a unique match.
 
 - **10.4** Create `plugins/pd/hooks/tests/test-data-file-guard.sh`. Migrate 4 existing meta-json-guard tests from `test-hooks.sh` (FR-7.3 explicit callout); add tests for backlog deny path (AC-7.4); add hot-add test using `PD_DATA_FILE_GUARDS_CONFIG`+`PD_DATA_FILE_GUARDS_LIB` fixtures (AC-7.5); add fail-open venv test (AC-7.8); add project-path exclude test (AC-7.7).
 - **10.5** Remove migrated tests from `plugins/pd/hooks/tests/test-hooks.sh`.
@@ -157,7 +158,7 @@ else:
 - **11.8** Implement `test_audit_writes.py::test_drift_classes_per_td11` (AC-9.1 through AC-9.4 — one assertion per design TD-11 drift class row).
 
 ### Group 12 — Backlog writer port + cleanup_backlog modify (~60 min)
-- **12.1** Modify `plugins/pd/commands/add-to-backlog.md` Step 5 (currently at lines 51-59 per design §1.1) to: (a) `register_entity(entity_type='backlog', entity_id=<next-id>-<slug>, metadata={"format":"table_row", "section":null})`, (b) invoke `_project_backlog_md` to regenerate `docs/backlog.md`. NO direct file Write.
+- **12.1** Modify `plugins/pd/commands/add-to-backlog.md` Step 6 (the `Write to backlog` block at lines 51-59, NOT Step 5 which is the `register_entity` MCP call — verified empirically): replace the direct Write tool block with an invocation of `_project_backlog_md` to regenerate `docs/backlog.md` AFTER the Step 5 `register_entity` call adds the row. Ensure register_entity receives `metadata={"format":"table_row", "section":null, ...}`.
 - **12.2** Modify `plugins/pd/commands/finish-feature.md` Step 5b MED-finding emission (line 414) to use the same pattern: register backlog entries with appropriate `metadata.format` / `section` then re-project.
 - **12.3** Modify `plugins/pd/scripts/cleanup_backlog.py` per design §2.3: route archival through existing `update_entity(type_id, status='archived')` MCP (NO new archive_entity MCP added); call `_project_backlog_md` post-archival.
 - **12.4** Run one-shot backfill parser (Group 8.2 deliverable) against current `docs/backlog.md`: assigns `metadata.format`/`section`/`section_intro`/`subsection` to each existing backlog entity row. Commit the resulting DB state diff.
