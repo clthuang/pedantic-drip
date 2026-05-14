@@ -42,12 +42,17 @@
 
 ## Group 2 — entity_display table + index + backfill
 
+### Task 2.0: Modify register_entity + register_entities_batch + add EntityIdFormatError
+- **Why:** Design §2.3 register_entity row; AC-8.2 1:1 invariant maintenance for new entities post-migration
+- **DoD:** `register_entity` (and `register_entities_batch`) in `plugins/pd/hooks/lib/entity_registry/database.py` modified to ALSO `INSERT INTO entity_display(uuid, seq, slug)` parsing seq/slug from entity_id, in the SAME transaction as the existing entities INSERT. Fail-fast precondition: if entity_id does not match `^\d+-.+` regex, raise `EntityIdFormatError` (new exception class in same module) BEFORE the entities INSERT. Audit test fixtures: `grep -rn "register_entity(" plugins/pd/hooks/lib/entity_registry/test_*.py | grep -vE "[0-9]+-[a-z]"` returns 0 (no non-conformant entity_ids remain). For test fixtures that legitimately need non-standard entity_ids, migrate to `_register_entity_no_display` test-only helper. `grep -c "EntityIdFormatError" plugins/pd/hooks/lib/entity_registry/database.py` returns ≥ 1.
+
 ### Task 2.1: Implement migration 13 body (CREATE TABLE + INDEX + version stamp)
 - **Why:** Plan Group 2.1; Spec FR-8.1, FR-5.1, FR-5.2, FR-5.3
 - **DoD:** Inside `BEGIN IMMEDIATE`: `PRAGMA foreign_key_check` pre-commit; `CREATE TABLE entity_display(uuid PK FK ON DELETE CASCADE, seq INT NOT NULL, slug TEXT NOT NULL)`; `CREATE INDEX idx_entity_display_seq ON entity_display(seq)`; idempotency early-return; `PRAGMA user_version = 13`; INSERT into `schema_version(13, ISO_TS)`; `PRAGMA foreign_key_check` post-commit.
 
 ### Task 2.2: Implement backfill INSERT with runtime PRAGMA introspection
 - **Why:** Plan Group 2.2; FR-8.2, FR-5.6
+- **Execution order note (per task-reviewer iter-2 blocker):** The backfill INSERT in 2.2 MUST run AFTER Group 3's audit (Tasks 3.1-3.3) inside the same transaction. The ordering inside `_migration_13_entity_display` is: (a) pre-flight gate per Task 1.1; (b) CREATE TABLE entity_display per Task 2.1; (c) CREATE TABLE migration_audit_log per Task 3.1; (d) pre-audit query + mismatch logging per Task 3.2; (e) env-var bypass check per Task 3.3 (raise if mismatches > 0 and bypass not set); (f) backfill INSERT (this task); (g) version stamp per Task 2.1 finale. Tasks 2.1 and 3.1-3.3 are scaffolding sub-steps of the same function body; numbering reflects test organization, NOT execution order.
 - **DoD:** Backfill body: `PRAGMA table_info(entities)` discovers columns; asserts presence of `uuid`, `entity_id`, `metadata`; aborts with column-missing error if absent. INSERT uses `CAST(substr(entity_id, 1, instr(entity_id, '-') - 1) AS INTEGER)` for seq, `substr(entity_id, instr(entity_id, '-') + 1)` for slug.
 
 ### Task 2.3: Test entity_display schema after migration
@@ -145,7 +150,7 @@
 
 ### Task 6.1: Port backfill.py entity_id parsing to entity_display query
 - **Why:** Plan Group 6.1; FR-8.3c
-- **DoD:** Replace exact old/new text per plan Group 6.1 spec. Test suite still passes.
+- **DoD:** Replace exact old/new text per plan Group 6.1 spec at `backfill.py:491`. Post-edit verification grep: `grep -n "meta\.get\(['\"]id\|meta\.get\(['\"]slug" plugins/pd/hooks/lib/entity_registry/backfill.py` returns hits ONLY inside fallback branches (`if row is None` blocks). Existing test suite still passes.
 
 ## Group 7 — Rename test (AC-8.6 + AC-8.7)
 
@@ -165,7 +170,7 @@
 
 ### Task 8.2: Implement backfill parser for existing backlog.md
 - **Why:** Plan Group 8.2 / 12.4
-- **DoD:** Script in `plugins/pd/scripts/` parses existing `docs/backlog.md`, assigns `metadata.format`/`section`/`section_intro`/`subsection` to each entity row matching by ID. Updates entities via `update_entity` MCP. Runs once during Group 12.
+- **DoD (Group 8 completion gate):** Script at `plugins/pd/scripts/parse_backlog_md.py` exists; can be invoked dry-run against `docs/backlog.md` without error (parses successfully, classifies each row into format/section/section_intro/subsection, prints summary to stdout). No DB writes in dry-run. Live-DB application is Task 12.4's DoD.
 
 ### Task 8.3: Test backlog projection byte-deterministic
 - **Why:** AC-4.2
@@ -191,7 +196,8 @@
 
 ### Task 9.2: Implement meta_json_decision.py
 - **Why:** Plan Group 9.2
-- **DoD:** `decide(file_path, tool_name, payload) → dict` matching current meta-json-guard.sh decision logic (bootstrap sentinel check, permit/deny). All 4 existing meta-json-guard test paths produce equivalent outputs.
+- **Sentinel logic reference:** Decision logic mirrors existing `plugins/pd/hooks/meta-json-guard.sh:64-109` bootstrap sentinel check: read sentinel from hook context (env var `PD_META_JSON_WRITE_ALLOWED` or file marker); deny if sentinel absent OR stale (>5 min old). Allow path: sentinel valid AND tool_name in `{Write, Edit, NotebookEdit}` AND file_path matches projection write context.
+- **DoD:** `decide(file_path, tool_name, payload) → dict` matching the sentinel reference. All 4 migrated meta-json-guard tests in `test-data-file-guard.sh` (Task 10.4) produce equivalent permit/deny outputs as the original suite did against the bash hook.
 
 ### Task 9.3: Implement backlog_decision.py
 - **Why:** Plan Group 9.3
@@ -255,7 +261,8 @@
 
 ### Task 11.3: Replace _fix_last_completed_phase + _fix_completed_timestamp with MCP wrappers
 - **Why:** Plan Group 11.3; Design TD-11 (corrected symbol names)
-- **DoD:** Both functions at `fix_actions.py:52` and `:87` replaced with bodies that invoke `complete_phase`/`transition_phase` MCP per TD-11 4-drift-class table. Each carries `# F4-AUDIT: MCP-routed (TD-11)` comment.
+- **MCP invocation pattern:** Doctor autofix runs in the same Python process as the MCP server (via `fix_actions.py` being part of `plugins/pd/hooks/lib/doctor/`). Use the in-process `workflow_engine` import: `from workflow_engine.engine import WorkflowStateEngine; engine = WorkflowStateEngine(); engine.complete_phase(feature_type_id, phase)`. Do NOT subprocess. For drift classes that have no direct MCP route, the wrapper returns a WARN-string for the doctor to surface (no autofix).
+- **DoD:** Both functions at `fix_actions.py:52` and `:87` replaced with bodies that invoke `engine.complete_phase`/`engine.transition_phase` per TD-11 4-drift-class table. NO `open(..., 'w')` or `Path.write_text(...)` targeting `.meta.json` in the new bodies (AC-1.1 will assert this via AST walk). Each carries `# F4-AUDIT: MCP-routed (TD-11)` comment.
 
 ### Task 11.4: Add F4-AUDIT comment near _fix_backlog_annotation
 - **Why:** Plan Group 11.4
@@ -281,7 +288,7 @@
 
 ### Task 12.1: Modify add-to-backlog command to register-then-project
 - **Why:** Plan Group 12.1; FR-4.3
-- **DoD:** `plugins/pd/commands/add-to-backlog.md` Step 5 no longer uses Write tool to append to `docs/backlog.md`. Instead calls `register_entity(entity_type='backlog', entity_id=<next-id>-<slug>, metadata={"format":"table_row", "section":null, ...})`. Then invokes `_project_backlog_md` to regenerate file.
+- **DoD:** `plugins/pd/commands/add-to-backlog.md` **Step 6** (the `Write to backlog` block at lines 51-59) no longer uses Write tool to append to `docs/backlog.md`. Step 5 (already `register_entity`) is extended to include `metadata={"format":"table_row", "section":null, ...}` per design TD-10. Step 6 is rewritten to invoke `_project_backlog_md` to regenerate the file.
 
 ### Task 12.2: Modify finish-feature MED-finding emission
 - **Why:** Plan Group 12.2; FR-4.3
@@ -341,7 +348,8 @@
 
 ### Task 14.6: Modify pre-commit-guard.sh per design FR-4.6
 - **Why:** Plan Group 14.6
-- **DoD:** Existing `plugins/pd/hooks/pre-commit-guard.sh` has new block appended AFTER existing branch-protection logic: sources `lib/session-start-helpers.sh` to load venv; invokes `python3 -m pd_state_diff --base ${pd_base_branch:-main}` writing stdout to `${PROJECT_ROOT}/pd-state.diff.md`; on script failure, emits stderr warn-line and exits 0 (does not block commit per AC-6.6).
+- **Base-branch resolution:** `pd_base_branch` is a session-context config variable from `.claude/pd.local.md`, NOT a bash env var (so naive `${pd_base_branch:-main}` shell expansion always falls through). The hook MUST read the config file directly: parse `base_branch:` from `.claude/pd.local.md` via a helper (e.g., `awk` or a new `read_pd_config()` function in `lib/session-start-helpers.sh`). If `base_branch: auto`, resolve via `git remote show origin | grep "HEAD branch"`. For this repo, the resolution returns `develop` (per CLAUDE.md "Base branch for this repo is `develop`").
+- **DoD:** Existing `plugins/pd/hooks/pre-commit-guard.sh` has new block appended AFTER existing branch-protection logic: sources `lib/session-start-helpers.sh` to load venv AND resolves `pd_base_branch` per above; invokes `python3 -m pd_state_diff --base <resolved-base>` writing stdout to `${PROJECT_ROOT}/pd-state.diff.md`; on script failure, emits stderr warn-line and exits 0 (does not block commit per AC-6.6).
 
 ### Task 14.7: Test pre-commit hook emits diff file
 - **Why:** AC-6.3
