@@ -3,7 +3,7 @@
 - **Project:** P003-entity-system-redesign — Milestone M3 (Phase 3 — Projections and Guards)
 - **Depends on:** 109-polymorphic-taxonomy-and-event (post-migration-12 baseline)
 - **Brainstorm source:** `docs/projects/P003-entity-system-redesign/prd.md`
-- **Status:** revision 3 (iter-2: 6 warnings + 3 suggestions resolved inline)
+- **Status:** revision 4 (iter-3 cap-reached: 3 blockers fixed inline post-iter-3 — pathlib.match Python 3.12 gap, phase_events CHECK violation, NOT NULL column gaps)
 
 ## §1 Background and SUT-Verified Baseline
 
@@ -72,7 +72,7 @@ Per the feature-109 KB heuristic *Run codebase-explorer Before Spec Iter-1 for S
   ```json
   [
     {
-      "pattern": "**/.meta.json",
+      "pattern": "*.meta.json",
       "exclude_patterns": ["docs/projects/*/.meta.json"],
       "decision_module": "data_file_guards.meta_json_decision",
       "mcp_tool_hint": "complete_phase / transition_phase"
@@ -84,8 +84,8 @@ Per the feature-109 KB heuristic *Run codebase-explorer Before Spec Iter-1 for S
     }
   ]
   ```
-  Path resolution: config path defaults to `plugins/pd/hooks/data_file_guards.json`, overridable via env var `PD_DATA_FILE_GUARDS_CONFIG`. Decision module import root defaults to `plugins/pd/hooks/lib/`, overridable via `PD_DATA_FILE_GUARDS_LIB`. `exclude_patterns` (optional) excludes paths from the pattern (per §1.1 R1 decision: project-type `.meta.json` writes are out of scope until feature 111).
-- **FR-7.2 — Dispatch loop.** New `plugins/pd/hooks/data-file-guard.sh` reads stdin once, sources `lib/session-start-helpers.sh` to load venv (per §1.1 FR-7 feasibility anchor), invokes `python3 -m data_file_guards.dispatcher <stdin>`. The Python dispatcher iterates config entries in declared order. **Pattern matching uses `pathlib.PurePath(file_path).match(pattern)` (NOT `fnmatch.fnmatch`)** because it correctly handles `**` recursive globs against path separators. For each entry, the match check is: `pathlib.PurePath(file_path).match(pattern)` AND none of `pathlib.PurePath(file_path).match(exclude_p)` for `exclude_p in exclude_patterns`. On first match invokes `decision_module.decide(file_path, tool_name, payload)`. Module import: dispatcher inserts `PD_DATA_FILE_GUARDS_LIB` (default `plugins/pd/hooks/lib/`) into `sys.path[0]`, calls `importlib.import_module(decision_module)`, then restores `sys.path` on exit. Returns `hookSpecificOutput.permissionDecision=deny|allow` per the decision module.
+  Path resolution: config path defaults to `plugins/pd/hooks/data_file_guards.json`, overridable via env var `PD_DATA_FILE_GUARDS_CONFIG`. Decision module import root defaults to `plugins/pd/hooks/lib/`, overridable via `PD_DATA_FILE_GUARDS_LIB`. `exclude_patterns` (optional) excludes paths from the pattern. Patterns use Python stdlib `fnmatch.fnmatch` semantics — `*` matches any character INCLUDING `/`, so `*.meta.json` matches `docs/features/043/.meta.json`. Recursive `**` is intentionally NOT used (Python 3.12 floor per `pyproject.toml`; `pathlib.PurePath.match()` does not support `**` until 3.13's `full_match()`). Project-type exclusion uses the explicit `docs/projects/*/.meta.json` form which fnmatch handles correctly.
+- **FR-7.2 — Dispatch loop.** New `plugins/pd/hooks/data-file-guard.sh` reads stdin once, sources `lib/session-start-helpers.sh` to load venv (per §1.1 FR-7 feasibility anchor), invokes `python3 -m data_file_guards.dispatcher <stdin>`. The Python dispatcher iterates config entries in declared order. **Pattern matching uses `fnmatch.fnmatch(file_path, pattern)`** (Python stdlib, no `**` support, but `*` matches `/`). For each entry, the match check is: `fnmatch.fnmatch(file_path, pattern)` AND none of `fnmatch.fnmatch(file_path, exclude_p)` match for `exclude_p in exclude_patterns`. On first match invokes `decision_module.decide(file_path, tool_name, payload)`. Module import: dispatcher calls `sys.path.insert(0, <PD_DATA_FILE_GUARDS_LIB>)` to prepend the lib directory (NOT overwrite `sys.path[0]`), calls `importlib.import_module(decision_module)`, then `sys.path.pop(0)` on exit (via context manager). Returns `hookSpecificOutput.permissionDecision=deny|allow` per the decision module.
 - **FR-7.3 — Remove `meta-json-guard.sh`.** The file `plugins/pd/hooks/meta-json-guard.sh` is DELETED in the same commit. No shim retained. AC-7.6 enforces.
 - **FR-7.4 — Hook registration.** `plugins/pd/.claude-plugin/hooks.json` registers `data-file-guard.sh` exactly once under `PreToolUse`. The `meta-json-guard.sh` registration entry is removed in the same commit.
 - **FR-7.5 — Hot-add new pattern (config-driven, no script change).** Adding a new entry to `data_file_guards.json` and implementing its decision module under `plugins/pd/hooks/lib/data_file_guards/` requires NO change to `data-file-guard.sh` or the dispatcher. Integration test verifies this via `PD_DATA_FILE_GUARDS_CONFIG` + `PD_DATA_FILE_GUARDS_LIB` env overrides pointing at fixture files in `plugins/pd/hooks/tests/fixtures/`.
@@ -111,7 +111,17 @@ Per the feature-109 KB heuristic *Run codebase-explorer Before Spec Iter-1 for S
   WHERE json_extract(metadata, '$.slug') IS NOT NULL
     AND json_extract(metadata, '$.slug') != substr(entity_id, instr(entity_id, '-') + 1)
   ```
-  Each mismatch row is logged to `migration_13_mismatch_log` (new table). If `count > 0`, migration 13 ABORTS with error message listing UUIDs and instructions to manually reconcile, UNLESS the env var `PD_MIGRATION_13_ACCEPT_ENTITY_ID_WINS=1` is set (acknowledgement gate). When bypass IS set AND mismatches exist, migration ALSO writes a `phase_events` row with `event_type='migration_13_bypass_acknowledged'`, `metadata={"mismatch_count": N, "workspace_uuid": "..."}` to leave permanent forensic evidence (so accidental `.zshrc`-exported bypass cannot silently elide history). AC-8.0 enforces.
+  Migration 13 creates a dedicated forensic table `migration_audit_log`:
+  ```sql
+  CREATE TABLE IF NOT EXISTS migration_audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    migration_version INTEGER NOT NULL,
+    event_type TEXT NOT NULL,        -- e.g. 'mismatch_row', 'bypass_acknowledged'
+    payload TEXT NOT NULL,           -- JSON
+    created_at TEXT NOT NULL
+  );
+  ```
+  Each mismatch row is logged to `migration_audit_log` with `event_type='mismatch_row'` and `payload={"uuid": "...", "entity_id": "...", "meta_id": ..., "meta_slug": "..."}`. If mismatch `count > 0`, migration 13 ABORTS with error message listing UUIDs and instructions to manually reconcile, UNLESS the env var `PD_MIGRATION_13_ACCEPT_ENTITY_ID_WINS=1` is set (acknowledgement gate). When bypass IS set AND mismatches exist, migration ALSO writes a `migration_audit_log` row with `event_type='bypass_acknowledged'`, `payload={"mismatch_count": N, "user": $(whoami), "ts": <ISO>}` to leave permanent forensic evidence (so accidental `.zshrc`-exported bypass cannot silently elide history). Note: rev-3 originally proposed `phase_events`, but post-migration-12 the `phase_events.event_type` CHECK constraint only permits 7 values and the INSERT would fail. Dedicated `migration_audit_log` avoids the scope creep of widening the existing constraint. AC-8.0 enforces.
 - **FR-8.2 — Backfill at migration time.** Migration 13 populates `entity_display` for every row in `entities` by parsing `entities.entity_id` (format `{seq}-{slug}`). `seq` = numeric prefix; `slug` = suffix after first `-`. Pre-audit (FR-8.2-pre) guarantees `metadata['slug']` matches `entity_id` suffix, so the choice is unambiguous.
 - **FR-8.3 — Port the four caller sites:**
   - `database.py:899-906 scan_entity_ids`: replace regex-on-`entity_id` with `SELECT COALESCE(MAX(seq), 0) FROM entity_display d JOIN entities e ON d.uuid = e.uuid WHERE e.workspace_uuid = ?`.
@@ -120,14 +130,14 @@ Per the feature-109 KB heuristic *Run codebase-explorer Before Spec Iter-1 for S
   - `show-status.md:99,124`: skill prose update to reference `entity_display`.
 - **FR-8.4 — Rename without rewrite.** AC-8.6 enforces: `UPDATE entity_display SET slug='renamed' WHERE uuid = ?` changes `.meta.json` projection output's `slug` field BUT leaves `entities` and `phase_events` tables byte-identical at the SQL dump level.
 - **FR-8.5 — Identity stability under rename.** AC-8.7 enforces: after slug rename, `parent_uuid` references from child entities still resolve correctly.
-- **FR-8.6 — Down-migration.** `MIGRATIONS_DOWN[13]` drops `entity_display` table + `idx_entity_display_seq` index. Drops the `migration_13_mismatch_log` table if present. Source-code restore is via git history (per feature-109 precedent).
+- **FR-8.6 — Down-migration.** `MIGRATIONS_DOWN[13]` drops `entity_display` table + `idx_entity_display_seq` index. Drops the `migration_audit_log` table if present. Source-code restore is via git history (per feature-109 precedent).
 
 ### FR-5 — Migration 13 safety
 
 - **FR-5.1 — Single-transaction discipline.** Migration 13 wraps all DDL + audit + backfill in `BEGIN IMMEDIATE` with `PRAGMA foreign_key_check` pre- and post-commit. On any check failure, rollback and surface the error.
 - **FR-5.2 — Idempotency.** Re-running migration 13 against `schema_version=13` is a no-op (early return inside transaction).
 - **FR-5.3 — Schema version stamp.** Migration 13 sets `PRAGMA user_version = 13` AND `INSERT INTO schema_version (version, applied_at) VALUES (13, ?)` inside the same transaction.
-- **FR-5.4 — Reverse migration.** `MIGRATIONS_DOWN[13]` drops `entity_display`, `idx_entity_display_seq`, and `migration_13_mismatch_log` if present.
+- **FR-5.4 — Reverse migration.** `MIGRATIONS_DOWN[13]` drops `entity_display`, `idx_entity_display_seq`, and `migration_audit_log` if present.
 - **FR-5.5 — Pre-flight schema gate.** Migration 13 first asserts ALL of: (a) `PRAGMA user_version` returns 12 (NOT 11 or less); (b) `SELECT MAX(version) FROM schema_version` returns 12 AND equals `user_version` (cross-check pragma vs table — divergence surfaces as a distinct error: "schema_version table / user_version pragma disagree"); (c) `PRAGMA table_info(entities)` returns the 14-column post-12 layout with `entity_type` ABSENT AND `type`/`kind`/`lifecycle_class` PRESENT. Each assertion that fails ABORTS with a phase-specific error pointing at feature-109's deferred live-DB remediation. No partial-state mutation.
 - **FR-5.6 — Runtime schema introspection (no hardcoded column lists in backfill SELECT).** Migration 13's backfill SQL uses `PRAGMA table_info(entities)` to verify `uuid`, `entity_id`, `metadata` columns exist before issuing any SELECT. If expected columns absent, ABORT with error. No hardcoded column-list assumptions in backfill code.
 
@@ -183,7 +193,7 @@ Per the feature-109 KB heuristic *Run codebase-explorer Before Spec Iter-1 for S
 
 ### AC-8.x — entity_display table
 
-- **AC-8.0** Pre-migration mismatch audit (FR-8.2-pre): the audit query returns 0 rows on a clean fixture DB. On a DB with synthetic mismatch (manually edit `metadata` JSON to differ from `entity_id` suffix), migration ABORTS unless `PD_MIGRATION_13_ACCEPT_ENTITY_ID_WINS=1` is set. With the env set, migration proceeds and writes the mismatch to `migration_13_mismatch_log`.
+- **AC-8.0** Pre-migration mismatch audit (FR-8.2-pre): the audit query returns 0 rows on a clean fixture DB. On a DB with synthetic mismatch (manually edit `metadata` JSON to differ from `entity_id` suffix), migration ABORTS unless `PD_MIGRATION_13_ACCEPT_ENTITY_ID_WINS=1` is set. With the env set, migration proceeds AND writes one `migration_audit_log` row per mismatch (event_type='mismatch_row') plus a single `bypass_acknowledged` row capturing mismatch_count + user + timestamp.
 - **AC-8.1** Post-migration: `PRAGMA table_info(entity_display)` returns columns `uuid`, `seq`, `slug`. Index `idx_entity_display_seq` exists per `sqlite_master`.
 - **AC-8.2** Post-migration: every row in `entities` has a corresponding row in `entity_display` joined on `uuid` (`SELECT COUNT(*) FROM entities WHERE uuid NOT IN (SELECT uuid FROM entity_display)` returns 0).
 - **AC-8.3** Backfill correctness: for each row, `entity_display.seq` = `CAST(substr(entities.entity_id, 1, instr(entities.entity_id, '-') - 1) AS INTEGER)` AND `entity_display.slug` = `substr(entities.entity_id, instr(entities.entity_id, '-') + 1)`. Test runs this SQL and asserts zero divergence rows.
