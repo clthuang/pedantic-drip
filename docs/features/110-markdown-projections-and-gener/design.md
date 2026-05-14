@@ -3,9 +3,23 @@
 - **Project:** P003-entity-system-redesign M3
 - **Spec:** docs/features/110-markdown-projections-and-gener/spec.md (rev 4)
 - **Schema baseline:** post-migration-12 (entities has type/kind/lifecycle_class, no entity_type)
-- **Status:** revision 1
+- **Status:** revision 2 (6 design-iter-1 blockers resolved inline)
 
-## §0 Prior Art Research
+## §0 Prior Art Research — including AST orthogonality with feature-109
+
+**AST orthogonality with feature-109's `check_status_write_path`:** Feature 109's AST check audits SQL writes against `_PERMITTED_ENCLOSING_DEFS = {append_phase_event, upsert_workflow_phase, update_workflow_phase, create_workflow_phase, update_entity, check_status_write_path}`. Feature 110's `test_audit_writes.py` audits `.meta.json` file writes against `{_project_meta_json, _write_meta_json_fallback, init_project_state}`. **Orthogonality verified:**
+- `_project_meta_json` reads entities only (no UPDATE/INSERT to entities/workflow_phases/phase_events) → does NOT trigger feature-109 check.
+- `append_phase_event` writes only to `entities` (status update) + `phase_events` (event row) — does NOT write to `.meta.json` → does NOT trigger feature-110 check.
+- The two allow-lists are disjoint by construction; no function appears in both, no cross-list conflict.
+
+The two AST walks may be consolidated in a future refactor (parse files once, run two assertion sets) but design 110 keeps them separate for clarity. Plan-phase adds an explicit AC verifying orthogonality is maintained.
+
+**Spec rev-4 corrections re-verification scrutiny:** Spec rev-4 added 3 inline post-iter-3 fixes (fnmatch revert, migration_audit_log, NOT NULL columns) WITHOUT a 4th adversarial spec-review iteration. Design phase applies extra scrutiny:
+- (a) fnmatch `*` semantics — verified empirically in TD-1 matrix; probe script `plugins/pd/hooks/tests/probe_fnmatch.py` (new) commits the test cases.
+- (b) `phase_events` CHECK constraint — verified at `database.py:3402-3406` per spec-reviewer iter-3 finding; 7 values are `{started, completed, skipped, backward, entity_created, entity_status_changed, entity_promoted}`. Migration 13's `migration_audit_log` table avoids needing to widen this. No further verification needed.
+- (c) NOT NULL columns — N/A: migration_audit_log replaces phase_events for forensic logging; the NOT NULL gaps on phase_events are bypassed entirely.
+
+
 
 **Codebase precedents (no external research needed — patterns established):**
 
@@ -122,7 +136,9 @@ Feature 110 lands three loosely-coupled sub-features under a single feature dire
 | `plugins/pd/hooks/lib/doctor/fix_actions.py` | Replace `_fix_update_meta_json` body with MCP-invoking wrapper; `_fix_annotate_backlog` add `# F4-AUDIT: annotation-only` comment. |
 | `plugins/pd/skills/add-to-backlog.md` (command) | Replace direct `Write` call with: `register_entity(entity_type='backlog', ...)` then call to projection. |
 | `plugins/pd/commands/finish-feature.md` Step 5b MED-finding emission | Same pattern: register backlog entries via DB then re-project. |
-| `plugins/pd/scripts/cleanup_backlog.py` | **Removed** — behavior moves to DB `status='archived'` flag with projection emitting under separate section. |
+| `plugins/pd/scripts/cleanup_backlog.py` | **Modified, NOT removed.** Continues to perform archival but ROUTES THROUGH NEW MCP `archive_entity(uuid)` instead of file writes. After archival, calls `_project_backlog_md` to regenerate `docs/backlog.md` (which excludes `status='archived'` rows). |
+| `plugins/pd/mcp/entity_server.py` | **Modified.** Add new MCP tool `archive_entity(type_id)` that transitions entity `status='active' \| 'open'` → `'archived'` via `update_entity` + appends `entity_status_changed` phase_event. This is the canonical active→archived transition trigger. |
+| `plugins/pd/hooks/lib/entity_registry/database.py register_entity` | **Modified.** ALSO inserts into `entity_display(uuid, seq, slug)` parsing seq/slug from entity_id. Same transaction as the existing entities INSERT. Maintains AC-8.2 1:1 invariant for NEW entities post-migration-13. `register_entities_batch` similarly modified. |
 | `plugins/pd/commands/show-status.md` | Update prose to reference `entity_display` (FR-8.3 skill update). |
 
 ### 2.4 Configuration files
@@ -244,6 +260,24 @@ def import_decision(module_name: str, lib_dir: str):
 
 **Rationale:** Per memory KB anti-pattern "Hardcoded Schema Column Lists in Migration Steps" (feature 109).
 
+### TD-7b — entity_id parsing audit (class-fix grep)
+
+**Decision:** FR-8.3's 4-caller enumeration is the design-time identified scope; plan-phase MUST add an audit-task to grep for ALL `entity_id`-suffix-parsing call sites and classify each as (a) port to entity_display, (b) confirms out-of-scope (type_id parsing only, not seq/slug semantics), or (c) test fixture.
+
+**Audit grep pattern** (for plan-phase task):
+```bash
+grep -rnE '\.split\(":"\)|\.partition\(":"\)|substr\(.*entity_id|instr\(.*entity_id|re\.match.*entity_id' \
+  plugins/pd/hooks/lib/ plugins/pd/mcp/ \
+  | grep -v 'test_' | grep -v 'migration_13'
+```
+
+**Known sites beyond the spec FR-8.3 enumeration** (from design-reviewer iter-1):
+- `entity_status.py:229, :249` — splits on `:` separator (type_id parsing, NOT seq/slug semantics) → out-of-scope (b).
+- `frontmatter_inject.py:101` — partition on `:` → out-of-scope (b).
+- `database.py:5210` (rename path) — split for rename → in-scope, port to entity_display (a).
+
+**Lint AC (new, added to spec FR-8.3 via design):** post-feature, the above grep returns hits ONLY in (i) `_migration_13_*` functions and (ii) test files. Any other hit is a regression.
+
 ### TD-8 — Down-migration is runtime-only
 
 **Decision:** `MIGRATIONS_DOWN[13]` only drops runtime artifacts (`entity_display`, `idx_entity_display_seq`, `migration_audit_log` if present). Source-code restore of removed callers (e.g., `cleanup_backlog.py`) is via git history.
@@ -268,34 +302,46 @@ Total: 2 changed, 1 added, 0 removed.
 
 If no changes: `No entity state changes vs {base}`. uuid truncated to first 8 chars for readability.
 
-### TD-10 — Backlog projection deterministic ordering
+### TD-10 — Backlog projection deterministic ordering (matches existing flat-table shape)
 
-**Decision:** `_project_backlog_md` orders rows by `id` integer ascending (extracted from `entity_id` of backlog entities; entity_id format `{seq}-{slug}` where `seq` is the 5-digit zero-padded backlog ID).
+**Decision:** `_project_backlog_md` emits a flat top-level table matching the EXISTING `docs/backlog.md` shape byte-for-byte (verified against current file: single `| ID | Timestamp | Description |` table sorted by ID ascending; per-feature `## From Feature N ...` sections appear lower as additional sections AFTER the main table, with rows in that section also in ID order).
 
-**Section structure:**
+**Section structure (v1 — matches existing file):**
 - `# Backlog` header
-- `| ID | Timestamp | Description |` table header
-- Active rows (`status='active'` OR `status='open'`) in ID ascending order
-- `## Archived` section for `status='archived'` rows in ID descending order (newest archived first)
-- `## From Feature {N} Pre-Release QA Findings ({date})` sections — per-feature-grouped MED findings (preserves the existing finish-feature.md emit pattern)
+- `| ID | Timestamp | Description |` flat top-level table — ALL non-section rows sorted by ID ascending. Description column contains any free-text annotations (e.g., `(closed: ...)`, `(promoted → feature:N)`).
+- `## From Feature {N} Pre-Release QA Findings ({date})` sections — per-feature-grouped MED findings, sorted by ID ascending within section, sections in order of appearance in DB (oldest section first).
 
-Section ordering metadata is stored as `entity.metadata.section` (e.g., `"section": "From Feature 109 Pre-Release QA Findings"`). Same-section rows are sorted by ID within their section.
+**No `## Archived` separate section in v1.** Archive logic deferred to per-row `(closed: ...)` annotation in description text (matches existing convention). The `status='archived'` flag (FR-4.3 `cleanup_backlog.py` archival behavior) controls whether the row appears in the main table; archived rows are EXCLUDED from the main table output (matching existing cleanup behavior where archived rows are moved to `docs/backlog-archive.md`).
 
-### TD-11 — Doctor autofix replacement strategy
+**Source fields:**
+- `id` column: `entities.entity_id` numeric prefix (5-digit zero-padded).
+- `timestamp` column: `entities.created_at` (ISO 8601).
+- `description` column: `entities.name` (which carries the free-text description, including any `(closed: ...)` annotations).
+- Section grouping: `entities.metadata.section` JSON field (NULL = flat top table). Backfilled during migration 13 by parsing the current `docs/backlog.md` once and assigning section context.
 
-**Decision:** `_fix_update_meta_json` is replaced by `_fix_meta_json_via_mcp(drift_type, feature_dir)`:
+**Backfill rule for `metadata.section`:** A one-shot parser reads existing `docs/backlog.md`. For each row found:
+- If the row appears under a `## From Feature N ...` header, set `metadata.section` to that header text.
+- Otherwise (top-level table), set `metadata.section = null`.
+Parser runs as part of migration 13 (or as a separate Group 0 task — plan-phase decides Group placement, NOT algorithm choice).
 
-| Drift type | Action |
-|---|---|
-| `lastCompletedPhase mismatch` | Invoke `complete_phase(feature_type_id, <correct_phase>)` MCP — triggers projection. |
-| `status mismatch (DB has 'completed', file has 'active')` | Invoke `complete_phase(..., phase='finish')`. |
-| `unknown drift class` | Downgrade to WARN-only finding; doctor surfaces to user but does NOT autofix. |
+**Byte-equality verification:** A pre-merge AC (AC-4.2a, added to spec via design phase) requires that running `_project_backlog_md` against the post-migration DB produces a file whose `diff -u` against the current `docs/backlog.md` shows ONLY pre-enumerated intentional changes (e.g., no whitespace drift). The current file is the authoritative shape baseline.
 
-Specific drift classes recognized by the existing autofix should be enumerated in plan phase as ACs.
+### TD-11 — Doctor autofix replacement strategy (drift classes enumerated)
+
+**Decision:** `_fix_update_meta_json` is replaced by `_fix_meta_json_via_mcp(drift_type, feature_dir)`. The existing `_fix_update_meta_json` (per SUT-explorer survey: `plugins/pd/hooks/lib/doctor/fix_actions.py:53-95`) handles drift cases by direct `.meta.json` write. Audited drift classes (enumerated in design rev-2, NOT punted to plan):
+
+| Drift class | Detection trigger | New autofix action |
+|---|---|---|
+| `lastCompletedPhase mismatch` | `entities.metadata.lastCompletedPhase != entity.last_completed_phase` (from DB) | Invoke `complete_phase(feature_type_id, <DB phase>)` MCP — triggers projection that overwrites `.meta.json`. |
+| `status mismatch (DB completed, file active)` | DB entity status='completed' AND file says 'active' | Invoke `complete_phase(..., phase='finish')` (canonical finish transition). |
+| `branch field stale` | `entities.metadata.branch != git current branch for this feature` | Re-project via `_project_meta_json` (triggers branch-field refresh from DB). No state change. |
+| `unknown drift class` (any other discrepancy) | Anything not in the above 3 classes | Doctor emits WARN-only finding pointing user to the appropriate MCP. Does NOT autofix. |
+
+Plan-phase will add one AC per row of this table (4 ACs under AC-1.x or new AC-9.x). The unknown-drift case is the safety net — when in doubt, surface to user rather than guess.
 
 ## §4 Interfaces
 
-### 4.1 `pd_state_diff.py` CLI
+### 4.1 `pd_state_diff.py` CLI — algorithm committed
 
 ```
 $ python -m pd_state_diff --base develop
@@ -303,14 +349,35 @@ $ python -m pd_state_diff --base develop
 [exit 0 on success; exit 0 on any failure with stderr warning]
 ```
 
-Implementation: reads DB via existing `EntityDatabase` connection, compares HEAD entity state to base by checking `git show <base>:<entity_path>/.meta.json` for each feature (but since .meta.json will be gitignored, we read from DB only — DB has timestamps; entities created since base have `created_at > base_commit_time`).
+**Algorithm (committed in design, NOT punted to plan):**
 
-**Actually correction:** Since .meta.json is gitignored, base-branch comparison cannot use the file. Algorithm:
-1. Query current DB: `SELECT uuid, type_id, status, workflow_phase, parent_type_id, updated_at FROM entities LEFT JOIN workflow_phases USING (type_id)`.
-2. Identify rows where `updated_at > base_commit_time`. Compare against state as-of base by querying `phase_events` for each entity to reconstruct status at base_commit_time.
-3. Emit rows with computed change marker.
+The DB is the source of truth. `.meta.json` is gitignored so file-diff is impossible. The algorithm is **phase_events replay against a base-commit-timestamp horizon**:
 
-(This is more complex than the spec's simple "diff HEAD vs base" framing. Plan phase resolves the implementation choice.)
+1. Resolve `base_commit_ts` = output of `git log -1 --format=%aI <base>` (ISO 8601 timestamp of HEAD on base branch).
+2. Query current entity state from DB:
+   ```sql
+   SELECT e.uuid, e.type_id, e.status, e.parent_type_id,
+          wp.workflow_phase, e.updated_at
+   FROM entities e
+   LEFT JOIN workflow_phases wp ON wp.type_id = e.type_id
+   ORDER BY e.uuid
+   ```
+3. For each entity, compute base-time state by replaying `phase_events`:
+   ```sql
+   SELECT event_type, payload, phase, timestamp
+   FROM phase_events
+   WHERE entity_uuid = ? AND timestamp <= ?
+   ORDER BY timestamp ASC
+   ```
+   Apply events in order: `entity_created` → set base-existed=True, status='active'; `entity_status_changed` → update status; `started`/`completed` → update workflow_phase; `entity_promoted` → update type_id.
+4. Compare base-time state against current state. Emit row per entity with change marker per TD-9.
+5. Entities with `created_at > base_commit_ts` are `(added)`; entities whose base-time state existed but current state has them at terminal `archived` are `(removed)` from active view.
+
+**Performance bound:** Per AC-6.5 median-of-5 < 500ms on a 500-row DB. Replay cost is O(events_per_entity × 500). Empirically: post-feature-109, average events_per_entity is ~5-15 for feature-type entities. Total query count: 1 (current state) + 500 (replay queries) = 501 prepared SQL executions. Plan-phase MUST add a benchmark task using fixture DB.
+
+**Failure path:** If `git log -1 <base>` returns nonzero (base ref missing), script writes `pd-state diff unavailable: base ref '{base}' not found` to output AND exits 0 (AC-6.6).
+
+**Concurrent commit safety:** Output file write uses `os.replace(tmp_path, final_path)` atomic rename (TD-5 row "Concurrent commit invocation").
 
 ### 4.2 `data-file-guard.sh` contract
 
