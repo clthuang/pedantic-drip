@@ -2,9 +2,16 @@
   "id": "110",
   "slug": "markdown-projections-and-gener",
   "mode": "standard",
-  "status": "planned",
+  "status": "active",
   "created": "2026-05-10T07:38:19.291452+00:00",
   "branch": "planned",
-  "lastCompletedPhase": null,
-  "phases": {}
+  "lastCompletedPhase": "brainstorm",
+  "phases": {
+    "brainstorm": {
+      "started": "2026-05-14T06:49:55.437282+00:00",
+      "completed": "2026-05-14T06:50:17.974489+00:00",
+      "iterations": 1,
+      "reviewerNotes": "Brainstorm artifact = parent project PRD at docs/projects/P003-entity-system-redesign/prd.md. Scope crystallized via project decomposition: F4 (gitignore .meta.json + backlog.md, regenerate on demand, emit pd-state.diff.md generator), F7 (generalized data-file guard hook with config table path_pattern \u2192 mcp_tool_hint), F8 (entity_display table separating identity from display metadata \u2014 UUID is identity, seq+slug are decoration). Per P003 roadmap M3 \u2014 Phase 3 Projections and Guards. Persistent decomposition warning acknowledged: 110 bundles projection (read-path) + guard (write-path) responsibilities, deferred unless >800 LOC at create-plan time."
+    }
+  }
 }
