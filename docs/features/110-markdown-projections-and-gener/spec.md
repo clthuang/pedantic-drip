@@ -3,7 +3,7 @@
 - **Project:** P003-entity-system-redesign — Milestone M3 (Phase 3 — Projections and Guards)
 - **Depends on:** 109-polymorphic-taxonomy-and-event (post-migration-12 baseline)
 - **Brainstorm source:** `docs/projects/P003-entity-system-redesign/prd.md`
-- **Status:** revision 2 (4 blockers + 8 warnings + 2 suggestions resolved)
+- **Status:** revision 3 (iter-2: 6 warnings + 3 suggestions resolved inline)
 
 ## §1 Background and SUT-Verified Baseline
 
@@ -62,8 +62,8 @@ Per the feature-109 KB heuristic *Run codebase-explorer Before Spec Iter-1 for S
   - `cleanup_backlog.py:165`: REMOVED. The cleanup-archival behavior moves to a DB `status='archived'` flag; projection emits archived rows under a separate section.
   - `fix_actions.py:150-159 _fix_annotate_backlog`: retain WITH `# F4-AUDIT: annotation-only; not a state mutation` comment.
 - **FR-4.4 — Determinism + idempotency.** Projection functions MUST source all timestamp fields from `entities.updated_at`/`entities.created_at` columns (read from DB row state, NEVER from `datetime.utcnow()` at projection time). Two consecutive invocations against unchanged DB state produce byte-identical output (sorted keys, fixed line endings, stable section ordering). Volatile fields enumerated: NONE (every field traces to a DB column).
-- **FR-4.5 — Gitignore + tracked-copy removal.** Add `**/.meta.json` and `docs/backlog.md` to `.gitignore`. SAME commit runs `git rm --cached docs/features/*/.meta.json` (132 files per §1.1 SUT pin) and `git rm --cached docs/backlog.md`. Working-tree copies are untouched (regenerable via projection).
-- **FR-4.6 — `pd-state.diff.md` generator (gitignored local artifact).** New script `plugins/pd/scripts/pd_state_diff.py` emits a markdown diff of (uuid, type_id, status, workflow_phase, parent_type_id) between HEAD and base branch. Wired into `pre-commit-guard.sh` which writes the file to repo root for local PR-prep. **`pd-state.diff.md` is added to `.gitignore` per AC-6.3 — it is NOT committed.** No `finish-feature.md` Step 5 integration (prior rev-1 wording removed).
+- **FR-4.5 — Gitignore + tracked-copy removal.** Add `**/.meta.json` and `docs/backlog.md` to `.gitignore`. SAME commit runs `git rm --cached docs/features/*/.meta.json` (132 files per §1.1 SUT pin) and `git rm --cached docs/backlog.md`. Working-tree copies are untouched (regenerable via projection). If `git ls-files docs/features/*/.meta.json` returns zero files (fresh worktree edge case), the `git rm --cached` step is skipped (no-op); the intent is to remove only currently-tracked copies. Same defense for `docs/backlog.md`.
+- **FR-4.6 — `pd-state.diff.md` generator (gitignored local artifact).** New script `plugins/pd/scripts/pd_state_diff.py` emits a markdown diff of (uuid, type_id, status, workflow_phase, parent_type_id) between HEAD and base branch. **`pre-commit-guard.sh` already exists at `plugins/pd/hooks/pre-commit-guard.sh`** (per §1.1 SUT survey row "Existing meta-json-guard.sh" sibling entry — confirmed via Bash tool grep: it intercepts the Bash tool with `git commit` command). FR-4.6 MODIFIES `pre-commit-guard.sh` to additionally invoke `pd_state_diff.py` (via plugin venv) and write `pd-state.diff.md` to repo root. **`pd-state.diff.md` is added to `.gitignore` per AC-6.3 — it is NOT committed.** No `finish-feature.md` Step 5 integration.
 - **FR-4.7 — Hand-editing safety.** Deleting `.meta.json` files does NOT change any row in `entities`, `workflow_phases`, or `phase_events`. AC-4.5 enforces.
 
 ### FR-7 — Generalized data-file guard
@@ -72,8 +72,8 @@ Per the feature-109 KB heuristic *Run codebase-explorer Before Spec Iter-1 for S
   ```json
   [
     {
-      "pattern": "*.meta.json",
-      "exclude_patterns": ["docs/projects/**/.meta.json"],
+      "pattern": "**/.meta.json",
+      "exclude_patterns": ["docs/projects/*/.meta.json"],
       "decision_module": "data_file_guards.meta_json_decision",
       "mcp_tool_hint": "complete_phase / transition_phase"
     },
@@ -84,8 +84,8 @@ Per the feature-109 KB heuristic *Run codebase-explorer Before Spec Iter-1 for S
     }
   ]
   ```
-  Path resolution: config path defaults to `plugins/pd/hooks/data_file_guards.json`, overridable via env var `PD_DATA_FILE_GUARDS_CONFIG`. Decision module import root defaults to `plugins/pd/hooks/lib/`, overridable via `PD_DATA_FILE_GUARDS_LIB`. `exclude_patterns` (optional) excludes paths from the pattern (per §1.1 R1: `docs/projects/**/.meta.json` excluded so project-type writers continue working without trigger).
-- **FR-7.2 — Dispatch loop.** New `plugins/pd/hooks/data-file-guard.sh` reads stdin once, sources `lib/session-start-helpers.sh` to load venv (per §1.1 FR-7 feasibility anchor), invokes `python3 -m data_file_guards.dispatcher <stdin>`. The Python dispatcher iterates config entries in declared order, runs `fnmatch.fnmatch(file_path, pattern)` AND none-of `exclude_patterns` match, and on first match invokes `decision_module.decide(file_path, tool_name, payload)`. Returns `hookSpecificOutput.permissionDecision=deny|allow` per the decision module.
+  Path resolution: config path defaults to `plugins/pd/hooks/data_file_guards.json`, overridable via env var `PD_DATA_FILE_GUARDS_CONFIG`. Decision module import root defaults to `plugins/pd/hooks/lib/`, overridable via `PD_DATA_FILE_GUARDS_LIB`. `exclude_patterns` (optional) excludes paths from the pattern (per §1.1 R1 decision: project-type `.meta.json` writes are out of scope until feature 111).
+- **FR-7.2 — Dispatch loop.** New `plugins/pd/hooks/data-file-guard.sh` reads stdin once, sources `lib/session-start-helpers.sh` to load venv (per §1.1 FR-7 feasibility anchor), invokes `python3 -m data_file_guards.dispatcher <stdin>`. The Python dispatcher iterates config entries in declared order. **Pattern matching uses `pathlib.PurePath(file_path).match(pattern)` (NOT `fnmatch.fnmatch`)** because it correctly handles `**` recursive globs against path separators. For each entry, the match check is: `pathlib.PurePath(file_path).match(pattern)` AND none of `pathlib.PurePath(file_path).match(exclude_p)` for `exclude_p in exclude_patterns`. On first match invokes `decision_module.decide(file_path, tool_name, payload)`. Module import: dispatcher inserts `PD_DATA_FILE_GUARDS_LIB` (default `plugins/pd/hooks/lib/`) into `sys.path[0]`, calls `importlib.import_module(decision_module)`, then restores `sys.path` on exit. Returns `hookSpecificOutput.permissionDecision=deny|allow` per the decision module.
 - **FR-7.3 — Remove `meta-json-guard.sh`.** The file `plugins/pd/hooks/meta-json-guard.sh` is DELETED in the same commit. No shim retained. AC-7.6 enforces.
 - **FR-7.4 — Hook registration.** `plugins/pd/.claude-plugin/hooks.json` registers `data-file-guard.sh` exactly once under `PreToolUse`. The `meta-json-guard.sh` registration entry is removed in the same commit.
 - **FR-7.5 — Hot-add new pattern (config-driven, no script change).** Adding a new entry to `data_file_guards.json` and implementing its decision module under `plugins/pd/hooks/lib/data_file_guards/` requires NO change to `data-file-guard.sh` or the dispatcher. Integration test verifies this via `PD_DATA_FILE_GUARDS_CONFIG` + `PD_DATA_FILE_GUARDS_LIB` env overrides pointing at fixture files in `plugins/pd/hooks/tests/fixtures/`.
@@ -111,7 +111,7 @@ Per the feature-109 KB heuristic *Run codebase-explorer Before Spec Iter-1 for S
   WHERE json_extract(metadata, '$.slug') IS NOT NULL
     AND json_extract(metadata, '$.slug') != substr(entity_id, instr(entity_id, '-') + 1)
   ```
-  Each mismatch row is logged to `migration_13_mismatch_log` (new table or `phase_events` row with `event_type='migration_audit'`). If `count > 0`, migration 13 ABORTS with error message listing UUIDs and instructions to manually reconcile, UNLESS the env var `PD_MIGRATION_13_ACCEPT_ENTITY_ID_WINS=1` is set (acknowledgement gate). AC-8.0 enforces.
+  Each mismatch row is logged to `migration_13_mismatch_log` (new table). If `count > 0`, migration 13 ABORTS with error message listing UUIDs and instructions to manually reconcile, UNLESS the env var `PD_MIGRATION_13_ACCEPT_ENTITY_ID_WINS=1` is set (acknowledgement gate). When bypass IS set AND mismatches exist, migration ALSO writes a `phase_events` row with `event_type='migration_13_bypass_acknowledged'`, `metadata={"mismatch_count": N, "workspace_uuid": "..."}` to leave permanent forensic evidence (so accidental `.zshrc`-exported bypass cannot silently elide history). AC-8.0 enforces.
 - **FR-8.2 — Backfill at migration time.** Migration 13 populates `entity_display` for every row in `entities` by parsing `entities.entity_id` (format `{seq}-{slug}`). `seq` = numeric prefix; `slug` = suffix after first `-`. Pre-audit (FR-8.2-pre) guarantees `metadata['slug']` matches `entity_id` suffix, so the choice is unambiguous.
 - **FR-8.3 — Port the four caller sites:**
   - `database.py:899-906 scan_entity_ids`: replace regex-on-`entity_id` with `SELECT COALESCE(MAX(seq), 0) FROM entity_display d JOIN entities e ON d.uuid = e.uuid WHERE e.workspace_uuid = ?`.
@@ -128,14 +128,14 @@ Per the feature-109 KB heuristic *Run codebase-explorer Before Spec Iter-1 for S
 - **FR-5.2 — Idempotency.** Re-running migration 13 against `schema_version=13` is a no-op (early return inside transaction).
 - **FR-5.3 — Schema version stamp.** Migration 13 sets `PRAGMA user_version = 13` AND `INSERT INTO schema_version (version, applied_at) VALUES (13, ?)` inside the same transaction.
 - **FR-5.4 — Reverse migration.** `MIGRATIONS_DOWN[13]` drops `entity_display`, `idx_entity_display_seq`, and `migration_13_mismatch_log` if present.
-- **FR-5.5 — Pre-flight schema gate.** Migration 13 first asserts (a) `PRAGMA user_version` returns 12 (NOT 11 or less); (b) `PRAGMA table_info(entities)` returns the 14-column post-12 layout with `entity_type` ABSENT, `type`/`kind`/`lifecycle_class` PRESENT. If gate fails, migration ABORTS with explicit error pointing at feature-109's deferred live-DB remediation. No partial-state mutation.
+- **FR-5.5 — Pre-flight schema gate.** Migration 13 first asserts ALL of: (a) `PRAGMA user_version` returns 12 (NOT 11 or less); (b) `SELECT MAX(version) FROM schema_version` returns 12 AND equals `user_version` (cross-check pragma vs table — divergence surfaces as a distinct error: "schema_version table / user_version pragma disagree"); (c) `PRAGMA table_info(entities)` returns the 14-column post-12 layout with `entity_type` ABSENT AND `type`/`kind`/`lifecycle_class` PRESENT. Each assertion that fails ABORTS with a phase-specific error pointing at feature-109's deferred live-DB remediation. No partial-state mutation.
 - **FR-5.6 — Runtime schema introspection (no hardcoded column lists in backfill SELECT).** Migration 13's backfill SQL uses `PRAGMA table_info(entities)` to verify `uuid`, `entity_id`, `metadata` columns exist before issuing any SELECT. If expected columns absent, ABORT with error. No hardcoded column-list assumptions in backfill code.
 
 ## §4 Acceptance Criteria
 
 ### AC-1.x — Code-surface acceptance (AST-based, per feature-109 KB pattern)
 
-- **AC-1.1** AST test `test_audit_writes.py::test_no_unaudited_meta_json_writes` walks `plugins/pd/hooks/lib/workflow_engine/`, `plugins/pd/mcp/`, `plugins/pd/hooks/lib/doctor/` (excludes `*/tests/*`). For every `Call` node targeting `.meta.json` writes (matches `open(...,'w')`, `Path(...).write_text(...)`, `json.dump(fp, ...)` with `fp` opened on a `.meta.json` path), assert the enclosing function name is one of the FR-4.1 allow-list: `_project_meta_json`, `_write_meta_json_fallback`, `init_project_state`. Any other match FAILS the test. Each allow-listed match must also have a `# F4-AUDIT:` comment within 5 lines (AC-1.1b).
+- **AC-1.1** AST test `test_audit_writes.py::test_no_unaudited_meta_json_writes` walks `plugins/pd/hooks/lib/workflow_engine/`, `plugins/pd/mcp/`, `plugins/pd/hooks/lib/doctor/` (excludes `*/tests/*`). For every `Call` node targeting `.meta.json` writes (matches `open(..., 'w')`, `Path(...).write_text(...)`, `json.dump(fp, ...)` where `fp` was opened on a `.meta.json` path **within the same function body**), assert the enclosing function name is one of the FR-4.1 allow-list: `_project_meta_json`, `_write_meta_json_fallback`, `init_project_state`. Any other match FAILS the test. Each allow-listed match must also have a `# F4-AUDIT:` comment within 5 lines (AC-1.1b). **Known limitation:** cross-function `fp` passing (a helper opens `fp` on `.meta.json` and another function calls `json.dump(fp, ...)`) is NOT detected by this AST walk; the proximity-comment requirement (AC-1.1b) catches such cases via human-review during PR.
 - **AC-1.2** AST test `test_audit_writes.py::test_no_unaudited_backlog_md_writes` similarly walks for `backlog.md` writes; allow-list is `_project_backlog_md`, `_fix_annotate_backlog`. (Other writes must be replaced by FR-4.3 to call `_project_backlog_md`.)
 - **AC-1.3** `python3 -c "from workflow_state_server import _project_backlog_md; print(callable(_project_backlog_md))"` prints `True` after install. (Module path matches actual import root.)
 - **AC-1.4** `cat .gitignore | grep -E "^\*\*/\.meta\.json$"` returns 1 match AND `cat .gitignore | grep -E "^docs/backlog\.md$"` returns 1 match AND `cat .gitignore | grep -E "^pd-state\.diff\.md$"` returns 1 match.
@@ -156,7 +156,9 @@ Per the feature-109 KB heuristic *Run codebase-explorer Before Spec Iter-1 for S
 - **AC-5.3** `PRAGMA user_version` returns 13 post-migration. `schema_version` table has row `(13, <iso ts>)`.
 - **AC-5.4** `MIGRATIONS_DOWN[13]` drops the three artifacts (`entity_display`, `idx_entity_display_seq`, `migration_13_mismatch_log` if present). Post-down: `PRAGMA user_version` returns 12.
 - **AC-5.5** Round-trip safety: up → down on a 100-row fixture DB leaves `entities`, `workflow_phases`, `phase_events` byte-identical (sqlite3 `.dump` compare).
-- **AC-5.6** Pre-flight gate (FR-5.5): synthetic test using a stale-schema DB (entity_type column present, type/kind absent) asserts migration 13 ABORTS with error containing the phrase "feature 109" before any DDL is issued. DB state unchanged after the failed run.
+- **AC-5.6** Pre-flight gate (FR-5.5): synthetic test using a stale-schema DB (entity_type column present, type/kind absent — migration 12 never ran) asserts migration 13 ABORTS with error containing the phrase "feature 109" before any DDL is issued. DB state unchanged after the failed run.
+- **AC-5.6b** Pre-flight gate, partial-migration shape: synthetic test with a fixture where `entity_type` column present AND `type`/`kind`/`lifecycle_class` ALSO present (migration-12-partially-applied state) asserts migration 13 ABORTS via the same FR-5.5 gate. Confirms both stale-shape branches are exercised.
+- **AC-5.6c** Pre-flight gate, version divergence: fixture where `PRAGMA user_version = 12` but `SELECT MAX(version) FROM schema_version = 11` (or vice versa) asserts migration 13 ABORTS with the specific "schema_version table / user_version pragma disagree" error.
 - **AC-5.7** Runtime introspection (FR-5.6): backfill SQL uses `PRAGMA table_info` results to validate column presence. Synthetic test: drop `metadata` column from a fixture DB → migration aborts with column-missing error; entity_display table is NOT created.
 
 ### AC-6.x — `pd-state.diff.md` generator (gitignored)
@@ -165,7 +167,7 @@ Per the feature-109 KB heuristic *Run codebase-explorer Before Spec Iter-1 for S
 - **AC-6.2** Same script run after a synthetic `register_entity` produces a row containing the new uuid, type_id, status=`active`, parent_type_id (or empty), and an `(added)` marker.
 - **AC-6.3** `pre-commit-guard.sh` invokes `pd_state_diff.py` (via plugin venv) and writes `pd-state.diff.md` BEFORE the commit completes. The file is **gitignored** (FR-4.6 / AC-1.4 enforces). Not committed.
 - **AC-6.4** Empty-tree branch run shows literal `No entity state changes vs {base}`.
-- **AC-6.5** Performance: `time python plugins/pd/scripts/pd_state_diff.py --base develop` against a 500-row fixture DB completes in < 500 ms (measured wall-clock). Test fails if exceeded.
+- **AC-6.5** Performance (median-of-5 with warm-up): one warm-up invocation followed by 5 timed invocations of `python plugins/pd/scripts/pd_state_diff.py --base develop` against a 500-row fixture DB. **Median wall-clock < 500 ms** (resists CI noisy-neighbor variance). Hard outlier cap: no single run exceeds 1500 ms. Harness modeled on `plugins/pd/hooks/tests/bench-session-start.sh` pattern (per feature-107 NFR2 KB).
 - **AC-6.6** Missing-base graceful degrade: if the base branch ref is absent (e.g., fresh clone with no `develop` ref), script emits `pd-state diff unavailable: base ref '{base}' not found` to `pd-state.diff.md` and exits 0. Does NOT block the commit.
 
 ### AC-7.x — Generalized guard
@@ -176,7 +178,8 @@ Per the feature-109 KB heuristic *Run codebase-explorer Before Spec Iter-1 for S
 - **AC-7.4** Write/Edit of `docs/backlog.md` outside the projection path is denied; reason text contains `/pd:add-to-backlog` OR `update via DB then re-project`.
 - **AC-7.5** Hot-add (config-driven): integration test sets `PD_DATA_FILE_GUARDS_CONFIG=plugins/pd/hooks/tests/fixtures/test_data_file_guards.json` and `PD_DATA_FILE_GUARDS_LIB=plugins/pd/hooks/tests/fixtures/`, adds a `test_fixture.md` pattern with a fixture decision module, runs the dispatch hook with a Write tool input on `test_fixture.md`, asserts the deny path executes. `data-file-guard.sh` is NOT modified (git diff is empty for that file in the test setup).
 - **AC-7.6** File `plugins/pd/hooks/meta-json-guard.sh` does NOT exist in tree post-feature (`test -f` returns nonzero).
-- **AC-7.7** `docs/projects/**/.meta.json` paths are NOT denied (per `exclude_patterns`); regression test exercises project-type write and verifies the hook permits.
+- **AC-7.7** `docs/projects/*/.meta.json` paths are NOT denied (per `exclude_patterns`); regression test exercises project-type write and verifies the hook permits.
+- **AC-7.8** venv fallback (R6): if `session-start-helpers.sh` venv discovery fails (synthetic test: `PATH` cleared, no `python3` in environment), `data-file-guard.sh` MUST exit 0 with `permissionDecision: allow` (fail-open). Test asserts no `permissionDecision: deny` emitted under this failure mode.
 
 ### AC-8.x — entity_display table
 
@@ -209,10 +212,10 @@ Per the feature-109 KB heuristic *Run codebase-explorer Before Spec Iter-1 for S
 
 ## §7 Open Risks
 
-- **R3 — Backfill mismatch (FR-8.2-pre).** Addressed by mandatory pre-audit + abort-unless-acknowledged env var. Residual risk: env-var bypass on a busy DB hides drift. Plan phase to add post-migration verification log.
-- **R4 — `pd-state.diff.md` performance.** Capped at 500ms per AC-6.5. If exceeded, design decides async-defer pattern (e.g., compute lazily during PR creation rather than every commit).
+- **R3 — Backfill mismatch (FR-8.2-pre).** Addressed by mandatory pre-audit + abort-unless-acknowledged env var + forensic `phase_events` row on bypass. Residual risk: a malicious actor with DB write access could delete the forensic event; not in threat model.
+- **R4 — `pd-state.diff.md` performance.** Capped at 500ms median with 1500ms outlier cap per AC-6.5. If exceeded under real-world load, design decides async-defer pattern.
 - **R5 — Doctor autofix regression (FR-4.1 _fix_update_meta_json).** Replacement may not handle all drift modes; degraded WARN-only fallback is documented. Plan must include explicit AC for each drift mode currently autofixed.
-- **R6 — venv-from-bash bootstrap (FR-7.2).** Decision-module dispatch loads venv from `session-start-helpers.sh` precedent. If venv path discovery fails under hook context, dispatch must degrade to allow (fail-open) rather than block writes. Plan to add fallback AC.
+- **R6 — venv-from-bash bootstrap (FR-7.2).** Decision-module dispatch loads venv from `session-start-helpers.sh` precedent. If venv path discovery fails under hook context, dispatch MUST degrade to allow (fail-open) rather than block writes. AC-7.8 enforces this fallback.
 
 ## §8 Verification Mapping
 
