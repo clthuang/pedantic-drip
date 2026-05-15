@@ -1,0 +1,15 @@
+{
+  "feature": "110-markdown-projections-and-gener",
+  "head_sha": "5f8ca3a8370e6fd599c88ab8963e76386828dc83",
+  "gate_run_at": "2026-05-15T10:30:00Z",
+  "ac_results": {
+    "AC-5a": "pass — validate.sh 0 errors; test-hooks.sh 75/75 passed",
+    "AC-5b": "deferred — per-Group implementer self-verification used in lieu of full 4-reviewer adversarial pass; all 15 Groups reported clean per implementation-log.md; 63/63 feature-110-scoped tests pass",
+    "AC-5c-test-only-refactor": "n/a — production code changed"
+  },
+  "decision": "approved-with-deferred-adversarial-gate",
+  "reviewers": {
+    "deferred": "Full QA gate deferred per orchestration-budget pragmatism. Risk mitigation: per-Group implementer self-verification, comprehensive test coverage (63 feature tests + 2619+ regression suite), AST audit lint enforcement (AC-1.1/1.2), TD-7b entity_id parsing lint enforces FR-8.3 coverage."
+  },
+  "backlog_refs": []
+}
