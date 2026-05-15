@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.18.0] - 2026-05-15
+
 ### Added
 
 - **`entity_display` table** (feature 110) — new SQLite table `entity_display(uuid, seq, slug)` separates identity from display metadata. Migration 13 adds the table atomically; `register_entity` and `register_entities_batch` INSERT into it on every entity registration.
