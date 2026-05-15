@@ -114,7 +114,7 @@ Each Group's task list below is split into RED-first (tests) then GREEN (product
 
 **Additions:**
 - `_KIND_TO_TYPE_LIFECYCLE` at database.py:48: add `'bug': ('work', 'bug_flow')`; remap `'task': ('work', 'task_flow')`.
-- `_VALID_PARAMS` at database.py:4442: add `'spawned_child': {'metadata'}`. **Also `_REQUIRED_PARAMS` at database.py:4452: add `'spawned_child': {'metadata'}`** (per plan-reviewer iter 2 W4 — preserves audit-trail guarantee that spawned_child events carry the required metadata payload).
+- `_VALID_PARAMS` at database.py:4442: add `'spawned_child': {'metadata'}`. (NOTE: `_REQUIRED_PARAMS` row INTENTIONALLY OMITTED per plan-reviewer iter 3 S3 — issue_spawn is the only caller and FR-9.3 guarantees metadata at the application layer; DB-layer enforcement deferred until a non-issue_spawn caller needs it.)
 - `_CLOSES_TERMINAL` (NEW module-level dict at database.py near `_KIND_TO_TYPE_LIFECYCLE`): `{'bug_flow': 'closed', 'task_flow': 'closed', 'work_flow': 'dropped'}`.
 - `VALID_ENTITY_TYPES` tuple at database.py:4534: add `'bug'` (9 values total).
 - `EntityNotFoundError(ValueError)` + `InvalidCloseTargetError(ValueError)` near EntityExistsError at :4484.

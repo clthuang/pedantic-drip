@@ -136,7 +136,7 @@
   - After register_entity(entity_type='bug', auto_id, status='open'): entities row has correct triple; NO workflow_phases row
   - Direct `update_entity(bug_uuid, status='resolved')` succeeds; no workflow_phases write
   - closes= on a status='open' bug → status='closed' + entity_relations row + NO workflow_phases gain
-  - `transition_entity_phase(type_id='bug:X', ...)` raises ValueError with substring "uses status-only lifecycle"
+  - `transition_entity_phase(type_id='bug:X', ...)` raises ValueError with substring `"invalid_entity_type"` AND substring `"bug"` (matches existing `entity_lifecycle.py:148` raise; resolves B.2-vs-B.15 alignment per plan-reviewer iter 3 W1)
 - **Done when:** Tests written; running them FAILS.
 - **Time:** 20 min
 
@@ -150,7 +150,7 @@
 
 ### Task B.4 — RED: Extend test_entity_lifecycle.py for AC-BL.7
 - **File:** `plugins/pd/hooks/lib/entity_registry/test_entity_lifecycle.py`
-- **What:** Add 1-2 tests asserting `transition_entity_phase(type_id='bug:X', workflow_phase='resolved', ...)` raises ValueError with substring "uses status-only lifecycle".
+- **What:** Add 1-2 tests asserting `transition_entity_phase(type_id='bug:X', workflow_phase='resolved', ...)` raises ValueError with substring `"invalid_entity_type"` AND `"bug"` (matches existing entity_lifecycle.py:148 raise — no new production code needed).
 - **Done when:** Tests added; FAIL.
 - **Time:** 5 min
 
@@ -180,11 +180,11 @@
 - **Done when:** Dict has 9 rows; tests B.2 row referencing bug/task pass.
 - **Time:** 3 min
 
-### Task B.9 — GREEN: Extend `_VALID_PARAMS` AND `_REQUIRED_PARAMS`
-- **File:** `database.py:4442` (_VALID_PARAMS) and `:4452` (_REQUIRED_PARAMS)
-- **What:** Add `'spawned_child': {'metadata'}` to BOTH dicts. The `_REQUIRED_PARAMS` row enforces that `spawned_child` events MUST carry metadata (prevents future callers from writing NULL-metadata audit-trail rows). Per plan-reviewer iter 2 W4.
-- **Done when:** Both dicts have new row. Test asserting `append_phase_event(event_type='spawned_child', metadata=None)` raises ValueError passes (added to test_status_only_lifecycle.py).
-- **Time:** 4 min
+### Task B.9 — GREEN: Extend `_VALID_PARAMS` only (downgrade per iter-3 S3)
+- **File:** `database.py:4442` (_VALID_PARAMS)
+- **What:** Add `'spawned_child': {'metadata'}` to `_VALID_PARAMS`. Do NOT add to `_REQUIRED_PARAMS` — `issue_spawn` (the only caller) always passes metadata per FR-9.3 contract, so application-layer guarantees are sufficient without DB-layer enforcement. If a future caller emits spawned_child events, they can add the _REQUIRED_PARAMS row when needed.
+- **Done when:** _VALID_PARAMS dict has 8 rows including new 'spawned_child' entry.
+- **Time:** 3 min
 
 ### Task B.10 — GREEN: Extend `VALID_ENTITY_TYPES` tuple
 - **File:** `database.py:4534`
@@ -260,8 +260,8 @@
 - **Time:** 25 min
 
 ### Task C.3 — Verify check_status_write_path
-- **What:** Run the doctor AST check against entity_server.py: `cd plugins/pd && .venv/bin/python -m doctor check_status_write_path` (or whatever the invocation is per existing doctor patterns).
-- **Done when:** Check passes (issue_spawn uses append_phase_event for parent events, no direct phase_events INSERT).
+- **What:** Run the doctor suite that includes check_status_write_path (it runs at session start via `__init__.py:CHECK_ORDER`). Observe PASS for entity_server.py changes. Invocation: `cd plugins/pd && .venv/bin/python -m doctor` (or whatever the existing CLI is — `grep "check_status_write_path" plugins/pd/hooks/lib/doctor/__init__.py` shows the entry point if direct invocation needed). The AST check is grep-based and runs over `entity_server.py` regardless.
+- **Done when:** Check passes (issue_spawn uses `db.append_phase_event` for parent events; no direct `phase_events` INSERT statements in the new code).
 - **Time:** 3 min
 
 ### Task C.4 — Commit Group C
@@ -374,9 +374,9 @@
 
 ### Task E.4b — DELETE: Free-text parsers at reconciliation_orchestrator/entity_status.py:14-18 (5th-site cleanup per Pin G trigger)
 - **File:** `plugins/pd/hooks/lib/reconciliation_orchestrator/entity_status.py`
-- **What:** DELETE `CLOSED_RE`, `PROMOTED_RE`, `FIXED_RE`, `NAME_STRIP_RE` regex compilations at lines 14-18. Migrate consumers at `:320, :322, :324, :329`: the prior marker→status mapping (closed:→dropped, fixed:→dropped, promoted →→promoted) is replaced by reading `entities.status` directly (already authoritative post-feature-109). Strip the marker text from any cosmetic name display via a name-cleanup migration (one-time, not on every read) — if applicable to AC, otherwise leave existing name text intact (markers remain in entity.name but parser never reads them).
-- **Done when:** Grep at AC-CL.1 returns 0 hits against this file. Consumers at :320-329 successfully read from DB without parser involvement.
-- **Time:** 12 min
+- **What:** DELETE `CLOSED_RE`, `PROMOTED_RE`, `FIXED_RE`, `NAME_STRIP_RE` regex compilations at lines 14-18. Migrate consumers at `:320, :322, :324, :329`: the prior marker→status mapping (closed:→dropped, fixed:→dropped, promoted →→promoted) is replaced by reading `entities.status` directly (already authoritative post-feature-109). **OUT OF SCOPE — entity.name marker text remains intact post-cleanup; only the parser regexes and their consumers are removed. Future feature handles name normalization if needed (no AC requires it in feature 111).**
+- **Done when:** Grep at AC-CL.1 returns 0 hits against this file. Consumers at :320-329 successfully read from DB without parser involvement. entity.name strings unchanged.
+- **Time:** 10 min
 
 ### Task E.5 — Migrate test_backfill.py fixtures
 - **File:** `plugins/pd/hooks/lib/entity_registry/test_backfill.py:981, 992, 1037`
