@@ -32,7 +32,12 @@ if _hooks_lib not in (os.path.normpath(p) for p in sys.path):
 from server_lifecycle import write_pid, remove_pid, start_parent_watchdog
 from sqlite_retry import with_retry, is_transient
 
-from entity_registry.database import EntityDatabase
+from entity_registry.database import (
+    EntityDatabase,
+    EntityNotFoundError,
+    InvalidCloseTargetError,
+    _CLOSES_TERMINAL,
+)
 from entity_registry.project_identity import _compute_legacy_project_id, resolve_workspace_uuid
 from entity_registry.entity_lifecycle import (
     init_entity_workflow as _lib_init_entity_workflow,
@@ -829,6 +834,36 @@ _ENTITY_RECOVERY_HINTS = {
 }
 
 
+def _catch_close_errors(func):
+    """Map feature 111 closure exceptions to structured MCP error envelopes.
+
+    EntityNotFoundError and InvalidCloseTargetError subclass ValueError so
+    they'd otherwise be swallowed by ``_catch_value_error`` and translated
+    to generic ``invalid_transition`` / ``feature_not_found`` envelopes.
+
+    This decorator goes INSIDE ``_catch_value_error`` so it catches the
+    specific subclasses first. Per spec FR-EX.3 / AC-EX.2, the envelope
+    shape is ``{error: true, error_type: <lowercased_classname>, message: ...}``.
+    """
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except EntityNotFoundError as exc:
+            return _make_error(
+                "entitynotfounderror",
+                str(exc),
+                "Verify the caller's type_id and all closes= uuids exist",
+            )
+        except InvalidCloseTargetError as exc:
+            return _make_error(
+                "invalidclosetargeterror",
+                str(exc),
+                "Inspect closure target lifecycle_class / workspace / prior closer",
+            )
+    return wrapper
+
+
 def _catch_entity_value_error(func):
     """Map entity-related ValueErrors to structured error dicts."""
     @functools.wraps(func)
@@ -856,10 +891,14 @@ def _with_retry(**kwargs):
     Applied INSIDE _with_error_handling so retries happen before
     the error is converted to a terminal MCP response.
 
-    Decorator stacking order:
+    Decorator stacking order (full stack, outermost first):
       @_with_error_handling    <- outer: catches final exception, returns JSON error
       _with_retry()            <- middle: retries transient errors before they reach outer
-      @_catch_value_error      <- inner: converts ValueError to structured error
+      @_catch_value_error      <- middle: converts generic ValueError to structured error
+      @_catch_close_errors     <- innermost (feature 111): catches the specific
+                                  EntityNotFoundError / InvalidCloseTargetError
+                                  subclasses BEFORE the generic _catch_value_error
+                                  swallows them as ``invalid_transition``.
       def _process_foo(...)
     """
     return with_retry("workflow-state", **kwargs)
@@ -1083,6 +1122,7 @@ def _check_artifact_completeness(
 @_with_error_handling
 @_with_retry()
 @_catch_value_error
+@_catch_close_errors
 def _process_complete_phase(
     engine: WorkflowStateEngine,
     feature_type_id: str,
@@ -1091,12 +1131,19 @@ def _process_complete_phase(
     iterations: int | None = None,
     reviewer_notes: str | None = None,
     entity_engine: EntityWorkflowEngine | None = None,
+    closes: list[str] | None = None,
 ) -> str:
     # Task 3.4: Route through EntityWorkflowEngine for cascade support.
     # If entity_engine is available, use it (handles frozen engine delegation
     # + cascade internally). Fall back to frozen engine if not wired yet.
     completion = None
     warning = None
+
+    # Feature 111 F10 — closes= state. closes_applied is the response field
+    # listing the uuids that were closed (or already-closed-by-same-closer
+    # on idempotent replay). Empty when closes is None or [].
+    closes_list: list[str] = list(closes) if closes else []
+    closes_applied: list[str] = []
 
     # Feature 088 FR-2.4: entry-point reviewer_notes size guard.
     if reviewer_notes and len(reviewer_notes) > 10000:
@@ -1125,6 +1172,25 @@ def _process_complete_phase(
     # First db.get_entity for UUID resolution stays OUTSIDE transaction
     if db is not None:
         with db.transaction():
+            # Feature 111 F10 (FR-10.2) — caller-resolution gate. When closes=
+            # is non-empty, resolve the caller's from_uuid BEFORE any other
+            # writes so EntityNotFoundError can fire before the engine's
+            # generic "Feature not found" ValueError (which would otherwise
+            # be re-translated to feature_not_found by _catch_value_error).
+            # Per AC-10.9: caller not registered raises BEFORE any writes.
+            from_uuid: str | None = None
+            caller_workspace_uuid: str | None = None
+            if closes_list:
+                _caller_ws = _workspace_uuid or ""
+                from_uuid, caller_workspace_uuid = db.resolve_entity_uuid(
+                    _caller_ws, feature_type_id,
+                )
+                if from_uuid is None:
+                    raise EntityNotFoundError(
+                        f"complete_phase: caller not registered: "
+                        f"{feature_type_id}"
+                    )
+
             if entity_engine is not None:
                 entity = db.get_entity(feature_type_id)
                 if entity is not None:
@@ -1196,6 +1262,110 @@ def _process_complete_phase(
                 status = "completed" if phase == "finish" else "active"
                 kanban = derive_kanban(status, state.current_phase)
                 db.update_workflow_phase(feature_type_id, kanban_column=kanban)
+
+            # Feature 111 F10 — closes=[...] atomic closure block. Sibling
+            # (NOT nested) of the feature-kanban block above: closure fires for
+            # ANY caller kind when closes_list is non-empty (not just features).
+            # Caller's `completed` phase_event dual-write at lines ~1217-1244
+            # STAYS OUTSIDE the transaction per feature 088 FR-5.1 ("MUST NOT
+            # roll back"). Mixed semantics: closure side atomic, caller side
+            # best-effort dual-write. Implementation per design IF-2 + plan §1.1.
+            if closes_list:
+                # FR-10.2 caller resolution was performed at the top of the
+                # transaction (above). from_uuid + caller_workspace_uuid are
+                # both non-None here (else EntityNotFoundError already raised).
+                assert from_uuid is not None and caller_workspace_uuid is not None
+
+                # FR-10.3 steps 2-4 — validate each closure target.
+                closure_targets: list[tuple[str, str, str, str, bool]] = []
+                for to_uuid in closes_list:
+                    row = db.get_entity_by_uuid(to_uuid)
+                    if row is None:
+                        raise EntityNotFoundError(
+                            f"complete_phase: closure target not found: "
+                            f"{to_uuid}"
+                        )
+                    if row.get("workspace_uuid") != caller_workspace_uuid:
+                        raise InvalidCloseTargetError(
+                            f"complete_phase: cross-workspace closure "
+                            f"forbidden: {to_uuid} is in workspace "
+                            f"{row.get('workspace_uuid')}, caller is in "
+                            f"{caller_workspace_uuid}"
+                        )
+                    lc = row.get("lifecycle_class")
+                    if lc not in _CLOSES_TERMINAL:
+                        if lc == "feature_flow":
+                            raise InvalidCloseTargetError(
+                                f"complete_phase: feature entities cannot be "
+                                f"closed via closes=; use "
+                                f"complete_phase('finish') directly: {to_uuid}"
+                            )
+                        raise InvalidCloseTargetError(
+                            f"complete_phase: lifecycle_class {lc} not "
+                            f"closable via closes=: {to_uuid}"
+                        )
+                    terminal = _CLOSES_TERMINAL[lc]
+
+                    # FR-10.3 step 4 — terminal-status idempotency check.
+                    is_replay = False
+                    if row.get("status") == terminal:
+                        prior_from_uuid = db.get_prior_closer(to_uuid)
+                        if prior_from_uuid is None:
+                            raise InvalidCloseTargetError(
+                                f"complete_phase: {to_uuid} already terminal "
+                                f"but no closer record"
+                            )
+                        if prior_from_uuid != from_uuid:
+                            raise InvalidCloseTargetError(
+                                f"complete_phase: {to_uuid} already closed "
+                                f"by different closer ({prior_from_uuid}); "
+                                f"cannot re-close from {from_uuid}"
+                            )
+                        is_replay = True
+                    # NB: status != terminal AND status != 'open' (e.g., bug
+                    # at 'resolved') falls through — closure overwrites status
+                    # with terminal. Deliberate state-machine bypass per
+                    # spec AC-10.11 + TD-4.
+
+                    closure_targets.append(
+                        (to_uuid, row["type_id"], row.get("status") or "",
+                         terminal, is_replay)
+                    )
+
+                # FR-10.3 step 6 — transition non-replay closed entities.
+                _target_project_id = _resolve_project_id(entity) if entity else "__unknown__"
+                for to_uuid, target_type_id, old_status, terminal, is_replay in closure_targets:
+                    if not is_replay:
+                        db.update_entity(
+                            to_uuid,
+                            status=terminal,
+                            workspace_uuid=caller_workspace_uuid,
+                        )
+                        db.append_phase_event(
+                            type_id=target_type_id,
+                            project_id=_target_project_id,
+                            workspace_uuid=caller_workspace_uuid,
+                            event_type="entity_status_changed",
+                            phase=None,
+                            metadata={
+                                "old_status": old_status,
+                                "new_status": terminal,
+                                "closed_by_uuid": from_uuid,
+                            },
+                        )
+
+                # FR-10.3 step 7 — INSERT entity_relations idempotently.
+                # closes_applied append is UNCONDITIONAL (includes replay path
+                # per FR-10.6); on_conflict='ignore' returns False but the
+                # uuid is still in closes_applied.
+                for to_uuid, _, _, _, _ in closure_targets:
+                    db.insert_entity_relation(
+                        from_uuid=from_uuid,
+                        to_uuid=to_uuid,
+                        kind="fixes",
+                        on_conflict="ignore",
+                    )
+                    closes_applied.append(to_uuid)
     else:
         state = engine.complete_phase(feature_type_id, phase)
 
@@ -1291,6 +1461,11 @@ def _process_complete_phase(
             )
             if digest:
                 result["memory_refresh"] = digest
+
+    # Feature 111 F10 — surface closes= results on the response (FR-10.6).
+    # Empty list when closes was None or []. Augmented with uuids that were
+    # actually written (including idempotent-replay path per FR-10.6).
+    result["closes_applied"] = closes_applied
 
     return json.dumps(result)
 
@@ -1812,8 +1987,14 @@ async def complete_phase(
     iterations: int | None = None,
     reviewer_notes: str | None = None,
     ref: str | None = None,
+    closes: list[str] | None = None,
 ) -> str:
-    """Record a phase as completed and advance to next phase."""
+    """Record a phase as completed and advance to next phase.
+
+    Feature 111 F10 — optional ``closes=[uuid, ...]`` atomically closes the
+    referenced entities (bug/task/backlog) in the same transaction and writes
+    ``entity_relations(kind='fixes')`` linkage rows. See spec FR-10.x.
+    """
     err = _check_db_available()
     if err:
         return err
@@ -1827,6 +2008,7 @@ async def complete_phase(
         _engine, resolved, phase,
         db=_db, iterations=iterations, reviewer_notes=reviewer_notes,
         entity_engine=_entity_engine,
+        closes=closes,
     )
 
 

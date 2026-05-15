@@ -4,7 +4,6 @@ from __future__ import annotations
 import glob
 import json
 import os
-import re
 import sqlite3
 import subprocess
 import time
@@ -965,7 +964,16 @@ def check_backlog_status(
 ) -> CheckResult:
     """Check 4: Backlog Status Consistency.
 
-    Parse backlog.md for (promoted -> ...) annotations and cross-ref entity DB.
+    Feature 111 / FR-CL.2: free-text suffix parsers removed.
+    ``entities.status`` is authoritative; closure linkage lives in
+    ``entity_relations``.
+
+    Post-cleanup behavior:
+        * If backlog.md is missing, passes (no surface to check).
+        * Surface backlog entities whose status is ``'dropped'`` but have
+          NO corresponding ``entity_relations(to_uuid=<backlog>, kind='fixes')``
+          row (i.e. closed without an audit trail). Severity: info.
+        * No backlog.md parsing whatsoever.
     """
     start = time.monotonic()
     issues: list[Issue] = []
@@ -980,130 +988,49 @@ def check_backlog_status(
             elapsed_ms=elapsed,
         )
 
-    # Parse backlog.md for promoted annotations
-    annotated_ids: set[str] = set()
-    content = ""
-    try:
-        with open(backlog_path) as f:
-            content = f.read()
-
-        # Match lines with (promoted -> ...) or (promoted-> ...)
-        # Pattern: look for (promoted → or (promoted -> or (promoted->
-        promoted_pattern = re.compile(
-            r"\(promoted\s*(?:→|->)\s*([^)]*)\)", re.IGNORECASE
-        )
-        # Match lines with (closed: ...), (fixed: ...), (already implemented ...)
-        closed_pattern = re.compile(
-            r"\((?:closed|fixed|already implemented)[:\s—]", re.IGNORECASE
-        )
-        # Also try to extract backlog ID from the line
-        # Backlog lines typically have an ID like BL-001 or a number
-        id_pattern = re.compile(r"(?:BL-?)?(\d+)", re.IGNORECASE)
-
-        closed_ids: set[str] = set()
-        for line in content.splitlines():
-            match = promoted_pattern.search(line)
-            if match:
-                # Try to extract a backlog ID from the line
-                id_match = id_pattern.search(line)
-                if id_match:
-                    backlog_id = id_match.group(0)
-                    annotated_ids.add(backlog_id)
-            elif closed_pattern.search(line):
-                id_match = id_pattern.search(line)
-                if id_match:
-                    closed_ids.add(id_match.group(0))
-    except (OSError, IOError):
-        pass
-
-    if not annotated_ids and not closed_ids and not content.strip():
-        # Empty backlog — passes
-        elapsed = int((time.monotonic() - start) * 1000)
-        return CheckResult(
-            name="backlog_status",
-            passed=True,
-            issues=issues,
-            elapsed_ms=elapsed,
-        )
-
-    # Cross-ref annotated IDs with entity DB
-    for backlog_id in annotated_ids:
-        type_id = f"backlog:{backlog_id}"
-        try:
-            row = entities_conn.execute(
-                "SELECT status FROM entities WHERE type_id = ?", (type_id,)
-            ).fetchone()
-            if row:
-                db_status = row[0] or ""
-                if db_status != "promoted":
-                    issues.append(Issue(
-                        check="backlog_status",
-                        severity="warning",
-                        entity=type_id,
-                        message=(
-                            f"Backlog '{backlog_id}' annotated as promoted in "
-                            f"backlog.md but entity status is '{db_status}'"
-                        ),
-                        fix_hint="Update entity status to 'promoted'",
-                    ))
-            else:
-                issues.append(Issue(
-                    check="backlog_status",
-                    severity="warning",
-                    entity=type_id,
-                    message=(
-                        f"Backlog '{backlog_id}' annotated as promoted in "
-                        "backlog.md but entity not found in DB"
-                    ),
-                    fix_hint="Register backlog entity or remove annotation",
-                ))
-        except sqlite3.Error:
-            pass
-
-    # Cross-ref closed IDs with entity DB — expect status="dropped"
-    for backlog_id in closed_ids:
-        type_id = f"backlog:{backlog_id}"
-        try:
-            row = entities_conn.execute(
-                "SELECT status FROM entities WHERE type_id = ?", (type_id,)
-            ).fetchone()
-            if row:
-                db_status = row[0] or ""
-                if db_status != "dropped":
-                    issues.append(Issue(
-                        check="backlog_status",
-                        severity="warning",
-                        entity=type_id,
-                        message=(
-                            f"Backlog '{backlog_id}' annotated as closed in "
-                            f"backlog.md but entity status is '{db_status}'"
-                        ),
-                        fix_hint="Update entity status to 'dropped'",
-                    ))
-        except sqlite3.Error:
-            pass
-
-    # Check reverse: entities promoted but not annotated in backlog.md
+    # DB-only cross-ref: surface backlog entities at status='dropped' that
+    # lack an entity_relations 'fixes' row (closed without an audit trail).
+    # The entity_relations table was added in Migration 14 (feature 111);
+    # if it is absent (e.g. the DB has not been migrated yet) the cross-ref
+    # is skipped silently.
     try:
         cursor = entities_conn.execute(
-            "SELECT entity_id, status FROM entities "
-            "WHERE entity_type = 'backlog' AND status = 'promoted'"
+            "SELECT uuid, entity_id, status FROM entities "
+            "WHERE kind = 'backlog' AND status = 'dropped'"
         )
-        for row in cursor:
-            entity_id = row[0]
-            if entity_id not in annotated_ids:
-                issues.append(Issue(
-                    check="backlog_status",
-                    severity="info",
-                    entity=f"backlog:{entity_id}",
-                    message=(
-                        f"Backlog '{entity_id}' is promoted in DB but "
-                        "not annotated in backlog.md"
-                    ),
-                    fix_hint="Add (promoted -> feature) annotation to backlog.md",
-                ))
+        dropped_rows = cursor.fetchall()
     except sqlite3.Error:
-        pass
+        dropped_rows = []
+
+    for row in dropped_rows:
+        bl_uuid, entity_id, _status = row
+        try:
+            closer_row = entities_conn.execute(
+                "SELECT from_uuid FROM entity_relations "
+                "WHERE to_uuid = ? AND kind = 'fixes' LIMIT 1",
+                (bl_uuid,),
+            ).fetchone()
+        except sqlite3.Error:
+            # entity_relations table absent (pre-Migration-14 DB) — skip.
+            closer_row = None
+            # Once the table is missing, all subsequent backlog entities
+            # will hit the same error; break out to avoid spam.
+            break
+        if closer_row is None:
+            issues.append(Issue(
+                check="backlog_status",
+                severity="info",
+                entity=f"backlog:{entity_id}",
+                message=(
+                    f"Backlog '{entity_id}' has status='dropped' but no "
+                    "entity_relations 'fixes' closer recorded"
+                ),
+                fix_hint=(
+                    "Re-close via complete_phase(closes=[<backlog_uuid>]) "
+                    "to record the closer in entity_relations, or "
+                    "leave as-is if the closure pre-dates feature 111"
+                ),
+            ))
 
     elapsed = int((time.monotonic() - start) * 1000)
     passed = not any(i.severity in ("error", "warning") for i in issues)

@@ -963,7 +963,14 @@ class TestBacklogTitleTruncation:
 
 
 class TestBacklogStatusDerivation:
-    """Tests for backlog status derivation from annotations in _scan_backlog."""
+    """Tests for backlog row handling in _scan_backlog.
+
+    Feature 111 / FR-CL.1: free-text suffix parsers removed from
+    backfill.py. The 4 parser-only tests (promoted/closed/fixed/already
+    implemented) were DELETED; ``test_idempotent_no_clobber_promoted``
+    was also deleted (it depended on parser-derived status). Only the
+    positive regression guard remains.
+    """
 
     def _make_backlog(self, tmp_path, item_id, description):
         backlog_md = (
@@ -977,50 +984,6 @@ class TestBacklogStatusDerivation:
         (tmp_path / "features").mkdir(exist_ok=True)
         (tmp_path / "backlog.md").write_text(backlog_md)
 
-    def test_promoted_annotation_sets_status(self, tmp_path):
-        self._make_backlog(tmp_path, "00001", "Something (promoted → feature:048)")
-        db = EntityDatabase(str(tmp_path / "test.db"))
-        try:
-            from entity_registry.backfill import run_backfill
-            run_backfill(db, str(tmp_path))
-            entity = db.get_entity("backlog:00001")
-            assert entity["status"] == "promoted"
-        finally:
-            db.close()
-
-    def test_closed_annotation_sets_dropped(self, tmp_path):
-        self._make_backlog(tmp_path, "00002", "Fix bug (closed: upstream fix)")
-        db = EntityDatabase(str(tmp_path / "test.db"))
-        try:
-            from entity_registry.backfill import run_backfill
-            run_backfill(db, str(tmp_path))
-            entity = db.get_entity("backlog:00002")
-            assert entity["status"] == "dropped"
-        finally:
-            db.close()
-
-    def test_fixed_annotation_sets_dropped(self, tmp_path):
-        self._make_backlog(tmp_path, "00003", "Add check (fixed: auto-increment in CI)")
-        db = EntityDatabase(str(tmp_path / "test.db"))
-        try:
-            from entity_registry.backfill import run_backfill
-            run_backfill(db, str(tmp_path))
-            entity = db.get_entity("backlog:00003")
-            assert entity["status"] == "dropped"
-        finally:
-            db.close()
-
-    def test_already_implemented_sets_dropped(self, tmp_path):
-        self._make_backlog(tmp_path, "00004", "Add review cycle (already implemented — Stage 4/5)")
-        db = EntityDatabase(str(tmp_path / "test.db"))
-        try:
-            from entity_registry.backfill import run_backfill
-            run_backfill(db, str(tmp_path))
-            entity = db.get_entity("backlog:00004")
-            assert entity["status"] == "dropped"
-        finally:
-            db.close()
-
     def test_no_annotation_leaves_status_null(self, tmp_path):
         self._make_backlog(tmp_path, "00005", "Add retry logic to webhook delivery")
         db = EntityDatabase(str(tmp_path / "test.db"))
@@ -1029,21 +992,6 @@ class TestBacklogStatusDerivation:
             run_backfill(db, str(tmp_path))
             entity = db.get_entity("backlog:00005")
             assert entity["status"] is None or entity["status"] == ""
-        finally:
-            db.close()
-
-    def test_idempotent_no_clobber_promoted(self, tmp_path):
-        """Re-running backfill on already-promoted entity keeps status."""
-        self._make_backlog(tmp_path, "00006", "Something (promoted → feature:048)")
-        db = EntityDatabase(str(tmp_path / "test.db"))
-        try:
-            from entity_registry.backfill import run_backfill
-            run_backfill(db, str(tmp_path))
-            assert db.get_entity("backlog:00006")["status"] == "promoted"
-            # Force re-run by resetting backfill version
-            db.set_metadata("backfill_version", "0")
-            run_backfill(db, str(tmp_path))
-            assert db.get_entity("backlog:00006")["status"] == "promoted"
         finally:
             db.close()
 

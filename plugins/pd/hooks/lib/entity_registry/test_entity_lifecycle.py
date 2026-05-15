@@ -422,3 +422,54 @@ class TestTransitionEntityPhase:
             transition_entity_phase(
                 db, "brainstorm:bar", "reviewing", workspace_uuid=ws_b_uuid,
             )
+
+
+# ---------------------------------------------------------------------------
+# Feature 111 AC-BL.7 — defensive raise on bug/task type_ids
+# ---------------------------------------------------------------------------
+#
+# bug and task entities use the status-only lifecycle model (FR-BL.1); they
+# do NOT have ENTITY_MACHINES entries. The existing first-line validation in
+# transition_entity_phase at entity_lifecycle.py:148 (raises
+# "invalid_entity_type: {entity_type} — only brainstorm and backlog supported")
+# fires naturally for these type_ids. These tests pin that behavior so a
+# future refactor of ENTITY_MACHINES does not accidentally widen routing.
+
+
+class TestTransitionEntityPhaseStatusOnlyBugTask:
+    def test_transition_entity_phase_rejects_bug_type_id(self, db):
+        # Register the bug so the type_id resolves (we want the raise to
+        # come from the entity_type-vs-ENTITY_MACHINES gate, not from a
+        # missing-entity branch).
+        db.register_entity(
+            entity_type="bug",
+            entity_id="1-defensive-bug",
+            name="Defensive raise check",
+            status="open",
+            project_id="__unknown__",
+        )
+
+        with pytest.raises(ValueError) as excinfo:
+            transition_entity_phase(
+                db, "bug:1-defensive-bug", "resolved",
+            )
+        msg = str(excinfo.value)
+        assert "invalid_entity_type" in msg
+        assert "bug" in msg
+
+    def test_transition_entity_phase_rejects_task_type_id(self, db):
+        db.register_entity(
+            entity_type="task",
+            entity_id="2-defensive-task",
+            name="Defensive raise check task",
+            status="open",
+            project_id="__unknown__",
+        )
+
+        with pytest.raises(ValueError) as excinfo:
+            transition_entity_phase(
+                db, "task:2-defensive-task", "closed",
+            )
+        msg = str(excinfo.value)
+        assert "invalid_entity_type" in msg
+        assert "task" in msg

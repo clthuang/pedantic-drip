@@ -1,0 +1,452 @@
+# Tasks — Feature 111: Issue Lifecycle Closure
+
+- **Plan:** plan.md rev 3
+- **Status:** revision 3.2 (plan-reviewer iter 2: 5th parser site + get_entity_by_uuid reuse; iter 3: substring alignment + OOS markers + _REQUIRED_PARAMS downgrade; task-reviewer iter 1: 3-file grep scope in E.1+E.7, B.3 envelope test moved to D.2, A.8 smoke script simplified to in-memory constructor)
+- **TDD discipline:** Implementer-skill MUST execute RED-tests-first regardless of task list order. Each Group's task list places test tasks first (RED) followed by production tasks (GREEN).
+
+## Group A — Migration 14 (DDL only)
+
+**Scope:** `plugins/pd/hooks/lib/entity_registry/database.py` ONLY. No Python logic outside the migration. No test files. Commit boundary: one commit, schema DDL only.
+
+### Task A.1 — Verify MigrationError + audit_log helper exist
+- **File:** `database.py`
+- **What:** Run `grep -n "class MigrationError\|def _append_migration_audit_log" plugins/pd/hooks/lib/entity_registry/database.py`. Both symbols are inherited from features 109/110 (migration 12 + 13 precedent). **Remediation if missing:** if `MigrationError` is absent, define at the top of the migration section using the existing exception pattern (subclass `Exception` with a docstring); if `_append_migration_audit_log` is absent, locate the audit-stamping pattern at migration-12 body (`database.py:~2685`) and reuse that helper's exact function name in subsequent tasks.
+- **Done when:** Grep returns both class + function definitions. If either is missing, define before proceeding to Task A.2.
+- **Time:** 3 min
+
+### Task A.2 — Write `_copy_rename_entities_for_v14(conn)` helper
+- **File:** `database.py` (alongside migration-12 copy-rename helpers around `:2960-3030`)
+- **What:** Replicate migration-12 entities copy-rename idiom with widened (type, kind) CHECK: `(type='work' AND kind IN ('feature','backlog','bug','initiative','objective','key_result','task'))`. Preserve all existing columns by name. Save + restore triggers and non-FTS indices.
+- **Done when:** Function compiles; ready for use by main migration body.
+- **Time:** 12 min
+
+### Task A.3 — Write `_copy_rename_phase_events_for_v14(conn)` helper
+- **File:** `database.py`
+- **What:** Replicate migration-12 phase_events copy-rename idiom with widened event_type CHECK adding `'spawned_child'` (8 values total). Save + restore triggers and indices.
+- **Done when:** Function compiles.
+- **Time:** 12 min
+
+### Task A.4 — Write `_migration_14_issue_lifecycle_closure(conn)` main body
+- **File:** `database.py`
+- **What:** Implement per design IF-3 skeleton: idempotency early-return, PRAGMA foreign_keys=OFF, BEGIN IMMEDIATE, concurrent re-check, pre-flight gates (schema_version=13, entity_display present, migration_audit_log present, entity_relations absent), CREATE entity_relations + 3 indices, UPDATE entities SET lifecycle_class='task_flow' WHERE kind='task', call _copy_rename_entities_for_v14, call _copy_rename_phase_events_for_v14, pre-commit FK check, stamp schema_version=14 + audit log, COMMIT.
+- **Done when:** Function compiles; ready to register in MIGRATIONS dict.
+- **Time:** 15 min
+
+### Task A.5 — Write `_copy_rename_entities_to_v13(conn)` + `_copy_rename_phase_events_to_v13(conn)` down helpers
+- **File:** `database.py`
+- **What:** Mirror images of A.2 and A.3 — narrow CHECKs back to v13 form. Drop `'bug'` from work-kind enum; drop `'spawned_child'` from event_type enum.
+- **Done when:** Both functions compile.
+- **Time:** 15 min
+
+### Task A.6 — Write `_migration_14_down(conn)` (down-migration)
+- **File:** `database.py`
+- **What:** Per design IF-3 `_migration_14_down`: pre-flight refuse if `kind='bug'` rows or entity_relations rows exist; drop entity_relations + indices; DELETE phase_events WHERE event_type='spawned_child'; call _copy_rename_phase_events_to_v13; call _copy_rename_entities_to_v13; revert task lifecycle_class remap.
+- **Done when:** Function compiles.
+- **Time:** 12 min
+
+### Task A.7 — Register migration in MIGRATIONS + MIGRATIONS_DOWN dicts
+- **File:** `database.py` (near top, where MIGRATIONS dict lives)
+- **What:** `MIGRATIONS[14] = _migration_14_issue_lifecycle_closure`. `MIGRATIONS_DOWN[14] = _migration_14_down`.
+- **Done when:** Both dict entries present.
+- **Time:** 3 min
+
+### Task A.8 — Red-equivalent local smoke validation (NOT committed)
+- **What:** Use the existing `EntityDatabase(':memory:')` constructor which runs ALL migrations via `_migrate()` automatically — no manual chain replay needed. Then assert the post-migration schema state. Compensates for atomic-DDL discipline ruling out same-commit tests.
+  ```bash
+  cd plugins/pd && .venv/bin/python -c "
+  from entity_registry.database import EntityDatabase, MIGRATIONS, MIGRATIONS_DOWN
+  assert 14 in MIGRATIONS and 14 in MIGRATIONS_DOWN, 'Migration 14 not registered'
+  db = EntityDatabase(':memory:')
+  conn = db._conn  # used here for sqlite_master introspection only
+  tables = {r[0] for r in conn.execute(\"SELECT name FROM sqlite_master WHERE type='table'\").fetchall()}
+  assert 'entity_relations' in tables, 'entity_relations not created'
+  entities_sql = conn.execute(\"SELECT sql FROM sqlite_master WHERE name='entities'\").fetchone()[0]
+  assert 'bug' in entities_sql, f'bug kind not in (type, kind) CHECK: {entities_sql[:200]}'
+  events_sql = conn.execute(\"SELECT sql FROM sqlite_master WHERE name='phase_events'\").fetchone()[0]
+  assert 'spawned_child' in events_sql, f'spawned_child not in event_type CHECK: {events_sql[:200]}'
+  v = conn.execute(\"SELECT MAX(version) FROM schema_migrations\").fetchone()[0]
+  assert v == 14, f'schema_version = {v}, expected 14'
+  print('OK — Migration 14 smoke passes (schema_version=14, entity_relations table, bug kind admitted, spawned_child admitted)')
+  db.close()
+  "
+  ```
+- **Done when:** Prints "OK — Migration 14 smoke passes ..." with all 4 assertions green. Output is the red-equivalent gate (Group B's full test runs are the canonical red test).
+- **Time:** 5 min
+
+### Task A.9 — Commit Group A (with self-witnessing smoke evidence)
+- **What:** Capture the Task A.8 smoke output in the commit message so the migration commit is self-witnessed (compensates for atomic-DDL-only forbidding same-commit tests):
+  ```
+  git add database.py
+  git commit -m "$(cat <<'EOF'
+  feat(111): Migration 14 — entity_relations table + (type,kind) + event_type CHECK widenings
+
+  Local smoke validation (NOT committed):
+  $ .venv/bin/python -c "<A.8 inline script>"
+  → OK — Migration 14 smoke passes
+  → schema_version=14, entity_relations table present, 'bug' in (type,kind) CHECK, 'spawned_child' in event_type CHECK
+  EOF
+  )"
+  ```
+- **Done when:** Commit lands cleanly on feature branch. No test files in the commit. Commit message includes the smoke-output excerpt.
+- **Time:** 4 min
+
+**Group A total:** ~80 min for ~750 lines of DDL/migration code.
+
+---
+
+## Group B — Discriminator + constants + helpers + tests
+
+**Scope:** All Python application logic, exception classes, new EntityDatabase helpers, defensive raise, and Group A's tests (which depend on Group B symbols).
+
+### Task B.1 — RED: Write test_migration_14_safety.py
+- **File:** `plugins/pd/hooks/lib/entity_registry/test_migration_14_safety.py` (NEW)
+- **What:** Verify all AC-MR.x (1-11). Tests run the migration on a synthetic v13 fixture DB and assert:
+  - `PRAGMA table_info(entity_relations)` matches schema
+  - 3 indices present
+  - `sqlite_master.sql for 'entities'` contains substring `'feature','backlog','bug','initiative','objective','key_result','task'`
+  - `sqlite_master.sql for 'phase_events'` contains `'spawned_child'`
+  - Pre-flight failures (stale-12 DB, existing entity_relations table) abort with substring-matching messages
+  - Replay no-op
+  - Down-migration on clean v14 → byte-identical to pre-v14 (entities, workflow_phases, phase_events excluding spawned_child) plus schema_migrations.MAX=13
+  - Down-migration with bug entities → MigrationError "Cannot down-migrate v14...bug entities"
+  - Down-migration with entity_relations rows → MigrationError "...entity_relations"
+  - FK enforcement after migration (INSERT entity_relations with non-existent from_uuid raises FK violation)
+- **Done when:** Tests written; running them FAILS (expected — Group A symbols don't yet have their tests; this is RED phase).
+- **Time:** 25 min
+
+### Task B.2 — RED: Write test_status_only_lifecycle.py
+- **File:** `plugins/pd/hooks/lib/entity_registry/test_status_only_lifecycle.py` (NEW)
+- **What:** Verify all AC-BL.x (1-7):
+  - `ENTITY_MACHINES` does NOT contain 'bug' or 'task' keys
+  - `_KIND_TO_TYPE_LIFECYCLE['bug']` returns `('work', 'bug_flow')`; `_KIND_TO_TYPE_LIFECYCLE['task']` returns `('work', 'task_flow')`
+  - `_CLOSES_TERMINAL` dict contents (3 keys, correct values)
+  - After register_entity(entity_type='bug', auto_id, status='open'): entities row has correct triple; NO workflow_phases row
+  - Direct `update_entity(bug_uuid, status='resolved')` succeeds; no workflow_phases write
+  - closes= on a status='open' bug → status='closed' + entity_relations row + NO workflow_phases gain
+  - `transition_entity_phase(type_id='bug:X', ...)` raises ValueError with substring `"invalid_entity_type"` AND substring `"bug"` (matches existing `entity_lifecycle.py:148` raise; resolves B.2-vs-B.15 alignment per plan-reviewer iter 3 W1)
+- **Done when:** Tests written; running them FAILS.
+- **Time:** 20 min
+
+### Task B.3 — RED: Add AC-EX.1 test to test_status_only_lifecycle.py
+- **File:** same as B.2
+- **What:** ONE test case (AC-EX.1):
+  - `from entity_registry.database import EntityNotFoundError, InvalidCloseTargetError` succeeds; both `issubclass(..., ValueError)` is True.
+- **NOTE:** AC-EX.2's MCP envelope test (smoke that `complete_phase` MCP returns `{"error": true, "error_type": "entitynotfounderror", ...}` for a nonexistent caller) is moved to Task D.2 — depends on Group D's closes= implementation and lives in `test_complete_phase_closes.py`. Do NOT include the envelope test here.
+- **Done when:** AC-EX.1 assertion written; FAIL until Group B exception classes land (Task B.6); does NOT require Group D.
+- **Time:** 3 min
+
+### Task B.4 — RED: Extend test_entity_lifecycle.py for AC-BL.7
+- **File:** `plugins/pd/hooks/lib/entity_registry/test_entity_lifecycle.py`
+- **What:** Add 1-2 tests asserting `transition_entity_phase(type_id='bug:X', workflow_phase='resolved', ...)` raises ValueError with substring `"invalid_entity_type"` AND `"bug"` (matches existing entity_lifecycle.py:148 raise — no new production code needed).
+- **Done when:** Tests added; FAIL.
+- **Time:** 5 min
+
+### Task B.5 — RED: Audit test_workflow_state_server.py + test_entity_lifecycle.py (pre-pinned: NO updates needed)
+- **Files:** `plugins/pd/mcp/test_workflow_state_server.py` + `plugins/pd/hooks/lib/entity_registry/test_entity_lifecycle.py`
+- **What:** Two greps, both pre-pinned:
+  1. `grep -n "ENTITY_MACHINES\[" plugins/pd/mcp/test_workflow_state_server.py plugins/pd/hooks/lib/entity_registry/test_entity_lifecycle.py` — verified 3 references in test_workflow_state_server.py at :6136, :6144, :6560, all reference `'brainstorm'`/`'backlog'`; NONE reference `'bug'`/`'task'`.
+  2. `grep -nE "transition_entity_phase\(.*['\"](bug|task)['\"]" plugins/pd/mcp/test_workflow_state_server.py plugins/pd/hooks/lib/entity_registry/test_entity_lifecycle.py` — verifies no existing call site passes bug/task to transition_entity_phase (would hit AC-BL.7's existing raise pattern).
+- **Done when:** Both greps return same results as pre-pin (no bug/task references). Skip if pre-pin holds.
+- **Fallback (pre-pin breaks):** Pause and document findings in a comment block. Rule: any test asserting `bug`/`task` in `ENTITY_MACHINES[...]` context → update fixture to use `brainstorm`/`backlog`; any test calling `transition_entity_phase` with bug/task → migrate it to assert the AC-BL.7 raise pattern (substring "invalid_entity_type" + entity_type name). Capture the count + disposition in the Group B commit message.
+- **Time:** 4 min
+
+### Task B.6 — GREEN: Add EntityNotFoundError + InvalidCloseTargetError
+- **File:** `database.py` near line 4484 (`EntityExistsError`)
+- **What:** Per IF-9 — both classes subclass `ValueError`, single-line `pass` body, docstrings per IF-9 template.
+- **Done when:** Both classes defined; importable.
+- **Time:** 5 min
+
+### Task B.7 — GREEN: Add `_CLOSES_TERMINAL` dict
+- **File:** `database.py` near `_KIND_TO_TYPE_LIFECYCLE` (line 48)
+- **What:** Module-level dict per IF-7: `_CLOSES_TERMINAL = {"bug_flow": "closed", "task_flow": "closed", "work_flow": "dropped"}`.
+- **Done when:** Constant defined.
+- **Time:** 3 min
+
+### Task B.8 — GREEN: Extend `_KIND_TO_TYPE_LIFECYCLE`
+- **File:** `database.py:48`
+- **What:** Add `'bug': ('work', 'bug_flow')` row; change `'task'` row from `('work', 'work_flow')` to `('work', 'task_flow')`.
+- **Done when:** Dict has 9 rows; tests B.2 row referencing bug/task pass.
+- **Time:** 3 min
+
+### Task B.9 — GREEN: Extend `_VALID_PARAMS` only (downgrade per iter-3 S3)
+- **File:** `database.py:4442` (_VALID_PARAMS)
+- **What:** Add `'spawned_child': {'metadata'}` to `_VALID_PARAMS`. Do NOT add to `_REQUIRED_PARAMS` — `issue_spawn` (the only caller) always passes metadata per FR-9.3 contract, so application-layer guarantees are sufficient without DB-layer enforcement. If a future caller emits spawned_child events, they can add the _REQUIRED_PARAMS row when needed.
+- **Done when:** _VALID_PARAMS dict has 8 rows including new 'spawned_child' entry.
+- **Time:** 3 min
+
+### Task B.10 — GREEN: Extend `VALID_ENTITY_TYPES` tuple
+- **File:** `database.py:4534`
+- **What:** Add `'bug'` to the tuple (9 values).
+- **Done when:** Tuple has 9 values; tests pass.
+- **Time:** 3 min
+
+### Task B.11 — REUSE existing `db.get_entity_by_uuid` (NO new code)
+- **File:** `plugins/pd/hooks/lib/entity_registry/database.py:4788` (existing method)
+- **What:** Per plan-reviewer iter 2 B2 verification: `db.get_entity_by_uuid` ALREADY EXISTS at `:4788` and returns a dict including `kind`, `parent_uuid`, `workspace_uuid`, `type_id`. Sufficient for IF-1 step 5 + IF-2 step 2 use cases. NO new code. Update consumer call sites in C1 (issue_spawn) and C5 (closure block) to call the existing method.
+- **Done when:** Verified the existing return shape covers required fields. Test in test_status_only_lifecycle.py imports and uses the existing method.
+- **Time:** 2 min
+
+### Task B.12 — GREEN: Add `db.get_prior_closer` method
+- **File:** `database.py`
+- **What:** `def get_prior_closer(self, to_uuid: str) -> str | None`. SELECT `from_uuid FROM entity_relations WHERE to_uuid=? AND kind='fixes' LIMIT 1`; return uuid or None.
+- **Done when:** Method works.
+- **Time:** 5 min
+
+### Task B.13 — GREEN: Add `db.insert_entity_relation` method
+- **File:** `database.py`
+- **What:** `def insert_entity_relation(self, from_uuid: str, to_uuid: str, kind: str, on_conflict: str = "raise") -> bool`. INSERT INTO entity_relations(from_uuid, to_uuid, kind, created_at); when `on_conflict='ignore'`, append `ON CONFLICT(from_uuid, to_uuid, kind) DO NOTHING`. Returns True on insert, False on conflict-ignore. Use `conn.execute().rowcount` to detect.
+- **Done when:** Method works for both modes.
+- **Time:** 8 min
+
+### Task B.14 — GREEN: Add `db.resolve_entity_uuid` method
+- **File:** `database.py`
+- **What:** `def resolve_entity_uuid(self, workspace_uuid: str, type_id: str) -> tuple[str | None, str | None]`. SELECT `uuid, workspace_uuid FROM entities WHERE workspace_uuid=? AND type_id=?`; return `(uuid, workspace_uuid)` or `(None, None)`.
+- **Done when:** Method works.
+- **Time:** 5 min
+
+### Task B.15 — GREEN: AC-BL.7 satisfied by existing code (pre-pinned)
+- **File:** `entity_lifecycle.py:148-150` (transition_entity_phase function — already raises)
+- **What:** The existing code at `entity_lifecycle.py:148-150` already raises `ValueError("invalid_entity_type: {entity_type} — only brainstorm and backlog supported")` when `entity_type not in ENTITY_MACHINES`. Since FR-BL.1 keeps bug/task OUT of ENTITY_MACHINES, this raise fires naturally. NO new code needed. AC-BL.7's test assertion (Task B.4) should match the existing error pattern (substring `"invalid_entity_type"` and `entity_type` name). If the message needs to be more user-friendly, optionally append a single clarifying sentence — but this is cosmetic.
+- **Done when:** Test B.4 asserts the existing ValueError substring `"invalid_entity_type"` + `"bug"` (or `"task"`); passes against unchanged transition_entity_phase code.
+- **Time:** 2 min
+
+### Task B.16 — Run all Group B tests + Group A's tests via Group B's test files
+- **What:** `cd plugins/pd && .venv/bin/python -m pytest hooks/lib/entity_registry/test_migration_14_safety.py hooks/lib/entity_registry/test_status_only_lifecycle.py hooks/lib/entity_registry/test_entity_lifecycle.py -v`
+- **Done when:** All tests green. AC-MR.x + AC-BL.x + AC-EX.x verified.
+- **Time:** 5 min
+
+### Task B.17 — Commit Group B
+- **What:** `git add database.py entity_lifecycle.py test_migration_14_safety.py test_status_only_lifecycle.py test_entity_lifecycle.py [test_workflow_state_server.py]; git commit -m "feat(111): Group B — discriminator constants + helpers + exceptions + migration tests"`
+- **Done when:** Commit lands. PR contains both Group A and Group B commits.
+- **Time:** 3 min
+
+**Group B total:** ~120 min for ~600 LoC application + ~400 LoC tests.
+
+---
+
+## Group C — F9 `issue_spawn` MCP (parallelizable with D, E after B)
+
+### Task C.1 — RED: Write test_issue_spawn.py
+- **File:** `plugins/pd/mcp/test_issue_spawn.py` (NEW)
+- **What:** Verify all AC-9.x:
+  - AC-9.1: issue_spawn(kind='bug', summary='Foo') → entity (work, bug, bug_flow, status='open', parent_uuid set, entity_id matches `^\d+-foo`); response JSON contains uuid; entity_display row exists
+  - AC-9.2: column-level invariance of parent's `workflow_phase` and `kanban_column`
+  - AC-9.3: exactly 1 phase_event on parent with event_type='spawned_child', phase IS NULL, metadata contains child_uuid/child_kind/child_name
+  - AC-9.4: invalid kind raises ValueError before any DB write (counts unchanged)
+  - AC-9.5: nonexistent parent_uuid → ValueError; disallowed parent kind → ValueError
+  - AC-9.6: entity_id matches `^\d+-.+`
+  - AC-9.7: entity_display row count = 1 with non-null seq + slug
+  - AC-9.8: doctor check_status_write_path passes on issue_spawn code
+  - AC-9.9: metadata shallow merge with system keys winning; `parent_uuid` injected metadata key is dropped
+- **Done when:** Tests written; fail (issue_spawn doesn't exist yet).
+- **Time:** 30 min
+
+### Task C.2 — GREEN: Implement `issue_spawn` MCP tool
+- **File:** `plugins/pd/mcp/entity_server.py`
+- **What:** Per design IF-1 steps 1-11. Use new helpers from Group B (`db.get_entity_by_uuid`, `id_generator.generate_entity_id`, `db.register_entity`, `db.append_phase_event`). Add `@mcp.tool()` decorator. Mirror error-translation pattern from existing register_entity MCP.
+- **Done when:** All AC-9.x tests pass.
+- **Time:** 25 min
+
+### Task C.3 — Verify check_status_write_path
+- **What:** Run the test suite section for `check_status_write_path`: `cd plugins/pd && .venv/bin/python -m pytest hooks/lib/doctor/check_status_write_path.py hooks/lib/doctor/test_check_status_write_path.py -v` (test file exists per feature 109 Group 10; if test file name differs, the production check_status_write_path.py runs as a module). Alternatively run the full doctor suite via session-start hook or the existing CLI entry, which executes all checks in CHECK_ORDER. The check is AST/grep-based over the source and PASSES when no direct `phase_events` INSERT or `update_entity(status=)` outside the sealed path exists.
+- **Done when:** Check returns PASS for `mcp/entity_server.py` (the new issue_spawn function uses `db.append_phase_event` for parent events; no direct phase_events INSERT statements in the new code).
+- **Time:** 3 min
+
+### Task C.4 — Commit Group C
+- **What:** `git add entity_server.py test_issue_spawn.py; git commit -m "feat(111): F9 — issue_spawn MCP for spontaneous mid-flight issue capture"`
+- **Done when:** Commit lands.
+- **Time:** 3 min
+
+**Group C total:** ~60 min.
+
+---
+
+## Group D — F10 complete_phase closes= extension (parallelizable with C, E after B)
+
+### Task D.1 — Verify transaction-close ordering at workflow_state_server.py:1127-1234
+- **File:** read-only audit of `plugins/pd/mcp/workflow_state_server.py:1086-1234`
+- **What:** Per design IF-2 CRITICAL note: identify where the existing `with db.transaction():` block COMMITs. If a post-commit dual-write of `append_phase_event` exists OUTSIDE the with-block, the closure block must be inserted BEFORE the COMMIT (inside the with-block). Document findings inline in commit message.
+- **Done when:** Audit complete; design phase implementer plan for IF-2 inline-or-hoist decided.
+- **Time:** 8 min
+
+### Task D.2 — RED: Write test_complete_phase_closes.py (includes AC-EX.2 envelope test)
+- **File:** `plugins/pd/mcp/test_complete_phase_closes.py` (NEW)
+- **What:** Verify all AC-10.x (10.1–10.11) PLUS AC-EX.2 (MCP error envelope for nonexistent caller — moved from Task B.3 per task-reviewer iter 1 B3):
+  - AC-EX.2: `complete_phase(type_id='feature:nonexistent', closes=['u1'])` returns JSON `{"error": true, "error_type": "entitynotfounderror", "message": "..."}` (per IF-9 + spec FR-EX.3).
+- AC-10.x cases below:
+  - 10.1: closes=[u_bug, u_task] → both closed + 2 entity_relations rows in one transaction
+  - 10.2: closes=None → response includes `closes_applied: []`, identical to pre-feature-111 behavior
+  - 10.3: atomic rollback on lifecycle_class mismatch (feature in closes list); feature's phase unchanged
+  - 10.4: 3 replays with same closer → 1 entity_relations row + 1 entity_status_changed phase_event per uuid
+  - 10.5: cross-closer raises with substring "already closed by different closer"
+  - 10.6: cross-workspace raises with substring "cross-workspace closure forbidden"
+  - 10.7: terminal-without-closer raises with substring "already terminal but no closer record"
+  - 10.8: closed entities receive entity_status_changed phase_event with metadata old_status/new_status/closed_by_uuid
+  - 10.9: caller not registered → EntityNotFoundError (or its MCP-translated envelope)
+  - 10.10: feature in closes → InvalidCloseTargetError "feature entities cannot be closed via closes="
+  - 10.11: backlog at status='open' closed via closes= → status='dropped' (state-machine bypass) + phase_event metadata old_status='open'
+- **Done when:** Tests written; fail (closes= not implemented).
+- **Time:** 35 min
+
+### Task D.3 — GREEN: Extend `_process_complete_phase` with closure block
+- **File:** `plugins/pd/mcp/workflow_state_server.py:1086`
+- **What:** Per design IF-2 pseudocode. Use new helpers (`db.resolve_entity_uuid`, `db.get_entity_by_uuid`, `db.get_prior_closer`, `db.insert_entity_relation`). Honor the COMMIT-ordering decision from D.1 (closure writes are SIBLING of, NOT nested inside, the `if feature_type_id.startswith("feature:")` block at line ~1195). When calling `append_phase_event` for closed entities' `entity_status_changed` events, pass BOTH `workspace_uuid=caller_workspace_uuid` AND `project_id=effective_project_id` (caller's resolved project_id from the surrounding scope — `_resolve_project_id(entity)` at line ~1209 is the existing pattern). Append to `closes_applied` unconditionally (after insert, including replay path).
+- **Done when:** All AC-10.x tests pass.
+- **Time:** 30 min
+
+### Task D.4 — GREEN: Extend `complete_phase` MCP signature
+- **File:** `plugins/pd/mcp/workflow_state_server.py:1809`
+- **What:** Add `closes: list[str] | None = None` keyword arg (after `*, ref`). Pass-through to `_process_complete_phase`. Response JSON includes `closes_applied` field.
+- **Done when:** Smoke-test: calling `complete_phase` without closes still works; calling with closes=[u1] writes the relation row.
+- **Time:** 5 min
+
+### Task D.5 — Commit Group D
+- **What:** `git add workflow_state_server.py test_complete_phase_closes.py; git commit -m "feat(111): F10 — complete_phase(closes=[...]) atomic closure linkage"`
+- **Done when:** Commit lands.
+- **Time:** 3 min
+
+**Group D total:** ~85 min.
+
+---
+
+## Group E — Cleanup + new doctor check (parallelizable with C, D after B)
+
+### Task E.0 — Inventory parser-dependent tests (deliverable as committed checklist)
+- **Files (read-only inventory):** `plugins/pd/hooks/lib/entity_registry/test_backfill.py:981, 992, 1037` and `plugins/pd/hooks/lib/reconciliation_orchestrator/test_entity_status.py:385-1168` (path corrected).
+- **Deliverable:** `docs/features/111-issue-lifecycle-closure/cleanup-inventory.md` — a markdown checklist file committed as part of Group E's first commit. Format:
+  ```markdown
+  # Group E Cleanup Inventory
+
+  ## Migrate (DB-state refactor)
+  - [ ] test_backfill.py::test_xxx — uses (closed:) fixture; refactor to status='closed'
+  - ...
+
+  ## Delete (parser-only exercise, no DB path)
+  - [ ] test_entity_status.py::test_yyy — only asserts CLOSED_RE match; no DB equivalent
+  - ...
+
+  ## Keep (false positive)
+  - [ ] ...
+  ```
+  Each entry has a one-line rationale. Expected counts per spec R3: ~10 tests affected; expected delete-rate <30%.
+- **Done when:** `cleanup-inventory.md` committed; the rest of Group E's tasks (E.1, E.5, E.6) use this list as the gate.
+- **Time:** 12 min
+
+### Task E.1 — RED: Write test_cleanup_suffix_parsers.py
+- **File:** `plugins/pd/hooks/lib/entity_registry/test_cleanup_suffix_parsers.py` (NEW)
+- **What:** Verify AC-CL.1 + AC-CL.2 + AC-CL.3:
+  - AC-CL.1: grep `\(closed:|\(promoted →|\(fixed:` against ALL THREE production paths (`entity_registry/backfill.py`, `doctor/checks.py`, AND `reconciliation_orchestrator/entity_status.py`) returns 0 matches per spec FR-CL.4
+  - AC-CL.2: backfill behavior documented as changed; no parse of historical free-text markers
+  - AC-CL.3: synthetic backlog row with status='dropped' + entity_relations row → doctor identifies it as closed-by-feature_X (no parsing involved)
+- **Done when:** Tests written; AC-CL.1 fails (parsers still present in all 3 files); AC-CL.3 may already pass or fail depending on current doctor logic.
+- **Time:** 15 min
+
+### Task E.2 — RED: Extend test_doctor.py for check_no_free_text_status_parsers
+- **File:** `plugins/pd/hooks/lib/doctor/test_doctor.py`
+- **What:** Verify AC-CL.4:
+  - check_no_free_text_status_parsers PASSES on production code (grep returns 0)
+  - synthetic regression (inject `(closed:` into a temp copy of backfill.py) → check FAILS
+  - check produces identical result from project root AND from a subdirectory (2-CWD test)
+- **Done when:** Tests written; fail (check doesn't exist yet).
+- **Time:** 12 min
+
+### Task E.3 — DELETE: Free-text parser at entity_registry/backfill.py:418-444
+- **File:** `plugins/pd/hooks/lib/entity_registry/backfill.py`
+- **What:** Remove the derived_status block (lines 418-444 per codebase-explorer pin). Keep the `get_entity` + `upsert_entity` calls above it.
+- **Done when:** Grep at AC-CL.1 passes against this file. Existing backfill tests that consume the parser output need migration (Task E.5).
+- **Time:** 5 min
+
+### Task E.4 — DELETE: Free-text parser at doctor/checks.py:983-1015
+- **File:** `plugins/pd/hooks/lib/doctor/checks.py`
+- **What:** Remove the regex compilation (promoted_pattern, closed_pattern) and the line-loop matching block. Preserve the entities_conn cross-ref infra below line :1029 — this becomes the sole closure detection mechanism (DB state replaces text matching).
+- **Done when:** Grep at AC-CL.1 passes against this file.
+- **Time:** 5 min
+
+### Task E.4b — DELETE: Free-text parsers at reconciliation_orchestrator/entity_status.py:14-18 (5th-site cleanup per Pin G trigger)
+- **File:** `plugins/pd/hooks/lib/reconciliation_orchestrator/entity_status.py`
+- **What:** DELETE `CLOSED_RE`, `PROMOTED_RE`, `FIXED_RE`, `NAME_STRIP_RE` regex compilations at lines 14-18. Migrate consumers at `:320, :322, :324, :329`: the prior marker→status mapping (closed:→dropped, fixed:→dropped, promoted →→promoted) is replaced by reading `entities.status` directly (already authoritative post-feature-109). **OUT OF SCOPE — entity.name marker text remains intact post-cleanup; only the parser regexes and their consumers are removed. Future feature handles name normalization if needed (no AC requires it in feature 111).**
+- **Done when:** Grep at AC-CL.1 returns 0 hits against this file. Consumers at :320-329 successfully read from DB without parser involvement. entity.name strings unchanged.
+- **Time:** 10 min
+
+### Task E.5 — Migrate test_backfill.py fixtures
+- **File:** `plugins/pd/hooks/lib/entity_registry/test_backfill.py:981, 992, 1037`
+- **What:** Audit each test. If a test ONLY exercises the parser, delete it. If it has a meaningful DB-state assertion, refactor the fixture to use synthetic entities with explicit status= columns instead of free-text-marker description.
+- **Done when:** All tests pass; AC-CL.x doesn't regress.
+- **Time:** 12 min
+
+### Task E.6 — Migrate test_entity_status.py fixtures
+- **File:** `plugins/pd/hooks/lib/reconciliation_orchestrator/test_entity_status.py:385-1168` (path corrected — file lives in reconciliation_orchestrator/, not entity_registry/)
+- **What:** Same triage as E.5 — preserve fixtures using DB-state, delete parser-exercise-only tests. Use Task E.0's pre-committed inventory list as the gate.
+- **Done when:** All tests pass.
+- **Time:** 14 min
+
+### Task E.7 — GREEN: Implement check_no_free_text_status_parsers
+- **File:** `plugins/pd/hooks/lib/doctor/checks.py` (bottom)
+- **What:** Per design IF-8: use PROJECT_ROOT env var → git rev-parse fallback; grep **all THREE target files** (`$PROJECT_ROOT/plugins/pd/hooks/lib/entity_registry/backfill.py`, `$PROJECT_ROOT/plugins/pd/hooks/lib/doctor/checks.py`, `$PROJECT_ROOT/plugins/pd/hooks/lib/reconciliation_orchestrator/entity_status.py`); return CheckResult per outcome. Match existing CheckResult shape.
+- **Done when:** Function defined; importable; passes the smoke test in E.2; target_files list contains exactly 3 paths.
+- **Time:** 10 min
+
+### Task E.8 — GREEN: Register check in doctor's CHECK_ORDER
+- **File:** `plugins/pd/hooks/lib/doctor/__init__.py:12-31` (import block from `doctor.checks`) + `:33` (CHECK_ORDER list start)
+- **What:** Add `check_no_free_text_status_parsers` to the existing `from doctor.checks import (...)` block starting at line 12. Append `check_no_free_text_status_parsers` to the `CHECK_ORDER` list (starts at line 33) — append at the end, after the existing entries. Verify the symbol resolves at runtime.
+- **Done when:** `/pd:doctor` or equivalent invocation runs the new check. `grep "check_no_free_text_status_parsers" plugins/pd/hooks/lib/doctor/__init__.py | wc -l` returns 2 (import + CHECK_ORDER entry).
+- **Time:** 4 min
+
+### Task E.9 — Run full test suite
+- **What:** `cd plugins/pd && .venv/bin/python -m pytest hooks/lib/entity_registry/ hooks/lib/doctor/ mcp/ -v 2>&1 | tail -30`
+- **Done when:** No regressions; all AC-9.x + AC-10.x + AC-MR.x + AC-BL.x + AC-CL.x + AC-EX.x green.
+- **Time:** 8 min
+
+### Task E.10 — Commit Group E
+- **What:** `git add backfill.py doctor/checks.py doctor/__init__.py test_backfill.py test_entity_status.py test_cleanup_suffix_parsers.py test_doctor.py; git commit -m "feat(111): Cleanup — remove free-text status parsers + new check_no_free_text_status_parsers doctor check"`
+- **Done when:** Commit lands.
+- **Time:** 3 min
+
+**Group E total:** ~85 min.
+
+---
+
+## §X — Cross-Group Verification
+
+### Task X.1 — Full feature-111 test scope smoke
+- **What:** Run all new test files plus extended ones:
+  ```
+  cd plugins/pd && .venv/bin/python -m pytest \
+    hooks/lib/entity_registry/test_migration_14_safety.py \
+    hooks/lib/entity_registry/test_status_only_lifecycle.py \
+    hooks/lib/entity_registry/test_entity_lifecycle.py \
+    hooks/lib/entity_registry/test_cleanup_suffix_parsers.py \
+    hooks/lib/doctor/test_doctor.py \
+    mcp/test_issue_spawn.py \
+    mcp/test_complete_phase_closes.py \
+    -v 2>&1 | tail -40
+  ```
+  (NB: test_cleanup_suffix_parsers.py is on the list above — Task E.1 deliverable.)
+- **Done when:** All passing.
+- **Time:** 5 min
+
+### Task X.2 — Broader regression check
+- **What:** `cd plugins/pd && .venv/bin/python -m pytest 2>&1 | tail -10` (full suite). Compare with pre-feature-111 baseline (Group A commit's parent).
+- **Done when:** No new failures; numbers approximately matching pre-feature-111 baseline + new feature-111 tests.
+- **Time:** 10 min
+
+### Task X.3 — Doctor health check
+- **What:** Run `/pd:doctor` or equivalent. Verify check_no_free_text_status_parsers appears and PASSES.
+- **Done when:** Doctor output green.
+- **Time:** 3 min
+
+---
+
+## Time Estimate Total
+
+| Group | Time | Tasks |
+|---|---|---|
+| A | 82 min | 9 (incl. red-equivalent smoke at A.8 + commit-witnessing at A.9) |
+| B | 117 min | 17 (B.11 reduced — reuse existing get_entity_by_uuid; B.9 adds _REQUIRED_PARAMS; B.15 simplified) |
+| C | 60 min | 4 |
+| D | 85 min | 5 |
+| E | 110 min | 12 (added E.4b for 5th-site cleanup; E.0 inventory deliverable; E.6 path corrected) |
+| X | 20 min | 3 |
+| **Total** | **474 min (~7.9h)** | **50** |
+
+With parallel execution of C/D/E after B merges: critical path ≈ A (80) + B (120) + max(C, D, E) (85) + X (20) = **~305 min**.

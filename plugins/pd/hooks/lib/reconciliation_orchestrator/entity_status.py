@@ -11,11 +11,13 @@ TERMINAL_STATUSES = {"promoted", "abandoned", "archived"}
 
 # Backlog row parsing constants
 BACKLOG_ROW_RE = re.compile(r'^\|\s*(\d{5})\s*\|[^|]*\|(.+)\|')
-CLOSED_RE = re.compile(r'\((?:closed|already implemented)[:\s\u2014]')
-PROMOTED_RE = re.compile(r'\(promoted\s*(?:\u2192|->)')
-FIXED_RE = re.compile(r'\(fixed:')
+# Feature 111 / FR-CL.1b: free-text status marker parsers
+# (CLOSED_RE / PROMOTED_RE / FIXED_RE / NAME_STRIP_RE) removed. Backlog
+# row parsing now derives status from entities.status (authoritative);
+# the name field stores the description as-is (markers, if present in
+# historical prose, remain intact \u2014 entity.name normalization is out of
+# scope per design C8.b).
 JUNK_ID_RE = re.compile(r'^[0-9]{5}$')
-NAME_STRIP_RE = re.compile(r'\s*\((?:closed|promoted|fixed|already implemented)[^)]*\)\s*')
 
 
 def _sync_meta_json_entities(db, full_artifacts_path, subdir, entity_type, project_id, workspace_uuid=None):
@@ -317,16 +319,13 @@ def _sync_backlog_entities(db, full_artifacts_path, artifacts_root, project_id, 
         entity_id = m.group(1)
         description = m.group(2).strip()
 
-        if CLOSED_RE.search(description):
-            status = "dropped"
-        elif PROMOTED_RE.search(description):
-            status = "promoted"
-        elif FIXED_RE.search(description):
-            status = "dropped"
-        else:
-            status = "open"
-
-        name = NAME_STRIP_RE.sub("", description).strip()[:200]
+        # Feature 111 / FR-CL.1b: free-text status-marker parsing removed.
+        # New rows default to status='open'; existing rows preserve whatever
+        # status is already in the DB (authoritative source). The description
+        # becomes the entity name as-is, truncated to 200 chars (marker text,
+        # if present, remains — entity.name normalization is out of scope per
+        # design C8.b).
+        name = description[:200]
 
         type_id = f"backlog:{entity_id}"
         existing = existing_map.get(type_id)
@@ -338,20 +337,13 @@ def _sync_backlog_entities(db, full_artifacts_path, artifacts_root, project_id, 
                 entity_id=entity_id,
                 name=name,
                 artifact_path=os.path.join(artifacts_root, "backlog.md"),
-                status=status,
+                status="open",
                 workspace_uuid=workspace_uuid,
                 project_id=effective_project_id,
             )
             results["registered"] += 1
-        elif existing["status"] != status:
-            db.update_entity(
-                type_id,
-                status=status,
-                project_id=effective_project_id,
-                workspace_uuid=workspace_uuid,
-            )
-            results["updated"] += 1
         else:
+            # Existing entity: preserve DB status (authoritative). Skip.
             results["skipped"] += 1
 
     return results

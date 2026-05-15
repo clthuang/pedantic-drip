@@ -8,6 +8,9 @@ import os
 import sqlite3
 import time
 
+from doctor.check_no_free_text_status_parsers import (
+    check_no_free_text_status_parsers,
+)
 from doctor.check_status_write_path import check_status_write_path
 from doctor.checks import (
     _build_local_entity_set,
@@ -48,6 +51,9 @@ CHECK_ORDER = [
     # Feature 109 / AC-2.1 + AC-2.6 (Group 10): static-grep audit for
     # direct status writes that bypass the append_phase_event sole-writer.
     check_status_write_path,
+    # Feature 111 / AC-CL.4 (Group E): lint for re-introduction of
+    # free-text status-suffix parsers at the 3 production sites.
+    check_no_free_text_status_parsers,
 ]
 
 # Checks that require entity DB
