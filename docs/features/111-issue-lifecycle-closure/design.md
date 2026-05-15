@@ -2,7 +2,7 @@
 
 - **Spec:** [spec.md](./spec.md) revision 3.4
 - **Parent PRD:** `docs/projects/P003-entity-system-redesign/prd.md` (M4 — Phase 4 Lifecycle Closure)
-- **Status:** revision 2 (rev 1 = architecture + interface + prior art; rev 2 patches in design-reviewer iter 1 fixes: status-only model for bug/task, new exception classes pinned, append_phase_event workspace_uuid wiring, encapsulation via new EntityDatabase helper methods, atomic commit boundary respected, down-migration pre-flight)
+- **Status:** revision 2.1 (rev 2 addressed design-reviewer iter 1 blockers; rev 2.1 addresses iter 2 nits: IF-1 ValueError-vs-EntityNotFoundError docstring clarity, IF-1 workspace_uuid-on-spawned_child defensive note, IF-7 module placement fixed to database.py, same-PR Group-A-and-B constraint noted, IF-2 workspace_uuid scope check note)
 
 ## §0 Prior Art Research
 
@@ -300,12 +300,12 @@ async def issue_spawn(
 2. Validate `kind in ('bug', 'task')` → `ValueError("invalid_kind: {kind}; expected bug|task")` if not.
 3. Resolve `workspace_uuid = workspace_uuid or _workspace_uuid or ""`.
 4. Resolve `effective_project_id = project_id or _project_id or "__unknown__"`.
-5. Look up parent via NEW helper: `parent_row = db.get_entity_by_uuid(parent_uuid)` → `EntityNotFoundError("parent_not_found: ...")` if None. Validate `parent_row['workspace_uuid'] == workspace_uuid` → `ValueError("cross-workspace parent forbidden")` if not.
+5. Look up parent via NEW helper: `parent_row = db.get_entity_by_uuid(parent_uuid)` → `EntityNotFoundError("parent_not_found: ...")` if None. NB: `EntityNotFoundError` is a `ValueError` subclass per IF-9, so AC-9.5's `assertRaises(ValueError)` test passes either way. Validate `parent_row['workspace_uuid'] == workspace_uuid` → `ValueError("cross-workspace parent forbidden")` if not.
 6. Validate `parent_row['kind'] in ('feature', 'backlog', 'project')` → `ValueError("invalid_parent_kind: ...; expected feature|backlog|project")` if not.
 7. `entity_id = id_generator.generate_entity_id(_db, kind, summary, effective_project_id)` — produces conformant `{seq:03d}-{slug}`.
 8. `new_uuid = db.register_entity(entity_type=kind, entity_id=entity_id, name=summary, workspace_uuid=workspace_uuid, project_id=effective_project_id, status='open', parent_uuid=parent_uuid, metadata=metadata or {})`. The call goes through `db.register_entity` DIRECTLY (not `_process_register_entity`) — mirrors the existing register_entity MCP pattern at `entity_server.py:502-590` which also calls `db.register_entity` directly. The internal mapping at `_derive_type_and_lifecycle(database.py:65)` converts `entity_type=kind` → `(type='work', kind=<kind>, lifecycle_class=<kind>_flow)`.
 9. **No `init_entity_workflow` call** — per FR-BL.1, bug/task entities use status-only model; no workflow_phases row created.
-10. `db.append_phase_event(type_id=parent_row['type_id'], project_id=effective_project_id, workspace_uuid=workspace_uuid, event_type='spawned_child', phase=None, metadata={"child_uuid": new_uuid, "child_kind": kind, "child_name": summary})`. workspace_uuid is passed because `spawned_child` is an `entity_*`-family event_type subject to the workspace_uuid requirement at `database.py:6964-6970`.
+10. `db.append_phase_event(type_id=parent_row['type_id'], project_id=effective_project_id, workspace_uuid=workspace_uuid, event_type='spawned_child', phase=None, metadata={"child_uuid": new_uuid, "child_kind": kind, "child_name": summary})`. workspace_uuid is passed as defensive practice (informational for `spawned_child`; the `append_phase_event` check at `database.py:6964-6970` enforces the kwarg only for `entity_status_changed` and `entity_promoted`. Passing it is harmless and future-proofs against the check being widened to include `spawned_child`).
 11. Return `json.dumps({"uuid": new_uuid})`.
 
 **Atomicity:** Steps 8 and 10 are inside `register_entity` and `append_phase_event` respectively, each of which uses `db.transaction()`. The two MCP-layer calls are NOT bundled in a single transaction (current pattern matches `register_entity` MCP at `entity_server.py:502-590`). If step 10 fails after step 8 succeeds, the entity exists but parent has no spawned_child event — same dual-write window as existing register_entity MCP (post-INSERT `entity_created` event has identical exposure). Acceptable per existing pattern; not a new failure mode.
@@ -723,7 +723,7 @@ _VALID_PARAMS: dict[str, set[str]] = {
 
 ### IF-7 — `_CLOSES_TERMINAL` constant
 
-**Module:** `plugins/pd/mcp/workflow_state_server.py` (module level, near top imports)
+**Module:** `plugins/pd/hooks/lib/entity_registry/database.py` (module level, near `_KIND_TO_TYPE_LIFECYCLE` at `:48` — single source of truth, importable from both DB layer and MCP layer per iter-1 S10 resolution)
 
 ```python
 # Closure terminal-state derivation by lifecycle_class.
@@ -879,6 +879,10 @@ Group E: Cleanup (depends on Group D)
 ```
 
 **Atomic commit discipline (NFR-1):** Per memory anti-pattern "Atomic commit discipline in schema migrations" (high-priority), the Migration 14 commit (Group A) MUST contain DDL only. All Python constant changes (VALID_ENTITY_TYPES, _KIND_TO_TYPE_LIFECYCLE, _VALID_PARAMS, _CLOSES_TERMINAL) ship in Group B. Inter-commit deploy ordering: A then B (atomic via NFR-1 ordering — both ship together to develop in the same PR but as separate commits).
+
+**Same-PR constraint (deploy safety):** Group A and Group B MUST land in the same PR (back-to-back commits, or squashed). Splitting them across PRs creates a partial-deploy window where Migration 14 has remapped `kind='task'` to `lifecycle_class='task_flow'` in the DB but Python's `_KIND_TO_TYPE_LIFECYCLE` still maps `'task' → 'work_flow'` — new register_entity(kind='task') calls would write the stale value. Operational risk is tiny (Pin I: 0 task rows in production live DB), but the deploy-ordering constraint is non-negotiable. Implementer: enforce by reviewing the same PR contains both groups before merge.
+
+**IF-2 implementation note (workspace_uuid scope):** The design IF-2 pseudocode assumes `workspace_uuid` (caller's effective workspace) is in scope at the existing `with db.transaction():` block boundary (`workflow_state_server.py:1127`). Implementer MUST verify this by reading the actual function. If `workspace_uuid` is not yet resolved at that point, hoist its resolution above the transaction-block — the resolve_entity_uuid() call needs both kwargs.
 
 **Parallelization opportunities (per implementing skill worktree pattern):**
 - Group A must run first and alone (migration changes DB schema for all subsequent groups).
