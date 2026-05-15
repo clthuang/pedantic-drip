@@ -3,7 +3,7 @@
 - **Project:** P003-entity-system-redesign — Milestone M4 (Phase 4 — Lifecycle Closure) — final feature in P003
 - **Depends on:** 109-polymorphic-taxonomy-and-event (post-migration-12 baseline; `entity_type` column DROPPED, `type`/`kind`/`lifecycle_class` triple ACTIVE); 110-markdown-projections-and-gener (post-migration-13 `entity_display` + projection sealed write path)
 - **Brainstorm source:** `docs/projects/P003-entity-system-redesign/prd.md`
-- **Status:** revision 3 (rev 2 addressed taxonomy reconciliation + terminal-state derivation + feature_uuid resolution + backfill contradiction; rev 3 addresses task-lifecycle gap + cross-workspace leakage + multiple testability tightenings)
+- **Status:** revision 3.2 (rev 3 addressed task-lifecycle + cross-workspace + multiple testability tightenings; rev 3.2 addresses phase-reviewer blockers: AC-10.x renumber, FR-10.4 same-closer carve-out, Pin K lifecycle_class no-CHECK confirmation, FR-MR.7 Python-constant down-migration mechanism)
 
 ## §1 Background and SUT-Verified Baseline
 
@@ -45,6 +45,7 @@ These are the concrete pre-conditions feature 111 depends on. If any pin drifts 
 - **Pin H — `phase_events.phase` column is NULLABLE:** `sqlite3 entities.db "PRAGMA table_info(phase_events)"` returns `notnull=0` for the `phase` column. (If pin fails, Migration 14 adds a column-relax step. Currently assumed true per migration-12 widening at `database.py:3395+`.)
 - **Pin I — Live-DB task entity count is 0:** Empirically verified pre-design: `sqlite3 ~/.claude/pd/entities/entities.db "SELECT COUNT(*) FROM entities WHERE entity_type='task'"` returns `0` on the current live DB. (The DB queried is on a PRE-feature-109 schema — uses `entity_type` column; post-109 query would be `WHERE kind='task'`. Migrations 12-13 auto-run at next session start.) Implication: FR-MR.5 task remap UPDATE is an operational no-op in production; only test fixtures exercise the remap path.
 - **Pin J — Pre-feature-109/110 schema state in live DB:** The live entities.db is currently on a pre-feature-109 schema (no `schema_migrations` table; entities table has `entity_type` column). Features 109 and 110 migrations 11-13 are in the codebase but have not yet run against the live DB. This is a deliberate state — they run automatically on next pd session start via `EntityDatabase._migrate()`. Feature 111's Migration 14 chains on top of 13 — design phase confirms the migration runner enforces strict v0→v13→v14 ordering.
+- **Pin K — `lifecycle_class` column has NO CHECK constraint:** Empirically verified at `database.py:2983` (post-migration-12 entities table) and `:3294` (post-Group-7 entities table) — `lifecycle_class` is declared `TEXT NOT NULL DEFAULT 'feature_flow'` with no CHECK clause. Implication: adding new lifecycle_class values (`bug_flow`, `task_flow`) does NOT require widening any CHECK constraint. Migration 14 omits lifecycle_class CHECK widening entirely.
 
 ## §2 Goals
 
@@ -125,7 +126,7 @@ These are the concrete pre-conditions feature 111 depends on. If any pin drifts 
   6. For each `uuid` NOT skipped in step 4 (i.e., not an idempotent replay): `update_entity(uuid, status=<derived_terminal>)` + `append_phase_event(type_id=<closed_entity_type_id>, event_type='entity_status_changed', metadata={"old_status": <prev>, "new_status": <derived_terminal>, "closed_by_uuid": <from_uuid>})`. (Skipping on replay avoids duplicate audit-trail events.)
   7. For each `uuid`: `INSERT INTO entity_relations(from_uuid, to_uuid, kind, created_at) VALUES (<from_uuid>, <uuid>, 'fixes', <ISO_TS>) ON CONFLICT DO NOTHING`. The `ON CONFLICT DO NOTHING` makes the INSERT idempotent on the composite UNIQUE (FR-10.5). Replay path falls through cleanly.
   8. COMMIT.
-- **FR-10.4 — Failure semantics.** If ANY closed-uuid (a) does not exist, (b) is already in a terminal state, (c) has an incompatible `lifecycle_class` per FR-10.3 step 3, → entire transaction rolls back. complete_phase's primary effect (phase transition) is also reverted. Caller sees a clean failure (no partial state).
+- **FR-10.4 — Failure semantics.** If ANY closed-uuid (a) does not exist, (b) is already in a terminal state AND the prior closer differs from the current caller (or no `entity_relations` closer record exists per FR-10.3 step 4), (c) has an incompatible `lifecycle_class` per FR-10.3 step 3, (d) resides in a different workspace than the caller per FR-10.3 step 2, → entire transaction rolls back. complete_phase's primary effect (phase transition) is also reverted. Caller sees a clean failure (no partial state). **Exception (idempotent replay):** When the prior closer matches the current caller (same `from_uuid`), per FR-10.3 step 4 + FR-10.5, this is NOT a failure — writes are SKIPPED for that uuid and the response includes it in `closes_applied`.
 - **FR-10.5 — Idempotency on replay.** Calling `complete_phase(phase='finish', closes=[u1])` after a previous successful call with the same closure set must succeed cleanly. Per FR-10.3 step 4, when the same closer replays, step 6 (update_entity + phase_event append) is SKIPPED for that uuid — preventing duplicate `entity_status_changed` audit events. INSERT in step 7 falls through via ON CONFLICT DO NOTHING. Concretely:
   - First call: transitions u1 → closed (or 'dropped' for backlog); appends 1 phase_event; INSERTs 1 entity_relations row; returns `closes_applied=[u1]`.
   - Second call (same from_uuid): step 4 detects same-closer, skips step 6; step 7 INSERT is no-op (ON CONFLICT); returns `closes_applied=[u1]`. Post-state: exactly 1 phase_event row + 1 entity_relations row for this (from, to, fixes) tuple.
@@ -166,7 +167,7 @@ These are the concrete pre-conditions feature 111 depends on. If any pin drifts 
   - `entity_display` table present (else abort: "Migration 14 requires entity_display table (feature 110). Run feature-110 deferred remediation.")
   - `migration_audit_log` table present (else abort: same).
   - `entity_relations` table ABSENT (else abort: "Migration 14 entity_relations table already exists. Drop or replay-detect.").
-- **FR-MR.7 — Down-migration `MIGRATIONS_DOWN[14]`.** Drops `entity_relations` + 3 indices. Reverses (type, kind) CHECK widening (copy-rename back to 6 work-kinds). Reverses phase_events.event_type CHECK widening (copy-rename back to 7 event_types) — **but only after first DELETING phase_events rows where event_type='spawned_child'** (else the copy-INSERT-SELECT into the narrower CHECK table fails). Reverts the lifecycle_class remap: `UPDATE entities SET lifecycle_class='work_flow' WHERE kind='task' AND lifecycle_class='task_flow'`. Restores `VALID_ENTITY_TYPES` and register_entity mapping via git-history (Python source code, not runtime — same precedent as features 109/110 down-migrations).
+- **FR-MR.7 — Down-migration `MIGRATIONS_DOWN[14]`.** Drops `entity_relations` + 3 indices. Reverses (type, kind) CHECK widening (copy-rename back to 6 work-kinds). Reverses phase_events.event_type CHECK widening (copy-rename back to 7 event_types) — **but only after first DELETING phase_events rows where event_type='spawned_child'** (else the copy-INSERT-SELECT into the narrower CHECK table fails). Reverts the lifecycle_class remap: `UPDATE entities SET lifecycle_class='work_flow' WHERE kind='task' AND lifecycle_class='task_flow'`. **Python constants `VALID_ENTITY_TYPES` and the `register_entity` entity_type → triple mapping are NOT reverted by the Python down-migration function** — they live in source code and are reverted only by reverting the feature 111 commit. The `MIGRATIONS_DOWN[14]` docstring documents this explicitly: "Caller must additionally revert source-code changes to VALID_ENTITY_TYPES and register_entity._ENTITY_TYPE_MAPPING to restore the v13 runtime contract." Same precedent as features 109/110 down-migrations (which similarly omit Python-constant reversion).
 - **FR-MR.8 — Idempotency.** Replay-safe: re-running on schema_version=14 is a no-op. Single-transaction with foreign_key_check pre/post. PRAGMA foreign_keys MUST be ON throughout.
 
 ### FR-cleanup — Free-text suffix parser removal
@@ -201,9 +202,9 @@ These are the concrete pre-conditions feature 111 depends on. If any pin drifts 
 - **AC-10.5** Cross-closer conflict: u1 closed by feature_A, then `complete_phase(type_id='feature:B', closes=[u1])` raises `InvalidCloseTargetError` whose message contains the substring `'already closed by different closer'`. Transaction rolls back (feature_B's phase unchanged; no new entity_relations row).
 - **AC-10.6** Cross-workspace closure forbidden: caller in workspace_A attempts `complete_phase(closes=[u_in_ws_B])` raises `InvalidCloseTargetError` with message substring `'cross-workspace closure forbidden'`. No partial state.
 - **AC-10.7** Terminal-without-closer-record path: u1 manually transitioned to 'closed' via direct `update_entity(u1, status='closed')` (no closes= path used; no `entity_relations` row exists). A subsequent `complete_phase(closes=[u1])` from feature_X raises `InvalidCloseTargetError` whose message contains substring `'already terminal but no closer record'`. Transaction rolls back.
-- **AC-10.6** Closed entities receive an `entity_status_changed` phase_event with metadata `{"old_status": "open", "new_status": "closed", "closed_by_uuid": <feature_uuid>}`.
-- **AC-10.7** Caller-not-registered: `complete_phase(type_id='feature:nonexistent', phase='finish', closes=[u1])` raises `EntityNotFoundError` BEFORE any writes. No phase transition, no closure rows.
-- **AC-10.8** `complete_phase(type_id=..., closes=[u_feature])` where `u_feature.lifecycle_class='feature_flow'` raises `InvalidCloseTargetError` (features cannot be closed via closes=).
+- **AC-10.8** Closed entities receive an `entity_status_changed` phase_event with metadata `{"old_status": "open", "new_status": "closed", "closed_by_uuid": <feature_uuid>}`.
+- **AC-10.9** Caller-not-registered: `complete_phase(type_id='feature:nonexistent', phase='finish', closes=[u1])` raises `EntityNotFoundError` BEFORE any writes. No phase transition, no closure rows.
+- **AC-10.10** `complete_phase(type_id=..., closes=[u_feature])` where `u_feature.lifecycle_class='feature_flow'` raises `InvalidCloseTargetError` (features cannot be closed via closes=).
 
 ### AC-MR.x — Migration 14 safety
 
@@ -252,7 +253,7 @@ These are the concrete pre-conditions feature 111 depends on. If any pin drifts 
 - Bulk closure CLI / `/pd:close` command — separate feature.
 - Renaming `complete_phase` to better reflect the closes= surface — naming bikeshed deferred.
 - Backfill of historical free-text `(closed: ...)` markers into `entity_relations` rows — explicitly out of scope per FR-CL.1 and AC-CL.2. Historical prose remains in files.
-- Cross-workspace closure linkage — explicitly FORBIDDEN at application layer per FR-10.2 and FR-10.3 step 2; AC-10.9 asserts the raise. (Schema-level enforcement via FK is not added in this feature; the application-layer check is sufficient because all writes route through the MCP surface.)
+- Cross-workspace closure linkage — explicitly FORBIDDEN at application layer per FR-10.2 and FR-10.3 step 2; AC-10.6 asserts the raise. (Schema-level enforcement via FK is not added in this feature; the application-layer check is sufficient because all writes route through the MCP surface.)
 
 ## §7 Open Risks
 
