@@ -542,6 +542,196 @@ def _project_meta_json(
         return f"projection failed: {exc}"
 
 
+# F4-AUDIT: backlog projection (feature 110 FR-4.2, TD-10).
+def _project_backlog_md(db: EntityDatabase) -> str:
+    """Build a deterministic markdown representation of ``docs/backlog.md``
+    from the entity registry (feature 110 FR-4.2 / TD-10).
+
+    All timestamp and identity fields source from DB columns
+    (``entities.created_at``, ``entities.name``, ``entities.entity_id``,
+    ``entities.metadata``). No ``datetime.utcnow()`` / ``datetime.now()``
+    calls — AC-4.2 static-checks this contract.
+
+    Two formats per TD-10:
+      - ``metadata.format == "table_row"`` (default for general backlog
+        items): emitted as a pipe-table row under the top-level table.
+      - ``metadata.format == "bullet_item"``: emitted as a bullet
+        (``- **#{seq:05d}** {name}``) under the appropriate
+        ``## From Feature N ...`` section identified by
+        ``metadata.section``.
+
+    Section ordering: sections appear in the order of the FIRST entity
+    created in them (``min(created_at)`` per section). Within a section,
+    rows are sorted by ``seq`` ascending.
+
+    Optional metadata keys:
+      - ``section_intro``: prose paragraph emitted after the section
+        header (sourced from the first entity in that section that
+        carries the key — deterministic because sections are sorted by
+        ``min(created_at)`` and rows within sections are sorted by seq).
+      - ``subsection``: emitted as ``### {subsection}`` before the first
+        entity bearing that subsection within a section. Only the first
+        occurrence per ``(section, subsection)`` pair emits the header.
+
+    Returns
+    -------
+    str
+        Markdown string. Archived rows (``status='archived'``) are
+        excluded from the main table per design TD-10.
+    """
+    # Collect every backlog entity across all workspaces (cross-project
+    # backlog is a single file). ``list_entities`` returns dict rows with
+    # ``entity_id``, ``name``, ``created_at``, ``metadata``, ``status``,
+    # ``uuid``.
+    rows = db.list_entities(entity_type="backlog")
+
+    # Exclude archived rows from the main projection (per design TD-10).
+    rows = [r for r in rows if (r.get("status") or "") != "archived"]
+
+    # Decorate rows with parsed metadata + (seq, slug) from entity_display
+    # (preferred) or entity_id fallback. NO datetime.now/utcnow call here.
+    decorated: list[dict] = []
+    for row in rows:
+        raw_md = row.get("metadata")
+        if raw_md:
+            md = (
+                json.loads(raw_md)
+                if isinstance(raw_md, str)
+                else raw_md
+            )
+        else:
+            md = {}
+
+        # Identity: prefer entity_display side table; fall back to
+        # parsing entity_id (feature 110 FR-8.3b style).
+        entity_id = row.get("entity_id") or ""
+        display = db.get_entity_display(row.get("uuid")) if row.get("uuid") else None
+        if display is not None:
+            seq = display["seq"]
+            slug = display["slug"]
+        else:
+            # Fallback: parse from entity_id. Backlog ids are typically
+            # zero-padded 5-digit integers (e.g., "00008"); a dash-slug
+            # form ("001-foo") is also supported per the strict format
+            # contract. Empty/non-numeric IDs sort last with seq=0.
+            if "-" in entity_id:
+                head, _, tail = entity_id.partition("-")
+                try:
+                    seq = int(head)
+                except ValueError:
+                    seq = 0
+                slug = tail
+            else:
+                try:
+                    seq = int(entity_id)
+                except ValueError:
+                    seq = 0
+                slug = ""
+
+        decorated.append({
+            "uuid": row.get("uuid") or "",
+            "entity_id": entity_id,
+            "seq": seq,
+            "slug": slug,
+            "name": row.get("name") or "",
+            "created_at": row.get("created_at") or "",
+            "metadata": md,
+            "format": md.get("format") or "table_row",
+            "section": md.get("section"),  # may be None
+            "section_intro": md.get("section_intro"),
+            "subsection": md.get("subsection"),
+        })
+
+    # Partition into top-level table rows vs section bullets.
+    table_rows = [
+        d for d in decorated
+        if d["format"] == "table_row"
+    ]
+    bullet_rows = [d for d in decorated if d["format"] == "bullet_item"]
+
+    # Sort table rows by seq ascending (stable on entity_id tiebreaker
+    # so that deterministic ordering survives duplicate seq).
+    table_rows.sort(key=lambda d: (d["seq"], d["entity_id"]))
+
+    # Group bullet rows by section in order of FIRST creation per
+    # section (deterministic groupby on min(created_at)).
+    sections: dict[str, list[dict]] = {}
+    for d in bullet_rows:
+        sec = d["section"] or ""
+        sections.setdefault(sec, []).append(d)
+    # Sort each section's rows by seq + entity_id.
+    for sec in sections:
+        sections[sec].sort(key=lambda d: (d["seq"], d["entity_id"]))
+    # Section header ordering = min(created_at) per section, then
+    # section name to break ties when timestamps are equal.
+    section_order = sorted(
+        sections.keys(),
+        key=lambda s: (
+            min((d["created_at"] for d in sections[s]), default=""),
+            s,
+        ),
+    )
+
+    # Build output. Use \n line endings (deterministic; matches existing
+    # docs/backlog.md). Always end with a single trailing newline.
+    out: list[str] = ["# Backlog", ""]
+    out.append("| ID | Timestamp | Description |")
+    out.append("|----|-----------|-------------|")
+    for d in table_rows:
+        seq_str = f"{d['seq']:05d}"
+        # Escape pipe characters in name (description) to avoid breaking
+        # the markdown table layout (matches add-to-backlog convention).
+        name_escaped = d["name"].replace("|", "\\|")
+        out.append(f"| {seq_str} | {d['created_at']} | {name_escaped} |")
+
+    # Per-section bullets.
+    for sec in section_order:
+        if not sec:
+            # Defensive: section bullets without a section header are
+            # rendered under an "Uncategorized" pseudo-section. In
+            # practice this never fires because rendering requires
+            # metadata.format=='bullet_item' which is only set when the
+            # backfill parser identifies a section.
+            section_header = "## Uncategorized"
+        else:
+            section_header = f"## {sec}"
+        out.append("")
+        out.append(section_header)
+
+        # Emit section_intro from the first entity in the section that
+        # carries one (deterministic — list already sorted by seq).
+        intro_text: str | None = None
+        for d in sections[sec]:
+            if d["section_intro"]:
+                intro_text = d["section_intro"]
+                break
+        if intro_text:
+            out.append("")
+            out.append(intro_text)
+
+        # Emit bullets. Track which (section, subsection) pairs have
+        # already emitted their `### Subsection` header so we only
+        # render each once.
+        emitted_subsections: set[str] = set()
+        first_bullet_pending = True
+        for d in sections[sec]:
+            subsection = d["subsection"]
+            if subsection and subsection not in emitted_subsections:
+                emitted_subsections.add(subsection)
+                out.append("")
+                out.append(f"### {subsection}")
+                first_bullet_pending = True
+            if first_bullet_pending:
+                out.append("")
+                first_bullet_pending = False
+            seq_str = f"{d['seq']:05d}"
+            name_escaped = d["name"]
+            out.append(f"- **#{seq_str}** {name_escaped}")
+
+    out.append("")  # trailing newline
+    return "\n".join(out)
+
+
 # ---------------------------------------------------------------------------
 # Processing functions
 # ---------------------------------------------------------------------------

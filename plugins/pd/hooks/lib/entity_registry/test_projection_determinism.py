@@ -36,7 +36,10 @@ if _MCP not in sys.path:
     sys.path.insert(0, _MCP)
 
 from entity_registry.database import EntityDatabase  # noqa: E402
-from workflow_state_server import _project_meta_json  # noqa: E402
+from workflow_state_server import (  # noqa: E402
+    _project_backlog_md,
+    _project_meta_json,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -306,4 +309,292 @@ def test_meta_json_tamper_safety(tmp_path: Path) -> None:
     )
     assert regenerated_bytes == pre_bytes, (
         "Re-projection after tamper did not restore canonical bytes"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Group 8 backlog projection tests — feature 110 FR-4.2 / TD-10
+# ---------------------------------------------------------------------------
+
+
+def _seed_backlog_entity(
+    db: EntityDatabase,
+    *,
+    entity_id: str,
+    name: str,
+    created_at: str,
+    metadata: dict | None = None,
+    status: str = "open",
+    workspace_uuid: str | None = None,
+) -> str:
+    """Seed a backlog entity directly via raw SQL.
+
+    Raw SQL is used (rather than ``register_entity``) so the test does
+    not depend on the strict-format env-var toggle AND so the
+    deterministic ``created_at`` value is honored exactly (the
+    ``register_entity`` path stamps an ``_iso_now()`` value).
+    """
+    # Reuse the conftest-installed __unknown__ workspace seed so the
+    # FK on entities.workspace_uuid resolves. The bootstrap workspace
+    # row is created lazily; force-create it here.
+    if workspace_uuid is None:
+        db._ensure_unknown_workspace_row()
+        row = db._conn.execute(
+            "SELECT uuid FROM workspaces "
+            "WHERE project_id_legacy = '__unknown__' LIMIT 1"
+        ).fetchone()
+        assert row is not None, (
+            "Bootstrap workspace row missing — test environment broken"
+        )
+        workspace_uuid = row["uuid"]
+
+    entity_uuid = str(_uuid.uuid4())
+    type_id = f"backlog:{entity_id}"
+    md_json = json.dumps(metadata or {})
+    db._conn.execute(
+        "INSERT INTO entities ("
+        "uuid, workspace_uuid, type_id, entity_id, name, status, "
+        "metadata, created_at, updated_at, "
+        "type, kind, lifecycle_class"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            entity_uuid,
+            workspace_uuid,
+            type_id,
+            entity_id,
+            name,
+            status,
+            md_json,
+            created_at,
+            created_at,
+            "work",
+            "backlog",
+            "work_flow",
+        ),
+    )
+
+    # Populate entity_display for the row. Backlog ids may be pure
+    # 5-digit ("00008") or "00400-slug" form — handle both.
+    if "-" in entity_id:
+        head, _, tail = entity_id.partition("-")
+        try:
+            seq = int(head)
+        except ValueError:
+            seq = 0
+        slug = tail
+    else:
+        try:
+            seq = int(entity_id)
+        except ValueError:
+            seq = 0
+        slug = ""
+    db._conn.execute(
+        "INSERT OR REPLACE INTO entity_display (uuid, seq, slug) "
+        "VALUES (?, ?, ?)",
+        (entity_uuid, seq, slug),
+    )
+    db._conn.commit()
+    return entity_uuid
+
+
+def test_project_backlog_md_callable() -> None:
+    """Task 5.6 / AC-1.3: ``_project_backlog_md`` is importable + callable.
+
+    The deferred Task 5.6 belongs to Group 5 but is tested here alongside
+    the Group 8 backlog suite to keep all backlog-projection asserts in
+    one file.
+    """
+    import workflow_state_server as wss
+    assert callable(wss._project_backlog_md)
+
+
+def test_backlog_md_byte_deterministic(tmp_path: Path) -> None:
+    """Task 8.3 / AC-4.2: two consecutive ``_project_backlog_md(db)``
+    calls produce SHA256-identical output."""
+    db = EntityDatabase(":memory:")
+
+    # Mix formats so the section-grouping branch is exercised in
+    # determinism testing.
+    _seed_backlog_entity(
+        db,
+        entity_id="00008",
+        name="add product manager agent",
+        created_at="2026-01-31T12:05:00Z",
+        metadata={"format": "table_row"},
+    )
+    _seed_backlog_entity(
+        db,
+        entity_id="00012",
+        name="fix the secretary AskUserQuestion formatting.",
+        created_at="2026-02-17T12:00:00Z",
+        metadata={"format": "table_row"},
+    )
+    _seed_backlog_entity(
+        db,
+        entity_id="00367",
+        name="[MED-security] dummy",
+        created_at="2026-05-11T00:00:00Z",
+        metadata={
+            "format": "bullet_item",
+            "section": "From Feature 108 Pre-Release QA Findings (2026-05-11)",
+            "subsection": "MED findings (auto-filed from QA gate)",
+        },
+    )
+    _seed_backlog_entity(
+        db,
+        entity_id="00360",
+        name="[HIGH-deferred] FR-3 violated",
+        created_at="2026-05-11T00:00:01Z",
+        metadata={
+            "format": "bullet_item",
+            "section": "From Feature 108 Pre-Release QA Findings (2026-05-11)",
+            "section_intro": (
+                "Feature 108 Pre-Release Adversarial QA Gate surfaced "
+                "blockers."
+            ),
+            "subsection": "HIGH-cluster deferrals (rationale in qa-override.md)",
+        },
+    )
+
+    result_1 = _project_backlog_md(db)
+    result_2 = _project_backlog_md(db)
+
+    hash_1 = hashlib.sha256(result_1.encode("utf-8")).hexdigest()
+    hash_2 = hashlib.sha256(result_2.encode("utf-8")).hexdigest()
+    assert hash_1 == hash_2, (
+        f"_project_backlog_md is NOT byte-deterministic "
+        f"({hash_1} vs {hash_2})"
+    )
+    assert result_1 == result_2
+
+
+def test_backlog_md_no_datetime_now_calls() -> None:
+    """Task 8.4 / AC-4.2 static check: ``_project_backlog_md`` body
+    contains no ``datetime.utcnow()`` / ``datetime.now()`` calls."""
+    import ast
+    import inspect
+    import workflow_state_server as wss
+
+    source_file = inspect.getsourcefile(wss._project_backlog_md)
+    assert source_file is not None
+    tree = ast.parse(Path(source_file).read_text())
+    target = None
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.FunctionDef)
+                and node.name == "_project_backlog_md"):
+            target = node
+            break
+    assert target is not None, "_project_backlog_md not found in AST"
+
+    forbidden = {"utcnow", "now"}
+    offending: list[str] = []
+    for node in ast.walk(target):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            attr = node.func.attr
+            if attr in forbidden:
+                # Match datetime.utcnow() / datetime.now().
+                if (isinstance(node.func.value, ast.Name)
+                        and node.func.value.id == "datetime"):
+                    offending.append(ast.unparse(node))
+    assert not offending, (
+        f"_project_backlog_md must not call datetime.utcnow/now "
+        f"(volatile state); found: {offending}"
+    )
+
+
+def test_backlog_md_regenerate_after_delete(tmp_path: Path) -> None:
+    """Task 8.5 / AC-4.4: deleting the projected file and re-running
+    ``_project_backlog_md`` yields byte-identical content."""
+    db = EntityDatabase(":memory:")
+    _seed_backlog_entity(
+        db,
+        entity_id="00001",
+        name="first item",
+        created_at="2026-01-01T00:00:00Z",
+        metadata={"format": "table_row"},
+    )
+    _seed_backlog_entity(
+        db,
+        entity_id="00002",
+        name="second item with | pipe",
+        created_at="2026-01-02T00:00:00Z",
+        metadata={"format": "table_row"},
+    )
+
+    backlog_path = tmp_path / "backlog.md"
+    pre_text = _project_backlog_md(db)
+    backlog_path.write_text(pre_text, encoding="utf-8")
+    pre_bytes = backlog_path.read_bytes()
+
+    # Delete the file. Re-project. Bytes must match.
+    backlog_path.unlink()
+    assert not backlog_path.exists()
+    post_text = _project_backlog_md(db)
+    backlog_path.write_text(post_text, encoding="utf-8")
+    post_bytes = backlog_path.read_bytes()
+
+    assert post_bytes == pre_bytes, (
+        f"Re-projected backlog bytes diverge:\n"
+        f"  pre:  {pre_bytes!r}\n"
+        f"  post: {post_bytes!r}"
+    )
+
+
+def test_compare_backlog_projection_script_no_drift(tmp_path: Path) -> None:
+    """Task 8.6 / AC-4.2a: the ``compare_backlog_projection.py`` script
+    exits 0 when fed identical fixture content.
+
+    Verifies the script exists, is importable, and that its whitespace-
+    normalized comparison succeeds on a fixture DB whose projection
+    equals the fixture file (by construction).
+    """
+    import subprocess
+
+    script_path = (
+        _REPO_ROOT / "plugins" / "pd" / "scripts"
+        / "compare_backlog_projection.py"
+    )
+    assert script_path.exists(), (
+        f"compare_backlog_projection.py missing at {script_path}"
+    )
+
+    # Seed a fixture DB with two table-row entries.
+    db_path = tmp_path / "entities.db"
+    db = EntityDatabase(str(db_path))
+    _seed_backlog_entity(
+        db,
+        entity_id="00001",
+        name="alpha",
+        created_at="2026-01-01T00:00:00Z",
+        metadata={"format": "table_row"},
+    )
+    _seed_backlog_entity(
+        db,
+        entity_id="00002",
+        name="beta",
+        created_at="2026-01-02T00:00:00Z",
+        metadata={"format": "table_row"},
+    )
+
+    # Render projection into a fixture file. The script's comparison
+    # MUST then report zero drift against this file.
+    fixture_backlog = tmp_path / "backlog.md"
+    fixture_backlog.write_text(_project_backlog_md(db), encoding="utf-8")
+    db.close()
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(script_path),
+            "--backlog-path",
+            str(fixture_backlog),
+            "--db-path",
+            str(db_path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, (
+        f"compare_backlog_projection.py reported drift on byte-identical "
+        f"fixture:\n  stdout={proc.stdout!r}\n  stderr={proc.stderr!r}"
     )
