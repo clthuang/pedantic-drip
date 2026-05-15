@@ -58,7 +58,7 @@ flowchart TD
 | Agents | 29 |
 | Commands | 35 |
 | Hooks | 19 |
-| MCP Tools | 46 |
+| MCP Tools | 45 |
 
 ## Commands
 
@@ -90,7 +90,7 @@ flowchart TD
 | `/pd:retrospect` | Capture learnings |
 | `/pd:add-to-backlog <idea>` | Capture ideas for later |
 | `/pd:cleanup-brainstorms` | Delete old scratch files |
-| `/pd:doctor` | Run 15 diagnostic checks on pd workspace health (incl. security-review command and stale worktrees) |
+| `/pd:doctor` | Run 16 diagnostic checks on pd workspace health (incl. security-review command, stale worktrees, and status-parser regression) |
 | `/pd:sync-cache` | Reload plugin after changes |
 | `/pd:secretary` | Intelligent task routing to commands, agents, and skills |
 | `/pd:root-cause-analysis` | Investigate bugs and failures to find all root causes |
@@ -228,20 +228,29 @@ $PLUGIN_ROOT/.venv/bin/pip install "google-genai>=1.0,<2"
 
 ### Entity Registry Server
 
-The entity registry server (`mcp/entity_server.py`) exposes ten tools for entity lineage tracking:
+The entity registry server (`mcp/entity_server.py`) exposes nineteen tools for entity lineage tracking:
 
 | Tool | Purpose |
 |------|---------|
 | `register_entity` | Register a new entity (feature, project, brainstorm) with type and status; raises `EntityExistsError` on `(workspace_uuid, type_id)` conflict |
-| `upsert_entity` | Idempotent insert-or-status-update; use when pre-existing entities should be updated rather than rejected |
-| `promote_entity` | Atomically promote an entity's lifecycle phase and rewrite parent relationships |
+| `issue_spawn` | Capture a mid-flight bug or task as a child entity linked to a parent; appends `spawned_child` phase event without modifying parent workflow state |
 | `set_parent` | Set a parent-child relationship between two entities |
 | `get_entity` | Retrieve entity details by type_id |
 | `get_lineage` | Get the full lineage tree for an entity (ancestors and descendants) |
 | `update_entity` | Update entity name, status, or metadata |
 | `export_lineage_markdown` | Export lineage tree as a markdown file |
-| `search_entities` | Search entities by name, type, status, or metadata |
 | `export_entities` | Export all entities as structured data |
+| `delete_entity` | Delete an entity by type_id or UUID |
+| `add_entity_tag` | Add a tag to an entity |
+| `get_entity_tags` | Get all tags for an entity |
+| `add_dependency` | Add a dependency relationship between two entities |
+| `remove_dependency` | Remove a dependency relationship |
+| `search_entities` | Search entities by name, type, status, or metadata |
+| `add_okr_alignment` | Align an entity to a key result |
+| `get_okr_alignments` | Get OKR alignments for an entity |
+| `create_key_result` | Create a key result under a project |
+| `update_kr_score` | Update the score for a key result |
+| `list_projects` | List all registered projects |
 
 The server is bootstrapped by `mcp/run-entity-server.sh` and declared in `plugin.json` via `mcpServers`. If the entity DB is locked at startup, the server starts in degraded mode and recovers automatically once the lock is released.
 
@@ -253,7 +262,7 @@ The workflow engine server (`mcp/workflow_state_server.py`) exposes fifteen tool
 |------|---------|
 | `get_phase` | Get current workflow phase for a feature |
 | `transition_phase` | Transition a feature to the next workflow phase |
-| `complete_phase` | Mark the current phase as complete |
+| `complete_phase` | Mark the current phase as complete; optional `closes=[uuid...]` atomically transitions each referenced issue to its terminal status and writes `entity_relations(kind='fixes')` rows |
 | `validate_prerequisites` | Check if prerequisites are met for a target phase |
 | `list_features_by_phase` | List all features currently in a given phase |
 | `list_features_by_status` | List all features with a given status |

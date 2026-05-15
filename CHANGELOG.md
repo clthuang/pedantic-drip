@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`issue_spawn(parent_uuid, kind, summary)` MCP tool** (feature 111) — spontaneously capture mid-flight bugs and tasks as child entities linked to a parent feature/backlog/project; appends `spawned_child` phase event on parent without modifying parent workflow state.
+- **`complete_phase(..., closes=[uuid...])` — atomic closure linkage** (feature 111) — `complete_phase` now accepts an optional `closes` list; each referenced entity is transitioned to its kind-appropriate terminal status (`bug`/`task` → `closed`, `backlog` → `dropped`) and an `entity_relations(kind='fixes')` row is written, all in a single transaction. Idempotent on replay; cross-workspace closure is rejected.
+- **`check_no_free_text_status_parsers` doctor check** (feature 111) — AST-based lint that prevents re-introduction of free-text status-suffix parsers at the 3 production sites (`backfill.py`, `doctor/checks.py`, `entity_status.py`). Brings doctor check count to 16.
+- **`entity_relations` table** (feature 111) — Migration 14 adds `entity_relations(id, from_uuid, to_uuid, kind, created_at)` with composite `UNIQUE(from_uuid, to_uuid, kind)` and 3 indices.
+
+### Changed
+
+- **Schema** (feature 111) — `entities.(type, kind)` CHECK widened to admit `kind='bug'`; `phase_events.event_type` CHECK widened to admit `'spawned_child'`; existing `kind='task'` rows remapped from `lifecycle_class='work_flow'` to `'task_flow'`.
+
+### Removed
+
+- **Free-text closure parsers** (feature 111) — removed prose-marker suffix parsers from `entity_registry/backfill.py`, `doctor/checks.py`, and `reconciliation_orchestrator/entity_status.py`. DB state (`entities.status` + `entity_relations` rows) is now the sole source of truth for closure detection.
+
 ## [4.18.0] - 2026-05-15
 
 ### Added
