@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.18.0] - 2026-05-15
+
+### Added
+
+- **`entity_display` table** (feature 110) — new SQLite table `entity_display(uuid, seq, slug)` separates identity from display metadata. Migration 13 adds the table atomically; `register_entity` and `register_entities_batch` INSERT into it on every entity registration.
+- **`_project_backlog_md` projection function** (feature 110) — MCP-side function that deterministically projects `docs/backlog.md` from `entity_type='backlog'` DB rows. Output is byte-identical on repeated calls against the same DB state.
+- **`data-file-guard.sh`** (feature 110) — config-driven guard replacing `meta-json-guard.sh`. Dispatches deny rules from `data_file_guards.json`; new guard patterns are added via config without a new shell script.
+- **`pd_state_diff.py`** (feature 110) — local pd-state diff generator wired into the pre-commit hook. Produces `pd-state.diff.md` (gitignored) showing entity state changes vs base branch for PR review.
+- **`EntityIdFormatError`** (feature 110) — `register_entity` now raises `EntityIdFormatError` when `entity_id` does not match `^\d+-.+`. Malformed IDs are rejected at registration time.
+
+### Changed
+
+- **`docs/backlog.md` and `.meta.json` files are now gitignored** (feature 110) — both are deterministic projections of DB state. Regenerating either produces byte-identical output. Direct writes to these paths are denied by `data-file-guard.sh`; use MCP tools (`complete_phase`, `transition_phase`, `register_entity`, `update_entity`) to mutate entity state.
+- **Doctor `.meta.json` autofix** (feature 110) — drift correction now routes through MCP (`complete_phase`/`transition_phase`) instead of direct file writes (TD-11). Autofix no longer bypasses the write guard.
+- **Migration 13 pre-flight gate** (feature 110) — session-start migration aborts if the live DB is pre-Migration-12. Includes mismatch audit, env-gated bypass (`PD_MIGRATION_SKIP_PREFLIGHT`), and forensic `migration_audit_log` table for post-migration inspection.
+
+### Removed
+
+- **`plugins/pd/hooks/meta-json-guard.sh`** (feature 110) — replaced by the generalized `data-file-guard.sh` with `data_file_guards.json` config.
+- **133 tracked `.meta.json` files and `docs/backlog.md`** (feature 110) — removed from the git index. Both are now gitignored projections.
+
 ## [4.17.3] - 2026-05-13
 
 ### Added

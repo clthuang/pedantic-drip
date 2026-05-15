@@ -222,10 +222,11 @@ docs/
 ├── brainstorms/           # From /pd:brainstorm
 ├── features/{id}-{name}/  # From /pd:create-feature
 │   ├── spec.md, design.md, plan.md, tasks.md
-│   └── .meta.json         # Phase tracking
+│   └── .meta.json         # Phase tracking (gitignored projection — use MCP tools to mutate)
 ├── projects/{id}-{name}/  # From /pd:create-project
 │   ├── prd.md             # Project PRD
 │   └── roadmap.md         # Dependency graph, milestones
+├── backlog.md             # Gitignored projection — use /pd:add-to-backlog to add items
 ├── retrospectives/        # From /pd:retrospect
 └── knowledge-bank/        # Accumulated learnings
 ```

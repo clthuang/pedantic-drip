@@ -370,6 +370,59 @@ def _build_frontmatter_summary(reports: list[DriftReport]) -> dict[str, int]:
 # ---------------------------------------------------------------------------
 
 
+def _read_entity_display(
+    db: EntityDatabase,
+    entity_uuid: str | None,
+    feature_type_id: str,
+    metadata: dict,
+    *,
+    entity_id_hint: str | None = None,
+) -> tuple[str, str]:
+    """Return ``(id, slug)`` for an entity, preferring the ``entity_display``
+    side table over ``metadata`` JSON (feature 110 FR-8.3b).
+
+    Defense-in-depth: if the entity_display row is missing (test fixtures
+    using ``_register_entity_no_display``, or rows registered before
+    migration 13 / pre-migration callers), emit a stderr WARN and fall back
+    to ``metadata.id`` / ``metadata.slug``.
+
+    The function intentionally returns ``str`` for both fields so the
+    downstream ``.meta.json`` shape is stable. ``id`` is the integer ``seq``
+    serialized via ``str(seq)``. Zero-padding width is recovered from
+    (1) ``metadata.id`` if it's a digit string, else (2) ``entity_id_hint``'s
+    leading numeric prefix (i.e., ``entities.entity_id``), else (3) no
+    padding. AC-8.5 specifically requires that the projection output is
+    byte-identical even when ``metadata.id`` has been removed — so the
+    ``entity_id_hint`` fallback is load-bearing.
+    """
+
+    def _width_from(value: str | None) -> int:
+        if not value:
+            return 0
+        head = value.split("-", 1)[0]
+        return len(head) if head.isdigit() else 0
+
+    if entity_uuid:
+        # Use the public encapsulated helper instead of raw _conn access;
+        # the helper returns None on pre-migration-13 DBs and on missing
+        # rows.
+        row = db.get_entity_display(entity_uuid)
+        if row is not None:
+            seq, slug = row["seq"], row["slug"]
+            # Recover zero-pad width. Order: metadata.id → entity_id prefix.
+            width = _width_from(metadata.get("id"))
+            if width == 0:
+                width = _width_from(entity_id_hint)
+            return (str(seq).zfill(width) if width else str(seq)), slug
+    # Fallback (WARN): entity_display row missing.
+    sys.stderr.write(
+        f"[workflow-state] _project_meta_json: no entity_display row for "
+        f"{feature_type_id!r} (uuid={entity_uuid!r}); falling back to "
+        f"metadata id/slug\n"
+    )
+    return metadata.get("id", ""), metadata.get("slug", "")
+
+
 def _project_meta_json(
     db: EntityDatabase,
     engine: WorkflowStateEngine | None,
@@ -412,10 +465,22 @@ def _project_meta_json(
     else:
         last_completed = metadata.get("last_completed_phase")
 
+    # Feature 110 Group 5 (FR-8.3b): read seq + slug from entity_display
+    # table when available. Falls back to metadata JSON with a WARN log if
+    # the row is missing (defense-in-depth: test fixtures using
+    # _register_entity_no_display, or rows registered before migration 13).
+    display_id, display_slug = _read_entity_display(
+        db,
+        entity.get("uuid"),
+        feature_type_id,
+        metadata,
+        entity_id_hint=entity.get("entity_id"),
+    )
+
     # Build .meta.json structure
     meta = {
-        "id": metadata.get("id", ""),
-        "slug": metadata.get("slug", ""),
+        "id": display_id,
+        "slug": display_slug,
         "mode": metadata.get("mode", "standard"),
         "status": entity.get("status") or "active",
         "created": entity.get("created_at") or _iso_now(),
@@ -475,6 +540,196 @@ def _project_meta_json(
         return None  # success
     except Exception as exc:
         return f"projection failed: {exc}"
+
+
+# F4-AUDIT: backlog projection (feature 110 FR-4.2, TD-10).
+def _project_backlog_md(db: EntityDatabase) -> str:
+    """Build a deterministic markdown representation of ``docs/backlog.md``
+    from the entity registry (feature 110 FR-4.2 / TD-10).
+
+    All timestamp and identity fields source from DB columns
+    (``entities.created_at``, ``entities.name``, ``entities.entity_id``,
+    ``entities.metadata``). No ``datetime.utcnow()`` / ``datetime.now()``
+    calls — AC-4.2 static-checks this contract.
+
+    Two formats per TD-10:
+      - ``metadata.format == "table_row"`` (default for general backlog
+        items): emitted as a pipe-table row under the top-level table.
+      - ``metadata.format == "bullet_item"``: emitted as a bullet
+        (``- **#{seq:05d}** {name}``) under the appropriate
+        ``## From Feature N ...`` section identified by
+        ``metadata.section``.
+
+    Section ordering: sections appear in the order of the FIRST entity
+    created in them (``min(created_at)`` per section). Within a section,
+    rows are sorted by ``seq`` ascending.
+
+    Optional metadata keys:
+      - ``section_intro``: prose paragraph emitted after the section
+        header (sourced from the first entity in that section that
+        carries the key — deterministic because sections are sorted by
+        ``min(created_at)`` and rows within sections are sorted by seq).
+      - ``subsection``: emitted as ``### {subsection}`` before the first
+        entity bearing that subsection within a section. Only the first
+        occurrence per ``(section, subsection)`` pair emits the header.
+
+    Returns
+    -------
+    str
+        Markdown string. Archived rows (``status='archived'``) are
+        excluded from the main table per design TD-10.
+    """
+    # Collect every backlog entity across all workspaces (cross-project
+    # backlog is a single file). ``list_entities`` returns dict rows with
+    # ``entity_id``, ``name``, ``created_at``, ``metadata``, ``status``,
+    # ``uuid``.
+    rows = db.list_entities(entity_type="backlog")
+
+    # Exclude archived rows from the main projection (per design TD-10).
+    rows = [r for r in rows if (r.get("status") or "") != "archived"]
+
+    # Decorate rows with parsed metadata + (seq, slug) from entity_display
+    # (preferred) or entity_id fallback. NO datetime.now/utcnow call here.
+    decorated: list[dict] = []
+    for row in rows:
+        raw_md = row.get("metadata")
+        if raw_md:
+            md = (
+                json.loads(raw_md)
+                if isinstance(raw_md, str)
+                else raw_md
+            )
+        else:
+            md = {}
+
+        # Identity: prefer entity_display side table; fall back to
+        # parsing entity_id (feature 110 FR-8.3b style).
+        entity_id = row.get("entity_id") or ""
+        display = db.get_entity_display(row.get("uuid")) if row.get("uuid") else None
+        if display is not None:
+            seq = display["seq"]
+            slug = display["slug"]
+        else:
+            # Fallback: parse from entity_id. Backlog ids are typically
+            # zero-padded 5-digit integers (e.g., "00008"); a dash-slug
+            # form ("001-foo") is also supported per the strict format
+            # contract. Empty/non-numeric IDs sort last with seq=0.
+            if "-" in entity_id:
+                head, _, tail = entity_id.partition("-")
+                try:
+                    seq = int(head)
+                except ValueError:
+                    seq = 0
+                slug = tail
+            else:
+                try:
+                    seq = int(entity_id)
+                except ValueError:
+                    seq = 0
+                slug = ""
+
+        decorated.append({
+            "uuid": row.get("uuid") or "",
+            "entity_id": entity_id,
+            "seq": seq,
+            "slug": slug,
+            "name": row.get("name") or "",
+            "created_at": row.get("created_at") or "",
+            "metadata": md,
+            "format": md.get("format") or "table_row",
+            "section": md.get("section"),  # may be None
+            "section_intro": md.get("section_intro"),
+            "subsection": md.get("subsection"),
+        })
+
+    # Partition into top-level table rows vs section bullets.
+    table_rows = [
+        d for d in decorated
+        if d["format"] == "table_row"
+    ]
+    bullet_rows = [d for d in decorated if d["format"] == "bullet_item"]
+
+    # Sort table rows by seq ascending (stable on entity_id tiebreaker
+    # so that deterministic ordering survives duplicate seq).
+    table_rows.sort(key=lambda d: (d["seq"], d["entity_id"]))
+
+    # Group bullet rows by section in order of FIRST creation per
+    # section (deterministic groupby on min(created_at)).
+    sections: dict[str, list[dict]] = {}
+    for d in bullet_rows:
+        sec = d["section"] or ""
+        sections.setdefault(sec, []).append(d)
+    # Sort each section's rows by seq + entity_id.
+    for sec in sections:
+        sections[sec].sort(key=lambda d: (d["seq"], d["entity_id"]))
+    # Section header ordering = min(created_at) per section, then
+    # section name to break ties when timestamps are equal.
+    section_order = sorted(
+        sections.keys(),
+        key=lambda s: (
+            min((d["created_at"] for d in sections[s]), default=""),
+            s,
+        ),
+    )
+
+    # Build output. Use \n line endings (deterministic; matches existing
+    # docs/backlog.md). Always end with a single trailing newline.
+    out: list[str] = ["# Backlog", ""]
+    out.append("| ID | Timestamp | Description |")
+    out.append("|----|-----------|-------------|")
+    for d in table_rows:
+        seq_str = f"{d['seq']:05d}"
+        # Escape pipe characters in name (description) to avoid breaking
+        # the markdown table layout (matches add-to-backlog convention).
+        name_escaped = d["name"].replace("|", "\\|")
+        out.append(f"| {seq_str} | {d['created_at']} | {name_escaped} |")
+
+    # Per-section bullets.
+    for sec in section_order:
+        if not sec:
+            # Defensive: section bullets without a section header are
+            # rendered under an "Uncategorized" pseudo-section. In
+            # practice this never fires because rendering requires
+            # metadata.format=='bullet_item' which is only set when the
+            # backfill parser identifies a section.
+            section_header = "## Uncategorized"
+        else:
+            section_header = f"## {sec}"
+        out.append("")
+        out.append(section_header)
+
+        # Emit section_intro from the first entity in the section that
+        # carries one (deterministic — list already sorted by seq).
+        intro_text: str | None = None
+        for d in sections[sec]:
+            if d["section_intro"]:
+                intro_text = d["section_intro"]
+                break
+        if intro_text:
+            out.append("")
+            out.append(intro_text)
+
+        # Emit bullets. Track which (section, subsection) pairs have
+        # already emitted their `### Subsection` header so we only
+        # render each once.
+        emitted_subsections: set[str] = set()
+        first_bullet_pending = True
+        for d in sections[sec]:
+            subsection = d["subsection"]
+            if subsection and subsection not in emitted_subsections:
+                emitted_subsections.add(subsection)
+                out.append("")
+                out.append(f"### {subsection}")
+                first_bullet_pending = True
+            if first_bullet_pending:
+                out.append("")
+                first_bullet_pending = False
+            seq_str = f"{d['seq']:05d}"
+            name_escaped = d["name"]
+            out.append(f"- **#{seq_str}** {name_escaped}")
+
+    out.append("")  # trailing newline
+    return "\n".join(out)
 
 
 # ---------------------------------------------------------------------------
@@ -1813,6 +2068,7 @@ async def init_feature_state(
     )
 
 
+# F4-AUDIT: MCP-tool wrapper; delegates to feature_lifecycle.init_project_state
 @mcp.tool()
 async def init_project_state(
     project_dir: str,

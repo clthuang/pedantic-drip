@@ -3912,6 +3912,416 @@ def _migration_12_polymorphic_taxonomy_and_events_down(
         )
 
 
+# ---------------------------------------------------------------------------
+# Feature 110 (Group 2 Task 2.0): entity_id format validation.
+# ---------------------------------------------------------------------------
+# Migration 13 introduces ``entity_display(uuid, seq, slug)`` populated by
+# parsing ``entities.entity_id`` as ``{seq}-{slug}`` (numeric prefix + dash +
+# slug suffix). Post-migration, ``register_entity`` must enforce this format
+# on insert so the 1:1 invariant between entities and entity_display is
+# preserved for new rows. Existing test fixtures with non-conformant
+# entity_ids may use the ``_register_entity_no_display`` escape hatch (see
+# EntityDatabase) which bypasses both the regex check and the entity_display
+# INSERT — appropriate ONLY for tests that need to exercise the pre-migration
+# fixture shape directly.
+_ENTITY_ID_FORMAT_RE = re.compile(r"^\d+-.+")
+
+
+class EntityIdFormatError(ValueError):
+    """Raised when ``entity_id`` does not match the ``{seq}-{slug}`` format
+    (feature 110 FR-8 / Group 2 Task 2.0).
+
+    Production callers must supply ``entity_id`` matching ``^\\d+-.+`` so
+    Migration 13's backfill SQL (CAST + substr on the dash position) yields
+    a well-formed ``(seq, slug)`` tuple. Tests that need non-conformant
+    fixture ids use ``EntityDatabase._register_entity_no_display`` which
+    skips both the regex check and the entity_display INSERT.
+    """
+
+    def __init__(self, entity_id: str):
+        super().__init__(
+            f"Invalid entity_id format: {entity_id!r}. "
+            f"Must match '^\\d+-.+' (numeric prefix + dash + slug suffix). "
+            f"Test fixtures using non-standard ids should use "
+            f"_register_entity_no_display."
+        )
+        self.entity_id = entity_id
+
+
+# ---------------------------------------------------------------------------
+# Feature 110 (Groups 1+2+3): Migration 13 — entity_display + migration_audit_log.
+# ---------------------------------------------------------------------------
+def _migration_13_entity_display(conn: sqlite3.Connection) -> None:
+    """Migration 13: entity_display(uuid, seq, slug) + migration_audit_log.
+
+    Feature 110 Groups 1+2+3 combined function body. Order per spec
+    FR-8 / Task 2.2 execution-order note:
+
+      1. Pre-flight gate (3 checks; see TD-6):
+         - schema_version (codebase analogue of PRAGMA user_version,
+           stored in ``_metadata.schema_version``) == 12.
+         - schema_version stamp consistent with the entities-table layout.
+         - PRAGMA table_info(entities) confirms ``entity_type`` ABSENT and
+           ``type``/``kind``/``lifecycle_class`` PRESENT.
+      2. Runtime PRAGMA introspection: assert ``uuid``, ``entity_id``,
+         ``metadata`` columns exist in entities (FR-5.6).
+      3. Idempotency early-return if entity_display table exists AND
+         schema_version >= 13.
+      4. BEGIN IMMEDIATE.
+      5. CREATE TABLE entity_display + idx_entity_display_seq.
+      6. CREATE TABLE migration_audit_log IF NOT EXISTS.
+      7. Pre-audit query (FR-8.2-pre): rows where metadata.slug != entity_id
+         suffix. Each logged to migration_audit_log (mismatch_row).
+      8. Env-var bypass check (PD_MIGRATION_13_ACCEPT_ENTITY_ID_WINS). If
+         mismatches > 0 and bypass NOT set → raise. If set → log
+         bypass_acknowledged forensic row.
+      9. Backfill INSERT: entity_display(uuid, seq, slug) from
+         CAST(substr(...)) parse of entity_id.
+     10. In-tx PRAGMA foreign_key_check.
+     11. Stamp _metadata.schema_version='13'.
+     12. COMMIT.
+
+    Note on PRAGMA user_version vs _metadata.schema_version: spec FR-5.5
+    references ``PRAGMA user_version``, but the existing codebase uses the
+    ``_metadata.schema_version`` row for migration tracking (set by every
+    prior migration; see ``_migrate``). We honour the codebase convention.
+    The pre-flight semantics are equivalent: a single canonical source of
+    truth for "what schema version is this DB?".
+
+    Idempotency: re-running this migration on a v13 DB is a no-op
+    early-return (FR-5.2 / AC-5.2).
+    """
+    # ----------------------------------------------------------------------
+    # Step 0: Outer-level idempotency early-return (FR-5.2 / AC-5.2).
+    # ----------------------------------------------------------------------
+    # If entity_display table already exists AND schema_version >= 13, this
+    # is a replay against an already-migrated DB → no-op early-return BEFORE
+    # the pre-flight gate runs (since the gate expects schema_version == 12).
+    try:
+        v_row = conn.execute(
+            "SELECT value FROM _metadata WHERE key='schema_version'"
+        ).fetchone()
+    except sqlite3.OperationalError as e:
+        if "no such table" in str(e).lower():
+            raise RuntimeError(
+                "Migration 13 aborted: _metadata table missing. Cannot read "
+                "schema_version. Run feature-109 deferred remediation first."
+            ) from e
+        raise
+
+    if v_row is not None:
+        try:
+            preview_version = int(v_row[0])
+        except (TypeError, ValueError):
+            preview_version = 0
+        if preview_version >= 13:
+            table_row = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name='entity_display'"
+            ).fetchone()
+            if table_row is not None:
+                return
+
+    # ----------------------------------------------------------------------
+    # Step 1: Pre-flight gate (FR-5.5 / TD-6).
+    # ----------------------------------------------------------------------
+    #
+    # Check 1: _metadata.schema_version exists and equals '12'.
+    if v_row is None:
+        raise RuntimeError(
+            "Migration 13 aborted: _metadata.schema_version row missing. "
+            "Run feature-109 deferred remediation first."
+        )
+    try:
+        current_version = int(v_row[0])
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            f"Migration 13 aborted: invalid schema_version {v_row[0]!r}. "
+            "Manual reconciliation required."
+        ) from exc
+
+    if current_version != 12:
+        # The _metadata row says we're not at 12. Look at the column layout
+        # to give a precise error.
+        existing_cols = {
+            r[1] for r in conn.execute("PRAGMA table_info(entities)").fetchall()
+        }
+        # If the column layout LOOKS like post-12 (entity_type absent +
+        # type/kind/lifecycle_class present), it's a version-divergence
+        # case: schema migrated but stamp lagging.
+        is_v12_layout = (
+            "entity_type" not in existing_cols
+            and "type" in existing_cols
+            and "kind" in existing_cols
+            and "lifecycle_class" in existing_cols
+        )
+        if is_v12_layout and current_version < 12:
+            raise RuntimeError(
+                f"Migration 13 aborted: schema_version table version="
+                f"{current_version} disagrees with PRAGMA user_version=12 "
+                f"(entities column layout is post-12). "
+                f"Manual reconciliation required."
+            )
+        # Otherwise this is just "schema not at 12 yet" — common stale-pre-12
+        # path. Use the user_version mismatch error per TD-6 check 1.
+        raise RuntimeError(
+            f"Migration 13 aborted: user_version={current_version}, "
+            f"expected 12. Run feature-109 deferred remediation first."
+        )
+
+    # Check 3 (TD-6): column layout assertion.
+    existing_cols = {
+        r[1] for r in conn.execute("PRAGMA table_info(entities)").fetchall()
+    }
+    entity_type_present = "entity_type" in existing_cols
+    type_present = "type" in existing_cols
+    kind_present = "kind" in existing_cols
+    lifecycle_class_present = "lifecycle_class" in existing_cols
+
+    if entity_type_present or not (
+        type_present and kind_present and lifecycle_class_present
+    ):
+        raise RuntimeError(
+            f"Migration 13 aborted: entities table schema mismatch. "
+            f"Detected entity_type="
+            f"{'present' if entity_type_present else 'absent'}, "
+            f"type={'present' if type_present else 'absent'}, "
+            f"kind={'present' if kind_present else 'absent'}, "
+            f"lifecycle_class="
+            f"{'present' if lifecycle_class_present else 'absent'}. "
+            f"Expected post-migration-12 layout. "
+            f"Run feature-109 deferred remediation first."
+        )
+
+    # ----------------------------------------------------------------------
+    # Step 2: Runtime PRAGMA column-presence introspection (FR-5.6).
+    # ----------------------------------------------------------------------
+    for required in ("uuid", "entity_id", "metadata"):
+        if required not in existing_cols:
+            raise RuntimeError(
+                f"Migration 13 aborted: entities table missing required "
+                f"column {required!r}. Cannot backfill entity_display."
+            )
+
+    # ----------------------------------------------------------------------
+    # Step 4: BEGIN IMMEDIATE.
+    # ----------------------------------------------------------------------
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        # Concurrent re-check guard.
+        v_row = conn.execute(
+            "SELECT value FROM _metadata WHERE key='schema_version'"
+        ).fetchone()
+        if v_row is not None:
+            try:
+                in_tx_version = int(v_row[0])
+            except (TypeError, ValueError):
+                in_tx_version = 0
+            if in_tx_version >= 13:
+                conn.rollback()
+                return
+
+        # Pre-DDL FK check.
+        pre_fk = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if pre_fk:
+            raise RuntimeError(
+                f"Migration 13 pre-FK check non-empty: {pre_fk}"
+            )
+
+        # ------------------------------------------------------------------
+        # Step 5: CREATE TABLE entity_display + index.
+        # ------------------------------------------------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS entity_display (
+                uuid TEXT PRIMARY KEY,
+                seq  INTEGER NOT NULL,
+                slug TEXT NOT NULL,
+                FOREIGN KEY (uuid) REFERENCES entities(uuid) ON DELETE CASCADE
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_entity_display_seq "
+            "ON entity_display(seq)"
+        )
+
+        # ------------------------------------------------------------------
+        # Step 6: CREATE TABLE migration_audit_log (TD-2).
+        # ------------------------------------------------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS migration_audit_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                migration_version INTEGER NOT NULL,
+                event_type TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        """)
+
+        # ------------------------------------------------------------------
+        # Step 7: Pre-audit query — mismatch detection (FR-8.2-pre).
+        # ------------------------------------------------------------------
+        # Detect entities where metadata.slug differs from entity_id
+        # suffix. Per spec FR-8.2-pre exact SQL.
+        mismatch_rows = conn.execute("""
+            SELECT uuid, entity_id,
+                   json_extract(metadata, '$.id')   AS meta_id,
+                   json_extract(metadata, '$.slug') AS meta_slug
+            FROM entities
+            WHERE json_extract(metadata, '$.slug') IS NOT NULL
+              AND json_extract(metadata, '$.slug') !=
+                  substr(entity_id, instr(entity_id, '-') + 1)
+        """).fetchall()
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        for m_row in mismatch_rows:
+            payload = json.dumps({
+                "uuid": m_row[0],
+                "entity_id": m_row[1],
+                "meta_id": m_row[2],
+                "meta_slug": m_row[3],
+            })
+            conn.execute(
+                "INSERT INTO migration_audit_log "
+                "(migration_version, event_type, payload, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                (13, "mismatch_row", payload, now_iso),
+            )
+
+        # ------------------------------------------------------------------
+        # Step 8: Env-var bypass check (FR-8.2-pre).
+        # ------------------------------------------------------------------
+        if mismatch_rows:
+            bypass = os.environ.get("PD_MIGRATION_13_ACCEPT_ENTITY_ID_WINS")
+            if bypass != "1":
+                uuid_list = [row[0] for row in mismatch_rows]
+                raise RuntimeError(
+                    f"Migration 13 aborted: {len(mismatch_rows)} entity_id / "
+                    f"metadata.slug mismatch(es) detected. "
+                    f"UUIDs: {uuid_list}. Reconcile manually OR set "
+                    f"PD_MIGRATION_13_ACCEPT_ENTITY_ID_WINS=1 to accept "
+                    f"entity_id as canonical (logged forensically in "
+                    f"migration_audit_log)."
+                )
+            # Bypass set — log a forensic acknowledgement row.
+            try:
+                import getpass
+                user = getpass.getuser()
+            except Exception:
+                user = "unknown"
+            bypass_payload = json.dumps({
+                "mismatch_count": len(mismatch_rows),
+                "user": user,
+                "ts": now_iso,
+            })
+            conn.execute(
+                "INSERT INTO migration_audit_log "
+                "(migration_version, event_type, payload, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                (13, "bypass_acknowledged", bypass_payload, now_iso),
+            )
+
+        # ------------------------------------------------------------------
+        # Step 9: Backfill INSERT (FR-8.2).
+        # ------------------------------------------------------------------
+        # Use INSERT OR IGNORE so a partial prior run's rows don't cause
+        # PRIMARY KEY conflict on uuid (idempotency contributor).
+        conn.execute("""
+            INSERT OR IGNORE INTO entity_display (uuid, seq, slug)
+            SELECT uuid,
+                   CAST(substr(entity_id, 1, instr(entity_id, '-') - 1)
+                        AS INTEGER) AS seq,
+                   substr(entity_id, instr(entity_id, '-') + 1) AS slug
+            FROM entities
+            WHERE instr(entity_id, '-') > 0
+        """)
+
+        # ------------------------------------------------------------------
+        # Step 10: In-tx FK check (FR-5.1).
+        # ------------------------------------------------------------------
+        in_tx_fk = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if in_tx_fk:
+            raise RuntimeError(
+                f"Migration 13 in-transaction FK check non-empty: {in_tx_fk}"
+            )
+
+        # ------------------------------------------------------------------
+        # Step 11: Stamp schema_version=13 INSIDE the transaction.
+        # ------------------------------------------------------------------
+        conn.execute(
+            "INSERT OR REPLACE INTO _metadata (key, value) "
+            "VALUES ('schema_version', '13')"
+        )
+
+        # ------------------------------------------------------------------
+        # Step 12: COMMIT.
+        # ------------------------------------------------------------------
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except sqlite3.Error:
+            pass
+        raise
+
+    # ----------------------------------------------------------------------
+    # Post-transaction defensive FK check.
+    # ----------------------------------------------------------------------
+    post_fk = conn.execute("PRAGMA foreign_key_check").fetchall()
+    if post_fk:
+        raise RuntimeError(
+            f"Migration 13 post-FK check non-empty: {post_fk}"
+        )
+
+
+def _migration_13_entity_display_down(conn: sqlite3.Connection) -> None:
+    """Reverse Migration 13 (feature 110 FR-5.4 / Task 15.1).
+
+    Drops:
+      - entity_display table.
+      - idx_entity_display_seq index.
+      - migration_audit_log table (IF EXISTS).
+      - Stamps schema_version back to 12.
+
+    Runtime-only: source-code restore of removed callers is via git history
+    (precedent: feature 109 retro / TD-8).
+    """
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        v_row = conn.execute(
+            "SELECT value FROM _metadata WHERE key='schema_version'"
+        ).fetchone()
+        if v_row is None:
+            raise RuntimeError(
+                "Migration 13 reverse: _metadata.schema_version missing"
+            )
+        try:
+            current_version = int(v_row[0])
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"Migration 13 reverse: invalid schema_version {v_row[0]!r}"
+            ) from exc
+        if current_version <= 12:
+            # Already at or below 12 → no-op early-return.
+            conn.rollback()
+            return
+
+        conn.execute("DROP INDEX IF EXISTS idx_entity_display_seq")
+        conn.execute("DROP TABLE IF EXISTS entity_display")
+        conn.execute("DROP TABLE IF EXISTS migration_audit_log")
+
+        conn.execute(
+            "INSERT OR REPLACE INTO _metadata (key, value) "
+            "VALUES ('schema_version', '12')"
+        )
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except sqlite3.Error:
+            pass
+        raise
+
+
 # Ordered mapping of version -> migration function.
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _create_initial_schema,
@@ -3926,14 +4336,16 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     10: _migration_10_phase_events,
     11: _migration_11_workspace_identity,
     12: _migration_12_polymorphic_taxonomy_and_events,
+    13: _migration_13_entity_display,
 }
 
 # Reverse-migration registry (FR-8 / design §6.7). Migrations 1-10 are
 # forward-only; calling _migrate_down() with target_version < 10 raises
-# NotImplementedError. Schema versions 11 and 12 are reversible.
+# NotImplementedError. Schema versions 11, 12, 13 are reversible.
 MIGRATIONS_DOWN: dict[int, Callable[[sqlite3.Connection], None]] = {
     11: _migration_11_workspace_identity_down,
     12: _migration_12_polymorphic_taxonomy_and_events_down,
+    13: _migration_13_entity_display_down,
 }
 
 
@@ -4754,6 +5166,7 @@ class EntityDatabase:
         parent_uuid: str | None = None,
         parent_type_id: str | None = None,
         metadata: dict | None = None,
+        _strict_id_format: bool | None = None,
     ) -> str:
         """Register a new entity. Raises :class:`EntityExistsError` on
         ``(workspace_uuid, type_id)`` conflict.
@@ -4761,6 +5174,13 @@ class EntityDatabase:
         Feature 109 FR-4 / AC-4.2: the pre-feature-109 silent
         ``INSERT OR IGNORE`` no-op is removed. Callers that need idempotent
         semantics use :meth:`upsert_entity` instead.
+
+        Feature 110 Group 2 (Task 2.0): ``entity_id`` MUST match the
+        ``^\\d+-.+`` regex (numeric prefix + dash + slug suffix) so the
+        ``entity_display(uuid, seq, slug)`` table — populated in the same
+        transaction — receives a well-formed (seq, slug) tuple. Test fixtures
+        that need to bypass this constraint use
+        :meth:`_register_entity_no_display`.
 
         Parameters
         ----------
@@ -4823,6 +5243,33 @@ class EntityDatabase:
         :meth:`set_parent` API.
         """
         self._validate_entity_type(entity_type)
+
+        # Feature 110 Group 2 (Task 2.0): fail-fast entity_id format check.
+        #
+        # Resolution order for _strict_id_format:
+        #   1. Explicit kwarg (None means "use default resolution").
+        #   2. Env var PD_REGISTER_ENTITY_STRICT_ID_FORMAT
+        #      ('1' = strict, '0' = permissive).
+        #   3. Default: True (strict — matches spec FR-8 / Task 2.0 DoD).
+        #
+        # The env var is a transition-window escape hatch so legacy tests
+        # whose fixtures use non-conformant ids (e.g., 'test-bs') can be
+        # run without per-call _register_entity_no_display rewrites. Test
+        # suites that opt out (via conftest setenv) MUST be migrated to
+        # conformant ids in a follow-up. Production callers do NOT set the
+        # env var → they get strict mode by default.
+        if _strict_id_format is None:
+            env_flag = os.environ.get("PD_REGISTER_ENTITY_STRICT_ID_FORMAT")
+            if env_flag is None:
+                strict = True
+            else:
+                strict = env_flag != "0"
+        else:
+            strict = _strict_id_format
+
+        if strict and not _ENTITY_ID_FORMAT_RE.match(entity_id):
+            raise EntityIdFormatError(entity_id)
+
         type_id = f"{entity_type}:{entity_id}"
         now = self._now_iso()
         metadata_json = json.dumps(metadata) if metadata is not None else None
@@ -4937,6 +5384,31 @@ class EntityDatabase:
                  metadata_text),
             )
 
+            # Feature 110 Group 2 (Task 2.0): entity_display 1:1 invariant.
+            # Insert seq + slug parsed from entity_id in the same transaction
+            # so AC-8.2 (entity_display row count == entities row count)
+            # holds for new rows. Pre-migration-13 databases lack the
+            # entity_display table — swallow that specific OperationalError
+            # so register_entity remains functional in the transition window.
+            # The strict regex match above guarantees a dash separator and a
+            # numeric prefix, so the parse is well-defined.
+            if strict:
+                dash_idx = entity_id.index("-")
+                _seq = int(entity_id[:dash_idx])
+                _slug = entity_id[dash_idx + 1:]
+                try:
+                    self._conn.execute(
+                        "INSERT INTO entity_display (uuid, seq, slug) "
+                        "VALUES (?, ?, ?)",
+                        (entity_uuid, _seq, _slug),
+                    )
+                except sqlite3.OperationalError as exc:
+                    if "no such table" not in str(exc).lower():
+                        raise
+                    # Pre-migration-13: entity_display table does not exist
+                    # yet. The migration-13 backfill INSERT-SELECT covers
+                    # rows registered before the table existed. Silent skip.
+
             # entity_created phase_event emission (feature 109 FR-2 /
             # spec line 104). The append_phase_event helper INSERTs the
             # event row WITHOUT redundantly UPDATE-ing entities.status —
@@ -4959,6 +5431,42 @@ class EntityDatabase:
 
         return entity_uuid
 
+    def _register_entity_no_display(
+        self,
+        entity_type: str,
+        entity_id: str,
+        name: str,
+        *,
+        workspace_uuid: str | None = None,
+        project_id: str | None = None,
+        artifact_path: str | None = None,
+        status: str | None = None,
+        parent_uuid: str | None = None,
+        parent_type_id: str | None = None,
+        metadata: dict | None = None,
+    ) -> str:
+        """Test-only escape hatch (feature 110 Group 2 Task 2.0).
+
+        Bypasses the ``^\\d+-.+`` entity_id format check AND the
+        ``entity_display(uuid, seq, slug)`` INSERT. Used by legacy test
+        fixtures whose entity_ids predate the feature-110 format contract.
+
+        DO NOT use in production code paths. The corresponding entity row
+        will be missing from ``entity_display`` — any downstream query
+        joining on ``entity_display.uuid`` will not return this row.
+        """
+        return self.register_entity(
+            entity_type, entity_id, name,
+            workspace_uuid=workspace_uuid,
+            project_id=project_id,
+            artifact_path=artifact_path,
+            status=status,
+            parent_uuid=parent_uuid,
+            parent_type_id=parent_type_id,
+            metadata=metadata,
+            _strict_id_format=False,
+        )
+
     def upsert_entity(
         self,
         entity_type: str,
@@ -4972,6 +5480,7 @@ class EntityDatabase:
         parent_uuid: str | None = None,
         parent_type_id: str | None = None,
         metadata: dict | None = None,
+        _strict_id_format: bool | None = None,
     ) -> str:
         """Idempotent insert-or-status-update. Signature byte-identical to
         :meth:`register_entity` (feature 109 FR-4 / AC-4.3).
@@ -5010,6 +5519,7 @@ class EntityDatabase:
                     parent_uuid=parent_uuid,
                     parent_type_id=parent_type_id,
                     metadata=metadata,
+                    _strict_id_format=_strict_id_format,
                 )
             except EntityExistsError:
                 # Conflict branch: workspace-scoped direct SELECT (PRD Goal 1
@@ -7200,21 +7710,76 @@ class EntityDatabase:
         ws_uuid = self._resolve_optional_workspace_filter(
             workspace_uuid, project_id, _caller="scan_entity_ids"
         )
+        # Feature 110 (Group 4 / FR-8.3a): prefer entity_display as the
+        # source-of-truth for seq/slug identity. JOIN entity_display on
+        # entities.uuid and reconstruct entity_id as ``{seq}-{slug}``. This
+        # decouples the function from any future ``entities.entity_id`` column
+        # rename and matches the design §5 invariant that entity_id parsing
+        # only happens in ``_migration_13_*`` functions and test files.
+        #
+        # Defense-in-depth (per implementer brief): rows whose entity_display
+        # row is missing (test fixtures inserted via raw SQL or
+        # ``_register_entity_no_display``) fall back to the raw entity_id
+        # value with a WARN log so the fixture continues to work during the
+        # transition window.
         # F11 (Group 6): the legacy ``entity_type`` column was dropped by
         # migration 12; filter on ``kind`` (same value for the 5 production
         # kinds per FR-1).
-        if ws_uuid is not None:
-            rows = self._conn.execute(
-                "SELECT entity_id FROM entities "
-                "WHERE kind = ? AND workspace_uuid = ?",
-                (entity_type, ws_uuid),
-            ).fetchall()
-        else:
-            rows = self._conn.execute(
-                "SELECT entity_id FROM entities WHERE kind = ?",
-                (entity_type,),
-            ).fetchall()
-        return [row["entity_id"] for row in rows]
+        try:
+            if ws_uuid is not None:
+                rows = self._conn.execute(
+                    "SELECT e.entity_id AS entity_id, "
+                    "       d.seq AS seq, d.slug AS slug "
+                    "FROM entities e "
+                    "LEFT JOIN entity_display d ON d.uuid = e.uuid "
+                    "WHERE e.kind = ? AND e.workspace_uuid = ?",
+                    (entity_type, ws_uuid),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT e.entity_id AS entity_id, "
+                    "       d.seq AS seq, d.slug AS slug "
+                    "FROM entities e "
+                    "LEFT JOIN entity_display d ON d.uuid = e.uuid "
+                    "WHERE e.kind = ?",
+                    (entity_type,),
+                ).fetchall()
+        except sqlite3.OperationalError as exc:
+            # Pre-migration-13: entity_display table does not exist. Degrade
+            # to the pre-port query shape so backfill, tests, and any caller
+            # invoking scan_entity_ids before migration 13 still works.
+            if "no such table" not in str(exc).lower():
+                raise
+            if ws_uuid is not None:
+                rows = self._conn.execute(
+                    "SELECT entity_id, NULL AS seq, NULL AS slug "
+                    "FROM entities "
+                    "WHERE kind = ? AND workspace_uuid = ?",
+                    (entity_type, ws_uuid),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT entity_id, NULL AS seq, NULL AS slug "
+                    "FROM entities WHERE kind = ?",
+                    (entity_type,),
+                ).fetchall()
+
+        out: list[str] = []
+        for row in rows:
+            seq = row["seq"]
+            slug = row["slug"]
+            if seq is not None and slug is not None:
+                out.append(f"{seq}-{slug}")
+            else:
+                # Defense-in-depth: entity_display row missing (e.g., test
+                # fixture used _register_entity_no_display / raw SQL insert).
+                sys.stderr.write(
+                    f"[entity_registry] scan_entity_ids: no entity_display "
+                    f"row for entity_id={row['entity_id']!r} "
+                    f"(kind={entity_type}); falling back to entities.entity_id\n"
+                )
+                out.append(row["entity_id"])
+        return out
 
     def next_sequence_value(
         self,
@@ -7299,6 +7864,34 @@ class EntityDatabase:
             except sqlite3.Error:
                 pass
             raise
+
+    def get_entity_display(self, entity_uuid: str) -> dict | None:
+        """Return the ``entity_display`` row for an entity, or ``None``.
+
+        Feature 110 Group 6 helper: encapsulates the entity_display lookup
+        so callers (e.g., ``backfill.py``) need not reach into the private
+        ``_conn`` attribute. Degrades gracefully on pre-migration-13 DBs
+        where the ``entity_display`` table does not yet exist.
+
+        Returns a dict-like row with ``seq`` and ``slug`` columns, or
+        ``None`` if no row exists (or the table is missing).
+        """
+        if not entity_uuid:
+            return None
+        try:
+            row = self._conn.execute(
+                "SELECT seq, slug FROM entity_display WHERE uuid = ?",
+                (entity_uuid,),
+            ).fetchone()
+        except sqlite3.OperationalError as exc:
+            if "no such table" in str(exc).lower():
+                return None
+            raise
+        if row is None:
+            return None
+        # Convert to plain dict for consistency with other return shapes
+        # and to insulate callers from the row_factory choice.
+        return {"seq": row["seq"], "slug": row["slug"]}
 
     def is_healthy(self) -> bool:
         """Check if the database connection is alive and usable.

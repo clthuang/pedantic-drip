@@ -220,6 +220,7 @@ def init_feature_state(
     }
 
 
+# F4-AUDIT: project-type schema differs; ported to feature 111
 def init_project_state(
     db: EntityDatabase,
     artifacts_root: str,
