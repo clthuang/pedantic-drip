@@ -58,7 +58,26 @@ _KIND_TO_TYPE_LIFECYCLE: dict[str, tuple[str, str]] = {
     "initiative": ("work",       "work_flow"),
     "objective":  ("work",       "work_flow"),
     "key_result": ("work",       "work_flow"),
-    "task":       ("work",       "work_flow"),
+    # Feature 111 FR-BL.3 / FR-MR.5: task remapped from 'work_flow' to
+    # 'task_flow' so _CLOSES_TERMINAL can derive the closes= terminal
+    # without colliding with backlog (which keeps 'work_flow' → 'dropped').
+    "task":       ("work",       "task_flow"),
+    # Feature 111 FR-9.2: new 'bug' kind for spontaneous mid-flight issue
+    # capture (issue_spawn MCP). Status-only model — see FR-BL.
+    "bug":        ("work",       "bug_flow"),
+}
+
+
+# Feature 111 FR-10.3 step 3 / IF-7: closure terminal-state derivation by
+# lifecycle_class. Single source of truth for complete_phase(closes=). Keys
+# absent from this dict raise InvalidCloseTargetError when passed via closes=.
+# Future relation kinds extend this dict without touching dispatch logic.
+_CLOSES_TERMINAL: dict[str, str] = {
+    "bug_flow":  "closed",   # bug terminal via closes= (resolved/wont_fix via update_entity)
+    "task_flow": "closed",   # task terminal (only terminal in task machine)
+    "work_flow": "dropped",  # backlog terminal — "subsumed by feature"
+    # feature_flow → NOT in dict → raise InvalidCloseTargetError (TD-1)
+    # brainstorm_flow, container_flow, etc. → NOT in dict → raise
 }
 
 
@@ -4322,6 +4341,1003 @@ def _migration_13_entity_display_down(conn: sqlite3.Connection) -> None:
         raise
 
 
+# ---------------------------------------------------------------------------
+# Feature 111 (Group A): Migration 14 — entity_relations table + CHECK widenings.
+# ---------------------------------------------------------------------------
+# Adds:
+#   - entity_relations table (FR-MR.1) + 3 indices.
+#   - Widens entities (type, kind) CHECK to admit kind='bug' (FR-MR.2).
+#   - Widens phase_events.event_type CHECK to admit 'spawned_child' (FR-MR.3).
+#   - Remaps any existing kind='task' rows from lifecycle_class='work_flow'
+#     to 'task_flow' (FR-MR.5; operational no-op per spec Pin I).
+#
+# MigrationError + _append_migration_audit_log helper are introduced here to
+# back the FR-MR.6 / FR-MR.9 pre-flight gates (which raise structured errors
+# that downstream tests assert by class). Prior migrations (12, 13) raised
+# RuntimeError; this feature standardises on MigrationError for new gates and
+# leaves the legacy RuntimeError sites untouched (no backward-compat shim per
+# CLAUDE.md "No backward compatibility").
+
+
+class MigrationError(Exception):
+    """Raised by migration pre-flight gates and safety checks.
+
+    Used by Migration 14 (and forward) to signal structured migration
+    failures: schema-version drift, required-table-absent, required-table-
+    present (idempotency violation), or down-migration safety blockers.
+
+    Tests assert the class type + message substring (per spec
+    AC-MR.4/5/10/11).
+    """
+
+
+def _append_migration_audit_log(
+    conn: sqlite3.Connection,
+    *,
+    version: int,
+    event_type: str,
+    payload: dict | None = None,
+) -> None:
+    """Append a structured audit log row to migration_audit_log.
+
+    Centralises the INSERT pattern Migration 13 emits inline (lines
+    4184-4188, 4217-4220). Migration 14 (and forward migrations) use this
+    helper for consistency.
+
+    The migration_audit_log table is created by Migration 13. Callers
+    invoking this helper from a Migration 14+ body can assume the table
+    exists (Migration 14's pre-flight asserts so).
+    """
+    now_iso = datetime.now(timezone.utc).isoformat()
+    payload_json = json.dumps(payload or {})
+    conn.execute(
+        "INSERT INTO migration_audit_log "
+        "(migration_version, event_type, payload, created_at) "
+        "VALUES (?, ?, ?, ?)",
+        (version, event_type, payload_json, now_iso),
+    )
+
+
+# Post-migration-12 entities table column list (the 14 columns produced by
+# Migration 12 Group 7's entity_type drop). Used by Migration 14's copy-rename
+# to build the INSERT-SELECT column list and to declare the new table.
+_V14_ENTITIES_COLUMNS: tuple[str, ...] = (
+    "uuid",
+    "workspace_uuid",
+    "type_id",
+    "entity_id",
+    "name",
+    "status",
+    "parent_uuid",
+    "artifact_path",
+    "created_at",
+    "updated_at",
+    "metadata",
+    "type",
+    "kind",
+    "lifecycle_class",
+)
+
+
+def _copy_rename_entities_for_v14(conn: sqlite3.Connection) -> None:
+    """Migration 14 helper — widen entities (type, kind) CHECK to admit 'bug'.
+
+    Replicates the Migration 12 Group 3 copy-rename idiom
+    (database.py:2866-3083): capture pre-rebuild indexes + triggers +
+    cross-table triggers, build entities_new with widened CHECK, INSERT-
+    SELECT all rows, DROP old, RENAME new, recreate indexes + triggers.
+
+    Widened (type, kind) CHECK per FR-MR.2 — work-kind enum becomes:
+        'feature','backlog','bug','initiative','objective','key_result','task'
+    ('bug' inserted between 'backlog' and 'initiative'; AC-MR.2 pins the
+    exact substring).
+
+    Idempotency: probes sqlite_master for the literal substring
+    ``'bug'`` (with quotes) inside the entities CHECK SQL. If present, the
+    block already ran in a prior interrupted v14 attempt — skip.
+    """
+    entities_sql_row = conn.execute(
+        "SELECT sql FROM sqlite_master "
+        "WHERE type='table' AND name='entities'"
+    ).fetchone()
+    entities_sql = entities_sql_row[0] if entities_sql_row else ""
+    # The literal "'bug'" (with quotes) appears only when the widened CHECK
+    # is in place. Comment-text mentions of "bug" (added by feature 109's
+    # source code) don't include the surrounding quotes.
+    if "'bug'" in (entities_sql or ""):
+        return
+
+    # Capture pre-rebuild row count for parity check.
+    pre_count = conn.execute(
+        "SELECT COUNT(*) FROM entities"
+    ).fetchone()[0]
+
+    # Capture user-defined indexes on entities.
+    saved_indexes = [
+        (r[0], r[1])
+        for r in conn.execute(
+            "SELECT name, sql FROM sqlite_master "
+            "WHERE type='index' AND tbl_name='entities' "
+            "AND sql IS NOT NULL"
+        ).fetchall()
+    ]
+
+    # Capture triggers ON entities.
+    saved_triggers = [
+        (r[0], r[1])
+        for r in conn.execute(
+            "SELECT name, sql FROM sqlite_master "
+            "WHERE type='trigger' AND tbl_name='entities' "
+            "AND sql IS NOT NULL"
+        ).fetchall()
+    ]
+
+    # Capture cross-table triggers that reference ``entities`` (SQLite
+    # RENAME-table validator scans every trigger SQL and aborts if any
+    # reference resolves to a missing table during the swap).
+    cross_triggers = [
+        (r[0], r[1])
+        for r in conn.execute(
+            "SELECT name, sql FROM sqlite_master "
+            "WHERE type='trigger' "
+            "AND tbl_name <> 'entities' "
+            "AND sql LIKE '%entities%' "
+            "AND sql IS NOT NULL"
+        ).fetchall()
+    ]
+    for trg_name, _ in cross_triggers:
+        conn.execute(f"DROP TRIGGER IF EXISTS {trg_name}")
+
+    # Build entities_new with the widened (type, kind) CHECK. Column
+    # ordering matches the post-migration-12 layout (14 columns); the
+    # CHECK enum substring per FR-MR.2 / AC-MR.2 is literal.
+    conn.execute("""
+        CREATE TABLE entities_new (
+            uuid           TEXT NOT NULL PRIMARY KEY,
+            workspace_uuid TEXT NOT NULL
+                           REFERENCES workspaces(uuid),
+            type_id        TEXT NOT NULL,
+            entity_id      TEXT NOT NULL,
+            name           TEXT NOT NULL,
+            status         TEXT,
+            parent_uuid    TEXT REFERENCES entities_new(uuid),
+            artifact_path  TEXT,
+            created_at     TEXT NOT NULL,
+            updated_at     TEXT NOT NULL,
+            metadata       TEXT,
+            type           TEXT NOT NULL DEFAULT 'work',
+            kind           TEXT NOT NULL DEFAULT 'feature',
+            lifecycle_class TEXT NOT NULL DEFAULT 'feature_flow',
+            UNIQUE(workspace_uuid, type_id),
+            CHECK (
+                (type='workspace' AND kind='workspace') OR
+                (type='brainstorm' AND kind='brainstorm') OR
+                (type='container' AND kind='project') OR
+                (type='work' AND kind IN (
+                    'feature','backlog','bug','initiative','objective','key_result','task'
+                ))
+            )
+        )
+    """)
+
+    # Defensive: confirm the source column set matches what we expect.
+    src_cols = [
+        r[1] for r in conn.execute(
+            "PRAGMA table_info(entities)"
+        ).fetchall()
+    ]
+    expected = set(_V14_ENTITIES_COLUMNS)
+    if set(src_cols) != expected:
+        unknown = [c for c in src_cols if c not in expected]
+        missing = [c for c in expected if c not in src_cols]
+        raise MigrationError(
+            f"Migration 14 entities copy-rename: column-set mismatch. "
+            f"unknown={unknown!r}, missing={missing!r}"
+        )
+
+    col_list_sql = ",".join(_V14_ENTITIES_COLUMNS)
+    conn.execute(
+        f"INSERT INTO entities_new ({col_list_sql}) "
+        f"SELECT {col_list_sql} FROM entities"
+    )
+    post_count = conn.execute(
+        "SELECT COUNT(*) FROM entities_new"
+    ).fetchone()[0]
+    if post_count != pre_count:
+        raise MigrationError(
+            f"Migration 14 entities copy-rename row-count mismatch: "
+            f"pre={pre_count}, post={post_count}"
+        )
+
+    # Swap tables.
+    conn.execute("DROP TABLE entities")
+    conn.execute("PRAGMA legacy_alter_table = OFF")
+    conn.execute("ALTER TABLE entities_new RENAME TO entities")
+
+    # Recreate captured user-defined indexes verbatim.
+    for _, idx_sql in saved_indexes:
+        if idx_sql:
+            conn.execute(idx_sql)
+
+    # Recreate captured triggers ON entities verbatim.
+    for _, trg_sql in saved_triggers:
+        if trg_sql:
+            conn.execute(trg_sql)
+
+    # Recreate cross-table triggers we temporarily dropped to allow the
+    # entities-table rename. Captured SQL still references the table name
+    # ``entities`` which is now the renamed table.
+    for _, trg_sql in cross_triggers:
+        if trg_sql:
+            conn.execute(trg_sql)
+
+
+def _copy_rename_phase_events_for_v14(conn: sqlite3.Connection) -> None:
+    """Migration 14 helper — widen phase_events.event_type CHECK to admit
+    'spawned_child'.
+
+    Replicates the Migration 12 Group 8 copy-rename idiom
+    (database.py:3329-3456): capture pre-rebuild indexes + triggers, build
+    phase_events_new with widened CHECK (8 event_types incl. 'spawned_child'),
+    INSERT-SELECT all rows, DROP old, RENAME new, recreate indexes + triggers.
+
+    Widened event_type CHECK per FR-MR.3 — 8 values:
+        'started','completed','skipped','backward',
+        'entity_created','entity_status_changed','entity_promoted',
+        'spawned_child'
+
+    Idempotency: probes sqlite_master for ``'spawned_child'`` substring
+    in the phase_events CHECK SQL. If present, the block already ran in a
+    prior interrupted v14 attempt — skip.
+    """
+    pe_sql_row = conn.execute(
+        "SELECT sql FROM sqlite_master "
+        "WHERE type='table' AND name='phase_events'"
+    ).fetchone()
+    pe_sql = pe_sql_row[0] if pe_sql_row else ""
+    if "'spawned_child'" in (pe_sql or ""):
+        return
+
+    pe_pre_count = conn.execute(
+        "SELECT COUNT(*) FROM phase_events"
+    ).fetchone()[0]
+
+    # Capture user-defined indexes on phase_events.
+    pe_saved_indexes = [
+        (r[0], r[1])
+        for r in conn.execute(
+            "SELECT name, sql FROM sqlite_master "
+            "WHERE type='index' AND tbl_name='phase_events' "
+            "AND sql IS NOT NULL"
+        ).fetchall()
+    ]
+
+    # Capture triggers ON phase_events (none expected, future-proof).
+    pe_saved_triggers = [
+        (r[0], r[1])
+        for r in conn.execute(
+            "SELECT name, sql FROM sqlite_master "
+            "WHERE type='trigger' AND tbl_name='phase_events' "
+            "AND sql IS NOT NULL"
+        ).fetchall()
+    ]
+
+    # Capture cross-table triggers referencing phase_events.
+    pe_cross_triggers = [
+        (r[0], r[1])
+        for r in conn.execute(
+            "SELECT name, sql FROM sqlite_master "
+            "WHERE type='trigger' "
+            "AND tbl_name <> 'phase_events' "
+            "AND sql LIKE '%phase_events%' "
+            "AND sql IS NOT NULL"
+        ).fetchall()
+    ]
+    for trg_name, _ in pe_cross_triggers:
+        conn.execute(f"DROP TRIGGER IF EXISTS {trg_name}")
+
+    # Build phase_events_new with widened event_type CHECK. Column order
+    # matches the post-migration-12 layout.
+    conn.execute("""
+        CREATE TABLE phase_events_new (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            type_id         TEXT NOT NULL,
+            project_id      TEXT NOT NULL,
+            phase           TEXT,
+            event_type      TEXT NOT NULL CHECK(event_type IN (
+                'started', 'completed', 'skipped', 'backward',
+                'entity_created', 'entity_status_changed',
+                'entity_promoted', 'spawned_child'
+            )),
+            timestamp       TEXT NOT NULL,
+            iterations      INTEGER,
+            reviewer_notes  TEXT,
+            backward_reason TEXT,
+            backward_target TEXT,
+            source          TEXT NOT NULL DEFAULT 'live' CHECK(
+                source IN ('live', 'backfill')
+            ),
+            created_at      TEXT NOT NULL,
+            metadata        TEXT
+        )
+    """)
+
+    conn.execute(
+        "INSERT INTO phase_events_new "
+        "(id, type_id, project_id, phase, event_type, timestamp, "
+        "iterations, reviewer_notes, backward_reason, "
+        "backward_target, source, created_at, metadata) "
+        "SELECT id, type_id, project_id, phase, event_type, "
+        "timestamp, iterations, reviewer_notes, backward_reason, "
+        "backward_target, source, created_at, metadata "
+        "FROM phase_events"
+    )
+    pe_post_count = conn.execute(
+        "SELECT COUNT(*) FROM phase_events_new"
+    ).fetchone()[0]
+    if pe_post_count != pe_pre_count:
+        raise MigrationError(
+            f"Migration 14 phase_events copy-rename row-count mismatch: "
+            f"pre={pe_pre_count}, post={pe_post_count}"
+        )
+
+    conn.execute("DROP TABLE phase_events")
+    conn.execute(
+        "ALTER TABLE phase_events_new RENAME TO phase_events"
+    )
+
+    # Recreate captured indexes verbatim.
+    for _, idx_sql in pe_saved_indexes:
+        if idx_sql:
+            conn.execute(idx_sql)
+
+    # Recreate captured triggers ON phase_events verbatim.
+    for _, trg_sql in pe_saved_triggers:
+        if trg_sql:
+            conn.execute(trg_sql)
+
+    # Recreate cross-table triggers.
+    for _, trg_sql in pe_cross_triggers:
+        if trg_sql:
+            conn.execute(trg_sql)
+
+
+def _v14_schema_already_applied(conn: sqlite3.Connection) -> bool:
+    """Return True if all three v14 DDL artifacts are already in place.
+
+    Probes the SCHEMA (sqlite_master), not _metadata.schema_version — the
+    outer ``_migrate`` loop clobbers schema_version after each migration_fn
+    returns, so under concurrent-runner conditions the racer's schema_version
+    may read as 13 even when the peer has fully applied v14 DDL. The schema
+    artifacts (entity_relations table + widened CHECKs) are the stable
+    racer-tolerant fingerprint.
+
+    Used by Migration 14's step 0 and step 3 to short-circuit silently when
+    a peer process has already applied the migration — preserves the
+    concurrent-runner safety established by Migration 11.
+    """
+    tables = {
+        r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    if "entity_relations" not in tables:
+        return False
+    entities_sql_row = conn.execute(
+        "SELECT sql FROM sqlite_master "
+        "WHERE type='table' AND name='entities'"
+    ).fetchone()
+    entities_sql = entities_sql_row[0] if entities_sql_row else ""
+    pe_sql_row = conn.execute(
+        "SELECT sql FROM sqlite_master "
+        "WHERE type='table' AND name='phase_events'"
+    ).fetchone()
+    pe_sql = pe_sql_row[0] if pe_sql_row else ""
+    # Quoted-literal probes — distinguishes CHECK-enum entries from
+    # comment-text mentions.
+    return "'bug'" in entities_sql and "'spawned_child'" in pe_sql
+
+
+def _migration_14_issue_lifecycle_closure(conn: sqlite3.Connection) -> None:
+    """Migration 14 — Feature 111 issue lifecycle closure (DDL).
+
+    Creates:
+        entity_relations table + 3 indices (FR-MR.1)
+
+    Widens:
+        entities.(type, kind) CHECK to admit kind='bug' (FR-MR.2)
+        phase_events.event_type CHECK to admit 'spawned_child' (FR-MR.3)
+
+    Remaps:
+        UPDATE entities SET lifecycle_class='task_flow' WHERE kind='task'
+        AND lifecycle_class='work_flow' (FR-MR.5; operational no-op per Pin I)
+
+    Pre-flight (FR-MR.6):
+        _metadata.schema_version = 13 (codebase analogue of schema_migrations
+                                       per Migration 13 docstring TD-6 note).
+        entity_display table present.
+        migration_audit_log table present.
+        entity_relations table ABSENT (only when schema is genuinely v13;
+        racer-replay scenarios short-circuit before this gate via
+        :func:`_v14_schema_already_applied`).
+
+    Replay-safe (FR-MR.8): early-return if already at v14 OR if schema
+    artifacts indicate a concurrent peer has already applied v14 DDL
+    (concurrent-runner safety; the outer ``_migrate`` clobbers
+    ``_metadata.schema_version`` after each migration_fn return, so the
+    SCHEMA fingerprint is the racer-tolerant idempotency signal).
+    """
+    # ----------------------------------------------------------------------
+    # Step 0: Outer-level idempotency early-return (FR-MR.8).
+    # ----------------------------------------------------------------------
+    try:
+        v_row = conn.execute(
+            "SELECT value FROM _metadata WHERE key='schema_version'"
+        ).fetchone()
+    except sqlite3.OperationalError as e:
+        if "no such table" in str(e).lower():
+            raise MigrationError(
+                "Migration 14 aborted: _metadata table missing. Cannot read "
+                "schema_version. Run feature-109/110 deferred remediation "
+                "first."
+            ) from e
+        raise
+
+    if v_row is not None:
+        try:
+            current_version = int(v_row[0])
+        except (TypeError, ValueError):
+            current_version = 0
+        if current_version >= 14:
+            return
+
+    # Concurrent-runner short-circuit: peer process has already applied
+    # v14 DDL even though our outer _migrate just stamped schema_version
+    # back to 13.
+    if _v14_schema_already_applied(conn):
+        return
+
+    # ----------------------------------------------------------------------
+    # Step 1: PRAGMA foreign_keys = OFF (outside transaction)
+    # ----------------------------------------------------------------------
+    conn.execute("PRAGMA foreign_keys = OFF")
+    fk_status = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+    if fk_status != 0:
+        raise MigrationError(
+            "PRAGMA foreign_keys = OFF did not take effect — "
+            "aborting migration 14"
+        )
+
+    try:
+        # ------------------------------------------------------------------
+        # Step 2: BEGIN IMMEDIATE
+        # ------------------------------------------------------------------
+        conn.execute("BEGIN IMMEDIATE")
+
+        # ------------------------------------------------------------------
+        # Step 3: Concurrent re-check guard
+        # ------------------------------------------------------------------
+        v_row = conn.execute(
+            "SELECT value FROM _metadata WHERE key='schema_version'"
+        ).fetchone()
+        if v_row is not None:
+            try:
+                in_tx_version = int(v_row[0])
+            except (TypeError, ValueError):
+                in_tx_version = 0
+            if in_tx_version >= 14:
+                conn.rollback()
+                return
+
+        # Racer-tolerant re-check at the SCHEMA level: peer process may
+        # have applied v14 DDL between our step-0 probe and BEGIN IMMEDIATE
+        # acquisition. Short-circuit silently to preserve concurrent-runner
+        # safety (the outer ``_migrate`` clobbers schema_version after each
+        # migration_fn return, so the schema fingerprint is the stable
+        # idempotency signal under this race).
+        if _v14_schema_already_applied(conn):
+            conn.rollback()
+            return
+
+        # ------------------------------------------------------------------
+        # Step 4: Pre-flight gates (FR-MR.6)
+        # ------------------------------------------------------------------
+        # Gate 1: schema_version == 13 (codebase analogue per Migration 13
+        # docstring TD-6 — _metadata.schema_version is the source of truth).
+        if v_row is None:
+            raise MigrationError(
+                "Migration 14 requires schema_version=13; current=None. "
+                "Run prior migrations first."
+            )
+        try:
+            current_version = int(v_row[0])
+        except (TypeError, ValueError) as exc:
+            raise MigrationError(
+                "Migration 14 requires schema_version=13; "
+                f"current={v_row[0]!r} (unparseable). "
+                "Run prior migrations first."
+            ) from exc
+        if current_version != 13:
+            raise MigrationError(
+                f"Migration 14 requires schema_version=13; "
+                f"current={current_version}. Run prior migrations first."
+            )
+
+        # Gate 2-4: table-presence checks.
+        tables = {
+            r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        if "entity_display" not in tables:
+            raise MigrationError(
+                "Migration 14 requires entity_display table (feature 110). "
+                "Run feature-110 deferred remediation."
+            )
+        if "migration_audit_log" not in tables:
+            raise MigrationError(
+                "Migration 14 requires migration_audit_log table "
+                "(feature 110). Run feature-110 deferred remediation."
+            )
+        if "entity_relations" in tables:
+            # Racer short-circuit at step 3 should have caught the
+            # concurrent-runner case; reaching this branch means
+            # entity_relations exists WITHOUT the rest of v14 DDL — an
+            # unexpected partial-prior-run state. AC-MR.5 pins the message.
+            raise MigrationError(
+                "Migration 14 entity_relations table already exists. "
+                "Drop or replay-detect."
+            )
+
+        # ------------------------------------------------------------------
+        # Step 5a: CREATE entity_relations + 3 indices (FR-MR.1).
+        # ------------------------------------------------------------------
+        conn.execute("""
+            CREATE TABLE entity_relations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                from_uuid TEXT NOT NULL,
+                to_uuid TEXT NOT NULL,
+                kind TEXT NOT NULL CHECK(kind IN ('fixes')),
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (from_uuid) REFERENCES entities(uuid)
+                    ON DELETE CASCADE,
+                FOREIGN KEY (to_uuid) REFERENCES entities(uuid)
+                    ON DELETE CASCADE
+            )
+        """)
+        conn.execute(
+            "CREATE UNIQUE INDEX idx_entity_relations_unique "
+            "ON entity_relations(from_uuid, to_uuid, kind)"
+        )
+        conn.execute(
+            "CREATE INDEX idx_entity_relations_from "
+            "ON entity_relations(from_uuid)"
+        )
+        conn.execute(
+            "CREATE INDEX idx_entity_relations_to "
+            "ON entity_relations(to_uuid)"
+        )
+
+        # ------------------------------------------------------------------
+        # Step 5b: Task lifecycle_class remap (FR-MR.5).
+        # ------------------------------------------------------------------
+        # Operational no-op per spec Pin I (0 task entities in production
+        # live DB). Test fixtures exercise the remap path. Restricted to
+        # rows that still hold the legacy work_flow tag so a re-run remains
+        # idempotent against rows already at task_flow.
+        conn.execute(
+            "UPDATE entities SET lifecycle_class = 'task_flow' "
+            "WHERE kind = 'task' AND lifecycle_class = 'work_flow'"
+        )
+
+        # ------------------------------------------------------------------
+        # Step 5c: Copy-rename entities to widen (type, kind) CHECK (FR-MR.2).
+        # ------------------------------------------------------------------
+        _copy_rename_entities_for_v14(conn)
+
+        # ------------------------------------------------------------------
+        # Step 5d: Copy-rename phase_events to widen event_type CHECK (FR-MR.3).
+        # ------------------------------------------------------------------
+        _copy_rename_phase_events_for_v14(conn)
+
+        # ------------------------------------------------------------------
+        # Step 6: Pre-commit FK check (in-transaction).
+        # ------------------------------------------------------------------
+        in_tx_fk = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if in_tx_fk:
+            raise MigrationError(
+                f"Migration 14 in-transaction FK check non-empty: {in_tx_fk}"
+            )
+
+        # ------------------------------------------------------------------
+        # Step 7: Stamp schema_version=14 + audit log entry.
+        # ------------------------------------------------------------------
+        conn.execute(
+            "INSERT OR REPLACE INTO _metadata (key, value) "
+            "VALUES ('schema_version', '14')"
+        )
+        _append_migration_audit_log(
+            conn,
+            version=14,
+            event_type="success",
+            payload={"feature": "111-issue-lifecycle-closure"},
+        )
+
+        # ------------------------------------------------------------------
+        # Step 8: COMMIT.
+        # ------------------------------------------------------------------
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except sqlite3.Error:
+            pass
+        raise
+    finally:
+        # Re-enable FKs whether success or failure.
+        conn.execute("PRAGMA foreign_keys = ON")
+
+    # ----------------------------------------------------------------------
+    # Post-transaction defensive FK check.
+    # ----------------------------------------------------------------------
+    post_fk = conn.execute("PRAGMA foreign_key_check").fetchall()
+    if post_fk:
+        raise MigrationError(
+            f"Migration 14 post-FK check non-empty: {post_fk}"
+        )
+
+
+def _copy_rename_entities_to_v13(conn: sqlite3.Connection) -> None:
+    """Migration 14 reverse helper — narrow entities (type, kind) CHECK
+    back to the pre-feature-111 enum.
+
+    Mirror image of :func:`_copy_rename_entities_for_v14` — work-kind enum
+    becomes:
+        'feature','backlog','initiative','objective','key_result','task'
+    (no 'bug').
+
+    Caller (``_migration_14_down``) is responsible for the FR-MR.9
+    pre-flight (no kind='bug' rows survive) — INSERT-SELECT into the
+    narrowed CHECK would otherwise fail.
+    """
+    entities_sql_row = conn.execute(
+        "SELECT sql FROM sqlite_master "
+        "WHERE type='table' AND name='entities'"
+    ).fetchone()
+    entities_sql = entities_sql_row[0] if entities_sql_row else ""
+    # Idempotency probe: if 'bug' (quoted) is absent, the narrowing already
+    # happened.
+    if "'bug'" not in (entities_sql or ""):
+        return
+
+    pre_count = conn.execute(
+        "SELECT COUNT(*) FROM entities"
+    ).fetchone()[0]
+
+    saved_indexes = [
+        (r[0], r[1])
+        for r in conn.execute(
+            "SELECT name, sql FROM sqlite_master "
+            "WHERE type='index' AND tbl_name='entities' "
+            "AND sql IS NOT NULL"
+        ).fetchall()
+    ]
+    saved_triggers = [
+        (r[0], r[1])
+        for r in conn.execute(
+            "SELECT name, sql FROM sqlite_master "
+            "WHERE type='trigger' AND tbl_name='entities' "
+            "AND sql IS NOT NULL"
+        ).fetchall()
+    ]
+    cross_triggers = [
+        (r[0], r[1])
+        for r in conn.execute(
+            "SELECT name, sql FROM sqlite_master "
+            "WHERE type='trigger' "
+            "AND tbl_name <> 'entities' "
+            "AND sql LIKE '%entities%' "
+            "AND sql IS NOT NULL"
+        ).fetchall()
+    ]
+    for trg_name, _ in cross_triggers:
+        conn.execute(f"DROP TRIGGER IF EXISTS {trg_name}")
+
+    conn.execute("""
+        CREATE TABLE entities_new (
+            uuid           TEXT NOT NULL PRIMARY KEY,
+            workspace_uuid TEXT NOT NULL
+                           REFERENCES workspaces(uuid),
+            type_id        TEXT NOT NULL,
+            entity_id      TEXT NOT NULL,
+            name           TEXT NOT NULL,
+            status         TEXT,
+            parent_uuid    TEXT REFERENCES entities_new(uuid),
+            artifact_path  TEXT,
+            created_at     TEXT NOT NULL,
+            updated_at     TEXT NOT NULL,
+            metadata       TEXT,
+            type           TEXT NOT NULL DEFAULT 'work',
+            kind           TEXT NOT NULL DEFAULT 'feature',
+            lifecycle_class TEXT NOT NULL DEFAULT 'feature_flow',
+            UNIQUE(workspace_uuid, type_id),
+            CHECK (
+                (type='workspace' AND kind='workspace') OR
+                (type='brainstorm' AND kind='brainstorm') OR
+                (type='container' AND kind='project') OR
+                (type='work' AND kind IN (
+                    'feature','backlog','initiative','objective','key_result','task'
+                ))
+            )
+        )
+    """)
+
+    col_list_sql = ",".join(_V14_ENTITIES_COLUMNS)
+    conn.execute(
+        f"INSERT INTO entities_new ({col_list_sql}) "
+        f"SELECT {col_list_sql} FROM entities"
+    )
+    post_count = conn.execute(
+        "SELECT COUNT(*) FROM entities_new"
+    ).fetchone()[0]
+    if post_count != pre_count:
+        raise MigrationError(
+            f"Migration 14 down entities narrow row-count mismatch: "
+            f"pre={pre_count}, post={post_count}"
+        )
+
+    conn.execute("DROP TABLE entities")
+    conn.execute("PRAGMA legacy_alter_table = OFF")
+    conn.execute("ALTER TABLE entities_new RENAME TO entities")
+
+    for _, idx_sql in saved_indexes:
+        if idx_sql:
+            conn.execute(idx_sql)
+    for _, trg_sql in saved_triggers:
+        if trg_sql:
+            conn.execute(trg_sql)
+    for _, trg_sql in cross_triggers:
+        if trg_sql:
+            conn.execute(trg_sql)
+
+
+def _copy_rename_phase_events_to_v13(conn: sqlite3.Connection) -> None:
+    """Migration 14 reverse helper — narrow phase_events.event_type CHECK
+    back to the pre-feature-111 7-value enum.
+
+    Mirror image of :func:`_copy_rename_phase_events_for_v14`. Drops
+    'spawned_child' from the enum.
+
+    Caller (``_migration_14_down``) is responsible for DELETEing
+    phase_events rows with event_type='spawned_child' BEFORE invoking this
+    helper — otherwise the INSERT-SELECT into the narrowed CHECK fails.
+    """
+    pe_sql_row = conn.execute(
+        "SELECT sql FROM sqlite_master "
+        "WHERE type='table' AND name='phase_events'"
+    ).fetchone()
+    pe_sql = pe_sql_row[0] if pe_sql_row else ""
+    if "'spawned_child'" not in (pe_sql or ""):
+        return
+
+    pe_pre_count = conn.execute(
+        "SELECT COUNT(*) FROM phase_events"
+    ).fetchone()[0]
+
+    pe_saved_indexes = [
+        (r[0], r[1])
+        for r in conn.execute(
+            "SELECT name, sql FROM sqlite_master "
+            "WHERE type='index' AND tbl_name='phase_events' "
+            "AND sql IS NOT NULL"
+        ).fetchall()
+    ]
+    pe_saved_triggers = [
+        (r[0], r[1])
+        for r in conn.execute(
+            "SELECT name, sql FROM sqlite_master "
+            "WHERE type='trigger' AND tbl_name='phase_events' "
+            "AND sql IS NOT NULL"
+        ).fetchall()
+    ]
+    pe_cross_triggers = [
+        (r[0], r[1])
+        for r in conn.execute(
+            "SELECT name, sql FROM sqlite_master "
+            "WHERE type='trigger' "
+            "AND tbl_name <> 'phase_events' "
+            "AND sql LIKE '%phase_events%' "
+            "AND sql IS NOT NULL"
+        ).fetchall()
+    ]
+    for trg_name, _ in pe_cross_triggers:
+        conn.execute(f"DROP TRIGGER IF EXISTS {trg_name}")
+
+    conn.execute("""
+        CREATE TABLE phase_events_new (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            type_id         TEXT NOT NULL,
+            project_id      TEXT NOT NULL,
+            phase           TEXT,
+            event_type      TEXT NOT NULL CHECK(event_type IN (
+                'started', 'completed', 'skipped', 'backward',
+                'entity_created', 'entity_status_changed',
+                'entity_promoted'
+            )),
+            timestamp       TEXT NOT NULL,
+            iterations      INTEGER,
+            reviewer_notes  TEXT,
+            backward_reason TEXT,
+            backward_target TEXT,
+            source          TEXT NOT NULL DEFAULT 'live' CHECK(
+                source IN ('live', 'backfill')
+            ),
+            created_at      TEXT NOT NULL,
+            metadata        TEXT
+        )
+    """)
+
+    conn.execute(
+        "INSERT INTO phase_events_new "
+        "(id, type_id, project_id, phase, event_type, timestamp, "
+        "iterations, reviewer_notes, backward_reason, "
+        "backward_target, source, created_at, metadata) "
+        "SELECT id, type_id, project_id, phase, event_type, "
+        "timestamp, iterations, reviewer_notes, backward_reason, "
+        "backward_target, source, created_at, metadata "
+        "FROM phase_events"
+    )
+    pe_post_count = conn.execute(
+        "SELECT COUNT(*) FROM phase_events_new"
+    ).fetchone()[0]
+    if pe_post_count != pe_pre_count:
+        raise MigrationError(
+            f"Migration 14 down phase_events narrow row-count mismatch: "
+            f"pre={pe_pre_count}, post={pe_post_count}"
+        )
+
+    conn.execute("DROP TABLE phase_events")
+    conn.execute(
+        "ALTER TABLE phase_events_new RENAME TO phase_events"
+    )
+
+    for _, idx_sql in pe_saved_indexes:
+        if idx_sql:
+            conn.execute(idx_sql)
+    for _, trg_sql in pe_saved_triggers:
+        if trg_sql:
+            conn.execute(trg_sql)
+    for _, trg_sql in pe_cross_triggers:
+        if trg_sql:
+            conn.execute(trg_sql)
+
+
+def _migration_14_down(conn: sqlite3.Connection) -> None:
+    """Reverse Migration 14 (feature 111 FR-MR.7 / FR-MR.9).
+
+    Order (mirror of up-migration):
+      0. Pre-flight refuse on bug entities or entity_relations rows.
+      1. DROP entity_relations + 3 indices.
+      2. DELETE phase_events WHERE event_type='spawned_child' (destructive
+         after pre-flight — caller waved the safety per AC-MR.7 docstring
+         contract).
+      3. Copy-rename phase_events to narrowed CHECK.
+      4. Copy-rename entities to narrowed CHECK.
+      5. Revert task lifecycle_class remap (task_flow → work_flow).
+      6. Stamp schema_version back to 13.
+
+    Caller MUST additionally revert source-code changes to
+    ``VALID_ENTITY_TYPES``, ``_KIND_TO_TYPE_LIFECYCLE``, ``_CLOSES_TERMINAL``,
+    and the feature-111 exception classes (these live in source code per
+    Group B and are reverted only by reverting that commit). Same precedent
+    as features 109/110 down-migrations (which similarly omit Python-
+    constant reversion).
+    """
+    # ----------------------------------------------------------------------
+    # Step 0: FR-MR.9 pre-flight refuse.
+    # ----------------------------------------------------------------------
+    # Refuse if any kind='bug' entities or entity_relations rows exist;
+    # CHECK narrowing would otherwise fail mid-copy-rename.
+    bug_count = conn.execute(
+        "SELECT COUNT(*) FROM entities WHERE kind='bug'"
+    ).fetchone()[0]
+    rel_count = conn.execute(
+        "SELECT COUNT(*) FROM entity_relations"
+    ).fetchone()[0]
+    if bug_count > 0 or rel_count > 0:
+        raise MigrationError(
+            f"Cannot down-migrate v14: {bug_count} bug entities + "
+            f"{rel_count} entity_relations rows exist. "
+            "Delete or remap before down-migration."
+        )
+
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+
+        # Concurrent re-check guard.
+        v_row = conn.execute(
+            "SELECT value FROM _metadata WHERE key='schema_version'"
+        ).fetchone()
+        if v_row is None:
+            raise MigrationError(
+                "Migration 14 reverse: _metadata.schema_version missing"
+            )
+        try:
+            current_version = int(v_row[0])
+        except (TypeError, ValueError) as exc:
+            raise MigrationError(
+                f"Migration 14 reverse: invalid schema_version "
+                f"{v_row[0]!r}"
+            ) from exc
+        if current_version <= 13:
+            # Already at or below 13 → no-op early-return.
+            conn.rollback()
+            return
+
+        # ------------------------------------------------------------------
+        # Step 1: Drop entity_relations + 3 indices.
+        # ------------------------------------------------------------------
+        conn.execute("DROP INDEX IF EXISTS idx_entity_relations_to")
+        conn.execute("DROP INDEX IF EXISTS idx_entity_relations_from")
+        conn.execute("DROP INDEX IF EXISTS idx_entity_relations_unique")
+        conn.execute("DROP TABLE IF EXISTS entity_relations")
+
+        # ------------------------------------------------------------------
+        # Step 2: Delete spawned_child phase_events (destructive after
+        #          FR-MR.9 pre-flight per AC-MR.7 docstring).
+        # ------------------------------------------------------------------
+        conn.execute(
+            "DELETE FROM phase_events WHERE event_type = 'spawned_child'"
+        )
+
+        # ------------------------------------------------------------------
+        # Step 3: Copy-rename phase_events back to 7-event_type CHECK.
+        # ------------------------------------------------------------------
+        _copy_rename_phase_events_to_v13(conn)
+
+        # ------------------------------------------------------------------
+        # Step 4: Copy-rename entities back to 6-work-kind CHECK.
+        # ------------------------------------------------------------------
+        _copy_rename_entities_to_v13(conn)
+
+        # ------------------------------------------------------------------
+        # Step 5: Revert task lifecycle_class remap.
+        # ------------------------------------------------------------------
+        conn.execute(
+            "UPDATE entities SET lifecycle_class = 'work_flow' "
+            "WHERE kind = 'task' AND lifecycle_class = 'task_flow'"
+        )
+
+        # Audit log entry (best-effort — migration_audit_log may have
+        # been dropped by a prior _migration_13_entity_display_down call,
+        # but at v14→v13 it's still present per FR-MR.6 pre-flight).
+        _append_migration_audit_log(
+            conn,
+            version=14,
+            event_type="down",
+            payload={"feature": "111-issue-lifecycle-closure"},
+        )
+
+        # ------------------------------------------------------------------
+        # Step 6: Stamp schema_version back to 13.
+        # ------------------------------------------------------------------
+        conn.execute(
+            "INSERT OR REPLACE INTO _metadata (key, value) "
+            "VALUES ('schema_version', '13')"
+        )
+
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except sqlite3.Error:
+            pass
+        raise
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
+
+
 # Ordered mapping of version -> migration function.
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _create_initial_schema,
@@ -4337,15 +5353,17 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     11: _migration_11_workspace_identity,
     12: _migration_12_polymorphic_taxonomy_and_events,
     13: _migration_13_entity_display,
+    14: _migration_14_issue_lifecycle_closure,
 }
 
 # Reverse-migration registry (FR-8 / design §6.7). Migrations 1-10 are
 # forward-only; calling _migrate_down() with target_version < 10 raises
-# NotImplementedError. Schema versions 11, 12, 13 are reversible.
+# NotImplementedError. Schema versions 11, 12, 13, 14 are reversible.
 MIGRATIONS_DOWN: dict[int, Callable[[sqlite3.Connection], None]] = {
     11: _migration_11_workspace_identity_down,
     12: _migration_12_polymorphic_taxonomy_and_events_down,
     13: _migration_13_entity_display_down,
+    14: _migration_14_down,
 }
 
 
@@ -4448,6 +5466,13 @@ _VALID_PARAMS: dict[str, set[str]] = {
     "entity_created":       {"metadata"},
     "entity_status_changed":{"metadata"},
     "entity_promoted":      {"metadata"},
+    # Feature 111 FR-9.3 / FR-MR.3: spawned_child event_type emitted by
+    # issue_spawn on the parent (no phase change, only an audit-trail
+    # marker with child metadata). NOT added to _REQUIRED_PARAMS — the
+    # sole caller (issue_spawn) guarantees metadata application-side; a
+    # future non-issue_spawn caller can promote to required when needed
+    # (plan-reviewer iter 3 S3 downgrade).
+    "spawned_child":        {"metadata"},
 }
 _REQUIRED_PARAMS: dict[str, set[str]] = {
     "started":              {"phase"},
@@ -4498,6 +5523,29 @@ class EntityExistsError(ValueError):
         self.type_id = type_id
 
 
+class EntityNotFoundError(ValueError):
+    """Raised when a referenced entity does not exist (feature 111 FR-EX.1).
+
+    Used by F10 complete_phase(closes=) when:
+    - caller's type_id resolves to no entity row (FR-10.2)
+    - closure target uuid resolves to no entity row (FR-10.3 step 2)
+    """
+    pass
+
+
+class InvalidCloseTargetError(ValueError):
+    """Raised when a closure target is structurally incompatible
+    (feature 111 FR-EX.2).
+
+    Used by F10 complete_phase(closes=) for:
+    - lifecycle_class not in _CLOSES_TERMINAL (FR-10.3 step 3)
+    - cross-workspace closure attempt (FR-10.3 step 2)
+    - already terminal with different prior closer (FR-10.3 step 4)
+    - already terminal with no prior closer record (FR-10.3 step 4)
+    """
+    pass
+
+
 class PromotionConflictError(ValueError):
     """Raised by ``promote_entity`` when the post-promotion ``type_id`` would
     collide with an existing row in the same workspace (feature 109 FR-3 /
@@ -4534,6 +5582,9 @@ class EntityDatabase:
     VALID_ENTITY_TYPES = (
         "backlog", "brainstorm", "project", "feature",
         "initiative", "objective", "key_result", "task",
+        # Feature 111 FR-MR.4: new 'bug' kind for spontaneous mid-flight
+        # issue capture via issue_spawn MCP.
+        "bug",
     )
 
     def __init__(self, db_path: str, *, check_same_thread: bool = True) -> None:
@@ -4806,6 +5857,88 @@ class EntityDatabase:
             (uuid,),
         ).fetchone()
         return dict(row) if row else None
+
+    # ------------------------------------------------------------------
+    # Feature 111 helpers — closure-transaction primitives used by F10
+    # complete_phase(closes=) and (for resolve_entity_uuid) F9 issue_spawn.
+    # ------------------------------------------------------------------
+
+    def get_prior_closer(self, to_uuid: str) -> str | None:
+        """Return the ``from_uuid`` of the prior 'fixes' relation to ``to_uuid``,
+        or ``None`` if no such relation exists (feature 111 IF-2 step 4).
+
+        Used by F10 complete_phase(closes=) idempotency check to detect
+        same-closer replay vs cross-closer conflict (FR-10.3 step 4 /
+        FR-10.5).
+        """
+        row = self._conn.execute(
+            "SELECT from_uuid FROM entity_relations "
+            "WHERE to_uuid = ? AND kind = 'fixes' LIMIT 1",
+            (to_uuid,),
+        ).fetchone()
+        return row[0] if row is not None else None
+
+    def insert_entity_relation(
+        self,
+        from_uuid: str,
+        to_uuid: str,
+        kind: str,
+        on_conflict: str = "raise",
+    ) -> bool:
+        """Insert a row into ``entity_relations`` (feature 111 FR-10.3 step 7).
+
+        Parameters
+        ----------
+        from_uuid, to_uuid, kind:
+            The triple making up the composite UNIQUE on entity_relations.
+        on_conflict:
+            ``"raise"`` (default) — INSERT without ON CONFLICT; SQLite raises
+            ``sqlite3.IntegrityError`` if the composite UNIQUE is violated.
+            ``"ignore"`` — append ``ON CONFLICT(from_uuid, to_uuid, kind)
+            DO NOTHING`` so the INSERT is idempotent. Returns ``False`` when
+            a conflict was skipped, ``True`` when a row was actually inserted.
+
+        Returns
+        -------
+        bool
+            ``True`` if a new row was inserted, ``False`` if the conflict
+            branch was taken (``on_conflict='ignore'`` only).
+        """
+        if on_conflict not in ("raise", "ignore"):
+            raise ValueError(
+                f"on_conflict must be 'raise' or 'ignore'; got {on_conflict!r}"
+            )
+        now = self._now_iso()
+        sql = (
+            "INSERT INTO entity_relations(from_uuid, to_uuid, kind, created_at) "
+            "VALUES (?, ?, ?, ?)"
+        )
+        if on_conflict == "ignore":
+            sql += " ON CONFLICT(from_uuid, to_uuid, kind) DO NOTHING"
+        cur = self._conn.execute(sql, (from_uuid, to_uuid, kind, now))
+        # ``rowcount`` is 1 on real insert, 0 when ON CONFLICT DO NOTHING fires.
+        return cur.rowcount > 0
+
+    def resolve_entity_uuid(
+        self,
+        workspace_uuid: str,
+        type_id: str,
+    ) -> tuple[str | None, str | None]:
+        """Resolve ``(workspace_uuid, type_id)`` to ``(uuid, workspace_uuid)``
+        (feature 111 IF-2 step 1).
+
+        Returns ``(None, None)`` if no entity matches. Used by F10
+        complete_phase(closes=) to resolve the caller's ``from_uuid`` and
+        ``caller_workspace_uuid`` before any writes (FR-10.2).
+        """
+        row = self._conn.execute(
+            "SELECT uuid, workspace_uuid FROM entities "
+            "WHERE workspace_uuid = ? AND type_id = ?",
+            (workspace_uuid, type_id),
+        ).fetchone()
+        if row is None:
+            return (None, None)
+        return (row[0], row[1])
 
     def resolve_ref(
         self,

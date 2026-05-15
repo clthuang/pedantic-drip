@@ -5,6 +5,7 @@ Runs as a subprocess via stdio transport.  Never print to stdout
 """
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import os
@@ -23,6 +24,7 @@ from entity_registry.backfill import run_backfill
 from entity_registry.database import (
     EntityDatabase,
     EntityExistsError,
+    EntityNotFoundError,
     PromotionConflictError,
 )
 from entity_registry.id_generator import generate_entity_id
@@ -588,6 +590,217 @@ async def register_entity(
         parent_uuid=parent_uuid,
         workspace_uuid=resolved_workspace_uuid,
     )
+
+
+# ---------------------------------------------------------------------------
+# Feature 111 F9 — issue_spawn MCP tool
+# ---------------------------------------------------------------------------
+
+
+_ISSUE_SPAWN_VALID_KINDS = ("bug", "task")
+_ISSUE_SPAWN_VALID_PARENT_KINDS = ("feature", "backlog", "project")
+
+
+def _catch_issue_spawn_errors(func):
+    """Translate ValueError-family exceptions raised by ``issue_spawn`` into
+    structured JSON error envelopes at the MCP boundary.
+
+    Per spec FR-EX.3 / design IF-9: ``issue_spawn`` raises ``ValueError`` (and
+    the ``EntityNotFoundError`` ValueError subclass) for ``invalid_kind``,
+    ``parent_not_found``, ``invalid_parent_kind``, and ``cross-workspace
+    parent forbidden``. The envelope shape matches the F10 ``complete_phase``
+    pattern at ``workflow_state_server.py:_catch_close_errors`` so MCP
+    consumers see a uniform contract:
+
+      ``{"error": true, "error_type": "<class_name_lowercased>",
+         "message": "<exception_str>"}``
+
+    The wrapper is async-aware — ``issue_spawn`` is an async MCP tool.
+    """
+    @functools.wraps(func)
+    async def wrapper(*args, **kwargs):
+        try:
+            return await func(*args, **kwargs)
+        except ValueError as exc:
+            return json.dumps({
+                "error": True,
+                "error_type": exc.__class__.__name__.lower(),
+                "message": str(exc),
+            })
+    return wrapper
+
+
+@mcp.tool()
+@_catch_issue_spawn_errors
+async def issue_spawn(
+    parent_uuid: str,
+    kind: str,
+    summary: str,
+    workspace_uuid: str | None = None,
+    project_id: str | None = None,
+    metadata: str | dict | None = None,
+) -> str:
+    """Spawn a new issue entity (kind='bug' or 'task') linked to a parent.
+
+    Per FR-9.1 to FR-9.9 of feature 111. Parent (feature/backlog/project) is
+    NOT state-mutated — only a ``spawned_child`` phase_event is appended on
+    the parent. The new entity's lifecycle is status-only (FR-BL) — no
+    ``workflow_phases`` row is created.
+
+    Parameters
+    ----------
+    parent_uuid:
+        UUID of the parent entity. Parent's resolved ``kind`` must be in
+        ``{feature, backlog, project}``.
+    kind:
+        Issue kind — ``'bug'`` or ``'task'``.
+    summary:
+        Human-readable summary; becomes ``entities.name`` AND seeds the
+        slug portion of the auto-generated ``entity_id``.
+    workspace_uuid:
+        Workspace identity. Resolves via the lazy ``_workspace_uuid`` global
+        when not supplied.
+    project_id:
+        Legacy project scope alias (deprecated). Falls back to the
+        ``_project_id`` global, then ``"__unknown__"``.
+    metadata:
+        Optional dict (or JSON string) merged into ``entities.metadata``.
+        System-supplied keys win — caller-supplied ``parent_uuid`` (and
+        similar reserved keys owned by ``register_entity``) are dropped
+        before persistence per FR-9.9.
+
+    Returns
+    -------
+    str
+        JSON string ``'{"uuid": "<new_entity_uuid>"}'`` on success. On
+        failure, returns a JSON error envelope
+        ``{"error": true, "error_type": "<exc_cls_lower>",
+           "message": "<exc_str>"}`` produced by the
+        ``_catch_issue_spawn_errors`` decorator (FR-EX.3).
+
+    Raises
+    ------
+    ValueError
+        On ``invalid_kind`` (FR-9.5), ``parent_not_found`` (FR-9.6),
+        ``invalid_parent_kind`` (FR-9.6), or ``cross-workspace parent
+        forbidden`` (FR-9.6 design IF-1 step 5b). All four conditions are
+        caught at the MCP boundary by ``_catch_issue_spawn_errors`` and
+        translated to a JSON error envelope (FR-EX.3).
+    """
+    err = _check_db_available()
+    if err:
+        return json.dumps(err)
+    if _db is None:
+        return "Error: database not initialized (server not started)"
+
+    # FR-9.5: validate kind BEFORE any DB work (no partial state on bad kind).
+    if kind not in _ISSUE_SPAWN_VALID_KINDS:
+        raise ValueError(
+            f"invalid_kind: {kind!r}; expected bug|task"
+        )
+
+    # Two-layer fallback per design IF-1 step 3-4 (mirrors register_entity MCP
+    # at entity_server.py:560-561).
+    resolved_workspace_uuid = workspace_uuid or _workspace_uuid or ""
+    resolved_project_id = project_id or _project_id or "__unknown__"
+
+    # FR-9.6: resolve parent. Existing helper reused per design C11 /
+    # plan-reviewer iter 2 B2 (database.py:5839 — get_entity_by_uuid).
+    parent_row = _db.get_entity_by_uuid(parent_uuid)
+    if parent_row is None:
+        # EntityNotFoundError is a ValueError subclass per IF-9, so the
+        # caller's `except ValueError` (and AC-9.5's pytest.raises(ValueError))
+        # still matches. The substring "parent_not_found" is pinned by AC-9.5.
+        raise EntityNotFoundError(f"parent_not_found: {parent_uuid}")
+    parent_kind = parent_row.get("kind")
+    if parent_kind not in _ISSUE_SPAWN_VALID_PARENT_KINDS:
+        raise ValueError(
+            f"invalid_parent_kind: {parent_kind!r}; "
+            f"expected feature|backlog|project"
+        )
+
+    # FR-9.6 cross-workspace gate (design IF-1 step 5b, security-reviewer iter
+    # 2 BLOCKER 1): parent_uuid MUST resolve to a row in the SAME workspace as
+    # the caller. Resolve the caller's effective workspace_uuid via the same
+    # path register_entity uses (database.py:5635 _resolve_workspace_uuid_kwargs)
+    # so the comparison is canonical (e.g., project_id='__unknown__' resolves
+    # to _UNKNOWN_WORKSPACE_UUID). Run this BEFORE any state-mutating call so
+    # no partial state can be created.
+    resolved_caller_ws = _db._resolve_workspace_uuid_kwargs(
+        resolved_workspace_uuid or None,
+        resolved_project_id if not resolved_workspace_uuid else None,
+        _caller="issue_spawn",
+    )
+    parent_ws = parent_row.get("workspace_uuid")
+    if parent_ws != resolved_caller_ws:
+        raise ValueError(
+            f"cross-workspace parent forbidden: "
+            f"parent in {parent_ws!r}, caller in {resolved_caller_ws!r}"
+        )
+
+    # Normalize caller metadata to a dict; drop reserved keys that live in
+    # entity columns. FR-9.9: system-supplied keys win — caller's
+    # parent_uuid (and other column-owned keys) are removed before merge.
+    if isinstance(metadata, str):
+        caller_meta: dict = json.loads(metadata) if metadata else {}
+    elif isinstance(metadata, dict):
+        # Shallow copy so we don't mutate the caller's dict.
+        caller_meta = dict(metadata)
+    else:
+        caller_meta = {}
+    # parent_uuid lives in the entities.parent_uuid column, NOT in metadata
+    # (per AC-9.9 synthetic test). Strip the key defensively so caller-supplied
+    # values cannot leak into entities.metadata.
+    caller_meta.pop("parent_uuid", None)
+
+    # FR-9.2: auto_id path via generate_entity_id produces conformant
+    # `{seq:03d}-{slug}` ids, so EntityIdFormatError cannot fire (AC-9.6).
+    entity_id = generate_entity_id(
+        _db, kind, summary, resolved_project_id
+    )
+
+    # FR-9.2: direct db.register_entity call (mirrors entity_server.py:502+
+    # pattern). The internal _derive_type_and_lifecycle mapping (Group B)
+    # converts entity_type=kind → (type='work', kind=<bug|task>,
+    # lifecycle_class=<kind>_flow). NO init_entity_workflow call —
+    # bug/task use the status-only model per FR-BL.
+    ws_uuid_kwarg = resolved_workspace_uuid or None
+    # F12 audit: conflict-is-error → register_entity, EntityExistsError
+    # bubbles to MCP boundary translator. auto_id guarantees fresh entity_id
+    # so conflict is operationally impossible; raise-on-conflict semantics
+    # preferred over INSERT OR IGNORE per feature 109 FR-4.
+    new_uuid = _db.register_entity(
+        entity_type=kind,
+        entity_id=entity_id,
+        name=summary,
+        workspace_uuid=ws_uuid_kwarg,
+        project_id=resolved_project_id if ws_uuid_kwarg is None else None,
+        status="open",
+        parent_uuid=parent_uuid,
+        metadata=caller_meta,
+    )
+
+    # FR-9.3: append spawned_child phase_event on the parent. workspace_uuid
+    # is passed defensively (informational for spawned_child today; the
+    # required-kwarg gate at database.py:6964-6970 enforces it only for
+    # entity_status_changed / entity_promoted, so passing here is harmless
+    # and future-proofs against the check being widened). Source the
+    # workspace_uuid from the parent row (the canonical context for the
+    # event we're appending on the parent's type_id).
+    _db.append_phase_event(
+        type_id=parent_row["type_id"],
+        project_id=resolved_project_id,
+        workspace_uuid=parent_row.get("workspace_uuid") or resolved_workspace_uuid or None,
+        event_type="spawned_child",
+        phase=None,
+        metadata={
+            "child_uuid": new_uuid,
+            "child_kind": kind,
+            "child_name": summary,
+        },
+    )
+
+    return json.dumps({"uuid": new_uuid})
 
 
 @mcp.tool()
