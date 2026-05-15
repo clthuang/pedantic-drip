@@ -1,0 +1,14 @@
+[
+  {
+    "pattern": "*.meta.json",
+    "exclude_patterns": ["docs/projects/*/.meta.json"],
+    "decision_module": "data_file_guards.meta_json_decision",
+    "mcp_tool_hint": "complete_phase / transition_phase"
+  },
+  {
+    "pattern": "docs/backlog.md",
+    "exclude_patterns": [],
+    "decision_module": "data_file_guards.backlog_decision",
+    "mcp_tool_hint": "/pd:add-to-backlog or update via DB then re-project"
+  }
+]
