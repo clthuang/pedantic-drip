@@ -2,7 +2,7 @@
 
 - **Spec:** [spec.md](./spec.md) revision 3.4
 - **Parent PRD:** `docs/projects/P003-entity-system-redesign/prd.md` (M4 — Phase 4 Lifecycle Closure)
-- **Status:** revision 2.3 (rev 2.2 addressed phase-reviewer iter 1 nits; rev 2.3 addresses iter 2 nits: explicit COMMIT-ordering note in IF-2 step 5; orphan-detection accepted-out-of-scope statement in IF-1 atomicity; closes_applied append inline comment)
+- **Status:** revision 2.4 (rev 2.3 was phase-reviewer-approved; rev 2.4 patches IF-2 COMMIT-ordering note per plan-reviewer iter 1 B2 verification: closure writes INSIDE existing transaction block (line ~1195-1199); caller's `completed` event STAYS OUTSIDE (preserves feature 088 FR-5.1 dual-write). Mixed-semantics boundary pinned.)
 
 ## §0 Prior Art Research
 
@@ -437,15 +437,20 @@ def _process_complete_phase(
 
         # EXISTING: standard complete_phase work (FR-10.3 step 5)
         # ... entity_engine.complete_phase + db.update_workflow_phase etc. ...
-        # CRITICAL — transaction-close ordering: per codebase-explorer finding,
-        # `_process_complete_phase` currently does post-commit dual-write of
-        # append_phase_event OUTSIDE the with-block. F10 atomicity (TD-1) REQUIRES
-        # closure writes (steps 6-7 below) to execute INSIDE this transaction.
-        # Implementer MUST verify at `workflow_state_server.py:1127-1234` that
-        # steps 6-7 land BEFORE the existing transaction COMMIT, NOT after the
-        # post-commit dual-write. If the existing flow commits early and then
-        # dual-writes phase_events, the closure block must be hoisted ABOVE the
-        # early commit, OR the existing early commit must be removed.
+        # RESOLVED (per plan-reviewer iter 1 B2 verification of workflow_state_server.py:1086-1234):
+        # Feature 088 FR-5.1 mandates the caller's `completed` event_type
+        # append_phase_event STAYS OUTSIDE the transaction (current lines
+        # 1202-1229 — explicit "MUST NOT roll back" comment). For F10, the
+        # CLOSURE writes (steps 6, 7 below) go INSIDE the existing
+        # `with db.transaction():` block (closes alongside update_entity for
+        # metadata at ~line 1195) — atomicity for closure is required by
+        # FR-10.4. The caller's own `completed` event_type append at line
+        # 1212 STAYS OUTSIDE the transaction. Mixed semantics:
+        #   • Closure side: atomic (rolls back on failure)
+        #   • Caller side: best-effort dual-write (preserves FR-5.1)
+        # This is a deliberate boundary choice. Implementer inserts closure
+        # writes between `db.update_workflow_phase(...)` (line ~1195) and the
+        # close of the `with db.transaction():` block (line ~1199).
 
         # NEW: FR-10.3 step 6 — transition non-replay closed entities
         for to_uuid, target_type_id, old_status, terminal, is_replay in closure_targets:

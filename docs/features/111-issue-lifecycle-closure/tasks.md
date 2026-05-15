@@ -1,8 +1,8 @@
 # Tasks — Feature 111: Issue Lifecycle Closure
 
-- **Plan:** plan.md rev 1
-- **Status:** revision 1
-- **TDD discipline:** Implementer-skill MUST execute RED-tests-first regardless of task list order. Each Group's task list is logical ordering, not test-after-code.
+- **Plan:** plan.md rev 2
+- **Status:** revision 2 (plan-reviewer iter 1 follow-ups: E.0 inventory added, B.5 audit pre-pinned, doctor __init__.py line numbers corrected, defensive raise simplified to existing-code rely, IF-2 transaction-boundary resolution pinned)
+- **TDD discipline:** Implementer-skill MUST execute RED-tests-first regardless of task list order. Each Group's task list places test tasks first (RED) followed by production tasks (GREEN).
 
 ## Group A — Migration 14 (DDL only)
 
@@ -50,10 +50,41 @@
 - **Done when:** Both dict entries present.
 - **Time:** 3 min
 
-### Task A.8 — Smoke-validate via Python REPL
-- **What:** `python -c "from entity_registry.database import MIGRATIONS, MIGRATIONS_DOWN; assert 14 in MIGRATIONS and 14 in MIGRATIONS_DOWN; print('OK')"` (or use the project's venv).
-- **Done when:** Prints "OK" — confirms registration. No DB run yet (Group B's tests run the migration).
-- **Time:** 3 min
+### Task A.8 — Red-equivalent local smoke validation (NOT committed)
+- **What:** Run the migration against a tmpfs SQLite DB and assert the post-migration schema state. Compensates for atomic-DDL discipline ruling out same-commit tests (plan §1.1). NOT committed — purely local sanity check before Group B's full test suite lands.
+  ```bash
+  cd plugins/pd && .venv/bin/python -c "
+  import sqlite3, tempfile, os
+  from entity_registry.database import MIGRATIONS, MIGRATIONS_DOWN
+  assert 14 in MIGRATIONS and 14 in MIGRATIONS_DOWN, 'Migration 14 not registered'
+  # Apply migrations 0→14 to a fresh in-memory DB
+  with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as f:
+      path = f.name
+  conn = sqlite3.connect(path)
+  conn.execute(\"CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT)\")
+  for v in range(1, 14):
+      if v in MIGRATIONS:
+          MIGRATIONS[v](conn)
+  # Verify pre-flight gates require entity_display and migration_audit_log — synthesize them
+  conn.execute(\"CREATE TABLE IF NOT EXISTS entity_display (entity_uuid TEXT, display_seq INT, display_slug TEXT)\")
+  conn.execute(\"CREATE TABLE IF NOT EXISTS migration_audit_log (version INTEGER, status TEXT, applied_at TEXT)\")
+  # Apply migration 14
+  MIGRATIONS[14](conn)
+  tables = {r[0] for r in conn.execute(\"SELECT name FROM sqlite_master WHERE type='table'\").fetchall()}
+  assert 'entity_relations' in tables, 'entity_relations not created'
+  entities_sql = conn.execute(\"SELECT sql FROM sqlite_master WHERE name='entities'\").fetchone()[0]
+  assert 'bug' in entities_sql, 'bug kind not in (type, kind) CHECK'
+  events_sql = conn.execute(\"SELECT sql FROM sqlite_master WHERE name='phase_events'\").fetchone()[0]
+  assert 'spawned_child' in events_sql, 'spawned_child not in event_type CHECK'
+  v = conn.execute(\"SELECT MAX(version) FROM schema_migrations\").fetchone()[0]
+  assert v == 14, f'schema_version = {v}, expected 14'
+  print('OK — Migration 14 smoke passes')
+  conn.close()
+  os.unlink(path)
+  "
+  ```
+- **Done when:** Prints "OK — Migration 14 smoke passes". Output is the red-equivalent gate (Group B's full test runs are the canonical red test).
+- **Time:** 5 min
 
 ### Task A.9 — Commit Group A
 - **What:** `git add database.py; git commit -m "feat(111): Migration 14 — entity_relations table + (type,kind) + event_type CHECK widenings"`
@@ -111,11 +142,11 @@
 - **Done when:** Tests added; FAIL.
 - **Time:** 5 min
 
-### Task B.5 — RED: Audit test_workflow_state_server.py
+### Task B.5 — RED: Audit test_workflow_state_server.py (pre-pinned: NO updates needed)
 - **File:** `plugins/pd/mcp/test_workflow_state_server.py`
-- **What:** Per CLAUDE.md "ENTITY_MACHINES has assertions in TWO test files", grep this file for `ENTITY_MACHINES` references. If any test asserts specific keys or transition graphs, update so it doesn't break when Group B lands the defensive raise.
-- **Done when:** Audit complete; either no impact OR fixtures updated.
-- **Time:** 5 min
+- **What:** Pre-pin verified via `grep -n "ENTITY_MACHINES\[" plugins/pd/mcp/test_workflow_state_server.py`: 3 references at lines 6136, 6144, 6560 — all reference `'brainstorm'` or `'backlog'`. NONE reference `'bug'` or `'task'`. The defensive-raise change in Group B (Task B.15) does NOT impact these assertions. Verify pre-pin holds at implementation time, no fixture updates required.
+- **Done when:** Re-run grep returns same 3 line numbers, all referencing brainstorm/backlog only. Skip if pre-pin still holds.
+- **Time:** 3 min
 
 ### Task B.6 — GREEN: Add EntityNotFoundError + InvalidCloseTargetError
 - **File:** `database.py` near line 4484 (`EntityExistsError`)
@@ -171,11 +202,11 @@
 - **Done when:** Method works.
 - **Time:** 5 min
 
-### Task B.15 — GREEN: Add defensive raise in `transition_entity_phase`
-- **File:** `entity_lifecycle.py:124` (transition_entity_phase function)
-- **What:** Before the existing `ENTITY_MACHINES[entity_type]` lookup, add: `if entity_type in ("bug", "task"): raise ValueError(f"invalid_entity_type: {entity_type} uses status-only lifecycle; use update_entity directly")`.
-- **Done when:** Tests B.4 + relevant B.2 case pass.
-- **Time:** 5 min
+### Task B.15 — GREEN: AC-BL.7 satisfied by existing code (pre-pinned)
+- **File:** `entity_lifecycle.py:148-150` (transition_entity_phase function — already raises)
+- **What:** The existing code at `entity_lifecycle.py:148-150` already raises `ValueError("invalid_entity_type: {entity_type} — only brainstorm and backlog supported")` when `entity_type not in ENTITY_MACHINES`. Since FR-BL.1 keeps bug/task OUT of ENTITY_MACHINES, this raise fires naturally. NO new code needed. AC-BL.7's test assertion (Task B.4) should match the existing error pattern (substring `"invalid_entity_type"` and `entity_type` name). If the message needs to be more user-friendly, optionally append a single clarifying sentence — but this is cosmetic.
+- **Done when:** Test B.4 asserts the existing ValueError substring `"invalid_entity_type"` + `"bug"` (or `"task"`); passes against unchanged transition_entity_phase code.
+- **Time:** 2 min
 
 ### Task B.16 — Run all Group B tests + Group A's tests via Group B's test files
 - **What:** `cd plugins/pd && .venv/bin/python -m pytest hooks/lib/entity_registry/test_migration_14_safety.py hooks/lib/entity_registry/test_status_only_lifecycle.py hooks/lib/entity_registry/test_entity_lifecycle.py -v`
@@ -276,6 +307,16 @@
 
 ## Group E — Cleanup + new doctor check (parallelizable with C, D after B)
 
+### Task E.0 — Inventory parser-dependent tests
+- **Files (read-only):** `plugins/pd/hooks/lib/entity_registry/test_backfill.py:981, 992, 1037` and `plugins/pd/hooks/lib/entity_registry/test_entity_status.py:385-1168`.
+- **What:** Read each parser-dependent test region. Triage each test into:
+  - **Migrate** — test has meaningful DB-state assertion; refactor fixture to use synthetic entities with explicit `status=` column instead of free-text marker.
+  - **Delete** — test ONLY exercises parser logic (no DB-state path); deletion replaces with positive doctor-lint test in AC-CL.4.
+  - **Keep** — test does not actually depend on the parser (false positive).
+  Emit a triage list as a comment block at the top of Group E's commit message: `# Triage: <test_name> → migrate|delete|keep`. Expected counts per spec R3: ~10 tests affected; expected delete-rate <30%.
+- **Done when:** Triage list written (memo, not committed); E.5 + E.6 follow the list.
+- **Time:** 10 min
+
 ### Task E.1 — RED: Write test_cleanup_suffix_parsers.py
 - **File:** `plugins/pd/hooks/lib/entity_registry/test_cleanup_suffix_parsers.py` (NEW)
 - **What:** Verify AC-CL.1 + AC-CL.2 + AC-CL.3:
@@ -325,9 +366,9 @@
 - **Time:** 10 min
 
 ### Task E.8 — GREEN: Register check in doctor's CHECK_ORDER
-- **File:** `plugins/pd/hooks/lib/doctor/__init__.py:11-27` (import block) + `:32` (CHECK_ORDER list)
-- **What:** Add `from doctor.checks import check_no_free_text_status_parsers` to the import block. Append `check_no_free_text_status_parsers` to CHECK_ORDER after `check_status_write_path`.
-- **Done when:** `/pd:doctor` or equivalent invocation runs the new check.
+- **File:** `plugins/pd/hooks/lib/doctor/__init__.py:12-31` (import block from `doctor.checks`) + `:33` (CHECK_ORDER list start)
+- **What:** Add `check_no_free_text_status_parsers` to the existing `from doctor.checks import (...)` block starting at line 12. Append `check_no_free_text_status_parsers` to the `CHECK_ORDER` list (starts at line 33) — append at the end, after the existing entries. Verify the symbol resolves at runtime.
+- **Done when:** `/pd:doctor` or equivalent invocation runs the new check. `grep "check_no_free_text_status_parsers" plugins/pd/hooks/lib/doctor/__init__.py | wc -l` returns 2 (import + CHECK_ORDER entry).
 - **Time:** 4 min
 
 ### Task E.9 — Run full test suite
@@ -378,12 +419,12 @@
 
 | Group | Time | Tasks |
 |---|---|---|
-| A | 80 min | 9 |
+| A | 80 min | 9 (incl. red-equivalent smoke at A.8) |
 | B | 120 min | 17 |
 | C | 60 min | 4 |
 | D | 85 min | 5 |
-| E | 85 min | 10 |
+| E | 95 min | 11 (incl. inventory at E.0) |
 | X | 20 min | 3 |
-| **Total** | **450 min (~7.5h)** | **48** |
+| **Total** | **460 min (~7.7h)** | **49** |
 
 With parallel execution of C/D/E after B merges: critical path ≈ A (80) + B (120) + max(C, D, E) (85) + X (20) = **~305 min**.
