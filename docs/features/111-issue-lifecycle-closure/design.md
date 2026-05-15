@@ -1,8 +1,8 @@
 # Design — Feature 111: Issue Lifecycle Closure
 
-- **Spec:** [spec.md](./spec.md) revision 3.4
+- **Spec:** [spec.md](./spec.md) revision 3.5
 - **Parent PRD:** `docs/projects/P003-entity-system-redesign/prd.md` (M4 — Phase 4 Lifecycle Closure)
-- **Status:** revision 2.5 (rev 2.4 pinned closure-transaction boundary; rev 2.5 patches plan-reviewer iter 2 findings: §0 lists 3 parser sites (added entity_status.py:14-18); C8 expanded with C8.b for 5th-site cleanup; IF-8 target_files extended to 3 paths; C11 corrected to note db.get_entity_by_uuid ALREADY EXISTS at :4788 — reuse, don't duplicate.)
+- **Status:** revision 2.7 (rev 2.6 fixed task-reviewer iter 2 nits; rev 2.7 fixes phase-reviewer iter 1 stale documentation residuals: spec rev cross-ref bumped to 3.5, §1 architecture diagram corrected to ENTITY_MACHINES UNCHANGED, F10 dependency cell clarified as "NOT F9", TD-8 snippet target_files extended to 3 paths.)
 
 ## §0 Prior Art Research
 
@@ -68,7 +68,7 @@ Feature 111 is the closing chapter of project P003. It adds 4 cohesive sub-featu
                                   │
                                   ▼
 ┌────────────────────────────────────────────────────────────────────────┐
-│ entity_lifecycle.py — ENTITY_MACHINES (new bug + task entries)         │
+│ entity_lifecycle.py — ENTITY_MACHINES UNCHANGED (bug/task status-only) │
 └────────────────────────────────────────────────────────────────────────┘
                                   │
                                   ▼
@@ -84,7 +84,7 @@ Feature 111 is the closing chapter of project P003. It adds 4 cohesive sub-featu
 | Sub-feature | Files touched | LoC est. | Dependencies |
 |---|---|---|---|
 | **F9 (issue_spawn MCP)** | `entity_server.py` (+1 tool), `database.py` (`_KIND_TO_TYPE_LIFECYCLE` +2 rows; `_VALID_PARAMS` +1 row), `entity_lifecycle.py` (`ENTITY_MACHINES` +2 entries) | ~180 | Migration 14 (CHECK widening) must land first |
-| **F10 (complete_phase closes=)** | `workflow_state_server.py:1086+1809` (+`closes` kwarg, +closure block inside transaction), `database.py` (new `_CLOSES_TERMINAL` dict) | ~250 | Migration 14 (entity_relations table); F9 (for the bug-closure test path) |
+| **F10 (complete_phase closes=)** | `workflow_state_server.py:1086+1809` (+`closes` kwarg, +closure block inside transaction), `database.py` (new `_CLOSES_TERMINAL` dict) | ~250 | Migration 14 (entity_relations table); Group B (exception classes, `_CLOSES_TERMINAL`, helpers). NOT F9 — D.2 test fixtures use hand-crafted entities from Group B per plan §1.1 resolution. |
 | **Migration 14** | `database.py` (new `_migration_14_entity_relations` function + `MIGRATIONS[14]` entry + `MIGRATIONS_DOWN[14]`); `VALID_ENTITY_TYPES` tuple | ~400 (incl. copy-rename ceremony) | None — landed first |
 | **Cleanup** | `entity_registry/backfill.py:418-444`, `doctor/checks.py:983-1015`, doctor registry (+1 new check), test files | ~150 | F10 (DB-state replacement path exists) |
 
@@ -243,6 +243,7 @@ project_root = os.environ.get("PROJECT_ROOT") or subprocess.check_output(
 target_files = [
     f"{project_root}/plugins/pd/hooks/lib/entity_registry/backfill.py",
     f"{project_root}/plugins/pd/hooks/lib/doctor/checks.py",
+    f"{project_root}/plugins/pd/hooks/lib/reconciliation_orchestrator/entity_status.py",
 ]
 ```
 
