@@ -411,7 +411,21 @@ Each dispatch prompt MUST include: feature `spec.md` content (or fallback `no sp
 **Decision tree:**
 
 - **HIGH count > 0** → block merge unless `qa-override.md` exists with ≥ 50 chars of user-authored rationale (per-section trimmed-count). Print findings list with location + suggested_fix per finding. Exit non-zero.
-- **MED findings** → auto-file each to `{pd_artifacts_root}/backlog.md` under `## From Feature {feature_id} Pre-Release QA Findings ({date})` section (next-available 5-digit ID).
+- **MED findings** → auto-file each via `register_entity` (feature 110 FR-4.3 register-then-project pattern). For each MED finding, call:
+  ```
+  register_entity(
+    entity_type="backlog",
+    auto_id=true,
+    name="[{MED|MED-quality|MED-security}] {description}. (surfaced by feature:{feature_id} pre-release QA)",
+    artifact_path="{pd_artifacts_root}/backlog.md",
+    status="open",
+    metadata={
+      "format": "bullet_item",
+      "section": "From Feature {feature_id} Pre-Release QA Findings ({date})"
+    }
+  )
+  ```
+  After all MED findings are registered, the MCP server auto-projects `{pd_artifacts_root}/backlog.md` (which renders each `format="bullet_item"` row under the `## From Feature ...` section identified by `metadata.section`). The pre-port direct-Write block to `{pd_artifacts_root}/backlog.md` is REMOVED — that file is now a projection of DB state and is guarded by `data-file-guard.sh`. If `register_entity` fails for any MED, log the failure and continue with the remaining findings; surface the aggregate failure count at the end of Step 5b. Do NOT fall back to direct Write.
 - **LOW findings** → append each to `{pd_artifacts_root}/features/{id}-{slug}/.qa-gate-low-findings.md` sidecar (created if absent). Folded into `retro.md` by `pd:retrospecting` skill.
 - **Idempotency:** if `.qa-gate.json` exists with `head_sha == $(git rev-parse HEAD)`, skip dispatch and append `skip:` line to `.qa-gate.log`.
 - **Incomplete-run** (any reviewer fails JSON parse + schema validation): block; print `INCOMPLETE: {n} of 4 reviewers failed: [...]`; exit non-zero. Never silent-pass on partial coverage.

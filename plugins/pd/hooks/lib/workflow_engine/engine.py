@@ -441,6 +441,7 @@ class WorkflowStateEngine:
             meta, feature_type_id, source="meta_json_fallback"
         )
 
+    # F4-AUDIT: degraded-mode-only
     def _write_meta_json_fallback(
         self,
         feature_type_id: str,
