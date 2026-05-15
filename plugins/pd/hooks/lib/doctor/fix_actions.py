@@ -5,7 +5,6 @@ of the action taken. Raises on failure (caller catches and records as failed).
 """
 from __future__ import annotations
 
-import json
 import os
 import re
 import sqlite3
@@ -15,7 +14,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from doctor.models import Issue
-from workflow_engine.feature_lifecycle import _atomic_json_write
 
 if TYPE_CHECKING:
     from entity_registry.database import EntityDatabase
@@ -38,80 +36,122 @@ class FixContext:
     memory_conn: sqlite3.Connection | None
 
 
-# Canonical phase sequence — must match transition_gate.constants.PHASE_SEQUENCE
-_PHASE_ORDER = [
-    "brainstorm",
-    "specify",
-    "design",
-    "create-plan",
-    "implement",
-    "finish",
-]
+# Known TD-11 drift classes (feature 110 design §3 TD-11).
+_DRIFT_LAST_COMPLETED_PHASE = "lastCompletedPhase mismatch"
+_DRIFT_STATUS_MISMATCH = "status mismatch"
+_DRIFT_BRANCH_FIELD_STALE = "branch field stale"
 
 
+def _fix_meta_json_via_mcp(
+    ctx: FixContext,
+    drift_class: str,
+    feature_type_id: str,
+) -> str:
+    """Route .meta.json drift fixes through MCP / projection (TD-11).
+
+    Per design TD-11, doctor autofix MUST NOT write .meta.json directly.
+    Each drift class corresponds to a specific MCP / projection invocation
+    that re-derives the file from DB state.
+
+    Returns a status string describing the action taken. For unknown drift
+    classes, returns a WARN string (no autofix; surface to user).
+    """
+    # F4-AUDIT: MCP-routed (TD-11)
+    if not feature_type_id:
+        raise ValueError("No feature_type_id provided for drift fix")
+
+    # Drift class #1: lastCompletedPhase mismatch -> complete_phase(DB phase).
+    if drift_class == _DRIFT_LAST_COMPLETED_PHASE:
+        if ctx.engine is None or ctx.db is None:
+            raise ValueError(
+                "Engine + DB required for lastCompletedPhase fix (drift "
+                "class #1); both must be present on FixContext."
+            )
+        # DB phase = current last_completed_phase column on workflow_phases.
+        row = ctx.db.get_workflow_phase(feature_type_id)
+        if row is None:
+            raise ValueError(
+                f"workflow_phases row missing for {feature_type_id}; cannot "
+                "route lastCompletedPhase fix through MCP."
+            )
+        if isinstance(row, dict):
+            db_phase = row.get("last_completed_phase")
+        else:
+            db_phase = row["last_completed_phase"]
+        if not db_phase:
+            raise ValueError(
+                f"workflow_phases.last_completed_phase NULL for "
+                f"{feature_type_id}; nothing to project."
+            )
+        ctx.engine.complete_phase(feature_type_id, db_phase)
+        return (
+            f"Routed lastCompletedPhase fix through complete_phase MCP for "
+            f"{feature_type_id} (phase={db_phase})"
+        )
+
+    # Drift class #2: status mismatch (DB completed, file active) ->
+    # complete_phase(phase='finish').
+    if drift_class == _DRIFT_STATUS_MISMATCH:
+        if ctx.engine is None:
+            raise ValueError(
+                "Engine required for status mismatch fix (drift class #2)."
+            )
+        ctx.engine.complete_phase(feature_type_id, "finish")
+        return (
+            f"Routed status mismatch fix through complete_phase(phase='finish') "
+            f"MCP for {feature_type_id}"
+        )
+
+    # Drift class #3: branch field stale -> re-project via _project_meta_json.
+    if drift_class == _DRIFT_BRANCH_FIELD_STALE:
+        if ctx.db is None:
+            raise ValueError(
+                "DB required for branch field stale fix (drift class #3)."
+            )
+        # In-process import per design TD-11 -- workflow_state_server.py is in
+        # plugins/pd/mcp (added to sys.path at MCP server import time).
+        from workflow_state_server import _project_meta_json
+        warning = _project_meta_json(ctx.db, ctx.engine, feature_type_id)
+        if warning:
+            return (
+                f"Re-projected .meta.json for {feature_type_id} via "
+                f"_project_meta_json (with warning: {warning})"
+            )
+        return (
+            f"Re-projected .meta.json for {feature_type_id} via "
+            f"_project_meta_json (branch field refreshed)"
+        )
+
+    # Drift class #4: unknown -> WARN-only finding (no autofix).
+    return (
+        f"WARN: unknown drift class '{drift_class}' for {feature_type_id}; "
+        f"no autofix available — surface to user for manual MCP invocation."
+    )
+
+
+# F4-AUDIT: MCP-routed (TD-11)
 def _fix_last_completed_phase(ctx: FixContext, issue: Issue) -> str:
-    """Update .meta.json lastCompletedPhase to the latest completed phase."""
+    """MCP-routing wrapper for lastCompletedPhase drift (TD-11 drift class #1).
+
+    Replaces direct .meta.json write; routes through engine.complete_phase
+    so the projection function regenerates the file from DB state.
+    """
     if not issue.entity:
         raise ValueError("No entity on issue")
-    # Extract entity_id from type_id (e.g., "feature:008-test" -> "008-test")
-    parts = issue.entity.split(":", 1)
-    entity_id = parts[1] if len(parts) > 1 else parts[0]
-
-    meta_path = os.path.join(
-        ctx.project_root, ctx.artifacts_root, "features", entity_id, ".meta.json"
-    )
-    with open(meta_path) as f:
-        meta = json.load(f)
-
-    phases = meta.get("phases", {})
-    latest_phase = None
-    latest_idx = -1
-    for phase_name, phase_data in phases.items():
-        if isinstance(phase_data, dict) and phase_data.get("completed"):
-            try:
-                idx = _PHASE_ORDER.index(phase_name)
-            except ValueError:
-                continue
-            if idx > latest_idx:
-                latest_idx = idx
-                latest_phase = phase_name
-
-    if latest_phase is None:
-        raise ValueError(f"No completed phases found in {meta_path}")
-
-    meta["lastCompletedPhase"] = latest_phase
-    _atomic_json_write(meta_path, meta)
-    return f"Set lastCompletedPhase to '{latest_phase}'"
+    return _fix_meta_json_via_mcp(ctx, _DRIFT_LAST_COMPLETED_PHASE, issue.entity)
 
 
+# F4-AUDIT: MCP-routed (TD-11)
 def _fix_completed_timestamp(ctx: FixContext, issue: Issue) -> str:
-    """Set top-level 'completed' timestamp from latest phase completion."""
+    """MCP-routing wrapper for status / completed-timestamp drift (TD-11 #2).
+
+    Replaces direct .meta.json write; routes through
+    engine.complete_phase(phase='finish') so the projection refreshes the
+    top-level `completed` timestamp from DB state.
+    """
     if not issue.entity:
         raise ValueError("No entity on issue")
-    parts = issue.entity.split(":", 1)
-    entity_id = parts[1] if len(parts) > 1 else parts[0]
-
-    meta_path = os.path.join(
-        ctx.project_root, ctx.artifacts_root, "features", entity_id, ".meta.json"
-    )
-    with open(meta_path) as f:
-        meta = json.load(f)
-
-    # Find latest completed timestamp from phases
-    from datetime import datetime, timezone
-    latest = None
-    for phase_data in meta.get("phases", {}).values():
-        if isinstance(phase_data, dict) and "completed" in phase_data:
-            ts = phase_data["completed"]
-            if latest is None or ts > latest:
-                latest = ts
-
-    if latest is None:
-        latest = datetime.now(timezone.utc).isoformat()
-
-    meta["completed"] = latest
-    _atomic_json_write(meta_path, meta)
-    return f"Set completed timestamp to {latest}"
+    return _fix_meta_json_via_mcp(ctx, _DRIFT_STATUS_MISMATCH, issue.entity)
 
 
 def _fix_reconcile(ctx: FixContext, issue: Issue) -> str:
@@ -146,6 +186,7 @@ def _fix_entity_status_dropped(ctx: FixContext, issue: Issue) -> str:
     return f"Updated {issue.entity} status to 'dropped'"
 
 
+# F4-AUDIT: annotation-only; not state mutation
 def _fix_backlog_annotation(ctx: FixContext, issue: Issue) -> str:
     """Add (promoted -> feature) annotation to backlog.md."""
     if not issue.entity:
