@@ -112,12 +112,16 @@ These are the concrete pre-conditions feature 111 depends on. If any pin drifts 
 - **FR-10.3 — Atomic transaction order.** When `closes` is non-empty, the entire `complete_phase` operation runs in a single `BEGIN IMMEDIATE` transaction. Order:
   1. Resolve calling entity's `from_uuid` and `caller_workspace_uuid` (FR-10.2).
   2. For each `uuid` in `closes`: `SELECT type, kind, lifecycle_class, status, workspace_uuid FROM entities WHERE uuid = ?`. If row missing → raise `EntityNotFoundError("complete_phase: closure target not found: {uuid}")`. If `workspace_uuid != caller_workspace_uuid` → raise `InvalidCloseTargetError("complete_phase: cross-workspace closure forbidden: {uuid} is in workspace {other_ws}, caller is in {caller_ws}")`.
-  3. For each closed entity, **derive terminal state from its `lifecycle_class`**:
-     - `lifecycle_class='bug_flow'` (kind='bug') → terminal = `'closed'` (callers wanting 'resolved'/'wont_fix' use `update_entity` directly; `closes=` is for "this feature fixed this bug" only).
-     - `lifecycle_class='task_flow'` (kind='task') → terminal = `'closed'` (the new task machine; see FR-BM.3).
-     - `lifecycle_class='work_flow'` (kind='backlog') → terminal = `'dropped'` (backlog's existing terminal — feature has subsumed/closed the backlog item).
-     - `lifecycle_class='feature_flow'` → NOT supported. Raise `InvalidCloseTargetError("complete_phase: feature entities cannot be closed via closes=; use complete_phase('finish') directly: {uuid}")`. (Features have their own finish phase.)
-     - Other lifecycle_classes (`container_flow`, `brainstorm_flow`, `none`) → raise `InvalidCloseTargetError("complete_phase: lifecycle_class {lc} not closable via closes=: {uuid}")`.
+  3. For each closed entity, **derive terminal state from its `lifecycle_class`** via the module-level `_CLOSES_TERMINAL` dict (single source of truth — future relation kinds extend this dict without touching dispatch logic):
+     ```python
+     _CLOSES_TERMINAL = {
+         "bug_flow": "closed",   # callers wanting 'resolved'/'wont_fix' use update_entity directly; closes= is for "this feature fixed this bug" only
+         "task_flow": "closed",  # new task machine per FR-BM.3
+         "work_flow": "dropped", # backlog's existing terminal — feature has subsumed/closed the backlog item
+     }
+     ```
+     - `lifecycle_class='feature_flow'` → NOT in `_CLOSES_TERMINAL`. Raise `InvalidCloseTargetError("complete_phase: feature entities cannot be closed via closes=; use complete_phase('finish') directly: {uuid}")`. (Features have their own finish phase.)
+     - Any other lifecycle_class (`container_flow`, `brainstorm_flow`, `none`) → NOT in `_CLOSES_TERMINAL` → raise `InvalidCloseTargetError("complete_phase: lifecycle_class {lc} not closable via closes=: {uuid}")`.
   4. For each `uuid`: if current `status` is already terminal:
      - Check whether the prior closer matches: `SELECT from_uuid FROM entity_relations WHERE to_uuid=? AND kind='fixes' LIMIT 1`.
      - If returned `from_uuid == caller's from_uuid` → idempotent replay; SKIP all writes for this uuid (no update_entity, no phase_event append) and add the uuid to `closes_applied` in the response.
@@ -155,6 +159,7 @@ These are the concrete pre-conditions feature 111 depends on. If any pin drifts 
 - **FR-MR.2 — Widen (type, kind) CHECK on entities.** Migration 14 performs a copy-rename of the `entities` table to widen the CHECK constraint:
   - **Before:** `(type='work' AND kind IN ('feature','backlog','initiative','objective','key_result','task'))`
   - **After:** `(type='work' AND kind IN ('feature','backlog','bug','initiative','objective','key_result','task'))`
+  - **Ordering rule:** preserve existing migration-12 insertion order; new value `'bug'` is inserted between `'backlog'` and `'initiative'` (matches the work_kind hierarchy: production kinds first → forward-compat kinds second). AC-MR.2's substring assert pins this exact sequence — the implementation must match it literally.
   - Procedure: standard SQLite CHECK-mutation pattern (CREATE TABLE entities_new, INSERT ... SELECT, DROP TABLE entities, ALTER TABLE entities_new RENAME). Triggers and indices recreated post-rename per the migration-12 precedent (`database.py:3290+`).
 - **FR-MR.3 — Widen phase_events.event_type CHECK.** Migration 14 also widens the phase_events.event_type CHECK to admit `'spawned_child'`:
   - **Before:** `('started','completed','skipped','backward','entity_created','entity_status_changed','entity_promoted')` (7 values, per `database.py:3402`).
@@ -258,7 +263,7 @@ These are the concrete pre-conditions feature 111 depends on. If any pin drifts 
 ## §7 Open Risks
 
 - **R1 — (type, kind) CHECK copy-rename complexity.** The migration-12 precedent at `database.py:3290+` shows the copy-rename procedure is non-trivial (drop indices, drop triggers, recreate post-rename). Migration 14 must replicate this carefully for both `entities` AND `phase_events`. Design phase enumerates exact trigger/index list to recreate.
-- **R2 — `bug_flow` lifecycle_class.** Introducing a new lifecycle_class value requires checking whether any downstream code enumerates lifecycle_classes (e.g., entity_engine routing, doctor checks). Design phase greps for `lifecycle_class\s*==\s*'` and `LIFECYCLE_CLASS_` constants.
+- **R2 — `bug_flow`/`task_flow` lifecycle_class blast radius.** Expected blast-radius files from spec-time grep: `entity_engine.py` routing (currently keys on `type='container'`; lifecycle_class enumeration not expected here but design phase confirms); `doctor/checks.py` (no `check_lifecycle_class_valid` currently exists — design phase verifies). Design phase confirms these are the only sites, adds bug_flow/task_flow handling, and verifies `grep -nE "lifecycle_class\s*==\s*'|LIFECYCLE_CLASS_" plugins/pd/` returns 0 unhandled enumeration sites post-implementation.
 - **R3 — Cleanup blast radius.** Removing free-text suffix parsers may break tests that read parser output. Conservative estimate from §1.1 row "Free-text suffix parsers": ~10 tests affected. Implement may need to migrate fixtures rather than delete.
 - **R4 — Idempotency-on-replay vs strict-atomic semantics.** FR-10.5 chooses idempotency-on-same-closer (ON CONFLICT DO NOTHING + closer-match check). Alternative was strict-atomic (any duplicate rolls back). Trade-off: idempotency is operationally safer for retries but loses error visibility on accidental double-close. Spec defaults to idempotency-on-same-closer.
 - **R5 — Idle-trigger touch of parent row.** AC-9.2 asserts column-level invariance of `workflow_phase` AND `kanban_column`, but `updated_at` may legitimately tick if any trigger fires on a parent-row write. Implementation must avoid spurious touches of the parent `workflow_phases` row when only appending a phase_event; design phase greps for triggers on `workflow_phases` table that may fire on insert into `phase_events`.
