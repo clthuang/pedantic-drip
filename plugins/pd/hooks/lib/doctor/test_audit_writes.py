@@ -1,34 +1,40 @@
-"""Feature 110 AST audit scaffold (AC-1.1, AC-1.2).
+"""Doctor audit-writes lint tests (feature 110).
 
-Walks the source trees enumerated in spec FR-4.1 + design §2.3 to
-assert that ``.meta.json`` and ``docs/backlog.md`` writes are confined
-to the allow-listed projection / annotation surfaces.
+Combines two audit lints:
 
-This file is a **scaffold** added by Group 12 (feature 110); Group 11
-(next dispatch) implements the full AST walk + comment-proximity
-checks per AC-1.1b. The scaffold's purpose is to:
-  1. Reserve the module path used by `docs/features/110-.../spec.md`
-     §8 verification mapping (test file = `test_audit_writes.py`).
-  2. Lock in the allow-list values so future regressions surface
-     during code review even before Group 11 lands.
-  3. Guarantee CI passes during Group 12 (no false-positive failures
-     from a missing test module).
+1. **`.meta.json` / `docs/backlog.md` writer allow-list scaffold (Groups 11 + 12).**
+   Constants pinning the design-mandated allow-lists. Group 11 will replace the
+   stub tests with full AST walks (AC-1.1, AC-1.2). For now, the constants are
+   PASS-by-construction so CI doesn't regress while Group 11 lands.
 
-The stub assertions are PASS-by-construction (they verify the
-allow-list constants exist and are non-empty). Group 11 replaces them
-with real AST walks. Per Task 12.5 DoD: "stub assertions return PASS
-(so Group 12 doesn't break CI)".
+2. **entity_id parsing audit lint (Group 15 / TD-7b / design §5 invariant).**
+   Enforces that all `entity_id`-suffix parsing call sites either live inside
+   a ``_migration_13_*`` function or in a test file. Hits anywhere else
+   indicate a caller that should have been ported to read seq/slug from
+   ``entity_display`` per FR-8.3 but was missed.
+
+Grace mode (design TD-7b): if the audit finds unported sites, the test is
+marked ``xfail`` (not ``fail``) so the contract exists for CI without
+blocking integration.
 """
 from __future__ import annotations
 
+import ast
+import subprocess
 from pathlib import Path
 
-# Repo-relative anchors used by future AST walks. Stored as module-level
-# constants so Group 11 can reuse them without re-deriving paths.
+import pytest
+
+
+# ---------------------------------------------------------------------------
+# Constants — locate plugin paths relative to this file.
+# ---------------------------------------------------------------------------
+
 _DOCTOR_DIR = Path(__file__).resolve().parent           # plugins/pd/hooks/lib/doctor
 _HOOKS_LIB = _DOCTOR_DIR.parent                          # plugins/pd/hooks/lib
 _HOOKS_DIR = _HOOKS_LIB.parent                           # plugins/pd/hooks
 _PLUGIN_ROOT = _HOOKS_DIR.parent                         # plugins/pd
+_PLUGIN_PD_DIR = _PLUGIN_ROOT                            # alias for clarity
 _REPO_ROOT = _PLUGIN_ROOT.parent.parent                  # repo root
 
 
@@ -65,12 +71,7 @@ AUDIT_TREES: tuple[Path, ...] = (
 
 
 def test_no_unaudited_meta_json_writes() -> None:
-    """AC-1.1 scaffold — Group 11 implements full AST walk.
-
-    For Group 12, we just assert the allow-list is non-empty and the
-    target source trees exist. This guarantees CI passes; the real
-    walk lands in Group 11.
-    """
+    """AC-1.1 scaffold — Group 11 implements full AST walk."""
     assert len(META_JSON_WRITER_ALLOWLIST) > 0, (
         "META_JSON_WRITER_ALLOWLIST must be populated per spec FR-4.1."
     )
@@ -81,27 +82,116 @@ def test_no_unaudited_meta_json_writes() -> None:
 
 
 def test_no_unaudited_backlog_md_writes() -> None:
-    """AC-1.2 scaffold — Group 11 implements full AST walk.
+    """AC-1.2 scaffold — Group 11 implements full AST walk."""
+    assert "_project_backlog_md" in BACKLOG_MD_WRITER_ALLOWLIST
+    assert "_fix_backlog_annotation" in BACKLOG_MD_WRITER_ALLOWLIST
+    assert len(BACKLOG_MD_WRITER_ALLOWLIST) == 2
 
-    Verifies the BACKLOG_MD_WRITER_ALLOWLIST exists and contains the
-    two expected entries per spec FR-4.3:
-      * ``_project_backlog_md`` (projection)
-      * ``_fix_backlog_annotation`` (F4-AUDIT annotation-only)
 
-    Group 12 (this dispatch) ports the three pre-port backlog writers
-    (``add-to-backlog.md``, ``finish-feature.md`` Step 5b,
-    ``cleanup_backlog.py``) to register-then-project. Post-port, no
-    other write surface should remain. Group 11's AST walk will
-    enforce this empirically.
-    """
-    assert "_project_backlog_md" in BACKLOG_MD_WRITER_ALLOWLIST, (
-        "Spec FR-4.3 — projection must be on the allow-list."
-    )
-    assert "_fix_backlog_annotation" in BACKLOG_MD_WRITER_ALLOWLIST, (
-        "Spec FR-4.3 — F4-AUDIT annotation writer retained per design §2.3."
-    )
-    # Sanity: no surprise entries beyond the two design-pinned writers.
-    assert len(BACKLOG_MD_WRITER_ALLOWLIST) == 2, (
-        f"Unexpected backlog allow-list size: "
-        f"{BACKLOG_MD_WRITER_ALLOWLIST}. Spec FR-4.3 expects exactly two."
-    )
+# ---------------------------------------------------------------------------
+# TD-7b entity_id parsing audit lint (Group 15)
+# ---------------------------------------------------------------------------
+
+_SCAN_ROOTS = [
+    _PLUGIN_PD_DIR / "hooks" / "lib",
+    _PLUGIN_PD_DIR / "mcp",
+]
+
+_AUDIT_PATTERN = (
+    r'\.split\(":"\)|'
+    r'substr\(.*entity_id|'
+    r'instr\(.*entity_id|'
+    r're\.match.*entity_id'
+)
+
+
+def _run_audit_grep() -> list[tuple[str, int, str]]:
+    args = ["grep", "-rnIE", "--include=*.py", _AUDIT_PATTERN]
+    for root in _SCAN_ROOTS:
+        if root.exists():
+            args.append(str(root))
+    result = subprocess.run(args, capture_output=True, text=True, check=False)
+    if result.returncode == 1:
+        return []
+    if result.returncode == 2:
+        raise RuntimeError(
+            f"audit grep failed: stderr={result.stderr!r}, stdout={result.stdout!r}"
+        )
+    hits: list[tuple[str, int, str]] = []
+    for line in result.stdout.splitlines():
+        parts = line.split(":", 2)
+        if len(parts) != 3:
+            continue
+        path, lineno_s, text = parts
+        try:
+            lineno = int(lineno_s)
+        except ValueError:
+            continue
+        hits.append((path, lineno, text))
+    return hits
+
+
+def _function_enclosing(path: Path, line: int) -> str | None:
+    try:
+        src = path.read_text()
+    except OSError:
+        return None
+    try:
+        tree = ast.parse(src, filename=str(path))
+    except SyntaxError:
+        return None
+    enclosing: str | None = None
+    enclosing_span = (0, 0)
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            start = node.lineno
+            end = node.end_lineno or start
+            if start <= line <= end:
+                span = end - start
+                if enclosing is None or span < (enclosing_span[1] - enclosing_span[0]):
+                    enclosing = node.name
+                    enclosing_span = (start, end)
+    return enclosing
+
+
+def _classify_hit(path: str, line: int) -> str:
+    p = Path(path)
+    if p.name.startswith("test_") and p.suffix == ".py":
+        return "allowed_test"
+    fn = _function_enclosing(p, line)
+    if fn is not None and fn.startswith("_migration_13_"):
+        return "allowed_migration_13"
+    return "unallowed"
+
+
+_CURRENT_UNALLOWED = [
+    (path, line, text)
+    for (path, line, text) in _run_audit_grep()
+    if _classify_hit(path, line) == "unallowed"
+]
+
+
+@pytest.mark.xfail(
+    bool(_CURRENT_UNALLOWED),
+    reason=(
+        f"TD-7b followup: {len(_CURRENT_UNALLOWED)} entity_id-parsing site(s) "
+        "pending port. Sites: "
+        + "; ".join(f"{p}:{ln}" for (p, ln, _t) in _CURRENT_UNALLOWED[:5])
+    ),
+    strict=False,
+)
+def test_entity_id_parsing_audit_lint() -> None:
+    """TD-7b lint: every entity_id-suffix-parsing call site outside test
+    files MUST live inside a ``_migration_13_*`` function."""
+    hits = _run_audit_grep()
+    unallowed: list[tuple[str, int, str]] = []
+    for path, line, text in hits:
+        if _classify_hit(path, line) == "unallowed":
+            unallowed.append((path, line, text))
+    if unallowed:
+        bullets = "\n".join(f"  - {p}:{ln}: {t.strip()}" for (p, ln, t) in unallowed)
+        pytest.fail(
+            "TD-7b audit lint: found entity_id-parsing call sites outside "
+            "the allow-list.\n"
+            f"Unallowed hits ({len(unallowed)}):\n{bullets}"
+        )
