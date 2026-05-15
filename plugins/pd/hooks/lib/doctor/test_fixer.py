@@ -375,19 +375,14 @@ class TestClassifyFix:
 class TestFixActions:
     """Test individual fix functions."""
 
-    def test_fix_last_completed_phase(self, tmp_path):
+    def test_fix_last_completed_phase_requires_engine(self, tmp_path):
+        """Feature 110 TD-11: _fix_last_completed_phase no longer writes
+        .meta.json directly; it routes through engine.complete_phase MCP.
+        Without engine + DB on the FixContext, it MUST raise ValueError
+        (no silent fallback to direct write).
+        """
         from doctor.fix_actions import FixContext, _fix_last_completed_phase
 
-        _create_meta_json(
-            tmp_path,
-            slug="008-test-feature",
-            last_completed_phase=None,
-            phases={
-                "ideate": {"started": "2025-01-01", "completed": "2025-01-02"},
-                "specify": {"started": "2025-01-03", "completed": "2025-01-04"},
-                "design": {"started": "2025-01-05"},
-            },
-        )
         ctx = FixContext(
             entities_db_path="", memory_db_path="",
             artifacts_root=str(tmp_path), project_root=str(tmp_path),
@@ -398,13 +393,8 @@ class TestFixActions:
                       message="missing lastCompletedPhase",
                       fix_hint="Set lastCompletedPhase to the latest completed phase")
 
-        action = _fix_last_completed_phase(ctx, issue)
-        assert "specify" in action
-
-        # Verify file was updated
-        meta_path = tmp_path / "features" / "008-test-feature" / ".meta.json"
-        meta = json.loads(meta_path.read_text())
-        assert meta["lastCompletedPhase"] == "specify"
+        with pytest.raises(ValueError, match="Engine \\+ DB required"):
+            _fix_last_completed_phase(ctx, issue)
 
     def test_fix_entity_status_promoted(self, tmp_path):
         from doctor.fix_actions import FixContext, _fix_entity_status_promoted

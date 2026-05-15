@@ -2068,6 +2068,7 @@ async def init_feature_state(
     )
 
 
+# F4-AUDIT: MCP-tool wrapper; delegates to feature_lifecycle.init_project_state
 @mcp.tool()
 async def init_project_state(
     project_dir: str,
