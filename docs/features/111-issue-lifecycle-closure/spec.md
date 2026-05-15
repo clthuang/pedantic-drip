@@ -3,7 +3,7 @@
 - **Project:** P003-entity-system-redesign — Milestone M4 (Phase 4 — Lifecycle Closure) — final feature in P003
 - **Depends on:** 109-polymorphic-taxonomy-and-event (post-migration-12 baseline; `entity_type` column DROPPED, `type`/`kind`/`lifecycle_class` triple ACTIVE); 110-markdown-projections-and-gener (post-migration-13 `entity_display` + projection sealed write path)
 - **Brainstorm source:** `docs/projects/P003-entity-system-redesign/prd.md`
-- **Status:** revision 3.2 (rev 3 addressed task-lifecycle + cross-workspace + multiple testability tightenings; rev 3.2 addresses phase-reviewer blockers: AC-10.x renumber, FR-10.4 same-closer carve-out, Pin K lifecycle_class no-CHECK confirmation, FR-MR.7 Python-constant down-migration mechanism)
+- **Status:** revision 3.4 (rev 3.3 was phase-reviewer-approved; rev 3.4 patches in design-reviewer iter 1 findings: status-only model for bug/task (drops ENTITY_MACHINES entries; resolves Blocker B1 — workflow_phases CHECK incompatibility); EntityNotFoundError + InvalidCloseTargetError exception classes pinned (FR-EX, Blocker B2); down-migration pre-flight check (FR-MR.9, AC-MR.10/11); AC-10.11 state-machine-bypass behavior; Pins L (entities.status no CHECK) and M (workflow_phases.workflow_phase CHECK gaps))
 
 ## §1 Background and SUT-Verified Baseline
 
@@ -46,6 +46,8 @@ These are the concrete pre-conditions feature 111 depends on. If any pin drifts 
 - **Pin I — Live-DB task entity count is 0:** Empirically verified pre-design: `sqlite3 ~/.claude/pd/entities/entities.db "SELECT COUNT(*) FROM entities WHERE entity_type='task'"` returns `0` on the current live DB. (The DB queried is on a PRE-feature-109 schema — uses `entity_type` column; post-109 query would be `WHERE kind='task'`. Migrations 12-13 auto-run at next session start.) Implication: FR-MR.5 task remap UPDATE is an operational no-op in production; only test fixtures exercise the remap path.
 - **Pin J — Pre-feature-109/110 schema state in live DB:** The live entities.db is currently on a pre-feature-109 schema (no `schema_migrations` table; entities table has `entity_type` column). Features 109 and 110 migrations 11-13 are in the codebase but have not yet run against the live DB. This is a deliberate state — they run automatically on next pd session start via `EntityDatabase._migrate()`. Feature 111's Migration 14 chains on top of 13 — design phase confirms the migration runner enforces strict v0→v13→v14 ordering.
 - **Pin K — `lifecycle_class` column has NO CHECK constraint:** Empirically verified at `database.py:2983` (post-migration-12 entities table) and `:3294` (post-Group-7 entities table) — `lifecycle_class` is declared `TEXT NOT NULL DEFAULT 'feature_flow'` with no CHECK clause. Implication: adding new lifecycle_class values (`bug_flow`, `task_flow`) does NOT require widening any CHECK constraint. Migration 14 omits lifecycle_class CHECK widening entirely.
+- **Pin L — `entities.status` column has NO CHECK constraint:** Verified at `database.py:5334+` (entities table CREATE in migration-12) — `status TEXT` (nullable, no CHECK). Implication: `update_entity(uuid, status=<any-string>)` is a free write at the DB layer. Validation lives in application code (status-only model per FR-BL.2). Future tightening (e.g., per-kind status CHECK via a trigger) is out of scope.
+- **Pin M — `workflow_phases.workflow_phase` CHECK does NOT admit bug/task states:** At `database.py:743-748`, the CHECK admits `('brainstorm','specify','design','create-plan','create-tasks','implement','finish','draft','reviewing','promoted','abandoned','open','triaged','dropped','discover','define','deliver','debrief')` — `'resolved'`, `'closed'`, `'wont_fix'` are ABSENT. Migration 14 does NOT widen this — bug/task entities use the status-only model (FR-BL) and skip workflow_phases entirely.
 
 ## §2 Goals
 
@@ -70,7 +72,7 @@ These are the concrete pre-conditions feature 111 depends on. If any pin drifts 
       metadata: dict | None = None,    # arbitrary caller-supplied JSON; merged into entities.metadata
   ) -> str  # returns the new entity's uuid
   ```
-- **FR-9.2 — Entity creation contract.** `issue_spawn` calls `register_entity(entity_type=kind, entity_id=<auto>, name=summary, parent_uuid=parent_uuid, status='open', workspace_uuid=..., metadata=metadata)`. The `entity_id` is generated via `id_generator.generate_entity_id(_db, kind, name, project_id)` (auto_id path) — produces conformant `{seq}-{slug}` so EntityIdFormatError cannot fire. The internal `entity_type → (type, kind, lifecycle_class)` mapping in register_entity is extended: `kind='bug' → (type='work', kind='bug', lifecycle_class='bug_flow')`; `kind='task' → (type='work', kind='task', lifecycle_class='task_flow')` (NEW lifecycle_class value; see FR-BM.3 + FR-MR.5).
+- **FR-9.2 — Entity creation contract.** `issue_spawn` calls `register_entity(entity_type=kind, entity_id=<auto>, name=summary, parent_uuid=parent_uuid, status='open', workspace_uuid=..., metadata=metadata)`. The `entity_id` is generated via `id_generator.generate_entity_id(_db, kind, name, project_id)` (auto_id path) — produces conformant `{seq}-{slug}` so EntityIdFormatError cannot fire. The internal `entity_type → (type, kind, lifecycle_class)` mapping in register_entity is extended: `kind='bug' → (type='work', kind='bug', lifecycle_class='bug_flow')`; `kind='task' → (type='work', kind='task', lifecycle_class='task_flow')` (NEW lifecycle_class value; declarative tag only — see FR-BL.3 + FR-MR.5). NO `init_entity_workflow` call follows registration (status-only model per FR-BL).
 - **FR-9.3 — Parent phase_event append.** After entity creation, `issue_spawn` MUST `append_phase_event(type_id=<parent_type_id>, event_type='spawned_child', phase=NULL, metadata={"child_uuid": <new_uuid>, "child_kind": kind, "child_name": summary})`. The parent's `workflow_phases.workflow_phase` AND `workflow_phases.kanban_column` columns are NOT modified (column-level invariance — `updated_at` may tick due to triggers; AC-9.2 asserts column-level, not row-level, equality).
 - **FR-9.4 — Returns.** Returns the new entity uuid (string).
 - **FR-9.5 — kind enum.** `kind` value MUST be one of `{"bug", "task"}` (per PRD Story 8 `work.kind` ontology). Invalid kind raises `ValueError` BEFORE any DB write.
@@ -79,26 +81,20 @@ These are the concrete pre-conditions feature 111 depends on. If any pin drifts 
 - **FR-9.8 — Doctor check_status_write_path compliance.** issue_spawn implementation MUST go through `append_phase_event()` for the parent event (no direct INSERT into phase_events). The AST-based doctor check (`check_status_write_path`) MUST pass on the new code.
 - **FR-9.9 — Metadata merge semantics.** Caller-supplied `metadata` dict is shallow-merged into `entities.metadata` JSON with **system-supplied keys taking precedence** — callers cannot overwrite reserved keys (the reserved set is owned by register_entity / id_generator and includes any keys it writes internally; issue_spawn does not currently inject reserved keys beyond what register_entity injects). Pinned via AC-9.9 with the synthetic `{"severity": "high", "parent_uuid": "evil"}` → resulting metadata has `severity='high'` AND no `parent_uuid` key (parent linkage lives in entities.parent_uuid column, not metadata).
 
-### FR-bug-machine — entity_lifecycle.py 'bug' state machine
+### FR-bug-task-lifecycle — status-only tracking (no ENTITY_MACHINES entry)
 
-- **FR-BM.1 — `ENTITY_MACHINES['bug']` added.** State graph:
-  - States: `open` (initial), `resolved`, `closed`, `wont_fix` (all 3 terminal).
-  - Transitions: `open → resolved`, `open → closed`, `open → wont_fix`. No transitions FROM terminal states.
-  - Columns mapping (kanban): all 4 states map to existing kanban_column values — `open → 'wip'`, `resolved → 'completed'`, `closed → 'completed'`, `wont_fix → 'completed'`. (kanban_column CHECK at `database.py:743` already admits these; no widening needed.)
-- **FR-BM.2 — Forward-set shape.** `ENTITY_MACHINES['bug']['forward']` is a set of (from, to) tuples matching the brainstorm/backlog convention (`entity_lifecycle.py:28-34`, `:48-53`):
-  ```python
-  "forward": {
-      ("open", "resolved"),
-      ("open", "closed"),
-      ("open", "wont_fix"),
-  }
-  ```
-- **FR-BM.3 — `task` lifecycle (new ENTITY_MACHINES entry).** kind='task' gets a NEW ENTITY_MACHINES entry to make the closes= path valid. Without this, the existing 'work_flow' machine (used by backlog) does not admit 'closed' as a transition target, so `update_entity(task_uuid, status='closed')` from closes= would fail state-machine validation.
-  - States: `open` (initial), `closed` (terminal).
-  - Transitions: `open → closed`.
-  - Columns mapping: `open → 'wip'`, `closed → 'completed'`.
-  - lifecycle_class registered as `'task_flow'` (NEW value), aligned with the pattern from FR-9.2 register_entity mapping extension (see FR-MR.5).
-  - Forward set: `{("open", "closed")}`.
+**Design-phase patch (per design-reviewer iter 1 blocker B1):** bug and task entities use a **status-only tracking model** — they do NOT have `workflow_phases` rows, do NOT go through `transition_entity_phase`, and do NOT need entries in `ENTITY_MACHINES`. Their lifecycle is encoded entirely by:
+1. `_KIND_TO_TYPE_LIFECYCLE` mapping (`kind='bug' → lifecycle_class='bug_flow'`; `kind='task' → lifecycle_class='task_flow'`) — declarative tag.
+2. Initial `status='open'` set at `register_entity` time by `issue_spawn`.
+3. `_CLOSES_TERMINAL` dict (`'bug_flow' → 'closed'`; `'task_flow' → 'closed'`) consulted by `complete_phase(closes=)`.
+4. Direct `update_entity(uuid, status=<terminal>)` for transitions outside closes= (e.g., a caller marks a bug as 'resolved' or 'wont_fix' directly).
+
+**Why this departs from rev 3.3:** The `workflow_phases.workflow_phase` CHECK constraint (`database.py:743-748`) does NOT admit `'resolved'`, `'closed'`, `'wont_fix'`. Widening it would require yet another copy-rename of `workflow_phases`. The status-only model is simpler, avoids the CHECK widening, and matches the "issues are lightweight" mental model from PRD Story 5 ("first-class MCP for spontaneous mid-flight issue capture").
+
+- **FR-BL.1 — No ENTITY_MACHINES entry.** `ENTITY_MACHINES['bug']` and `ENTITY_MACHINES['task']` are NOT added. Neither kind goes through `init_entity_workflow` or `transition_entity_phase`. No `workflow_phases` row is created at issue_spawn time.
+- **FR-BL.2 — `entities.status` is the sole state field.** Valid values for `kind='bug'`: `{'open', 'resolved', 'closed', 'wont_fix'}`. Valid for `kind='task'`: `{'open', 'closed'}`. There is no DB-level CHECK on `status` (per Pin L below); validation is application-layer (in `issue_spawn` initial-status + `_CLOSES_TERMINAL` terminal derivation). Callers wanting non-`closed` terminals for bugs call `db.update_entity(uuid, status=<terminal>)` directly.
+- **FR-BL.3 — lifecycle_class declarative.** `lifecycle_class='bug_flow'` / `'task_flow'` exist as discriminator tags on the entities row — consumed by `_CLOSES_TERMINAL` to derive the closes= terminal. No state-machine code consults them otherwise.
+- **FR-BL.4 — Existing test fixtures with `kind='task'`, `lifecycle_class='work_flow'` migrated.** Migration 14 includes `UPDATE entities SET lifecycle_class='task_flow' WHERE kind='task'` (operational no-op per Pin I; test fixtures exercise the remap).
 
 ### FR-10 — `complete_phase(closes=[uuid...])` atomic closure
 
@@ -166,7 +162,7 @@ These are the concrete pre-conditions feature 111 depends on. If any pin drifts 
   - **After:** `('started','completed','skipped','backward','entity_created','entity_status_changed','entity_promoted','spawned_child')` (8 values).
   - Procedure: same copy-rename pattern as migration-12 (`database.py:3395+`).
 - **FR-MR.4 — Extend `VALID_ENTITY_TYPES`.** The Python constant at `database.py:4534` extends to 9 values: add `'bug'`.
-- **FR-MR.5 — Extend `register_entity` entity_type → (type, kind, lifecycle_class) mapping.** Add `'bug' → ('work', 'bug', 'bug_flow')` AND remap `'task' → ('work', 'task', 'task_flow')` (was `('work', 'task', 'work_flow')` per migration-12 backfill — the task remap aligns the lifecycle_class with the new ENTITY_MACHINES['task'] entry in FR-BM.3). If existing rows in the live DB have `kind='task'` with `lifecycle_class='work_flow'`, Migration 14 includes a one-time UPDATE: `UPDATE entities SET lifecycle_class='task_flow' WHERE kind='task'`. Operationally a no-op per Pin I (0 task entities in production live DB); test fixtures exercise the remap path.
+- **FR-MR.5 — Extend `register_entity` entity_type → (type, kind, lifecycle_class) mapping.** Add `'bug' → ('work', 'bug', 'bug_flow')` AND remap `'task' → ('work', 'task', 'task_flow')` (was `('work', 'task', 'work_flow')` per migration-12 backfill — the task remap aligns the lifecycle_class with the status-only model per FR-BL). If existing rows in the live DB have `kind='task'` with `lifecycle_class='work_flow'`, Migration 14 includes a one-time UPDATE: `UPDATE entities SET lifecycle_class='task_flow' WHERE kind='task'`. Operationally a no-op per Pin I (0 task entities in production live DB); test fixtures exercise the remap path.
 - **FR-MR.6 — Pre-flight gate.** Migration 14 pre-flight asserts:
   - `schema_version = 13` (else abort: "Migration 14 requires schema_version=13; current={n}. Run prior migrations first.")
   - `entity_display` table present (else abort: "Migration 14 requires entity_display table (feature 110). Run feature-110 deferred remediation.")
@@ -174,6 +170,23 @@ These are the concrete pre-conditions feature 111 depends on. If any pin drifts 
   - `entity_relations` table ABSENT (else abort: "Migration 14 entity_relations table already exists. Drop or replay-detect.").
 - **FR-MR.7 — Down-migration `MIGRATIONS_DOWN[14]`.** Drops `entity_relations` + 3 indices. Reverses (type, kind) CHECK widening (copy-rename back to 6 work-kinds). Reverses phase_events.event_type CHECK widening (copy-rename back to 7 event_types) — **but only after first DELETING phase_events rows where event_type='spawned_child'** (else the copy-INSERT-SELECT into the narrower CHECK table fails). Reverts the lifecycle_class remap: `UPDATE entities SET lifecycle_class='work_flow' WHERE kind='task' AND lifecycle_class='task_flow'`. **Python constants `VALID_ENTITY_TYPES` and the `register_entity` entity_type → triple mapping are NOT reverted by the Python down-migration function** — they live in source code and are reverted only by reverting the feature 111 commit. The `MIGRATIONS_DOWN[14]` docstring documents this explicitly: "Caller must additionally revert source-code changes to VALID_ENTITY_TYPES and register_entity._ENTITY_TYPE_MAPPING to restore the v13 runtime contract." Same precedent as features 109/110 down-migrations (which similarly omit Python-constant reversion).
 - **FR-MR.8 — Idempotency.** Replay-safe: re-running on schema_version=14 is a no-op. Single-transaction with foreign_key_check pre/post. PRAGMA foreign_keys MUST be ON throughout.
+- **FR-MR.9 — Down-migration safety pre-flight.** `MIGRATIONS_DOWN[14]` MUST refuse to run if any `kind='bug'` entities exist or any `entity_relations` rows exist post-migration (CHECK widening narrowing back would fail mid-copy-rename). Procedure:
+  ```
+  bug_count = SELECT COUNT(*) FROM entities WHERE kind='bug'
+  rel_count = SELECT COUNT(*) FROM entity_relations
+  if bug_count > 0 OR rel_count > 0:
+    raise MigrationError(
+      f"Cannot down-migrate v14: {bug_count} bug entities + {rel_count} "
+      "entity_relations exist. Delete or remap before down-migration."
+    )
+  ```
+  Pre-flight runs BEFORE the destructive DELETE of `spawned_child` phase_events (FR-MR.7).
+
+### FR-exceptions — New exception class definitions
+
+- **FR-EX.1 — `EntityNotFoundError`.** Defined in `plugins/pd/hooks/lib/entity_registry/database.py` near `EntityExistsError` (currently around `:4484`). Subclasses `ValueError`. Constructor: `EntityNotFoundError(message: str)`. Raised by F10 closure transaction when caller's `type_id` resolves to no entity (FR-10.2) or closure target uuid resolves to no entity (FR-10.3 step 2).
+- **FR-EX.2 — `InvalidCloseTargetError`.** Defined in same module, same pattern. Subclasses `ValueError`. Constructor: `InvalidCloseTargetError(message: str)`. Raised by F10 closure transaction for: incompatible lifecycle_class (FR-10.3 step 3), already-terminal with different closer (FR-10.3 step 4), already-terminal with no closer record (FR-10.3 step 4), cross-workspace closure attempt (FR-10.3 step 2).
+- **FR-EX.3 — MCP layer translation.** At the `@mcp.tool()` boundary, both new exceptions are caught and translated to JSON error responses via the existing `_translate_error()` helper or equivalent pattern at `entity_server.py` / `workflow_state_server.py`. The error JSON shape: `{"error": true, "error_type": "<class_name_lowercased>", "message": "<exception_str>"}`.
 
 ### FR-cleanup — Free-text suffix parser removal
 
@@ -210,6 +223,7 @@ These are the concrete pre-conditions feature 111 depends on. If any pin drifts 
 - **AC-10.8** Closed entities receive an `entity_status_changed` phase_event with metadata `{"old_status": "open", "new_status": "closed", "closed_by_uuid": <feature_uuid>}`.
 - **AC-10.9** Caller-not-registered: `complete_phase(type_id='feature:nonexistent', phase='finish', closes=[u1])` raises `EntityNotFoundError` BEFORE any writes. No phase transition, no closure rows.
 - **AC-10.10** `complete_phase(type_id=..., closes=[u_feature])` where `u_feature.lifecycle_class='feature_flow'` raises `InvalidCloseTargetError` (features cannot be closed via closes=).
+- **AC-10.11** State-machine bypass: A backlog row at `status='open'` (NOT 'triaged') closed via `closes=[backlog_uuid]` transitions directly to `status='dropped'` (skipping 'triaged'). The phase_event metadata records `old_status='open', new_status='dropped'`. This documents the intentional state-machine bypass for closes= (FR-10 atomicity prioritized over `ENTITY_MACHINES['backlog']` graph adherence).
 
 ### AC-MR.x — Migration 14 safety
 
@@ -222,17 +236,23 @@ These are the concrete pre-conditions feature 111 depends on. If any pin drifts 
 - **AC-MR.7** Down-migration on a 50-row fixture (mix of entities + 10 entity_relations rows + 5 spawned_child phase_events) leaves `entities`, `workflow_phases`, AND `phase_events` (excluding rows with event_type='spawned_child') tables byte-identical to a pre-migration-14 snapshot (sqlite3 .dump compare per-table). Phase_events rows with `event_type='spawned_child'` are DELETED by the down-migration before the CHECK narrowing copy-rename; this destructive policy is documented in `MIGRATIONS_DOWN[14]` docstring. The lifecycle_class remap for `kind='task'` is also reverted (`task_flow` → `work_flow`). Post-down, `SELECT MAX(version) FROM schema_migrations` returns 13 (not 14); `.tables` does NOT include `entity_relations`.
 - **AC-MR.8** Composite UNIQUE works: `INSERT INTO entity_relations(from='u1', to='u2', kind='fixes'); INSERT ... same values` — second INSERT fails with UNIQUE constraint error (when called WITHOUT ON CONFLICT DO NOTHING; the FR-10.3 step 7 code path uses ON CONFLICT DO NOTHING).
 - **AC-MR.9** Post-migration, `PRAGMA foreign_keys = ON` is set; INSERT into `entity_relations` with a non-existent `from_uuid` raises FK violation.
+- **AC-MR.10** Down-migration pre-flight: synthetic v14 DB with 1 bug entity present → `MIGRATIONS_DOWN[14]` raises `MigrationError` whose message contains substring `"Cannot down-migrate v14"` and `"bug entities"`. No partial down-migration state.
+- **AC-MR.11** Down-migration pre-flight: synthetic v14 DB with 0 bug entities but 3 entity_relations rows present → raises with substring `"entity_relations"`. No partial down-migration state.
 
-### AC-BM.x — `entity_lifecycle.ENTITY_MACHINES['bug']` + `['task']`
+### AC-EX.x — New exception classes
 
-- **AC-BM.1** `ENTITY_MACHINES['bug']` exists with 4 states (open, resolved, closed, wont_fix). All 3 forward transitions FROM 'open' present. 0 transitions FROM terminal states.
-- **AC-BM.2** Synthetic `transition_entity_phase(type_id='bug:X', workflow_phase='resolved', kanban_column='completed')` from 'open' succeeds.
-- **AC-BM.3** Synthetic `transition_entity_phase(type_id='bug:X', workflow_phase='open', ...)` FROM 'resolved' raises `invalid_transition` (no terminal→non-terminal).
-- **AC-BM.4** Synthetic `transition_entity_phase(type_id='bug:X', workflow_phase='nonsense', ...)` raises `invalid_transition: nonsense is not a valid phase for bug`.
-- **AC-BM.5** Synthetic `transition_entity_phase(type_id='bug:X', workflow_phase='closed', kanban_column='completed')` from 'open' succeeds (pins FR-BM.1 'closed' column mapping).
-- **AC-BM.6** Synthetic `transition_entity_phase(type_id='bug:X', workflow_phase='wont_fix', kanban_column='completed')` from 'open' succeeds (pins FR-BM.1 'wont_fix' column mapping — the novel state).
-- **AC-BM.7** `ENTITY_MACHINES['task']` exists with 2 states (open, closed). Forward set = `{('open', 'closed')}`. Column mapping: open→'wip', closed→'completed'.
-- **AC-BM.8** Synthetic `transition_entity_phase(type_id='task:X', workflow_phase='closed', kanban_column='completed')` from 'open' succeeds (pins task closure path used by `closes=`).
+- **AC-EX.1** `from entity_registry.database import EntityNotFoundError, InvalidCloseTargetError` succeeds. Both are subclasses of `ValueError`.
+- **AC-EX.2** Raising and catching the new exceptions works through the MCP `@mcp.tool()` boundary: `complete_phase(type_id='feature:nonexistent', closes=[u1])` returns JSON `{"error": true, "error_type": "entitynotfounderror", "message": "complete_phase: caller not registered: feature:nonexistent"}` (or equivalent error envelope per existing `_translate_error` pattern).
+
+### AC-BL.x — Status-only lifecycle for bug/task
+
+- **AC-BL.1** `ENTITY_MACHINES` dict does NOT contain keys `'bug'` or `'task'`. (Introspection-only assertion.)
+- **AC-BL.2** `_KIND_TO_TYPE_LIFECYCLE['bug']` returns `('work', 'bug_flow')`. `_KIND_TO_TYPE_LIFECYCLE['task']` returns `('work', 'task_flow')`.
+- **AC-BL.3** `_CLOSES_TERMINAL['bug_flow']` returns `'closed'`. `_CLOSES_TERMINAL['task_flow']` returns `'closed'`. `_CLOSES_TERMINAL['work_flow']` returns `'dropped'`. `'feature_flow'`, `'brainstorm_flow'`, `'container_flow'` are NOT keys in `_CLOSES_TERMINAL`.
+- **AC-BL.4** After `issue_spawn(parent_uuid, kind='bug', summary='X')`: `SELECT type, kind, lifecycle_class, status FROM entities WHERE uuid=<new>` returns `('work', 'bug', 'bug_flow', 'open')`. NO row exists in `workflow_phases` for the new entity's type_id.
+- **AC-BL.5** Direct `db.update_entity(bug_uuid, status='resolved')` succeeds (entities.status has no CHECK; status-only model accepts the write). `SELECT status FROM entities WHERE uuid=<bug>` returns `'resolved'`. No workflow_phases write occurs.
+- **AC-BL.6** `complete_phase(closes=[bug_uuid])` on a status='open' bug transitions to status='closed' AND writes entity_relations row (per AC-10.x). The bug does NOT gain a workflow_phases row mid-closure.
+- **AC-BL.7** Calling `transition_entity_phase(type_id='bug:X', ...)` raises (no ENTITY_MACHINES entry → first-line validation fails with KeyError or invalid_entity_type — implementation choice; design phase pins exact error). This is a defensive AC to confirm bug entities are not accidentally routed through the state-machine path.
 
 ### AC-CL.x — Free-text suffix parser cleanup
 
@@ -276,5 +296,5 @@ These are the concrete pre-conditions feature 111 depends on. If any pin drifts 
 | AC-9.x | DB introspection + phase_events query + entity_display 1:1 check | `test_issue_spawn.py` (new) |
 | AC-10.x | Multi-call orchestration + entity_relations query + idempotency replay + cross-closer | `test_complete_phase_closes.py` (new) |
 | AC-MR.x | Migration runner + PRAGMA + sqlite_master string assert + dump-compare + FK enforcement | `test_migration_14_safety.py` (new) |
-| AC-BM.x | ENTITY_MACHINES introspection + transition smoke tests | `test_entity_lifecycle.py` (extended) |
+| AC-BL.x | Dict introspection + status-only model verification + workflow_phases absence checks | `test_entity_lifecycle.py` + `test_status_only_lifecycle.py` (new) |
 | AC-CL.x | grep lint + doctor check assertion + DB-state regression | `test_cleanup_suffix_parsers.py` (new) + `test_doctor.py` (extended) |

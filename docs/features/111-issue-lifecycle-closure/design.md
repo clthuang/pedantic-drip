@@ -1,8 +1,8 @@
 # Design — Feature 111: Issue Lifecycle Closure
 
-- **Spec:** [spec.md](./spec.md) revision 3.3
+- **Spec:** [spec.md](./spec.md) revision 3.4
 - **Parent PRD:** `docs/projects/P003-entity-system-redesign/prd.md` (M4 — Phase 4 Lifecycle Closure)
-- **Status:** revision 1 (architecture + interface + prior art)
+- **Status:** revision 2 (rev 1 = architecture + interface + prior art; rev 2 patches in design-reviewer iter 1 fixes: status-only model for bug/task, new exception classes pinned, append_phase_event workspace_uuid wiring, encapsulation via new EntityDatabase helper methods, atomic commit boundary respected, down-migration pre-flight)
 
 ## §0 Prior Art Research
 
@@ -108,9 +108,10 @@ Feature 111 is the closing chapter of project P003. It adds 4 cohesive sub-featu
 - Adds `'spawned_child': {'metadata'}` — gates that `spawned_child` events accept the `metadata` discriminator kwarg, not `iterations`/`reviewer_notes`/`backward_reason`/`backward_target`.
 - Adds `'spawned_child'` to the post-12 phase_events CHECK widening (handled in Migration 14, not at runtime).
 
-**C4 — `ENTITY_MACHINES` extension** (`entity_lifecycle.py:18`)
-- Adds `'bug': { transitions, columns, forward }` per FR-BM.1.
-- Adds `'task': { transitions, columns, forward }` per FR-BM.3.
+**C4 — Status-only model for bug/task** (no ENTITY_MACHINES extension)
+- **NOT added** to `ENTITY_MACHINES`. Per spec FR-BL (status-only tracking model), bug/task entities do NOT have `workflow_phases` rows and do NOT go through `transition_entity_phase`. Their state lives solely in `entities.status`.
+- Lifecycle declared via `_KIND_TO_TYPE_LIFECYCLE` tag (`bug→bug_flow`, `task→task_flow`) — purely informational; `_CLOSES_TERMINAL` is the only consumer.
+- Rationale (per design-reviewer iter 1 B1): `workflow_phases.workflow_phase` CHECK at `database.py:743-748` does NOT admit `'resolved'`, `'closed'`, `'wont_fix'`. Adding state-machine entries for bug/task would require yet another copy-rename of `workflow_phases` (Migration 14 would balloon). Status-only model is simpler and matches PRD Story 5's "lightweight issue capture" framing.
 
 **C5 — `complete_phase` closes= extension** (`workflow_state_server.py:1086 + 1809`)
 - Adds `closes: list[str] | None = None` kwarg to both the MCP tool and `_process_complete_phase`.
@@ -147,6 +148,17 @@ Feature 111 is the closing chapter of project P003. It adds 4 cohesive sub-featu
 - Greps `\(closed:|\(promoted →|\(fixed:` against `$PROJECT_ROOT/plugins/pd/hooks/lib/entity_registry/backfill.py` and `$PROJECT_ROOT/plugins/pd/hooks/lib/doctor/checks.py`.
 - Returns FAIL if >0 matches.
 - Registered in doctor's check registry.
+
+**C10 — New exception classes** (`entity_registry/database.py`, near `EntityExistsError` at `:4484`)
+- `class EntityNotFoundError(ValueError): pass` — raised when caller's `type_id` resolves to no entity (FR-10.2) or closure target uuid resolves to no entity (FR-10.3 step 2). Per FR-EX.1.
+- `class InvalidCloseTargetError(ValueError): pass` — raised for incompatible lifecycle_class, already-terminal with different closer, already-terminal with no closer record, or cross-workspace closure (FR-10.3). Per FR-EX.2.
+- MCP-layer translation at `@mcp.tool()` boundary in `workflow_state_server.py` follows the existing `_translate_error()` pattern (or equivalent — design phase pins the helper name). Error JSON envelope: `{"error": true, "error_type": "<lowercased_class>", "message": "<exc_str>"}`. Per FR-EX.3.
+
+**C11 — New EntityDatabase helper methods** (encapsulation per CLAUDE.md "Never access db._conn directly")
+- `db.get_entity_by_uuid(uuid: str) -> dict | None` — SELECTs all columns for the given uuid; returns dict shape or None.
+- `db.get_prior_closer(to_uuid: str) -> str | None` — SELECTs `from_uuid` from `entity_relations WHERE to_uuid=? AND kind='fixes' LIMIT 1`; returns the uuid string or None.
+- `db.insert_entity_relation(from_uuid: str, to_uuid: str, kind: str, on_conflict: str = "raise") -> bool` — INSERTs into entity_relations; `on_conflict='ignore'` translates to `ON CONFLICT(from_uuid, to_uuid, kind) DO NOTHING`. Returns True if a row was inserted, False on conflict-ignore.
+- `db.resolve_entity_uuid(workspace_uuid: str, type_id: str) -> tuple[str | None, str | None]` — SELECTs `(uuid, workspace_uuid)` for the (workspace_uuid, type_id) pair; returns (None, None) if not found. Replaces the explicit `_conn.execute(SELECT uuid, workspace_uuid FROM entities WHERE ...)` in `_process_complete_phase`.
 
 ## §2 Technical Decisions
 
@@ -285,17 +297,18 @@ async def issue_spawn(
 
 **Internal call sequence:**
 1. `_check_db_available()` — early return JSON error if `_db is None`.
-2. Validate `kind in ('bug', 'task')` → ValueError if not.
+2. Validate `kind in ('bug', 'task')` → `ValueError("invalid_kind: {kind}; expected bug|task")` if not.
 3. Resolve `workspace_uuid = workspace_uuid or _workspace_uuid or ""`.
 4. Resolve `effective_project_id = project_id or _project_id or "__unknown__"`.
-5. SELECT parent row: `db._conn.execute("SELECT uuid, type_id, kind, workspace_uuid FROM entities WHERE uuid = ? AND workspace_uuid = ?", (parent_uuid, workspace_uuid)).fetchone()`. → ValueError("parent_not_found: ...") if None.
-6. Validate `parent_row['kind'] in ('feature', 'backlog', 'project')` → ValueError("invalid_parent_kind: ...") if not.
+5. Look up parent via NEW helper: `parent_row = db.get_entity_by_uuid(parent_uuid)` → `EntityNotFoundError("parent_not_found: ...")` if None. Validate `parent_row['workspace_uuid'] == workspace_uuid` → `ValueError("cross-workspace parent forbidden")` if not.
+6. Validate `parent_row['kind'] in ('feature', 'backlog', 'project')` → `ValueError("invalid_parent_kind: ...; expected feature|backlog|project")` if not.
 7. `entity_id = id_generator.generate_entity_id(_db, kind, summary, effective_project_id)` — produces conformant `{seq:03d}-{slug}`.
-8. `new_uuid = db.register_entity(entity_type=kind, entity_id=entity_id, name=summary, workspace_uuid=workspace_uuid, project_id=effective_project_id, status='open', parent_uuid=parent_uuid, metadata=metadata or {})`. (register_entity internally maps `entity_type=kind` → (type='work', kind=<kind>, lifecycle_class=<kind>_flow) via `_KIND_TO_TYPE_LIFECYCLE`.)
-9. `db.append_phase_event(type_id=parent_row['type_id'], project_id=effective_project_id, event_type='spawned_child', phase=None, metadata={"child_uuid": new_uuid, "child_kind": kind, "child_name": summary})`.
-10. Return `json.dumps({"uuid": new_uuid})`.
+8. `new_uuid = db.register_entity(entity_type=kind, entity_id=entity_id, name=summary, workspace_uuid=workspace_uuid, project_id=effective_project_id, status='open', parent_uuid=parent_uuid, metadata=metadata or {})`. The call goes through `db.register_entity` DIRECTLY (not `_process_register_entity`) — mirrors the existing register_entity MCP pattern at `entity_server.py:502-590` which also calls `db.register_entity` directly. The internal mapping at `_derive_type_and_lifecycle(database.py:65)` converts `entity_type=kind` → `(type='work', kind=<kind>, lifecycle_class=<kind>_flow)`.
+9. **No `init_entity_workflow` call** — per FR-BL.1, bug/task entities use status-only model; no workflow_phases row created.
+10. `db.append_phase_event(type_id=parent_row['type_id'], project_id=effective_project_id, workspace_uuid=workspace_uuid, event_type='spawned_child', phase=None, metadata={"child_uuid": new_uuid, "child_kind": kind, "child_name": summary})`. workspace_uuid is passed because `spawned_child` is an `entity_*`-family event_type subject to the workspace_uuid requirement at `database.py:6964-6970`.
+11. Return `json.dumps({"uuid": new_uuid})`.
 
-**Atomicity:** Steps 8 and 9 are inside `register_entity` and `append_phase_event` respectively, each of which uses `db.transaction()`. The two MCP-layer calls are NOT bundled in a single transaction (current pattern matches `register_entity` MCP at `entity_server.py:502-590`). If step 9 fails after step 8 succeeds, the entity exists but parent has no spawned_child event — design phase confirms this matches the existing `register_entity` MCP pattern (which has the same potential dual-write window for the post-INSERT `entity_created` event).
+**Atomicity:** Steps 8 and 10 are inside `register_entity` and `append_phase_event` respectively, each of which uses `db.transaction()`. The two MCP-layer calls are NOT bundled in a single transaction (current pattern matches `register_entity` MCP at `entity_server.py:502-590`). If step 10 fails after step 8 succeeds, the entity exists but parent has no spawned_child event — same dual-write window as existing register_entity MCP (post-INSERT `entity_created` event has identical exposure). Acceptable per existing pattern; not a new failure mode.
 
 ### IF-2 — `complete_phase` MCP tool (extension)
 
@@ -352,34 +365,29 @@ def _process_complete_phase(
     ref: str | None = None,
     closes: list[str] | None = None,   # NEW
 ) -> str:
-    # ... existing resolution of feature_type_id, db, etc. ...
+    # ... existing resolution of feature_type_id, db, project_id,
+    #     workspace_uuid (the caller's effective workspace) ...
 
     closes_applied: list[str] = []
     closes_list = closes or []
 
     with db.transaction():
-        # NEW: FR-10.2 caller resolution
+        # NEW: FR-10.2 caller resolution via NEW public helper (C11)
+        from_uuid: str | None = None
+        caller_workspace_uuid: str | None = None
         if closes_list:
-            caller_row = db._conn.execute(
-                "SELECT uuid, workspace_uuid FROM entities "
-                "WHERE workspace_uuid = ? AND type_id = ?",
-                (workspace_uuid, feature_type_id),
-            ).fetchone()
-            if caller_row is None:
+            from_uuid, caller_workspace_uuid = db.resolve_entity_uuid(
+                workspace_uuid, feature_type_id
+            )
+            if from_uuid is None:
                 raise EntityNotFoundError(
                     f"complete_phase: caller not registered: {feature_type_id}"
                 )
-            from_uuid = caller_row["uuid"]
-            caller_workspace_uuid = caller_row["workspace_uuid"]
 
-            # NEW: FR-10.3 step 2 + 3 + 4 — validate each closure target
-            closure_targets = []  # list of (uuid, type_id, terminal, is_replay) tuples
+            # NEW: FR-10.3 steps 2 + 3 + 4 — validate each closure target
+            closure_targets = []  # list of (uuid, type_id, old_status, terminal, is_replay)
             for to_uuid in closes_list:
-                row = db._conn.execute(
-                    "SELECT type_id, type, kind, lifecycle_class, status, workspace_uuid "
-                    "FROM entities WHERE uuid = ?",
-                    (to_uuid,),
-                ).fetchone()
+                row = db.get_entity_by_uuid(to_uuid)
                 if row is None:
                     raise EntityNotFoundError(
                         f"complete_phase: closure target not found: {to_uuid}"
@@ -403,35 +411,29 @@ def _process_complete_phase(
                     )
                 terminal = _CLOSES_TERMINAL[lc]
 
-                # FR-10.3 step 4: idempotency check
+                # FR-10.3 step 4: terminal-status idempotency check
                 is_replay = False
                 if row["status"] == terminal:
-                    prior_closer = db._conn.execute(
-                        "SELECT from_uuid FROM entity_relations "
-                        "WHERE to_uuid = ? AND kind = 'fixes' LIMIT 1",
-                        (to_uuid,),
-                    ).fetchone()
-                    if prior_closer is None:
+                    prior_from_uuid = db.get_prior_closer(to_uuid)
+                    if prior_from_uuid is None:
                         raise InvalidCloseTargetError(
                             f"complete_phase: {to_uuid} already terminal "
                             f"but no closer record"
                         )
-                    if prior_closer["from_uuid"] != from_uuid:
+                    if prior_from_uuid != from_uuid:
                         raise InvalidCloseTargetError(
                             f"complete_phase: {to_uuid} already closed by "
-                            f"different closer ({prior_closer['from_uuid']}); "
+                            f"different closer ({prior_from_uuid}); "
                             f"cannot re-close from {from_uuid}"
                         )
                     is_replay = True
-                elif row["status"] in TERMINAL_STATUSES_NON_TARGET:
-                    # e.g., entity is in some OTHER terminal status that's
-                    # not the closes= target — refuse rather than overwrite
-                    raise InvalidCloseTargetError(
-                        f"complete_phase: {to_uuid} already in unexpected "
-                        f"terminal status {row['status']}"
-                    )
+                # NB: status != terminal AND status != 'open' (e.g., bug at 'resolved')
+                # falls through — the closure overwrites status with terminal. This is
+                # the deliberate state-machine bypass per spec AC-10.11 + TD-4.
 
-                closure_targets.append((to_uuid, row["type_id"], row["status"], terminal, is_replay))
+                closure_targets.append(
+                    (to_uuid, row["type_id"], row["status"], terminal, is_replay)
+                )
 
         # EXISTING: standard complete_phase work (FR-10.3 step 5)
         # ... entity_engine.complete_phase + db.update_workflow_phase etc. ...
@@ -442,7 +444,8 @@ def _process_complete_phase(
                 db.update_entity(to_uuid, status=terminal)
                 db.append_phase_event(
                     type_id=target_type_id,
-                    project_id=project_id,
+                    project_id=project_id,                   # caller's effective project_id
+                    workspace_uuid=caller_workspace_uuid,    # REQUIRED for entity_status_changed (see codebase-explorer finding: append_phase_event:6964-6970)
                     event_type="entity_status_changed",
                     phase=None,
                     metadata={
@@ -452,35 +455,22 @@ def _process_complete_phase(
                     },
                 )
 
-        # NEW: FR-10.3 step 7 — INSERT entity_relations (idempotent via ON CONFLICT)
-        if closure_targets:
-            now_iso = datetime.now(timezone.utc).isoformat()
-            for to_uuid, _, _, _, _ in closure_targets:
-                db._conn.execute(
-                    "INSERT INTO entity_relations "
-                    "(from_uuid, to_uuid, kind, created_at) "
-                    "VALUES (?, ?, 'fixes', ?) "
-                    "ON CONFLICT(from_uuid, to_uuid, kind) DO NOTHING",
-                    (from_uuid, to_uuid, now_iso),
-                )
-                closes_applied.append(to_uuid)
+        # NEW: FR-10.3 step 7 — INSERT entity_relations via NEW helper (C11)
+        for to_uuid, _, _, _, _ in closure_targets:
+            db.insert_entity_relation(
+                from_uuid=from_uuid,
+                to_uuid=to_uuid,
+                kind="fixes",
+                on_conflict="ignore",   # ON CONFLICT DO NOTHING
+            )
+            closes_applied.append(to_uuid)
 
     # Existing response assembly + closes_applied addition
     response["closes_applied"] = closes_applied
     return json.dumps(response)
 ```
 
-**`TERMINAL_STATUSES_NON_TARGET` rationale:** A bug entity at `status='wont_fix'` is terminal but NOT the closes= target (`'closed'`). Closing it via closes= would overwrite a meaningful state with the generic 'closed'. Refuse rather than overwrite.
-
-```python
-TERMINAL_STATUSES_NON_TARGET = {
-    "resolved", "wont_fix",   # bug-specific non-closed terminals
-    "promoted",                # backlog non-dropped terminal
-    "abandoned",               # brainstorm terminal
-}
-```
-
-(Design phase finalizes this set based on `ENTITY_MACHINES` introspection.)
+**Note on state-machine bypass (TD-4):** `closes=` deliberately overwrites a non-terminal status (e.g., backlog at 'open' → 'dropped' skipping 'triaged') WITHOUT going through `transition_entity_phase`. This is the documented atomic-closure-prioritized behavior pinned by spec AC-10.11. There is no `TERMINAL_STATUSES_NON_TARGET` set — the only blocker is `status == terminal` (which goes through the idempotent-replay check) or `lifecycle_class not in _CLOSES_TERMINAL` (which raises). A backlog at status='promoted' (terminal but not the closes= target 'dropped') triggers the `already terminal but no closer record` path in step 4 — uniform handling, no special-case set.
 
 ### IF-3 — Migration 14 function
 
@@ -630,16 +620,33 @@ finally:
 def _migration_14_down(conn: sqlite3.Connection) -> None:
     """Down-migration: drops entity_relations, narrows CHECKs back to v13 state.
 
-    Destructive: DELETEs phase_events rows where event_type='spawned_child'
-    before the CHECK narrowing copy-rename (else INSERT-SELECT fails).
+    Pre-flight per FR-MR.9: refuses if any kind='bug' entities or
+    entity_relations rows exist (CHECK narrowing would fail mid-copy-rename).
+
+    Destructive (post pre-flight): DELETEs phase_events rows where
+    event_type='spawned_child' before the CHECK narrowing copy-rename.
     """
+    # 0. Pre-flight (FR-MR.9) — refuse on bug entities or relation rows
+    bug_count = conn.execute(
+        "SELECT COUNT(*) FROM entities WHERE kind='bug'"
+    ).fetchone()[0]
+    rel_count = conn.execute(
+        "SELECT COUNT(*) FROM entity_relations"
+    ).fetchone()[0]
+    if bug_count > 0 or rel_count > 0:
+        raise MigrationError(
+            f"Cannot down-migrate v14: {bug_count} bug entities + "
+            f"{rel_count} entity_relations rows exist. "
+            "Delete or remap before down-migration."
+        )
+
     # 1. Drop entity_relations + indices
     conn.execute("DROP INDEX IF EXISTS idx_entity_relations_to")
     conn.execute("DROP INDEX IF EXISTS idx_entity_relations_from")
     conn.execute("DROP INDEX IF EXISTS idx_entity_relations_unique")
     conn.execute("DROP TABLE IF EXISTS entity_relations")
 
-    # 2. Delete spawned_child phase_events (destructive)
+    # 2. Delete spawned_child phase_events (destructive after pre-flight)
     conn.execute("DELETE FROM phase_events WHERE event_type = 'spawned_child'")
 
     # 3. Copy-rename phase_events back to 7-event_type CHECK
@@ -654,55 +661,30 @@ def _migration_14_down(conn: sqlite3.Connection) -> None:
         "WHERE kind = 'task' AND lifecycle_class = 'task_flow'"
     )
 
-    # NOTE: Python constants VALID_ENTITY_TYPES and _KIND_TO_TYPE_LIFECYCLE
-    # are NOT reverted by this function — they live in source code and
-    # are reverted only by reverting the feature 111 commit.
-    # Caller must additionally revert source-code changes to restore the
-    # v13 runtime contract.
+    # NOTE: Python constants VALID_ENTITY_TYPES, _KIND_TO_TYPE_LIFECYCLE,
+    # _CLOSES_TERMINAL, and exception classes are NOT reverted by this
+    # function — they live in source code (Group B commit) and are
+    # reverted only by reverting that commit. Caller must additionally
+    # revert source-code changes to restore the v13 runtime contract.
 ```
 
-### IF-4 — ENTITY_MACHINES extensions
+### IF-4 — ENTITY_MACHINES NOT extended (status-only model)
 
 **Module:** `plugins/pd/hooks/lib/entity_registry/entity_lifecycle.py`
 
+**Per spec FR-BL: `ENTITY_MACHINES` is NOT modified.** No `'bug'` or `'task'` entries are added. Bug/task entities live exclusively in the `entities` table with state in `entities.status` and lifecycle declared by `_KIND_TO_TYPE_LIFECYCLE` (informational tag). `_CLOSES_TERMINAL` is the only consumer of that tag.
+
 ```python
+# ENTITY_MACHINES stays as-is — only brainstorm + backlog entries
 ENTITY_MACHINES: dict[str, dict] = {
-    "brainstorm": { ... existing ... },
-    "backlog": { ... existing ... },
-
-    # NEW — FR-BM.1
-    "bug": {
-        "transitions": {
-            "open": ["resolved", "closed", "wont_fix"],
-        },
-        "columns": {
-            "open":     "wip",
-            "resolved": "completed",
-            "closed":   "completed",
-            "wont_fix": "completed",
-        },
-        "forward": {
-            ("open", "resolved"),
-            ("open", "closed"),
-            ("open", "wont_fix"),
-        },
-    },
-
-    # NEW — FR-BM.3
-    "task": {
-        "transitions": {
-            "open": ["closed"],
-        },
-        "columns": {
-            "open":   "wip",
-            "closed": "completed",
-        },
-        "forward": {
-            ("open", "closed"),
-        },
-    },
+    "brainstorm": { ... unchanged ... },
+    "backlog":    { ... unchanged ... },
+    # NO 'bug' entry
+    # NO 'task' entry
 }
 ```
+
+**AC-BL.7 defensive check:** If a future caller accidentally invokes `transition_entity_phase(type_id='bug:X', ...)`, the existing dispatch at `entity_lifecycle.py:88` raises `KeyError` on `ENTITY_MACHINES[entity_type]` lookup. Design phase wraps this in a more meaningful error: at the dispatcher's pre-validation step, raise `ValueError("invalid_entity_type: {kind} uses status-only lifecycle; use update_entity directly")` for kinds in `{'bug', 'task'}`.
 
 ### IF-5 — `_KIND_TO_TYPE_LIFECYCLE` extension
 
@@ -755,6 +737,35 @@ _CLOSES_TERMINAL: dict[str, str] = {
     # brainstorm_flow, container_flow, etc. → NOT in dict → raise
 }
 ```
+
+### IF-9 — New exception classes
+
+**Module:** `plugins/pd/hooks/lib/entity_registry/database.py` (near `EntityExistsError` at `:4484`)
+
+```python
+class EntityNotFoundError(ValueError):
+    """Raised when a referenced entity does not exist.
+
+    Used by F10 complete_phase(closes=) when:
+    - caller's type_id resolves to no entity row (FR-10.2)
+    - closure target uuid resolves to no entity row (FR-10.3 step 2)
+    """
+    pass
+
+
+class InvalidCloseTargetError(ValueError):
+    """Raised when a closure target is structurally incompatible.
+
+    Used by F10 complete_phase(closes=) for:
+    - lifecycle_class not in _CLOSES_TERMINAL (FR-10.3 step 3)
+    - cross-workspace closure attempt (FR-10.3 step 2)
+    - already terminal with different prior closer (FR-10.3 step 4)
+    - already terminal with no prior closer record (FR-10.3 step 4)
+    """
+    pass
+```
+
+**MCP-layer translation:** At the `@mcp.tool()` boundary in `workflow_state_server.py:complete_phase`, both new exceptions are caught in the existing try/except block and translated via the existing `_translate_error()` helper (or equivalent — see existing pattern at `_process_complete_phase`'s caller). Error JSON envelope: `{"error": true, "error_type": "<class_name_lowercased>", "message": "<exception_str>"}`.
 
 ### IF-8 — `check_no_free_text_status_parsers` doctor check
 
@@ -826,41 +837,48 @@ def check_no_free_text_status_parsers(_db: EntityDatabase) -> CheckResult:
 
 ## §5 Implementation Order
 
-The 4 sub-features have strict dependencies — implementation MUST land in this order:
+The 5 sub-features have strict dependencies — implementation MUST land in this order. Each Group is its own commit per NFR-1 (atomic commit discipline). The migration commit (Group A) contains ONLY DDL — no application logic.
 
 ```
-Group A: Migration 14 (DB schema)
+Group A: Migration 14 (DB schema ONLY — no Python logic per NFR-1)
     ├── _migration_14_issue_lifecycle_closure function
-    ├── MIGRATIONS[14] + MIGRATIONS_DOWN[14] entries
-    ├── _copy_rename_entities_for_v14 helper
-    ├── _copy_rename_phase_events_for_v14 helper
-    ├── VALID_ENTITY_TYPES Python constant extension (add 'bug')
-    └── Tests: test_migration_14_safety.py
+    ├── MIGRATIONS[14] entry
+    ├── MIGRATIONS_DOWN[14] entry with bug/entity_relations pre-flight
+    ├── _copy_rename_entities_for_v14 helper (CHECK widening)
+    ├── _copy_rename_phase_events_for_v14 helper (CHECK widening)
+    ├── _copy_rename_entities_to_v13 + _copy_rename_phase_events_to_v13 (down helpers)
+    └── Tests: test_migration_14_safety.py (AC-MR.x)
 
-Group B: _KIND_TO_TYPE_LIFECYCLE + ENTITY_MACHINES extensions
-    ├── _KIND_TO_TYPE_LIFECYCLE += {'bug': ('work', 'bug_flow'); remap 'task': ('work', 'task_flow')}
-    ├── ENTITY_MACHINES += {'bug': {...}, 'task': {...}}
+Group B: Discriminator + lifecycle extensions (application-logic Python only)
+    ├── _KIND_TO_TYPE_LIFECYCLE += {'bug': ('work', 'bug_flow')}; remap 'task' → ('work', 'task_flow')
     ├── _VALID_PARAMS += {'spawned_child': {'metadata'}}
-    └── Tests: test_entity_lifecycle.py extensions
+    ├── _CLOSES_TERMINAL = {'bug_flow': 'closed', 'task_flow': 'closed', 'work_flow': 'dropped'} (in database.py near _KIND_TO_TYPE_LIFECYCLE)
+    ├── VALID_ENTITY_TYPES Python constant extension (add 'bug') — application code, NOT migration
+    ├── EntityNotFoundError + InvalidCloseTargetError classes (per IF-9)
+    ├── New EntityDatabase helpers (C11): get_entity_by_uuid, get_prior_closer, insert_entity_relation, resolve_entity_uuid
+    ├── ENTITY_MACHINES NOT modified (status-only model per FR-BL)
+    ├── transition_entity_phase: add defensive raise for kind in {'bug', 'task'} (AC-BL.7)
+    └── Tests: test_entity_lifecycle.py + test_status_only_lifecycle.py (AC-BL.x)
 
-Group C: F9 issue_spawn MCP
+Group C: F9 issue_spawn MCP (depends on Group A + B)
     ├── issue_spawn function in entity_server.py
-    └── Tests: test_issue_spawn.py
+    └── Tests: test_issue_spawn.py (AC-9.x)
 
-Group D: F10 complete_phase closes= extension
-    ├── _CLOSES_TERMINAL dict
+Group D: F10 complete_phase closes= extension (depends on Group A + B)
     ├── _process_complete_phase extension (closure block inside transaction)
     ├── complete_phase MCP signature extension (+closes kwarg)
-    └── Tests: test_complete_phase_closes.py
+    └── Tests: test_complete_phase_closes.py (AC-10.x)
 
-Group E: Cleanup
+Group E: Cleanup (depends on Group D)
     ├── Delete free-text parser at entity_registry/backfill.py:418-444 (derived_status block)
     ├── Delete free-text parsers at doctor/checks.py:983-1015 (regex + line-loop)
-    ├── Add check_no_free_text_status_parsers doctor check
+    ├── Add check_no_free_text_status_parsers doctor check (IF-8)
     ├── Register the new check in doctor's check registry
     ├── Migrate test_backfill.py and test_entity_status.py fixtures
-    └── Tests: test_cleanup_suffix_parsers.py + test_doctor.py extensions
+    └── Tests: test_cleanup_suffix_parsers.py + test_doctor.py extensions (AC-CL.x)
 ```
+
+**Atomic commit discipline (NFR-1):** Per memory anti-pattern "Atomic commit discipline in schema migrations" (high-priority), the Migration 14 commit (Group A) MUST contain DDL only. All Python constant changes (VALID_ENTITY_TYPES, _KIND_TO_TYPE_LIFECYCLE, _VALID_PARAMS, _CLOSES_TERMINAL) ship in Group B. Inter-commit deploy ordering: A then B (atomic via NFR-1 ordering — both ship together to develop in the same PR but as separate commits).
 
 **Parallelization opportunities (per implementing skill worktree pattern):**
 - Group A must run first and alone (migration changes DB schema for all subsequent groups).
@@ -874,9 +892,10 @@ Group E: Cleanup
 
 | Spec AC group | Design component | Implementation site |
 |---|---|---|
-| AC-9.x | C1 (issue_spawn MCP) | `entity_server.py` new function |
-| AC-10.x | C5 (closes= extension) | `workflow_state_server.py:1086+1809` |
-| AC-MR.x | C7 (Migration 14) | `database.py` new `_migration_14_*` group |
-| AC-BM.x | C4 (ENTITY_MACHINES) | `entity_lifecycle.py:18` extension |
+| AC-9.x | C1 (issue_spawn MCP) + C11 (new helpers) | `entity_server.py` new function |
+| AC-10.x (incl. AC-10.11) | C5 (closes= extension) + C6 (_CLOSES_TERMINAL) + C11 (helpers) | `workflow_state_server.py:1086+1809` |
+| AC-MR.x (incl. AC-MR.10/11) | C7 (Migration 14 + down-migration pre-flight) | `database.py` new `_migration_14_*` group |
+| AC-BL.x | C4 (status-only model, no ENTITY_MACHINES extension) | `entity_lifecycle.py` defensive raise + test introspection |
 | AC-CL.x | C8 + C9 (parser removal + new doctor check) | `backfill.py`, `doctor/checks.py` |
+| AC-EX.x | C10 (new exception classes) | `database.py` near `:4484` |
 
