@@ -829,3 +829,17 @@ For migrations spanning N call-sites across M groups where intermediate states a
 - Confidence: high
 - Last observed: Feature #109
 - Observation count: 1
+
+### Pattern: Factual-Blocker-Remap At Cap-3 (No Iter-N+1 For Empirical Corrections)
+When the iter-3 reviewer pass finds NEW blockers that are factual corrections per empirical evidence (Python docs, schema introspection, file:line grep), fix inline and document in `.review-history.md` rather than triggering an iter-4 adversarial pass. The corrections are mechanical, not subjective — no additional adversarial review iteration warranted.
+- Observed in: Feature #110 specify iter-3 (3 blockers: pathlib.match 3.12 gap per CPython issue #73435; phase_events CHECK 7-value constraint per database.py:3402-3406; NOT NULL columns); design iter-2 (3 blockers: fix_actions symbol mismatch; archive_entity contradictory signatures; TD-10 two-format reality).
+- Confidence: high
+- Last observed: Feature #110
+- Observation count: 1
+
+### Pattern: Worktree-Isolated Parallel Dispatch With Manual Conflict Merge
+Dispatching parallel implementers per Group in `.pd-worktrees/group-N/` directories, each on its own `worktree-FEATURE-group-N` branch, is cost-acceptable when conflicts are file-scope additions (e.g., two Groups create the same scaffold file). Manual merge of split files is ~5 min vs ~10+ min wall-clock cost of serial dispatch — net win.
+- Observed in: Feature #110 implement phase — 15 Groups dispatched in 5 parallel batches; 1 merge conflict in test_audit_writes.py (Groups 12 + 15 both created the file), resolved by combining scaffolds + AST walks + TD-7b lint into one unified file.
+- Confidence: medium
+- Last observed: Feature #110
+- Observation count: 1

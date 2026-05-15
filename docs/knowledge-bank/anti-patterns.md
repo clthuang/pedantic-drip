@@ -788,3 +788,12 @@ Implementer notes "N pre-existing test failures, out of scope per task brief" an
 - Confidence: high
 - Last observed: Feature #109
 - Observation count: 1
+
+### Anti-Pattern: Strict-Format Validation Without Fixture Migration Plan
+Introducing a strict input-format check (e.g., regex precondition) without a coordinated test-fixture migration plan creates an immediate ~N-fixture failure cascade. Resolution via env-gated opt-out (conftest) keeps existing tests green BUT accrues real tech debt: the invariant (AC-8.2 1:1 entity_display row count) holds only when opt-out is active in test context — not in production-equivalent test runs.
+- Observed in: Feature #110 Group 2 Task 2.0 — register_entity strict-format check `^\d+-.+` introduced; ~500 test sites use non-conformant entity_ids (`'test-bs'`, `'parent-bs'`, etc.). Mitigation: `PD_REGISTER_ENTITY_STRICT_ID_FORMAT=0` opt-out in `plugins/pd/hooks/lib/conftest.py`. Follow-up: migrate fixtures, remove opt-out.
+- Cost: deferred tech-debt sweep across ~24 test files; AC-8.2 invariant gap for test-suite-generated entities.
+- Instead: Before introducing strict-format validation, grep for callers (`grep -rn 'register_entity\(' plugins/pd/`), tally non-conformant sites, and add a Group early in the plan that migrates them BEFORE introducing the strict check. Or scope the strict check to NEW callers only via a `_register_entity_strict()` helper.
+- Confidence: high
+- Last observed: Feature #110
+- Observation count: 1

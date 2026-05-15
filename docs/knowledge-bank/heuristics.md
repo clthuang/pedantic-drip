@@ -850,3 +850,17 @@ When session-start tooling friction occurs (Codex CLI unavailable, MCP server st
 - Confidence: medium
 - Last observed: Feature #109
 - Observation count: 1
+
+### Heuristic: TDD Discipline Via Preamble (Not Task Reordering) For Large Multi-Group Features
+For features with 10+ Groups and 60+ tasks, retroactively reordering every task to RED-before-GREEN is expensive (touches every Group). Instead, add a TDD-discipline preamble to tasks.md that states: "Within each Group, tasks are listed in logical order grouped by concern (schema, port, test). Implementer-skill MUST execute RED tests first regardless of task list order." Implementers honor this when dispatching per Group.
+- Source: Feature #110 plan iter-1 — plan-reviewer flagged systematic implementation-before-tests ordering as a blocker in ~all 15 Groups. Reordering all ~70 tasks was infeasible; preamble fix satisfied the TDD contract without touching task numbers.
+- Confidence: high
+- Last observed: Feature #110
+- Observation count: 1
+
+### Heuristic: Run Codebase-Explorer Before Spec Iter-1 — But Expect 2-3 Iter-3 Factual Catches Anyway
+SUT-verification at session-start prevents most structural blockers (per feature-109 KB pattern), but iter-3 will still surface 2-3 factual-correction blockers from third-party-library quirks, language-version gaps, or subtle codebase invariants. Budget for inline fixes at cap-3 rather than burning iter-4 adversarial passes on mechanical corrections.
+- Source: Feature #110 specify iter-3 (3 NEW blockers: pathlib.match Python 3.12 gap; phase_events CHECK 7-value constraint; NOT NULL columns) — all factual, all fixed inline post-cap.
+- Confidence: medium
+- Last observed: Feature #110
+- Observation count: 1
