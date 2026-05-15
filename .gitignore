@@ -63,3 +63,8 @@ agent_sandbox/
 # (.qa-gate.json removed from gitignore by feature 113 FR-1.4 — committable evidence)
 docs/features/**/.qa-gate.log
 docs/features/**/.qa-gate-low-findings.md
+
+# Feature 110: markdown projections — generated artifacts, never tracked
+**/.meta.json
+docs/backlog.md
+pd-state.diff.md
