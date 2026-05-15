@@ -370,6 +370,59 @@ def _build_frontmatter_summary(reports: list[DriftReport]) -> dict[str, int]:
 # ---------------------------------------------------------------------------
 
 
+def _read_entity_display(
+    db: EntityDatabase,
+    entity_uuid: str | None,
+    feature_type_id: str,
+    metadata: dict,
+    *,
+    entity_id_hint: str | None = None,
+) -> tuple[str, str]:
+    """Return ``(id, slug)`` for an entity, preferring the ``entity_display``
+    side table over ``metadata`` JSON (feature 110 FR-8.3b).
+
+    Defense-in-depth: if the entity_display row is missing (test fixtures
+    using ``_register_entity_no_display``, or rows registered before
+    migration 13 / pre-migration callers), emit a stderr WARN and fall back
+    to ``metadata.id`` / ``metadata.slug``.
+
+    The function intentionally returns ``str`` for both fields so the
+    downstream ``.meta.json`` shape is stable. ``id`` is the integer ``seq``
+    serialized via ``str(seq)``. Zero-padding width is recovered from
+    (1) ``metadata.id`` if it's a digit string, else (2) ``entity_id_hint``'s
+    leading numeric prefix (i.e., ``entities.entity_id``), else (3) no
+    padding. AC-8.5 specifically requires that the projection output is
+    byte-identical even when ``metadata.id`` has been removed — so the
+    ``entity_id_hint`` fallback is load-bearing.
+    """
+
+    def _width_from(value: str | None) -> int:
+        if not value:
+            return 0
+        head = value.split("-", 1)[0]
+        return len(head) if head.isdigit() else 0
+
+    if entity_uuid:
+        # Use the public encapsulated helper instead of raw _conn access;
+        # the helper returns None on pre-migration-13 DBs and on missing
+        # rows.
+        row = db.get_entity_display(entity_uuid)
+        if row is not None:
+            seq, slug = row["seq"], row["slug"]
+            # Recover zero-pad width. Order: metadata.id → entity_id prefix.
+            width = _width_from(metadata.get("id"))
+            if width == 0:
+                width = _width_from(entity_id_hint)
+            return (str(seq).zfill(width) if width else str(seq)), slug
+    # Fallback (WARN): entity_display row missing.
+    sys.stderr.write(
+        f"[workflow-state] _project_meta_json: no entity_display row for "
+        f"{feature_type_id!r} (uuid={entity_uuid!r}); falling back to "
+        f"metadata id/slug\n"
+    )
+    return metadata.get("id", ""), metadata.get("slug", "")
+
+
 def _project_meta_json(
     db: EntityDatabase,
     engine: WorkflowStateEngine | None,
@@ -412,10 +465,22 @@ def _project_meta_json(
     else:
         last_completed = metadata.get("last_completed_phase")
 
+    # Feature 110 Group 5 (FR-8.3b): read seq + slug from entity_display
+    # table when available. Falls back to metadata JSON with a WARN log if
+    # the row is missing (defense-in-depth: test fixtures using
+    # _register_entity_no_display, or rows registered before migration 13).
+    display_id, display_slug = _read_entity_display(
+        db,
+        entity.get("uuid"),
+        feature_type_id,
+        metadata,
+        entity_id_hint=entity.get("entity_id"),
+    )
+
     # Build .meta.json structure
     meta = {
-        "id": metadata.get("id", ""),
-        "slug": metadata.get("slug", ""),
+        "id": display_id,
+        "slug": display_slug,
         "mode": metadata.get("mode", "standard"),
         "status": entity.get("status") or "active",
         "created": entity.get("created_at") or _iso_now(),
