@@ -165,6 +165,14 @@ def bucket(finding, all_findings, *, is_test_only_refactor: bool = False):
 
 ## §5 — MED auto-file to backlog (FR-7a, AC-19, TD-7)
 
+> **Feature 110 FR-4.3 update (post-Group 12):** MED findings are now
+> filed via `register_entity(entity_type="backlog", auto_id=true, ...)`
+> with `metadata={"format": "bullet_item", "section": "From Feature ..."}`.
+> The MCP server's `_project_backlog_md` projection renders the entity
+> as a bullet under the matching `## From Feature ...` section. The
+> sections below describe the rendered output shape, not direct file
+> writes (which are denied by `data-file-guard.sh`).
+
 ### Per-feature section heading
 
 ```markdown
@@ -173,26 +181,42 @@ def bucket(finding, all_findings, *, is_test_only_refactor: bool = False):
 
 ### ID extraction algorithm
 
+Auto-id is delegated to `register_entity`'s `auto_id=true` path; the
+registry assigns the next 5-digit sequential id. The grep-based
+algorithm below is retained as a documentation reference for the
+projection output format only.
+
 ```bash
+# Documentation reference — describes the projection output shape.
 # Find max existing 5-digit ID anchored to start-of-list-line
 max_id=$(grep -oE '^- \*\*#[0-9]{5}\*\*' docs/backlog.md | grep -oE '[0-9]{5}' | sort -n | tail -1)
 # Fallback to 0 when backlog is empty or has no matches (per FR-7a step 2: "if no matches, start at 00001")
 next_id=$(printf '%05d' $((10#${max_id:-0} + 1)))
 ```
 
-For batch MED filing in one run: reserve IDs sequentially (`next_id`, `next_id+1`, ...) in the order the gate processes findings.
+For batch MED filing in one run, `register_entity` reserves ids
+sequentially in the order the gate processes findings.
 
 ### Insertion algorithm
 
-1. Search `docs/backlog.md` for `^## From Feature {feature_id} Pre-Release QA`.
-2. If found: append entries inside that section (after the heading, before next `## ` heading).
-3. If not found: insert new section heading + entries immediately before the first existing `## ` heading (places near top, inverse-chronological per existing convention).
+`_project_backlog_md` derives section ordering deterministically from
+DB state (per design TD-10): sections appear in order of the first
+entity created in them; within a section rows sort by `seq` ascending.
+The legacy "search for existing section then append" flow is no longer
+needed — the projection handles section structure declaratively from
+`metadata.section`.
 
 ### Entry template
+
+The projection renders each MED-finding entity as:
 
 ```markdown
 - **#{NNNNN}** [{MED|MED-quality|MED-security}] {description}. (surfaced by feature:{feature_id} pre-release QA)
 ```
+
+This shape is produced by `_project_backlog_md` from
+`entities.entity_id` (numeric prefix) + `entities.name`. The MED gate
+must construct the entity `name` to match this template verbatim.
 
 ## §6 — LOW auto-file to sidecar (FR-7a)
 

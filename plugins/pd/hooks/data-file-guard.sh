@@ -25,6 +25,10 @@ PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # can't be sourced; we always want SOME emitter available.
 # shellcheck source=lib/common.sh
 source "${SCRIPT_DIR}/lib/common.sh" 2>/dev/null || true
+# Install ERR trap so uncaught failures emit valid JSON (fail-open).
+if declare -F install_err_trap >/dev/null 2>&1; then
+    install_err_trap
+fi
 # shellcheck source=lib/session-start-helpers.sh
 source "${SCRIPT_DIR}/lib/session-start-helpers.sh" 2>/dev/null || true
 
