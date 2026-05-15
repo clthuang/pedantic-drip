@@ -147,9 +147,12 @@ Feature 111 is the closing chapter of project P003. It adds 4 cohesive sub-featu
 
 **C9 — New doctor check `check_no_free_text_status_parsers`** (`doctor/checks.py`)
 - Uses `PROJECT_ROOT` env var → `git rev-parse --show-toplevel` fallback.
-- Greps `\(closed:|\(promoted →|\(fixed:` against `$PROJECT_ROOT/plugins/pd/hooks/lib/entity_registry/backfill.py` and `$PROJECT_ROOT/plugins/pd/hooks/lib/doctor/checks.py`.
+- Greps `\(closed:|\(promoted →|\(fixed:` against **ALL 3 target files** (per IF-8 canonical list — extended in rev 2.5):
+  - `$PROJECT_ROOT/plugins/pd/hooks/lib/entity_registry/backfill.py`
+  - `$PROJECT_ROOT/plugins/pd/hooks/lib/doctor/checks.py`
+  - `$PROJECT_ROOT/plugins/pd/hooks/lib/reconciliation_orchestrator/entity_status.py`
 - Returns FAIL if >0 matches.
-- **Registry location pinned:** Append to the `CHECK_ORDER` list in `plugins/pd/hooks/lib/doctor/__init__.py:32` (after `check_status_write_path`). Also add the symbol to the import block at `__init__.py:11-27`.
+- **Registry location pinned:** Append to the `CHECK_ORDER` list in `plugins/pd/hooks/lib/doctor/__init__.py:33` (after `check_status_write_path`). Also add the symbol to the import block at `__init__.py:12-31`.
 
 **C10 — New exception classes** (`entity_registry/database.py`, near `EntityExistsError` at `:4484`)
 - `class EntityNotFoundError(ValueError): pass` — raised when caller's `type_id` resolves to no entity (FR-10.2) or closure target uuid resolves to no entity (FR-10.3 step 2). Per FR-EX.1.
@@ -895,7 +898,7 @@ Group D: F10 complete_phase closes= extension (depends on Group A + B)
     ├── complete_phase MCP signature extension (+closes kwarg)
     └── Tests: test_complete_phase_closes.py (AC-10.x)
 
-Group E: Cleanup (depends on Group D)
+Group E: Cleanup (depends on Group B; parallel with C, D)
     ├── Delete free-text parser at entity_registry/backfill.py:418-444 (derived_status block)
     ├── Delete free-text parsers at doctor/checks.py:983-1015 (regex + line-loop)
     ├── Add check_no_free_text_status_parsers doctor check (IF-8)
