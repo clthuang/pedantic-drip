@@ -381,58 +381,11 @@ def write_backlog_md(tmp_path, rows: list[tuple[str, str, str]]) -> None:
 class TestSyncBacklogEntities:
     """Tests for _sync_backlog_entities()."""
 
-    def test_closed_status_mapped_to_dropped(self, tmp_path):
-        """Task 1.2: (closed: not needed) marker maps to dropped status."""
-        db = make_db()
-        seed_backlog(db, "00014", status="open")
-        write_backlog_md(tmp_path, [
-            ("00014", "2026-01-01T00:00:00Z", "Security Scanning (closed: not needed)"),
-        ])
-
-        result = entity_status._sync_backlog_entities(db, str(tmp_path), "docs", "test-project")
-
-        entity = db.get_entity("backlog:00014")
-        assert entity["status"] == "dropped"
-
-    def test_promoted_status_mapped(self, tmp_path):
-        """Task 1.3: (promoted -> feature:048) marker maps to promoted status."""
-        db = make_db()
-        seed_backlog(db, "00020", status="open")
-        write_backlog_md(tmp_path, [
-            ("00020", "2026-01-01T00:00:00Z", "Rename plugin (promoted \u2192 feature:048)"),
-        ])
-
-        result = entity_status._sync_backlog_entities(db, str(tmp_path), "docs", "test-project")
-
-        entity = db.get_entity("backlog:00020")
-        assert entity["status"] == "promoted"
-
-    def test_fixed_status_mapped_to_dropped(self, tmp_path):
-        """Task 1.4: (fixed: auto-increment) marker maps to dropped status."""
-        db = make_db()
-        seed_backlog(db, "00048", status="open")
-        write_backlog_md(tmp_path, [
-            ("00048", "2026-01-01T00:00:00Z", "Release tag check (fixed: auto-increment)"),
-        ])
-
-        result = entity_status._sync_backlog_entities(db, str(tmp_path), "docs", "test-project")
-
-        entity = db.get_entity("backlog:00048")
-        assert entity["status"] == "dropped"
-
-    def test_already_implemented_mapped_to_dropped(self, tmp_path):
-        """Task 1.5: (closed: already implemented -- Stage 4) maps to dropped."""
-        db = make_db()
-        seed_backlog(db, "00046", status="open")
-        write_backlog_md(tmp_path, [
-            ("00046", "2026-01-01T00:00:00Z",
-             "Add review cycle (closed: already implemented \u2014 Stage 4)"),
-        ])
-
-        result = entity_status._sync_backlog_entities(db, str(tmp_path), "docs", "test-project")
-
-        entity = db.get_entity("backlog:00046")
-        assert entity["status"] == "dropped"
+    # Feature 111 / FR-CL.1b: free-text suffix parsers removed.
+    # Parser-only tests (test_closed_status_mapped_to_dropped,
+    # test_promoted_status_mapped, test_fixed_status_mapped_to_dropped,
+    # test_already_implemented_mapped_to_dropped) DELETED \u2014 see
+    # docs/features/111-issue-lifecycle-closure/cleanup-inventory.md.
 
     def test_no_marker_registered_as_open(self, tmp_path):
         """Task 1.6: No status marker in description -> registered as open."""
@@ -676,46 +629,17 @@ class TestBacklogBoundaryValues:
 
 
 class TestBacklogAdversarial:
-    """Adversarial tests for backlog status marker edge cases."""
+    """Adversarial tests for backlog edge cases.
 
-    def test_standalone_already_implemented_mapped_to_dropped(self, tmp_path):
-        """Adversarial: '(already implemented' WITHOUT '(closed:' prefix maps to dropped.
-        derived_from: spec:AC-2 (backlog status mapping — standalone variant)
-        """
-        # Given a backlog row with standalone "(already implemented" marker
-        db = make_db()
-        seed_backlog(db, "00046", status="open")
-        write_backlog_md(tmp_path, [
-            ("00046", "2026-01-01T00:00:00Z",
-             "Add review cycle (already implemented in Stage 4)"),
-        ])
-
-        # When backlog sync runs
-        result = entity_status._sync_backlog_entities(db, str(tmp_path), "docs", "test-project")
-
-        # Then entity status maps to dropped (spec says standalone variant)
-        entity = db.get_entity("backlog:00046")
-        assert entity["status"] == "dropped"
-
-    def test_promoted_with_unicode_arrow_mapped(self, tmp_path):
-        """Adversarial: both → (unicode) and -> (ascii) arrows detected as promoted.
-        derived_from: spec:AC-3 (promotion detection)
-        """
-        # Given backlog rows with both arrow variants
-        db = make_db()
-        seed_backlog(db, "00020", status="open")
-        seed_backlog(db, "00021", status="open")
-        write_backlog_md(tmp_path, [
-            ("00020", "2026-01-01T00:00:00Z", "Item A (promoted → feature:048)"),
-            ("00021", "2026-01-01T00:00:00Z", "Item B (promoted -> feature:049)"),
-        ])
-
-        # When backlog sync runs
-        result = entity_status._sync_backlog_entities(db, str(tmp_path), "docs", "test-project")
-
-        # Then both are promoted
-        assert db.get_entity("backlog:00020")["status"] == "promoted"
-        assert db.get_entity("backlog:00021")["status"] == "promoted"
+    Feature 111 / FR-CL.1b: free-text suffix parsers removed.
+    Parser-only adversarial tests
+    (test_standalone_already_implemented_mapped_to_dropped,
+    test_promoted_with_unicode_arrow_mapped,
+    test_backlog_row_with_multiple_status_markers,
+    test_backlog_row_with_parenthetical_not_a_status_marker,
+    test_name_stripping_removes_status_marker_not_entire_description)
+    DELETED — see cleanup-inventory.md.
+    """
 
     def test_cross_project_duplicates_not_touched(self, tmp_path):
         """Adversarial: duplicates with DIFFERENT project_ids are NOT deduped.
@@ -750,65 +674,6 @@ class TestBacklogAdversarial:
         # Then both entities still exist (cross-project dups not touched)
         all_20 = [e for e in db.list_entities(entity_type="backlog") if e["entity_id"] == "00020"]
         assert len(all_20) == 2
-
-    def test_backlog_row_with_multiple_status_markers(self, tmp_path):
-        """Adversarial: row with multiple markers → first match wins (regex priority).
-        derived_from: dimension:adversarial (marker ambiguity)
-        """
-        # Given a backlog row with both closed AND promoted markers
-        db = make_db()
-        seed_backlog(db, "00030", status="open")
-        write_backlog_md(tmp_path, [
-            ("00030", "2026-01-01T00:00:00Z",
-             "Item (closed: not needed) (promoted -> feature:050)"),
-        ])
-
-        # When backlog sync runs
-        result = entity_status._sync_backlog_entities(db, str(tmp_path), "docs", "test-project")
-
-        # Then closed wins (checked first in the if/elif chain)
-        entity = db.get_entity("backlog:00030")
-        assert entity["status"] == "dropped"
-
-    def test_backlog_row_with_parenthetical_not_a_status_marker(self, tmp_path):
-        """Adversarial: '(needs review)' is NOT a recognized status marker → open.
-        derived_from: dimension:adversarial (false positive parenthetical)
-        """
-        # Given a backlog row with non-marker parenthetical text
-        db = make_db()
-        write_backlog_md(tmp_path, [
-            ("00031", "2026-01-01T00:00:00Z",
-             "Add caching layer (needs review)"),
-        ])
-
-        # When backlog sync runs
-        result = entity_status._sync_backlog_entities(db, str(tmp_path), "docs", "test-project")
-
-        # Then entity is registered as open (parenthetical is not a status marker)
-        entity = db.get_entity("backlog:00031")
-        assert entity is not None
-        assert entity["status"] == "open"
-        assert result["registered"] == 1
-
-    def test_name_stripping_removes_status_marker_not_entire_description(self, tmp_path):
-        """Adversarial: NAME_STRIP_RE removes only the status marker parenthetical.
-        derived_from: dimension:adversarial (name corruption)
-        """
-        # Given a backlog row with description and a closed marker
-        db = make_db()
-        write_backlog_md(tmp_path, [
-            ("00032", "2026-01-01T00:00:00Z",
-             "Security Scanning (closed: not needed)"),
-        ])
-
-        # When backlog sync runs
-        result = entity_status._sync_backlog_entities(db, str(tmp_path), "docs", "test-project")
-
-        # Then the name contains the description but NOT the status marker
-        entity = db.get_entity("backlog:00032")
-        assert entity is not None
-        assert "Security Scanning" in entity["name"]
-        assert "(closed" not in entity["name"]
 
 
 class TestDedupEdgeCases:
@@ -955,27 +820,34 @@ class TestMutationMindset:
         assert result["deleted"] == 1
 
     def test_execution_order_junk_before_dedup_before_sync(self, tmp_path):
-        """Mutation: if junk cleanup ran AFTER sync, junk entities could get updated
-        instead of deleted. Verify junk deletion happens first.
+        """Mutation: if junk cleanup ran AFTER sync, junk entities could get
+        updated instead of deleted. Verify junk deletion happens first.
         derived_from: dimension:mutation_mindset (execution order)
+
+        Feature 111 / FR-CL.1b: post-parser-cleanup, the "valid item updated
+        from open to dropped" leg of this test is no longer reachable via
+        backlog.md markers. The execution-order pin remains intact via the
+        junk-deletion path alone.
         """
         # Given both junk and valid entities exist
         db = make_db()
         seed_backlog(db, "JUNK", status="open")  # junk ID
         seed_backlog(db, "00001", status="open")  # valid ID
         write_backlog_md(tmp_path, [
-            ("00001", "2026-01-01T00:00:00Z", "Valid item (closed: done)"),
+            ("00001", "2026-01-01T00:00:00Z", "Valid item"),
         ])
 
         # When backlog sync runs
         result = entity_status._sync_backlog_entities(db, str(tmp_path), "docs", "test-project")
 
-        # Then junk is deleted AND valid item is updated (both happen correctly)
+        # Then junk is deleted (junk cleanup runs BEFORE parse/sync).
         assert db.get_entity("backlog:JUNK") is None
         assert result["deleted"] >= 1
+        # And the valid entity is skipped (status unchanged; no parser-driven
+        # status-change post-feature-111).
         entity = db.get_entity("backlog:00001")
-        assert entity["status"] == "dropped"  # updated from open to dropped
-        assert result["updated"] == 1
+        assert entity["status"] == "open"
+        assert result["skipped"] >= 1
 
     def test_project_root_derivation_when_empty(self, tmp_path):
         """Mutation: if project_root derivation logic was removed, assertion would fire.
@@ -1149,40 +1021,18 @@ def _setup_site_189_brainstorm_archive(db, ws_uuid, tmp_path):
     return verify
 
 
-def _setup_site_320_backlog_status_change(db, ws_uuid, tmp_path):
-    """Site 320: _sync_backlog_entities status-change branch (backlog row status differs from DB).
-
-    Register a backlog entity with status=open scoped to ws_uuid; write
-    backlog.md with the same id but a (closed: ...) marker → status maps
-    to dropped → status-change branch fires (line 320).
-    """
-    db.register_entity(
-        entity_type="backlog",
-        entity_id="00077",
-        name="00077",
-        status="open",
-        artifact_path="docs/backlog.md",
-        workspace_uuid=ws_uuid,
-    )
-    write_backlog_md(tmp_path, [
-        ("00077", "2026-01-01T00:00:00Z", "Some item (closed: not needed)"),
-    ])
-
-    def verify(db, result):
-        entity = db.get_entity("backlog:00077")
-        assert entity["status"] == "dropped", (
-            f"site 320 backlog status-change did not fire: entity status="
-            f"{entity['status']!r}, result={result!r}"
-        )
-
-    return verify
+# Feature 111 / FR-CL.1b: _setup_site_320_backlog_status_change DELETED.
+# Site 320 used (closed: ...) marker to drive the parser-derived
+# status-change branch in _sync_backlog_entities. Post-cleanup the parser
+# is gone; the synthetic status-change is unreachable via backlog.md
+# fixtures. The remaining 3 sites (47, 72, 189) still verify the FR-10
+# conditional-kwarg pattern across distinct update_entity call sites.
 
 
 SITE_SETUPS = {
     "site_47_meta_json_archive": _setup_site_47_meta_json_archive,
     "site_72_meta_json_status_change": _setup_site_72_meta_json_status_change,
     "site_189_brainstorm_archive": _setup_site_189_brainstorm_archive,
-    "site_320_backlog_status_change": _setup_site_320_backlog_status_change,
 }
 
 

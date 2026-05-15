@@ -415,33 +415,10 @@ def _scan_backlog(db: EntityDatabase, artifacts_root: str, project_id: str = "__
             metadata={"description": description},
         )
 
-        # Derive status from backlog.md annotations (paired write pattern)
-        existing = db.get_entity(f"backlog:{item_id}")
-        existing_status = (existing or {}).get("status") or ""
-        if existing_status not in ("promoted", "dropped"):
-            derived_status = None
-            desc_lower = description.lower()
-            if "(promoted" in desc_lower:
-                derived_status = "promoted"
-            elif any(
-                marker in desc_lower
-                for marker in ["(closed:", "(fixed:", "(already implemented"]
-            ):
-                derived_status = "dropped"
-
-            if derived_status:
-                db.update_entity(
-                    type_id=f"backlog:{item_id}",
-                    status=derived_status,
-                    project_id=project_id,
-                )
-                wf = db.get_workflow_phase(f"backlog:{item_id}")
-                if wf:
-                    db.update_workflow_phase(
-                        f"backlog:{item_id}",
-                        workflow_phase=derived_status,
-                        kanban_column="completed",
-                    )
+        # Feature 111 / FR-CL.1: free-text suffix parsers removed.
+        # entities.status is authoritative (set via complete_phase closes= or
+        # explicit update_entity). Backfill no longer derives status from
+        # historical prose markers in the description text.
 
 
 def _scan_brainstorms(db: EntityDatabase, artifacts_root: str, project_id: str = "__unknown__") -> None:

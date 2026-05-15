@@ -1149,31 +1149,12 @@ def _register_backlog(db_path, entity_id, status="active"):
     return type_id
 
 
-class TestCheck4AnnotatedNotPromoted:
-    """Check 4: backlog annotated as promoted but entity not updated → warning."""
-
-    def test_check4_annotated_not_promoted(self, tmp_path):
-        from doctor.checks import check_backlog_status
-
-        db_path = _make_db(tmp_path)
-        _register_backlog(db_path, "42", status="active")
-
-        # Create backlog.md with promoted annotation
-        (tmp_path / "backlog.md").write_text(
-            "# Backlog\n\n"
-            "- 42: Some idea (promoted -> feature:001-alpha)\n"
-        )
-
-        conn = _entities_conn(db_path)
-        try:
-            result = check_backlog_status(conn, str(tmp_path))
-            assert result.passed is False
-            warnings = [i for i in result.issues if i.severity == "warning"]
-            assert len(warnings) >= 1
-            assert "42" in warnings[0].message
-            assert "promoted" in warnings[0].message.lower() or "active" in warnings[0].message
-        finally:
-            conn.close()
+# Feature 111 / FR-CL.2: free-text suffix parsers removed from
+# doctor/checks.py. The parser-driven TestCheck4 classes
+# (TestCheck4AnnotatedNotPromoted, TestCheck4PromotedNotAnnotated,
+# TestCheck4ClosedAnnotation) DELETED — see
+# docs/features/111-issue-lifecycle-closure/cleanup-inventory.md.
+# The passive checks (missing backlog.md, empty backlog.md) remain.
 
 
 class TestCheck4BacklogMissingFile:
@@ -1193,33 +1174,6 @@ class TestCheck4BacklogMissingFile:
             conn.close()
 
 
-class TestCheck4PromotedNotAnnotated:
-    """Check 4: entity promoted but not annotated in backlog.md → info."""
-
-    def test_check4_promoted_not_annotated_info(self, tmp_path):
-        from doctor.checks import check_backlog_status
-
-        db_path = _make_db(tmp_path)
-        _register_backlog(db_path, "42", status="promoted")
-
-        # Create backlog.md without annotation
-        (tmp_path / "backlog.md").write_text(
-            "# Backlog\n\n"
-            "- 42: Some idea\n"
-        )
-
-        conn = _entities_conn(db_path)
-        try:
-            result = check_backlog_status(conn, str(tmp_path))
-            # Info issues don't flip passed
-            assert result.passed is True
-            infos = [i for i in result.issues if i.severity == "info"]
-            assert len(infos) >= 1
-            assert "42" in infos[0].message
-        finally:
-            conn.close()
-
-
 class TestCheck4EmptyBacklog:
     """Check 4: empty backlog.md → passes."""
 
@@ -1234,80 +1188,6 @@ class TestCheck4EmptyBacklog:
         try:
             result = check_backlog_status(conn, str(tmp_path))
             assert result.passed is True
-        finally:
-            conn.close()
-
-
-class TestCheck4ClosedAnnotation:
-    """Check 4: backlog annotated as closed but entity status not dropped → warning."""
-
-    def test_check4_closed_annotation_stale_status(self, tmp_path):
-        from doctor.checks import check_backlog_status
-
-        db_path = _make_db(tmp_path)
-        _register_backlog(db_path, "00012", status="active")
-
-        backlog_md = (
-            "| ID | Timestamp | Description |\n"
-            "|----|-----------|-------------|\n"
-            "| 00012 | 2026-02-17 | fix something (closed: upstream limitation) |\n"
-        )
-        (tmp_path / "backlog.md").write_text(backlog_md)
-
-        conn = _entities_conn(db_path)
-        try:
-            result = check_backlog_status(conn, str(tmp_path))
-            assert result.passed is False
-            warnings = [i for i in result.issues if i.severity == "warning"]
-            closed_warnings = [w for w in warnings if "closed" in w.message]
-            assert len(closed_warnings) >= 1
-            assert "dropped" in closed_warnings[0].fix_hint
-        finally:
-            conn.close()
-
-    def test_check4_closed_annotation_correct_status(self, tmp_path):
-        from doctor.checks import check_backlog_status
-
-        db_path = _make_db(tmp_path)
-        _register_backlog(db_path, "00012", status="dropped")
-
-        backlog_md = (
-            "| ID | Timestamp | Description |\n"
-            "|----|-----------|-------------|\n"
-            "| 00012 | 2026-02-17 | fix something (closed: upstream limitation) |\n"
-        )
-        (tmp_path / "backlog.md").write_text(backlog_md)
-
-        conn = _entities_conn(db_path)
-        try:
-            result = check_backlog_status(conn, str(tmp_path))
-            closed_warnings = [
-                i for i in result.issues
-                if i.severity == "warning" and "closed" in i.message
-            ]
-            assert len(closed_warnings) == 0
-        finally:
-            conn.close()
-
-    def test_check4_fixed_annotation_stale_status(self, tmp_path):
-        from doctor.checks import check_backlog_status
-
-        db_path = _make_db(tmp_path)
-        _register_backlog(db_path, "00048", status="active")
-
-        backlog_md = (
-            "| ID | Timestamp | Description |\n"
-            "|----|-----------|-------------|\n"
-            "| 00048 | 2026-03-26 | add check (fixed: auto-increment in CI) |\n"
-        )
-        (tmp_path / "backlog.md").write_text(backlog_md)
-
-        conn = _entities_conn(db_path)
-        try:
-            result = check_backlog_status(conn, str(tmp_path))
-            assert result.passed is False
-            warnings = [i for i in result.issues if i.severity == "warning"]
-            assert len(warnings) >= 1
         finally:
             conn.close()
 
@@ -2346,8 +2226,9 @@ class TestCheck10MissingConfigFileUsesDefaults:
 
 
 class TestOrchestratorReportHas14Checks:
-    """Orchestrator: report always has 15 checks (14 pre-109 + the
-    feature-109 ``check_status_write_path`` added by Group 10).
+    """Orchestrator: report always has 16 checks (14 pre-109 + the
+    feature-109 ``check_status_write_path`` added by Group 10 + the
+    feature-111 ``check_no_free_text_status_parsers`` added by Group E).
     """
 
     def test_report_has_14_checks(self, tmp_path):
@@ -2358,11 +2239,11 @@ class TestOrchestratorReportHas14Checks:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 15
+        assert len(report.checks) == 16
 
 
 class TestOrchestratorReportEvenWhenLocked:
-    """Orchestrator: 15 checks even when DB is locked."""
+    """Orchestrator: 16 checks even when DB is locked."""
 
     def test_report_14_checks_even_when_locked(self, tmp_path):
         from doctor import run_diagnostics
@@ -2376,7 +2257,7 @@ class TestOrchestratorReportEvenWhenLocked:
         blocker.execute("BEGIN IMMEDIATE")
         try:
             report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-            assert len(report.checks) == 15
+            assert len(report.checks) == 16
         finally:
             blocker.rollback()
             blocker.close()
@@ -2489,7 +2370,7 @@ class TestOrchestratorPerCheckExceptionIsolation:
         # The orchestrator wraps each check in try/except
         # Even if a check raises, we still get 10 results
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 15
+        assert len(report.checks) == 16
 
 
 class TestOrchestratorMissingDbFile:
@@ -2505,7 +2386,7 @@ class TestOrchestratorMissingDbFile:
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
         assert not os.path.exists(db_path)
         assert not os.path.exists(mem_path)
-        assert len(report.checks) == 15
+        assert len(report.checks) == 16
 
 
 class TestOrchestratorBaseBranchFromConfig:
@@ -2522,7 +2403,7 @@ class TestOrchestratorBaseBranchFromConfig:
         (config_dir / "pd.local.md").write_text("base_branch: develop\n")
 
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 15
+        assert len(report.checks) == 16
 
 
 class TestOrchestratorBaseBranchDefaultMain:
@@ -2536,7 +2417,7 @@ class TestOrchestratorBaseBranchDefaultMain:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 15
+        assert len(report.checks) == 16
 
 
 class TestOrchestratorCheck8RunsFirst:
@@ -2569,7 +2450,7 @@ class TestOrchestratorBothDbsLocked:
         blocker2.execute("BEGIN IMMEDIATE")
         try:
             report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-            assert len(report.checks) == 15
+            assert len(report.checks) == 16
             assert report.healthy is False
         finally:
             blocker1.rollback()
@@ -2589,7 +2470,7 @@ class TestOrchestratorFreshProjectEmpty:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 15
+        assert len(report.checks) == 16
         assert report.elapsed_ms >= 0
 
 
@@ -2605,7 +2486,7 @@ class TestOrchestratorWorksWithoutMcp:
 
         # No MCP servers running -- should still work
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 15
+        assert len(report.checks) == 16
 
 
 class TestOrchestratorConnectionsClosedOnSuccess:
@@ -2619,7 +2500,7 @@ class TestOrchestratorConnectionsClosedOnSuccess:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 15
+        assert len(report.checks) == 16
 
         # Verify we can acquire write locks (connections were closed)
         conn = sqlite3.connect(db_path, timeout=1.0)
@@ -2666,8 +2547,9 @@ def _doctor_lib_path():
 
 
 class TestCliJsonOutputHas14Checks:
-    """CLI: JSON output contains 15 checks (14 pre-109 + the feature-109
-    ``check_status_write_path`` added by Group 10).
+    """CLI: JSON output contains 16 checks (14 pre-109 + the feature-109
+    ``check_status_write_path`` added by Group 10 + the feature-111
+    ``check_no_free_text_status_parsers`` added by Group E).
     """
 
     def test_cli_json_output_has_14_checks(self, tmp_path):
@@ -2688,7 +2570,7 @@ class TestCliJsonOutputHas14Checks:
         data = json.loads(result.stdout)
         # Phase 2 wraps output: {"diagnostic": ...}
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 15
+        assert len(diag["checks"]) == 16
 
 
 class TestCliExitCodeAlwaysZero:
@@ -2763,7 +2645,7 @@ class TestCliArtifactsRootCliArgPrecedence:
         assert result.returncode == 0
         data = json.loads(result.stdout)
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 15
+        assert len(diag["checks"]) == 16
 
 
 class TestCliArtifactsRootConfigFallback:
@@ -2785,7 +2667,7 @@ class TestCliArtifactsRootConfigFallback:
         assert result.returncode == 0
         data = json.loads(result.stdout)
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 15
+        assert len(diag["checks"]) == 16
 
 
 class TestCliArtifactsRootDefaultDocs:
@@ -2806,7 +2688,7 @@ class TestCliArtifactsRootDefaultDocs:
         assert result.returncode == 0
         data = json.loads(result.stdout)
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 15
+        assert len(diag["checks"]) == 16
 
 
 class TestCliNoneSerializesAsJsonNull:
