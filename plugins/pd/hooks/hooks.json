@@ -89,7 +89,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/meta-json-guard.sh"
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/data-file-guard.sh"
           }
         ]
       },
