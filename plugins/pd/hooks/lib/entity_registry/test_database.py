@@ -364,9 +364,9 @@ class TestMigration2:
         conn.close()
 
         # Now open it with EntityDatabase — runs pending migrations (3+)
-        # Feature 110 Migration 13: schema_version bumped to 13.
+        # Feature 111 Migration 14: schema_version bumped to 14.
         db = EntityDatabase(db_path)
-        assert db.get_metadata("schema_version") == "13"
+        assert db.get_metadata("schema_version") == "14"
 
         # Schema should be intact.
         # Feature 109 Migration 12 added 3 columns (type, kind,
@@ -614,6 +614,11 @@ class TestIndexes:
             # Feature 110 (FR-8.1): index on entity_display(seq) added
             # by migration 13.
             "idx_entity_display_seq",
+            # Feature 111 (FR-MR.1): entity_relations indices added by
+            # migration 14 (sorted alphabetically — _from, _to, _unique).
+            "idx_entity_relations_from",
+            "idx_entity_relations_to",
+            "idx_entity_relations_unique",
             "idx_eoa_entity_uuid",
             "idx_eoa_key_result_uuid",
             "idx_et_entity_uuid",
@@ -668,8 +673,8 @@ class TestMetadata:
         assert db.get_metadata("foo") == "baz"
 
     def test_schema_version_is_10(self, db: EntityDatabase):
-        # Feature 110 Migration 13 bumps schema_version to 13.
-        assert db.get_metadata("schema_version") == "13"
+        # Feature 111 Migration 14 bumps schema_version to 14.
+        assert db.get_metadata("schema_version") == "14"
 
 
 # ---------------------------------------------------------------------------
@@ -2678,8 +2683,8 @@ class TestMigrationIdempotency:
         entity = db2.get_entity("project:p1")
         assert entity is not None
         assert entity["uuid"] == p1_uuid
-        # Feature 110 Migration 13: schema_version bumped to 13.
-        assert db2.get_metadata("schema_version") == "13"
+        # Feature 111 Migration 14: schema_version bumped to 14.
+        assert db2.get_metadata("schema_version") == "14"
         db2.close()
 
 
@@ -2877,11 +2882,11 @@ class TestMigration3:
         assert "type_id" not in fk_columns
 
     def test_schema_version_is_10(self, db: EntityDatabase):
-        """After all migrations, schema_version should be 13.
+        """After all migrations, schema_version should be 14.
 
-        Feature 110 Migration 13 bumps the version.
+        Feature 111 Migration 14 bumps the version.
         """
-        assert db.get_metadata("schema_version") == "13"
+        assert db.get_metadata("schema_version") == "14"
 
     # -- Task 1.2: Migration creates indexes and trigger (AC-2) ------------
 
@@ -3068,11 +3073,11 @@ class TestMigration3:
     def test_fresh_db_has_all_migrations(self, tmp_path):
         """A brand-new EntityDatabase should run all migrations.
 
-        Feature 110 Migration 13 bumps the version to 13.
+        Feature 111 Migration 14 bumps the version to 14.
         """
         fresh_db = EntityDatabase(str(tmp_path / "fresh.db"))
         try:
-            assert fresh_db.get_metadata("schema_version") == "13"
+            assert fresh_db.get_metadata("schema_version") == "14"
         finally:
             fresh_db.close()
 
@@ -4663,8 +4668,8 @@ class TestMigration5:
         new phase values are accepted."""
         db = EntityDatabase(str(tmp_path / "m5-idem.db"))
         try:
-            # Feature 110 Migration 13 bumps the version to 13.
-            assert db.get_schema_version() == 13
+            # Feature 111 Migration 14 bumps the version to 14.
+            assert db.get_schema_version() == 14
 
             # Verify all new phase values are accepted
             new_phases = [
@@ -5995,8 +6000,8 @@ class TestMigration8Data:
             db2 = EntityDatabase(db_path)
             v2 = db2.get_schema_version()
             db2.close()
-            # Feature 110 Migration 13 bumps the version to 13.
-            assert v1 == v2 == 13
+            # Feature 111 Migration 14 bumps the version to 14.
+            assert v1 == v2 == 14
 
     def test_migration_8_schema_version_set_to_8(self):
         """Schema version is 8 after migration."""
@@ -7408,11 +7413,11 @@ class TestMigration11ConcurrentRunners:
                 [(db_path, str(tmp_path))] * 2,
             )
 
-        # Both workers should converge on the latest schema_version (13 after
-        # feature 110 added migration 13). The race condition under test is
+        # Both workers should converge on the latest schema_version (14 after
+        # feature 111 added migration 14). The race condition under test is
         # migration 11's concurrent-runner short-circuit; subsequent migrations
         # run sequentially after 11 stamps in both workers.
-        assert all(r == "13" for r in results), results
+        assert all(r == "14" for r in results), results
 
         # Open the DB again and check exactly one row per legacy project_id.
         verify_conn = sqlite3.connect(db_path)
@@ -7514,13 +7519,13 @@ class TestMigrationsDownDispatcher:
 
     def test_migrations_down_contains_only_11(self):
         """Reverse migrations registered: 11 (feature 108), 12 (feature 109),
-        and 13 (feature 110).
+        13 (feature 110), and 14 (feature 111).
 
         Test name preserved for git-blame continuity; the assertion is
         updated as each new reverse migration ships.
         """
         from entity_registry.database import MIGRATIONS_DOWN
-        assert sorted(MIGRATIONS_DOWN.keys()) == [11, 12, 13]
+        assert sorted(MIGRATIONS_DOWN.keys()) == [11, 12, 13, 14]
 
     def test_migrate_down_raises_on_unsupported_target_version(self, tmp_path):
         """Reversing past 10 raises NotImplementedError."""

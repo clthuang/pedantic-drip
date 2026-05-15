@@ -58,7 +58,26 @@ _KIND_TO_TYPE_LIFECYCLE: dict[str, tuple[str, str]] = {
     "initiative": ("work",       "work_flow"),
     "objective":  ("work",       "work_flow"),
     "key_result": ("work",       "work_flow"),
-    "task":       ("work",       "work_flow"),
+    # Feature 111 FR-BL.3 / FR-MR.5: task remapped from 'work_flow' to
+    # 'task_flow' so _CLOSES_TERMINAL can derive the closes= terminal
+    # without colliding with backlog (which keeps 'work_flow' → 'dropped').
+    "task":       ("work",       "task_flow"),
+    # Feature 111 FR-9.2: new 'bug' kind for spontaneous mid-flight issue
+    # capture (issue_spawn MCP). Status-only model — see FR-BL.
+    "bug":        ("work",       "bug_flow"),
+}
+
+
+# Feature 111 FR-10.3 step 3 / IF-7: closure terminal-state derivation by
+# lifecycle_class. Single source of truth for complete_phase(closes=). Keys
+# absent from this dict raise InvalidCloseTargetError when passed via closes=.
+# Future relation kinds extend this dict without touching dispatch logic.
+_CLOSES_TERMINAL: dict[str, str] = {
+    "bug_flow":  "closed",   # bug terminal via closes= (resolved/wont_fix via update_entity)
+    "task_flow": "closed",   # task terminal (only terminal in task machine)
+    "work_flow": "dropped",  # backlog terminal — "subsumed by feature"
+    # feature_flow → NOT in dict → raise InvalidCloseTargetError (TD-1)
+    # brainstorm_flow, container_flow, etc. → NOT in dict → raise
 }
 
 
@@ -5447,6 +5466,13 @@ _VALID_PARAMS: dict[str, set[str]] = {
     "entity_created":       {"metadata"},
     "entity_status_changed":{"metadata"},
     "entity_promoted":      {"metadata"},
+    # Feature 111 FR-9.3 / FR-MR.3: spawned_child event_type emitted by
+    # issue_spawn on the parent (no phase change, only an audit-trail
+    # marker with child metadata). NOT added to _REQUIRED_PARAMS — the
+    # sole caller (issue_spawn) guarantees metadata application-side; a
+    # future non-issue_spawn caller can promote to required when needed
+    # (plan-reviewer iter 3 S3 downgrade).
+    "spawned_child":        {"metadata"},
 }
 _REQUIRED_PARAMS: dict[str, set[str]] = {
     "started":              {"phase"},
@@ -5497,6 +5523,29 @@ class EntityExistsError(ValueError):
         self.type_id = type_id
 
 
+class EntityNotFoundError(ValueError):
+    """Raised when a referenced entity does not exist (feature 111 FR-EX.1).
+
+    Used by F10 complete_phase(closes=) when:
+    - caller's type_id resolves to no entity row (FR-10.2)
+    - closure target uuid resolves to no entity row (FR-10.3 step 2)
+    """
+    pass
+
+
+class InvalidCloseTargetError(ValueError):
+    """Raised when a closure target is structurally incompatible
+    (feature 111 FR-EX.2).
+
+    Used by F10 complete_phase(closes=) for:
+    - lifecycle_class not in _CLOSES_TERMINAL (FR-10.3 step 3)
+    - cross-workspace closure attempt (FR-10.3 step 2)
+    - already terminal with different prior closer (FR-10.3 step 4)
+    - already terminal with no prior closer record (FR-10.3 step 4)
+    """
+    pass
+
+
 class PromotionConflictError(ValueError):
     """Raised by ``promote_entity`` when the post-promotion ``type_id`` would
     collide with an existing row in the same workspace (feature 109 FR-3 /
@@ -5533,6 +5582,9 @@ class EntityDatabase:
     VALID_ENTITY_TYPES = (
         "backlog", "brainstorm", "project", "feature",
         "initiative", "objective", "key_result", "task",
+        # Feature 111 FR-MR.4: new 'bug' kind for spontaneous mid-flight
+        # issue capture via issue_spawn MCP.
+        "bug",
     )
 
     def __init__(self, db_path: str, *, check_same_thread: bool = True) -> None:
@@ -5805,6 +5857,88 @@ class EntityDatabase:
             (uuid,),
         ).fetchone()
         return dict(row) if row else None
+
+    # ------------------------------------------------------------------
+    # Feature 111 helpers — closure-transaction primitives used by F10
+    # complete_phase(closes=) and (for resolve_entity_uuid) F9 issue_spawn.
+    # ------------------------------------------------------------------
+
+    def get_prior_closer(self, to_uuid: str) -> str | None:
+        """Return the ``from_uuid`` of the prior 'fixes' relation to ``to_uuid``,
+        or ``None`` if no such relation exists (feature 111 IF-2 step 4).
+
+        Used by F10 complete_phase(closes=) idempotency check to detect
+        same-closer replay vs cross-closer conflict (FR-10.3 step 4 /
+        FR-10.5).
+        """
+        row = self._conn.execute(
+            "SELECT from_uuid FROM entity_relations "
+            "WHERE to_uuid = ? AND kind = 'fixes' LIMIT 1",
+            (to_uuid,),
+        ).fetchone()
+        return row[0] if row is not None else None
+
+    def insert_entity_relation(
+        self,
+        from_uuid: str,
+        to_uuid: str,
+        kind: str,
+        on_conflict: str = "raise",
+    ) -> bool:
+        """Insert a row into ``entity_relations`` (feature 111 FR-10.3 step 7).
+
+        Parameters
+        ----------
+        from_uuid, to_uuid, kind:
+            The triple making up the composite UNIQUE on entity_relations.
+        on_conflict:
+            ``"raise"`` (default) — INSERT without ON CONFLICT; SQLite raises
+            ``sqlite3.IntegrityError`` if the composite UNIQUE is violated.
+            ``"ignore"`` — append ``ON CONFLICT(from_uuid, to_uuid, kind)
+            DO NOTHING`` so the INSERT is idempotent. Returns ``False`` when
+            a conflict was skipped, ``True`` when a row was actually inserted.
+
+        Returns
+        -------
+        bool
+            ``True`` if a new row was inserted, ``False`` if the conflict
+            branch was taken (``on_conflict='ignore'`` only).
+        """
+        if on_conflict not in ("raise", "ignore"):
+            raise ValueError(
+                f"on_conflict must be 'raise' or 'ignore'; got {on_conflict!r}"
+            )
+        now = self._now_iso()
+        sql = (
+            "INSERT INTO entity_relations(from_uuid, to_uuid, kind, created_at) "
+            "VALUES (?, ?, ?, ?)"
+        )
+        if on_conflict == "ignore":
+            sql += " ON CONFLICT(from_uuid, to_uuid, kind) DO NOTHING"
+        cur = self._conn.execute(sql, (from_uuid, to_uuid, kind, now))
+        # ``rowcount`` is 1 on real insert, 0 when ON CONFLICT DO NOTHING fires.
+        return cur.rowcount > 0
+
+    def resolve_entity_uuid(
+        self,
+        workspace_uuid: str,
+        type_id: str,
+    ) -> tuple[str | None, str | None]:
+        """Resolve ``(workspace_uuid, type_id)`` to ``(uuid, workspace_uuid)``
+        (feature 111 IF-2 step 1).
+
+        Returns ``(None, None)`` if no entity matches. Used by F10
+        complete_phase(closes=) to resolve the caller's ``from_uuid`` and
+        ``caller_workspace_uuid`` before any writes (FR-10.2).
+        """
+        row = self._conn.execute(
+            "SELECT uuid, workspace_uuid FROM entities "
+            "WHERE workspace_uuid = ? AND type_id = ?",
+            (workspace_uuid, type_id),
+        ).fetchone()
+        if row is None:
+            return (None, None)
+        return (row[0], row[1])
 
     def resolve_ref(
         self,
