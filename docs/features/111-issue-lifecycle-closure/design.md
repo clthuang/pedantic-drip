@@ -2,7 +2,7 @@
 
 - **Spec:** [spec.md](./spec.md) revision 3.4
 - **Parent PRD:** `docs/projects/P003-entity-system-redesign/prd.md` (M4 — Phase 4 Lifecycle Closure)
-- **Status:** revision 2.1 (rev 2 addressed design-reviewer iter 1 blockers; rev 2.1 addresses iter 2 nits: IF-1 ValueError-vs-EntityNotFoundError docstring clarity, IF-1 workspace_uuid-on-spawned_child defensive note, IF-7 module placement fixed to database.py, same-PR Group-A-and-B constraint noted, IF-2 workspace_uuid scope check note)
+- **Status:** revision 2.2 (rev 2.1 addressed design-reviewer iter 2 nits; rev 2.2 addresses phase-reviewer iter 1 nits: test_migration_14_safety.py moved to Group B per atomic-DDL discipline; closes_applied replay-inclusion comment added; B-must-precede-C parallelization clarified; doctor CHECK_ORDER registry location pinned at __init__.py:32; test_workflow_state_server.py audit added to Group B)
 
 ## §0 Prior Art Research
 
@@ -147,7 +147,7 @@ Feature 111 is the closing chapter of project P003. It adds 4 cohesive sub-featu
 - Uses `PROJECT_ROOT` env var → `git rev-parse --show-toplevel` fallback.
 - Greps `\(closed:|\(promoted →|\(fixed:` against `$PROJECT_ROOT/plugins/pd/hooks/lib/entity_registry/backfill.py` and `$PROJECT_ROOT/plugins/pd/hooks/lib/doctor/checks.py`.
 - Returns FAIL if >0 matches.
-- Registered in doctor's check registry.
+- **Registry location pinned:** Append to the `CHECK_ORDER` list in `plugins/pd/hooks/lib/doctor/__init__.py:32` (after `check_status_write_path`). Also add the symbol to the import block at `__init__.py:11-27`.
 
 **C10 — New exception classes** (`entity_registry/database.py`, near `EntityExistsError` at `:4484`)
 - `class EntityNotFoundError(ValueError): pass` — raised when caller's `type_id` resolves to no entity (FR-10.2) or closure target uuid resolves to no entity (FR-10.3 step 2). Per FR-EX.1.
@@ -456,6 +456,10 @@ def _process_complete_phase(
                 )
 
         # NEW: FR-10.3 step 7 — INSERT entity_relations via NEW helper (C11)
+        # NB: closes_applied includes BOTH new closures AND idempotent replays
+        # per FR-10.6. The ON CONFLICT DO NOTHING path is a successful idempotent
+        # write; the uuid is in closes_applied either way. Do NOT guard the
+        # append behind `if not is_replay`.
         for to_uuid, _, _, _, _ in closure_targets:
             db.insert_entity_relation(
                 from_uuid=from_uuid,
@@ -833,7 +837,7 @@ def check_no_free_text_status_parsers(_db: EntityDatabase) -> CheckResult:
         )
 ```
 
-**Registration:** Add to doctor's `ALL_CHECKS` list (or equivalent registry — design phase confirms exact symbol).
+**Registration:** Append `check_no_free_text_status_parsers` to the `CHECK_ORDER` list at `plugins/pd/hooks/lib/doctor/__init__.py:32` (after `check_status_write_path`). Add the import to the import block above (lines 11-27).
 
 ## §5 Implementation Order
 
@@ -846,8 +850,12 @@ Group A: Migration 14 (DB schema ONLY — no Python logic per NFR-1)
     ├── MIGRATIONS_DOWN[14] entry with bug/entity_relations pre-flight
     ├── _copy_rename_entities_for_v14 helper (CHECK widening)
     ├── _copy_rename_phase_events_for_v14 helper (CHECK widening)
-    ├── _copy_rename_entities_to_v13 + _copy_rename_phase_events_to_v13 (down helpers)
-    └── Tests: test_migration_14_safety.py (AC-MR.x)
+    └── _copy_rename_entities_to_v13 + _copy_rename_phase_events_to_v13 (down helpers)
+
+    (NB: test_migration_14_safety.py ships in Group B, NOT Group A —
+     it imports the new exception classes + helpers from Group B, and
+     test fixtures count as Python logic which violates the atomic-DDL-only
+     rule for the migration commit.)
 
 Group B: Discriminator + lifecycle extensions (application-logic Python only)
     ├── _KIND_TO_TYPE_LIFECYCLE += {'bug': ('work', 'bug_flow')}; remap 'task' → ('work', 'task_flow')
@@ -858,7 +866,8 @@ Group B: Discriminator + lifecycle extensions (application-logic Python only)
     ├── New EntityDatabase helpers (C11): get_entity_by_uuid, get_prior_closer, insert_entity_relation, resolve_entity_uuid
     ├── ENTITY_MACHINES NOT modified (status-only model per FR-BL)
     ├── transition_entity_phase: add defensive raise for kind in {'bug', 'task'} (AC-BL.7)
-    └── Tests: test_entity_lifecycle.py + test_status_only_lifecycle.py (AC-BL.x)
+    ├── Audit test_workflow_state_server.py for ENTITY_MACHINES introspection assertions impacted by defensive raise — update if needed (per CLAUDE.md "ENTITY_MACHINES has assertions in TWO test files")
+    └── Tests: test_entity_lifecycle.py + test_status_only_lifecycle.py + test_migration_14_safety.py (AC-BL.x + AC-MR.x + AC-EX.x)
 
 Group C: F9 issue_spawn MCP (depends on Group A + B)
     ├── issue_spawn function in entity_server.py
@@ -885,12 +894,22 @@ Group E: Cleanup (depends on Group D)
 **IF-2 implementation note (workspace_uuid scope):** The design IF-2 pseudocode assumes `workspace_uuid` (caller's effective workspace) is in scope at the existing `with db.transaction():` block boundary (`workflow_state_server.py:1127`). Implementer MUST verify this by reading the actual function. If `workspace_uuid` is not yet resolved at that point, hoist its resolution above the transaction-block — the resolve_entity_uuid() call needs both kwargs.
 
 **Parallelization opportunities (per implementing skill worktree pattern):**
-- Group A must run first and alone (migration changes DB schema for all subsequent groups).
-- Groups B, C, D, E can run in parallel worktrees AFTER Group A completes:
-  - B and C share `database.py` + `entity_lifecycle.py` (low conflict risk; B's lines are at :48, :4442; C lands in `entity_server.py`).
-  - D shares `workflow_state_server.py` (no overlap with B or C).
-  - E shares `backfill.py` (low overlap with C's `entity_server.py`) and `doctor/checks.py` (single file, no overlap with B/C/D).
-- Per feature-110 retro learnings: declare which files each Group creates to avoid the `test_audit_writes.py` conflict pattern. Groups C, D, E each create distinct test files (no collisions).
+
+**Strict ordering (hard dependencies):**
+- Group A first, alone (migration changes DB schema for all subsequent groups).
+- Group B SECOND, alone (C and D both call C11 helpers + use new exception classes — B's outputs must exist before C/D begin). Group B is also where `test_migration_14_safety.py` lives.
+- Groups C and D can run in parallel worktrees AFTER Group B merges:
+  - C lands `entity_server.py` (new issue_spawn).
+  - D lands `workflow_state_server.py` (closes= extension).
+  - Zero file overlap between C and D.
+- Group E can run in parallel with C and D (E modifies `entity_registry/backfill.py` + `doctor/checks.py` — no overlap).
+
+**File-creation declarations (per feature-110 retro learning):**
+- Group C creates: `test_issue_spawn.py`.
+- Group D creates: `test_complete_phase_closes.py`.
+- Group E creates: `test_cleanup_suffix_parsers.py`, extends existing `test_doctor.py`.
+- Group B creates: `test_status_only_lifecycle.py`, `test_migration_14_safety.py`, extends existing `test_entity_lifecycle.py`.
+- No two Groups create the same test file — zero `test_audit_writes.py`-style conflicts expected.
 
 ## §6 Verification Mapping (cross-reference to spec ACs)
 
