@@ -704,15 +704,15 @@ async def issue_spawn(
     )
 
     # FR-9.2: direct db.register_entity call (mirrors entity_server.py:502+
-    # register_entity MCP pattern via server_helpers._process_register_entity:
-    # empty-string workspace_uuid is normalized to None so register_entity's
-    # _resolve_workspace_uuid_kwargs falls back to the project_id legacy
-    # path — otherwise a literal "" workspace_uuid would FK-fail). The
-    # internal _derive_type_and_lifecycle mapping (Group B) converts
-    # entity_type=kind → (type='work', kind=<bug|task>, lifecycle_class=
-    # <kind>_flow). NO init_entity_workflow call — bug/task use the
-    # status-only model per FR-BL.
+    # pattern). The internal _derive_type_and_lifecycle mapping (Group B)
+    # converts entity_type=kind → (type='work', kind=<bug|task>,
+    # lifecycle_class=<kind>_flow). NO init_entity_workflow call —
+    # bug/task use the status-only model per FR-BL.
     ws_uuid_kwarg = resolved_workspace_uuid or None
+    # F12 audit: conflict-is-error → register_entity, EntityExistsError
+    # bubbles to MCP boundary translator. auto_id guarantees fresh entity_id
+    # so conflict is operationally impossible; raise-on-conflict semantics
+    # preferred over INSERT OR IGNORE per feature 109 FR-4.
     new_uuid = _db.register_entity(
         entity_type=kind,
         entity_id=entity_id,
