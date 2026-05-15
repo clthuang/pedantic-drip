@@ -1,0 +1,18 @@
+{
+  "head_sha": "f4d34d7c8a7c9801b91ff7243977b25ad3f2e49e",
+  "feature_id": "111-issue-lifecycle-closure",
+  "run_at": "2026-05-15T22:00:00+00:00",
+  "reviewers_dispatched": 4,
+  "reviewers_completed": 4,
+  "high_count": 0,
+  "med_count": 23,
+  "low_count": 11,
+  "verdict": "approved",
+  "test_only_refactor": false,
+  "remap_applied": {
+    "test_deepener_high_to_med": 2,
+    "reason": "AC-5b: mutation_caught=false AND no cross-confirmation"
+  },
+  "low_findings_sidecar": ".qa-gate-low-findings.md",
+  "merge_block": false
+}
