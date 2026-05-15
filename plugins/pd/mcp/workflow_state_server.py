@@ -891,10 +891,14 @@ def _with_retry(**kwargs):
     Applied INSIDE _with_error_handling so retries happen before
     the error is converted to a terminal MCP response.
 
-    Decorator stacking order:
+    Decorator stacking order (full stack, outermost first):
       @_with_error_handling    <- outer: catches final exception, returns JSON error
       _with_retry()            <- middle: retries transient errors before they reach outer
-      @_catch_value_error      <- inner: converts ValueError to structured error
+      @_catch_value_error      <- middle: converts generic ValueError to structured error
+      @_catch_close_errors     <- innermost (feature 111): catches the specific
+                                  EntityNotFoundError / InvalidCloseTargetError
+                                  subclasses BEFORE the generic _catch_value_error
+                                  swallows them as ``invalid_transition``.
       def _process_foo(...)
     """
     return with_retry("workflow-state", **kwargs)

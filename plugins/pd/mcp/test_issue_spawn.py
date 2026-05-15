@@ -250,16 +250,17 @@ class TestAC93SpawnedChildEvent:
 
 
 # ---------------------------------------------------------------------------
-# AC-9.4 — invalid kind raises ValueError BEFORE any DB write
+# AC-9.4 — invalid kind translated to JSON error envelope BEFORE any DB write
 # ---------------------------------------------------------------------------
 
 
 class TestAC94InvalidKind:
-    """AC-9.4: kind='nonsense' raises ValueError; entities + phase_events
-    row counts are byte-identical pre/post.
+    """AC-9.4 + FR-EX.3: kind='nonsense' produces a JSON error envelope
+    at the MCP boundary (via ``_catch_issue_spawn_errors``);
+    entities + phase_events row counts are byte-identical pre/post.
     """
 
-    def test_invalid_kind_raises_no_partial_state(
+    def test_invalid_kind_returns_error_envelope_no_partial_state(
         self, server, db, parent_feature
     ):
         parent_uuid, _ = parent_feature
@@ -270,12 +271,21 @@ class TestAC94InvalidKind:
             "SELECT COUNT(*) FROM phase_events"
         ).fetchone()[0]
 
-        with pytest.raises(ValueError, match="invalid_kind"):
-            _run(server.issue_spawn(
-                parent_uuid=parent_uuid,
-                kind="nonsense",
-                summary="Foo",
-            ))
+        # FR-EX.3 envelope: {"error": true, "error_type":"valueerror",
+        # "message": "invalid_kind: ..."}.
+        result_raw = _run(server.issue_spawn(
+            parent_uuid=parent_uuid,
+            kind="nonsense",
+            summary="Foo",
+        ))
+        data = json.loads(result_raw)
+        assert data.get("error") is True, f"expected error envelope, got {data!r}"
+        assert data.get("error_type") == "valueerror", (
+            f"expected error_type='valueerror', got {data!r}"
+        )
+        assert "invalid_kind" in data.get("message", ""), (
+            f"expected 'invalid_kind' in message, got {data!r}"
+        )
 
         entities_after = db._conn.execute(
             "SELECT COUNT(*) FROM entities"
@@ -292,25 +302,37 @@ class TestAC94InvalidKind:
 
 
 # ---------------------------------------------------------------------------
-# AC-9.5 — invalid parent_uuid / disallowed parent kind
+# AC-9.5 — invalid parent_uuid / disallowed parent kind / cross-workspace
 # ---------------------------------------------------------------------------
 
 
 class TestAC95ParentValidation:
-    """AC-9.5: non-existent parent → ValueError("parent_not_found");
-    disallowed parent kind → ValueError("invalid_parent_kind").
+    """AC-9.5 + FR-9.6 + FR-EX.3: non-existent parent →
+    ``entitynotfounderror`` envelope with ``parent_not_found`` substring;
+    disallowed parent kind → ``valueerror`` envelope with
+    ``invalid_parent_kind`` substring; cross-workspace parent →
+    ``valueerror`` envelope with ``cross-workspace parent forbidden``
+    substring (design IF-1 step 5b).
     """
 
-    def test_nonexistent_parent_raises(self, server, db):
+    def test_nonexistent_parent_returns_error_envelope(self, server, db):
         # The DB has no parent registered — any uuid is a miss.
-        with pytest.raises(ValueError, match="parent_not_found"):
-            _run(server.issue_spawn(
-                parent_uuid="00000000-0000-0000-0000-000000000000",
-                kind="bug",
-                summary="Foo",
-            ))
+        result_raw = _run(server.issue_spawn(
+            parent_uuid="00000000-0000-0000-0000-000000000000",
+            kind="bug",
+            summary="Foo",
+        ))
+        data = json.loads(result_raw)
+        assert data.get("error") is True, f"expected error envelope, got {data!r}"
+        # EntityNotFoundError → 'entitynotfounderror' (FR-EX.3 lowercased class name).
+        assert data.get("error_type") == "entitynotfounderror", (
+            f"expected error_type='entitynotfounderror', got {data!r}"
+        )
+        assert "parent_not_found" in data.get("message", ""), (
+            f"expected 'parent_not_found' in message, got {data!r}"
+        )
 
-    def test_disallowed_parent_kind_raises(self, server, db):
+    def test_disallowed_parent_kind_returns_error_envelope(self, server, db):
         # Register a brainstorm entity as the "parent" — disallowed kind.
         db.register_entity(
             "brainstorm",
@@ -320,12 +342,91 @@ class TestAC95ParentValidation:
             project_id="__unknown__",
         )
         bs = db.get_entity("brainstorm:001-bs-fixture")
-        with pytest.raises(ValueError, match="invalid_parent_kind"):
-            _run(server.issue_spawn(
-                parent_uuid=bs["uuid"],
-                kind="bug",
-                summary="Foo",
-            ))
+        result_raw = _run(server.issue_spawn(
+            parent_uuid=bs["uuid"],
+            kind="bug",
+            summary="Foo",
+        ))
+        data = json.loads(result_raw)
+        assert data.get("error") is True
+        assert data.get("error_type") == "valueerror"
+        assert "invalid_parent_kind" in data.get("message", "")
+
+    def test_cross_workspace_parent_returns_error_envelope(
+        self, server, db, tmp_path, monkeypatch
+    ):
+        """AC-9.5 extension + FR-9.6 cross-workspace gate (design IF-1
+        step 5b).
+
+        Create the parent feature in workspace_B; the caller is in
+        __unknown__ (default fixture). The call must (a) return a JSON
+        error envelope and (b) leave entities + phase_events row counts
+        byte-identical.
+        """
+        # Set up a SECOND workspace (mirrors test_complete_phase_closes.py
+        # AC-10.6 pattern at :393).
+        import uuid as _uuid
+        ws_b_uuid = str(_uuid.uuid4())
+        now = db._now_iso()
+        db._conn.execute(
+            "INSERT INTO workspaces "
+            "(uuid, project_id_legacy, project_root, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (ws_b_uuid, "ws-b-legacy", str(tmp_path / "ws_b"), now, now),
+        )
+
+        # Register a feature parent inside workspace_B.
+        parent_uuid_ws_b = db.register_entity(
+            entity_type="feature",
+            entity_id="222-foreign-feature",
+            name="Foreign Feature",
+            status="active",
+            workspace_uuid=ws_b_uuid,
+        )
+
+        # Caller is in __unknown__ workspace (server fixture set
+        # _workspace_uuid=""), so resolved caller workspace will be
+        # _UNKNOWN_WORKSPACE_UUID — different from ws_b_uuid.
+        entities_before = db._conn.execute(
+            "SELECT COUNT(*) FROM entities WHERE kind = 'bug'"
+        ).fetchone()[0]
+        events_before = db._conn.execute(
+            "SELECT COUNT(*) FROM phase_events "
+            "WHERE event_type = 'spawned_child'"
+        ).fetchone()[0]
+
+        result_raw = _run(server.issue_spawn(
+            parent_uuid=parent_uuid_ws_b,
+            kind="bug",
+            summary="Should not be created",
+        ))
+        data = json.loads(result_raw)
+        assert data.get("error") is True, (
+            f"expected error envelope, got {data!r}"
+        )
+        assert data.get("error_type") == "valueerror", (
+            f"expected error_type='valueerror', got {data!r}"
+        )
+        assert "cross-workspace parent forbidden" in data.get("message", ""), (
+            f"expected 'cross-workspace parent forbidden' in message, got "
+            f"{data!r}"
+        )
+
+        # No partial state: bug count unchanged, no spawned_child event.
+        entities_after = db._conn.execute(
+            "SELECT COUNT(*) FROM entities WHERE kind = 'bug'"
+        ).fetchone()[0]
+        events_after = db._conn.execute(
+            "SELECT COUNT(*) FROM phase_events "
+            "WHERE event_type = 'spawned_child'"
+        ).fetchone()[0]
+        assert entities_before == entities_after, (
+            f"bug entity count changed: {entities_before} → {entities_after}"
+        )
+        assert events_before == events_after, (
+            f"spawned_child event count changed: "
+            f"{events_before} → {events_after}"
+        )
 
     def test_no_partial_state_on_parent_not_found(
         self, server, db, parent_feature
@@ -338,12 +439,14 @@ class TestAC95ParentValidation:
         events_before = db._conn.execute(
             "SELECT COUNT(*) FROM phase_events"
         ).fetchone()[0]
-        with pytest.raises(ValueError, match="parent_not_found"):
-            _run(server.issue_spawn(
-                parent_uuid="00000000-0000-0000-0000-000000000000",
-                kind="bug",
-                summary="Bar",
-            ))
+        result_raw = _run(server.issue_spawn(
+            parent_uuid="00000000-0000-0000-0000-000000000000",
+            kind="bug",
+            summary="Bar",
+        ))
+        data = json.loads(result_raw)
+        assert data.get("error") is True
+        assert "parent_not_found" in data.get("message", "")
         entities_after = db._conn.execute(
             "SELECT COUNT(*) FROM entities"
         ).fetchone()[0]

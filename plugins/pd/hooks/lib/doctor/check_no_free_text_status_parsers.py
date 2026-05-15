@@ -29,7 +29,8 @@ _RELATIVE_TARGETS = (
     "plugins/pd/hooks/lib/reconciliation_orchestrator/entity_status.py",
 )
 
-# Marker discriminators: "(closed:", "(promoted ->", "(promoted →" (unicode),
+# Marker discriminators: "(closed:", "(promoted →" (unicode arrow only —
+# the ASCII "->" variant is intentionally NOT matched per AC-CL.4), and
 # "(fixed:". Encoded as an ERE pattern for ``grep -E``.
 _GREP_PATTERN = r"\(closed:|\(promoted →|\(fixed:"
 
