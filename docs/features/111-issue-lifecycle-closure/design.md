@@ -2,7 +2,7 @@
 
 - **Spec:** [spec.md](./spec.md) revision 3.4
 - **Parent PRD:** `docs/projects/P003-entity-system-redesign/prd.md` (M4 — Phase 4 Lifecycle Closure)
-- **Status:** revision 2.2 (rev 2.1 addressed design-reviewer iter 2 nits; rev 2.2 addresses phase-reviewer iter 1 nits: test_migration_14_safety.py moved to Group B per atomic-DDL discipline; closes_applied replay-inclusion comment added; B-must-precede-C parallelization clarified; doctor CHECK_ORDER registry location pinned at __init__.py:32; test_workflow_state_server.py audit added to Group B)
+- **Status:** revision 2.3 (rev 2.2 addressed phase-reviewer iter 1 nits; rev 2.3 addresses iter 2 nits: explicit COMMIT-ordering note in IF-2 step 5; orphan-detection accepted-out-of-scope statement in IF-1 atomicity; closes_applied append inline comment)
 
 ## §0 Prior Art Research
 
@@ -308,7 +308,7 @@ async def issue_spawn(
 10. `db.append_phase_event(type_id=parent_row['type_id'], project_id=effective_project_id, workspace_uuid=workspace_uuid, event_type='spawned_child', phase=None, metadata={"child_uuid": new_uuid, "child_kind": kind, "child_name": summary})`. workspace_uuid is passed as defensive practice (informational for `spawned_child`; the `append_phase_event` check at `database.py:6964-6970` enforces the kwarg only for `entity_status_changed` and `entity_promoted`. Passing it is harmless and future-proofs against the check being widened to include `spawned_child`).
 11. Return `json.dumps({"uuid": new_uuid})`.
 
-**Atomicity:** Steps 8 and 10 are inside `register_entity` and `append_phase_event` respectively, each of which uses `db.transaction()`. The two MCP-layer calls are NOT bundled in a single transaction (current pattern matches `register_entity` MCP at `entity_server.py:502-590`). If step 10 fails after step 8 succeeds, the entity exists but parent has no spawned_child event — same dual-write window as existing register_entity MCP (post-INSERT `entity_created` event has identical exposure). Acceptable per existing pattern; not a new failure mode.
+**Atomicity:** Steps 8 and 10 are inside `register_entity` and `append_phase_event` respectively, each of which uses `db.transaction()`. The two MCP-layer calls are NOT bundled in a single transaction (current pattern matches `register_entity` MCP at `entity_server.py:502-590`). If step 10 fails after step 8 succeeds, the entity exists but parent has no spawned_child event — same dual-write window as existing register_entity MCP (post-INSERT `entity_created` event has identical exposure). **Orphan-detection accepted out-of-scope:** PRD does not require detection of entities whose parent has no `spawned_child` audit row. Post-cleanup (Group E) removes the free-text parser fallback, but no compensating orphan-detection doctor check is added. This is a deliberate scope cut — if operational evidence later shows the failure mode occurring, a follow-up feature adds the check. Implementers MUST NOT add compensating code in this feature.
 
 ### IF-2 — `complete_phase` MCP tool (extension)
 
@@ -437,6 +437,15 @@ def _process_complete_phase(
 
         # EXISTING: standard complete_phase work (FR-10.3 step 5)
         # ... entity_engine.complete_phase + db.update_workflow_phase etc. ...
+        # CRITICAL — transaction-close ordering: per codebase-explorer finding,
+        # `_process_complete_phase` currently does post-commit dual-write of
+        # append_phase_event OUTSIDE the with-block. F10 atomicity (TD-1) REQUIRES
+        # closure writes (steps 6-7 below) to execute INSIDE this transaction.
+        # Implementer MUST verify at `workflow_state_server.py:1127-1234` that
+        # steps 6-7 land BEFORE the existing transaction COMMIT, NOT after the
+        # post-commit dual-write. If the existing flow commits early and then
+        # dual-writes phase_events, the closure block must be hoisted ABOVE the
+        # early commit, OR the existing early commit must be removed.
 
         # NEW: FR-10.3 step 6 — transition non-replay closed entities
         for to_uuid, target_type_id, old_status, terminal, is_replay in closure_targets:
@@ -467,7 +476,7 @@ def _process_complete_phase(
                 kind="fixes",
                 on_conflict="ignore",   # ON CONFLICT DO NOTHING
             )
-            closes_applied.append(to_uuid)
+            closes_applied.append(to_uuid)  # appended unconditionally — includes replay per FR-10.6
 
     # Existing response assembly + closes_applied addition
     response["closes_applied"] = closes_applied
