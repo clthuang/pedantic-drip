@@ -2,7 +2,7 @@
 
 - **Spec:** [spec.md](./spec.md) revision 3.4
 - **Parent PRD:** `docs/projects/P003-entity-system-redesign/prd.md` (M4 — Phase 4 Lifecycle Closure)
-- **Status:** revision 2.4 (rev 2.3 was phase-reviewer-approved; rev 2.4 patches IF-2 COMMIT-ordering note per plan-reviewer iter 1 B2 verification: closure writes INSIDE existing transaction block (line ~1195-1199); caller's `completed` event STAYS OUTSIDE (preserves feature 088 FR-5.1 dual-write). Mixed-semantics boundary pinned.)
+- **Status:** revision 2.5 (rev 2.4 pinned closure-transaction boundary; rev 2.5 patches plan-reviewer iter 2 findings: §0 lists 3 parser sites (added entity_status.py:14-18); C8 expanded with C8.b for 5th-site cleanup; IF-8 target_files extended to 3 paths; C11 corrected to note db.get_entity_by_uuid ALREADY EXISTS at :4788 — reuse, don't duplicate.)
 
 ## §0 Prior Art Research
 
@@ -24,6 +24,7 @@ Empirical pins gathered before architecture (`file:line` references verified):
 - **`lifecycle_class` has NO CHECK constraint** — verified at `database.py:2983` and `:3294`. New lifecycle_class values ('bug_flow', 'task_flow') require NO migration widening for that column. Confirmed Pin K from spec.
 - **Free-text parsers at `entity_registry/backfill.py:418-444`** — derived_status block (NOT `hooks/lib/backfill.py` — the file lives at `entity_registry/backfill.py`). Cleanup removes only lines 422-444; `get_entity` + `upsert_entity` calls above it stay.
 - **Free-text parsers at `doctor/checks.py:983-1015`** — regex compilation + line-loop. Cleanup removes the loop; entities_conn cross-ref infrastructure below `:1029` stays.
+- **Free-text parsers at `reconciliation_orchestrator/entity_status.py:14-16` (5th-site discovery per Pin G trigger)** — `CLOSED_RE`, `PROMOTED_RE`, `FIXED_RE` regex compilations + `NAME_STRIP_RE` at `:18`; consumers at `:320, :322, :324, :329` map matched markers to status values. Cleanup removes the compilations + their consumer sites; status derivation migrates to read from DB (entities.status + entity_relations rows). Per spec FR-CL.1b.
 
 ### External Research (from internet-researcher dispatch)
 
@@ -138,10 +139,11 @@ Feature 111 is the closing chapter of project P003. It adds 4 cohesive sub-featu
 - VALID_ENTITY_TYPES Python constant extension is a source-code change in the same commit (NOT runtime).
 - `MIGRATIONS_DOWN[14]` reverses in opposite order, deletes spawned_child phase_events before narrowing CHECK.
 
-**C8 — Cleanup of free-text parsers** (`backfill.py:418-444`, `doctor/checks.py:983-1015`)
-- Delete the derived_status block in backfill.
-- Delete regex compilation + line-loop in doctor; preserve the entities_conn cross-ref infra.
-- Migrate `test_backfill.py:981,992,1037` and `test_entity_status.py:385-1168` fixtures to DB-state inputs.
+**C8 — Cleanup of free-text parsers** (3 production sites)
+- Delete the derived_status block in `entity_registry/backfill.py:418-444`.
+- Delete regex compilation + line-loop in `doctor/checks.py:983-1015`; preserve the entities_conn cross-ref infra.
+- **C8.b (5th-site, added per Pin G trigger)** — Delete `CLOSED_RE`, `PROMOTED_RE`, `FIXED_RE`, `NAME_STRIP_RE` regex compilations at `reconciliation_orchestrator/entity_status.py:14-18`. Migrate consumers at `:320-329` to read entity state from DB directly: the prior marker→status mapping ((closed:→dropped, fixed:→dropped, promoted →→promoted) is replaced by reading entities.status (already authoritative post-feature-109) and entity_relations rows for closed-by linkage. Strip the marker text from entity names via a name-cleanup migration (one-time, not on every read).
+- Migrate `entity_registry/test_backfill.py:981,992,1037` and `reconciliation_orchestrator/test_entity_status.py:385-1168` fixtures to DB-state inputs.
 
 **C9 — New doctor check `check_no_free_text_status_parsers`** (`doctor/checks.py`)
 - Uses `PROJECT_ROOT` env var → `git rev-parse --show-toplevel` fallback.
@@ -155,10 +157,10 @@ Feature 111 is the closing chapter of project P003. It adds 4 cohesive sub-featu
 - MCP-layer translation at `@mcp.tool()` boundary in `workflow_state_server.py` follows the existing `_translate_error()` pattern (or equivalent — design phase pins the helper name). Error JSON envelope: `{"error": true, "error_type": "<lowercased_class>", "message": "<exc_str>"}`. Per FR-EX.3.
 
 **C11 — New EntityDatabase helper methods** (encapsulation per CLAUDE.md "Never access db._conn directly")
-- `db.get_entity_by_uuid(uuid: str) -> dict | None` — SELECTs all columns for the given uuid; returns dict shape or None.
-- `db.get_prior_closer(to_uuid: str) -> str | None` — SELECTs `from_uuid` from `entity_relations WHERE to_uuid=? AND kind='fixes' LIMIT 1`; returns the uuid string or None.
-- `db.insert_entity_relation(from_uuid: str, to_uuid: str, kind: str, on_conflict: str = "raise") -> bool` — INSERTs into entity_relations; `on_conflict='ignore'` translates to `ON CONFLICT(from_uuid, to_uuid, kind) DO NOTHING`. Returns True if a row was inserted, False on conflict-ignore.
-- `db.resolve_entity_uuid(workspace_uuid: str, type_id: str) -> tuple[str | None, str | None]` — SELECTs `(uuid, workspace_uuid)` for the (workspace_uuid, type_id) pair; returns (None, None) if not found. Replaces the explicit `_conn.execute(SELECT uuid, workspace_uuid FROM entities WHERE ...)` in `_process_complete_phase`.
+- `db.get_entity_by_uuid(uuid: str)` — **ALREADY EXISTS at database.py:4788** (verified empirically per plan-reviewer iter 2). REUSE the existing method; do NOT define a new one. The return shape includes `kind`, `parent_uuid`, `workspace_uuid`, `type_id` — sufficient for IF-1 step 5 and IF-2 step 2 use-cases.
+- `db.get_prior_closer(to_uuid: str) -> str | None` (NEW) — SELECTs `from_uuid` from `entity_relations WHERE to_uuid=? AND kind='fixes' LIMIT 1`; returns the uuid string or None.
+- `db.insert_entity_relation(from_uuid: str, to_uuid: str, kind: str, on_conflict: str = "raise") -> bool` (NEW) — INSERTs into entity_relations; `on_conflict='ignore'` translates to `ON CONFLICT(from_uuid, to_uuid, kind) DO NOTHING`. Returns True if a row was inserted, False on conflict-ignore.
+- `db.resolve_entity_uuid(workspace_uuid: str, type_id: str) -> tuple[str | None, str | None]` (NEW) — SELECTs `(uuid, workspace_uuid)` for the (workspace_uuid, type_id) pair; returns (None, None) if not found. Replaces the explicit `_conn.execute(SELECT uuid, workspace_uuid FROM entities WHERE ...)` in `_process_complete_phase`.
 
 ## §2 Technical Decisions
 
@@ -822,6 +824,7 @@ def check_no_free_text_status_parsers(_db: EntityDatabase) -> CheckResult:
     target_files = [
         f"{project_root}/plugins/pd/hooks/lib/entity_registry/backfill.py",
         f"{project_root}/plugins/pd/hooks/lib/doctor/checks.py",
+        f"{project_root}/plugins/pd/hooks/lib/reconciliation_orchestrator/entity_status.py",
     ]
     pattern = r"\(closed:|\(promoted →|\(fixed:"
 
@@ -877,7 +880,7 @@ Group B: Discriminator + lifecycle extensions (application-logic Python only)
     ├── _CLOSES_TERMINAL = {'bug_flow': 'closed', 'task_flow': 'closed', 'work_flow': 'dropped'} (in database.py near _KIND_TO_TYPE_LIFECYCLE)
     ├── VALID_ENTITY_TYPES Python constant extension (add 'bug') — application code, NOT migration
     ├── EntityNotFoundError + InvalidCloseTargetError classes (per IF-9)
-    ├── New EntityDatabase helpers (C11): get_entity_by_uuid, get_prior_closer, insert_entity_relation, resolve_entity_uuid
+    ├── New EntityDatabase helpers (C11): get_prior_closer, insert_entity_relation, resolve_entity_uuid (REUSE existing get_entity_by_uuid at database.py:4788)
     ├── ENTITY_MACHINES NOT modified (status-only model per FR-BL)
     ├── transition_entity_phase: add defensive raise for kind in {'bug', 'task'} (AC-BL.7)
     ├── Audit test_workflow_state_server.py for ENTITY_MACHINES introspection assertions impacted by defensive raise — update if needed (per CLAUDE.md "ENTITY_MACHINES has assertions in TWO test files")

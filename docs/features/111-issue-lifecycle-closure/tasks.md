@@ -86,10 +86,22 @@
 - **Done when:** Prints "OK — Migration 14 smoke passes". Output is the red-equivalent gate (Group B's full test runs are the canonical red test).
 - **Time:** 5 min
 
-### Task A.9 — Commit Group A
-- **What:** `git add database.py; git commit -m "feat(111): Migration 14 — entity_relations table + (type,kind) + event_type CHECK widenings"`
-- **Done when:** Commit lands cleanly on feature branch. No test files in the commit.
-- **Time:** 3 min
+### Task A.9 — Commit Group A (with self-witnessing smoke evidence)
+- **What:** Capture the Task A.8 smoke output in the commit message so the migration commit is self-witnessed (compensates for atomic-DDL-only forbidding same-commit tests):
+  ```
+  git add database.py
+  git commit -m "$(cat <<'EOF'
+  feat(111): Migration 14 — entity_relations table + (type,kind) + event_type CHECK widenings
+
+  Local smoke validation (NOT committed):
+  $ .venv/bin/python -c "<A.8 inline script>"
+  → OK — Migration 14 smoke passes
+  → schema_version=14, entity_relations table present, 'bug' in (type,kind) CHECK, 'spawned_child' in event_type CHECK
+  EOF
+  )"
+  ```
+- **Done when:** Commit lands cleanly on feature branch. No test files in the commit. Commit message includes the smoke-output excerpt.
+- **Time:** 4 min
 
 **Group A total:** ~80 min for ~750 lines of DDL/migration code.
 
@@ -142,11 +154,13 @@
 - **Done when:** Tests added; FAIL.
 - **Time:** 5 min
 
-### Task B.5 — RED: Audit test_workflow_state_server.py (pre-pinned: NO updates needed)
-- **File:** `plugins/pd/mcp/test_workflow_state_server.py`
-- **What:** Pre-pin verified via `grep -n "ENTITY_MACHINES\[" plugins/pd/mcp/test_workflow_state_server.py`: 3 references at lines 6136, 6144, 6560 — all reference `'brainstorm'` or `'backlog'`. NONE reference `'bug'` or `'task'`. The defensive-raise change in Group B (Task B.15) does NOT impact these assertions. Verify pre-pin holds at implementation time, no fixture updates required.
-- **Done when:** Re-run grep returns same 3 line numbers, all referencing brainstorm/backlog only. Skip if pre-pin still holds.
-- **Time:** 3 min
+### Task B.5 — RED: Audit test_workflow_state_server.py + test_entity_lifecycle.py (pre-pinned: NO updates needed)
+- **Files:** `plugins/pd/mcp/test_workflow_state_server.py` + `plugins/pd/hooks/lib/entity_registry/test_entity_lifecycle.py`
+- **What:** Two greps, both pre-pinned:
+  1. `grep -n "ENTITY_MACHINES\[" plugins/pd/mcp/test_workflow_state_server.py plugins/pd/hooks/lib/entity_registry/test_entity_lifecycle.py` — verified 3 references in test_workflow_state_server.py at :6136, :6144, :6560, all reference `'brainstorm'`/`'backlog'`; NONE reference `'bug'`/`'task'`.
+  2. `grep -nE "transition_entity_phase\(.*['\"](bug|task)['\"]" plugins/pd/mcp/test_workflow_state_server.py plugins/pd/hooks/lib/entity_registry/test_entity_lifecycle.py` — verifies no existing call site passes bug/task to transition_entity_phase (would hit AC-BL.7's existing raise pattern).
+- **Done when:** Both greps return same results as pre-pin (no bug/task references). Skip if pre-pin holds. If new references found, decide migrate-fixture vs delete-test BEFORE Task B.15.
+- **Time:** 4 min
 
 ### Task B.6 — GREEN: Add EntityNotFoundError + InvalidCloseTargetError
 - **File:** `database.py` near line 4484 (`EntityExistsError`)
@@ -166,11 +180,11 @@
 - **Done when:** Dict has 9 rows; tests B.2 row referencing bug/task pass.
 - **Time:** 3 min
 
-### Task B.9 — GREEN: Extend `_VALID_PARAMS`
-- **File:** `database.py:4442`
-- **What:** Add `'spawned_child': {'metadata'}` row to dict.
-- **Done when:** Dict has 8 rows.
-- **Time:** 3 min
+### Task B.9 — GREEN: Extend `_VALID_PARAMS` AND `_REQUIRED_PARAMS`
+- **File:** `database.py:4442` (_VALID_PARAMS) and `:4452` (_REQUIRED_PARAMS)
+- **What:** Add `'spawned_child': {'metadata'}` to BOTH dicts. The `_REQUIRED_PARAMS` row enforces that `spawned_child` events MUST carry metadata (prevents future callers from writing NULL-metadata audit-trail rows). Per plan-reviewer iter 2 W4.
+- **Done when:** Both dicts have new row. Test asserting `append_phase_event(event_type='spawned_child', metadata=None)` raises ValueError passes (added to test_status_only_lifecycle.py).
+- **Time:** 4 min
 
 ### Task B.10 — GREEN: Extend `VALID_ENTITY_TYPES` tuple
 - **File:** `database.py:4534`
@@ -178,11 +192,11 @@
 - **Done when:** Tuple has 9 values; tests pass.
 - **Time:** 3 min
 
-### Task B.11 — GREEN: Add `db.get_entity_by_uuid` method
-- **File:** `database.py` (alongside existing entity methods)
-- **What:** Public method: `def get_entity_by_uuid(self, uuid: str) -> dict | None`. SELECTs all entities columns for the uuid; returns dict (use `sqlite3.Row` → dict conversion) or None.
-- **Done when:** Method works; unit test in test_status_only_lifecycle.py passes.
-- **Time:** 7 min
+### Task B.11 — REUSE existing `db.get_entity_by_uuid` (NO new code)
+- **File:** `plugins/pd/hooks/lib/entity_registry/database.py:4788` (existing method)
+- **What:** Per plan-reviewer iter 2 B2 verification: `db.get_entity_by_uuid` ALREADY EXISTS at `:4788` and returns a dict including `kind`, `parent_uuid`, `workspace_uuid`, `type_id`. Sufficient for IF-1 step 5 + IF-2 step 2 use cases. NO new code. Update consumer call sites in C1 (issue_spawn) and C5 (closure block) to call the existing method.
+- **Done when:** Verified the existing return shape covers required fields. Test in test_status_only_lifecycle.py imports and uses the existing method.
+- **Time:** 2 min
 
 ### Task B.12 — GREEN: Add `db.get_prior_closer` method
 - **File:** `database.py`
@@ -307,15 +321,26 @@
 
 ## Group E — Cleanup + new doctor check (parallelizable with C, D after B)
 
-### Task E.0 — Inventory parser-dependent tests
-- **Files (read-only):** `plugins/pd/hooks/lib/entity_registry/test_backfill.py:981, 992, 1037` and `plugins/pd/hooks/lib/entity_registry/test_entity_status.py:385-1168`.
-- **What:** Read each parser-dependent test region. Triage each test into:
-  - **Migrate** — test has meaningful DB-state assertion; refactor fixture to use synthetic entities with explicit `status=` column instead of free-text marker.
-  - **Delete** — test ONLY exercises parser logic (no DB-state path); deletion replaces with positive doctor-lint test in AC-CL.4.
-  - **Keep** — test does not actually depend on the parser (false positive).
-  Emit a triage list as a comment block at the top of Group E's commit message: `# Triage: <test_name> → migrate|delete|keep`. Expected counts per spec R3: ~10 tests affected; expected delete-rate <30%.
-- **Done when:** Triage list written (memo, not committed); E.5 + E.6 follow the list.
-- **Time:** 10 min
+### Task E.0 — Inventory parser-dependent tests (deliverable as committed checklist)
+- **Files (read-only inventory):** `plugins/pd/hooks/lib/entity_registry/test_backfill.py:981, 992, 1037` and `plugins/pd/hooks/lib/reconciliation_orchestrator/test_entity_status.py:385-1168` (path corrected).
+- **Deliverable:** `docs/features/111-issue-lifecycle-closure/cleanup-inventory.md` — a markdown checklist file committed as part of Group E's first commit. Format:
+  ```markdown
+  # Group E Cleanup Inventory
+
+  ## Migrate (DB-state refactor)
+  - [ ] test_backfill.py::test_xxx — uses (closed:) fixture; refactor to status='closed'
+  - ...
+
+  ## Delete (parser-only exercise, no DB path)
+  - [ ] test_entity_status.py::test_yyy — only asserts CLOSED_RE match; no DB equivalent
+  - ...
+
+  ## Keep (false positive)
+  - [ ] ...
+  ```
+  Each entry has a one-line rationale. Expected counts per spec R3: ~10 tests affected; expected delete-rate <30%.
+- **Done when:** `cleanup-inventory.md` committed; the rest of Group E's tasks (E.1, E.5, E.6) use this list as the gate.
+- **Time:** 12 min
 
 ### Task E.1 — RED: Write test_cleanup_suffix_parsers.py
 - **File:** `plugins/pd/hooks/lib/entity_registry/test_cleanup_suffix_parsers.py` (NEW)
@@ -347,6 +372,12 @@
 - **Done when:** Grep at AC-CL.1 passes against this file.
 - **Time:** 5 min
 
+### Task E.4b — DELETE: Free-text parsers at reconciliation_orchestrator/entity_status.py:14-18 (5th-site cleanup per Pin G trigger)
+- **File:** `plugins/pd/hooks/lib/reconciliation_orchestrator/entity_status.py`
+- **What:** DELETE `CLOSED_RE`, `PROMOTED_RE`, `FIXED_RE`, `NAME_STRIP_RE` regex compilations at lines 14-18. Migrate consumers at `:320, :322, :324, :329`: the prior marker→status mapping (closed:→dropped, fixed:→dropped, promoted →→promoted) is replaced by reading `entities.status` directly (already authoritative post-feature-109). Strip the marker text from any cosmetic name display via a name-cleanup migration (one-time, not on every read) — if applicable to AC, otherwise leave existing name text intact (markers remain in entity.name but parser never reads them).
+- **Done when:** Grep at AC-CL.1 returns 0 hits against this file. Consumers at :320-329 successfully read from DB without parser involvement.
+- **Time:** 12 min
+
 ### Task E.5 — Migrate test_backfill.py fixtures
 - **File:** `plugins/pd/hooks/lib/entity_registry/test_backfill.py:981, 992, 1037`
 - **What:** Audit each test. If a test ONLY exercises the parser, delete it. If it has a meaningful DB-state assertion, refactor the fixture to use synthetic entities with explicit status= columns instead of free-text-marker description.
@@ -354,10 +385,10 @@
 - **Time:** 12 min
 
 ### Task E.6 — Migrate test_entity_status.py fixtures
-- **File:** `plugins/pd/hooks/lib/entity_registry/test_entity_status.py:385-1168`
-- **What:** Same triage as E.5 — preserve fixtures using DB-state, delete parser-exercise-only tests.
+- **File:** `plugins/pd/hooks/lib/reconciliation_orchestrator/test_entity_status.py:385-1168` (path corrected — file lives in reconciliation_orchestrator/, not entity_registry/)
+- **What:** Same triage as E.5 — preserve fixtures using DB-state, delete parser-exercise-only tests. Use Task E.0's pre-committed inventory list as the gate.
 - **Done when:** All tests pass.
-- **Time:** 12 min
+- **Time:** 14 min
 
 ### Task E.7 — GREEN: Implement check_no_free_text_status_parsers
 - **File:** `plugins/pd/hooks/lib/doctor/checks.py` (bottom)
@@ -419,12 +450,12 @@
 
 | Group | Time | Tasks |
 |---|---|---|
-| A | 80 min | 9 (incl. red-equivalent smoke at A.8) |
-| B | 120 min | 17 |
+| A | 82 min | 9 (incl. red-equivalent smoke at A.8 + commit-witnessing at A.9) |
+| B | 117 min | 17 (B.11 reduced — reuse existing get_entity_by_uuid; B.9 adds _REQUIRED_PARAMS; B.15 simplified) |
 | C | 60 min | 4 |
 | D | 85 min | 5 |
-| E | 95 min | 11 (incl. inventory at E.0) |
+| E | 110 min | 12 (added E.4b for 5th-site cleanup; E.0 inventory deliverable; E.6 path corrected) |
 | X | 20 min | 3 |
-| **Total** | **460 min (~7.7h)** | **49** |
+| **Total** | **474 min (~7.9h)** | **50** |
 
 With parallel execution of C/D/E after B merges: critical path ≈ A (80) + B (120) + max(C, D, E) (85) + X (20) = **~305 min**.

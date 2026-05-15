@@ -1,8 +1,8 @@
 # Plan — Feature 111: Issue Lifecycle Closure
 
-- **Spec:** spec.md rev 3.4
-- **Design:** design.md rev 2.4 (updated during plan-reviewer iter 1 — IF-2 transaction boundary RESOLVED)
-- **Status:** revision 2 (addresses plan-reviewer iter 1: 4 blockers + 6 warnings + 2 suggestions)
+- **Spec:** spec.md rev 3.5 (Pin G trigger — 5th parser site added to scope)
+- **Design:** design.md rev 2.5 (C8.b + IF-8 target_files = 3 paths; C11 corrected to note get_entity_by_uuid exists)
+- **Status:** revision 3 (addresses plan-reviewer iter 2: 2 blockers + 4 warnings + 2 suggestions)
 - **Mode:** standard
 
 ## §1 Strategy
@@ -14,7 +14,7 @@
 - **TDD red-first vs atomic-DDL-only.** Atomic-DDL wins for Group A — migration commit ships DDL only (no test file in the same commit) per features 109/110 precedent. **Red-first compensation:** Task A.8 runs a local Python REPL smoke test (NOT committed) against a tmpfs DB that asserts the post-migration schema state. This is the red-equivalent gate before Group A commits. Group B's `test_migration_14_safety.py` is the full red test (runs after Group B's exception/helper symbols exist).
 - **Closure transaction boundary (RESOLVED — design IF-2 patched to rev 2.4).** Feature 088 FR-5.1 mandates caller's `completed` phase_event STAYS OUTSIDE the existing `with db.transaction():` block (current `workflow_state_server.py:1202-1229` post-commit dual-write — "MUST NOT roll back" comment). For F10, **closure writes go INSIDE** the existing transaction block (alongside `update_entity` for metadata at ~line 1195 / before transaction-close at ~line 1199); **caller's `completed` event stays OUTSIDE** (preserves FR-5.1). Mixed semantics: closure side atomic, caller side best-effort dual-write. Implementer inserts closure block between `db.update_workflow_phase(...)` (line ~1195) and end of with-block (line ~1199).
 - **Group E parallel-with-D safety (RESOLVED).** AC-CL.3's doctor synthetic test uses HAND-CRAFTED DB fixtures (direct INSERT into entities + entity_relations rows; NO call to `complete_phase(closes=)`). E remains parallelizable with D. Integration coverage of F10→doctor lives in Group D's own tests (AC-10.x).
-- **Same-PR enforcement.** Group A and Group B MUST land in the same PR. Implementer **creates both commits locally and pushes as a single `git push` invocation** — no intermediate push between commits. PR description must list both commit SHAs.
+- **Same-PR enforcement.** Group A and Group B MUST land in the same PR. Implementer **creates both commits locally and pushes as a single `git push` invocation** — no intermediate push between commits. PR description must list both commit SHAs. **Verification gate:** at PR-merge time, assert `git log --oneline GROUP_A_SHA..GROUP_B_SHA | wc -l == 1` (B is the immediate successor of A, no interleaved commits). PR template or merge checklist line: "Confirm Group A → Group B commits are immediately adjacent (no interleaved commits)." Group A's commit message captures the local-smoke-test output (Task A.8) so the commit is self-witnessed.
 
 ### §1.2 TDD ordering per Group
 
@@ -114,12 +114,12 @@ Each Group's task list below is split into RED-first (tests) then GREEN (product
 
 **Additions:**
 - `_KIND_TO_TYPE_LIFECYCLE` at database.py:48: add `'bug': ('work', 'bug_flow')`; remap `'task': ('work', 'task_flow')`.
-- `_VALID_PARAMS` at database.py:4442: add `'spawned_child': {'metadata'}`.
+- `_VALID_PARAMS` at database.py:4442: add `'spawned_child': {'metadata'}`. **Also `_REQUIRED_PARAMS` at database.py:4452: add `'spawned_child': {'metadata'}`** (per plan-reviewer iter 2 W4 — preserves audit-trail guarantee that spawned_child events carry the required metadata payload).
 - `_CLOSES_TERMINAL` (NEW module-level dict at database.py near `_KIND_TO_TYPE_LIFECYCLE`): `{'bug_flow': 'closed', 'task_flow': 'closed', 'work_flow': 'dropped'}`.
 - `VALID_ENTITY_TYPES` tuple at database.py:4534: add `'bug'` (9 values total).
 - `EntityNotFoundError(ValueError)` + `InvalidCloseTargetError(ValueError)` near EntityExistsError at :4484.
-- 4 new EntityDatabase methods: `get_entity_by_uuid`, `get_prior_closer`, `insert_entity_relation`, `resolve_entity_uuid`.
-- `transition_entity_phase`: pre-validation raise for `kind in {'bug', 'task'}` with message `"invalid_entity_type: {kind} uses status-only lifecycle; use update_entity directly"`.
+- 3 new EntityDatabase methods: `get_prior_closer`, `insert_entity_relation`, `resolve_entity_uuid`. **REUSE existing `db.get_entity_by_uuid` at database.py:4788** (per plan-reviewer iter 2 B2 — verified existing method covers IF-1 step 5 + IF-2 step 2 use cases).
+- `transition_entity_phase`: AC-BL.7 satisfied by existing code at `entity_lifecycle.py:148-150` (raises `ValueError("invalid_entity_type: ... — only brainstorm and backlog supported")` when entity_type not in ENTITY_MACHINES). NO new defensive raise needed.
 
 **Acceptance:** All AC-BL.x + AC-EX.x + AC-MR.x pass. `pytest plugins/pd/hooks/lib/entity_registry/test_status_only_lifecycle.py test_migration_14_safety.py test_entity_lifecycle.py -v` green.
 
@@ -155,7 +155,7 @@ Each Group's task list below is split into RED-first (tests) then GREEN (product
 - `plugins/pd/mcp/workflow_state_server.py:1086` (`_process_complete_phase`) and `:1809` (MCP signature) — add `closes` kwarg + closure block per IF-2.
 - `plugins/pd/mcp/test_complete_phase_closes.py` (NEW) — verifies AC-10.x.
 
-**Implementation pin (RESOLVED in design rev 2.4 + plan §1.1):** Closure writes (FR-10.3 steps 6, 7) land INSIDE the existing `with db.transaction():` block (between `db.update_workflow_phase(...)` at line ~1195 and the close of the with-block at line ~1199). The caller's `completed` phase_event dual-write at lines 1202-1229 (feature 088 FR-5.1) STAYS OUTSIDE the transaction. Mixed semantics — closure side atomic, caller side best-effort — is the deliberate boundary.
+**Implementation pin (RESOLVED in design rev 2.5 + plan §1.1):** Closure writes (FR-10.3 steps 6, 7) land INSIDE the existing `with db.transaction():` block (between `db.update_workflow_phase(...)` at line ~1198 and the close of the with-block at line ~1199). **Sibling, NOT nested:** the closure block is a sibling of (NOT inside) the `if feature_type_id.startswith("feature:")` block at line 1195 — closure writes fire for ANY caller kind when `closes` is non-empty, not just features. Mis-nesting would silently skip closure transitions for non-feature callers despite `closes=` being passed. The caller's `completed` phase_event dual-write at lines 1202-1229 (feature 088 FR-5.1) STAYS OUTSIDE the transaction. Mixed semantics — closure side atomic, caller side best-effort — is the deliberate boundary.
 
 **Acceptance:** All AC-10.x (10.1 through 10.11) pass. `pytest plugins/pd/mcp/test_complete_phase_closes.py -v` green.
 
@@ -172,10 +172,11 @@ Each Group's task list below is split into RED-first (tests) then GREEN (product
 **Files:**
 - `plugins/pd/hooks/lib/entity_registry/backfill.py:418-444` — DELETE derived_status block.
 - `plugins/pd/hooks/lib/doctor/checks.py:983-1015` — DELETE regex compilation + line-loop; preserve entities_conn cross-ref infra.
-- `plugins/pd/hooks/lib/doctor/checks.py` (bottom) — add `check_no_free_text_status_parsers` per IF-8.
+- `plugins/pd/hooks/lib/reconciliation_orchestrator/entity_status.py:14-18` — DELETE `CLOSED_RE`, `PROMOTED_RE`, `FIXED_RE`, `NAME_STRIP_RE` regex compilations. Migrate consumers at `:320-329` to read from DB (entities.status + entity_relations). Per spec FR-CL.1b (added per Pin G trigger).
+- `plugins/pd/hooks/lib/doctor/checks.py` (bottom) — add `check_no_free_text_status_parsers` per IF-8 (3 target paths).
 - `plugins/pd/hooks/lib/doctor/__init__.py:12-31` (import block) + `:33` (CHECK_ORDER list start) — register new check.
 - `plugins/pd/hooks/lib/entity_registry/test_backfill.py:981, 992, 1037` — migrate fixtures to DB-state inputs OR delete parser-exercise-only tests.
-- `plugins/pd/hooks/lib/entity_registry/test_entity_status.py:385-1168` — same triage.
+- `plugins/pd/hooks/lib/reconciliation_orchestrator/test_entity_status.py:385-1168` — same triage (path correction: file lives in reconciliation_orchestrator/, not entity_registry/).
 - `plugins/pd/hooks/lib/entity_registry/test_cleanup_suffix_parsers.py` (NEW) — verifies AC-CL.x.
 - `plugins/pd/hooks/lib/doctor/test_doctor.py` — extend with `check_no_free_text_status_parsers` smoke tests + 2-CWD assertion.
 
