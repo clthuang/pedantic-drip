@@ -1,9 +1,0 @@
-{
-  "id": "002",
-  "slug": "change-workflow-ordering",
-  "status": "completed",
-  "mode": "standard",
-  "created": "2026-01-29T00:00:00Z",
-  "completed": "2026-01-30T00:00:00Z",
-  "branch": "feature/002-change-workflow-ordering"
-}
