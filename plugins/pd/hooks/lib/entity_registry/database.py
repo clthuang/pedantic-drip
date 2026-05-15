@@ -7710,21 +7710,76 @@ class EntityDatabase:
         ws_uuid = self._resolve_optional_workspace_filter(
             workspace_uuid, project_id, _caller="scan_entity_ids"
         )
+        # Feature 110 (Group 4 / FR-8.3a): prefer entity_display as the
+        # source-of-truth for seq/slug identity. JOIN entity_display on
+        # entities.uuid and reconstruct entity_id as ``{seq}-{slug}``. This
+        # decouples the function from any future ``entities.entity_id`` column
+        # rename and matches the design §5 invariant that entity_id parsing
+        # only happens in ``_migration_13_*`` functions and test files.
+        #
+        # Defense-in-depth (per implementer brief): rows whose entity_display
+        # row is missing (test fixtures inserted via raw SQL or
+        # ``_register_entity_no_display``) fall back to the raw entity_id
+        # value with a WARN log so the fixture continues to work during the
+        # transition window.
         # F11 (Group 6): the legacy ``entity_type`` column was dropped by
         # migration 12; filter on ``kind`` (same value for the 5 production
         # kinds per FR-1).
-        if ws_uuid is not None:
-            rows = self._conn.execute(
-                "SELECT entity_id FROM entities "
-                "WHERE kind = ? AND workspace_uuid = ?",
-                (entity_type, ws_uuid),
-            ).fetchall()
-        else:
-            rows = self._conn.execute(
-                "SELECT entity_id FROM entities WHERE kind = ?",
-                (entity_type,),
-            ).fetchall()
-        return [row["entity_id"] for row in rows]
+        try:
+            if ws_uuid is not None:
+                rows = self._conn.execute(
+                    "SELECT e.entity_id AS entity_id, "
+                    "       d.seq AS seq, d.slug AS slug "
+                    "FROM entities e "
+                    "LEFT JOIN entity_display d ON d.uuid = e.uuid "
+                    "WHERE e.kind = ? AND e.workspace_uuid = ?",
+                    (entity_type, ws_uuid),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT e.entity_id AS entity_id, "
+                    "       d.seq AS seq, d.slug AS slug "
+                    "FROM entities e "
+                    "LEFT JOIN entity_display d ON d.uuid = e.uuid "
+                    "WHERE e.kind = ?",
+                    (entity_type,),
+                ).fetchall()
+        except sqlite3.OperationalError as exc:
+            # Pre-migration-13: entity_display table does not exist. Degrade
+            # to the pre-port query shape so backfill, tests, and any caller
+            # invoking scan_entity_ids before migration 13 still works.
+            if "no such table" not in str(exc).lower():
+                raise
+            if ws_uuid is not None:
+                rows = self._conn.execute(
+                    "SELECT entity_id, NULL AS seq, NULL AS slug "
+                    "FROM entities "
+                    "WHERE kind = ? AND workspace_uuid = ?",
+                    (entity_type, ws_uuid),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT entity_id, NULL AS seq, NULL AS slug "
+                    "FROM entities WHERE kind = ?",
+                    (entity_type,),
+                ).fetchall()
+
+        out: list[str] = []
+        for row in rows:
+            seq = row["seq"]
+            slug = row["slug"]
+            if seq is not None and slug is not None:
+                out.append(f"{seq}-{slug}")
+            else:
+                # Defense-in-depth: entity_display row missing (e.g., test
+                # fixture used _register_entity_no_display / raw SQL insert).
+                sys.stderr.write(
+                    f"[entity_registry] scan_entity_ids: no entity_display "
+                    f"row for entity_id={row['entity_id']!r} "
+                    f"(kind={entity_type}); falling back to entities.entity_id\n"
+                )
+                out.append(row["entity_id"])
+        return out
 
     def next_sequence_value(
         self,
@@ -7809,6 +7864,34 @@ class EntityDatabase:
             except sqlite3.Error:
                 pass
             raise
+
+    def get_entity_display(self, entity_uuid: str) -> dict | None:
+        """Return the ``entity_display`` row for an entity, or ``None``.
+
+        Feature 110 Group 6 helper: encapsulates the entity_display lookup
+        so callers (e.g., ``backfill.py``) need not reach into the private
+        ``_conn`` attribute. Degrades gracefully on pre-migration-13 DBs
+        where the ``entity_display`` table does not yet exist.
+
+        Returns a dict-like row with ``seq`` and ``slug`` columns, or
+        ``None`` if no row exists (or the table is missing).
+        """
+        if not entity_uuid:
+            return None
+        try:
+            row = self._conn.execute(
+                "SELECT seq, slug FROM entity_display WHERE uuid = ?",
+                (entity_uuid,),
+            ).fetchone()
+        except sqlite3.OperationalError as exc:
+            if "no such table" in str(exc).lower():
+                return None
+            raise
+        if row is None:
+            return None
+        # Convert to plain dict for consistency with other return shapes
+        # and to insulate callers from the row_factory choice.
+        return {"seq": row["seq"], "slug": row["slug"]}
 
     def is_healthy(self) -> bool:
         """Check if the database connection is alive and usable.

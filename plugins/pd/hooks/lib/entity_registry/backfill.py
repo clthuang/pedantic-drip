@@ -476,6 +476,54 @@ def _scan_brainstorms(db: EntityDatabase, artifacts_root: str, project_id: str =
         registered_stems.add(stem)
 
 
+def _read_entity_display_for_project(
+    db: EntityDatabase, meta: dict
+) -> dict | None:
+    """Look up the ``entity_display`` row for a project whose ``.meta.json``
+    has been read off disk (feature 110 FR-8.3c port).
+
+    Returns the ``(seq, slug)`` row if both (a) the project entity is
+    already registered in the DB (re-run scenario) AND (b) ``entity_display``
+    has a corresponding row. Returns ``None`` for first-pass backfill where
+    the entity does not yet exist, OR if ``entity_display`` is absent
+    (pre-migration-13).
+
+    The caller falls back to ``meta.get("id", "")`` when this returns
+    ``None`` — see the ``if row is None`` branch in ``_scan_projects``.
+    """
+    # fallback: read id from .meta.json (no entity_display row exists yet).
+    proj_id_from_meta = meta.get("id", "")
+    if not proj_id_from_meta:
+        return None
+    existing = db.get_entity(f"project:{proj_id_from_meta}")
+    if existing is None:
+        return None
+    return db.get_entity_display(existing.get("uuid"))
+
+
+def _read_entity_display_for_feature(
+    db: EntityDatabase, meta: dict
+) -> dict | None:
+    """Look up the ``entity_display`` row for a feature whose ``.meta.json``
+    has been read off disk (feature 110 FR-8.3c port).
+
+    The feature's composite entity_id is ``f"{meta.id}-{meta.slug}"``. We
+    use that to locate the entity row; if absent (first-pass backfill), or
+    if entity_display has no row, returns ``None`` so the caller falls back
+    to ``meta.get("id", "")`` / ``meta.get("slug", "")`` reads.
+    """
+    # fallback: read id/slug from .meta.json (no entity_display row yet).
+    feat_id = meta.get("id", "")
+    slug = meta.get("slug", "")
+    if not feat_id:
+        return None
+    composite = f"{feat_id}-{slug}" if slug else feat_id
+    existing = db.get_entity(f"feature:{composite}")
+    if existing is None:
+        return None
+    return db.get_entity_display(existing.get("uuid"))
+
+
 def _scan_projects(db: EntityDatabase, artifacts_root: str, project_id: str = "__unknown__") -> None:
     """Glob project .meta.json files and register each as a project entity."""
     proj_dir = os.path.join(artifacts_root, "projects")
@@ -488,7 +536,17 @@ def _scan_projects(db: EntityDatabase, artifacts_root: str, project_id: str = "_
         if meta is None:
             continue
 
-        proj_entity_id = meta.get("id", "")
+        # F4-AUDIT: read seq from entity_display when an entity row already
+        # exists (FR-8.3c). Backfill is typically a first-pass populator,
+        # but for re-runs (idempotent backfill) the entity_display table is
+        # already populated and is the canonical source of seq/slug. The
+        # ``meta.get("id", "")`` read remains as a defense-in-depth
+        # fallback for first-pass invocations.
+        row = _read_entity_display_for_project(db, meta)
+        if row is None:
+            proj_entity_id = meta.get("id", "")
+        else:
+            proj_entity_id = str(row["seq"])
         name = meta.get("name", proj_entity_id)
 
         # F12 audit: idempotent backfill → upsert_entity
@@ -517,8 +575,17 @@ def _scan_features(db: EntityDatabase, artifacts_root: str, project_id: str = "_
         if meta is None:
             continue
 
-        feat_id = meta.get("id", "")
-        slug = meta.get("slug", "")
+        # F4-AUDIT: prefer entity_display as source-of-truth for seq + slug
+        # (FR-8.3c). For re-run backfill the entity already exists in DB and
+        # entity_display is canonical. First-pass backfill (entity not yet
+        # in DB) falls back to the ``.meta.json`` reads below.
+        row = _read_entity_display_for_feature(db, meta)
+        if row is None:
+            feat_id = meta.get("id", "")
+            slug = meta.get("slug", "")
+        else:
+            feat_id = str(row["seq"])
+            slug = row["slug"]
         entity_id = f"{feat_id}-{slug}" if slug else feat_id
         name = meta.get("name", "")
         if not name:
