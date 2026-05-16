@@ -1356,22 +1356,16 @@ def _process_complete_phase(
                 _target_project_id = _resolve_project_id(entity) if entity else "__unknown__"
                 for to_uuid, target_type_id, old_status, terminal, is_replay in closure_targets:
                     if not is_replay:
+                        # Feature 115 FR-C-115.1: F111 manual emit removed. The
+                        # db.update_entity call below now emits entity_status_changed
+                        # itself (post-UPDATE, fail-open) per spec FR-C.1 + AC-C-115.1.
+                        # closed_by_uuid metadata key is permanently lost in closures
+                        # (operators correlate via entity_relations.fixes per F111 IF-2
+                        # step 7 — see 114 spec Pin F.1 entry #3 trade-off note).
                         db.update_entity(
                             to_uuid,
                             status=terminal,
                             workspace_uuid=caller_workspace_uuid,
-                        )
-                        db.append_phase_event(
-                            type_id=target_type_id,
-                            project_id=_target_project_id,
-                            workspace_uuid=caller_workspace_uuid,
-                            event_type="entity_status_changed",
-                            phase=None,
-                            metadata={
-                                "old_status": old_status,
-                                "new_status": terminal,
-                                "closed_by_uuid": from_uuid,
-                            },
                         )
 
                 # FR-10.3 step 7 — INSERT entity_relations idempotently.

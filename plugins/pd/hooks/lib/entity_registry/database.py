@@ -7297,6 +7297,77 @@ class EntityDatabase:
             )
             self._commit()  # no-op inside transaction(); commit handled by context manager
 
+        # Feature 115 FR-C-115.1: audit invariant emit.
+        # When status mutates (status is not None AND status != old), emit an
+        # entity_status_changed phase_event. Fail-open per spec FR-C.2 + 114 TD-2:
+        # status UPDATE has already committed; emit failures NEVER propagate.
+        # Per spec AC-C.4: no-op writes (same status) do NOT emit.
+        if status is not None and old_row is not None and old_row["status"] != status:
+            try:
+                # Resolve type_id + workspace_uuid for the emit. project_id is
+                # derived from workspace_uuid via the workspaces JOIN (post-F109).
+                entity_meta = self._conn.execute(
+                    "SELECT type_id, workspace_uuid FROM entities WHERE uuid = ?",
+                    (entity_uuid,),
+                ).fetchone()
+                if entity_meta is not None:
+                    # project_id from workspaces table (legacy field still required
+                    # by append_phase_event signature).
+                    ws_row = self._conn.execute(
+                        "SELECT project_id_legacy FROM workspaces WHERE uuid = ?",
+                        (entity_meta["workspace_uuid"],),
+                    ).fetchone()
+                    _project_id = (
+                        ws_row["project_id_legacy"]
+                        if ws_row and ws_row["project_id_legacy"]
+                        else "__unknown__"
+                    )
+                    self.append_phase_event(
+                        type_id=entity_meta["type_id"],
+                        project_id=_project_id,
+                        workspace_uuid=entity_meta["workspace_uuid"],
+                        event_type="entity_status_changed",
+                        phase=None,
+                        metadata={
+                            "old_status": old_row["status"],
+                            "new_status": status,
+                        },
+                    )
+            except Exception as exc:
+                # Outer fail-open: emit failure must NEVER propagate (TD-2).
+                # Inner fail-open: counter write may itself fail (e.g., lock
+                # contention); emit a secondary stderr line so the failure is
+                # at least visible.
+                try:
+                    _md = self._conn.execute(
+                        "SELECT value FROM _metadata WHERE key='audit_emit_failed_count'"
+                    ).fetchone()
+                    _ct = (int(_md[0]) if _md else 0) + 1
+                    self._conn.execute(
+                        "INSERT OR REPLACE INTO _metadata(key, value) VALUES (?, ?)",
+                        ("audit_emit_failed_count", str(_ct)),
+                    )
+                    self._conn.commit()
+                except Exception as counter_exc:
+                    print(
+                        f"pd.audit.counter_write_failed: "
+                        f'{{"type_id": {entity_uuid!r}, '
+                        f'"exception_class": {type(counter_exc).__name__!r}}}',
+                        file=sys.stderr,
+                    )
+                try:
+                    print(
+                        f"pd.audit.emit_failed: "
+                        f'{{"type_id": {entity_uuid!r}, '
+                        f'"old_status": {(old_row["status"] if old_row else None)!r}, '
+                        f'"new_status": {status!r}, '
+                        f'"exception_class": {type(exc).__name__!r}}}',
+                        file=sys.stderr,
+                    )
+                except Exception:
+                    pass  # stderr write itself failed; nothing more we can do
+                # NO re-raise. Status UPDATE has already committed.
+
         # Cascade unblock: when an entity is completed, remove it from all
         # blocked_by lists and promote fully-unblocked dependents.
         # Placed AFTER transaction exits (TD-1) to avoid nested transactions.
