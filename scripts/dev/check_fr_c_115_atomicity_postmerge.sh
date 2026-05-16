@@ -21,9 +21,9 @@ SHA=$(git log --grep='^FR-C-115.1:' --pretty=format:%H "${MERGE_BASE}..HEAD" | h
 if [[ -z "$SHA" ]]; then
     # No FR-C-115.1 commit on branch — check if either change-half slipped through unmarked.
     UNMARKED_DB=$(git diff "$MERGE_BASE..HEAD" -- plugins/pd/hooks/lib/entity_registry/database.py \
-        | grep -cE '^\+.*append_phase_event.*entity_status_changed' || true)
+        | grep -cE '^\+.*event_type[[:space:]]*=[[:space:]]*"entity_status_changed"' || true)
     UNMARKED_WSS=$(git diff "$MERGE_BASE..HEAD" -- plugins/pd/mcp/workflow_state_server.py \
-        | grep -cE '^-.*append_phase_event.*entity_status_changed' || true)
+        | grep -cE '^-.*event_type[[:space:]]*=[[:space:]]*"entity_status_changed"' || true)
     if [[ "$UNMARKED_DB" -gt 0 || "$UNMARKED_WSS" -gt 0 ]]; then
         echo "ERROR: FR-C-115 change-half present without marked commit. Atomicity unverified." >&2
         echo "  Unmarked database.py emit additions: $UNMARKED_DB" >&2
@@ -40,10 +40,21 @@ git show "$SHA" --name-only | grep -q 'plugins/pd/hooks/lib/entity_registry/data
 git show "$SHA" --name-only | grep -q 'plugins/pd/mcp/workflow_state_server.py' || {
     echo "ERROR: $SHA missing workflow_state_server.py" >&2; exit 1
 }
-git show "$SHA" -- plugins/pd/hooks/lib/entity_registry/database.py | grep -qE '^\+.*append_phase_event.*entity_status_changed' || {
-    echo "ERROR: $SHA missing emit insertion in database.py" >&2; exit 1
+# Multi-line call sites: append_phase_event and event_type="entity_status_changed"
+# typically appear on separate lines in Python. Check both signal lines are
+# in the diff (additions for database.py, deletions for workflow_state_server.py).
+DB_DIFF=$(git show "$SHA" -- plugins/pd/hooks/lib/entity_registry/database.py)
+echo "$DB_DIFF" | grep -qE '^\+.*append_phase_event' || {
+    echo "ERROR: $SHA missing append_phase_event addition in database.py" >&2; exit 1
 }
-git show "$SHA" -- plugins/pd/mcp/workflow_state_server.py | grep -qE '^-.*append_phase_event.*entity_status_changed' || {
-    echo "ERROR: $SHA missing manual emit deletion in workflow_state_server.py" >&2; exit 1
+echo "$DB_DIFF" | grep -qE '^\+.*event_type[[:space:]]*=[[:space:]]*"entity_status_changed"' || {
+    echo "ERROR: $SHA missing event_type=\"entity_status_changed\" addition in database.py" >&2; exit 1
+}
+WSS_DIFF=$(git show "$SHA" -- plugins/pd/mcp/workflow_state_server.py)
+echo "$WSS_DIFF" | grep -qE '^-.*append_phase_event' || {
+    echo "ERROR: $SHA missing append_phase_event deletion in workflow_state_server.py" >&2; exit 1
+}
+echo "$WSS_DIFF" | grep -qE '^-.*event_type[[:space:]]*=[[:space:]]*"entity_status_changed"' || {
+    echo "ERROR: $SHA missing event_type=\"entity_status_changed\" deletion in workflow_state_server.py" >&2; exit 1
 }
 exit 0

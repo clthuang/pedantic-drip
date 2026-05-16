@@ -16,9 +16,9 @@
 set -euo pipefail
 
 DB_ADDS=$(git diff --cached -- plugins/pd/hooks/lib/entity_registry/database.py \
-    | grep -cE '^\+.*append_phase_event.*entity_status_changed' || true)
+    | grep -cE '^\+.*event_type[[:space:]]*=[[:space:]]*"entity_status_changed"' || true)
 WSS_DELS=$(git diff --cached -- plugins/pd/mcp/workflow_state_server.py \
-    | grep -cE '^-.*append_phase_event.*entity_status_changed' || true)
+    | grep -cE '^-.*event_type[[:space:]]*=[[:space:]]*"entity_status_changed"' || true)
 
 if [[ "$DB_ADDS" -gt 0 && "$WSS_DELS" -gt 0 ]]; then
     exit 0  # both sides present — atomic

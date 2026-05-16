@@ -17,9 +17,9 @@ fi
 FIRST_LINE=$(head -1 "$MSG_FILE")
 
 DB_ADDS=$(git diff --cached -- plugins/pd/hooks/lib/entity_registry/database.py \
-    | grep -cE '^\+.*append_phase_event.*entity_status_changed' || true)
+    | grep -cE '^\+.*event_type[[:space:]]*=[[:space:]]*"entity_status_changed"' || true)
 WSS_DELS=$(git diff --cached -- plugins/pd/mcp/workflow_state_server.py \
-    | grep -cE '^-.*append_phase_event.*entity_status_changed' || true)
+    | grep -cE '^-.*event_type[[:space:]]*=[[:space:]]*"entity_status_changed"' || true)
 
 if [[ "$DB_ADDS" -gt 0 || "$WSS_DELS" -gt 0 ]]; then
     if [[ ! "$FIRST_LINE" =~ ^FR-C-115\.1: ]]; then
