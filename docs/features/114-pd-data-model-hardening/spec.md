@@ -250,8 +250,8 @@ Plus memory-system noise (29% capture-hook noise, 91% CLI-bypass) and workspace 
 ### AC-Sev (Severity Reporting Contract)
 
 - **AC-Sev.1**: Doctor invocation against a DB with cross-workspace `parent_uuid` rows + `audit_emit_failed_count > 0` returns exit code 0 AND output JSON contains `severity_summary.warning > 0`.
-- **AC-Sev.2**: Doctor output JSON's `severity_summary` field is present in all invocations. Schema (additive — MAY include extra severity keys for forward-compat): `{"severity_summary": {"error": int, "warning": int, "suggestion": int, ...}}` with non-negative integer values. Consumers MUST tolerate additional keys (e.g., `info`).
-- **AC-Sev.3**: Per-issue record schema in doctor JSON output: `{"severity": "error"|"warning"|"suggestion", ...}`. Verified by JSON schema validation against all emitted issue records.
+- **AC-Sev.2**: Doctor output JSON's `severity_summary` field is present in all invocations. Schema (matches existing `Issue.severity` enum at `doctor/models.py:12`): `{"severity_summary": {"error": int, "warning": int, "info": int}}` with non-negative integer values. Schema is additive — MAY include extra severity keys for forward-compat; consumers MUST tolerate additional keys.
+- **AC-Sev.3**: Per-issue record schema in doctor JSON output: `{"severity": "error"|"warning"|"info", ...}`. Verified by JSON schema validation against all emitted issue records. Vocabulary matches existing `Issue.severity` enum (NOT `"suggestion"`).
 
 ## 4. Empirical SUT Pins (production-DB-verified at spec time + frozen fixture references)
 
