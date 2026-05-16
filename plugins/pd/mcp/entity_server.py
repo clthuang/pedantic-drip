@@ -559,6 +559,11 @@ async def register_entity(
     # Feature 108 FR-13: resolve workspace_uuid via lazy global if caller
     # did not supply it. Default to the empty string when no workspace
     # context is set (legacy fixture path).
+    # NOTE: Feature 114 FR-D.2 originally proposed defaulting to
+    # _UNKNOWN_WORKSPACE_UUID here, but that broke test fixtures that pass
+    # project_id="__unknown__" without seeding the workspaces table.
+    # _resolve_workspace_uuid_kwargs downstream maps "__unknown__" project_id
+    # to _UNKNOWN_WORKSPACE_UUID correctly when workspace_uuid is "".
     resolved_workspace_uuid = workspace_uuid or _workspace_uuid or ""
     resolved_project_id = project_id or _project_id or "__unknown__"
 
@@ -700,7 +705,8 @@ async def issue_spawn(
         )
 
     # Two-layer fallback per design IF-1 step 3-4 (mirrors register_entity MCP
-    # at entity_server.py:560-561).
+    # at entity_server.py:560-561). See FR-D.2 note above re: empty-string vs
+    # _UNKNOWN_WORKSPACE_UUID default.
     resolved_workspace_uuid = workspace_uuid or _workspace_uuid or ""
     resolved_project_id = project_id or _project_id or "__unknown__"
 

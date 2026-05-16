@@ -1816,7 +1816,19 @@ def _migration_11_workspace_identity(conn: sqlite3.Connection) -> None:
             except (TypeError, ValueError):
                 current_version = 0
             if current_version >= 11:
-                return
+                # Feature 114 FR-M11.1: verify schema state matches stamp
+                # before trusting it. Same stub-trap-style defense as M12.
+                try:
+                    cols = {
+                        r[1] for r in conn.execute(
+                            "PRAGMA table_info(entities)"
+                        ).fetchall()
+                    }
+                    if "workspace_uuid" in cols:
+                        return  # genuine post-M11 state
+                    # Stamp present but column missing — fall through.
+                except sqlite3.OperationalError:
+                    pass
     except sqlite3.OperationalError as e:
         if "no such table" not in str(e).lower():
             raise
@@ -1897,8 +1909,18 @@ def _migration_11_workspace_identity(conn: sqlite3.Connection) -> None:
                 except (TypeError, ValueError):
                     current_version = 0
                 if current_version >= 11:
-                    conn.rollback()
-                    return
+                    # Feature 114 FR-M11.1: in-transaction re-check also
+                    # verifies the schema state. Stamp without column =
+                    # stub trap; fall through to body.
+                    cols = {
+                        r[1] for r in conn.execute(
+                            "PRAGMA table_info(entities)"
+                        ).fetchall()
+                    }
+                    if "workspace_uuid" in cols:
+                        conn.rollback()
+                        return
+                    # else: stub trap, fall through
         except sqlite3.OperationalError as e:
             # Narrow catch — only the "_metadata table does not exist"
             # case is acceptable here; anything else (e.g., 'database is
@@ -2680,7 +2702,31 @@ def _migration_12_polymorphic_taxonomy_and_events(
             except (TypeError, ValueError):
                 current_version = 0
             if current_version >= 12:
-                return
+                # Feature 114 FR-A.1: verify schema state matches stamp before
+                # trusting it. Pre-114, this guard only checked the stamp,
+                # creating the M12 stub trap when the stamp was applied without
+                # the body running (commit 6722191a window).
+                try:
+                    cols = {
+                        r[1] for r in conn.execute(
+                            "PRAGMA table_info(entities)"
+                        ).fetchall()
+                    }
+                    if (
+                        "type" in cols
+                        and "kind" in cols
+                        and "lifecycle_class" in cols
+                        and "entity_type" not in cols
+                    ):
+                        return  # genuine post-M12 state
+                    # Stamp present but body never ran (stub trap) — fall
+                    # through and execute the M12 body. The body's own
+                    # idempotency around individual ALTER TABLE / CREATE
+                    # TABLE statements handles re-execution safely.
+                except sqlite3.OperationalError:
+                    # entities table missing — falls through to body which
+                    # will fail-fast with a clearer error.
+                    pass
     except sqlite3.OperationalError as e:
         if "no such table" not in str(e).lower():
             raise
@@ -2715,8 +2761,24 @@ def _migration_12_polymorphic_taxonomy_and_events(
                 except (TypeError, ValueError):
                     current_version = 0
                 if current_version >= 12:
-                    conn.rollback()
-                    return
+                    # Feature 114 FR-A.1: in-transaction re-check also
+                    # verifies the schema state, not just the stamp. If
+                    # stamp says 12 but schema is pre-M12 (stub trap),
+                    # fall through and execute the body.
+                    cols = {
+                        r[1] for r in conn.execute(
+                            "PRAGMA table_info(entities)"
+                        ).fetchall()
+                    }
+                    if (
+                        "type" in cols
+                        and "kind" in cols
+                        and "lifecycle_class" in cols
+                        and "entity_type" not in cols
+                    ):
+                        conn.rollback()
+                        return  # genuine post-M12 state, concurrent run won
+                    # else: stub trap detected, fall through to body
         except sqlite3.OperationalError as e:
             if "no such table" not in str(e).lower():
                 raise
@@ -4024,7 +4086,7 @@ def _migration_13_entity_display(conn: sqlite3.Connection) -> None:
         if "no such table" in str(e).lower():
             raise RuntimeError(
                 "Migration 13 aborted: _metadata table missing. Cannot read "
-                "schema_version. Run feature-109 deferred remediation first."
+                "schema_version. Run: python -m plugins.pd.hooks.lib.entity_registry.remediate_m12 (feature-109 deferred remediation)."
             ) from e
         raise
 
@@ -4049,7 +4111,7 @@ def _migration_13_entity_display(conn: sqlite3.Connection) -> None:
     if v_row is None:
         raise RuntimeError(
             "Migration 13 aborted: _metadata.schema_version row missing. "
-            "Run feature-109 deferred remediation first."
+            "Run: python -m plugins.pd.hooks.lib.entity_registry.remediate_m12 (feature-109 deferred remediation)."
         )
     try:
         current_version = int(v_row[0])
@@ -4085,7 +4147,7 @@ def _migration_13_entity_display(conn: sqlite3.Connection) -> None:
         # path. Use the user_version mismatch error per TD-6 check 1.
         raise RuntimeError(
             f"Migration 13 aborted: user_version={current_version}, "
-            f"expected 12. Run feature-109 deferred remediation first."
+            f"expected 12. Run: python -m plugins.pd.hooks.lib.entity_registry.remediate_m12 (feature-109 deferred remediation)."
         )
 
     # Check 3 (TD-6): column layout assertion.
@@ -4109,7 +4171,7 @@ def _migration_13_entity_display(conn: sqlite3.Connection) -> None:
             f"lifecycle_class="
             f"{'present' if lifecycle_class_present else 'absent'}. "
             f"Expected post-migration-12 layout. "
-            f"Run feature-109 deferred remediation first."
+            f"Run: python -m plugins.pd.hooks.lib.entity_registry.remediate_m12 (feature-109 deferred remediation)."
         )
 
     # ----------------------------------------------------------------------
@@ -4778,7 +4840,7 @@ def _migration_14_issue_lifecycle_closure(conn: sqlite3.Connection) -> None:
         if "no such table" in str(e).lower():
             raise MigrationError(
                 "Migration 14 aborted: _metadata table missing. Cannot read "
-                "schema_version. Run feature-109/110 deferred remediation "
+                "schema_version. Run: python -m plugins.pd.hooks.lib.entity_registry.remediate_m12 (feature-109/110 deferred remediation) "
                 "first."
             ) from e
         raise
@@ -4872,12 +4934,12 @@ def _migration_14_issue_lifecycle_closure(conn: sqlite3.Connection) -> None:
         if "entity_display" not in tables:
             raise MigrationError(
                 "Migration 14 requires entity_display table (feature 110). "
-                "Run feature-110 deferred remediation."
+                "Run: python -m plugins.pd.hooks.lib.entity_registry.remediate_m12 (feature-110 deferred remediation)."
             )
         if "migration_audit_log" not in tables:
             raise MigrationError(
                 "Migration 14 requires migration_audit_log table "
-                "(feature 110). Run feature-110 deferred remediation."
+                "(feature 110). Run: python -m plugins.pd.hooks.lib.entity_registry.remediate_m12 (feature-110 deferred remediation)."
             )
         if "entity_relations" in tables:
             # Racer short-circuit at step 3 should have caught the
