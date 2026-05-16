@@ -88,10 +88,6 @@ def _process_store_memory(
             f"Must be one of: {', '.join(sorted(VALID_SOURCES))}"
         )
 
-    # -- Tier 1 gate: minimum description length --
-    if len(description) < 20:
-        return "Entry rejected: description too short (min 20 chars)"
-
     # -- Compute content hash (id) --
     entry_id = content_hash(description)
 
@@ -116,35 +112,41 @@ def _process_store_memory(
                 file=sys.stderr,
             )
 
-    # -- Tier 1 gate: near-duplicate rejection (0.95, stricter than dedup merge) --
+    # -- Feature 115 FR-B-H3.1: quality gates via shared helper --
+    # Single source of truth for length / near-dup / dedup-merge checks
+    # (per spec AC-B-H3.2 — no inline duplicates of these thresholds).
+    from semantic_memory.quality_gates import apply_quality_gates
     cfg = config or {}
-    if embedding_vec is not None:
-        neardupe_result = check_duplicate(embedding_vec, db, threshold=0.95)
-        if neardupe_result.is_duplicate:
-            matched_entry = db.get_entry(neardupe_result.existing_entry_id)
-            matched_name = matched_entry["name"] if matched_entry else "unknown"
-            if matched_name != name:
-                return f"Entry rejected: near-duplicate of existing entry '{matched_name}'"
-    else:
-        print("memory-server: near-duplicate check skipped: embedding provider unavailable", file=sys.stderr)
-
-    # -- Dedup merge check (0.90, existing behavior) --
-    # Feature 086 #00091: route through the shared resolver for bool-rejection,
-    # type coercion, clamp, and one-shot warning parity with other
-    # memory-server thresholds (memory_influence_threshold, etc.).
-    threshold = resolve_float_config(
-        cfg,
-        "memory_dedup_threshold",
-        0.90,
-        prefix="[memory-server]",
-        warned=_warned_fields,
-        clamp=(0.0, 1.0),
+    if embedding_vec is None:
+        print(
+            "memory-server: near-duplicate check skipped: embedding provider unavailable",
+            file=sys.stderr,
+        )
+    gate_result = apply_quality_gates(
+        description=description,
+        name=name,
+        db=db,
+        embedding_vec=embedding_vec,
+        config=cfg,
+        keywords=keywords,
     )
-    if embedding_vec is not None:
-        dedup_result = check_duplicate(embedding_vec, db, threshold)
-        if dedup_result.is_duplicate:
-            merged = db.merge_duplicate(dedup_result.existing_entry_id, keywords, config=cfg)
-            return f"Reinforced: {merged['name']} (observation #{merged['observation_count']})"
+    if not gate_result.passed:
+        if gate_result.reason == "too_short":
+            return "Entry rejected: description too short (min 20 chars)"
+        if gate_result.reason == "near_dup":
+            return (
+                f"Entry rejected: near-duplicate of existing entry "
+                f"'{gate_result.matched_entry_name}'"
+            )
+        if gate_result.reason == "deduped":
+            merged_id = gate_result.merged_entry_id
+            merged = db.get_entry(merged_id) if merged_id else None
+            if merged:
+                return (
+                    f"Reinforced: {merged['name']} "
+                    f"(observation #{merged['observation_count']})"
+                )
+            return "Reinforced existing entry (observation incremented)"
 
     # -- Build entry dict --
     now = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")

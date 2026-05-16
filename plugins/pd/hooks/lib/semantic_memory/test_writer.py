@@ -333,7 +333,9 @@ class TestPendingBatch:
 
         entry_json = _make_entry_json(
             name="New entry",
-            description="A brand new entry",
+            # Feature 115 FR-B-H3.2: writer.py:main now enforces 20-char min;
+            # fixture lengthened to satisfy the gate.
+            description="A brand new entry with enough length",
         )
 
         with patch("semantic_memory.writer.create_provider", return_value=mock_provider), \
