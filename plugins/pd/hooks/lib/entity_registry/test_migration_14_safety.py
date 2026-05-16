@@ -56,7 +56,8 @@ def _make_v13_conn(tmp_path=None) -> sqlite3.Connection:
 def _make_v14_db(tmp_path) -> EntityDatabase:
     """Construct a fresh EntityDatabase — runs all migrations including 14.
 
-    Returns the EntityDatabase at schema_version=14.
+    Returns the EntityDatabase at the current head schema_version (17 post-F115).
+    Test name preserved for git-blame continuity.
     """
     db_path = str(tmp_path / "v14.db")
     db = EntityDatabase(db_path)
@@ -225,7 +226,8 @@ def test_ac_mr_6_replay_is_no_op(tmp_path):
         v_before = db._conn.execute(
             "SELECT value FROM _metadata WHERE key='schema_version'"
         ).fetchone()[0]
-        assert v_before == "14"
+        # Post-F115: head is 17 (M15 + M16 stub + M17), not 14.
+        assert v_before == "17"
 
         # Replay should be a no-op early-return.
         _migration_14_issue_lifecycle_closure(db._conn)
@@ -233,7 +235,7 @@ def test_ac_mr_6_replay_is_no_op(tmp_path):
         v_after = db._conn.execute(
             "SELECT value FROM _metadata WHERE key='schema_version'"
         ).fetchone()[0]
-        assert v_after == "14"
+        assert v_after == "17"
     finally:
         db.close()
 
