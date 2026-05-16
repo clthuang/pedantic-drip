@@ -22,6 +22,7 @@ if _hooks_lib not in (os.path.normpath(p) for p in sys.path):
 
 from entity_registry.backfill import run_backfill
 from entity_registry.database import (
+    CrossWorkspaceError,
     EntityDatabase,
     EntityExistsError,
     EntityNotFoundError,
@@ -1183,6 +1184,19 @@ async def add_dependency(
         )
     except CycleError as exc:
         return json.dumps({"error": f"Cycle detected: {exc}"})
+    except CrossWorkspaceError as exc:
+        # Feature 115 FR-E.3: structured envelope for cross-workspace rejection.
+        return json.dumps({
+            "error": True,
+            "error_type": "cross_workspace_forbidden",
+            "message": str(exc),
+            "recovery_hint": (
+                "Re-attribute one endpoint or grandfather via "
+                "cross_workspace_allowlist"
+            ),
+            "op_name": exc.op_name,
+            "pairs": exc.pairs,
+        })
     except ValueError as exc:
         return json.dumps({"error": str(exc)})
     except Exception as exc:
@@ -1303,6 +1317,19 @@ async def add_okr_alignment(entity_ref: str, kr_ref: str) -> str:
         entity_uuid = _db.resolve_ref(entity_ref, project_id=_effective_project_id())
         kr_uuid = _db.resolve_ref(kr_ref, project_id=_effective_project_id())
         return _process_add_okr_alignment(_db, entity_uuid, kr_uuid, entity_ref, kr_ref)
+    except CrossWorkspaceError as exc:
+        # Feature 115 FR-E.3: structured envelope for cross-workspace rejection.
+        return json.dumps({
+            "error": True,
+            "error_type": "cross_workspace_forbidden",
+            "message": str(exc),
+            "recovery_hint": (
+                "Re-attribute one endpoint or grandfather via "
+                "cross_workspace_allowlist"
+            ),
+            "op_name": exc.op_name,
+            "pairs": exc.pairs,
+        })
     except Exception as exc:
         return json.dumps({"error": str(exc)})
 

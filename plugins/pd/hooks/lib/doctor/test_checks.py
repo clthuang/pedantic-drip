@@ -2239,7 +2239,7 @@ class TestOrchestratorReportHas14Checks:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 16
+        assert len(report.checks) == 19
 
 
 class TestOrchestratorReportEvenWhenLocked:
@@ -2257,7 +2257,7 @@ class TestOrchestratorReportEvenWhenLocked:
         blocker.execute("BEGIN IMMEDIATE")
         try:
             report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-            assert len(report.checks) == 16
+            assert len(report.checks) == 19
         finally:
             blocker.rollback()
             blocker.close()
@@ -2370,7 +2370,7 @@ class TestOrchestratorPerCheckExceptionIsolation:
         # The orchestrator wraps each check in try/except
         # Even if a check raises, we still get 10 results
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 16
+        assert len(report.checks) == 19
 
 
 class TestOrchestratorMissingDbFile:
@@ -2386,7 +2386,7 @@ class TestOrchestratorMissingDbFile:
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
         assert not os.path.exists(db_path)
         assert not os.path.exists(mem_path)
-        assert len(report.checks) == 16
+        assert len(report.checks) == 19
 
 
 class TestOrchestratorBaseBranchFromConfig:
@@ -2403,7 +2403,7 @@ class TestOrchestratorBaseBranchFromConfig:
         (config_dir / "pd.local.md").write_text("base_branch: develop\n")
 
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 16
+        assert len(report.checks) == 19
 
 
 class TestOrchestratorBaseBranchDefaultMain:
@@ -2417,7 +2417,7 @@ class TestOrchestratorBaseBranchDefaultMain:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 16
+        assert len(report.checks) == 19
 
 
 class TestOrchestratorCheck8RunsFirst:
@@ -2450,7 +2450,7 @@ class TestOrchestratorBothDbsLocked:
         blocker2.execute("BEGIN IMMEDIATE")
         try:
             report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-            assert len(report.checks) == 16
+            assert len(report.checks) == 19
             assert report.healthy is False
         finally:
             blocker1.rollback()
@@ -2470,7 +2470,7 @@ class TestOrchestratorFreshProjectEmpty:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 16
+        assert len(report.checks) == 19
         assert report.elapsed_ms >= 0
 
 
@@ -2486,7 +2486,7 @@ class TestOrchestratorWorksWithoutMcp:
 
         # No MCP servers running -- should still work
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 16
+        assert len(report.checks) == 19
 
 
 class TestOrchestratorConnectionsClosedOnSuccess:
@@ -2500,7 +2500,7 @@ class TestOrchestratorConnectionsClosedOnSuccess:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 16
+        assert len(report.checks) == 19
 
         # Verify we can acquire write locks (connections were closed)
         conn = sqlite3.connect(db_path, timeout=1.0)
@@ -2570,7 +2570,7 @@ class TestCliJsonOutputHas14Checks:
         data = json.loads(result.stdout)
         # Phase 2 wraps output: {"diagnostic": ...}
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 16
+        assert len(diag["checks"]) == 19
 
 
 class TestCliExitCodeAlwaysZero:
@@ -2645,7 +2645,7 @@ class TestCliArtifactsRootCliArgPrecedence:
         assert result.returncode == 0
         data = json.loads(result.stdout)
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 16
+        assert len(diag["checks"]) == 19
 
 
 class TestCliArtifactsRootConfigFallback:
@@ -2667,7 +2667,7 @@ class TestCliArtifactsRootConfigFallback:
         assert result.returncode == 0
         data = json.loads(result.stdout)
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 16
+        assert len(diag["checks"]) == 19
 
 
 class TestCliArtifactsRootDefaultDocs:
@@ -2688,7 +2688,7 @@ class TestCliArtifactsRootDefaultDocs:
         assert result.returncode == 0
         data = json.loads(result.stdout)
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 16
+        assert len(diag["checks"]) == 19
 
 
 class TestCliNoneSerializesAsJsonNull:
