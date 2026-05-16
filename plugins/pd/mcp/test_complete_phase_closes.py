@@ -476,7 +476,13 @@ class TestAc10_8EntityStatusChangedEvent:
         meta = json.loads(ev_row["metadata"])
         assert meta["old_status"] == "open"
         assert meta["new_status"] == "closed"
-        assert meta["closed_by_uuid"] == feature_uuid
+        # Feature 115 FR-C-115.1: F111 manual emit removed; new emit lives inside
+        # db.update_entity which has no access to the closer's uuid. closed_by_uuid
+        # metadata is permanently lost per accepted trade-off (115 spec AC-C-115.3
+        # + 114 spec Pin F.1 entry #3). Operators correlate via entity_relations
+        # (the closure relation is INSERTed separately in _process_complete_phase
+        # step 7). Asserting absence here documents the contract.
+        assert "closed_by_uuid" not in meta
 
 
 # ---------------------------------------------------------------------------

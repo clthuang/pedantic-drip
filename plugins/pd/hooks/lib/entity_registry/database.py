@@ -5400,6 +5400,137 @@ def _migration_14_down(conn: sqlite3.Connection) -> None:
         conn.execute("PRAGMA foreign_keys = ON")
 
 
+# Feature 115 C10-115.3: Migration 15 — initialize audit_emit_failed_count.
+def _migration_15_audit_emit_counter(conn: sqlite3.Connection) -> None:
+    """Initialize the audit_emit_failed_count counter to 0.
+
+    Per spec FR-C.3: counter is touched only by the FR-C-115.1 fail-open
+    emit path in db.update_entity (on emit failure). Migration 15 is the
+    ONLY initializer; subsequent migrations MUST NOT touch this key
+    (enforced by check_audit_counter_write_path AST check, C10-115.4).
+    """
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO _metadata (key, value) VALUES (?, ?)",
+            ("audit_emit_failed_count", "0"),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO _metadata (key, value) VALUES (?, ?)",
+            ("schema_version", "15"),
+        )
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+
+
+def _migration_15_audit_emit_counter_down(conn: sqlite3.Connection) -> None:
+    """Reverse Migration 15: remove counter and stamp schema_version=14."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute("DELETE FROM _metadata WHERE key='audit_emit_failed_count'")
+        conn.execute(
+            "INSERT OR REPLACE INTO _metadata (key, value) VALUES ('schema_version', '14')"
+        )
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+
+
+# Feature 115 FR-Migrations-115.2: Migration 16 is a NO-OP STUB.
+# 114 spec Pin O originally reserved M16 = hash-unify, but 114 deferred B-H4
+# entirely and 115 placed hash-unify at memory.db M6 instead. This entities.db
+# slot is kept as a no-op for migration-runner contiguity (runner uses
+# range(current+1, target+1) at database.py forward dispatcher; vacating M16
+# would raise KeyError when upgrading past it).
+def _migration_16_reserved(conn: sqlite3.Connection) -> None:
+    """Reserved during 115 planning; intentionally empty body.
+
+    The migration runner stamps schema_version=16 immediately after this
+    function returns. No schema work is performed.
+    """
+    pass
+
+
+def _migration_16_reserved_down(conn: sqlite3.Connection) -> None:
+    """Reverse Migration 16: no schema change to undo, but MUST stamp 15 in-tx
+    per the down-migration framework's defensive guard.
+    """
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO _metadata (key, value) VALUES ('schema_version', '15')"
+        )
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+
+
+# Feature 115 C13-115.2: Migration 17 — cross_workspace_allowlist table.
+# Per 114 spec FR-E.2.1 schema; supports E.2 triage tool grandfathering.
+def _migration_17_cross_workspace_allowlist(conn: sqlite3.Connection) -> None:
+    """Create the cross_workspace_allowlist table for 115 Cluster E.2.
+
+    Schema per 114 spec FR-E.2.1. CASCADE FKs on entity delete: allowlist
+    rows auto-remove when an entity is deleted (documented trade-off — if
+    the entity is recreated with the same uuid, operator must re-grandfather).
+    """
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS cross_workspace_allowlist (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                parent_uuid TEXT NOT NULL,
+                child_uuid TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                grandfathered_by TEXT NOT NULL DEFAULT 'operator',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(parent_uuid, child_uuid),
+                FOREIGN KEY (parent_uuid) REFERENCES entities(uuid) ON DELETE CASCADE,
+                FOREIGN KEY (child_uuid) REFERENCES entities(uuid) ON DELETE CASCADE
+            )
+        """)
+        conn.execute(
+            "INSERT OR REPLACE INTO _metadata (key, value) VALUES ('schema_version', '17')"
+        )
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+
+
+def _migration_17_cross_workspace_allowlist_down(conn: sqlite3.Connection) -> None:
+    """Reverse Migration 17: DROP TABLE + stamp schema_version=16."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute("DROP TABLE IF EXISTS cross_workspace_allowlist")
+        conn.execute(
+            "INSERT OR REPLACE INTO _metadata (key, value) VALUES ('schema_version', '16')"
+        )
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+
+
 # Ordered mapping of version -> migration function.
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _create_initial_schema,
@@ -5416,16 +5547,22 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     12: _migration_12_polymorphic_taxonomy_and_events,
     13: _migration_13_entity_display,
     14: _migration_14_issue_lifecycle_closure,
+    15: _migration_15_audit_emit_counter,
+    16: _migration_16_reserved,
+    17: _migration_17_cross_workspace_allowlist,
 }
 
 # Reverse-migration registry (FR-8 / design §6.7). Migrations 1-10 are
 # forward-only; calling _migrate_down() with target_version < 10 raises
-# NotImplementedError. Schema versions 11, 12, 13, 14 are reversible.
+# NotImplementedError. Schema versions 11+ are reversible.
 MIGRATIONS_DOWN: dict[int, Callable[[sqlite3.Connection], None]] = {
     11: _migration_11_workspace_identity_down,
     12: _migration_12_polymorphic_taxonomy_and_events_down,
     13: _migration_13_entity_display_down,
     14: _migration_14_down,
+    15: _migration_15_audit_emit_counter_down,
+    16: _migration_16_reserved_down,
+    17: _migration_17_cross_workspace_allowlist_down,
 }
 
 
@@ -7296,6 +7433,77 @@ class EntityDatabase:
                  new_meta_text),
             )
             self._commit()  # no-op inside transaction(); commit handled by context manager
+
+        # Feature 115 FR-C-115.1: audit invariant emit.
+        # When status mutates (status is not None AND status != old), emit an
+        # entity_status_changed phase_event. Fail-open per spec FR-C.2 + 114 TD-2:
+        # status UPDATE has already committed; emit failures NEVER propagate.
+        # Per spec AC-C.4: no-op writes (same status) do NOT emit.
+        if status is not None and old_row is not None and old_row["status"] != status:
+            try:
+                # Resolve type_id + workspace_uuid for the emit. project_id is
+                # derived from workspace_uuid via the workspaces JOIN (post-F109).
+                entity_meta = self._conn.execute(
+                    "SELECT type_id, workspace_uuid FROM entities WHERE uuid = ?",
+                    (entity_uuid,),
+                ).fetchone()
+                if entity_meta is not None:
+                    # project_id from workspaces table (legacy field still required
+                    # by append_phase_event signature).
+                    ws_row = self._conn.execute(
+                        "SELECT project_id_legacy FROM workspaces WHERE uuid = ?",
+                        (entity_meta["workspace_uuid"],),
+                    ).fetchone()
+                    _project_id = (
+                        ws_row["project_id_legacy"]
+                        if ws_row and ws_row["project_id_legacy"]
+                        else "__unknown__"
+                    )
+                    self.append_phase_event(
+                        type_id=entity_meta["type_id"],
+                        project_id=_project_id,
+                        workspace_uuid=entity_meta["workspace_uuid"],
+                        event_type="entity_status_changed",
+                        phase=None,
+                        metadata={
+                            "old_status": old_row["status"],
+                            "new_status": status,
+                        },
+                    )
+            except Exception as exc:
+                # Outer fail-open: emit failure must NEVER propagate (TD-2).
+                # Inner fail-open: counter write may itself fail (e.g., lock
+                # contention); emit a secondary stderr line so the failure is
+                # at least visible.
+                try:
+                    _md = self._conn.execute(
+                        "SELECT value FROM _metadata WHERE key='audit_emit_failed_count'"
+                    ).fetchone()
+                    _ct = (int(_md[0]) if _md else 0) + 1
+                    self._conn.execute(
+                        "INSERT OR REPLACE INTO _metadata(key, value) VALUES (?, ?)",
+                        ("audit_emit_failed_count", str(_ct)),
+                    )
+                    self._conn.commit()
+                except Exception as counter_exc:
+                    print(
+                        f"pd.audit.counter_write_failed: "
+                        f'{{"type_id": {entity_uuid!r}, '
+                        f'"exception_class": {type(counter_exc).__name__!r}}}',
+                        file=sys.stderr,
+                    )
+                try:
+                    print(
+                        f"pd.audit.emit_failed: "
+                        f'{{"type_id": {entity_uuid!r}, '
+                        f'"old_status": {(old_row["status"] if old_row else None)!r}, '
+                        f'"new_status": {status!r}, '
+                        f'"exception_class": {type(exc).__name__!r}}}',
+                        file=sys.stderr,
+                    )
+                except Exception:
+                    pass  # stderr write itself failed; nothing more we can do
+                # NO re-raise. Status UPDATE has already committed.
 
         # Cascade unblock: when an entity is completed, remove it from all
         # blocked_by lists and promote fully-unblocked dependents.
