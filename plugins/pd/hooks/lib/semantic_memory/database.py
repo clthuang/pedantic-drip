@@ -322,12 +322,206 @@ def _rebuild_fts5_index(
     conn.execute("INSERT INTO entries_fts(entries_fts) VALUES('rebuild')")
 
 
+# Feature 115 C8-115.2: M6 — hash unify + Tool-failure DELETE.
+# Per spec FR-B-H4-115.2 (DELETE never shipped in 114; new work in 115).
+# Per design: migration body runs INSIDE the outer BEGIN IMMEDIATE acquired
+# by _migrate() at database.py:1308 — so this body does NOT start its own
+# transaction. Raising any exception triggers the outer rollback.
+def _migration_6_unify_source_hash_and_cleanup(
+    conn: sqlite3.Connection, **_kwargs: object,
+) -> None:
+    """Memory.db M6: unify source_hash + delete Tool failure noise.
+
+    Two operations gated independently per spec FR-B-H4-115.1:
+    - Op 1: DELETE Tool failure:% rows (114 FR-B-H2.2 carry-forward — NEW work
+      in 115; grep confirmed the DELETE never ran in 114). Bounded-count
+      gate (Pin H-115: 468 ± 50 = [418, 518]) + identity spot-check (95%
+      temporal anchor `created_at < '2026-05-16'`).
+    - Op 2: hash recompute on `source='import'` rows + others where stored vs
+      recomputed differ (114 FR-B-H4.1). Identity-safe (same row IDs,
+      corrected hash values only) — no upper bound; n_shifted >= 0 accepted.
+    """
+    import json as _json
+    from semantic_memory.recompute_source_hash import recompute_all_with_conn
+
+    def _emit(tag: str, **payload: object) -> None:
+        # Reuse 114 IF-4 log_stderr_json pattern (matches the migration
+        # diagnostic regex in spec FR-B-H4-115.1).
+        try:
+            from _log_helpers import log_stderr_json  # noqa: F401
+            log_stderr_json(f"pd.migrate.{tag}", payload)
+        except Exception:
+            # Fallback inline (matches the regex; minimal payload).
+            sys.stderr.write(
+                f"pd.migrate.{tag}: {_json.dumps(payload, default=str)}\n"
+            )
+
+    # ===== Op 1: Tool-failure DELETE =====
+    observed_count = conn.execute(
+        "SELECT COUNT(*) FROM entries "
+        "WHERE source='session-capture' AND name LIKE 'Tool failure:%'"
+    ).fetchone()[0]
+    # Fresh / clean DB: no work to do. Skip the bounded-count gate when
+    # observed count is zero — the gate is a safety check against accidental
+    # over-deletion on a populated DB, not a "must have history" assertion.
+    # If the DB unexpectedly has Tool-failure rows OUTSIDE the safe range,
+    # abort with diagnostic.
+    if observed_count == 0:
+        pass  # No-op: nothing to clean.
+    elif not (418 <= observed_count <= 518):
+        _emit(
+            "m6_count_drift",
+            observed=observed_count, expected=468, tolerance=50, stage=1,
+            recount_command=(
+                "sqlite3 ~/.claude/pd/memory/memory.db \"SELECT COUNT(*) "
+                "FROM entries WHERE source='session-capture' AND name LIKE "
+                "'Tool failure:%'\""
+            ),
+            identity_sample=[],
+            pin_to_amend="docs/features/115-pd-data-model-followups/spec.md §5 Pin H-115",
+            migration_id="m6_op1_tool_failure_delete",
+            suggested_new_tolerance=abs(observed_count - 468) + 100,
+        )
+        raise RuntimeError(
+            f"M6 Op 1 aborted: observed Tool-failure count {observed_count} "
+            f"outside [418, 518] (Pin H-115: 468 ± 50)"
+        )
+    if observed_count > 0:
+        sample = conn.execute(
+            "SELECT id, name, created_at FROM entries "
+            "WHERE source='session-capture' AND name LIKE 'Tool failure:%' "
+            "ORDER BY created_at LIMIT 50"
+        ).fetchall()
+        pre_freeze = conn.execute(
+            "SELECT COUNT(*) FROM entries "
+            "WHERE source='session-capture' AND name LIKE 'Tool failure:%' "
+            "AND created_at < '2026-05-16'"
+        ).fetchone()[0]
+        if (pre_freeze / observed_count) < 0.95:
+            _emit(
+                "m6_identity_drift",
+                observed=observed_count, expected=468, stage=2,
+                pre_freeze=pre_freeze, threshold=0.95,
+                recount_command="see m6_count_drift",
+                identity_sample=[
+                    {"id": r[0], "name": r[1], "created_at": r[2]}
+                    for r in sample[:5]
+                ],
+                pin_to_amend="docs/features/115-pd-data-model-followups/spec.md §5 Pin H-115",
+                migration_id="m6_op1_tool_failure_delete",
+            )
+            raise RuntimeError(
+                f"M6 Op 1 aborted: identity spot-check failed "
+                f"({pre_freeze}/{observed_count} = "
+                f"{pre_freeze/observed_count:.3f} < 0.95 pre-freeze)"
+            )
+    conn.execute(
+        "DELETE FROM entries "
+        "WHERE source='session-capture' AND name LIKE 'Tool failure:%'"
+    )
+
+    # ===== Op 2: Hash unify (identity-safe; no upper bound) =====
+    result = recompute_all_with_conn(conn, dry_run=False)
+    if result["shifted_ids"]:
+        _emit(
+            "m6_hash_unify_applied",
+            shifted_count=len(result["shifted_ids"]),
+            migration_id="m6_op2_hash_unify",
+        )
+    # No-op when n_shifted == 0 (re-run scenario or already-converged DB).
+
+
+# Feature 115 C8-115.3: M7 — observation reset for inflated import rows.
+def _migration_7_reset_inflated_observation_count(
+    conn: sqlite3.Connection, **_kwargs: object,
+) -> None:
+    """Memory.db M7: reset observation_count for inflated import rows
+    per 114 FR-B-H4.3 + 115 FR-B-H4-115.3.
+
+    Bounded-count gate (Pin I-115: 12 ± 3 = [9, 15]) + identity spot-check
+    (95% temporal anchor; effectively strict for n=12 since 11/12=91.7% < 0.95).
+    Runs inside the outer migration-runner transaction.
+    """
+    import json as _json
+
+    def _emit(tag: str, **payload: object) -> None:
+        try:
+            from _log_helpers import log_stderr_json  # noqa: F401
+            log_stderr_json(f"pd.migrate.{tag}", payload)
+        except Exception:
+            sys.stderr.write(
+                f"pd.migrate.{tag}: {_json.dumps(payload, default=str)}\n"
+            )
+
+    observed_count = conn.execute(
+        "SELECT COUNT(*) FROM entries "
+        "WHERE source='import' AND observation_count > 100"
+    ).fetchone()[0]
+    # Fresh / clean DB: no work to do. Same rationale as M6 — the bounded-count
+    # gate is a safety check against accidental over-mutation, not a
+    # "must have inflated rows" assertion.
+    if observed_count == 0:
+        return  # No-op: nothing to reset; skip both gates and the UPDATE.
+    if not (9 <= observed_count <= 15):
+        _emit(
+            "m7_count_drift",
+            observed=observed_count, expected=12, tolerance=3, stage=1,
+            recount_command=(
+                "sqlite3 ~/.claude/pd/memory/memory.db \"SELECT COUNT(*) "
+                "FROM entries WHERE source='import' AND observation_count > 100\""
+            ),
+            identity_sample=[],
+            pin_to_amend="docs/features/115-pd-data-model-followups/spec.md §5 Pin I-115",
+            migration_id="m7_observation_reset",
+            suggested_new_tolerance=abs(observed_count - 12) + 6,
+        )
+        raise RuntimeError(
+            f"M7 aborted: observed inflated count {observed_count} outside "
+            f"[9, 15] (Pin I-115: 12 ± 3)"
+        )
+    if observed_count > 0:
+        sample = conn.execute(
+            "SELECT id, source, observation_count, created_at FROM entries "
+            "WHERE source='import' AND observation_count > 100 ORDER BY id"
+        ).fetchall()
+        pre_freeze = conn.execute(
+            "SELECT COUNT(*) FROM entries "
+            "WHERE source='import' AND observation_count > 100 "
+            "AND created_at < '2026-05-16'"
+        ).fetchone()[0]
+        if (pre_freeze / observed_count) < 0.95:
+            _emit(
+                "m7_identity_drift",
+                observed=observed_count, expected=12, stage=2,
+                pre_freeze=pre_freeze, threshold=0.95,
+                recount_command="see m7_count_drift",
+                identity_sample=[
+                    {"id": r[0], "source": r[1], "observation_count": r[2],
+                     "created_at": r[3]}
+                    for r in sample[:5]
+                ],
+                pin_to_amend="docs/features/115-pd-data-model-followups/spec.md §5 Pin I-115",
+                migration_id="m7_observation_reset",
+            )
+            raise RuntimeError(
+                f"M7 aborted: identity spot-check failed "
+                f"({pre_freeze}/{observed_count} = "
+                f"{pre_freeze/observed_count:.3f} < 0.95 pre-freeze)"
+            )
+    conn.execute(
+        "UPDATE entries SET observation_count = 1 "
+        "WHERE source='import' AND observation_count > 100"
+    )
+
+
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _create_initial_schema,
     2: _add_source_hash_and_created_timestamp,
     3: _enforce_not_null_columns,
     4: _add_influence_tracking,
     5: _rebuild_fts5_index,
+    6: _migration_6_unify_source_hash_and_cleanup,
+    7: _migration_7_reset_inflated_observation_count,
 }
 
 # All 19 column names in insertion order.
