@@ -18,6 +18,7 @@ from doctor.checks import (
     check_brainstorm_status,
     check_branch_consistency,
     check_config_validity,
+    check_cross_workspace_parent_uuid,
     check_db_readiness,
     check_entity_orphans,
     check_feature_status,
@@ -54,6 +55,9 @@ CHECK_ORDER = [
     # Feature 111 / AC-CL.4 (Group E): lint for re-introduction of
     # free-text status-suffix parsers at the 3 production sites.
     check_no_free_text_status_parsers,
+    # Feature 115 C13-115.3 / FR-E-115.1: warning-only doctor check for
+    # unallowlisted cross-workspace parent_uuid rows.
+    check_cross_workspace_parent_uuid,
 ]
 
 # Checks that require entity DB
@@ -67,6 +71,7 @@ _ENTITY_DB_CHECKS = {
     "check_referential_integrity",
     "check_stale_dependencies",
     "check_project_attribution",
+    "check_cross_workspace_parent_uuid",
 }
 
 # Checks that require memory DB
