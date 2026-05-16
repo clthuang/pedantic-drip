@@ -2187,6 +2187,71 @@ def check_stale_worktrees(project_root: str, **kwargs) -> CheckResult:
 
 
 # ---------------------------------------------------------------------------
+# Feature 115 C10-115 / AC-C.5: audit_emit_failed_count health check.
+# ---------------------------------------------------------------------------
+
+
+def check_audit_emit_failed_count(
+    entities_db_path: str | None = None,
+    **_,
+) -> CheckResult:
+    """Feature 115 AC-C.5: emit severity='warning' issue if the
+    audit_emit_failed_count counter is > 0.
+
+    The counter is incremented by the fail-open emit path inside
+    db.update_entity when append_phase_event raises (per spec FR-C.2).
+    Non-zero count indicates emit failures have occurred since M15 reset
+    (or DB creation).
+    """
+    start = time.monotonic()
+    issues: list[Issue] = []
+
+    if entities_db_path is None or not os.path.exists(entities_db_path):
+        elapsed = int((time.monotonic() - start) * 1000)
+        return CheckResult(
+            name="audit_emit_failed_count",
+            passed=True,
+            issues=issues,
+            elapsed_ms=elapsed,
+        )
+
+    try:
+        conn = sqlite3.connect(entities_db_path, timeout=5.0)
+        try:
+            row = conn.execute(
+                "SELECT value FROM _metadata WHERE key='audit_emit_failed_count'"
+            ).fetchone()
+            count = int(row[0]) if row and row[0] is not None else 0
+            if count > 0:
+                issues.append(Issue(
+                    check="audit_emit_failed_count",
+                    severity="warning",
+                    entity=None,
+                    message=(
+                        f"audit_emit_failed_count = {count}: "
+                        f"db.update_entity emitted {count} entity_status_changed "
+                        f"event(s) that FAILED to append (fail-open path fired). "
+                        f"Check stderr for 'pd.audit.emit_failed' lines."
+                    ),
+                    fix_hint=None,
+                ))
+        finally:
+            conn.close()
+    except sqlite3.OperationalError:
+        # DB locked or missing _metadata — defer to db_readiness check.
+        pass
+
+    elapsed = int((time.monotonic() - start) * 1000)
+    passed = len(issues) == 0
+    return CheckResult(
+        name="audit_emit_failed_count",
+        passed=passed,
+        issues=issues,
+        elapsed_ms=elapsed,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Feature 115 C13-115.3 / FR-E-115.1: cross-workspace parent_uuid check.
 # ---------------------------------------------------------------------------
 

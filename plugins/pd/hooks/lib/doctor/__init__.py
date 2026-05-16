@@ -8,12 +8,16 @@ import os
 import sqlite3
 import time
 
+from doctor.check_audit_counter_write_path import (
+    check_audit_counter_write_path,
+)
 from doctor.check_no_free_text_status_parsers import (
     check_no_free_text_status_parsers,
 )
 from doctor.check_status_write_path import check_status_write_path
 from doctor.checks import (
     _build_local_entity_set,
+    check_audit_emit_failed_count,
     check_backlog_status,
     check_brainstorm_status,
     check_branch_consistency,
@@ -58,6 +62,11 @@ CHECK_ORDER = [
     # Feature 115 C13-115.3 / FR-E-115.1: warning-only doctor check for
     # unallowlisted cross-workspace parent_uuid rows.
     check_cross_workspace_parent_uuid,
+    # Feature 115 C10-115.4 / AC-C.7c: AST audit that only M15 mutates the
+    # audit_emit_failed_count counter (sole-writer invariant).
+    check_audit_counter_write_path,
+    # Feature 115 AC-C.5: doctor health check for audit_emit_failed_count > 0.
+    check_audit_emit_failed_count,
 ]
 
 # Checks that require entity DB
@@ -72,6 +81,7 @@ _ENTITY_DB_CHECKS = {
     "check_stale_dependencies",
     "check_project_attribution",
     "check_cross_workspace_parent_uuid",
+    "check_audit_emit_failed_count",
 }
 
 # Checks that require memory DB
