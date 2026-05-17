@@ -432,7 +432,7 @@ def test_t2b_5_cross_workspace_gate_matrix(
   This lets each handler lambda extract the field it needs (`set_parent` takes type_id; `add_dependency` and `add_okr_alignment` take UUIDs).
 - `_cross_ws_pair_fixture(db)`: returns (feature_in_A, backlog_in_B) using the dict shape above.
 - `_same_ws_pair_fixture(db)`: returns (feature_in_A, backlog_in_A).
-- `_allowlisted_pair_fixture(db)`: returns (feature_in_A, backlog_in_B) AFTER `db._conn.execute("INSERT INTO cross_workspace_allowlist ...")`.
+- `_allowlisted_pair_fixture(db)`: returns (feature_in_A, backlog_in_B) AFTER inserting an allowlist row. Prefer a public `EntityDatabase` method if present (search `cross_workspace_allowlist` in `entity_registry/database.py`); if none exists, use `db._conn.execute("INSERT INTO cross_workspace_allowlist ...")` with an inline `# test-only: no public API for allowlist seeding; direct _conn access is intentional test scaffolding` comment to acknowledge the CLAUDE.md "Never access `db._conn` directly" gotcha is being deliberately bypassed in test code only.
 
 Updated HANDLERS to consume the dict:
 
