@@ -112,3 +112,35 @@ in F115.
 - [F115 retro](./retro.md) — full AORTA + 7 KB candidates
 - [Backlog entry #00278](../../backlog.md) — pre-existing develop failures
 - `.qa-gate-low-findings.md` (this directory) — LOW sidecar
+
+---
+
+## F116 Resolution Table (appended 2026-05-17)
+
+F116 (`docs/features/116-f115-qa-deferred/`) closes all 8 HIGH carry-forward
+items documented above. Resolution commits:
+
+| # | qa-override item (verbatim title) | F116 FR | Resolution commit |
+|---|---|---|---|
+| 1 | `severity_summary` field absent from doctor JSON output | FR-1, FR-2 | `3e1ed9e6` |
+| 2 | M6/M7 abort-path tests (T3b.3a/b/c, T3b.4) not landed | FR-3, FR-4 | `3e1ed9e6` |
+| 3 | T2b.5 9-case cross-workspace gate matrix missing | FR-6 | `3e1ed9e6` |
+| 4 | T2b.8 `check_severity_vocab.py` AST check missing | FR-2 | `3e1ed9e6` |
+| 5 | T2a.7 4-decision triage tests missing | FR-7 | `3e1ed9e6` |
+| 6 | T1.10 M15 preservation test missing (semantics revised) | FR-5 | `3e1ed9e6` |
+| 7 | `check_cross_workspace_parent_uuid` inlined vs design spec | FR-8 | `3e1ed9e6` |
+| 8 | Adversarial parsing for `fix_hint` in the triage tool | FR-9 | `3e1ed9e6` |
+
+**Note on item 6:** F116 FR-5 documents M15's actual INSERT-OR-REPLACE reset
+semantics rather than asserting value preservation — runner-contiguity prevents
+re-invocation in production, and the implemented test confirms safe-to-re-run
+behavior. This is honest disclosure of actual M15 contract, not a regression.
+
+**Bonus finding (filed via F116 retro):** During TC.4 implementation, the
+implementer discovered that `_fix_triage_cross_workspace_link`'s `re-attribute
+parent` / `re-attribute child` branches will fail in production against any
+entities.db with the `enforce_immutable_workspace_uuid` trigger active (i.e.,
+every post-Migration-11 DB). The function issues `UPDATE entities SET
+workspace_uuid = ?` directly without dropping the trigger, unlike
+`claim_unknown_entities` which drops + recreates it. F116 does NOT fix this
+(out of scope for coverage-only feature) — recommend a follow-up feature.
