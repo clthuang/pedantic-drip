@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.18.2] - 2026-05-17
+
 ### Added
 
 - **FR-C-115.1 atomic same-commit invariant** (feature 115) — `complete_phase` and `close_entity` now emit the `entity_status_changed` row in the same transaction that mutates `entities.status`; the F111 manual emit site is removed. Enforced post-merge by `scripts/dev/check_fr_c_115_atomicity_postmerge.sh` (wired into `validate.sh`).
