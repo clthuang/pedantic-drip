@@ -20,6 +20,7 @@ from entity_registry.database import (
     _expand_workflow_phase_check,
     _fix_fts_content_mode,
     _migrate_to_uuid_pk,
+    _migration_15_audit_emit_counter,
     _schema_expansion_v6,
 )
 
@@ -8224,3 +8225,79 @@ class TestMigration11StressBenchmark:
             ).fetchone()[0] == 10000
         finally:
             conn.close()
+
+
+# ---------------------------------------------------------------------------
+# F116 Theme B / TB.6 — M15 re-run safety regression
+#
+# Per F116 FR-5: M15 uses INSERT OR REPLACE (reset semantics, NOT preservation).
+# In production the runner's contiguity (range(current+1, target+1)) prevents
+# re-invocation. This test exercises the recovery path: rewind schema_version
+# to '14' and re-run M15. M15 owns its own BEGIN IMMEDIATE (database.py:5412)
+# so we open the test connection with isolation_level=None (autocommit) to
+# avoid colliding with sqlite3's implicit transaction.
+# ---------------------------------------------------------------------------
+
+
+def _build_entities_db_at_v14(tmp_path):
+    """Build entities.db, then rewind schema_version to 14 + drop M15 counter.
+
+    Instantiating EntityDatabase runs all migrations to max; this helper then
+    rewinds the M15 state so a fresh M15 invocation can be observed.
+    """
+    import pathlib
+    db_path = pathlib.Path(tmp_path) / "entities.db"
+    db = EntityDatabase(str(db_path))
+    db.close()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO _metadata (key, value) VALUES ('schema_version', '14')"
+        )
+        conn.execute("DELETE FROM _metadata WHERE key='audit_emit_failed_count'")
+        conn.commit()
+    return db_path
+
+
+def test_m15_safe_to_rerun_with_documented_reset_semantics(tmp_path):
+    """F116 FR-5 / AC-5.1: M15 is safe to re-run.
+
+    Re-running M15 after the counter has been bumped resets the counter to
+    '0' via INSERT OR REPLACE (this is RESET semantics, NOT preservation).
+    Production runner contiguity prevents this happening organically; the
+    test exercises the recovery path explicitly.
+
+    M15 owns its OWN BEGIN IMMEDIATE (unlike M6/M7 which inherit the runner's
+    outer transaction). We open the test connection with isolation_level=None
+    (autocommit) so M15's BEGIN IMMEDIATE doesn't collide with sqlite3's
+    implicit DML transaction.
+    """
+    db_path = _build_entities_db_at_v14(tmp_path)
+
+    # First run: install the counter, then bump it to '7' and rewind version.
+    conn = sqlite3.connect(db_path, isolation_level=None)
+    try:
+        _migration_15_audit_emit_counter(conn)
+        conn.execute(
+            "UPDATE _metadata SET value='7' WHERE key='audit_emit_failed_count'"
+        )
+        conn.execute("UPDATE _metadata SET value='14' WHERE key='schema_version'")
+    finally:
+        conn.close()
+
+    # Second run on a fresh autocommit conn: M15 must be re-runnable.
+    conn = sqlite3.connect(db_path, isolation_level=None)
+    try:
+        _migration_15_audit_emit_counter(conn)
+    finally:
+        conn.close()
+
+    # Assert RESET (not preservation) + schema_version stamped back to '15'.
+    with sqlite3.connect(db_path) as conn:
+        counter = conn.execute(
+            "SELECT value FROM _metadata WHERE key='audit_emit_failed_count'"
+        ).fetchone()[0]
+        version = conn.execute(
+            "SELECT value FROM _metadata WHERE key='schema_version'"
+        ).fetchone()[0]
+    assert counter == "0", "INSERT OR REPLACE reset; not value-preserving"
+    assert version == "15"

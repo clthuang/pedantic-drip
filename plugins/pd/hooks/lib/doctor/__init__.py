@@ -11,9 +11,13 @@ import time
 from doctor.check_audit_counter_write_path import (
     check_audit_counter_write_path,
 )
+from doctor.check_cross_workspace_parent_uuid import (
+    check_cross_workspace_parent_uuid,
+)
 from doctor.check_no_free_text_status_parsers import (
     check_no_free_text_status_parsers,
 )
+from doctor.check_severity_vocab import check_severity_vocab
 from doctor.check_status_write_path import check_status_write_path
 from doctor.checks import (
     _build_local_entity_set,
@@ -22,7 +26,6 @@ from doctor.checks import (
     check_brainstorm_status,
     check_branch_consistency,
     check_config_validity,
-    check_cross_workspace_parent_uuid,
     check_db_readiness,
     check_entity_orphans,
     check_feature_status,
@@ -67,6 +70,9 @@ CHECK_ORDER = [
     check_audit_counter_write_path,
     # Feature 115 AC-C.5: doctor health check for audit_emit_failed_count > 0.
     check_audit_emit_failed_count,
+    # Feature 116 FR-2 / AC-2.x: AST audit that all doctor checks emit
+    # severity from {error, warning, info}.
+    check_severity_vocab,
 ]
 
 # Checks that require entity DB
@@ -291,11 +297,21 @@ def run_diagnostics(
     warning_count = sum(1 for i in all_issues if i.severity == "warning")
     healthy = all(r.passed for r in results)
 
+    # Feature 116 FR-1 / AC-1.x: closed-set severity rollup across ALL issues
+    # (including synthetic skipped-check errors). Invariant AC-1.4:
+    # severity_summary["error"] == error_count, ["warning"] == warning_count.
+    severity_summary = {"error": 0, "warning": 0, "info": 0}
+    for cr in results:
+        for i in cr.issues:
+            if i.severity in severity_summary:
+                severity_summary[i.severity] += 1
+
     return DiagnosticReport(
         healthy=healthy,
         checks=results,
         total_issues=len(all_issues),
         error_count=error_count,
         warning_count=warning_count,
+        severity_summary=severity_summary,
         elapsed_ms=elapsed_ms,
     )

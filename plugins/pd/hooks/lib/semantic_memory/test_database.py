@@ -18,6 +18,11 @@ import numpy as np
 import pytest
 
 from semantic_memory.database import MemoryDatabase, _sanitize_fts5_query
+from semantic_memory.database import (
+    MIGRATIONS,
+    _migration_6_unify_source_hash_and_cleanup,
+    _migration_7_reset_inflated_observation_count,
+)
 from semantic_memory._config_utils import _ISO8601_Z_PATTERN
 
 
@@ -2712,3 +2717,277 @@ class TestFeature089BundleA:
             )
         finally:
             db.close()
+
+
+# ---------------------------------------------------------------------------
+# F116 Theme B — Migration regression coverage (TB.1 .. TB.5)
+#
+# Pure test additions; no production code changes. Helpers replay individual
+# migrations against a raw sqlite3.Connection so M6/M7 can be exercised in
+# isolation (production runs them through MemoryDatabase._migrate which migrates
+# all the way to max).
+# ---------------------------------------------------------------------------
+
+
+def _build_memory_db_at_v5(tmp_path):
+    """Build a memory.db stamped at schema_version=5 (per F116 FR-3).
+
+    Replays MIGRATIONS[1..5] directly against a raw sqlite3 connection so
+    that M6/M7 (the test subjects) can be exercised in isolation.
+    """
+    import pathlib
+    db_path = pathlib.Path(tmp_path) / "memory.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS _metadata "
+        "(key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+    )
+    conn.commit()
+    for version in range(1, 6):
+        MIGRATIONS[version](conn, fts5_available=True)
+    conn.execute(
+        "INSERT OR REPLACE INTO _metadata (key, value) VALUES ('schema_version', '5')"
+    )
+    conn.commit()
+    conn.close()
+    return db_path
+
+
+def _build_memory_db_at_v6(tmp_path):
+    """Build a memory.db stamped at schema_version=6 WITHOUT running M6's body.
+
+    For testing M7 in isolation: replays 1..5 via `_build_memory_db_at_v5`,
+    then manually stamps schema_version='6' so M7 can be exercised against
+    seeded inflated-import rows without M6's gates interfering.
+    """
+    db_path = _build_memory_db_at_v5(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO _metadata (key, value) VALUES ('schema_version', '6')"
+        )
+        conn.commit()
+    return db_path
+
+
+def _seed_tool_failure_rows(db_path, count, created_at):
+    """Insert N rows matching M6's DELETE predicate (FR-3).
+
+    Schema at v5 NOT NULL columns (post-M3): id, name, description, category,
+    source, source_project, source_hash, created_at, updated_at.
+    M6 targets: source='session-capture' AND name LIKE 'Tool failure:%'.
+    """
+    import uuid
+    with sqlite3.connect(db_path) as conn:
+        for i in range(count):
+            description = "seed body"
+            source_hash = hashlib.sha256(description.encode()).hexdigest()[:16]
+            conn.execute(
+                "INSERT INTO entries "
+                "(id, name, description, category, source, source_project, "
+                " source_hash, confidence, created_at, updated_at, observation_count) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    str(uuid.uuid4()),
+                    f"Tool failure: seed-{i}",
+                    description,
+                    "anti-patterns",
+                    "session-capture",
+                    "unknown",
+                    source_hash,
+                    "medium",
+                    created_at,
+                    created_at,
+                    1,
+                ),
+            )
+        conn.commit()
+
+
+def _seed_inflated_import_rows(db_path, count, observation_count, created_at):
+    """Insert N rows matching M7's predicate (FR-4).
+
+    Predicate: source='import' AND observation_count > 100.
+    Same NOT NULL column set as `_seed_tool_failure_rows`.
+    """
+    import uuid
+    with sqlite3.connect(db_path) as conn:
+        for i in range(count):
+            description = "seed body"
+            source_hash = hashlib.sha256(description.encode()).hexdigest()[:16]
+            conn.execute(
+                "INSERT INTO entries "
+                "(id, name, description, category, source, source_project, "
+                " source_hash, confidence, created_at, updated_at, observation_count) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    str(uuid.uuid4()),
+                    f"Import row {i}",
+                    description,
+                    "patterns",
+                    "import",
+                    "unknown",
+                    source_hash,
+                    "medium",
+                    created_at,
+                    created_at,
+                    observation_count,
+                ),
+            )
+        conn.commit()
+
+
+def _read_schema_version(db_path):
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT value FROM _metadata WHERE key='schema_version'"
+        ).fetchone()
+    return row[0] if row else None
+
+
+def _count_entries(db_path):
+    """Helper used by TB.4 to verify row count unchanged after rollback."""
+    with sqlite3.connect(db_path) as conn:
+        return conn.execute("SELECT COUNT(*) FROM entries").fetchone()[0]
+
+
+def test_f116_tb1_fixture_smoke(tmp_path):
+    """TB.1 fixture smoke: build v5 + seed 10 rows; assert version=5 + 10 rows."""
+    db_path = _build_memory_db_at_v5(tmp_path)
+    _seed_tool_failure_rows(db_path, 10, created_at="2026-05-01T00:00:00")
+    assert _read_schema_version(db_path) == "5"
+    with sqlite3.connect(db_path) as conn:
+        count = conn.execute("SELECT COUNT(*) FROM entries").fetchone()[0]
+    assert count == 10
+
+
+# ----- TB.2: M6 bounded-count abort (parametrized) -----
+
+
+@pytest.mark.parametrize("seed_count,direction", [
+    (600, "above"),  # 600 > expected_max 518
+    (300, "below"),  # 300 < expected_min 418
+])
+def test_m6_aborts_on_bounded_count_violation(tmp_path, seed_count, direction):
+    """F116 FR-3 / AC-3.1: M6 aborts with RuntimeError when Tool-failure count
+    is outside the bounded gate [418, 518] (Pin H-115). Schema version
+    preserved (abort propagates before the schema_version stamp)."""
+    db_path = _build_memory_db_at_v5(tmp_path)
+    _seed_tool_failure_rows(db_path, seed_count, created_at="2026-05-01T00:00:00")
+    pre_version = _read_schema_version(db_path)
+    with sqlite3.connect(db_path) as conn:
+        with pytest.raises(
+            RuntimeError,
+            match=r"outside \[418, 518\]|Pin H-115|Tool-failure count",
+        ):
+            _migration_6_unify_source_hash_and_cleanup(conn)
+    assert _read_schema_version(db_path) == pre_version
+
+
+# ----- TB.3: M6 pre-freeze ratio abort -----
+
+
+def test_m6_aborts_on_pre_freeze_ratio_violation(tmp_path):
+    """F116 FR-3 / AC-3.2: 425 pre-freeze rows + 25 post-freeze rows = 450
+    total. Total 450 is within bounded-count [418, 518] so the bounded gate
+    passes. Pre-freeze ratio = 425/450 = 0.9444 < 0.95, triggering the
+    identity spot-check abort."""
+    db_path = _build_memory_db_at_v5(tmp_path)
+    _seed_tool_failure_rows(db_path, 425, created_at="2026-05-01T00:00:00")  # pre-freeze
+    _seed_tool_failure_rows(db_path, 25, created_at="2026-05-17T00:00:00")   # post-freeze
+    pre_version = _read_schema_version(db_path)
+    with sqlite3.connect(db_path) as conn:
+        with pytest.raises(RuntimeError, match=r"(identity spot.check|pre.freeze)"):
+            _migration_6_unify_source_hash_and_cleanup(conn)
+    assert _read_schema_version(db_path) == pre_version
+
+
+# ----- TB.4: M6 OperationalError propagation -----
+
+
+class _MidTxFailingConnection:
+    """Proxy a sqlite3.Connection so the first DELETE FROM ENTRIES raises
+    OperationalError. Per F116 FR-3 T3b.3c spec.
+
+    Delegation surface: execute (with injection), executemany, executescript,
+    cursor, commit, rollback, close, in_transaction. __enter__/__exit__
+    intentionally omitted — TB.4 wraps the proxy in try/finally not `with`.
+    """
+
+    def __init__(self, real_conn):
+        self._real = real_conn
+        self._injected = False
+
+    def execute(self, sql, *args, **kwargs):
+        if (not self._injected) and sql.strip().upper().startswith("DELETE FROM ENTRIES"):
+            self._injected = True
+            raise sqlite3.OperationalError("injected mid-tx failure")
+        return self._real.execute(sql, *args, **kwargs)
+
+    def executemany(self, *a, **kw):
+        return self._real.executemany(*a, **kw)
+
+    def executescript(self, *a, **kw):
+        return self._real.executescript(*a, **kw)
+
+    def cursor(self):
+        return self._real.cursor()
+
+    def commit(self):
+        return self._real.commit()
+
+    def rollback(self):
+        return self._real.rollback()
+
+    def close(self):
+        return self._real.close()
+
+    @property
+    def in_transaction(self):
+        return self._real.in_transaction
+
+
+def test_m6_operational_error_propagates_uncaught(tmp_path):
+    """F116 FR-3 / AC-3.3: M6 has no try/except for sqlite3.OperationalError.
+    Injection on the first DELETE FROM entries fires before Op 2's
+    recompute_all_with_conn. M6 thus propagates the error uncaught."""
+    db_path = _build_memory_db_at_v5(tmp_path)
+    _seed_tool_failure_rows(db_path, 450, created_at="2026-05-01T00:00:00")
+    pre_version = _read_schema_version(db_path)
+    pre_rowcount = _count_entries(db_path)
+    raw_conn = sqlite3.connect(db_path)
+    try:
+        proxied = _MidTxFailingConnection(raw_conn)
+        # Defensive pre-condition: injection has not fired yet.
+        assert proxied._injected is False
+        with pytest.raises(sqlite3.OperationalError, match="injected mid-tx failure"):
+            _migration_6_unify_source_hash_and_cleanup(proxied)
+        # Defensive post-condition: injection fired exactly once.
+        assert proxied._injected is True
+        # Rollback uncommitted state to simulate the runner's outer rollback.
+        raw_conn.rollback()
+    finally:
+        raw_conn.close()
+    assert _read_schema_version(db_path) == pre_version
+    assert _count_entries(db_path) == pre_rowcount
+
+
+# ----- TB.5: M7 bounds violation -----
+
+
+def test_m7_aborts_on_bounds_violation(tmp_path):
+    """F116 FR-4 / AC-4.1: seed memory.db at v6 with 20 import rows of
+    observation_count=200; 20 is outside M7's [9, 15] bound (Pin I-115:
+    12 ± 3). Expect RuntimeError + schema_version preserved."""
+    db_path = _build_memory_db_at_v6(tmp_path)
+    _seed_inflated_import_rows(
+        db_path, count=20, observation_count=200,
+        created_at="2026-05-01T00:00:00",
+    )
+    pre_version = _read_schema_version(db_path)
+    with sqlite3.connect(db_path) as conn:
+        with pytest.raises(
+            RuntimeError,
+            match=r"outside \[9, 15\]|inflated count|Pin I-115",
+        ):
+            _migration_7_reset_inflated_observation_count(conn)
+    assert _read_schema_version(db_path) == pre_version
