@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **FR-C-115.1 atomic same-commit invariant** (feature 115) — `complete_phase` and `close_entity` now emit the `entity_status_changed` row in the same transaction that mutates `entities.status`; the F111 manual emit site is removed. Enforced post-merge by `scripts/dev/check_fr_c_115_atomicity_postmerge.sh` (wired into `validate.sh`).
+- **Cross-workspace integrity gates** (feature 115) — `set_parent`, `add_dependency`, and `add_okr_alignment` reject cross-workspace links via `_assert_same_workspace_pairwise`. Violations surface as `CrossWorkspaceError` and are translated to a structured MCP error envelope on the boundary.
+- **`check_cross_workspace_parent_uuid` doctor check** (feature 115) — LEFT JOIN based scan against the new `cross_workspace_allowlist` table (M17) for legitimately-allowed cross-workspace parent links.
+- **`check_audit_counter_write_path` doctor check** (feature 115) — AST-based lint pinning `audit_log.counter` mutation to a single writer (M15 init + the atomic emit path).
+- **`check_audit_emit_failed_count` doctor check** (feature 115) — health probe surfacing `audit_log` entries with `operation='entity_status_changed_emit'` AND `success=0`. Brings doctor check count to 19.
+- **Triage tool for cross-workspace links** (feature 115) — interactive `doctor.fix_actions._fix_triage_cross_workspace_link` with 4-decision branching (allowlist add / reparent / detach / skip).
+- **`apply_quality_gates()` single source of truth** (feature 115) — `semantic_memory/quality_gates.py` consolidates description-length (>=20 chars), near-dup (0.95 threshold), and dedup-merge (0.90 threshold) gates used by both the writer CLI and the MCP `store_memory` path.
+- **`semantic_memory.recompute_source_hash` CLI** (feature 115) — `--report` / `--dry-run` / `--apply` modes for canonicalizing entry `source_hash` values to `SHA-256(description)[:16]`.
+- **Migrations M15, M16, M17** (feature 115) — M15 initializes `audit_log.counter` baseline; M16 is the no-op stub preserving runner contiguity; M17 adds the `cross_workspace_allowlist` table.
+- **M6 (entities.db DELETE + hash unify) and M7 (semantic_memory observation reset)** (feature 115) — bounded-count + identity spot-check (95% temporal anchor) gates with fresh-DB no-op semantics.
+
+### Changed
+
+- **`doctor.fix_actions` is now a sub-package** (feature 115) — promoted via `git mv fix_actions.py fix_actions/__init__.py`; the new `_interactive.py` helper module hosts `_interactive_triage_loop`. All existing `from doctor.fix_actions import ...` imports continue to resolve.
+
+### Removed
+
+- **F111 manual `entity_status_changed` emit site** (feature 115) — removed in favor of the atomic same-commit insertion. The manual emit is now structurally impossible (audit invariant enforced by the AST check).
+
 ## [4.18.1] - 2026-05-16
 
 ### Added
