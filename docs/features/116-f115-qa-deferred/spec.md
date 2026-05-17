@@ -155,21 +155,24 @@ def _seed_tool_failure_rows(db_path: pathlib.Path, count: int, created_at: str) 
     NOT NULL columns: id, name, description, category, source, created_at, updated_at.
     Predicate M6 targets: source='session-capture' AND name LIKE 'Tool failure:%'.
     """
-    import uuid
+    import uuid, hashlib
     with sqlite3.connect(db_path) as conn:
         for i in range(count):
+            description = "seed body"
+            source_hash = hashlib.sha256(description.encode()).hexdigest()[:16]
             conn.execute(
                 "INSERT INTO entries "
                 "(id, name, description, category, source, source_project, "
-                " confidence, created_at, updated_at, observation_count) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " source_hash, confidence, created_at, updated_at, observation_count) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     str(uuid.uuid4()),
                     f"Tool failure: seed-{i}",
-                    "seed body",
+                    description,
                     "anti-patterns",
                     "session-capture",
                     "unknown",
+                    source_hash,
                     "medium",
                     created_at,
                     created_at,
@@ -185,22 +188,26 @@ def _seed_inflated_import_rows(
     """Insert N rows matching M7's predicate (source='import', high observation_count).
 
     Used by FR-4 (T3b.4). Same NOT NULL columns as _seed_tool_failure_rows.
+    Post-M3 schema requires source_hash NOT NULL (verified at database.py:259).
     """
-    import uuid
+    import uuid, hashlib
     with sqlite3.connect(db_path) as conn:
         for i in range(count):
+            description = "seed body"
+            source_hash = hashlib.sha256(description.encode()).hexdigest()[:16]
             conn.execute(
                 "INSERT INTO entries "
                 "(id, name, description, category, source, source_project, "
-                " confidence, created_at, updated_at, observation_count) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " source_hash, confidence, created_at, updated_at, observation_count) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     str(uuid.uuid4()),
                     f"Import row {i}",
-                    "seed body",
+                    description,
                     "patterns",
                     "import",
                     "unknown",
+                    source_hash,
                     "medium",
                     created_at,
                     created_at,
@@ -344,17 +351,25 @@ def test_m15_safe_to_rerun_with_documented_reset_semantics(tmp_path):
     This is safe-to-re-run semantics, NOT value-preservation.
     """
     db_path = _build_entities_db_at_v14(tmp_path)  # see fixture below
-    with sqlite3.connect(db_path) as conn:
+    # IMPORTANT: M15 issues its own BEGIN IMMEDIATE (database.py:5412).
+    # Python sqlite3 default isolation_level='' opens an implicit tx on first
+    # DML. Use isolation_level=None (autocommit) so M15's BEGIN doesn't conflict.
+    conn = sqlite3.connect(db_path, isolation_level=None)
+    try:
         _migration_15_audit_emit_counter(conn)
-        # Bump counter to verify reset is observable
+        # Bump counter to verify reset is observable on re-run
         conn.execute(
             "UPDATE _metadata SET value='7' WHERE key='audit_emit_failed_count'"
         )
         conn.execute("UPDATE _metadata SET value='14' WHERE key='schema_version'")
-        conn.commit()
-    # Re-run M15
-    with sqlite3.connect(db_path) as conn:
+    finally:
+        conn.close()
+    # Re-run M15 on a fresh connection (also autocommit to avoid tx collision)
+    conn = sqlite3.connect(db_path, isolation_level=None)
+    try:
         _migration_15_audit_emit_counter(conn)
+    finally:
+        conn.close()
     # Assert reset (NOT preservation)
     with sqlite3.connect(db_path) as conn:
         counter = conn.execute(
