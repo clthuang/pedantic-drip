@@ -625,7 +625,7 @@ import unicodedata, re
 
 _UUID_LIKE = re.compile(r"^[0-9a-fA-F\-]+$")        # for parent_uuid, child_uuid
 _CHOICE_LIKE = re.compile(r"^[a-zA-Z\- ]+$")        # for choice value
-_REASON_DENY = re.compile(r"[\x00-\x1f`$\\]")       # control chars + shell metas in reason
+_REASON_DENY = re.compile(r"[\x00-\x1f;&()`$\\]")   # control chars + all shell metas (PRD FR-9 set: ;|&`$()); `|` is segment separator so excluded
 _MAX_LEN = 1024
 
 def _normalize_and_validate_fix_hint(fix_hint: str) -> str:
@@ -721,6 +721,10 @@ These pins document the runtime contract on which AC-9.1 and AC-9.3 depend; they
     (f"triage_cross_workspace_links:{_VALID_UUID_1}:{_VALID_UUID_2}|choice:grandfather|reason:legit$(rm -rf /)", "invalid character in reason"),
     # case 5: backtick in reason
     (f"triage_cross_workspace_links:{_VALID_UUID_1}:{_VALID_UUID_2}|choice:grandfather|reason:abc`whoami`", "invalid character in reason"),
+    # case 5b: semicolon + ampersand in reason
+    (f"triage_cross_workspace_links:{_VALID_UUID_1}:{_VALID_UUID_2}|choice:grandfather|reason:foo; bar & baz", "invalid character in reason"),
+    # case 5c: parentheses in reason
+    (f"triage_cross_workspace_links:{_VALID_UUID_1}:{_VALID_UUID_2}|choice:grandfather|reason:foo(bar)", "invalid character in reason"),
     # case 6: over-length
     ("triage_cross_workspace_links:" + ("a"*2000), "too long"),
     # case 7: unknown segment

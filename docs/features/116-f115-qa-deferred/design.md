@@ -230,13 +230,11 @@ report.severity_summary
 ### IF-116-2: check_severity_vocab
 
 ```python
-# Signature (matches doctor check contract — see _make_failed_result for shape):
+# Signature (matches doctor check contract — verified against
+# check_status_write_path.py:154 and check_audit_counter_write_path.py:85-88):
 check_severity_vocab(
-    db: EntityDatabase | None,
-    *,
-    project_root: pathlib.Path,
-    artifacts_root: pathlib.Path | None,
-    **_kwargs,
+    project_root: str | None = None,
+    **_kwargs: object,
 ) -> CheckResult
 ```
 
