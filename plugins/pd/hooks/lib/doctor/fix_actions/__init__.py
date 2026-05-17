@@ -10,6 +10,7 @@ import re
 import sqlite3
 import subprocess
 import sys
+import unicodedata
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -392,6 +393,62 @@ def _fix_stale_dependency(ctx: FixContext, issue: Issue) -> str:
     return f"Stale dependency on {blocked_by_uuid} already cleaned"
 
 
+# ---------------------------------------------------------------------------
+# Feature 116 FR-9: Defensive parser layer for adversarial fix_hint inputs.
+# ---------------------------------------------------------------------------
+
+_UUID_LIKE = re.compile(r"^[0-9a-fA-F\-]+$")        # for parent_uuid, child_uuid segments
+_CHOICE_LIKE = re.compile(r"^[a-zA-Z\- ]+$")        # for choice value
+_REASON_DENY = re.compile(r"[\x00-\x1f;&()`$\\]")   # control chars + all shell metas (;|&`$()); `|` is segment separator so excluded
+_MAX_LEN = 1024
+
+
+def _normalize_and_validate_fix_hint(fix_hint: str | None) -> str:
+    """Defensive parser layer for adversarial fix_hint inputs (Feature 116 FR-9).
+
+    Steps:
+    1. NFC-normalize unicode confusables.
+    2. Reject if utf-8 byte length > 1024.
+    3. Split on '|' into segments; validate each by grammar:
+       - First segment: 'triage_cross_workspace_links:<uuid>:<uuid>' — UUID-like chars only.
+       - 'choice:<value>' — choice value matches _CHOICE_LIKE.
+       - 'reason:<value>' — free text, but reject control chars + shell metas ($, \\, `, ;, &, (, )).
+    4. Reject other unknown top-level segments.
+
+    Raises ValueError on rejection (reuses existing exception type — no new
+    InvalidFixHintError class introduced).
+
+    Returns the NFC-normalized, whitespace-stripped string.
+    """
+    if not fix_hint:
+        return ""
+    nfc = unicodedata.normalize("NFC", fix_hint)
+    if len(nfc.encode("utf-8")) > _MAX_LEN:
+        raise ValueError(f"fix_hint too long ({len(nfc)} chars, max {_MAX_LEN})")
+    stripped = nfc.strip()
+    segments = stripped.split("|")
+    head = segments[0]
+    if head.startswith("triage_cross_workspace_links:"):
+        try:
+            _, parent, child = head.split(":", 2)
+        except ValueError:
+            raise ValueError("fix_hint malformed: requires parent_uuid:child_uuid after prefix")
+        if not _UUID_LIKE.match(parent) or not _UUID_LIKE.match(child):
+            raise ValueError(f"fix_hint contains invalid character in uuid field: {head!r}")
+    for seg in segments[1:]:
+        if seg.startswith("choice:"):
+            val = seg[len("choice:"):]
+            if not _CHOICE_LIKE.match(val):
+                raise ValueError(f"fix_hint contains invalid character in choice: {val!r}")
+        elif seg.startswith("reason:"):
+            val = seg[len("reason:"):]
+            if _REASON_DENY.search(val):
+                raise ValueError(f"fix_hint contains invalid character in reason: {val!r}")
+        else:
+            raise ValueError(f"fix_hint contains unknown segment: {seg!r}")
+    return stripped
+
+
 def _parse_triage_choice(fix_hint: str | None) -> dict:
     """Parse a triage choice encoded in Issue.fix_hint.
 
@@ -442,7 +499,9 @@ def _fix_triage_cross_workspace_link(ctx: FixContext, issue: Issue) -> str:
     """
     if ctx.entities_conn is None:
         raise RuntimeError("entities_conn not available")
-    choice_info = _parse_triage_choice(issue.fix_hint)
+    # Feature 116 FR-9: validate + normalize before parsing.
+    normalized_hint = _normalize_and_validate_fix_hint(issue.fix_hint)
+    choice_info = _parse_triage_choice(normalized_hint)
     parent_uuid = choice_info["parent_uuid"]
     child_uuid = choice_info["child_uuid"] or issue.entity
     choice = choice_info["choice"]

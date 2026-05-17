@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`check_severity_vocab` doctor check** (feature 116) — AST audit that verifies all doctor checks emit severity from the closed set `{error, warning, info}`. Brings doctor check count to 20. Runs at session-start; CI enforcement via `validate.sh`.
+- **`severity_summary` rollup field on `DiagnosticReport`** (feature 116) — doctor JSON output now includes a top-level `severity_summary: {error: N, warning: N, info: N}` field aggregated across all check issues. Existing `error_count`/`warning_count` fields preserved for backwards compatibility.
+
+### Changed
+
+- **`check_cross_workspace_parent_uuid`** (feature 116) — moved from `doctor/checks.py` to its own standalone module `doctor/check_cross_workspace_parent_uuid.py` per F115 T2b.6 plan. CHECK_ORDER position preserved byte-identical; behavior unchanged.
+
 ## [4.18.2] - 2026-05-17
 
 ### Added

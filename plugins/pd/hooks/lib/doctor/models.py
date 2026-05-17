@@ -43,7 +43,12 @@ class DiagnosticReport:
     total_issues: int
     error_count: int
     warning_count: int
-    elapsed_ms: int
+    # Feature 116 FR-1 / AC-1.x: closed-set severity rollup aggregated across
+    # all CheckResult.issues. default_factory keeps existing call sites green.
+    severity_summary: dict[str, int] = field(
+        default_factory=lambda: {"error": 0, "warning": 0, "info": 0}
+    )
+    elapsed_ms: int = 0
 
     def to_dict(self) -> dict:
         """Serialize to a plain dict (None -> JSON null)."""
