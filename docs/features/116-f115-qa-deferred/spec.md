@@ -37,8 +37,10 @@ class DiagnosticReport:
     total_issues: int
     error_count: int
     warning_count: int
-    severity_summary: dict[str, int]   # NEW — {"error": N, "warning": N, "info": N}
-    elapsed_ms: int
+    severity_summary: dict[str, int] = field(
+        default_factory=lambda: {"error": 0, "warning": 0, "info": 0}
+    )   # NEW — additive; default_factory preserves existing call sites
+    elapsed_ms: int = 0  # promoted to default for call-site stability
 ```
 
 **Population location:** In whatever code path constructs `DiagnosticReport` (search `DiagnosticReport(` to locate, expected in `doctor/__init__.py`).
@@ -149,17 +151,61 @@ def _build_memory_db_at_v6(tmp_path) -> pathlib.Path:
 def _seed_tool_failure_rows(db_path: pathlib.Path, count: int, created_at: str) -> None:
     """Insert N rows matching M6's DELETE predicate at the given created_at.
 
-    Schema columns: name, description, source, created_at (plus others).
-    Predicate: source='session-capture' AND name LIKE 'Tool failure:%'.
+    Schema at v5 (verified at semantic_memory/database.py:101-119):
+    NOT NULL columns: id, name, description, category, source, created_at, updated_at.
+    Predicate M6 targets: source='session-capture' AND name LIKE 'Tool failure:%'.
     """
+    import uuid
     with sqlite3.connect(db_path) as conn:
         for i in range(count):
             conn.execute(
-                "INSERT INTO entries (name, description, source, source_hash, "
-                "category, confidence, created_at, observation_count) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (f"Tool failure: seed-{i}", "seed body", "session-capture",
-                 "0"*16, "anti-patterns", 0.5, created_at, 1),
+                "INSERT INTO entries "
+                "(id, name, description, category, source, source_project, "
+                " confidence, created_at, updated_at, observation_count) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    str(uuid.uuid4()),
+                    f"Tool failure: seed-{i}",
+                    "seed body",
+                    "anti-patterns",
+                    "session-capture",
+                    "unknown",
+                    "medium",
+                    created_at,
+                    created_at,
+                    1,
+                ),
+            )
+        conn.commit()
+
+
+def _seed_inflated_import_rows(
+    db_path: pathlib.Path, count: int, observation_count: int, created_at: str
+) -> None:
+    """Insert N rows matching M7's predicate (source='import', high observation_count).
+
+    Used by FR-4 (T3b.4). Same NOT NULL columns as _seed_tool_failure_rows.
+    """
+    import uuid
+    with sqlite3.connect(db_path) as conn:
+        for i in range(count):
+            conn.execute(
+                "INSERT INTO entries "
+                "(id, name, description, category, source, source_project, "
+                " confidence, created_at, updated_at, observation_count) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    str(uuid.uuid4()),
+                    f"Import row {i}",
+                    "seed body",
+                    "patterns",
+                    "import",
+                    "unknown",
+                    "medium",
+                    created_at,
+                    created_at,
+                    observation_count,
+                ),
             )
         conn.commit()
 
@@ -183,7 +229,7 @@ def test_m6_aborts_on_bounded_count_violation(tmp_path, seed_count, direction):
     _seed_tool_failure_rows(db_path, seed_count, created_at='2026-05-01T00:00:00')
     pre_version = _read_schema_version(db_path)
     with sqlite3.connect(db_path) as conn:
-        with pytest.raises(RuntimeError, match=r"bounded.count"):
+        with pytest.raises(RuntimeError, match=r"outside \[418, 518\]|Pin H-115|Tool-failure count"):
             _migration_6_unify_source_hash_and_cleanup(conn)
     assert _read_schema_version(db_path) == pre_version
 ```
@@ -265,13 +311,14 @@ def test_m6_operational_error_propagates_uncaught(tmp_path):
 
 ```python
 def test_m7_aborts_on_bounds_violation(tmp_path):
-    """Seed memory.db at v6 with observation_count outside M7's bound."""
-    db_path = _build_memory_db_at_v6(tmp_path)  # similar helper to _build_memory_db_at_v5
-    # Seed pattern that violates M7's bound — concrete count + observation_count
-    # value pinned in the test docstring; matches M7's actual gate predicate.
+    """Seed memory.db at v6 with 20 import-rows of observation_count=200,
+    which is outside M7's [9, 15] bound on the inflated-count count."""
+    db_path = _build_memory_db_at_v6(tmp_path)
+    _seed_inflated_import_rows(db_path, count=20, observation_count=200,
+                               created_at='2026-05-01T00:00:00')
     pre_version = _read_schema_version(db_path)
     with sqlite3.connect(db_path) as conn:
-        with pytest.raises(RuntimeError):
+        with pytest.raises(RuntimeError, match=r"outside \[9, 15\]|inflated count|Pin I-115"):
             _migration_7_reset_inflated_observation_count(conn)
     assert _read_schema_version(db_path) == pre_version
 ```
