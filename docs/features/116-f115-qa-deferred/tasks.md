@@ -1,10 +1,10 @@
 # Tasks: F116 — F115 QA-Gate Deferred Hardening
 
 **Source plan:** `docs/features/116-f115-qa-deferred/plan.md` rev 1
-**Tier 1 (code-surface):** FR-1, FR-2, FR-8, FR-9 → 9 tasks
+**Tier 1 (code-surface):** FR-1, FR-2, FR-8, FR-9 → 10 tasks (TC.7a + TC.7b split)
 **Tier 2 (pure test):** FR-3, FR-4, FR-5, FR-6, FR-7 → 11 tasks
 **Closure tasks:** 2 tasks
-**Total:** 22 tasks
+**Total:** 23 tasks (counting TC.7a, TC.7b separately)
 
 ---
 
@@ -32,7 +32,7 @@
 - [ ] Write 4 tests:
   - `test_severity_summary_present_when_zero_issues`: empty `check_results` → `severity_summary == {"error": 0, "warning": 0, "info": 0}`
   - `test_severity_summary_aggregates_across_checks`: 2 mocked CheckResults with mixed severities → assert exact counts
-  - `test_severity_summary_includes_skipped_check_synthetics`: invoke `_make_failed_result` and verify the synthetic error is counted
+  - `test_severity_summary_includes_skipped_check_synthetics`: invoke `_make_failed_result` (import via `from doctor import _make_failed_result` — private module-level function at __init__.py:93-111) and verify the synthetic error is counted
   - `test_invariant_severity_summary_matches_legacy_counters`: AC-1.4 — `report.severity_summary["error"] == report.error_count` AND `["warning"] == warning_count`
 - [ ] Run: `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/doctor/test_severity_summary.py -v`
 
@@ -113,6 +113,14 @@
 **Plan item:** P-B.1 | **FR:** FR-3, FR-4 | **Est:** 30 min
 
 - [ ] Open `plugins/pd/hooks/lib/semantic_memory/test_database.py`
+- [ ] Add imports at top of test file (private migration functions are module-level — use direct import):
+  ```python
+  from semantic_memory.database import (
+      MIGRATIONS,
+      _migration_6_unify_source_hash_and_cleanup,
+      _migration_7_reset_inflated_observation_count,
+  )
+  ```
 - [ ] Add helper `_build_memory_db_at_v5(tmp_path)` per spec FR-3 (replays MIGRATIONS[1..5] against raw sqlite3.Connection, stamps schema_version='5')
 - [ ] Add helper `_build_memory_db_at_v6(tmp_path)` per spec FR-3 (calls `_build_memory_db_at_v5` then manually stamps schema_version='6')
 - [ ] Add helper `_seed_tool_failure_rows(db_path, count, created_at)` per spec FR-3 with full NOT NULL column set: `id, name, description, category, source, source_project, source_hash, confidence, created_at, updated_at, observation_count`. `source_hash` computed as `hashlib.sha256(description.encode()).hexdigest()[:16]`
@@ -177,6 +185,10 @@
 **Plan item:** P-B.6 | **FR:** FR-5 | **Est:** 25 min
 
 - [ ] Open `plugins/pd/hooks/lib/entity_registry/test_database.py`
+- [ ] Add imports at top of test file:
+  ```python
+  from entity_registry.database import EntityDatabase, _migration_15_audit_emit_counter
+  ```
 - [ ] Add fixture `_build_entities_db_at_v14(tmp_path)` per spec FR-5 (instantiate EntityDatabase, rewind schema_version, delete counter key)
 - [ ] Add test `test_m15_safe_to_rerun_with_documented_reset_semantics`:
   - Open connection with `sqlite3.connect(db_path, isolation_level=None)` (autocommit) to avoid M15 BEGIN IMMEDIATE collision
@@ -260,7 +272,19 @@
 **Plan item:** P-C.3 | **FR:** FR-6 | **Est:** 40 min
 
 - [ ] Create new file `plugins/pd/hooks/lib/entity_registry/test_cross_workspace_matrix.py`
-- [ ] Define session-scoped `entity_db` fixture: yields `EntityDatabase` instance with 3 workspaces (A, B, C) and seeded entities (1 feature + 1 backlog per workspace). Reset between cases via SAVEPOINT
+- [ ] Define session-scoped `entity_db` fixture: yields `EntityDatabase` instance with 3 workspaces (A, B, C) and seeded entities (1 feature + 1 backlog per workspace).
+- [ ] Define function-scoped autouse fixture for per-case reset:
+  ```python
+  @pytest.fixture(autouse=True)
+  def _reset_per_case(entity_db):
+      """SAVEPOINT-based reset between parametrized cases."""
+      entity_db._conn.execute("SAVEPOINT tc3_case")
+      try:
+          yield
+      finally:
+          entity_db._conn.execute("ROLLBACK TO SAVEPOINT tc3_case")
+          entity_db._conn.execute("RELEASE SAVEPOINT tc3_case")
+  ```
 - [ ] Define `_cross_ws_pair_fixture(db)`, `_same_ws_pair_fixture(db)`, `_allowlisted_pair_fixture(db)` per spec FR-6 — each returns dict-shape `{parent:{type_id, uuid}, child:{type_id, uuid}}`
 - [ ] `_allowlisted_pair_fixture` inserts allowlist row: prefer public `EntityDatabase` method if present; else direct `db._conn.execute("INSERT INTO cross_workspace_allowlist ...")` with test-only comment
 - [ ] Define HANDLERS list per spec FR-6 (3 lambdas: set_parent uses type_id; add_dependency/add_okr_alignment use uuid)
@@ -276,7 +300,23 @@
 **Plan item:** P-C.4 | **FR:** FR-7 | **Est:** 30 min
 
 - [ ] Create new file `plugins/pd/hooks/lib/doctor/test_fix_actions.py`
-- [ ] Define `entities_db_session` fixture (sqlite3.Connection)
+- [ ] Define `entities_db_session` fixture (sqlite3.Connection):
+  ```python
+  @pytest.fixture
+  def entities_db_session(tmp_path):
+      """Build a schema-correct entities.db connection via EntityDatabase.
+
+      Bypasses MCP entity-server (which may be unavailable in test env);
+      yields the underlying _conn for direct SQL fixtures (test-only access
+      per CLAUDE.md gotcha — EntityDatabase has no public allowlist setter).
+      """
+      from entity_registry.database import EntityDatabase
+      db = EntityDatabase(str(tmp_path / "entities.db"))
+      try:
+          yield db._conn  # test-only direct conn access
+      finally:
+          db.close()
+  ```
 - [ ] Define `_make_fix_ctx(entities_conn)` helper per spec FR-7 (FixContext with 8 placeholder fields)
 - [ ] Define `_seed_cross_workspace_pair(conn)` helper returning real seeded UUIDs
 - [ ] Define `TRIAGE_CASES` list + 4 assertion helpers per spec FR-7
@@ -387,16 +427,22 @@ graph TD
     TB1 --> TB5[TB.5: M7 bounds]
     TB6[TB.6: M15 rerun safety]
     TC01[TC0.1: FM-2 audit] --> TC5[TC.5: normalizer impl]
-    TC02[TC0.2: FM-7 audit] --> TC6[TC.6: wire normalizer]
+    TC02[TC0.2: FM-7 audit] --> TC5
+    TC01 --> TC3[TC.3: 9-case matrix tests]
+    TC02 --> TC3
+    TC01 --> TC4[TC.4: 4-decision triage tests]
+    TC02 --> TC4
     TC1[TC.1: file extraction] --> TC2[TC.2: CHECK_ORDER regression]
     TA6 --> TC2
-    TC3[TC.3: 9-case matrix tests]
-    TC4[TC.4: 4-decision triage tests] --> TC6
+    TC4 --> TC7a[TC.7a: adversarial tests, TDD red]
+    TC01 --> TC7a
+    TC7a --> TC5
+    TC4 --> TC6[TC.6: wire normalizer]
     TC5 --> TC6
-    TC6 --> TC7[TC.7: adversarial fix_hint tests]
+    TC6 --> TC7b[TC.7b: AC-9.3 happy-path regression]
     TA6 --> TZ1[TZ.1: carry-forward table]
     TB6 --> TZ1
-    TC7 --> TZ1
+    TC7b --> TZ1
     TZ1 --> TZ2[TZ.2: final validation]
 ```
 
