@@ -98,27 +98,52 @@ For each scanned file:
 
 **Failure mode:** Emits `Issue(severity="error")`. Session-start does NOT abort. `validate.sh` is the CI enforcement layer (existing convention; matches `check_status_write_path` and `check_audit_counter_write_path`).
 
+**Scope limitation:** The visitor inspects ONLY keyword arguments. Positional severity arguments (e.g., `Issue("check_name", "warning", ...)`) are not flagged. Acceptable because all current `Issue(...)` call sites use kwargs (grep-verified at spec time). If positional usage is ever introduced, extend the visitor to inspect `node.args[1]` when the call target resolves to `Issue`.
+
 ### FR-3 — M6 Abort-Path Regression Tests (closes qa-override item 2)
 
 **Symbol pin:** M6 entry point is `_migration_6_unify_source_hash_and_cleanup` (verified at `plugins/pd/hooks/lib/semantic_memory/database.py:330`).
 
-**Fixture contract (new helper to add to test module):**
+**Fixture contract (new helpers in test module — `MIGRATIONS` is a module-level dict at `semantic_memory/database.py:517`, NOT a class method; runner is `MemoryDatabase._migrate(self)` which migrates to max — for these tests we replay individual migrations against a raw connection):**
 
 ```python
 def _build_memory_db_at_v5(tmp_path) -> pathlib.Path:
     """Build a memory.db stamped at schema_version=5 with the schema in place.
 
-    Returns path to the DB file. Caller adds rows as needed for each test.
-    Uses the same migration runner used by production code: invoke migrations
-    1..5 explicitly via _migrate(conn, target_version=5) and stop.
+    Replays migrations 1..5 directly against a raw sqlite3 connection so
+    that M6/M7 (the tests' subjects) can be exercised in isolation.
     """
     db_path = tmp_path / "memory.db"
     conn = sqlite3.connect(db_path)
-    # Apply migrations 1..5 (final pre-M6 state)
-    from semantic_memory.database import MIGRATIONS, _migrate
-    _migrate(conn, target_version=5)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS _metadata "
+        "(key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+    )
+    conn.commit()
+    from semantic_memory.database import MIGRATIONS
+    for version in range(1, 6):
+        MIGRATIONS[version](conn, fts5_available=True)
+    conn.execute(
+        "INSERT OR REPLACE INTO _metadata (key, value) VALUES ('schema_version', '5')"
+    )
     conn.commit()
     conn.close()
+    return db_path
+
+def _build_memory_db_at_v6(tmp_path) -> pathlib.Path:
+    """Build a memory.db stamped at schema_version=6 WITHOUT running M6's body.
+
+    For testing M7 in isolation: replays migrations 1..5 via the same path
+    as _build_memory_db_at_v5, then manually stamps schema_version='6' to
+    skip M6's bounded-count + identity gates. This is test-only — production
+    always runs M6 between v5 and v6 via the migration runner.
+    """
+    db_path = _build_memory_db_at_v5(tmp_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO _metadata (key, value) VALUES ('schema_version', '6')"
+        )
+        conn.commit()
     return db_path
 
 def _seed_tool_failure_rows(db_path: pathlib.Path, count: int, created_at: str) -> None:
@@ -207,10 +232,11 @@ class _MidTxFailingConnection:
     def commit(self): return self._real.commit()
     def rollback(self): return self._real.rollback()
     def close(self): return self._real.close()
-    def __enter__(self): return self
-    def __exit__(self, *a): return self._real.__exit__(*a)
     @property
     def in_transaction(self): return self._real.in_transaction
+    # __enter__/__exit__ intentionally omitted: T3b.3c test wraps the proxy in
+    # try/finally rather than `with`, so context-manager delegation isn't
+    # exercised. If a future test uses `with proxied:`, add the methods here.
 
 def test_m6_operational_error_propagates_uncaught(tmp_path):
     """Per Empirical Pin §5: M6 Op 1 (DELETE) executes BEFORE Op 2 (recompute).
@@ -252,6 +278,8 @@ def test_m7_aborts_on_bounds_violation(tmp_path):
 
 **Implementation note:** Spec phase pins the M7 gate predicate by reading `semantic_memory/database.py:435+` body during implementation; the concrete seed shape (N inflated rows) is determined by the bound at implement-time and documented in the test docstring.
 
+**Fixture for v6:** Use `_build_memory_db_at_v6(tmp_path)` defined in FR-3's fixture contract above (replays 1..5 then manually stamps `schema_version='6'` — skips M6's gate body so M7 can be tested in isolation against polluted data).
+
 ### FR-5 — M15 Re-Run Safety Test (T1.10)
 
 **Symbol pin:** M15 entry point is `_migration_15_audit_emit_counter` (verified at `plugins/pd/hooks/lib/entity_registry/database.py:5404`). M15 owns its **own** `BEGIN IMMEDIATE` (line 5412) — unlike M6/M7 which inherit the runner transaction.
@@ -268,7 +296,7 @@ def test_m15_safe_to_rerun_with_documented_reset_semantics(tmp_path):
     Expected: no exception; counter resets to '0' (INSERT OR REPLACE).
     This is safe-to-re-run semantics, NOT value-preservation.
     """
-    db_path = _build_entities_db_at_v14(tmp_path)  # helper: stamp v14 + create _metadata
+    db_path = _build_entities_db_at_v14(tmp_path)  # see fixture below
     with sqlite3.connect(db_path) as conn:
         _migration_15_audit_emit_counter(conn)
         # Bump counter to verify reset is observable
@@ -292,15 +320,50 @@ def test_m15_safe_to_rerun_with_documented_reset_semantics(tmp_path):
     assert version == "15"
 ```
 
-### FR-6 — T2b.5 9-Case Cross-Workspace Matrix (3 handlers × 3 ACs)
-
-Tests invoke the **database.py-layer functions** (`db.set_parent_uuid`, `db.add_dependency`, `db.add_okr_alignment`) NOT the MCP server entry points — isolates gate behavior from MCP runtime availability, matches F115 design rev 2 contract.
+**Fixture `_build_entities_db_at_v14` (new helper in `plugins/pd/hooks/lib/entity_registry/test_database.py`):**
 
 ```python
+def _build_entities_db_at_v14(tmp_path) -> pathlib.Path:
+    """Build an entities.db stamped at schema_version=14 with _metadata in place.
+
+    Instantiates the production EntityDatabase against a temp path (which runs
+    all migrations to max), then manually rewinds schema_version to '14' and
+    deletes the audit_emit_failed_count key (so M15 starts from a clean v14).
+    Production-equivalent v14 schema (entity_display + migration_audit_log)
+    is left in place — only the M15 state is reset.
+    """
+    db_path = tmp_path / "entities.db"
+    from entity_registry.database import EntityDatabase
+    db = EntityDatabase(str(db_path))
+    db.close()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO _metadata (key, value) VALUES ('schema_version', '14')"
+        )
+        conn.execute("DELETE FROM _metadata WHERE key='audit_emit_failed_count'")
+        conn.commit()
+    return db_path
+```
+
+### FR-6 — T2b.5 9-Case Cross-Workspace Matrix (3 handlers × 3 ACs)
+
+Tests invoke the **EntityDatabase instance methods** (`db.set_parent`, `db.add_dependency`, `db.add_okr_alignment`) NOT the MCP server entry points — isolates gate behavior from MCP runtime availability, matches F115 design rev 2 contract.
+
+**Signatures (verified at spec time):**
+- `db.set_parent(type_id, parent_type_id, project_id=None, *, workspace_uuid=None) -> str` (`entity_registry/database.py:6984`)
+- `db.add_dependency(entity_uuid, blocked_by_uuid)` — no `kind` parameter (`entity_registry/database.py:9021`)
+- `db.add_okr_alignment(entity_uuid, key_result_uuid)` — semantically (entity, key_result) not (parent, child) (`entity_registry/database.py:6498`)
+
+```python
+# Adapters: matrix iterates "pair = (parent/entity, child/blocker/kr)" but each
+# handler has its own naming; the lambda translates pair → call signature.
 HANDLERS = [
-    ("set_parent",      lambda db, p, c: db.set_parent_uuid(c, p)),
-    ("add_dependency",  lambda db, p, c: db.add_dependency(p, c, kind="depends_on")),
-    ("add_okr_alignment", lambda db, p, c: db.add_okr_alignment(p, c)),
+    ("set_parent",
+     lambda db, parent, child: db.set_parent(child, parent)),
+    ("add_dependency",
+     lambda db, parent, child: db.add_dependency(child, parent)),  # child is blocked by parent
+    ("add_okr_alignment",
+     lambda db, parent, child: db.add_okr_alignment(parent, child)),  # (entity=parent, key_result=child)
 ]
 
 @pytest.mark.parametrize("handler_name,handler_fn", HANDLERS)
@@ -325,7 +388,33 @@ def test_t2b_5_cross_workspace_gate_matrix(
 
 ### FR-7 — T2a.7 4-Decision Triage Tests
 
-New file `plugins/pd/hooks/lib/doctor/test_fix_actions.py`. Parametrized 4-branch coverage of `_fix_triage_cross_workspace_link` (verified branches at `fix_actions/__init__.py:472-499`):
+New file `plugins/pd/hooks/lib/doctor/test_fix_actions.py`. Parametrized 4-branch coverage of `_fix_triage_cross_workspace_link` (verified branches at `fix_actions/__init__.py:472-499`).
+
+**`FixContext` shape (verified at `fix_actions/__init__.py:23-36`):** 8 required fields, no defaults — `entities_db_path, memory_db_path, artifacts_root, project_root, db, engine, entities_conn, memory_conn`. Direct instantiation with one field will `TypeError`.
+
+**Helper `_make_fix_ctx` (new — added to test_fix_actions.py once, used by all tests in FR-7 + FR-9):**
+
+```python
+def _make_fix_ctx(entities_conn: sqlite3.Connection) -> FixContext:
+    """Build a minimal FixContext for triage tests.
+
+    Only entities_conn is load-bearing for cross-workspace fix paths;
+    other fields are populated with no-op placeholders that satisfy the
+    dataclass contract.
+    """
+    return FixContext(
+        entities_db_path="",
+        memory_db_path="",
+        artifacts_root="",
+        project_root="",
+        db=None,
+        engine=None,
+        entities_conn=entities_conn,
+        memory_conn=None,
+    )
+```
+
+All `FixContext(...)` references in FR-7 + FR-9 test code below are replaced with `_make_fix_ctx(entities_db_session)`.
 
 ```python
 TRIAGE_CASES = [
@@ -351,7 +440,7 @@ def test_t2a_7_triage_branch(entities_db_session, choice, assertion):
         message="cross-workspace link",
         fix_hint=fix_hint,
     )
-    ctx = FixContext(entities_conn=entities_db_session)
+    ctx = _make_fix_ctx(entities_db_session)
     _fix_triage_cross_workspace_link(ctx, issue)
     assertion(entities_db_session, parent_uuid, child_uuid, reason)
 ```
@@ -372,7 +461,7 @@ def test_t2a_7_grandfather_without_reason_uses_fallback(entities_db_session):
     )  # no reason: field
     issue = Issue(check="check_cross_workspace_parent_uuid", severity="warning",
                   entity=child_uuid, message="x", fix_hint=fix_hint)
-    _fix_triage_cross_workspace_link(FixContext(entities_conn=entities_db_session), issue)
+    _fix_triage_cross_workspace_link(_make_fix_ctx(entities_db_session), issue)
     with entities_db_session as conn:
         row = conn.execute(
             "SELECT reason FROM cross_workspace_allowlist WHERE parent_uuid=? AND child_uuid=?",
@@ -392,7 +481,7 @@ def test_t2a_7_unknown_choice_raises_value_error(entities_db_session):
     issue = Issue(check="check_cross_workspace_parent_uuid", severity="warning",
                   entity=child_uuid, message="x", fix_hint=fix_hint)
     with pytest.raises(ValueError, match="Unknown triage choice"):
-        _fix_triage_cross_workspace_link(FixContext(entities_conn=entities_db_session), issue)
+        _fix_triage_cross_workspace_link(_make_fix_ctx(entities_db_session), issue)
 ```
 
 ### FR-8 — Standalone Helper File Extraction (per F115 T2b.6)
@@ -513,6 +602,24 @@ The normalizer returns the cleaned string (does NOT mutate `issue.fix_hint`). On
 
 **Call-site pin:** `_parse_triage_choice` has exactly ONE call site (`_fix_triage_cross_workspace_link` at line 445) — verified by grep at spec time. If a future caller is added, FR-9 normalization is bypassed (acknowledged in FM-7).
 
+**Empirical pins (REPL-verified at spec time) for the FR-9 grammar:**
+
+```python
+>>> import unicodedata, re
+>>> unicodedata.normalize('NFC', 'а') == 'а'   # U+0430 Cyrillic 'a' — stays Cyrillic
+True
+>>> re.match(r'^[0-9a-fA-F\-]+$', 'а') is None  # Cyrillic rejected by UUID-like
+True
+>>> re.search(r'[\x00-\x1f`$\\]', 'legit$(rm -rf /)') is not None  # shell meta caught
+True
+>>> re.search(r'[\x00-\x1f`$\\]', 'operator approved cross-org link') is None  # legit reason passes
+True
+>>> re.match(r'^[a-zA-Z\- ]+$', 're-attribute parent') is not None  # legit choice passes
+True
+```
+
+These pins document the runtime contract on which AC-9.1 and AC-9.3 depend; they MUST be re-asserted during implementation in `test_fix_actions.py` smoke tests.
+
 **New tests in `test_fix_actions.py`:**
 
 ```python
@@ -541,7 +648,7 @@ def test_fr9_adversarial_fix_hint_rejected(entities_db_session, bad_hint, error_
         fix_hint=bad_hint,
     )
     with pytest.raises(ValueError, match=error_fragment):
-        _fix_triage_cross_workspace_link(FixContext(entities_conn=entities_db_session), issue)
+        _fix_triage_cross_workspace_link(_make_fix_ctx(entities_db_session), issue)
 ```
 
 **Happy-path regression (must pass post-FR-9):**
@@ -556,7 +663,7 @@ def test_fr9_legitimate_grandfather_with_reason_preserves_behavior(entities_db_s
     )
     issue = Issue(check="check_cross_workspace_parent_uuid", severity="warning",
                   entity=child_uuid, message="x", fix_hint=fix_hint)
-    _fix_triage_cross_workspace_link(FixContext(entities_conn=entities_db_session), issue)
+    _fix_triage_cross_workspace_link(_make_fix_ctx(entities_db_session), issue)
     # Assertion: allowlist row inserted with expected reason
     with entities_db_session as conn:
         row = conn.execute(
@@ -625,7 +732,7 @@ def test_fr9_legitimate_grandfather_with_reason_preserves_behavior(entities_db_s
 | M6 OperationalError handling | Grep `except OperationalError` in M6 body | None (uncaught; propagates to runner) |
 | Triage tool abort exception class | `fix_actions/__init__.py:450,455,499` | `ValueError` (NOT `InvalidFixHintError`) |
 | `_parse_triage_choice` call sites | grep | Exactly 1: `_fix_triage_cross_workspace_link` line 445 |
-| Python/sqlite version | `plugins/pd/pyproject.toml`, `python -c "import sqlite3; print(sqlite3.sqlite_version)"` | Python ≥ 3.11; sqlite3 ≥ 3.35 |
+| Python/sqlite version | `plugins/pd/pyproject.toml`, `python -c "import sqlite3; print(sqlite3.sqlite_version)"` | Python ≥ 3.12 (per `plugins/pd/pyproject.toml:4` `requires-python = ">=3.12"`); sqlite3 ≥ 3.35 |
 
 ## 6. Behavioral Constraints
 
@@ -699,9 +806,12 @@ Within Theme C: refactor (FR-8) BEFORE matrix coverage (FR-6) so the regression 
 Before beginning FR-9 implementation, run:
 
 ```bash
-# FM-2: max-observed fix_hint length in audit_log
-sqlite3 ~/.claude/pd/entities/entities.db \
-  "SELECT MAX(LENGTH(fix_hint)) FROM ... ;" # actual table name TBD at implement time
+# FM-2: max-observed fix_hint length across the codebase
+# Production fix_hint values are NOT persisted to a DB table (verified at
+# spec time — grep for "fix_hint=" in doctor sources). So the audit is
+# against source-code occurrences rather than runtime audit_log.
+grep -rno "fix_hint=" plugins/pd/hooks/lib/doctor/ \
+  | awk -F: '{print length($0)}' | sort -n | tail -1
 
 # FM-7: confirm _parse_triage_choice still has exactly 1 call site
 grep -c "_parse_triage_choice(" plugins/pd/hooks/lib/doctor/fix_actions/__init__.py
