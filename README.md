@@ -49,7 +49,7 @@ The setup walks through provider selection, API key configuration, and project i
 bash "$(ls -d ~/.claude/plugins/cache/*/pd/*/scripts/doctor.sh 2>/dev/null | head -1)"
 ```
 
-Read-only health check across 5 categories (system prerequisites, plugin environment, embedding provider, memory system, project context) with OS-specific fix commands. Runs 16 checks including security-review command presence, stale worktree detection, status write-path enforcement, and free-text status-parser regression detection.
+Read-only health check across 5 categories (system prerequisites, plugin environment, embedding provider, memory system, project context) with OS-specific fix commands. Runs 20 checks including security-review command presence, stale worktree detection, status write-path enforcement, free-text status-parser regression detection, and severity vocabulary validation.
 
 ## Quick Start
 
@@ -144,7 +144,7 @@ Configure via `.claude/pd.local.md`:
 | `/pd:remember` | Capture a learning to long-term memory |
 | `/pd:promote-pattern [<entry-substring>]` | Promote a high-confidence KB pattern to an enforceable hook, skill, agent, or command |
 | `/pd:cleanup-brainstorms` | Delete old brainstorm scratch files |
-| `/pd:doctor` | Run 16 diagnostic checks on pd workspace health (incl. security-review command, stale worktrees, and status-parser regression) |
+| `/pd:doctor` | Run 20 diagnostic checks on pd workspace health (incl. security-review command, stale worktrees, status-parser regression, and severity vocabulary) |
 | `/pd:secretary` | Intelligent task routing to agents and skills (supports YOLO mode with orchestrate subcommand) |
 | `/pd:create-specialist-team` | Create ephemeral specialist teams for complex tasks |
 | `/pd:root-cause-analysis` | Investigate bugs systematically |
