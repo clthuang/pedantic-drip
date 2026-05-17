@@ -322,9 +322,63 @@ def main() -> None:
         # Check provider migration (TD9)
         _check_provider_migration(db, config, provider)
 
-        # Build and upsert entry
+        # Build entry (pre-upsert)
         db_entry = _build_db_entry(entry_data, entry_id, now,
                                    project_root=args.project_root)
+
+        # Feature 115 FR-B-H3.2: apply quality gates BEFORE upsert_entry.
+        # Pre-F115 the CLI bypassed gates entirely; per spec 91% of memory
+        # entries were CLI-sourced and bypass-tier. The shared helper enforces
+        # length / near-dup / dedup-merge per spec AC-B-H3.1 + AC-B-H3.2.
+        embedding_vec = None
+        if provider is not None:
+            try:
+                embed_text = _embed_text_for_entry(db_entry)
+                embedding_vec = provider.embed(embed_text, task_type="document")
+            except Exception as exc:
+                print(
+                    f"writer: embedding failed: {exc}",
+                    file=sys.stderr,
+                )
+        else:
+            print(
+                "writer: near-duplicate check skipped: embedding provider unavailable",
+                file=sys.stderr,
+            )
+
+        from semantic_memory.quality_gates import apply_quality_gates
+        keywords_list = json.loads(db_entry.get("keywords") or "[]")
+        gate_result = apply_quality_gates(
+            description=entry_data["description"],
+            name=entry_data["name"],
+            db=db,
+            embedding_vec=embedding_vec,
+            config=config,
+            keywords=keywords_list,
+        )
+        if not gate_result.passed:
+            if gate_result.reason == "too_short":
+                print(
+                    "Entry rejected: description too short (min 20 chars)",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            if gate_result.reason == "near_dup":
+                print(
+                    f"Entry rejected: near-duplicate of existing entry "
+                    f"'{gate_result.matched_entry_name}'",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            if gate_result.reason == "deduped":
+                # Merge succeeded; observation_count bumped on existing entry.
+                # Exit 0 per spec — this is a successful absorption, not a rejection.
+                print(
+                    f"Reinforced existing entry "
+                    f"(merged into {gate_result.merged_entry_id})",
+                )
+                sys.exit(0)
+
         db.upsert_entry(db_entry)
 
         # Generate embedding for this entry if provider is available

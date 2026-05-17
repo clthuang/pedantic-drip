@@ -979,6 +979,15 @@ echo "=========================================="
 echo "Errors: $ERRORS"
 echo "Warnings: $WARNINGS"
 
+# Feature 115: FR-C-115.1 atomicity post-merge gate.
+# Asserts the entity_status_changed emit insertion + F111 manual emit deletion
+# resolved to the same commit on this feature branch.
+if [[ -x scripts/dev/check_fr_c_115_atomicity_postmerge.sh ]]; then
+    if ! bash scripts/dev/check_fr_c_115_atomicity_postmerge.sh "${PD_BASE_BRANCH:-develop}"; then
+        log_error "FR-C-115.1 atomicity check failed (see scripts/dev/check_fr_c_115_atomicity_postmerge.sh output above)"
+    fi
+fi
+
 if [ $ERRORS -gt 0 ]; then
     echo -e "${RED}Validation failed with $ERRORS error(s)${NC}"
     exit 1

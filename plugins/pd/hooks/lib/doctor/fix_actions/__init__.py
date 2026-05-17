@@ -390,3 +390,113 @@ def _fix_stale_dependency(ctx: FixContext, issue: Issue) -> str:
     if result:
         return f"Removed stale dependency on {blocked_by_uuid}, unblocked {len(result)} entities"
     return f"Stale dependency on {blocked_by_uuid} already cleaned"
+
+
+def _parse_triage_choice(fix_hint: str | None) -> dict:
+    """Parse a triage choice encoded in Issue.fix_hint.
+
+    Format options:
+        "triage_cross_workspace_links:<parent_uuid>:<child_uuid>"
+            (default — no choice pre-collected; caller will prompt via
+            AskUserQuestion at harness layer)
+        "triage_cross_workspace_links:<parent_uuid>:<child_uuid>|choice:<value>|reason:<reason>"
+            (post-AskUserQuestion: choice ∈ {"re-attribute parent",
+            "re-attribute child", "delete relation", "grandfather"})
+
+    Returns dict with optional keys: choice, reason, parent_uuid, child_uuid.
+    """
+    result: dict[str, str | None] = {
+        "choice": None, "reason": None,
+        "parent_uuid": None, "child_uuid": None,
+    }
+    if not fix_hint:
+        return result
+    parts = fix_hint.split("|")
+    head = parts[0]
+    if head.startswith("triage_cross_workspace_links:"):
+        try:
+            _, parent_uuid, child_uuid = head.split(":", 2)
+            result["parent_uuid"] = parent_uuid
+            result["child_uuid"] = child_uuid
+        except ValueError:
+            pass
+    for part in parts[1:]:
+        if part.startswith("choice:"):
+            result["choice"] = part[len("choice:"):]
+        elif part.startswith("reason:"):
+            result["reason"] = part[len("reason:"):]
+    return result
+
+
+def _fix_triage_cross_workspace_link(ctx: FixContext, issue: Issue) -> str:
+    """Feature 115 C14-115 / IF-8: triage a single cross-workspace parent_uuid link.
+
+    Per spec FR-E.2.2: harness presents AskUserQuestion with 4 options before
+    invoking this function and encodes the choice in issue.fix_hint:
+        - "re-attribute parent": UPDATE parent.workspace_uuid = child.workspace_uuid
+        - "re-attribute child": UPDATE child.workspace_uuid = parent.workspace_uuid
+        - "delete relation": UPDATE child SET parent_uuid = NULL
+        - "grandfather": INSERT INTO cross_workspace_allowlist (with reason)
+
+    The fix function is a pure mutation: harness handles UI consent + choice.
+    """
+    if ctx.entities_conn is None:
+        raise RuntimeError("entities_conn not available")
+    choice_info = _parse_triage_choice(issue.fix_hint)
+    parent_uuid = choice_info["parent_uuid"]
+    child_uuid = choice_info["child_uuid"] or issue.entity
+    choice = choice_info["choice"]
+    if not parent_uuid or not child_uuid:
+        raise ValueError(
+            f"triage fix requires parent_uuid:child_uuid in issue.fix_hint; "
+            f"got fix_hint={issue.fix_hint!r}"
+        )
+    if not choice:
+        raise ValueError(
+            "triage fix requires choice:<value> in issue.fix_hint after the "
+            "AskUserQuestion harness collects the operator decision; got "
+            f"fix_hint={issue.fix_hint!r}"
+        )
+
+    row = ctx.entities_conn.execute(
+        "SELECT e.workspace_uuid AS child_ws, p.workspace_uuid AS parent_ws "
+        "FROM entities e LEFT JOIN entities p ON e.parent_uuid = p.uuid "
+        "WHERE e.uuid = ?",
+        (child_uuid,),
+    ).fetchone()
+    if row is None:
+        raise RuntimeError(f"Child entity {child_uuid} not found")
+    child_ws = row[0] if not hasattr(row, "keys") else row["child_ws"]
+    parent_ws = row[1] if not hasattr(row, "keys") else row["parent_ws"]
+
+    if choice == "re-attribute parent":
+        ctx.entities_conn.execute(
+            "UPDATE entities SET workspace_uuid = ? WHERE uuid = ?",
+            (child_ws, parent_uuid),
+        )
+        action = f"re-attributed parent {parent_uuid} → workspace {child_ws}"
+    elif choice == "re-attribute child":
+        ctx.entities_conn.execute(
+            "UPDATE entities SET workspace_uuid = ? WHERE uuid = ?",
+            (parent_ws, child_uuid),
+        )
+        action = f"re-attributed child {child_uuid} → workspace {parent_ws}"
+    elif choice == "delete relation":
+        ctx.entities_conn.execute(
+            "UPDATE entities SET parent_uuid = NULL WHERE uuid = ?",
+            (child_uuid,),
+        )
+        action = f"deleted parent_uuid on {child_uuid}"
+    elif choice == "grandfather":
+        reason = choice_info.get("reason") or "operator-grandfathered (no reason supplied)"
+        ctx.entities_conn.execute(
+            "INSERT OR IGNORE INTO cross_workspace_allowlist "
+            "(parent_uuid, child_uuid, reason) VALUES (?, ?, ?)",
+            (parent_uuid, child_uuid, reason),
+        )
+        action = f"grandfathered pair ({parent_uuid}, {child_uuid}): {reason}"
+    else:
+        raise ValueError(f"Unknown triage choice: {choice!r}")
+
+    ctx.entities_conn.commit()
+    return action

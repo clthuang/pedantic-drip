@@ -53,42 +53,17 @@ try:
     else:
         subject = ''
 
-    # Branch on event type for error extraction
+    # Feature 114 FR-B-H2.1: only PostToolUseFailure events are processed.
+    # The previous PostToolUse heuristic-detection branch produced 29% of
+    # memory-DB noise (464/1581 'Tool failure:' rows; ~90% shell-init noise
+    # like 'Path error - export PATH=...'). The heuristic branch is deleted.
+    # Non-PostToolUseFailure events: emit empty result + is_failure=0.
     if event_name == 'PostToolUseFailure':
-        # Direct failure event — error field exists, no heuristic needed
         error_text = data.get('error', '')
         is_failure = True
     else:
-        # PostToolUse — detect failures from tool_response content
-        tool_response = data.get('tool_response', {})
-        if tool_name == 'Bash':
-            stdout = tool_response.get('stdout', '') if isinstance(tool_response, dict) else str(tool_response)
-            stderr = tool_response.get('stderr', '') if isinstance(tool_response, dict) else ''
-            error_text = (stderr + ' ' + stdout).strip() if stderr else stdout
-        elif tool_name in ('Edit', 'Write'):
-            if isinstance(tool_response, dict):
-                error_text = tool_response.get('stderr', '') or tool_response.get('stdout', '')
-            else:
-                error_text = str(tool_response)
-        else:
-            error_text = ''
-
-        # Heuristic failure detection for PostToolUse
+        error_text = ''
         is_failure = False
-        error_indicators = [
-            'No such file', 'not found', 'ENOENT', 'FileNotFoundError',
-            'Permission denied', 'EACCES', 'Operation not permitted',
-            'SyntaxError', 'unexpected token', 'parse error',
-            'ModuleNotFoundError', 'Cannot find module', 'ImportError', 'not installed',
-            'not compatible', 'version mismatch', 'unsupported', 'deprecated',
-            'command not found', 'Error:', 'error:', 'FATAL', 'fatal:',
-            'Traceback (most recent call last)', 'Exception:',
-            'not found in file', 'not unique', 'Is a directory'
-        ]
-        for indicator in error_indicators:
-            if indicator in error_text:
-                is_failure = True
-                break
 
     print(tool_name)
     print(subject.replace(chr(10), ' ')[:500])

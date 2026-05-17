@@ -37,6 +37,7 @@ from entity_registry.database import (
     EntityNotFoundError,
     InvalidCloseTargetError,
     _CLOSES_TERMINAL,
+    _UNKNOWN_WORKSPACE_UUID,
 )
 from entity_registry.project_identity import _compute_legacy_project_id, resolve_workspace_uuid
 from entity_registry.entity_lifecycle import (
@@ -1181,10 +1182,29 @@ def _process_complete_phase(
             from_uuid: str | None = None
             caller_workspace_uuid: str | None = None
             if closes_list:
-                _caller_ws = _workspace_uuid or ""
+                # Feature 114 FR-D.1: two-pass workspace fallback for legacy
+                # `__unknown__`-workspace entities. Empty/None _workspace_uuid
+                # normalizes to _UNKNOWN_WORKSPACE_UUID. If pass-1 against a
+                # real UUID misses, fall back to _UNKNOWN_WORKSPACE_UUID —
+                # strictly gated, no arbitrary cross-workspace probing.
+                _primary_ws = _workspace_uuid or _UNKNOWN_WORKSPACE_UUID
                 from_uuid, caller_workspace_uuid = db.resolve_entity_uuid(
-                    _caller_ws, feature_type_id,
+                    _primary_ws, feature_type_id,
                 )
+                if from_uuid is None and _primary_ws != _UNKNOWN_WORKSPACE_UUID:
+                    from_uuid, caller_workspace_uuid = db.resolve_entity_uuid(
+                        _UNKNOWN_WORKSPACE_UUID, feature_type_id,
+                    )
+                    if from_uuid is not None:
+                        print(
+                            "pd.workspace.legacy_fallback: " + json.dumps({
+                                "call_site": "complete_phase",
+                                "type_id": feature_type_id,
+                                "primary_ws": _primary_ws,
+                                "fallback_ws": _UNKNOWN_WORKSPACE_UUID,
+                            }),
+                            file=sys.stderr,
+                        )
                 if from_uuid is None:
                     raise EntityNotFoundError(
                         f"complete_phase: caller not registered: "
@@ -1336,22 +1356,16 @@ def _process_complete_phase(
                 _target_project_id = _resolve_project_id(entity) if entity else "__unknown__"
                 for to_uuid, target_type_id, old_status, terminal, is_replay in closure_targets:
                     if not is_replay:
+                        # Feature 115 FR-C-115.1: F111 manual emit removed. The
+                        # db.update_entity call below now emits entity_status_changed
+                        # itself (post-UPDATE, fail-open) per spec FR-C.1 + AC-C-115.1.
+                        # closed_by_uuid metadata key is permanently lost in closures
+                        # (operators correlate via entity_relations.fixes per F111 IF-2
+                        # step 7 — see 114 spec Pin F.1 entry #3 trade-off note).
                         db.update_entity(
                             to_uuid,
                             status=terminal,
                             workspace_uuid=caller_workspace_uuid,
-                        )
-                        db.append_phase_event(
-                            type_id=target_type_id,
-                            project_id=_target_project_id,
-                            workspace_uuid=caller_workspace_uuid,
-                            event_type="entity_status_changed",
-                            phase=None,
-                            metadata={
-                                "old_status": old_status,
-                                "new_status": terminal,
-                                "closed_by_uuid": from_uuid,
-                            },
                         )
 
                 # FR-10.3 step 7 — INSERT entity_relations idempotently.

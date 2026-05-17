@@ -1816,7 +1816,19 @@ def _migration_11_workspace_identity(conn: sqlite3.Connection) -> None:
             except (TypeError, ValueError):
                 current_version = 0
             if current_version >= 11:
-                return
+                # Feature 114 FR-M11.1: verify schema state matches stamp
+                # before trusting it. Same stub-trap-style defense as M12.
+                try:
+                    cols = {
+                        r[1] for r in conn.execute(
+                            "PRAGMA table_info(entities)"
+                        ).fetchall()
+                    }
+                    if "workspace_uuid" in cols:
+                        return  # genuine post-M11 state
+                    # Stamp present but column missing — fall through.
+                except sqlite3.OperationalError:
+                    pass
     except sqlite3.OperationalError as e:
         if "no such table" not in str(e).lower():
             raise
@@ -1897,8 +1909,18 @@ def _migration_11_workspace_identity(conn: sqlite3.Connection) -> None:
                 except (TypeError, ValueError):
                     current_version = 0
                 if current_version >= 11:
-                    conn.rollback()
-                    return
+                    # Feature 114 FR-M11.1: in-transaction re-check also
+                    # verifies the schema state. Stamp without column =
+                    # stub trap; fall through to body.
+                    cols = {
+                        r[1] for r in conn.execute(
+                            "PRAGMA table_info(entities)"
+                        ).fetchall()
+                    }
+                    if "workspace_uuid" in cols:
+                        conn.rollback()
+                        return
+                    # else: stub trap, fall through
         except sqlite3.OperationalError as e:
             # Narrow catch — only the "_metadata table does not exist"
             # case is acceptable here; anything else (e.g., 'database is
@@ -2680,7 +2702,31 @@ def _migration_12_polymorphic_taxonomy_and_events(
             except (TypeError, ValueError):
                 current_version = 0
             if current_version >= 12:
-                return
+                # Feature 114 FR-A.1: verify schema state matches stamp before
+                # trusting it. Pre-114, this guard only checked the stamp,
+                # creating the M12 stub trap when the stamp was applied without
+                # the body running (commit 6722191a window).
+                try:
+                    cols = {
+                        r[1] for r in conn.execute(
+                            "PRAGMA table_info(entities)"
+                        ).fetchall()
+                    }
+                    if (
+                        "type" in cols
+                        and "kind" in cols
+                        and "lifecycle_class" in cols
+                        and "entity_type" not in cols
+                    ):
+                        return  # genuine post-M12 state
+                    # Stamp present but body never ran (stub trap) — fall
+                    # through and execute the M12 body. The body's own
+                    # idempotency around individual ALTER TABLE / CREATE
+                    # TABLE statements handles re-execution safely.
+                except sqlite3.OperationalError:
+                    # entities table missing — falls through to body which
+                    # will fail-fast with a clearer error.
+                    pass
     except sqlite3.OperationalError as e:
         if "no such table" not in str(e).lower():
             raise
@@ -2715,8 +2761,24 @@ def _migration_12_polymorphic_taxonomy_and_events(
                 except (TypeError, ValueError):
                     current_version = 0
                 if current_version >= 12:
-                    conn.rollback()
-                    return
+                    # Feature 114 FR-A.1: in-transaction re-check also
+                    # verifies the schema state, not just the stamp. If
+                    # stamp says 12 but schema is pre-M12 (stub trap),
+                    # fall through and execute the body.
+                    cols = {
+                        r[1] for r in conn.execute(
+                            "PRAGMA table_info(entities)"
+                        ).fetchall()
+                    }
+                    if (
+                        "type" in cols
+                        and "kind" in cols
+                        and "lifecycle_class" in cols
+                        and "entity_type" not in cols
+                    ):
+                        conn.rollback()
+                        return  # genuine post-M12 state, concurrent run won
+                    # else: stub trap detected, fall through to body
         except sqlite3.OperationalError as e:
             if "no such table" not in str(e).lower():
                 raise
@@ -4024,7 +4086,7 @@ def _migration_13_entity_display(conn: sqlite3.Connection) -> None:
         if "no such table" in str(e).lower():
             raise RuntimeError(
                 "Migration 13 aborted: _metadata table missing. Cannot read "
-                "schema_version. Run feature-109 deferred remediation first."
+                "schema_version. Run: python -m plugins.pd.hooks.lib.entity_registry.remediate_m12 (feature-109 deferred remediation)."
             ) from e
         raise
 
@@ -4049,7 +4111,7 @@ def _migration_13_entity_display(conn: sqlite3.Connection) -> None:
     if v_row is None:
         raise RuntimeError(
             "Migration 13 aborted: _metadata.schema_version row missing. "
-            "Run feature-109 deferred remediation first."
+            "Run: python -m plugins.pd.hooks.lib.entity_registry.remediate_m12 (feature-109 deferred remediation)."
         )
     try:
         current_version = int(v_row[0])
@@ -4085,7 +4147,7 @@ def _migration_13_entity_display(conn: sqlite3.Connection) -> None:
         # path. Use the user_version mismatch error per TD-6 check 1.
         raise RuntimeError(
             f"Migration 13 aborted: user_version={current_version}, "
-            f"expected 12. Run feature-109 deferred remediation first."
+            f"expected 12. Run: python -m plugins.pd.hooks.lib.entity_registry.remediate_m12 (feature-109 deferred remediation)."
         )
 
     # Check 3 (TD-6): column layout assertion.
@@ -4109,7 +4171,7 @@ def _migration_13_entity_display(conn: sqlite3.Connection) -> None:
             f"lifecycle_class="
             f"{'present' if lifecycle_class_present else 'absent'}. "
             f"Expected post-migration-12 layout. "
-            f"Run feature-109 deferred remediation first."
+            f"Run: python -m plugins.pd.hooks.lib.entity_registry.remediate_m12 (feature-109 deferred remediation)."
         )
 
     # ----------------------------------------------------------------------
@@ -4778,7 +4840,7 @@ def _migration_14_issue_lifecycle_closure(conn: sqlite3.Connection) -> None:
         if "no such table" in str(e).lower():
             raise MigrationError(
                 "Migration 14 aborted: _metadata table missing. Cannot read "
-                "schema_version. Run feature-109/110 deferred remediation "
+                "schema_version. Run: python -m plugins.pd.hooks.lib.entity_registry.remediate_m12 (feature-109/110 deferred remediation) "
                 "first."
             ) from e
         raise
@@ -4872,12 +4934,12 @@ def _migration_14_issue_lifecycle_closure(conn: sqlite3.Connection) -> None:
         if "entity_display" not in tables:
             raise MigrationError(
                 "Migration 14 requires entity_display table (feature 110). "
-                "Run feature-110 deferred remediation."
+                "Run: python -m plugins.pd.hooks.lib.entity_registry.remediate_m12 (feature-110 deferred remediation)."
             )
         if "migration_audit_log" not in tables:
             raise MigrationError(
                 "Migration 14 requires migration_audit_log table "
-                "(feature 110). Run feature-110 deferred remediation."
+                "(feature 110). Run: python -m plugins.pd.hooks.lib.entity_registry.remediate_m12 (feature-110 deferred remediation)."
             )
         if "entity_relations" in tables:
             # Racer short-circuit at step 3 should have caught the
@@ -5338,6 +5400,137 @@ def _migration_14_down(conn: sqlite3.Connection) -> None:
         conn.execute("PRAGMA foreign_keys = ON")
 
 
+# Feature 115 C10-115.3: Migration 15 — initialize audit_emit_failed_count.
+def _migration_15_audit_emit_counter(conn: sqlite3.Connection) -> None:
+    """Initialize the audit_emit_failed_count counter to 0.
+
+    Per spec FR-C.3: counter is touched only by the FR-C-115.1 fail-open
+    emit path in db.update_entity (on emit failure). Migration 15 is the
+    ONLY initializer; subsequent migrations MUST NOT touch this key
+    (enforced by check_audit_counter_write_path AST check, C10-115.4).
+    """
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO _metadata (key, value) VALUES (?, ?)",
+            ("audit_emit_failed_count", "0"),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO _metadata (key, value) VALUES (?, ?)",
+            ("schema_version", "15"),
+        )
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+
+
+def _migration_15_audit_emit_counter_down(conn: sqlite3.Connection) -> None:
+    """Reverse Migration 15: remove counter and stamp schema_version=14."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute("DELETE FROM _metadata WHERE key='audit_emit_failed_count'")
+        conn.execute(
+            "INSERT OR REPLACE INTO _metadata (key, value) VALUES ('schema_version', '14')"
+        )
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+
+
+# Feature 115 FR-Migrations-115.2: Migration 16 is a NO-OP STUB.
+# 114 spec Pin O originally reserved M16 = hash-unify, but 114 deferred B-H4
+# entirely and 115 placed hash-unify at memory.db M6 instead. This entities.db
+# slot is kept as a no-op for migration-runner contiguity (runner uses
+# range(current+1, target+1) at database.py forward dispatcher; vacating M16
+# would raise KeyError when upgrading past it).
+def _migration_16_reserved(conn: sqlite3.Connection) -> None:
+    """Reserved during 115 planning; intentionally empty body.
+
+    The migration runner stamps schema_version=16 immediately after this
+    function returns. No schema work is performed.
+    """
+    pass
+
+
+def _migration_16_reserved_down(conn: sqlite3.Connection) -> None:
+    """Reverse Migration 16: no schema change to undo, but MUST stamp 15 in-tx
+    per the down-migration framework's defensive guard.
+    """
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO _metadata (key, value) VALUES ('schema_version', '15')"
+        )
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+
+
+# Feature 115 C13-115.2: Migration 17 — cross_workspace_allowlist table.
+# Per 114 spec FR-E.2.1 schema; supports E.2 triage tool grandfathering.
+def _migration_17_cross_workspace_allowlist(conn: sqlite3.Connection) -> None:
+    """Create the cross_workspace_allowlist table for 115 Cluster E.2.
+
+    Schema per 114 spec FR-E.2.1. CASCADE FKs on entity delete: allowlist
+    rows auto-remove when an entity is deleted (documented trade-off — if
+    the entity is recreated with the same uuid, operator must re-grandfather).
+    """
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS cross_workspace_allowlist (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                parent_uuid TEXT NOT NULL,
+                child_uuid TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                grandfathered_by TEXT NOT NULL DEFAULT 'operator',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(parent_uuid, child_uuid),
+                FOREIGN KEY (parent_uuid) REFERENCES entities(uuid) ON DELETE CASCADE,
+                FOREIGN KEY (child_uuid) REFERENCES entities(uuid) ON DELETE CASCADE
+            )
+        """)
+        conn.execute(
+            "INSERT OR REPLACE INTO _metadata (key, value) VALUES ('schema_version', '17')"
+        )
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+
+
+def _migration_17_cross_workspace_allowlist_down(conn: sqlite3.Connection) -> None:
+    """Reverse Migration 17: DROP TABLE + stamp schema_version=16."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute("DROP TABLE IF EXISTS cross_workspace_allowlist")
+        conn.execute(
+            "INSERT OR REPLACE INTO _metadata (key, value) VALUES ('schema_version', '16')"
+        )
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+
+
 # Ordered mapping of version -> migration function.
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _create_initial_schema,
@@ -5354,16 +5547,22 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     12: _migration_12_polymorphic_taxonomy_and_events,
     13: _migration_13_entity_display,
     14: _migration_14_issue_lifecycle_closure,
+    15: _migration_15_audit_emit_counter,
+    16: _migration_16_reserved,
+    17: _migration_17_cross_workspace_allowlist,
 }
 
 # Reverse-migration registry (FR-8 / design §6.7). Migrations 1-10 are
 # forward-only; calling _migrate_down() with target_version < 10 raises
-# NotImplementedError. Schema versions 11, 12, 13, 14 are reversible.
+# NotImplementedError. Schema versions 11+ are reversible.
 MIGRATIONS_DOWN: dict[int, Callable[[sqlite3.Connection], None]] = {
     11: _migration_11_workspace_identity_down,
     12: _migration_12_polymorphic_taxonomy_and_events_down,
     13: _migration_13_entity_display_down,
     14: _migration_14_down,
+    15: _migration_15_audit_emit_counter_down,
+    16: _migration_16_reserved_down,
+    17: _migration_17_cross_workspace_allowlist_down,
 }
 
 
@@ -5567,6 +5766,33 @@ class PromotionConflictError(ValueError):
         self.workspace_uuid = workspace_uuid
         self.old_type_id = old_type_id
         self.new_type_id = new_type_id
+
+
+class CrossWorkspaceError(ValueError):
+    """Feature 115 FR-E.3 / 114 IF-3: raised when an MCP op would create a
+    cross-workspace link between entities that reside in different workspaces.
+
+    Inherits ValueError so existing MCP error handlers catch via the standard
+    ValueError path. The MCP envelope translator branch in entity_server.py
+    and server_helpers.py recognizes this typed exception and emits
+    ``error_type=cross_workspace_forbidden`` instead of the generic envelope.
+    """
+
+    def __init__(
+        self,
+        op_name: str,
+        pairs: list[tuple[str, str | None, str, str | None]],
+    ):
+        # Each tuple: (uuid_a, ws_a, uuid_b, ws_b) — pairs that mismatch
+        self.op_name = op_name
+        self.pairs = pairs
+        super().__init__(
+            f"cross-workspace {op_name} forbidden: "
+            + "; ".join(
+                f"{ua}@{wa} vs {ub}@{wb}"
+                for ua, wa, ub, wb in pairs
+            )
+        )
 
 
 class EntityDatabase:
@@ -5877,6 +6103,46 @@ class EntityDatabase:
             (to_uuid,),
         ).fetchone()
         return row[0] if row is not None else None
+
+    def _assert_same_workspace_pairwise(
+        self,
+        pair: tuple[str, str],
+        op_name: str,
+    ) -> None:
+        """Feature 115 FR-E.1 / 114 IF-3: assert two entities share workspace.
+
+        Raises :class:`CrossWorkspaceError` if the two entities reside in
+        different workspaces AND the pair is not present in
+        ``cross_workspace_allowlist`` (either ordering).
+
+        Per spec FR-E.2: pairwise comparison between the two entities — NOT
+        a check against the caller's workspace (which may differ from both).
+        """
+        uuid_a, uuid_b = pair
+        rows = self._conn.execute(
+            "SELECT uuid, workspace_uuid FROM entities WHERE uuid IN (?, ?)",
+            (uuid_a, uuid_b),
+        ).fetchall()
+        if len(rows) < 2:
+            # One or both entities not found — let downstream NOT-FOUND
+            # handling cover it. Don't raise here; that would mask the
+            # real "entity missing" error with a workspace mismatch.
+            return
+        by_uuid = {r["uuid"]: r["workspace_uuid"] for r in rows}
+        ws_a = by_uuid.get(uuid_a)
+        ws_b = by_uuid.get(uuid_b)
+        if ws_a == ws_b:
+            return  # Same workspace — fine.
+        # Mismatch detected. Check allowlist by entity-UUID pair (both orderings).
+        allow_row = self._conn.execute(
+            "SELECT id FROM cross_workspace_allowlist "
+            "WHERE (parent_uuid = ? AND child_uuid = ?) "
+            "OR (parent_uuid = ? AND child_uuid = ?)",
+            (uuid_a, uuid_b, uuid_b, uuid_a),
+        ).fetchone()
+        if allow_row is not None:
+            return  # Allowlisted — skip the assertion.
+        raise CrossWorkspaceError(op_name, [(uuid_a, ws_a, uuid_b, ws_b)])
 
     def insert_entity_relation(
         self,
@@ -6234,6 +6500,10 @@ class EntityDatabase:
 
         Idempotent (duplicate is ignored via INSERT OR IGNORE).
 
+        Feature 115 FR-E.2: cross-workspace gate. Raises CrossWorkspaceError
+        if entity and key_result reside in different workspaces (unless
+        allowlisted via cross_workspace_allowlist).
+
         Parameters
         ----------
         entity_uuid:
@@ -6241,6 +6511,9 @@ class EntityDatabase:
         key_result_uuid:
             UUID of the key_result entity to align with.
         """
+        self._assert_same_workspace_pairwise(
+            (entity_uuid, key_result_uuid), "add_okr_alignment"
+        )
         self._conn.execute(
             "INSERT OR IGNORE INTO entity_okr_alignment "
             "(entity_uuid, key_result_uuid) VALUES (?, ?)",
@@ -6760,6 +7033,10 @@ class EntityDatabase:
         if child_uuid == parent_uuid:
             raise ValueError("entity cannot be its own parent")
 
+        # Feature 115 FR-E.2: cross-workspace gate. Raises CrossWorkspaceError
+        # if child and parent reside in different workspaces (unless allowlisted).
+        self._assert_same_workspace_pairwise((child_uuid, parent_uuid), "set_parent")
+
         # Circular reference detection via UUID-based CTE (depth-guarded)
         cur = self._conn.execute(
             """
@@ -7234,6 +7511,77 @@ class EntityDatabase:
                  new_meta_text),
             )
             self._commit()  # no-op inside transaction(); commit handled by context manager
+
+        # Feature 115 FR-C-115.1: audit invariant emit.
+        # When status mutates (status is not None AND status != old), emit an
+        # entity_status_changed phase_event. Fail-open per spec FR-C.2 + 114 TD-2:
+        # status UPDATE has already committed; emit failures NEVER propagate.
+        # Per spec AC-C.4: no-op writes (same status) do NOT emit.
+        if status is not None and old_row is not None and old_row["status"] != status:
+            try:
+                # Resolve type_id + workspace_uuid for the emit. project_id is
+                # derived from workspace_uuid via the workspaces JOIN (post-F109).
+                entity_meta = self._conn.execute(
+                    "SELECT type_id, workspace_uuid FROM entities WHERE uuid = ?",
+                    (entity_uuid,),
+                ).fetchone()
+                if entity_meta is not None:
+                    # project_id from workspaces table (legacy field still required
+                    # by append_phase_event signature).
+                    ws_row = self._conn.execute(
+                        "SELECT project_id_legacy FROM workspaces WHERE uuid = ?",
+                        (entity_meta["workspace_uuid"],),
+                    ).fetchone()
+                    _project_id = (
+                        ws_row["project_id_legacy"]
+                        if ws_row and ws_row["project_id_legacy"]
+                        else "__unknown__"
+                    )
+                    self.append_phase_event(
+                        type_id=entity_meta["type_id"],
+                        project_id=_project_id,
+                        workspace_uuid=entity_meta["workspace_uuid"],
+                        event_type="entity_status_changed",
+                        phase=None,
+                        metadata={
+                            "old_status": old_row["status"],
+                            "new_status": status,
+                        },
+                    )
+            except Exception as exc:
+                # Outer fail-open: emit failure must NEVER propagate (TD-2).
+                # Inner fail-open: counter write may itself fail (e.g., lock
+                # contention); emit a secondary stderr line so the failure is
+                # at least visible.
+                try:
+                    _md = self._conn.execute(
+                        "SELECT value FROM _metadata WHERE key='audit_emit_failed_count'"
+                    ).fetchone()
+                    _ct = (int(_md[0]) if _md else 0) + 1
+                    self._conn.execute(
+                        "INSERT OR REPLACE INTO _metadata(key, value) VALUES (?, ?)",
+                        ("audit_emit_failed_count", str(_ct)),
+                    )
+                    self._conn.commit()
+                except Exception as counter_exc:
+                    print(
+                        f"pd.audit.counter_write_failed: "
+                        f'{{"type_id": {entity_uuid!r}, '
+                        f'"exception_class": {type(counter_exc).__name__!r}}}',
+                        file=sys.stderr,
+                    )
+                try:
+                    print(
+                        f"pd.audit.emit_failed: "
+                        f'{{"type_id": {entity_uuid!r}, '
+                        f'"old_status": {(old_row["status"] if old_row else None)!r}, '
+                        f'"new_status": {status!r}, '
+                        f'"exception_class": {type(exc).__name__!r}}}',
+                        file=sys.stderr,
+                    )
+                except Exception:
+                    pass  # stderr write itself failed; nothing more we can do
+                # NO re-raise. Status UPDATE has already committed.
 
         # Cascade unblock: when an entity is completed, remove it from all
         # blocked_by lists and promote fully-unblocked dependents.
@@ -8674,7 +9022,14 @@ class EntityDatabase:
         """Add a dependency: entity_uuid is blocked by blocked_by_uuid.
 
         Uses INSERT OR IGNORE for idempotency.
+
+        Feature 115 FR-E.2: cross-workspace gate. Raises CrossWorkspaceError
+        if entity and blocked_by reside in different workspaces (unless
+        allowlisted via cross_workspace_allowlist).
         """
+        self._assert_same_workspace_pairwise(
+            (entity_uuid, blocked_by_uuid), "add_dependency"
+        )
         self._conn.execute(
             "INSERT OR IGNORE INTO entity_dependencies "
             "(entity_uuid, blocked_by_uuid) VALUES (?, ?)",

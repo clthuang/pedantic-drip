@@ -366,7 +366,7 @@ class TestMigration2:
         # Now open it with EntityDatabase — runs pending migrations (3+)
         # Feature 111 Migration 14: schema_version bumped to 14.
         db = EntityDatabase(db_path)
-        assert db.get_metadata("schema_version") == "14"
+        assert db.get_metadata("schema_version") == "17"
 
         # Schema should be intact.
         # Feature 109 Migration 12 added 3 columns (type, kind,
@@ -674,7 +674,7 @@ class TestMetadata:
 
     def test_schema_version_is_10(self, db: EntityDatabase):
         # Feature 111 Migration 14 bumps schema_version to 14.
-        assert db.get_metadata("schema_version") == "14"
+        assert db.get_metadata("schema_version") == "17"
 
 
 # ---------------------------------------------------------------------------
@@ -2684,7 +2684,7 @@ class TestMigrationIdempotency:
         assert entity is not None
         assert entity["uuid"] == p1_uuid
         # Feature 111 Migration 14: schema_version bumped to 14.
-        assert db2.get_metadata("schema_version") == "14"
+        assert db2.get_metadata("schema_version") == "17"
         db2.close()
 
 
@@ -2886,7 +2886,7 @@ class TestMigration3:
 
         Feature 111 Migration 14 bumps the version.
         """
-        assert db.get_metadata("schema_version") == "14"
+        assert db.get_metadata("schema_version") == "17"
 
     # -- Task 1.2: Migration creates indexes and trigger (AC-2) ------------
 
@@ -3077,7 +3077,7 @@ class TestMigration3:
         """
         fresh_db = EntityDatabase(str(tmp_path / "fresh.db"))
         try:
-            assert fresh_db.get_metadata("schema_version") == "14"
+            assert fresh_db.get_metadata("schema_version") == "17"
         finally:
             fresh_db.close()
 
@@ -4669,7 +4669,7 @@ class TestMigration5:
         db = EntityDatabase(str(tmp_path / "m5-idem.db"))
         try:
             # Feature 111 Migration 14 bumps the version to 14.
-            assert db.get_schema_version() == 14
+            assert db.get_schema_version() == 17
 
             # Verify all new phase values are accepted
             new_phases = [
@@ -6001,7 +6001,7 @@ class TestMigration8Data:
             v2 = db2.get_schema_version()
             db2.close()
             # Feature 111 Migration 14 bumps the version to 14.
-            assert v1 == v2 == 14
+            assert v1 == v2 == 17
 
     def test_migration_8_schema_version_set_to_8(self):
         """Schema version is 8 after migration."""
@@ -7417,7 +7417,7 @@ class TestMigration11ConcurrentRunners:
         # feature 111 added migration 14). The race condition under test is
         # migration 11's concurrent-runner short-circuit; subsequent migrations
         # run sequentially after 11 stamps in both workers.
-        assert all(r == "14" for r in results), results
+        assert all(r == "17" for r in results), results
 
         # Open the DB again and check exactly one row per legacy project_id.
         verify_conn = sqlite3.connect(db_path)
@@ -7518,14 +7518,15 @@ class TestMigrationsDownDispatcher:
     """Phase C Task 3.1: MIGRATIONS_DOWN dispatcher behaviour."""
 
     def test_migrations_down_contains_only_11(self):
-        """Reverse migrations registered: 11 (feature 108), 12 (feature 109),
-        13 (feature 110), and 14 (feature 111).
+        """Reverse migrations registered: 11 (F108), 12 (F109), 13 (F110),
+        14 (F111), 15 (F115 audit counter), 16 (F115 reserved no-op stub),
+        17 (F115 cross_workspace_allowlist).
 
         Test name preserved for git-blame continuity; the assertion is
         updated as each new reverse migration ships.
         """
         from entity_registry.database import MIGRATIONS_DOWN
-        assert sorted(MIGRATIONS_DOWN.keys()) == [11, 12, 13, 14]
+        assert sorted(MIGRATIONS_DOWN.keys()) == [11, 12, 13, 14, 15, 16, 17]
 
     def test_migrate_down_raises_on_unsupported_target_version(self, tmp_path):
         """Reversing past 10 raises NotImplementedError."""
