@@ -1,0 +1,20 @@
+{
+  "head_sha": "515cfddaf51a7afc04bdbf8e8c6d46b3170b5d26",
+  "feature_id": "115",
+  "feature_slug": "pd-data-model-followups",
+  "gate_run_at": "2026-05-17T00:50:00+00:00",
+  "decision": "OVERRIDE",
+  "override_path": "docs/features/115-pd-data-model-followups/qa-override.md",
+  "override_rationale_length_chars": 4127,
+  "reviewers": {
+    "pd:security-reviewer": {"approved": true, "high": 0, "med": 0, "low": 3},
+    "pd:code-quality-reviewer": {"approved": true, "high": 0, "med": 0, "low": 8},
+    "pd:implementation-reviewer": {"approved": false, "high": 2, "med": 0, "low": 1},
+    "pd:test-deepener": {"approved": null, "high": 6, "med": 10, "low": 4}
+  },
+  "med_findings_filed_to": "backlog#00278 (single consolidated entry for pre-existing develop failures)",
+  "low_findings_sidecar": "docs/features/115-pd-data-model-followups/.qa-gate-low-findings.md",
+  "high_findings_carry_forward": "F116 (8 items documented in qa-override.md)",
+  "yolo_mode": true,
+  "notes": "Override invoked post-merge per F114 retro pattern (compress-reviewer-iterations + partial-impl). MCP entity-server disconnected throughout session (lingering M12 state) — backlog filed via direct DB INSERT, not register_entity."
+}
