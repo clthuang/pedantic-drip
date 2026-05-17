@@ -402,16 +402,9 @@ Tests invoke the **EntityDatabase instance methods** (`db.set_parent`, `db.add_d
 - `db.add_okr_alignment(entity_uuid, key_result_uuid)` — semantically (entity, key_result) not (parent, child) (`entity_registry/database.py:6498`)
 
 ```python
-# Adapters: matrix iterates "pair = (parent/entity, child/blocker/kr)" but each
-# handler has its own naming; the lambda translates pair → call signature.
-HANDLERS = [
-    ("set_parent",
-     lambda db, parent, child: db.set_parent(child, parent)),
-    ("add_dependency",
-     lambda db, parent, child: db.add_dependency(child, parent)),  # child is blocked by parent
-    ("add_okr_alignment",
-     lambda db, parent, child: db.add_okr_alignment(parent, child)),  # (entity=parent, key_result=child)
-]
+# See "Fixture contracts" block below for the full HANDLERS list — pair is a
+# dict with type_id + uuid fields so set_parent gets type_id while
+# add_dependency / add_okr_alignment get uuid.
 
 @pytest.mark.parametrize("handler_name,handler_fn", HANDLERS)
 @pytest.mark.parametrize("ac,pair_fixture,expected", [
@@ -420,18 +413,50 @@ HANDLERS = [
     ("AC-E.3_allowlisted_succeeds", _allowlisted_pair_fixture, contextlib.nullcontext()),
 ])
 def test_t2b_5_cross_workspace_gate_matrix(
-    entities_db_session, handler_name, handler_fn, ac, pair_fixture, expected
+    entity_db, handler_name, handler_fn, ac, pair_fixture, expected
 ):
-    parent_uuid, child_uuid = pair_fixture(entities_db_session)
+    pair = pair_fixture(entity_db)
     with expected:
-        handler_fn(entities_db_session, parent_uuid, child_uuid)
+        handler_fn(entity_db, pair)
 ```
 
 **Fixture contracts (new helpers in `plugins/pd/hooks/lib/entity_registry/test_cross_workspace_matrix.py` — new file):**
-- `entities_db_session` (session-scoped): builds an entities.db with 3 pre-seeded workspaces (workspace_A, workspace_B, workspace_C) and seeded entities (1 feature + 1 backlog per workspace). Resets between cases via SAVEPOINT.
-- `_cross_ws_pair_fixture(db)`: returns `(feature_in_A, backlog_in_B)`.
-- `_same_ws_pair_fixture(db)`: returns `(feature_in_A, backlog_in_A)`.
-- `_allowlisted_pair_fixture(db)`: returns `(feature_in_A, backlog_in_B)` AFTER inserting a row into `cross_workspace_allowlist`.
+- `entity_db` (session-scoped fixture; renamed from `entities_db_session` to avoid name collision with FR-7/FR-9's `entities_db_session` which is a raw `sqlite3.Connection`): yields an `EntityDatabase` instance with 3 pre-seeded workspaces and seeded entities (1 feature + 1 backlog per workspace). Resets between cases via SAVEPOINT.
+- Each `_*_pair_fixture(db)` returns a `dict` with both `type_id` strings AND `uuid` strings:
+  ```python
+  return {
+      "parent": {"type_id": "feature:f-A", "uuid": "<uuid-a>"},
+      "child":  {"type_id": "backlog:b-B", "uuid": "<uuid-b>"},
+  }
+  ```
+  This lets each handler lambda extract the field it needs (`set_parent` takes type_id; `add_dependency` and `add_okr_alignment` take UUIDs).
+- `_cross_ws_pair_fixture(db)`: returns (feature_in_A, backlog_in_B) using the dict shape above.
+- `_same_ws_pair_fixture(db)`: returns (feature_in_A, backlog_in_A).
+- `_allowlisted_pair_fixture(db)`: returns (feature_in_A, backlog_in_B) AFTER `db._conn.execute("INSERT INTO cross_workspace_allowlist ...")`.
+
+Updated HANDLERS to consume the dict:
+
+```python
+HANDLERS = [
+    ("set_parent",
+     lambda db, pair: db.set_parent(pair["child"]["type_id"], pair["parent"]["type_id"])),
+    ("add_dependency",
+     lambda db, pair: db.add_dependency(pair["child"]["uuid"], pair["parent"]["uuid"])),
+    ("add_okr_alignment",
+     lambda db, pair: db.add_okr_alignment(pair["parent"]["uuid"], pair["child"]["uuid"])),
+]
+```
+
+Test invocation:
+
+```python
+@pytest.mark.parametrize("handler_name,handler_fn", HANDLERS)
+@pytest.mark.parametrize("ac,pair_fixture,expected", [...])
+def test_t2b_5_cross_workspace_gate_matrix(entity_db, handler_name, handler_fn, ac, pair_fixture, expected):
+    pair = pair_fixture(entity_db)
+    with expected:
+        handler_fn(entity_db, pair)
+```
 
 ### FR-7 — T2a.7 4-Decision Triage Tests
 
