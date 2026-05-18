@@ -24,8 +24,14 @@ from entity_registry.database import (
     _schema_expansion_v6,
 )
 
+
 from entity_registry.database import EXPORT_SCHEMA_VERSION
 from entity_registry.test_helpers import TEST_PROJECT_ID
+
+
+def _latest_entity_version() -> int:
+    """F117 TB.3 / FR-B.2a: dynamic latest schema_version for sweep sites (per design/plan authoritative 15-step ordering)."""
+    return max(MIGRATIONS.keys())
 
 
 # ---------------------------------------------------------------------------
@@ -367,7 +373,7 @@ class TestMigration2:
         # Now open it with EntityDatabase — runs pending migrations (3+)
         # Feature 111 Migration 14: schema_version bumped to 14.
         db = EntityDatabase(db_path)
-        assert db.get_metadata("schema_version") == "17"
+        assert db.get_metadata("schema_version") == str(_latest_entity_version())
 
         # Schema should be intact.
         # Feature 109 Migration 12 added 3 columns (type, kind,
@@ -675,7 +681,7 @@ class TestMetadata:
 
     def test_schema_version_is_10(self, db: EntityDatabase):
         # Feature 111 Migration 14 bumps schema_version to 14.
-        assert db.get_metadata("schema_version") == "17"
+        assert db.get_metadata("schema_version") == str(_latest_entity_version())
 
 
 # ---------------------------------------------------------------------------
@@ -2685,7 +2691,7 @@ class TestMigrationIdempotency:
         assert entity is not None
         assert entity["uuid"] == p1_uuid
         # Feature 111 Migration 14: schema_version bumped to 14.
-        assert db2.get_metadata("schema_version") == "17"
+        assert db2.get_metadata("schema_version") == str(_latest_entity_version())
         db2.close()
 
 
@@ -2887,7 +2893,7 @@ class TestMigration3:
 
         Feature 111 Migration 14 bumps the version.
         """
-        assert db.get_metadata("schema_version") == "17"
+        assert db.get_metadata("schema_version") == str(_latest_entity_version())
 
     # -- Task 1.2: Migration creates indexes and trigger (AC-2) ------------
 
@@ -3078,7 +3084,7 @@ class TestMigration3:
         """
         fresh_db = EntityDatabase(str(tmp_path / "fresh.db"))
         try:
-            assert fresh_db.get_metadata("schema_version") == "17"
+            assert fresh_db.get_metadata("schema_version") == str(_latest_entity_version())
         finally:
             fresh_db.close()
 
@@ -4670,7 +4676,7 @@ class TestMigration5:
         db = EntityDatabase(str(tmp_path / "m5-idem.db"))
         try:
             # Feature 111 Migration 14 bumps the version to 14.
-            assert db.get_schema_version() == 17
+            assert db.get_schema_version() == _latest_entity_version()
 
             # Verify all new phase values are accepted
             new_phases = [

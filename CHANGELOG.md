@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`pd doctor --fix` cross-workspace re-attribute** (feature 117) — the `_fix_triage_cross_workspace_link` helper now drops the `enforce_immutable_workspace_uuid` trigger, applies the `UPDATE entities SET workspace_uuid = ?` re-attribute, then recreates the trigger from the captured SQL — all inside a `with conn:` transaction with `try/finally` restore. Previously this raised `sqlite3.IntegrityError: workspace_uuid is immutable` on production DBs.
+- **Doctor stale-version false errors eliminated** (feature 117) — `ENTITY_SCHEMA_VERSION` and `MEMORY_SCHEMA_VERSION` constants in `doctor/checks.py` replaced with `max(MIGRATIONS.keys())`-based helpers. Schema version checks now track migrations automatically; future migrations no longer require manually updating constants.
+
 ### Added
 
 - **`check_severity_vocab` doctor check** (feature 116) — AST audit that verifies all doctor checks emit severity from the closed set `{error, warning, info}`. Brings doctor check count to 20. Runs at session-start; CI enforcement via `validate.sh`.

@@ -32,6 +32,31 @@ _VALID_UUID_1 = "a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1"
 _VALID_UUID_2 = "b2b2b2b2-b2b2-b2b2-b2b2-b2b2b2b2b2b2"
 
 
+# F117 TA.1: canonical CREATE TRIGGER SQL for enforce_immutable_workspace_uuid.
+# MUST be byte-identical to plugins/pd/hooks/lib/entity_registry/database.py
+# lines 2042-2046 inside _migration_11_workspace_identity. The em-dash below
+# is U+2014 (HORIZONTAL EM-DASH) — load-bearing per F117 design R-1.
+# Drift detector: see test_canonical_trigger_sql_matches_production_source.
+_CANONICAL_TRIGGER_SQL = """
+            CREATE TRIGGER enforce_immutable_workspace_uuid
+            BEFORE UPDATE OF workspace_uuid ON entities
+            BEGIN SELECT RAISE(ABORT, 'workspace_uuid is immutable — use re-attribution API'); END
+        """
+
+
+def _recreate_workspace_uuid_trigger(conn: sqlite3.Connection) -> None:
+    """F117 TA.1: re-arm the enforce_immutable_workspace_uuid trigger that
+    _seed_cross_workspace_pair drops during cross-workspace seeding.
+
+    Called AFTER _seed_cross_workspace_pair (which DROPs the trigger to
+    allow seed INSERTs) and BEFORE invoking _fix_triage_cross_workspace_link
+    in tests that exercise the F117 capture/replay path. Mirrors
+    entity_registry/database.py:2042-2046 byte-identical; if that source
+    changes, update _CANONICAL_TRIGGER_SQL to match.
+    """
+    conn.execute(_CANONICAL_TRIGGER_SQL)
+
+
 # ---------------------------------------------------------------------------
 # Fixtures and helpers
 # ---------------------------------------------------------------------------
@@ -194,6 +219,7 @@ TRIAGE_CASES = [
 @pytest.mark.parametrize("choice,assertion", TRIAGE_CASES)
 def test_t2a_7_triage_branch(entities_db_session, choice, assertion):
     parent_uuid, child_uuid = _seed_cross_workspace_pair(entities_db_session)
+    _recreate_workspace_uuid_trigger(entities_db_session)  # F117 TA.5
     reason = "operator approved cross-org link"
     fix_hint = (
         f"triage_cross_workspace_links:{parent_uuid}:{child_uuid}"
@@ -216,6 +242,7 @@ def test_t2a_7_triage_grandfather_without_reason_uses_fallback(
     entities_db_session,
 ):
     parent_uuid, child_uuid = _seed_cross_workspace_pair(entities_db_session)
+    _recreate_workspace_uuid_trigger(entities_db_session)  # F117 TA.5
     fix_hint = (
         f"triage_cross_workspace_links:{parent_uuid}:{child_uuid}"
         f"|choice:grandfather"
@@ -241,6 +268,7 @@ def test_t2a_7_triage_grandfather_without_reason_uses_fallback(
 
 def test_t2a_7_triage_unknown_choice_raises_value_error(entities_db_session):
     parent_uuid, child_uuid = _seed_cross_workspace_pair(entities_db_session)
+    _recreate_workspace_uuid_trigger(entities_db_session)  # F117 TA.5
     fix_hint = (
         f"triage_cross_workspace_links:{parent_uuid}:{child_uuid}"
         f"|choice:bogus"
@@ -297,6 +325,7 @@ def test_fr9_adversarial_fix_hint_rejected(bad_hint, error_fragment):
 def test_fr9_legitimate_grandfather_with_reason_preserves_behavior(entities_db_session):
     """FR-9 / AC-9.3: legitimate grandfather reason passes through normalizer."""
     parent_uuid, child_uuid = _seed_cross_workspace_pair(entities_db_session)
+    _recreate_workspace_uuid_trigger(entities_db_session)  # F117 TA.5
     reason = "operator approved cross-org link"
     fix_hint = (
         f"triage_cross_workspace_links:{parent_uuid}:{child_uuid}"
@@ -316,3 +345,204 @@ def test_fr9_legitimate_grandfather_with_reason_preserves_behavior(entities_db_s
     ).fetchone()
     assert row is not None, "Expected allowlist row inserted"
     assert row[0] == reason, f"Expected reason={reason!r}; got {row[0]!r}"
+
+
+# ---------------------------------------------------------------------------
+# Feature 117 TA.2 / TA.4: trigger-active re-attribute tests.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "choice",
+    ["re-attribute parent", "re-attribute child"],
+)
+def test_re_attribute_against_trigger_active_db(entities_db_session, choice):
+    """F117 TA.2 / FR-A.3: re-attribute survives the enforce_immutable_workspace_uuid
+    trigger via sqlite_master capture/replay (TDD red against pre-F117 production
+    code; green after TA.3 lands _execute_re_attribute_with_trigger_dance).
+
+    Inverts F116 TC.4 fixture polarity: re-arms trigger BEFORE invoking the
+    fix function (vs F116 fixture which left trigger dropped). Single re-arm
+    suffices for both parametrized choices (pytest re-runs test body per param).
+    """
+    parent_uuid, child_uuid = _seed_cross_workspace_pair(entities_db_session)
+    _recreate_workspace_uuid_trigger(entities_db_session)
+
+    pre_trigger_sql = entities_db_session.execute(
+        "SELECT sql FROM sqlite_master WHERE name='enforce_immutable_workspace_uuid'"
+    ).fetchone()[0]
+    assert pre_trigger_sql is not None, "Pre-call: trigger should exist"
+
+    fix_hint = (
+        f"triage_cross_workspace_links:{parent_uuid}:{child_uuid}"
+        f"|choice:{choice}"
+    )
+    issue = Issue(
+        check="check_cross_workspace_parent_uuid",
+        severity="warning",
+        entity=child_uuid,
+        message="cross-workspace link",
+        fix_hint=fix_hint,
+    )
+
+    _fix_triage_cross_workspace_link(_make_fix_ctx(entities_db_session), issue)
+
+    post_trigger_sql = entities_db_session.execute(
+        "SELECT sql FROM sqlite_master WHERE name='enforce_immutable_workspace_uuid'"
+    ).fetchone()[0]
+    assert post_trigger_sql == pre_trigger_sql, (
+        f"Trigger SQL drift detected:\npre:  {pre_trigger_sql!r}\npost: {post_trigger_sql!r}"
+    )
+
+    # Post-call trigger still enforces immutability against any other row.
+    # Use the child (re-attribute parent case) or parent (re-attribute child case)
+    # — whichever entity was NOT mutated by the re-attribute call.
+    untouched_uuid = child_uuid if choice == "re-attribute parent" else parent_uuid
+    with pytest.raises(sqlite3.IntegrityError, match="workspace_uuid is immutable"):
+        entities_db_session.execute(
+            "UPDATE entities SET workspace_uuid = ? WHERE uuid = ?",
+            ("00000000-0000-0000-0000-000000000000", untouched_uuid),
+        )
+
+
+def test_re_attribute_aborts_when_trigger_absent(entities_db_session):
+    """F117 TA.4 / FR-A.6: aborts with RuntimeError if trigger missing from
+    sqlite_master (do NOT degrade to bare UPDATE). Fixture leaves trigger
+    dropped (no _recreate call); abort fires before any workspace_uuid mutation.
+    """
+    parent_uuid, child_uuid = _seed_cross_workspace_pair(entities_db_session)
+    pre_ws = entities_db_session.execute(
+        "SELECT workspace_uuid FROM entities WHERE uuid = ?", (parent_uuid,)
+    ).fetchone()[0]
+
+    fix_hint = (
+        f"triage_cross_workspace_links:{parent_uuid}:{child_uuid}"
+        f"|choice:re-attribute parent"
+    )
+    issue = Issue(
+        check="check_cross_workspace_parent_uuid",
+        severity="warning",
+        entity=child_uuid,
+        message="x",
+        fix_hint=fix_hint,
+    )
+    with pytest.raises(RuntimeError, match="enforce_immutable_workspace_uuid trigger not found"):
+        _fix_triage_cross_workspace_link(_make_fix_ctx(entities_db_session), issue)
+
+    post_ws = entities_db_session.execute(
+        "SELECT workspace_uuid FROM entities WHERE uuid = ?", (parent_uuid,)
+    ).fetchone()[0]
+    assert post_ws == pre_ws
+
+
+class _FailingUpdateConn:
+    """F117 TA.4 / FR-A.4: proxy raising on UPDATE entities SET workspace_uuid only.
+
+    NOTE on Python data model: __enter__/__exit__ MUST be defined on the class
+    (not delegated via __getattr__). Special-method lookup uses type(obj).__enter__,
+    bypassing instance __getattr__ entirely (Python docs §3.3.10). Without explicit
+    __enter__/__exit__, `with conn:` inside _execute_re_attribute_with_trigger_dance
+    would AttributeError before UPDATE — defeating the test.
+    """
+
+    def __init__(self, real_conn):
+        self._real = real_conn
+
+    def execute(self, sql, params=()):
+        stripped = sql.lstrip().upper()
+        if stripped.startswith("UPDATE ENTITIES SET WORKSPACE_UUID"):
+            raise sqlite3.OperationalError("simulated UPDATE failure (F117 FR-A.4)")
+        return self._real.execute(sql, params)
+
+    def commit(self):
+        return self._real.commit()
+
+    def __enter__(self):
+        return self._real.__enter__()
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return self._real.__exit__(exc_type, exc_val, exc_tb)
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+def test_re_attribute_restores_trigger_on_update_failure(entities_db_session):
+    """F117 TA.4 / FR-A.4: trigger restored + workspace_uuid unchanged when
+    UPDATE raises mid-transaction. Uses _FailingUpdateConn proxy (FK injection
+    rejected at design — fix function reads workspace_uuid from entities table).
+    """
+    parent_uuid, child_uuid = _seed_cross_workspace_pair(entities_db_session)
+    _recreate_workspace_uuid_trigger(entities_db_session)
+
+    pre_trigger_sql = entities_db_session.execute(
+        "SELECT sql FROM sqlite_master WHERE name='enforce_immutable_workspace_uuid'"
+    ).fetchone()[0]
+    pre_parent_ws = entities_db_session.execute(
+        "SELECT workspace_uuid FROM entities WHERE uuid = ?", (parent_uuid,)
+    ).fetchone()[0]
+
+    ctx = _make_fix_ctx(entities_db_session)
+    ctx.entities_conn = _FailingUpdateConn(entities_db_session)
+
+    fix_hint = (
+        f"triage_cross_workspace_links:{parent_uuid}:{child_uuid}"
+        f"|choice:re-attribute parent"
+    )
+    issue = Issue(
+        check="check_cross_workspace_parent_uuid",
+        severity="warning",
+        entity=child_uuid,
+        message="x",
+        fix_hint=fix_hint,
+    )
+    with pytest.raises(sqlite3.OperationalError, match="simulated UPDATE failure"):
+        _fix_triage_cross_workspace_link(ctx, issue)
+
+    post_trigger_sql = entities_db_session.execute(
+        "SELECT sql FROM sqlite_master WHERE name='enforce_immutable_workspace_uuid'"
+    ).fetchone()[0]
+    assert post_trigger_sql == pre_trigger_sql
+
+    post_parent_ws = entities_db_session.execute(
+        "SELECT workspace_uuid FROM entities WHERE uuid = ?", (parent_uuid,)
+    ).fetchone()[0]
+    assert post_parent_ws == pre_parent_ws
+
+
+def test_canonical_trigger_sql_matches_production_source():
+    """F117 TA.4 / R-1 mitigation: detect drift between _CANONICAL_TRIGGER_SQL
+    in this test module and the source-of-truth in entity_registry/database.py
+    (_migration_11_workspace_identity, lines ~2042-2046). Substring scan +
+    whitespace normalization tolerates indentation drift but catches body changes.
+    """
+    import re
+    from pathlib import Path
+
+    db_source_path = (
+        Path(__file__).parent.parent / "entity_registry" / "database.py"
+    )
+    db_source = db_source_path.read_text(encoding="utf-8")
+
+    pattern = re.compile(
+        r"CREATE TRIGGER enforce_immutable_workspace_uuid\s+"
+        r"BEFORE UPDATE OF workspace_uuid ON entities\s+"
+        r"BEGIN SELECT RAISE\(ABORT,\s*"
+        r"'workspace_uuid is immutable — use re-attribution API'\s*"
+        r"\); END",
+        re.MULTILINE | re.DOTALL,
+    )
+    match = pattern.search(db_source)
+    assert match is not None, (
+        "Migration-11 CREATE TRIGGER enforce_immutable_workspace_uuid not "
+        f"found in {db_source_path} — has the canonical source moved?"
+    )
+
+    def _normalize(s: str) -> str:
+        return re.sub(r"\s+", " ", s).strip()
+
+    assert _normalize(match.group(0)) == _normalize(_CANONICAL_TRIGGER_SQL), (
+        "Canonical trigger SQL in test_fix_actions.py drifted from production "
+        "source at database.py. Re-sync _CANONICAL_TRIGGER_SQL to match the "
+        "CREATE TRIGGER block in _migration_11_workspace_identity."
+    )
