@@ -10,9 +10,26 @@ import time
 
 from doctor.models import CheckResult, Issue
 
-# Expected schema versions
-ENTITY_SCHEMA_VERSION = 11
-MEMORY_SCHEMA_VERSION = 4
+
+def _get_expected_entity_version() -> int:
+    """F117 FR-B.1: dynamic expected schema_version for entity_registry.
+
+    Replaces hardcoded ENTITY_SCHEMA_VERSION = 11 (F115 retro KB candidate #6).
+    Lazy import scopes the cost to actual check execution and forecloses on
+    any future circular-import risk between doctor and entity_registry.
+    """
+    from entity_registry.database import MIGRATIONS as ENTITY_MIGRATIONS
+    return max(ENTITY_MIGRATIONS.keys())
+
+
+def _get_expected_memory_version() -> int:
+    """F117 FR-B.1: dynamic expected schema_version for semantic_memory.
+
+    Replaces hardcoded MEMORY_SCHEMA_VERSION = 4. Lazy import per
+    _get_expected_entity_version rationale.
+    """
+    from semantic_memory.database import MIGRATIONS as MEMORY_MIGRATIONS
+    return max(MEMORY_MIGRATIONS.keys())
 
 
 def _build_local_entity_set(artifacts_root: str) -> set[str]:
@@ -264,7 +281,7 @@ def check_db_readiness(
     # Schema version checks (only if not locked)
     if entity_db_ok:
         schema_issue = _check_schema_version(
-            entities_db_path, "Entity DB", ENTITY_SCHEMA_VERSION
+            entities_db_path, "Entity DB", _get_expected_entity_version()
         )
         if schema_issue is not None:
             issues.append(schema_issue)
@@ -1071,14 +1088,15 @@ def check_memory_health(memory_conn: sqlite3.Connection, **_) -> CheckResult:
             ))
         else:
             version = int(row[0])
-            if version != MEMORY_SCHEMA_VERSION:
+            expected = _get_expected_memory_version()
+            if version != expected:
                 issues.append(Issue(
                     check="memory_health",
                     severity="error",
                     entity=None,
                     message=(
                         f"Memory DB schema_version is {version}, "
-                        f"expected {MEMORY_SCHEMA_VERSION}"
+                        f"expected {expected}"
                     ),
                     fix_hint="Run memory DB migrations to update schema",
                 ))

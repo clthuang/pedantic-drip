@@ -18,6 +18,12 @@ import numpy as np
 import pytest
 
 from semantic_memory.database import MemoryDatabase, _sanitize_fts5_query
+
+
+def _latest_memory_version() -> int:
+    """F117 TB.4 / FR-B.2a: dynamic latest schema_version for sweep sites."""
+    from semantic_memory.database import MIGRATIONS
+    return max(MIGRATIONS.keys())
 from semantic_memory.database import (
     MIGRATIONS,
     _migration_6_unify_source_hash_and_cleanup,
@@ -88,7 +94,7 @@ class TestSchemaCreation:
         assert cur.fetchone() is not None
 
     def test_schema_version_is_4(self, db: MemoryDatabase):
-        assert db.get_schema_version() == 7
+        assert db.get_schema_version() == _latest_memory_version()
 
     def test_entries_has_19_columns(self, db: MemoryDatabase):
         cur = db._conn.execute("PRAGMA table_info(entries)")
@@ -113,18 +119,18 @@ class TestMigrationIdempotency:
         """Opening two MemoryDatabase instances on same in-memory DB should
         still result in schema_version == 5 (migrations are idempotent)."""
         db1 = MemoryDatabase(":memory:")
-        assert db1.get_schema_version() == 7
+        assert db1.get_schema_version() == _latest_memory_version()
         db1.close()
 
     def test_schema_version_persists(self, tmp_path):
         """Schema version survives close and reopen."""
         db_path = str(tmp_path / "test.db")
         db1 = MemoryDatabase(db_path)
-        assert db1.get_schema_version() == 7
+        assert db1.get_schema_version() == _latest_memory_version()
         db1.close()
 
         db2 = MemoryDatabase(db_path)
-        assert db2.get_schema_version() == 7
+        assert db2.get_schema_version() == _latest_memory_version()
         db2.close()
 
 
@@ -188,7 +194,7 @@ class TestMigrationV2Backfill:
 
         # Reopen with MemoryDatabase to trigger migrations v2-v4
         db = MemoryDatabase(db_path)
-        assert db.get_schema_version() == 7
+        assert db.get_schema_version() == _latest_memory_version()
 
         entry = db.get_entry("test1")
         assert entry is not None
@@ -1263,7 +1269,7 @@ class TestMigration4:
         conn.close()
 
         db = MemoryDatabase(db_path)
-        assert db.get_schema_version() == 7
+        assert db.get_schema_version() == _latest_memory_version()
 
         # Verify influence_count column exists and defaults to 0
         entry = db.get_entry("e1")
@@ -1303,11 +1309,11 @@ class TestMigration4:
         conn.close()
 
         db1 = MemoryDatabase(db_path)
-        assert db1.get_schema_version() == 7
+        assert db1.get_schema_version() == _latest_memory_version()
         db1.close()
 
         db2 = MemoryDatabase(db_path)
-        assert db2.get_schema_version() == 7
+        assert db2.get_schema_version() == _latest_memory_version()
         db2.close()
 
     def test_migration_influence_count_default_zero_on_new_entry(self, db: MemoryDatabase):

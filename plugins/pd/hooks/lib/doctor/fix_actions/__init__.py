@@ -485,6 +485,55 @@ def _parse_triage_choice(fix_hint: str | None) -> dict:
     return result
 
 
+def _execute_re_attribute_with_trigger_dance(
+    conn,
+    target_entity_uuid: str,
+    target_workspace_uuid: str,
+) -> None:
+    """F117 FR-A.1: wrap an UPDATE entities SET workspace_uuid statement with
+    sqlite_master capture/replay of the enforce_immutable_workspace_uuid
+    trigger.
+
+    Per Python 3.6+ sqlite3 semantics (bpo-27334) — CPython legacy autocommit
+    mode — DDL (DROP/CREATE) autocommits immediately; the `finally` block is
+    the SOLE trigger-restoration mechanism. The `with conn:` rolls back the
+    UPDATE's implicit DML transaction only. Both layers are load-bearing —
+    neither is optional. PyPy may diverge; F117 assumes CPython only.
+
+    Strengthens the inline-hardcoded pattern at
+    entity_registry/database.py:7956-7975 (claim_unknown_entities) by
+    capturing the live trigger SQL from sqlite_master at call time —
+    byte-identical to whatever the DB actually has, regardless of source
+    drift in database.py.
+
+    Raises RuntimeError if the trigger is not present at call time (do NOT
+    silently degrade to a bare UPDATE).
+    """
+    trigger_sql_row = conn.execute(
+        "SELECT sql FROM sqlite_master "
+        "WHERE name='enforce_immutable_workspace_uuid'"
+    ).fetchone()
+    if trigger_sql_row is None or not trigger_sql_row[0]:
+        raise RuntimeError(
+            "F117 FR-A.1: enforce_immutable_workspace_uuid trigger not "
+            "found in sqlite_master; cannot safely drop/recreate. "
+            "Aborting re-attribute."
+        )
+    captured_sql = trigger_sql_row[0]
+
+    with conn:
+        conn.execute(
+            "DROP TRIGGER IF EXISTS enforce_immutable_workspace_uuid"
+        )
+        try:
+            conn.execute(
+                "UPDATE entities SET workspace_uuid = ? WHERE uuid = ?",
+                (target_workspace_uuid, target_entity_uuid),
+            )
+        finally:
+            conn.execute(captured_sql)
+
+
 def _fix_triage_cross_workspace_link(ctx: FixContext, issue: Issue) -> str:
     """Feature 115 C14-115 / IF-8: triage a single cross-workspace parent_uuid link.
 
@@ -529,15 +578,13 @@ def _fix_triage_cross_workspace_link(ctx: FixContext, issue: Issue) -> str:
     parent_ws = row[1] if not hasattr(row, "keys") else row["parent_ws"]
 
     if choice == "re-attribute parent":
-        ctx.entities_conn.execute(
-            "UPDATE entities SET workspace_uuid = ? WHERE uuid = ?",
-            (child_ws, parent_uuid),
+        _execute_re_attribute_with_trigger_dance(
+            ctx.entities_conn, parent_uuid, child_ws
         )
         action = f"re-attributed parent {parent_uuid} → workspace {child_ws}"
     elif choice == "re-attribute child":
-        ctx.entities_conn.execute(
-            "UPDATE entities SET workspace_uuid = ? WHERE uuid = ?",
-            (parent_ws, child_uuid),
+        _execute_re_attribute_with_trigger_dance(
+            ctx.entities_conn, child_uuid, parent_ws
         )
         action = f"re-attributed child {child_uuid} → workspace {parent_ws}"
     elif choice == "delete relation":

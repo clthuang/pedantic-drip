@@ -156,19 +156,22 @@ def _create_meta_json(
 
 
 def _make_memory_db(tmp_path, name: str = "memory.db") -> str:
-    """Create a minimal memory DB with schema matching memory v4.
+    """Create a minimal memory DB with schema matching the dynamic latest
+    memory version (F117 FR-B.1 replaces the old hardcoded MEMORY_SCHEMA_VERSION=4).
 
     Returns the path to the DB file.
     """
+    from doctor.checks import _get_expected_memory_version
+    expected = str(_get_expected_memory_version())
     db_path = str(tmp_path / name)
     conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.executescript("""
+    conn.executescript(f"""
         CREATE TABLE IF NOT EXISTS _metadata (
             key   TEXT PRIMARY KEY,
             value TEXT NOT NULL
         );
-        INSERT OR REPLACE INTO _metadata(key, value) VALUES('schema_version', '4');
+        INSERT OR REPLACE INTO _metadata(key, value) VALUES('schema_version', '{expected}');
 
         CREATE TABLE IF NOT EXISTS entries (
             id          TEXT PRIMARY KEY,
@@ -386,13 +389,17 @@ class TestCheck8BothDbsHealthy:
         entity_path = _make_db(tmp_path, "entities.db")
         memory_path = _make_memory_db(tmp_path, "memory.db")
 
-        # Stamp schema_version=11 to match the post-Migration-11 production
-        # ENTITY_SCHEMA_VERSION constant. _make_db uses a legacy v9 fixture
-        # so most tests can keep INSERTing via the project_id / parent_type_id
-        # columns until the full Phase F test-fixture migration lands
-        # (backlog #00360).
+        # Stamp schema_version to the dynamic latest (F117 FR-B.1 replaces
+        # the old hardcoded ENTITY_SCHEMA_VERSION=11). _make_db uses a legacy
+        # v9 fixture so most tests can keep INSERTing via the project_id /
+        # parent_type_id columns until the full Phase F test-fixture
+        # migration lands (backlog #00360).
+        from doctor.checks import _get_expected_entity_version
         conn = sqlite3.connect(entity_path)
-        conn.execute("UPDATE _metadata SET value = '11' WHERE key = 'schema_version'")
+        conn.execute(
+            "UPDATE _metadata SET value = ? WHERE key = 'schema_version'",
+            (str(_get_expected_entity_version()),),
+        )
         conn.commit()
         conn.close()
 
@@ -507,10 +514,15 @@ class TestCheck8ImmediateRollbackReleasesLock:
         entity_path = _make_db(tmp_path, "entities.db")
         memory_path = _make_memory_db(tmp_path, "memory.db")
 
-        # Stamp schema_version=11 to match the post-Migration-11 production
-        # ENTITY_SCHEMA_VERSION constant (see test_both_dbs_healthy note).
+        # Stamp schema_version to the dynamic latest (F117 FR-B.1 replaces
+        # the old hardcoded ENTITY_SCHEMA_VERSION=11). See test_both_dbs_healthy
+        # for fixture rationale.
+        from doctor.checks import _get_expected_entity_version
         conn = sqlite3.connect(entity_path)
-        conn.execute("UPDATE _metadata SET value = '11' WHERE key = 'schema_version'")
+        conn.execute(
+            "UPDATE _metadata SET value = ? WHERE key = 'schema_version'",
+            (str(_get_expected_entity_version()),),
+        )
         conn.commit()
         conn.close()
 
