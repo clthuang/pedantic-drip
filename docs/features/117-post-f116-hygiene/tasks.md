@@ -227,7 +227,7 @@ Add `_recreate_workspace_uuid_trigger(entities_db_session)` immediately after `_
 **Depends on:** TB.1, TB.2, TB.3, TB.4 (all Phase B code changes complete)
 
 **Action:**
-1. **Capture baseline FIRST** (before any TB.* edits land — to make the "no new failures" criterion binary). Implementer SHOULD have captured this at session start; if not, capture from `git stash` of all F117 changes:
+1. **Capture baseline FIRST** (before any TB.* edits land — to make the "no new failures" criterion binary). If a baseline was already captured at session start, confirm the stash procedure below is unnecessary; otherwise execute it now. The condition is explicit — no silent skip:
    ```bash
    git stash push -m "f117-tb5-baseline-capture" -- plugins/pd/hooks/lib/
    plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/ --tb=no -q 2>&1 | tail -5 > /tmp/f117-pytest-baseline.txt
@@ -243,6 +243,7 @@ Add `_recreate_workspace_uuid_trigger(entities_db_session)` immediately after `_
 - [ ] Pytest summary: 0 failures in `doctor`, `entity_registry`, `semantic_memory` test modules.
 - [ ] `./validate.sh` exit code matches baseline (expected: 0 errors).
 - [ ] Validate.sh warning count matches baseline (expected: 5 pre-existing cosmetic warnings — same set, no new ones). If new warning text appears, diff against baseline to identify the F117-attributable warning and resolve before proceeding.
+- [ ] **FR-B.3 forward-compat verification:** `grep -rn 'len(CHECK_ORDER)\s*==\s*[0-9]\+' plugins/pd` → 0 matches (no hardcoded CHECK_ORDER count assertions reintroduced).
 
 ---
 
