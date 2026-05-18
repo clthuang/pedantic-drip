@@ -1073,7 +1073,7 @@ def check_memory_health(memory_conn: sqlite3.Connection, **_) -> CheckResult:
     start = time.monotonic()
     issues: list[Issue] = []
 
-    # 1. schema_version == 4
+    # 1. schema_version == expected (dynamic, see _get_expected_memory_version)
     try:
         row = memory_conn.execute(
             "SELECT value FROM _metadata WHERE key = 'schema_version'"

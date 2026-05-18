@@ -486,7 +486,7 @@ def _parse_triage_choice(fix_hint: str | None) -> dict:
 
 
 def _execute_re_attribute_with_trigger_dance(
-    conn,
+    conn: sqlite3.Connection,
     target_entity_uuid: str,
     target_workspace_uuid: str,
 ) -> None:

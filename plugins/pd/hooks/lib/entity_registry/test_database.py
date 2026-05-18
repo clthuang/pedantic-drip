@@ -25,12 +25,13 @@ from entity_registry.database import (
 )
 
 
+from entity_registry.database import EXPORT_SCHEMA_VERSION
+from entity_registry.test_helpers import TEST_PROJECT_ID
+
+
 def _latest_entity_version() -> int:
     """F117 TB.3 / FR-B.2a: dynamic latest schema_version for sweep sites."""
     return max(MIGRATIONS.keys())
-
-from entity_registry.database import EXPORT_SCHEMA_VERSION
-from entity_registry.test_helpers import TEST_PROJECT_ID
 
 
 # ---------------------------------------------------------------------------
