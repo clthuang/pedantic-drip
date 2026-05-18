@@ -352,7 +352,16 @@ def _execute_re_attribute_with_trigger_dance(
      class _FailingUpdateConn:
          """Proxy that wraps a sqlite3.Connection and raises on the
          UPDATE entities SET workspace_uuid statement specifically.
-         Other statements (SELECT, DROP, CREATE) pass through untouched."""
+         Other statements (SELECT, DROP, CREATE) pass through untouched.
+
+         NOTE on Python data model: __enter__/__exit__ MUST be defined
+         on the class (not delegated via __getattr__). Special-method
+         lookup in CPython uses type(obj).__enter__, bypassing instance
+         __getattr__ entirely (see Python docs §3.3.10 "Special method
+         lookup"). Without explicit __enter__/__exit__, the `with conn:`
+         inside _execute_re_attribute_with_trigger_dance would raise
+         AttributeError before the UPDATE ever fires.
+         """
          def __init__(self, real_conn):
              self._real = real_conn
          def execute(self, sql, params=()):
@@ -361,7 +370,16 @@ def _execute_re_attribute_with_trigger_dance(
              return self._real.execute(sql, params)
          def commit(self):
              return self._real.commit()
-         # __getattr__ delegates everything else to self._real
+         def __enter__(self):
+             # Delegate to real connection so `with conn:` opens an
+             # implicit transaction on _real (not on the proxy itself).
+             return self._real.__enter__()
+         def __exit__(self, exc_type, exc_val, exc_tb):
+             # Delegate __exit__ so commit/rollback fires on _real
+             # per the real sqlite3.Connection's context-manager semantics.
+             return self._real.__exit__(exc_type, exc_val, exc_tb)
+         # __getattr__ delegates other attributes (fetchone, etc.) —
+         # NOT used for special-method lookup.
          def __getattr__(self, name):
              return getattr(self._real, name)
 
@@ -687,6 +705,18 @@ Design-specific:
 | 9 | suggestion | LOC counts in C-A.1 verification load-bearing? | Replaced with structural description; "exact line counts intentionally unspecified". |
 
 **Rev 2 summary:** Both blockers (DDL/DML semantics + fabricated test names) resolved with honest framing and verified names. 5 warnings resolved with concrete mechanisms (proxy class for failure injection, regex scan for trigger SQL drift detection, conditional deferral artifacts). 2 suggestions absorbed.
+
+### Design-Reviewer Iteration 2 (2026-05-18)
+
+**Result:** Needs Revision. 1 NEW blocker introduced by rev 2 fix.
+
+**Findings:**
+
+| # | Severity | Issue | Resolution (rev 2.1) |
+|---|----------|-------|-------------------|
+| 1 | blocker | `_FailingUpdateConn` proxy class missing `__enter__`/`__exit__`. Python's `with conn:` uses type-level dunder lookup (datamodel.html §3.3.10) which bypasses `__getattr__`. Without explicit `__enter__`/`__exit__`, the proxy raises `AttributeError` before reaching the UPDATE — defeating the test. | Added explicit `__enter__` and `__exit__` methods delegating to `self._real.__enter__()` / `self._real.__exit__(...)`. Added inline docstring NOTE explaining the special-method-lookup gotcha. |
+
+**Rev 2.1 summary:** Single targeted fix to the proxy class. Empirically verified all 9 iter-1 findings remained resolved per iter-2 reviewer's verification table (8 of 9 cleanly, with the proxy class adjustment closing the 9th).
 
 ## Open Questions
 
