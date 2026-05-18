@@ -23,12 +23,12 @@ from semantic_memory.database import (
     _migration_6_unify_source_hash_and_cleanup,
     _migration_7_reset_inflated_observation_count,
 )
+from semantic_memory._config_utils import _ISO8601_Z_PATTERN
 
 
 def _latest_memory_version() -> int:
     """F117 TB.4 / FR-B.2a: dynamic latest schema_version for sweep sites."""
     return max(MIGRATIONS.keys())
-from semantic_memory._config_utils import _ISO8601_Z_PATTERN
 
 
 # ---------------------------------------------------------------------------

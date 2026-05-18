@@ -128,7 +128,27 @@ The following 21 cross-workspace `parent_uuid` links require operator-interactiv
 
 | # | Child UUID (`entity` field from doctor issue) |
 |---|-----------------------------------------------|
-$(awk 'NR<=21 {printf "| %d | %s |\n", NR, $0}' /tmp/f117-deferred-links.txt 2>/dev/null || echo "(see /tmp/f117-deferred-links.txt for full list)")
+| 1 | 154eb998-51d0-458c-897b-86a90cf9f654 |
+| 2 | 45fcda8a-c6ef-4dcd-879f-e03dbf62941a |
+| 3 | d291bdbc-9e4d-4fb9-94d1-fc634b5d03b0 |
+| 4 | 157247ab-0a89-41bf-a900-426f68f1eb87 |
+| 5 | 2b3aba82-52da-4018-86d8-7e3c154e792c |
+| 6 | cecf3490-f7db-4181-99de-49022766c993 |
+| 7 | f7029b56-83ee-4734-b416-113c1b132411 |
+| 8 | 6e9d81f4-d419-45e6-97d1-900bd22dd258 |
+| 9 | 2d76911e-fa98-49f2-986d-631f221e18d9 |
+| 10 | 16c2a8a1-0e54-4a30-8d6e-d398e475dceb |
+| 11 | 8dcae2d8-f70d-4047-b3f5-9164051c889e |
+| 12 | 19e5e946-8f35-411d-abe5-6afa6c2124b6 |
+| 13 | d03e8286-a18e-4ed1-b03c-139a013f1ec9 |
+| 14 | fc26509f-02ed-48e0-be06-65106caf0876 |
+| 15 | 0a07b8e6-749b-47a6-afb2-c750e8fccb86 |
+| 16 | 7fa83a07-0b71-48c0-b86a-7d6432c1aa39 |
+| 17 | b51e42fa-e9b3-4376-a5d9-ccb6e5b5a8ec |
+| 18 | d137f12e-0368-4530-a0b9-7df953b85588 |
+| 19 | 5f7f9f78-8abb-4a02-8ae4-29c1bf131556 |
+| 20 | b681a4d1-ebe8-46a4-b348-a30956b4eb49 |
+| 21 | ed0ac402-a0ca-4a6e-abef-913e5543b20c |
 
 To resume triage in a future session:
 ```bash
