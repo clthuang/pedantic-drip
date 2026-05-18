@@ -46,6 +46,13 @@ with ctx.entities_conn:
         "DROP TRIGGER IF EXISTS enforce_immutable_workspace_uuid"
     )
     try:
+        # Variable bindings (from existing function body, lines 532-541):
+        #   "re-attribute parent" branch: target_workspace_uuid = child_ws,
+        #     target_entity_uuid = parent_uuid (matches line 534).
+        #   "re-attribute child" branch:  target_workspace_uuid = parent_ws,
+        #     target_entity_uuid = child_uuid (matches line 540).
+        # The capture/replay wrapper is identical for both branches —
+        # only the bound values differ.
         ctx.entities_conn.execute(
             "UPDATE entities SET workspace_uuid = ? WHERE uuid = ?",
             (target_workspace_uuid, target_entity_uuid),
@@ -96,7 +103,7 @@ A new test `test_re_attribute_against_trigger_active_db` MUST be added to `plugi
 A new test `test_re_attribute_restores_trigger_on_update_failure` MUST be added. Constraints:
 
 - Fixture: trigger active. Failure-injection mechanism: pass an entity_uuid that does not exist in `workspaces.uuid` (the entities table's `workspace_uuid` column is `TEXT NOT NULL REFERENCES workspaces(uuid)` per `database.py:1984`). With `PRAGMA foreign_keys = ON` enabled on the connection (verify in the test fixture; if not enabled, the fixture MUST enable it via `conn.execute("PRAGMA foreign_keys = ON")` before the test), the UPDATE raises `sqlite3.IntegrityError: FOREIGN KEY constraint failed`.
-- Pre-flight verification: before fixing the implementation, the test author MUST manually verify that `conn.execute("PRAGMA foreign_keys=ON; UPDATE entities SET workspace_uuid='nonexistent-uuid' WHERE uuid=?", (...,))` against a trigger-dropped fixture raises `sqlite3.IntegrityError` with `"FOREIGN KEY constraint failed"` in the message. If `PRAGMA foreign_keys` is OFF by default in the project's connection wrapper, the test fixture MUST explicitly enable it. (Fallback if FK enforcement is impractical: use `pytest.MonkeyPatch.setattr` on `ctx.entities_conn.execute` to raise `sqlite3.OperationalError("simulated failure")` on the second call (the UPDATE), keeping the first call (DROP TRIGGER) intact. Document the chosen mechanism in the test docstring.)
+- **Design-time verification** (one-shot check before writing the test): confirm FK enforcement fires by running `conn.execute("PRAGMA foreign_keys=ON; UPDATE entities SET workspace_uuid='nonexistent-uuid' WHERE uuid=?", (...,))` against a trigger-dropped fixture and observing `sqlite3.IntegrityError` with `"FOREIGN KEY constraint failed"` in the message. If `PRAGMA foreign_keys` is OFF in the project's connection wrapper, the test fixture MUST enable it explicitly. This is a design-time confirmation, not a runtime test assertion. (Fallback if FK enforcement is impractical: use `pytest.MonkeyPatch.setattr` on `ctx.entities_conn.execute` to raise `sqlite3.OperationalError("simulated failure")` on the second call (the UPDATE), keeping the first call (DROP TRIGGER) intact. Document the chosen mechanism in the test docstring.)
 - Assertion: after the exception propagates from `_fix_triage_cross_workspace_link` to the test, (a) `SELECT sql FROM sqlite_master WHERE name='enforce_immutable_workspace_uuid'` returns the captured text byte-identical (the `finally` re-issued it), (b) the original `workspace_uuid` on the target entity is unchanged (the `with ctx.entities_conn:` rollback discarded the UPDATE — `SELECT workspace_uuid FROM entities WHERE uuid=?` returns the pre-call value), (c) the raised exception is the original mechanism's type (`sqlite3.IntegrityError` for FK injection, `sqlite3.OperationalError` for monkey-patched), NOT a wrapped exception — the function does not swallow.
 
 **FR-A.5: F116 TC.4 test compatibility (modified fixture flow)**
@@ -307,7 +314,8 @@ After Themes A/B/C complete, `python -m doctor` MUST return:
 
 - **AC-D.1:** F115 + F116 regression suite passes (0 new test failures attributable to F117).
 - **AC-D.2:** Merge target: `develop` branch (NOT main, per user memory `merge-to-develop-not-main`).
-- **AC-D.3:** `.meta.json` `lastCompletedPhase` advances through specify → design → create-plan → implement → finish.
+
+(Workflow note — not an acceptance criterion: `.meta.json` `lastCompletedPhase` advances through specify → design → create-plan → implement → finish via the workflow-state MCP server; this is a tool invariant, not a design-addressable condition.)
 
 ## Test Strategy
 
@@ -396,6 +404,16 @@ For the create-plan phase, anticipate the following TDD ordering:
 2. FR-B.2b enumeration of test_migration_13_safety.py missed line 367 (`v[0] == "12"` — post-down-migration terminal-version pin) — added as 4th pinned site. Site is saved from F117 sweep by narrow regex (raw-tuple `v[0]` form not matched), but explicit enumeration is the spec's rigor standard.
 
 Spec is implementation-ready.
+
+### Phase-Reviewer Iteration 1 (2026-05-18)
+
+**Result:** APPROVED. 0 blockers, 1 warning, 2 suggestions (all 3 applied as rev 2.2):
+
+1. (warning) FR-A.1 pseudocode used unbound `target_workspace_uuid` / `target_entity_uuid` without cross-referencing existing function body — added inline comment annotating which lines (532-535 vs 538-541) bind which values.
+2. (suggestion) FR-A.4 pre-flight verification framed as runtime test step — reframed as "design-time verification" (one-shot check).
+3. (suggestion) AC-D.3 (lastCompletedPhase progression) was workflow-tool invariant, not design criterion — moved to workflow note below AC-D list.
+
+Specify phase complete. Spec ready for design.
 
 ## Evidence + Reference Trail
 
