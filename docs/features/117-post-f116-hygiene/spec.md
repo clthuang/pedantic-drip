@@ -51,12 +51,12 @@ with ctx.entities_conn:
             (target_workspace_uuid, target_entity_uuid),
         )
     finally:
-        # Re-issue the captured trigger SQL byte-identical. This fires
-        # even if the UPDATE raised — the connection-level rollback then
-        # discards both the DROP and any partial UPDATE work, while the
-        # trigger SQL is re-asserted at the DDL layer (DDL is implicitly
-        # committed by sqlite3 on each execute, but DROP within a tx is
-        # reverted by `with conn:` rollback per SQLite semantics).
+        # Re-issue the captured trigger SQL byte-identical. Per Python 3.6+
+        # sqlite3 semantics (bpo-27334), DDL statements participate in the
+        # implicit transaction opened by `with conn:` and are rolled back
+        # alongside DML when the block exits via exception. The `finally`
+        # acts as defense-in-depth: even if rollback semantics ever
+        # surprise us, the captured SQL is re-asserted explicitly.
         ctx.entities_conn.execute(captured_sql)
 # The standalone `ctx.entities_conn.commit()` at line 560 (post-branch) is
 # preserved for the other branches (delete relation, grandfather) — those
@@ -183,10 +183,11 @@ Sites: lines 91, 116, 123, 127, 191, 1266, 1306, 1310 (all of the form `assert d
 
 Empirical enumeration (verified 2026-05-18 via grep `schema_version.*== *"\|MIGRATION_SAFETY`):
 
-1. `plugins/pd/hooks/lib/entity_registry/test_migration_13_safety.py` — 3 pinned sites:
+1. `plugins/pd/hooks/lib/entity_registry/test_migration_13_safety.py` — 4 pinned sites:
    - Line 194: `assert v is not None and v[0] == "13"` (replay-drift check)
    - Line 205: `assert v is not None and v[0] == "13"` (post-migration stamp)
    - Line 224: `assert stamp_idx >= 0, "migration 13 must stamp schema_version=13"` (static source check)
+   - Line 367: `assert v is not None and v[0] == "12"` (post-DOWN-migration terminal-version pin; LOAD-BEARING for migration-13 down-safety — verifies reverse migration restores schema_version=12). Saved from F117 sweep by the narrow regex (raw-tuple `v[0]` form is not matched by `get_metadata\(...\)` or `get_schema_version\(\)` patterns), but explicitly enumerated here for completeness.
 2. `plugins/pd/hooks/lib/entity_registry/test_migration_14_safety.py` — **0 hardcoded `== "N"` assertion-form sites** (verified via grep). No FR-B.2b exclusion required for this file; FR-B.2a sweep does not touch it either.
 3. `plugins/pd/hooks/lib/entity_registry/test_migration_safety.py` — **0 hardcoded `== "N"` assertion-form sites** (verified via grep). Same status as #2.
 4. `plugins/pd/hooks/lib/semantic_memory/test_database.py:2857`: `assert _read_schema_version(db_path) == "5"` — post-migration backstop assertion. Pins explicitly to "5". MUST remain hardcoded.
@@ -386,6 +387,15 @@ For the create-plan phase, anticipate the following TDD ordering:
 | 9 | suggestion | Overview section did not propagate the "stricter variant" framing from PRD rev 2.1 | Overview Theme A bullet expanded with the strengthening rationale (stricter variant of `claim_unknown_entities`'s hardcoded pattern). |
 
 **Rev 2 summary:** All 2 blockers resolved with concrete implementation-ready specifications; 4 warnings resolved with explicit ordering / quoting / falsifiable verification commands; 3 suggestions absorbed into spec body (no separate addendum needed).
+
+### Spec-Reviewer Iteration 2 (2026-05-18)
+
+**Result:** APPROVED. 0 blockers, 0 warnings, 2 non-blocking suggestions (both applied as rev 2.1):
+
+1. FR-A.1 inline DDL/transaction comment was internally contradictory (pre-3.6 vs post-3.6 sqlite3 semantics) — rewrote comment to cite Python 3.6+ semantics (bpo-27334) cleanly and frame the `finally` as defense-in-depth.
+2. FR-B.2b enumeration of test_migration_13_safety.py missed line 367 (`v[0] == "12"` — post-down-migration terminal-version pin) — added as 4th pinned site. Site is saved from F117 sweep by narrow regex (raw-tuple `v[0]` form not matched), but explicit enumeration is the spec's rigor standard.
+
+Spec is implementation-ready.
 
 ## Evidence + Reference Trail
 
