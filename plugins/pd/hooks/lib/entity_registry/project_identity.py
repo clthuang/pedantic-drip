@@ -526,10 +526,13 @@ def resolve_workspace_uuid(working_dir: str | None = None) -> str:
 
     Precedence chain:
       1. ``ENTITY_WORKSPACE_UUID`` env var (test override).
-      2. ``<working_dir>/.claude/pd/workspace.json`` (file-based; project-level).
+      2. ``<working_dir>/.claude/pd/workspace.json`` (file-based; project-level)
+         — self-healing: an orphaned file uuid is reconciled against the
+         workspaces table (adopt the project_root row, or insert the missing
+         row) so file and DB stay consistent.
       3. workspaces-table lookup by ``project_root`` match (single row only).
-      4. Fresh write — generate uuid4, persist via flock-synchronised
-         atomic write.
+      4. Fresh write — generate uuid4, persist via flock-synchronised atomic
+         write, then record the matching workspaces row.
 
     Parameters
     ----------
@@ -559,13 +562,31 @@ def resolve_workspace_uuid(working_dir: str | None = None) -> str:
         return _validate_workspace_uuid(env_uuid)
 
     target_path = os.path.join(cwd, ".claude", "pd", "workspace.json")
+    # ENTITY_DB_PATH-aware (matches the MCP servers); historically this was
+    # hard-coded to the global store, which diverged under test harnesses.
+    db_path = _entities_db_path()
 
-    # Step 2: file-based.
+    # Step 2: file-based, with split-brain self-heal. A workspace.json whose
+    # uuid is absent from the workspaces table (the F-incident: file written
+    # without a matching DB row) is repaired here instead of being trusted
+    # forever: adopt the project_root's canonical row (rewriting the file) or
+    # insert the missing row so the FK resolves on the next write.
     if os.path.exists(target_path):
-        return _read_workspace_json(target_path)
+        file_uuid = _read_workspace_json(target_path)  # may raise (corrupt).
+        resolved = validate_or_adopt_workspace_uuid(file_uuid, cwd, db_path)
+        if resolved != file_uuid:
+            print(
+                f"[workspace.json] WARN: healed workspace split-brain: "
+                f"adopted {resolved} from workspaces table (file had orphan "
+                f"{file_uuid})",
+                file=sys.stderr,
+            )
+            return _rewrite_workspace_json_if_matches(
+                target_path, file_uuid, resolved
+            )
+        return resolved
 
     # Step 3: workspaces-table lookup (best-effort; DB may be missing).
-    db_path = os.path.expanduser("~/.claude/pd/entities/entities.db")
     if os.path.isfile(db_path):
         try:
             conn = sqlite3.connect(
@@ -632,7 +653,12 @@ def resolve_workspace_uuid(working_dir: str | None = None) -> str:
             f"project, or set ENTITY_WORKSPACE_UUID explicitly."
         )
     fresh_uuid = str(uuid_mod.uuid4())
-    return _atomic_workspace_json_write(target_path, fresh_uuid)
+    # Write the file FIRST (flock decides the race winner and the returned
+    # uuid is authoritative), THEN record the matching workspaces row so the
+    # file and DB never diverge. Never hold the flock across the DB write.
+    written = _atomic_workspace_json_write(target_path, fresh_uuid)
+    _ensure_workspace_row(db_path, written, cwd)
+    return written
 
 
 @dataclasses.dataclass(frozen=True)

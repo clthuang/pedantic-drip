@@ -655,6 +655,22 @@ class TestLookupWorkspaceUuidByProjectRoot:
             conn.close()
 
 
+def _resolve_orphan_heal_worker(args):
+    """Worker for the orphan-heal race test (must be picklable)."""
+    import os as _os
+    import sys as _sys
+    import time
+    project_dir, db_path, sentinel_path = args
+    _os.environ.pop("ENTITY_WORKSPACE_UUID", None)
+    _os.environ["ENTITY_DB_PATH"] = db_path
+    _sys.path.insert(0, str(project_dir) + "/../../../../")
+    from entity_registry.project_identity import resolve_workspace_uuid
+    deadline = time.time() + 10.0
+    while not _os.path.exists(sentinel_path) and time.time() < deadline:
+        time.sleep(0.01)
+    return resolve_workspace_uuid(project_dir)
+
+
 def _resolve_workspace_uuid_worker(args):
     """Worker for the multiprocessing race test (must be picklable)."""
     import os as _os
@@ -713,6 +729,42 @@ class TestResolveWorkspaceUuidConcurrentRace:
         assert target.exists()
         on_disk = _read_workspace_json_uuid(str(target))
         assert on_disk == results[0]
+
+    def test_concurrent_orphan_heal_converges(self, tmp_path, monkeypatch):
+        """N processes healing the same orphaned file all adopt the one DB row
+        (CAS-rewrite winner; losers read the winner's value)."""
+        import multiprocessing as mp
+
+        monkeypatch.delenv("ENTITY_WORKSPACE_UUID", raising=False)
+        project_dir = tmp_path / "proj"
+        (project_dir / ".claude" / "pd").mkdir(parents=True)
+        root = os.path.abspath(str(project_dir))
+        db = str(tmp_path / "e.db")
+        _make_v11_db(db, [(_UUID_B, "leg", root)])
+        # Seed the orphan file (uuid A, not in the DB).
+        from entity_registry.project_identity import (
+            _atomic_workspace_json_write,
+        )
+        target = project_dir / ".claude" / "pd" / "workspace.json"
+        _atomic_workspace_json_write(str(target), _UUID_A)
+        sentinel = tmp_path / "go"
+
+        ctx = mp.get_context("fork")
+        with ctx.Pool(3) as pool:
+            async_result = pool.map_async(
+                _resolve_orphan_heal_worker,
+                [(str(project_dir), db, str(sentinel))] * 3,
+            )
+            import time
+            time.sleep(0.05)
+            sentinel.touch()
+            results = async_result.get(timeout=30)
+
+        # All three adopted the single canonical DB row B.
+        assert results == [_UUID_B, _UUID_B, _UUID_B], results
+        assert _read_workspace_json_uuid(str(target)) == _UUID_B
+        # No competing rows were inserted — still exactly one workspace.
+        assert len(_ws_rows(db)) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -994,3 +1046,161 @@ class TestValidateOrAdoptWorkspaceUuid:
         assert validate_or_adopt_workspace_uuid(
             _UUID_A, "/root", str(tmp_path / "absent.db")
         ) == _UUID_A
+
+
+class TestResolveWorkspaceUuidSelfHeal:
+    """Step 2 of the fix: resolve_workspace_uuid heals orphaned files and
+    records a row on fresh mint. Tests drive the DB via ENTITY_DB_PATH."""
+
+    def _proj(self, tmp_path):
+        proj = tmp_path / "proj"
+        (proj / ".claude" / "pd").mkdir(parents=True)
+        return proj
+
+    def test_orphan_file_adopts_single_root_row_and_rewrites(
+        self, monkeypatch, tmp_path
+    ):
+        from entity_registry.project_identity import (
+            _atomic_workspace_json_write,
+            resolve_workspace_uuid,
+        )
+
+        monkeypatch.delenv("ENTITY_WORKSPACE_UUID", raising=False)
+        proj = self._proj(tmp_path)
+        root = os.path.abspath(str(proj))
+        db = str(tmp_path / "e.db")
+        # DB row B owns the project_root; the file holds orphan A.
+        _make_v11_db(db, [(_UUID_B, "leg", root)])
+        monkeypatch.setenv("ENTITY_DB_PATH", db)
+        target = proj / ".claude" / "pd" / "workspace.json"
+        _atomic_workspace_json_write(str(target), _UUID_A)
+
+        result = resolve_workspace_uuid(str(proj))
+        assert result == _UUID_B  # adopted
+        # File was CAS-rewritten to the adopted uuid.
+        assert _read_workspace_json_uuid(str(target)) == _UUID_B
+
+    def test_orphan_file_no_root_row_inserts_row(
+        self, monkeypatch, tmp_path
+    ):
+        from entity_registry.project_identity import (
+            _atomic_workspace_json_write,
+            resolve_workspace_uuid,
+        )
+
+        monkeypatch.delenv("ENTITY_WORKSPACE_UUID", raising=False)
+        proj = self._proj(tmp_path)
+        root = os.path.abspath(str(proj))
+        db = str(tmp_path / "e.db")
+        _make_v11_db(db)  # empty workspaces
+        monkeypatch.setenv("ENTITY_DB_PATH", db)
+        target = proj / ".claude" / "pd" / "workspace.json"
+        _atomic_workspace_json_write(str(target), _UUID_A)
+
+        result = resolve_workspace_uuid(str(proj))
+        assert result == _UUID_A  # kept; row inserted to back it
+        rows = _ws_rows(db)
+        assert rows[0][0] == _UUID_A and rows[0][2] == root
+        # File unchanged (no adoption).
+        assert _read_workspace_json_uuid(str(target)) == _UUID_A
+
+    def test_orphan_file_multi_root_row_no_heal(
+        self, monkeypatch, tmp_path, capsys
+    ):
+        from entity_registry.project_identity import (
+            _atomic_workspace_json_write,
+            resolve_workspace_uuid,
+        )
+
+        monkeypatch.delenv("ENTITY_WORKSPACE_UUID", raising=False)
+        proj = self._proj(tmp_path)
+        root = os.path.abspath(str(proj))
+        db = str(tmp_path / "e.db")
+        _make_v11_db(
+            db,
+            [
+                (_UUID_B, "l1", root),
+                ("cccccccc-3333-4333-8333-cccccccccccc", "l2", root),
+            ],
+        )
+        monkeypatch.setenv("ENTITY_DB_PATH", db)
+        target = proj / ".claude" / "pd" / "workspace.json"
+        _atomic_workspace_json_write(str(target), _UUID_A)
+
+        result = resolve_workspace_uuid(str(proj))
+        assert result == _UUID_A  # ambiguous → no heal
+        assert _read_workspace_json_uuid(str(target)) == _UUID_A
+
+    def test_member_file_is_fast_path_no_rewrite(
+        self, monkeypatch, tmp_path
+    ):
+        from entity_registry.project_identity import (
+            _atomic_workspace_json_write,
+            resolve_workspace_uuid,
+        )
+
+        monkeypatch.delenv("ENTITY_WORKSPACE_UUID", raising=False)
+        proj = self._proj(tmp_path)
+        root = os.path.abspath(str(proj))
+        db = str(tmp_path / "e.db")
+        _make_v11_db(db, [(_UUID_A, "leg", root)])
+        monkeypatch.setenv("ENTITY_DB_PATH", db)
+        target = proj / ".claude" / "pd" / "workspace.json"
+        _atomic_workspace_json_write(str(target), _UUID_A)
+        mtime_before = target.stat().st_mtime
+
+        result = resolve_workspace_uuid(str(proj))
+        assert result == _UUID_A
+        assert target.stat().st_mtime == mtime_before  # not rewritten
+
+    def test_fresh_mint_records_row_when_db_present(
+        self, monkeypatch, tmp_path
+    ):
+        from entity_registry.project_identity import resolve_workspace_uuid
+
+        monkeypatch.delenv("ENTITY_WORKSPACE_UUID", raising=False)
+        proj = self._proj(tmp_path)
+        root = os.path.abspath(str(proj))
+        db = str(tmp_path / "e.db")
+        _make_v11_db(db)
+        monkeypatch.setenv("ENTITY_DB_PATH", db)
+        # No file yet → step 4 fresh mint.
+        target = proj / ".claude" / "pd" / "workspace.json"
+        assert not target.exists()
+
+        result = resolve_workspace_uuid(str(proj))
+        assert _read_workspace_json_uuid(str(target)) == result
+        # Matching workspaces row was recorded.
+        rows = _ws_rows(db)
+        assert rows[0][0] == result and rows[0][2] == root
+
+    def test_fresh_mint_file_only_when_db_absent(
+        self, monkeypatch, tmp_path
+    ):
+        from entity_registry.project_identity import resolve_workspace_uuid
+
+        monkeypatch.delenv("ENTITY_WORKSPACE_UUID", raising=False)
+        proj = self._proj(tmp_path)
+        db = str(tmp_path / "absent.db")
+        monkeypatch.setenv("ENTITY_DB_PATH", db)
+        target = proj / ".claude" / "pd" / "workspace.json"
+
+        result = resolve_workspace_uuid(str(proj))
+        assert _read_workspace_json_uuid(str(target)) == result
+        # No DB file was created by the ensure-row step.
+        assert not os.path.exists(db)
+
+    def test_corrupt_file_still_raises(self, monkeypatch, tmp_path):
+        from entity_registry.project_identity import (
+            WorkspaceCorruptedError,
+            resolve_workspace_uuid,
+        )
+
+        monkeypatch.delenv("ENTITY_WORKSPACE_UUID", raising=False)
+        proj = self._proj(tmp_path)
+        target = proj / ".claude" / "pd" / "workspace.json"
+        target.write_text("{ not json", encoding="utf-8")
+        monkeypatch.setenv("ENTITY_DB_PATH", str(tmp_path / "e.db"))
+
+        with pytest.raises(WorkspaceCorruptedError):
+            resolve_workspace_uuid(str(proj))
