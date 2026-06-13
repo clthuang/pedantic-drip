@@ -1266,3 +1266,74 @@ class TestResolveStartupWorkspaceUuid:
         # Falls through to resolve_workspace_uuid (reads + heals the file).
         result = resolve_startup_workspace_uuid(str(proj), db)
         assert result == _UUID_A
+
+
+class TestIncidentReplay:
+    """End-to-end replay of the 2026-06-12 split-brain.
+
+    Pre-fix mechanics that this exercises: session-start wrote workspace.json
+    with uuid A but no DB row; the entity-server lifespan FK-failed silently
+    trying to upsert the project with A (upsert skipped row creation when a
+    uuid was supplied); backfill then minted a SECOND uuid B keyed on
+    project_id_legacy. Every later register_entity FK-failed forever because
+    resolve trusted the orphaned file unconditionally.
+
+    Post-fix: resolve self-heals the file to the canonical row, the provided
+    uuid is validated (loud error pre-heal), and the write path succeeds.
+    """
+
+    def test_full_chain_heals_and_writes_succeed(self, monkeypatch, tmp_path):
+        from entity_registry.database import EntityDatabase
+        from entity_registry.project_identity import (
+            _atomic_workspace_json_write,
+            _compute_legacy_project_id,
+            resolve_workspace_uuid,
+        )
+
+        monkeypatch.delenv("ENTITY_WORKSPACE_UUID", raising=False)
+        monkeypatch.delenv("WORKSPACE_UUID", raising=False)
+        proj = tmp_path / "proj"
+        (proj / ".claude" / "pd").mkdir(parents=True)
+        root = os.path.abspath(str(proj))
+        db_path = str(tmp_path / "entities.db")
+        monkeypatch.setenv("ENTITY_DB_PATH", db_path)
+
+        db = EntityDatabase(db_path)
+        try:
+            # Reproduce the split: canonical DB row B (legacy pid + root),
+            # but workspace.json points at orphan A.
+            legacy = _compute_legacy_project_id(root)
+            db._conn.execute(
+                "INSERT INTO workspaces (uuid, project_id_legacy, "
+                "project_root, created_at, updated_at) "
+                "VALUES (?, ?, ?, 'n', 'n')",
+                (_UUID_B, legacy, root),
+            )
+            db._conn.commit()
+            target = proj / ".claude" / "pd" / "workspace.json"
+            _atomic_workspace_json_write(str(target), _UUID_A)
+
+            # Pre-heal: the orphaned identity fails LOUD (not a bare FK error).
+            with pytest.raises(ValueError, match="split-brain"):
+                db._resolve_workspace_uuid_kwargs(_UUID_A, None)
+
+            # Resolve self-heals the file to the canonical row B.
+            assert resolve_workspace_uuid(str(proj)) == _UUID_B
+            assert _read_workspace_json_uuid(str(target)) == _UUID_B
+
+            # upsert_project with the healed identity succeeds (the INSERT
+            # that FK-failed in the incident).
+            db.upsert_project(
+                project_id=legacy, name="proj", root_commit_sha=None,
+                remote_url=None, normalized_url=None, remote_host=None,
+                remote_owner=None, remote_repo=None, default_branch=None,
+                project_root=root, is_git_repo=False, workspace_uuid=_UUID_B,
+            )
+            # And a governed write (register_entity) now resolves the FK.
+            uuid_out = db.register_entity(
+                "feature", "001-replayed", "Replayed Feature",
+                workspace_uuid=_UUID_B,
+            )
+            assert _uuid.UUID(uuid_out)
+        finally:
+            db.close()

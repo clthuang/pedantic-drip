@@ -664,6 +664,48 @@ class TestFixInsertWorkspaceRow:
         assert "already consistent" in result
 
 
+class TestDoctorWorkspaceHealEndToEnd:
+    """run_diagnostics → apply_fixes → re-run converges (the pd:doctor --fix
+    path operators actually invoke)."""
+
+    def test_detect_fix_reconverge(self, tmp_path):
+        from doctor import run_diagnostics
+        from doctor.fixer import apply_fixes
+        from entity_registry.database import EntityDatabase
+
+        db_path = str(tmp_path / "entities.db")
+        mem_path = str(tmp_path / "memory.db")  # absent → memory checks skip
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        root = _os.path.abspath(str(proj))
+
+        db = EntityDatabase(db_path)
+        try:
+            _seed_ws_row(db._conn, _WS_B, "leg", root)  # canonical row
+        finally:
+            db.close()
+        _write_orphan_ws(str(proj), _WS_A)  # orphaned file
+
+        before = run_diagnostics(db_path, mem_path, str(proj), str(proj))
+        ws_before = [
+            c for c in before.checks
+            if c.name == "workspace_uuid_consistency"
+        ][0]
+        assert not ws_before.passed
+
+        apply_fixes(before, db_path, mem_path, str(proj), str(proj))
+
+        after = run_diagnostics(db_path, mem_path, str(proj), str(proj))
+        ws_after = [
+            c for c in after.checks
+            if c.name == "workspace_uuid_consistency"
+        ][0]
+        assert ws_after.passed
+        assert _file_uuid(
+            _os.path.join(str(proj), ".claude", "pd", "workspace.json")
+        ) == _WS_B
+
+
 class TestWorkspaceFixDryRun:
     """dry_run must not invoke the fix function — file + DB stay untouched."""
 
