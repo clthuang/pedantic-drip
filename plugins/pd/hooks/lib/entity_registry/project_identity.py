@@ -661,6 +661,45 @@ def resolve_workspace_uuid(working_dir: str | None = None) -> str:
     return written
 
 
+def resolve_startup_workspace_uuid(
+    project_root: str, db_path: str | None = None
+) -> str:
+    """Resolve the workspace identity for an MCP server lifespan.
+
+    Shared by ``entity_server`` and ``workflow_state_server`` startup. The two
+    env vars are NOT equivalent:
+
+      * ``ENTITY_WORKSPACE_UUID`` — absolute test/explicit override. Used
+        verbatim (format-validated only); never reconciled against the DB.
+      * ``WORKSPACE_UUID`` — inherited from the session-start hook. Treated as
+        a CANDIDATE: reconciled via :func:`validate_or_adopt_workspace_uuid`
+        so a stale value adopts the project_root's canonical row instead of
+        being trusted blindly (the env-bypass that would otherwise re-open the
+        split-brain even after the resolver/write paths were hardened).
+
+    When both are set, ``ENTITY_WORKSPACE_UUID`` wins (the historical
+    short-circuit is preserved). With neither set, falls back to the full
+    file→DB→mint :func:`resolve_workspace_uuid` (which self-heals).
+    """
+    env_abs = os.environ.get("ENTITY_WORKSPACE_UUID")
+    if env_abs:
+        return _validate_workspace_uuid(env_abs)
+    env_candidate = os.environ.get("WORKSPACE_UUID")
+    if env_candidate:
+        db = db_path if db_path is not None else _entities_db_path()
+        resolved = validate_or_adopt_workspace_uuid(
+            env_candidate, project_root, db
+        )
+        if resolved != env_candidate:
+            print(
+                f"[workspace] WARN: inherited WORKSPACE_UUID {env_candidate} "
+                f"reconciled to {resolved} for project_root {project_root!r}",
+                file=sys.stderr,
+            )
+        return resolved
+    return resolve_workspace_uuid(project_root)
+
+
 @dataclasses.dataclass(frozen=True)
 class GitProjectInfo:
     """Immutable git project metadata for the projects table."""

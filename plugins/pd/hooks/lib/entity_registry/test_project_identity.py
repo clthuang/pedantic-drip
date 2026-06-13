@@ -1204,3 +1204,65 @@ class TestResolveWorkspaceUuidSelfHeal:
 
         with pytest.raises(WorkspaceCorruptedError):
             resolve_workspace_uuid(str(proj))
+
+
+class TestResolveStartupWorkspaceUuid:
+    """Task #12: MCP lifespan env resolution. ENTITY_WORKSPACE_UUID is an
+    absolute override; WORKSPACE_UUID is a reconciled candidate."""
+
+    def test_entity_env_is_absolute_even_when_orphan(
+        self, monkeypatch, tmp_path
+    ):
+        from entity_registry.project_identity import (
+            resolve_startup_workspace_uuid,
+        )
+
+        db = str(tmp_path / "e.db")
+        _make_v11_db(db, [(_UUID_B, "leg", "/root")])
+        # ENTITY_WORKSPACE_UUID set to an orphan → used verbatim (test hook).
+        monkeypatch.setenv("ENTITY_WORKSPACE_UUID", _UUID_A)
+        monkeypatch.setenv("WORKSPACE_UUID", _UUID_B)
+        assert resolve_startup_workspace_uuid("/root", db) == _UUID_A
+
+    def test_workspace_env_orphan_adopts_root_row(
+        self, monkeypatch, tmp_path
+    ):
+        from entity_registry.project_identity import (
+            resolve_startup_workspace_uuid,
+        )
+
+        db = str(tmp_path / "e.db")
+        _make_v11_db(db, [(_UUID_B, "leg", "/root")])
+        monkeypatch.delenv("ENTITY_WORKSPACE_UUID", raising=False)
+        monkeypatch.setenv("WORKSPACE_UUID", _UUID_A)  # orphan candidate
+        # No ENTITY_WORKSPACE_UUID → candidate reconciled → adopts B.
+        assert resolve_startup_workspace_uuid("/root", db) == _UUID_B
+
+    def test_workspace_env_member_passthrough(self, monkeypatch, tmp_path):
+        from entity_registry.project_identity import (
+            resolve_startup_workspace_uuid,
+        )
+
+        db = str(tmp_path / "e.db")
+        _make_v11_db(db, [(_UUID_A, "leg", "/root")])
+        monkeypatch.delenv("ENTITY_WORKSPACE_UUID", raising=False)
+        monkeypatch.setenv("WORKSPACE_UUID", _UUID_A)
+        assert resolve_startup_workspace_uuid("/root", db) == _UUID_A
+
+    def test_no_env_falls_back_to_resolve(self, monkeypatch, tmp_path):
+        from entity_registry.project_identity import (
+            _atomic_workspace_json_write,
+            resolve_startup_workspace_uuid,
+        )
+
+        proj = tmp_path / "proj"
+        (proj / ".claude" / "pd").mkdir(parents=True)
+        db = str(tmp_path / "e.db")
+        _make_v11_db(db)
+        monkeypatch.delenv("ENTITY_WORKSPACE_UUID", raising=False)
+        monkeypatch.delenv("WORKSPACE_UUID", raising=False)
+        target = proj / ".claude" / "pd" / "workspace.json"
+        _atomic_workspace_json_write(str(target), _UUID_A)
+        # Falls through to resolve_workspace_uuid (reads + heals the file).
+        result = resolve_startup_workspace_uuid(str(proj), db)
+        assert result == _UUID_A

@@ -33,7 +33,7 @@ from entity_registry.project_identity import (
     GitProjectInfo,
     _compute_legacy_project_id,
     collect_git_info,
-    resolve_workspace_uuid,
+    resolve_startup_workspace_uuid,
 )
 from entity_registry.server_helpers import (
     _process_export_entities,
@@ -231,22 +231,16 @@ async def lifespan(server):
 
         # Detect project identity and register in DB.
         _project_id = _compute_legacy_project_id(_project_root)
-        # Phase E Task 5.5: populate the workspace_uuid lazy global with
-        # FR-3 / Decision 11 precedence:
-        #   ENTITY_WORKSPACE_UUID env (test override / explicit)
-        #     > WORKSPACE_UUID env (subprocess inheritance from hooks)
+        # Phase E Task 5.5: populate the workspace_uuid lazy global. Precedence
+        # (see resolve_startup_workspace_uuid):
+        #   ENTITY_WORKSPACE_UUID env (absolute test/explicit override)
+        #     > WORKSPACE_UUID env (inherited candidate, reconciled vs DB)
         #     > resolve_workspace_uuid(_project_root) (file → DB → fresh)
-        # All resolution failures are best-effort; we never block startup.
+        # The WORKSPACE_UUID candidate is validate-or-adopted so a stale
+        # inherited value cannot re-open the split-brain it would otherwise
+        # bypass. All resolution failures are best-effort; never block startup.
         try:
-            env_uuid = (
-                os.environ.get("ENTITY_WORKSPACE_UUID")
-                or os.environ.get("WORKSPACE_UUID")
-                or ""
-            )
-            if env_uuid:
-                _workspace_uuid = env_uuid
-            else:
-                _workspace_uuid = resolve_workspace_uuid(_project_root)
+            _workspace_uuid = resolve_startup_workspace_uuid(_project_root)
         except Exception as exc:
             print(
                 f"entity-server: workspace_uuid resolution failed: {exc}",

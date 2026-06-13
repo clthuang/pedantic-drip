@@ -39,7 +39,7 @@ from entity_registry.database import (
     _CLOSES_TERMINAL,
     _UNKNOWN_WORKSPACE_UUID,
 )
-from entity_registry.project_identity import _compute_legacy_project_id, resolve_workspace_uuid
+from entity_registry.project_identity import _compute_legacy_project_id, resolve_startup_workspace_uuid
 from entity_registry.entity_lifecycle import (
     init_entity_workflow as _lib_init_entity_workflow,
     transition_entity_phase as _lib_transition_entity_phase,
@@ -211,22 +211,14 @@ async def lifespan(server):
         project_root = os.environ.get("PROJECT_ROOT", os.getcwd())
         _project_root = project_root
         _project_id = _compute_legacy_project_id(project_root)
-        # Feature 108 Phase E: populate workspace_uuid lazy global with the
-        # same FR-3 / Decision 11 precedence as mcp/entity_server.py:
-        #   ENTITY_WORKSPACE_UUID env (test override / explicit)
-        #     > WORKSPACE_UUID env (subprocess inheritance from hooks)
+        # Feature 108 Phase E: populate workspace_uuid lazy global. Precedence
+        # (see resolve_startup_workspace_uuid, shared with entity_server):
+        #   ENTITY_WORKSPACE_UUID env (absolute test/explicit override)
+        #     > WORKSPACE_UUID env (inherited candidate, reconciled vs DB)
         #     > resolve_workspace_uuid(_project_root) (file → DB → fresh)
         # All resolution failures are best-effort; we never block startup.
         try:
-            env_uuid = (
-                os.environ.get("ENTITY_WORKSPACE_UUID")
-                or os.environ.get("WORKSPACE_UUID")
-                or ""
-            )
-            if env_uuid:
-                _workspace_uuid = env_uuid
-            else:
-                _workspace_uuid = resolve_workspace_uuid(_project_root)
+            _workspace_uuid = resolve_startup_workspace_uuid(_project_root)
         except Exception as exc:
             print(
                 f"workflow-engine: workspace_uuid resolution failed: {exc}",
