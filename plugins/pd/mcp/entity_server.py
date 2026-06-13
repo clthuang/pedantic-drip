@@ -170,16 +170,24 @@ def _effective_project_id(explicit: str | None = None) -> str | None:
 
 
 def _backfill_project_ids(
-    db: EntityDatabase, project_root: str, project_id: str
+    db: EntityDatabase,
+    project_root: str,
+    project_id: str,
+    workspace_uuid: str | None = None,
 ) -> int:
     """Claim __unknown__ entities whose artifact_path is under project_root.
 
     Delegates to EntityDatabase.backfill_project_ids() which handles the
-    trigger-drop + UPDATE + trigger-recreate pattern internally.
+    trigger-drop + UPDATE + trigger-recreate pattern internally. When
+    *workspace_uuid* is supplied (the lifespan-resolved identity) it is the
+    authoritative claim target, so entities are never cross-attributed into a
+    stale legacy-keyed workspace row.
 
     Returns count of claimed entities.
     """
-    count = db.backfill_project_ids(project_root, project_id)
+    count = db.backfill_project_ids(
+        project_root, project_id, workspace_uuid=workspace_uuid
+    )
     if count > 0:
         _logger.info("backfill: claimed %d entities for project %s", count, project_id)
     return count
@@ -251,9 +259,14 @@ async def lifespan(server):
         except Exception as exc:
             print(f"entity-server: project upsert failed: {exc}", file=sys.stderr)
 
-        # Claim __unknown__ entities matching this project root.
+        # Claim __unknown__ entities matching this project root. Pass the
+        # resolved workspace identity so entities are claimed into it directly
+        # (never cross-attributed into a stale legacy-keyed row).
         try:
-            claimed = _backfill_project_ids(_db, _project_root, _project_id)
+            claimed = _backfill_project_ids(
+                _db, _project_root, _project_id,
+                workspace_uuid=_workspace_uuid or None,
+            )
             if claimed > 0:
                 print(
                     f"entity-server: claimed {claimed} entities for project {_project_id}",

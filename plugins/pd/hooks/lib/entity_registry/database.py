@@ -7662,7 +7662,12 @@ class EntityDatabase:
                     pass
                 raise
 
-    def backfill_project_ids(self, project_root: str, project_id: str) -> int:
+    def backfill_project_ids(
+        self,
+        project_root: str,
+        project_id: str,
+        workspace_uuid: str | None = None,
+    ) -> int:
         """Claim ``__unknown__`` entities whose artifact_path is under *project_root*.
 
         Temporarily drops the ``enforce_immutable_project_id`` trigger to allow
@@ -7675,6 +7680,15 @@ class EntityDatabase:
             Absolute path to the project root directory.
         project_id:
             Project identifier to assign to the claimed entities.
+        workspace_uuid:
+            When supplied (the lifespan-resolved identity), it is the
+            authoritative claim target — entities are claimed into it directly,
+            bypassing the legacy ``project_id`` lookup. This prevents
+            cross-attribution into a stale legacy-keyed row when the canonical
+            identity is already known. A competing ``project_root`` row is
+            adopted rather than duplicated. When ``None``, the target is
+            resolved by legacy ``project_id`` → single ``project_root`` match →
+            fresh mint.
 
         Returns
         -------
@@ -7702,23 +7716,52 @@ class EntityDatabase:
             .replace("%", "\\%")
             .replace("_", "\\_")
         )
-        # Resolve / bootstrap target workspace.
-        ws_row = self._conn.execute(
-            "SELECT uuid FROM workspaces WHERE project_id_legacy = ?",
-            (project_id,),
-        ).fetchone()
-        if ws_row is None:
-            target_ws_uuid = str(uuid_mod.uuid4())
-            now = self._now_iso()
-            self._conn.execute(
-                "INSERT INTO workspaces "
-                "(uuid, project_id_legacy, project_root, created_at, "
-                "updated_at) VALUES (?, ?, ?, ?, ?)",
-                (target_ws_uuid, project_id, project_root, now, now),
+        # Resolve / bootstrap target workspace. This runs BEFORE the
+        # BEGIN IMMEDIATE trigger-drop block below — keep that block minimal.
+        if workspace_uuid is not None:
+            # Authoritative identity: ensure its row exists and claim into it.
+            from entity_registry.project_identity import (
+                _insert_workspace_row_if_absent,
             )
+            outcome = _insert_workspace_row_if_absent(
+                self._conn, workspace_uuid, project_root, project_id
+            )
+            if outcome == "conflict-root":
+                row = self._conn.execute(
+                    "SELECT uuid FROM workspaces "
+                    "WHERE project_root IS NOT NULL AND project_root = ?",
+                    (project_root,),
+                ).fetchone()
+                target_ws_uuid = row["uuid"] if row is not None else workspace_uuid
+            else:
+                target_ws_uuid = workspace_uuid
             self._conn.commit()
         else:
-            target_ws_uuid = ws_row["uuid"]
+            ws_row = self._conn.execute(
+                "SELECT uuid FROM workspaces WHERE project_id_legacy = ?",
+                (project_id,),
+            ).fetchone()
+            if ws_row is not None:
+                target_ws_uuid = ws_row["uuid"]
+            else:
+                # Adopt a single project_root match before minting fresh.
+                root_rows = self._conn.execute(
+                    "SELECT uuid FROM workspaces "
+                    "WHERE project_root IS NOT NULL AND project_root = ?",
+                    (project_root,),
+                ).fetchall()
+                if len(root_rows) == 1:
+                    target_ws_uuid = root_rows[0]["uuid"]
+                else:
+                    target_ws_uuid = str(uuid_mod.uuid4())
+                    now = self._now_iso()
+                    self._conn.execute(
+                        "INSERT INTO workspaces "
+                        "(uuid, project_id_legacy, project_root, created_at, "
+                        "updated_at) VALUES (?, ?, ?, ?, ?)",
+                        (target_ws_uuid, project_id, project_root, now, now),
+                    )
+                    self._conn.commit()
         if target_ws_uuid == _UNKNOWN_WORKSPACE_UUID:
             return 0  # no-op: cannot claim into the unknown bucket itself
         self._conn.commit()  # flush any implicit transaction

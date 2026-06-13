@@ -522,3 +522,62 @@ class TestUpsertProjectWorkspaceRow:
         _seed_ws(db, _WSB, None, "/root/adopt")
         _upsert(db, "proj-adopt", "/root/adopt", workspace_uuid=None)
         assert _projects_ws_uuid(db, "proj-adopt") == _WSB
+
+
+def _entity_ws(db, type_id):
+    return db._conn.execute(
+        "SELECT workspace_uuid FROM entities WHERE type_id = ?", (type_id,)
+    ).fetchone()["workspace_uuid"]
+
+
+class TestBackfillWorkspaceTarget:
+    """Task #4: backfill_project_ids honours a supplied workspace_uuid and
+    never cross-attributes into a stale legacy-keyed row."""
+
+    def _register_unknown(self, db, eid, root):
+        db.register_entity(
+            "feature", eid, eid.title(),
+            artifact_path=f"{root}/docs/features/{eid}/design.md",
+            project_id="__unknown__",
+        )
+
+    def test_kwarg_orphan_claims_into_root_row(self, db):
+        """Provided uuid orphaned while a root row exists → entities claimed
+        into the canonical root row, not a freshly-minted competitor."""
+        _seed_ws(db, _WSB, "legacy-b", "/root/shared")
+        self._register_unknown(db, "bf-a", "/root/shared")
+        n = db.backfill_project_ids(
+            "/root/shared", "proj-shared", workspace_uuid=_WSA
+        )
+        assert n == 1
+        assert _entity_ws(db, "feature:bf-a") == _WSB  # adopted root row
+        assert not _ws_present(db, _WSA)
+
+    def test_kwarg_wins_over_stale_legacy_row(self, db):
+        """Provided uuid is the claim target even when a legacy-keyed row
+        for project_id exists at a different root (legacy lookup skipped)."""
+        _seed_ws(db, _WSB, "proj-y", "/root/other")
+        self._register_unknown(db, "bf-y", "/root/y")
+        n = db.backfill_project_ids(
+            "/root/y", "proj-y", workspace_uuid=_WSA
+        )
+        assert n == 1
+        # Claimed into A (the provided identity), NOT B (the legacy match).
+        assert _entity_ws(db, "feature:bf-y") == _WSA
+
+    def test_none_path_adopts_root_match(self, db):
+        """None path: legacy miss + single root match → adopt that row."""
+        _seed_ws(db, _WSB, None, "/root/z")
+        self._register_unknown(db, "bf-z", "/root/z")
+        n = db.backfill_project_ids("/root/z", "proj-z", workspace_uuid=None)
+        assert n == 1
+        assert _entity_ws(db, "feature:bf-z") == _WSB
+
+    def test_none_path_mints_when_nothing_matches(self, db):
+        """None path: no legacy row, no root row → mint a fresh workspace."""
+        self._register_unknown(db, "bf-w", "/root/w")
+        n = db.backfill_project_ids("/root/w", "proj-w", workspace_uuid=None)
+        assert n == 1
+        ws = _entity_ws(db, "feature:bf-w")
+        assert ws not in (None, "00000000-0000-0000-0000-000000000000")
+        assert _ws_present(db, ws)
