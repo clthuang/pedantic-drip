@@ -713,3 +713,284 @@ class TestResolveWorkspaceUuidConcurrentRace:
         assert target.exists()
         on_disk = _read_workspace_json_uuid(str(target))
         assert on_disk == results[0]
+
+
+# ---------------------------------------------------------------------------
+# Workspace split-brain heal primitives (Step 1 of the split-brain fix).
+# ---------------------------------------------------------------------------
+
+_NOW = "2026-06-13T00:00:00+00:00"
+
+
+def _make_v11_db(path: str, rows=()):
+    """Create a schema_version=11 entities.db with a workspaces table.
+
+    ``rows`` is an iterable of (uuid, legacy_pid, project_root) tuples.
+    """
+    conn = _sqlite3.connect(path)
+    try:
+        conn.execute(
+            "CREATE TABLE _metadata "
+            "(key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+        )
+        conn.execute(
+            "INSERT INTO _metadata (key, value) "
+            "VALUES ('schema_version', '11')"
+        )
+        conn.execute(
+            "CREATE TABLE workspaces ("
+            " uuid TEXT NOT NULL PRIMARY KEY,"
+            " project_id_legacy TEXT UNIQUE,"
+            " project_root TEXT,"
+            " created_at TEXT NOT NULL,"
+            " updated_at TEXT NOT NULL"
+            ")"
+        )
+        for ws_uuid, legacy, root in rows:
+            conn.execute(
+                "INSERT INTO workspaces "
+                "(uuid, project_id_legacy, project_root, created_at, "
+                "updated_at) VALUES (?, ?, ?, ?, ?)",
+                (ws_uuid, legacy, root, _NOW, _NOW),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _ws_rows(path: str):
+    conn = _sqlite3.connect(path)
+    try:
+        return conn.execute(
+            "SELECT uuid, project_id_legacy, project_root FROM workspaces"
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+_UUID_A = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
+_UUID_B = "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb"
+
+
+class TestInsertWorkspaceRowIfAbsent:
+    """Step 1 primitive: _insert_workspace_row_if_absent."""
+
+    def test_exists_is_noop(self, tmp_path):
+        from entity_registry.project_identity import (
+            _insert_workspace_row_if_absent,
+        )
+
+        db = str(tmp_path / "e.db")
+        _make_v11_db(db, [(_UUID_A, "leg", "/root")])
+        conn = _sqlite3.connect(db)
+        try:
+            assert _insert_workspace_row_if_absent(
+                conn, _UUID_A, "/root", "leg"
+            ) == "exists"
+        finally:
+            conn.close()
+        assert len(_ws_rows(db)) == 1
+
+    def test_inserts_when_absent(self, tmp_path):
+        from entity_registry.project_identity import (
+            _insert_workspace_row_if_absent,
+        )
+
+        db = str(tmp_path / "e.db")
+        _make_v11_db(db)
+        conn = _sqlite3.connect(db)
+        try:
+            assert _insert_workspace_row_if_absent(
+                conn, _UUID_A, "/root", "leg"
+            ) == "inserted"
+            conn.commit()
+        finally:
+            conn.close()
+        rows = _ws_rows(db)
+        assert rows == [(_UUID_A, "leg", "/root")]
+
+    def test_conflict_root_suppresses_insert(self, tmp_path):
+        """Root already owned by a different uuid → no competing row."""
+        from entity_registry.project_identity import (
+            _insert_workspace_row_if_absent,
+        )
+
+        db = str(tmp_path / "e.db")
+        _make_v11_db(db, [(_UUID_B, "leg", "/root")])
+        conn = _sqlite3.connect(db)
+        try:
+            assert _insert_workspace_row_if_absent(
+                conn, _UUID_A, "/root", "other-leg"
+            ) == "conflict-root"
+            conn.commit()
+        finally:
+            conn.close()
+        # Still exactly one row — the original.
+        assert _ws_rows(db) == [(_UUID_B, "leg", "/root")]
+
+    def test_legacy_collision_retries_with_null(self, tmp_path):
+        """Legacy pid held by a different-root row → insert with NULL legacy."""
+        from entity_registry.project_identity import (
+            _insert_workspace_row_if_absent,
+        )
+
+        db = str(tmp_path / "e.db")
+        # Row B owns legacy 'leg' at a DIFFERENT root (moved-repo case).
+        _make_v11_db(db, [(_UUID_B, "leg", "/old-root")])
+        conn = _sqlite3.connect(db)
+        try:
+            assert _insert_workspace_row_if_absent(
+                conn, _UUID_A, "/new-root", "leg"
+            ) == "inserted"
+            conn.commit()
+        finally:
+            conn.close()
+        rows = dict((r[0], r[1]) for r in _ws_rows(db))
+        assert rows[_UUID_A] is None  # legacy nulled to avoid the collision
+        assert rows[_UUID_B] == "leg"
+
+class TestRewriteWorkspaceJsonIfMatches:
+    """Step 1 primitive: _rewrite_workspace_json_if_matches (CAS)."""
+
+    def test_cas_hit_rewrites(self, tmp_path):
+        from entity_registry.project_identity import (
+            _atomic_workspace_json_write,
+            _rewrite_workspace_json_if_matches,
+        )
+
+        target = tmp_path / ".claude" / "pd" / "workspace.json"
+        _atomic_workspace_json_write(str(target), _UUID_A)
+        result = _rewrite_workspace_json_if_matches(
+            str(target), _UUID_A, _UUID_B
+        )
+        assert result == _UUID_B
+        assert _read_workspace_json_uuid(str(target)) == _UUID_B
+        # schema_version preserved at 1.
+        with open(target, encoding="utf-8") as fh:
+            assert _json.load(fh)["schema_version"] == 1
+
+    def test_cas_miss_returns_current(self, tmp_path):
+        """Expected uuid no longer on disk → no rewrite, return current."""
+        from entity_registry.project_identity import (
+            _atomic_workspace_json_write,
+            _rewrite_workspace_json_if_matches,
+        )
+
+        target = tmp_path / ".claude" / "pd" / "workspace.json"
+        _atomic_workspace_json_write(str(target), _UUID_B)  # current = B
+        result = _rewrite_workspace_json_if_matches(
+            str(target), _UUID_A, "cccccccc-3333-4333-8333-cccccccccccc"
+        )
+        assert result == _UUID_B  # CAS miss, current value returned
+        assert _read_workspace_json_uuid(str(target)) == _UUID_B
+
+
+class TestEnsureWorkspaceRow:
+    """Step 1 primitive: _ensure_workspace_row (standalone rw connection)."""
+
+    def test_no_db_file_is_noop_and_creates_nothing(self, tmp_path):
+        from entity_registry.project_identity import _ensure_workspace_row
+
+        db = str(tmp_path / "absent.db")
+        assert _ensure_workspace_row(db, _UUID_A, "/root") is None
+        # mode=rw must NOT have created the DB file.
+        assert not os.path.exists(db)
+
+    def test_pre_m11_is_noop(self, tmp_path):
+        from entity_registry.project_identity import _ensure_workspace_row
+
+        db = str(tmp_path / "e.db")
+        conn = _sqlite3.connect(db)
+        try:
+            conn.execute(
+                "CREATE TABLE _metadata "
+                "(key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+            )
+            conn.execute(
+                "INSERT INTO _metadata (key, value) "
+                "VALUES ('schema_version', '10')"
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        assert _ensure_workspace_row(db, _UUID_A, "/root") is None
+
+    def test_inserts_and_is_idempotent(self, tmp_path):
+        from entity_registry.project_identity import _ensure_workspace_row
+
+        db = str(tmp_path / "e.db")
+        _make_v11_db(db)
+        assert _ensure_workspace_row(db, _UUID_A, None) == "inserted"
+        assert _ensure_workspace_row(db, _UUID_A, None) == "exists"
+        assert len(_ws_rows(db)) == 1
+
+
+class TestValidateOrAdoptWorkspaceUuid:
+    """Step 1 primitive: validate_or_adopt_workspace_uuid."""
+
+    def test_member_passthrough(self, tmp_path):
+        from entity_registry.project_identity import (
+            validate_or_adopt_workspace_uuid,
+        )
+
+        db = str(tmp_path / "e.db")
+        _make_v11_db(db, [(_UUID_A, "leg", "/root")])
+        assert validate_or_adopt_workspace_uuid(
+            _UUID_A, "/root", db
+        ) == _UUID_A
+
+    def test_adopt_single_root_row(self, tmp_path):
+        from entity_registry.project_identity import (
+            validate_or_adopt_workspace_uuid,
+        )
+
+        db = str(tmp_path / "e.db")
+        _make_v11_db(db, [(_UUID_B, "leg", "/root")])
+        # Orphan A, root owned by B → adopt B.
+        assert validate_or_adopt_workspace_uuid(
+            _UUID_A, "/root", db
+        ) == _UUID_B
+
+    def test_insert_when_no_root_row(self, tmp_path):
+        from entity_registry.project_identity import (
+            validate_or_adopt_workspace_uuid,
+        )
+
+        db = str(tmp_path / "e.db")
+        _make_v11_db(db)
+        assert validate_or_adopt_workspace_uuid(
+            _UUID_A, "/root", db
+        ) == _UUID_A
+        # A row was inserted carrying the candidate uuid + project_root.
+        rows = _ws_rows(db)
+        assert len(rows) == 1
+        assert rows[0][0] == _UUID_A
+        assert rows[0][2] == "/root"
+
+    def test_multi_root_row_warns_and_passes_through(self, tmp_path, capsys):
+        from entity_registry.project_identity import (
+            validate_or_adopt_workspace_uuid,
+        )
+
+        db = str(tmp_path / "e.db")
+        _make_v11_db(
+            db,
+            [
+                (_UUID_B, "leg1", "/root"),
+                ("cccccccc-3333-4333-8333-cccccccccccc", "leg2", "/root"),
+            ],
+        )
+        # Two rows for the same root → ambiguous, return candidate.
+        assert validate_or_adopt_workspace_uuid(
+            _UUID_A, "/root", db
+        ) == _UUID_A
+        assert "multiple rows" in capsys.readouterr().err
+
+    def test_db_absent_passthrough(self, tmp_path):
+        from entity_registry.project_identity import (
+            validate_or_adopt_workspace_uuid,
+        )
+
+        assert validate_or_adopt_workspace_uuid(
+            _UUID_A, "/root", str(tmp_path / "absent.db")
+        ) == _UUID_A
