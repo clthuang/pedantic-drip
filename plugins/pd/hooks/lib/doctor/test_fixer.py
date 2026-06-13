@@ -339,6 +339,31 @@ class TestClassifyFix:
         cls, fn = classify_fix("Clear self-referential parent_uuid")
         assert cls == "safe"
 
+    def test_adopt_workspace_uuid_safe(self):
+        from doctor.fixer import classify_fix
+        cls, fn = classify_fix(
+            "Adopt workspace UUID from DB row abc (file has orphan def)"
+        )
+        assert cls == "safe"
+        assert fn.__name__ == "_fix_adopt_workspace_uuid"
+
+    def test_insert_workspace_row_safe(self):
+        from doctor.fixer import classify_fix
+        cls, fn = classify_fix(
+            "Insert missing workspaces row for file UUID abc"
+        )
+        assert cls == "safe"
+        assert fn.__name__ == "_fix_insert_workspace_row"
+
+    def test_workspace_manual_hint_stays_manual(self):
+        from doctor.fixer import classify_fix
+        # The ambiguous multi-row hint is not auto-fixable.
+        cls, fn = classify_fix(
+            "Multiple workspaces rows match this project_root; resolve manually"
+        )
+        assert cls == "manual"
+        assert fn is None
+
     def test_rebuild_fts(self):
         from doctor.fixer import classify_fix
         cls, fn = classify_fix("Rebuild FTS index: python3 scripts/migrate_db.py rebuild-fts")

@@ -606,3 +606,95 @@ def _fix_triage_cross_workspace_link(ctx: FixContext, issue: Issue) -> str:
 
     ctx.entities_conn.commit()
     return action
+
+
+def _read_workspace_json_file_uuid(project_root: str) -> tuple[str, str | None]:
+    """Return (workspace_json_path, file_uuid) for the project, re-derived at
+    fix time. file_uuid is None when the file is absent."""
+    import json as _json
+
+    ws_path = os.path.join(project_root, ".claude", "pd", "workspace.json")
+    if not os.path.isfile(ws_path):
+        return ws_path, None
+    try:
+        with open(ws_path, encoding="utf-8") as fh:
+            return ws_path, _json.load(fh).get("workspace_uuid")
+    except (OSError, _json.JSONDecodeError) as exc:
+        raise ValueError(f"workspace.json unreadable: {exc}") from exc
+
+
+def _fix_adopt_workspace_uuid(ctx: FixContext, issue: Issue) -> str:
+    """Adopt the project_root's canonical workspace UUID into workspace.json.
+
+    Re-derives all state at fix time (never trusts the issue message). No-ops
+    gracefully when the split-brain has already been healed (file uuid now a
+    member, or the file is gone).
+    """
+    if not ctx.project_root:
+        raise ValueError(
+            "FixContext.project_root required for workspace UUID fix actions"
+        )
+    if not ctx.entities_conn:
+        raise ValueError("No entities connection")
+    from entity_registry.project_identity import (
+        _rewrite_workspace_json_if_matches,
+    )
+
+    ws_path, file_uuid = _read_workspace_json_file_uuid(ctx.project_root)
+    if file_uuid is None:
+        return "already consistent: workspace.json absent — no rewrite needed"
+    if ctx.entities_conn.execute(
+        "SELECT 1 FROM workspaces WHERE uuid = ?", (file_uuid,)
+    ).fetchone() is not None:
+        return "already consistent: workspace.json uuid present in DB"
+    rows = ctx.entities_conn.execute(
+        "SELECT uuid FROM workspaces "
+        "WHERE project_root IS NOT NULL AND project_root = ?",
+        (os.path.abspath(ctx.project_root),),
+    ).fetchall()
+    if len(rows) != 1:
+        return (
+            f"no-op: expected exactly one project_root row to adopt, "
+            f"found {len(rows)}"
+        )
+    adopted = rows[0][0]
+    result = _rewrite_workspace_json_if_matches(ws_path, file_uuid, adopted)
+    return (
+        f"Adopted workspace UUID {adopted} into workspace.json "
+        f"(was orphan {file_uuid}); on-disk now {result}"
+    )
+
+
+def _fix_insert_workspace_row(ctx: FixContext, issue: Issue) -> str:
+    """Insert the missing workspaces row for the file's orphaned UUID.
+
+    Re-derives state at fix time. No-ops when already healed or when the
+    project_root turns out to be owned by another uuid (defensive — the check
+    only emits this hint when zero rows match the root).
+    """
+    if not ctx.project_root:
+        raise ValueError(
+            "FixContext.project_root required for workspace UUID fix actions"
+        )
+    if not ctx.entities_conn:
+        raise ValueError("No entities connection")
+    from entity_registry.project_identity import (
+        _compute_legacy_project_id,
+        _insert_workspace_row_if_absent,
+    )
+
+    _ws_path, file_uuid = _read_workspace_json_file_uuid(ctx.project_root)
+    if file_uuid is None:
+        return "already consistent: workspace.json absent — no row needed"
+    if ctx.entities_conn.execute(
+        "SELECT 1 FROM workspaces WHERE uuid = ?", (file_uuid,)
+    ).fetchone() is not None:
+        return "already consistent: workspace.json uuid present in DB"
+    root = os.path.abspath(ctx.project_root)
+    outcome = _insert_workspace_row_if_absent(
+        ctx.entities_conn, file_uuid, root, _compute_legacy_project_id(root)
+    )
+    if outcome == "conflict-root":
+        return "no-op: project_root already owned by another workspace row"
+    ctx.entities_conn.commit()
+    return f"Inserted workspaces row for {file_uuid} (outcome={outcome})"
