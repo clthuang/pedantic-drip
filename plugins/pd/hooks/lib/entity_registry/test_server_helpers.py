@@ -374,6 +374,22 @@ class TestProcessRegisterEntity:
         )
         assert isinstance(result, str)
 
+    def test_orphan_workspace_uuid_returns_error_envelope(
+        self, db: EntityDatabase
+    ):
+        """A split-brain workspace_uuid (Task #5 ValueError) surfaces as the
+        plain 'Error registering entity: ...' string, not a raised exception
+        — that string IS the MCP-visible result."""
+        result = _process_register_entity(
+            db, "feature", "orphan-ws", "Orphan WS",
+            artifact_path=None, status=None,
+            parent_type_id=None, metadata=None,
+            workspace_uuid="aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa",
+        )
+        assert isinstance(result, str)
+        assert result.startswith("Error registering entity:")
+        assert "split-brain" in result
+
 
 class TestProcessGetLineage:
     def _setup_chain(self, db: EntityDatabase):

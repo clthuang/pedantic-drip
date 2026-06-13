@@ -5858,6 +5858,37 @@ class EntityDatabase:
             )
             self._commit()
 
+    def _validated_provided_workspace_uuid(
+        self, workspace_uuid: str, _caller: str
+    ) -> str:
+        """Confirm a caller-supplied workspace_uuid actually exists.
+
+        Previously a provided uuid was returned unchecked, so an orphaned
+        identity (the split-brain: workspace.json points at a uuid with no
+        ``workspaces`` row) surfaced only as a bare ``FOREIGN KEY constraint
+        failed`` deep in the INSERT. Fail loudly here with a fix that points
+        at the recovery path instead.
+
+        The canonical ``__unknown__`` uuid is bootstrapped (not an error) so
+        callers that pass it directly behave like the ``project_id`` path.
+        """
+        if workspace_uuid == _UNKNOWN_WORKSPACE_UUID:
+            self._ensure_unknown_workspace_row()
+            return workspace_uuid
+        # Read-only membership probe — safe inside any open transaction
+        # (no BEGIN/COMMIT added here).
+        row = self._conn.execute(
+            "SELECT 1 FROM workspaces WHERE uuid = ?", (workspace_uuid,)
+        ).fetchone()
+        if row is None:
+            raise ValueError(
+                f"{_caller}(): workspace_uuid={workspace_uuid!r} not present "
+                f"in the workspaces table — workspace.json/DB split-brain "
+                f"detected. Run pd:doctor --fix, then restart the session "
+                f"(MCP servers cache the workspace UUID at startup)."
+            )
+        return workspace_uuid
+
     def _resolve_workspace_uuid_kwargs(
         self,
         workspace_uuid: str | None,
@@ -5898,9 +5929,13 @@ class EntityDatabase:
                 DeprecationWarning,
                 stacklevel=3,
             )
-            return workspace_uuid
+            return self._validated_provided_workspace_uuid(
+                workspace_uuid, _caller
+            )
         if workspace_uuid is not None:
-            return workspace_uuid
+            return self._validated_provided_workspace_uuid(
+                workspace_uuid, _caller
+            )
         if project_id is None:
             raise ValueError(
                 f"{_caller}() requires workspace_uuid or project_id"
