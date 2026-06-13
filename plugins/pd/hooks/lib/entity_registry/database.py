@@ -9555,13 +9555,13 @@ class EntityDatabase:
     ) -> None:
         """Insert or update a project row, preserving created_at on conflict.
 
-        Feature 108 (Decision 5): ``workspace_uuid`` is optional during the
-        Migration 11 transition window. When supplied, callers (e.g.,
-        ``mcp/entity_server.py::_upsert_project``) can record the workspace
-        identity alongside the legacy ``project_id``. The current INSERT
-        does NOT yet write the column because the projects rebuild step
-        (FR-7 step 13) is part of the migration body, and its inserts come
-        from the migration itself rather than this helper.
+        Feature 108 (Decision 5): ``workspace_uuid`` is optional. When
+        supplied (e.g. by ``mcp/entity_server.py::_upsert_project`` from the
+        lifespan-resolved identity), a matching ``workspaces`` row is ensured
+        before the projects INSERT so the FK resolves, and the column is
+        written/refreshed on both INSERT and ON CONFLICT UPDATE. When omitted,
+        the row is resolved by legacy ``project_id`` → ``project_root`` match
+        → fresh mint, in that order.
 
         Parameters
         ----------
@@ -9590,8 +9590,40 @@ class EntityDatabase:
         """
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         # Feature 108 Migration 11: projects.workspace_uuid is NOT NULL.
-        # Resolve / auto-bootstrap the workspaces row keyed on project_id.
-        if workspace_uuid is None:
+        # Resolve / auto-bootstrap the workspaces row.
+        if workspace_uuid is not None:
+            # A caller-supplied identity (e.g. the lifespan-resolved
+            # _workspace_uuid). Guarantee a matching workspaces row exists
+            # BEFORE the projects INSERT or the FK fails (the original
+            # split-brain bug: this path skipped row creation entirely).
+            # Never mint a competing row for a project_root another uuid
+            # already owns — adopt that canonical row instead.
+            from entity_registry.project_identity import (
+                _insert_workspace_row_if_absent,
+            )
+            outcome = _insert_workspace_row_if_absent(
+                self._conn, workspace_uuid, project_root, project_id
+            )
+            if outcome == "conflict-root":
+                row = self._conn.execute(
+                    "SELECT uuid FROM workspaces "
+                    "WHERE project_root IS NOT NULL AND project_root = ?",
+                    (project_root,),
+                ).fetchone()
+                if row is not None:
+                    workspace_uuid = row["uuid"]
+                else:
+                    # Ambiguous (multiple rows for this root) — keep the
+                    # provided uuid; a downstream write surfaces it loudly.
+                    print(
+                        f"[workspace] WARN: project_root={project_root!r} has "
+                        f"multiple workspace rows; cannot adopt for "
+                        f"{workspace_uuid}",
+                        file=sys.stderr,
+                    )
+        else:
+            # No identity supplied (incl. the lifespan ``_workspace_uuid or
+            # None`` empty-string fallback when startup resolution failed).
             row = self._conn.execute(
                 "SELECT uuid FROM workspaces WHERE project_id_legacy = ?",
                 (project_id,),
@@ -9599,13 +9631,22 @@ class EntityDatabase:
             if row is not None:
                 workspace_uuid = row["uuid"]
             else:
-                workspace_uuid = str(uuid_mod.uuid4())
-                self._conn.execute(
-                    "INSERT INTO workspaces "
-                    "(uuid, project_id_legacy, project_root, created_at, "
-                    "updated_at) VALUES (?, ?, ?, ?, ?)",
-                    (workspace_uuid, project_id, project_root, now, now),
-                )
+                # Adopt a single project_root match before minting fresh.
+                root_rows = self._conn.execute(
+                    "SELECT uuid FROM workspaces "
+                    "WHERE project_root IS NOT NULL AND project_root = ?",
+                    (project_root,),
+                ).fetchall()
+                if len(root_rows) == 1:
+                    workspace_uuid = root_rows[0]["uuid"]
+                else:
+                    workspace_uuid = str(uuid_mod.uuid4())
+                    self._conn.execute(
+                        "INSERT INTO workspaces "
+                        "(uuid, project_id_legacy, project_root, created_at, "
+                        "updated_at) VALUES (?, ?, ?, ?, ?)",
+                        (workspace_uuid, project_id, project_root, now, now),
+                    )
         self._conn.execute(
             """INSERT INTO projects (
                    project_id, name, root_commit_sha, remote_url,
@@ -9624,7 +9665,8 @@ class EntityDatabase:
                    default_branch=excluded.default_branch,
                    project_root=excluded.project_root,
                    is_git_repo=excluded.is_git_repo,
-                   updated_at=excluded.updated_at
+                   updated_at=excluded.updated_at,
+                   workspace_uuid=excluded.workspace_uuid
             """,
             (
                 project_id, name, root_commit_sha,
