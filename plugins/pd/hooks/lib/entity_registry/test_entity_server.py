@@ -591,6 +591,14 @@ class TestBackfillWorkspaceTarget:
         with pytest.raises(ValueError, match="claimed by 2 workspace rows"):
             db.backfill_project_ids("/root/dup", "proj-dup", workspace_uuid=_WSA)
 
+    def test_none_path_multi_row_raises(self, db):
+        """Re-review: the None path must also raise on multi-row (not mint)."""
+        _seed_ws(db, _WSB, "l1", "/root/dup2")
+        _seed_ws(db, "cccccccc-3333-4333-8333-cccccccccccc", "l2", "/root/dup2")
+        self._register_unknown(db, "bf-dup2", "/root/dup2")
+        with pytest.raises(ValueError, match="claimed by 2 workspace rows"):
+            db.backfill_project_ids("/root/dup2", "proj-dup2", workspace_uuid=None)
+
 
 class TestUpsertProjectMultiRowConflict:
     """Codex blocker 2: upsert_project must not bind arbitrarily under
@@ -601,3 +609,10 @@ class TestUpsertProjectMultiRowConflict:
         _seed_ws(db, "cccccccc-3333-4333-8333-cccccccccccc", "l2", "/root/dup")
         with pytest.raises(ValueError, match="claimed by 2 workspace rows"):
             _upsert(db, "proj-dup", "/root/dup", workspace_uuid=_WSA)
+
+    def test_none_path_multi_row_raises(self, db):
+        """Re-review: the None path must also raise on multi-row (not mint)."""
+        _seed_ws(db, _WSB, "l1", "/root/dup2")
+        _seed_ws(db, "cccccccc-3333-4333-8333-cccccccccccc", "l2", "/root/dup2")
+        with pytest.raises(ValueError, match="claimed by 2 workspace rows"):
+            _upsert(db, "proj-dup2", "/root/dup2", workspace_uuid=None)
