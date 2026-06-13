@@ -388,6 +388,9 @@ def check_workspace_uuid_consistency(
     db_has_entities = False
     db_legacy_for_uuid: str | None = None
     db_uuid_present = False
+    # uuid(s) the workspaces table holds for this project_root — used to pick
+    # a fixable hint for the orphan case (adopt single row vs insert).
+    db_root_uuids: list[str] = []
 
     if os.path.isfile(entities_db_path):
         conn = None
@@ -417,6 +420,20 @@ def check_workspace_uuid_consistency(
                 if row is not None:
                     db_uuid_present = True
                     db_legacy_for_uuid = row[0]
+
+            if project_root:
+                try:
+                    db_root_uuids = [
+                        r[0]
+                        for r in conn.execute(
+                            "SELECT uuid FROM workspaces "
+                            "WHERE project_root IS NOT NULL "
+                            "  AND project_root = ?",
+                            (os.path.abspath(project_root),),
+                        ).fetchall()
+                    ]
+                except sqlite3.Error:
+                    db_root_uuids = []
         finally:
             if conn is not None:
                 try:
@@ -461,6 +478,26 @@ def check_workspace_uuid_consistency(
     else:
         # File present — check DB consistency.
         if file_uuid and not db_uuid_present:
+            # Split-brain: the file's uuid has no workspaces row. Pick a
+            # fixable hint based on what the table holds for this project_root.
+            # The "Adopt …"/"Insert …" prefixes are the contract with the
+            # doctor fix actions (fixer._SAFE_PATTERNS); do not vary them.
+            if len(db_root_uuids) == 1:
+                fix_hint = (
+                    f"Adopt workspace UUID from DB row {db_root_uuids[0]} "
+                    f"(file has orphan {file_uuid})"
+                )
+            elif len(db_root_uuids) == 0:
+                fix_hint = (
+                    f"Insert missing workspaces row for file UUID {file_uuid}"
+                )
+            else:
+                # Ambiguous — multiple rows claim this project_root; no safe
+                # automatic fix.
+                fix_hint = (
+                    "Multiple workspaces rows match this project_root; "
+                    "resolve manually (inspect the workspaces table)."
+                )
             issues.append(
                 Issue(
                     check="workspace_uuid_consistency",
@@ -470,11 +507,7 @@ def check_workspace_uuid_consistency(
                         f"workspace.json UUID {file_uuid} not present in "
                         "workspaces table"
                     ),
-                    fix_hint=(
-                        "If pre-Migration-11 DB: run migration. Otherwise "
-                        "rm .claude/pd/workspace.json and re-run "
-                        "session-start to bootstrap from DB."
-                    ),
+                    fix_hint=fix_hint,
                 )
             )
         elif file_uuid and file_legacy and db_legacy_for_uuid is not None and (

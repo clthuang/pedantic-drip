@@ -36,6 +36,7 @@ from doctor.checks import (
     check_stale_dependencies,
     check_stale_worktrees,
     check_workflow_phase,
+    check_workspace_uuid_consistency,
 )
 from doctor.models import CheckResult, DiagnosticReport, Issue
 
@@ -73,6 +74,11 @@ CHECK_ORDER = [
     # Feature 116 FR-2 / AC-2.x: AST audit that all doctor checks emit
     # severity from {error, warning, info}.
     check_severity_vocab,
+    # Workspace split-brain fix: detect (and, via fix actions, repair) a
+    # workspace.json whose uuid is absent from the workspaces table. NOT in
+    # _ENTITY_DB_CHECKS — it self-guards a missing DB and its fresh-checkout
+    # warning is meaningful without one.
+    check_workspace_uuid_consistency,
 ]
 
 # Checks that require entity DB

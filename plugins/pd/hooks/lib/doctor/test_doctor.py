@@ -32,6 +32,7 @@ def test_check_order_preserved_post_f116():
         "check_audit_counter_write_path",
         "check_audit_emit_failed_count",
         "check_severity_vocab",
+        "check_workspace_uuid_consistency",
     ]
     actual_names = [c.__name__ for c in CHECK_ORDER]
     assert actual_names == expected_names, (
@@ -39,3 +40,7 @@ def test_check_order_preserved_post_f116():
     )
     assert "check_cross_workspace_parent_uuid" in _ENTITY_DB_CHECKS
     assert "check_audit_emit_failed_count" in _ENTITY_DB_CHECKS
+    # The workspace-consistency check self-guards a missing DB and its
+    # fresh-checkout warning is meaningful without one, so it is deliberately
+    # NOT gated behind the entity-DB prerequisite set.
+    assert "check_workspace_uuid_consistency" not in _ENTITY_DB_CHECKS

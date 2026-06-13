@@ -2251,7 +2251,7 @@ class TestOrchestratorReportHas14Checks:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 20  # F116 TA.6: +check_severity_vocab
+        assert len(report.checks) == 21  # +check_workspace_uuid_consistency (was 20: F116 +severity_vocab)
 
 
 class TestOrchestratorReportEvenWhenLocked:
@@ -2269,7 +2269,7 @@ class TestOrchestratorReportEvenWhenLocked:
         blocker.execute("BEGIN IMMEDIATE")
         try:
             report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-            assert len(report.checks) == 20  # F116 TA.6: +check_severity_vocab
+            assert len(report.checks) == 21  # +check_workspace_uuid_consistency (was 20: F116 +severity_vocab)
         finally:
             blocker.rollback()
             blocker.close()
@@ -2382,7 +2382,7 @@ class TestOrchestratorPerCheckExceptionIsolation:
         # The orchestrator wraps each check in try/except
         # Even if a check raises, we still get 10 results
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 20  # F116 TA.6: +check_severity_vocab
+        assert len(report.checks) == 21  # +check_workspace_uuid_consistency (was 20: F116 +severity_vocab)
 
 
 class TestOrchestratorMissingDbFile:
@@ -2398,7 +2398,7 @@ class TestOrchestratorMissingDbFile:
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
         assert not os.path.exists(db_path)
         assert not os.path.exists(mem_path)
-        assert len(report.checks) == 20  # F116 TA.6: +check_severity_vocab
+        assert len(report.checks) == 21  # +check_workspace_uuid_consistency (was 20: F116 +severity_vocab)
 
 
 class TestOrchestratorBaseBranchFromConfig:
@@ -2415,7 +2415,7 @@ class TestOrchestratorBaseBranchFromConfig:
         (config_dir / "pd.local.md").write_text("base_branch: develop\n")
 
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 20  # F116 TA.6: +check_severity_vocab
+        assert len(report.checks) == 21  # +check_workspace_uuid_consistency (was 20: F116 +severity_vocab)
 
 
 class TestOrchestratorBaseBranchDefaultMain:
@@ -2429,7 +2429,7 @@ class TestOrchestratorBaseBranchDefaultMain:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 20  # F116 TA.6: +check_severity_vocab
+        assert len(report.checks) == 21  # +check_workspace_uuid_consistency (was 20: F116 +severity_vocab)
 
 
 class TestOrchestratorCheck8RunsFirst:
@@ -2462,7 +2462,7 @@ class TestOrchestratorBothDbsLocked:
         blocker2.execute("BEGIN IMMEDIATE")
         try:
             report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-            assert len(report.checks) == 20  # F116 TA.6: +check_severity_vocab
+            assert len(report.checks) == 21  # +check_workspace_uuid_consistency (was 20: F116 +severity_vocab)
             assert report.healthy is False
         finally:
             blocker1.rollback()
@@ -2482,7 +2482,7 @@ class TestOrchestratorFreshProjectEmpty:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 20  # F116 TA.6: +check_severity_vocab
+        assert len(report.checks) == 21  # +check_workspace_uuid_consistency (was 20: F116 +severity_vocab)
         assert report.elapsed_ms >= 0
 
 
@@ -2498,7 +2498,7 @@ class TestOrchestratorWorksWithoutMcp:
 
         # No MCP servers running -- should still work
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 20  # F116 TA.6: +check_severity_vocab
+        assert len(report.checks) == 21  # +check_workspace_uuid_consistency (was 20: F116 +severity_vocab)
 
 
 class TestOrchestratorConnectionsClosedOnSuccess:
@@ -2512,7 +2512,7 @@ class TestOrchestratorConnectionsClosedOnSuccess:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 20  # F116 TA.6: +check_severity_vocab
+        assert len(report.checks) == 21  # +check_workspace_uuid_consistency (was 20: F116 +severity_vocab)
 
         # Verify we can acquire write locks (connections were closed)
         conn = sqlite3.connect(db_path, timeout=1.0)
@@ -2582,7 +2582,7 @@ class TestCliJsonOutputHas14Checks:
         data = json.loads(result.stdout)
         # Phase 2 wraps output: {"diagnostic": ...}
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 20  # F116 TA.6: +check_severity_vocab
+        assert len(diag["checks"]) == 21  # +check_workspace_uuid_consistency (was 20: F116 +severity_vocab)
 
 
 class TestCliExitCodeAlwaysZero:
@@ -2657,7 +2657,7 @@ class TestCliArtifactsRootCliArgPrecedence:
         assert result.returncode == 0
         data = json.loads(result.stdout)
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 20  # F116 TA.6: +check_severity_vocab
+        assert len(diag["checks"]) == 21  # +check_workspace_uuid_consistency (was 20: F116 +severity_vocab)
 
 
 class TestCliArtifactsRootConfigFallback:
@@ -2679,7 +2679,7 @@ class TestCliArtifactsRootConfigFallback:
         assert result.returncode == 0
         data = json.loads(result.stdout)
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 20  # F116 TA.6: +check_severity_vocab
+        assert len(diag["checks"]) == 21  # +check_workspace_uuid_consistency (was 20: F116 +severity_vocab)
 
 
 class TestCliArtifactsRootDefaultDocs:
@@ -2700,7 +2700,7 @@ class TestCliArtifactsRootDefaultDocs:
         assert result.returncode == 0
         data = json.loads(result.stdout)
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 20  # F116 TA.6: +check_severity_vocab
+        assert len(diag["checks"]) == 21  # +check_workspace_uuid_consistency (was 20: F116 +severity_vocab)
 
 
 class TestCliNoneSerializesAsJsonNull:
@@ -3243,3 +3243,156 @@ class TestCheckStaleWorktreesMultipleOrphans:
         messages = " ".join(w.message for w in warnings)
         assert "task-a" in messages
         assert "task-b" in messages
+
+
+def _write_ws_json(proj_dir, ws_uuid, legacy=None):
+    """Write a workspace.json under <proj_dir>/.claude/pd/."""
+    d = os.path.join(proj_dir, ".claude", "pd")
+    os.makedirs(d, exist_ok=True)
+    payload = {"workspace_uuid": ws_uuid, "schema_version": 1}
+    if legacy is not None:
+        payload["project_id_legacy"] = legacy
+    with open(os.path.join(d, "workspace.json"), "w", encoding="utf-8") as fh:
+        json.dump(payload, fh)
+
+
+def _make_ws_db(tmp_path, name, rows=(), entities=0):
+    """v11 entities.db with a workspaces table (+ optional entity rows)."""
+    db_path = str(tmp_path / name)
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            "CREATE TABLE _metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+        )
+        conn.execute(
+            "INSERT INTO _metadata VALUES ('schema_version', '11')"
+        )
+        conn.execute(
+            "CREATE TABLE workspaces ("
+            " uuid TEXT NOT NULL PRIMARY KEY,"
+            " project_id_legacy TEXT UNIQUE,"
+            " project_root TEXT,"
+            " created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
+        )
+        conn.execute("CREATE TABLE entities (uuid TEXT PRIMARY KEY)")
+        for u, leg, root in rows:
+            conn.execute(
+                "INSERT INTO workspaces VALUES (?, ?, ?, 'n', 'n')",
+                (u, leg, root),
+            )
+        for i in range(entities):
+            conn.execute("INSERT INTO entities VALUES (?)", (f"e{i}",))
+        conn.commit()
+    finally:
+        conn.close()
+    return db_path
+
+
+class TestCheckWorkspaceUuidConsistency:
+    """First-ever coverage: the split-brain detector + fixable-hint choice."""
+
+    _A = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
+    _B = "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb"
+    _C = "cccccccc-3333-4333-8333-cccccccccccc"
+
+    def test_file_matches_db_passes(self, tmp_path):
+        from doctor.checks import check_workspace_uuid_consistency
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        root = os.path.abspath(str(proj))
+        db = _make_ws_db(tmp_path, "e.db", rows=[(self._A, "leg", root)])
+        _write_ws_json(str(proj), self._A)
+        result = check_workspace_uuid_consistency(
+            entities_db_path=db, project_root=str(proj)
+        )
+        assert result.passed
+        assert result.issues == []
+
+    def test_orphan_single_root_row_emits_adopt_hint(self, tmp_path):
+        from doctor.checks import check_workspace_uuid_consistency
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        root = os.path.abspath(str(proj))
+        db = _make_ws_db(tmp_path, "e.db", rows=[(self._B, "leg", root)])
+        _write_ws_json(str(proj), self._A)  # orphan A; root owned by B
+        result = check_workspace_uuid_consistency(
+            entities_db_path=db, project_root=str(proj)
+        )
+        assert not result.passed
+        assert result.issues[0].fix_hint.startswith(
+            "Adopt workspace UUID from DB row"
+        )
+
+    def test_orphan_no_root_row_emits_insert_hint(self, tmp_path):
+        from doctor.checks import check_workspace_uuid_consistency
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        db = _make_ws_db(tmp_path, "e.db")  # empty workspaces
+        _write_ws_json(str(proj), self._A)
+        result = check_workspace_uuid_consistency(
+            entities_db_path=db, project_root=str(proj)
+        )
+        assert not result.passed
+        assert result.issues[0].fix_hint.startswith(
+            "Insert missing workspaces row"
+        )
+
+    def test_orphan_multi_root_row_manual_hint(self, tmp_path):
+        from doctor.checks import check_workspace_uuid_consistency
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        root = os.path.abspath(str(proj))
+        db = _make_ws_db(
+            tmp_path, "e.db",
+            rows=[(self._B, "l1", root), (self._C, "l2", root)],
+        )
+        _write_ws_json(str(proj), self._A)
+        result = check_workspace_uuid_consistency(
+            entities_db_path=db, project_root=str(proj)
+        )
+        assert not result.passed
+        assert "Multiple workspaces rows" in result.issues[0].fix_hint
+
+    def test_file_missing_with_entities_errors(self, tmp_path):
+        from doctor.checks import check_workspace_uuid_consistency
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        db = _make_ws_db(tmp_path, "e.db", entities=3)
+        result = check_workspace_uuid_consistency(
+            entities_db_path=db, project_root=str(proj)
+        )
+        assert not result.passed
+        assert any(i.severity == "error" for i in result.issues)
+
+    def test_file_missing_empty_db_warns(self, tmp_path):
+        from doctor.checks import check_workspace_uuid_consistency
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        db = _make_ws_db(tmp_path, "e.db", entities=0)
+        result = check_workspace_uuid_consistency(
+            entities_db_path=db, project_root=str(proj)
+        )
+        # Fresh checkout: warning, not error → still "passed" (no errors).
+        assert result.passed
+        assert any(i.severity == "warning" for i in result.issues)
+
+    def test_legacy_mismatch_errors(self, tmp_path):
+        from doctor.checks import check_workspace_uuid_consistency
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        root = os.path.abspath(str(proj))
+        # DB row for A carries legacy 'db-leg'; file claims 'file-leg'.
+        db = _make_ws_db(tmp_path, "e.db", rows=[(self._A, "db-leg", root)])
+        _write_ws_json(str(proj), self._A, legacy="file-leg")
+        result = check_workspace_uuid_consistency(
+            entities_db_path=db, project_root=str(proj)
+        )
+        assert not result.passed
+        assert any("project_id_legacy" in i.message for i in result.issues)
