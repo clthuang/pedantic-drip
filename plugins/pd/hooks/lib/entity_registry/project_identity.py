@@ -457,20 +457,31 @@ def validate_or_adopt_workspace_uuid(
     ``WORKSPACE_UUID`` env), and — indirectly — the write paths. Read-mostly:
     the only write is the missing-row insert via :func:`_ensure_workspace_row`.
 
+    Membership alone is NOT sufficient — a candidate that exists but is bound
+    to a DIFFERENT ``project_root`` is foreign (e.g. a workspace.json copied
+    between projects, or a stale inherited ``WORKSPACE_UUID``) and must not be
+    accepted for this root, or entities would cross-bind to another project's
+    workspace.
+
     Precedence:
       1. Malformed candidate → raise ``ValueError`` (caller's problem).
       2. DB unreachable / pre-M11 → return *candidate* unchanged.
-      3. *candidate* present in ``workspaces`` → return it (fast path).
-      4. Orphaned + exactly one row matches *project_root* → return that row's
-         uuid (ADOPT; caller persists the swap if it owns the file).
+      3. *candidate* present AND its row's ``project_root`` is NULL or equals
+         this root → return it (fast path; correctly ours / unscoped).
+      4. Otherwise (orphaned, OR present-but-foreign-root) → exactly one row
+         matches *project_root* → return that row's uuid (ADOPT).
       5. Orphaned + zero rows match *project_root* → insert a row carrying
          *candidate* and return it.
-      6. Orphaned + multiple rows match *project_root* → WARN, return
-         *candidate* (ambiguous; a downstream write will fail loudly).
+      6. Can't safely map (present-but-foreign with no/ambiguous root row, or
+         orphaned + multiple root rows) → WARN, return *candidate*.
     """
     _validate_workspace_uuid(candidate)
     if not os.path.isfile(db_path):
         return candidate
+    root_abs = os.path.abspath(project_root) if project_root else None
+    is_member = False
+    cand_root: str | None = None
+    root_uuids: list[str] = []
     conn = None
     try:
         conn = sqlite3.connect(
@@ -485,18 +496,21 @@ def validate_or_adopt_workspace_uuid(
             sv = 0
         if sv < 11:
             return candidate
-        present = conn.execute(
-            "SELECT 1 FROM workspaces WHERE uuid = ?", (candidate,)
+        crow = conn.execute(
+            "SELECT project_root FROM workspaces WHERE uuid = ?", (candidate,)
         ).fetchone()
-        if present is not None:
-            return candidate
-        rows = []
-        if project_root is not None:
-            rows = conn.execute(
-                "SELECT uuid FROM workspaces "
-                "WHERE project_root IS NOT NULL AND project_root = ?",
-                (project_root,),
-            ).fetchall()
+        if crow is not None:
+            is_member = True
+            cand_root = crow[0]
+        if root_abs is not None:
+            root_uuids = [
+                r[0]
+                for r in conn.execute(
+                    "SELECT uuid FROM workspaces "
+                    "WHERE project_root IS NOT NULL AND project_root = ?",
+                    (root_abs,),
+                ).fetchall()
+            ]
     except sqlite3.Error:
         return candidate
     finally:
@@ -506,23 +520,39 @@ def validate_or_adopt_workspace_uuid(
             except sqlite3.Error:
                 pass
 
-    if len(rows) == 1:
-        return rows[0][0]
-    if len(rows) > 1:
-        print(
-            f"[workspace.json] WARN: workspaces table has multiple rows "
-            f"matching project_root={project_root!r}; cannot adopt for "
-            f"orphaned uuid {candidate}",
-            file=sys.stderr,
-        )
+    if is_member and (cand_root is None or cand_root == root_abs):
+        return candidate  # correctly ours, or unscoped (NULL root)
+
+    # Either orphaned, or a member bound to a different root (foreign).
+    if len(root_uuids) == 1:
+        return root_uuids[0]  # adopt this root's canonical row
+    if not is_member and len(root_uuids) == 0:
+        # Orphaned + this root unclaimed — record the candidate so the FK
+        # resolves. (A foreign member is NOT inserted: its uuid already exists
+        # elsewhere; we can't claim it here.)
+        _ensure_workspace_row(db_path, candidate, project_root)
         return candidate
-    # Zero rows for this root — record the candidate so the FK resolves.
-    _ensure_workspace_row(db_path, candidate, project_root)
+    why = (
+        "present but bound to a different project_root"
+        if is_member else "orphaned"
+    )
+    print(
+        f"[workspace.json] WARN: candidate {candidate} is {why} and "
+        f"project_root={project_root!r} has {len(root_uuids)} workspace "
+        f"row(s); cannot safely adopt — leaving as-is",
+        file=sys.stderr,
+    )
     return candidate
 
 
-def resolve_workspace_uuid(working_dir: str | None = None) -> str:
+def resolve_workspace_uuid(
+    working_dir: str | None = None, db_path: str | None = None
+) -> str:
     """Resolve workspace UUID for the given working directory (FR-3).
+
+    ``db_path`` overrides the entities.db location (defaults to
+    :func:`_entities_db_path`); threaded through so callers that already
+    resolved a DB path reconcile/insert against the SAME database.
 
     Precedence chain:
       1. ``ENTITY_WORKSPACE_UUID`` env var (test override).
@@ -564,7 +594,8 @@ def resolve_workspace_uuid(working_dir: str | None = None) -> str:
     target_path = os.path.join(cwd, ".claude", "pd", "workspace.json")
     # ENTITY_DB_PATH-aware (matches the MCP servers); historically this was
     # hard-coded to the global store, which diverged under test harnesses.
-    db_path = _entities_db_path()
+    if db_path is None:
+        db_path = _entities_db_path()
 
     # Step 2: file-based, with split-brain self-heal. A workspace.json whose
     # uuid is absent from the workspaces table (the F-incident: file written
@@ -681,12 +712,12 @@ def resolve_startup_workspace_uuid(
     short-circuit is preserved). With neither set, falls back to the full
     file→DB→mint :func:`resolve_workspace_uuid` (which self-heals).
     """
+    db = db_path if db_path is not None else _entities_db_path()
     env_abs = os.environ.get("ENTITY_WORKSPACE_UUID")
     if env_abs:
         return _validate_workspace_uuid(env_abs)
     env_candidate = os.environ.get("WORKSPACE_UUID")
     if env_candidate:
-        db = db_path if db_path is not None else _entities_db_path()
         resolved = validate_or_adopt_workspace_uuid(
             env_candidate, project_root, db
         )
@@ -697,7 +728,8 @@ def resolve_startup_workspace_uuid(
                 file=sys.stderr,
             )
         return resolved
-    return resolve_workspace_uuid(project_root)
+    # No env hint — full file→DB→mint resolution against the SAME db_path.
+    return resolve_workspace_uuid(project_root, db_path=db)
 
 
 @dataclasses.dataclass(frozen=True)

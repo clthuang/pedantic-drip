@@ -1036,7 +1036,7 @@ class TestValidateOrAdoptWorkspaceUuid:
         assert validate_or_adopt_workspace_uuid(
             _UUID_A, "/root", db
         ) == _UUID_A
-        assert "multiple rows" in capsys.readouterr().err
+        assert "cannot safely adopt" in capsys.readouterr().err
 
     def test_db_absent_passthrough(self, tmp_path):
         from entity_registry.project_identity import (
@@ -1046,6 +1046,50 @@ class TestValidateOrAdoptWorkspaceUuid:
         assert validate_or_adopt_workspace_uuid(
             _UUID_A, "/root", str(tmp_path / "absent.db")
         ) == _UUID_A
+
+    def test_member_bound_to_foreign_root_adopts_our_row(self, tmp_path):
+        """Codex blocker 1: a candidate that exists but is bound to ANOTHER
+        project_root must not be accepted — adopt this root's row instead."""
+        from entity_registry.project_identity import (
+            validate_or_adopt_workspace_uuid,
+        )
+
+        db = str(tmp_path / "e.db")
+        # _UUID_A exists but belongs to /other; our root /root is owned by B.
+        _make_v11_db(
+            db,
+            [(_UUID_A, "lega", "/other"), (_UUID_B, "legb", "/root")],
+        )
+        assert validate_or_adopt_workspace_uuid(
+            _UUID_A, "/root", db
+        ) == _UUID_B  # adopted our row, NOT the foreign member
+
+    def test_member_with_null_root_is_accepted(self, tmp_path):
+        """An unscoped (NULL project_root) member is not a conflict."""
+        from entity_registry.project_identity import (
+            validate_or_adopt_workspace_uuid,
+        )
+
+        db = str(tmp_path / "e.db")
+        _make_v11_db(db, [(_UUID_A, "leg", None)])
+        assert validate_or_adopt_workspace_uuid(
+            _UUID_A, "/root", db
+        ) == _UUID_A
+
+    def test_member_foreign_root_no_adoptable_row_warns(
+        self, tmp_path, capsys
+    ):
+        """Foreign member + no row for our root → cannot map; WARN, keep."""
+        from entity_registry.project_identity import (
+            validate_or_adopt_workspace_uuid,
+        )
+
+        db = str(tmp_path / "e.db")
+        _make_v11_db(db, [(_UUID_A, "lega", "/other")])  # only /other
+        assert validate_or_adopt_workspace_uuid(
+            _UUID_A, "/root", db
+        ) == _UUID_A
+        assert "different project_root" in capsys.readouterr().err
 
 
 class TestResolveWorkspaceUuidSelfHeal:

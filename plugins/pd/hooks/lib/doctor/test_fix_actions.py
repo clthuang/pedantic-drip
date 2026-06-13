@@ -663,6 +663,15 @@ class TestFixInsertWorkspaceRow:
         result = _fix_insert_workspace_row(_ws_ctx(conn, str(proj)), None)
         assert "already consistent" in result
 
+    def test_malformed_uuid_refused(self, entities_db_session, tmp_path):
+        """Defense in depth (codex warning): never insert a malformed uuid."""
+        conn = entities_db_session
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        _write_orphan_ws(str(proj), "not-a-uuid")
+        with pytest.raises(ValueError, match="malformed"):
+            _fix_insert_workspace_row(_ws_ctx(conn, str(proj)), None)
+
 
 class TestDoctorWorkspaceHealEndToEnd:
     """run_diagnostics → apply_fixes → re-run converges (the pd:doctor --fix

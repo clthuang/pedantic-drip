@@ -679,6 +679,7 @@ def _fix_insert_workspace_row(ctx: FixContext, issue: Issue) -> str:
     if not ctx.entities_conn:
         raise ValueError("No entities connection")
     from entity_registry.project_identity import (
+        _WORKSPACE_UUID_RE,
         _compute_legacy_project_id,
         _insert_workspace_row_if_absent,
     )
@@ -686,6 +687,12 @@ def _fix_insert_workspace_row(ctx: FixContext, issue: Issue) -> str:
     _ws_path, file_uuid = _read_workspace_json_file_uuid(ctx.project_root)
     if file_uuid is None:
         return "already consistent: workspace.json absent — no row needed"
+    if not _WORKSPACE_UUID_RE.match(file_uuid or ""):
+        # Defensive: never insert a malformed uuid as a workspaces.uuid.
+        raise ValueError(
+            f"workspace.json workspace_uuid {file_uuid!r} is malformed; "
+            f"refusing to insert. rm the file and re-run session-start."
+        )
     if ctx.entities_conn.execute(
         "SELECT 1 FROM workspaces WHERE uuid = ?", (file_uuid,)
     ).fetchone() is not None:

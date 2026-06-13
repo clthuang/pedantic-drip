@@ -7762,12 +7762,20 @@ class EntityDatabase:
                 self._conn, workspace_uuid, project_root, project_id
             )
             if outcome == "conflict-root":
-                row = self._conn.execute(
+                root_rows = self._conn.execute(
                     "SELECT uuid FROM workspaces "
                     "WHERE project_root IS NOT NULL AND project_root = ?",
                     (project_root,),
-                ).fetchone()
-                target_ws_uuid = row["uuid"] if row is not None else workspace_uuid
+                ).fetchall()
+                if len(root_rows) == 1:
+                    target_ws_uuid = root_rows[0]["uuid"]
+                else:
+                    raise ValueError(
+                        f"backfill_project_ids(): project_root="
+                        f"{project_root!r} is claimed by {len(root_rows)} "
+                        f"workspace rows; refusing to attribute entities "
+                        f"ambiguously. Manual repair required (run pd:doctor)."
+                    )
             else:
                 target_ws_uuid = workspace_uuid
             self._conn.commit()
@@ -9683,21 +9691,21 @@ class EntityDatabase:
                 self._conn, workspace_uuid, project_root, project_id
             )
             if outcome == "conflict-root":
-                row = self._conn.execute(
+                root_rows = self._conn.execute(
                     "SELECT uuid FROM workspaces "
                     "WHERE project_root IS NOT NULL AND project_root = ?",
                     (project_root,),
-                ).fetchone()
-                if row is not None:
-                    workspace_uuid = row["uuid"]
+                ).fetchall()
+                if len(root_rows) == 1:
+                    workspace_uuid = root_rows[0]["uuid"]
                 else:
-                    # Ambiguous (multiple rows for this root) — keep the
-                    # provided uuid; a downstream write surfaces it loudly.
-                    print(
-                        f"[workspace] WARN: project_root={project_root!r} has "
-                        f"multiple workspace rows; cannot adopt for "
-                        f"{workspace_uuid}",
-                        file=sys.stderr,
+                    # Multiple rows claim this project_root — pre-existing
+                    # corruption. Refuse to bind arbitrarily; surface loudly.
+                    raise ValueError(
+                        f"upsert_project(): project_root={project_root!r} is "
+                        f"claimed by {len(root_rows)} workspace rows; cannot "
+                        f"adopt a workspace_uuid. Manual repair required "
+                        f"(inspect the workspaces table; run pd:doctor)."
                     )
         else:
             # No identity supplied (incl. the lifespan ``_workspace_uuid or

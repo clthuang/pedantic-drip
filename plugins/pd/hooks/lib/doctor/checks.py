@@ -482,14 +482,26 @@ def check_workspace_uuid_consistency(
             # fixable hint based on what the table holds for this project_root.
             # The "Adopt …"/"Insert …" prefixes are the contract with the
             # doctor fix actions (fixer._SAFE_PATTERNS); do not vary them.
+            from entity_registry.project_identity import _WORKSPACE_UUID_RE
+            file_uuid_well_formed = bool(
+                _WORKSPACE_UUID_RE.match(file_uuid or "")
+            )
             if len(db_root_uuids) == 1:
+                # Adopt is safe even if the file uuid is malformed — it writes
+                # the (valid) DB row uuid, discarding the bad file value.
                 fix_hint = (
                     f"Adopt workspace UUID from DB row {db_root_uuids[0]} "
                     f"(file has orphan {file_uuid})"
                 )
-            elif len(db_root_uuids) == 0:
+            elif len(db_root_uuids) == 0 and file_uuid_well_formed:
                 fix_hint = (
                     f"Insert missing workspaces row for file UUID {file_uuid}"
+                )
+            elif len(db_root_uuids) == 0:
+                # Malformed file uuid + nothing to adopt → not auto-fixable.
+                fix_hint = (
+                    "workspace.json workspace_uuid is malformed; rm "
+                    ".claude/pd/workspace.json and re-run session-start."
                 )
             else:
                 # Ambiguous — multiple rows claim this project_root; no safe

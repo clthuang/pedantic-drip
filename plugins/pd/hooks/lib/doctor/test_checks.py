@@ -3396,3 +3396,20 @@ class TestCheckWorkspaceUuidConsistency:
         )
         assert not result.passed
         assert any("project_id_legacy" in i.message for i in result.issues)
+
+    def test_malformed_file_uuid_no_root_row_manual_hint(self, tmp_path):
+        """Codex warning: a malformed (but parseable) file uuid + no root row
+        must NOT get the fixable Insert hint (it would write a bad row)."""
+        from doctor.checks import check_workspace_uuid_consistency
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        db = _make_ws_db(tmp_path, "e.db")  # empty workspaces
+        _write_ws_json(str(proj), "not-a-uuid")
+        result = check_workspace_uuid_consistency(
+            entities_db_path=db, project_root=str(proj)
+        )
+        assert not result.passed
+        hint = result.issues[0].fix_hint
+        assert not hint.startswith("Insert missing workspaces row")
+        assert "malformed" in hint

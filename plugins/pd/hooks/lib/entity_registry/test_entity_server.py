@@ -581,3 +581,23 @@ class TestBackfillWorkspaceTarget:
         ws = _entity_ws(db, "feature:bf-w")
         assert ws not in (None, "00000000-0000-0000-0000-000000000000")
         assert _ws_present(db, ws)
+
+    def test_multi_row_conflict_root_raises(self, db):
+        """Codex blocker 3: >1 rows claim project_root → refuse to attribute
+        ambiguously (raise), don't silently first-pick."""
+        _seed_ws(db, _WSB, "l1", "/root/dup")
+        _seed_ws(db, "cccccccc-3333-4333-8333-cccccccccccc", "l2", "/root/dup")
+        self._register_unknown(db, "bf-dup", "/root/dup")
+        with pytest.raises(ValueError, match="claimed by 2 workspace rows"):
+            db.backfill_project_ids("/root/dup", "proj-dup", workspace_uuid=_WSA)
+
+
+class TestUpsertProjectMultiRowConflict:
+    """Codex blocker 2: upsert_project must not bind arbitrarily under
+    multi-row project_root corruption."""
+
+    def test_multi_row_conflict_root_raises(self, db):
+        _seed_ws(db, _WSB, "l1", "/root/dup")
+        _seed_ws(db, "cccccccc-3333-4333-8333-cccccccccccc", "l2", "/root/dup")
+        with pytest.raises(ValueError, match="claimed by 2 workspace rows"):
+            _upsert(db, "proj-dup", "/root/dup", workspace_uuid=_WSA)
