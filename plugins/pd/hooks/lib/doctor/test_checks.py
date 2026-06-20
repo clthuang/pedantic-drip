@@ -2251,7 +2251,7 @@ class TestOrchestratorReportHas14Checks:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 21  # +check_workspace_uuid_consistency (was 20: F116 +severity_vocab)
+        assert len(report.checks) == 22  # +check_unknown_workspace_orphans (was 21: +workspace_uuid_consistency)
 
 
 class TestOrchestratorReportEvenWhenLocked:
@@ -2269,7 +2269,7 @@ class TestOrchestratorReportEvenWhenLocked:
         blocker.execute("BEGIN IMMEDIATE")
         try:
             report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-            assert len(report.checks) == 21  # +check_workspace_uuid_consistency (was 20: F116 +severity_vocab)
+            assert len(report.checks) == 22  # +check_unknown_workspace_orphans (was 21: +workspace_uuid_consistency)
         finally:
             blocker.rollback()
             blocker.close()
@@ -2382,7 +2382,7 @@ class TestOrchestratorPerCheckExceptionIsolation:
         # The orchestrator wraps each check in try/except
         # Even if a check raises, we still get 10 results
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 21  # +check_workspace_uuid_consistency (was 20: F116 +severity_vocab)
+        assert len(report.checks) == 22  # +check_unknown_workspace_orphans (was 21: +workspace_uuid_consistency)
 
 
 class TestOrchestratorMissingDbFile:
@@ -2398,7 +2398,7 @@ class TestOrchestratorMissingDbFile:
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
         assert not os.path.exists(db_path)
         assert not os.path.exists(mem_path)
-        assert len(report.checks) == 21  # +check_workspace_uuid_consistency (was 20: F116 +severity_vocab)
+        assert len(report.checks) == 22  # +check_unknown_workspace_orphans (was 21: +workspace_uuid_consistency)
 
 
 class TestOrchestratorBaseBranchFromConfig:
@@ -2415,7 +2415,7 @@ class TestOrchestratorBaseBranchFromConfig:
         (config_dir / "pd.local.md").write_text("base_branch: develop\n")
 
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 21  # +check_workspace_uuid_consistency (was 20: F116 +severity_vocab)
+        assert len(report.checks) == 22  # +check_unknown_workspace_orphans (was 21: +workspace_uuid_consistency)
 
 
 class TestOrchestratorBaseBranchDefaultMain:
@@ -2429,7 +2429,7 @@ class TestOrchestratorBaseBranchDefaultMain:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 21  # +check_workspace_uuid_consistency (was 20: F116 +severity_vocab)
+        assert len(report.checks) == 22  # +check_unknown_workspace_orphans (was 21: +workspace_uuid_consistency)
 
 
 class TestOrchestratorCheck8RunsFirst:
@@ -2462,7 +2462,7 @@ class TestOrchestratorBothDbsLocked:
         blocker2.execute("BEGIN IMMEDIATE")
         try:
             report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-            assert len(report.checks) == 21  # +check_workspace_uuid_consistency (was 20: F116 +severity_vocab)
+            assert len(report.checks) == 22  # +check_unknown_workspace_orphans (was 21: +workspace_uuid_consistency)
             assert report.healthy is False
         finally:
             blocker1.rollback()
@@ -2482,7 +2482,7 @@ class TestOrchestratorFreshProjectEmpty:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 21  # +check_workspace_uuid_consistency (was 20: F116 +severity_vocab)
+        assert len(report.checks) == 22  # +check_unknown_workspace_orphans (was 21: +workspace_uuid_consistency)
         assert report.elapsed_ms >= 0
 
 
@@ -2498,7 +2498,7 @@ class TestOrchestratorWorksWithoutMcp:
 
         # No MCP servers running -- should still work
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 21  # +check_workspace_uuid_consistency (was 20: F116 +severity_vocab)
+        assert len(report.checks) == 22  # +check_unknown_workspace_orphans (was 21: +workspace_uuid_consistency)
 
 
 class TestOrchestratorConnectionsClosedOnSuccess:
@@ -2512,7 +2512,7 @@ class TestOrchestratorConnectionsClosedOnSuccess:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 21  # +check_workspace_uuid_consistency (was 20: F116 +severity_vocab)
+        assert len(report.checks) == 22  # +check_unknown_workspace_orphans (was 21: +workspace_uuid_consistency)
 
         # Verify we can acquire write locks (connections were closed)
         conn = sqlite3.connect(db_path, timeout=1.0)
@@ -2582,7 +2582,7 @@ class TestCliJsonOutputHas14Checks:
         data = json.loads(result.stdout)
         # Phase 2 wraps output: {"diagnostic": ...}
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 21  # +check_workspace_uuid_consistency (was 20: F116 +severity_vocab)
+        assert len(diag["checks"]) == 22  # +check_unknown_workspace_orphans (was 21: +workspace_uuid_consistency)
 
 
 class TestCliExitCodeAlwaysZero:
@@ -2657,7 +2657,7 @@ class TestCliArtifactsRootCliArgPrecedence:
         assert result.returncode == 0
         data = json.loads(result.stdout)
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 21  # +check_workspace_uuid_consistency (was 20: F116 +severity_vocab)
+        assert len(diag["checks"]) == 22  # +check_unknown_workspace_orphans (was 21: +workspace_uuid_consistency)
 
 
 class TestCliArtifactsRootConfigFallback:
@@ -2679,7 +2679,7 @@ class TestCliArtifactsRootConfigFallback:
         assert result.returncode == 0
         data = json.loads(result.stdout)
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 21  # +check_workspace_uuid_consistency (was 20: F116 +severity_vocab)
+        assert len(diag["checks"]) == 22  # +check_unknown_workspace_orphans (was 21: +workspace_uuid_consistency)
 
 
 class TestCliArtifactsRootDefaultDocs:
@@ -2700,7 +2700,7 @@ class TestCliArtifactsRootDefaultDocs:
         assert result.returncode == 0
         data = json.loads(result.stdout)
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 21  # +check_workspace_uuid_consistency (was 20: F116 +severity_vocab)
+        assert len(diag["checks"]) == 22  # +check_unknown_workspace_orphans (was 21: +workspace_uuid_consistency)
 
 
 class TestCliNoneSerializesAsJsonNull:
@@ -3413,3 +3413,107 @@ class TestCheckWorkspaceUuidConsistency:
         hint = result.issues[0].fix_hint
         assert not hint.startswith("Insert missing workspaces row")
         assert "malformed" in hint
+
+
+def _make_orphan_db(tmp_path, name, ws_rows=(), orphans=0):
+    """entities.db with a workspaces table + an entities table carrying a
+    ``workspace_uuid`` column, seeded with ``orphans`` rows in the unknown
+    bucket (so check_unknown_workspace_orphans can count them)."""
+    from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
+
+    db_path = str(tmp_path / name)
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            "CREATE TABLE workspaces ("
+            " uuid TEXT NOT NULL PRIMARY KEY,"
+            " project_id_legacy TEXT UNIQUE,"
+            " project_root TEXT,"
+            " created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
+        )
+        conn.execute(
+            "CREATE TABLE entities (uuid TEXT PRIMARY KEY, workspace_uuid TEXT)"
+        )
+        for u, leg, root in ws_rows:
+            conn.execute(
+                "INSERT INTO workspaces VALUES (?, ?, ?, 'n', 'n')",
+                (u, leg, root),
+            )
+        for i in range(orphans):
+            conn.execute(
+                "INSERT INTO entities VALUES (?, ?)",
+                (f"orphan{i}", _UNKNOWN_WORKSPACE_UUID),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    return db_path
+
+
+class TestCheckUnknownWorkspaceOrphans:
+    """Detect entities stranded in the unknown-workspace bucket + claim hint."""
+
+    _WS = "dddddddd-4444-4444-8444-dddddddddddd"
+
+    def test_orphans_single_workspace_emits_claim_hint(self, tmp_path):
+        from doctor.checks import check_unknown_workspace_orphans
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        root = os.path.abspath(str(proj))
+        db = _make_orphan_db(
+            tmp_path, "e.db", ws_rows=[(self._WS, "leg", root)], orphans=3
+        )
+        result = check_unknown_workspace_orphans(
+            entities_db_path=db, project_root=str(proj)
+        )
+        # Warning (not error) → still "passed"; emits the fixable claim hint.
+        assert result.passed
+        assert len(result.issues) == 1
+        assert result.issues[0].severity == "warning"
+        assert result.issues[0].fix_hint.startswith(
+            "Claim unknown-workspace entities into"
+        )
+        assert self._WS in result.issues[0].fix_hint
+        assert "3 entities" in result.issues[0].message
+
+    def test_no_orphans_passes_clean(self, tmp_path):
+        from doctor.checks import check_unknown_workspace_orphans
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        root = os.path.abspath(str(proj))
+        db = _make_orphan_db(
+            tmp_path, "e.db", ws_rows=[(self._WS, "leg", root)], orphans=0
+        )
+        result = check_unknown_workspace_orphans(
+            entities_db_path=db, project_root=str(proj)
+        )
+        assert result.passed
+        assert result.issues == []
+
+    def test_orphans_ambiguous_workspace_manual_hint(self, tmp_path):
+        from doctor.checks import check_unknown_workspace_orphans
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        # No workspaces row for this project_root → cannot auto-claim.
+        db = _make_orphan_db(tmp_path, "e.db", ws_rows=(), orphans=2)
+        result = check_unknown_workspace_orphans(
+            entities_db_path=db, project_root=str(proj)
+        )
+        assert result.passed  # warning only
+        assert len(result.issues) == 1
+        assert not result.issues[0].fix_hint.startswith(
+            "Claim unknown-workspace entities into"
+        )
+
+    def test_missing_db_is_noop(self, tmp_path):
+        from doctor.checks import check_unknown_workspace_orphans
+
+        result = check_unknown_workspace_orphans(
+            entities_db_path=str(tmp_path / "nonexistent.db"),
+            project_root=str(tmp_path),
+        )
+        assert result.passed
+        assert result.issues == []

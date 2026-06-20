@@ -844,7 +844,8 @@ class TestHasWorkContext:
         pipeline = self._make_pipeline()
         with mock.patch.object(pipeline, "_find_active_feature", return_value=(None, None)), \
              mock.patch.object(pipeline, "_git_branch_name", return_value="main"), \
-             mock.patch.object(pipeline, "_git_changed_files", return_value=["file.py"]):
+             mock.patch.object(pipeline, "_git_changed_files", return_value=["file.py"]), \
+             mock.patch.object(pipeline, "_git_working_tree_files", return_value=[]):
             assert pipeline.has_work_context("/project") is True
 
     def test_has_work_context_false_when_no_signals(self):

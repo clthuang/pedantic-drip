@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import functools
 import json
-import os
 import re
 import sys
 import time
@@ -41,6 +40,7 @@ from semantic_memory._config_utils import (
     _iso_utc,
     _resolve_int_config as _resolve_int_config_core,
     _warn_and_default as _warn_and_default_core,
+    write_secure_log_line,
 )
 from semantic_memory.database import MemoryDatabase
 from semantic_memory.embedding import EmbeddingProvider
@@ -189,68 +189,21 @@ def _emit_refresh_diagnostic(
     suppress subsequent warnings for the remainder of the process lifetime.
     """
     global _refresh_error_warned
+    # Feature 089 FR-3.2 / AC-12 (#00148): use shared ``_iso_utc`` helper
+    # instead of inline ``strftime('%Y-%m-%dT%H:%M:%SZ')`` so format drift
+    # between maintenance.py and refresh.py is structurally impossible.
+    line = json.dumps({
+        "ts": _iso_utc(datetime.now(timezone.utc)),
+        "event": "memory_refresh",
+        "feature_type_id": feature_type_id,
+        "completed_phase": completed_phase,
+        "query": query,
+        "entry_count": entry_count,
+        "elapsed_ms": elapsed_ms,
+    })
     try:
-        # FR-1.2 (#00097): parent dir 0o700; symlink-safe open via O_NOFOLLOW.
-        # mkdir(mode=) only applies to newly created dirs; existing dirs keep
-        # their mode (documented platform behavior).
-        INFLUENCE_DEBUG_LOG_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-
-        # Feature 089 FR-1.7 / AC-7 (#00154): verify parent dir ownership +
-        # mode BEFORE opening the log. Mirrors maintenance._emit_decay_diagnostic.
-        parent_stat = INFLUENCE_DEBUG_LOG_PATH.parent.stat()
-        if parent_stat.st_uid != os.getuid() or (parent_stat.st_mode & 0o077):
-            raise OSError(
-                f"refusing to write log: parent dir "
-                f"{INFLUENCE_DEBUG_LOG_PATH.parent} has insecure "
-                f"uid={parent_stat.st_uid} or mode=0o{parent_stat.st_mode & 0o777:o}"
-            )
-
-        # Feature 089 FR-3.2 / AC-12 (#00148): use shared ``_iso_utc`` helper
-        # instead of inline ``strftime('%Y-%m-%dT%H:%M:%SZ')`` so format drift
-        # between maintenance.py and refresh.py is structurally impossible.
-        line = json.dumps({
-            "ts": _iso_utc(datetime.now(timezone.utc)),
-            "event": "memory_refresh",
-            "feature_type_id": feature_type_id,
-            "completed_phase": completed_phase,
-            "query": query,
-            "entry_count": entry_count,
-            "elapsed_ms": elapsed_ms,
-        })
-        base_flags = os.O_APPEND | os.O_WRONLY
-        if hasattr(os, "O_NOFOLLOW"):
-            base_flags |= os.O_NOFOLLOW
-        # First attempt: O_EXCL to atomically create-and-acquire. On EEXIST,
-        # reopen in append-only and verify ownership via fstat.
-        try:
-            fd = os.open(
-                str(INFLUENCE_DEBUG_LOG_PATH),
-                base_flags | os.O_CREAT | os.O_EXCL,
-                0o600,
-            )
-        except FileExistsError:
-            fd = os.open(str(INFLUENCE_DEBUG_LOG_PATH), base_flags)
-            try:
-                fd_stat = os.fstat(fd)
-            except OSError:
-                os.close(fd)
-                raise
-            if fd_stat.st_uid != os.getuid():
-                os.close(fd)
-                raise OSError(
-                    f"refusing to append log: file owner uid={fd_stat.st_uid} "
-                    f"!= running uid={os.getuid()}"
-                )
-        try:
-            if hasattr(os, "fchmod"):
-                try:
-                    os.fchmod(fd, 0o600)
-                except (OSError, NotImplementedError):
-                    pass  # platforms without fchmod / filesystems without perm bits
-            os.write(fd, (line + "\n").encode("utf-8"))
-        finally:
-            os.close(fd)
-    except (OSError, IOError) as exc:
+        write_secure_log_line(INFLUENCE_DEBUG_LOG_PATH, line)
+    except OSError as exc:
         if not _refresh_error_warned:
             sys.stderr.write(
                 f"[refresh] memory-refresh diagnostic log write failed "

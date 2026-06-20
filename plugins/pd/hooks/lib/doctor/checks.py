@@ -552,6 +552,121 @@ def check_workspace_uuid_consistency(
     )
 
 
+def check_unknown_workspace_orphans(
+    entities_db_path: str | None = None,
+    project_root: str | None = None,
+    **_,
+) -> CheckResult:
+    """Detect entities stranded in the canonical unknown-workspace bucket.
+
+    Migration 11 maps every legacy ``project_id="__unknown__"`` entity to the
+    canonical ``_UNKNOWN_WORKSPACE_UUID``. Once a real workspace is
+    bootstrapped, those rows should be claimed into it. This check counts the
+    orphans and, when exactly one ``workspaces`` row matches ``project_root``,
+    emits the fixable ``Claim unknown-workspace entities into`` hint — the
+    contract with the doctor fix action (fixer._SAFE_PATTERNS), which
+    re-attributes via ``EntityDatabase.claim_unknown_entities``. Self-guards a
+    missing/locked DB and the pre-Mig-11 schema (no ``workspace_uuid`` column).
+    """
+    start = time.monotonic()
+    issues: list[Issue] = []
+
+    if (
+        not project_root
+        or not entities_db_path
+        or not os.path.isfile(entities_db_path)
+    ):
+        elapsed = int((time.monotonic() - start) * 1000)
+        return CheckResult(
+            name="unknown_workspace_orphans",
+            passed=True,
+            issues=issues,
+            elapsed_ms=elapsed,
+        )
+
+    from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
+
+    orphan_count = 0
+    root_uuids: list[str] = []
+    conn = None
+    try:
+        conn = sqlite3.connect(
+            f"file:{entities_db_path}?mode=ro", uri=True, timeout=2.0
+        )
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM entities WHERE workspace_uuid = ?",
+                (_UNKNOWN_WORKSPACE_UUID,),
+            ).fetchone()
+            orphan_count = int(row[0]) if row else 0
+        except sqlite3.Error:
+            # Pre-Mig-11 schema has no workspace_uuid column — nothing to claim.
+            orphan_count = 0
+        try:
+            root_uuids = [
+                r[0]
+                for r in conn.execute(
+                    "SELECT uuid FROM workspaces "
+                    "WHERE project_root IS NOT NULL AND project_root = ?",
+                    (os.path.abspath(project_root),),
+                ).fetchall()
+            ]
+        except sqlite3.Error:
+            root_uuids = []
+    except sqlite3.Error:
+        elapsed = int((time.monotonic() - start) * 1000)
+        return CheckResult(
+            name="unknown_workspace_orphans",
+            passed=True,
+            issues=issues,
+            elapsed_ms=elapsed,
+        )
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    if orphan_count > 0:
+        if len(root_uuids) == 1:
+            # The "Claim unknown-workspace entities into" prefix is the contract
+            # with fixer._SAFE_PATTERNS; do not vary it.
+            fix_hint = (
+                f"Claim unknown-workspace entities into workspace "
+                f"{root_uuids[0]}"
+            )
+        else:
+            # Orphans exist but the current workspace is ambiguous (0 or >1 rows
+            # match project_root) — not safely auto-claimable (manual hint).
+            fix_hint = (
+                "Bootstrap a single workspace for this project_root "
+                "(run session-start.sh), then re-run doctor --fix to claim."
+            )
+        noun = "entity" if orphan_count == 1 else "entities"
+        issues.append(
+            Issue(
+                check="unknown_workspace_orphans",
+                severity="warning",
+                entity=None,
+                message=(
+                    f"{orphan_count} {noun} stranded in the unknown-workspace "
+                    "bucket"
+                ),
+                fix_hint=fix_hint,
+            )
+        )
+
+    elapsed = int((time.monotonic() - start) * 1000)
+    passed = not any(i.severity == "error" for i in issues)
+    return CheckResult(
+        name="unknown_workspace_orphans",
+        passed=passed,
+        issues=issues,
+        elapsed_ms=elapsed,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Check 1: Feature Status Consistency
 # ---------------------------------------------------------------------------

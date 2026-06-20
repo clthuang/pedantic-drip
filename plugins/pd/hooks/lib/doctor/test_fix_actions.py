@@ -762,3 +762,78 @@ class TestWorkspaceFixDryRun:
             r.classification == "safe" and not r.applied
             for r in fix_report.results
         )
+
+
+class TestFixClaimUnknownEntities:
+    """The claim fix re-attributes unknown-workspace orphans into the project's
+    workspace, resolved at fix time from project_root."""
+
+    _TARGET = "eeeeeeee-5555-4555-8555-eeeeeeeeeeee"
+
+    def _db_with_orphans(self, tmp_path, n):
+        from entity_registry.database import EntityDatabase
+
+        db = EntityDatabase(str(tmp_path / "entities.db"))
+        for i in range(n):
+            db.register_entity(
+                "feature", f"f{i}", f"F{i}", project_id="__unknown__"
+            )
+        return db
+
+    def _ctx(self, db, project_root):
+        return FixContext(
+            entities_db_path="", memory_db_path="", artifacts_root="",
+            project_root=project_root, db=db, engine=None,
+            entities_conn=db._conn if db else None, memory_conn=None,
+        )
+
+    def test_claims_orphans_into_resolved_workspace(self, tmp_path):
+        from doctor.fix_actions import _fix_claim_unknown_entities
+        from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        root = _os.path.abspath(str(proj))
+        db = self._db_with_orphans(tmp_path, 3)
+        _seed_ws_row(db._conn, self._TARGET, "leg", root)  # the claim target
+        try:
+            result = _fix_claim_unknown_entities(self._ctx(db, str(proj)), None)
+            assert "Claimed 3" in result
+            assert self._TARGET in result
+            remaining = db._conn.execute(
+                "SELECT COUNT(*) FROM entities WHERE workspace_uuid = ?",
+                (_UNKNOWN_WORKSPACE_UUID,),
+            ).fetchone()[0]
+            assert remaining == 0
+        finally:
+            db.close()
+
+    def test_no_workspace_row_is_noop(self, tmp_path):
+        from doctor.fix_actions import _fix_claim_unknown_entities
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        db = self._db_with_orphans(tmp_path, 2)  # no workspaces row for root
+        try:
+            result = _fix_claim_unknown_entities(self._ctx(db, str(proj)), None)
+            assert "no-op" in result
+        finally:
+            db.close()
+
+    def test_missing_project_root_raises(self, tmp_path):
+        from doctor.fix_actions import _fix_claim_unknown_entities
+
+        db = self._db_with_orphans(tmp_path, 0)
+        try:
+            with pytest.raises(ValueError, match="project_root required"):
+                _fix_claim_unknown_entities(self._ctx(db, ""), None)
+        finally:
+            db.close()
+
+    def test_missing_db_raises(self, tmp_path):
+        from doctor.fix_actions import _fix_claim_unknown_entities
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        with pytest.raises(ValueError, match="No entities DB"):
+            _fix_claim_unknown_entities(self._ctx(None, str(proj)), None)

@@ -9,7 +9,7 @@ KBEntry lives in `kb_parser.py` per design C-3, not here.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Optional, Union
 

@@ -60,7 +60,7 @@ from semantic_memory.refresh import (
     _resolve_int_config,
     _refresh_warned_fields,
 )
-from transition_gate.models import Severity, TransitionResult
+from transition_gate.models import TransitionResult
 from workflow_engine.engine import WorkflowStateEngine
 from workflow_engine.entity_engine import EntityWorkflowEngine
 from workflow_engine.feature_lifecycle import (
@@ -78,7 +78,7 @@ from workflow_engine.task_promotion import (
     promote_task as _lib_promote_task,
     query_ready_tasks as _lib_query_ready_tasks,
 )
-from workflow_engine.models import FeatureWorkflowState, TransitionResponse
+from workflow_engine.models import FeatureWorkflowState
 from workflow_engine.rollup import get_ancestor_progress as _lib_get_ancestor_progress
 from workflow_engine.notifications import NotificationQueue
 from workflow_engine.reconciliation import (

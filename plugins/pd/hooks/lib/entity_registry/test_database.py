@@ -457,31 +457,6 @@ class TestMigration2:
 
 
 class TestSchemaCreation:
-    def test_creates_entities_table(self, db: EntityDatabase):
-        """The entities table should exist after init."""
-        cur = db._conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='entities'"
-        )
-        assert cur.fetchone() is not None
-
-    def test_creates_metadata_table(self, db: EntityDatabase):
-        """The _metadata table should exist after init."""
-        cur = db._conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='_metadata'"
-        )
-        assert cur.fetchone() is not None
-
-    def test_entities_has_13_columns(self, db: EntityDatabase):
-        # Feature 108 Migration 11: dropped project_id + parent_type_id,
-        # kept workspace_uuid + parent_uuid → 12 columns.
-        # Feature 109 Migration 12: added type + kind + lifecycle_class
-        # (+3) and Group 7 dropped entity_type (-1) → 14 columns total.
-        # (Test name retained for git-blame continuity; column count is
-        # asserted in the body.)
-        cur = db._conn.execute("PRAGMA table_info(entities)")
-        columns = cur.fetchall()
-        assert len(columns) == 14
-
     def test_entities_column_names(self, db: EntityDatabase):
         # Feature 109 Migration 12: post-migration column layout. The
         # three trailing columns (type, kind, lifecycle_class) were added

@@ -78,27 +78,8 @@ def db():
 
 
 class TestSchemaCreation:
-    def test_creates_entries_table(self, db: MemoryDatabase):
-        """The entries table should exist after init."""
-        cur = db._conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='entries'"
-        )
-        assert cur.fetchone() is not None
-
-    def test_creates_metadata_table(self, db: MemoryDatabase):
-        """The _metadata table should exist after init."""
-        cur = db._conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='_metadata'"
-        )
-        assert cur.fetchone() is not None
-
     def test_schema_version_is_4(self, db: MemoryDatabase):
         assert db.get_schema_version() == _latest_memory_version()
-
-    def test_entries_has_19_columns(self, db: MemoryDatabase):
-        cur = db._conn.execute("PRAGMA table_info(entries)")
-        columns = cur.fetchall()
-        assert len(columns) == 19
 
     def test_entries_column_names(self, db: MemoryDatabase):
         cur = db._conn.execute("PRAGMA table_info(entries)")

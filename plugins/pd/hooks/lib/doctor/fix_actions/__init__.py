@@ -705,3 +705,34 @@ def _fix_insert_workspace_row(ctx: FixContext, issue: Issue) -> str:
         return "no-op: project_root already owned by another workspace row"
     ctx.entities_conn.commit()
     return f"Inserted workspaces row for {file_uuid} (outcome={outcome})"
+
+
+def _fix_claim_unknown_entities(ctx: FixContext, issue: Issue) -> str:
+    """Re-attribute unknown-workspace orphan entities into the project's workspace.
+
+    Re-derives the target workspace at fix time from ``project_root`` (never
+    trusts the issue message), mirroring ``_fix_adopt_workspace_uuid``.
+    Delegates the actual re-attribution — and its trigger-dance — to
+    ``EntityDatabase.claim_unknown_entities``, which itself guards the
+    no-op self-claim and missing-workspace cases.
+    """
+    if not ctx.project_root:
+        raise ValueError(
+            "FixContext.project_root required for workspace claim fix actions"
+        )
+    if not ctx.db or not ctx.entities_conn:
+        raise ValueError("No entities DB")
+    rows = ctx.entities_conn.execute(
+        "SELECT uuid FROM workspaces "
+        "WHERE project_root IS NOT NULL AND project_root = ?",
+        (os.path.abspath(ctx.project_root),),
+    ).fetchall()
+    if len(rows) != 1:
+        return (
+            f"no-op: expected exactly one project_root workspace row to claim "
+            f"into, found {len(rows)}"
+        )
+    ws_uuid = rows[0][0]
+    n = ctx.db.claim_unknown_entities(workspace_uuid=ws_uuid)
+    noun = "entity" if n == 1 else "entities"
+    return f"Claimed {n} unknown-workspace {noun} into {ws_uuid}"

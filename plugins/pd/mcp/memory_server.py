@@ -25,7 +25,6 @@ from semantic_memory.config_utils import resolve_float_config
 from semantic_memory.database import MemoryDatabase
 from semantic_memory.embedding import EmbeddingProvider, create_provider
 from semantic_memory.refresh import hybrid_retrieve
-from semantic_memory.dedup import check_duplicate
 from semantic_memory.keywords import extract_keywords
 
 try:

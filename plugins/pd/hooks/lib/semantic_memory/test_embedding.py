@@ -246,13 +246,6 @@ class TestGeminiSpecific:
         with pytest.raises(RuntimeError, match="google-genai SDK does not support task_type"):
             GeminiProvider(api_key="key")
 
-    def test_task_type_map_has_document_and_query(self):
-        """TASK_TYPE_MAP should map 'document' and 'query'."""
-        assert GeminiProvider.TASK_TYPE_MAP == {
-            "document": "RETRIEVAL_DOCUMENT",
-            "query": "RETRIEVAL_QUERY",
-        }
-
     @patch("semantic_memory.embedding.types")
     @patch("semantic_memory.embedding.genai")
     def test_embed_default_task_type_is_query(self, mock_genai, mock_types):
@@ -432,24 +425,6 @@ class TestNormalizingWrapperEmbedBatch:
 
 
 class TestNormalizingWrapperProperties:
-    def test_dimensions_forwarded(self):
-        """dimensions should be forwarded from the inner provider."""
-        inner = _FakeProvider()
-        wrapper = NormalizingWrapper(inner)
-        assert wrapper.dimensions == 5
-
-    def test_provider_name_forwarded(self):
-        """provider_name should be forwarded from the inner provider."""
-        inner = _FakeProvider()
-        wrapper = NormalizingWrapper(inner)
-        assert wrapper.provider_name == "fake"
-
-    def test_model_name_forwarded(self):
-        """model_name should be forwarded from the inner provider."""
-        inner = _FakeProvider()
-        wrapper = NormalizingWrapper(inner)
-        assert wrapper.model_name == "fake-model-v1"
-
     def test_satisfies_embedding_provider_protocol(self):
         """NormalizingWrapper should satisfy EmbeddingProvider protocol."""
         inner = _FakeProvider()

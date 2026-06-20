@@ -13,6 +13,7 @@ from doctor.fix_actions import (
     FixContext,
     _fix_adopt_workspace_uuid,
     _fix_backlog_annotation,
+    _fix_claim_unknown_entities,
     _fix_completed_timestamp,
     _fix_entity_status_dropped,
     _fix_entity_status_promoted,
@@ -31,7 +32,7 @@ from doctor.fix_actions import (
     _fix_wal_entities,
     _fix_wal_memory,
 )
-from doctor.models import DiagnosticReport, FixReport, FixResult, Issue
+from doctor.models import DiagnosticReport, FixReport, FixResult
 
 # Pattern prefix -> fix function mapping.
 # Order matters: first match wins. More specific prefixes before general ones.
@@ -59,6 +60,9 @@ _SAFE_PATTERNS: list[tuple[str, Callable]] = [
     # check_workspace_uuid_consistency's check-time fix_hints.
     ("Adopt workspace UUID from DB row", _fix_adopt_workspace_uuid),
     ("Insert missing workspaces row", _fix_insert_workspace_row),
+    # Unknown-workspace orphan claim — prefix is the contract with
+    # check_unknown_workspace_orphans's check-time fix_hint.
+    ("Claim unknown-workspace entities into", _fix_claim_unknown_entities),
 ]
 
 

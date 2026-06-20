@@ -24,9 +24,11 @@ preserves the existing divergence so no test regresses from Bundle A alone.
 """
 from __future__ import annotations
 
+import os
 import re
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 
 def _iso_utc(dt: datetime) -> str:
@@ -149,3 +151,63 @@ def _resolve_int_config(
             warned.add(key)
         value = clamped
     return value
+
+
+def write_secure_log_line(log_path: Path, line: str) -> None:
+    """Append ``line`` (a trailing newline is added) to ``log_path`` using a
+    hardened, symlink-safe write sequence, raising ``OSError`` on any failure
+    or security violation. Callers own the one-shot warning-suppression policy.
+
+    Shared by ``maintenance._emit_decay_diagnostic`` and
+    ``refresh._emit_refresh_diagnostic`` so the security-critical sequence —
+    0o700 parent, parent ownership/mode check, ``O_NOFOLLOW`` + ``O_EXCL``-then-
+    ``fstat``, ``fchmod`` 0o600 — lives in exactly one place (feature 089
+    FR-1.7 / AC-7, #00154; previously duplicated, which was finding #00098).
+    """
+    # FR-1.2 (#00097): parent dir 0o700; symlink-safe open via O_NOFOLLOW.
+    # mkdir(mode=) only applies to newly created dirs; existing dirs keep their
+    # current mode (documented platform behavior).
+    log_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+
+    # Feature 089 FR-1.7 / AC-7 (#00154): verify parent dir ownership + mode
+    # BEFORE opening the log. A group/world-writable parent or a foreign uid on
+    # the parent is an active compromise signal.
+    parent_stat = log_path.parent.stat()
+    if parent_stat.st_uid != os.getuid() or (parent_stat.st_mode & 0o077):
+        raise OSError(
+            f"refusing to write log: parent dir {log_path.parent} has insecure "
+            f"uid={parent_stat.st_uid} or mode=0o{parent_stat.st_mode & 0o777:o}"
+        )
+
+    base_flags = os.O_APPEND | os.O_WRONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        base_flags |= os.O_NOFOLLOW
+    # First attempt: O_EXCL — atomic create-and-acquire. On EEXIST, reopen in
+    # append-only and verify the existing file's ownership via fstat so a
+    # symlink-swap or foreign-uid hijack is caught BEFORE we write.
+    try:
+        fd = os.open(str(log_path), base_flags | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        fd = os.open(str(log_path), base_flags)
+        # Re-stat the fd — not the path — so a TOCTOU symlink swap post-open
+        # is caught.
+        try:
+            fd_stat = os.fstat(fd)
+        except OSError:
+            os.close(fd)
+            raise
+        if fd_stat.st_uid != os.getuid():
+            os.close(fd)
+            raise OSError(
+                f"refusing to append log: file owner uid={fd_stat.st_uid} "
+                f"!= running uid={os.getuid()}"
+            )
+    try:
+        if hasattr(os, "fchmod"):
+            try:
+                os.fchmod(fd, 0o600)
+            except (OSError, NotImplementedError):
+                pass  # platforms without fchmod / filesystems without perm bits
+        os.write(fd, (line + "\n").encode("utf-8"))
+    finally:
+        os.close(fd)

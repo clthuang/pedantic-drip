@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import dataclasses
 import fcntl
-import functools
 import hashlib
 import json
 import os
