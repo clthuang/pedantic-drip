@@ -905,7 +905,7 @@ echo "=== D1-BDD: server scripts are thin wrappers ==="
 
 (
     all_thin=true
-    for script in run-memory-server.sh run-entity-server.sh run-workflow-server.sh run-ui-server.sh; do
+    for script in run-entity-server.sh run-workflow-server.sh run-ui-server.sh; do
         script_path="$SCRIPT_DIR/$script"
         if [[ ! -f "$script_path" ]]; then
             fail "server script not found: $script"
@@ -933,7 +933,7 @@ echo "=== D1-BDD: server scripts are thin wrappers ==="
     done
 
     if [[ "$all_thin" == true ]]; then
-        pass "all 4 server scripts are thin wrappers sourcing bootstrap-venv.sh (spec:AC-2.1)"
+        pass "all 3 server scripts are thin wrappers sourcing bootstrap-venv.sh (spec:AC-2.1)"
     fi
 ) || true
 

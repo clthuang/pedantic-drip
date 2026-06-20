@@ -19,7 +19,6 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 
 from entity_registry.database import EntityDatabase
-from semantic_memory.database import MemoryDatabase
 
 
 # ---------------------------------------------------------------------------
@@ -30,14 +29,13 @@ PYTHON = sys.executable
 MODULE = "reconciliation_orchestrator"
 
 
-def _run_cli(project_root, artifacts_root, entity_db, memory_db, extra_args=None):
+def _run_cli(project_root, artifacts_root, entity_db, extra_args=None):
     """Run the orchestrator CLI as a subprocess and return CompletedProcess."""
     cmd = [
         PYTHON, "-m", MODULE,
         "--project-root", project_root,
         "--artifacts-root", artifacts_root,
         "--entity-db", entity_db,
-        "--memory-db", memory_db,
     ]
     if extra_args:
         cmd.extend(extra_args)
@@ -55,12 +53,6 @@ def _make_entity_db(path):
     db.close()
 
 
-def _make_memory_db(path):
-    """Create (and close) a MemoryDatabase at path so the file exists."""
-    db = MemoryDatabase(path)
-    db.close()
-
-
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -71,9 +63,7 @@ class TestFullRunOutputsValidJson:
 
     def test_full_run_outputs_valid_json(self, tmp_path):
         entity_db_path = str(tmp_path / "entities.db")
-        memory_db_path = str(tmp_path / "memory.db")
         _make_entity_db(entity_db_path)
-        _make_memory_db(memory_db_path)
 
         # Minimal project layout — no features/projects/brainstorms dirs needed
         # (orchestrator handles missing dirs gracefully)
@@ -81,7 +71,6 @@ class TestFullRunOutputsValidJson:
             project_root=str(tmp_path),
             artifacts_root="docs",
             entity_db=entity_db_path,
-            memory_db=memory_db_path,
         )
 
         assert result.returncode == 0, (
@@ -93,7 +82,7 @@ class TestFullRunOutputsValidJson:
 
         data = json.loads(output)
 
-        expected_keys = {"entity_sync", "kb_import", "workflow_reconcile",
+        expected_keys = {"entity_sync", "workflow_reconcile",
                          "dependency_cleanup", "elapsed_ms", "errors"}
         assert set(data.keys()) == expected_keys, (
             f"Expected keys {expected_keys}, got {set(data.keys())}"
@@ -105,7 +94,6 @@ class TestFullRunOutputsValidJson:
     def test_full_run_with_fixtures(self, tmp_path):
         """Full run with actual feature and brainstorm fixtures produces correct counts."""
         entity_db_path = str(tmp_path / "entities.db")
-        memory_db_path = str(tmp_path / "memory.db")
 
         # Seed entity DB with one feature
         db = EntityDatabase(entity_db_path)
@@ -117,7 +105,6 @@ class TestFullRunOutputsValidJson:
             project_id="__unknown__",
         )
         db.close()
-        _make_memory_db(memory_db_path)
 
         # Write .meta.json matching the DB status (no drift)
         feature_dir = tmp_path / "docs" / "features" / "001-test-feature"
@@ -132,7 +119,6 @@ class TestFullRunOutputsValidJson:
             project_root=str(tmp_path),
             artifacts_root="docs",
             entity_db=entity_db_path,
-            memory_db=memory_db_path,
         )
 
         assert result.returncode == 0
@@ -147,11 +133,9 @@ class TestPerTaskErrorIsolation:
     """test_per_task_error_isolation: one task raises → others still run, error captured."""
 
     def test_entity_status_error_isolated(self, tmp_path):
-        """If entity_status.sync_entity_statuses raises, kb and other tasks still run."""
+        """If entity_status.sync_entity_statuses raises, other tasks still run."""
         entity_db_path = str(tmp_path / "entities.db")
-        memory_db_path = str(tmp_path / "memory.db")
         _make_entity_db(entity_db_path)
-        _make_memory_db(memory_db_path)
 
         with patch(
             "reconciliation_orchestrator.entity_status.sync_entity_statuses",
@@ -170,7 +154,6 @@ class TestPerTaskErrorIsolation:
                     project_root=str(tmp_path),
                     artifacts_root="docs",
                     entity_db=entity_db_path,
-                    memory_db=memory_db_path,
                         )
                 written_chunks = []
                 mock_stdout.write = lambda s: written_chunks.append(s)
@@ -186,60 +169,20 @@ class TestPerTaskErrorIsolation:
             assert data["entity_sync"] is None or "error" in str(data.get("errors", [])), (
                 f"Expected entity_sync error captured; got: {data}"
             )
-            # kb and other tasks should still have run (keys present with results)
-            assert "kb_import" in data
+            # Other tasks should still have run (keys present with results)
+            assert "workflow_reconcile" in data
+            assert "dependency_cleanup" in data
             assert len(data["errors"]) >= 1
             assert "entity_status" in data["errors"][0].lower() or "forced" in data["errors"][0].lower()
 
-    def test_kb_import_error_isolated(self, tmp_path):
-        """If kb_import raises, entity and brainstorm tasks still run and are reflected in output."""
-        entity_db_path = str(tmp_path / "entities.db")
-        memory_db_path = str(tmp_path / "memory.db")
-        _make_entity_db(entity_db_path)
-        _make_memory_db(memory_db_path)
-
-        with patch(
-            "reconciliation_orchestrator.kb_import.sync_knowledge_bank",
-            side_effect=RuntimeError("forced kb_import failure"),
-        ):
-            import reconciliation_orchestrator.__main__ as orch_main
-
-            import argparse
-            args = argparse.Namespace(
-                project_root=str(tmp_path),
-                artifacts_root="docs",
-                entity_db=entity_db_path,
-                memory_db=memory_db_path,
-                )
-            written_chunks = []
-
-            def fake_exit(code):
-                raise SystemExit(code)
-
-            with patch("sys.stdout") as mock_stdout, patch("sys.exit", side_effect=fake_exit):
-                mock_stdout.write = lambda s: written_chunks.append(s)
-                try:
-                    orch_main.run(args)
-                except SystemExit:
-                    pass
-
-            data = json.loads("".join(written_chunks))
-
-        assert data["kb_import"] is None or len(data["errors"]) >= 1
-        assert "entity_sync" in data
-        # At least one error captured
-        assert len(data["errors"]) >= 1
-
 
 class TestDbConnectionsClosed:
-    """test_db_connections_closed: EntityDatabase.close() and MemoryDatabase.close() called once."""
+    """test_db_connections_closed: EntityDatabase.close() called once."""
 
     def test_db_connections_closed_on_success(self, tmp_path):
-        """Both close() methods are called in the finally block on normal exit."""
+        """close() is called in the finally block on normal exit."""
         entity_db_path = str(tmp_path / "entities.db")
-        memory_db_path = str(tmp_path / "memory.db")
         _make_entity_db(entity_db_path)
-        _make_memory_db(memory_db_path)
 
         import reconciliation_orchestrator.__main__ as orch_main
         import argparse
@@ -248,23 +191,17 @@ class TestDbConnectionsClosed:
             project_root=str(tmp_path),
             artifacts_root="docs",
             entity_db=entity_db_path,
-            memory_db=memory_db_path,
         )
 
         real_entity_db = EntityDatabase(entity_db_path)
-        real_memory_db = MemoryDatabase(memory_db_path)
 
         entity_close_calls = []
-        memory_close_calls = []
         original_entity_close = real_entity_db.close
-        original_memory_close = real_memory_db.close
 
         real_entity_db.close = lambda: entity_close_calls.append(1) or original_entity_close()
-        real_memory_db.close = lambda: memory_close_calls.append(1) or original_memory_close()
 
         # Patch where __main__ looks up the names (not in the source module)
-        with patch("reconciliation_orchestrator.__main__.EntityDatabase", return_value=real_entity_db), \
-             patch("reconciliation_orchestrator.__main__.MemoryDatabase", return_value=real_memory_db):
+        with patch("reconciliation_orchestrator.__main__.EntityDatabase", return_value=real_entity_db):
 
             def fake_exit(code):
                 raise SystemExit(code)
@@ -280,16 +217,11 @@ class TestDbConnectionsClosed:
         assert len(entity_close_calls) == 1, (
             f"EntityDatabase.close() should be called exactly once, got {len(entity_close_calls)}"
         )
-        assert len(memory_close_calls) == 1, (
-            f"MemoryDatabase.close() should be called exactly once, got {len(memory_close_calls)}"
-        )
 
     def test_db_connections_closed_on_task_error(self, tmp_path):
-        """Both close() methods are called even when a task raises."""
+        """close() is called even when a task raises."""
         entity_db_path = str(tmp_path / "entities.db")
-        memory_db_path = str(tmp_path / "memory.db")
         _make_entity_db(entity_db_path)
-        _make_memory_db(memory_db_path)
 
         import reconciliation_orchestrator.__main__ as orch_main
         import argparse
@@ -298,21 +230,15 @@ class TestDbConnectionsClosed:
             project_root=str(tmp_path),
             artifacts_root="docs",
             entity_db=entity_db_path,
-            memory_db=memory_db_path,
         )
 
         real_entity_db = EntityDatabase(entity_db_path)
-        real_memory_db = MemoryDatabase(memory_db_path)
 
         entity_close_calls = []
-        memory_close_calls = []
         original_entity_close = real_entity_db.close
-        original_memory_close = real_memory_db.close
         real_entity_db.close = lambda: entity_close_calls.append(1) or original_entity_close()
-        real_memory_db.close = lambda: memory_close_calls.append(1) or original_memory_close()
 
         with patch("reconciliation_orchestrator.__main__.EntityDatabase", return_value=real_entity_db), \
-             patch("reconciliation_orchestrator.__main__.MemoryDatabase", return_value=real_memory_db), \
              patch(
                  "reconciliation_orchestrator.entity_status.sync_entity_statuses",
                  side_effect=RuntimeError("forced failure"),
@@ -330,24 +256,20 @@ class TestDbConnectionsClosed:
                     pass
 
         assert len(entity_close_calls) == 1
-        assert len(memory_close_calls) == 1
 
 
 class TestCliArgsParsed:
-    """test_cli_args_parsed: --project-root, --artifacts-root, --entity-db, --memory-db parsed."""
+    """test_cli_args_parsed: --project-root, --artifacts-root, --entity-db parsed."""
 
     def test_required_args_accepted(self, tmp_path):
         """CLI accepts all required args without error."""
         entity_db_path = str(tmp_path / "entities.db")
-        memory_db_path = str(tmp_path / "memory.db")
         _make_entity_db(entity_db_path)
-        _make_memory_db(memory_db_path)
 
         result = _run_cli(
             project_root=str(tmp_path),
             artifacts_root="docs",
             entity_db=entity_db_path,
-            memory_db=memory_db_path,
         )
 
         # If args were not parsed correctly, argparse exits 2
@@ -357,20 +279,19 @@ class TestCliArgsParsed:
 
     def test_missing_required_arg_exits_nonzero(self, tmp_path):
         """Omitting a required arg causes argparse to exit with code 2."""
-        # Missing --memory-db
+        # Missing --entity-db
         cmd = [
             PYTHON, "-m", MODULE,
             "--project-root", str(tmp_path),
             "--artifacts-root", "docs",
-            "--entity-db", str(tmp_path / "entities.db"),
-            # --memory-db omitted
+            # --entity-db omitted
         ]
         env = os.environ.copy()
         lib_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
         env["PYTHONPATH"] = lib_dir
         result = subprocess.run(cmd, capture_output=True, text=True, env=env)
         assert result.returncode != 0, (
-            "Expected non-zero exit when required arg --memory-db is missing"
+            "Expected non-zero exit when required arg --entity-db is missing"
         )
 
     def test_args_passed_through_to_run(self, tmp_path):
@@ -381,13 +302,11 @@ class TestCliArgsParsed:
             "--project-root", "/some/root",
             "--artifacts-root", "my_docs",
             "--entity-db", "/some/entities.db",
-            "--memory-db", "/some/memory.db",
         ])
 
         assert args.project_root == "/some/root"
         assert args.artifacts_root == "my_docs"
         assert args.entity_db == "/some/entities.db"
-        assert args.memory_db == "/some/memory.db"
 
 
 class TestExitCodeAlwaysZero:
@@ -396,15 +315,12 @@ class TestExitCodeAlwaysZero:
     def test_exit_zero_on_success(self, tmp_path):
         """Normal run exits 0."""
         entity_db_path = str(tmp_path / "entities.db")
-        memory_db_path = str(tmp_path / "memory.db")
         _make_entity_db(entity_db_path)
-        _make_memory_db(memory_db_path)
 
         result = _run_cli(
             project_root=str(tmp_path),
             artifacts_root="docs",
             entity_db=entity_db_path,
-            memory_db=memory_db_path,
         )
 
         assert result.returncode == 0
@@ -416,14 +332,11 @@ class TestExitCodeAlwaysZero:
         so this tests that the orchestrator handles the DB init gracefully.
         """
         entity_db_path = str(tmp_path / "nonexistent" / "entities.db")
-        memory_db_path = str(tmp_path / "memory.db")
-        _make_memory_db(memory_db_path)
 
         result = _run_cli(
             project_root=str(tmp_path),
             artifacts_root="docs",
             entity_db=entity_db_path,
-            memory_db=memory_db_path,
         )
 
         # Fail-open: exit 0 regardless, error captured in JSON or graceful failure
@@ -434,15 +347,12 @@ class TestExitCodeAlwaysZero:
     def test_exit_zero_on_missing_project_root(self, tmp_path):
         """Missing project-root directory → exit 0 (all tasks handle missing dirs gracefully)."""
         entity_db_path = str(tmp_path / "entities.db")
-        memory_db_path = str(tmp_path / "memory.db")
         _make_entity_db(entity_db_path)
-        _make_memory_db(memory_db_path)
 
         result = _run_cli(
             project_root="/nonexistent/path/that/does/not/exist",
             artifacts_root="docs",
             entity_db=entity_db_path,
-            memory_db=memory_db_path,
         )
 
         assert result.returncode == 0, (
@@ -453,15 +363,12 @@ class TestExitCodeAlwaysZero:
     def test_output_is_valid_json_on_error(self, tmp_path):
         """Even when tasks encounter errors, stdout is valid JSON."""
         entity_db_path = str(tmp_path / "entities.db")
-        memory_db_path = str(tmp_path / "memory.db")
         _make_entity_db(entity_db_path)
-        _make_memory_db(memory_db_path)
 
         result = _run_cli(
             project_root="/nonexistent/path/that/does/not/exist",
             artifacts_root="docs",
             entity_db=entity_db_path,
-            memory_db=memory_db_path,
         )
 
         assert result.returncode == 0
@@ -482,15 +389,12 @@ class TestWorkflowReconcileKeyPresent:
     def test_workflow_reconcile_key_in_output(self, tmp_path):
         """Subprocess run includes workflow_reconcile key (empty DB = all zeros)."""
         entity_db_path = str(tmp_path / "entities.db")
-        memory_db_path = str(tmp_path / "memory.db")
         _make_entity_db(entity_db_path)
-        _make_memory_db(memory_db_path)
 
         result = _run_cli(
             project_root=str(tmp_path),
             artifacts_root="docs",
             entity_db=entity_db_path,
-            memory_db=memory_db_path,
         )
 
         assert result.returncode == 0
@@ -509,7 +413,6 @@ class TestWorkflowReconcileAppliesDrift:
     def test_reconciles_drifted_feature(self, tmp_path):
         """Feature with .meta.json phase ahead of DB gets reconciled."""
         entity_db_path = str(tmp_path / "entities.db")
-        memory_db_path = str(tmp_path / "memory.db")
 
         # Seed entity DB with a feature at "specifying" phase
         db = EntityDatabase(entity_db_path)
@@ -528,8 +431,6 @@ class TestWorkflowReconcileAppliesDrift:
         )
         db.close()
 
-        _make_memory_db(memory_db_path)
-
         # Write .meta.json with lastCompletedPhase="create-plan" → derived phase "implement"
         # This is ahead of DB's "specify", creating drift
         feature_dir = tmp_path / "docs" / "features" / "099-drift-test"
@@ -543,7 +444,6 @@ class TestWorkflowReconcileAppliesDrift:
             project_root=str(tmp_path),
             artifacts_root="docs",
             entity_db=entity_db_path,
-            memory_db=memory_db_path,
         )
 
         assert result.returncode == 0
@@ -558,9 +458,7 @@ class TestWorkflowReconcileErrorIsolation:
 
     def test_workflow_error_does_not_block_other_tasks(self, tmp_path):
         entity_db_path = str(tmp_path / "entities.db")
-        memory_db_path = str(tmp_path / "memory.db")
         _make_entity_db(entity_db_path)
-        _make_memory_db(memory_db_path)
 
         import reconciliation_orchestrator.__main__ as orch_main
         import argparse
@@ -569,7 +467,6 @@ class TestWorkflowReconcileErrorIsolation:
             project_root=str(tmp_path),
             artifacts_root="docs",
             entity_db=entity_db_path,
-            memory_db=memory_db_path,
         )
 
         with patch(
@@ -592,7 +489,7 @@ class TestWorkflowReconcileErrorIsolation:
 
         # Other tasks should still have results
         assert "entity_sync" in data
-        assert "kb_import" in data
+        assert "dependency_cleanup" in data
         # workflow_reconcile should be None (error before assignment)
         assert data["workflow_reconcile"] is None
         # Error captured
@@ -604,9 +501,7 @@ class TestWorkflowReconcileImportDiagnostic:
 
     def test_import_error_captured_in_errors(self, tmp_path):
         entity_db_path = str(tmp_path / "entities.db")
-        memory_db_path = str(tmp_path / "memory.db")
         _make_entity_db(entity_db_path)
-        _make_memory_db(memory_db_path)
 
         import reconciliation_orchestrator.__main__ as orch_main
         import argparse
@@ -616,7 +511,6 @@ class TestWorkflowReconcileImportDiagnostic:
             project_root=str(tmp_path),
             artifacts_root="docs",
             entity_db=entity_db_path,
-            memory_db=memory_db_path,
         )
 
         original_import = builtins.__import__

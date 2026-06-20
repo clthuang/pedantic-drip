@@ -17,7 +17,6 @@ def test_check_order_preserved_post_f116():
         "check_workflow_phase",
         "check_brainstorm_status",
         "check_backlog_status",
-        "check_memory_health",
         "check_branch_consistency",
         "check_entity_orphans",
         "check_referential_integrity",

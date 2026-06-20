@@ -31,7 +31,7 @@ DEP_IMPORT_NAMES=(fastapi jinja2 mcp numpy pydantic pydantic_settings dotenv uvi
 # All output to stderr (MCP stdio safety).
 #
 # Arguments:
-#   $1 - server_name: which server failed (e.g., "memory-server")
+#   $1 - server_name: which server failed (e.g., "entity-server")
 #   $2 - error_type: one of "python_version", "venv_creation", "dep_install", "lock_timeout"
 #   $3 - message: human-readable error description
 #   $4 - extra_json: optional additional JSON fields (e.g., '"found":"3.9","required":"3.12"')

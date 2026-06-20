@@ -22,16 +22,6 @@ def _get_expected_entity_version() -> int:
     return max(ENTITY_MIGRATIONS.keys())
 
 
-def _get_expected_memory_version() -> int:
-    """F117 FR-B.1: dynamic expected schema_version for semantic_memory.
-
-    Replaces hardcoded MEMORY_SCHEMA_VERSION = 4. Lazy import per
-    _get_expected_entity_version rationale.
-    """
-    from semantic_memory.database import MIGRATIONS as MEMORY_MIGRATIONS
-    return max(MEMORY_MIGRATIONS.keys())
-
-
 def _build_local_entity_set(artifacts_root: str) -> set[str]:
     """Scan {artifacts_root}/features/*/ directories and return directory names.
 
@@ -252,31 +242,25 @@ def _check_wal_mode(db_path: str, label: str) -> Issue | None:
 
 
 def check_db_readiness(
-    entities_db_path: str, memory_db_path: str, **_
+    entities_db_path: str, **_
 ) -> CheckResult:
     """Check 8: DB Readiness.
 
-    Tests lock acquisition, schema version, and WAL mode on both databases.
+    Tests lock acquisition, schema version, and WAL mode on the entity database.
     Each sub-check uses a dedicated short-lived connection.
 
-    Returns extras={"entity_db_ok": bool, "memory_db_ok": bool}.
+    Returns extras={"entity_db_ok": bool}.
     """
     start = time.monotonic()
     issues: list[Issue] = []
 
     entity_db_ok = True
-    memory_db_ok = True
 
     # Lock tests
     entity_lock_issue = _test_db_lock(entities_db_path, "Entity DB")
     if entity_lock_issue is not None:
         issues.append(entity_lock_issue)
         entity_db_ok = False
-
-    memory_lock_issue = _test_db_lock(memory_db_path, "Memory DB")
-    if memory_lock_issue is not None:
-        issues.append(memory_lock_issue)
-        memory_db_ok = False
 
     # Schema version checks (only if not locked)
     if entity_db_ok:
@@ -286,16 +270,9 @@ def check_db_readiness(
         if schema_issue is not None:
             issues.append(schema_issue)
 
-    # Memory DB schema_version checked by check_memory_health (Check 5), not here (B2 resolution)
-
     # WAL mode checks (only if not locked)
     if entity_db_ok:
         wal_issue = _check_wal_mode(entities_db_path, "Entity DB")
-        if wal_issue is not None:
-            issues.append(wal_issue)
-
-    if memory_db_ok:
-        wal_issue = _check_wal_mode(memory_db_path, "Memory DB")
         if wal_issue is not None:
             issues.append(wal_issue)
 
@@ -307,7 +284,7 @@ def check_db_readiness(
         passed=passed,
         issues=issues,
         elapsed_ms=elapsed,
-        extras={"entity_db_ok": entity_db_ok, "memory_db_ok": memory_db_ok},
+        extras={"entity_db_ok": entity_db_ok},
     )
 
 
@@ -1220,224 +1197,6 @@ def check_backlog_status(
 
 
 # ---------------------------------------------------------------------------
-# Check 5: Memory DB Health
-# ---------------------------------------------------------------------------
-
-
-def check_memory_health(memory_conn: sqlite3.Connection, **_) -> CheckResult:
-    """Check 5: Memory DB Health.
-
-    Verifies schema version, required tables, FTS5 table + triggers,
-    embedding coverage, keyword population, and WAL mode.
-    """
-    start = time.monotonic()
-    issues: list[Issue] = []
-
-    # 1. schema_version == expected (dynamic, see _get_expected_memory_version)
-    try:
-        row = memory_conn.execute(
-            "SELECT value FROM _metadata WHERE key = 'schema_version'"
-        ).fetchone()
-        if row is None:
-            issues.append(Issue(
-                check="memory_health",
-                severity="error",
-                entity=None,
-                message="Memory DB has no schema_version in _metadata",
-                fix_hint="Run memory DB migrations",
-            ))
-        else:
-            version = int(row[0])
-            expected = _get_expected_memory_version()
-            if version != expected:
-                issues.append(Issue(
-                    check="memory_health",
-                    severity="error",
-                    entity=None,
-                    message=(
-                        f"Memory DB schema_version is {version}, "
-                        f"expected {expected}"
-                    ),
-                    fix_hint="Run memory DB migrations to update schema",
-                ))
-    except sqlite3.Error as exc:
-        issues.append(Issue(
-            check="memory_health",
-            severity="error",
-            entity=None,
-            message=f"Cannot read schema_version: {exc}",
-            fix_hint=None,
-        ))
-
-    # 2. Required tables exist
-    required_tables = {"entries", "_metadata", "influence_log"}
-    try:
-        cursor = memory_conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        )
-        existing_tables = {row[0] for row in cursor}
-        for table in required_tables:
-            if table not in existing_tables:
-                issues.append(Issue(
-                    check="memory_health",
-                    severity="error",
-                    entity=None,
-                    message=f"Required table '{table}' is missing",
-                    fix_hint="Run memory DB migrations to create missing tables",
-                ))
-    except sqlite3.Error as exc:
-        issues.append(Issue(
-            check="memory_health",
-            severity="error",
-            entity=None,
-            message=f"Cannot list tables: {exc}",
-            fix_hint=None,
-        ))
-
-    # 3. FTS5 entries_fts exists
-    try:
-        fts_row = memory_conn.execute(
-            "SELECT name FROM sqlite_master "
-            "WHERE type='table' AND name='entries_fts'"
-        ).fetchone()
-        if fts_row is None:
-            issues.append(Issue(
-                check="memory_health",
-                severity="error",
-                entity=None,
-                message="FTS5 virtual table 'entries_fts' is missing",
-                fix_hint="Rebuild FTS index: python3 scripts/migrate_db.py rebuild-fts",
-            ))
-    except sqlite3.Error:
-        pass
-
-    # 4. 3 triggers: entries_ai, entries_ad, entries_au
-    required_triggers = {"entries_ai", "entries_ad", "entries_au"}
-    try:
-        cursor = memory_conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='trigger'"
-        )
-        existing_triggers = {row[0] for row in cursor}
-        for trigger in required_triggers:
-            if trigger not in existing_triggers:
-                issues.append(Issue(
-                    check="memory_health",
-                    severity="error",
-                    entity=None,
-                    message=f"FTS trigger '{trigger}' is missing",
-                    fix_hint="Rebuild FTS index to recreate triggers",
-                ))
-    except sqlite3.Error:
-        pass
-
-    # 5. FTS row count vs entries count
-    try:
-        entries_count = memory_conn.execute(
-            "SELECT COUNT(*) FROM entries"
-        ).fetchone()[0]
-        fts_count = memory_conn.execute(
-            "SELECT COUNT(*) FROM entries_fts"
-        ).fetchone()[0]
-        if entries_count != fts_count:
-            issues.append(Issue(
-                check="memory_health",
-                severity="warning",
-                entity=None,
-                message=(
-                    f"FTS row count ({fts_count}) differs from entries "
-                    f"count ({entries_count})"
-                ),
-                fix_hint="Rebuild FTS index: python3 scripts/migrate_db.py rebuild-fts",
-            ))
-    except sqlite3.Error:
-        pass
-
-    # 6. keywords == '[]' count
-    try:
-        empty_kw = memory_conn.execute(
-            "SELECT COUNT(*) FROM entries WHERE keywords = '[]'"
-        ).fetchone()[0]
-        if empty_kw > 0:
-            issues.append(Issue(
-                check="memory_health",
-                severity="info",
-                entity=None,
-                message=f"{empty_kw} entries have empty keywords (keywords='[]')",
-                fix_hint="Run keyword backfill to populate keywords",
-            ))
-    except sqlite3.Error:
-        pass
-
-    # 7. NULL embedding > 10%
-    try:
-        total = memory_conn.execute(
-            "SELECT COUNT(*) FROM entries"
-        ).fetchone()[0]
-        if total > 0:
-            null_emb = memory_conn.execute(
-                "SELECT COUNT(*) FROM entries WHERE embedding IS NULL"
-            ).fetchone()[0]
-            pct = null_emb / total
-            if pct > 0.10:
-                issues.append(Issue(
-                    check="memory_health",
-                    severity="warning",
-                    entity=None,
-                    message=(
-                        f"{null_emb}/{total} entries ({pct:.0%}) have NULL "
-                        "embedding (threshold: 10%)"
-                    ),
-                    fix_hint="Run embedding backfill to populate embeddings",
-                ))
-    except sqlite3.Error:
-        pass
-
-    # 8. length(embedding) != 3072 for non-NULL
-    try:
-        bad_dim = memory_conn.execute(
-            "SELECT COUNT(*) FROM entries "
-            "WHERE embedding IS NOT NULL AND length(embedding) != 3072"
-        ).fetchone()[0]
-        if bad_dim > 0:
-            issues.append(Issue(
-                check="memory_health",
-                severity="error",
-                entity=None,
-                message=(
-                    f"{bad_dim} entries have wrong embedding dimension "
-                    "(expected length 3072)"
-                ),
-                fix_hint="Re-run embedding generation for affected entries",
-            ))
-    except sqlite3.Error:
-        pass
-
-    # 9. WAL mode
-    try:
-        row = memory_conn.execute("PRAGMA journal_mode").fetchone()
-        if row is None or row[0].lower() != "wal":
-            mode = row[0] if row else "unknown"
-            issues.append(Issue(
-                check="memory_health",
-                severity="warning",
-                entity=None,
-                message=f"Memory DB journal_mode is '{mode}', expected 'wal'",
-                fix_hint="Set PRAGMA journal_mode=WAL on memory DB",
-            ))
-    except sqlite3.Error:
-        pass
-
-    elapsed = int((time.monotonic() - start) * 1000)
-    passed = not any(i.severity in ("error", "warning") for i in issues)
-    return CheckResult(
-        name="memory_health",
-        passed=passed,
-        issues=issues,
-        elapsed_ms=elapsed,
-    )
-
-
-# ---------------------------------------------------------------------------
 # Check 6: Branch Consistency
 # ---------------------------------------------------------------------------
 
@@ -2130,13 +1889,13 @@ def check_security_review_command(project_root: str, **kwargs) -> CheckResult:
 def check_config_validity(project_root: str, **kwargs) -> CheckResult:
     """Check 10: Configuration Validity.
 
-    Validates pd configuration using read_config() from semantic_memory.config.
+    Validates pd configuration using read_config() from pd_config.config.
     """
     start = time.monotonic()
     issues: list[Issue] = []
 
     try:
-        from semantic_memory.config import read_config
+        from pd_config.config import read_config
         config = read_config(project_root)
     except Exception as exc:
         issues.append(Issue(
@@ -2165,63 +1924,6 @@ def check_config_validity(project_root: str, **kwargs) -> CheckResult:
             message=f"artifacts_root directory '{artifacts_root}' does not exist",
             fix_hint=f"Create directory '{artifacts_root}' or update config",
         ))
-
-    # 2. Weights sum to 1.0 (within 0.01 tolerance)
-    vector_w = config.get("memory_vector_weight", 0.5)
-    keyword_w = config.get("memory_keyword_weight", 0.2)
-    prominence_w = config.get("memory_prominence_weight", 0.3)
-    try:
-        weight_sum = float(vector_w) + float(keyword_w) + float(prominence_w)
-        if abs(weight_sum - 1.0) > 0.01:
-            issues.append(Issue(
-                check="config_validity",
-                severity="warning",
-                entity=None,
-                message=(
-                    f"Memory weights sum to {weight_sum:.3f}, "
-                    "expected 1.0 (tolerance: 0.01)"
-                ),
-                fix_hint="Adjust memory_vector_weight, memory_keyword_weight, "
-                         "memory_prominence_weight to sum to 1.0",
-            ))
-    except (TypeError, ValueError):
-        issues.append(Issue(
-            check="config_validity",
-            severity="warning",
-            entity=None,
-            message="Cannot parse memory weights as numbers",
-            fix_hint="Check weight values in .claude/pd.local.md",
-        ))
-
-    # 3. Thresholds in [0.0, 1.0]
-    for key in ("memory_relevance_threshold", "memory_dedup_threshold"):
-        val = config.get(key)
-        if val is not None:
-            try:
-                fval = float(val)
-                if fval < 0.0 or fval > 1.0:
-                    issues.append(Issue(
-                        check="config_validity",
-                        severity="warning",
-                        entity=None,
-                        message=f"{key} is {fval}, expected [0.0, 1.0]",
-                        fix_hint=f"Set {key} to a value between 0.0 and 1.0",
-                    ))
-            except (TypeError, ValueError):
-                pass
-
-    # 4. Embedding provider when semantic_enabled
-    semantic_enabled = config.get("memory_semantic_enabled", True)
-    if semantic_enabled:
-        provider = config.get("memory_embedding_provider", "")
-        if not provider:
-            issues.append(Issue(
-                check="config_validity",
-                severity="warning",
-                entity=None,
-                message="Semantic memory enabled but no embedding provider configured",
-                fix_hint="Set memory_embedding_provider in .claude/pd.local.md",
-            ))
 
     elapsed = int((time.monotonic() - start) * 1000)
     passed = not any(i.severity in ("error", "warning") for i in issues)

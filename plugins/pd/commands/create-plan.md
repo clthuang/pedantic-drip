@@ -58,12 +58,6 @@ b. **Reviewer 1 — Invoke plan-reviewer:**
 
    **If iteration == 1 OR resume_state["plan-reviewer"] is missing/empty OR resume_state["plan-reviewer"].agent_id is null** — use fresh I1-R4 dispatch:
 
-   **Pre-dispatch memory enrichment:** Before building the dispatch prompt below,
-   call `search_memory` with query: "{agent role} {task context} {space-separated file list}",
-   limit=5, brief=true, and category="anti-patterns".
-   Store the returned entry names for post-dispatch influence tracking.
-   Include non-empty results inside the prompt below.
-
    Use Task tool:
    ```
    Task tool call:
@@ -83,9 +77,6 @@ b. **Reviewer 1 — Invoke plan-reviewer:**
        - Plan: {feature_path}/plan.md
 
        Return JSON: {"approved": bool, "issues": [{"severity": "blocker|warning|suggestion", "description": "...", "location": "...", "suggestion": "..."}], "summary": "..."}
-
-       ## Relevant Engineering Memory
-       {search_memory results from the pre-dispatch call above}
 
        ## Phase Context (backward transitions only)
        If .meta.json `phases[current_phase]` has a `completed` timestamp (indicating re-entry into a completed phase):
@@ -165,17 +156,6 @@ c. **Parse response:** Extract `approved` field.
 
    **Fallback detection (I9):** Search the agent's response for "Files read:" pattern. If not found, log `LAZY-LOAD-WARNING: plan-reviewer did not confirm artifact reads` to `.review-history.md`. Proceed regardless. Note: Resumed dispatches (I2 template) do not include Required Artifacts, so "Files read:" may not appear — only apply I9 detection to fresh dispatches.
 
-   <!-- influence-tracking-site: s5 -->
-   **Influence tracking (mandatory, unconditional):**
-   Call `record_influence_by_content(
-     subagent_output_text=<full agent output text>,
-     injected_entry_names=<list from search_memory results, or [] if none>,
-     agent_role="plan-reviewer",
-     feature_type_id=<current feature type_id from .meta.json>)`
-   Emit one line to your output: `Influence recorded: N matches`.
-   On MCP failure: warn "Influence tracking failed: {error}", continue.
-   If .meta.json missing or type_id unresolvable: skip with warning.
-
 d. **Branch on plan-reviewer result (strict threshold):**
    - **PASS:** `approved: true` AND zero issues with severity "blocker" or "warning"
    - **FAIL:** `approved: false` OR any issue has severity "blocker" or "warning"
@@ -198,12 +178,6 @@ e2. **Invoke task-reviewer:**
    **Dispatch decision for task-reviewer:**
 
    **If iteration == 1 OR resume_state["task-reviewer"] is missing/empty OR resume_state["task-reviewer"].agent_id is null** — use fresh I1-R4 dispatch:
-
-   **Pre-dispatch memory enrichment:** Before building the dispatch prompt below,
-   call `search_memory` with query: "{agent role} {task context} {space-separated file list}",
-   limit=5, brief=true, and category="anti-patterns".
-   Store the returned entry names for post-dispatch influence tracking.
-   Include non-empty results inside the prompt below.
 
    Use Task tool:
    ```
@@ -236,9 +210,6 @@ e2. **Invoke task-reviewer:**
          "issues": [{"severity": "blocker|warning|suggestion", "task": "...", "description": "...", "suggestion": "..."}],
          "summary": "..."
        }
-
-       ## Relevant Engineering Memory
-       {search_memory results from the pre-dispatch call above}
 
        ## Phase Context (backward transitions only)
        If .meta.json `phases[current_phase]` has a `completed` timestamp (indicating re-entry into a completed phase):
@@ -323,17 +294,6 @@ e3. **Parse task-reviewer response:** Extract `approved` field.
 
    **Fallback detection (I9):** Search the agent's response for "Files read:" pattern. If not found, log `LAZY-LOAD-WARNING: task-reviewer did not confirm artifact reads` to `.review-history.md`. Proceed regardless. Note: Resumed dispatches (I2 template) do not include Required Artifacts, so "Files read:" may not appear — only apply I9 detection to fresh dispatches.
 
-   <!-- influence-tracking-site: s6 -->
-   **Influence tracking (mandatory, unconditional):**
-   Call `record_influence_by_content(
-     subagent_output_text=<full agent output text>,
-     injected_entry_names=<list from search_memory results, or [] if none>,
-     agent_role="task-reviewer",
-     feature_type_id=<current feature type_id from .meta.json>)`
-   Emit one line to your output: `Influence recorded: N matches`.
-   On MCP failure: warn "Influence tracking failed: {error}", continue.
-   If .meta.json missing or type_id unresolvable: skip with warning.
-
 e4. **Branch on task-reviewer result (strict threshold):**
    - **PASS:** `approved: true` AND zero issues with severity "blocker" or "warning"
    - **FAIL:** `approved: false` OR any issue has severity "blocker" or "warning"
@@ -355,12 +315,6 @@ e5. **Invoke phase-reviewer:**
    **Dispatch decision for phase-reviewer:**
 
    **If iteration == 1 OR resume_state["phase-reviewer"] is missing/empty OR resume_state["phase-reviewer"].agent_id is null** — use fresh I1-R4 dispatch:
-
-   **Pre-dispatch memory enrichment:** Before building the dispatch prompt below,
-   call `search_memory` with query: "{agent role} {task context} {space-separated file list}",
-   limit=5, brief=true.
-   Store the returned entry names for post-dispatch influence tracking.
-   Include non-empty results inside the prompt below.
 
    ```
    Task tool call:
@@ -395,9 +349,6 @@ e5. **Invoke phase-reviewer:**
        - Unresolved issues: {list of remaining blocker/warning descriptions, or "none"}
 
        This is combined review iteration {iteration}/{max}.
-
-       ## Relevant Engineering Memory
-       {search_memory results from the pre-dispatch call above}
 
        ## Phase Context (backward transitions only)
        If .meta.json `phases[current_phase]` has a `completed` timestamp (indicating re-entry into a completed phase):
@@ -478,17 +429,6 @@ e6. **Parse phase-reviewer response:** Extract `approved` field.
 
    **Fallback detection (I9):** Search the agent's response for "Files read:" pattern. If not found, log `LAZY-LOAD-WARNING: phase-reviewer did not confirm artifact reads` to `.review-history.md`. Proceed regardless. Note: Resumed dispatches (I2 template) do not include Required Artifacts, so "Files read:" may not appear — only apply I9 detection to fresh dispatches.
 
-   <!-- influence-tracking-site: s7 -->
-   **Influence tracking (mandatory, unconditional):**
-   Call `record_influence_by_content(
-     subagent_output_text=<full agent output text>,
-     injected_entry_names=<list from search_memory results, or [] if none>,
-     agent_role="phase-reviewer",
-     feature_type_id=<current feature type_id from .meta.json>)`
-   Emit one line to your output: `Influence recorded: N matches`.
-   On MCP failure: warn "Influence tracking failed: {error}", continue.
-   If .meta.json missing or type_id unresolvable: skip with warning.
-
 e7. **Branch on phase-reviewer result (strict threshold):**
    - **PASS:** `approved: true` AND zero issues with severity "blocker" or "warning"
    - **FAIL:** `approved: false` OR any issue has severity "blocker" or "warning"
@@ -503,56 +443,7 @@ e7. **Branch on phase-reviewer result (strict threshold):**
 
 h. **Complete phase:** Proceed to auto-commit, then update state.
 
-### 4a. Capture Review Learnings (Automatic)
-
-**Trigger:** Execute after any review iteration that found blocker or warning issues.
-
-**Two-path capture:**
-- **IF exactly 1 iteration with blockers found and fixed:** Store each blocker directly via `store_memory` with `confidence="low"` (single observation, not a confirmed pattern). Budget: max 2 entries.
-- **IF 2+ iterations:** Use recurring-pattern grouping logic below. Budget: max 3 entries.
-
-**Process (for 2+ iterations):**
-1. Read `.review-history.md` entries for THIS phase only (plan-reviewer, task-reviewer, and phase-reviewer entries)
-2. Group issues by description similarity (same category, overlapping file patterns)
-3. Identify issues that appeared in 2+ iterations — these are recurring patterns
-
-**For each recurring issue, call `store_memory`:**
-- `name`: derived from issue description (max 60 chars)
-- `description`: issue description + the suggestion that resolved it
-- `reasoning`: "Recurred across {n} review iterations in feature {id} create-plan phase"
-- `category`: infer from issue type:
-  - Security issues → `anti-patterns`
-  - Quality/SOLID/naming → `heuristics`
-  - Missing requirements → `anti-patterns`
-  - Feasibility/complexity → `heuristics`
-  - Scope/assumption issues → `heuristics`
-- `references`: ["feature/{id}-{slug}"]
-- `confidence`: "low"
-
-**Budget:** Max 3 entries per review cycle to avoid noise.
-
-**Notable catches (single-iteration blockers):**
-If the review loop completed in 1 iteration AND the reviewer found issues with severity "blocker":
-1. For each blocker issue (max 2):
-   - Store via `store_memory` MCP tool:
-     - `name`: derived from issue description (max 60 chars)
-     - `description`: issue description + the suggestion that resolved it
-     - `reasoning`: "Single-iteration blocker catch in feature {id} create-plan phase"
-     - `category`: inferred from issue type (same mapping as recurring patterns above)
-     - `confidence`: "low"
-     - `references`: ["feature/{id}-{slug}"]
-
-**Circuit breaker capture:** If review loop hit max iterations (cap reached) in either stage, also capture a single entry:
-- `name`: "Plan review cap: {brief issue category}"
-- `description`: summary of unresolved issues that prevented approval
-- `category`: "anti-patterns"
-- `confidence`: "low"
-
-**Fallback:** If `store_memory` MCP tool unavailable, use `semantic_memory.writer` CLI.
-
-**Output:** `"Review learnings: {n} patterns captured from {m}-iteration review cycle"` (inline, no prompt)
-
-### 4b. Auto-Commit and Update State
+### 4a. Auto-Commit and Update State
 
 **Construct reviewerNotes before committing:**
 ```
@@ -567,8 +458,6 @@ Follow `commitAndComplete("create-plan", ["plan.md", "tasks.md"], iteration, cap
 ### Relevance Gate (Pre-Implementation Coherence Check)
 
 After commitAndComplete succeeds, before auto-chaining to implement:
-
-**Pre-dispatch memory enrichment:** call `search_memory` with query: "relevance-verifier artifact coherence spec design plan tasks", limit=5, brief=true, category="anti-patterns".
 
 Dispatch relevance-verifier:
 ```
@@ -589,9 +478,6 @@ Task tool call:
     Run all 4 checks: coverage, completeness, testability, coherence.
 
     Return JSON with pass/fail per check, gaps, and optional backward_to.
-
-    ## Relevant Engineering Memory
-    {search_memory results}
 ```
 
 **Handle result:**

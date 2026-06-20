@@ -105,35 +105,6 @@ def _make_db(tmp_path, name: str = "entities.db") -> str:
     return db_path
 
 
-def _make_memory_db(tmp_path, name: str = "memory.db") -> str:
-    """Create a minimal memory DB with schema matching memory v4."""
-    db_path = str(tmp_path / name)
-    conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS _metadata (
-            key   TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        );
-        INSERT OR REPLACE INTO _metadata(key, value) VALUES('schema_version', '4');
-
-        CREATE TABLE IF NOT EXISTS entries (
-            id          TEXT PRIMARY KEY,
-            content     TEXT NOT NULL,
-            category    TEXT,
-            source      TEXT,
-            project     TEXT,
-            created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-            updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
-            keywords    TEXT,
-            embedding   BLOB
-        );
-    """)
-    conn.commit()
-    conn.close()
-    return db_path
-
-
 def _register_feature(db_path: str, slug: str = "008-test-feature", status: str = "active") -> str:
     """Register a feature entity directly via SQL. Returns type_id."""
     type_id = f"feature:{slug}"
@@ -309,11 +280,6 @@ class TestClassifyFix:
         cls, fn = classify_fix("Set PRAGMA journal_mode=WAL on the database")
         assert cls == "safe"
 
-    def test_set_wal_memory(self):
-        from doctor.fixer import classify_fix
-        cls, fn = classify_fix("Set PRAGMA journal_mode=WAL on memory DB")
-        assert cls == "safe"
-
     def test_update_meta_from_db(self):
         from doctor.fixer import classify_fix
         cls, fn = classify_fix("Update .meta.json from DB state")
@@ -374,11 +340,6 @@ class TestClassifyFix:
         cls, fn = classify_fix("Run migrations to initialize the database")
         assert cls == "safe"
 
-    def test_run_memory_migrations(self):
-        from doctor.fixer import classify_fix
-        cls, fn = classify_fix("Run memory DB migrations to update schema")
-        assert cls == "safe"
-
     def test_unknown_hint_is_manual(self):
         from doctor.fixer import classify_fix
         cls, fn = classify_fix("Kill the process holding the lock")
@@ -409,9 +370,9 @@ class TestFixActions:
         from doctor.fix_actions import FixContext, _fix_last_completed_phase
 
         ctx = FixContext(
-            entities_db_path="", memory_db_path="",
+            entities_db_path="",
             artifacts_root=str(tmp_path), project_root=str(tmp_path),
-            db=None, engine=None, entities_conn=None, memory_conn=None,
+            db=None, engine=None, entities_conn=None,
         )
         issue = Issue(check="workflow_phase", severity="error",
                       entity="feature:008-test-feature",
@@ -438,9 +399,9 @@ class TestFixActions:
         )
 
         ctx = FixContext(
-            entities_db_path=db_path, memory_db_path="",
+            entities_db_path=db_path,
             artifacts_root="", project_root="",
-            db=db, engine=None, entities_conn=db._conn, memory_conn=None,
+            db=db, engine=None, entities_conn=db._conn,
         )
         issue = Issue(check="brainstorm_status", severity="warning",
                       entity="feature:009-brainstorm",
@@ -469,9 +430,9 @@ class TestFixActions:
 
         conn = sqlite3.connect(db_path)
         ctx = FixContext(
-            entities_db_path=db_path, memory_db_path="",
+            entities_db_path=db_path,
             artifacts_root="", project_root="",
-            db=None, engine=None, entities_conn=conn, memory_conn=None,
+            db=None, engine=None, entities_conn=conn,
         )
         issue = Issue(check="db_readiness", severity="warning", entity=None,
                       message="not WAL", fix_hint="Set PRAGMA journal_mode=WAL on the database")
@@ -482,27 +443,6 @@ class TestFixActions:
         # Verify
         mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
         assert mode == "wal"
-        conn.close()
-
-    def test_fix_wal_memory(self, tmp_path):
-        from doctor.fix_actions import FixContext, _fix_wal_memory
-
-        db_path = _make_memory_db(tmp_path)
-        conn = sqlite3.connect(db_path)
-        conn.execute("PRAGMA journal_mode=DELETE")
-        conn.close()
-
-        conn = sqlite3.connect(db_path)
-        ctx = FixContext(
-            entities_db_path="", memory_db_path=db_path,
-            artifacts_root="", project_root="",
-            db=None, engine=None, entities_conn=None, memory_conn=conn,
-        )
-        issue = Issue(check="db_readiness", severity="warning", entity=None,
-                      message="not WAL", fix_hint="Set PRAGMA journal_mode=WAL on memory DB")
-
-        action = _fix_wal_memory(ctx, issue)
-        assert "WAL" in action
         conn.close()
 
     def test_fix_self_referential_parent(self, tmp_path):
@@ -519,9 +459,9 @@ class TestFixActions:
         conn.commit()
 
         ctx = FixContext(
-            entities_db_path=db_path, memory_db_path="",
+            entities_db_path=db_path,
             artifacts_root="", project_root="",
-            db=None, engine=None, entities_conn=conn, memory_conn=None,
+            db=None, engine=None, entities_conn=conn,
         )
         issue = Issue(check="referential_integrity", severity="error",
                       entity="feature:001-self",
@@ -551,9 +491,9 @@ class TestFixActions:
         conn.commit()
 
         ctx = FixContext(
-            entities_db_path=db_path, memory_db_path="",
+            entities_db_path=db_path,
             artifacts_root="", project_root="",
-            db=None, engine=None, entities_conn=conn, memory_conn=None,
+            db=None, engine=None, entities_conn=conn,
         )
         issue = Issue(
             check="referential_integrity", severity="error", entity=None,
@@ -576,9 +516,9 @@ class TestFixActions:
         conn = sqlite3.connect(db_path)
 
         ctx = FixContext(
-            entities_db_path=db_path, memory_db_path="",
+            entities_db_path=db_path,
             artifacts_root="", project_root="",
-            db=None, engine=None, entities_conn=conn, memory_conn=None,
+            db=None, engine=None, entities_conn=conn,
         )
         issue = Issue(
             check="referential_integrity", severity="error", entity=None,
@@ -600,9 +540,9 @@ class TestFixActions:
         conn.commit()
 
         ctx = FixContext(
-            entities_db_path=db_path, memory_db_path="",
+            entities_db_path=db_path,
             artifacts_root="", project_root="",
-            db=None, engine=None, entities_conn=conn, memory_conn=None,
+            db=None, engine=None, entities_conn=conn,
         )
         issue = Issue(
             check="referential_integrity", severity="error", entity=None,
@@ -628,9 +568,9 @@ class TestFixActions:
         conn.commit()
 
         ctx = FixContext(
-            entities_db_path=db_path, memory_db_path="",
+            entities_db_path=db_path,
             artifacts_root="", project_root="",
-            db=None, engine=None, entities_conn=conn, memory_conn=None,
+            db=None, engine=None, entities_conn=conn,
         )
         issue = Issue(
             check="referential_integrity", severity="error",
@@ -651,9 +591,9 @@ class TestFixActions:
         from doctor.fix_actions import FixContext, _fix_rebuild_fts
 
         ctx = FixContext(
-            entities_db_path=str(tmp_path / "entities.db"), memory_db_path="",
+            entities_db_path=str(tmp_path / "entities.db"),
             artifacts_root="", project_root=str(tmp_path),
-            db=None, engine=None, entities_conn=None, memory_conn=None,
+            db=None, engine=None, entities_conn=None,
         )
         issue = Issue(
             check="db_readiness", severity="warning", entity=None,
@@ -676,9 +616,9 @@ class TestFixActions:
         )
 
         ctx = FixContext(
-            entities_db_path="", memory_db_path="",
+            entities_db_path="",
             artifacts_root=str(tmp_path), project_root=str(tmp_path),
-            db=None, engine=None, entities_conn=None, memory_conn=None,
+            db=None, engine=None, entities_conn=None,
         )
         issue = Issue(
             check="backlog_status", severity="warning",
@@ -703,9 +643,9 @@ class TestFixActions:
         backlog_path.write_text("| ID | Description |\n| 99999 | something |\n")
 
         ctx = FixContext(
-            entities_db_path="", memory_db_path="",
+            entities_db_path="",
             artifacts_root=str(tmp_path), project_root=str(tmp_path),
-            db=None, engine=None, entities_conn=None, memory_conn=None,
+            db=None, engine=None, entities_conn=None,
         )
         issue = Issue(
             check="backlog_status", severity="warning",
@@ -726,32 +666,14 @@ class TestFixActions:
         conn.close()
 
         ctx = FixContext(
-            entities_db_path=db_path, memory_db_path="",
+            entities_db_path=db_path,
             artifacts_root="", project_root="",
-            db=None, engine=None, entities_conn=None, memory_conn=None,
+            db=None, engine=None, entities_conn=None,
         )
         issue = Issue(check="db_readiness", severity="error", entity=None,
                       message="schema outdated", fix_hint="Run migrations to initialize the database")
 
         action = _fix_run_entity_migrations(ctx, issue)
-        assert "migration" in action.lower()
-
-    def test_fix_run_memory_migrations(self, tmp_path):
-        from doctor.fix_actions import _fix_run_memory_migrations, FixContext
-
-        db_path = str(tmp_path / "memory.db")
-        conn = sqlite3.connect(db_path)
-        conn.close()
-
-        ctx = FixContext(
-            entities_db_path="", memory_db_path=db_path,
-            artifacts_root="", project_root="",
-            db=None, engine=None, entities_conn=None, memory_conn=None,
-        )
-        issue = Issue(check="db_readiness", severity="error", entity=None,
-                      message="schema outdated", fix_hint="Run memory DB migrations")
-
-        action = _fix_run_memory_migrations(ctx, issue)
         assert "migration" in action.lower()
 
     def test_fix_context_shared_connection(self, tmp_path):
@@ -762,11 +684,10 @@ class TestFixActions:
         db_path = _make_db(tmp_path)
         db = EntityDatabase(db_path)
         ctx = FixContext(
-            entities_db_path=db_path, memory_db_path="",
+            entities_db_path=db_path,
             artifacts_root="", project_root="",
             db=db, engine=None,
             entities_conn=db._conn,
-            memory_conn=None,
         )
         assert ctx.entities_conn is db._conn
         db.close()
@@ -785,7 +706,6 @@ class TestApplyFixes:
         from doctor.fixer import apply_fixes
 
         db_path = _make_db(tmp_path)
-        memory_path = _make_memory_db(tmp_path)
 
         # Create a report with a WAL fix issue
         report = _make_report(
@@ -798,7 +718,6 @@ class TestApplyFixes:
         result = apply_fixes(
             report=report,
             entities_db_path=db_path,
-            memory_db_path=memory_path,
             artifacts_root=str(tmp_path),
             project_root=str(tmp_path),
         )
@@ -812,7 +731,6 @@ class TestApplyFixes:
         from doctor.fixer import apply_fixes
 
         db_path = _make_db(tmp_path)
-        memory_path = _make_memory_db(tmp_path)
 
         report = _make_report(
             ("db_readiness", [
@@ -824,7 +742,6 @@ class TestApplyFixes:
         result = apply_fixes(
             report=report,
             entities_db_path=db_path,
-            memory_db_path=memory_path,
             artifacts_root=str(tmp_path),
             project_root=str(tmp_path),
         )
@@ -838,7 +755,6 @@ class TestApplyFixes:
         from doctor.fixer import apply_fixes
 
         db_path = _make_db(tmp_path)
-        memory_path = _make_memory_db(tmp_path)
 
         report = _make_report(
             ("db_readiness", [
@@ -850,7 +766,6 @@ class TestApplyFixes:
         result = apply_fixes(
             report=report,
             entities_db_path=db_path,
-            memory_db_path=memory_path,
             artifacts_root=str(tmp_path),
             project_root=str(tmp_path),
             dry_run=True,
@@ -866,7 +781,6 @@ class TestApplyFixes:
         from doctor.fixer import apply_fixes
 
         db_path = _make_db(tmp_path)
-        memory_path = _make_memory_db(tmp_path)
 
         # FTS rebuild with no script -> will fail
         report = _make_report(
@@ -880,7 +794,6 @@ class TestApplyFixes:
         result = apply_fixes(
             report=report,
             entities_db_path=db_path,
-            memory_db_path=memory_path,
             artifacts_root=str(tmp_path),
             project_root=str(tmp_path),
         )
@@ -894,7 +807,6 @@ class TestApplyFixes:
         from doctor.fixer import apply_fixes
 
         db_path = _make_db(tmp_path)
-        memory_path = _make_memory_db(tmp_path)
 
         report = _make_report(
             ("db_readiness", [
@@ -906,7 +818,6 @@ class TestApplyFixes:
         result = apply_fixes(
             report=report,
             entities_db_path=db_path,
-            memory_db_path=memory_path,
             artifacts_root=str(tmp_path),
             project_root=str(tmp_path),
         )
@@ -918,7 +829,6 @@ class TestApplyFixes:
         from doctor.fixer import apply_fixes
 
         db_path = _make_db(tmp_path)
-        memory_path = _make_memory_db(tmp_path)
 
         report = _make_report(
             ("db_readiness", [
@@ -935,7 +845,6 @@ class TestApplyFixes:
         result = apply_fixes(
             report=report,
             entities_db_path=db_path,
-            memory_db_path=memory_path,
             artifacts_root=str(tmp_path),
             project_root=str(tmp_path),
         )
@@ -950,7 +859,6 @@ class TestApplyFixes:
         from doctor.fixer import apply_fixes
 
         db_path = _make_db(tmp_path)
-        memory_path = _make_memory_db(tmp_path)
 
         # Set entities DB to DELETE mode so WAL fix has something to do
         conn = sqlite3.connect(db_path)
@@ -965,7 +873,7 @@ class TestApplyFixes:
         )
 
         result1 = apply_fixes(
-            report=report, entities_db_path=db_path, memory_db_path=memory_path,
+            report=report, entities_db_path=db_path,
             artifacts_root=str(tmp_path), project_root=str(tmp_path),
         )
         assert result1.fixed_count == 1
@@ -973,7 +881,7 @@ class TestApplyFixes:
         # Second run: WAL is already set, so the fix is a no-op (still "applied"
         # because PRAGMA journal_mode=WAL is idempotent and doesn't error)
         result2 = apply_fixes(
-            report=report, entities_db_path=db_path, memory_db_path=memory_path,
+            report=report, entities_db_path=db_path,
             artifacts_root=str(tmp_path), project_root=str(tmp_path),
         )
         # The fix still "applies" (PRAGMA is idempotent), but the real verification
@@ -992,12 +900,10 @@ class TestCLI:
     def _run_doctor(self, tmp_path, *extra_args):
         """Run doctor CLI and return parsed JSON output."""
         db_path = _make_db(tmp_path)
-        memory_path = _make_memory_db(tmp_path)
 
         cmd = [
             sys.executable, "-m", "doctor",
             "--entities-db", db_path,
-            "--memory-db", memory_path,
             "--project-root", str(tmp_path),
             "--artifacts-root", str(tmp_path),
             *extra_args,
@@ -1064,9 +970,9 @@ class TestFixStaleDependency:
         db.add_dependency(uuid_blocked, uuid_blocker)
 
         ctx = FixContext(
-            entities_db_path=db_path, memory_db_path="",
+            entities_db_path=db_path,
             artifacts_root="", project_root="",
-            db=db, engine=None, entities_conn=None, memory_conn=None,
+            db=db, engine=None, entities_conn=None,
         )
         issue = Issue(
             check="stale_dependencies", severity="warning", entity=None,

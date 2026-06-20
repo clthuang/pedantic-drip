@@ -1,5 +1,4 @@
 #!/bin/bash
-# Feature 104 FR-6: cleanup_stale_correction_buffers (AC-6.1).
 # Feature 106 FR-3: cleanup_stale_mcp_servers (5 tests, consolidated from
 # test_session_start_cleanup.sh; sed-extract pattern per feature 104 TD-1).
 set -uo pipefail
@@ -25,51 +24,6 @@ TEST_HOME=$(mktemp -d)
 # Always restore HOME on exit so a test that fails mid-flight doesn't leave the
 # parent shell pointed at a torn-down tmp dir.
 trap 'HOME="$ORIG_HOME"; rm -rf "$TEST_HOME"' EXIT
-
-# AC-6.1: cleanup_stale_correction_buffers deletes 25h-old, keeps 1h-old
-test_cleanup_stale_correction_buffers() {
-    log_test "AC-6.1: cleanup_stale_correction_buffers deletes 25h-old, keeps 1h-old"
-    local tmp_home
-    tmp_home=$(mktemp -d -t pd-test-home.XXXXXX)
-    local buffer_dir="$tmp_home/.claude/pd"
-    mkdir -p "$buffer_dir"
-
-    # Cross-platform mtime: BSD (macOS) uses date -v, GNU (Linux) uses date -d
-    local mtime_old
-    if date -v-25H >/dev/null 2>&1; then
-        mtime_old=$(date -v-25H +"%Y%m%d%H%M.%S")
-    else
-        mtime_old=$(date -d '25 hours ago' +"%Y%m%d%H%M.%S")
-    fi
-
-    touch -t "$mtime_old" "$buffer_dir/correction-buffer-test-old.jsonl"
-    touch "$buffer_dir/correction-buffer-test-fresh.jsonl"
-
-    # Extract cleanup_stale_correction_buffers via sed (do NOT source whole file —
-    # session-start.sh runs `main` and exit 0 at end-of-file). Per design TD-1.
-    local fn_tmpfile
-    fn_tmpfile=$(mktemp -t pd-fn-extract.XXXXXX)
-    sed -n '/^cleanup_stale_correction_buffers()/,/^}/p' "${HOOKS_DIR}/session-start.sh" > "$fn_tmpfile"
-    # shellcheck disable=SC1090
-    HOME="$tmp_home" source "$fn_tmpfile"
-
-    local stderr_capture
-    stderr_capture=$(HOME="$tmp_home" cleanup_stale_correction_buffers 2>&1 >/dev/null)
-    rm -f "$fn_tmpfile"
-
-    if [[ ! -f "$buffer_dir/correction-buffer-test-old.jsonl" ]] && \
-       [[ -f "$buffer_dir/correction-buffer-test-fresh.jsonl" ]] && \
-       echo "$stderr_capture" | grep -q "Cleaned 1 stale correction buffers"; then
-        log_pass
-    else
-        local old_status="missing"
-        local fresh_status="missing"
-        [[ -f "$buffer_dir/correction-buffer-test-old.jsonl" ]] && old_status="present"
-        [[ -f "$buffer_dir/correction-buffer-test-fresh.jsonl" ]] && fresh_status="present"
-        log_fail "old=$old_status (want missing), fresh=$fresh_status (want present), stderr='$stderr_capture'"
-    fi
-    rm -rf "$tmp_home"
-}
 
 # Helper: sed-extract cleanup_stale_mcp_servers from session-start.sh
 # (replaces the copy-paste extraction from test_session_start_cleanup.sh)
@@ -207,8 +161,7 @@ time.sleep(120)
     HOME="$ORIG_HOME"
 }
 
-# Run all 6 tests
-test_cleanup_stale_correction_buffers
+# Run all 5 tests
 test_stale_pid_file_removed
 test_missing_pid_dir
 test_invalid_pid_content

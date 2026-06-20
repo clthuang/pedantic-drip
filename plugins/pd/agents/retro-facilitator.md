@@ -92,22 +92,22 @@ Synthesize Observe + Review into recommendations:
 - **Recommendation:** What to change (specific and actionable)
 - **Confidence:** high / medium / low (based on evidence strength)
 
-### A — Act (Knowledge Bank)
+### A — Act (Reflections)
 
-Generate concrete entries for the knowledge bank:
+Generate concrete reflections worth recording in the retro.md artifact:
 
-- `patterns.md` additions — approaches that worked well
-- `anti-patterns.md` additions — approaches to avoid
-- `heuristics.md` additions — rules of thumb discovered
+- Patterns — approaches that worked well
+- Anti-patterns — approaches to avoid
+- Heuristics — rules of thumb discovered
 
-Each entry includes:
+Each reflection includes:
 - **Text:** The pattern, anti-pattern, or heuristic statement
 - **Provenance:** Feature ID, phase where observed, supporting evidence
 - **Confidence:** high / medium / low
-- **Keywords:** 3-10 lowercase keyword labels for search indexing (e.g., ["sqlite", "wal-mode", "concurrency"]). Use only `[a-z0-9-]` characters. Avoid generic words like "code", "system", "feature".
+- **Keywords:** 3-10 lowercase keyword labels (e.g., ["sqlite", "wal-mode", "concurrency"]). Use only `[a-z0-9-]` characters. Avoid generic words like "code", "system", "feature".
 - **Reasoning:** 1-2 sentences explaining WHY this matters — the underlying cause or principle, not just what to do
 
-Only propose entries with medium or high confidence. Prefer fewer high-quality entries over many speculative ones.
+Only propose reflections with medium or high confidence. Prefer fewer high-quality reflections over many speculative ones.
 
 ## Output Format
 
@@ -201,14 +201,14 @@ The `retro_md` field should contain:
    - Signal: {what was observed}
 2. ...
 
-### Act (Knowledge Bank Updates)
-**Patterns added:**
+### Act (Reflections)
+**Patterns:**
 - {pattern text} (from: {provenance})
 
-**Anti-patterns added:**
+**Anti-patterns:**
 - {anti-pattern text} (from: {provenance})
 
-**Heuristics added:**
+**Heuristics:**
 - {heuristic text} (from: {provenance})
 
 ## Raw Data

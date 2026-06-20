@@ -304,36 +304,4 @@ def is_backward_transition(phase_name: str, meta_json: dict) -> bool:
 
 Note: `.meta.json` projects `phase_timing` as `phases` (see `_project_meta_json` line 377). Detection reads from `.meta.json`, hence uses the `phases` key.
 
-## Memory MCP Server
-
-**Server:** `plugins/pd/mcp/memory_server.py`
-**Database:** `~/.claude/pd/memory/memory.db`
-
-### store_memory
-
-```
-store_memory(
-    name: str,
-    description: str,
-    reasoning: str,
-    category: str,
-    references: list[str],
-    confidence: "high" | "medium" | "low",  # default: "medium"
-)
-```
-
-### search_memory
-
-```
-search_memory(
-    query: str,
-    limit: int = 10,
-    category: str | None = None,
-    brief: bool = False,                    # When True, returns terse one-line summaries
-    project: str | None = None,             # Optional project-scope filter
-) -> str                                    # Formatted markdown string, NOT a list
-```
-
-Uses hybrid retrieval: vector similarity (Gemini embeddings) + BM25 keyword search. Falls back to FTS5 keyword search when no API key is configured. Returns a formatted markdown string; caller must parse if structured access is needed.
-
 <!-- AUTO-GENERATED: END -->

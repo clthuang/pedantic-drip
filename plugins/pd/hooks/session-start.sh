@@ -185,57 +185,6 @@ check_branch_mismatch() {
     return 1  # Match
 }
 
-# Ensure capture-tool-failure hook is registered in .claude/settings.local.json.
-# Plugin hooks.json PostToolUse doesn't fire for built-in tools (CC limitation #6305),
-# so we register via settings.local.json which does fire. Also adds PostToolUseFailure.
-# Called at session start to keep the path current if the plugin cache moves.
-ensure_capture_hook() {
-    local settings_path="${PROJECT_ROOT}/.claude/settings.local.json"
-    local hook_cmd="${SCRIPT_DIR}/capture-tool-failure.sh"
-
-    # Fast path: check if already configured with correct path
-    if [[ -f "$settings_path" ]] && grep -q "capture-tool-failure" "$settings_path" 2>/dev/null; then
-        if grep -q "$hook_cmd" "$settings_path" 2>/dev/null; then
-            return 0  # Already configured with correct path
-        fi
-    fi
-
-    # Use python3 to safely read/create/update JSON
-    # FR-1.1: single-quoted Python source (bash does not expand vars inside).
-    python3 -c '
-import json, os, sys
-settings_path = sys.argv[1]
-hook_cmd = sys.argv[2]
-
-if os.path.exists(settings_path):
-    with open(settings_path) as f:
-        settings = json.load(f)
-else:
-    settings = {}
-
-hooks = settings.setdefault("hooks", {})
-
-# Ensure both PostToolUse and PostToolUseFailure have the hook
-for event in ["PostToolUse", "PostToolUseFailure"]:
-    entries = hooks.setdefault(event, [])
-    found = False
-    for entry in entries:
-        for h in entry.get("hooks", []):
-            if "capture-tool-failure" in h.get("command", ""):
-                h["command"] = hook_cmd
-                found = True
-    if not found:
-        entries.append({
-            "matcher": "Bash|Edit|Write",
-            "hooks": [{"type": "command", "command": hook_cmd, "async": True}]
-        })
-
-os.makedirs(os.path.dirname(settings_path), exist_ok=True)
-with open(settings_path, "w") as f:
-    json.dump(settings, f, indent=2)
-' "$settings_path" "$hook_cmd" 2>/dev/null || true
-}
-
 # Clean up stale/orphaned MCP server processes via PID files + lsof fallback.
 # Called BEFORE doctor autofix and MCP health check to release DB locks early.
 cleanup_stale_mcp_servers() {
@@ -273,7 +222,6 @@ cleanup_stale_mcp_servers() {
     if command -v lsof >/dev/null 2>&1; then
         local db_files=""
         [[ -f "$HOME/.claude/pd/entities/entities.db" ]] && db_files="$HOME/.claude/pd/entities/entities.db"
-        [[ -f "$HOME/.claude/pd/memory/memory.db" ]] && db_files="$db_files $HOME/.claude/pd/memory/memory.db"
         if [[ -n "$db_files" ]]; then
             lsof $db_files 2>/dev/null | awk 'NR>1{print $2}' | sort -u | while read -r lpid; do
                 local lppid
@@ -288,24 +236,6 @@ cleanup_stale_mcp_servers() {
             done
         fi
     fi
-}
-
-# Feature 102 FR-1.5: clean up stale FR-1 correction-buffer files.
-# Files older than 24 hours are removed to prevent disk pollution from
-# crashed sessions where capture-on-stop.sh never ran.
-cleanup_stale_correction_buffers() {
-    local buffer_dir="$HOME/.claude/pd"
-    [[ -d "$buffer_dir" ]] || return 0
-    local count=0
-    for f in "$buffer_dir"/correction-buffer-*.jsonl; do
-        [[ -e "$f" ]] || continue
-        # mtime > 24h (1 day) ago
-        if [[ -n $(find "$f" -mtime +0 -print 2>/dev/null) ]]; then
-            rm -f "$f" 2>/dev/null && count=$((count + 1))
-        fi
-    done
-    [[ $count -gt 0 ]] && echo "Cleaned $count stale correction buffers" >&2
-    return 0
 }
 
 # Reads ~/.claude/pd/mcp-bootstrap-errors.log for entries < 10 minutes old.
@@ -381,7 +311,7 @@ ${line}"
 
         # Output warning if recent errors found
         if [[ -n "$recent_errors" ]]; then
-            printf "WARNING: MCP servers failed to start. Workflow tools (transition_phase, store_memory, etc.) are unavailable.\nError: %s. Run: bash \"%s/scripts/setup.sh\"" "$recent_errors" "$PLUGIN_ROOT"
+            printf "WARNING: MCP servers failed to start. Workflow tools (transition_phase, etc.) are unavailable.\nError: %s. Run: bash \"%s/scripts/setup.sh\"" "$recent_errors" "$PLUGIN_ROOT"
         fi
     ) 2>/dev/null || echo ""
 }
@@ -517,9 +447,6 @@ else:
 
     # Always include workflow overview
     context+="\nAvailable commands: /brainstorm → /specify → /design → /create-plan → /implement → /finish-feature (/create-feature, /create-project as alternatives)"
-    context+="\nTip: Use /remember <learning> to capture insights, or use the store_memory MCP tool directly."
-    context+="\nMemory capture mode: $(read_local_md_field "$PROJECT_ROOT/.claude/pd.local.md" "memory_model_capture_mode" "ask-first")"
-    context+="\nMemory silent capture budget: $(read_local_md_field "$PROJECT_ROOT/.claude/pd.local.md" "memory_silent_capture_budget" "5")"
 
     local max_agents
     max_agents=$(read_local_md_field "$PROJECT_ROOT/.claude/pd.local.md" "max_concurrent_agents" "5")
@@ -553,74 +480,12 @@ else:
     echo "$context"
 }
 
-# Build memory context from knowledge bank entries
-build_memory_context() {
-    local config_file="${PROJECT_ROOT}/.claude/pd.local.md"
-    local enabled
-    enabled=$(read_local_md_field "$config_file" "memory_injection_enabled" "true")
-    if [[ "$enabled" != "true" ]]; then
-        return
-    fi
-
-    local limit
-    limit=$(read_local_md_field "$config_file" "memory_injection_limit" "15")
-    [[ "$limit" =~ ^[0-9]+$ ]] || limit="15"
-
-    local semantic_enabled
-    semantic_enabled=$(read_local_md_field "$config_file" "memory_semantic_enabled" "true")
-
-    local timeout_cmd=""
-    if command -v gtimeout >/dev/null 2>&1; then
-        timeout_cmd="gtimeout 5"
-    elif command -v timeout >/dev/null 2>&1; then
-        timeout_cmd="timeout 5"
-    fi
-
-    # Resolve Python: prefer venv, fallback to system python3
-    local python_cmd="python3"
-    if [[ -x "${PLUGIN_ROOT}/.venv/bin/python" ]]; then
-        python_cmd="${PLUGIN_ROOT}/.venv/bin/python"
-    fi
-
-    local memory_output=""
-    local max_retries=3
-    local attempt=0
-    if [[ "$semantic_enabled" == "false" ]]; then
-        # [DEPRECATED] Legacy memory: markdown-based with observation count sorting
-        # This path will be removed next release. Set memory_semantic_enabled=true (default) to use semantic injection.
-        deprecation_warning="[DEPRECATED] memory_semantic_enabled=false — legacy memory.py injection will be removed next release."
-        echo "$deprecation_warning"
-        # stderr suppressed: memory.py errors must not corrupt hook JSON output
-        while (( attempt < max_retries )); do
-            memory_output=$($timeout_cmd $python_cmd "${SCRIPT_DIR}/lib/memory.py" \
-                --project-root "$PROJECT_ROOT" \
-                --limit "$limit" \
-                --global-store "$HOME/.claude/pd/memory" 2>/dev/null) && break
-            memory_output=""
-            (( attempt++ ))
-        done
-    else
-        # Semantic memory: embedding-based retrieval with FTS5 keyword search (default)
-        # stderr suppressed: injector.py errors must not corrupt hook JSON output
-        while (( attempt < max_retries )); do
-            memory_output=$(PYTHONPATH="${SCRIPT_DIR}/lib" $timeout_cmd "$python_cmd" -m semantic_memory.injector \
-                --project-root "$PROJECT_ROOT" \
-                --limit "$limit" \
-                --global-store "$HOME/.claude/pd/memory" 2>/dev/null) && break
-            memory_output=""
-            (( attempt++ ))
-        done
-    fi
-    echo "$memory_output"
-}
-
-# Run reconciliation orchestrator: sync entity statuses, brainstorm registry, and KB
+# Run reconciliation orchestrator: sync entity statuses and brainstorm registry
 # Returns reconciliation summary line via stdout (empty if no changes).
 run_reconciliation() {
     local python_cmd="$PLUGIN_ROOT/.venv/bin/python"
     local result
     local entity_db="${ENTITY_DB_PATH:-$HOME/.claude/pd/entities/entities.db}"
-    local memory_db="${MEMORY_DB_PATH:-$HOME/.claude/pd/memory/memory.db}"
     local artifacts_root
     artifacts_root=$(resolve_artifacts_root)
 
@@ -637,7 +502,6 @@ run_reconciliation() {
         --project-root "$PROJECT_ROOT" \
         --artifacts-root "$artifacts_root" \
         --entity-db "$entity_db" \
-        --memory-db "$memory_db" \
         2>/dev/null) || true
 
     # Timing diagnostics are in the JSON output (elapsed_ms field).
@@ -670,7 +534,6 @@ except Exception:
 run_doctor_autofix() {
     local python_cmd="$PLUGIN_ROOT/.venv/bin/python"
     local entity_db="${ENTITY_DB_PATH:-$HOME/.claude/pd/entities/entities.db}"
-    local memory_db="${MEMORY_DB_PATH:-$HOME/.claude/pd/memory/memory.db}"
     local artifacts_root
     artifacts_root=$(resolve_artifacts_root)
 
@@ -686,7 +549,6 @@ run_doctor_autofix() {
     result=$(PYTHONPATH="$SCRIPT_DIR/lib" \
         $timeout_cmd "$python_cmd" -m doctor \
         --entities-db "$entity_db" \
-        --memory-db "$memory_db" \
         --project-root "$PROJECT_ROOT" \
         --artifacts-root "$artifacts_root" \
         --fix 2>/dev/null) || true
@@ -713,114 +575,6 @@ except Exception:
     fi
 }
 
-# Run memory confidence-decay maintenance pass (feature 082).
-# Invokes `python -m semantic_memory.maintenance --decay` with the project root.
-# Returns the summary line via stdout (empty when disabled, dry-run with no
-# changes, module missing, or DB error).  Must NEVER crash session-start.
-#
-# Timeout budget: 10s ceiling.  Decay touches the whole entries table when
-# seeded; matches run_doctor_autofix's budget (vs run_reconciliation's 5s).
-# Internal NFR-2 ceiling is 5000ms (AC-24); 10s leaves margin for subprocess
-# startup + BEGIN IMMEDIATE busy-wait (per spec FR-5 writer-contention note).
-# Feature 101 FR-2: FTS5 integrity check + on-demand backfill.
-# Detects the case where entries_fts has 0 rows but entries has rows,
-# indicating migration 5 'rebuild' silently failed. Self-heals by
-# invoking semantic_memory.maintenance --rebuild-fts5. Best-effort.
-check_fts5_integrity() {
-    local db="$HOME/.claude/pd/memory/memory.db"
-    [[ ! -f "$db" ]] && return 0  # No DB yet, skip
-    local VENV_PYTHON="${PLUGIN_ROOT}/.venv/bin/python"
-    [[ ! -x "$VENV_PYTHON" ]] && return 0
-    local out
-    out=$("$VENV_PYTHON" -c "
-import sqlite3, sys
-try:
-    c = sqlite3.connect('$db')
-    e = c.execute('SELECT COUNT(*) FROM entries').fetchone()[0]
-    try:
-        f = c.execute('SELECT COUNT(*) FROM entries_fts').fetchone()[0]
-    except sqlite3.OperationalError:
-        f = 0
-    print(f'{e},{f}')
-    c.close()
-except Exception:
-    print('0,0')
-" 2>/dev/null) || return 0
-    local entries fts5
-    entries="${out%,*}"
-    fts5="${out#*,}"
-    if [[ "${entries:-0}" -gt 0 ]] && [[ "${fts5:-0}" -eq 0 ]]; then
-        echo "[memory] FTS5 empty; auto-rebuilding..." >&2
-        "$VENV_PYTHON" -m semantic_memory.maintenance --rebuild-fts5 >&2 || true
-    fi
-}
-
-run_memory_decay() {
-    # FR-1.3 (#00112): PATH pinning + venv hard-fail + timeout enforcement.
-    # (a) Pin PATH to a known-safe value for the duration of the subprocess
-    #     invocation so `command -v gtimeout/timeout` and any implicit child
-    #     lookups cannot be redirected via a tampered user $PATH.
-    # (b) Hard-fail (silent skip) if the plugin venv Python is missing — do
-    #     NOT fall back to $PATH-resolved python3.
-    # (c) Enforce a 10s subprocess budget via gtimeout/timeout, falling back
-    #     to a Python subprocess.run(..., timeout=10) wrapper on platforms
-    #     where neither is present.
-    #
-    # Feature 089 FR-3.5 / AC-15 (#00153):
-    # - Use ``trap ... RETURN`` so PATH is restored on ANY exit path (early
-    #   return, SIGINT, unexpected error) — the previous ``export PATH=...``
-    #   at function end ran only on the happy path.
-    # - Extend pinned PATH to include ``/usr/local/bin`` (Intel Homebrew) and
-    #   ``/opt/homebrew/bin`` (Apple Silicon Homebrew) so ``gtimeout`` is
-    #   discoverable on macOS where ``timeout`` is not available by default.
-    local PATH_OLD="$PATH"
-    # shellcheck disable=SC2064  # intentional early expansion of PATH_OLD
-    trap "export PATH=\"$PATH_OLD\"" RETURN
-    export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-
-    local VENV_PYTHON="${PLUGIN_ROOT}/.venv/bin/python"
-    if [[ ! -x "$VENV_PYTHON" ]]; then
-        return 0  # skip silently; trap restores PATH on return
-    fi
-
-    # Platform-aware timeout (macOS: gtimeout from coreutils, Linux: timeout).
-    local TIMEOUT_CMD=""
-    if command -v gtimeout >/dev/null 2>&1; then
-        TIMEOUT_CMD="gtimeout 10"
-    elif command -v timeout >/dev/null 2>&1; then
-        TIMEOUT_CMD="timeout 10"
-    fi
-
-    # stderr suppressed: maintenance.py errors must not corrupt hook JSON output.
-    # `|| true` belt-and-suspenders on top of FR-8 / I-1 internal exception-swallowing.
-    if [[ -n "$TIMEOUT_CMD" ]]; then
-        PYTHONPATH="${SCRIPT_DIR}/lib" $TIMEOUT_CMD "$VENV_PYTHON" -m semantic_memory.maintenance \
-            --decay \
-            --project-root "$PROJECT_ROOT" \
-            2>/dev/null || true
-    else
-        # Portable fallback: invoke via Python's subprocess.run with timeout=10.
-        # FR-1.1: single-quoted Python source + positional args.
-        PYTHONPATH="${SCRIPT_DIR}/lib" "$VENV_PYTHON" -c '
-import sys, subprocess
-try:
-    r = subprocess.run(
-        [sys.argv[1], "-m", "semantic_memory.maintenance",
-         "--decay", "--project-root", sys.argv[2]],
-        timeout=10, capture_output=True, text=True,
-    )
-    sys.stdout.write(r.stdout)
-    sys.stderr.write(r.stderr)
-except subprocess.TimeoutExpired:
-    sys.stderr.write("[memory-decay] subprocess timeout (10s)\n")
-' "$VENV_PYTHON" "$PROJECT_ROOT" 2>/dev/null || true
-    fi
-
-    # trap 'export PATH="$PATH_OLD"' RETURN handles PATH restoration on all
-    # function-exit paths, including early ``return`` above and any unexpected
-    # error — no explicit restore needed here.
-}
-
 # Main
 main() {
     # Auto-provision config from template if missing (only if .claude/ already exists)
@@ -833,10 +587,10 @@ main() {
     # Reset plan-review gate state from previous session
     rm -f "${PROJECT_ROOT}/.claude/.plan-review-state" 2>/dev/null
 
-    # python3 is required for feature detection and memory injection
+    # python3 is required for feature detection
     if ! command -v python3 &>/dev/null; then
         local missing_py_payload
-        missing_py_payload='{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"WARNING: python3 not found. Memory injection and feature detection disabled. Install python3 to enable full functionality."}}'
+        missing_py_payload='{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"WARNING: python3 not found. Feature detection disabled. Install python3 to enable full functionality."}}'
         safe_emit_hook_json "$missing_py_payload"
         exit 0
     fi
@@ -844,37 +598,20 @@ main() {
     # Clean up stale/orphaned MCP servers before health checks (feature 063)
     cleanup_stale_mcp_servers
 
-    # Feature 102 FR-1.5: stale correction-buffer cleanup (>24h mtime)
-    cleanup_stale_correction_buffers
-
-    # Ensure capture-tool-failure hook is registered in settings.local.json (feature 077)
-    ensure_capture_hook
-
     # Check MCP health before building context (R4: surface bootstrap failures early)
     local mcp_warning=""
     mcp_warning=$(check_mcp_health)
 
     # First-run detection (R5: moved to main() for early evaluation, before build_context)
+    # Triggers when pd's per-user state home is absent OR the plugin venv is
+    # missing -- either means pd has not been set up on this machine yet.
     local first_run_warning=""
-    if [[ ! -d "$HOME/.claude/pd/memory" ]] || [[ ! -x "${PLUGIN_ROOT}/.venv/bin/python" ]]; then
+    if [[ ! -d "$HOME/.claude/pd" ]] || [[ ! -x "${PLUGIN_ROOT}/.venv/bin/python" ]]; then
         first_run_warning="Setup required for MCP workflow tools. Run: bash \"${PLUGIN_ROOT}/scripts/setup.sh\""
     fi
 
     local cron_schedule_context=""
     cron_schedule_context=$(build_cron_schedule_context) || cron_schedule_context=""
-
-    # Feature 101 FR-2: FTS5 integrity self-heal BEFORE decay so all
-    # downstream memory ops see a populated keyword index. Best-effort —
-    # any failure is logged but never blocks session-start.
-    check_fts5_integrity
-
-    # Feature 082: decay confidence BEFORE build_memory_context so memory
-    # injection uses post-decay confidence values (per spec TD-5 / FR-4).
-    local decay_summary=""
-    decay_summary=$(run_memory_decay)
-
-    local memory_context=""
-    memory_context=$(build_memory_context)
 
     local recon_summary=""
     recon_summary=$(run_reconciliation)
@@ -885,7 +622,7 @@ main() {
     local context
     context=$(build_context)
 
-    # Prepend warnings, then memory, then workflow state
+    # Prepend warnings, then workflow state
     local full_context=""
     if [[ -n "$mcp_warning" ]]; then
         full_context="${mcp_warning}"
@@ -913,27 +650,12 @@ main() {
             full_context="${doctor_summary}"
         fi
     fi
-    # Feature 082: confidence-decay summary (silent when disabled / no changes)
-    if [[ -n "$decay_summary" ]]; then
-        if [[ -n "$full_context" ]]; then
-            full_context="${full_context}\n\n${decay_summary}"
-        else
-            full_context="${decay_summary}"
-        fi
-    fi
     # Scheduled doctor CronCreate instruction (silent when doctor_schedule unset)
     if [[ -n "$cron_schedule_context" ]]; then
         if [[ -n "$full_context" ]]; then
             full_context="${full_context}\n\n${cron_schedule_context}"
         else
             full_context="${cron_schedule_context}"
-        fi
-    fi
-    if [[ -n "$memory_context" ]]; then
-        if [[ -n "$full_context" ]]; then
-            full_context="${full_context}\n\n${memory_context}"
-        else
-            full_context="${memory_context}"
         fi
     fi
     if [[ -n "$full_context" ]]; then

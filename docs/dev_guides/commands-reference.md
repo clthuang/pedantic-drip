@@ -4,12 +4,6 @@
 # Validate components
 ./validate.sh
 
-# Run memory server tests (requires plugin venv for MCP deps)
-plugins/pd/.venv/bin/python -m pytest plugins/pd/mcp/test_memory_server.py -v
-
-# Run MCP bootstrap wrapper tests
-bash plugins/pd/mcp/test_run_memory_server.sh
-
 # Run MCP bootstrap shared library tests (unit + integration, ~2-5 min)
 bash plugins/pd/mcp/test_bootstrap_venv.sh
 
@@ -64,17 +58,8 @@ bash scripts/test_migrate_bash.sh
 python3 scripts/migrate_db.py rebuild-fts [--skip-kill] [db_path]
 
 # Run hook integration tests (includes external test scripts:
-# test-tag-correction.sh, test-capture-on-stop.sh, test-session-start.sh)
+# test-session-start.sh)
 bash plugins/pd/hooks/tests/test-hooks.sh
-
-# Run capture-tool-failure hook tests (PostToolUseFailure — 11 tests)
-bash plugins/pd/hooks/tests/test-capture-tool-failure.sh
-
-# Run memory deprecation warning tests (legacy injection path escape hatch)
-bash plugins/pd/hooks/tests/test-deprecation-warning.sh
-
-# Run memory pattern embedding tests
-bash plugins/pd/hooks/tests/test-memory-pattern.sh
 
 # Release (bumps version, merges develop→main, tags)
 # Uses --ci for non-interactive; BUMP_OVERRIDE=patch|minor|major to force bump type

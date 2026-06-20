@@ -57,17 +57,13 @@ def _run_with_stub_checks(tmp_path, stubs):
     triggering check_db_readiness's own "missing DB" issues.
     """
     entities_db = tmp_path / "entities.db"
-    memory_db = tmp_path / "memory.db"
-    # Touch the files so readiness guards see them.
+    # Touch the file so readiness guards see it.
     sqlite3.connect(str(entities_db)).close()
-    sqlite3.connect(str(memory_db)).close()
 
     with mock.patch.object(doctor_pkg, "CHECK_ORDER", stubs), \
-         mock.patch.object(doctor_pkg, "_ENTITY_DB_CHECKS", set()), \
-         mock.patch.object(doctor_pkg, "_MEMORY_DB_CHECKS", set()):
+         mock.patch.object(doctor_pkg, "_ENTITY_DB_CHECKS", set()):
         report = run_diagnostics(
             entities_db_path=str(entities_db),
-            memory_db_path=str(memory_db),
             artifacts_root=str(tmp_path),
             project_root=str(tmp_path),
         )

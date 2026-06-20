@@ -84,19 +84,17 @@ def _make_fix_ctx(entities_conn: sqlite3.Connection) -> FixContext:
     """Build a minimal FixContext for triage tests.
 
     Only entities_conn is load-bearing for cross-workspace fix paths; other
-    fields are populated with no-op placeholders that satisfy the 8-field
-    dataclass contract (entities_db_path, memory_db_path, artifacts_root,
-    project_root, db, engine, entities_conn, memory_conn).
+    fields are populated with no-op placeholders that satisfy the
+    dataclass contract (entities_db_path, artifacts_root,
+    project_root, db, engine, entities_conn).
     """
     return FixContext(
         entities_db_path="",
-        memory_db_path="",
         artifacts_root="",
         project_root="",
         db=None,
         engine=None,
         entities_conn=entities_conn,
-        memory_conn=None,
     )
 
 
@@ -575,9 +573,9 @@ def _write_orphan_ws(proj_dir, ws_uuid):
 
 def _ws_ctx(conn, project_root):
     return FixContext(
-        entities_db_path="", memory_db_path="", artifacts_root="",
+        entities_db_path="", artifacts_root="",
         project_root=project_root, db=None, engine=None,
-        entities_conn=conn, memory_conn=None,
+        entities_conn=conn,
     )
 
 
@@ -683,7 +681,6 @@ class TestDoctorWorkspaceHealEndToEnd:
         from entity_registry.database import EntityDatabase
 
         db_path = str(tmp_path / "entities.db")
-        mem_path = str(tmp_path / "memory.db")  # absent → memory checks skip
         proj = tmp_path / "proj"
         proj.mkdir()
         root = _os.path.abspath(str(proj))
@@ -695,16 +692,16 @@ class TestDoctorWorkspaceHealEndToEnd:
             db.close()
         _write_orphan_ws(str(proj), _WS_A)  # orphaned file
 
-        before = run_diagnostics(db_path, mem_path, str(proj), str(proj))
+        before = run_diagnostics(db_path, str(proj), str(proj))
         ws_before = [
             c for c in before.checks
             if c.name == "workspace_uuid_consistency"
         ][0]
         assert not ws_before.passed
 
-        apply_fixes(before, db_path, mem_path, str(proj), str(proj))
+        apply_fixes(before, db_path, str(proj), str(proj))
 
-        after = run_diagnostics(db_path, mem_path, str(proj), str(proj))
+        after = run_diagnostics(db_path, str(proj), str(proj))
         ws_after = [
             c for c in after.checks
             if c.name == "workspace_uuid_consistency"
@@ -744,7 +741,7 @@ class TestWorkspaceFixDryRun:
             severity_summary={"error": 1},
         )
         fix_report = apply_fixes(
-            report, db_path, str(tmp_path / "memory.db"),
+            report, db_path,
             str(proj), str(proj), dry_run=True,
         )
         # File unchanged; no row inserted.
@@ -782,9 +779,9 @@ class TestFixClaimUnknownEntities:
 
     def _ctx(self, db, project_root):
         return FixContext(
-            entities_db_path="", memory_db_path="", artifacts_root="",
+            entities_db_path="", artifacts_root="",
             project_root=project_root, db=db, engine=None,
-            entities_conn=db._conn if db else None, memory_conn=None,
+            entities_conn=db._conn if db else None,
         )
 
     def test_claims_orphans_into_resolved_workspace(self, tmp_path):

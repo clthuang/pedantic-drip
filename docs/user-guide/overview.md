@@ -7,7 +7,7 @@ audit-feature: 098-tier-doc-frontmatter-sweep
 <!-- AUTO-GENERATED: START - source: 075-phase-context-accumulation -->
 # pd Plugin — Overview
 
-pd is a Claude Code plugin that turns ideas into shipped features through structured phases. It guides work from brainstorming through specification, design, planning, implementation, and merge — with built-in quality gates and semantic memory at every step.
+pd is a Claude Code plugin that turns ideas into shipped features through structured phases. It guides work from brainstorming through specification, design, planning, implementation, and merge — with built-in quality gates at every step.
 
 ## What pd Does
 
@@ -16,7 +16,6 @@ pd imposes a proven workflow on top of Claude Code:
 - Each feature moves through phases in order: brainstorm → specify → design → create-plan → implement → finish
 - Every phase has an AI reviewer that challenges the output before progression
 - Quality gates catch issues early, before they compound into later phases
-- Memory persists learnings across sessions and projects so past decisions inform future work
 - A local Kanban board gives a live view of all active work
 
 ## Key Features
@@ -41,10 +40,6 @@ YOLO mode lets pd run the full workflow without pausing for confirmation at each
 - `manual` — default, confirms at every transition
 - `aware` — provides hints about autonomous operation
 - `yolo` — fully autonomous end-to-end
-
-### Semantic Memory
-
-pd persists learnings in a global memory store (`~/.claude/pd/memory/`) that accumulates across all projects. At session start, relevant memories are injected automatically. You can also save learnings explicitly with `/pd:remember`.
 
 ### Kanban Board
 

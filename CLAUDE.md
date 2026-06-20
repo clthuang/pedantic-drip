@@ -12,7 +12,7 @@ Claude Code plugin providing a structured feature development workflow—skills,
 - **Branches for all modes** - All workflow modes (Standard, Full) create feature branches. Branches are lightweight.
 - **Retro before cleanup** - Retrospective runs BEFORE branch deletion so context is still available.
 - **Plugin portability** - Never use hardcoded `plugins/pd/` paths in agent, skill, or command files. Use two-location Glob: primary `~/.claude/plugins/cache/*/pd*/*/...`, fallback `plugins/*/...` (dev workspace). Mark fallback lines with "Fallback" or "dev workspace" so `validate.sh` can distinguish them from violations.
-- **Project-aware design** - pd is used across multiple projects. Paths resolution, configs, and state must be relative to the current project context — never assume a specific project root. The only global feature is the knowledge bank DB (`~/.claude/pd/memory/`), which accumulates learnings across all projects.
+- **Project-aware design** - pd is used across multiple projects. Paths resolution, configs, and state must be relative to the current project context — never assume a specific project root.
 - **Use uv for Python dependencies** - `uv add` for package management, never `pip install` directly. Run tests with the correct venv: `plugins/pd/.venv/bin/python -m pytest`.
 
 ## Working Standards
@@ -23,7 +23,7 @@ Claude Code plugin providing a structured feature development workflow—skills,
 
 **Bug fixing posture:** Be autonomous. When pointed at errors, failing tests, or broken CI — investigate root causes and fix without hand-holding. Use `systematic-debugging` skill for structured investigation; `/pd:root-cause-analysis` for thorough multi-cause analysis.
 
-**When corrected:** After any user correction, capture the pattern via `/pd:remember` so it persists across sessions. Don't repeat the same mistake twice.
+**When corrected:** After any user correction, capture the pattern (via Claude Code's native memory) so it persists across sessions. Don't repeat the same mistake twice.
 
 **Before non-trivial changes:** Pause and ask whether there's a simpler approach. Skip this for obvious, mechanical fixes.
 
@@ -106,10 +106,9 @@ bash scripts/release.sh --ci     # Release (develop→main)
 
 When the `openai-codex/codex` plugin is installed (detected by presence of `~/.claude/plugins/cache/openai-codex/codex/*/scripts/codex-companion.mjs`), pd reviewer dispatches **except `pd:security-reviewer`** route through Codex's `adversarial-review` instead of the pd reviewer Task. Security review stays on Anthropic Claude (safety-calibration reasons). See `plugins/pd/references/codex-routing.md` for the detection helper, foreground/background dispatch patterns, and the codex-to-pd JSON field-mapping table. Each reviewer-dispatching command has a "Codex Reviewer Routing" preamble pointing to the reference.
 
-## Knowledge & Memory
+## Entity Registry & Gotchas
 
-- **Knowledge bank:** `docs/knowledge-bank/{patterns,anti-patterns,heuristics}.md` — updated by retrospectives
-- **Global memory store:** `~/.claude/pd/memory/` — cross-project entries injected at session start
+- **Knowledge bank:** `docs/knowledge-bank/{patterns,anti-patterns,heuristics}.md` — inert reference markdown (no tooling reads/writes it)
 - **Entity registry DB:** `~/.claude/pd/entities/entities.db` — cross-project entity lineage (overridable via `ENTITY_DB_PATH` env var)
 - **Entity type_id format gotcha:** `type_id` uses colon separator: `"{entity_type}:{entity_id}"` (e.g., `"feature:043-my-feature"`), NOT slash. See `database.py:627`.
 - **Entity registry MCP metadata gotcha:** `register_entity` and `update_entity` accept `metadata` as either a dict or JSON string (dict preferred). Dicts are auto-coerced to JSON string via `json.dumps()` before `parse_metadata`. When updating entity state, prefer updating `.meta.json` directly (source of truth) and skip MCP metadata updates.
@@ -128,7 +127,6 @@ When the `openai-codex/codex` plugin is installed (detected by presence of `~/.c
 - **Hook EPIPE safety (feature 107):** Hooks emitting structured output via printf/cat MUST keep `trap '' PIPE` AND wrap writes with `{ ...; } 2>/dev/null || true`. The trap is co-load-bearing — without it, the bash process is SIGPIPE-killed before `|| true` can run. Use `safe_emit_hook_json` from `lib/session-start-helpers.sh`. See `docs/dev_guides/hook-development.md` "Broken-pipe handling".
 - **Bash 3.2 / macOS BSD portability:** Use POSIX `[[:space:]]` (not `\s`) in `grep -E`; use `${!varname:-default}` indirect expansion (not `eval`) for env-var indirection — both work on macOS bash 3.2 and avoid eval-injection. `$?` in `trap '...' EXIT` strings expands at fire time, not registration time (verified empirically).
 - **Hook benchmarks (NFR2 verification):** Isolate workspace state, not just `$HOME`. Stage both hook versions to a temp dir and run BOTH against HEAD's project state with `HOME=$(mktemp -d)`. Pattern in `plugins/pd/hooks/tests/bench-session-start.sh`.
-- **Semantic memory CLI:** Find plugin root first: `PLUGIN_ROOT=$(ls -d ~/.claude/plugins/cache/*/pd*/*/hooks 2>/dev/null | head -1 | xargs dirname)`, then `PYTHONPATH="$PLUGIN_ROOT/hooks/lib" "$PLUGIN_ROOT/.venv/bin/python" -m semantic_memory.writer`. Fallback (dev workspace): `PYTHONPATH=plugins/pd/hooks/lib python3 -m semantic_memory.writer`
 
 ## Quick Reference
 
@@ -153,10 +151,9 @@ A hookify rule (`.claude/hookify.docs-sync.local.md`) will remind you on plugin 
 **Reviewer prompt consistency:** All reviewer dispatch prompts in command files must include explicit JSON return schema blocks (`{approved, issues[], summary}`). Plain prose like "Return assessment with approval status" gets caught late in implement review. Verify with: `grep -n 'Return.*assessment\|Return.*JSON\|Return.*approval' plugins/pd/commands/*.md`
 
 **Project-aware config:** `.claude/pd.local.md` fields injected at session start:
-- `artifacts_root` (default: `docs`) — root directory for features, brainstorms, projects, knowledge-bank
+- `artifacts_root` (default: `docs`) — root directory for features, brainstorms, projects
 - `base_branch` (default: `auto` — detects from remote HEAD, falls back to `main`) — merge target branch
 - `release_script` (default: empty) — path to release script, conditional execution
-- `backfill_scan_dirs` (default: empty) — comma-separated dirs to scan for knowledge banks
 
 Skills/commands reference these as `{pd_artifacts_root}`, `{pd_base_branch}`, `{pd_release_script}`.
 

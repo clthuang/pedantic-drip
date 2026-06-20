@@ -2,11 +2,10 @@
 
 Covers:
 1. Empty databases (0 rows) -- backup, manifest, verify
-2. Large source_hash/type_id values -- merge boundary conditions
-3. Unicode in file names and entry content
+2. Large type_id values -- merge boundary conditions
+3. Unicode in file names and entity content
 4. Concurrent manifest read/write
-5. Missing columns in _metadata table
-6. Entities with NULL parent_type_id during merge
+5. Entities with NULL parent_type_id during merge
 
 Run: python3 -m pytest scripts/test_migrate_deepened.py -v
 """
@@ -28,7 +27,6 @@ import pytest
 from test_migrate_db import (
     SCRIPT,
     create_entity_db,
-    create_memory_db,
     create_wal_db,
     run_cli,
     _create_staging_dir,
@@ -99,67 +97,6 @@ class TestEmptyDatabases:
         assert result["ok"] is False
         assert result["actual_count"] == 0
 
-    def test_manifest_empty_memory_db_shows_zero_entries(self, tmp_path: Path) -> None:
-        """Manifest with empty memory.db reports memory_entries=0.
-
-        Anticipate: count(*) on empty table returns 0, but the code path
-        might not handle the case where entries table exists but is empty.
-        """
-        # Given a staging dir with empty memory.db (0 entries)
-        staging = _create_staging_dir(tmp_path, memory_entries=0)
-
-        # When we generate a manifest
-        result = run_cli("manifest", str(staging), "--plugin-version", "1.0.0")
-
-        # Then memory_entries count is 0
-        assert result["files"]["memory/memory.db"]["entry_count"] == 0
-
-    def test_merge_memory_empty_src_into_populated_dst(self, tmp_path: Path) -> None:
-        """Merging empty source into populated destination adds nothing.
-
-        Anticipate: Empty source might cause division by zero or negative
-        skip_count calculation (total_src - add_count).
-        """
-        # Given an empty source and a populated destination
-        src = str(tmp_path / "src.db")
-        dst = str(tmp_path / "dst.db")
-        create_memory_db(src, [])
-        create_memory_db(dst, [
-            {"source_hash": "existing-1", "name": "existing"},
-        ])
-
-        # When we merge
-        result = run_cli("merge-memory", src, dst)
-
-        # Then nothing is added or skipped
-        assert result["added"] == 0
-        assert result["skipped"] == 0
-
-        # And destination still has its original entry
-        conn = sqlite3.connect(dst)
-        count = conn.execute("SELECT count(*) FROM entries").fetchone()[0]
-        conn.close()
-        assert count == 1
-
-    def test_merge_memory_empty_src_into_empty_dst(self, tmp_path: Path) -> None:
-        """Merging empty source into empty destination: zero counts, no crash.
-
-        Anticipate: Both subqueries return 0; skip_count = 0 - 0 = 0.
-        Edge case for the subtraction logic.
-        """
-        # Given both source and destination are empty
-        src = str(tmp_path / "src.db")
-        dst = str(tmp_path / "dst.db")
-        create_memory_db(src, [])
-        create_memory_db(dst, [])
-
-        # When we merge
-        result = run_cli("merge-memory", src, dst)
-
-        # Then both counts are zero
-        assert result["added"] == 0
-        assert result["skipped"] == 0
-
     def test_merge_entities_empty_src_into_populated_dst(self, tmp_path: Path) -> None:
         """Merging empty entity source into populated destination: zero added.
 
@@ -199,38 +136,13 @@ class TestEmptyDatabases:
 
 
 # ============================================================
-# Dimension 2: Large source_hash/type_id values
+# Dimension 2: Large type_id values
 # derived_from: dimension:boundary_values (string length extremes)
 # ============================================================
 
 
 class TestLargeValues:
     """Boundary conditions with very long string values."""
-
-    def test_merge_memory_large_source_hash(self, tmp_path: Path) -> None:
-        """source_hash of 10,000 chars: merge completes without truncation.
-
-        Anticipate: SQLite TEXT has no length limit, but the NOT IN subquery
-        comparison could fail or be slow with very long strings.
-        """
-        # Given entries with very long source_hash values
-        large_hash = "a" * 10_000
-        src = str(tmp_path / "src.db")
-        dst = str(tmp_path / "dst.db")
-        create_memory_db(src, [{"source_hash": large_hash, "name": "large-hash-entry"}])
-        create_memory_db(dst, [])
-
-        # When we merge
-        result = run_cli("merge-memory", src, dst)
-
-        # Then the entry is added successfully
-        assert result["added"] == 1
-
-        # And the full hash is preserved in dst
-        conn = sqlite3.connect(dst)
-        row = conn.execute("SELECT source_hash FROM entries").fetchone()
-        conn.close()
-        assert row[0] == large_hash
 
     def test_merge_entities_large_type_id(self, tmp_path: Path) -> None:
         """type_id of 5,000 chars: merge handles it without error.
@@ -256,26 +168,6 @@ class TestLargeValues:
         row = conn.execute("SELECT type_id FROM entities").fetchone()
         conn.close()
         assert row[0] == large_type_id
-
-    def test_merge_memory_duplicate_large_hash_is_skipped(self, tmp_path: Path) -> None:
-        """Duplicate detection works correctly with very long source_hash.
-
-        Anticipate: String comparison in NOT IN subquery might behave
-        differently for very long strings vs short ones.
-        """
-        # Given same large hash in both src and dst
-        large_hash = "b" * 8_000
-        src = str(tmp_path / "src.db")
-        dst = str(tmp_path / "dst.db")
-        create_memory_db(src, [{"source_hash": large_hash, "name": "src-entry"}])
-        create_memory_db(dst, [{"source_hash": large_hash, "name": "dst-entry"}])
-
-        # When we merge
-        result = run_cli("merge-memory", src, dst)
-
-        # Then the entry is skipped (duplicate by source_hash)
-        assert result["added"] == 0
-        assert result["skipped"] == 1
 
     def test_merge_entities_many_new_type_ids_sql_interpolation(self, tmp_path: Path) -> None:
         """50 new entities: Phase 4 SQL with large IN clause works.
@@ -310,36 +202,6 @@ class TestLargeValues:
 class TestUnicode:
     """Unicode handling in entry content and file operations."""
 
-    def test_merge_memory_unicode_name_and_description(self, tmp_path: Path) -> None:
-        """Entries with CJK, emoji, and diacritics survive merge intact.
-
-        Anticipate: Encoding issues in INSERT...SELECT across attached DBs,
-        or JSON output mangling non-ASCII characters.
-        """
-        # Given entries with unicode content
-        src = str(tmp_path / "src.db")
-        dst = str(tmp_path / "dst.db")
-        create_memory_db(src, [{
-            "source_hash": "unicode-1",
-            "name": "Unicode test entry",
-            "description": "Contains CJK chars: \u4e16\u754c, diacritics: caf\u00e9, emoji: \U0001f680",
-        }])
-        create_memory_db(dst, [])
-
-        # When we merge
-        result = run_cli("merge-memory", src, dst)
-
-        # Then the entry is added
-        assert result["added"] == 1
-
-        # And unicode content is preserved exactly
-        conn = sqlite3.connect(dst)
-        row = conn.execute("SELECT description FROM entries").fetchone()
-        conn.close()
-        assert "\u4e16\u754c" in row[0]
-        assert "caf\u00e9" in row[0]
-        assert "\U0001f680" in row[0]
-
     def test_merge_entities_unicode_entity_name(self, tmp_path: Path) -> None:
         """Entity name with Unicode: merge and FTS rebuild work.
 
@@ -369,7 +231,7 @@ class TestUnicode:
         conn.close()
         assert "\u65e5\u672c\u8a9e" in name
 
-    def test_manifest_unicode_markdown_filename(self, tmp_path: Path) -> None:
+    def test_manifest_unicode_filename(self, tmp_path: Path) -> None:
         """Staging dir with unicode filename: manifest checksums include it.
 
         Anticipate: os.walk + os.path.relpath might mangle unicode paths,
@@ -377,7 +239,7 @@ class TestUnicode:
         """
         # Given a staging dir with a unicode-named file
         staging = _create_staging_dir(tmp_path)
-        unicode_file = staging / "memory" / "caf\u00e9-patterns.md"
+        unicode_file = staging / "entities" / "caf\u00e9-patterns.md"
         unicode_file.write_text("# Caf\u00e9 Patterns\n")
 
         # When we generate manifest
@@ -385,28 +247,8 @@ class TestUnicode:
 
         # Then the unicode filename appears in files
         # On macOS, the path separator is /
-        expected_key = os.path.join("memory", "caf\u00e9-patterns.md")
+        expected_key = os.path.join("entities", "caf\u00e9-patterns.md")
         assert expected_key in result["files"]
-
-    def test_merge_memory_unicode_source_hash(self, tmp_path: Path) -> None:
-        """source_hash containing unicode: deduplication still works.
-
-        Anticipate: NOT IN comparison on unicode strings could behave
-        differently than ASCII-only comparisons.
-        """
-        # Given same unicode hash in both databases
-        unicode_hash = "\u00fc\u00f1\u00ee\u00e7\u00f6\u00f0\u00e9-hash-\U0001f600"
-        src = str(tmp_path / "src.db")
-        dst = str(tmp_path / "dst.db")
-        create_memory_db(src, [{"source_hash": unicode_hash, "name": "unicode-hash"}])
-        create_memory_db(dst, [{"source_hash": unicode_hash, "name": "unicode-hash"}])
-
-        # When we merge
-        result = run_cli("merge-memory", src, dst)
-
-        # Then the entry is correctly identified as a duplicate
-        assert result["added"] == 0
-        assert result["skipped"] == 1
 
 
 # ============================================================
@@ -498,124 +340,6 @@ class TestConcurrentManifest:
         v2 = run_cli("validate", str(staging2))
         assert v1["valid"] is True
         assert v2["valid"] is True
-
-
-# ============================================================
-# Dimension 5: Missing columns in _metadata table
-# derived_from: dimension:error_propagation (partial schema)
-# ============================================================
-
-
-class TestMissingMetadata:
-    """Handling of _metadata table with missing or malformed data."""
-
-    def test_manifest_metadata_table_exists_but_empty(self, tmp_path: Path) -> None:
-        """_metadata table exists but has no rows: embedding fields are null.
-
-        Anticipate: fetchone() returns None; code accesses row[0]
-        on None and crashes with TypeError.
-        """
-        # Given a staging dir where _metadata table exists but is empty
-        staging = _create_staging_dir(tmp_path)
-        mem_db = str(staging / "memory" / "memory.db")
-        conn = sqlite3.connect(mem_db)
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS _metadata (key TEXT PRIMARY KEY, value TEXT)"
-        )
-        conn.commit()
-        conn.close()
-
-        # When we generate manifest
-        result = run_cli("manifest", str(staging), "--plugin-version", "1.0.0")
-
-        # Then embedding fields are None (not crash)
-        assert result["embedding_provider"] is None
-        assert result["embedding_model"] is None
-
-    def test_manifest_metadata_has_provider_but_no_model(self, tmp_path: Path) -> None:
-        """_metadata has embedding_provider but not embedding_model.
-
-        Anticipate: Missing key means fetchone() returns None;
-        embedding_model should be None while provider is populated.
-        """
-        # Given _metadata with only embedding_provider
-        staging = _create_staging_dir(tmp_path)
-        mem_db = str(staging / "memory" / "memory.db")
-        conn = sqlite3.connect(mem_db)
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS _metadata (key TEXT PRIMARY KEY, value TEXT)"
-        )
-        conn.execute(
-            "INSERT INTO _metadata (key, value) VALUES ('embedding_provider', 'openai')"
-        )
-        conn.commit()
-        conn.close()
-
-        # When we generate manifest
-        result = run_cli("manifest", str(staging), "--plugin-version", "1.0.0")
-
-        # Then provider is set, model is None
-        assert result["embedding_provider"] == "openai"
-        assert result["embedding_model"] is None
-
-    def test_check_embeddings_metadata_table_with_no_provider_row(self, tmp_path: Path) -> None:
-        """_metadata exists in dst but has no embedding_provider row.
-
-        Anticipate: fetchone() returns None, code accesses row[0].
-        The `dst_provider = row[0] if row else None` should handle this.
-        """
-        # Given a manifest claiming openai provider
-        from test_migrate_db import _write_manifest
-        manifest_path = _write_manifest(tmp_path, {
-            "schema_version": 1,
-            "embedding_provider": "openai",
-        })
-
-        # And a dst DB with _metadata table but no embedding_provider key
-        dst_db = str(tmp_path / "dst_memory.db")
-        conn = sqlite3.connect(dst_db)
-        conn.execute("CREATE TABLE _metadata (key TEXT PRIMARY KEY, value TEXT)")
-        conn.execute(
-            "INSERT INTO _metadata (key, value) VALUES ('some_other_key', 'value')"
-        )
-        conn.commit()
-        conn.close()
-
-        # When we check embeddings
-        result = run_cli("check-embeddings", manifest_path, dst_db)
-
-        # Then mismatch is false (dst_provider is None, treated as compatible)
-        assert result["mismatch"] is False
-
-    def test_check_embeddings_metadata_provider_is_null_value(self, tmp_path: Path) -> None:
-        """_metadata has embedding_provider key but value is NULL.
-
-        Anticipate: row[0] is None. The comparison
-        `dst_provider is None or src_provider == dst_provider`
-        should return mismatch=false because dst_provider is None.
-        """
-        # Given manifest with openai
-        from test_migrate_db import _write_manifest
-        manifest_path = _write_manifest(tmp_path, {
-            "schema_version": 1,
-            "embedding_provider": "openai",
-        })
-
-        # And dst has embedding_provider key with NULL value
-        dst_db = str(tmp_path / "dst_memory.db")
-        conn = sqlite3.connect(dst_db)
-        conn.execute("CREATE TABLE _metadata (key TEXT PRIMARY KEY, value TEXT)")
-        conn.execute(
-            "INSERT INTO _metadata (key, value) VALUES ('embedding_provider', NULL)"
-        )
-        conn.commit()
-        conn.close()
-
-        # When we check embeddings
-        result = run_cli("check-embeddings", manifest_path, dst_db)
-
-        # Then no mismatch (NULL dst_provider is treated as fresh machine)
-        assert result["mismatch"] is False
 
 
 # ============================================================
@@ -883,35 +607,6 @@ class TestMutationMindset:
 
         # Then it fails
         assert result["valid"] is False
-
-    def test_merge_memory_fts_rebuild_only_when_added(self, tmp_path: Path) -> None:
-        """FTS rebuild runs only when add_count > 0.
-
-        Mutation target: Deleting the `if add_count > 0` guard.
-        We verify that with 0 additions, the FTS table is not rebuilt
-        (indirectly, by checking it still works after a no-op merge).
-        """
-        # Given a destination with existing FTS-indexed entries
-        src = str(tmp_path / "src.db")
-        dst = str(tmp_path / "dst.db")
-        create_memory_db(dst, [
-            {"source_hash": "existing-1", "name": "SearchableExistingTerm"},
-        ])
-        create_memory_db(src, [
-            {"source_hash": "existing-1", "name": "duplicate-entry"},
-        ])
-
-        # When we merge (all skipped, add_count=0)
-        result = run_cli("merge-memory", src, dst)
-        assert result["added"] == 0
-
-        # Then FTS still works for existing entries
-        conn = sqlite3.connect(dst)
-        rows = conn.execute(
-            "SELECT name FROM entries_fts WHERE entries_fts MATCH 'SearchableExistingTerm'"
-        ).fetchall()
-        conn.close()
-        assert len(rows) == 1
 
 
 # ============================================================

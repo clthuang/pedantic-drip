@@ -44,8 +44,7 @@ flowchart TD
     CG -->|All Pass| FIN
 
     FIN["FINISH<br/>Docs / PR / Merge"] --> RET
-    RET["RETROSPECTIVE<br/>Capture Learnings"] --> MEM[("Long-Term<br/>Memory")]
-    RET --> DONE([Complete])
+    RET["RETROSPECTIVE<br/>Capture Learnings"] --> DONE([Complete])
 ```
 
 ![Workflow Overview](../../docs/workflow-overview.png)
@@ -54,11 +53,10 @@ flowchart TD
 
 | Type | Count |
 |------|-------|
-| Skills | 31 |
+| Skills | 29 |
 | Agents | 29 |
-| Commands | 35 |
-| Hooks | 19 |
-| MCP Tools | 45 |
+| Commands | 33 |
+| MCP Servers | 2 |
 
 ## Commands
 
@@ -90,7 +88,7 @@ flowchart TD
 | `/pd:retrospect` | Capture learnings |
 | `/pd:add-to-backlog <idea>` | Capture ideas for later |
 | `/pd:cleanup-brainstorms` | Delete old scratch files |
-| `/pd:doctor` | Run 20 diagnostic checks on pd workspace health (incl. security-review command, stale worktrees, status-parser regression, and severity vocabulary) |
+| `/pd:doctor` | Run 21 diagnostic checks on pd workspace health (incl. security-review command, stale worktrees, status-parser regression, and severity vocabulary) |
 | `/pd:sync-cache` | Reload plugin after changes |
 | `/pd:secretary` | Intelligent task routing to commands, agents, and skills |
 | `/pd:root-cause-analysis` | Investigate bugs and failures to find all root causes |
@@ -103,8 +101,6 @@ flowchart TD
 | `/pd:review-ds-code <file>` | Review DS Python code for anti-patterns |
 | `/pd:generate-docs` | Generate three-tier documentation scaffold or update existing docs |
 | `/pd:subagent-ras` | Research, analyze, and summarize any topic using parallel agents |
-| `/pd:remember` | Capture a learning to long-term memory for future session recall |
-| `/pd:promote-pattern [<entry-substring>]` | Promote a high-confidence KB pattern to an enforceable hook, skill, agent, or command (backed by the `promoting-patterns` skill) |
 | `/pd:yolo [on\|off]` | Toggle YOLO autonomous mode |
 
 ## Review System
@@ -208,23 +204,7 @@ The `/pd:implement` command uses three reviewers in an iterative loop (up to 3 i
 
 ## MCP Tools
 
-All four MCP servers (memory, entity registry, workflow engine, UI) share a common lifecycle layer (`mcp/server_lifecycle.py`) that manages PID files, parent-PID watchdog, and session-lifetime watchdog. Orphaned server processes from previous sessions are cleaned up at session start.
-
-### Memory Server
-
-The memory server (`mcp/memory_server.py`) exposes two tools for long-term semantic memory:
-
-| Tool | Purpose |
-|------|---------|
-| `store_memory` | Save a learning (pattern, anti-pattern, or heuristic) to long-term memory |
-| `search_memory` | Search long-term memory for relevant learnings by topic |
-| `record_influence` | Record that a retrieved memory influenced a subagent dispatch, incrementing its ranking weight |
-
-The server is declared in `plugin.json` via `mcpServers` and bootstrapped by `mcp/run-memory-server.sh`. On first session it auto-creates `.venv/` with core deps (`mcp`, `numpy`, `python-dotenv`). For embedding providers, install into the plugin venv:
-
-```bash
-$PLUGIN_ROOT/.venv/bin/pip install "google-genai>=1.0,<2"
-```
+Both MCP servers (entity registry, workflow engine) share a common lifecycle layer (`mcp/server_lifecycle.py`) that manages PID files, parent-PID watchdog, and session-lifetime watchdog. Orphaned server processes from previous sessions are cleaned up at session start.
 
 ### Entity Registry Server
 
@@ -286,16 +266,14 @@ After installing, run the setup script to configure the plugin environment:
 # Check system health (read-only diagnostics)
 bash plugins/pd/scripts/doctor.sh
 
-# Interactive setup (venv, embedding provider, API keys)
+# Interactive setup (venv, project init)
 bash plugins/pd/scripts/setup.sh
 ```
 
 The setup script:
 1. Runs diagnostics to check prerequisites (python3, git, rsync)
 2. Creates/verifies the Python venv with core dependencies
-3. Configures an embedding provider for semantic memory (gemini or none)
-4. Sets up API keys and environment variables
-5. Initializes project directories and config
+3. Initializes project directories and config
 
 Run `doctor.sh` anytime to troubleshoot issues — it provides OS-specific fix instructions.
 

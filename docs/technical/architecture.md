@@ -34,11 +34,8 @@ User
  ├── MCP: workflow-engine     Phase transition state machine + .meta.json projection
  │   plugins/pd/mcp/          workflow_state_server.py (registered as FastMCP("workflow-engine"))
  │
- ├── MCP: entity-registry     Cross-project entity lineage + metadata storage
- │   plugins/pd/mcp/          entity_server.py → ~/.claude/pd/entities/entities.db
- │
- └── MCP: memory              Semantic long-term memory
-     plugins/pd/mcp/          memory_server.py → ~/.claude/pd/memory/memory.db
+ └── MCP: entity-registry     Cross-project entity lineage + metadata storage
+     plugins/pd/mcp/          entity_server.py → ~/.claude/pd/entities/entities.db
 ```
 
 ## Workflow Phase Sequence
@@ -279,7 +276,6 @@ Total: 16 hooks. Subset shown below; see [README_FOR_DEV.md](../../README_FOR_DE
 | `cleanup-locks` / `cleanup-sandbox` / `cleanup-stale-versions` | SessionStart | Clean up SQLite locks, agent sandboxes, stale plugin versions |
 | `inject-secretary-context` | PreToolUse (Task) | Injects secretary routing context |
 | `start-ui-server` / `sync-cache` | SessionStart | Auto-start Kanban UI server, sync plugin cache |
-| `capture-tool-failure` | PostToolUse | Capture tool failures for diagnostics |
 
 ## Agent Categories
 
@@ -289,7 +285,7 @@ Total: 29 agents (verify via `ls plugins/pd/agents/*.md | wc -l`).
 |----------|-------|---------|
 | Reviewers | 14 | Validate artifacts and gate phase transitions (incl. secretary-reviewer, relevance-verifier) |
 | Workers | 6 | Implement, synthesize, or transform content |
-| Researchers | 5 | Gather context, scan codebase, search memory |
+| Researchers | 5 | Gather context, scan codebase |
 | Advisory | 1 | Domain advisory for brainstorm problems |
 | Orchestration | 3 | Secretary routing, RCA, retro facilitation |
 
