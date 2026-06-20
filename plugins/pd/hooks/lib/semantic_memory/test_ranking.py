@@ -419,12 +419,12 @@ class TestWeightRedistribution:
 
 class TestProminence:
     def test_norm_obs_uses_all_entries(self):
-        """norm_obs should be computed across ALL entries, not just candidates."""
+        """max_obs (the norm_obs denominator) is taken across ALL entries, not
+        just candidates: a high-observation NON-candidate raises the
+        denominator and so lowers a candidate's prominence and final_score."""
         engine = RankingEngine(_default_config())
-        # "a" is a candidate with obs_count=2, "b" is not a candidate but has obs_count=10
         _, entry_a = _make_entry("a", observation_count=2)
         _, entry_b = _make_entry("b", observation_count=10)
-        entries = {"a": entry_a, "b": entry_b}
         result = RetrievalResult(
             candidates={
                 "a": CandidateScores(vector_score=0.5, bm25_score=5.0),
@@ -432,15 +432,20 @@ class TestProminence:
             vector_candidate_count=1,
             fts5_candidate_count=1,
         )
-        ranked = engine.rank(result, entries, limit=10)
-        # norm_obs for "a" should be 2/10 = 0.2 (not 2/2 = 1.0)
-        assert len(ranked) == 1
+        # With the high-obs non-candidate "b" present, max_obs=10 so
+        # norm_obs("a") = log(3)/log(11) < 1.
+        with_b = engine.rank(result, {"a": entry_a, "b": entry_b}, limit=10, now=_NOW)
+        # Without it, max_obs=2 so norm_obs("a") = log(3)/log(3) = 1.0 — the
+        # candidate's prominence (and thus final_score) is strictly higher.
+        without_b = engine.rank(result, {"a": entry_a}, limit=10, now=_NOW)
+        assert with_b[0]["final_score"] < without_b[0]["final_score"]
 
     def test_max_obs_zero_means_norm_obs_zero(self):
-        """When max observation_count across all entries is 0, norm_obs is 0 for all."""
+        """When the max observation_count across all entries is 0, the
+        log(max_obs+1) denominator guard yields norm_obs=0 (no
+        ZeroDivisionError) — obs contributes nothing to prominence."""
         engine = RankingEngine(_default_config())
         _, entry = _make_entry("a", observation_count=0)
-        entries = {"a": entry}
         result = RetrievalResult(
             candidates={
                 "a": CandidateScores(vector_score=0.5, bm25_score=5.0),
@@ -448,8 +453,11 @@ class TestProminence:
             vector_candidate_count=1,
             fts5_candidate_count=1,
         )
-        ranked = engine.rank(result, entries, limit=10)
-        assert len(ranked) == 1
+        ranked = engine.rank(result, {"a": entry}, limit=10, now=_NOW)
+        assert math.isfinite(ranked[0]["final_score"])
+        # obs=0 → norm_obs=0 regardless of max_obs; the max_obs=0 guard must
+        # produce the same prominence as a positive max_obs (not crash, not 1.0).
+        assert engine._prominence(entry, 0, _NOW) == engine._prominence(entry, 99, _NOW)
 
 
 # ---------------------------------------------------------------------------

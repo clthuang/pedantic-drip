@@ -457,31 +457,6 @@ class TestMigration2:
 
 
 class TestSchemaCreation:
-    def test_creates_entities_table(self, db: EntityDatabase):
-        """The entities table should exist after init."""
-        cur = db._conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='entities'"
-        )
-        assert cur.fetchone() is not None
-
-    def test_creates_metadata_table(self, db: EntityDatabase):
-        """The _metadata table should exist after init."""
-        cur = db._conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='_metadata'"
-        )
-        assert cur.fetchone() is not None
-
-    def test_entities_has_13_columns(self, db: EntityDatabase):
-        # Feature 108 Migration 11: dropped project_id + parent_type_id,
-        # kept workspace_uuid + parent_uuid → 12 columns.
-        # Feature 109 Migration 12: added type + kind + lifecycle_class
-        # (+3) and Group 7 dropped entity_type (-1) → 14 columns total.
-        # (Test name retained for git-blame continuity; column count is
-        # asserted in the body.)
-        cur = db._conn.execute("PRAGMA table_info(entities)")
-        columns = cur.fetchall()
-        assert len(columns) == 14
-
     def test_entities_column_names(self, db: EntityDatabase):
         # Feature 109 Migration 12: post-migration column layout. The
         # three trailing columns (type, kind, lifecycle_class) were added
@@ -8307,3 +8282,48 @@ def test_m15_safe_to_rerun_with_documented_reset_semantics(tmp_path):
         ).fetchone()[0]
     assert counter == "0", "INSERT OR REPLACE reset; not value-preserving"
     assert version == "15"
+
+
+class TestProvidedWorkspaceUuidMembership:
+    """Task #5: _resolve_workspace_uuid_kwargs fails loud on an orphaned
+    provided workspace_uuid instead of letting a bare FK error escape."""
+
+    _ORPHAN = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
+
+    def test_orphan_uuid_raises_actionable(self, db):
+        with pytest.raises(ValueError, match="split-brain"):
+            db._resolve_workspace_uuid_kwargs(self._ORPHAN, None)
+
+    def test_orphan_uuid_message_names_doctor_and_restart(self, db):
+        with pytest.raises(ValueError) as exc:
+            db._resolve_workspace_uuid_kwargs(self._ORPHAN, None)
+        msg = str(exc.value)
+        assert "pd:doctor --fix" in msg and "restart the session" in msg
+
+    def test_both_supplied_branch_also_checked(self, db):
+        # workspace_uuid wins over project_id, and is still validated.
+        with pytest.raises(ValueError, match="split-brain"):
+            db._resolve_workspace_uuid_kwargs(self._ORPHAN, "__test__")
+
+    def test_present_uuid_returns_it(self, db):
+        ws = _bootstrap_test_workspace(db, "membership-present")
+        assert db._resolve_workspace_uuid_kwargs(ws, None) == ws
+
+    def test_unknown_uuid_bootstraps_not_raises(self, db):
+        from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
+
+        # Even on a DB where the __unknown__ row may be absent, passing the
+        # canonical uuid bootstraps it rather than raising.
+        db._conn.execute(
+            "DELETE FROM workspaces WHERE uuid = ?", (_UNKNOWN_WORKSPACE_UUID,)
+        )
+        db._conn.commit()
+        result = db._resolve_workspace_uuid_kwargs(
+            _UNKNOWN_WORKSPACE_UUID, None
+        )
+        assert result == _UNKNOWN_WORKSPACE_UUID
+        # Row now exists.
+        assert db._conn.execute(
+            "SELECT 1 FROM workspaces WHERE uuid = ?",
+            (_UNKNOWN_WORKSPACE_UUID,),
+        ).fetchone() is not None

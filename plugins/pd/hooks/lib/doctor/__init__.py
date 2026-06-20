@@ -1,6 +1,6 @@
 """pd:doctor diagnostic module.
 
-Entry point: run_diagnostics() runs all 14 checks and returns a DiagnosticReport.
+Entry point: run_diagnostics() runs every check in CHECK_ORDER and returns a DiagnosticReport.
 """
 from __future__ import annotations
 
@@ -35,7 +35,9 @@ from doctor.checks import (
     check_security_review_command,
     check_stale_dependencies,
     check_stale_worktrees,
+    check_unknown_workspace_orphans,
     check_workflow_phase,
+    check_workspace_uuid_consistency,
 )
 from doctor.models import CheckResult, DiagnosticReport, Issue
 
@@ -73,6 +75,15 @@ CHECK_ORDER = [
     # Feature 116 FR-2 / AC-2.x: AST audit that all doctor checks emit
     # severity from {error, warning, info}.
     check_severity_vocab,
+    # Workspace split-brain fix: detect (and, via fix actions, repair) a
+    # workspace.json whose uuid is absent from the workspaces table. NOT in
+    # _ENTITY_DB_CHECKS — it self-guards a missing DB and its fresh-checkout
+    # warning is meaningful without one.
+    check_workspace_uuid_consistency,
+    # Unknown-workspace orphan claim: count entities still stranded in the
+    # canonical unknown-workspace bucket and (via the fix action) re-attribute
+    # them. Self-guards a missing/locked DB, so NOT in _ENTITY_DB_CHECKS.
+    check_unknown_workspace_orphans,
 ]
 
 # Checks that require entity DB

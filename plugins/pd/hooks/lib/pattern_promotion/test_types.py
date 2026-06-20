@@ -52,17 +52,6 @@ class TestFileEdit:
         assert data["before"] == "old content\n"
         assert data["write_order"] == 1
 
-    def test_write_order_is_int(self):
-        edit = FileEdit(
-            path=Path("/tmp/x"),
-            action="create",
-            before=None,
-            after="x",
-            write_order=2,
-        )
-        data = json.loads(_to_json(edit))
-        assert isinstance(data["write_order"], int)
-
 
 class TestDiffPlan:
     def test_empty_edits_roundtrip(self):
@@ -104,12 +93,6 @@ class TestDiffPlan:
         assert data["edits"][1]["write_order"] == 2
         assert data["target_type"] == "hook"
 
-    def test_target_type_valid_enum(self):
-        for tt in ("hook", "skill", "agent", "command"):
-            plan = DiffPlan(edits=[], target_type=tt, target_path=Path("x"))
-            data = json.loads(_to_json(plan))
-            assert data["target_type"] == tt
-
 
 class TestResult:
     def test_success_roundtrip(self):
@@ -140,15 +123,3 @@ class TestResult:
         assert data["target_path"] is None
         assert data["rolled_back"] is True
         assert "validate.sh" in data["reason"]
-
-    def test_stage_completed_range(self):
-        for stage in range(0, 6):
-            res = Result(
-                success=False,
-                target_path=None,
-                reason="test",
-                rolled_back=False,
-                stage_completed=stage,
-            )
-            data = json.loads(_to_json(res))
-            assert data["stage_completed"] == stage

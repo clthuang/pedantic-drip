@@ -34,6 +34,7 @@ from semantic_memory._config_utils import (
     _iso_utc,
     _resolve_int_config as _resolve_int_config_core,
     _warn_and_default as _warn_and_default_core,
+    write_secure_log_line,
 )
 from semantic_memory._confidence import _recompute_confidence as _recompute_confidence_core
 from semantic_memory.database import MemoryDatabase
@@ -145,65 +146,7 @@ def _emit_decay_diagnostic(diag: dict) -> None:
         "dry_run": diag["dry_run"],
     })
     try:
-        # mkdir MUST be inside try/except so both "parent is a file" errors
-        # and "path is a directory" errors (AC-19 monkeypatch) are caught.
-        # OSError covers IsADirectoryError, PermissionError, FileNotFoundError,
-        # and IOError (alias in Python 3).
-        # FR-1.2 (#00097): parent dir 0o700; symlink-safe open via O_NOFOLLOW.
-        # Note: mkdir(mode=) only applies when the dir is newly created — existing
-        # dirs keep their current mode (documented platform behavior).
-        INFLUENCE_DEBUG_LOG_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-
-        # Feature 089 FR-1.7 / AC-7 (#00154): verify parent dir ownership +
-        # mode BEFORE opening the log. An attacker with write access to the
-        # parent dir (group/world-writable) could race-swap the log file; a
-        # foreign uid on the parent is an active compromise signal.
-        parent_stat = INFLUENCE_DEBUG_LOG_PATH.parent.stat()
-        if parent_stat.st_uid != os.getuid() or (parent_stat.st_mode & 0o077):
-            # Silently decline to write — treat like any other log failure.
-            raise OSError(
-                f"refusing to write log: parent dir "
-                f"{INFLUENCE_DEBUG_LOG_PATH.parent} has insecure "
-                f"uid={parent_stat.st_uid} or mode=0o{parent_stat.st_mode & 0o777:o}"
-            )
-
-        base_flags = os.O_APPEND | os.O_WRONLY
-        if hasattr(os, "O_NOFOLLOW"):
-            base_flags |= os.O_NOFOLLOW
-        # First attempt: O_EXCL — atomic create-and-acquire. If EEXIST, we
-        # fall back to append-only (no O_CREAT, no O_EXCL) and verify the
-        # existing file's ownership via fstat so a symlink-swap or foreign-uid
-        # hijack is caught BEFORE we write.
-        try:
-            fd = os.open(
-                str(INFLUENCE_DEBUG_LOG_PATH),
-                base_flags | os.O_CREAT | os.O_EXCL,
-                0o600,
-            )
-        except FileExistsError:
-            fd = os.open(str(INFLUENCE_DEBUG_LOG_PATH), base_flags)
-            # Re-stat the fd — not the path — so a TOCTOU symlink swap post-
-            # open is caught.
-            try:
-                fd_stat = os.fstat(fd)
-            except OSError:
-                os.close(fd)
-                raise
-            if fd_stat.st_uid != os.getuid():
-                os.close(fd)
-                raise OSError(
-                    f"refusing to append log: file owner uid={fd_stat.st_uid} "
-                    f"!= running uid={os.getuid()}"
-                )
-        try:
-            if hasattr(os, "fchmod"):
-                try:
-                    os.fchmod(fd, 0o600)
-                except (OSError, NotImplementedError):
-                    pass  # platforms without fchmod / filesystems without perm bits
-            os.write(fd, (line + "\n").encode("utf-8"))
-        finally:
-            os.close(fd)
+        write_secure_log_line(INFLUENCE_DEBUG_LOG_PATH, line)
     except OSError as e:
         global _decay_log_warned
         if not _decay_log_warned:

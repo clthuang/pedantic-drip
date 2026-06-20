@@ -159,7 +159,7 @@ class EntityWorkflowEngine:
         # Phase A: completion — route by backend
         if entity_type == "feature":
             # FR-2: forward workspace_uuid to the frozen-engine layer.
-            state = self._feature_complete(
+            state = self._frozen_engine.complete_phase(
                 type_id, phase, workspace_uuid=workspace_uuid,
             )
         elif _is_phase_sequence_kind(entity_type):
@@ -398,25 +398,6 @@ class EntityWorkflowEngine:
             self._db.update_entity(child["type_id"], status="abandoned")
             abandoned.append(child["uuid"])
         return abandoned
-
-    # ------------------------------------------------------------------
-    # Private: Feature backend (delegates to frozen engine)
-    # ------------------------------------------------------------------
-
-    def _feature_complete(
-        self, type_id: str, phase: str,
-        *,
-        workspace_uuid: str | None = None,
-    ) -> FeatureWorkflowState:
-        """Phase A for features: delegate to frozen engine (auto-commits).
-
-        FR-2: workspace_uuid is forwarded to the frozen engine which routes
-        it through update_workflow_phase / update_entity writes on the
-        terminal phase path.
-        """
-        return self._frozen_engine.complete_phase(
-            type_id, phase, workspace_uuid=workspace_uuid,
-        )
 
     # ------------------------------------------------------------------
     # Private: FiveDBackend (direct DB — tasks, projects, initiatives, etc.)

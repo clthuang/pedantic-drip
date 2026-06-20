@@ -19,9 +19,11 @@ All static routing tables, rules, and reference data are collected here for prom
 
 ### Routing Boundary Directive
 
-> During steps 1-6, you are ROUTING, not executing. Do not use Edit, Write, or Bash.
-> Only use Read, Glob, Grep for discovery, AskUserQuestion for clarification,
-> and Task for secretary-reviewer. Step 7 (DELEGATE) lifts this restriction.
+> During steps 1-6, you are ROUTING, not executing. Do not use Edit, Write, or Bash
+> to do the user's task. Only use Read, Glob, Grep for discovery, AskUserQuestion for
+> clarification, Task for secretary-reviewer, and the read-only Secretary Intelligence
+> CLI (`SI …`, see **Secretary Intelligence CLI** below) for mode/parent/weight/OKR
+> computation. Step 7 (DELEGATE) lifts this restriction.
 
 ### YOLO Mode Overrides
 
@@ -140,12 +142,12 @@ Used by Step 4 (weight recommendation) and Weight Escalation Detection:
 
 ### OKR Anti-Pattern Checks
 
-On KR creation, check for activity-word anti-patterns and KR count limits:
+On key_result creation, run the Secretary Intelligence CLI (see **Secretary Intelligence CLI** below) and surface any non-null `warning`:
 
-1. **Activity-word check:** If the KR text contains activity verbs (launch, build, implement, create, deploy, migrate, develop, ship, release), warn: "This looks like an output, not an outcome. Consider reframing as a measurable result."
-2. **KR count check:** If the parent objective already has >5 active KRs, warn: "Consider reducing KR count. Recommended max: 5."
+1. **Activity-word check:** `SI detect-activity-kr --text "<kr text>"` → if `.warning` is non-null, show it (output, not an outcome — reframe as a measurable result).
+2. **KR count check:** `SI check-okr --objective-uuid "<parent objective uuid>"` → if `.warning` is non-null, show it (objective exceeds the recommended max of 5 active KRs).
 
-These checks use `detect_activity_kr(text)` and `check_kr_count(db, objective_uuid)` from `secretary_intelligence.py`.
+The activity-verb list and the count threshold live in the CLI, so this stays in sync with `secretary_intelligence.py` automatically. Fallback if the CLI is unavailable: flag activity verbs (launch, build, implement, create, deploy, migrate, develop, ship, release, complete) and objectives with >5 active KRs by hand.
 
 ### Entity Type Hierarchy Table
 
@@ -243,6 +245,33 @@ AskUserQuestion:
 Use these values from session context (injected at session start):
 - `{pd_artifacts_root}` — root directory for feature artifacts (default: `docs`)
 - `{pd_reviewer_model}` — model to use for the secretary reviewer gate (default: `opus`, overridable for local proxy users)
+
+## Secretary Intelligence CLI
+
+Mode detection, parent/duplicate search, weight recommendation, OKR anti-pattern checks, catchball context, and scope-expansion are computed by the unit-tested `workflow_engine.secretary_intelligence` module — the deterministic source of truth behind the static tables above. Step 0, Step 3, Step 4, the Universal Work Creation Flow, and Weight Escalation call it instead of re-deriving the logic from the tables by hand.
+
+**Setup** — shell state does NOT persist between separate Bash calls, so include this block in the *same* Bash invocation as any `SI …` call (or inline the full `PYTHONPATH=… python -m …` form):
+
+```bash
+PLUGIN_ROOT=$(ls -d ~/.claude/plugins/cache/*/pd*/*/hooks 2>/dev/null | head -1 | xargs dirname)
+if [[ -z "$PLUGIN_ROOT" ]] || [[ ! -d "$PLUGIN_ROOT" ]]; then PLUGIN_ROOT="plugins/pd"; fi  # Fallback (dev workspace)
+SI() { PYTHONPATH="$PLUGIN_ROOT/hooks/lib" "$PLUGIN_ROOT/.venv/bin/python" -m workflow_engine.secretary_intelligence "$@" 2>/dev/null; }
+```
+
+**Subcommands** (each prints one JSON line; the entity-aware ones honor `ENTITY_DB_PATH`, default `~/.claude/pd/entities/entities.db`):
+
+| Invocation | Output |
+|---|---|
+| `SI detect-mode --text "<req>" --context '<json>'` | `{"mode": "CREATE\|CONTINUE\|QUERY"}` |
+| `SI find-parents --entity-type <type> --name "<name>"` | `{"candidates": [{type_id, name, status, …}]}` |
+| `SI check-duplicates --name "<name>"` | `{"duplicates": [...]}` |
+| `SI recommend-weight --signals '<json-array>'` | `{"weight": "light\|standard\|full"}` |
+| `SI scope-expansion --current-mode <w> --signals '<json-array>'` | `{"upgrade": "<weight>\|null"}` |
+| `SI detect-activity-kr --text "<kr>"` | `{"warning": "<msg>\|null"}` |
+| `SI check-okr --objective-uuid <uuid>` | `{"warning": "<msg>\|null"}` |
+| `SI parent-context --parent-type-id <type_id>` | `{"context": {type_id, name, phase, progress, traffic_light}\|null}` |
+
+On an `{"error": …}` line or empty output, fall back to the static tables above.
 
 ## Subcommand Routing
 
@@ -375,19 +404,20 @@ Before routing, determine the user's operating mode: **CREATE**, **CONTINUE**, o
 
 #### Resolution Order
 
-1. **Context check** — Detect current git branch via `git branch --show-current`.
-   - If on a feature branch (matches `feature/*` or `feat/*`):
-     - Check for explicit CREATE intent: patterns like "add a task", "create a task to track", "new entity" → **CREATE**
-     - Check for explicit QUERY intent: question words (how, what, where, which, list, show, find, status, progress) appearing first → **QUERY**
-     - Otherwise → **CONTINUE** (default when on feature branch)
-   - If NOT on a feature branch → proceed to keyword classification
+Run the Secretary Intelligence CLI — it encodes the full resolution order (feature-branch context override → first-match keyword scan → ambiguous-defaults-to-CREATE) deterministically. Set up `SI` (see **Secretary Intelligence CLI** above) in the same Bash invocation, then:
 
-2. **Keyword classification** — Scan request text left-to-right for first keyword match:
-   - Action verbs: create, add, build, implement, start, make, new, need, want, fix, set up → **CREATE**
-   - Question/status words: what, how, where, which, list, show, find, status, progress → **QUERY**
-   - Continuation words: continue, resume, next, finish → **CONTINUE**
+```bash
+BRANCH=$(git branch --show-current 2>/dev/null)
+# Only feature/feat branches contribute the CONTINUE-default context.
+case "$BRANCH" in feature/*|feat/*) CTX=$(printf '{"feature_branch":"%s"}' "$BRANCH");; *) CTX='{}';; esac
+SI detect-mode --text "<the user's request text>" --context "$CTX"
+```
 
-3. **Ambiguous** — If no keywords match after context check, default to **CREATE** (safe default — creation flow includes clarification steps).
+Read `.mode` from the JSON (`CREATE`, `CONTINUE`, or `QUERY`). If the CLI is unavailable (empty output or `{"error": …}`), fall back to the Mode Detection Keywords Table and the order it documents:
+
+1. **Context check** — on a `feature/*` or `feat/*` branch → **CONTINUE**, unless explicit CREATE intent ("add a task", "create a task to track", "new entity") or QUERY intent (question words first) is present.
+2. **Keyword classification** (not on a feature branch) — first left-to-right keyword match: action verbs → **CREATE**; question/status words → **QUERY**; continuation words → **CONTINUE**.
+3. **Ambiguous** — no match → **CREATE** (safe default; creation flow includes clarification steps).
 
 #### Mode-Specific Behaviour
 
@@ -504,12 +534,12 @@ When Step 0 detected **CREATE** mode, query the entity registry before maturity 
 
 1. **Search for parent candidates:**
    - Infer the entity type from scope signals: company-wide → initiative, multi-feature → project, single deliverable → feature, bounded fix → task (or light feature)
-   - Determine plausible parent types: task parents = [feature, project, key_result]; feature parents = [project, key_result, objective, initiative]; project parents = [key_result, objective, initiative]
-   - For each plausible parent type, call `search_entities(query="{request keywords}", entity_type="{parent_type}")` to find candidates
+   - Run `SI find-parents --entity-type "{inferred_type}" --name "{request keywords}"` (see **Secretary Intelligence CLI** above). It applies the Entity Type Hierarchy Table and FTS5 search, returning deduped `.candidates`.
    - Present top candidates (max 3) to user: "Found potential parent: {type_id} — {name} ({status})"
+   - Fallback if the CLI is unavailable: for each plausible parent type from the hierarchy table, call `search_entities(query="{request keywords}", entity_type="{parent_type}")`.
 
 2. **Check for duplicates:**
-   - Call `search_entities(query="{entity name/description}")` without type filter
+   - Run `SI check-duplicates --name "{entity name/description}"` → read `.duplicates` (FTS5 search across all types). Fallback: `search_entities(query="{entity name/description}")` without type filter.
    - If results overlap with what user is creating → warn: "Potential duplicate: {type_id} — {name}. Continue creating or link to existing?"
    - Present via AskUserQuestion with options: "Create new", "Link to existing {type_id}", "Cancel"
 
@@ -622,15 +652,9 @@ Apply Confidence Thresholds above to filter results.
 
 When Step 0 detected **CREATE** mode, recommend a workflow weight based on scope signals extracted from the request and triage context:
 
-**Scope signal extraction:** Collect descriptors from the user's request that indicate scope/complexity:
-- "quick fix", "small", "simple", "typo", "trivial", "minor", "cosmetic" → light signals
-- "rewrite", "refactor", "breaking change", "complex", "cross-team", "architecture", "migration", "security", "multi-service" → full signals
-- No clear signals → standard (default)
-
-**Weight resolution:**
-- Any full signal present → recommend **full** weight
-- Only light signals → recommend **light** weight
-- No signals or mixed → recommend **standard** weight
+1. Collect the scope/complexity phrases the user used into a JSON array (e.g. `["rewrite","cross-team"]`).
+2. Run `SI recommend-weight --signals '<json-array>'` (see **Secretary Intelligence CLI** above) → read `.weight`. The CLI uses fuzzy + synonym matching over the full signal lists, so it catches phrasings the Scope Signal Keywords Table only abbreviates.
+3. Fallback if unavailable — resolve via that table: any full signal → **full**; only light signals → **light**; no signals or mixed → **standard**.
 
 Store `recommended_weight` for the Universal Work Creation Flow. Present in Step 6 (RECOMMEND): "Recommended weight: {weight} based on scope signals: {list of matched signals}."
 
@@ -795,7 +819,7 @@ Propose parent linkage using Triage results:
 1. If `parent_candidate` was found in Triage:
    - Call `get_entity(ref="{parent_ref}")` to confirm parent still exists and is active; capture `uuid` as `parent_uuid`
    - Present: "Link as child of {parent_name} ({parent_ref})?"
-   - Before confirming parent linkage, fetch parent context using `get_parent_context(db, parent_ref)` from `secretary_intelligence.py`. If context is returned, display: "Parent: {type_id} ({phase}, {progress}%)" with traffic light indicator ({traffic_light}). This is the Catchball pattern (AC-35a) — showing parent intent on creation so the user understands what they're linking into.
+   - Before confirming parent linkage, fetch parent context: `SI parent-context --parent-type-id "{parent_ref}"` (see **Secretary Intelligence CLI** above). If `.context` is non-null, display: "Parent: {type_id} ({phase}, {progress}%)" with the traffic-light indicator ({traffic_light}). This is the Catchball pattern (AC-35a) — showing parent intent on creation so the user understands what they're linking into.
    - User confirms or selects different parent or standalone
 
 2. If no parent found:
@@ -880,8 +904,8 @@ Extract scope signals from the user's current request and conversation context. 
 
 1. Determine current weight: call `get_entity(ref="{current_feature_type_id}")` → read `metadata.weight` (or `workflow_phases.mode`)
 2. If current weight is already `full` → no escalation possible, skip
-3. Match signals against the expansion patterns above
-4. If escalation detected → recommend upgrade
+3. Collect the user's scope-expansion phrases into a JSON array and run `SI scope-expansion --current-mode "{current_weight}" --signals '<json-array>'` (see **Secretary Intelligence CLI** above). Read `.upgrade` — null means no escalation; a weight string is the recommended upgrade. Fallback: match against the Expansion signals table above.
+4. If `.upgrade` is non-null → recommend that upgrade.
 
 #### Recommendation
 

@@ -388,6 +388,9 @@ def check_workspace_uuid_consistency(
     db_has_entities = False
     db_legacy_for_uuid: str | None = None
     db_uuid_present = False
+    # uuid(s) the workspaces table holds for this project_root — used to pick
+    # a fixable hint for the orphan case (adopt single row vs insert).
+    db_root_uuids: list[str] = []
 
     if os.path.isfile(entities_db_path):
         conn = None
@@ -417,6 +420,20 @@ def check_workspace_uuid_consistency(
                 if row is not None:
                     db_uuid_present = True
                     db_legacy_for_uuid = row[0]
+
+            if project_root:
+                try:
+                    db_root_uuids = [
+                        r[0]
+                        for r in conn.execute(
+                            "SELECT uuid FROM workspaces "
+                            "WHERE project_root IS NOT NULL "
+                            "  AND project_root = ?",
+                            (os.path.abspath(project_root),),
+                        ).fetchall()
+                    ]
+                except sqlite3.Error:
+                    db_root_uuids = []
         finally:
             if conn is not None:
                 try:
@@ -461,6 +478,38 @@ def check_workspace_uuid_consistency(
     else:
         # File present — check DB consistency.
         if file_uuid and not db_uuid_present:
+            # Split-brain: the file's uuid has no workspaces row. Pick a
+            # fixable hint based on what the table holds for this project_root.
+            # The "Adopt …"/"Insert …" prefixes are the contract with the
+            # doctor fix actions (fixer._SAFE_PATTERNS); do not vary them.
+            from entity_registry.project_identity import _WORKSPACE_UUID_RE
+            file_uuid_well_formed = bool(
+                _WORKSPACE_UUID_RE.match(file_uuid or "")
+            )
+            if len(db_root_uuids) == 1:
+                # Adopt is safe even if the file uuid is malformed — it writes
+                # the (valid) DB row uuid, discarding the bad file value.
+                fix_hint = (
+                    f"Adopt workspace UUID from DB row {db_root_uuids[0]} "
+                    f"(file has orphan {file_uuid})"
+                )
+            elif len(db_root_uuids) == 0 and file_uuid_well_formed:
+                fix_hint = (
+                    f"Insert missing workspaces row for file UUID {file_uuid}"
+                )
+            elif len(db_root_uuids) == 0:
+                # Malformed file uuid + nothing to adopt → not auto-fixable.
+                fix_hint = (
+                    "workspace.json workspace_uuid is malformed; rm "
+                    ".claude/pd/workspace.json and re-run session-start."
+                )
+            else:
+                # Ambiguous — multiple rows claim this project_root; no safe
+                # automatic fix.
+                fix_hint = (
+                    "Multiple workspaces rows match this project_root; "
+                    "resolve manually (inspect the workspaces table)."
+                )
             issues.append(
                 Issue(
                     check="workspace_uuid_consistency",
@@ -470,11 +519,7 @@ def check_workspace_uuid_consistency(
                         f"workspace.json UUID {file_uuid} not present in "
                         "workspaces table"
                     ),
-                    fix_hint=(
-                        "If pre-Migration-11 DB: run migration. Otherwise "
-                        "rm .claude/pd/workspace.json and re-run "
-                        "session-start to bootstrap from DB."
-                    ),
+                    fix_hint=fix_hint,
                 )
             )
         elif file_uuid and file_legacy and db_legacy_for_uuid is not None and (
@@ -501,6 +546,121 @@ def check_workspace_uuid_consistency(
     passed = not any(i.severity == "error" for i in issues)
     return CheckResult(
         name="workspace_uuid_consistency",
+        passed=passed,
+        issues=issues,
+        elapsed_ms=elapsed,
+    )
+
+
+def check_unknown_workspace_orphans(
+    entities_db_path: str | None = None,
+    project_root: str | None = None,
+    **_,
+) -> CheckResult:
+    """Detect entities stranded in the canonical unknown-workspace bucket.
+
+    Migration 11 maps every legacy ``project_id="__unknown__"`` entity to the
+    canonical ``_UNKNOWN_WORKSPACE_UUID``. Once a real workspace is
+    bootstrapped, those rows should be claimed into it. This check counts the
+    orphans and, when exactly one ``workspaces`` row matches ``project_root``,
+    emits the fixable ``Claim unknown-workspace entities into`` hint — the
+    contract with the doctor fix action (fixer._SAFE_PATTERNS), which
+    re-attributes via ``EntityDatabase.claim_unknown_entities``. Self-guards a
+    missing/locked DB and the pre-Mig-11 schema (no ``workspace_uuid`` column).
+    """
+    start = time.monotonic()
+    issues: list[Issue] = []
+
+    if (
+        not project_root
+        or not entities_db_path
+        or not os.path.isfile(entities_db_path)
+    ):
+        elapsed = int((time.monotonic() - start) * 1000)
+        return CheckResult(
+            name="unknown_workspace_orphans",
+            passed=True,
+            issues=issues,
+            elapsed_ms=elapsed,
+        )
+
+    from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
+
+    orphan_count = 0
+    root_uuids: list[str] = []
+    conn = None
+    try:
+        conn = sqlite3.connect(
+            f"file:{entities_db_path}?mode=ro", uri=True, timeout=2.0
+        )
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM entities WHERE workspace_uuid = ?",
+                (_UNKNOWN_WORKSPACE_UUID,),
+            ).fetchone()
+            orphan_count = int(row[0]) if row else 0
+        except sqlite3.Error:
+            # Pre-Mig-11 schema has no workspace_uuid column — nothing to claim.
+            orphan_count = 0
+        try:
+            root_uuids = [
+                r[0]
+                for r in conn.execute(
+                    "SELECT uuid FROM workspaces "
+                    "WHERE project_root IS NOT NULL AND project_root = ?",
+                    (os.path.abspath(project_root),),
+                ).fetchall()
+            ]
+        except sqlite3.Error:
+            root_uuids = []
+    except sqlite3.Error:
+        elapsed = int((time.monotonic() - start) * 1000)
+        return CheckResult(
+            name="unknown_workspace_orphans",
+            passed=True,
+            issues=issues,
+            elapsed_ms=elapsed,
+        )
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    if orphan_count > 0:
+        if len(root_uuids) == 1:
+            # The "Claim unknown-workspace entities into" prefix is the contract
+            # with fixer._SAFE_PATTERNS; do not vary it.
+            fix_hint = (
+                f"Claim unknown-workspace entities into workspace "
+                f"{root_uuids[0]}"
+            )
+        else:
+            # Orphans exist but the current workspace is ambiguous (0 or >1 rows
+            # match project_root) — not safely auto-claimable (manual hint).
+            fix_hint = (
+                "Bootstrap a single workspace for this project_root "
+                "(run session-start.sh), then re-run doctor --fix to claim."
+            )
+        noun = "entity" if orphan_count == 1 else "entities"
+        issues.append(
+            Issue(
+                check="unknown_workspace_orphans",
+                severity="warning",
+                entity=None,
+                message=(
+                    f"{orphan_count} {noun} stranded in the unknown-workspace "
+                    "bucket"
+                ),
+                fix_hint=fix_hint,
+            )
+        )
+
+    elapsed = int((time.monotonic() - start) * 1000)
+    passed = not any(i.severity == "error" for i in issues)
+    return CheckResult(
+        name="unknown_workspace_orphans",
         passed=passed,
         issues=issues,
         elapsed_ms=elapsed,

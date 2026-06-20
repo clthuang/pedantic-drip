@@ -78,29 +78,31 @@ class RetrievalPipeline:
         Returns a composed context string, or ``None`` if no signals
         are found.
         """
-        signals: list[str] = []
+        return self._compose_context(self._gather_signals(project_root))
 
-        # 1. Active feature .meta.json
+    def _gather_signals(self, project_root: str) -> dict:
+        """Gather every context signal in a single pass and cache the result.
+
+        Cached per ``project_root`` on the instance so the injector's
+        ``has_work_context()`` + ``collect_context()`` pair runs the git
+        subprocess probes (branch, committed, working tree) once rather than
+        twice. The pipeline is constructed fresh per injection, so the cache
+        lifetime is a single session-start injection.
+        """
+        if getattr(self, "_signals_cache_key", None) == project_root:
+            return self._signals_cache
+
+        # 1-3. Active feature: slug, description, phase
         meta, feature_dir = self._find_active_feature(project_root)
-
         if meta is not None and feature_dir is not None:
             slug = meta.get("slug", "")
-            if slug:
-                signals.append(slug)
-
-            # 2. Feature description (spec.md first paragraph, max 100 words)
             description = self._read_feature_description(feature_dir)
-            if description:
-                signals.append(description)
-
-            # 3. Phase
             phase = meta.get("lastCompletedPhase", "unknown")
-            signals.append(f"Phase: {phase}")
+        else:
+            slug, description, phase = "", None, None
 
         # 4. Project-level description (always included)
         project_desc = self._read_project_descriptions(project_root)
-        if project_desc:
-            signals.append(project_desc)
 
         # 5. Branch name (skip generic names that add no signal)
         base_branch = self._config.get("base_branch", "auto")
@@ -108,26 +110,53 @@ class RetrievalPipeline:
         if base_branch not in ("auto", ""):
             skip_branches.add(base_branch)
         branch = self._git_branch_name(project_root)
-        if branch and branch not in skip_branches:
-            signals.append(f"Branch: {branch}")
+        branch = branch if (branch and branch not in skip_branches) else None
 
         # 6a. Git committed changes
         committed_files = self._git_changed_files(project_root)
-        if committed_files:
-            signals.append(f"Files: {' '.join(committed_files)}")
 
-        # 6b. Working tree changes (unstaged + staged), deduplicated
+        # 6b. Working tree changes (unstaged + staged), deduped against committed
         working_files = self._git_working_tree_files(project_root)
         if working_files:
             committed_set = set(committed_files) if committed_files else set()
-            new_files = [f for f in working_files if f not in committed_set]
-            if new_files:
-                signals.append(f"Editing: {' '.join(new_files)}")
+            editing_files = [f for f in working_files if f not in committed_set]
+        else:
+            editing_files = []
 
-        if not signals:
+        signals = {
+            "slug": slug,
+            "description": description,
+            "phase": phase,
+            "project_desc": project_desc,
+            "branch": branch,
+            "committed_files": committed_files,
+            "editing_files": editing_files,
+        }
+        self._signals_cache_key = project_root
+        self._signals_cache = signals
+        return signals
+
+    @staticmethod
+    def _compose_context(signals: dict) -> str | None:
+        """Compose the ordered context string from gathered signals."""
+        parts: list[str] = []
+        if signals["slug"]:
+            parts.append(signals["slug"])
+        if signals["description"]:
+            parts.append(signals["description"])
+        if signals["phase"] is not None:
+            parts.append(f"Phase: {signals['phase']}")
+        if signals["project_desc"]:
+            parts.append(signals["project_desc"])
+        if signals["branch"]:
+            parts.append(f"Branch: {signals['branch']}")
+        if signals["committed_files"]:
+            parts.append(f"Files: {' '.join(signals['committed_files'])}")
+        if signals["editing_files"]:
+            parts.append(f"Editing: {' '.join(signals['editing_files'])}")
+        if not parts:
             return None
-
-        return ". ".join(signals)
+        return ". ".join(parts)
 
     # ------------------------------------------------------------------
     # Work context detection
@@ -136,37 +165,25 @@ class RetrievalPipeline:
     def has_work_context(self, project_root: str) -> bool:
         """Check whether work-specific context signals are present.
 
-        Returns True when any of signals 1-3, 5, or 6 from
-        collect_context() are present (anything beyond the
-        always-present project description).
+        Returns True when any of signals 1-3, 5, or 6 from collect_context()
+        are present (anything beyond the always-present project description).
 
-        Mirrors collect_context()'s signal checks for consistency.
-        Duplicates some subprocess calls (git branch, git diff) that
-        collect_context() will also make — accepted tradeoff since
-        these are lightweight (~50-100ms total) and only run in the
-        injector path.
+        Short-circuits on an active feature (signal 1) without running the git
+        probes; otherwise derives the answer from the cached single-pass gather
+        that collect_context() shares, so the injector runs the git
+        subprocesses once rather than twice.
         """
+        # Short-circuit on an active feature (signal 1) without touching git.
         meta, feature_dir = self._find_active_feature(project_root)
         if meta is not None and feature_dir is not None:
-            return True  # Signal 1 (feature slug) present — matches collect_context line 86
+            return True
 
-        branch = self._git_branch_name(project_root)
-        base_branch = self._config.get("base_branch", "auto")
-        skip_branches = {"main", "master", "develop", "HEAD"}
-        if base_branch not in ("auto", ""):
-            skip_branches.add(base_branch)
-        if branch and branch not in skip_branches:
-            return True  # Signal 5 (non-default branch) present
-
-        committed = self._git_changed_files(project_root)
-        if committed:
-            return True  # Signal 6a present
-
-        working = self._git_working_tree_files(project_root)
-        if working:
-            return True  # Signal 6b present
-
-        return False
+        signals = self._gather_signals(project_root)
+        return bool(
+            signals["branch"]
+            or signals["committed_files"]
+            or signals["editing_files"]
+        )
 
     # ------------------------------------------------------------------
     # Retrieval

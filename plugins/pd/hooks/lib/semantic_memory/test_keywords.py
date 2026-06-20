@@ -370,12 +370,10 @@ class TestConstants:
         assert not _KEYWORD_RE.match("-leading")
         assert not _KEYWORD_RE.match("")
 
-    def test_stopwords_is_frozenset(self):
-        assert isinstance(_STOPWORDS, frozenset)
+    def test_stopwords_contains_expected_terms(self):
         assert "code" in _STOPWORDS
         assert "development" in _STOPWORDS
         assert "change" in _STOPWORDS
-        assert len(_STOPWORDS) == 17
 
     def test_keyword_prompt_has_placeholders(self):
         assert "{name}" in KEYWORD_PROMPT

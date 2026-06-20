@@ -5,6 +5,7 @@ TDD: tests written first, then implementation.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 import uuid as uuid_mod
 
@@ -812,3 +813,112 @@ class TestNewSignals:
     def test_expansion_extra_requirements_triggers_standard(self):
         result = detect_scope_expansion("light", ["extra requirements found"])
         assert result == "standard"
+
+
+# ---------------------------------------------------------------------------
+# CLI entry point tests (wires the module into /pd:secretary)
+# ---------------------------------------------------------------------------
+class TestCLI:
+    """`python -m workflow_engine.secretary_intelligence <subcommand>` JSON CLI."""
+
+    def _run(self, capsys, argv):
+        from workflow_engine import secretary_intelligence as si
+
+        si.main(argv)
+        return json.loads(capsys.readouterr().out)
+
+    @pytest.fixture()
+    def seeded_db_path(self, tmp_path):
+        from entity_registry.database import EntityDatabase
+
+        db_path = str(tmp_path / "entities.db")
+        db = EntityDatabase(db_path)
+        db.register_entity(
+            entity_type="objective",
+            entity_id="001-reliability",
+            name="Platform Reliability",
+            status="active",
+            project_id="__unknown__",
+        )
+        db.close()
+        return db_path
+
+    # -- pure-text subcommands (no DB) --
+
+    def test_detect_mode(self, capsys):
+        result = self._run(
+            capsys,
+            ["detect-mode", "--text", "add a task to track logins",
+             "--context", '{"feature_branch":"feature/x"}'],
+        )
+        assert result == {"mode": "CREATE"}
+
+    def test_recommend_weight(self, capsys):
+        result = self._run(capsys, ["recommend-weight", "--signals", '["rewrite"]'])
+        assert result == {"weight": "full"}
+
+    def test_detect_activity_kr(self, capsys):
+        result = self._run(capsys, ["detect-activity-kr", "--text", "launch the dashboard"])
+        assert result["warning"] is not None
+
+    def test_scope_expansion(self, capsys):
+        result = self._run(
+            capsys,
+            ["scope-expansion", "--current-mode", "light", "--signals", '["breaking change"]'],
+        )
+        assert result == {"upgrade": "full"}
+
+    # -- entity-aware subcommands (DB via ENTITY_DB_PATH) --
+
+    def test_find_parents(self, capsys, monkeypatch, seeded_db_path):
+        monkeypatch.setenv("ENTITY_DB_PATH", seeded_db_path)
+        result = self._run(
+            capsys,
+            ["find-parents", "--entity-type", "project", "--name", "Platform Reliability"],
+        )
+        assert any("reliability" in c["type_id"] for c in result["candidates"])
+
+    def test_check_duplicates(self, capsys, monkeypatch, seeded_db_path):
+        monkeypatch.setenv("ENTITY_DB_PATH", seeded_db_path)
+        result = self._run(capsys, ["check-duplicates", "--name", "Platform Reliability"])
+        assert isinstance(result["duplicates"], list)
+
+    def test_parent_context_missing_entity_returns_null(self, capsys, monkeypatch, seeded_db_path):
+        monkeypatch.setenv("ENTITY_DB_PATH", seeded_db_path)
+        result = self._run(capsys, ["parent-context", "--parent-type-id", "project:999-nope"])
+        assert result == {"context": None}
+
+    # -- error paths (JSON error on stdout, non-zero exit) --
+
+    def test_invalid_signals_json_exits_2(self, capsys):
+        from workflow_engine import secretary_intelligence as si
+
+        with pytest.raises(SystemExit) as exc:
+            si.main(["recommend-weight", "--signals", "not-json"])
+        assert exc.value.code == 2
+        assert "error" in json.loads(capsys.readouterr().out)
+
+    def test_invalid_context_json_exits_2(self, capsys):
+        from workflow_engine import secretary_intelligence as si
+
+        with pytest.raises(SystemExit) as exc:
+            si.main(["detect-mode", "--text", "x", "--context", "{bad"])
+        assert exc.value.code == 2
+
+    def test_corrupt_db_emits_error(self, capsys, monkeypatch, tmp_path):
+        from workflow_engine import secretary_intelligence as si
+
+        bad = tmp_path / "garbage.db"
+        bad.write_text("this is not a sqlite database")
+        monkeypatch.setenv("ENTITY_DB_PATH", str(bad))
+        with pytest.raises(SystemExit) as exc:
+            si.main(["check-duplicates", "--name", "x"])
+        assert exc.value.code == 1
+        assert "error" in json.loads(capsys.readouterr().out)
+
+    def test_missing_required_arg_exits_2(self):
+        from workflow_engine import secretary_intelligence as si
+
+        with pytest.raises(SystemExit) as exc:
+            si.main(["detect-mode"])  # missing --text
+        assert exc.value.code == 2

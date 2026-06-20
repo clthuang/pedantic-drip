@@ -5858,6 +5858,37 @@ class EntityDatabase:
             )
             self._commit()
 
+    def _validated_provided_workspace_uuid(
+        self, workspace_uuid: str, _caller: str
+    ) -> str:
+        """Confirm a caller-supplied workspace_uuid actually exists.
+
+        Previously a provided uuid was returned unchecked, so an orphaned
+        identity (the split-brain: workspace.json points at a uuid with no
+        ``workspaces`` row) surfaced only as a bare ``FOREIGN KEY constraint
+        failed`` deep in the INSERT. Fail loudly here with a fix that points
+        at the recovery path instead.
+
+        The canonical ``__unknown__`` uuid is bootstrapped (not an error) so
+        callers that pass it directly behave like the ``project_id`` path.
+        """
+        if workspace_uuid == _UNKNOWN_WORKSPACE_UUID:
+            self._ensure_unknown_workspace_row()
+            return workspace_uuid
+        # Read-only membership probe — safe inside any open transaction
+        # (no BEGIN/COMMIT added here).
+        row = self._conn.execute(
+            "SELECT 1 FROM workspaces WHERE uuid = ?", (workspace_uuid,)
+        ).fetchone()
+        if row is None:
+            raise ValueError(
+                f"{_caller}(): workspace_uuid={workspace_uuid!r} not present "
+                f"in the workspaces table — workspace.json/DB split-brain "
+                f"detected. Run pd:doctor --fix, then restart the session "
+                f"(MCP servers cache the workspace UUID at startup)."
+            )
+        return workspace_uuid
+
     def _resolve_workspace_uuid_kwargs(
         self,
         workspace_uuid: str | None,
@@ -5898,9 +5929,13 @@ class EntityDatabase:
                 DeprecationWarning,
                 stacklevel=3,
             )
-            return workspace_uuid
+            return self._validated_provided_workspace_uuid(
+                workspace_uuid, _caller
+            )
         if workspace_uuid is not None:
-            return workspace_uuid
+            return self._validated_provided_workspace_uuid(
+                workspace_uuid, _caller
+            )
         if project_id is None:
             raise ValueError(
                 f"{_caller}() requires workspace_uuid or project_id"
@@ -7662,7 +7697,12 @@ class EntityDatabase:
                     pass
                 raise
 
-    def backfill_project_ids(self, project_root: str, project_id: str) -> int:
+    def backfill_project_ids(
+        self,
+        project_root: str,
+        project_id: str,
+        workspace_uuid: str | None = None,
+    ) -> int:
         """Claim ``__unknown__`` entities whose artifact_path is under *project_root*.
 
         Temporarily drops the ``enforce_immutable_project_id`` trigger to allow
@@ -7675,6 +7715,15 @@ class EntityDatabase:
             Absolute path to the project root directory.
         project_id:
             Project identifier to assign to the claimed entities.
+        workspace_uuid:
+            When supplied (the lifespan-resolved identity), it is the
+            authoritative claim target — entities are claimed into it directly,
+            bypassing the legacy ``project_id`` lookup. This prevents
+            cross-attribution into a stale legacy-keyed row when the canonical
+            identity is already known. A competing ``project_root`` row is
+            adopted rather than duplicated. When ``None``, the target is
+            resolved by legacy ``project_id`` → single ``project_root`` match →
+            fresh mint.
 
         Returns
         -------
@@ -7702,23 +7751,62 @@ class EntityDatabase:
             .replace("%", "\\%")
             .replace("_", "\\_")
         )
-        # Resolve / bootstrap target workspace.
-        ws_row = self._conn.execute(
-            "SELECT uuid FROM workspaces WHERE project_id_legacy = ?",
-            (project_id,),
-        ).fetchone()
-        if ws_row is None:
-            target_ws_uuid = str(uuid_mod.uuid4())
-            now = self._now_iso()
-            self._conn.execute(
-                "INSERT INTO workspaces "
-                "(uuid, project_id_legacy, project_root, created_at, "
-                "updated_at) VALUES (?, ?, ?, ?, ?)",
-                (target_ws_uuid, project_id, project_root, now, now),
+        # Canonicalize root for workspaces-row ops (match validate_or_adopt).
+        root_abs = os.path.abspath(project_root)
+
+        def _single_root_or_raise():
+            rows = self._conn.execute(
+                "SELECT uuid FROM workspaces "
+                "WHERE project_root IS NOT NULL AND project_root = ?",
+                (root_abs,),
+            ).fetchall()
+            if len(rows) == 1:
+                return rows[0]["uuid"]
+            if len(rows) == 0:
+                return None
+            raise ValueError(
+                f"backfill_project_ids(): project_root={root_abs!r} is "
+                f"claimed by {len(rows)} workspace rows; refusing to attribute "
+                f"entities ambiguously. Manual repair required (run pd:doctor)."
             )
+
+        # Resolve / bootstrap target workspace. This runs BEFORE the
+        # BEGIN IMMEDIATE trigger-drop block below — keep that block minimal.
+        if workspace_uuid is not None:
+            # Authoritative identity: ensure its row exists and claim into it.
+            from entity_registry.project_identity import (
+                _insert_workspace_row_if_absent,
+            )
+            outcome = _insert_workspace_row_if_absent(
+                self._conn, workspace_uuid, root_abs, project_id
+            )
+            if outcome == "conflict-root":
+                # conflict-root guarantees ≥1 row; None is unreachable here.
+                target_ws_uuid = _single_root_or_raise()
+            else:
+                target_ws_uuid = workspace_uuid
             self._conn.commit()
         else:
-            target_ws_uuid = ws_row["uuid"]
+            ws_row = self._conn.execute(
+                "SELECT uuid FROM workspaces WHERE project_id_legacy = ?",
+                (project_id,),
+            ).fetchone()
+            if ws_row is not None:
+                target_ws_uuid = ws_row["uuid"]
+            else:
+                # Adopt a single project_root match (raise on multi-row);
+                # mint only when the root is genuinely unclaimed.
+                target_ws_uuid = _single_root_or_raise()
+                if target_ws_uuid is None:
+                    target_ws_uuid = str(uuid_mod.uuid4())
+                    now = self._now_iso()
+                    self._conn.execute(
+                        "INSERT INTO workspaces "
+                        "(uuid, project_id_legacy, project_root, created_at, "
+                        "updated_at) VALUES (?, ?, ?, ?, ?)",
+                        (target_ws_uuid, project_id, root_abs, now, now),
+                    )
+                    self._conn.commit()
         if target_ws_uuid == _UNKNOWN_WORKSPACE_UUID:
             return 0  # no-op: cannot claim into the unknown bucket itself
         self._conn.commit()  # flush any implicit transaction
@@ -9555,13 +9643,13 @@ class EntityDatabase:
     ) -> None:
         """Insert or update a project row, preserving created_at on conflict.
 
-        Feature 108 (Decision 5): ``workspace_uuid`` is optional during the
-        Migration 11 transition window. When supplied, callers (e.g.,
-        ``mcp/entity_server.py::_upsert_project``) can record the workspace
-        identity alongside the legacy ``project_id``. The current INSERT
-        does NOT yet write the column because the projects rebuild step
-        (FR-7 step 13) is part of the migration body, and its inserts come
-        from the migration itself rather than this helper.
+        Feature 108 (Decision 5): ``workspace_uuid`` is optional. When
+        supplied (e.g. by ``mcp/entity_server.py::_upsert_project`` from the
+        lifespan-resolved identity), a matching ``workspaces`` row is ensured
+        before the projects INSERT so the FK resolves, and the column is
+        written/refreshed on both INSERT and ON CONFLICT UPDATE. When omitted,
+        the row is resolved by legacy ``project_id`` → ``project_root`` match
+        → fresh mint, in that order.
 
         Parameters
         ----------
@@ -9589,9 +9677,51 @@ class EntityDatabase:
             Whether the project is a git repository.
         """
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        # Canonicalize the root for all workspaces-row ops so they match
+        # validate_or_adopt_workspace_uuid (which abspath()s) — avoids a silent
+        # adoption miss when the caller passes a non-normalized absolute path.
+        root_abs = os.path.abspath(project_root) if project_root else project_root
+
+        def _single_root_or_raise(_caller: str):
+            """Return the lone workspaces uuid for root_abs, or None if there
+            is none. Raise on multi-row corruption (never bind arbitrarily)."""
+            rows = self._conn.execute(
+                "SELECT uuid FROM workspaces "
+                "WHERE project_root IS NOT NULL AND project_root = ?",
+                (root_abs,),
+            ).fetchall()
+            if len(rows) == 1:
+                return rows[0]["uuid"]
+            if len(rows) == 0:
+                return None
+            raise ValueError(
+                f"{_caller}: project_root={root_abs!r} is claimed by "
+                f"{len(rows)} workspace rows; refusing to bind ambiguously. "
+                f"Manual repair required (inspect workspaces; run pd:doctor)."
+            )
+
         # Feature 108 Migration 11: projects.workspace_uuid is NOT NULL.
-        # Resolve / auto-bootstrap the workspaces row keyed on project_id.
-        if workspace_uuid is None:
+        # Resolve / auto-bootstrap the workspaces row.
+        if workspace_uuid is not None:
+            # A caller-supplied identity (e.g. the lifespan-resolved
+            # _workspace_uuid). Guarantee a matching workspaces row exists
+            # BEFORE the projects INSERT or the FK fails (the original
+            # split-brain bug: this path skipped row creation entirely).
+            # Never mint a competing row for a project_root another uuid
+            # already owns — adopt that canonical row instead.
+            from entity_registry.project_identity import (
+                _insert_workspace_row_if_absent,
+            )
+            outcome = _insert_workspace_row_if_absent(
+                self._conn, workspace_uuid, root_abs, project_id
+            )
+            if outcome == "conflict-root":
+                adopted = _single_root_or_raise("upsert_project()")
+                # conflict-root guarantees ≥1 row; None is unreachable here.
+                workspace_uuid = adopted
+        else:
+            # No identity supplied (incl. the lifespan ``_workspace_uuid or
+            # None`` empty-string fallback when startup resolution failed).
             row = self._conn.execute(
                 "SELECT uuid FROM workspaces WHERE project_id_legacy = ?",
                 (project_id,),
@@ -9599,13 +9729,17 @@ class EntityDatabase:
             if row is not None:
                 workspace_uuid = row["uuid"]
             else:
-                workspace_uuid = str(uuid_mod.uuid4())
-                self._conn.execute(
-                    "INSERT INTO workspaces "
-                    "(uuid, project_id_legacy, project_root, created_at, "
-                    "updated_at) VALUES (?, ?, ?, ?, ?)",
-                    (workspace_uuid, project_id, project_root, now, now),
-                )
+                # Adopt a single project_root match (raise on multi-row);
+                # mint only when the root is genuinely unclaimed.
+                workspace_uuid = _single_root_or_raise("upsert_project()")
+                if workspace_uuid is None:
+                    workspace_uuid = str(uuid_mod.uuid4())
+                    self._conn.execute(
+                        "INSERT INTO workspaces "
+                        "(uuid, project_id_legacy, project_root, created_at, "
+                        "updated_at) VALUES (?, ?, ?, ?, ?)",
+                        (workspace_uuid, project_id, root_abs, now, now),
+                    )
         self._conn.execute(
             """INSERT INTO projects (
                    project_id, name, root_commit_sha, remote_url,
@@ -9624,7 +9758,8 @@ class EntityDatabase:
                    default_branch=excluded.default_branch,
                    project_root=excluded.project_root,
                    is_git_repo=excluded.is_git_repo,
-                   updated_at=excluded.updated_at
+                   updated_at=excluded.updated_at,
+                   workspace_uuid=excluded.workspace_uuid
             """,
             (
                 project_id, name, root_commit_sha,

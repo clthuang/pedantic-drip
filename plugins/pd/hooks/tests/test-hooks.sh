@@ -2156,6 +2156,14 @@ _run_maintenance_fault_test() {
         return
     fi
 
+    # AC-4d invariant (#00195): the fault is injected into a temp COPY, so the
+    # real maintenance.py must be byte-identical after the run. Snapshot a content
+    # hash before/after (not `git status`) so a developer's unrelated uncommitted
+    # edits to maintenance.py don't false-trip the mutation guard.
+    local _mp_real="${HOOKS_DIR}/lib/semantic_memory/maintenance.py"
+    local _mp_hash_before
+    _mp_hash_before=$(shasum -a 256 "$_mp_real" 2>/dev/null | awk '{print $1}')
+
     (
         set +e  # NOT -e: negative-control Python invocation deliberately
                 # returns non-zero; set -e would terminate before raw_exit
@@ -2220,13 +2228,15 @@ _run_maintenance_fault_test() {
         log_fail "${test_label} subshell reported failure (exit $subshell_exit)"
     fi
 
-    # Feature 092 FR-3 (#00195): AC-4d invariant uses repo-root-absolute git call.
-    local git_status
-    git_status=$(git -C "$(git rev-parse --show-toplevel)" status --porcelain \
-        plugins/pd/hooks/lib/semantic_memory/maintenance.py 2>/dev/null || true)
-    if [ -n "$git_status" ]; then
+    # Feature 092 FR-3 (#00195): AC-4d invariant — the fault-injection works on a
+    # temp copy, so the real maintenance.py must be byte-identical afterward.
+    # Compare a content hash before/after rather than `git status`, which would
+    # false-trip on a developer's unrelated uncommitted edits to the file.
+    local _mp_hash_after
+    _mp_hash_after=$(shasum -a 256 "$_mp_real" 2>/dev/null | awk '{print $1}')
+    if [ "$_mp_hash_before" != "$_mp_hash_after" ]; then
         log_test "AC-4d invariant: production maintenance.py untouched (${t7_tag})"
-        log_fail "production maintenance.py mutated: $git_status"
+        log_fail "production maintenance.py mutated by test: hash ${_mp_hash_before} -> ${_mp_hash_after}"
     fi
 }
 
