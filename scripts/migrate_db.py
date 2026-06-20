@@ -104,36 +104,7 @@ def cmd_manifest(args: argparse.Namespace) -> None:
                 "size_bytes": os.path.getsize(fpath),
             }
 
-    # Enrich DB file entries with counts; read embedding metadata
-    embedding_provider = None
-    embedding_model = None
-
-    memory_db = os.path.join(staging_dir, "memory", "memory.db")
-    if os.path.exists(memory_db):
-        conn = sqlite3.connect(memory_db)
-        try:
-            entry_count = conn.execute(
-                "SELECT count(*) FROM entries"
-            ).fetchone()[0]
-        except sqlite3.OperationalError:
-            entry_count = 0
-        if "memory/memory.db" in file_entries:
-            file_entries["memory/memory.db"]["entry_count"] = entry_count
-        try:
-            row = conn.execute(
-                "SELECT value FROM _metadata WHERE key='embedding_provider'"
-            ).fetchone()
-            if row:
-                embedding_provider = row[0]
-            row = conn.execute(
-                "SELECT value FROM _metadata WHERE key='embedding_model'"
-            ).fetchone()
-            if row:
-                embedding_model = row[0]
-        except sqlite3.OperationalError:
-            pass  # _metadata table doesn't exist
-        conn.close()
-
+    # Enrich DB file entries with counts
     entities_db = os.path.join(staging_dir, "entities", "entities.db")
     if os.path.exists(entities_db):
         conn = sqlite3.connect(entities_db)
@@ -160,8 +131,6 @@ def cmd_manifest(args: argparse.Namespace) -> None:
         "export_timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "source_platform": f"{sys.platform}-{platform.machine()}",
         "python_version": platform.python_version(),
-        "embedding_provider": embedding_provider,
-        "embedding_model": embedding_model,
         "files": file_entries,
     }
 
@@ -225,67 +194,6 @@ def cmd_validate(args: argparse.Namespace) -> None:
 
     valid = len(errors) == 0
     _json_out({"valid": valid, "errors": errors})
-
-
-def cmd_merge_memory(args: argparse.Namespace) -> None:
-    """Merge memory entries from source to destination database."""
-    dst = sqlite3.connect(args.dst_db)
-    add_count = 0
-    skip_count = 0
-    try:
-        dst.execute("ATTACH DATABASE ? AS src", (args.src_db,))
-
-        # Count new vs existing entries by source_hash
-        add_count = dst.execute("""
-            SELECT count(*) FROM src.entries
-            WHERE source_hash NOT IN (SELECT source_hash FROM main.entries)
-        """).fetchone()[0]
-        skip_count = dst.execute(
-            "SELECT count(*) FROM src.entries"
-        ).fetchone()[0] - add_count
-
-        if args.dry_run:
-            _json_out({"added": add_count, "skipped": skip_count})
-            return
-
-        dst.execute("BEGIN")
-        dst.execute("""
-            INSERT OR IGNORE INTO main.entries (id, name, description, reasoning,
-                category, keywords, source, source_project, "references",
-                observation_count, confidence, recall_count, last_recalled_at,
-                embedding, created_at, updated_at, source_hash, created_timestamp_utc)
-            SELECT id, name, description, reasoning,
-                category, keywords, source, source_project, "references",
-                observation_count, confidence, recall_count, last_recalled_at,
-                embedding, created_at, updated_at, source_hash, created_timestamp_utc
-            FROM src.entries
-            WHERE source_hash NOT IN (SELECT source_hash FROM main.entries)
-        """)
-
-        # Rebuild FTS5
-        if add_count > 0:
-            try:
-                dst.execute(
-                    "INSERT INTO entries_fts(entries_fts) VALUES('rebuild')"
-                )
-            except sqlite3.OperationalError:
-                pass
-
-        dst.execute("COMMIT")
-    except Exception:
-        try:
-            dst.execute("ROLLBACK")
-        except Exception:
-            pass
-        raise
-    finally:
-        try:
-            dst.execute("DETACH DATABASE src")
-        except Exception:
-            pass
-        dst.close()
-
-    _json_out({"added": add_count, "skipped": skip_count})
 
 
 def cmd_merge_entities(args: argparse.Namespace) -> None:
@@ -442,45 +350,6 @@ def cmd_info(args: argparse.Namespace) -> None:
     with open(args.manifest_path) as f:
         manifest = json.load(f)
     _json_out(manifest)
-
-
-def cmd_check_embeddings(args: argparse.Namespace) -> None:
-    """Check embedding consistency between manifest and destination DB."""
-    with open(args.manifest_path) as f:
-        manifest = json.load(f)
-
-    src_provider = manifest.get("embedding_provider")
-
-    # Null provider in bundle — skip check
-    if src_provider is None:
-        _json_out({"mismatch": False})
-        return
-
-    # Read dst _metadata table
-    conn = sqlite3.connect(args.dst_memory_db)
-    try:
-        row = conn.execute(
-            "SELECT value FROM _metadata WHERE key='embedding_provider'"
-        ).fetchone()
-        dst_provider = row[0] if row else None
-    except sqlite3.OperationalError:
-        # _metadata table doesn't exist (fresh machine)
-        _json_out({"mismatch": False})
-        return
-    finally:
-        conn.close()
-
-    if dst_provider is None or src_provider == dst_provider:
-        _json_out({"mismatch": False})
-    else:
-        _json_out({
-            "mismatch": True,
-            "warning": (
-                f"Embedding provider mismatch: bundle uses '{src_provider}' "
-                f"but destination uses '{dst_provider}'. "
-                "Cosine similarity may be degraded."
-            ),
-        })
 
 
 def cmd_migrate(args: argparse.Namespace) -> None:
@@ -746,17 +615,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_validate.add_argument("bundle_dir", help="Bundle directory path")
     p_validate.set_defaults(func=cmd_validate)
 
-    # merge-memory
-    p_merge_memory = subparsers.add_parser(
-        "merge-memory", help="Merge memory databases"
-    )
-    p_merge_memory.add_argument("src_db", help="Source database path")
-    p_merge_memory.add_argument("dst_db", help="Destination database path")
-    p_merge_memory.add_argument(
-        "--dry-run", action="store_true", help="Preview without modifying"
-    )
-    p_merge_memory.set_defaults(func=cmd_merge_memory)
-
     # merge-entities
     p_merge_entities = subparsers.add_parser(
         "merge-entities", help="Merge entity databases"
@@ -783,14 +641,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_info = subparsers.add_parser("info", help="Show manifest information")
     p_info.add_argument("manifest_path", help="Path to manifest file")
     p_info.set_defaults(func=cmd_info)
-
-    # check-embeddings
-    p_check = subparsers.add_parser(
-        "check-embeddings", help="Check embedding consistency"
-    )
-    p_check.add_argument("manifest_path", help="Path to manifest file")
-    p_check.add_argument("dst_memory_db", help="Destination memory database")
-    p_check.set_defaults(func=cmd_check_embeddings)
 
     # migrate
     p_migrate = subparsers.add_parser(

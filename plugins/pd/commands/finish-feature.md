@@ -291,9 +291,8 @@ Run retrospective automatically without asking permission.
 Follow the `retrospecting` skill, which handles:
 1. Context bundle assembly (.meta.json, .review-history.md, git summary, artifact stats)
 2. retro-facilitator agent dispatch (AORTA framework analysis)
-3. retro.md generation
-4. Knowledge bank updates
-5. Commit
+3. retro.md generation (plain markdown reflection)
+4. Commit
 
 The skill includes graceful degradation — if retro-facilitator fails, it falls back to investigation-agent.
 
@@ -565,6 +564,4 @@ Feature {id}-{slug} completed
 Retrospective saved to retro.md
 Branch cleaned up
 {PR created: {url} | Released v{version}}
-
-Learnings captured in knowledge bank.
 ```

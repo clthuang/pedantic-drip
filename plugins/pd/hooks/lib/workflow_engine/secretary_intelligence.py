@@ -5,8 +5,12 @@ Implements Plan Step 2.0, AC-17 (CREATE), AC-18 (QUERY), AC-22a (weight escalati
 """
 from __future__ import annotations
 
+import argparse
 import difflib
+import json
+import os
 import re
+import sys
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -573,3 +577,161 @@ def detect_scope_expansion(
             return "standard"
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
+# Wires the logic above into ``/pd:secretary`` via
+# ``python -m workflow_engine.secretary_intelligence <subcommand>``. Every
+# subcommand emits exactly one JSON line on stdout. The four entity-aware
+# subcommands open the entity registry via ``ENTITY_DB_PATH`` (default
+# ``~/.claude/pd/entities/entities.db``); the four pure-text subcommands need
+# no database. Errors are surfaced as ``{"error": ...}`` JSON, never tracebacks,
+# so the calling command can parse stdout unconditionally.
+
+
+def _emit(obj: object) -> None:
+    """Write one JSON line to stdout (``default=str`` for Path/UUID safety)."""
+    json.dump(obj, sys.stdout, default=str)
+    sys.stdout.write("\n")
+
+
+def _parse_json_list(raw: str, flag: str) -> list:
+    """Parse a JSON-array CLI argument; emit a JSON error + exit(2) on failure."""
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        _emit({"error": f"invalid {flag} JSON: {exc}"})
+        sys.exit(2)
+    if not isinstance(value, list):
+        _emit({"error": f"{flag} must be a JSON array"})
+        sys.exit(2)
+    return value
+
+
+def _open_db():
+    """Open the entity registry honoring ``ENTITY_DB_PATH`` (see CLAUDE.md)."""
+    from entity_registry.database import EntityDatabase
+
+    db_path = os.environ.get(
+        "ENTITY_DB_PATH",
+        os.path.expanduser("~/.claude/pd/entities/entities.db"),
+    )
+    return EntityDatabase(db_path)
+
+
+def _with_db(handler) -> None:
+    """Open the DB, run ``handler(db)``, emit its result, always close.
+
+    Open failures and handler failures both surface as ``{"error": ...}`` with
+    a non-zero exit so the caller never sees a raw traceback on stdout.
+    """
+    try:
+        db = _open_db()
+    except Exception as exc:  # noqa: BLE001 — surface as JSON, never a traceback
+        _emit({"error": f"cannot open database: {exc}"})
+        sys.exit(1)
+    try:
+        _emit(handler(db))
+    except Exception as exc:  # noqa: BLE001
+        _emit({"error": f"handler failed: {exc}"})
+        sys.exit(1)
+    finally:
+        db.close()
+
+
+def _cmd_detect_mode(args) -> None:
+    try:
+        context = json.loads(args.context)
+    except json.JSONDecodeError as exc:
+        _emit({"error": f"invalid --context JSON: {exc}"})
+        sys.exit(2)
+    _emit({"mode": detect_mode(args.text, context)})
+
+
+def _cmd_recommend_weight(args) -> None:
+    _emit({"weight": recommend_weight(_parse_json_list(args.signals, "--signals"))})
+
+
+def _cmd_detect_activity_kr(args) -> None:
+    _emit({"warning": detect_activity_kr(args.text)})
+
+
+def _cmd_scope_expansion(args) -> None:
+    signals = _parse_json_list(args.signals, "--signals")
+    _emit({"upgrade": detect_scope_expansion(args.current_mode, signals)})
+
+
+def _cmd_find_parents(args) -> None:
+    _with_db(
+        lambda db: {
+            "candidates": find_parent_candidates(db, args.entity_type, args.name)
+        }
+    )
+
+
+def _cmd_check_duplicates(args) -> None:
+    _with_db(lambda db: {"duplicates": check_duplicates(db, args.name)})
+
+
+def _cmd_check_okr(args) -> None:
+    _with_db(lambda db: {"warning": check_kr_count(db, args.objective_uuid)})
+
+
+def _cmd_parent_context(args) -> None:
+    _with_db(lambda db: {"context": get_parent_context(db, args.parent_type_id)})
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(
+        prog="secretary_intelligence",
+        description="Secretary routing intelligence (JSON-emitting subcommands).",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p = sub.add_parser("detect-mode", help="Classify a request as CREATE/CONTINUE/QUERY.")
+    p.add_argument("--text", required=True)
+    p.add_argument(
+        "--context",
+        default="{}",
+        help='JSON object, e.g. \'{"feature_branch":"feature/x"}\'.',
+    )
+    p.set_defaults(func=_cmd_detect_mode)
+
+    p = sub.add_parser("recommend-weight", help="Recommend light/standard/full from scope signals.")
+    p.add_argument("--signals", required=True, help="JSON array of signal strings.")
+    p.set_defaults(func=_cmd_recommend_weight)
+
+    p = sub.add_parser("detect-activity-kr", help="Flag the activity-word OKR anti-pattern in KR text.")
+    p.add_argument("--text", required=True)
+    p.set_defaults(func=_cmd_detect_activity_kr)
+
+    p = sub.add_parser("scope-expansion", help="Recommend a weight upgrade from expansion signals.")
+    p.add_argument("--current-mode", required=True, choices=["light", "standard", "full"])
+    p.add_argument("--signals", required=True, help="JSON array of signal strings.")
+    p.set_defaults(func=_cmd_scope_expansion)
+
+    p = sub.add_parser("find-parents", help="Search the entity registry for plausible parents.")
+    p.add_argument("--entity-type", required=True)
+    p.add_argument("--name", required=True)
+    p.set_defaults(func=_cmd_find_parents)
+
+    p = sub.add_parser("check-duplicates", help="Search the entity registry for duplicate names.")
+    p.add_argument("--name", required=True)
+    p.set_defaults(func=_cmd_check_duplicates)
+
+    p = sub.add_parser("check-okr", help="Warn if an objective exceeds the recommended KR count.")
+    p.add_argument("--objective-uuid", required=True)
+    p.set_defaults(func=_cmd_check_okr)
+
+    p = sub.add_parser("parent-context", help="Fetch parent entity context for catchball display.")
+    p.add_argument("--parent-type-id", required=True)
+    p.set_defaults(func=_cmd_parent_context)
+
+    args = parser.parse_args(argv)
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

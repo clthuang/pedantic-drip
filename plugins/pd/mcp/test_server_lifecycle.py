@@ -34,9 +34,9 @@ class TestWritePid:
     def test_write_pid_creates_directory(self, tmp_path):
         nested = tmp_path / "sub" / "dir"
         with patch("server_lifecycle.PID_DIR", nested):
-            write_pid("memory_server")
+            write_pid("workflow_state_server")
         assert nested.exists()
-        assert (nested / "memory_server.pid").exists()
+        assert (nested / "workflow_state_server.pid").exists()
 
     def test_write_pid_overwrites_stale(self, pid_dir):
         pid_file = pid_dir / "entity_server.pid"

@@ -155,66 +155,6 @@ def _create_meta_json(
     (feature_dir / ".meta.json").write_text(json.dumps(meta))
 
 
-def _make_memory_db(tmp_path, name: str = "memory.db") -> str:
-    """Create a minimal memory DB with schema matching memory v4.
-
-    Returns the path to the DB file.
-    """
-    db_path = str(tmp_path / name)
-    conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS _metadata (
-            key   TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        );
-        INSERT OR REPLACE INTO _metadata(key, value) VALUES('schema_version', '4');
-
-        CREATE TABLE IF NOT EXISTS entries (
-            id          TEXT PRIMARY KEY,
-            content     TEXT NOT NULL,
-            keywords    TEXT DEFAULT '[]',
-            entry_type  TEXT DEFAULT 'observation',
-            project     TEXT,
-            importance  REAL DEFAULT 0.5,
-            created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-            updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
-            embedding   BLOB
-        );
-
-        CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
-            content, keywords, entry_type, project
-        );
-
-        CREATE TRIGGER IF NOT EXISTS entries_ai AFTER INSERT ON entries BEGIN
-            INSERT INTO entries_fts(rowid, content, keywords, entry_type, project)
-            VALUES (new.rowid, new.content, new.keywords, new.entry_type, new.project);
-        END;
-
-        CREATE TRIGGER IF NOT EXISTS entries_ad AFTER DELETE ON entries BEGIN
-            INSERT INTO entries_fts(entries_fts, rowid, content, keywords, entry_type, project)
-            VALUES ('delete', old.rowid, old.content, old.keywords, old.entry_type, old.project);
-        END;
-
-        CREATE TRIGGER IF NOT EXISTS entries_au AFTER UPDATE ON entries BEGIN
-            INSERT INTO entries_fts(entries_fts, rowid, content, keywords, entry_type, project)
-            VALUES ('delete', old.rowid, old.content, old.keywords, old.entry_type, old.project);
-            INSERT INTO entries_fts(rowid, content, keywords, entry_type, project)
-            VALUES (new.rowid, new.content, new.keywords, new.entry_type, new.project);
-        END;
-
-        CREATE TABLE IF NOT EXISTS influence_log (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            entry_id    TEXT NOT NULL,
-            context     TEXT,
-            created_at  TEXT NOT NULL DEFAULT (datetime('now'))
-        );
-    """)
-    conn.commit()
-    conn.close()
-    return db_path
-
-
 # ===========================================================================
 # Task 1.1: Model Tests
 # ===========================================================================
@@ -384,25 +324,26 @@ class TestCheck8BothDbsHealthy:
         from doctor.checks import check_db_readiness
 
         entity_path = _make_db(tmp_path, "entities.db")
-        memory_path = _make_memory_db(tmp_path, "memory.db")
 
-        # Stamp schema_version=11 to match the post-Migration-11 production
-        # ENTITY_SCHEMA_VERSION constant. _make_db uses a legacy v9 fixture
-        # so most tests can keep INSERTing via the project_id / parent_type_id
-        # columns until the full Phase F test-fixture migration lands
-        # (backlog #00360).
+        # Stamp schema_version to the dynamic latest (F117 FR-B.1 replaces
+        # the old hardcoded ENTITY_SCHEMA_VERSION=11). _make_db uses a legacy
+        # v9 fixture so most tests can keep INSERTing via the project_id /
+        # parent_type_id columns until the full Phase F test-fixture
+        # migration lands (backlog #00360).
+        from doctor.checks import _get_expected_entity_version
         conn = sqlite3.connect(entity_path)
-        conn.execute("UPDATE _metadata SET value = '11' WHERE key = 'schema_version'")
+        conn.execute(
+            "UPDATE _metadata SET value = ? WHERE key = 'schema_version'",
+            (str(_get_expected_entity_version()),),
+        )
         conn.commit()
         conn.close()
 
         result = check_db_readiness(
             entities_db_path=entity_path,
-            memory_db_path=memory_path,
         )
         assert result.passed is True
         assert result.extras["entity_db_ok"] is True
-        assert result.extras["memory_db_ok"] is True
         assert result.name == "db_readiness"
 
 
@@ -413,7 +354,6 @@ class TestCheck8EntityDbLocked:
         from doctor.checks import check_db_readiness
 
         entity_path = _make_db(tmp_path, "entities.db")
-        memory_path = _make_memory_db(tmp_path, "memory.db")
 
         # Hold a write lock on the entity DB
         blocker = sqlite3.connect(entity_path)
@@ -422,11 +362,9 @@ class TestCheck8EntityDbLocked:
         try:
             result = check_db_readiness(
                 entities_db_path=entity_path,
-                memory_db_path=memory_path,
             )
             assert result.passed is False
             assert result.extras["entity_db_ok"] is False
-            assert result.extras["memory_db_ok"] is True
             # Should have at least one error issue about the lock
             lock_issues = [i for i in result.issues if "lock" in i.message.lower()]
             assert len(lock_issues) >= 1
@@ -443,7 +381,6 @@ class TestCheck8WrongEntitySchemaVersion:
         from doctor.checks import check_db_readiness
 
         entity_path = _make_db(tmp_path, "entities.db")
-        memory_path = _make_memory_db(tmp_path, "memory.db")
 
         # Downgrade schema version
         conn = sqlite3.connect(entity_path)
@@ -453,7 +390,6 @@ class TestCheck8WrongEntitySchemaVersion:
 
         result = check_db_readiness(
             entities_db_path=entity_path,
-            memory_db_path=memory_path,
         )
         schema_issues = [i for i in result.issues if "schema" in i.message.lower()]
         assert len(schema_issues) >= 1
@@ -478,20 +414,8 @@ class TestCheck8NonWalMode:
         conn.commit()
         conn.close()
 
-        # Create memory DB without WAL
-        memory_path = str(tmp_path / "memory.db")
-        conn = sqlite3.connect(memory_path)
-        conn.execute("PRAGMA journal_mode=DELETE")
-        conn.executescript("""
-            CREATE TABLE _metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-            INSERT INTO _metadata(key, value) VALUES('schema_version', '4');
-        """)
-        conn.commit()
-        conn.close()
-
         result = check_db_readiness(
             entities_db_path=entity_path,
-            memory_db_path=memory_path,
         )
         wal_issues = [i for i in result.issues if "wal" in i.message.lower()]
         assert len(wal_issues) >= 1
@@ -505,19 +429,22 @@ class TestCheck8ImmediateRollbackReleasesLock:
         from doctor.checks import check_db_readiness
 
         entity_path = _make_db(tmp_path, "entities.db")
-        memory_path = _make_memory_db(tmp_path, "memory.db")
 
-        # Stamp schema_version=11 to match the post-Migration-11 production
-        # ENTITY_SCHEMA_VERSION constant (see test_both_dbs_healthy note).
+        # Stamp schema_version to the dynamic latest (F117 FR-B.1 replaces
+        # the old hardcoded ENTITY_SCHEMA_VERSION=11). See test_both_dbs_healthy
+        # for fixture rationale.
+        from doctor.checks import _get_expected_entity_version
         conn = sqlite3.connect(entity_path)
-        conn.execute("UPDATE _metadata SET value = '11' WHERE key = 'schema_version'")
+        conn.execute(
+            "UPDATE _metadata SET value = ? WHERE key = 'schema_version'",
+            (str(_get_expected_entity_version()),),
+        )
         conn.commit()
         conn.close()
 
         # Run the check
         result = check_db_readiness(
             entities_db_path=entity_path,
-            memory_db_path=memory_path,
         )
         assert result.passed is True
 
@@ -1188,255 +1115,6 @@ class TestCheck4EmptyBacklog:
         try:
             result = check_backlog_status(conn, str(tmp_path))
             assert result.passed is True
-        finally:
-            conn.close()
-
-
-# ===========================================================================
-# Task 3.1: Check 5 (Memory Health)
-# ===========================================================================
-
-
-class TestCheck5HealthyMemoryDb:
-    """Check 5: healthy memory DB passes."""
-
-    def test_check5_healthy_memory_db(self, tmp_path):
-        from doctor.checks import check_memory_health
-
-        db_path = _make_memory_db(tmp_path)
-        conn = sqlite3.connect(db_path)
-        conn.execute("PRAGMA busy_timeout = 5000")
-        try:
-            result = check_memory_health(conn)
-            assert result.passed is True
-            assert result.name == "memory_health"
-        finally:
-            conn.close()
-
-
-class TestCheck5MemorySchemaWrong:
-    """Check 5: wrong schema_version reports error."""
-
-    def test_check5_memory_schema_wrong(self, tmp_path):
-        from doctor.checks import check_memory_health
-
-        db_path = _make_memory_db(tmp_path)
-        conn = sqlite3.connect(db_path)
-        conn.execute("UPDATE _metadata SET value = '3' WHERE key = 'schema_version'")
-        conn.commit()
-        conn.execute("PRAGMA busy_timeout = 5000")
-        try:
-            result = check_memory_health(conn)
-            schema_issues = [i for i in result.issues if "schema_version" in i.message]
-            assert len(schema_issues) >= 1
-            assert schema_issues[0].severity == "error"
-        finally:
-            conn.close()
-
-
-class TestCheck5MissingFtsTable:
-    """Check 5: missing FTS table reports error."""
-
-    def test_check5_missing_fts_table(self, tmp_path):
-        from doctor.checks import check_memory_health
-
-        db_path = str(tmp_path / "memory.db")
-        conn = sqlite3.connect(db_path)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.executescript("""
-            CREATE TABLE _metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-            INSERT INTO _metadata(key, value) VALUES('schema_version', '4');
-            CREATE TABLE entries (
-                id TEXT PRIMARY KEY, content TEXT, keywords TEXT DEFAULT '[]',
-                entry_type TEXT, project TEXT, importance REAL, created_at TEXT,
-                updated_at TEXT, embedding BLOB
-            );
-            CREATE TABLE influence_log (id INTEGER PRIMARY KEY, entry_id TEXT, context TEXT, created_at TEXT);
-        """)
-        conn.commit()
-        conn.execute("PRAGMA busy_timeout = 5000")
-        try:
-            result = check_memory_health(conn)
-            fts_issues = [i for i in result.issues if "entries_fts" in i.message]
-            assert len(fts_issues) >= 1
-            assert fts_issues[0].severity == "error"
-        finally:
-            conn.close()
-
-
-class TestCheck5MissingFtsTrigger:
-    """Check 5: missing FTS trigger reports error."""
-
-    def test_check5_missing_fts_trigger(self, tmp_path):
-        from doctor.checks import check_memory_health
-
-        db_path = _make_memory_db(tmp_path)
-        conn = sqlite3.connect(db_path)
-        conn.execute("DROP TRIGGER IF EXISTS entries_ai")
-        conn.commit()
-        conn.execute("PRAGMA busy_timeout = 5000")
-        try:
-            result = check_memory_health(conn)
-            trigger_issues = [i for i in result.issues if "entries_ai" in i.message]
-            assert len(trigger_issues) >= 1
-            assert trigger_issues[0].severity == "error"
-        finally:
-            conn.close()
-
-
-class TestCheck5FtsRowCountDivergence:
-    """Check 5: FTS row count differs from entries count."""
-
-    def test_check5_fts_row_count_divergence(self, tmp_path):
-        from doctor.checks import check_memory_health
-
-        db_path = _make_memory_db(tmp_path)
-        conn = sqlite3.connect(db_path)
-        # Insert an entry (triggers auto-insert into FTS)
-        conn.execute(
-            "INSERT INTO entries (id, content, created_at, updated_at) "
-            "VALUES ('e1', 'test content', datetime('now'), datetime('now'))"
-        )
-        conn.commit()
-        # Manually insert extra FTS row (desync)
-        conn.execute(
-            "INSERT INTO entries_fts(rowid, content, keywords, entry_type, project) "
-            "VALUES (999, 'ghost', '[]', 'observation', NULL)"
-        )
-        conn.commit()
-        conn.execute("PRAGMA busy_timeout = 5000")
-        try:
-            result = check_memory_health(conn)
-            fts_issues = [i for i in result.issues if "FTS row count" in i.message]
-            assert len(fts_issues) >= 1
-            assert fts_issues[0].severity == "warning"
-        finally:
-            conn.close()
-
-
-class TestCheck5NullEmbeddingAboveThreshold:
-    """Check 5: NULL embedding > 10% reports warning."""
-
-    def test_check5_null_embedding_above_threshold(self, tmp_path):
-        from doctor.checks import check_memory_health
-
-        db_path = _make_memory_db(tmp_path)
-        conn = sqlite3.connect(db_path)
-        # Insert 10 entries: 5 with NULL embedding (50%)
-        for i in range(10):
-            emb = b'\x00' * 3072 if i < 5 else None
-            conn.execute(
-                "INSERT INTO entries (id, content, embedding, created_at, updated_at) "
-                "VALUES (?, ?, ?, datetime('now'), datetime('now'))",
-                (f"e{i}", f"content {i}", emb),
-            )
-        conn.commit()
-        conn.execute("PRAGMA busy_timeout = 5000")
-        try:
-            result = check_memory_health(conn)
-            emb_issues = [i for i in result.issues if "NULL" in i.message and "embedding" in i.message]
-            assert len(emb_issues) >= 1
-            assert emb_issues[0].severity == "warning"
-        finally:
-            conn.close()
-
-
-class TestCheck5WrongEmbeddingDimension:
-    """Check 5: wrong embedding dimension reports error."""
-
-    def test_check5_wrong_embedding_dimension(self, tmp_path):
-        from doctor.checks import check_memory_health
-
-        db_path = _make_memory_db(tmp_path)
-        conn = sqlite3.connect(db_path)
-        # Insert entry with wrong embedding size
-        conn.execute(
-            "INSERT INTO entries (id, content, embedding, created_at, updated_at) "
-            "VALUES ('e1', 'test', ?, datetime('now'), datetime('now'))",
-            (b'\x00' * 1024,),  # Wrong dimension
-        )
-        conn.commit()
-        conn.execute("PRAGMA busy_timeout = 5000")
-        try:
-            result = check_memory_health(conn)
-            dim_issues = [i for i in result.issues if "embedding dimension" in i.message]
-            assert len(dim_issues) >= 1
-            assert dim_issues[0].severity == "error"
-        finally:
-            conn.close()
-
-
-class TestCheck5EmptyKeywordsInfo:
-    """Check 5: entries with keywords='[]' reports info."""
-
-    def test_check5_empty_keywords_info(self, tmp_path):
-        from doctor.checks import check_memory_health
-
-        db_path = _make_memory_db(tmp_path)
-        conn = sqlite3.connect(db_path)
-        conn.execute(
-            "INSERT INTO entries (id, content, keywords, embedding, created_at, updated_at) "
-            "VALUES ('e1', 'test', '[]', ?, datetime('now'), datetime('now'))",
-            (b'\x00' * 3072,),
-        )
-        conn.commit()
-        conn.execute("PRAGMA busy_timeout = 5000")
-        try:
-            result = check_memory_health(conn)
-            kw_issues = [i for i in result.issues if "empty keywords" in i.message]
-            assert len(kw_issues) >= 1
-            assert kw_issues[0].severity == "info"
-            # Info doesn't flip passed
-            err_warn = [i for i in result.issues if i.severity in ("error", "warning")]
-            assert len(err_warn) == 0
-            assert result.passed is True
-        finally:
-            conn.close()
-
-
-class TestCheck5NonWalMode:
-    """Check 5: non-WAL mode reports warning."""
-
-    def test_check5_non_wal_mode(self, tmp_path):
-        from doctor.checks import check_memory_health
-
-        db_path = str(tmp_path / "memory.db")
-        conn = sqlite3.connect(db_path)
-        conn.execute("PRAGMA journal_mode=DELETE")
-        conn.executescript("""
-            CREATE TABLE _metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-            INSERT INTO _metadata(key, value) VALUES('schema_version', '4');
-            CREATE TABLE entries (
-                id TEXT PRIMARY KEY, content TEXT, keywords TEXT DEFAULT '[]',
-                entry_type TEXT, project TEXT, importance REAL,
-                created_at TEXT DEFAULT (datetime('now')),
-                updated_at TEXT DEFAULT (datetime('now')),
-                embedding BLOB
-            );
-            CREATE VIRTUAL TABLE entries_fts USING fts5(content, keywords, entry_type, project);
-            CREATE TRIGGER entries_ai AFTER INSERT ON entries BEGIN
-                INSERT INTO entries_fts(rowid, content, keywords, entry_type, project)
-                VALUES (new.rowid, new.content, new.keywords, new.entry_type, new.project);
-            END;
-            CREATE TRIGGER entries_ad AFTER DELETE ON entries BEGIN
-                INSERT INTO entries_fts(entries_fts, rowid, content, keywords, entry_type, project)
-                VALUES ('delete', old.rowid, old.content, old.keywords, old.entry_type, old.project);
-            END;
-            CREATE TRIGGER entries_au AFTER UPDATE ON entries BEGIN
-                INSERT INTO entries_fts(entries_fts, rowid, content, keywords, entry_type, project)
-                VALUES ('delete', old.rowid, old.content, old.keywords, old.entry_type, old.project);
-                INSERT INTO entries_fts(rowid, content, keywords, entry_type, project)
-                VALUES (new.rowid, new.content, new.keywords, new.entry_type, new.project);
-            END;
-            CREATE TABLE influence_log (id INTEGER PRIMARY KEY, entry_id TEXT, context TEXT, created_at TEXT);
-        """)
-        conn.commit()
-        conn.execute("PRAGMA busy_timeout = 5000")
-        try:
-            result = check_memory_health(conn)
-            wal_issues = [i for i in result.issues if "wal" in i.message.lower()]
-            assert len(wal_issues) >= 1
-            assert wal_issues[0].severity == "warning"
         finally:
             conn.close()
 
@@ -2128,27 +1806,6 @@ class TestCheck10ValidConfig:
         assert result.name == "config_validity"
 
 
-class TestCheck10ConfigWeightsSum:
-    """Check 10: weights not summing to 1.0 -> warning."""
-
-    def test_check10_config_weights_sum(self, tmp_path):
-        from doctor.checks import check_config_validity
-
-        (tmp_path / "docs").mkdir()
-        config_dir = tmp_path / ".claude"
-        config_dir.mkdir()
-        (config_dir / "pd.local.md").write_text(
-            "memory_vector_weight: 0.3\n"
-            "memory_keyword_weight: 0.2\n"
-            "memory_prominence_weight: 0.2\n"
-        )
-
-        result = check_config_validity(str(tmp_path), artifacts_root="docs")
-        weight_issues = [i for i in result.issues if "weights sum" in i.message]
-        assert len(weight_issues) >= 1
-        assert weight_issues[0].severity == "warning"
-
-
 class TestCheck10ArtifactsRootMissing:
     """Check 10: artifacts_root dir missing -> error."""
 
@@ -2159,51 +1816,6 @@ class TestCheck10ArtifactsRootMissing:
         errors = [i for i in result.issues if i.severity == "error"]
         assert len(errors) >= 1
         assert "artifacts_root" in errors[0].message
-
-
-class TestCheck10ThresholdOutOfRange:
-    """Check 10: threshold out of [0, 1] range -> warning."""
-
-    def test_check10_threshold_out_of_range(self, tmp_path):
-        from doctor.checks import check_config_validity
-
-        (tmp_path / "docs").mkdir()
-        config_dir = tmp_path / ".claude"
-        config_dir.mkdir()
-        (config_dir / "pd.local.md").write_text(
-            "memory_relevance_threshold: 1.5\n"
-        )
-
-        result = check_config_validity(str(tmp_path), artifacts_root="docs")
-        threshold_issues = [i for i in result.issues if "threshold" in i.message.lower()]
-        assert len(threshold_issues) >= 1
-        assert threshold_issues[0].severity == "warning"
-
-
-class TestCheck10MissingEmbeddingProvider:
-    """Check 10: semantic enabled but no provider -> warning."""
-
-    def test_check10_missing_embedding_provider(self, tmp_path):
-        from doctor.checks import check_config_validity
-
-        (tmp_path / "docs").mkdir()
-        config_dir = tmp_path / ".claude"
-        config_dir.mkdir()
-        (config_dir / "pd.local.md").write_text(
-            "memory_semantic_enabled: true\n"
-            "memory_embedding_provider:\n"
-        )
-
-        result = check_config_validity(str(tmp_path), artifacts_root="docs")
-        provider_issues = [
-            i for i in result.issues
-            if "embedding provider" in i.message.lower()
-        ]
-        # The default provider is "gemini" from DEFAULTS, so an empty override
-        # might or might not clear it depending on read_config behavior.
-        # With empty value, read_config skips it, so defaults apply.
-        # This test verifies no crash at minimum.
-        assert result.name == "config_validity"
 
 
 class TestCheck10MissingConfigFileUsesDefaults:
@@ -2235,11 +1847,10 @@ class TestOrchestratorReportHas14Checks:
         from doctor import run_diagnostics
 
         db_path = _make_db(tmp_path)
-        mem_path = _make_memory_db(tmp_path)
         (tmp_path / "docs").mkdir(exist_ok=True)
 
-        report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 19
+        report = run_diagnostics(db_path, str(tmp_path / "docs"), str(tmp_path))
+        assert len(report.checks) == 21  # was 22 pre-memory-extraction (check_memory_health removed)
 
 
 class TestOrchestratorReportEvenWhenLocked:
@@ -2249,15 +1860,14 @@ class TestOrchestratorReportEvenWhenLocked:
         from doctor import run_diagnostics
 
         db_path = _make_db(tmp_path)
-        mem_path = _make_memory_db(tmp_path)
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         # Lock entity DB
         blocker = sqlite3.connect(db_path)
         blocker.execute("BEGIN IMMEDIATE")
         try:
-            report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-            assert len(report.checks) == 19
+            report = run_diagnostics(db_path, str(tmp_path / "docs"), str(tmp_path))
+            assert len(report.checks) == 21  # was 22 pre-memory-extraction (check_memory_health removed)
         finally:
             blocker.rollback()
             blocker.close()
@@ -2270,43 +1880,14 @@ class TestOrchestratorHealthyProject:
         from doctor import run_diagnostics
 
         db_path = _make_db(tmp_path)
-        mem_path = _make_memory_db(tmp_path)
         (tmp_path / "docs").mkdir(exist_ok=True)
 
-        report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
+        report = run_diagnostics(db_path, str(tmp_path / "docs"), str(tmp_path))
         # All checks should pass (empty project)
         failed = [c for c in report.checks if not c.passed]
         # Note: check2 (workflow_phase) might fail if EntityDatabase migration fails
         # In a clean test env with proper schema, it should pass or soft-fail
         assert report.total_issues >= 0  # Sanity check
-
-
-class TestOrchestratorInfoIssuesDoNotFlipPassed:
-    """Orchestrator: info-only issues keep passed=True."""
-
-    def test_info_issues_do_not_flip_passed(self, tmp_path):
-        from doctor import run_diagnostics
-
-        db_path = _make_db(tmp_path)
-        mem_path = _make_memory_db(tmp_path)
-        (tmp_path / "docs").mkdir(exist_ok=True)
-
-        # Add entry with empty keywords (info)
-        conn = sqlite3.connect(mem_path)
-        conn.execute(
-            "INSERT INTO entries (id, content, keywords, created_at, updated_at) "
-            "VALUES ('e1', 'test', '[]', datetime('now'), datetime('now'))"
-        )
-        conn.commit()
-        conn.close()
-
-        report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        mem_check = next(c for c in report.checks if c.name == "memory_health")
-        info_issues = [i for i in mem_check.issues if i.severity == "info"]
-        # If only info issues, passed should be True
-        err_warn = [i for i in mem_check.issues if i.severity in ("error", "warning")]
-        if not err_warn:
-            assert mem_check.passed is True
 
 
 class TestOrchestratorEntityDbLockSkips:
@@ -2316,13 +1897,12 @@ class TestOrchestratorEntityDbLockSkips:
         from doctor import run_diagnostics
 
         db_path = _make_db(tmp_path)
-        mem_path = _make_memory_db(tmp_path)
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         blocker = sqlite3.connect(db_path)
         blocker.execute("BEGIN IMMEDIATE")
         try:
-            report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
+            report = run_diagnostics(db_path, str(tmp_path / "docs"), str(tmp_path))
             # Entity-dependent checks should be skipped
             for check in report.checks:
                 if check.name in ("feature_status", "brainstorm_status",
@@ -2335,28 +1915,6 @@ class TestOrchestratorEntityDbLockSkips:
             blocker.close()
 
 
-class TestOrchestratorMemoryDbLockSkips:
-    """Orchestrator: memory DB lock skips check 5."""
-
-    def test_memory_db_lock_skips_check5(self, tmp_path):
-        from doctor import run_diagnostics
-
-        db_path = _make_db(tmp_path)
-        mem_path = _make_memory_db(tmp_path)
-        (tmp_path / "docs").mkdir(exist_ok=True)
-
-        blocker = sqlite3.connect(mem_path)
-        blocker.execute("BEGIN IMMEDIATE")
-        try:
-            report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-            mem_check = next(c for c in report.checks if c.name == "memory_health")
-            skip_issues = [i for i in mem_check.issues if "Skipped" in i.message]
-            assert len(skip_issues) >= 1
-        finally:
-            blocker.rollback()
-            blocker.close()
-
-
 class TestOrchestratorPerCheckExceptionIsolation:
     """Orchestrator: exception in one check doesn't crash others."""
 
@@ -2364,13 +1922,12 @@ class TestOrchestratorPerCheckExceptionIsolation:
         from doctor import run_diagnostics
 
         db_path = _make_db(tmp_path)
-        mem_path = _make_memory_db(tmp_path)
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         # The orchestrator wraps each check in try/except
         # Even if a check raises, we still get 10 results
-        report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 19
+        report = run_diagnostics(db_path, str(tmp_path / "docs"), str(tmp_path))
+        assert len(report.checks) == 21  # was 22 pre-memory-extraction (check_memory_health removed)
 
 
 class TestOrchestratorMissingDbFile:
@@ -2380,13 +1937,11 @@ class TestOrchestratorMissingDbFile:
         from doctor import run_diagnostics
 
         db_path = str(tmp_path / "nonexistent_entities.db")
-        mem_path = str(tmp_path / "nonexistent_memory.db")
         (tmp_path / "docs").mkdir(exist_ok=True)
 
-        report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
+        report = run_diagnostics(db_path, str(tmp_path / "docs"), str(tmp_path))
         assert not os.path.exists(db_path)
-        assert not os.path.exists(mem_path)
-        assert len(report.checks) == 19
+        assert len(report.checks) == 21  # was 22 pre-memory-extraction (check_memory_health removed)
 
 
 class TestOrchestratorBaseBranchFromConfig:
@@ -2396,14 +1951,13 @@ class TestOrchestratorBaseBranchFromConfig:
         from doctor import run_diagnostics
 
         db_path = _make_db(tmp_path)
-        mem_path = _make_memory_db(tmp_path)
         (tmp_path / "docs").mkdir(exist_ok=True)
         config_dir = tmp_path / ".claude"
         config_dir.mkdir()
         (config_dir / "pd.local.md").write_text("base_branch: develop\n")
 
-        report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 19
+        report = run_diagnostics(db_path, str(tmp_path / "docs"), str(tmp_path))
+        assert len(report.checks) == 21  # was 22 pre-memory-extraction (check_memory_health removed)
 
 
 class TestOrchestratorBaseBranchDefaultMain:
@@ -2413,11 +1967,10 @@ class TestOrchestratorBaseBranchDefaultMain:
         from doctor import run_diagnostics
 
         db_path = _make_db(tmp_path)
-        mem_path = _make_memory_db(tmp_path)
         (tmp_path / "docs").mkdir(exist_ok=True)
 
-        report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 19
+        report = run_diagnostics(db_path, str(tmp_path / "docs"), str(tmp_path))
+        assert len(report.checks) == 21  # was 22 pre-memory-extraction (check_memory_health removed)
 
 
 class TestOrchestratorCheck8RunsFirst:
@@ -2427,36 +1980,30 @@ class TestOrchestratorCheck8RunsFirst:
         from doctor import run_diagnostics
 
         db_path = _make_db(tmp_path)
-        mem_path = _make_memory_db(tmp_path)
         (tmp_path / "docs").mkdir(exist_ok=True)
 
-        report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
+        report = run_diagnostics(db_path, str(tmp_path / "docs"), str(tmp_path))
         assert report.checks[0].name == "db_readiness"
 
 
-class TestOrchestratorBothDbsLocked:
-    """Orchestrator: both DBs locked -> all DB-dependent checks skipped."""
+class TestOrchestratorEntityDbLocked:
+    """Orchestrator: entity DB locked -> all DB-dependent checks skipped."""
 
-    def test_both_dbs_locked(self, tmp_path):
+    def test_entity_db_locked(self, tmp_path):
         from doctor import run_diagnostics
 
         db_path = _make_db(tmp_path)
-        mem_path = _make_memory_db(tmp_path)
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         blocker1 = sqlite3.connect(db_path)
         blocker1.execute("BEGIN IMMEDIATE")
-        blocker2 = sqlite3.connect(mem_path)
-        blocker2.execute("BEGIN IMMEDIATE")
         try:
-            report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-            assert len(report.checks) == 19
+            report = run_diagnostics(db_path, str(tmp_path / "docs"), str(tmp_path))
+            assert len(report.checks) == 21  # was 22 pre-memory-extraction (check_memory_health removed)
             assert report.healthy is False
         finally:
             blocker1.rollback()
             blocker1.close()
-            blocker2.rollback()
-            blocker2.close()
 
 
 class TestOrchestratorFreshProjectEmpty:
@@ -2466,11 +2013,10 @@ class TestOrchestratorFreshProjectEmpty:
         from doctor import run_diagnostics
 
         db_path = _make_db(tmp_path)
-        mem_path = _make_memory_db(tmp_path)
         (tmp_path / "docs").mkdir(exist_ok=True)
 
-        report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 19
+        report = run_diagnostics(db_path, str(tmp_path / "docs"), str(tmp_path))
+        assert len(report.checks) == 21  # was 22 pre-memory-extraction (check_memory_health removed)
         assert report.elapsed_ms >= 0
 
 
@@ -2481,12 +2027,11 @@ class TestOrchestratorWorksWithoutMcp:
         from doctor import run_diagnostics
 
         db_path = _make_db(tmp_path)
-        mem_path = _make_memory_db(tmp_path)
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         # No MCP servers running -- should still work
-        report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 19
+        report = run_diagnostics(db_path, str(tmp_path / "docs"), str(tmp_path))
+        assert len(report.checks) == 21  # was 22 pre-memory-extraction (check_memory_health removed)
 
 
 class TestOrchestratorConnectionsClosedOnSuccess:
@@ -2496,11 +2041,10 @@ class TestOrchestratorConnectionsClosedOnSuccess:
         from doctor import run_diagnostics
 
         db_path = _make_db(tmp_path)
-        mem_path = _make_memory_db(tmp_path)
         (tmp_path / "docs").mkdir(exist_ok=True)
 
-        report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 19
+        report = run_diagnostics(db_path, str(tmp_path / "docs"), str(tmp_path))
+        assert len(report.checks) == 21  # was 22 pre-memory-extraction (check_memory_health removed)
 
         # Verify we can acquire write locks (connections were closed)
         conn = sqlite3.connect(db_path, timeout=1.0)
@@ -2508,7 +2052,7 @@ class TestOrchestratorConnectionsClosedOnSuccess:
         conn.execute("ROLLBACK")
         conn.close()
 
-        conn = sqlite3.connect(mem_path, timeout=1.0)
+        conn = sqlite3.connect(db_path, timeout=1.0)
         conn.execute("BEGIN IMMEDIATE")
         conn.execute("ROLLBACK")
         conn.close()
@@ -2521,10 +2065,9 @@ class TestOrchestratorConnectionsClosedOnException:
         from doctor import run_diagnostics
 
         db_path = _make_db(tmp_path)
-        mem_path = _make_memory_db(tmp_path)
         (tmp_path / "docs").mkdir(exist_ok=True)
 
-        report = run_diagnostics(db_path, mem_path, str(tmp_path / "docs"), str(tmp_path))
+        report = run_diagnostics(db_path, str(tmp_path / "docs"), str(tmp_path))
 
         # Connections should be closed regardless
         conn = sqlite3.connect(db_path, timeout=1.0)
@@ -2554,13 +2097,11 @@ class TestCliJsonOutputHas14Checks:
 
     def test_cli_json_output_has_14_checks(self, tmp_path):
         db_path = _make_db(tmp_path)
-        mem_path = _make_memory_db(tmp_path)
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         result = subprocess.run(
             [sys.executable, "-m", "doctor",
              "--entities-db", db_path,
-             "--memory-db", mem_path,
              "--project-root", str(tmp_path),
              "--artifacts-root", str(tmp_path / "docs")],
             capture_output=True, text=True,
@@ -2570,7 +2111,7 @@ class TestCliJsonOutputHas14Checks:
         data = json.loads(result.stdout)
         # Phase 2 wraps output: {"diagnostic": ...}
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 19
+        assert len(diag["checks"]) == 21  # was 22 pre-memory-extraction (check_memory_health removed)
 
 
 class TestCliExitCodeAlwaysZero:
@@ -2581,7 +2122,6 @@ class TestCliExitCodeAlwaysZero:
         result = subprocess.run(
             [sys.executable, "-m", "doctor",
              "--entities-db", str(tmp_path / "nope.db"),
-             "--memory-db", str(tmp_path / "nope2.db"),
              "--project-root", str(tmp_path),
              "--artifacts-root", str(tmp_path)],
             capture_output=True, text=True,
@@ -2595,13 +2135,11 @@ class TestCliJsonStructureMatchesModel:
 
     def test_cli_json_structure_matches_model(self, tmp_path):
         db_path = _make_db(tmp_path)
-        mem_path = _make_memory_db(tmp_path)
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         result = subprocess.run(
             [sys.executable, "-m", "doctor",
              "--entities-db", db_path,
-             "--memory-db", mem_path,
              "--project-root", str(tmp_path),
              "--artifacts-root", str(tmp_path / "docs")],
             capture_output=True, text=True,
@@ -2629,14 +2167,12 @@ class TestCliArtifactsRootCliArgPrecedence:
 
     def test_cli_artifacts_root_cli_arg_precedence(self, tmp_path):
         db_path = _make_db(tmp_path)
-        mem_path = _make_memory_db(tmp_path)
         custom_root = tmp_path / "custom-docs"
         custom_root.mkdir()
 
         result = subprocess.run(
             [sys.executable, "-m", "doctor",
              "--entities-db", db_path,
-             "--memory-db", mem_path,
              "--project-root", str(tmp_path),
              "--artifacts-root", str(custom_root)],
             capture_output=True, text=True,
@@ -2645,7 +2181,7 @@ class TestCliArtifactsRootCliArgPrecedence:
         assert result.returncode == 0
         data = json.loads(result.stdout)
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 19
+        assert len(diag["checks"]) == 21  # was 22 pre-memory-extraction (check_memory_health removed)
 
 
 class TestCliArtifactsRootConfigFallback:
@@ -2653,13 +2189,11 @@ class TestCliArtifactsRootConfigFallback:
 
     def test_cli_artifacts_root_config_fallback(self, tmp_path):
         db_path = _make_db(tmp_path)
-        mem_path = _make_memory_db(tmp_path)
         (tmp_path / "docs").mkdir()
 
         result = subprocess.run(
             [sys.executable, "-m", "doctor",
              "--entities-db", db_path,
-             "--memory-db", mem_path,
              "--project-root", str(tmp_path)],
             capture_output=True, text=True,
             env={**os.environ, "PYTHONPATH": _doctor_lib_path()},
@@ -2667,7 +2201,7 @@ class TestCliArtifactsRootConfigFallback:
         assert result.returncode == 0
         data = json.loads(result.stdout)
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 19
+        assert len(diag["checks"]) == 21  # was 22 pre-memory-extraction (check_memory_health removed)
 
 
 class TestCliArtifactsRootDefaultDocs:
@@ -2675,12 +2209,10 @@ class TestCliArtifactsRootDefaultDocs:
 
     def test_cli_artifacts_root_default_docs(self, tmp_path):
         db_path = _make_db(tmp_path)
-        mem_path = _make_memory_db(tmp_path)
 
         result = subprocess.run(
             [sys.executable, "-m", "doctor",
              "--entities-db", db_path,
-             "--memory-db", mem_path,
              "--project-root", str(tmp_path)],
             capture_output=True, text=True,
             env={**os.environ, "PYTHONPATH": _doctor_lib_path()},
@@ -2688,7 +2220,7 @@ class TestCliArtifactsRootDefaultDocs:
         assert result.returncode == 0
         data = json.loads(result.stdout)
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 19
+        assert len(diag["checks"]) == 21  # was 22 pre-memory-extraction (check_memory_health removed)
 
 
 class TestCliNoneSerializesAsJsonNull:
@@ -2696,12 +2228,10 @@ class TestCliNoneSerializesAsJsonNull:
 
     def test_cli_none_serializes_as_json_null(self, tmp_path):
         db_path = _make_db(tmp_path)
-        mem_path = _make_memory_db(tmp_path)
 
         result = subprocess.run(
             [sys.executable, "-m", "doctor",
              "--entities-db", db_path,
-             "--memory-db", mem_path,
              "--project-root", str(tmp_path)],
             capture_output=True, text=True,
             env={**os.environ, "PYTHONPATH": _doctor_lib_path()},
@@ -3231,3 +2761,277 @@ class TestCheckStaleWorktreesMultipleOrphans:
         messages = " ".join(w.message for w in warnings)
         assert "task-a" in messages
         assert "task-b" in messages
+
+
+def _write_ws_json(proj_dir, ws_uuid, legacy=None):
+    """Write a workspace.json under <proj_dir>/.claude/pd/."""
+    d = os.path.join(proj_dir, ".claude", "pd")
+    os.makedirs(d, exist_ok=True)
+    payload = {"workspace_uuid": ws_uuid, "schema_version": 1}
+    if legacy is not None:
+        payload["project_id_legacy"] = legacy
+    with open(os.path.join(d, "workspace.json"), "w", encoding="utf-8") as fh:
+        json.dump(payload, fh)
+
+
+def _make_ws_db(tmp_path, name, rows=(), entities=0):
+    """v11 entities.db with a workspaces table (+ optional entity rows)."""
+    db_path = str(tmp_path / name)
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            "CREATE TABLE _metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+        )
+        conn.execute(
+            "INSERT INTO _metadata VALUES ('schema_version', '11')"
+        )
+        conn.execute(
+            "CREATE TABLE workspaces ("
+            " uuid TEXT NOT NULL PRIMARY KEY,"
+            " project_id_legacy TEXT UNIQUE,"
+            " project_root TEXT,"
+            " created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
+        )
+        conn.execute("CREATE TABLE entities (uuid TEXT PRIMARY KEY)")
+        for u, leg, root in rows:
+            conn.execute(
+                "INSERT INTO workspaces VALUES (?, ?, ?, 'n', 'n')",
+                (u, leg, root),
+            )
+        for i in range(entities):
+            conn.execute("INSERT INTO entities VALUES (?)", (f"e{i}",))
+        conn.commit()
+    finally:
+        conn.close()
+    return db_path
+
+
+class TestCheckWorkspaceUuidConsistency:
+    """First-ever coverage: the split-brain detector + fixable-hint choice."""
+
+    _A = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
+    _B = "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb"
+    _C = "cccccccc-3333-4333-8333-cccccccccccc"
+
+    def test_file_matches_db_passes(self, tmp_path):
+        from doctor.checks import check_workspace_uuid_consistency
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        root = os.path.abspath(str(proj))
+        db = _make_ws_db(tmp_path, "e.db", rows=[(self._A, "leg", root)])
+        _write_ws_json(str(proj), self._A)
+        result = check_workspace_uuid_consistency(
+            entities_db_path=db, project_root=str(proj)
+        )
+        assert result.passed
+        assert result.issues == []
+
+    def test_orphan_single_root_row_emits_adopt_hint(self, tmp_path):
+        from doctor.checks import check_workspace_uuid_consistency
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        root = os.path.abspath(str(proj))
+        db = _make_ws_db(tmp_path, "e.db", rows=[(self._B, "leg", root)])
+        _write_ws_json(str(proj), self._A)  # orphan A; root owned by B
+        result = check_workspace_uuid_consistency(
+            entities_db_path=db, project_root=str(proj)
+        )
+        assert not result.passed
+        assert result.issues[0].fix_hint.startswith(
+            "Adopt workspace UUID from DB row"
+        )
+
+    def test_orphan_no_root_row_emits_insert_hint(self, tmp_path):
+        from doctor.checks import check_workspace_uuid_consistency
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        db = _make_ws_db(tmp_path, "e.db")  # empty workspaces
+        _write_ws_json(str(proj), self._A)
+        result = check_workspace_uuid_consistency(
+            entities_db_path=db, project_root=str(proj)
+        )
+        assert not result.passed
+        assert result.issues[0].fix_hint.startswith(
+            "Insert missing workspaces row"
+        )
+
+    def test_orphan_multi_root_row_manual_hint(self, tmp_path):
+        from doctor.checks import check_workspace_uuid_consistency
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        root = os.path.abspath(str(proj))
+        db = _make_ws_db(
+            tmp_path, "e.db",
+            rows=[(self._B, "l1", root), (self._C, "l2", root)],
+        )
+        _write_ws_json(str(proj), self._A)
+        result = check_workspace_uuid_consistency(
+            entities_db_path=db, project_root=str(proj)
+        )
+        assert not result.passed
+        assert "Multiple workspaces rows" in result.issues[0].fix_hint
+
+    def test_file_missing_with_entities_errors(self, tmp_path):
+        from doctor.checks import check_workspace_uuid_consistency
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        db = _make_ws_db(tmp_path, "e.db", entities=3)
+        result = check_workspace_uuid_consistency(
+            entities_db_path=db, project_root=str(proj)
+        )
+        assert not result.passed
+        assert any(i.severity == "error" for i in result.issues)
+
+    def test_file_missing_empty_db_warns(self, tmp_path):
+        from doctor.checks import check_workspace_uuid_consistency
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        db = _make_ws_db(tmp_path, "e.db", entities=0)
+        result = check_workspace_uuid_consistency(
+            entities_db_path=db, project_root=str(proj)
+        )
+        # Fresh checkout: warning, not error → still "passed" (no errors).
+        assert result.passed
+        assert any(i.severity == "warning" for i in result.issues)
+
+    def test_legacy_mismatch_errors(self, tmp_path):
+        from doctor.checks import check_workspace_uuid_consistency
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        root = os.path.abspath(str(proj))
+        # DB row for A carries legacy 'db-leg'; file claims 'file-leg'.
+        db = _make_ws_db(tmp_path, "e.db", rows=[(self._A, "db-leg", root)])
+        _write_ws_json(str(proj), self._A, legacy="file-leg")
+        result = check_workspace_uuid_consistency(
+            entities_db_path=db, project_root=str(proj)
+        )
+        assert not result.passed
+        assert any("project_id_legacy" in i.message for i in result.issues)
+
+    def test_malformed_file_uuid_no_root_row_manual_hint(self, tmp_path):
+        """Codex warning: a malformed (but parseable) file uuid + no root row
+        must NOT get the fixable Insert hint (it would write a bad row)."""
+        from doctor.checks import check_workspace_uuid_consistency
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        db = _make_ws_db(tmp_path, "e.db")  # empty workspaces
+        _write_ws_json(str(proj), "not-a-uuid")
+        result = check_workspace_uuid_consistency(
+            entities_db_path=db, project_root=str(proj)
+        )
+        assert not result.passed
+        hint = result.issues[0].fix_hint
+        assert not hint.startswith("Insert missing workspaces row")
+        assert "malformed" in hint
+
+
+def _make_orphan_db(tmp_path, name, ws_rows=(), orphans=0):
+    """entities.db with a workspaces table + an entities table carrying a
+    ``workspace_uuid`` column, seeded with ``orphans`` rows in the unknown
+    bucket (so check_unknown_workspace_orphans can count them)."""
+    from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
+
+    db_path = str(tmp_path / name)
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            "CREATE TABLE workspaces ("
+            " uuid TEXT NOT NULL PRIMARY KEY,"
+            " project_id_legacy TEXT UNIQUE,"
+            " project_root TEXT,"
+            " created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
+        )
+        conn.execute(
+            "CREATE TABLE entities (uuid TEXT PRIMARY KEY, workspace_uuid TEXT)"
+        )
+        for u, leg, root in ws_rows:
+            conn.execute(
+                "INSERT INTO workspaces VALUES (?, ?, ?, 'n', 'n')",
+                (u, leg, root),
+            )
+        for i in range(orphans):
+            conn.execute(
+                "INSERT INTO entities VALUES (?, ?)",
+                (f"orphan{i}", _UNKNOWN_WORKSPACE_UUID),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    return db_path
+
+
+class TestCheckUnknownWorkspaceOrphans:
+    """Detect entities stranded in the unknown-workspace bucket + claim hint."""
+
+    _WS = "dddddddd-4444-4444-8444-dddddddddddd"
+
+    def test_orphans_single_workspace_emits_claim_hint(self, tmp_path):
+        from doctor.checks import check_unknown_workspace_orphans
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        root = os.path.abspath(str(proj))
+        db = _make_orphan_db(
+            tmp_path, "e.db", ws_rows=[(self._WS, "leg", root)], orphans=3
+        )
+        result = check_unknown_workspace_orphans(
+            entities_db_path=db, project_root=str(proj)
+        )
+        # Warning (not error) → still "passed"; emits the fixable claim hint.
+        assert result.passed
+        assert len(result.issues) == 1
+        assert result.issues[0].severity == "warning"
+        assert result.issues[0].fix_hint.startswith(
+            "Claim unknown-workspace entities into"
+        )
+        assert self._WS in result.issues[0].fix_hint
+        assert "3 entities" in result.issues[0].message
+
+    def test_no_orphans_passes_clean(self, tmp_path):
+        from doctor.checks import check_unknown_workspace_orphans
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        root = os.path.abspath(str(proj))
+        db = _make_orphan_db(
+            tmp_path, "e.db", ws_rows=[(self._WS, "leg", root)], orphans=0
+        )
+        result = check_unknown_workspace_orphans(
+            entities_db_path=db, project_root=str(proj)
+        )
+        assert result.passed
+        assert result.issues == []
+
+    def test_orphans_ambiguous_workspace_manual_hint(self, tmp_path):
+        from doctor.checks import check_unknown_workspace_orphans
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        # No workspaces row for this project_root → cannot auto-claim.
+        db = _make_orphan_db(tmp_path, "e.db", ws_rows=(), orphans=2)
+        result = check_unknown_workspace_orphans(
+            entities_db_path=db, project_root=str(proj)
+        )
+        assert result.passed  # warning only
+        assert len(result.issues) == 1
+        assert not result.issues[0].fix_hint.startswith(
+            "Claim unknown-workspace entities into"
+        )
+
+    def test_missing_db_is_noop(self, tmp_path):
+        from doctor.checks import check_unknown_workspace_orphans
+
+        result = check_unknown_workspace_orphans(
+            entities_db_path=str(tmp_path / "nonexistent.db"),
+            project_root=str(tmp_path),
+        )
+        assert result.passed
+        assert result.issues == []

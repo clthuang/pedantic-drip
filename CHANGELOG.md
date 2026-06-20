@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.0.0] - 2026-06-20
+
+### Removed
+
+- **Knowledge-bank / semantic-memory subsystem (full teardown)** — removed the entire engineering-memory feature so that cross-session memory is now orthogonal to pd, delegated to native Claude Code memory or an external memory plugin. Deleted: the `semantic_memory/` engine (~18.5k LOC: embedding/retrieval/ranking/decay/influence/refresh), the `pattern_promotion/` package, the `memory-server` MCP and its tools (`store_memory`, `search_memory`, `delete_memory`, `record_influence`, `record_influence_by_content`), the legacy `hooks/lib/memory.py`, the three capture hooks (`capture-on-stop`, `capture-tool-failure`, `tag-correction`), the `/pd:remember` and `/pd:promote-pattern` commands, and the `capturing-learnings` & `promoting-patterns` skills. All `memory_*` config keys and embedding-provider extras (gemini/voyage/openai/ollama) were dropped from `pyproject.toml` and the config templates. Session-start memory injection/decay, the doctor `check_memory_health` check (now 21 checks), the reconciliation `kb_import` task, and the migration tool's `memory.db` handling were all removed. Net: **−42k lines across 167 files.**
+- **`read_config` config seam extracted** — the shared config parser that the entity-registry, workflow-engine, and doctor imported from `semantic_memory.config` was moved to a new memory-independent `plugins/pd/hooks/lib/pd_config/` package, keeping the core (`brainstorm→finish`) workflow, entity registry, workflow engine, and doctor fully functional after the teardown.
+
+### Note
+
+- The retrospective process is preserved but now writes a plain-markdown `retro.md` artifact only (no DB/MCP/influence persistence). `docs/knowledge-bank/*.md` are retained as inert reference markdown with no tooling reading or writing them. The cross-project `~/.claude/pd/memory/memory.db` store is left in place — remove it manually (`rm -rf ~/.claude/pd/memory`) if desired.
+
+### Fixed
+
+- **`pd doctor --fix` cross-workspace re-attribute** (feature 117) — the `_fix_triage_cross_workspace_link` helper now drops the `enforce_immutable_workspace_uuid` trigger, applies the `UPDATE entities SET workspace_uuid = ?` re-attribute, then recreates the trigger from the captured SQL — all inside a `with conn:` transaction with `try/finally` restore. Previously this raised `sqlite3.IntegrityError: workspace_uuid is immutable` on production DBs.
+- **Doctor stale-version false errors eliminated** (feature 117) — `ENTITY_SCHEMA_VERSION` and `MEMORY_SCHEMA_VERSION` constants in `doctor/checks.py` replaced with `max(MIGRATIONS.keys())`-based helpers. Schema version checks now track migrations automatically; future migrations no longer require manually updating constants.
+
+### Added
+
+- **`check_severity_vocab` doctor check** (feature 116) — AST audit that verifies all doctor checks emit severity from the closed set `{error, warning, info}`. Brings doctor check count to 20. Runs at session-start; CI enforcement via `validate.sh`.
+- **`severity_summary` rollup field on `DiagnosticReport`** (feature 116) — doctor JSON output now includes a top-level `severity_summary: {error: N, warning: N, info: N}` field aggregated across all check issues. Existing `error_count`/`warning_count` fields preserved for backwards compatibility.
+
+### Changed
+
+- **`check_cross_workspace_parent_uuid`** (feature 116) — moved from `doctor/checks.py` to its own standalone module `doctor/check_cross_workspace_parent_uuid.py` per F115 T2b.6 plan. CHECK_ORDER position preserved byte-identical; behavior unchanged.
+
 ## [4.18.2] - 2026-05-17
 
 ### Added

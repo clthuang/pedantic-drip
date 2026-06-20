@@ -10,6 +10,7 @@ import re
 import sqlite3
 import subprocess
 import sys
+import unicodedata
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -25,7 +26,6 @@ class FixContext:
     """Shared context for all fix functions."""
 
     entities_db_path: str
-    memory_db_path: str
     artifacts_root: str
     project_root: str
     db: EntityDatabase | None
@@ -33,7 +33,6 @@ class FixContext:
     # entities_conn IS db._conn (intentional encapsulation bypass — EntityDatabase
     # lacks public setters for parent_uuid/parent_type_id).
     entities_conn: sqlite3.Connection | None
-    memory_conn: sqlite3.Connection | None
 
 
 # Known TD-11 drift classes (feature 110 design §3 TD-11).
@@ -236,14 +235,6 @@ def _fix_wal_entities(ctx: FixContext, issue: Issue) -> str:
     return "Set journal_mode=WAL on entity DB"
 
 
-def _fix_wal_memory(ctx: FixContext, issue: Issue) -> str:
-    """Set PRAGMA journal_mode=WAL on the memory database."""
-    if not ctx.memory_conn:
-        raise ValueError("No memory connection")
-    ctx.memory_conn.execute("PRAGMA journal_mode=WAL")
-    return "Set journal_mode=WAL on memory DB"
-
-
 def _fix_self_referential_parent(ctx: FixContext, issue: Issue) -> str:
     """Clear self-referential parent_uuid."""
     if not ctx.entities_conn or not issue.entity:
@@ -354,15 +345,6 @@ def _fix_run_entity_migrations(ctx: FixContext, issue: Issue) -> str:
     return "Ran entity DB migrations"
 
 
-def _fix_run_memory_migrations(ctx: FixContext, issue: Issue) -> str:
-    """Run memory DB migrations by constructing MemoryDatabase."""
-    from semantic_memory.database import MemoryDatabase
-
-    db = MemoryDatabase(ctx.memory_db_path)
-    db.close()
-    return "Ran memory DB migrations"
-
-
 def _fix_project_attribution(ctx: FixContext, issue: Issue) -> str:
     """Backfill project_id for __unknown__ entities under project_root."""
     if not ctx.db:
@@ -390,6 +372,62 @@ def _fix_stale_dependency(ctx: FixContext, issue: Issue) -> str:
     if result:
         return f"Removed stale dependency on {blocked_by_uuid}, unblocked {len(result)} entities"
     return f"Stale dependency on {blocked_by_uuid} already cleaned"
+
+
+# ---------------------------------------------------------------------------
+# Feature 116 FR-9: Defensive parser layer for adversarial fix_hint inputs.
+# ---------------------------------------------------------------------------
+
+_UUID_LIKE = re.compile(r"^[0-9a-fA-F\-]+$")        # for parent_uuid, child_uuid segments
+_CHOICE_LIKE = re.compile(r"^[a-zA-Z\- ]+$")        # for choice value
+_REASON_DENY = re.compile(r"[\x00-\x1f;&()`$\\]")   # control chars + all shell metas (;|&`$()); `|` is segment separator so excluded
+_MAX_LEN = 1024
+
+
+def _normalize_and_validate_fix_hint(fix_hint: str | None) -> str:
+    """Defensive parser layer for adversarial fix_hint inputs (Feature 116 FR-9).
+
+    Steps:
+    1. NFC-normalize unicode confusables.
+    2. Reject if utf-8 byte length > 1024.
+    3. Split on '|' into segments; validate each by grammar:
+       - First segment: 'triage_cross_workspace_links:<uuid>:<uuid>' — UUID-like chars only.
+       - 'choice:<value>' — choice value matches _CHOICE_LIKE.
+       - 'reason:<value>' — free text, but reject control chars + shell metas ($, \\, `, ;, &, (, )).
+    4. Reject other unknown top-level segments.
+
+    Raises ValueError on rejection (reuses existing exception type — no new
+    InvalidFixHintError class introduced).
+
+    Returns the NFC-normalized, whitespace-stripped string.
+    """
+    if not fix_hint:
+        return ""
+    nfc = unicodedata.normalize("NFC", fix_hint)
+    if len(nfc.encode("utf-8")) > _MAX_LEN:
+        raise ValueError(f"fix_hint too long ({len(nfc)} chars, max {_MAX_LEN})")
+    stripped = nfc.strip()
+    segments = stripped.split("|")
+    head = segments[0]
+    if head.startswith("triage_cross_workspace_links:"):
+        try:
+            _, parent, child = head.split(":", 2)
+        except ValueError:
+            raise ValueError("fix_hint malformed: requires parent_uuid:child_uuid after prefix")
+        if not _UUID_LIKE.match(parent) or not _UUID_LIKE.match(child):
+            raise ValueError(f"fix_hint contains invalid character in uuid field: {head!r}")
+    for seg in segments[1:]:
+        if seg.startswith("choice:"):
+            val = seg[len("choice:"):]
+            if not _CHOICE_LIKE.match(val):
+                raise ValueError(f"fix_hint contains invalid character in choice: {val!r}")
+        elif seg.startswith("reason:"):
+            val = seg[len("reason:"):]
+            if _REASON_DENY.search(val):
+                raise ValueError(f"fix_hint contains invalid character in reason: {val!r}")
+        else:
+            raise ValueError(f"fix_hint contains unknown segment: {seg!r}")
+    return stripped
 
 
 def _parse_triage_choice(fix_hint: str | None) -> dict:
@@ -428,6 +466,55 @@ def _parse_triage_choice(fix_hint: str | None) -> dict:
     return result
 
 
+def _execute_re_attribute_with_trigger_dance(
+    conn: sqlite3.Connection,
+    target_entity_uuid: str,
+    target_workspace_uuid: str,
+) -> None:
+    """F117 FR-A.1: wrap an UPDATE entities SET workspace_uuid statement with
+    sqlite_master capture/replay of the enforce_immutable_workspace_uuid
+    trigger.
+
+    Per Python 3.6+ sqlite3 semantics (bpo-27334) — CPython legacy autocommit
+    mode — DDL (DROP/CREATE) autocommits immediately; the `finally` block is
+    the SOLE trigger-restoration mechanism. The `with conn:` rolls back the
+    UPDATE's implicit DML transaction only. Both layers are load-bearing —
+    neither is optional. PyPy may diverge; F117 assumes CPython only.
+
+    Strengthens the inline-hardcoded pattern at
+    entity_registry/database.py:7956-7975 (claim_unknown_entities) by
+    capturing the live trigger SQL from sqlite_master at call time —
+    byte-identical to whatever the DB actually has, regardless of source
+    drift in database.py.
+
+    Raises RuntimeError if the trigger is not present at call time (do NOT
+    silently degrade to a bare UPDATE).
+    """
+    trigger_sql_row = conn.execute(
+        "SELECT sql FROM sqlite_master "
+        "WHERE name='enforce_immutable_workspace_uuid'"
+    ).fetchone()
+    if trigger_sql_row is None or not trigger_sql_row[0]:
+        raise RuntimeError(
+            "F117 FR-A.1: enforce_immutable_workspace_uuid trigger not "
+            "found in sqlite_master; cannot safely drop/recreate. "
+            "Aborting re-attribute."
+        )
+    captured_sql = trigger_sql_row[0]
+
+    with conn:
+        conn.execute(
+            "DROP TRIGGER IF EXISTS enforce_immutable_workspace_uuid"
+        )
+        try:
+            conn.execute(
+                "UPDATE entities SET workspace_uuid = ? WHERE uuid = ?",
+                (target_workspace_uuid, target_entity_uuid),
+            )
+        finally:
+            conn.execute(captured_sql)
+
+
 def _fix_triage_cross_workspace_link(ctx: FixContext, issue: Issue) -> str:
     """Feature 115 C14-115 / IF-8: triage a single cross-workspace parent_uuid link.
 
@@ -442,7 +529,9 @@ def _fix_triage_cross_workspace_link(ctx: FixContext, issue: Issue) -> str:
     """
     if ctx.entities_conn is None:
         raise RuntimeError("entities_conn not available")
-    choice_info = _parse_triage_choice(issue.fix_hint)
+    # Feature 116 FR-9: validate + normalize before parsing.
+    normalized_hint = _normalize_and_validate_fix_hint(issue.fix_hint)
+    choice_info = _parse_triage_choice(normalized_hint)
     parent_uuid = choice_info["parent_uuid"]
     child_uuid = choice_info["child_uuid"] or issue.entity
     choice = choice_info["choice"]
@@ -470,15 +559,13 @@ def _fix_triage_cross_workspace_link(ctx: FixContext, issue: Issue) -> str:
     parent_ws = row[1] if not hasattr(row, "keys") else row["parent_ws"]
 
     if choice == "re-attribute parent":
-        ctx.entities_conn.execute(
-            "UPDATE entities SET workspace_uuid = ? WHERE uuid = ?",
-            (child_ws, parent_uuid),
+        _execute_re_attribute_with_trigger_dance(
+            ctx.entities_conn, parent_uuid, child_ws
         )
         action = f"re-attributed parent {parent_uuid} → workspace {child_ws}"
     elif choice == "re-attribute child":
-        ctx.entities_conn.execute(
-            "UPDATE entities SET workspace_uuid = ? WHERE uuid = ?",
-            (parent_ws, child_uuid),
+        _execute_re_attribute_with_trigger_dance(
+            ctx.entities_conn, child_uuid, parent_ws
         )
         action = f"re-attributed child {child_uuid} → workspace {parent_ws}"
     elif choice == "delete relation":
@@ -500,3 +587,133 @@ def _fix_triage_cross_workspace_link(ctx: FixContext, issue: Issue) -> str:
 
     ctx.entities_conn.commit()
     return action
+
+
+def _read_workspace_json_file_uuid(project_root: str) -> tuple[str, str | None]:
+    """Return (workspace_json_path, file_uuid) for the project, re-derived at
+    fix time. file_uuid is None when the file is absent."""
+    import json as _json
+
+    ws_path = os.path.join(project_root, ".claude", "pd", "workspace.json")
+    if not os.path.isfile(ws_path):
+        return ws_path, None
+    try:
+        with open(ws_path, encoding="utf-8") as fh:
+            return ws_path, _json.load(fh).get("workspace_uuid")
+    except (OSError, _json.JSONDecodeError) as exc:
+        raise ValueError(f"workspace.json unreadable: {exc}") from exc
+
+
+def _fix_adopt_workspace_uuid(ctx: FixContext, issue: Issue) -> str:
+    """Adopt the project_root's canonical workspace UUID into workspace.json.
+
+    Re-derives all state at fix time (never trusts the issue message). No-ops
+    gracefully when the split-brain has already been healed (file uuid now a
+    member, or the file is gone).
+    """
+    if not ctx.project_root:
+        raise ValueError(
+            "FixContext.project_root required for workspace UUID fix actions"
+        )
+    if not ctx.entities_conn:
+        raise ValueError("No entities connection")
+    from entity_registry.project_identity import (
+        _rewrite_workspace_json_if_matches,
+    )
+
+    ws_path, file_uuid = _read_workspace_json_file_uuid(ctx.project_root)
+    if file_uuid is None:
+        return "already consistent: workspace.json absent — no rewrite needed"
+    if ctx.entities_conn.execute(
+        "SELECT 1 FROM workspaces WHERE uuid = ?", (file_uuid,)
+    ).fetchone() is not None:
+        return "already consistent: workspace.json uuid present in DB"
+    rows = ctx.entities_conn.execute(
+        "SELECT uuid FROM workspaces "
+        "WHERE project_root IS NOT NULL AND project_root = ?",
+        (os.path.abspath(ctx.project_root),),
+    ).fetchall()
+    if len(rows) != 1:
+        return (
+            f"no-op: expected exactly one project_root row to adopt, "
+            f"found {len(rows)}"
+        )
+    adopted = rows[0][0]
+    result = _rewrite_workspace_json_if_matches(ws_path, file_uuid, adopted)
+    return (
+        f"Adopted workspace UUID {adopted} into workspace.json "
+        f"(was orphan {file_uuid}); on-disk now {result}"
+    )
+
+
+def _fix_insert_workspace_row(ctx: FixContext, issue: Issue) -> str:
+    """Insert the missing workspaces row for the file's orphaned UUID.
+
+    Re-derives state at fix time. No-ops when already healed or when the
+    project_root turns out to be owned by another uuid (defensive — the check
+    only emits this hint when zero rows match the root).
+    """
+    if not ctx.project_root:
+        raise ValueError(
+            "FixContext.project_root required for workspace UUID fix actions"
+        )
+    if not ctx.entities_conn:
+        raise ValueError("No entities connection")
+    from entity_registry.project_identity import (
+        _WORKSPACE_UUID_RE,
+        _compute_legacy_project_id,
+        _insert_workspace_row_if_absent,
+    )
+
+    _ws_path, file_uuid = _read_workspace_json_file_uuid(ctx.project_root)
+    if file_uuid is None:
+        return "already consistent: workspace.json absent — no row needed"
+    if not _WORKSPACE_UUID_RE.match(file_uuid or ""):
+        # Defensive: never insert a malformed uuid as a workspaces.uuid.
+        raise ValueError(
+            f"workspace.json workspace_uuid {file_uuid!r} is malformed; "
+            f"refusing to insert. rm the file and re-run session-start."
+        )
+    if ctx.entities_conn.execute(
+        "SELECT 1 FROM workspaces WHERE uuid = ?", (file_uuid,)
+    ).fetchone() is not None:
+        return "already consistent: workspace.json uuid present in DB"
+    root = os.path.abspath(ctx.project_root)
+    outcome = _insert_workspace_row_if_absent(
+        ctx.entities_conn, file_uuid, root, _compute_legacy_project_id(root)
+    )
+    if outcome == "conflict-root":
+        return "no-op: project_root already owned by another workspace row"
+    ctx.entities_conn.commit()
+    return f"Inserted workspaces row for {file_uuid} (outcome={outcome})"
+
+
+def _fix_claim_unknown_entities(ctx: FixContext, issue: Issue) -> str:
+    """Re-attribute unknown-workspace orphan entities into the project's workspace.
+
+    Re-derives the target workspace at fix time from ``project_root`` (never
+    trusts the issue message), mirroring ``_fix_adopt_workspace_uuid``.
+    Delegates the actual re-attribution — and its trigger-dance — to
+    ``EntityDatabase.claim_unknown_entities``, which itself guards the
+    no-op self-claim and missing-workspace cases.
+    """
+    if not ctx.project_root:
+        raise ValueError(
+            "FixContext.project_root required for workspace claim fix actions"
+        )
+    if not ctx.db or not ctx.entities_conn:
+        raise ValueError("No entities DB")
+    rows = ctx.entities_conn.execute(
+        "SELECT uuid FROM workspaces "
+        "WHERE project_root IS NOT NULL AND project_root = ?",
+        (os.path.abspath(ctx.project_root),),
+    ).fetchall()
+    if len(rows) != 1:
+        return (
+            f"no-op: expected exactly one project_root workspace row to claim "
+            f"into, found {len(rows)}"
+        )
+    ws_uuid = rows[0][0]
+    n = ctx.db.claim_unknown_entities(workspace_uuid=ws_uuid)
+    noun = "entity" if n == 1 else "entities"
+    return f"Claimed {n} unknown-workspace {noun} into {ws_uuid}"

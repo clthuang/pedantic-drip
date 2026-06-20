@@ -7,6 +7,5 @@ from __future__ import annotations
 
 __version__ = "0.1.0"
 
-# FR-1.1 canonical per-AC status enum. Modeled on
-# semantic_memory.__init__.VALID_CATEGORIES (frozenset, O(1) membership).
+# FR-1.1 canonical per-AC status enum. A frozenset for O(1) membership checks.
 STATUS_ENUM = frozenset({"passed", "deferred", "n_a", "conditional_skipped"})

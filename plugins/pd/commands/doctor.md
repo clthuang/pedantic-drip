@@ -4,7 +4,7 @@ description: Run diagnostic checks on pd workspace health
 
 # /pd:doctor Command
 
-Run 14 data consistency checks across entity DB, memory DB, workflow state, and filesystem artifacts. Optionally apply safe auto-fixes.
+Run 21 data consistency checks across entity DB, workflow state, and filesystem artifacts. Optionally apply safe auto-fixes.
 
 ## Config Variables
 Use these values from session context (injected at session start):
@@ -28,7 +28,6 @@ PLUGIN_ROOT=$(ls -d ~/.claude/plugins/cache/*/pd*/*/hooks 2>/dev/null | head -1 
 if [[ -n "$PLUGIN_ROOT" ]] && [[ -x "$PLUGIN_ROOT/.venv/bin/python" ]]; then
   PYTHONPATH="$PLUGIN_ROOT/hooks/lib" "$PLUGIN_ROOT/.venv/bin/python" -m doctor \
     --entities-db ~/.claude/pd/entities/entities.db \
-    --memory-db ~/.claude/pd/memory/memory.db \
     --artifacts-root {pd_artifacts_root} \
     --project-root . \
     2>/dev/null
@@ -37,7 +36,6 @@ else
   if [[ -x "plugins/pd/.venv/bin/python" ]]; then
     PYTHONPATH=plugins/pd/hooks/lib plugins/pd/.venv/bin/python -m doctor \ # Fallback (dev workspace)
       --entities-db ~/.claude/pd/entities/entities.db \
-      --memory-db ~/.claude/pd/memory/memory.db \
       --artifacts-root {pd_artifacts_root} \
       --project-root . \
       2>/dev/null
@@ -62,7 +60,6 @@ Parse the `diagnostic` key. Format as a summary table:
 | workflow_phase | PASS/FAIL | N issues |
 | brainstorm_status | PASS/FAIL | N issues |
 | backlog_status | PASS/FAIL | N issues |
-| memory_health | PASS/FAIL | N issues |
 | branch_consistency | PASS/FAIL | N issues |
 | entity_orphans | PASS/FAIL | N issues |
 | referential_integrity | PASS/FAIL | N issues |

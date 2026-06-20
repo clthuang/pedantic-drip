@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import dataclasses
 import fcntl
-import functools
 import hashlib
 import json
 import os
@@ -230,15 +229,339 @@ def _read_workspace_json(target_path: str) -> str:
     return ws_uuid
 
 
-def resolve_workspace_uuid(working_dir: str | None = None) -> str:
+def _entities_db_path() -> str:
+    """Resolve the entities.db path with the same precedence the MCP servers
+    use (``ENTITY_DB_PATH`` env override → global store).
+
+    Kept in lock-step with ``mcp/entity_server.py`` lifespan (and
+    ``workflow_state_server.py``): both honour ``ENTITY_DB_PATH``. The runtime
+    ``resolve_workspace_uuid`` historically hard-coded the global path, which
+    diverged from the servers under test harnesses that set ``ENTITY_DB_PATH``;
+    routing every DB touch through this helper removes that split.
+    """
+    return os.environ.get(
+        "ENTITY_DB_PATH",
+        os.path.expanduser("~/.claude/pd/entities/entities.db"),
+    )
+
+
+def _insert_workspace_row_if_absent(
+    conn: sqlite3.Connection,
+    workspace_uuid: str,
+    project_root: str | None,
+    legacy_pid: str | None,
+) -> str:
+    """Insert a ``workspaces`` row for *workspace_uuid* iff safe to do so.
+
+    Single source of the "create-a-workspace-row" SQL shared by the runtime
+    resolver (via :func:`_ensure_workspace_row`), ``upsert_project``, and
+    ``backfill_project_ids``. Does NOT open or commit a transaction — the
+    caller's transaction/isolation applies (this is required: several callers
+    are mid-transaction and a nested ``BEGIN`` would raise).
+
+    Returns
+    -------
+    str
+        - ``"exists"``    — a row with this uuid is already present (no-op).
+        - ``"conflict-root"`` — *project_root* is already claimed by one or
+          more rows with a DIFFERENT uuid; NO insert performed. The caller
+          decides whether to adopt the existing row (single match) or warn
+          and fall through (ambiguous multi-match).
+        - ``"inserted"``  — a new row was inserted (possibly with
+          ``project_id_legacy=NULL`` if the supplied *legacy_pid* collided
+          with an existing row — the moved-repo case).
+
+    Raises
+    ------
+    sqlite3.IntegrityError
+        If even the ``legacy_pid=NULL`` retry fails (e.g. the uuid itself
+        collided in a concurrent insert) — callers treat this as best-effort
+        when wrapped by :func:`_ensure_workspace_row`.
+    """
+    row = conn.execute(
+        "SELECT 1 FROM workspaces WHERE uuid = ?",
+        (workspace_uuid,),
+    ).fetchone()
+    if row is not None:
+        return "exists"
+
+    # Our uuid is absent. If project_root is already claimed by other
+    # uuid(s), refuse to mint a competing root claim — that is exactly how
+    # the split-brain row got created in the first place.
+    if project_root is not None:
+        claimed = conn.execute(
+            "SELECT 1 FROM workspaces "
+            "WHERE project_root IS NOT NULL AND project_root = ? LIMIT 1",
+            (project_root,),
+        ).fetchone()
+        if claimed is not None:
+            return "conflict-root"
+
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        conn.execute(
+            "INSERT INTO workspaces "
+            "(uuid, project_id_legacy, project_root, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (workspace_uuid, legacy_pid, project_root, now, now),
+        )
+    except sqlite3.IntegrityError:
+        # The only other UNIQUE besides the uuid PK is project_id_legacy.
+        # A legacy pid collision means a row with a different root already
+        # owns this legacy id (moved/renamed repo). Insert with NULL legacy
+        # so the workspace identity is still recorded; legacy resolution
+        # continues to point at the original row.
+        if legacy_pid is None:
+            raise  # uuid PK collision (concurrent insert) — propagate.
+        print(
+            f"[workspace.json] WARN: project_id_legacy={legacy_pid!r} already "
+            f"claimed; inserting workspace row {workspace_uuid} with NULL "
+            f"legacy id",
+            file=sys.stderr,
+        )
+        conn.execute(
+            "INSERT INTO workspaces "
+            "(uuid, project_id_legacy, project_root, created_at, updated_at) "
+            "VALUES (?, NULL, ?, ?, ?)",
+            (workspace_uuid, project_root, now, now),
+        )
+    return "inserted"
+
+
+def _rewrite_workspace_json_if_matches(
+    target_path: str, expected_uuid: str, new_uuid: str
+) -> str:
+    """Compare-and-swap rewrite of ``workspace.json`` under the file flock.
+
+    Distinct from :func:`_atomic_workspace_json_write` (create-if-absent):
+    this rewrites an EXISTING file, but only if its current ``workspace_uuid``
+    still equals *expected_uuid* (CAS). Concurrent healers that already
+    rewrote the file are no-ops — the loser returns the winner's value.
+
+    Returns the uuid that ends up on disk (``new_uuid`` on a hit, the file's
+    current uuid on a CAS miss).
+
+    The written payload intentionally OMITS ``project_id_legacy`` — the
+    adopted uuid is the authoritative identity post-heal and the legacy id is
+    not meaningful for it (the consistency check's legacy-mismatch branch
+    skips when the field is absent).
+    """
+    lock_path = target_path + ".lock"
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+        current = None
+        if os.path.exists(target_path):
+            try:
+                with open(target_path, encoding="utf-8") as fh:
+                    current = json.load(fh).get("workspace_uuid")
+            except (OSError, json.JSONDecodeError):
+                current = None
+        if current != expected_uuid:
+            # CAS miss — another healer won, or the file changed. Return the
+            # current on-disk value if usable, else the expected (best effort).
+            return current if isinstance(current, str) else expected_uuid
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        payload = {
+            "workspace_uuid": new_uuid,
+            "schema_version": 1,
+            "created_at": now_iso,
+            "created_by": "self-heal",
+        }
+        parent_dir = os.path.dirname(target_path)
+        tmp_fd, tmp_path = tempfile.mkstemp(
+            prefix=".workspace.", suffix=".json.tmp", dir=parent_dir,
+        )
+        try:
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
+                json.dump(payload, fh, indent=2, sort_keys=True)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp_path, target_path)
+            tmp_path = None
+        finally:
+            if tmp_path is not None:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+        return new_uuid
+    finally:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        os.close(lock_fd)
+
+
+def _ensure_workspace_row(
+    db_path: str, workspace_uuid: str, project_root: str | None
+) -> str | None:
+    """Best-effort: ensure a ``workspaces`` row exists for *workspace_uuid*.
+
+    Opens its own short-lived read-write connection (used from the resolver,
+    which is not inside an ``EntityDatabase`` transaction). Gated so it never
+    creates the DB file and never touches a pre-Migration-11 schema.
+
+    Returns the :func:`_insert_workspace_row_if_absent` result string
+    (``"exists"``/``"inserted"``/``"conflict-root"``), or ``None`` when a gate
+    is not met or any error occurs — callers continue with the candidate uuid
+    unchanged in that case (the gap self-heals on a later resolve when the DB
+    is reachable).
+    """
+    if not os.path.isfile(db_path):
+        return None  # mode=rw must not create the file; bail before connect.
+    conn = None
+    try:
+        # mode=rw (NOT rwc) — fails rather than creating a new empty DB.
+        conn = sqlite3.connect(
+            f"file:{db_path}?mode=rw", uri=True, timeout=2.0
+        )
+        conn.execute("PRAGMA busy_timeout = 2000")
+        sv_row = conn.execute(
+            "SELECT value FROM _metadata WHERE key='schema_version'"
+        ).fetchone()
+        try:
+            sv = int(sv_row[0]) if sv_row is not None else 0
+        except (TypeError, ValueError):
+            sv = 0
+        if sv < 11:
+            return None
+        legacy_pid = (
+            _compute_legacy_project_id(project_root) if project_root else None
+        )
+        result = _insert_workspace_row_if_absent(
+            conn, workspace_uuid, project_root, legacy_pid
+        )
+        conn.commit()
+        return result
+    except (sqlite3.Error, OSError, ValueError):
+        return None
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except sqlite3.Error:
+                pass
+
+
+def validate_or_adopt_workspace_uuid(
+    candidate: str, project_root: str | None, db_path: str
+) -> str:
+    """Canonical "is this workspace uuid real, and if not what should it be?"
+
+    Shared by the runtime resolver (file uuid), the MCP lifespans (inherited
+    ``WORKSPACE_UUID`` env), and — indirectly — the write paths. Read-mostly:
+    the only write is the missing-row insert via :func:`_ensure_workspace_row`.
+
+    Membership alone is NOT sufficient — a candidate that exists but is bound
+    to a DIFFERENT ``project_root`` is foreign (e.g. a workspace.json copied
+    between projects, or a stale inherited ``WORKSPACE_UUID``) and must not be
+    accepted for this root, or entities would cross-bind to another project's
+    workspace.
+
+    Precedence:
+      1. Malformed candidate → raise ``ValueError`` (caller's problem).
+      2. DB unreachable / pre-M11 → return *candidate* unchanged.
+      3. *candidate* present AND its row's ``project_root`` is NULL or equals
+         this root → return it (fast path; correctly ours / unscoped).
+      4. Otherwise (orphaned, OR present-but-foreign-root) → exactly one row
+         matches *project_root* → return that row's uuid (ADOPT).
+      5. Orphaned + zero rows match *project_root* → insert a row carrying
+         *candidate* and return it.
+      6. Can't safely map (present-but-foreign with no/ambiguous root row, or
+         orphaned + multiple root rows) → WARN, return *candidate*.
+    """
+    _validate_workspace_uuid(candidate)
+    if not os.path.isfile(db_path):
+        return candidate
+    root_abs = os.path.abspath(project_root) if project_root else None
+    is_member = False
+    cand_root: str | None = None
+    root_uuids: list[str] = []
+    conn = None
+    try:
+        conn = sqlite3.connect(
+            f"file:{db_path}?mode=ro", uri=True, timeout=2.0
+        )
+        sv_row = conn.execute(
+            "SELECT value FROM _metadata WHERE key='schema_version'"
+        ).fetchone()
+        try:
+            sv = int(sv_row[0]) if sv_row is not None else 0
+        except (TypeError, ValueError):
+            sv = 0
+        if sv < 11:
+            return candidate
+        crow = conn.execute(
+            "SELECT project_root FROM workspaces WHERE uuid = ?", (candidate,)
+        ).fetchone()
+        if crow is not None:
+            is_member = True
+            cand_root = crow[0]
+        if root_abs is not None:
+            root_uuids = [
+                r[0]
+                for r in conn.execute(
+                    "SELECT uuid FROM workspaces "
+                    "WHERE project_root IS NOT NULL AND project_root = ?",
+                    (root_abs,),
+                ).fetchall()
+            ]
+    except sqlite3.Error:
+        return candidate
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except sqlite3.Error:
+                pass
+
+    if is_member and (cand_root is None or cand_root == root_abs):
+        return candidate  # correctly ours, or unscoped (NULL root)
+
+    # Either orphaned, or a member bound to a different root (foreign).
+    if len(root_uuids) == 1:
+        return root_uuids[0]  # adopt this root's canonical row
+    if not is_member and len(root_uuids) == 0:
+        # Orphaned + this root unclaimed — record the candidate so the FK
+        # resolves. (A foreign member is NOT inserted: its uuid already exists
+        # elsewhere; we can't claim it here.)
+        _ensure_workspace_row(db_path, candidate, project_root)
+        return candidate
+    why = (
+        "present but bound to a different project_root"
+        if is_member else "orphaned"
+    )
+    print(
+        f"[workspace.json] WARN: candidate {candidate} is {why} and "
+        f"project_root={project_root!r} has {len(root_uuids)} workspace "
+        f"row(s); cannot safely adopt — leaving as-is",
+        file=sys.stderr,
+    )
+    return candidate
+
+
+def resolve_workspace_uuid(
+    working_dir: str | None = None, db_path: str | None = None
+) -> str:
     """Resolve workspace UUID for the given working directory (FR-3).
+
+    ``db_path`` overrides the entities.db location (defaults to
+    :func:`_entities_db_path`); threaded through so callers that already
+    resolved a DB path reconcile/insert against the SAME database.
 
     Precedence chain:
       1. ``ENTITY_WORKSPACE_UUID`` env var (test override).
-      2. ``<working_dir>/.claude/pd/workspace.json`` (file-based; project-level).
+      2. ``<working_dir>/.claude/pd/workspace.json`` (file-based; project-level)
+         — self-healing: an orphaned file uuid is reconciled against the
+         workspaces table (adopt the project_root row, or insert the missing
+         row) so file and DB stay consistent.
       3. workspaces-table lookup by ``project_root`` match (single row only).
-      4. Fresh write — generate uuid4, persist via flock-synchronised
-         atomic write.
+      4. Fresh write — generate uuid4, persist via flock-synchronised atomic
+         write, then record the matching workspaces row.
 
     Parameters
     ----------
@@ -268,13 +591,32 @@ def resolve_workspace_uuid(working_dir: str | None = None) -> str:
         return _validate_workspace_uuid(env_uuid)
 
     target_path = os.path.join(cwd, ".claude", "pd", "workspace.json")
+    # ENTITY_DB_PATH-aware (matches the MCP servers); historically this was
+    # hard-coded to the global store, which diverged under test harnesses.
+    if db_path is None:
+        db_path = _entities_db_path()
 
-    # Step 2: file-based.
+    # Step 2: file-based, with split-brain self-heal. A workspace.json whose
+    # uuid is absent from the workspaces table (the F-incident: file written
+    # without a matching DB row) is repaired here instead of being trusted
+    # forever: adopt the project_root's canonical row (rewriting the file) or
+    # insert the missing row so the FK resolves on the next write.
     if os.path.exists(target_path):
-        return _read_workspace_json(target_path)
+        file_uuid = _read_workspace_json(target_path)  # may raise (corrupt).
+        resolved = validate_or_adopt_workspace_uuid(file_uuid, cwd, db_path)
+        if resolved != file_uuid:
+            print(
+                f"[workspace.json] WARN: healed workspace split-brain: "
+                f"adopted {resolved} from workspaces table (file had orphan "
+                f"{file_uuid})",
+                file=sys.stderr,
+            )
+            return _rewrite_workspace_json_if_matches(
+                target_path, file_uuid, resolved
+            )
+        return resolved
 
     # Step 3: workspaces-table lookup (best-effort; DB may be missing).
-    db_path = os.path.expanduser("~/.claude/pd/entities/entities.db")
     if os.path.isfile(db_path):
         try:
             conn = sqlite3.connect(
@@ -341,7 +683,52 @@ def resolve_workspace_uuid(working_dir: str | None = None) -> str:
             f"project, or set ENTITY_WORKSPACE_UUID explicitly."
         )
     fresh_uuid = str(uuid_mod.uuid4())
-    return _atomic_workspace_json_write(target_path, fresh_uuid)
+    # Write the file FIRST (flock decides the race winner and the returned
+    # uuid is authoritative), THEN record the matching workspaces row so the
+    # file and DB never diverge. Never hold the flock across the DB write.
+    written = _atomic_workspace_json_write(target_path, fresh_uuid)
+    _ensure_workspace_row(db_path, written, cwd)
+    return written
+
+
+def resolve_startup_workspace_uuid(
+    project_root: str, db_path: str | None = None
+) -> str:
+    """Resolve the workspace identity for an MCP server lifespan.
+
+    Shared by ``entity_server`` and ``workflow_state_server`` startup. The two
+    env vars are NOT equivalent:
+
+      * ``ENTITY_WORKSPACE_UUID`` — absolute test/explicit override. Used
+        verbatim (format-validated only); never reconciled against the DB.
+      * ``WORKSPACE_UUID`` — inherited from the session-start hook. Treated as
+        a CANDIDATE: reconciled via :func:`validate_or_adopt_workspace_uuid`
+        so a stale value adopts the project_root's canonical row instead of
+        being trusted blindly (the env-bypass that would otherwise re-open the
+        split-brain even after the resolver/write paths were hardened).
+
+    When both are set, ``ENTITY_WORKSPACE_UUID`` wins (the historical
+    short-circuit is preserved). With neither set, falls back to the full
+    file→DB→mint :func:`resolve_workspace_uuid` (which self-heals).
+    """
+    db = db_path if db_path is not None else _entities_db_path()
+    env_abs = os.environ.get("ENTITY_WORKSPACE_UUID")
+    if env_abs:
+        return _validate_workspace_uuid(env_abs)
+    env_candidate = os.environ.get("WORKSPACE_UUID")
+    if env_candidate:
+        resolved = validate_or_adopt_workspace_uuid(
+            env_candidate, project_root, db
+        )
+        if resolved != env_candidate:
+            print(
+                f"[workspace] WARN: inherited WORKSPACE_UUID {env_candidate} "
+                f"reconciled to {resolved} for project_root {project_root!r}",
+                file=sys.stderr,
+            )
+        return resolved
+    # No env hint — full file→DB→mint resolution against the SAME db_path.
+    return resolve_workspace_uuid(project_root, db_path=db)
 
 
 @dataclasses.dataclass(frozen=True)

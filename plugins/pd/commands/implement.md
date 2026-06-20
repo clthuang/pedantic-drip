@@ -75,7 +75,7 @@ The native skill has full conversation context (files changed, implementation de
 - Applying approved simplifications
 - Verifying tests still pass
 
-No pre-dispatch memory enrichment or post-dispatch influence tracking needed — the native skill operates within the main conversation context.
+The native skill operates within the main conversation context.
 
 ### 6. Test Deepening Phase
 
@@ -91,12 +91,6 @@ Dispatch test-deepener agent in two phases. Phase A generates spec-driven test o
 Store the resolved PRD line for reuse below.
 
 **Phase A — Generate test outlines from spec only:**
-
-**Pre-dispatch memory enrichment:** Before building the dispatch prompt below,
-call `search_memory` with query: "{agent role} {task context} {space-separated file list}",
-limit=5, brief=true, and category="anti-patterns".
-Store the returned entry names for post-dispatch influence tracking.
-Include non-empty results inside the prompt below.
 
 ```
 Task tool call:
@@ -121,23 +115,9 @@ Task tool call:
     Generate Given/When/Then test outlines for all applicable dimensions.
     Return as structured JSON with dimension, scenario name, given/when/then text,
     and derived_from reference to spec criterion.
-
-    ## Relevant Engineering Memory
-    {search_memory results from the pre-dispatch call above}
 ```
 
 **Fallback detection (I9):** After receiving the test-deepener Phase A response, search for "Files read:" pattern. If not found, log `LAZY-LOAD-WARNING: test-deepener did not confirm artifact reads` to `.review-history.md`. Proceed regardless.
-
-<!-- influence-tracking-site: s8 -->
-**Influence tracking (mandatory, unconditional):**
-Call `record_influence_by_content(
-  subagent_output_text=<full agent output text>,
-  injected_entry_names=<list from search_memory results, or [] if none>,
-  agent_role="test-deepener",
-  feature_type_id=<current feature type_id from .meta.json>)`
-Emit one line to your output: `Influence recorded: N matches`.
-On MCP failure: warn "Influence tracking failed: {error}", continue.
-If .meta.json missing or type_id unresolvable: skip with warning.
 
 **Phase A validation:** If `outlines` array is empty, log warning: "Test deepening Phase A returned no outlines — skipping test deepening" and proceed to Step 7.
 
@@ -159,12 +139,6 @@ files_changed = sorted(set(implementation_files + simplification_files))
 **Fallback if context was compacted:** If the orchestrator no longer holds Step 4/5 data in context (due to conversation compaction), parse `implementation-log.md` directly. Each task section contains a "Files changed" or "files_changed" field with file paths. Match lines that look like file paths (contain `/` and end with a file extension). Validate extracted paths: reject any containing `..`, `%2e`, null bytes, or backslashes; reject paths starting with `/`; only accept relative paths within the project root. Step 5 paths are always a subset of Step 4 paths, so no coverage gap exists.
 
 **Phase B — Write executable tests:**
-
-**Pre-dispatch memory enrichment:** Before building the dispatch prompt below,
-call `search_memory` with query: "{agent role} {task context} {space-separated file list}",
-limit=5, brief=true, and category="anti-patterns".
-Store the returned entry names for post-dispatch influence tracking.
-Include non-empty results inside the prompt below.
 
 ```
 Task tool call:
@@ -189,21 +163,7 @@ Task tool call:
     Step 2: Skip scenarios already covered by existing TDD tests.
 
     Step 3: Write executable tests, run the suite, and report.
-
-    ## Relevant Engineering Memory
-    {search_memory results from the pre-dispatch call above}
 ```
-
-<!-- influence-tracking-site: s9 -->
-**Influence tracking (mandatory, unconditional):**
-Call `record_influence_by_content(
-  subagent_output_text=<full agent output text>,
-  injected_entry_names=<list from search_memory results, or [] if none>,
-  agent_role="test-deepener",
-  feature_type_id=<current feature type_id from .meta.json>)`
-Emit one line to your output: `Influence recorded: N matches`.
-On MCP failure: warn "Influence tracking failed: {error}", continue.
-If .meta.json missing or type_id unresolvable: skip with warning.
 
 **Divergence control flow:**
 
@@ -246,44 +206,6 @@ After Phase B completes, check `spec_divergences` in the output:
      Resume with: /secretary continue"
 
 **Error handling:** If Phase A or Phase B agent dispatch fails (tool error, timeout, or agent crash), log the error and proceed to Step 7. Test deepening is additive — failure should not block the review phase.
-
-### 6b. Pre-validation Against Knowledge Bank
-
-Before dispatching reviewers, run a self-check against accumulated anti-patterns.
-
-1. **Determine changed files:**
-   ```
-   Bash: git diff --name-only {base_branch}...HEAD
-   ```
-   Capture as `changed_files`.
-
-2. **Query knowledge bank:**
-   ```
-   search_memory(query="{feature slug} {current phase} {space-separated changed file names}", limit=20, category="anti-patterns", brief=true)
-   ```
-
-3. **Skip threshold:** If fewer than 5 entries returned, skip pre-validation — insufficient KB data for meaningful matching. Proceed directly to Step 7.
-
-4. **Inline self-check:** Build a prompt presenting ONLY the returned anti-pattern descriptions and the changed file contents:
-   ```
-   The knowledge bank contains these anti-patterns relevant to this feature:
-   {list of anti-pattern names and descriptions from search_memory}
-
-   Review the following implementation files for any of these specific anti-patterns:
-   {changed file contents}
-
-   For each anti-pattern that applies, explain which code exhibits it and suggest a fix.
-   Do NOT identify issues beyond the listed anti-patterns.
-   ```
-   Execute this as an inline self-directed reasoning step (no subagent dispatch).
-
-5. **Auto-fix matches:** For each matched anti-pattern, apply the suggested fix. Log each fix to `.review-history.md` as:
-   ```markdown
-   ## Pre-validation Auto-fix - {ISO timestamp}
-   - Fixed: {anti-pattern name} in {file} — {brief description of fix}
-   ```
-
-6. **Error handling:** If `search_memory` MCP is unavailable, times out, or the self-check errors out, skip pre-validation and proceed directly to Step 7. Log: `"Pre-validation skipped: {reason}"` to `.review-history.md`.
 
 ### 7. Review Phase (3-Level Sequential Verification)
 
@@ -337,12 +259,6 @@ Use the PRD line resolved in Step 6 (I8).
 
 **If iteration == 1 OR resume_state["implementation-reviewer"] is missing/empty OR resume_state["implementation-reviewer"].agent_id is null** — use fresh I1-R4 dispatch:
 
-**Pre-dispatch memory enrichment:** Before building the dispatch prompt below,
-call `search_memory` with query: "{agent role} {task context} {space-separated file list}",
-limit=5, brief=true, and category="anti-patterns".
-Store the returned entry names for post-dispatch influence tracking.
-Include non-empty results inside the prompt below.
-
 ```
 Task tool call:
   description: "Review implementation against requirements chain"
@@ -382,9 +298,6 @@ Task tool call:
 
     ## Implementation Files
     {newline-separated list of file paths}
-
-    ## Relevant Engineering Memory
-    {search_memory results from the pre-dispatch call above}
 ```
 
 After fresh dispatch: capture the `agent_id` from the Task tool result. Record the character count of the prompt above as `prompt_length`. Capture current HEAD SHA via `Bash: git rev-parse HEAD`. Store in resume_state:
@@ -508,28 +421,11 @@ resume_state["implementation-reviewer"].last_commit_sha = {current HEAD SHA}
 
 **Fallback detection (I9):** After receiving the implementation-reviewer's response, search for "Files read:" pattern. If not found, log `LAZY-LOAD-WARNING: implementation-reviewer did not confirm artifact reads` to `.review-history.md`. Proceed regardless. Note: Resumed dispatches (I2/I2-FV templates) do not include Required Artifacts, so "Files read:" may not appear — only apply I9 detection to fresh dispatches.
 
-<!-- influence-tracking-site: s10 -->
-**Influence tracking (mandatory, unconditional):**
-Call `record_influence_by_content(
-  subagent_output_text=<full agent output text>,
-  injected_entry_names=<list from search_memory results, or [] if none>,
-  agent_role="implementation-reviewer",
-  feature_type_id=<current feature type_id from .meta.json>)`
-Emit one line to your output: `Influence recorded: N matches`.
-On MCP failure: warn "Influence tracking failed: {error}", continue.
-If .meta.json missing or type_id unresolvable: skip with warning.
-
 **7a2. Level 2: Spec-Level Verification (Relevance Check):**
 
 **Dispatch decision for relevance-verifier:**
 
 **If iteration == 1 OR resume_state["relevance-verifier"] is missing/empty OR resume_state["relevance-verifier"].agent_id is null** -- use fresh I1-R4 dispatch:
-
-**Pre-dispatch memory enrichment:** Before building the dispatch prompt below,
-call `search_memory` with query: "relevance-verifier spec compliance artifact coherence",
-limit=5, brief=true, and category="anti-patterns".
-Store the returned entry names for post-dispatch influence tracking.
-Include non-empty results inside the prompt below.
 
 ```
 Task tool call:
@@ -556,9 +452,6 @@ Task tool call:
     Run all 4 checks: coverage, completeness, testability, coherence.
 
     Return JSON with pass/fail per check, gaps, and optional backward_to.
-
-    ## Relevant Engineering Memory
-    {search_memory results from the pre-dispatch call above}
 
     ## Phase Context (backward transitions only)
     If .meta.json `phases[current_phase]` has a `completed` timestamp (indicating re-entry into a completed phase):
@@ -670,17 +563,6 @@ resume_state["relevance-verifier"].last_commit_sha = {current HEAD SHA}
 
 **Fallback detection (I9):** After receiving the relevance-verifier's response, search for "Files read:" pattern. If not found, log `LAZY-LOAD-WARNING: relevance-verifier did not confirm artifact reads` to `.review-history.md`. Proceed regardless. Note: Resumed dispatches (I2/I2-FV templates) do not include Required Artifacts, so "Files read:" may not appear -- only apply I9 detection to fresh dispatches.
 
-<!-- influence-tracking-site: s11 -->
-**Influence tracking (mandatory, unconditional):**
-Call `record_influence_by_content(
-  subagent_output_text=<full agent output text>,
-  injected_entry_names=<list from search_memory results, or [] if none>,
-  agent_role="relevance-verifier",
-  feature_type_id=<current feature type_id from .meta.json>)`
-Emit one line to your output: `Influence recorded: N matches`.
-On MCP failure: warn "Influence tracking failed: {error}", continue.
-If .meta.json missing or type_id unresolvable: skip with warning.
-
 **Handle relevance-verifier result:**
 - Apply strict threshold: **PASS** = `pass: true` with zero gaps across all checks. **FAIL** = `pass: false` OR any check has gaps.
 - Update `reviewer_status["relevance"]` based on result.
@@ -692,12 +574,6 @@ If .meta.json missing or type_id unresolvable: skip with warning.
 **Dispatch decision for code-quality-reviewer:**
 
 **If iteration == 1 OR resume_state["code-quality-reviewer"] is missing/empty OR resume_state["code-quality-reviewer"].agent_id is null** — use fresh I1-R4 dispatch:
-
-**Pre-dispatch memory enrichment:** Before building the dispatch prompt below,
-call `search_memory` with query: "{agent role} {task context} {space-separated file list}",
-limit=5, brief=true, and category="anti-patterns".
-Store the returned entry names for post-dispatch influence tracking.
-Include non-empty results inside the prompt below.
 
 ```
 Task tool call:
@@ -730,9 +606,6 @@ Task tool call:
 
     ## Implementation Files
     {newline-separated list of file paths}
-
-    ## Relevant Engineering Memory
-    {search_memory results from the pre-dispatch call above}
 
     ## Phase Context (backward transitions only)
     If .meta.json `phases[current_phase]` has a `completed` timestamp (indicating re-entry into a completed phase):
@@ -849,28 +722,11 @@ resume_state["code-quality-reviewer"].last_commit_sha = {current HEAD SHA}
 
 **Fallback detection (I9):** After receiving the code-quality-reviewer's response, search for "Files read:" pattern. If not found, log `LAZY-LOAD-WARNING: code-quality-reviewer did not confirm artifact reads` to `.review-history.md`. Proceed regardless. Note: Resumed dispatches (I2/I2-FV templates) do not include Required Artifacts, so "Files read:" may not appear — only apply I9 detection to fresh dispatches.
 
-<!-- influence-tracking-site: s12 -->
-**Influence tracking (mandatory, unconditional):**
-Call `record_influence_by_content(
-  subagent_output_text=<full agent output text>,
-  injected_entry_names=<list from search_memory results, or [] if none>,
-  agent_role="code-quality-reviewer",
-  feature_type_id=<current feature type_id from .meta.json>)`
-Emit one line to your output: `Influence recorded: N matches`.
-On MCP failure: warn "Influence tracking failed: {error}", continue.
-If .meta.json missing or type_id unresolvable: skip with warning.
-
 **7c. Level 3: Standards-Level Verification -- Security Review:**
 
 **Dispatch decision for security-reviewer:**
 
 **If iteration == 1 OR resume_state["security-reviewer"] is missing/empty OR resume_state["security-reviewer"].agent_id is null** — use fresh I1-R4 dispatch:
-
-**Pre-dispatch memory enrichment:** Before building the dispatch prompt below,
-call `search_memory` with query: "{agent role} {task context} {space-separated file list}",
-limit=5, brief=true, and category="anti-patterns".
-Store the returned entry names for post-dispatch influence tracking.
-Include non-empty results inside the prompt below.
 
 ```
 Task tool call:
@@ -902,9 +758,6 @@ Task tool call:
 
     ## Implementation Files
     {newline-separated list of file paths}
-
-    ## Relevant Engineering Memory
-    {search_memory results from the pre-dispatch call above}
 
     ## Phase Context (backward transitions only)
     If .meta.json `phases[current_phase]` has a `completed` timestamp (indicating re-entry into a completed phase):
@@ -1021,17 +874,6 @@ resume_state["security-reviewer"].last_commit_sha = {current HEAD SHA}
 
 **Fallback detection (I9):** After receiving the security-reviewer's response, search for "Files read:" pattern. If not found, log `LAZY-LOAD-WARNING: security-reviewer did not confirm artifact reads` to `.review-history.md`. Proceed regardless. Note: Resumed dispatches (I2/I2-FV templates) do not include Required Artifacts, so "Files read:" may not appear — only apply I9 detection to fresh dispatches.
 
-<!-- influence-tracking-site: s13 -->
-**Influence tracking (mandatory, unconditional):**
-Call `record_influence_by_content(
-  subagent_output_text=<full agent output text>,
-  injected_entry_names=<list from search_memory results, or [] if none>,
-  agent_role="security-reviewer",
-  feature_type_id=<current feature type_id from .meta.json>)`
-Emit one line to your output: `Influence recorded: N matches`.
-On MCP failure: warn "Influence tracking failed: {error}", continue.
-If .meta.json missing or type_id unresolvable: skip with warning.
-
 **7d. Selective Dispatch Logic:**
 
 Determine which reviewers to dispatch this iteration:
@@ -1097,12 +939,6 @@ Use the PRD line resolved in Step 6 (I8).
 
 **If resume_state["implementer"] is missing/empty OR resume_state["implementer"].agent_id is null** — use fresh I7 dispatch:
 
-**Pre-dispatch memory enrichment:** Before building the dispatch prompt below,
-call `search_memory` with query: "{agent role} {task context} {space-separated file list}",
-limit=5, brief=true.
-Store the returned entry names for post-dispatch influence tracking.
-Include non-empty results inside the prompt below.
-
 ```
 Task tool call:
   description: "Fix review issues iteration {n}"
@@ -1127,9 +963,6 @@ Task tool call:
     {consolidated issue list from reviewers with reviewer_status == "failed"}
 
     After fixing, return summary of changes made.
-
-    ## Relevant Engineering Memory
-    {search_memory results from the pre-dispatch call above}
 ```
 
 After fresh dispatch: capture the `agent_id` from the Task tool result. Record the character count of the prompt above as `prompt_length`. Store in resume_state:
@@ -1184,17 +1017,6 @@ resume_state["implementer"].last_iteration = {iteration}
 **Context compaction detection**: Before attempting I7 resume, if `resume_state["implementer"]` was previously populated but `agent_id` is now null or missing (due to context compaction), treat as fresh I7 dispatch. Log: `RESUME-FALLBACK: implementer iteration {iteration} — agent_id lost (context compaction)`.
 
 **Fallback detection (I9):** After receiving the implementer's response, search for "Files read:" pattern. If not found, log `LAZY-LOAD-WARNING: implementer did not confirm artifact reads` to `.review-history.md`. Proceed regardless. Note: Resumed dispatches (I7 resumed template) do not include Required Artifacts, so "Files read:" may not appear — only apply I9 detection to fresh dispatches.
-
-<!-- influence-tracking-site: s14 -->
-**Influence tracking (mandatory, unconditional):**
-Call `record_influence_by_content(
-  subagent_output_text=<full agent output text>,
-  injected_entry_names=<list from search_memory results, or [] if none>,
-  agent_role="implementer",
-  feature_type_id=<current feature type_id from .meta.json>)`
-Emit one line to your output: `Influence recorded: N matches`.
-On MCP failure: warn "Influence tracking failed: {error}", continue.
-If .meta.json missing or type_id unresolvable: skip with warning.
 
 **7e-commit. Per-iteration git commit after implementer fixes:**
 
@@ -1271,55 +1093,6 @@ AskUserQuestion:
 ```
 
 Where `{final_validation_tag}` is `[FINAL VALIDATION]` when the iteration is a mandatory full regression review, otherwise empty. Skipped reviewers show which iteration they last passed in.
-
-### 7f. Capture Review Learnings (Automatic)
-
-**Trigger:** Execute after any review iteration that found blocker or warning issues.
-
-**Two-path capture:**
-- **IF exactly 1 iteration with blockers found and fixed:** Store each blocker directly via `store_memory` with `confidence="low"` (single observation, not a confirmed pattern). Budget: max 2 entries.
-- **IF 2+ iterations:** Use recurring-pattern grouping logic below. Budget: max 3 entries.
-
-**Process (for 2+ iterations):**
-1. Read `.review-history.md` entries for THIS phase only (implementation-reviewer, relevance-verifier, code-quality-reviewer, and security-reviewer entries)
-2. Group issues by description similarity (same category, overlapping file patterns)
-3. Identify issues that appeared in 2+ iterations — these are recurring patterns
-
-**For each recurring issue, call `store_memory`:**
-- `name`: derived from issue description (max 60 chars)
-- `description`: issue description + the suggestion that resolved it
-- `reasoning`: "Recurred across {n} review iterations in feature {id} implement phase"
-- `category`: infer from issue type:
-  - Security issues → `anti-patterns`
-  - Quality/SOLID/naming → `heuristics`
-  - Missing requirements → `anti-patterns`
-  - Feasibility/complexity → `heuristics`
-  - Scope/assumption issues → `heuristics`
-- `references`: ["feature/{id}-{slug}"]
-- `confidence`: "low"
-
-**Budget:** Max 3 entries per review cycle to avoid noise.
-
-**Notable catches (single-iteration blockers):**
-If the review loop completed in 1 iteration AND the reviewer found issues with severity "blocker":
-1. For each blocker issue (max 2):
-   - Store via `store_memory` MCP tool:
-     - `name`: derived from issue description (max 60 chars)
-     - `description`: issue description + the suggestion that resolved it
-     - `reasoning`: "Single-iteration blocker catch in feature {id} implement phase"
-     - `category`: inferred from issue type (same mapping as recurring patterns above)
-     - `confidence`: "low"
-     - `references`: ["feature/{id}-{slug}"]
-
-**Circuit breaker capture:** If review loop hit max iterations (cap reached), also capture a single entry:
-- `name`: "Implement review cap: {brief issue category}"
-- `description`: summary of unresolved issues that prevented approval
-- `category`: "anti-patterns"
-- `confidence`: "low"
-
-**Fallback:** If `store_memory` MCP tool unavailable, use `semantic_memory.writer` CLI.
-
-**Output:** `"Review learnings: {n} patterns captured from {m}-iteration review cycle"` (inline, no prompt)
 
 ### 8. Update State on Completion
 

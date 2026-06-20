@@ -13,12 +13,6 @@ dependencies = [
     "uvicorn>=0.34",
 ]
 
-[project.optional-dependencies]
-gemini = ["google-genai>=1.0,<2"]
-voyage = ["voyageai>=0.3,<1"]
-openai = ["openai>=1.0,<3"]
-ollama = ["ollama>=0.4,<1"]
-
 [dependency-groups]
 dev = [
     "pytest>=9.0.2,<10",

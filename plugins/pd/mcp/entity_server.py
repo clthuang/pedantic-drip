@@ -15,7 +15,7 @@ import threading
 import time
 from contextlib import asynccontextmanager
 
-# Make entity_registry and semantic_memory importable from hooks/lib/.
+# Make entity_registry and pd_config importable from hooks/lib/.
 _hooks_lib = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "hooks", "lib"))
 if _hooks_lib not in (os.path.normpath(p) for p in sys.path):
     sys.path.insert(0, _hooks_lib)
@@ -33,7 +33,7 @@ from entity_registry.project_identity import (
     GitProjectInfo,
     _compute_legacy_project_id,
     collect_git_info,
-    resolve_workspace_uuid,
+    resolve_startup_workspace_uuid,
 )
 from entity_registry.server_helpers import (
     _process_export_entities,
@@ -43,7 +43,7 @@ from entity_registry.server_helpers import (
     _process_set_parent,
     parse_metadata,
 )
-from semantic_memory.config import read_config
+from pd_config.config import read_config
 from sqlite_retry import with_retry
 
 from mcp.server.fastmcp import FastMCP
@@ -170,16 +170,24 @@ def _effective_project_id(explicit: str | None = None) -> str | None:
 
 
 def _backfill_project_ids(
-    db: EntityDatabase, project_root: str, project_id: str
+    db: EntityDatabase,
+    project_root: str,
+    project_id: str,
+    workspace_uuid: str | None = None,
 ) -> int:
     """Claim __unknown__ entities whose artifact_path is under project_root.
 
     Delegates to EntityDatabase.backfill_project_ids() which handles the
-    trigger-drop + UPDATE + trigger-recreate pattern internally.
+    trigger-drop + UPDATE + trigger-recreate pattern internally. When
+    *workspace_uuid* is supplied (the lifespan-resolved identity) it is the
+    authoritative claim target, so entities are never cross-attributed into a
+    stale legacy-keyed workspace row.
 
     Returns count of claimed entities.
     """
-    count = db.backfill_project_ids(project_root, project_id)
+    count = db.backfill_project_ids(
+        project_root, project_id, workspace_uuid=workspace_uuid
+    )
     if count > 0:
         _logger.info("backfill: claimed %d entities for project %s", count, project_id)
     return count
@@ -223,22 +231,16 @@ async def lifespan(server):
 
         # Detect project identity and register in DB.
         _project_id = _compute_legacy_project_id(_project_root)
-        # Phase E Task 5.5: populate the workspace_uuid lazy global with
-        # FR-3 / Decision 11 precedence:
-        #   ENTITY_WORKSPACE_UUID env (test override / explicit)
-        #     > WORKSPACE_UUID env (subprocess inheritance from hooks)
+        # Phase E Task 5.5: populate the workspace_uuid lazy global. Precedence
+        # (see resolve_startup_workspace_uuid):
+        #   ENTITY_WORKSPACE_UUID env (absolute test/explicit override)
+        #     > WORKSPACE_UUID env (inherited candidate, reconciled vs DB)
         #     > resolve_workspace_uuid(_project_root) (file → DB → fresh)
-        # All resolution failures are best-effort; we never block startup.
+        # The WORKSPACE_UUID candidate is validate-or-adopted so a stale
+        # inherited value cannot re-open the split-brain it would otherwise
+        # bypass. All resolution failures are best-effort; never block startup.
         try:
-            env_uuid = (
-                os.environ.get("ENTITY_WORKSPACE_UUID")
-                or os.environ.get("WORKSPACE_UUID")
-                or ""
-            )
-            if env_uuid:
-                _workspace_uuid = env_uuid
-            else:
-                _workspace_uuid = resolve_workspace_uuid(_project_root)
+            _workspace_uuid = resolve_startup_workspace_uuid(_project_root)
         except Exception as exc:
             print(
                 f"entity-server: workspace_uuid resolution failed: {exc}",
@@ -251,9 +253,14 @@ async def lifespan(server):
         except Exception as exc:
             print(f"entity-server: project upsert failed: {exc}", file=sys.stderr)
 
-        # Claim __unknown__ entities matching this project root.
+        # Claim __unknown__ entities matching this project root. Pass the
+        # resolved workspace identity so entities are claimed into it directly
+        # (never cross-attributed into a stale legacy-keyed row).
         try:
-            claimed = _backfill_project_ids(_db, _project_root, _project_id)
+            claimed = _backfill_project_ids(
+                _db, _project_root, _project_id,
+                workspace_uuid=_workspace_uuid or None,
+            )
             if claimed > 0:
                 print(
                     f"entity-server: claimed {claimed} entities for project {_project_id}",

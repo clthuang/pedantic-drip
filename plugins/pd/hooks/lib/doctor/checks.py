@@ -10,9 +10,16 @@ import time
 
 from doctor.models import CheckResult, Issue
 
-# Expected schema versions
-ENTITY_SCHEMA_VERSION = 11
-MEMORY_SCHEMA_VERSION = 4
+
+def _get_expected_entity_version() -> int:
+    """F117 FR-B.1: dynamic expected schema_version for entity_registry.
+
+    Replaces hardcoded ENTITY_SCHEMA_VERSION = 11 (F115 retro KB candidate #6).
+    Lazy import scopes the cost to actual check execution and forecloses on
+    any future circular-import risk between doctor and entity_registry.
+    """
+    from entity_registry.database import MIGRATIONS as ENTITY_MIGRATIONS
+    return max(ENTITY_MIGRATIONS.keys())
 
 
 def _build_local_entity_set(artifacts_root: str) -> set[str]:
@@ -235,20 +242,19 @@ def _check_wal_mode(db_path: str, label: str) -> Issue | None:
 
 
 def check_db_readiness(
-    entities_db_path: str, memory_db_path: str, **_
+    entities_db_path: str, **_
 ) -> CheckResult:
     """Check 8: DB Readiness.
 
-    Tests lock acquisition, schema version, and WAL mode on both databases.
+    Tests lock acquisition, schema version, and WAL mode on the entity database.
     Each sub-check uses a dedicated short-lived connection.
 
-    Returns extras={"entity_db_ok": bool, "memory_db_ok": bool}.
+    Returns extras={"entity_db_ok": bool}.
     """
     start = time.monotonic()
     issues: list[Issue] = []
 
     entity_db_ok = True
-    memory_db_ok = True
 
     # Lock tests
     entity_lock_issue = _test_db_lock(entities_db_path, "Entity DB")
@@ -256,29 +262,17 @@ def check_db_readiness(
         issues.append(entity_lock_issue)
         entity_db_ok = False
 
-    memory_lock_issue = _test_db_lock(memory_db_path, "Memory DB")
-    if memory_lock_issue is not None:
-        issues.append(memory_lock_issue)
-        memory_db_ok = False
-
     # Schema version checks (only if not locked)
     if entity_db_ok:
         schema_issue = _check_schema_version(
-            entities_db_path, "Entity DB", ENTITY_SCHEMA_VERSION
+            entities_db_path, "Entity DB", _get_expected_entity_version()
         )
         if schema_issue is not None:
             issues.append(schema_issue)
 
-    # Memory DB schema_version checked by check_memory_health (Check 5), not here (B2 resolution)
-
     # WAL mode checks (only if not locked)
     if entity_db_ok:
         wal_issue = _check_wal_mode(entities_db_path, "Entity DB")
-        if wal_issue is not None:
-            issues.append(wal_issue)
-
-    if memory_db_ok:
-        wal_issue = _check_wal_mode(memory_db_path, "Memory DB")
         if wal_issue is not None:
             issues.append(wal_issue)
 
@@ -290,7 +284,7 @@ def check_db_readiness(
         passed=passed,
         issues=issues,
         elapsed_ms=elapsed,
-        extras={"entity_db_ok": entity_db_ok, "memory_db_ok": memory_db_ok},
+        extras={"entity_db_ok": entity_db_ok},
     )
 
 
@@ -371,6 +365,9 @@ def check_workspace_uuid_consistency(
     db_has_entities = False
     db_legacy_for_uuid: str | None = None
     db_uuid_present = False
+    # uuid(s) the workspaces table holds for this project_root — used to pick
+    # a fixable hint for the orphan case (adopt single row vs insert).
+    db_root_uuids: list[str] = []
 
     if os.path.isfile(entities_db_path):
         conn = None
@@ -400,6 +397,20 @@ def check_workspace_uuid_consistency(
                 if row is not None:
                     db_uuid_present = True
                     db_legacy_for_uuid = row[0]
+
+            if project_root:
+                try:
+                    db_root_uuids = [
+                        r[0]
+                        for r in conn.execute(
+                            "SELECT uuid FROM workspaces "
+                            "WHERE project_root IS NOT NULL "
+                            "  AND project_root = ?",
+                            (os.path.abspath(project_root),),
+                        ).fetchall()
+                    ]
+                except sqlite3.Error:
+                    db_root_uuids = []
         finally:
             if conn is not None:
                 try:
@@ -444,6 +455,38 @@ def check_workspace_uuid_consistency(
     else:
         # File present — check DB consistency.
         if file_uuid and not db_uuid_present:
+            # Split-brain: the file's uuid has no workspaces row. Pick a
+            # fixable hint based on what the table holds for this project_root.
+            # The "Adopt …"/"Insert …" prefixes are the contract with the
+            # doctor fix actions (fixer._SAFE_PATTERNS); do not vary them.
+            from entity_registry.project_identity import _WORKSPACE_UUID_RE
+            file_uuid_well_formed = bool(
+                _WORKSPACE_UUID_RE.match(file_uuid or "")
+            )
+            if len(db_root_uuids) == 1:
+                # Adopt is safe even if the file uuid is malformed — it writes
+                # the (valid) DB row uuid, discarding the bad file value.
+                fix_hint = (
+                    f"Adopt workspace UUID from DB row {db_root_uuids[0]} "
+                    f"(file has orphan {file_uuid})"
+                )
+            elif len(db_root_uuids) == 0 and file_uuid_well_formed:
+                fix_hint = (
+                    f"Insert missing workspaces row for file UUID {file_uuid}"
+                )
+            elif len(db_root_uuids) == 0:
+                # Malformed file uuid + nothing to adopt → not auto-fixable.
+                fix_hint = (
+                    "workspace.json workspace_uuid is malformed; rm "
+                    ".claude/pd/workspace.json and re-run session-start."
+                )
+            else:
+                # Ambiguous — multiple rows claim this project_root; no safe
+                # automatic fix.
+                fix_hint = (
+                    "Multiple workspaces rows match this project_root; "
+                    "resolve manually (inspect the workspaces table)."
+                )
             issues.append(
                 Issue(
                     check="workspace_uuid_consistency",
@@ -453,11 +496,7 @@ def check_workspace_uuid_consistency(
                         f"workspace.json UUID {file_uuid} not present in "
                         "workspaces table"
                     ),
-                    fix_hint=(
-                        "If pre-Migration-11 DB: run migration. Otherwise "
-                        "rm .claude/pd/workspace.json and re-run "
-                        "session-start to bootstrap from DB."
-                    ),
+                    fix_hint=fix_hint,
                 )
             )
         elif file_uuid and file_legacy and db_legacy_for_uuid is not None and (
@@ -484,6 +523,121 @@ def check_workspace_uuid_consistency(
     passed = not any(i.severity == "error" for i in issues)
     return CheckResult(
         name="workspace_uuid_consistency",
+        passed=passed,
+        issues=issues,
+        elapsed_ms=elapsed,
+    )
+
+
+def check_unknown_workspace_orphans(
+    entities_db_path: str | None = None,
+    project_root: str | None = None,
+    **_,
+) -> CheckResult:
+    """Detect entities stranded in the canonical unknown-workspace bucket.
+
+    Migration 11 maps every legacy ``project_id="__unknown__"`` entity to the
+    canonical ``_UNKNOWN_WORKSPACE_UUID``. Once a real workspace is
+    bootstrapped, those rows should be claimed into it. This check counts the
+    orphans and, when exactly one ``workspaces`` row matches ``project_root``,
+    emits the fixable ``Claim unknown-workspace entities into`` hint — the
+    contract with the doctor fix action (fixer._SAFE_PATTERNS), which
+    re-attributes via ``EntityDatabase.claim_unknown_entities``. Self-guards a
+    missing/locked DB and the pre-Mig-11 schema (no ``workspace_uuid`` column).
+    """
+    start = time.monotonic()
+    issues: list[Issue] = []
+
+    if (
+        not project_root
+        or not entities_db_path
+        or not os.path.isfile(entities_db_path)
+    ):
+        elapsed = int((time.monotonic() - start) * 1000)
+        return CheckResult(
+            name="unknown_workspace_orphans",
+            passed=True,
+            issues=issues,
+            elapsed_ms=elapsed,
+        )
+
+    from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
+
+    orphan_count = 0
+    root_uuids: list[str] = []
+    conn = None
+    try:
+        conn = sqlite3.connect(
+            f"file:{entities_db_path}?mode=ro", uri=True, timeout=2.0
+        )
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM entities WHERE workspace_uuid = ?",
+                (_UNKNOWN_WORKSPACE_UUID,),
+            ).fetchone()
+            orphan_count = int(row[0]) if row else 0
+        except sqlite3.Error:
+            # Pre-Mig-11 schema has no workspace_uuid column — nothing to claim.
+            orphan_count = 0
+        try:
+            root_uuids = [
+                r[0]
+                for r in conn.execute(
+                    "SELECT uuid FROM workspaces "
+                    "WHERE project_root IS NOT NULL AND project_root = ?",
+                    (os.path.abspath(project_root),),
+                ).fetchall()
+            ]
+        except sqlite3.Error:
+            root_uuids = []
+    except sqlite3.Error:
+        elapsed = int((time.monotonic() - start) * 1000)
+        return CheckResult(
+            name="unknown_workspace_orphans",
+            passed=True,
+            issues=issues,
+            elapsed_ms=elapsed,
+        )
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    if orphan_count > 0:
+        if len(root_uuids) == 1:
+            # The "Claim unknown-workspace entities into" prefix is the contract
+            # with fixer._SAFE_PATTERNS; do not vary it.
+            fix_hint = (
+                f"Claim unknown-workspace entities into workspace "
+                f"{root_uuids[0]}"
+            )
+        else:
+            # Orphans exist but the current workspace is ambiguous (0 or >1 rows
+            # match project_root) — not safely auto-claimable (manual hint).
+            fix_hint = (
+                "Bootstrap a single workspace for this project_root "
+                "(run session-start.sh), then re-run doctor --fix to claim."
+            )
+        noun = "entity" if orphan_count == 1 else "entities"
+        issues.append(
+            Issue(
+                check="unknown_workspace_orphans",
+                severity="warning",
+                entity=None,
+                message=(
+                    f"{orphan_count} {noun} stranded in the unknown-workspace "
+                    "bucket"
+                ),
+                fix_hint=fix_hint,
+            )
+        )
+
+    elapsed = int((time.monotonic() - start) * 1000)
+    passed = not any(i.severity == "error" for i in issues)
+    return CheckResult(
+        name="unknown_workspace_orphans",
         passed=passed,
         issues=issues,
         elapsed_ms=elapsed,
@@ -1036,223 +1190,6 @@ def check_backlog_status(
     passed = not any(i.severity in ("error", "warning") for i in issues)
     return CheckResult(
         name="backlog_status",
-        passed=passed,
-        issues=issues,
-        elapsed_ms=elapsed,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Check 5: Memory DB Health
-# ---------------------------------------------------------------------------
-
-
-def check_memory_health(memory_conn: sqlite3.Connection, **_) -> CheckResult:
-    """Check 5: Memory DB Health.
-
-    Verifies schema version, required tables, FTS5 table + triggers,
-    embedding coverage, keyword population, and WAL mode.
-    """
-    start = time.monotonic()
-    issues: list[Issue] = []
-
-    # 1. schema_version == 4
-    try:
-        row = memory_conn.execute(
-            "SELECT value FROM _metadata WHERE key = 'schema_version'"
-        ).fetchone()
-        if row is None:
-            issues.append(Issue(
-                check="memory_health",
-                severity="error",
-                entity=None,
-                message="Memory DB has no schema_version in _metadata",
-                fix_hint="Run memory DB migrations",
-            ))
-        else:
-            version = int(row[0])
-            if version != MEMORY_SCHEMA_VERSION:
-                issues.append(Issue(
-                    check="memory_health",
-                    severity="error",
-                    entity=None,
-                    message=(
-                        f"Memory DB schema_version is {version}, "
-                        f"expected {MEMORY_SCHEMA_VERSION}"
-                    ),
-                    fix_hint="Run memory DB migrations to update schema",
-                ))
-    except sqlite3.Error as exc:
-        issues.append(Issue(
-            check="memory_health",
-            severity="error",
-            entity=None,
-            message=f"Cannot read schema_version: {exc}",
-            fix_hint=None,
-        ))
-
-    # 2. Required tables exist
-    required_tables = {"entries", "_metadata", "influence_log"}
-    try:
-        cursor = memory_conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        )
-        existing_tables = {row[0] for row in cursor}
-        for table in required_tables:
-            if table not in existing_tables:
-                issues.append(Issue(
-                    check="memory_health",
-                    severity="error",
-                    entity=None,
-                    message=f"Required table '{table}' is missing",
-                    fix_hint="Run memory DB migrations to create missing tables",
-                ))
-    except sqlite3.Error as exc:
-        issues.append(Issue(
-            check="memory_health",
-            severity="error",
-            entity=None,
-            message=f"Cannot list tables: {exc}",
-            fix_hint=None,
-        ))
-
-    # 3. FTS5 entries_fts exists
-    try:
-        fts_row = memory_conn.execute(
-            "SELECT name FROM sqlite_master "
-            "WHERE type='table' AND name='entries_fts'"
-        ).fetchone()
-        if fts_row is None:
-            issues.append(Issue(
-                check="memory_health",
-                severity="error",
-                entity=None,
-                message="FTS5 virtual table 'entries_fts' is missing",
-                fix_hint="Rebuild FTS index: python3 scripts/migrate_db.py rebuild-fts",
-            ))
-    except sqlite3.Error:
-        pass
-
-    # 4. 3 triggers: entries_ai, entries_ad, entries_au
-    required_triggers = {"entries_ai", "entries_ad", "entries_au"}
-    try:
-        cursor = memory_conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='trigger'"
-        )
-        existing_triggers = {row[0] for row in cursor}
-        for trigger in required_triggers:
-            if trigger not in existing_triggers:
-                issues.append(Issue(
-                    check="memory_health",
-                    severity="error",
-                    entity=None,
-                    message=f"FTS trigger '{trigger}' is missing",
-                    fix_hint="Rebuild FTS index to recreate triggers",
-                ))
-    except sqlite3.Error:
-        pass
-
-    # 5. FTS row count vs entries count
-    try:
-        entries_count = memory_conn.execute(
-            "SELECT COUNT(*) FROM entries"
-        ).fetchone()[0]
-        fts_count = memory_conn.execute(
-            "SELECT COUNT(*) FROM entries_fts"
-        ).fetchone()[0]
-        if entries_count != fts_count:
-            issues.append(Issue(
-                check="memory_health",
-                severity="warning",
-                entity=None,
-                message=(
-                    f"FTS row count ({fts_count}) differs from entries "
-                    f"count ({entries_count})"
-                ),
-                fix_hint="Rebuild FTS index: python3 scripts/migrate_db.py rebuild-fts",
-            ))
-    except sqlite3.Error:
-        pass
-
-    # 6. keywords == '[]' count
-    try:
-        empty_kw = memory_conn.execute(
-            "SELECT COUNT(*) FROM entries WHERE keywords = '[]'"
-        ).fetchone()[0]
-        if empty_kw > 0:
-            issues.append(Issue(
-                check="memory_health",
-                severity="info",
-                entity=None,
-                message=f"{empty_kw} entries have empty keywords (keywords='[]')",
-                fix_hint="Run keyword backfill to populate keywords",
-            ))
-    except sqlite3.Error:
-        pass
-
-    # 7. NULL embedding > 10%
-    try:
-        total = memory_conn.execute(
-            "SELECT COUNT(*) FROM entries"
-        ).fetchone()[0]
-        if total > 0:
-            null_emb = memory_conn.execute(
-                "SELECT COUNT(*) FROM entries WHERE embedding IS NULL"
-            ).fetchone()[0]
-            pct = null_emb / total
-            if pct > 0.10:
-                issues.append(Issue(
-                    check="memory_health",
-                    severity="warning",
-                    entity=None,
-                    message=(
-                        f"{null_emb}/{total} entries ({pct:.0%}) have NULL "
-                        "embedding (threshold: 10%)"
-                    ),
-                    fix_hint="Run embedding backfill to populate embeddings",
-                ))
-    except sqlite3.Error:
-        pass
-
-    # 8. length(embedding) != 3072 for non-NULL
-    try:
-        bad_dim = memory_conn.execute(
-            "SELECT COUNT(*) FROM entries "
-            "WHERE embedding IS NOT NULL AND length(embedding) != 3072"
-        ).fetchone()[0]
-        if bad_dim > 0:
-            issues.append(Issue(
-                check="memory_health",
-                severity="error",
-                entity=None,
-                message=(
-                    f"{bad_dim} entries have wrong embedding dimension "
-                    "(expected length 3072)"
-                ),
-                fix_hint="Re-run embedding generation for affected entries",
-            ))
-    except sqlite3.Error:
-        pass
-
-    # 9. WAL mode
-    try:
-        row = memory_conn.execute("PRAGMA journal_mode").fetchone()
-        if row is None or row[0].lower() != "wal":
-            mode = row[0] if row else "unknown"
-            issues.append(Issue(
-                check="memory_health",
-                severity="warning",
-                entity=None,
-                message=f"Memory DB journal_mode is '{mode}', expected 'wal'",
-                fix_hint="Set PRAGMA journal_mode=WAL on memory DB",
-            ))
-    except sqlite3.Error:
-        pass
-
-    elapsed = int((time.monotonic() - start) * 1000)
-    passed = not any(i.severity in ("error", "warning") for i in issues)
-    return CheckResult(
-        name="memory_health",
         passed=passed,
         issues=issues,
         elapsed_ms=elapsed,
@@ -1952,13 +1889,13 @@ def check_security_review_command(project_root: str, **kwargs) -> CheckResult:
 def check_config_validity(project_root: str, **kwargs) -> CheckResult:
     """Check 10: Configuration Validity.
 
-    Validates pd configuration using read_config() from semantic_memory.config.
+    Validates pd configuration using read_config() from pd_config.config.
     """
     start = time.monotonic()
     issues: list[Issue] = []
 
     try:
-        from semantic_memory.config import read_config
+        from pd_config.config import read_config
         config = read_config(project_root)
     except Exception as exc:
         issues.append(Issue(
@@ -1987,63 +1924,6 @@ def check_config_validity(project_root: str, **kwargs) -> CheckResult:
             message=f"artifacts_root directory '{artifacts_root}' does not exist",
             fix_hint=f"Create directory '{artifacts_root}' or update config",
         ))
-
-    # 2. Weights sum to 1.0 (within 0.01 tolerance)
-    vector_w = config.get("memory_vector_weight", 0.5)
-    keyword_w = config.get("memory_keyword_weight", 0.2)
-    prominence_w = config.get("memory_prominence_weight", 0.3)
-    try:
-        weight_sum = float(vector_w) + float(keyword_w) + float(prominence_w)
-        if abs(weight_sum - 1.0) > 0.01:
-            issues.append(Issue(
-                check="config_validity",
-                severity="warning",
-                entity=None,
-                message=(
-                    f"Memory weights sum to {weight_sum:.3f}, "
-                    "expected 1.0 (tolerance: 0.01)"
-                ),
-                fix_hint="Adjust memory_vector_weight, memory_keyword_weight, "
-                         "memory_prominence_weight to sum to 1.0",
-            ))
-    except (TypeError, ValueError):
-        issues.append(Issue(
-            check="config_validity",
-            severity="warning",
-            entity=None,
-            message="Cannot parse memory weights as numbers",
-            fix_hint="Check weight values in .claude/pd.local.md",
-        ))
-
-    # 3. Thresholds in [0.0, 1.0]
-    for key in ("memory_relevance_threshold", "memory_dedup_threshold"):
-        val = config.get(key)
-        if val is not None:
-            try:
-                fval = float(val)
-                if fval < 0.0 or fval > 1.0:
-                    issues.append(Issue(
-                        check="config_validity",
-                        severity="warning",
-                        entity=None,
-                        message=f"{key} is {fval}, expected [0.0, 1.0]",
-                        fix_hint=f"Set {key} to a value between 0.0 and 1.0",
-                    ))
-            except (TypeError, ValueError):
-                pass
-
-    # 4. Embedding provider when semantic_enabled
-    semantic_enabled = config.get("memory_semantic_enabled", True)
-    if semantic_enabled:
-        provider = config.get("memory_embedding_provider", "")
-        if not provider:
-            issues.append(Issue(
-                check="config_validity",
-                severity="warning",
-                entity=None,
-                message="Semantic memory enabled but no embedding provider configured",
-                fix_hint="Set memory_embedding_provider in .claude/pd.local.md",
-            ))
 
     elapsed = int((time.monotonic() - start) * 1000)
     passed = not any(i.severity in ("error", "warning") for i in issues)
@@ -2253,107 +2133,6 @@ def check_audit_emit_failed_count(
 
 # ---------------------------------------------------------------------------
 # Feature 115 C13-115.3 / FR-E-115.1: cross-workspace parent_uuid check.
+# Function extracted to doctor/check_cross_workspace_parent_uuid.py per
+# Feature 116 FR-8 / F115 T2b.6 carry-forward (design rev 2).
 # ---------------------------------------------------------------------------
-
-
-def check_cross_workspace_parent_uuid(
-    entities_db_path: str | None = None,
-    **_,
-) -> CheckResult:
-    """Feature 115 FR-E-115.1: emit one warning per unallowlisted cross-workspace
-    parent_uuid row.
-
-    Severity vocabulary: 'warning' EXCLUSIVELY (closed set per spec FR-Sev-115.1).
-    Allowlisted pairs are SUPPRESSED via two LEFT JOINs (one per ordering) so
-    the check never emits 'info' or 'error' or 'suggestion'.
-
-    SQL uses two LEFT JOINs (a1, a2) rather than a disjunctive ON-clause to
-    avoid SQLite query-planner full-scan on the allowlist table.
-    """
-    start = time.monotonic()
-    issues: list[Issue] = []
-
-    if entities_db_path is None or not os.path.exists(entities_db_path):
-        # No entities.db — nothing to check; not an error condition.
-        elapsed = int((time.monotonic() - start) * 1000)
-        return CheckResult(
-            name="cross_workspace_parent_uuid",
-            passed=True,
-            issues=issues,
-            elapsed_ms=elapsed,
-        )
-
-    try:
-        conn = sqlite3.connect(entities_db_path, timeout=5.0)
-        conn.row_factory = sqlite3.Row
-        try:
-            # Pre-check: allowlist table exists (created by M17). If not,
-            # treat ALL cross-workspace rows as unallowlisted.
-            tbl_exists = conn.execute(
-                "SELECT name FROM sqlite_master "
-                "WHERE type='table' AND name='cross_workspace_allowlist'"
-            ).fetchone() is not None
-
-            if tbl_exists:
-                sql = """
-                    SELECT e.uuid AS child_uuid, e.parent_uuid AS parent_uuid,
-                           e.workspace_uuid AS child_ws,
-                           p.workspace_uuid AS parent_ws
-                    FROM entities e
-                    JOIN entities p ON e.parent_uuid = p.uuid
-                    LEFT JOIN cross_workspace_allowlist a1
-                      ON a1.parent_uuid = p.uuid AND a1.child_uuid = e.uuid
-                    LEFT JOIN cross_workspace_allowlist a2
-                      ON a2.parent_uuid = e.uuid AND a2.child_uuid = p.uuid
-                    WHERE e.parent_uuid IS NOT NULL
-                      AND e.workspace_uuid != p.workspace_uuid
-                      AND a1.id IS NULL
-                      AND a2.id IS NULL
-                """
-            else:
-                sql = """
-                    SELECT e.uuid AS child_uuid, e.parent_uuid AS parent_uuid,
-                           e.workspace_uuid AS child_ws,
-                           p.workspace_uuid AS parent_ws
-                    FROM entities e
-                    JOIN entities p ON e.parent_uuid = p.uuid
-                    WHERE e.parent_uuid IS NOT NULL
-                      AND e.workspace_uuid != p.workspace_uuid
-                """
-            rows = conn.execute(sql).fetchall()
-
-            for r in rows:
-                # Per FR-E-115.1: severity is 'warning' EXCLUSIVELY (closed set).
-                # Allowlisted rows are SUPPRESSED by the LEFT JOIN above so
-                # emitted issues are always 'warning'.
-                issues.append(Issue(
-                    check="cross_workspace_parent_uuid",
-                    severity="warning",
-                    entity=r["child_uuid"],
-                    message=(
-                        f"child {r['child_uuid']} in workspace {r['child_ws']} "
-                        f"has parent {r['parent_uuid']} in workspace {r['parent_ws']}; "
-                        f"unallowlisted cross-workspace link"
-                    ),
-                    fix_hint=(
-                        f"triage_cross_workspace_links:"
-                        f"{r['parent_uuid']}:{r['child_uuid']}"
-                    ),
-                ))
-        finally:
-            conn.close()
-    except sqlite3.OperationalError:
-        # DB locked or unavailable — surface as info-equivalent issue. Per
-        # spec FR-Sev-115.1, this check uses {warning} only — so on transient
-        # failure we return zero issues rather than emit a different severity.
-        # Other doctor checks (db_readiness) already surface the lock issue.
-        pass
-
-    elapsed = int((time.monotonic() - start) * 1000)
-    passed = len(issues) == 0
-    return CheckResult(
-        name="cross_workspace_parent_uuid",
-        passed=passed,
-        issues=issues,
-        elapsed_ms=elapsed,
-    )

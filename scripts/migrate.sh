@@ -18,8 +18,6 @@ step() { echo -e "Step $1: $2..." >&2; }
 # Path constants
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 PD_DIR="${HOME}/.claude/pd"
-MEMORY_DIR="${PD_DIR}/memory"
-MEMORY_DB="${MEMORY_DIR}/memory.db"
 ENTITY_DIR="${PD_DIR}/entities"
 ENTITY_DB="${ENTITY_DB_PATH:-${ENTITY_DIR}/entities.db}"
 MIGRATE_DB="${SCRIPT_DIR}/migrate_db.py"
@@ -53,10 +51,10 @@ fi
 
 # Session detection
 check_active_session() {
-    if pgrep -f 'memory_server|entity_server|workflow_state_server' > /dev/null 2>&1; then
+    if pgrep -f 'entity_server|workflow_state_server' > /dev/null 2>&1; then
         return 0
     fi
-    local wal_files=("${MEMORY_DB}-wal" "${ENTITY_DB}-wal")
+    local wal_files=("${ENTITY_DB}-wal")
     for wal in "${wal_files[@]}"; do
         if [ -f "$wal" ] && [ "$(stat -f%z "$wal" 2>/dev/null || stat -c%s "$wal" 2>/dev/null)" -gt 0 ]; then
             return 0
@@ -86,22 +84,6 @@ copy_file() {
     return 0  # copied
 }
 
-copy_markdown_files() {
-    local src_dir="$1" dst_dir="$2"
-    local added=0 skipped=0
-    for md in "$src_dir"/*.md; do
-        [ -f "$md" ] || continue
-        local basename
-        basename="$(basename "$md")"
-        if copy_file "$md" "$dst_dir/$basename"; then
-            added=$((added + 1))
-        else
-            skipped=$((skipped + 1))
-        fi
-    done
-    info "  added $added, skipped $skipped"
-}
-
 # Plugin version resolution
 resolve_plugin_version() {
     local pjson
@@ -128,9 +110,6 @@ run_doctor_check() {
     else
         # Inline fallback: verify DBs are readable
         local check_ok=true
-        if [ -f "$MEMORY_DB" ]; then
-            "$PYTHON" -c "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('SELECT count(*) FROM entries'); c.close()" "$MEMORY_DB" 2>/dev/null || check_ok=false
-        fi
         if [ -f "$ENTITY_DB" ]; then
             "$PYTHON" -c "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('SELECT count(*) FROM entities'); c.close()" "$ENTITY_DB" 2>/dev/null || check_ok=false
         fi
@@ -222,13 +201,13 @@ main() {
 
 # Export and import flows
 export_flow() {
-    # Pre-flight: at least one database must exist
-    if [ ! -f "$MEMORY_DB" ] && [ ! -f "$ENTITY_DB" ]; then
-        die "No pd data found. Expected databases at:\n  $MEMORY_DB\n  $ENTITY_DB"
+    # Pre-flight: the entity database must exist
+    if [ ! -f "$ENTITY_DB" ]; then
+        die "No pd data found. Expected database at:\n  $ENTITY_DB"
     fi
 
     # Step 1: Session check
-    step "1/6" "Checking for active sessions"
+    step "1/5" "Checking for active sessions"
     if check_active_session; then
         if [ "${FORCE:-0}" != "1" ]; then
             echo -e "${RED}Error: Active Claude session detected. Close it first or use --force.${NC}" >&2
@@ -239,7 +218,7 @@ export_flow() {
     ok "  No conflicts"
 
     # Step 2: Create staging directory
-    step "2/6" "Creating staging directory"
+    step "2/5" "Creating staging directory"
     local timestamp
     timestamp="$(date +%Y%m%d-%H%M%S)"
     local staging_name="pd-export-${timestamp}"
@@ -250,23 +229,10 @@ export_flow() {
     trap 'rm -rf "$(dirname "$staging")"' EXIT
     ok "  $staging"
 
-    local memory_count=0
     local entity_count=0
 
-    # Step 3: Backup memory DB
-    step "3/6" "Backing up memory database"
-    if [ -f "$MEMORY_DB" ]; then
-        mkdir -p "$staging/memory"
-        local mem_json
-        mem_json=$("$PYTHON" "$MIGRATE_DB" backup "$MEMORY_DB" "$staging/memory/memory.db" --table entries)
-        memory_count=$(extract_json_field "$mem_json" entry_count)
-        ok "  $memory_count entries backed up"
-    else
-        info "  Skipped (memory.db not found)"
-    fi
-
-    # Step 4: Backup entity DB
-    step "4/6" "Backing up entity database"
+    # Step 3: Backup entity DB
+    step "3/5" "Backing up entity database"
     if [ -f "$ENTITY_DB" ]; then
         mkdir -p "$staging/entities"
         local ent_json
@@ -277,25 +243,8 @@ export_flow() {
         info "  Skipped (entities.db not found)"
     fi
 
-    # Step 5: Copy markdown files and projects.txt
-    step "5/6" "Copying markdown files and projects.txt"
-    if [ -d "$MEMORY_DIR" ]; then
-        local md_found=0
-        for md in "$MEMORY_DIR"/*.md; do
-            [ -f "$md" ] || continue
-            md_found=1
-            break
-        done
-        if [ "$md_found" -eq 1 ]; then
-            mkdir -p "$staging/memory"
-            copy_markdown_files "$MEMORY_DIR" "$staging/memory"
-        else
-            info "  No markdown files found, skipping"
-        fi
-    else
-        info "  No markdown files found, skipping"
-    fi
-
+    # Step 4: Copy projects.txt
+    step "4/5" "Copying projects.txt"
     if [ -f "$PD_DIR/projects.txt" ]; then
         cp "$PD_DIR/projects.txt" "$staging/projects.txt"
         ok "  projects.txt copied"
@@ -303,8 +252,8 @@ export_flow() {
         info "  No projects.txt found, skipping"
     fi
 
-    # Step 6: Generate manifest, create tar, cleanup
-    step "6/6" "Generating manifest and creating archive"
+    # Step 5: Generate manifest, create tar, cleanup
+    step "5/5" "Generating manifest and creating archive"
     local plugin_version
     plugin_version="$(resolve_plugin_version)"
     "$PYTHON" "$MIGRATE_DB" manifest "$staging" --plugin-version "$plugin_version" > /dev/null
@@ -322,7 +271,6 @@ export_flow() {
     ok "Export complete!"
     info "  File: $output_path"
     info "  Size: $file_size"
-    info "  Memory entries: $memory_count"
     info "  Entities: $entity_count"
 }
 import_flow() {
@@ -331,7 +279,7 @@ import_flow() {
     [ -f "$bundle_path" ] || die "Bundle not found: $bundle_path"
 
     # ── Step 1: Validate bundle ──────────────────────────────
-    step "1/8" "Validating bundle"
+    step "1/6" "Validating bundle"
     local extract_dir
     extract_dir="$(mktemp -d)"
     trap "rm -rf '$extract_dir'" EXIT
@@ -395,7 +343,7 @@ import_flow() {
     ok "  Bundle validated"
 
     # ── Step 2: Session check ────────────────────────────────
-    step "2/8" "Checking for active sessions"
+    step "2/6" "Checking for active sessions"
     if check_active_session; then
         if [ "$FORCE" != "1" ]; then
             echo -e "${RED}Error: Active Claude session detected. Use --force to proceed.${NC}" >&2
@@ -406,98 +354,19 @@ import_flow() {
         ok "  No active session"
     fi
 
-    # ── Step 3: Embedding check ──────────────────────────────
-    step "3/8" "Checking embedding compatibility"
-    if [ -f "$bundle_dir/memory/memory.db" ] && [ -f "$MEMORY_DB" ]; then
-        local embed_output
-        embed_output="$("$PYTHON" "$MIGRATE_DB" check-embeddings "$bundle_dir/manifest.json" "$MEMORY_DB" 2>/dev/null)" || true
-        if [ -n "$embed_output" ]; then
-            local mismatch
-            mismatch="$(extract_json_field "$embed_output" mismatch)" || true
-            if [ "$mismatch" = "True" ]; then
-                local embed_warning
-                embed_warning="$(extract_json_field "$embed_output" warning)" || embed_warning=""
-                warn "  $embed_warning"
-            else
-                ok "  Embeddings compatible"
-            fi
-        else
-            ok "  Embedding check skipped (no output)"
-        fi
-    else
-        ok "  Embedding check skipped (no existing memory.db or no bundle memory)"
-    fi
-
-    # ── Step 4: Create directories ───────────────────────────
-    step "4/8" "Creating directories"
-    mkdir -p "$MEMORY_DIR" "$ENTITY_DIR"
+    # ── Step 3: Create directories ───────────────────────────
+    step "3/6" "Creating directories"
+    mkdir -p "$ENTITY_DIR"
     ok "  Directories ready"
 
     # Track summary
-    local memory_action="skipped" entity_action="skipped"
-    local memory_added=0 memory_skipped=0 entity_added=0 entity_skipped=0
-    local md_added=0 md_skipped=0 files_summary=""
+    local entity_action="skipped"
+    local entity_added=0 entity_skipped=0
+    local files_summary=""
     local import_failures=() import_successes=()
 
-    # ── Step 5: Merge/copy memory ────────────────────────────
-    step "5/8" "Importing memory data"
-    if [ -f "$bundle_dir/memory/memory.db" ]; then
-        if [ ! -f "$MEMORY_DB" ]; then
-            # Fresh machine — direct copy
-            local manifest_mem_count
-            manifest_mem_count="$(extract_manifest_count "$bundle_dir/manifest.json" "memory/memory.db" entry_count)"
-            if [ -n "$DRY_RUN" ]; then
-                memory_added=$manifest_mem_count
-                memory_action="would-copy"
-                info "  Dry-run: would copy memory.db ($memory_added entries)"
-            else
-                if cp "$bundle_dir/memory/memory.db" "$MEMORY_DB" 2>/dev/null; then
-                    memory_action="copied"
-                    memory_added=$manifest_mem_count
-                    import_successes+=("memory.db")
-                    ok "  Copied memory.db ($memory_added entries)"
-                else
-                    import_failures+=("memory.db")
-                    warn "  Failed to copy memory.db"
-                fi
-            fi
-        else
-            # Existing state — merge
-            local merge_mem_output
-            merge_mem_output="$("$PYTHON" "$MIGRATE_DB" merge-memory "$bundle_dir/memory/memory.db" "$MEMORY_DB" $DRY_RUN 2>/dev/null)"
-            memory_added="$(extract_json_field "$merge_mem_output" added)"
-            memory_skipped="$(extract_json_field "$merge_mem_output" skipped)"
-            if [ -n "$DRY_RUN" ]; then
-                memory_action="would-merge"
-                info "  Dry-run: would merge $memory_added new, skip $memory_skipped existing"
-            else
-                memory_action="merged"
-                ok "  Merged memory: $memory_added added, $memory_skipped skipped"
-            fi
-        fi
-
-        # Copy markdown files (skip in dry-run)
-        if [ -z "$DRY_RUN" ]; then
-            for md in "$bundle_dir/memory/"*.md; do
-                [ -f "$md" ] || continue
-                local md_basename
-                md_basename="$(basename "$md")"
-                if copy_file "$md" "$MEMORY_DIR/$md_basename"; then
-                    md_added=$((md_added + 1))
-                else
-                    md_skipped=$((md_skipped + 1))
-                fi
-            done
-            if [ $((md_added + md_skipped)) -gt 0 ]; then
-                info "  Markdown files: added $md_added, skipped $md_skipped"
-            fi
-        fi
-    else
-        info "  No memory data in bundle"
-    fi
-
-    # ── Step 6: Merge/copy entities ──────────────────────────
-    step "6/8" "Importing entity data"
+    # ── Step 4: Merge/copy entities ──────────────────────────
+    step "4/6" "Importing entity data"
     if [ -f "$bundle_dir/entities/entities.db" ]; then
         if [ ! -f "$ENTITY_DB" ]; then
             # Fresh machine — direct copy
@@ -536,8 +405,8 @@ import_flow() {
         info "  No entity data in bundle"
     fi
 
-    # ── Step 7: Copy files ───────────────────────────────────
-    step "7/8" "Copying additional files"
+    # ── Step 5: Copy files ───────────────────────────────────
+    step "5/6" "Copying additional files"
     if [ -f "$bundle_dir/projects.txt" ]; then
         if [ -z "$DRY_RUN" ]; then
             if copy_file "$bundle_dir/projects.txt" "$PD_DIR/projects.txt"; then
@@ -556,18 +425,16 @@ import_flow() {
         info "  No additional files in bundle"
     fi
 
-    # ── Step 8: Verify integrity ─────────────────────────────
+    # ── Step 6: Verify integrity ─────────────────────────────
     if [ -n "$DRY_RUN" ]; then
         info ""
         ok "Dry-run complete — no changes made"
-        info "  Memory: $memory_action ($memory_added entries)"
         info "  Entities: $entity_action ($entity_added entities)"
         return 0
     fi
 
-    step "8/8" "Verifying integrity"
+    step "6/6" "Verifying integrity"
     local verify_errors=0
-    verify_imported_db "$MEMORY_DB" entries "memory.db" "$memory_action" "$memory_added"
     verify_imported_db "$ENTITY_DB" entities "entities.db" "$entity_action" "$entity_added"
 
     # Check for partial failures
@@ -585,9 +452,7 @@ import_flow() {
     # Summary
     info ""
     ok "Import complete"
-    info "  Memory: $memory_action ($memory_added added, $memory_skipped skipped)"
     info "  Entities: $entity_action ($entity_added added, $entity_skipped skipped)"
-    [ $((md_added + md_skipped)) -gt 0 ] && info "  Markdown: added $md_added, skipped $md_skipped"
     [ -n "$files_summary" ] && info "  Files: $files_summary"
 
     if [ $verify_errors -gt 0 ]; then

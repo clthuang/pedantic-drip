@@ -63,13 +63,8 @@ def _create_backlog(db: EntityDatabase, entity_id: str = "item-1") -> str:
 class TestEntityMachines:
     """Verify ENTITY_MACHINES constant structure."""
 
-    def test_brainstorm_machine_exists(self):
-        assert "brainstorm" in ENTITY_MACHINES
-
-    def test_backlog_machine_exists(self):
-        assert "backlog" in ENTITY_MACHINES
-
     def test_each_machine_has_required_keys(self):
+        assert {"brainstorm", "backlog"} <= set(ENTITY_MACHINES)
         for entity_type, machine in ENTITY_MACHINES.items():
             assert "transitions" in machine, f"{entity_type} missing transitions"
             assert "columns" in machine, f"{entity_type} missing columns"
@@ -146,11 +141,6 @@ class TestInitEntityWorkflow:
         with pytest.raises(ValueError, match="invalid_transition.*kanban_column"):
             init_entity_workflow(db, type_id, "draft", "wrong_column")
 
-    def test_init_returns_dict_not_string(self, db):
-        type_id = _create_brainstorm(db)
-        result = init_entity_workflow(db, type_id, "draft", "wip")
-        assert isinstance(result, dict)
-
 
 # ---------------------------------------------------------------------------
 # transition_entity_phase
@@ -226,12 +216,6 @@ class TestTransitionEntityPhase:
         type_id = _create_brainstorm(db)
         with pytest.raises(ValueError, match="entity_not_found.*no workflow_phases"):
             transition_entity_phase(db, type_id, "reviewing")
-
-    def test_returns_dict_not_string(self, db):
-        type_id = _create_brainstorm(db)
-        init_entity_workflow(db, type_id, "draft", "wip")
-        result = transition_entity_phase(db, type_id, "reviewing")
-        assert isinstance(result, dict)
 
     def test_full_lifecycle_brainstorm_draft_to_promoted(self, db):
         """Full forward path: draft -> reviewing -> promoted."""

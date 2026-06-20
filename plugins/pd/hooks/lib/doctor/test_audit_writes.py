@@ -433,13 +433,11 @@ class TestTd11DriftClassRouting:
         db_mock = MagicMock() if with_db else None
         return FixContext(
             entities_db_path="",
-            memory_db_path="",
             artifacts_root="",
             project_root="",
             db=db_mock,
             engine=engine_mock,
             entities_conn=None,
-            memory_conn=None,
         ), engine_mock, db_mock
 
     def test_fix_lastcompletedphase_routes_through_complete_phase(self) -> None:
@@ -548,9 +546,9 @@ class TestFixActionWrappersForwardToDriftHelper:
         monkeypatch.setattr(fix_actions, "_fix_meta_json_via_mcp", fake_drift)
 
         ctx = FixContext(
-            entities_db_path="", memory_db_path="",
+            entities_db_path="",
             artifacts_root="", project_root="",
-            db=None, engine=None, entities_conn=None, memory_conn=None,
+            db=None, engine=None, entities_conn=None,
         )
         issue = Issue(
             check="workflow_phase", severity="error",
@@ -577,9 +575,9 @@ class TestFixActionWrappersForwardToDriftHelper:
         monkeypatch.setattr(fix_actions, "_fix_meta_json_via_mcp", fake_drift)
 
         ctx = FixContext(
-            entities_db_path="", memory_db_path="",
+            entities_db_path="",
             artifacts_root="", project_root="",
-            db=None, engine=None, entities_conn=None, memory_conn=None,
+            db=None, engine=None, entities_conn=None,
         )
         issue = Issue(
             check="workflow_phase", severity="error",

@@ -18,7 +18,7 @@ def write_pid(server_name: str) -> Path:
     (previous instance may be stale).
 
     Args:
-        server_name: One of "entity_server", "memory_server",
+        server_name: One of "entity_server",
                      "workflow_state_server", "ui_server"
 
     Returns:

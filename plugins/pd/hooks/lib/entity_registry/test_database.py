@@ -20,11 +20,18 @@ from entity_registry.database import (
     _expand_workflow_phase_check,
     _fix_fts_content_mode,
     _migrate_to_uuid_pk,
+    _migration_15_audit_emit_counter,
     _schema_expansion_v6,
 )
 
+
 from entity_registry.database import EXPORT_SCHEMA_VERSION
 from entity_registry.test_helpers import TEST_PROJECT_ID
+
+
+def _latest_entity_version() -> int:
+    """F117 TB.3 / FR-B.2a: dynamic latest schema_version for sweep sites (per design/plan authoritative 15-step ordering)."""
+    return max(MIGRATIONS.keys())
 
 
 # ---------------------------------------------------------------------------
@@ -366,7 +373,7 @@ class TestMigration2:
         # Now open it with EntityDatabase — runs pending migrations (3+)
         # Feature 111 Migration 14: schema_version bumped to 14.
         db = EntityDatabase(db_path)
-        assert db.get_metadata("schema_version") == "17"
+        assert db.get_metadata("schema_version") == str(_latest_entity_version())
 
         # Schema should be intact.
         # Feature 109 Migration 12 added 3 columns (type, kind,
@@ -450,31 +457,6 @@ class TestMigration2:
 
 
 class TestSchemaCreation:
-    def test_creates_entities_table(self, db: EntityDatabase):
-        """The entities table should exist after init."""
-        cur = db._conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='entities'"
-        )
-        assert cur.fetchone() is not None
-
-    def test_creates_metadata_table(self, db: EntityDatabase):
-        """The _metadata table should exist after init."""
-        cur = db._conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='_metadata'"
-        )
-        assert cur.fetchone() is not None
-
-    def test_entities_has_13_columns(self, db: EntityDatabase):
-        # Feature 108 Migration 11: dropped project_id + parent_type_id,
-        # kept workspace_uuid + parent_uuid → 12 columns.
-        # Feature 109 Migration 12: added type + kind + lifecycle_class
-        # (+3) and Group 7 dropped entity_type (-1) → 14 columns total.
-        # (Test name retained for git-blame continuity; column count is
-        # asserted in the body.)
-        cur = db._conn.execute("PRAGMA table_info(entities)")
-        columns = cur.fetchall()
-        assert len(columns) == 14
-
     def test_entities_column_names(self, db: EntityDatabase):
         # Feature 109 Migration 12: post-migration column layout. The
         # three trailing columns (type, kind, lifecycle_class) were added
@@ -674,7 +656,7 @@ class TestMetadata:
 
     def test_schema_version_is_10(self, db: EntityDatabase):
         # Feature 111 Migration 14 bumps schema_version to 14.
-        assert db.get_metadata("schema_version") == "17"
+        assert db.get_metadata("schema_version") == str(_latest_entity_version())
 
 
 # ---------------------------------------------------------------------------
@@ -2684,7 +2666,7 @@ class TestMigrationIdempotency:
         assert entity is not None
         assert entity["uuid"] == p1_uuid
         # Feature 111 Migration 14: schema_version bumped to 14.
-        assert db2.get_metadata("schema_version") == "17"
+        assert db2.get_metadata("schema_version") == str(_latest_entity_version())
         db2.close()
 
 
@@ -2886,7 +2868,7 @@ class TestMigration3:
 
         Feature 111 Migration 14 bumps the version.
         """
-        assert db.get_metadata("schema_version") == "17"
+        assert db.get_metadata("schema_version") == str(_latest_entity_version())
 
     # -- Task 1.2: Migration creates indexes and trigger (AC-2) ------------
 
@@ -3077,7 +3059,7 @@ class TestMigration3:
         """
         fresh_db = EntityDatabase(str(tmp_path / "fresh.db"))
         try:
-            assert fresh_db.get_metadata("schema_version") == "17"
+            assert fresh_db.get_metadata("schema_version") == str(_latest_entity_version())
         finally:
             fresh_db.close()
 
@@ -4669,7 +4651,7 @@ class TestMigration5:
         db = EntityDatabase(str(tmp_path / "m5-idem.db"))
         try:
             # Feature 111 Migration 14 bumps the version to 14.
-            assert db.get_schema_version() == 17
+            assert db.get_schema_version() == _latest_entity_version()
 
             # Verify all new phase values are accepted
             new_phases = [
@@ -8224,3 +8206,124 @@ class TestMigration11StressBenchmark:
             ).fetchone()[0] == 10000
         finally:
             conn.close()
+
+
+# ---------------------------------------------------------------------------
+# F116 Theme B / TB.6 — M15 re-run safety regression
+#
+# Per F116 FR-5: M15 uses INSERT OR REPLACE (reset semantics, NOT preservation).
+# In production the runner's contiguity (range(current+1, target+1)) prevents
+# re-invocation. This test exercises the recovery path: rewind schema_version
+# to '14' and re-run M15. M15 owns its own BEGIN IMMEDIATE (database.py:5412)
+# so we open the test connection with isolation_level=None (autocommit) to
+# avoid colliding with sqlite3's implicit transaction.
+# ---------------------------------------------------------------------------
+
+
+def _build_entities_db_at_v14(tmp_path):
+    """Build entities.db, then rewind schema_version to 14 + drop M15 counter.
+
+    Instantiating EntityDatabase runs all migrations to max; this helper then
+    rewinds the M15 state so a fresh M15 invocation can be observed.
+    """
+    import pathlib
+    db_path = pathlib.Path(tmp_path) / "entities.db"
+    db = EntityDatabase(str(db_path))
+    db.close()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO _metadata (key, value) VALUES ('schema_version', '14')"
+        )
+        conn.execute("DELETE FROM _metadata WHERE key='audit_emit_failed_count'")
+        conn.commit()
+    return db_path
+
+
+def test_m15_safe_to_rerun_with_documented_reset_semantics(tmp_path):
+    """F116 FR-5 / AC-5.1: M15 is safe to re-run.
+
+    Re-running M15 after the counter has been bumped resets the counter to
+    '0' via INSERT OR REPLACE (this is RESET semantics, NOT preservation).
+    Production runner contiguity prevents this happening organically; the
+    test exercises the recovery path explicitly.
+
+    M15 owns its OWN BEGIN IMMEDIATE (unlike M6/M7 which inherit the runner's
+    outer transaction). We open the test connection with isolation_level=None
+    (autocommit) so M15's BEGIN IMMEDIATE doesn't collide with sqlite3's
+    implicit DML transaction.
+    """
+    db_path = _build_entities_db_at_v14(tmp_path)
+
+    # First run: install the counter, then bump it to '7' and rewind version.
+    conn = sqlite3.connect(db_path, isolation_level=None)
+    try:
+        _migration_15_audit_emit_counter(conn)
+        conn.execute(
+            "UPDATE _metadata SET value='7' WHERE key='audit_emit_failed_count'"
+        )
+        conn.execute("UPDATE _metadata SET value='14' WHERE key='schema_version'")
+    finally:
+        conn.close()
+
+    # Second run on a fresh autocommit conn: M15 must be re-runnable.
+    conn = sqlite3.connect(db_path, isolation_level=None)
+    try:
+        _migration_15_audit_emit_counter(conn)
+    finally:
+        conn.close()
+
+    # Assert RESET (not preservation) + schema_version stamped back to '15'.
+    with sqlite3.connect(db_path) as conn:
+        counter = conn.execute(
+            "SELECT value FROM _metadata WHERE key='audit_emit_failed_count'"
+        ).fetchone()[0]
+        version = conn.execute(
+            "SELECT value FROM _metadata WHERE key='schema_version'"
+        ).fetchone()[0]
+    assert counter == "0", "INSERT OR REPLACE reset; not value-preserving"
+    assert version == "15"
+
+
+class TestProvidedWorkspaceUuidMembership:
+    """Task #5: _resolve_workspace_uuid_kwargs fails loud on an orphaned
+    provided workspace_uuid instead of letting a bare FK error escape."""
+
+    _ORPHAN = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
+
+    def test_orphan_uuid_raises_actionable(self, db):
+        with pytest.raises(ValueError, match="split-brain"):
+            db._resolve_workspace_uuid_kwargs(self._ORPHAN, None)
+
+    def test_orphan_uuid_message_names_doctor_and_restart(self, db):
+        with pytest.raises(ValueError) as exc:
+            db._resolve_workspace_uuid_kwargs(self._ORPHAN, None)
+        msg = str(exc.value)
+        assert "pd:doctor --fix" in msg and "restart the session" in msg
+
+    def test_both_supplied_branch_also_checked(self, db):
+        # workspace_uuid wins over project_id, and is still validated.
+        with pytest.raises(ValueError, match="split-brain"):
+            db._resolve_workspace_uuid_kwargs(self._ORPHAN, "__test__")
+
+    def test_present_uuid_returns_it(self, db):
+        ws = _bootstrap_test_workspace(db, "membership-present")
+        assert db._resolve_workspace_uuid_kwargs(ws, None) == ws
+
+    def test_unknown_uuid_bootstraps_not_raises(self, db):
+        from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
+
+        # Even on a DB where the __unknown__ row may be absent, passing the
+        # canonical uuid bootstraps it rather than raising.
+        db._conn.execute(
+            "DELETE FROM workspaces WHERE uuid = ?", (_UNKNOWN_WORKSPACE_UUID,)
+        )
+        db._conn.commit()
+        result = db._resolve_workspace_uuid_kwargs(
+            _UNKNOWN_WORKSPACE_UUID, None
+        )
+        assert result == _UNKNOWN_WORKSPACE_UUID
+        # Row now exists.
+        assert db._conn.execute(
+            "SELECT 1 FROM workspaces WHERE uuid = ?",
+            (_UNKNOWN_WORKSPACE_UUID,),
+        ).fetchone() is not None

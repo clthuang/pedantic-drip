@@ -23,7 +23,7 @@ Each feature has a directory under `docs/features/{feature-id}/` containing:
 | `plan.md` | planning skill | Ordered implementation plan with dependencies |
 | `tasks.md` | breaking-down-tasks skill | Atomic task list with dependency graph |
 | `implementation-log.md` | implementer agent (or direct-orchestrator per feature 096 retro Tune #2) | Per-task decisions, deviations, concerns, T0 baselines, tooling-friction notes (deleted after retro per finish-feature Step 6b) |
-| `retro.md` | retrospecting skill | AORTA retrospective findings and knowledge bank updates; folds `.qa-gate-low-findings.md` and `.qa-gate.log` sidecars per Step 2c (FR-7b) |
+| `retro.md` | retrospecting skill | AORTA retrospective findings (plain markdown reflection); folds `.qa-gate-low-findings.md` and `.qa-gate.log` sidecars per Step 2c (FR-7b) |
 | `qa-override.md` | finish-feature Step 5b (manual) | Required when QA gate produces HIGH findings; ≥50-char user-authored rationale unblocks merge (feature 094) |
 | `.qa-gate.log` / `.qa-gate.json` / `.qa-gate-low-findings.md` | finish-feature Step 5b (transient sidecars, gitignored) | Per-reviewer audit log + idempotency cache (head_sha) + LOW-finding deferral; folded into retro.md by retrospecting skill |
 
@@ -36,17 +36,6 @@ Notable schema fields added since the source feature (078):
 - `backward_context` (object) — populated when a reviewer triggers backward travel; contains the referral message and target phase
 - `backward_return_target` (string) — phase to return to after rework completes
 - `backward_history` (array) — historical record of all backward transitions for the feature
-
-## Knowledge Bank
-
-`docs/knowledge-bank/` accumulates learnings from retrospectives:
-
-| File | Content |
-|------|---------|
-| `constitution.md` | Core principles (KISS, YAGNI, etc.) |
-| `patterns.md` | Approaches that have worked |
-| `anti-patterns.md` | Things to avoid |
-| `heuristics.md` | Decision guides |
 
 ## Technical Documentation
 

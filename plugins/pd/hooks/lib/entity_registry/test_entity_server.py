@@ -443,3 +443,176 @@ class TestCreateKeyResultMissingParent:
                 metadata_json=json.dumps({"score": 0.0}),
                 weight=1.0,
             )
+
+
+def _upsert(db, project_id, project_root, workspace_uuid=None, name="p"):
+    db.upsert_project(
+        project_id=project_id, name=name, root_commit_sha=None,
+        remote_url=None, normalized_url=None, remote_host=None,
+        remote_owner=None, remote_repo=None, default_branch=None,
+        project_root=project_root, is_git_repo=False,
+        workspace_uuid=workspace_uuid,
+    )
+
+
+def _seed_ws(db, ws_uuid, legacy, root):
+    db._conn.execute(
+        "INSERT INTO workspaces "
+        "(uuid, project_id_legacy, project_root, created_at, updated_at) "
+        "VALUES (?, ?, ?, '2026-06-13T00:00:00Z', '2026-06-13T00:00:00Z')",
+        (ws_uuid, legacy, root),
+    )
+    db._conn.commit()
+
+
+def _projects_ws_uuid(db, project_id):
+    return db._conn.execute(
+        "SELECT workspace_uuid FROM projects WHERE project_id = ?",
+        (project_id,),
+    ).fetchone()["workspace_uuid"]
+
+
+def _ws_present(db, ws_uuid):
+    return db._conn.execute(
+        "SELECT 1 FROM workspaces WHERE uuid = ?", (ws_uuid,)
+    ).fetchone() is not None
+
+
+_WSA = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
+_WSB = "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb"
+
+
+class TestUpsertProjectWorkspaceRow:
+    """Task #3: upsert_project ensures/adopts a workspaces row (no FK fail)."""
+
+    def test_provided_uuid_empty_workspaces_creates_row(self, db):
+        """Incident step-2 regression: provided uuid + no row → row created,
+        projects INSERT succeeds instead of FK-failing."""
+        _upsert(db, "proj-aaa", "/root/aaa", workspace_uuid=_WSA)
+        assert _ws_present(db, _WSA)
+        assert _projects_ws_uuid(db, "proj-aaa") == _WSA
+
+    def test_provided_uuid_conflict_root_adopts(self, db):
+        """Provided uuid A while row B owns project_root → adopt B, no A row."""
+        _seed_ws(db, _WSB, "legacy-b", "/root/shared")
+        _upsert(db, "proj-x", "/root/shared", workspace_uuid=_WSA)
+        assert _projects_ws_uuid(db, "proj-x") == _WSB  # adopted
+        assert not _ws_present(db, _WSA)  # no competing row
+
+    def test_provided_uuid_legacy_collision_inserts_null_legacy(self, db):
+        """Row B holds the legacy pid at a DIFFERENT root → A inserted with
+        NULL legacy, projects row points at A."""
+        _seed_ws(db, _WSB, "proj-y", "/root/old")
+        _upsert(db, "proj-y", "/root/new", workspace_uuid=_WSA)
+        assert _projects_ws_uuid(db, "proj-y") == _WSA
+        legacy = db._conn.execute(
+            "SELECT project_id_legacy FROM workspaces WHERE uuid = ?", (_WSA,)
+        ).fetchone()["project_id_legacy"]
+        assert legacy is None
+
+    def test_none_uuid_empty_resolution_no_crash(self, db):
+        """workspace_uuid=None (the '' startup fallback) → mint, no crash."""
+        _upsert(db, "proj-none", "/root/none", workspace_uuid=None)
+        ws = _projects_ws_uuid(db, "proj-none")
+        assert ws is not None  # minted
+        assert _ws_present(db, ws)
+
+    def test_none_uuid_adopts_root_match(self, db):
+        """None path adopts a single project_root match instead of minting."""
+        _seed_ws(db, _WSB, None, "/root/adopt")
+        _upsert(db, "proj-adopt", "/root/adopt", workspace_uuid=None)
+        assert _projects_ws_uuid(db, "proj-adopt") == _WSB
+
+
+def _entity_ws(db, type_id):
+    return db._conn.execute(
+        "SELECT workspace_uuid FROM entities WHERE type_id = ?", (type_id,)
+    ).fetchone()["workspace_uuid"]
+
+
+class TestBackfillWorkspaceTarget:
+    """Task #4: backfill_project_ids honours a supplied workspace_uuid and
+    never cross-attributes into a stale legacy-keyed row."""
+
+    def _register_unknown(self, db, eid, root):
+        db.register_entity(
+            "feature", eid, eid.title(),
+            artifact_path=f"{root}/docs/features/{eid}/design.md",
+            project_id="__unknown__",
+        )
+
+    def test_kwarg_orphan_claims_into_root_row(self, db):
+        """Provided uuid orphaned while a root row exists → entities claimed
+        into the canonical root row, not a freshly-minted competitor."""
+        _seed_ws(db, _WSB, "legacy-b", "/root/shared")
+        self._register_unknown(db, "bf-a", "/root/shared")
+        n = db.backfill_project_ids(
+            "/root/shared", "proj-shared", workspace_uuid=_WSA
+        )
+        assert n == 1
+        assert _entity_ws(db, "feature:bf-a") == _WSB  # adopted root row
+        assert not _ws_present(db, _WSA)
+
+    def test_kwarg_wins_over_stale_legacy_row(self, db):
+        """Provided uuid is the claim target even when a legacy-keyed row
+        for project_id exists at a different root (legacy lookup skipped)."""
+        _seed_ws(db, _WSB, "proj-y", "/root/other")
+        self._register_unknown(db, "bf-y", "/root/y")
+        n = db.backfill_project_ids(
+            "/root/y", "proj-y", workspace_uuid=_WSA
+        )
+        assert n == 1
+        # Claimed into A (the provided identity), NOT B (the legacy match).
+        assert _entity_ws(db, "feature:bf-y") == _WSA
+
+    def test_none_path_adopts_root_match(self, db):
+        """None path: legacy miss + single root match → adopt that row."""
+        _seed_ws(db, _WSB, None, "/root/z")
+        self._register_unknown(db, "bf-z", "/root/z")
+        n = db.backfill_project_ids("/root/z", "proj-z", workspace_uuid=None)
+        assert n == 1
+        assert _entity_ws(db, "feature:bf-z") == _WSB
+
+    def test_none_path_mints_when_nothing_matches(self, db):
+        """None path: no legacy row, no root row → mint a fresh workspace."""
+        self._register_unknown(db, "bf-w", "/root/w")
+        n = db.backfill_project_ids("/root/w", "proj-w", workspace_uuid=None)
+        assert n == 1
+        ws = _entity_ws(db, "feature:bf-w")
+        assert ws not in (None, "00000000-0000-0000-0000-000000000000")
+        assert _ws_present(db, ws)
+
+    def test_multi_row_conflict_root_raises(self, db):
+        """Codex blocker 3: >1 rows claim project_root → refuse to attribute
+        ambiguously (raise), don't silently first-pick."""
+        _seed_ws(db, _WSB, "l1", "/root/dup")
+        _seed_ws(db, "cccccccc-3333-4333-8333-cccccccccccc", "l2", "/root/dup")
+        self._register_unknown(db, "bf-dup", "/root/dup")
+        with pytest.raises(ValueError, match="claimed by 2 workspace rows"):
+            db.backfill_project_ids("/root/dup", "proj-dup", workspace_uuid=_WSA)
+
+    def test_none_path_multi_row_raises(self, db):
+        """Re-review: the None path must also raise on multi-row (not mint)."""
+        _seed_ws(db, _WSB, "l1", "/root/dup2")
+        _seed_ws(db, "cccccccc-3333-4333-8333-cccccccccccc", "l2", "/root/dup2")
+        self._register_unknown(db, "bf-dup2", "/root/dup2")
+        with pytest.raises(ValueError, match="claimed by 2 workspace rows"):
+            db.backfill_project_ids("/root/dup2", "proj-dup2", workspace_uuid=None)
+
+
+class TestUpsertProjectMultiRowConflict:
+    """Codex blocker 2: upsert_project must not bind arbitrarily under
+    multi-row project_root corruption."""
+
+    def test_multi_row_conflict_root_raises(self, db):
+        _seed_ws(db, _WSB, "l1", "/root/dup")
+        _seed_ws(db, "cccccccc-3333-4333-8333-cccccccccccc", "l2", "/root/dup")
+        with pytest.raises(ValueError, match="claimed by 2 workspace rows"):
+            _upsert(db, "proj-dup", "/root/dup", workspace_uuid=_WSA)
+
+    def test_none_path_multi_row_raises(self, db):
+        """Re-review: the None path must also raise on multi-row (not mint)."""
+        _seed_ws(db, _WSB, "l1", "/root/dup2")
+        _seed_ws(db, "cccccccc-3333-4333-8333-cccccccccccc", "l2", "/root/dup2")
+        with pytest.raises(ValueError, match="claimed by 2 workspace rows"):
+            _upsert(db, "proj-dup2", "/root/dup2", workspace_uuid=None)

@@ -55,19 +55,19 @@ Unlike traditional retrospective formats (4Ls, Start-Stop-Continue) that rely on
 
 **Output:** 3-5 actionable recommendations with signal, recommendation, and confidence level.
 
-### A — Act (Knowledge Bank)
+### A — Act (Reflections)
 
-**Purpose:** Generate concrete entries for the project knowledge bank.
+**Purpose:** Capture concrete reflections worth remembering from this feature, written into the `retro.md` markdown artifact.
 
-**Entry types:**
+**Reflection types:**
 
-| Type | Target File | What to Capture |
-|------|------------|----------------|
-| Patterns | `{pd_artifacts_root}/knowledge-bank/patterns.md` | Approaches that worked well |
-| Anti-patterns | `{pd_artifacts_root}/knowledge-bank/anti-patterns.md` | Approaches that caused problems |
-| Heuristics | `{pd_artifacts_root}/knowledge-bank/heuristics.md` | Rules of thumb discovered |
+| Type | What to Capture |
+|------|----------------|
+| Patterns | Approaches that worked well |
+| Anti-patterns | Approaches that caused problems |
+| Heuristics | Rules of thumb discovered |
 
-**Entry format:**
+**Reflection format (in retro.md):**
 
 ```markdown
 ### {Type}: {Name}
@@ -78,10 +78,10 @@ Unlike traditional retrospective formats (4Ls, Start-Stop-Continue) that rely on
 ```
 
 **Provenance requirements:**
-- Every entry must reference the feature ID and phase
-- Every entry must cite specific evidence (metric, reviewer quote, or observable outcome)
-- Only propose entries with medium or high confidence
-- Prefer fewer high-quality entries over many speculative ones
+- Every reflection must reference the feature ID and phase
+- Every reflection must cite specific evidence (metric, reviewer quote, or observable outcome)
+- Only propose reflections with medium or high confidence
+- Prefer fewer high-quality reflections over many speculative ones
 
 ## When Data Is Limited
 

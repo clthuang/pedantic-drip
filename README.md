@@ -1,10 +1,10 @@
 # pd Plugin
 
-> A Claude Code plugin that turns ideas into shipped features through structured phases — brainstorm, spec, design, plan, implement — with built-in quality gates, semantic memory, and autonomous operation.
+> A Claude Code plugin that turns ideas into shipped features through structured phases — brainstorm, spec, design, plan, implement — with built-in quality gates and autonomous operation.
 
 ## What It Does
 
-pd guides features from idea to merge through proven phases. Every phase has AI reviewers that catch issues before they compound. The plugin learns from retrospectives — memory persists across sessions and projects. It can run fully autonomously (YOLO mode) or step-by-step with user confirmation at each gate. Domain knowledge modules cover game design, crypto/DeFi, and data science.
+pd guides features from idea to merge through proven phases. Every phase has AI reviewers that catch issues before they compound. Retrospectives capture learnings as plain-markdown retros at feature completion. It can run fully autonomously (YOLO mode) or step-by-step with user confirmation at each gate. Domain knowledge modules cover game design, crypto/DeFi, and data science.
 
 ## Installation
 
@@ -13,7 +13,7 @@ pd guides features from idea to merge through proven phases. Every phase has AI 
 | Requirement | Version | Notes |
 |-------------|---------|-------|
 | Claude Code | latest | The CLI tool from Anthropic |
-| Python | 3.10+ | Required for semantic memory. Linux: also install `python3-venv` |
+| Python | 3.10+ | Required for MCP servers. Linux: also install `python3-venv` |
 | git | any | Required |
 
 Optional: `rsync` and `gtimeout` (macOS: `brew install coreutils`).
@@ -27,29 +27,13 @@ Optional: `rsync` and `gtimeout` (macOS: `brew install coreutils`).
 
 Core dependencies auto-install on first session.
 
-### Setup semantic memory (recommended)
-
-The plugin auto-installs core dependencies on first launch. For semantic search, configure an embedding provider:
-
-```bash
-# Find your plugin root and run the interactive setup
-bash "$(ls -d ~/.claude/plugins/cache/*/pd/*/scripts/setup.sh 2>/dev/null | head -1)"
-```
-
-The setup walks through provider selection, API key configuration, and project initialization.
-
-| Provider | API Key | Notes |
-|----------|---------|-------|
-| gemini | `GEMINI_API_KEY` | Free tier available (default) |
-| none | — | Disable semantic search |
-
 ### Troubleshooting
 
 ```bash
 bash "$(ls -d ~/.claude/plugins/cache/*/pd/*/scripts/doctor.sh 2>/dev/null | head -1)"
 ```
 
-Read-only health check across 5 categories (system prerequisites, plugin environment, embedding provider, memory system, project context) with OS-specific fix commands. Runs 16 checks including security-review command presence, stale worktree detection, status write-path enforcement, and free-text status-parser regression detection.
+Read-only health check across system prerequisites, plugin environment, and project context with OS-specific fix commands. Runs 21 checks including security-review command presence, stale worktree detection, status write-path enforcement, free-text status-parser regression detection, and severity vocabulary validation.
 
 ## Quick Start
 
@@ -83,18 +67,6 @@ Then follow the phases:
 All quality gates (reviewers, phase validators) still run — YOLO mode only bypasses user confirmation at phase transitions. Safety boundaries stop execution on review failures, merge conflicts, or missing prerequisites.
 
 **Modes:** `manual` (default) | `aware` (session hints) | `yolo` (fully autonomous)
-
-### Semantic Memory
-
-Three MCP tools persist and leverage learnings across sessions:
-
-| Tool | Purpose |
-|------|---------|
-| `store_memory` | Save a pattern, anti-pattern, or heuristic to long-term memory |
-| `search_memory` | Search past learnings by topic using semantic similarity |
-| `record_influence` | Record that a retrieved memory influenced a subagent dispatch, improving future ranking |
-
-Memory entries are injected automatically at session start. Duplicate entries are suppressed at capture time using cosine similarity (configurable via `memory_dedup_threshold`). Confidence decays over time when entries go unrecalled — high-confidence entries demote to medium after `memory_decay_high_threshold_days` days without recall, and medium demotes to low after `memory_decay_medium_threshold_days` days. Decay runs on session start and is opt-in via `memory_decay_enabled`. The global store (`~/.claude/pd/memory/`) accumulates knowledge across all projects. See [README_FOR_DEV.md](./README_FOR_DEV.md) for configuration.
 
 ### Domain Knowledge
 
@@ -141,10 +113,8 @@ Configure via `.claude/pd.local.md`:
 | `/pd:list-features` | List active features and branches |
 | `/pd:retrospect` | Run retrospective on a feature |
 | `/pd:add-to-backlog` | Capture ad-hoc ideas and todos |
-| `/pd:remember` | Capture a learning to long-term memory |
-| `/pd:promote-pattern [<entry-substring>]` | Promote a high-confidence KB pattern to an enforceable hook, skill, agent, or command |
 | `/pd:cleanup-brainstorms` | Delete old brainstorm scratch files |
-| `/pd:doctor` | Run 16 diagnostic checks on pd workspace health (incl. security-review command, stale worktrees, and status-parser regression) |
+| `/pd:doctor` | Run 21 diagnostic checks on pd workspace health (incl. security-review command, stale worktrees, status-parser regression, and severity vocabulary) |
 | `/pd:secretary` | Intelligent task routing to agents and skills (supports YOLO mode with orchestrate subcommand) |
 | `/pd:create-specialist-team` | Create ephemeral specialist teams for complex tasks |
 | `/pd:root-cause-analysis` | Investigate bugs systematically |
@@ -205,8 +175,7 @@ flowchart TD
     CG -->|All Pass| FIN
 
     FIN["FINISH<br/>Docs / PR / Merge"] --> RET
-    RET["RETROSPECTIVE<br/>Capture Learnings"] --> MEM[("Long-Term<br/>Memory")]
-    RET --> DONE([Complete])
+    RET["RETROSPECTIVE<br/>Capture Learnings"] --> DONE([Complete])
 ```
 
 ![Workflow Overview](./docs/workflow-overview.png)
@@ -227,8 +196,7 @@ docs/
 │   ├── prd.md             # Project PRD
 │   └── roadmap.md         # Dependency graph, milestones
 ├── backlog.md             # Gitignored projection — use /pd:add-to-backlog to add items
-├── retrospectives/        # From /pd:retrospect
-└── knowledge-bank/        # Accumulated learnings
+└── retrospectives/        # From /pd:retrospect
 ```
 
 ### Task Output Format
@@ -246,7 +214,7 @@ Tasks are organized for parallel execution:
 
 ## Reference
 
-pd includes 31 skills and 29 agents that run automatically during the workflow. You don't invoke them directly.
+pd includes 29 skills and 29 agents that run automatically during the workflow. You don't invoke them directly.
 
 ### Skills
 
@@ -309,12 +277,10 @@ pd includes 31 skills and 29 agents that run automatically during the workflow. 
 
 | Skill | Purpose |
 |-------|---------|
-| retrospecting | Runs data-driven AORTA retrospective using retro-facilitator agent |
+| retrospecting | Runs data-driven AORTA retrospective using retro-facilitator agent; writes plain-markdown retro.md |
 | updating-docs | Automatically updates documentation using agents |
 | writing-skills | Applies TDD approach to skill documentation |
 | detecting-kanban | Detects Vibe-Kanban and provides TodoWrite fallback |
-| capturing-learnings | Guides model-initiated learning capture with configurable modes |
-| promoting-patterns | Orchestrates /pd:promote-pattern flow — enumerates qualifying KB entries, classifies target, generates diff, gates approval, applies atomic writes |
 
 ### Agents
 
@@ -381,4 +347,4 @@ See [README_FOR_DEV.md](./README_FOR_DEV.md) for:
 - Release workflow
 - Validation
 
-Each project uses `.claude/pd.local.md` for local settings (artifacts path, merge branch, memory config). See [README_FOR_DEV.md](./README_FOR_DEV.md) for the full configuration reference.
+Each project uses `.claude/pd.local.md` for local settings (artifacts path, merge branch). See [README_FOR_DEV.md](./README_FOR_DEV.md) for the full configuration reference.

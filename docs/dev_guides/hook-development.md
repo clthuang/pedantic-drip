@@ -63,12 +63,6 @@ Walks up from PWD to find project root (directory containing `.git` or `docs/fea
 ### escape_json()
 Escapes special characters for JSON output: newlines, tabs, quotes, backslashes.
 
-## Memory Library
-
-Located at `hooks/lib/memory.py`:
-
-Python module used by `session-start.sh` to inject knowledge bank entries into session context. Parses entries from project-local (`docs/knowledge-bank/`) and global (`~/.claude/pd/memory/`) stores, deduplicates by content hash, selects top entries by priority, and outputs formatted markdown.
-
 ## Testing Hooks
 
 Run the hook test suite:

@@ -17,7 +17,6 @@ from entity_registry.database import EntityExistsError
 from entity_registry.dependencies import DependencyManager
 from entity_registry.id_generator import generate_entity_id
 from entity_registry.project_identity import _compute_legacy_project_id
-from workflow_engine.templates import get_template
 
 if TYPE_CHECKING:
     from entity_registry.database import EntityDatabase

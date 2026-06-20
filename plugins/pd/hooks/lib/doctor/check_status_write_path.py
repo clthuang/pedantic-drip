@@ -19,7 +19,6 @@ authoritative CI gate; this doctor check is the runtime audit.
 from __future__ import annotations
 
 import ast
-import os
 import subprocess
 import time
 from pathlib import Path

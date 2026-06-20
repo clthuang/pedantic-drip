@@ -17,11 +17,9 @@ SUBCOMMANDS = [
     "backup",
     "manifest",
     "validate",
-    "merge-memory",
     "merge-entities",
     "verify",
     "info",
-    "check-embeddings",
     "migrate",
     "rebuild-fts",
 ]
@@ -52,11 +50,9 @@ SUBCOMMAND_ARGS = [
     ("backup", ["src.db", "dst.db", "--table", "entries"]),
     ("manifest", ["staging-dir", "--plugin-version", "1.0.0"]),
     ("validate", ["bundle-dir"]),
-    ("merge-memory", ["src.db", "dst.db"]),
     ("merge-entities", ["src.db", "dst.db"]),
     ("verify", ["db.db", "--expected-count", "5", "--table", "entries"]),
     ("info", ["manifest.json"]),
-    ("check-embeddings", ["manifest.json", "dst-memory.db"]),
     ("migrate", ["entities.db"]),
     ("rebuild-fts", ["--skip-kill", "test.db"]),
 ]
@@ -77,7 +73,7 @@ def test_subcommand_stubs(subcommand: str, args: list[str]) -> None:
     )
     # Allow stubs that still return {} and real implementations that may fail
     # on missing files — but skip validation for stubs that are not yet implemented
-    if subcommand in ("info", "check-embeddings", "validate"):
+    if subcommand in ("info", "validate"):
         # These are now fully implemented and require real files;
         # skip the stub test (covered by dedicated test classes)
         pass
@@ -224,75 +220,11 @@ class TestVerify:
 
 
 # ============================================================
-# Helpers: memory DB and entity DB creation
+# Helpers: entity DB creation
 # ============================================================
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def create_memory_db(path: str, entries: list[dict] | None = None) -> None:
-    """Create a memory.db with full schema and optional entries."""
-    conn = sqlite3.connect(path)
-    conn.executescript("""
-        CREATE TABLE entries (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            description TEXT NOT NULL,
-            reasoning TEXT,
-            category TEXT NOT NULL,
-            keywords TEXT NOT NULL DEFAULT '[]',
-            source TEXT NOT NULL,
-            source_project TEXT NOT NULL,
-            "references" TEXT,
-            observation_count INTEGER DEFAULT 1,
-            confidence TEXT DEFAULT 'medium',
-            recall_count INTEGER DEFAULT 0,
-            last_recalled_at TEXT,
-            embedding BLOB,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            source_hash TEXT NOT NULL,
-            created_timestamp_utc REAL
-        );
-        CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
-            name, description, reasoning, keywords, content=entries, content_rowid=rowid
-        );
-    """)
-    if entries:
-        for e in entries:
-            now = _now_iso()
-            conn.execute("""
-                INSERT INTO entries (id, name, description, reasoning, category,
-                    keywords, source, source_project, "references", observation_count,
-                    confidence, recall_count, last_recalled_at, embedding,
-                    created_at, updated_at, source_hash, created_timestamp_utc)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                e.get("id", str(uuid.uuid4())),
-                e.get("name", "test-entry"),
-                e.get("description", "A test entry"),
-                e.get("reasoning"),
-                e.get("category", "pattern"),
-                e.get("keywords", "[]"),
-                e.get("source", "test"),
-                e.get("source_project", "test-project"),
-                e.get("references"),
-                e.get("observation_count", 1),
-                e.get("confidence", "medium"),
-                e.get("recall_count", 0),
-                e.get("last_recalled_at"),
-                e.get("embedding"),
-                e.get("created_at", now),
-                e.get("updated_at", now),
-                e["source_hash"],
-                e.get("created_timestamp_utc"),
-            ))
-        conn.commit()
-        # Populate FTS
-        conn.execute("INSERT INTO entries_fts(entries_fts) VALUES('rebuild')")
-        conn.commit()
-    conn.close()
 
 
 def create_entity_db(
@@ -383,168 +315,6 @@ def create_entity_db(
             )
         conn.commit()
     conn.close()
-
-
-# ============================================================
-# Step 6: merge-memory subcommand tests
-# ============================================================
-
-
-class TestMergeMemory:
-    """Tests for the merge-memory subcommand."""
-
-    # --- Task 6.1: test_merge_memory_no_overlap ---
-    def test_merge_memory_no_overlap(self, tmp_path: Path) -> None:
-        """Disjoint source_hash values: all entries added."""
-        src = str(tmp_path / "src.db")
-        dst = str(tmp_path / "dst.db")
-
-        src_entries = [{"source_hash": f"src-hash-{i}", "name": f"src-{i}"} for i in range(3)]
-        dst_entries = [{"source_hash": f"dst-hash-{i}", "name": f"dst-{i}"} for i in range(2)]
-
-        create_memory_db(src, src_entries)
-        create_memory_db(dst, dst_entries)
-
-        result = run_cli("merge-memory", src, dst)
-
-        assert result["added"] == 3
-        assert result["skipped"] == 0
-
-        # Verify dst now has 5 entries
-        conn = sqlite3.connect(dst)
-        count = conn.execute("SELECT count(*) FROM entries").fetchone()[0]
-        conn.close()
-        assert count == 5
-
-    # --- Task 6.2: test_merge_memory_full_overlap ---
-    def test_merge_memory_full_overlap(self, tmp_path: Path) -> None:
-        """Identical source_hash values: all entries skipped."""
-        src = str(tmp_path / "src.db")
-        dst = str(tmp_path / "dst.db")
-
-        entries = [{"source_hash": f"shared-hash-{i}", "name": f"entry-{i}"} for i in range(3)]
-
-        create_memory_db(src, entries)
-        create_memory_db(dst, entries)
-
-        result = run_cli("merge-memory", src, dst)
-
-        assert result["added"] == 0
-        assert result["skipped"] == 3
-
-    # --- Task 6.3: test_merge_memory_partial_overlap ---
-    def test_merge_memory_partial_overlap(self, tmp_path: Path) -> None:
-        """Some overlap: correct added/skipped counts."""
-        src = str(tmp_path / "src.db")
-        dst = str(tmp_path / "dst.db")
-
-        src_entries = [
-            {"source_hash": "shared-1", "name": "shared"},
-            {"source_hash": "src-only-1", "name": "src-unique-1"},
-            {"source_hash": "src-only-2", "name": "src-unique-2"},
-        ]
-        dst_entries = [
-            {"source_hash": "shared-1", "name": "shared"},
-            {"source_hash": "dst-only-1", "name": "dst-unique"},
-        ]
-
-        create_memory_db(src, src_entries)
-        create_memory_db(dst, dst_entries)
-
-        result = run_cli("merge-memory", src, dst)
-
-        assert result["added"] == 2
-        assert result["skipped"] == 1
-
-    # --- Task 6.4: test_merge_memory_dry_run ---
-    def test_merge_memory_dry_run(self, tmp_path: Path) -> None:
-        """Dry run: counts returned but dst unchanged."""
-        src = str(tmp_path / "src.db")
-        dst = str(tmp_path / "dst.db")
-
-        src_entries = [{"source_hash": f"src-hash-{i}", "name": f"src-{i}"} for i in range(3)]
-        create_memory_db(src, src_entries)
-        create_memory_db(dst, [])
-
-        result = run_cli("merge-memory", src, dst, "--dry-run")
-
-        assert result["added"] == 3
-        assert result["skipped"] == 0
-
-        # Verify dst still has 0 entries
-        conn = sqlite3.connect(dst)
-        count = conn.execute("SELECT count(*) FROM entries").fetchone()[0]
-        conn.close()
-        assert count == 0
-
-    # --- Task 6.5: test_merge_memory_rollback ---
-    def test_merge_memory_rollback(self, tmp_path: Path) -> None:
-        """Simulated failure: dst unchanged after rollback.
-
-        Strategy: corrupt the src DB after counting so the INSERT fails.
-        We create src with entries, then drop the src entries table before
-        the merge INSERT can read it — by using a trigger-based approach.
-        Instead, we use a simpler approach: make the dst entries table have
-        a CHECK constraint that rejects inserts after the count query.
-
-        Simplest reliable approach: temporarily rename the src table between
-        the count and insert phases by using a second connection.
-        """
-        src = str(tmp_path / "src.db")
-        dst = str(tmp_path / "dst.db")
-
-        src_entries = [{"source_hash": f"src-hash-{i}", "name": f"src-{i}"} for i in range(3)]
-        create_memory_db(src, src_entries)
-        create_memory_db(dst, [])
-
-        # Add a BEFORE INSERT trigger to the dst entries table that raises an error
-        conn = sqlite3.connect(dst)
-        conn.execute("""
-            CREATE TRIGGER fail_insert BEFORE INSERT ON entries
-            BEGIN
-                SELECT RAISE(ABORT, 'injected failure');
-            END
-        """)
-        conn.commit()
-        conn.close()
-
-        result = subprocess.run(
-            [sys.executable, SCRIPT, "merge-memory", src, dst],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        # The command should fail (exit 1) due to the trigger
-        assert result.returncode == 1
-
-        # Verify dst still has 0 entries (rollback worked)
-        conn = sqlite3.connect(dst)
-        count = conn.execute("SELECT count(*) FROM entries").fetchone()[0]
-        conn.close()
-        assert count == 0
-
-    # --- Task 6.7: test_merge_memory_fts_rebuild ---
-    def test_merge_memory_fts_rebuild(self, tmp_path: Path) -> None:
-        """After merge, FTS index returns results for known term."""
-        src = str(tmp_path / "src.db")
-        dst = str(tmp_path / "dst.db")
-
-        src_entries = [
-            {"source_hash": "fts-test-1", "name": "alpha-bravo-search-term",
-             "description": "Unique searchable description"}
-        ]
-        create_memory_db(src, src_entries)
-        create_memory_db(dst, [])
-
-        run_cli("merge-memory", src, dst)
-
-        conn = sqlite3.connect(dst)
-        rows = conn.execute(
-            "SELECT name FROM entries_fts WHERE entries_fts MATCH 'alpha'",
-        ).fetchall()
-        conn.close()
-        assert len(rows) == 1
-        assert "alpha" in rows[0][0]
 
 
 # ============================================================
@@ -779,8 +549,7 @@ class TestMergeEntities:
 # ============================================================
 
 
-def _create_staging_dir(tmp_path: Path, with_metadata: bool = False,
-                        memory_entries: int = 3, entity_count: int = 2,
+def _create_staging_dir(tmp_path: Path, entity_count: int = 2,
                         workflow_count: int = 1) -> Path:
     """Create a realistic staging directory for manifest tests.
 
@@ -788,24 +557,7 @@ def _create_staging_dir(tmp_path: Path, with_metadata: bool = False,
     """
     staging = tmp_path / "staging"
     staging.mkdir()
-    (staging / "memory").mkdir()
     (staging / "entities").mkdir()
-
-    # Create memory.db with entries
-    mem_db = str(staging / "memory" / "memory.db")
-    entries = [{"source_hash": f"hash-{i}", "name": f"entry-{i}"} for i in range(memory_entries)]
-    create_memory_db(mem_db, entries)
-
-    if with_metadata:
-        conn = sqlite3.connect(mem_db)
-        conn.execute("CREATE TABLE IF NOT EXISTS _metadata (key TEXT PRIMARY KEY, value TEXT)")
-        conn.execute("INSERT INTO _metadata (key, value) VALUES ('embedding_provider', 'openai')")
-        conn.execute("INSERT INTO _metadata (key, value) VALUES ('embedding_model', 'text-embedding-3-small')")
-        conn.commit()
-        conn.close()
-
-    # Create a category markdown file
-    (staging / "memory" / "patterns.md").write_text("# Patterns\n- pattern 1\n")
 
     # Create entities.db
     ent_db = str(staging / "entities" / "entities.db")
@@ -853,26 +605,6 @@ class TestManifest:
                     expected_files.add(rel)
         assert set(result["files"].keys()) == expected_files
 
-    # --- Task 3.2: test_manifest_embedding_metadata ---
-    def test_manifest_embedding_metadata(self, tmp_path: Path) -> None:
-        """Manifest contains embedding_provider and embedding_model from _metadata table."""
-        staging = _create_staging_dir(tmp_path, with_metadata=True)
-
-        result = run_cli("manifest", str(staging), "--plugin-version", "4.12.0")
-
-        assert result["embedding_provider"] == "openai"
-        assert result["embedding_model"] == "text-embedding-3-small"
-
-    # --- Task 3.3: test_manifest_no_metadata ---
-    def test_manifest_no_metadata(self, tmp_path: Path) -> None:
-        """Without _metadata table, embedding fields are null."""
-        staging = _create_staging_dir(tmp_path, with_metadata=False)
-
-        result = run_cli("manifest", str(staging), "--plugin-version", "4.12.0")
-
-        assert result["embedding_provider"] is None
-        assert result["embedding_model"] is None
-
     # --- Task 3.4: test_manifest_schema_version ---
     def test_manifest_schema_version(self, tmp_path: Path) -> None:
         """Manifest schema_version equals SUPPORTED_SCHEMA_VERSION (1)."""
@@ -888,7 +620,6 @@ class TestManifest:
         assert "python_version" in result
         # Verify per-file entry counts are present
         assert "files" in result
-        assert result["files"]["memory/memory.db"]["entry_count"] == 3
         assert result["files"]["entities/entities.db"]["entity_count"] == 2
         assert result["files"]["entities/entities.db"]["workflow_phases_count"] == 1
 
@@ -977,7 +708,7 @@ class TestValidate:
 
 
 # ============================================================
-# Step 8: info and check-embeddings subcommand tests
+# Step 8: info subcommand tests
 # ============================================================
 
 
@@ -986,90 +717,6 @@ def _write_manifest(path: Path, manifest: dict) -> str:
     manifest_file = path / "manifest.json"
     manifest_file.write_text(json.dumps(manifest, indent=2))
     return str(manifest_file)
-
-
-def _create_metadata_db(path: str, provider: str | None = None, model: str | None = None) -> None:
-    """Create a memory.db with a _metadata table containing embedding info."""
-    conn = sqlite3.connect(path)
-    conn.execute("CREATE TABLE _metadata (key TEXT PRIMARY KEY, value TEXT)")
-    if provider is not None:
-        conn.execute("INSERT INTO _metadata (key, value) VALUES ('embedding_provider', ?)", (provider,))
-    if model is not None:
-        conn.execute("INSERT INTO _metadata (key, value) VALUES ('embedding_model', ?)", (model,))
-    conn.commit()
-    conn.close()
-
-
-class TestCheckEmbeddings:
-    """Tests for the check-embeddings subcommand."""
-
-    # --- Task 8.1: test_check_same_provider ---
-    def test_check_same_provider(self, tmp_path: Path) -> None:
-        """Same embedding_provider in bundle and dst -> mismatch=false."""
-        manifest_path = _write_manifest(tmp_path, {
-            "schema_version": 1,
-            "embedding_provider": "openai",
-            "embedding_model": "text-embedding-3-small",
-        })
-        dst_db = str(tmp_path / "dst_memory.db")
-        _create_metadata_db(dst_db, provider="openai", model="text-embedding-3-small")
-
-        result = run_cli("check-embeddings", manifest_path, dst_db)
-
-        assert result["mismatch"] is False
-
-    # --- Task 8.2: test_check_different_provider ---
-    def test_check_different_provider(self, tmp_path: Path) -> None:
-        """Different provider -> mismatch=true with warning."""
-        manifest_path = _write_manifest(tmp_path, {
-            "schema_version": 1,
-            "embedding_provider": "openai",
-            "embedding_model": "text-embedding-3-small",
-        })
-        dst_db = str(tmp_path / "dst_memory.db")
-        _create_metadata_db(dst_db, provider="voyage", model="voyage-3")
-
-        result = run_cli("check-embeddings", manifest_path, dst_db)
-
-        assert result["mismatch"] is True
-        assert "warning" in result
-        assert "openai" in result["warning"]
-        assert "voyage" in result["warning"]
-
-    # --- Task 8.3: test_check_fresh_machine ---
-    def test_check_fresh_machine(self, tmp_path: Path) -> None:
-        """No _metadata table in dst (fresh machine) -> mismatch=false."""
-        manifest_path = _write_manifest(tmp_path, {
-            "schema_version": 1,
-            "embedding_provider": "openai",
-            "embedding_model": "text-embedding-3-small",
-        })
-        # Create a bare DB with no _metadata table
-        dst_db = str(tmp_path / "dst_memory.db")
-        conn = sqlite3.connect(dst_db)
-        conn.execute("CREATE TABLE entries (id TEXT PRIMARY KEY)")
-        conn.commit()
-        conn.close()
-
-        result = run_cli("check-embeddings", manifest_path, dst_db)
-
-        assert result["mismatch"] is False
-
-    # --- Task 8.4: test_check_null_provider_in_bundle ---
-    def test_check_null_provider_in_bundle(self, tmp_path: Path) -> None:
-        """Bundle has null embedding_provider -> skip check, no warning."""
-        manifest_path = _write_manifest(tmp_path, {
-            "schema_version": 1,
-            "embedding_provider": None,
-            "embedding_model": None,
-        })
-        dst_db = str(tmp_path / "dst_memory.db")
-        _create_metadata_db(dst_db, provider="openai", model="text-embedding-3-small")
-
-        result = run_cli("check-embeddings", manifest_path, dst_db)
-
-        assert result["mismatch"] is False
-        assert "warning" not in result
 
 
 class TestInfo:
@@ -1084,9 +731,7 @@ class TestInfo:
             "export_timestamp": "2026-03-16T00:00:00Z",
             "source_platform": "darwin-arm64",
             "python_version": "3.12.0",
-            "embedding_provider": "openai",
-            "embedding_model": "text-embedding-3-small",
-            "files": {"memory/memory.db": {"sha256": "abc123", "size_bytes": 4096, "entry_count": 10}},
+            "files": {"entities/entities.db": {"sha256": "abc123", "size_bytes": 4096, "entity_count": 10}},
         }
         manifest_path = _write_manifest(tmp_path, manifest_data)
 
