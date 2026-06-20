@@ -15,7 +15,7 @@ import threading
 import time
 from contextlib import asynccontextmanager
 
-# Make entity_registry and semantic_memory importable from hooks/lib/.
+# Make entity_registry and pd_config importable from hooks/lib/.
 _hooks_lib = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "hooks", "lib"))
 if _hooks_lib not in (os.path.normpath(p) for p in sys.path):
     sys.path.insert(0, _hooks_lib)
@@ -43,7 +43,7 @@ from entity_registry.server_helpers import (
     _process_set_parent,
     parse_metadata,
 )
-from semantic_memory.config import read_config
+from pd_config.config import read_config
 from sqlite_retry import with_retry
 
 from mcp.server.fastmcp import FastMCP

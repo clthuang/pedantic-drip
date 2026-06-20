@@ -16,14 +16,13 @@ from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import datetime
 from itertools import zip_longest
-from pathlib import Path
 
 # Feature 088 FR-7.2: internal cap on phase_events rows fetched for analytics.
 # query_phase_analytics fetches up to this many rows per internal call before
 # applying the caller-supplied `limit` (filter-then-truncate ordering).
 _ANALYTICS_EVENT_SCAN_LIMIT = 500
 
-# Make workflow_engine, transition_gate, entity_registry, semantic_memory
+# Make workflow_engine, transition_gate, entity_registry, pd_config
 # importable from hooks/lib/ — safety net for direct invocation and tests.
 _hooks_lib = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "hooks", "lib"))
 if _hooks_lib not in (os.path.normpath(p) for p in sys.path):
@@ -51,15 +50,7 @@ from entity_registry.frontmatter_sync import (
     scan_all,
 )
 from entity_registry.metadata import parse_metadata
-from semantic_memory.config import read_config
-from semantic_memory.database import MemoryDatabase
-from semantic_memory.embedding import EmbeddingProvider, create_provider
-from semantic_memory.refresh import (
-    refresh_memory_digest,
-    build_refresh_query,
-    _resolve_int_config,
-    _refresh_warned_fields,
-)
+from pd_config.config import read_config
 from transition_gate.models import TransitionResult
 from workflow_engine.engine import WorkflowStateEngine
 from workflow_engine.entity_engine import EntityWorkflowEngine
@@ -109,13 +100,6 @@ _project_id: str = ""
 # ``workspace_uuid=_workspace_uuid or None`` per the post-FR-2 wiring.
 _workspace_uuid: str = ""
 _notification_queue: NotificationQueue | None = None
-
-# Feature 081: memory refresh digest — separate MemoryDatabase
-# (~/.claude/pd/memory/memory.db, distinct from entities.db above) plus
-# embedding provider + config dict mirrored from memory_server.py's lifespan.
-_config: dict = {}
-_provider: EmbeddingProvider | None = None
-_memory_db: MemoryDatabase | None = None
 
 # ---------------------------------------------------------------------------
 # Degraded mode helpers
@@ -191,7 +175,6 @@ async def lifespan(server):
     """Manage DB connection and engine lifecycle."""
     global _db, _db_unavailable, _recovery_thread
     global _engine, _entity_engine, _artifacts_root, _project_root, _project_id, _workspace_uuid, _notification_queue
-    global _config, _provider, _memory_db
 
     write_pid("workflow_state_server")
     start_parent_watchdog()
@@ -234,27 +217,6 @@ async def lifespan(server):
             _db, _artifacts_root, _notification_queue, project_root=_project_root
         )
 
-        # Feature 081: populate memory-refresh globals (provider + memory.db).
-        # Failures are non-fatal — memory_refresh silently omits, but operator
-        # sees one stderr signal per failure mode.
-        _config = config
-        try:
-            _provider = create_provider(config)
-        except Exception as e:
-            print(
-                f"[workflow-state] memory_refresh disabled for this process: provider init failed: {e}",
-                file=sys.stderr,
-            )
-        try:
-            _memory_db = MemoryDatabase(
-                str(Path.home() / ".claude" / "pd" / "memory" / "memory.db")
-            )
-        except Exception as e:
-            print(
-                f"[workflow-state] memory_refresh disabled for this process: memory_db init failed: {e}",
-                file=sys.stderr,
-            )
-
         print(f"workflow-engine: started (db={db_path}, artifacts={_artifacts_root})", file=sys.stderr)
 
     try:
@@ -264,9 +226,6 @@ async def lifespan(server):
         if _db is not None:
             _db.close()
             _db = None
-        if _memory_db is not None:
-            _memory_db.close()
-            _memory_db = None
         _engine = None
         _entity_engine = None
         _notification_queue = None
@@ -1442,31 +1401,6 @@ def _process_complete_phase(
             )
             if artifact_warnings:
                 result["artifact_warnings"] = artifact_warnings
-
-    # Feature 081: memory refresh digest (additive).
-    # Four-part gate: entity DB live, memory DB live, the phase transition
-    # actually completed (result.last_completed_phase set), and config enables.
-    # Failing any gate omits the field silently — callers tolerate absence.
-    if (
-        db is not None
-        and _memory_db is not None
-        and result.get("last_completed_phase")
-        and _config.get("memory_refresh_enabled", True)
-    ):
-        query = build_refresh_query(feature_type_id, phase)
-        if query:
-            limit = _resolve_int_config(
-                _config, "memory_refresh_limit", 5,
-                clamp=(1, 20), warned=_refresh_warned_fields,
-            )
-            digest = refresh_memory_digest(
-                _memory_db, _provider, query, limit,
-                config=_config,
-                feature_type_id=feature_type_id,
-                completed_phase=phase,
-            )
-            if digest:
-                result["memory_refresh"] = digest
 
     # Feature 111 F10 — surface closes= results on the response (FR-10.6).
     # Empty list when closes was None or []. Augmented with uuids that were

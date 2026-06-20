@@ -2,8 +2,7 @@
 
 Runs all session-start reconciliation tasks in sequence:
   1. entity_status.sync_entity_statuses   — .meta.json → entity DB status sync
-  2. kb_import.sync_knowledge_bank         — MarkdownImporter KB sync
-  3. workflow_engine.reconciliation        — .meta.json → DB workflow state sync
+  2. workflow_engine.reconciliation        — .meta.json → DB workflow state sync
 
 Design principles:
   - Fail-open: any task error is captured in `errors` list; exit code is always 0.
@@ -11,7 +10,7 @@ Design principles:
   - DB connections closed in finally block (even on task errors).
 
 Output (stdout): single JSON line with keys:
-  entity_sync, kb_import, workflow_reconcile, dependency_cleanup, elapsed_ms, errors
+  entity_sync, workflow_reconcile, dependency_cleanup, elapsed_ms, errors
 """
 import argparse
 import json
@@ -21,9 +20,8 @@ import time
 
 from entity_registry.database import EntityDatabase
 from entity_registry.project_identity import _compute_legacy_project_id, resolve_workspace_uuid
-from semantic_memory.database import MemoryDatabase
 
-from reconciliation_orchestrator import entity_status, kb_import
+from reconciliation_orchestrator import entity_status
 
 
 def parse_args(argv=None):
@@ -55,11 +53,6 @@ def parse_args(argv=None):
         required=True,
         help="Path to the entity registry SQLite DB file.",
     )
-    parser.add_argument(
-        "--memory-db",
-        required=True,
-        help="Path to the semantic memory SQLite DB file.",
-    )
     return parser.parse_args(argv)
 
 
@@ -84,7 +77,7 @@ def run(args):
 
     Args:
         args: Parsed argparse.Namespace with project_root, artifacts_root,
-              entity_db, memory_db, verbose fields.
+              entity_db, verbose fields.
 
     Side effects:
         - Writes a single JSON line to sys.stdout.
@@ -92,11 +85,9 @@ def run(args):
     """
     start = time.monotonic()
     entity_db = None
-    memory_db = None
 
     results = {
         "entity_sync": None,
-        "kb_import": None,
         "workflow_reconcile": None,
         "dependency_cleanup": None,
         "elapsed_ms": 0,
@@ -105,10 +96,8 @@ def run(args):
 
     try:
         entity_db = EntityDatabase(args.entity_db)
-        memory_db = MemoryDatabase(args.memory_db)
 
         full_artifacts_path = os.path.join(args.project_root, args.artifacts_root)
-        global_store_path = os.path.dirname(args.memory_db)
         project_id = _compute_legacy_project_id(args.project_root)
         # Feature 108 FR-12 / AC-30: resolve workspace UUID with the
         # documented precedence chain. Best-effort: if resolution fails we
@@ -131,15 +120,7 @@ def run(args):
         except Exception as exc:
             results["errors"].append(f"entity_status: {exc}")
 
-        # Task 2: KB import
-        try:
-            results["kb_import"] = kb_import.sync_knowledge_bank(
-                memory_db, args.project_root, args.artifacts_root, global_store_path
-            )
-        except Exception as exc:
-            results["errors"].append(f"kb_import: {exc}")
-
-        # Task 3: workflow state reconciliation (.meta.json → DB)
+        # Task 2: workflow state reconciliation (.meta.json → DB)
         # Runs after entity_status sync (Task 1) so entity DB statuses are current.
         try:
             from workflow_engine.engine import WorkflowStateEngine
@@ -157,7 +138,7 @@ def run(args):
         except Exception as exc:
             results["errors"].append(f"workflow_reconcile: {exc}")
 
-        # Task 4: dependency freshness cleanup
+        # Task 3: dependency freshness cleanup
         try:
             from reconciliation_orchestrator import dependency_freshness
             result = dependency_freshness.cleanup_stale_dependencies(entity_db)
@@ -173,8 +154,6 @@ def run(args):
     finally:
         if entity_db is not None:
             entity_db.close()
-        if memory_db is not None:
-            memory_db.close()
 
     elapsed_ms = int((time.monotonic() - start) * 1000)
     results["elapsed_ms"] = elapsed_ms

@@ -12,6 +12,6 @@ Files changed: `module_a.py`, `module_b.py`
 
 ## Task T-control: Add config field
 
-**Decision:** Add `memory_decay_enabled` boolean to config defaults.
+**Decision:** Add `plan_mode_review` boolean to config defaults.
 
 Files changed: `config.py`

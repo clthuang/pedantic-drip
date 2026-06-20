@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 # Re-use DB creation helpers from the unit test module
-from test_migrate_db import create_entity_db, create_memory_db, _create_metadata_db
+from test_migrate_db import create_entity_db
 
 SCRIPT_DIR = Path(__file__).parent
 MIGRATE_SH = str(SCRIPT_DIR / "migrate.sh")
@@ -36,38 +36,17 @@ MIGRATE_DB = str(SCRIPT_DIR / "migrate_db.py")
 def _setup_pd_state(
     base_dir: Path,
     *,
-    memory_entries: list[dict] | None = None,
     entities: list[dict] | None = None,
     workflow_phases: list[dict] | None = None,
-    markdown_files: dict[str, str] | None = None,
     projects_txt: bool = False,
-    embedding_metadata: dict[str, str] | None = None,
 ) -> Path:
     """Create test pd state under base_dir/.claude/pd/.
 
     Returns the pd_dir path.
     """
     pd_dir = base_dir / ".claude" / "pd"
-    memory_dir = pd_dir / "memory"
     entity_dir = pd_dir / "entities"
-    memory_dir.mkdir(parents=True, exist_ok=True)
     entity_dir.mkdir(parents=True, exist_ok=True)
-
-    if memory_entries is not None:
-        mem_db = str(memory_dir / "memory.db")
-        create_memory_db(mem_db, memory_entries if memory_entries else None)
-        if embedding_metadata:
-            conn = sqlite3.connect(mem_db)
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS _metadata (key TEXT PRIMARY KEY, value TEXT)"
-            )
-            for k, v in embedding_metadata.items():
-                conn.execute(
-                    "INSERT OR REPLACE INTO _metadata (key, value) VALUES (?, ?)",
-                    (k, v),
-                )
-            conn.commit()
-            conn.close()
 
     if entities is not None:
         ent_db = str(entity_dir / "entities.db")
@@ -76,10 +55,6 @@ def _setup_pd_state(
             entities if entities else None,
             workflow_phases if workflow_phases else None,
         )
-
-    if markdown_files:
-        for name, content in markdown_files.items():
-            (memory_dir / name).write_text(content)
 
     if projects_txt:
         (pd_dir / "projects.txt").write_text(
@@ -138,14 +113,10 @@ class TestExportRoundTrip:
 
         _setup_pd_state(
             home,
-            memory_entries=[
-                {"source_hash": f"mem-{i}", "name": f"entry-{i}"} for i in range(3)
-            ],
             entities=[
                 {"type_id": f"feature:e-{i:03d}", "name": f"Feat{i}"} for i in range(2)
             ],
             workflow_phases=[{"type_id": "feature:e-000"}],
-            markdown_files={"patterns.md": "# Patterns\n"},
             projects_txt=True,
         )
 
@@ -184,7 +155,6 @@ class TestExportRoundTrip:
             assert actual_sha == file_info["sha256"], f"Checksum mismatch: {rel_path}"
 
         # Per-file counts should match
-        assert manifest["files"]["memory/memory.db"]["entry_count"] == 3
         assert manifest["files"]["entities/entities.db"]["entity_count"] == 2
 
 
@@ -202,14 +172,10 @@ class TestImportFresh:
         src_home.mkdir()
         _setup_pd_state(
             src_home,
-            memory_entries=[
-                {"source_hash": f"mem-{i}", "name": f"entry-{i}"} for i in range(4)
-            ],
             entities=[
                 {"type_id": f"feature:f-{i:03d}", "name": f"F{i}"} for i in range(3)
             ],
             workflow_phases=[{"type_id": f"feature:f-{i:03d}"} for i in range(3)],
-            markdown_files={"patterns.md": "# Patterns\n"},
             projects_txt=True,
         )
 
@@ -231,20 +197,13 @@ class TestImportFresh:
         assert result.returncode == 0, f"Import failed: {result.stderr}"
 
         # Verify all entries present
-        mem_db = str(dst_home / ".claude" / "pd" / "memory" / "memory.db")
-        conn = sqlite3.connect(mem_db)
-        mem_count = conn.execute("SELECT count(*) FROM entries").fetchone()[0]
-        conn.close()
-        assert mem_count == 4
-
         ent_db = str(dst_home / ".claude" / "pd" / "entities" / "entities.db")
         conn = sqlite3.connect(ent_db)
         ent_count = conn.execute("SELECT count(*) FROM entities").fetchone()[0]
         conn.close()
         assert ent_count == 3
 
-        # Verify markdown and projects.txt restored
-        assert (dst_home / ".claude" / "pd" / "memory" / "patterns.md").exists()
+        # Verify projects.txt restored
         assert (dst_home / ".claude" / "pd" / "projects.txt").exists()
 
 
@@ -262,10 +221,6 @@ class TestImportMerge:
         src_home.mkdir()
         _setup_pd_state(
             src_home,
-            memory_entries=[
-                {"source_hash": "shared-1", "name": "shared"},
-                {"source_hash": "src-only-1", "name": "src-unique"},
-            ],
             entities=[
                 {"type_id": "feature:shared-001", "name": "SharedFeat"},
                 {"type_id": "feature:src-only-001", "name": "SrcFeat"},
@@ -290,10 +245,6 @@ class TestImportMerge:
         dst_home.mkdir()
         _setup_pd_state(
             dst_home,
-            memory_entries=[
-                {"source_hash": "shared-1", "name": "shared"},
-                {"source_hash": "dst-only-1", "name": "dst-unique"},
-            ],
             entities=[
                 {"type_id": "feature:shared-001", "name": "SharedFeat"},
                 {"type_id": "feature:dst-only-001", "name": "DstFeat"},
@@ -306,13 +257,6 @@ class TestImportMerge:
 
         result = _run_migrate(dst_home, ["import", bundle_path], env_extra=env_extra)
         assert result.returncode == 0, f"Import failed: {result.stderr}"
-
-        # Memory: shared-1 + src-only-1 + dst-only-1 = 3 (no duplicates)
-        mem_db = str(dst_home / ".claude" / "pd" / "memory" / "memory.db")
-        conn = sqlite3.connect(mem_db)
-        mem_count = conn.execute("SELECT count(*) FROM entries").fetchone()[0]
-        conn.close()
-        assert mem_count == 3
 
         # Entities: shared-001 + src-only-001 + dst-only-001 = 3
         ent_db = str(dst_home / ".claude" / "pd" / "entities" / "entities.db")
@@ -336,7 +280,6 @@ class TestDryRun:
         src_home.mkdir()
         _setup_pd_state(
             src_home,
-            memory_entries=[{"source_hash": "m-1", "name": "entry-1"}],
             entities=[{"type_id": "feature:e-001", "name": "Feat1"}],
             workflow_phases=[{"type_id": "feature:e-001"}],
         )
@@ -393,7 +336,6 @@ class TestCorruptBundle:
         src_home.mkdir()
         _setup_pd_state(
             src_home,
-            memory_entries=[{"source_hash": "m-1", "name": "entry-1"}],
             entities=[{"type_id": "feature:e-001", "name": "Feat1"}],
             workflow_phases=[{"type_id": "feature:e-001"}],
             projects_txt=True,
@@ -455,7 +397,6 @@ class TestSessionDetection:
         home.mkdir()
         _setup_pd_state(
             home,
-            memory_entries=[{"source_hash": "m-1", "name": "entry-1"}],
             entities=[{"type_id": "feature:e-001", "name": "Feat1"}],
             workflow_phases=[{"type_id": "feature:e-001"}],
         )
@@ -489,11 +430,8 @@ class TestEntityDbPathOverride:
         home = tmp_path / "home"
         home.mkdir()
 
-        # Create memory state at normal location
-        _setup_pd_state(
-            home,
-            memory_entries=[{"source_hash": "m-1", "name": "entry-1"}],
-        )
+        # Create pd state dirs at the normal location (no entity DB here)
+        _setup_pd_state(home)
 
         # Create entity DB at a custom location (NOT the default path)
         custom_dir = tmp_path / "custom_entities"
@@ -538,58 +476,6 @@ class TestEntityDbPathOverride:
 
 
 # ============================================================
-# Test 8: Embedding mismatch (AC-9)
-# ============================================================
-
-
-class TestEmbeddingMismatch:
-    """Different embedding provider triggers warning on import."""
-
-    def test_embedding_mismatch_warning(self, tmp_path: Path) -> None:
-        # Source with openai embeddings
-        src_home = tmp_path / "src_home"
-        src_home.mkdir()
-        _setup_pd_state(
-            src_home,
-            memory_entries=[{"source_hash": "m-1", "name": "entry-1"}],
-            entities=[{"type_id": "feature:e-001", "name": "Feat1"}],
-            workflow_phases=[{"type_id": "feature:e-001"}],
-            embedding_metadata={
-                "embedding_provider": "openai",
-                "embedding_model": "text-embedding-3-small",
-            },
-        )
-
-        fake_bin = tmp_path / "fakebin"
-        fake_bin.mkdir()
-        _make_fake_pgrep(fake_bin, exit_code=1)
-        env_extra = {"PATH": f"{fake_bin}:{os.environ['PATH']}"}
-
-        bundle_path = str(tmp_path / "bundle.tar.gz")
-        result = _run_migrate(src_home, ["export", bundle_path], env_extra=env_extra)
-        assert result.returncode == 0
-
-        # Destination with voyage embeddings
-        dst_home = tmp_path / "dst_home"
-        dst_home.mkdir()
-        _setup_pd_state(
-            dst_home,
-            memory_entries=[{"source_hash": "dst-1", "name": "dst-entry"}],
-            embedding_metadata={
-                "embedding_provider": "voyage",
-                "embedding_model": "voyage-3",
-            },
-        )
-
-        result = _run_migrate(dst_home, ["import", bundle_path], env_extra=env_extra)
-        assert result.returncode == 0, f"Import failed: {result.stderr}"
-        # Should contain mismatch warning
-        assert "mismatch" in result.stderr.lower() or "openai" in result.stderr.lower(), (
-            f"Expected embedding mismatch warning in stderr: {result.stderr}"
-        )
-
-
-# ============================================================
 # Test 9: Post-import doctor (AC-15)
 # ============================================================
 
@@ -602,7 +488,6 @@ class TestPostImportDoctor:
         src_home.mkdir()
         _setup_pd_state(
             src_home,
-            memory_entries=[{"source_hash": "m-1", "name": "entry-1"}],
             entities=[{"type_id": "feature:e-001", "name": "Feat1"}],
             workflow_phases=[{"type_id": "feature:e-001"}],
         )
@@ -632,52 +517,6 @@ class TestPostImportDoctor:
 
 
 # ============================================================
-# Test 10: Fresh machine embedding — no mismatch warning (AC-9)
-# ============================================================
-
-
-class TestFreshMachineEmbedding:
-    """Import to empty dir with no _metadata produces no mismatch warning."""
-
-    def test_no_mismatch_on_fresh_machine(self, tmp_path: Path) -> None:
-        # Source with embedding metadata
-        src_home = tmp_path / "src_home"
-        src_home.mkdir()
-        _setup_pd_state(
-            src_home,
-            memory_entries=[{"source_hash": "m-1", "name": "entry-1"}],
-            entities=[{"type_id": "feature:e-001", "name": "Feat1"}],
-            workflow_phases=[{"type_id": "feature:e-001"}],
-            embedding_metadata={
-                "embedding_provider": "openai",
-                "embedding_model": "text-embedding-3-small",
-            },
-        )
-
-        fake_bin = tmp_path / "fakebin"
-        fake_bin.mkdir()
-        _make_fake_pgrep(fake_bin, exit_code=1)
-        env_extra = {"PATH": f"{fake_bin}:{os.environ['PATH']}"}
-
-        bundle_path = str(tmp_path / "bundle.tar.gz")
-        result = _run_migrate(src_home, ["export", bundle_path], env_extra=env_extra)
-        assert result.returncode == 0
-
-        # Fresh destination — no pd state at all
-        dst_home = tmp_path / "dst_home"
-        dst_home.mkdir()
-        (dst_home / ".claude" / "pd").mkdir(parents=True)
-
-        result = _run_migrate(dst_home, ["import", bundle_path], env_extra=env_extra)
-        assert result.returncode == 0, f"Import failed: {result.stderr}"
-
-        # Should NOT contain mismatch warning
-        assert "mismatch" not in result.stderr.lower(), (
-            f"Unexpected mismatch warning on fresh machine: {result.stderr}"
-        )
-
-
-# ============================================================
 # Test 11: UUID generation on merge (AC-5)
 # ============================================================
 
@@ -693,7 +532,6 @@ class TestUuidGenerationOnMerge:
         src_uuid_2 = str(uuid.uuid4())
         _setup_pd_state(
             src_home,
-            memory_entries=[{"source_hash": "m-1", "name": "entry-1"}],
             entities=[
                 {"type_id": "feature:src-001", "name": "SrcFeat1", "uuid": src_uuid_1},
                 {"type_id": "feature:src-002", "name": "SrcFeat2", "uuid": src_uuid_2},
@@ -718,7 +556,6 @@ class TestUuidGenerationOnMerge:
         dst_home.mkdir()
         _setup_pd_state(
             dst_home,
-            memory_entries=[{"source_hash": "dst-1", "name": "dst-entry"}],
             entities=[
                 {"type_id": "feature:dst-001", "name": "DstFeat1"},
             ],
@@ -751,20 +588,19 @@ class TestUuidGenerationOnMerge:
 
 
 class TestForceOverwrite:
-    """Import with --force overwrites existing markdown files."""
+    """Import with --force overwrites existing projects.txt."""
 
-    def test_force_overwrites_markdown(self, tmp_path: Path) -> None:
-        # Source with markdown
+    def test_force_overwrites_projects_txt(self, tmp_path: Path) -> None:
+        # Source with a distinct projects.txt
         src_home = tmp_path / "src_home"
         src_home.mkdir()
         _setup_pd_state(
             src_home,
-            memory_entries=[{"source_hash": "m-1", "name": "entry-1"}],
             entities=[{"type_id": "feature:e-001", "name": "Feat1"}],
             workflow_phases=[{"type_id": "feature:e-001"}],
-            markdown_files={"patterns.md": "# Source Patterns\nNew content\n"},
-            projects_txt=True,
         )
+        src_projects = src_home / ".claude" / "pd" / "projects.txt"
+        src_projects.write_text("/src/project-new\n")
 
         fake_bin = tmp_path / "fakebin"
         fake_bin.mkdir()
@@ -775,32 +611,30 @@ class TestForceOverwrite:
         result = _run_migrate(src_home, ["export", bundle_path], env_extra=env_extra)
         assert result.returncode == 0
 
-        # Destination with existing markdown (different content)
+        # Destination with existing projects.txt (different content)
         dst_home = tmp_path / "dst_home"
         dst_home.mkdir()
         _setup_pd_state(
             dst_home,
-            memory_entries=[{"source_hash": "dst-1", "name": "dst-entry"}],
             entities=[{"type_id": "feature:dst-001", "name": "DstFeat"}],
             workflow_phases=[{"type_id": "feature:dst-001"}],
-            markdown_files={"patterns.md": "# Old Patterns\nOld content\n"},
-            projects_txt=True,
         )
+        dst_projects = dst_home / ".claude" / "pd" / "projects.txt"
+        dst_projects.write_text("/dst/project-old\n")
 
         # Verify existing content first
-        dst_patterns = dst_home / ".claude" / "pd" / "memory" / "patterns.md"
-        assert "Old Patterns" in dst_patterns.read_text()
+        assert "project-old" in dst_projects.read_text()
 
-        # Import WITHOUT --force: markdown should be skipped
+        # Import WITHOUT --force: projects.txt should be skipped
         result = _run_migrate(dst_home, ["import", bundle_path], env_extra=env_extra)
         assert result.returncode == 0
-        assert "Old Patterns" in dst_patterns.read_text(), "Without --force, file should not be overwritten"
+        assert "project-old" in dst_projects.read_text(), "Without --force, file should not be overwritten"
 
-        # Import WITH --force: markdown should be overwritten
+        # Import WITH --force: projects.txt should be overwritten
         result = _run_migrate(
             dst_home, ["import", "--force", bundle_path], env_extra=env_extra
         )
         assert result.returncode == 0
-        assert "Source Patterns" in dst_patterns.read_text(), (
-            f"With --force, file should be overwritten. Got: {dst_patterns.read_text()}"
+        assert "project-new" in dst_projects.read_text(), (
+            f"With --force, file should be overwritten. Got: {dst_projects.read_text()}"
         )

@@ -1,7 +1,7 @@
 """CLI entry point for pd:doctor diagnostic tool.
 
 Usage:
-    python -m doctor --entities-db PATH --memory-db PATH --project-root PATH [--artifacts-root PATH]
+    python -m doctor --entities-db PATH --project-root PATH [--artifacts-root PATH]
     python -m doctor ... --fix          # Apply safe fixes and re-run diagnostics
     python -m doctor ... --fix --dry-run  # Show what would be fixed without applying
 
@@ -21,11 +21,6 @@ def main() -> None:
         "--entities-db",
         required=True,
         help="Path to entities.db",
-    )
-    parser.add_argument(
-        "--memory-db",
-        required=True,
-        help="Path to memory.db",
     )
     parser.add_argument(
         "--project-root",
@@ -64,7 +59,7 @@ def main() -> None:
     artifacts_root = args.artifacts_root
     if artifacts_root is None:
         try:
-            from semantic_memory.config import read_config
+            from pd_config.config import read_config
             config = read_config(args.project_root)
             artifacts_root = str(config.get("artifacts_root", "docs"))
         except Exception:
@@ -74,7 +69,6 @@ def main() -> None:
 
     report = run_diagnostics(
         entities_db_path=args.entities_db,
-        memory_db_path=args.memory_db,
         artifacts_root=artifacts_root,
         project_root=args.project_root,
     )
@@ -88,7 +82,6 @@ def main() -> None:
         fix_report = apply_fixes(
             report=report,
             entities_db_path=args.entities_db,
-            memory_db_path=args.memory_db,
             artifacts_root=artifacts_root,
             project_root=args.project_root,
             dry_run=args.dry_run,
@@ -103,7 +96,6 @@ def main() -> None:
             # Re-run diagnostics to verify fixes
             post_report = run_diagnostics(
                 entities_db_path=args.entities_db,
-                memory_db_path=args.memory_db,
                 artifacts_root=artifacts_root,
                 project_root=args.project_root,
             )

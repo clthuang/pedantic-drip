@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # pd doctor — read-only system health check
-# Reports status of prerequisites, plugin environment, memory system, and project context.
+# Reports status of prerequisites, plugin environment, and project context.
 # Exit code: 0 if no blockers, 1 if blockers found.
 set -euo pipefail
 
@@ -263,146 +263,6 @@ check_core_deps() {
     return "$all_ok"
 }
 
-check_semantic_memory() {
-    local venv_python="${PLUGIN_ROOT}/.venv/bin/python"
-    if [[ ! -x "$venv_python" ]]; then
-        warn "Skipping semantic_memory check (no venv)"
-        return 1
-    fi
-    if PYTHONPATH="${PLUGIN_ROOT}/hooks/lib" "$venv_python" -c "import semantic_memory" 2>/dev/null; then
-        pass "semantic_memory importable"
-        return 0
-    fi
-    warn "semantic_memory not importable" \
-        "Ensure ${PLUGIN_ROOT}/hooks/lib/semantic_memory/ exists"
-    return 1
-}
-
-check_embedding_provider() {
-    local project_root
-    project_root=$(detect_project_root)
-    local config_file="${project_root}/.claude/pd.local.md"
-
-    local provider
-    provider=$(read_config_field "$config_file" "memory_embedding_provider" "")
-    local model
-    model=$(read_config_field "$config_file" "memory_embedding_model" "")
-
-    if [[ -z "$provider" || "$provider" == "none" ]]; then
-        info "No embedding provider configured (keyword-only search)"
-        return 0
-    fi
-
-    info "Embedding provider: ${provider}${model:+ (model: ${model})}"
-
-    local venv_python="${PLUGIN_ROOT}/.venv/bin/python"
-    if [[ ! -x "$venv_python" ]]; then
-        warn "Cannot check provider SDK (no venv)"
-        return 1
-    fi
-
-    # Check SDK importable
-    local sdk_module=""
-    local sdk_pkg=""
-    case "$provider" in
-        gemini)  sdk_module="google.genai"; sdk_pkg="google-genai" ;;
-        openai)  sdk_module="openai"; sdk_pkg="openai" ;;
-        voyage)  sdk_module="voyageai"; sdk_pkg="voyageai" ;;
-        ollama)  sdk_module="ollama"; sdk_pkg="ollama" ;;
-        *)       info "Unknown provider '${provider}' -- skipping SDK check"; return 0 ;;
-    esac
-
-    if "$venv_python" -c "import ${sdk_module}" 2>/dev/null; then
-        pass "${sdk_pkg} SDK importable"
-    else
-        warn "${sdk_pkg} SDK not installed" \
-            "\"${PLUGIN_ROOT}/.venv/bin/pip\" install ${sdk_pkg}"
-    fi
-
-    # Check API key
-    case "$provider" in
-        gemini)  _check_api_key "GEMINI_API_KEY" "$project_root" ;;
-        openai)  _check_api_key "OPENAI_API_KEY" "$project_root" ;;
-        voyage)  _check_api_key "VOYAGE_API_KEY" "$project_root" ;;
-        ollama)  _check_ollama ;;
-    esac
-}
-
-_check_api_key() {
-    local key_name="$1"
-    local project_root="$2"
-
-    # Check environment variable
-    local env_val="${!key_name:-}"
-    if [[ -n "$env_val" ]]; then
-        local last4="${env_val: -4}"
-        pass "${key_name} set in environment (****${last4})"
-        return 0
-    fi
-
-    # Check .env file at project root
-    if [[ -f "${project_root}/.env" ]]; then
-        local file_val
-        file_val=$(grep "^${key_name}=" "${project_root}/.env" 2>/dev/null | head -1 | cut -d'=' -f2- || echo "")
-        # Strip surrounding quotes
-        file_val="${file_val#\"}"
-        file_val="${file_val%\"}"
-        file_val="${file_val#\'}"
-        file_val="${file_val%\'}"
-        if [[ -n "$file_val" ]]; then
-            local last4="${file_val: -4}"
-            pass "${key_name} found in .env (****${last4})"
-            return 0
-        fi
-    fi
-
-    warn "${key_name} not found in environment or .env" \
-        "Add ${key_name}=<your-key> to ${project_root}/.env"
-    return 1
-}
-
-_check_ollama() {
-    if command -v ollama &>/dev/null; then
-        if ollama list &>/dev/null; then
-            pass "Ollama server reachable"
-            return 0
-        fi
-        warn "Ollama installed but server not running" \
-            "ollama serve"
-        return 1
-    fi
-    warn "Ollama not installed" "$(install_cmd ollama)"
-    return 1
-}
-
-check_memory_store() {
-    local store_dir="$HOME/.claude/pd/memory"
-    if [[ -d "$store_dir" ]]; then
-        local count
-        count=$(find "$store_dir" -maxdepth 1 -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
-        pass "Global memory store exists (${count} markdown entries)"
-    else
-        warn "Global memory store not found at ${store_dir}" \
-            "mkdir -p \"${store_dir}\""
-    fi
-
-    # Check SQLite DB if it exists
-    local db_file="${store_dir}/memory.db"
-    if [[ -f "$db_file" ]]; then
-        if command -v sqlite3 &>/dev/null; then
-            local db_count
-            db_count=$(sqlite3 "$db_file" "SELECT count(*) FROM entries;" 2>/dev/null || echo "error")
-            if [[ "$db_count" == "error" ]]; then
-                warn "SQLite DB exists but could not query it"
-            else
-                pass "SQLite DB accessible (${db_count} entries)"
-            fi
-        else
-            info "SQLite DB exists at ${db_file} (sqlite3 CLI not available for count)"
-        fi
-    fi
-}
-
 check_project_context() {
     local project_root
     project_root=$(detect_project_root)
@@ -652,13 +512,6 @@ run_all_checks() {
     check_plugin_root || true
     check_venv || true
     check_core_deps || true
-    check_semantic_memory || true
-
-    printf "\n${BOLD}Embedding Provider${NC}\n"
-    check_embedding_provider || true
-
-    printf "\n${BOLD}Memory System${NC}\n"
-    check_memory_store || true
 
     printf "\n${BOLD}Project Hygiene${NC}\n"
     check_stale_feature_branches || true

@@ -15,13 +15,6 @@ A single argument: the user's query string.
 
 Dispatch two research agents in parallel + gather context inline.
 
-### Pre-Dispatch Memory Enrichment
-
-Before each Task dispatch:
-1. Call `search_memory(query="{agent role} {user query}", limit=5, brief=true)`
-2. If results non-empty, append `## Relevant Engineering Memory\n{results}` to the dispatch prompt
-3. Store returned entry names for post-dispatch influence tracking
-
 ### Parallel Agent Dispatch
 
 Issue both Task dispatches in the same message:
@@ -46,9 +39,6 @@ Task tool call:
       "findings": [{"finding": "...", "source": "file/path:line", "relevance": "high|medium|low"}],
       "no_findings_reason": null
     }
-
-    ## Relevant Engineering Memory
-    {search_memory results if non-empty}
 ```
 
 **Task 2: External Research**
@@ -71,14 +61,7 @@ Task tool call:
       "findings": [{"finding": "...", "source": "URL", "relevance": "high|medium|low"}],
       "no_findings_reason": null
     }
-
-    ## Relevant Engineering Memory
-    {search_memory results if non-empty}
 ```
-
-### Post-Dispatch Influence Tracking
-
-For each agent response: scan output for stored memory entry names (case-insensitive exact substring). For matches, call `record_influence(entry_name, agent_role, feature_type_id)` where feature_type_id is from `.meta.json` if on a feature branch, otherwise skip.
 
 ### Inline Context Gathering
 
@@ -99,7 +82,7 @@ Assemble into a text block for the synthesizer.
 | Task tool returns error/exception | Agent failure |
 | Output not parseable as expected JSON | Agent failure |
 | Valid JSON, empty findings[], non-null no_findings_reason | Success (no findings) |
-| search_memory / search_entities / record_influence unavailable | Skip gracefully, proceed |
+| search_entities unavailable | Skip gracefully, proceed |
 
 ### Failure Handling
 
@@ -113,10 +96,6 @@ Assemble into a text block for the synthesizer.
 ## Phase 2: ANALYZE
 
 After Phase 1 completes (both Task results received + inline context assembled):
-
-### Pre-Dispatch Memory Enrichment
-
-Call `search_memory(query="ras-synthesizer {user query}", limit=5, brief=true)`. Inject if non-empty.
 
 ### Synthesizer Dispatch
 
@@ -141,18 +120,11 @@ Task tool call:
     {inline context text, or "Work context unavailable"}
 
     Return JSON per your agent schema.
-
-    ## Relevant Engineering Memory
-    {search_memory results if non-empty}
 ```
 
 ### Schema Validation
 
 If synthesizer response is not valid JSON, or missing required fields (`executive_summary`, `confidence`, `themes`): treat as synthesizer failure → Phase 3 fallback.
-
-### Post-Dispatch Influence Tracking
-
-Same pattern as Phase 1.
 
 ---
 

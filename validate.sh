@@ -649,7 +649,7 @@ fi
 echo "Checking Artifact Path Portability..."
 artifact_path_errors=0
 # Patterns that should use {pd_artifacts_root} instead of hardcoded docs/
-artifact_patterns='docs/features/\|docs/brainstorms/\|docs/projects/\|docs/knowledge-bank/\|docs/backlog\|docs/rca/'
+artifact_patterns='docs/features/\|docs/brainstorms/\|docs/projects/\|docs/backlog\|docs/rca/'
 while IFS= read -r md_file; do
     [ -z "$md_file" ] && continue
     while IFS= read -r match_line; do
@@ -738,7 +738,6 @@ mkdir_checks=(
     "plugins/pd/commands/create-feature.md:mkdir"
     "plugins/pd/commands/add-to-backlog.md:mkdir"
     "plugins/pd/skills/root-cause-analysis/SKILL.md:mkdir"
-    "plugins/pd/skills/retrospecting/SKILL.md:mkdir"
 )
 for check in "${mkdir_checks[@]}"; do
     file="${check%%:*}"
@@ -796,52 +795,14 @@ for script in plugins/pd/scripts/doctor.sh plugins/pd/scripts/setup.sh; do
 done
 echo ""
 
-# Validate pattern_promotion Python package (pytest + importability)
-echo "Checking pattern_promotion Python Package..."
-PP_DIR="plugins/pd/hooks/lib/pattern_promotion"
-PP_PY="plugins/pd/.venv/bin/python"
-if [ -d "$PP_DIR" ]; then
-    if [ -x "$PP_PY" ]; then
-        # Import health check (fast, no test discovery cost)
-        if PYTHONPATH="plugins/pd/hooks/lib" "$PP_PY" -c "import pattern_promotion; import pattern_promotion.kb_parser; import pattern_promotion.classifier; import pattern_promotion.apply; import pattern_promotion.generators.hook; import pattern_promotion.generators.skill; import pattern_promotion.generators.agent; import pattern_promotion.generators.command" 2>/dev/null; then
-            log_success "pattern_promotion package imports cleanly"
-        else
-            log_error "pattern_promotion package fails to import"
-        fi
-
-        # Full pytest run (deterministic, <5s)
-        if PYTHONPATH="plugins/pd/hooks/lib" "$PP_PY" -m pytest "$PP_DIR" -q --tb=line > /tmp/pp-tests-output.txt 2>&1; then
-            log_success "pattern_promotion pytest suite passed ($(grep -oE '[0-9]+ passed' /tmp/pp-tests-output.txt | head -1))"
-        else
-            log_error "pattern_promotion pytest suite failed"
-            tail -20 /tmp/pp-tests-output.txt
-        fi
-    else
-        log_warning "$PP_PY not found — skipping pattern_promotion checks (run plugins/pd/scripts/setup.sh)"
-    fi
-else
-    log_info "pattern_promotion package not found — skipping"
-fi
-echo ""
-
 # --- Hooks.json Registration Contract (feature 104 FR-1 + FR-2) ---
 # Asserts hooks.json keeps the registration shape feature 102 / 104 depend on.
 # Defends against silent hook-misconfiguration regressions.
 echo "Checking Hooks.json Registration Contract..."
-if jq -e '.hooks.UserPromptSubmit | length == 1' plugins/pd/hooks/hooks.json > /dev/null 2>&1; then
-    log_success "hooks.json: UserPromptSubmit registered (1 entry)"
+if jq -e '.hooks.Stop | length == 1' plugins/pd/hooks/hooks.json > /dev/null 2>&1; then
+    log_success "hooks.json: Stop array has 1 entry (yolo-stop)"
 else
-    log_error "hooks.json: UserPromptSubmit length != 1"
-fi
-if jq -e '.hooks.Stop | length == 2' plugins/pd/hooks/hooks.json > /dev/null 2>&1; then
-    log_success "hooks.json: Stop array has 2 entries"
-else
-    log_error "hooks.json: Stop length != 2"
-fi
-if jq -e '.hooks.Stop[1].hooks[0] | (.async == true and .timeout == 30)' plugins/pd/hooks/hooks.json > /dev/null 2>&1; then
-    log_success "hooks.json: Stop[1] has async:true, timeout:30"
-else
-    log_error "hooks.json: Stop[1] async/timeout assertion failed"
+    log_error "hooks.json: Stop length != 1"
 fi
 if grep -qE 'extract_workarounds|workaround_candidates' plugins/pd/skills/retrospecting/SKILL.md; then
     log_success "retrospecting/SKILL.md references extract_workarounds"
@@ -911,33 +872,6 @@ fi
 
 [ "$codex_routing_allowlist_violations" = "0" ] && log_info "Codex routing coverage allowlist validated (11 expected files)"
 echo ""
-
-# --- docs-sync regression guards (feature 085 FR-8; from feature 080 AC-7/AC-11) ---
-# (a) The literal `threshold=0.70` must NOT resurface in non-test .py files
-#     under plugins/pd/ — feature 080 established 0.55 as the correct default.
-#     `--exclude='test_*.py'` is the right filter because pd's inline-test
-#     convention places test files next to sources (not in tests/ subdirs).
-bad_threshold=$(grep -rE --include='*.py' --exclude='test_*.py' 'threshold=0\.70' plugins/pd/ 2>/dev/null | wc -l | tr -d ' ')
-if [ "$bad_threshold" != "0" ]; then
-    echo -e "${RED}FAIL: threshold=0.70 literal resurfaced ($bad_threshold occurrences)${NC}"
-    exit 1
-fi
-# (b) README_FOR_DEV.md must continue documenting the memory_influence_*
-#     config knobs (feature 080 committed to at least 3 distinct references).
-influence_refs=$(grep -c 'memory_influence_' README_FOR_DEV.md 2>/dev/null || echo 0)
-if [ "$influence_refs" -lt 3 ]; then
-    echo -e "${RED}FAIL: memory_influence_* docs in README_FOR_DEV.md dropped below 3 ($influence_refs)${NC}"
-    exit 1
-fi
-
-# --- circular-import smoke test (feature 085 FR-8 / SC-7) ---
-# `config_utils.py` must stay importable without pulling `ranking`,
-# `database`, or any other semantic_memory submodule. A regression
-# that adds such an import will surface as ImportError here.
-if ! PYTHONPATH=plugins/pd/hooks/lib python3 -c 'from semantic_memory import config_utils; from semantic_memory import ranking' 2>/dev/null; then
-    echo -e "${RED}FAIL: circular import detected in semantic_memory.config_utils${NC}"
-    exit 1
-fi
 
 # --- hook JSON schema: hookSpecificOutput must include hookEventName (feature 087 RCA) ---
 # Per CC schema: every hook EMITTING `hookSpecificOutput` MUST include

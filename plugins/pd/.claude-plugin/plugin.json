@@ -15,10 +15,6 @@
     "implementation"
   ],
   "mcpServers": {
-    "memory-server": {
-      "command": "${CLAUDE_PLUGIN_ROOT}/mcp/run-memory-server.sh",
-      "args": []
-    },
     "entity-registry": {
       "command": "${CLAUDE_PLUGIN_ROOT}/mcp/run-entity-server.sh",
       "args": []

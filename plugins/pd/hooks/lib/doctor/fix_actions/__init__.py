@@ -26,7 +26,6 @@ class FixContext:
     """Shared context for all fix functions."""
 
     entities_db_path: str
-    memory_db_path: str
     artifacts_root: str
     project_root: str
     db: EntityDatabase | None
@@ -34,7 +33,6 @@ class FixContext:
     # entities_conn IS db._conn (intentional encapsulation bypass — EntityDatabase
     # lacks public setters for parent_uuid/parent_type_id).
     entities_conn: sqlite3.Connection | None
-    memory_conn: sqlite3.Connection | None
 
 
 # Known TD-11 drift classes (feature 110 design §3 TD-11).
@@ -237,14 +235,6 @@ def _fix_wal_entities(ctx: FixContext, issue: Issue) -> str:
     return "Set journal_mode=WAL on entity DB"
 
 
-def _fix_wal_memory(ctx: FixContext, issue: Issue) -> str:
-    """Set PRAGMA journal_mode=WAL on the memory database."""
-    if not ctx.memory_conn:
-        raise ValueError("No memory connection")
-    ctx.memory_conn.execute("PRAGMA journal_mode=WAL")
-    return "Set journal_mode=WAL on memory DB"
-
-
 def _fix_self_referential_parent(ctx: FixContext, issue: Issue) -> str:
     """Clear self-referential parent_uuid."""
     if not ctx.entities_conn or not issue.entity:
@@ -353,15 +343,6 @@ def _fix_run_entity_migrations(ctx: FixContext, issue: Issue) -> str:
     db = EntityDatabase(ctx.entities_db_path)
     db.close()
     return "Ran entity DB migrations"
-
-
-def _fix_run_memory_migrations(ctx: FixContext, issue: Issue) -> str:
-    """Run memory DB migrations by constructing MemoryDatabase."""
-    from semantic_memory.database import MemoryDatabase
-
-    db = MemoryDatabase(ctx.memory_db_path)
-    db.close()
-    return "Ran memory DB migrations"
 
 
 def _fix_project_attribution(ctx: FixContext, issue: Issue) -> str:

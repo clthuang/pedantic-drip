@@ -56,57 +56,6 @@ Task tool call:
     Follow the 6-phase RCA process. Generate a report at {pd_artifacts_root}/rca/.
 ```
 
-## Capture Learnings (REQUIRED)
-
-You MUST capture learnings before presenting handoff options. This is not optional.
-
-### Extract and Persist
-
-1. Glob `{pd_artifacts_root}/rca/*.md` and read the most recently modified report
-2. For each **root cause** (primary + contributing factors):
-   - Call `store_memory` with:
-     - `name`: concise title (max 60 chars)
-     - `description`: full root cause description with evidence
-     - `reasoning`: "Root cause discovered during RCA: {bug summary}"
-     - `category`: "anti-patterns"
-     - `references`: ["{report-path}"]
-     - `confidence`: "medium" for primary cause, "low" for contributing factors
-3. For each **recommendation**:
-   - Call `store_memory` with:
-     - `name`: concise recommendation title (max 60 chars)
-     - `description`: full recommendation text
-     - `reasoning`: "Prevention strategy from RCA: {bug summary}"
-     - `category`: "heuristics"
-     - `references`: ["{report-path}"]
-     - `confidence`: "low"
-
-### Quality Filter
-- Skip entries that are purely feature-specific (e.g., "add field X to table Y")
-- Only capture generalizable learnings (e.g., "validate schema migrations with version tracking")
-- Max 5 entries per RCA to avoid noise
-
-### Fallback
-If `store_memory` MCP tool unavailable, use CLI:
-```bash
-# Find plugin Python + library
-PLUGIN_ROOT=$(ls -d ~/.claude/plugins/cache/*/pd*/*/hooks 2>/dev/null | head -1 | xargs dirname)
-if [[ -n "$PLUGIN_ROOT" ]] && [[ -x "$PLUGIN_ROOT/.venv/bin/python" ]]; then
-  PYTHONPATH="$PLUGIN_ROOT/hooks/lib" "$PLUGIN_ROOT/.venv/bin/python" -m semantic_memory.writer \
-    --action upsert --global-store ~/.claude/pd/memory \
-    --entry-json '{...}'
-else
-  # Fallback: dev workspace
-  PYTHONPATH=plugins/pd/hooks/lib python3 -m semantic_memory.writer \
-    --action upsert --global-store ~/.claude/pd/memory \
-    --entry-json '{...}'
-fi
-```
-
-### Output
-```
-RCA learnings captured: {n} anti-patterns, {m} heuristics
-```
-
 ## On Completion
 
 After the agent completes the RCA, offer handoff options:

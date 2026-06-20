@@ -23,11 +23,11 @@ Everything is prompts. Skills and agents are instruction files that Claude follo
 
 | Component | Location | Count |
 |-----------|----------|-------|
-| Skills | `plugins/pd/skills/{name}/SKILL.md` | ~25 |
+| Skills | `plugins/pd/skills/{name}/SKILL.md` | 29 |
 | Agents | `plugins/pd/agents/{name}.md` | 29 |
-| Commands | `plugins/pd/commands/{name}.md` | ~20 |
-| Hooks | `plugins/pd/hooks/` | 13 |
-| MCP servers | `plugins/pd/mcp/` | 3 |
+| Commands | `plugins/pd/commands/{name}.md` | 33 |
+| Hooks | `plugins/pd/hooks/` | 12 |
+| MCP servers | `plugins/pd/mcp/` | 2 |
 | Shared Python libs | `plugins/pd/hooks/lib/` | — |
 
 ## Workflow Phases
@@ -87,7 +87,7 @@ Hooks fire automatically at Claude Code lifecycle points and are defined in `plu
 |------|---------|---------|
 | `sync-cache` | SessionStart | Syncs plugin source to Claude cache |
 | `cleanup-locks` | SessionStart | Removes stale lock files |
-| `session-start` | SessionStart | Injects active feature context, knowledge bank memory, runs doctor auto-fix |
+| `session-start` | SessionStart | Injects active feature context, runs doctor auto-fix |
 | `inject-secretary-context` | SessionStart | Injects available agent/command context for secretary routing |
 | `start-ui-server` | SessionStart | Auto-starts the Kanban board UI server |
 | `pre-commit-guard` | PreToolUse (Bash) | Branch protection; warns on commits to main/master |
@@ -102,13 +102,7 @@ SessionStart hooks match `startup|resume|clear` only — they do not fire on `co
 
 ## MCP Servers
 
-Three MCP servers provide persistent state to Claude across sessions:
-
-### Memory Server (`mcp/memory_server.py`)
-
-Tools: `store_memory`, `search_memory`, `record_influence`
-
-Stores learnings with optional Gemini embeddings for semantic retrieval. Falls back to FTS5 keyword search when no API key is set. Database: `~/.claude/pd/memory/memory.db`.
+Two MCP servers provide persistent state to Claude across sessions:
 
 ### Entity Registry Server (`mcp/entity_server.py`)
 
@@ -133,9 +127,8 @@ Located under `plugins/pd/hooks/lib/`:
 | `entity_registry/` | Entity DB, metadata parsing, backfill scanner, frontmatter injection |
 | `workflow_engine/` | State machine, hydration, transitions, reconciliation |
 | `transition_gate/` | Gate functions, constants, and transition models |
-| `semantic_memory/` | Embedding generation, memory store, retrieval ranking |
 | `reconciliation_orchestrator/` | Entity sync, backlog parsing, brainstorm archive |
-| `doctor/` | 15 data consistency checks with auto-fix support |
+| `doctor/` | 21 data consistency checks with auto-fix support |
 
 **Doctor check added in feature 109 — `check_status_write_path` (CHECK_ORDER position 15):** AST-based static audit that enforces AC-2.1 and AC-2.6. At session start it greps `plugins/pd/hooks/lib/` and `plugins/pd/mcp/` for direct `UPDATE entities SET status` and `UPDATE workflow_phases` writes outside the `append_phase_event` helper body. Emits a non-fatal stderr warning listing any violating `file:line` pairs. Identical grep to the CI test `test_no_direct_status_updates`.
 
@@ -157,17 +150,6 @@ Each feature produces a set of files under `{artifacts_root}/features/{id}-{slug
 | `.review-history.md` | reviewer agents (auto-managed) |
 
 `.meta.json` is the source of truth for workflow state. Modifications to it outside the workflow engine (MCP tools) are blocked by the `meta-json-guard` hook.
-
-## Knowledge Bank
-
-Learnings from retrospectives accumulate in `docs/knowledge-bank/`:
-
-- `constitution.md` — Core principles (KISS, YAGNI, etc.)
-- `patterns.md` — Approaches that worked
-- `anti-patterns.md` — Things to avoid
-- `heuristics.md` — Decision guides
-
-Cross-project universal entries are promoted to `~/.claude/pd/memory/` and injected into every session via the `session-start` hook.
 
 ## Design Principles
 

@@ -12,7 +12,7 @@ audit-feature: 098-tier-doc-frontmatter-sweep
 | Requirement | Version | Notes |
 |-------------|---------|-------|
 | Claude Code | latest | The CLI tool from Anthropic |
-| Python | 3.10+ | Required for semantic memory. Linux: also install `python3-venv` |
+| Python | 3.10+ | Required for plugin hooks and MCP servers. Linux: also install `python3-venv` |
 | git | any | Required |
 
 Optional: `rsync` and `gtimeout` (macOS: `brew install coreutils`).
@@ -25,21 +25,6 @@ Optional: `rsync` and `gtimeout` (macOS: `brew install coreutils`).
 ```
 
 Core dependencies auto-install on first session.
-
-## Set Up Semantic Memory (Recommended)
-
-Semantic memory lets pd find relevant past learnings by topic. After installing, run the interactive setup:
-
-```bash
-bash "$(ls -d ~/.claude/plugins/cache/*/pd/*/scripts/setup.sh 2>/dev/null | head -1)"
-```
-
-The setup walks through provider selection and API key configuration.
-
-| Provider | API Key | Notes |
-|----------|---------|-------|
-| gemini | `GEMINI_API_KEY` | Free tier available (default) |
-| none | — | Disables semantic search |
 
 ## Per-Project Configuration
 
@@ -63,7 +48,7 @@ Run the doctor to check workspace health:
 bash "$(ls -d ~/.claude/plugins/cache/*/pd/*/scripts/doctor.sh 2>/dev/null | head -1)"
 ```
 
-The doctor checks five categories: system prerequisites, plugin environment, embedding provider, memory system, and project context. It prints OS-specific fix commands for any issues found.
+The doctor checks system prerequisites, plugin environment, and project context. It prints OS-specific fix commands for any issues found.
 
 If you see all categories pass, pd is ready to use.
 <!-- AUTO-GENERATED: END -->

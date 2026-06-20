@@ -164,7 +164,7 @@ flowchart TD
         F4[tasks.md] ~~~ F5[impl-log.md] ~~~ F6[.meta.json]
     end
 
-    subgraph HOOKS["Hooks · 13 scripts"]
+    subgraph HOOKS["Hooks · scripts"]
         H1["SessionStart (5)<br/>sync-cache, session-start,<br/>inject-secretary-context,<br/>cleanup-locks, start-ui-server"]
         H2["PreToolUse (4)<br/>pre-commit-guard,<br/>pre-exit-plan-review,<br/>meta-json-guard,<br/>yolo-guard"]
         H3["PostToolUse (2)<br/>post-enter-plan,<br/>post-exit-plan"]
@@ -174,11 +174,6 @@ flowchart TD
     HOOKS -.->|"lifecycle events"| SK
     HOOKS -.->|"lifecycle events"| AG
 
-    subgraph MEM["Memory · 2 MCP tools"]
-        MCP1[store_memory] --> MB[("memory.db<br/>~/.claude/pd/memory/")]
-        MB --> MCP2[search_memory]
-    end
-
     subgraph ENT["Entity Registry · 8 MCP tools"]
         direction TB
         ET1[register_entity] ~~~ ET2[set_parent] ~~~ ET3[get_entity]
@@ -186,8 +181,6 @@ flowchart TD
         ET1 --> EB[("entities.db<br/>~/.claude/pd/entities/")]
         ET4 --> EB
     end
-
-    MCP2 -.->|"injected at<br/>session start"| U
 ```
 
 ![Architecture Overview](./docs/architecture-overview.png)
@@ -257,12 +250,10 @@ Skills are instructions Claude follows for specific development practices. Locat
 ### Maintenance
 | Skill | Purpose |
 |-------|---------|
-| `retrospecting` | Runs data-driven AORTA retrospective using retro-facilitator agent; reads implementation-log.md; validates knowledge bank entries |
+| `retrospecting` | Runs data-driven AORTA retrospective using retro-facilitator agent; reads implementation-log.md; writes plain-markdown retro.md |
 | `updating-docs` | Automatically updates documentation using agents |
 | `writing-skills` | Applies TDD approach to skill documentation |
 | `detecting-kanban` | Detects Vibe-Kanban and provides TodoWrite fallback |
-| `capturing-learnings` | Guides model-initiated learning capture with configurable modes |
-| `promoting-patterns` | Orchestrates /pd:promote-pattern — enumerate, classify (keyword + LLM fallback), generate per-target diff, approve, atomic apply with rollback, KB marker |
 
 ## Commands
 
@@ -275,7 +266,7 @@ Commands are user-invoked entry points. Located in `plugins/pd/commands/{name}.m
 | `promptimize` | Review a plugin prompt against best practices and return an improved version |
 | `refresh-prompt-guidelines` | Scout latest prompt engineering best practices and update the guidelines document |
 | `show-lineage` | Display entity lineage tree for a given entity (ancestors or descendants) |
-| `doctor` | Run 10 data consistency checks across entity DB, memory DB, workflow state, and filesystem. Supports `--fix` for auto-repair of safe issues. |
+| `doctor` | Run data consistency checks across entity DB, workflow state, and filesystem. Supports `--fix` for auto-repair of safe issues. |
 
 ### Scheduled Doctor Runs
 
@@ -357,7 +348,7 @@ Hooks execute automatically at lifecycle points.
 |------|---------|---------|
 | `sync-cache` | SessionStart (startup\|resume\|clear) | Syncs plugin source to Claude cache |
 | `cleanup-locks` | SessionStart (startup\|resume\|clear) | Removes stale lock files |
-| `session-start` | SessionStart (startup\|resume\|clear) | Injects active feature context, knowledge bank memory, and runs doctor auto-fix |
+| `session-start` | SessionStart (startup\|resume\|clear) | Injects active feature context and runs doctor auto-fix |
 | `inject-secretary-context` | SessionStart (startup\|resume\|clear) | Injects available agent/command context for secretary |
 | `start-ui-server` | SessionStart (startup\|resume\|clear) | Auto-starts UI server (Kanban board) in background |
 | `cleanup-sandbox` | (utility) | Cleans up agent_sandbox/ temporary files |
@@ -485,56 +476,17 @@ YOLO mode stops and reports to user (does not force through):
 
 ## Knowledge Bank
 
-Learnings accumulate in `docs/knowledge-bank/`:
+Inert reference markdown lives in `docs/knowledge-bank/`:
 
 - **constitution.md** — Core principles (KISS, YAGNI, etc.)
 - **patterns.md** — Approaches that worked
 - **anti-patterns.md** — Things to avoid
 - **heuristics.md** — Decision guides
 
-Updated via `/pd:retrospect` after feature completion.
-
-### Cross-Project Memory
-
-Universal entries are promoted to a global store at `~/.claude/pd/memory/` during retrospectives. The `session-start` hook injects top entries (project-local + global, deduplicated) into every session.
-
-**Semantic Retrieval:** Memory uses embedding-based retrieval with cosine similarity and hybrid ranking. SQLite database (`memory.db`) stores embeddings for semantic search. Legacy fallback (observation-count ranking) activates when semantic memory is disabled or no API key is set.
-
-**MCP Tools:** Three MCP tools are exposed via `plugins/pd/mcp/memory_server.py`:
-- `store_memory` -- Save a learning (name, description, reasoning, category, references) to long-term memory with automatic embedding generation. Optional `confidence` parameter (high/medium/low, defaults to medium) controls retrieval ranking weight.
-- `search_memory` -- Search long-term memory for relevant learnings using hybrid retrieval (vector similarity + BM25 keyword search)
-- `record_influence` -- Record that a retrieved memory influenced a subagent dispatch, incrementing an influence counter used by memory ranking
-
-**Setup:**
-1. Install dependencies: `cd plugins/pd && uv sync --extra gemini`
-2. Add API key to `.env` in project root: `GEMINI_API_KEY=your-key`
-3. Memory is enabled by default — no config changes needed
-
-Without an API key, memory still works via FTS5 keyword search and prominence ranking (no vector search).
+These files are preserved as plain documentation. Memory capture and recall are delegated to Claude Code's native memory or an external memory plugin — pd no longer owns any memory subsystem.
 
 **Configuration** (in `.claude/pd.local.md`):
 - `plan_mode_review` — Enable plan review hooks for Claude Code plan mode (default: true)
-- `memory_semantic_enabled` — Enable semantic retrieval (default: true)
-- `memory_embedding_provider` — Provider for embeddings (default: gemini)
-- `memory_embedding_model` — Model for embeddings (default: gemini-embedding-001)
-- `memory_model_capture_mode` — Model-initiated learning capture mode: ask-first, silent, or off (default: ask-first)
-- `memory_silent_capture_budget` — Max silent captures per session before switching to ask-first (default: 5)
-- `memory_injection_enabled` — Enable memory injection at session start (default: true)
-- `memory_injection_limit` — Max entries to inject per session (default: 20)
-- `memory_auto_promote` — Enable automatic confidence promotion when duplicate evidence exceeds threshold (default: false)
-- `memory_promote_low_threshold` — Evidence count threshold for promoting low→medium confidence (default: 3)
-- `memory_promote_medium_threshold` — Evidence count threshold for promoting medium→high confidence (default: 5)
-- `memory_promote_min_observations` — Min observation count a KB entry needs to qualify for `/pd:promote-pattern` (default: 3)
-- `memory_influence_threshold` — Cosine similarity threshold for influence matching (default: 0.55)
-- `memory_influence_weight` — Coefficient for influence in ranking prominence (default: 0.05)
-- `memory_influence_debug` — Emit per-dispatch hit-rate diagnostics to `~/.claude/pd/memory/influence-debug.log` (default: false)
-- `memory_refresh_enabled` — Inject memory digest into complete_phase MCP response at phase boundaries (default: true)
-- `memory_refresh_limit` — Max entries in per-phase refresh digest (default: 5; clamped to [1, 20])
-- `memory_decay_enabled` — Enable tiered confidence decay on session-start; opt-in, zero overhead when disabled (default: false)
-- `memory_decay_high_threshold_days` — Days without recall before high → medium; clamped to [1, 365] (default: 30)
-- `memory_decay_medium_threshold_days` — Days without recall before medium → low; clamped to [1, 365]; SHOULD be ≥ `memory_decay_high_threshold_days` (default: 60)
-- `memory_decay_grace_period_days` — Days after created_at before a never-recalled entry is eligible for decay; clamped to [0, 365] (default: 14)
-- `memory_decay_dry_run` — Report what would be demoted without modifying the DB; useful for measuring impact before enabling (default: false)
 - `max_concurrent_agents` — Max parallel Task dispatches across skills and commands (default: 5)
 
 ## Entity Registry

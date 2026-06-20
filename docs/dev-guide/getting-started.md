@@ -30,11 +30,9 @@ Install Python dependencies for the plugin:
 
 ```bash
 cd plugins/pd
-uv sync --extra gemini
+uv sync
 cd ../..
 ```
-
-The `--extra gemini` flag pulls in the Gemini SDK used for semantic memory embeddings. Without it, memory still works via keyword search but vector search is disabled.
 
 ## Installing the Plugin Locally
 
@@ -59,14 +57,6 @@ After making changes to any plugin file (`plugins/pd/`), sync the cache so Claud
 
 ## Environment Configuration
 
-Create a `.env` file at the project root to enable semantic memory:
-
-```bash
-GEMINI_API_KEY=your-key-here
-```
-
-Without this key, semantic memory degrades gracefully to FTS5 keyword search.
-
 Session-local configuration lives in `.claude/pd.local.md`. Key fields:
 
 | Field | Default | Purpose |
@@ -74,7 +64,6 @@ Session-local configuration lives in `.claude/pd.local.md`. Key fields:
 | `artifacts_root` | `docs` | Root directory for features, brainstorms, projects |
 | `base_branch` | `auto` | Merge target branch detection |
 | `max_concurrent_agents` | `5` | Max parallel subagent Task dispatches |
-| `memory_semantic_enabled` | `true` | Toggle vector search for memory |
 
 > **Note:** In this repository `base_branch` auto-detects `main` from the remote HEAD, but all feature branches merge to `develop`. The release script handles `develop → main`. Always merge to `develop`, never directly to `main`.
 
@@ -96,9 +85,6 @@ plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/workflow_engine/ -v
 
 # Workflow state MCP server (processing + reconciliation integration — 272 tests)
 plugins/pd/.venv/bin/python -m pytest plugins/pd/mcp/test_workflow_state_server.py -v
-
-# Memory MCP server
-plugins/pd/.venv/bin/python -m pytest plugins/pd/mcp/test_memory_server.py -v
 ```
 
 ### UI and doctor
@@ -115,7 +101,6 @@ PYTHONPATH=plugins/pd/hooks/lib plugins/pd/.venv/bin/python -m pytest plugins/pd
 
 ```bash
 bash plugins/pd/hooks/tests/test-hooks.sh
-bash plugins/pd/mcp/test_run_memory_server.sh
 bash plugins/pd/mcp/test_bootstrap_venv.sh      # ~2-5 min
 bash plugins/pd/mcp/test_entity_server.sh
 bash plugins/pd/mcp/test_run_workflow_server.sh

@@ -243,6 +243,7 @@ Task tool call:
     - Files changed: {git diff --stat summary}
 
     Analyze what went well, obstacles encountered, and learnings.
+    Write a plain-markdown reflection to `retro.md`.
     Return structured findings.
 ```
 
@@ -256,12 +257,11 @@ Task tool call:
     Analyze the recent implementation work for learnings.
     - Recent commits: {git log}
     - Files changed: {list}
+    Write key observations and learnings to `retro.md`.
     Return key observations and learnings.
 ```
 
-Store learnings directly via `store_memory` MCP tool (no retro.md file).
-
-Commit if any changes were made.
+Commit `retro.md` if it was written.
 
 ### Step 3b: CLAUDE.md Update
 
@@ -443,5 +443,5 @@ Determine current branch:
 Work wrapped up successfully.
 {PR created: {url} | Released v{version}}
 
-Learnings captured via memory tools.
+Retrospective saved to retro.md
 ```

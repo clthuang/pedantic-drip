@@ -63,7 +63,7 @@ When implementation is complete and tests pass:
 /pd:finish-feature
 ```
 
-This runs the retrospective, updates the knowledge bank, commits remaining artifacts, and merges the feature branch to `develop`. Do not manually delete the feature branch before the retrospective runs — the retro reads `implementation-log.md` which lives on the branch.
+This runs the retrospective (producing a `retro.md` reflection), commits remaining artifacts, and merges the feature branch to `develop`. Do not manually delete the feature branch before the retrospective runs — the retro reads `implementation-log.md` which lives on the branch.
 
 ## PR Process
 
