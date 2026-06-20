@@ -285,7 +285,7 @@ class EntityWorkflowEngine:
         if entity is None:
             return None
 
-        entity_type = entity["entity_type"]
+        entity_type = entity["kind"]
         type_id = entity["type_id"]
 
         if entity_type == "feature":
@@ -408,7 +408,7 @@ class EntityWorkflowEngine:
     ) -> FeatureWorkflowState | None:
         """Phase A for 5D entities: direct DB update."""
         type_id = entity["type_id"]
-        entity_type = entity["entity_type"]
+        entity_type = entity["kind"]
         weight = self._get_weight(type_id)
 
         try:
@@ -479,7 +479,7 @@ class EntityWorkflowEngine:
         from transition_gate.models import Severity, TransitionResult
 
         type_id = entity["type_id"]
-        entity_type = entity["entity_type"]
+        entity_type = entity["kind"]
         weight = self._get_weight(type_id)
 
         try:
