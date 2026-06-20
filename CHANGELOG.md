@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.0.0] - 2026-06-20
+
 ### Removed
 
 - **Knowledge-bank / semantic-memory subsystem (full teardown)** — removed the entire engineering-memory feature so that cross-session memory is now orthogonal to pd, delegated to native Claude Code memory or an external memory plugin. Deleted: the `semantic_memory/` engine (~18.5k LOC: embedding/retrieval/ranking/decay/influence/refresh), the `pattern_promotion/` package, the `memory-server` MCP and its tools (`store_memory`, `search_memory`, `delete_memory`, `record_influence`, `record_influence_by_content`), the legacy `hooks/lib/memory.py`, the three capture hooks (`capture-on-stop`, `capture-tool-failure`, `tag-correction`), the `/pd:remember` and `/pd:promote-pattern` commands, and the `capturing-learnings` & `promoting-patterns` skills. All `memory_*` config keys and embedding-provider extras (gemini/voyage/openai/ollama) were dropped from `pyproject.toml` and the config templates. Session-start memory injection/decay, the doctor `check_memory_health` check (now 21 checks), the reconciliation `kb_import` task, and the migration tool's `memory.db` handling were all removed. Net: **−42k lines across 167 files.**
