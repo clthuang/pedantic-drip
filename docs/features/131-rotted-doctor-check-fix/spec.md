@@ -22,20 +22,20 @@ P004 PRD census: ~320 of 601 doctor warnings stem from these swallowed schema er
 
 ## Success Criteria
 
-- [ ] Zero SQL statements in `doctor/checks.py` reference `entity_type` or `project_id` entity columns (verify: the EXPLAIN harness reports 0 broken sites out of all SQL sites).
+- [ ] Zero SQL statements in `doctor/checks.py` reference the DROPPED `entities.entity_type` or `entities.project_id` columns — the live `workspaces.project_id_legacy` column (`checks.py:391`) and message-text mentions of `project_id='__unknown__'` are excluded (verify: the EXPLAIN harness reports 0 broken sites out of all SQL sites — authoritative check).
 - [ ] `check_entity_orphans` run against the live DB no longer flags features that exist in both DB and filesystem (the ~one-warning-per-feature false-positive class disappears).
-- [ ] `check_feature_status` and `check_brainstorm_status` produce non-empty candidate sets from the live DB again (queries return rows; checks are no longer dead).
-- [ ] A schema-level `sqlite3.Error` inside any of the four checks surfaces as an `error`-severity doctor Issue naming the check and the SQL error — never a silent `pass` (per CLAUDE.md "Do not silently swallow database exceptions"). Exception: absence of a column that only exists post-migration (e.g., `workspace_uuid` on a pre-Migration-11 DB) is tolerated silently, mirroring the intentional-swallow precedent at `checks.py:579-581` — only failures against the CURRENT schema vocabulary (`kind`, `workspace_uuid` present) are rot and must surface.
-- [ ] All existing doctor tests pass; each RETAINED check gains a regression test that fails if its query references a column absent from the live schema. If `check_project_attribution` is deleted (see Open Questions), its tests are removed instead and doctor emits zero `project_attribution` issues.
+- [ ] The fixed queries in `check_feature_status` and `check_brainstorm_status` execute against the live schema without `sqlite3.Error` and return whatever `kind='feature'` / `kind='brainstorm'` rows exist (query liveness, not data presence — an all-promoted brainstorm set legitimately yields zero candidates). Smoke check: `check_feature_status`'s candidate set is non-empty on this repo's live DB (features guaranteed present per census).
+- [ ] A schema-level `sqlite3.Error` at any of the 6 REWRITTEN sites (broken site 7, `checks.py:1556`, is deleted with its check) surfaces as an `error`-severity doctor Issue naming the check and the SQL error — never a silent `pass` (per CLAUDE.md "Do not silently swallow database exceptions"). The EXPLAIN-clean SQL sites inside these checks (e.g., the `artifact_path` sweep at `checks.py:1457-1481`) retain their existing handling per Out of Scope. Exception: absence of a column that only exists post-migration (e.g., `workspace_uuid` on a pre-Migration-11 DB) is tolerated silently, mirroring the intentional-swallow precedent at `checks.py:579-581` — only failures against the CURRENT schema vocabulary (`kind`, `workspace_uuid` present) are rot and must surface.
+- [ ] All existing doctor tests pass; each of the three retained checks gains a regression test that fails if its query references a column absent from the live schema. `check_project_attribution` and its tests are removed, and a doctor run emits zero `project_attribution` issues.
 
 ## Scope
 
 ### In Scope
 
-- Rewrite the 7 broken queries to live schema: `entity_type = 'X'` → `kind = 'X'` (exact semantic successor per feature 109). For the `project_id` filters: the old `project_id = '__unknown__'` string-literal scoping is UNREPRODUCIBLE (column dropped; its row-set cannot be reconstructed) — this is a new semantic, not a port. Replacement policy: scope to the current `workspace_uuid` when resolvable (unknown-bucket = the computed `_UNKNOWN_WORKSPACE_UUID` at `database.py:118`, pattern already used at `checks.py:564-576`); fall back to unfiltered when no workspace context resolves.
-- `check_project_attribution`: fix to the workspace-based equivalent (entities in the `_UNKNOWN_WORKSPACE_UUID` bucket) or delete with rationale if its defended surface is judged gone — decision at design.
-- Replace the blanket `except sqlite3.Error: pass` at the affected sites with error-surfacing (emit `error`-severity Issue).
-- Regression tests pinning live-schema compatibility for the four checks.
+- Rewrite the broken queries in the three retained checks to live schema: `entity_type = 'X'` → `kind = 'X'` (exact semantic successor per feature 109). For the `project_id` scoping filter in `check_entity_orphans`: the old bucket IS faithfully reconstructible — Migration 11 maps every legacy `project_id='__unknown__'` entity 1:1 onto `workspace_uuid = _UNKNOWN_WORKSPACE_UUID` (`checks.py:539-546`, `database.py:118`). What actually changed is the SCOPING INPUT (the `project_id` kwarg has no column to match; workspace resolves via project root → `workspaces.uuid`) and the SENTINEL VALUE (`'__unknown__'` string → computed UUID). Policy: scope the feature-directory sweep to the current `workspace_uuid` when resolvable (pattern at `checks.py:564-576`); fall back to unfiltered when no workspace context resolves.
+- DELETE `check_project_attribution` (and its tests): its defended surface — entities in the unknown bucket — is already covered by the LIVE sibling `check_unknown_workspace_orphans` (`checks.py:532-581`), which queries `workspace_uuid = _UNKNOWN_WORKSPACE_UUID` and carries a fix action (`claim_unknown_entities`). Fixing it would duplicate that check, contradicting the PRD's doctor-shrink goal (Goal 4 / FR-12).
+- Replace the blanket `except sqlite3.Error: pass` at the 6 rewritten sites with error-surfacing (emit `error`-severity Issue).
+- Regression tests pinning live-schema compatibility for the three retained checks.
 
 ### Out of Scope
 
@@ -52,24 +52,24 @@ P004 PRD census: ~320 of 601 doctor warnings stem from these swallowed schema er
 - Given a feature registered in the DB whose directory was deleted, when `check_entity_orphans` runs, then exactly that entity is flagged "in DB but feature directory not found".
 - Given features whose DB `status` diverges from their `.meta.json` status, when `check_feature_status` runs, then the divergent features are reported (check is alive again).
 - Given a brainstorm entity with a stale status, when `check_brainstorm_status` runs, then it is reported.
-- Given a resolvable workspace context and features registered under a DIFFERENT workspace, when `check_entity_orphans` runs, then those foreign-workspace entities are excluded from the orphan sweep (workspace-scoped branch preserved).
-- Given `check_project_attribution` is RETAINED (fix branch): given entities in the `_UNKNOWN_WORKSPACE_UUID` bucket, when it runs, then those claimable entities are reported. Given it is DELETED instead: the check function and its tests are removed, and a doctor run emits zero `project_attribution` issues.
+- Given a resolvable workspace context and features registered under a DIFFERENT workspace, when `check_entity_orphans` runs, then those foreign-workspace entities are excluded from the feature-directory orphan check (sections 1-2; section 3's `artifact_path` path-prefix scoping at `checks.py:1466-1468` is unchanged and out of scope).
+- Given `check_project_attribution` is deleted, when doctor runs, then zero `project_attribution` issues are emitted, and the unknown-workspace bucket remains covered by `check_unknown_workspace_orphans` (no coverage gap, no duplicate).
 
 ### Error & Boundary Cases
 
-- Given a DB whose schema is missing a column one of the four checks queries, when that check runs, then it emits one `error`-severity Issue containing the check name and the sqlite error message, and does not raise or silently pass.
-- Given an empty DB (no entities), when the four checks run, then no false positives are emitted and no exception escapes.
+- Given a DB whose CURRENT schema is missing a column one of the 6 rewritten queries references, when that check runs, then it emits one `error`-severity Issue containing the check name and the sqlite error message, and does not raise or silently pass.
+- Given an empty DB (no entities), when the three retained checks run, then no false positives are emitted and no exception escapes.
 - Given no resolvable workspace context, when `check_entity_orphans` runs, then it falls back to an unscoped live-schema query (current unfiltered behavior preserved).
 
 ## Feasibility Assessment
 
 ### Assessment
 **Overall:** Confirmed
-**Reasoning:** `kind` is the drop-in successor of `entity_type` (feature 109 migration 12; result dicts already alias both keys). Workspace scoping via `_UNKNOWN_WORKSPACE_UUID` is already used by a neighboring live check at `checks.py:564-576`. The EXPLAIN harness demonstrates the exact failing set; rewrites are column renames plus one scoping-semantics port.
+**Reasoning:** `kind` is the drop-in successor of `entity_type` (feature 109 migration 12; result dicts already alias both keys). Workspace scoping via `_UNKNOWN_WORKSPACE_UUID` is already used by a neighboring live check at `checks.py:564-576`. The EXPLAIN harness demonstrates the exact failing set; the work is column renames in three retained checks, one workspace-scoping replacement, and one check deletion whose surface is already covered live.
 **Key Assumptions:**
 - `kind` values use the same vocabulary as old `entity_type` (`feature`, `brainstorm`) — Status: Verified (live DB query during P004 census; `database.py` FTS5 indexes `kind`).
 - Doctor Issue model supports `error` severity — Status: Verified (`models.py:12` types severity as `"error" | "warning" | "info"`; `severity="error"` already used at `checks.py:723`).
-**Open Risks:** None identified beyond the check_project_attribution fix-vs-delete decision (Open Questions).
+**Open Risks:** None identified.
 
 ## Dependencies
 
@@ -77,4 +77,4 @@ P004 PRD census: ~320 of 601 doctor warnings stem from these swallowed schema er
 
 ## Open Questions
 
-- `check_project_attribution`: fix to workspace-bucket semantics or delete outright — resolved at design after inspecting what its warnings drive.
+- None. The check_project_attribution fix-vs-delete question was resolved at spec review iteration 2: DELETE — fixing it to workspace-bucket semantics would duplicate the live `check_unknown_workspace_orphans` (`checks.py:532-581`).
