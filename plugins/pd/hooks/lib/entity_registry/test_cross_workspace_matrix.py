@@ -1,17 +1,27 @@
-"""Feature 116 FR-6 / AC-6.1: 9-case cross-workspace gate matrix.
+"""Feature 129: cross-workspace links are ordinary, permitted operations.
 
-Exercises the F115 cross-workspace gate (`_assert_same_workspace_pairwise`)
-through the THREE gated EntityDatabase public handlers (`set_parent`,
-`add_dependency`, `add_okr_alignment`) against THREE acceptance criteria
-(reject cross-workspace, accept same-workspace, accept allowlisted) for a
-3x3 = 9 parametrized case matrix.
+Historically (Feature 115/116) `EntityDatabase` gated cross-workspace links
+via `_assert_same_workspace_pairwise`, raising `CrossWorkspaceError` for a
+mismatched-workspace pair unless it was allowlisted. Feature 129 deleted
+that gate entirely: the THREE previously-gated EntityDatabase public
+handlers (`set_parent`, `add_dependency`, `add_okr_alignment`) now treat a
+cross-workspace pair the same as a same-workspace pair — the link is
+written, no exception, no allowlist required.
+
+This module pins the resulting round-trip matrix: for each handler, a
+cross-workspace pair and a same-workspace pair both succeed (3 handlers x
+2 cases = 6 parametrized cases), and the cross-workspace case additionally
+reads the created link back through the same public API a caller would
+use. The former "allowlisted" case is gone — with no gate to bypass, an
+allowlist row no longer changes the outcome, so that case would have been
+a vacuous duplicate of the re-scoped cross-workspace case.
 
 Tests invoke `EntityDatabase` instance methods (NOT the MCP server entry
-points) — this isolates gate behavior from MCP runtime availability and
-matches the F115 design rev 2 contract.
+points) — this isolates handler behavior from MCP runtime availability and
+matches the F115 design rev 2 contract's test placement.
 
 See spec:
-  /Users/terry/projects/pedantic-drip/docs/features/116-f115-qa-deferred/spec.md
+  /Users/terry/projects/pedantic-drip/docs/features/129-workspace-scoped-queries/spec.md
 """
 from __future__ import annotations
 
@@ -20,7 +30,7 @@ import uuid as uuid_mod
 
 import pytest
 
-from entity_registry.database import CrossWorkspaceError, EntityDatabase
+from entity_registry.database import EntityDatabase
 
 
 # ---------------------------------------------------------------------------
@@ -190,28 +200,29 @@ def _same_ws_pair_fixture(db: EntityDatabase) -> dict:
     }
 
 
-def _allowlisted_pair_fixture(db: EntityDatabase) -> dict:
-    """Cross-workspace pair (feature ws-A, backlog ws-B) WITH allowlist row.
+def _link_persisted(db: EntityDatabase, handler_name: str, pair: dict) -> bool:
+    """Read back the link `handler_name` should have created for `pair`.
 
-    Inserts a `cross_workspace_allowlist` row via direct _conn access.
+    Uses the same public read APIs a caller would use — no direct `_conn`
+    access. One branch per `HANDLERS` entry.
     """
-    pair = {
-        "parent": db._test_seeded["ws-A"]["feature"],
-        "child": db._test_seeded["ws-B"]["backlog"],
-    }
-    # test-only: no public API for allowlist seeding; direct _conn access is
-    # intentional test scaffolding (acknowledges CLAUDE.md "Never access
-    # db._conn directly" gotcha is deliberately bypassed in test code only).
-    db._conn.execute(
-        "INSERT INTO cross_workspace_allowlist (parent_uuid, child_uuid, reason) "
-        "VALUES (?, ?, ?)",
-        (pair["parent"]["uuid"], pair["child"]["uuid"], "test allowlist"),
-    )
-    return pair
+    if handler_name == "set_parent":
+        child = db.get_entity(pair["child"]["uuid"])
+        return child is not None and child["parent_uuid"] == pair["parent"]["uuid"]
+    if handler_name == "add_dependency":
+        rows = db.query_dependencies(
+            entity_uuid=pair["child"]["uuid"],
+            blocked_by_uuid=pair["parent"]["uuid"],
+        )
+        return len(rows) == 1
+    if handler_name == "add_okr_alignment":
+        aligned = db.get_okr_alignments(pair["parent"]["uuid"])
+        return any(kr["uuid"] == pair["child"]["uuid"] for kr in aligned)
+    raise AssertionError(f"no read-back check defined for handler {handler_name!r}")
 
 
 # ---------------------------------------------------------------------------
-# 3 handlers x 3 ACs = 9 parametrized cases
+# 3 handlers x 2 ACs = 6 parametrized cases
 # ---------------------------------------------------------------------------
 
 
@@ -242,18 +253,13 @@ HANDLERS = [
     "ac,pair_fixture,expected",
     [
         (
-            "AC-E.1_cross_ws_rejected",
+            "AC-E.1_cross_ws_permitted",
             _cross_ws_pair_fixture,
-            pytest.raises(CrossWorkspaceError),
+            contextlib.nullcontext(),
         ),
         (
             "AC-E.2_same_ws_succeeds",
             _same_ws_pair_fixture,
-            contextlib.nullcontext(),
-        ),
-        (
-            "AC-E.3_allowlisted_succeeds",
-            _allowlisted_pair_fixture,
             contextlib.nullcontext(),
         ),
     ],
@@ -261,7 +267,51 @@ HANDLERS = [
 def test_t2b_5_cross_workspace_gate_matrix(
     entity_db, handler_name, handler_fn, ac, pair_fixture, expected
 ):
-    """F116 FR-6 / AC-6.1: 3 handlers x 3 ACs = 9 cross-workspace gate cases."""
+    """F129: 3 handlers x 2 cases = 6 cross-workspace/same-workspace cases.
+
+    Both cases succeed now that the cross-workspace gate is gone; the
+    cross-workspace case is additionally verified non-vacuous by reading
+    the created link back (see `_link_persisted`).
+    """
     pair = pair_fixture(entity_db)
     with expected:
         handler_fn(entity_db, pair)
+    if ac == "AC-E.1_cross_ws_permitted":
+        assert _link_persisted(entity_db, handler_name, pair), (
+            f"{handler_name} did not persist a readable link for {ac}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Dedicated positive cross-workspace round-trip tests (spec SC2 / design
+# Testing Strategy #1). Non-vacuous: each of these raised CrossWorkspaceError
+# on develop before Feature 129 deleted the gate.
+# ---------------------------------------------------------------------------
+
+
+def test_add_dependency_cross_workspace_round_trip(entity_db):
+    """add_dependency across two workspaces succeeds and reads back."""
+    pair = _cross_ws_pair_fixture(entity_db)
+    entity_db.add_dependency(pair["child"]["uuid"], pair["parent"]["uuid"])
+    rows = entity_db.query_dependencies(
+        entity_uuid=pair["child"]["uuid"],
+        blocked_by_uuid=pair["parent"]["uuid"],
+    )
+    assert len(rows) == 1
+
+
+def test_set_parent_cross_workspace_round_trip(entity_db):
+    """set_parent across two workspaces succeeds and reads back."""
+    pair = _cross_ws_pair_fixture(entity_db)
+    entity_db.set_parent(pair["child"]["type_id"], pair["parent"]["type_id"])
+    child = entity_db.get_entity(pair["child"]["uuid"])
+    assert child is not None
+    assert child["parent_uuid"] == pair["parent"]["uuid"]
+
+
+def test_add_okr_alignment_cross_workspace_round_trip(entity_db):
+    """add_okr_alignment across two workspaces succeeds and reads back."""
+    pair = _cross_ws_pair_fixture(entity_db)
+    entity_db.add_okr_alignment(pair["parent"]["uuid"], pair["child"]["uuid"])
+    aligned = entity_db.get_okr_alignments(pair["parent"]["uuid"])
+    assert any(kr["uuid"] == pair["child"]["uuid"] for kr in aligned)

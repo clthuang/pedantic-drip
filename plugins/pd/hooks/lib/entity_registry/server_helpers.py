@@ -11,7 +11,7 @@ import sqlite3
 import sys
 from collections import defaultdict
 
-from entity_registry.database import CrossWorkspaceError, EntityExistsError
+from entity_registry.database import EntityExistsError
 from entity_registry.metadata import parse_metadata as _parse_metadata
 from sqlite_retry import with_retry
 
@@ -502,18 +502,5 @@ def _process_set_parent(db, type_id: str, parent_type_id: str) -> str:
         return f"Parent set: {type_id} → {parent_type_id}"
     except sqlite3.OperationalError:
         raise
-    except CrossWorkspaceError as exc:
-        # Feature 115 FR-E.3: structured envelope for cross-workspace rejection.
-        return json.dumps({
-            "error": True,
-            "error_type": "cross_workspace_forbidden",
-            "message": str(exc),
-            "recovery_hint": (
-                "Re-attribute one endpoint or grandfather via "
-                "cross_workspace_allowlist"
-            ),
-            "op_name": exc.op_name,
-            "pairs": exc.pairs,
-        })
     except Exception as exc:
         return f"Error setting parent: {exc}"
