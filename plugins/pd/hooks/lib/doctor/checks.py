@@ -38,6 +38,72 @@ def _build_local_entity_set(artifacts_root: str) -> set[str]:
     }
 
 
+def _run_live_schema_query(
+    conn: sqlite3.Connection,
+    sql: str,
+    params: tuple,
+    check_name: str,
+    issues: list[Issue],
+    required_columns: tuple[str, ...],
+) -> tuple[list[tuple], bool]:
+    """Execute ``sql``; return ``(rows, tolerated)`` (Feature 131 Component [A]).
+
+    The single discriminator for spec SC#4's surface-vs-tolerate rule, so the
+    six rewritten call sites don't drift the way the original rot did.
+
+    Happy path
+        ``conn.execute(sql, params)`` succeeds -> ``(list(cursor), False)``.
+
+    On ``sqlite3.Error`` probe ``entities``' current schema (one uncached
+    ``PRAGMA table_info`` on the failure path only) and branch:
+
+    - **Surface** — every column in ``required_columns`` IS present, yet the
+      statement failed (real rot: corrupt index, malformed DB, or a column
+      dropped out from under a live-schema query). Append one
+      ``error``-severity Issue naming the check and the sqlite error, then
+      return ``([], False)``. EMIT-ONCE: skip the append if an identical
+      ``(check, message)`` Issue already sits in ``issues`` — a per-edge call
+      site (e.g. ``check_brainstorm_status``'s dependency loop) must not
+      multiply one persistent failure into dozens of Issues.
+    - **Tolerate** — any required column is ABSENT (pre-Migration-11 DB).
+      Return ``([], True)`` silently; the column genuinely isn't there yet.
+
+    The ``tolerated`` flag lets membership consumers distinguish "schema too
+    old, could not read" from "genuinely zero rows": ``check_entity_orphans``
+    SKIPS its disk->DB flagging steps when a set is tolerated (membership is
+    UNKNOWN, not empty). Candidate-set consumers (feature_status,
+    brainstorm_status, step-1) just use ``rows`` — empty means nothing to
+    report. The helper NEVER raises.
+    """
+    try:
+        cursor = conn.execute(sql, params)
+        return (list(cursor), False)
+    except sqlite3.Error as exc:
+        try:
+            present = {
+                row[1] for row in conn.execute("PRAGMA table_info(entities)")
+            }
+        except sqlite3.Error:
+            # Cannot probe -> cannot confirm the current schema; tolerate
+            # rather than emit noise.
+            present = set()
+        if all(col in present for col in required_columns):
+            message = f"{check_name}: schema query failed: {exc}"
+            already = any(
+                i.check == check_name and i.message == message for i in issues
+            )
+            if not already:
+                issues.append(Issue(
+                    check=check_name,
+                    severity="error",
+                    entity=None,
+                    message=message,
+                    fix_hint=None,
+                ))
+            return ([], False)
+        return ([], True)
+
+
 def _identify_lock_holders(db_path: str) -> list[str]:
     """Identify processes potentially holding the DB lock.
 
@@ -702,16 +768,18 @@ def check_feature_status(
                     fix_hint="Fix JSON syntax in .meta.json",
                 ))
 
-    # Query DB for all feature entities
-    db_statuses: dict[str, str] = {}  # slug -> status
-    try:
-        cursor = entities_conn.execute(
-            "SELECT entity_id, status FROM entities WHERE entity_type = 'feature'"
-        )
-        for row in cursor:
-            db_statuses[row[0]] = row[1] or ""
-    except sqlite3.Error:
-        pass
+    # Query DB for all feature entities (live schema uses the `kind` column,
+    # not the dropped legacy discriminator). The helper owns the
+    # surface/tolerate error path.
+    rows, _tolerated = _run_live_schema_query(
+        entities_conn,
+        "SELECT entity_id, status FROM entities WHERE kind = 'feature'",
+        (),
+        "feature_status",
+        issues,
+        ("kind",),
+    )
+    db_statuses: dict[str, str] = {row[0]: row[1] or "" for row in rows}
 
     # Compare: features in .meta.json
     for slug, meta_status in meta_statuses.items():
@@ -980,15 +1048,22 @@ def check_brainstorm_status(
     start = time.monotonic()
     issues: list[Issue] = []
 
-    # Get brainstorm entities that are not promoted
+    # Get brainstorm entities that are not promoted (live schema uses the
+    # `kind` column). The wrapper try/except is a harmless dead guard — the
+    # helper never raises and owns the surface/tolerate error path.
     brainstorms: list[tuple[str, str, str]] = []  # (type_id, entity_id, status)
     try:
-        cursor = entities_conn.execute(
+        rows, _tolerated = _run_live_schema_query(
+            entities_conn,
             "SELECT type_id, entity_id, status FROM entities "
-            "WHERE entity_type = 'brainstorm' "
-            "AND (status IS NULL OR status != 'promoted')"
+            "WHERE kind = 'brainstorm' "
+            "AND (status IS NULL OR status != 'promoted')",
+            (),
+            "brainstorm_status",
+            issues,
+            ("kind",),
         )
-        brainstorms = [(row[0], row[1], row[2] or "") for row in cursor]
+        brainstorms = [(r[0], r[1], r[2] or "") for r in rows]
     except sqlite3.Error:
         pass
 
@@ -1077,12 +1152,19 @@ def check_brainstorm_status(
                 )
                 for dep_row in dep_cursor:
                     blocked_by_uuid = dep_row[0]
-                    # Check if target is a completed feature
-                    feat_row = entities_conn.execute(
+                    # Check if target is a completed feature (live schema uses
+                    # the `kind` column). Route through the helper; adapt its
+                    # list return to the prior .fetchone() single-row usage.
+                    feat_rows, _tolerated = _run_live_schema_query(
+                        entities_conn,
                         "SELECT type_id, status FROM entities "
-                        "WHERE uuid = ? AND entity_type = 'feature'",
+                        "WHERE uuid = ? AND kind = 'feature'",
                         (blocked_by_uuid,),
-                    ).fetchone()
+                        "brainstorm_status",
+                        issues,
+                        ("kind",),
+                    )
+                    feat_row = feat_rows[0] if feat_rows else None
                     if feat_row and feat_row[1] in ("completed", "finished"):
                         issues.append(Issue(
                             check="brainstorm_status",
@@ -1378,34 +1460,64 @@ def check_entity_orphans(
     project_root = kwargs.get("project_root", ".")
     local_entity_ids = kwargs.get("local_entity_ids", set())
 
-    # 1. Load all feature entities from DB (single query, reused for steps 1 and 2)
-    #    Filter by project_id when available to reduce cross-project noise.
-    project_id = kwargs.get("project_id")
-    db_features: list[tuple] = []  # (type_id, entity_id, artifact_path)
-    db_feature_ids: set[str] = set()
-    cross_project_count = 0
-    try:
-        if project_id:
-            cursor = entities_conn.execute(
-                "SELECT type_id, entity_id, artifact_path "
-                "FROM entities WHERE entity_type = 'feature' "
-                "AND (project_id = ? OR project_id = '__unknown__')",
-                (project_id,),
-            )
-        else:
-            cursor = entities_conn.execute(
-                "SELECT type_id, entity_id, artifact_path "
-                "FROM entities WHERE entity_type = 'feature'"
-            )
-        db_features = list(cursor)
-        db_feature_ids = {row[1] for row in db_features}
-    except sqlite3.Error:
-        pass
+    # 1. Load all feature entities from DB (live schema uses the `kind`
+    #    column). `db_features_all` ALWAYS runs and feeds step-2 membership:
+    #    a dir whose entity exists under ANY workspace is never flagged
+    #    "no entity in DB". Step-1 (the DB->disk orphan sweep) iterates a
+    #    workspace-scoped set when the project root resolves to exactly one
+    #    workspace, else the unfiltered set (legacy behavior preserved).
+    from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
 
-    for type_id, entity_id, artifact_path in db_features:
+    cross_project_count = 0
+
+    db_features_all, features_tolerated = _run_live_schema_query(
+        entities_conn,
+        "SELECT type_id, entity_id, artifact_path FROM entities "
+        "WHERE kind = 'feature'",
+        (),
+        "entity_orphans",
+        issues,
+        ("kind",),
+    )
+    db_feature_ids = {row[1] for row in db_features_all}
+
+    # Workspace resolution mirrors check_unknown_workspace_orphans exactly:
+    # abspath, NULL-guard, tolerated failure (missing workspaces table ->
+    # unfiltered fallback, never a raise).
+    try:
+        root_uuids = [
+            r[0]
+            for r in entities_conn.execute(
+                "SELECT uuid FROM workspaces "
+                "WHERE project_root IS NOT NULL AND project_root = ?",
+                (os.path.abspath(project_root),),
+            )
+        ]
+    except sqlite3.Error:
+        root_uuids = []
+    scoped = len(root_uuids) == 1  # step-1 two-arm scoping iff exactly one
+
+    if scoped:
+        db_features_step1, _ = _run_live_schema_query(
+            entities_conn,
+            "SELECT type_id, entity_id, artifact_path FROM entities "
+            "WHERE kind = 'feature' "
+            "AND (workspace_uuid = ? OR workspace_uuid = ?)",
+            (root_uuids[0], _UNKNOWN_WORKSPACE_UUID),
+            "entity_orphans",
+            issues,
+            ("kind", "workspace_uuid"),
+        )
+    else:
+        db_features_step1 = db_features_all
+    step1_ids = {row[1] for row in db_features_step1}
+
+    for type_id, entity_id, artifact_path in db_features_all:
         feature_dir = os.path.join(artifacts_root, "features", entity_id)
-        if entity_id in local_entity_ids or not local_entity_ids:
-            if not os.path.isdir(feature_dir):
+        if os.path.isdir(feature_dir):
+            continue
+        if scoped:
+            if entity_id in step1_ids:      # ours by workspace fact -> warning
                 issues.append(Issue(
                     check="entity_orphans",
                     severity="warning",
@@ -1416,8 +1528,21 @@ def check_entity_orphans(
                     ),
                     fix_hint="Remove stale entity or restore feature directory",
                 ))
-        else:
-            if not os.path.isdir(feature_dir):
+            else:                           # foreign workspace -> info bucket
+                cross_project_count += 1
+        else:                               # legacy branching, verbatim
+            if entity_id in local_entity_ids or not local_entity_ids:
+                issues.append(Issue(
+                    check="entity_orphans",
+                    severity="warning",
+                    entity=type_id,
+                    message=(
+                        f"Entity '{type_id}' in DB but feature directory "
+                        "not found on disk"
+                    ),
+                    fix_hint="Remove stale entity or restore feature directory",
+                ))
+            else:
                 cross_project_count += 1
 
     if cross_project_count > 0:
@@ -1432,10 +1557,13 @@ def check_entity_orphans(
             fix_hint=None,
         ))
 
-    # 2. Feature directories with .meta.json but no entity in DB
+    # 2. Feature directories with .meta.json but no entity in DB.
+    #    Gated on `not features_tolerated`: when the feature membership set
+    #    could not be read (pre-Migration-11 schema), membership is UNKNOWN,
+    #    not empty — flagging every on-disk dir would violate the tolerate AC.
     features_dir = os.path.join(artifacts_root, "features")
 
-    if os.path.isdir(features_dir):
+    if not features_tolerated and os.path.isdir(features_dir):
         for entry in os.listdir(features_dir):
             entry_dir = os.path.join(features_dir, entry)
             if not os.path.isdir(entry_dir):
@@ -1480,18 +1608,21 @@ def check_entity_orphans(
     except sqlite3.Error:
         pass
 
-    # 4. Brainstorm .prd.md without entity
+    # 4. Brainstorm .prd.md without entity (live schema uses the `kind`
+    #    column). Gated on `not brainstorms_tolerated` for the same
+    #    UNKNOWN-vs-empty reason as step 2.
     brainstorms_dir = os.path.join(artifacts_root, "brainstorms")
-    db_brainstorm_ids: set[str] = set()
-    try:
-        cursor = entities_conn.execute(
-            "SELECT entity_id FROM entities WHERE entity_type = 'brainstorm'"
-        )
-        db_brainstorm_ids = {row[0] for row in cursor}
-    except sqlite3.Error:
-        pass
+    db_brainstorms, brainstorms_tolerated = _run_live_schema_query(
+        entities_conn,
+        "SELECT entity_id FROM entities WHERE kind = 'brainstorm'",
+        (),
+        "entity_orphans",
+        issues,
+        ("kind",),
+    )
+    db_brainstorm_ids = {r[0] for r in db_brainstorms}
 
-    if os.path.isdir(brainstorms_dir):
+    if not brainstorms_tolerated and os.path.isdir(brainstorms_dir):
         for entry in os.listdir(brainstorms_dir):
             entry_path = os.path.join(brainstorms_dir, entry)
             if os.path.isdir(entry_path):
