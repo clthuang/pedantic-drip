@@ -1291,6 +1291,34 @@ class TestCheck3EntityDepsFallback:
         finally:
             conn.close()
 
+    def test_check3_dep_edge_to_non_feature_no_crash(self, tmp_path):
+        # Dependency edge points at a NON-feature entity: the WHERE
+        # uuid=? AND kind='feature' lookup returns [], exercising the
+        # `feat_rows[0] if feat_rows else None` empty guard. Fails with
+        # IndexError (escaping the sqlite-only except) if the guard is
+        # dropped (pre-release QA gate finding, feature 131).
+        from doctor.checks import check_brainstorm_status
+
+        db, conn = _make_live_db(tmp_path)
+        _register_live_feature(db, "bs-003", kind="brainstorm", status="active")
+        bs_uuid = _entity_uuid(conn, "brainstorm:bs-003")
+        _register_live_feature(db, "bs-004", kind="brainstorm", status="active")
+        other_uuid = _entity_uuid(conn, "brainstorm:bs-004")
+
+        db.add_dependency(bs_uuid, other_uuid)
+
+        try:
+            result = check_brainstorm_status(conn, str(tmp_path))
+            # Completes without raising; the non-feature edge produces no
+            # promotion warning for bs-003 via the deps-fallback path.
+            dep_warnings = [
+                i for i in result.issues
+                if "promoted" in i.message and "bs-003" in (i.entity or "")
+            ]
+            assert dep_warnings == []
+        finally:
+            conn.close()
+
 
 class TestCheck3BrainstormSourceMissing:
     """Check 3: brainstorm_source file doesn't exist → warning."""
@@ -1988,6 +2016,30 @@ class TestEntityOrphansTolerateWholeCheck:
         db_path = _make_db(tmp_path)
         _register_feature(db_path, slug="001-alpha", status="active")
         _create_meta_json(tmp_path, "001-alpha", status="active")
+        conn = _entities_conn(db_path)
+
+        try:
+            result = check_entity_orphans(
+                conn, str(tmp_path), project_root=str(tmp_path),
+            )
+            assert result.issues == []
+            assert result.passed is True
+        finally:
+            conn.close()
+
+    def test_legacy_schema_on_disk_brainstorm_zero_issues(self, tmp_path):
+        # Mirror of the feature case for STEP 4: LEGACY fixture (no `kind`
+        # column) + an on-disk brainstorms/<stem>/<stem>.prd.md with no
+        # matching entity. Were step 4 NOT gated on brainstorms_tolerated,
+        # the tolerated-to-[] db_brainstorm_ids would false-flag the dir.
+        # Fails if the `not brainstorms_tolerated` gate is removed
+        # (pre-release QA gate finding, feature 131).
+        from doctor.checks import check_entity_orphans
+
+        db_path = _make_db(tmp_path)
+        bs_dir = tmp_path / "brainstorms" / "bs-001"
+        bs_dir.mkdir(parents=True)
+        (bs_dir / "bs-001.prd.md").write_text("# PRD: stub\n")
         conn = _entities_conn(db_path)
 
         try:
