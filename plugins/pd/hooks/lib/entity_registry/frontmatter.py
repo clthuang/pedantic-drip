@@ -53,9 +53,9 @@ _FIELD_ORDER_SET = frozenset(FIELD_ORDER)
 # Allowed artifact types (R3)
 ALLOWED_ARTIFACT_TYPES = frozenset({"spec", "design", "plan", "tasks", "retro", "prd"})
 
-# UUID v4 regex (lowercase; callers must .lower() before matching per R11)
-_UUID_V4_RE = re.compile(
-    r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+# UUID regex, versions 1-7 (lowercase; callers must .lower() before matching per R11)
+_UUID_RE = re.compile(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-7][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
 )
 
 
@@ -115,7 +115,7 @@ def validate_header(header: dict) -> list[str]:
 
     # 2. UUID format (case-insensitive per R11: .lower() before matching)
     if "entity_uuid" in header:
-        if not _UUID_V4_RE.fullmatch(header["entity_uuid"].lower()):
+        if not _UUID_RE.fullmatch(header["entity_uuid"].lower()):
             errors.append(
                 f"Invalid entity_uuid format: {header['entity_uuid']!r}"
             )

@@ -116,11 +116,15 @@ Only include `backward_to` when the root cause is genuinely in an upstream artif
 - [ ] No contradictions between sections
 - [ ] Naming is consistent throughout
 - [ ] Data types align at boundaries
+- [ ] For any renamed public symbol: the design enumerates by-name imports across test modules — a definition-only rename fails at COLLECTION time (ImportError), not at an assertion (feature 118 design blocker)
+- [ ] Testing strategy is non-vacuous: new-path tests assert facts true ONLY on the new path (a test green on both old and new behavior pins nothing — feature 131/118 vacuous-green class)
 
 **Challenge patterns:**
 - Component A outputs `userId` but B expects `user_id`
 - Section 2 says sync, Section 4 says async
 - Method signature differs between definition and usage
+- "Rename X→Y" with only production call sites listed — where are the test-module imports?
+- A verification battery of grep-absences with no positive assertion exercising the new path
 
 ### Feasibility
 

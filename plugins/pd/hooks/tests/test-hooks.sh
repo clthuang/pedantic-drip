@@ -1668,7 +1668,7 @@ test_check_mcp_health_recent_errors() {
     # Write a recent error log entry (current UTC timestamp)
     local ts
     ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    echo "{\"timestamp\":\"$ts\",\"server\":\"workflow-state\",\"error\":\"python_version\",\"message\":\"Python >= 3.12 required\"}" > "$tmpdir/.claude/pd/mcp-bootstrap-errors.log"
+    echo "{\"timestamp\":\"$ts\",\"server\":\"workflow-state\",\"error\":\"python_version\",\"message\":\"Python >= 3.14 required\"}" > "$tmpdir/.claude/pd/mcp-bootstrap-errors.log"
 
     # Write a test script that sources the function and calls it
     local test_script="$tmpdir/test_health.sh"

@@ -115,12 +115,15 @@ Only include `backward_to` when the root cause is genuinely in an upstream artif
 - [ ] Are external dependencies confirmed to work as expected?
 - [ ] Are performance assumptions realistic?
 - [ ] Are compatibility assumptions verified?
+- [ ] For any renamed public symbol in the plan: is the by-name-import sweep across test modules an explicit step? (definition-only rename = collection-time ImportError — feature 118 blocker class)
+- [ ] Are the plan's verification steps non-vacuous — does at least one check assert a fact true ONLY after the change lands, not a grep-absence that passes on both old and new code? (feature 131/118 vacuous-green class)
 
 **Challenge patterns:**
 - "The API supports X" → "Has this been verified? Link to docs?"
 - "This should be fast enough" → "Based on what measurement?"
 - Assuming data formats without validation
 - Assuming library features exist without checking
+- A shared-config value change (version floor, pin, default path) verified only within the feature's own diff — where's the repo-wide consumer sweep (CI, shell scripts, docs)?
 
 **External Research:** Use Context7 to verify library capabilities, WebSearch for patterns and best practices.
 

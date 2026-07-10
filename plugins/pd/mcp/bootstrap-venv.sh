@@ -20,7 +20,7 @@ DEP_PIP_NAMES=("fastapi>=0.128.3" "jinja2>=3.1.6" "mcp>=1.0,<2" "numpy>=1.24,<3"
 DEP_IMPORT_NAMES=(fastapi jinja2 mcp numpy pydantic pydantic_settings dotenv uvicorn)
 
 # Module-level variables set during bootstrap_venv():
-#   PYTHON_FOR_VENV - absolute path to the discovered Python >= 3.12 interpreter (for venv creation)
+#   PYTHON_FOR_VENV - absolute path to the discovered Python >= 3.14 interpreter (for venv creation)
 #   SENTINEL_PATH   - path to the bootstrap-complete sentinel file
 #   SERVER_NAME     - human-readable server name for logging
 
@@ -34,7 +34,7 @@ DEP_IMPORT_NAMES=(fastapi jinja2 mcp numpy pydantic pydantic_settings dotenv uvi
 #   $1 - server_name: which server failed (e.g., "entity-server")
 #   $2 - error_type: one of "python_version", "venv_creation", "dep_install", "lock_timeout"
 #   $3 - message: human-readable error description
-#   $4 - extra_json: optional additional JSON fields (e.g., '"found":"3.9","required":"3.12"')
+#   $4 - extra_json: optional additional JSON fields (e.g., '"found":"3.9","required":"3.14"')
 log_bootstrap_error() {
     local server_name="$1"
     local error_type="$2"
@@ -50,7 +50,7 @@ log_bootstrap_error() {
 
 # Writes the sentinel file with interpreter metadata.
 # Format: <absolute_path>:<major.minor>
-# Example: /opt/homebrew/bin/python3.13:3.13
+# Example: /opt/homebrew/bin/python3.14:3.14
 #
 # Arguments:
 #   $1 - sentinel_path: path to the sentinel file
@@ -69,13 +69,13 @@ write_sentinel() {
     fi
 }
 
-# Discovers a Python >= 3.12 interpreter and sets PYTHON_FOR_VENV.
+# Discovers a Python >= 3.14 interpreter and sets PYTHON_FOR_VENV.
 # Search order:
-#   1. uv python find --system '>=3.12' (if uv available)
-#   2. python3.14, python3.13, python3.12 in /opt/homebrew/bin
-#   3. python3.14, python3.13, python3.12 in /usr/local/bin
+#   1. uv python find --system '>=3.14' (if uv available)
+#   2. python3.14 in /opt/homebrew/bin
+#   3. python3.14 in /usr/local/bin
 #   4. Bare python3 from PATH
-# For each candidate (tiers 2-4), verify version >= 3.12.
+# For each candidate (tiers 2-4), verify version >= 3.14.
 # On failure: calls log_bootstrap_error() and exits 1.
 # On success: sets PYTHON_FOR_VENV=<absolute path>
 #
@@ -87,7 +87,7 @@ discover_python() {
 
     # Tier 1: uv python find (if uv available)
     if command -v uv >/dev/null 2>&1; then
-        candidate=$(uv python find --system '>=3.12' 2>/dev/null) || true
+        candidate=$(uv python find --system '>=3.14' 2>/dev/null) || true
         if [ -n "$candidate" ] && [ -x "$candidate" ]; then
             PYTHON_FOR_VENV="$candidate"
             echo "${SERVER_NAME:-bootstrap}: discovered Python via uv: $PYTHON_FOR_VENV" >&2
@@ -97,7 +97,7 @@ discover_python() {
 
     # Tier 2-3: Manual search in well-known directories
     local search_dirs="/opt/homebrew/bin /usr/local/bin"
-    local search_versions="python3.14 python3.13 python3.12"
+    local search_versions="python3.14"
     for dir in $search_dirs; do
         for ver in $search_versions; do
             candidate="$dir/$ver"
@@ -105,9 +105,9 @@ discover_python() {
                 version=$("$candidate" -c "import sys; print('{0}.{1}'.format(sys.version_info.major, sys.version_info.minor))" 2>/dev/null || echo "0.0")
                 major="${version%%.*}"
                 minor="${version#*.}"
-                # Validate: accept if >= 3.12
+                # Validate: accept if >= 3.14
                 if [ -n "$minor" ] && [ "$minor" -eq "$minor" ] 2>/dev/null; then
-                    if [ "$major" -gt 3 ] 2>/dev/null || { [ "$major" -eq 3 ] && [ "$minor" -ge 12 ]; } 2>/dev/null; then
+                    if [ "$major" -gt 3 ] 2>/dev/null || { [ "$major" -eq 3 ] && [ "$minor" -ge 14 ]; } 2>/dev/null; then
                         PYTHON_FOR_VENV="$candidate"
                         echo "${SERVER_NAME:-bootstrap}: discovered Python at $PYTHON_FOR_VENV ($version)" >&2
                         return 0
@@ -124,7 +124,7 @@ discover_python() {
         major="${version%%.*}"
         minor="${version#*.}"
         if [ -n "$minor" ] && [ "$minor" -eq "$minor" ] 2>/dev/null; then
-            if [ "$major" -gt 3 ] 2>/dev/null || { [ "$major" -eq 3 ] && [ "$minor" -ge 12 ]; } 2>/dev/null; then
+            if [ "$major" -gt 3 ] 2>/dev/null || { [ "$major" -eq 3 ] && [ "$minor" -ge 14 ]; } 2>/dev/null; then
                 PYTHON_FOR_VENV="$candidate"
                 echo "${SERVER_NAME:-bootstrap}: using python3 from PATH: $PYTHON_FOR_VENV ($version)" >&2
                 return 0
@@ -136,10 +136,10 @@ discover_python() {
     local found_version="${version:-none}"
 
     # All tiers exhausted — failure
-    local searched_json="\"/opt/homebrew/bin/python3.{14,13,12}\",\"/usr/local/bin/python3.{14,13,12}\",\"python3 (PATH)\""
-    echo "${SERVER_NAME:-bootstrap}: ERROR: Python >= 3.12 required, found ${found_version:-none}" >&2
+    local searched_json="\"/opt/homebrew/bin/python3.14\",\"/usr/local/bin/python3.14\",\"python3 (PATH)\""
+    echo "${SERVER_NAME:-bootstrap}: ERROR: Python >= 3.14 required, found ${found_version:-none}" >&2
     echo "${SERVER_NAME:-bootstrap}: Searched: /opt/homebrew/bin, /usr/local/bin, PATH" >&2
-    log_bootstrap_error "${SERVER_NAME:-bootstrap}" "python_version" "Python >= 3.12 required, found ${found_version:-none}" "\"found\":\"${found_version:-none}\",\"required\":\"3.12\",\"searched\":[$searched_json]"
+    log_bootstrap_error "${SERVER_NAME:-bootstrap}" "python_version" "Python >= 3.14 required, found ${found_version:-none}" "\"found\":\"${found_version:-none}\",\"required\":\"3.14\",\"searched\":[$searched_json]"
     exit 1
 }
 
@@ -297,7 +297,7 @@ bootstrap_venv() {
     SERVER_NAME="$server_name"
     SENTINEL_PATH="$sentinel"
 
-    # Step 1: Python discovery — find a suitable interpreter >= 3.12
+    # Step 1: Python discovery — find a suitable interpreter >= 3.14
     discover_python
 
     # Step 2: System python check — if all deps importable, use system python

@@ -18,19 +18,20 @@ import subprocess
 import sys
 import sqlite3
 import tempfile
-import uuid as uuid_mod
 from datetime import datetime, timezone
+
+from entity_registry.uuid7 import generate_uuid7
 
 
 # ---------------------------------------------------------------------------
 # Phase D: workspace UUID resolution (FR-3 precedence chain).
 # ---------------------------------------------------------------------------
 
-# 36-char lowercase hyphenated UUID format. Accepts both v4 and v7 (the
-# version nibble is allowed to be any hex digit so a future F6 uuid7 deploy
-# does not need to widen this regex).
+# 36-char lowercase hyphenated UUID format. Version nibble [1-7] accepts
+# both v4 and v7 mints; variant nibble pinned to the RFC 9562 [89ab] class,
+# matching the sibling _UUID_RE copies in database.py / frontmatter.py.
 _WORKSPACE_UUID_RE = re.compile(
-    r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-7][0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-7][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
 )
 
 
@@ -560,7 +561,7 @@ def resolve_workspace_uuid(
          workspaces table (adopt the project_root row, or insert the missing
          row) so file and DB stay consistent.
       3. workspaces-table lookup by ``project_root`` match (single row only).
-      4. Fresh write — generate uuid4, persist via flock-synchronised atomic
+      4. Fresh write — generate uuid7, persist via flock-synchronised atomic
          write, then record the matching workspaces row.
 
     Parameters
@@ -682,7 +683,7 @@ def resolve_workspace_uuid(
             f"Create .claude/ (e.g., 'mkdir .claude') to enable pd for this "
             f"project, or set ENTITY_WORKSPACE_UUID explicitly."
         )
-    fresh_uuid = str(uuid_mod.uuid4())
+    fresh_uuid = generate_uuid7()
     # Write the file FIRST (flock decides the race winner and the returned
     # uuid is authoritative), THEN record the matching workspaces row so the
     # file and DB never diverge. Never hold the flock across the DB write.

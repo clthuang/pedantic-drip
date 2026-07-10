@@ -22,12 +22,11 @@ from entity_registry.frontmatter import (
 
 # Internal symbols — tested directly to verify low-level contracts
 from entity_registry.frontmatter import (
-    _UUID_V4_RE,
     _parse_block,
     _serialize_header,
 )
 
-# Valid UUID v4 for reuse across tests
+# Valid UUID for reuse across tests
 VALID_UUID = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
 VALID_TYPE_ID = "feature:002-markdown-entity-file-header-sc"
 VALID_ARTIFACT_TYPE = "spec"
@@ -1128,51 +1127,48 @@ class TestFrontmatterInjectCLI:
 
 
 class TestValidateHeaderUUIDBoundary:
-    """BVA tests for UUID v4 validation boundaries (dimension: boundary_values)."""
+    """BVA tests for UUID validation boundaries (dimension: boundary_values)."""
 
-    def test_validate_header_uuid_v4_minimum_valid(self):
-        """Minimum valid UUID v4: all-zeros with version=4, variant=8.
-        derived_from: spec:R11 (UUID v4 regex), dimension:boundary_values
+    def test_validate_header_uuid_minimum_valid(self):
+        """Minimum valid UUID: all-zeros with version=4, variant=8.
+        derived_from: spec:R11 (UUID regex), dimension:boundary_values
         """
-        # Given a header with the lowest possible valid UUID v4
+        # Given a header with the lowest possible valid UUID
         # 00000000-0000-4000-8000-000000000000
         # version digit = 4, variant digit = 8
         header = _full_header(entity_uuid="00000000-0000-4000-8000-000000000000")
         # When validated
         errors = validate_header(header)
-        # Then no errors — this is a valid UUID v4
-        assert errors == [], f"Minimum valid UUID v4 should pass, got: {errors}"
+        # Then no errors — this is a valid UUID
+        assert errors == [], f"Minimum valid UUID should pass, got: {errors}"
 
-    def test_validate_header_uuid_v4_maximum_valid(self):
-        """Maximum valid UUID v4: all-f's with version=4, variant=b.
-        derived_from: spec:R11 (UUID v4 regex), dimension:boundary_values
+    def test_validate_header_uuid_maximum_valid(self):
+        """Maximum valid UUID: all-f's with version=4, variant=b.
+        derived_from: spec:R11 (UUID regex), dimension:boundary_values
         """
-        # Given a header with the highest possible valid UUID v4
+        # Given a header with the highest possible valid UUID
         # ffffffff-ffff-4fff-bfff-ffffffffffff
         # version digit = 4, variant digit = b
         header = _full_header(entity_uuid="ffffffff-ffff-4fff-bfff-ffffffffffff")
         # When validated
         errors = validate_header(header)
-        # Then no errors — this is a valid UUID v4
-        assert errors == [], f"Maximum valid UUID v4 should pass, got: {errors}"
+        # Then no errors — this is a valid UUID
+        assert errors == [], f"Maximum valid UUID should pass, got: {errors}"
 
-    def test_validate_header_uuid_wrong_version_digit_3(self):
-        """UUID with version=3 (not v4) must be rejected.
-        derived_from: spec:R11 (UUID v4 regex), dimension:boundary_values
+    def test_validate_header_uuid_version_digit_3_accepted(self):
+        """UUID with version=3 is accepted — versions 1-7 are valid.
+        derived_from: spec:R11 (UUID regex), dimension:boundary_values
         """
-        # Given a UUID that differs only in the version digit (3 instead of 4)
+        # Given a UUID with version digit 3 (within the accepted [1-7] range)
         header = _full_header(entity_uuid="a1b2c3d4-e5f6-3a7b-8c9d-0e1f2a3b4c5d")
         # When validated
         errors = validate_header(header)
-        # Then it must be rejected — version digit must be exactly 4
-        assert len(errors) >= 1
-        assert any("entity_uuid" in e or "UUID" in e for e in errors), (
-            f"Expected UUID rejection for version=3, got: {errors}"
-        )
+        # Then no errors — version digit 3 is accepted
+        assert errors == [], f"Expected no UUID errors for version=3, got: {errors}"
 
     def test_validate_header_uuid_wrong_variant_digit_7(self):
         """UUID with variant=7 (outside [89ab]) must be rejected.
-        derived_from: spec:R11 (UUID v4 regex), dimension:boundary_values
+        derived_from: spec:R11 (UUID regex), dimension:boundary_values
         """
         # Given a UUID with variant digit 7 (valid range is [89ab])
         header = _full_header(entity_uuid="a1b2c3d4-e5f6-4a7b-7c9d-0e1f2a3b4c5d")
@@ -1184,19 +1180,41 @@ class TestValidateHeaderUUIDBoundary:
             f"Expected UUID rejection for variant=7, got: {errors}"
         )
 
-    def test_validate_header_uuid_version_digit_exactly_4_not_5(self):
-        """UUID with version=5 must be rejected — only version=4 is allowed.
-        derived_from: spec:R11 (UUID v4 only), dimension:mutation_mindset
-        Mutation: would swapping '4' check to '>= 4' pass version 5? This catches it.
+    def test_validate_header_uuid_version_digit_5_accepted(self):
+        """UUID with version=5 is accepted — versions 1-7 are valid.
+        derived_from: spec:R11 (UUID regex), dimension:mutation_mindset
+        Mutation: would a stray version-nibble check reject version 5? This catches it.
         """
-        # Given a UUID with version digit 5
+        # Given a UUID with version digit 5 (within the accepted [1-7] range)
         header = _full_header(entity_uuid="a1b2c3d4-e5f6-5a7b-8c9d-0e1f2a3b4c5d")
         # When validated
         errors = validate_header(header)
-        # Then rejected — only version 4 is valid
+        # Then no errors — version digit 5 is accepted
+        assert errors == [], f"Expected no UUID errors for version=5, got: {errors}"
+
+    def test_validate_header_uuid_version_digit_8_rejected(self):
+        """UUID with version=8 (one past the accepted [1-7] range) is
+        REJECTED. Pins the upper bound of the widened range on
+        frontmatter.py's OWN `_UUID_RE` copy (design D5: the two-file
+        duplication is deliberate, not shared — each copy needs its own
+        boundary pin, since a widening mistake could land in only one of
+        the two files).
+        Anticipate: a version-nibble widening that overshot to '[1-8]' (or
+        further) in THIS file's regex specifically — independent of
+        database.py's copy, which test_database.py's
+        test_uuid_v8_format_not_matched_as_uuid pins separately — would
+        pass validate_header when it must not.
+        derived_from: spec:R11 (UUID regex), dimension:boundary_values,
+        dimension:mutation_mindset
+        """
+        # Given a UUID with version digit 8 (outside the accepted [1-7] range)
+        header = _full_header(entity_uuid="a1b2c3d4-e5f6-8a7b-8c9d-0e1f2a3b4c5d")
+        # When validated
+        errors = validate_header(header)
+        # Then rejected
         assert len(errors) >= 1
         assert any("entity_uuid" in e or "UUID" in e for e in errors), (
-            f"Expected UUID rejection for version=5, got: {errors}"
+            f"Expected UUID rejection for version=8, got: {errors}"
         )
 
     def test_validate_header_uuid_variant_boundary_8_accepted(self):

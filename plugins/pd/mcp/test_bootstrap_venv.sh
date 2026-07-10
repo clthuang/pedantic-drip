@@ -79,7 +79,7 @@ echo "=== Task 1.1b: discover_python ==="
     # Check if hardcoded paths have valid python
     has_hardcoded=false
     for dir in /opt/homebrew/bin /usr/local/bin; do
-        for ver in python3.14 python3.13 python3.12; do
+        for ver in python3.14; do
             if [ -x "$dir/$ver" ]; then
                 has_hardcoded=true
                 break 2
@@ -120,11 +120,11 @@ MOCK_EOF
         stderr_output=$(cat "$STDERR_FILE")
 
         assert_exit_code 1 "$exit_code" "discover_python exits 1 for Python 3.10"
-        assert_contains "$stderr_output" "3.12" "stderr mentions required version 3.12"
+        assert_contains "$stderr_output" "3.14" "stderr mentions required version 3.14"
     fi
 ) || true
 
-# Sub-test: discover_python finds python3 >= 3.12 via uv mock
+# Sub-test: discover_python finds python3 >= 3.14 via uv mock
 (
     REAL_PYTHON3="$(command -v python3)"
     MOCK_DIR="$TMP_DIR/mock_python_uv"
@@ -156,15 +156,15 @@ MOCK_EOF
     fi
 ) || true
 
-# Sub-test: discover_python bare fallback (python3 on PATH >= 3.12)
+# Sub-test: discover_python bare fallback (python3 on PATH >= 3.14)
 (
     REAL_PYTHON3="$(command -v python3)"
     REAL_VERSION=$("$REAL_PYTHON3" -c "import sys; print('{0}.{1}'.format(sys.version_info.major, sys.version_info.minor))" 2>/dev/null)
     REAL_MAJOR="${REAL_VERSION%%.*}"
     REAL_MINOR="${REAL_VERSION#*.}"
 
-    # Only test if real python3 is >= 3.12
-    if [ "$REAL_MAJOR" -ge 3 ] 2>/dev/null && [ "$REAL_MINOR" -ge 12 ] 2>/dev/null; then
+    # Only test if real python3 is >= 3.14
+    if [ "$REAL_MAJOR" -ge 3 ] 2>/dev/null && [ "$REAL_MINOR" -ge 14 ] 2>/dev/null; then
         MOCK_DIR="$TMP_DIR/mock_python_bare"
         mkdir -p "$MOCK_DIR"
 
@@ -183,7 +183,7 @@ MOCK_EOF
 
         assert_exit_code 0 "$exit_code" "discover_python succeeds with bare python3 (${REAL_VERSION})"
     else
-        pass "discover_python bare fallback SKIPPED (system python is ${REAL_VERSION}, < 3.12)"
+        pass "discover_python bare fallback SKIPPED (system python is ${REAL_VERSION}, < 3.14)"
     fi
 ) || true
 
@@ -202,9 +202,16 @@ echo "=== Task 1.1c: check_venv_deps ==="
     # Source bootstrap-venv.sh to get function definitions and DEP arrays
     source "$SCRIPT_DIR/bootstrap-venv.sh"
 
+    # Discover a floor-compliant interpreter — bare `python3` can resolve to an
+    # ancient OS-bundled stub (e.g. macOS /usr/bin/python3) whose pip is too old
+    # to resolve modern package metadata (e.g. mcp).
+    SERVER_NAME="depcheck-setup"
+    discover_python 2>/dev/null
+    [[ -n "${PYTHON_FOR_VENV:-}" ]] || { fail "discover_python failed"; exit 1; }
+
     # Create a real venv and install all 8 canonical deps
     echo "  (creating venv and installing deps -- this takes ~30-60s)..."
-    python3 -m venv "$VENV_PATH"
+    "$PYTHON_FOR_VENV" -m venv "$VENV_PATH"
     "$VENV_PATH/bin/pip" install -q \
         "fastapi" "jinja2" "mcp" "numpy" \
         "pydantic" "pydantic-settings" "python-dotenv" "uvicorn" \
@@ -230,6 +237,11 @@ echo "=== Task 1.1d: dep array alignment with pyproject.toml ==="
 
 (
     PYPROJECT="$SCRIPT_DIR/../pyproject.toml"
+
+    # Assert requires-python floor is >= 3.14 (guards against a floor
+    # regression in pyproject.toml going undetected)
+    requires_python_line=$(grep '^requires-python' "$PYPROJECT" 2>/dev/null || echo "")
+    assert_contains "$requires_python_line" ">=3.14" "pyproject.toml requires-python floor is >=3.14"
 
     # Source bootstrap-venv.sh to get DEP_PIP_NAMES array
     source "$SCRIPT_DIR/bootstrap-venv.sh"
@@ -632,6 +644,13 @@ echo "=== Task 3.1c: missing dep self-heal (AC-2.4) ==="
     mkdir -p "$INT_DIR"
     VENV="$INT_DIR/.venv"
 
+    # Discover a Python interpreter first: create_venv/install_all_deps read
+    # PYTHON_FOR_VENV directly (no default), so it must be set via discover_python
+    # before calling them outside of bootstrap_venv's own Step 1.
+    SERVER_NAME="selfheal-setup"
+    discover_python 2>/dev/null
+    [[ -n "${PYTHON_FOR_VENV:-}" ]] || { fail "discover_python failed"; exit 1; }
+
     # Create venv with all deps
     create_venv "$VENV" "selfheal-setup" 2>/dev/null
     install_all_deps "$VENV" "selfheal-setup" 2>/dev/null
@@ -753,6 +772,13 @@ echo "=== Task 3.1e: fast-path and sentinel recovery ==="
     VENV="$INT_DIR/.venv"
     LOCK_DIR="${VENV}.bootstrap.lock"
 
+    # Discover a Python interpreter first: create_venv/install_all_deps read
+    # PYTHON_FOR_VENV directly (no default), so it must be set via discover_python
+    # before calling them outside of bootstrap_venv's own Step 1.
+    SERVER_NAME="fastpath-setup"
+    discover_python 2>/dev/null
+    [[ -n "${PYTHON_FOR_VENV:-}" ]] || { fail "discover_python failed"; exit 1; }
+
     # Create venv with all deps + sentinel
     create_venv "$VENV" "fastpath-setup" 2>/dev/null
     install_all_deps "$VENV" "fastpath-setup" 2>/dev/null
@@ -789,6 +815,13 @@ echo "=== Task 3.1e: fast-path and sentinel recovery ==="
     INT_DIR="$TMP_DIR/integration_3_1e_sentinel"
     mkdir -p "$INT_DIR"
     VENV="$INT_DIR/.venv"
+
+    # Discover a Python interpreter first: create_venv/install_all_deps read
+    # PYTHON_FOR_VENV directly (no default), so it must be set via discover_python
+    # before calling them outside of bootstrap_venv's own Step 1.
+    SERVER_NAME="sentinel-setup"
+    discover_python 2>/dev/null
+    [[ -n "${PYTHON_FOR_VENV:-}" ]] || { fail "discover_python failed"; exit 1; }
 
     # Create venv with all deps but NO sentinel
     create_venv "$VENV" "sentinel-setup" 2>/dev/null
@@ -938,11 +971,11 @@ echo "=== D1-BDD: server scripts are thin wrappers ==="
 ) || true
 
 # ============================================================================
-# D2-BVA: test_python_version_exactly_3_12_accepted
-# derived_from: spec:AC-3.1 — Python >= 3.12 required
-# Anticipate: Off-by-one in version check could reject 3.12.
-# Challenge: Mock python3 to return exactly 3.12, assert acceptance via discover_python.
-# Verify: Swapping < to <= in check would make 3.12 fail.
+# D2-BVA: test_python_version_exactly_3_14_accepted
+# derived_from: spec:AC-3.1 — Python >= 3.14 required
+# Anticipate: Off-by-one in version check could reject 3.14.
+# Challenge: Mock python3 to return exactly 3.14, assert acceptance via discover_python.
+# Verify: Swapping < to <= in check would make 3.14 fail.
 # ============================================================================
 echo ""
 echo "=== D2-BVA: Python version boundary tests ==="
@@ -977,25 +1010,25 @@ MOCK_EOF
 
     source "$SCRIPT_DIR/bootstrap-venv.sh"
 
-    # Test 3.12 — boundary: must be accepted (>= 3.12)
-    create_version_mock "3.12"
+    # Test 3.14 — boundary: must be accepted (>= 3.14)
+    create_version_mock "3.14"
     exit_code=0
     (PATH="$MOCK_DIR"; HOME="$TMP_DIR"; SERVER_NAME="bva-test"; discover_python) 2>/dev/null || exit_code=$?
-    assert_exit_code 0 "$exit_code" "Python 3.12 accepted (boundary, spec:AC-3.1)"
+    assert_exit_code 0 "$exit_code" "Python 3.14 accepted (boundary, spec:AC-3.1)"
 
-    # Test 3.13 — above boundary: must be accepted
-    create_version_mock "3.13"
+    # Test 3.15 — above boundary: must be accepted
+    create_version_mock "3.15"
     exit_code=0
     (PATH="$MOCK_DIR"; HOME="$TMP_DIR"; SERVER_NAME="bva-test"; discover_python) 2>/dev/null || exit_code=$?
-    assert_exit_code 0 "$exit_code" "Python 3.13 accepted (above boundary, spec:AC-3.1)"
+    assert_exit_code 0 "$exit_code" "Python 3.15 accepted (above boundary, spec:AC-3.1)"
 
-    # Test 3.11 — below boundary: must be rejected
+    # Test 3.13 — below boundary: must be rejected
     # Note: discover_python checks hardcoded paths (/opt/homebrew/bin, /usr/local/bin)
-    # which may find a real Python >= 3.12 even when mock returns 3.11.
+    # which may find a real Python >= 3.14 even when mock returns 3.13.
     # Skip this test if hardcoded paths have valid python.
     has_hardcoded=false
     for dir in /opt/homebrew/bin /usr/local/bin; do
-        for ver in python3.14 python3.13 python3.12; do
+        for ver in python3.14; do
             if [ -x "$dir/$ver" ]; then
                 has_hardcoded=true
                 break 2
@@ -1004,12 +1037,12 @@ MOCK_EOF
     done
 
     if [[ "$has_hardcoded" == true ]]; then
-        pass "Python 3.11 rejection SKIPPED (hardcoded path python exists)"
+        pass "Python 3.13 rejection SKIPPED (hardcoded path python exists)"
     else
-        create_version_mock "3.11"
+        create_version_mock "3.13"
         exit_code=0
         (PATH="$MOCK_DIR"; HOME="$TMP_DIR"; SERVER_NAME="bva-test"; discover_python) 2>/dev/null || exit_code=$?
-        assert_exit_code 1 "$exit_code" "Python 3.11 rejected (below boundary, spec:AC-3.1)"
+        assert_exit_code 1 "$exit_code" "Python 3.13 rejected (below boundary, spec:AC-3.1)"
     fi
 ) || true
 
@@ -1241,11 +1274,11 @@ echo "=== D5-MUT: acquire_lock return codes ==="
 
 # ============================================================================
 # D5-MUT: test_version_comparison_uses_correct_operator
-# derived_from: dimension:mutation_mindset — >= 3.12 means -ge 12 (in discover_python)
-# Anticipate: Using wrong comparison could reject 3.12.
-# Challenge: This is already tested by the BVA 3.12 test above, but we also
+# derived_from: dimension:mutation_mindset — >= 3.14 means -ge 14 (in discover_python)
+# Anticipate: Using wrong comparison could reject 3.14.
+# Challenge: This is already tested by the BVA 3.14 test above, but we also
 #   verify the source code uses -ge (for acceptance) in discover_python.
-# Verify: Changing -ge to -gt in source would reject 3.12.
+# Verify: Changing -ge to -gt in source would reject 3.14.
 # ============================================================================
 echo ""
 echo "=== D5-MUT: version comparison operator ==="
@@ -1253,21 +1286,28 @@ echo "=== D5-MUT: version comparison operator ==="
 (
     bootstrap_file="$SCRIPT_DIR/bootstrap-venv.sh"
 
-    # Given the discover_python function — check it uses -ge 12 for acceptance
-    minor_check=$(grep 'minor.*-ge.*12' "$bootstrap_file" 2>/dev/null || echo "")
+    # Given the discover_python function — check it uses -ge 14 for acceptance
+    minor_check=$(grep 'minor.*-ge.*14' "$bootstrap_file" 2>/dev/null || echo "")
 
     if [[ -z "$minor_check" ]]; then
-        fail "could not find 'minor -ge 12' comparison in discover_python"
+        fail "could not find 'minor -ge 14' comparison in discover_python"
     else
-        pass "discover_python uses -ge 12 for version acceptance (correct for >= 3.12)"
+        pass "discover_python uses -ge 14 for version acceptance (correct for >= 3.14)"
     fi
 
-    # Check it does NOT use -gt 12 (which would reject 3.12)
-    if grep -q 'minor.*-gt.*12' "$bootstrap_file" 2>/dev/null; then
-        fail "discover_python uses -gt 12 (would incorrectly reject 3.12)"
+    # Check it does NOT use -gt 14 (which would reject 3.14)
+    if grep -q 'minor.*-gt.*14' "$bootstrap_file" 2>/dev/null; then
+        fail "discover_python uses -gt 14 (would incorrectly reject 3.14)"
     else
-        pass "discover_python does not use -gt 12"
+        pass "discover_python does not use -gt 14"
     fi
+
+    # discover_python performs this comparison at TWO call sites (Tier 2-3
+    # hardcoded-path probe and Tier 4 bare `python3` fallback). A single
+    # occurrence of the pattern above is satisfied even if only one site is
+    # correct, so pin the exact count to catch a Tier-4-only revert to -ge 12.
+    minor_ge_14_count=$(grep -c 'minor.*-ge.*14' "$bootstrap_file" 2>/dev/null || echo 0)
+    assert_eq "2" "$minor_ge_14_count" "discover_python uses -ge 14 at both version-comparison call sites"
 ) || true
 
 # ############################################################################
@@ -1336,7 +1376,7 @@ echo "=== F042: log_bootstrap_error format ==="
     mkdir -p "$TEST_HOME/.claude/pd"
 
     HOME="$TEST_HOME" BOOTSTRAP_ERROR_LOG="$TEST_HOME/.claude/pd/mcp-bootstrap-errors.log" \
-        log_bootstrap_error "test-server" "python_version" "Python too old" '"found":"3.9","required":"3.12"'
+        log_bootstrap_error "test-server" "python_version" "Python too old" '"found":"3.9","required":"3.14"'
 
     LOG_FILE="$TEST_HOME/.claude/pd/mcp-bootstrap-errors.log"
 
@@ -1363,7 +1403,7 @@ echo "=== F042: discover_python failure writes error log ==="
     # Check if hardcoded paths have valid python (skip if so — discover_python will succeed)
     has_hardcoded=false
     for dir in /opt/homebrew/bin /usr/local/bin; do
-        for ver in python3.14 python3.13 python3.12; do
+        for ver in python3.14; do
             if [ -x "$dir/$ver" ]; then
                 has_hardcoded=true
                 break 2
@@ -1419,7 +1459,7 @@ MOCK_EOF
 ) || true
 
 # ============================================================================
-# test_doctor_check_python3_threshold: doctor.sh rejects 3.10/3.11, accepts 3.12
+# test_doctor_check_python3_threshold: doctor.sh rejects 3.10/3.11, accepts 3.14
 # ============================================================================
 echo ""
 echo "=== F042: doctor.sh check_python3 threshold ==="
@@ -1456,11 +1496,24 @@ MOCK_EOF
     (PATH="$MOCK_DIR:$PATH"; source "$DOCTOR_SCRIPT"; check_python3) >/dev/null 2>&1 || exit_code=$?
     assert_exit_code 1 "$exit_code" "doctor check_python3 rejects 3.11"
 
-    # Test 3.12 — must be accepted
+    # Test 3.12 — must be rejected (discriminating boundary: a revert of the
+    # floor from `minor < 14` back to `minor < 12` would wrongly accept this)
     create_doctor_version_mock "3.12"
     exit_code=0
     (PATH="$MOCK_DIR:$PATH"; source "$DOCTOR_SCRIPT"; check_python3) >/dev/null 2>&1 || exit_code=$?
-    assert_exit_code 0 "$exit_code" "doctor check_python3 accepts 3.12"
+    assert_exit_code 1 "$exit_code" "doctor check_python3 rejects 3.12"
+
+    # Test 3.13 — must be rejected (discriminating boundary: same as above)
+    create_doctor_version_mock "3.13"
+    exit_code=0
+    (PATH="$MOCK_DIR:$PATH"; source "$DOCTOR_SCRIPT"; check_python3) >/dev/null 2>&1 || exit_code=$?
+    assert_exit_code 1 "$exit_code" "doctor check_python3 rejects 3.13"
+
+    # Test 3.14 — must be accepted
+    create_doctor_version_mock "3.14"
+    exit_code=0
+    (PATH="$MOCK_DIR:$PATH"; source "$DOCTOR_SCRIPT"; check_python3) >/dev/null 2>&1 || exit_code=$?
+    assert_exit_code 0 "$exit_code" "doctor check_python3 accepts 3.14"
 ) || true
 
 # ============================================================================
@@ -1475,6 +1528,13 @@ echo "=== F042: sentinel written on system python path ==="
     INT_DIR="$TMP_DIR/f042_system_python"
     mkdir -p "$INT_DIR"
     VENV="$INT_DIR/.venv"
+
+    # Discover a Python interpreter first: create_venv/install_all_deps read
+    # PYTHON_FOR_VENV directly (no default), so it must be set via discover_python
+    # before calling them outside of bootstrap_venv's own Step 1.
+    SERVER_NAME="sys-python-test"
+    discover_python 2>/dev/null
+    [[ -n "${PYTHON_FOR_VENV:-}" ]] || { fail "discover_python failed"; exit 1; }
 
     # Create venv with all deps first (system python check needs all deps importable)
     create_venv "$VENV" "sys-python-test" 2>/dev/null
