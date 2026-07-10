@@ -45,10 +45,35 @@ Private helper in `checks.py` implementing spec SC#4's surface/tolerate discrimi
 | `check_entity_orphans` :1398 | `entity_type = 'feature'` → `kind = 'feature'` (unfiltered; ALWAYS runs — see step-role split below) |
 | `check_entity_orphans` :1488 | `entity_type = 'brainstorm'` → `kind = 'brainstorm'` |
 
-**Dead-branch revival, acknowledged**: the old `:1391` scoped branch is DEAD in production — `run_diagnostics` builds ctx without a `project_id` key (`doctor/__init__.py:165-172`), so `kwargs.get("project_id")` is always None and only the unfiltered `:1398` branch ever ran. Routing scoping through `project_root` (which IS in ctx) makes scoping reachable for the first time — a behavior change, not a reconstruction. To avoid the new false-positive class this could create (an on-disk dir whose entity carries a different REAL workspace_uuid getting step-2-flagged "no entity in DB"), the two queries take distinct roles:
+**Dead-branch revival, acknowledged**: the old `:1391` scoped branch is DEAD in production — `run_diagnostics` builds ctx without a `project_id` key (`doctor/__init__.py:165-172`), so `kwargs.get("project_id")` is always None and only the unfiltered `:1398` branch ever ran. Routing scoping through `project_root` (which IS in ctx) makes scoping reachable for the first time — a behavior change, not a reconstruction.
 
-- **Step-2 membership** (`db_feature_ids`, consumed at `checks.py:1444`) is built from the UNFILTERED `:1398` query, always — a dir whose entity exists under ANY workspace is never flagged "has .meta.json but no entity in DB" (spec SC#2 holds for every exists-in-both case, foreign-real-workspace included; matches today's only-reachable behavior).
-- **Step-1 reporting** (DB→disk orphan sweep, `checks.py:1405-1421`) iterates the two-arm scoped row-set (`:1391`) when exactly one `workspaces` row matches the project root; 0 or >1 matches → step 1 iterates the unfiltered set (current behavior). Foreign-workspace entities are thus excluded from step-1 reporting; unknown-bucket entities are treated as local (spec's unknown-bucket AC holds a fortiori since step-2 membership is unscoped).
+**Control flow (the old if/else collapses into two named row-sets):**
+
+```python
+db_features_all = _run_live_schema_query(   # ALWAYS runs (was the :1398 else-branch)
+    entities_conn, "SELECT type_id, entity_id, artifact_path FROM entities "
+    "WHERE kind = 'feature'", (), "entity_orphans", issues, ("kind",))
+db_feature_ids = {row[1] for row in db_features_all}      # step-2 membership, UNSCOPED
+
+if scoped:                                   # exactly one workspaces row matched
+    db_features_step1 = _run_live_schema_query(  # two-arm predicate (was :1391)
+        entities_conn, "... WHERE kind = 'feature' AND "
+        "(workspace_uuid = ? OR workspace_uuid = ?)",
+        (root_uuids[0], _UNKNOWN_WORKSPACE_UUID), "entity_orphans", issues,
+        ("kind", "workspace_uuid"))
+else:
+    db_features_step1 = db_features_all
+```
+
+- **Step-2 membership** (`db_feature_ids`, consumed at `checks.py:1444`) always comes from `db_features_all` — a dir whose entity exists under ANY workspace is never flagged "has .meta.json but no entity in DB" (spec SC#2 holds for every exists-in-both case, foreign-real-workspace included; matches today's only-reachable behavior).
+- **Step-1 reporting** (DB→disk orphan sweep, `checks.py:1405-1421`) iterates `db_features_step1`.
+
+**Reconciliation with the pre-existing `local_entity_ids` heuristic**: step 1 already discriminates cross-project rows via `local_entity_ids` (`checks.py:1407` warning branch vs `:1419` `cross_project_count` info bucket; built by `_build_local_entity_set`, injected at `doctor/__init__.py:171`). That heuristic is the pre-workspace-era PROXY for "belongs to this project" — directory presence approximating ownership. `workspace_uuid` is the fact the proxy approximated. Resolution:
+
+- **When scoped** (exactly one workspace match): the two-arm row-set IS the ownership discriminator. Step 1 iterates `db_features_step1` and flags every missing dir as a warning — the `local_entity_ids` branching is bypassed (every scoped row is "ours" by workspace fact). Rows in `db_features_all` but NOT in `db_features_step1` whose dirs are missing feed `cross_project_count`, preserving the existing info Issue ("may belong to other projects").
+- **When not scoped** (0 or >1 matches): current behavior preserved verbatim — `db_features_step1 == db_features_all`, `local_entity_ids` branching untouched.
+- The spec's deleted-dir warning AC holds in both modes: scoped → warning via workspace fact; unscoped → warning via the legacy branch (`entity_id in local_entity_ids or not local_entity_ids`).
+- **Why this is testable non-vacuously**: with `local_entity_ids` EMPTY (empty features dir), the legacy branch warns for EVERY missing-dir row including foreign ones (`not local_entity_ids` → warning arm); the scoped path routes foreign rows to the info bucket instead. Distinct outcomes ⇒ [D].5's foreign-workspace test fails if the workspace predicate is removed. (This is also a live false-positive class the scoping genuinely fixes.)
 
 Workspace resolution mirrors `check_unknown_workspace_orphans` (`checks.py:582-592`) EXACTLY: `os.path.abspath(project_root)`, predicate `project_root IS NOT NULL AND project_root = ?`, and the whole lookup wrapped in `try/except sqlite3.Error → root_uuids = []` (missing `workspaces` table → unfiltered fallback, never a raise). The `project_id` kwarg is no longer read by this check (dead input; the runner's kwarg plumbing is untouched).
 
@@ -66,14 +91,14 @@ Workspace resolution mirrors `check_unknown_workspace_orphans` (`checks.py:582-5
 
 **Fixture-migration plan (resolves the legacy-fixture conflict):** the existing behavioral tests for the three rewritten checks are built on LEGACY hand-rolled fixtures — `_make_db()` (`test_checks.py:22-59`) creates `entities` with `entity_type`/`project_id` but NO `kind`, NO `workspace_uuid`, and no `workspaces` table; `_register_feature` (`test_checks.py:113-131`) inserts `entity_type='feature'`. After the rewrite those fixtures would silently route every query down the tolerate branch (vacuous green) or false-fail (e.g., `test_check7_all_matched` at `:1340-1358`, `test_check7_orphaned_local_entity` at `:1364-1382`, cross-project suite at `:1431-1489`, plus the `check_feature_status`/`check_brainstorm_status` suites). Plan:
 
-- Fork the helpers: `_make_live_db()` builds fixtures via the real `EntityDatabase(tmp_path)` bootstrap (live schema, as `test_polymorphic_taxonomy.py` does); a live `_register_feature` inserts `kind='feature'` rows. The legacy `_make_db`/`_register_feature` are RETAINED only for tests that legitimately exercise pre-Migration-11 schemas (per `_make_db`'s own docstring, `test_checks.py:25-29`) — including the new tolerate-branch test.
+- Fork the helpers: `_make_live_db()` builds fixtures via the real `EntityDatabase(tmp_path)` bootstrap (live schema, as `test_polymorphic_taxonomy.py` does); a live `_register_feature(..., workspace_uuid=...)` inserts `kind='feature'` rows under a caller-chosen workspace; `_insert_workspace(conn, project_root, uuid)` inserts `workspaces` rows so [D].5 can construct exactly-one / zero / multiple project-root matches and local / foreign-real / unknown-bucket entity placements directly. The legacy `_make_db`/`_register_feature` are RETAINED only for tests that legitimately exercise pre-Migration-11 schemas (per `_make_db`'s own docstring, `test_checks.py:25-29`) — including the new tolerate-branch test.
 - Repoint the three rewritten checks' behavioral suites (`test_check7_*`, `check_feature_status`, `check_brainstorm_status` tests) onto the live fixtures.
 
 1. Per-check regression: for each retained check, build a live-schema DB via `_make_live_db()` and assert the check's queries execute (no schema `sqlite3.Error` surfaces, no tolerate-branch engagement — assert via returned candidate sets being non-vacuous where the fixture registers rows).
 2. Committed EXPLAIN scan: AST-walk `checks.py` for constant SQL in `execute()` calls (same technique as the authoring harness), `EXPLAIN` each against a live-schema connection, assert zero failures. Durable form of spec SC#1.
 3. Surface-branch test: live-schema DB, monkeypatch/corrupt a query to fail while `kind` exists → assert one `error` Issue naming the check.
 4. Tolerate-branch test: LEGACY fixture (`_make_db`, genuinely no `kind` column) → assert clean completion, zero Issues from the rewritten sites — the legacy fixture guards against vacuous green by construction.
-5. Scoping tests: foreign-workspace entity excluded from step-1 reporting; unknown-bucket entity treated local (step 1) and never step-2-flagged; foreign-real-workspace ON-DISK dir NOT step-2-flagged (unscoped membership); 0/>1 workspace-match → unfiltered step-1 fallback.
+5. Scoping tests (non-vacuous by construction — each controls `local_entity_ids` via the on-disk features dir AND workspace placement via `_insert_workspace` + per-entity `workspace_uuid`, and fails if the two-arm predicate is removed): (a) foreign-workspace entity, missing dir, EMPTY features dir → info bucket, not warning (legacy branch would warn — proves the predicate discriminates); (b) unknown-bucket entity, missing dir, scoped → warning (treated local); (c) foreign-real-workspace ON-DISK dir → not step-2-flagged (unscoped membership); (d) zero and multiple workspace matches → legacy `local_entity_ids` branching verbatim.
 6. Deletion tests: doctor run emits zero `project_attribution` issues; `test_doctor.py` `expected_names` updated and its `CHECK_ORDER` assertion passes.
 
 ## Interfaces
@@ -94,7 +119,11 @@ def _run_live_schema_query(
         (PRAGMA table_info probe, run on the failure path only — no cache;
         failures are rare and the probe is one PRAGMA) -> append one
         error-severity Issue(check=check_name, message=f"{check_name}: schema
-        query failed: {exc}") and return [].
+        query failed: {exc}") and return []. EMIT-ONCE: skip the append if an
+        identical (check, message) Issue is already in `issues` — call sites
+        inside loops (:1083 runs per-dependency-edge, checks.py:1049/:1078)
+        must not multiply one persistent failure into dozens of Issues
+        (spec SC#4 / error-AC say ONE Issue).
       - If any required column is absent (pre-Migration-11 DB) -> return []
         silently (tolerate branch, spec SC#4).
     """
