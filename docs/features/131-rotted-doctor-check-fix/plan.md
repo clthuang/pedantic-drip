@@ -87,6 +87,11 @@ S1.2 fixtures ─┬──→ S2.1 renames
 
 (S2.1 and S2.2 each require BOTH S1.1 and S1.2. Parallelism is stage-level only: items within a stage that touch the same files — S1.1/S1.2 both edit `test_checks.py`; S2.1/S2.2 both edit `checks.py` and `test_checks.py` — MUST serialize; do not dispatch them to concurrent worktrees.)
 
+## Rollback & Refactor Notes
+
+- **Rollback boundary:** each stage exits with a green test suite and its own commit — any stage's commit is a safe rollback point (git-backed, no external side effects).
+- **Refactor pass:** none needed as a separate step — the rewrites are mechanical (column renames, one control-flow consolidation already pinned in design code blocks); cleanup happens within each task's TDD cycle.
+
 ## Risk Areas
 
 - **S2.2 (check_entity_orphans rewrite):** most intricate — two row-sets, scoped/unscoped partition, tolerate gates. Mitigated by the design's pinned code blocks and [D].5's non-vacuous tests.
