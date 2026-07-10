@@ -1049,23 +1049,22 @@ def check_brainstorm_status(
     issues: list[Issue] = []
 
     # Get brainstorm entities that are not promoted (live schema uses the
-    # `kind` column). The wrapper try/except is a harmless dead guard — the
-    # helper never raises and owns the surface/tolerate error path.
-    brainstorms: list[tuple[str, str, str]] = []  # (type_id, entity_id, status)
-    try:
-        rows, _tolerated = _run_live_schema_query(
-            entities_conn,
-            "SELECT type_id, entity_id, status FROM entities "
-            "WHERE kind = 'brainstorm' "
-            "AND (status IS NULL OR status != 'promoted')",
-            (),
-            "brainstorm_status",
-            issues,
-            ("kind",),
-        )
-        brainstorms = [(r[0], r[1], r[2] or "") for r in rows]
-    except sqlite3.Error:
-        pass
+    # `kind` column). The helper owns the surface/tolerate error path and
+    # never raises, so no try/except is needed here.
+    rows, _tolerated = _run_live_schema_query(
+        entities_conn,
+        "SELECT type_id, entity_id, status FROM entities "
+        "WHERE kind = 'brainstorm' "
+        "AND (status IS NULL OR status != 'promoted')",
+        (),
+        "brainstorm_status",
+        issues,
+        ("kind",),
+    )
+    # brainstorms: (type_id, entity_id, status)
+    brainstorms: list[tuple[str, str, str]] = [
+        (r[0], r[1], r[2] or "") for r in rows
+    ]
 
     if not brainstorms:
         elapsed = int((time.monotonic() - start) * 1000)
@@ -1516,34 +1515,25 @@ def check_entity_orphans(
         feature_dir = os.path.join(artifacts_root, "features", entity_id)
         if os.path.isdir(feature_dir):
             continue
+        # "Ours" is decided by workspace fact when scoped (step1_ids), else by
+        # the legacy local_entity_ids branching (unchanged behavior).
         if scoped:
-            if entity_id in step1_ids:      # ours by workspace fact -> warning
-                issues.append(Issue(
-                    check="entity_orphans",
-                    severity="warning",
-                    entity=type_id,
-                    message=(
-                        f"Entity '{type_id}' in DB but feature directory "
-                        "not found on disk"
-                    ),
-                    fix_hint="Remove stale entity or restore feature directory",
-                ))
-            else:                           # foreign workspace -> info bucket
-                cross_project_count += 1
-        else:                               # legacy branching, verbatim
-            if entity_id in local_entity_ids or not local_entity_ids:
-                issues.append(Issue(
-                    check="entity_orphans",
-                    severity="warning",
-                    entity=type_id,
-                    message=(
-                        f"Entity '{type_id}' in DB but feature directory "
-                        "not found on disk"
-                    ),
-                    fix_hint="Remove stale entity or restore feature directory",
-                ))
-            else:
-                cross_project_count += 1
+            is_local = entity_id in step1_ids
+        else:
+            is_local = entity_id in local_entity_ids or not local_entity_ids
+        if is_local:
+            issues.append(Issue(
+                check="entity_orphans",
+                severity="warning",
+                entity=type_id,
+                message=(
+                    f"Entity '{type_id}' in DB but feature directory "
+                    "not found on disk"
+                ),
+                fix_hint="Remove stale entity or restore feature directory",
+            ))
+        else:
+            cross_project_count += 1
 
     if cross_project_count > 0:
         issues.append(Issue(

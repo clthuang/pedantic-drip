@@ -1045,24 +1045,6 @@ class TestCheck2CrossProjectDbOnly:
 # ===========================================================================
 
 
-def _register_brainstorm(db_path, entity_id, status="active"):
-    """Register a brainstorm entity. Returns (type_id, uuid)."""
-    import uuid as uuid_mod
-
-    type_id = f"brainstorm:{entity_id}"
-    entity_uuid = str(uuid_mod.uuid4())
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        "INSERT OR IGNORE INTO entities "
-        "(uuid, type_id, project_id, entity_type, entity_id, name, status, created_at, updated_at) "
-        "VALUES (?, ?, '__unknown__', 'brainstorm', ?, ?, ?, datetime('now'), datetime('now'))",
-        (entity_uuid, type_id, entity_id, f"Brainstorm {entity_id}", status),
-    )
-    conn.commit()
-    conn.close()
-    return type_id, entity_uuid
-
-
 class TestCheck3NoPromotionNeeded:
     """Check 3: no brainstorms needing promotion → passes."""
 
@@ -2421,6 +2403,10 @@ class TestCheck10MissingConfigFileUsesDefaults:
 # Task 5.1: Orchestrator Tests
 # ===========================================================================
 
+# Feature 131 removed check_project_attribution: 21 checks -> 20. Single
+# source for the orchestrator/CLI check-count assertions below.
+EXPECTED_CHECK_COUNT = 20
+
 
 class TestOrchestratorReportHas14Checks:
     """Orchestrator: report always has 16 checks (14 pre-109 + the
@@ -2435,7 +2421,7 @@ class TestOrchestratorReportHas14Checks:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 20  # feature 131 removed check_project_attribution (was 21)
+        assert len(report.checks) == EXPECTED_CHECK_COUNT
 
 
 class TestOrchestratorReportEvenWhenLocked:
@@ -2452,7 +2438,7 @@ class TestOrchestratorReportEvenWhenLocked:
         blocker.execute("BEGIN IMMEDIATE")
         try:
             report = run_diagnostics(db_path, str(tmp_path / "docs"), str(tmp_path))
-            assert len(report.checks) == 20  # feature 131 removed check_project_attribution (was 21)
+            assert len(report.checks) == EXPECTED_CHECK_COUNT
         finally:
             blocker.rollback()
             blocker.close()
@@ -2512,7 +2498,7 @@ class TestOrchestratorPerCheckExceptionIsolation:
         # The orchestrator wraps each check in try/except
         # Even if a check raises, we still get 10 results
         report = run_diagnostics(db_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 20  # feature 131 removed check_project_attribution (was 21)
+        assert len(report.checks) == EXPECTED_CHECK_COUNT
 
 
 class TestOrchestratorMissingDbFile:
@@ -2526,7 +2512,7 @@ class TestOrchestratorMissingDbFile:
 
         report = run_diagnostics(db_path, str(tmp_path / "docs"), str(tmp_path))
         assert not os.path.exists(db_path)
-        assert len(report.checks) == 20  # feature 131 removed check_project_attribution (was 21)
+        assert len(report.checks) == EXPECTED_CHECK_COUNT
 
 
 class TestOrchestratorBaseBranchFromConfig:
@@ -2542,7 +2528,7 @@ class TestOrchestratorBaseBranchFromConfig:
         (config_dir / "pd.local.md").write_text("base_branch: develop\n")
 
         report = run_diagnostics(db_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 20  # feature 131 removed check_project_attribution (was 21)
+        assert len(report.checks) == EXPECTED_CHECK_COUNT
 
 
 class TestOrchestratorBaseBranchDefaultMain:
@@ -2555,7 +2541,7 @@ class TestOrchestratorBaseBranchDefaultMain:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 20  # feature 131 removed check_project_attribution (was 21)
+        assert len(report.checks) == EXPECTED_CHECK_COUNT
 
 
 class TestOrchestratorCheck8RunsFirst:
@@ -2584,7 +2570,7 @@ class TestOrchestratorEntityDbLocked:
         blocker1.execute("BEGIN IMMEDIATE")
         try:
             report = run_diagnostics(db_path, str(tmp_path / "docs"), str(tmp_path))
-            assert len(report.checks) == 20  # feature 131 removed check_project_attribution (was 21)
+            assert len(report.checks) == EXPECTED_CHECK_COUNT
             assert report.healthy is False
         finally:
             blocker1.rollback()
@@ -2601,7 +2587,7 @@ class TestOrchestratorFreshProjectEmpty:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 20  # feature 131 removed check_project_attribution (was 21)
+        assert len(report.checks) == EXPECTED_CHECK_COUNT
         assert report.elapsed_ms >= 0
 
 
@@ -2616,7 +2602,7 @@ class TestOrchestratorWorksWithoutMcp:
 
         # No MCP servers running -- should still work
         report = run_diagnostics(db_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 20  # feature 131 removed check_project_attribution (was 21)
+        assert len(report.checks) == EXPECTED_CHECK_COUNT
 
 
 class TestOrchestratorConnectionsClosedOnSuccess:
@@ -2629,7 +2615,7 @@ class TestOrchestratorConnectionsClosedOnSuccess:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 20  # feature 131 removed check_project_attribution (was 21)
+        assert len(report.checks) == EXPECTED_CHECK_COUNT
 
         # Verify we can acquire write locks (connections were closed)
         conn = sqlite3.connect(db_path, timeout=1.0)
@@ -2696,7 +2682,7 @@ class TestCliJsonOutputHas14Checks:
         data = json.loads(result.stdout)
         # Phase 2 wraps output: {"diagnostic": ...}
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 20  # feature 131 removed check_project_attribution (was 21)
+        assert len(diag["checks"]) == EXPECTED_CHECK_COUNT
 
 
 class TestCliExitCodeAlwaysZero:
@@ -2766,7 +2752,7 @@ class TestCliArtifactsRootCliArgPrecedence:
         assert result.returncode == 0
         data = json.loads(result.stdout)
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 20  # feature 131 removed check_project_attribution (was 21)
+        assert len(diag["checks"]) == EXPECTED_CHECK_COUNT
 
 
 class TestCliArtifactsRootConfigFallback:
@@ -2786,7 +2772,7 @@ class TestCliArtifactsRootConfigFallback:
         assert result.returncode == 0
         data = json.loads(result.stdout)
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 20  # feature 131 removed check_project_attribution (was 21)
+        assert len(diag["checks"]) == EXPECTED_CHECK_COUNT
 
 
 class TestCliArtifactsRootDefaultDocs:
@@ -2805,7 +2791,7 @@ class TestCliArtifactsRootDefaultDocs:
         assert result.returncode == 0
         data = json.loads(result.stdout)
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 20  # feature 131 removed check_project_attribution (was 21)
+        assert len(diag["checks"]) == EXPECTED_CHECK_COUNT
 
 
 class TestCliNoneSerializesAsJsonNull:
