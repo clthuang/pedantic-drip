@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.0.1] - 2026-07-10
+
 ### Fixed
 
 - **Documentation accuracy audit** — all living docs re-verified against the implementation and corrected. Phantom components removed everywhere they were documented: the `code-simplifier` agent (never shipped), the `meta-json-guard` hook (replaced by `data-file-guard` in feature 110), and the deleted `emit_hook_json` helper (guidance now teaches `safe_emit_hook_json`'s real semantics — EPIPE-safe raw emission, no `hookEventName` auto-wrap, `trap '' PIPE` co-requirement). MCP tool inventories corrected across all tiers (workflow engine 15/17→21 tools incl. `get_notifications`, `promote_task`, `query_ready_tasks`, `get_progress_view`, `record_backward_event`, `query_phase_analytics`; entity registry 9/8→19). Hooks tables rebuilt from `hooks.json` (6/6/2/1 registrations, 17 scripts). Agent rosters re-tallied to the 29 shipped agents (added missing `relevance-verifier`). Implement-loop facts corrected (four reviewers, 3-iteration cap). The retired `create-tasks` phase removed from every diagram and prose sequence (6 canonical phases; merged into create-plan in feature 073). Install snippets unified to `pd@pedantic-drip-marketplace`. The 12-check environment `doctor.sh` un-conflated from the 21-check `/pd:doctor`. Rotted per-suite test counts removed from dev guides (fresh counts via `pytest --collect-only -q`). `docs/technical/api-reference.md` signatures verified against the servers (`complete_phase` gains the `closes` param; DB-layer methods explicitly labeled as not MCP tools). Defunct dev→prod prefix-conversion section in the component authoring guide rewritten to single-plugin reality.
