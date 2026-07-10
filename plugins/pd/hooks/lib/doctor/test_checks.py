@@ -541,6 +541,64 @@ class TestRunLiveSchemaQuery:
         assert len(errors) == 1
         conn.close()
 
+    def test_tolerate_when_one_of_multiple_required_columns_absent(self):
+        # Feature 131 Component [A] / design [D].5: check_entity_orphans' scoped
+        # step-1 query declares TWO required columns ("kind", "workspace_uuid").
+        # On an intermediate schema that HAS `kind` but NOT `workspace_uuid`,
+        # the "all required columns present" test must be False -> tolerate,
+        # NOT surface. This is the ONLY shape that distinguishes `all(...)` from
+        # a mutated `any(...)`: single-column required sets can't (for one
+        # element all() == any()). Mutating all->any would surface here instead.
+        from doctor.checks import _run_live_schema_query
+
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE entities (kind TEXT, entity_id TEXT)")
+        issues: list = []
+        rows, tolerated = _run_live_schema_query(
+            conn,
+            "SELECT entity_id FROM entities "
+            "WHERE kind = 'feature' AND workspace_uuid = ?",
+            ("ws",),
+            "entity_orphans",
+            issues,
+            ("kind", "workspace_uuid"),
+        )
+        assert rows == []
+        # all(["kind" present=True, "workspace_uuid" present=False]) -> False.
+        assert tolerated is True
+        assert issues == []
+        conn.close()
+
+    def test_never_raises_when_pragma_probe_also_fails(self):
+        # Feature 131 Component [A] "The helper NEVER raises": when BOTH the main
+        # statement AND the fallback PRAGMA table_info(entities) probe raise (a
+        # broken/closed connection), the inner except sets present=set(), so the
+        # all-present test is False for any non-empty required set -> tolerate,
+        # ([], True), zero Issues, and — the contract under test — NO exception
+        # escapes the helper. Existing surface/tolerate tests only fail the main
+        # query; the probe still succeeds there, so this path was untested.
+        from doctor.checks import _run_live_schema_query
+
+        class _AlwaysRaises:
+            """Stand-in connection whose every execute() raises (both the main
+            query and the PRAGMA probe hit it)."""
+
+            def execute(self, *_args, **_kwargs):
+                raise sqlite3.OperationalError("connection is broken")
+
+        issues: list = []
+        rows, tolerated = _run_live_schema_query(
+            _AlwaysRaises(),
+            "SELECT entity_id FROM entities WHERE kind = 'feature'",
+            (),
+            "feature_status",
+            issues,
+            ("kind",),
+        )
+        assert rows == []
+        assert tolerated is True
+        assert issues == []
+
 
 class TestCheck8BothDbsHealthy:
     """Check 8: both DBs healthy returns passed=True with extras."""
@@ -1992,6 +2050,63 @@ class TestEntityOrphansSurfaceBranch:
             conn.close()
 
 
+class TestEntityOrphansWorkspaceLookupFailure:
+    """Feature 131 design [D].5 / Component [A]: the workspace-resolution SELECT
+    in check_entity_orphans is a BARE ``try/except sqlite3.Error`` (NOT routed
+    through _run_live_schema_query), so a failure there must emit NO Issue and
+    fall back to the unscoped legacy membership path. This is distinct from the
+    tolerate-whole-check case (TestEntityOrphansTolerateWholeCheck): there
+    `kind` is ABSENT so the membership queries themselves tolerate; here `kind`
+    is PRESENT, the membership queries succeed, and ONLY the workspaces lookup
+    breaks — proving the bare-except swallow is load-bearing and silent.
+    """
+
+    def test_workspaces_lookup_failure_no_issue_unscoped_fallback(self, tmp_path):
+        from doctor.checks import check_entity_orphans
+
+        db, conn = _make_live_db(tmp_path)
+        _register_live_feature(db, "001-alpha", status="active")
+        # No on-disk feature dir: under the unscoped legacy fallback (empty
+        # local_entity_ids) the dirless registered feature is flagged, which
+        # makes the "check still ran" assertion below non-vacuous.
+
+        # Fail ONLY the `FROM workspaces` resolution query; every kind='feature'
+        # membership query and the PRAGMA probe delegate to the real conn.
+        class _FailWorkspacesConn:
+            def __init__(self, real):
+                self._real = real
+
+            def execute(self, sql, *args):
+                if "FROM workspaces" in sql:
+                    raise sqlite3.OperationalError("no such table: workspaces")
+                return self._real.execute(sql, *args)
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+        wrapped = _FailWorkspacesConn(conn)
+        try:
+            result = check_entity_orphans(
+                wrapped, str(tmp_path), project_root=str(tmp_path),
+            )
+            # The bare-except swallows the workspaces failure WITHOUT an Issue:
+            # no error at all (contrast TestEntityOrphansSurfaceBranch, where a
+            # membership-query failure DOES surface one error).
+            errors = [i for i in result.issues if i.severity == "error"]
+            assert errors == []
+            # Unscoped fallback (root_uuids == [] -> scoped False) still runs
+            # step-1: the dirless registered feature is flagged, proving the
+            # check proceeded past the swallowed lookup rather than aborting.
+            warnings_001 = [
+                i for i in result.issues
+                if i.severity == "warning" and "001-alpha" in (i.entity or "")
+            ]
+            assert len(warnings_001) >= 1
+            assert "not found on disk" in warnings_001[0].message
+        finally:
+            conn.close()
+
+
 def test_all_checks_sql_explains_against_live_schema(tmp_path):
     """Feature 131 Task 4.2 / design [D].2 / spec SC#1+SC#5: committed EXPLAIN
     scan over every constant SQL site in checks.py.
@@ -2056,6 +2171,90 @@ def test_all_checks_sql_explains_against_live_schema(tmp_path):
             f"  checks.py:{ln}: {err} :: {prefix}"
             for ln, err, prefix in failures
         )
+    )
+
+
+def test_fixer_sql_has_no_dropped_column_references():
+    """Feature 131 design [D].2 (fixer net): committed form of the manual grep
+    guarding the auto-fix WRITE paths against the Migration-11 dropped columns.
+
+    checks.py has its own live EXPLAIN scan
+    (test_all_checks_sql_explains_against_live_schema); the fix_actions / fixer
+    write paths (UPDATE / DELETE / INSERT on `entities` et al.) were only ever
+    guarded by a manual grep. AST-collect the constant SQL first-arg of every
+    ``.execute(...)`` in both modules and assert none names a column dropped by
+    Migration 11 (feature 108 / 109): ``entity_type``, ``project_id`` (bare —
+    ``project_id_legacy`` survives and is NOT flagged), or ``parent_type_id``.
+
+    Textual denylist rather than EXPLAIN on purpose: the fixer touches tables
+    the minimal live fixture may omit at a given migration head, so EXPLAIN
+    could false-fail with "no such table"; the denylist targets exactly the rot
+    class the grep watched and never false-fails on table coverage.
+    """
+    import ast
+    import re
+
+    # \b already excludes project_id_legacy: `d`->`_` is not a word boundary,
+    # so \bproject_id\b cannot match inside project_id_legacy.
+    dropped = {
+        "entity_type": re.compile(r"\bentity_type\b"),
+        "project_id": re.compile(r"\bproject_id\b"),
+        "parent_type_id": re.compile(r"\bparent_type_id\b"),
+    }
+    sql_verbs = (
+        "SELECT", "INSERT", "UPDATE", "DELETE", "REPLACE",
+        "CREATE", "DROP", "PRAGMA", "WITH",
+    )
+
+    here = os.path.dirname(__file__)
+    targets = [
+        os.path.join(here, "fix_actions", "__init__.py"),
+        os.path.join(here, "fixer.py"),
+    ]
+
+    collected: list[tuple[str, int, str]] = []  # (basename, lineno, sql)
+    for path in targets:
+        with open(path) as f:
+            tree = ast.parse(f.read(), filename=path)
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "execute"
+                and node.args
+            ):
+                continue
+            arg = node.args[0]
+            # Constants only (matches the checks.py scan): f-strings, Names and
+            # BinOp concatenations are out of scope by design.
+            if not (isinstance(arg, ast.Constant) and isinstance(arg.value, str)):
+                continue
+            if arg.value.strip().upper().startswith(sql_verbs):
+                collected.append(
+                    (os.path.basename(path), node.lineno, arg.value)
+                )
+
+    # Guard a silently-broken walker: the fixer write paths carry well over ten
+    # constant SQL sites (fixer.py delegates, contributing ~0; fix_actions holds
+    # the UPDATE / DELETE / INSERT / SELECT statements).
+    assert len(collected) >= 10, (
+        f"walker collected only {len(collected)} fixer SQL sites — expected "
+        ">= 10; the .execute() AST shape may have drifted"
+    )
+
+    hits: list[str] = []
+    for fname, lineno, sql in collected:
+        flat = " ".join(sql.split())
+        for col, rx in dropped.items():
+            if rx.search(sql):
+                hits.append(
+                    f"  {fname}:{lineno}: references dropped '{col}' :: "
+                    f"{flat[:80]}"
+                )
+
+    assert hits == [], (
+        "fixer SQL references a Migration-11 dropped column (rot):\n"
+        + "\n".join(hits)
     )
 
 
