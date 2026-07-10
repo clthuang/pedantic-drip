@@ -30,12 +30,18 @@ Plus directions accepted from the review:
 ### Core model
 - `entities(uuid PK [UUIDv7], workspace_uuid FK, kind, display_id, name, created_at, metadata)` — no status column at all (see events).
 - `events(id, entity_uuid FK, event_type, axis [pipeline|execution|lifecycle], from_value, to_value, actor, timestamp, payload JSON)` — append-only, the ONLY write path for state (R2.2). Generalizes today's `phase_events`.
-- **Current state = projection.** Either a `state` table maintained transactionally with each event append, or a view over latest-event-per-axis. Reads are served from the projection; the projection is rebuildable from events (`reconcile` = replay).
-- `.meta.json` (if it survives at all) is a read-only projection file written solely by the DB layer for fast hook reads (R2.1); the data-file-guard hook keeps blocking other writers. Consider dropping it entirely if session-start can query the DB fast enough.
-- Relations (parent, dependencies, fixes, OKR alignment, tags) all keyed on uuid — unchanged in spirit, unified in key.
+- **Current state = projection, structurally enforced.** Prefer a VIEW over latest-event-per-axis (or a projection table writable only inside the event-append transaction) so that raw SQL cannot bypass the event path — this closes the runtime-enforcement hole feature 109 explicitly deferred (`109/spec.md:378`: static grep + doctor were the only guards). Reads serve from the projection; `reconcile` = replay.
+- **Projection fidelity is a contract.** The projection must losslessly reproduce everything `.meta.json` carries today: per-phase `{started, completed, iterations, reviewerNotes}`, `skippedPhases[]`, `branch`, `mode`, `brainstorm_source`/`backlog_source` — all derivable from event payloads (property test: `replay(events) == projection`, field by field).
+- **Dependency cascade as a projection side-effect.** When a completion event lands, downstream entities whose `blocks` edges are now all resolved flip `execution_status blocked → ready` via a follow-on event (re-homes F052's `_cascade_unblock`, which dies with `derive_kanban`).
+- **Degraded mode = read-only.** If the DB is unavailable, all state mutations fail loud and reads serve the last projection. No fallback `.meta.json` writer exists, ever — `_write_meta_json_fallback` and equivalents do not survive the rebuild (a degradation path that permits writes reopens the dual-truth hole; per enforced-state-machine PRD Story 5, and the meta-json-guard-deadlock RCA means the guard must recognize the DB-layer writer so degraded mode can never deadlock).
+- `.meta.json` (if it survives at all) is a read-only projection file written solely by the DB layer for fast hook reads (R2.1); the data-file-guard hook keeps blocking other writers. Consider dropping it entirely if session-start can query the DB fast enough. Whatever survives must cover ALL kinds — project-type `.meta.json` was never ported to the sealed write path (`110/spec.md:36,48`); the rebuild closes that or confirms projects carry no meta file.
+- Relations (parent, dependencies, fixes, OKR alignment, tags) all keyed on uuid — unified in key. `entity_relations.kind` expands beyond `fixes` to at least `blocks` (backing the dependency cascade as real rows — today's `blocked_by` metadata JSON array dies); `relates_to`/`duplicates` only when an API needs them (deferred by 111, stays deferred).
+- **One transition engine.** A single per-kind state-machine router replaces the split `ENTITY_MACHINES` + `WorkflowStateEngine` pair — the collapse P003 enabled via `lifecycle_class` but never executed (deferred 109→110→111); project-kind transitions get ported instead of remaining the unowned special case.
 
 ### Display identity (replaces type_id)
 - `display_id` like `F-1042` / `B-311` per workspace, allocated from the existing atomic `next_sequence_value` (extended to all kinds — kill the filesystem-scan allocation in `create-feature.md`). Purely presentational: renaming/renumbering never touches identity, FKs, or events.
+- Rename/renumber becomes a plain `update_entity` on display metadata — subsumes backlog #00063 (entity rename tooling for scope-pivoted features).
+- Registration still validates display inputs (non-empty name/slug) as a plain input guard — cosmetic fields, but blank ones helped corrupt the old DB (`feature:` empty-id rows, P003 prd.md:20).
 
 ### Multi-workspace (R2.3)
 - `workspaces(uuid PK, root_path, name, created_at, last_seen_at)` stays; workspace resolution precedence unchanged (env > flag > workspace.json > recovery). Split-brain fails loud (keep feature-108 behavior).
@@ -44,12 +50,25 @@ Plus directions accepted from the review:
 
 ### Migration strategy
 - Private tooling, no back-compat: **rebuild, don't migrate.** New DB file (schema v2 counter reset, ONE version location), backfill by replaying: existing entities → `entity_created` events with fresh UUIDv7s; existing phase_events map onto the new axes; status/kanban derived once at import via the current `derive_kanban` logic, then that logic is deleted. Keep the old DB read-only for 30 days as escape hatch.
+- Rebuild also deletes the Migration-11 transition shims that were "retained for the transition window" and never removed: the compatibility shim at `database.py:5902` and the legacy `project_id` kwarg on `register_entity` (`entity_server.py:551`).
+
+### Implementation constraints (carried over from prior features)
+- **UUIDv7 source:** stdlib `uuid.uuid7` requires Python ≥3.14. The plugin venv already runs 3.14.6 (verified, `uuid7` present) but `pyproject.toml` still says `requires-python = ">=3.12"` — raise the floor to `>=3.14` (this was exactly the blocker that deferred UUIDv7 in feature 108 F6 / backlog #00359).
+- **Concurrency carryover (F062):** the event-append + projection-update pair is ONE `BEGIN IMMEDIATE` transaction using the shared `sqlite_retry` decorator and standardized `busy_timeout`; `display_id` allocation keeps the atomic sequence pattern. No new concurrency machinery — but the existing primitives apply to the new tables (the concurrent-create success criterion depends on them).
 - Doctor shrinks accordingly: drop the 12 identity/workspace/sync checks whose surfaces disappear; fix-or-delete the rotted checks querying dropped columns (`checks.py:709,988,1083,1391-1398`) — this is worth doing IMMEDIATELY regardless of the redesign, since 320 of the 601 current warnings are spurious and train the user to ignore the doctor.
 
 ## Non-goals
 - No changes to the phase vocabulary itself (workflow track owns that; the canonical 6 phases stay).
 - No multi-writer/concurrent-DB support beyond SQLite WAL + busy_timeout (current concurrency posture is adequate).
 - No cloud sync.
+- Tasks stay as artifacts (`tasks.md` / native task list), NOT first-class entities — the fractal-work-management proposal (`20260320-050414-fractal-work-management.prd.md`, never promoted) remains deliberately out of scope, recorded here so it isn't silently lost.
+- Memory-db cleanup items from the 112/114 hardening chain live in `memory.db`, not this DB — out of scope.
+
+## Supersedes (prior decisions this PRD deliberately reverses or retires)
+- **"Event sourcing is overkill; a simple audit table suffices"** — stated as a non-goal in four prior PRDs (enforced-state-machine:207, reactive-entity-consistency:300, state-consistency-consolidation:117, pd-data-model-hardening:57). This PRD adopts append-only event sourcing as the model (R2.2); those non-goals are no longer binding.
+- **`derive_kanban(status, phase)` + authoritative `entities.status`** (F052/F036) — replaced by the two-axis model.
+- **`project_id`-scoped identity + `UNIQUE(project_id, type_id)` + per-project sequences** (F065) — replaced by workspace_uuid + uuid-sole-identity + non-unique display_id.
+- **The 114→117 migration-repair chain** (M12 stub-trap recovery, remediate_m12, M13–M17 down-migrations, cross-workspace allowlist + triage tooling, `_UNKNOWN_WORKSPACE_UUID` re-attribution, audit-emit counter, AST whitelist sweeps, strict entity_id test-fixture format) — all current-DB-state repair that rebuild-not-migrate makes moot. The *invariant* they defended (state mutations always emit events) becomes structural in the new model.
 
 ## Success criteria
 - One key type (uuid) across every table; zero joins on business keys.
@@ -66,4 +85,6 @@ Plus directions accepted from the review:
 2. Event `actor` granularity: session id, agent name, or both?
 3. `execution_status` enum final shape: is `ready` needed distinct from `backlog`? Do `agent_review`/`human_review` (currently 0 rows ever) return as statuses or stay dead?
 4. Backfill fidelity: import all 533 historical entities' events, or snapshot-import current state as single `imported` events per entity (cheaper, loses pre-import history granularity)?
-5. Workspace identity: keep `workspace.json` random uuid, or derive stable id from git remote URL hash (survives re-clones, but breaks on remote rename)?
+5. Workspace identity: keep `workspace.json` random uuid, or derive stable id from git remote URL hash (survives re-clones, but breaks on remote rename)? If a derived id is chosen, a `workspace merge` tool becomes required (reactive-entity-consistency R2.5); with the random uuid it stays low priority.
+6. Pipeline-phase validity: per-kind only, or per-(kind, mode)? Express mode (workflow track R1.3) records skipped phases — the schema must represent phase subsets/skips per mode without a second vocabulary. Cross-track seam; decide jointly at design.
+7. PR-review surface for state changes: does the F110 `pd-state.diff.md` generator survive the rebuild, or do queryable events (e.g. `pd:show-status --diff base-branch`) replace it now that projections are gitignored?
