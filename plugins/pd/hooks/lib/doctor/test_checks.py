@@ -2309,12 +2309,13 @@ def test_fixer_sql_has_no_dropped_column_references():
                     (os.path.basename(path), node.lineno, arg.value)
                 )
 
-    # Guard a silently-broken walker: the fixer write paths carry well over ten
-    # constant SQL sites (fixer.py delegates, contributing ~0; fix_actions holds
-    # the UPDATE / DELETE / INSERT / SELECT statements).
-    assert len(collected) >= 10, (
+    # Guard a silently-broken walker: the fixer write paths carry ~9 constant
+    # SQL sites (fixer.py delegates, contributing ~0; fix_actions holds the
+    # UPDATE / DELETE / INSERT / SELECT statements — 9 after feature 129
+    # deleted the triage fixer + trigger-dance helper's 3 sites).
+    assert len(collected) >= 8, (
         f"walker collected only {len(collected)} fixer SQL sites — expected "
-        ">= 10; the .execute() AST shape may have drifted"
+        ">= 8; the .execute() AST shape may have drifted"
     )
 
     hits: list[str] = []
@@ -2677,9 +2678,10 @@ class TestCheck10MissingConfigFileUsesDefaults:
 # Task 5.1: Orchestrator Tests
 # ===========================================================================
 
-# Feature 131 removed check_project_attribution: 21 checks -> 20. Single
-# source for the orchestrator/CLI check-count assertions below.
-EXPECTED_CHECK_COUNT = 20
+# Feature 131 removed check_project_attribution: 21 checks -> 20. Feature 129
+# removed check_cross_workspace_parent_uuid: 20 checks -> 19. Single source
+# for the orchestrator/CLI check-count assertions below.
+EXPECTED_CHECK_COUNT = 19
 
 
 class TestOrchestratorReportHas14Checks:
@@ -3880,3 +3882,93 @@ class TestCheckUnknownWorkspaceOrphans:
         )
         assert result.passed
         assert result.issues == []
+
+
+class TestWorkspaceHelperAdoptionNoDrift:
+    """Feature 129 D7 / task 3.6: ``_lookup_workspace_uuid_by_project_root``
+    adoption at ``check_unknown_workspace_orphans`` and ``check_entity_orphans``
+    is a PURE refactor. Both sites previously computed their own list of
+    matching ``workspaces`` rows and collapsed 0-or->1 rows into the same
+    fallback branch as exactly-1 (the helper performs an identical collapse,
+    returning the uuid iff exactly one row matches, else ``None``). These
+    tests pin byte-identical issue output across the 0/1/>1 matrix so a
+    future edit that reintroduces drift between the two call sites fails
+    loud.
+    """
+
+    @pytest.mark.parametrize("n_matching_rows", [0, 1, 2])
+    def test_unknown_workspace_orphans_issue_tuple_pinned(
+        self, tmp_path, n_matching_rows
+    ):
+        from doctor.checks import check_unknown_workspace_orphans
+        import uuid as uuid_mod
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        root = os.path.abspath(str(proj))
+        ws_rows = [
+            (str(uuid_mod.uuid4()), f"leg{i}", root)
+            for i in range(n_matching_rows)
+        ]
+        db = _make_orphan_db(tmp_path, "e.db", ws_rows=ws_rows, orphans=2)
+
+        result = check_unknown_workspace_orphans(
+            entities_db_path=db, project_root=str(proj)
+        )
+        assert result.passed
+        assert len(result.issues) == 1
+        issue = result.issues[0]
+        assert issue.check == "unknown_workspace_orphans"
+        assert issue.severity == "warning"
+        assert issue.entity is None
+        assert issue.message == (
+            "2 entities stranded in the unknown-workspace bucket"
+        )
+        if n_matching_rows == 1:
+            assert issue.fix_hint == (
+                f"Claim unknown-workspace entities into workspace "
+                f"{ws_rows[0][0]}"
+            )
+        else:
+            assert issue.fix_hint == (
+                "Bootstrap a single workspace for this project_root "
+                "(run session-start.sh), then re-run doctor --fix to claim."
+            )
+
+    @pytest.mark.parametrize("n_matching_rows", [0, 1, 2])
+    def test_entity_orphans_scoped_branch_pinned(self, tmp_path, n_matching_rows):
+        from doctor.checks import check_entity_orphans
+        import uuid as uuid_mod
+
+        db, conn = _make_live_db(tmp_path)
+        try:
+            for _ in range(n_matching_rows):
+                _insert_workspace(conn, str(tmp_path), str(uuid_mod.uuid4()))
+            foreign_ws = str(uuid_mod.uuid4())
+            _insert_workspace(conn, str(tmp_path / "other"), foreign_ws)
+            _register_live_feature(db, "001-alpha", workspace_uuid=foreign_ws)
+            (tmp_path / "features").mkdir()  # empty features dir; entity orphaned
+
+            result = check_entity_orphans(
+                conn, str(tmp_path), project_root=str(tmp_path),
+            )
+            warnings_001 = [
+                i for i in result.issues
+                if i.severity == "warning" and "001-alpha" in (i.entity or "")
+            ]
+            infos_other = [
+                i for i in result.issues
+                if i.severity == "info" and "other projects" in i.message
+            ]
+            if n_matching_rows == 1:
+                # scoped=True: the foreign-workspace entity is routed to the
+                # info bucket, not flagged as a local warning.
+                assert warnings_001 == []
+                assert len(infos_other) >= 1
+            else:
+                # 0 or >1 matches -> scoped=False -> legacy (unscoped) branch,
+                # which treats the entity as local and warns.
+                assert len(warnings_001) >= 1
+                assert infos_other == []
+        finally:
+            conn.close()

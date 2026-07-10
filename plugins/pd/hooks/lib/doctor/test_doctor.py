@@ -26,7 +26,6 @@ def test_check_order_preserved_post_f116():
         "check_stale_worktrees",
         "check_status_write_path",
         "check_no_free_text_status_parsers",
-        "check_cross_workspace_parent_uuid",
         "check_audit_counter_write_path",
         "check_audit_emit_failed_count",
         "check_severity_vocab",
@@ -37,7 +36,6 @@ def test_check_order_preserved_post_f116():
     assert actual_names == expected_names, (
         f"CHECK_ORDER drift: expected {expected_names}, got {actual_names}"
     )
-    assert "check_cross_workspace_parent_uuid" in _ENTITY_DB_CHECKS
     assert "check_audit_emit_failed_count" in _ENTITY_DB_CHECKS
     # The workspace-consistency check self-guards a missing DB and its
     # fresh-checkout warning is meaningful without one, so it is deliberately
