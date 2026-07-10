@@ -64,7 +64,7 @@
 3. **Feature 132 cutover checklist:** (a) verify no invariant silently relied on dropped `UNIQUE(workspace_uuid, type_id)` — guarantee moves to application logic (security S2); (b) decide mixed-version replay: re-mint v4 rows vs preserve. Registered as backlog items pointing at 132.
 4. **Bug — MCP workflow-state events-write path:** `phase_events_write_failed: true` on every `complete_phase`; events silently lost while projections stay correct. Registered as high-priority backlog (silent data loss; feeds P004's own events work).
 5. **Backlog — `complete_phase` ergonomics:** `reviewer_notes` demands a doubly-JSON-encoded string (harness re-parses JSON-shaped args). Registered as backlog.
-6. **Reviewer-agent checklist lines** (`plugins/pd/agents/design-reviewer.md` + `plan-reviewer.md`): renamed-symbol by-name-import sweep (118 design iter-1 blocker); plus the still-unapplied 131 non-vacuity lines. *Applied at finish (this feature).*
+6. **Reviewer-agent checklist lines** (`plugins/pd/agents/design-reviewer.md` + `plan-reviewer.md`): renamed-symbol by-name-import sweep (118 design iter-1 blocker); plus the still-unapplied 131 non-vacuity lines (plus the plan-reviewer shared-config sweep line — the enforcer Action 1 names). *Applied at finish (this feature).*
 
 ## Raw Data
 

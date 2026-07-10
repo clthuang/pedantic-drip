@@ -207,6 +207,7 @@ echo "=== Task 1.1c: check_venv_deps ==="
     # to resolve modern package metadata (e.g. mcp).
     SERVER_NAME="depcheck-setup"
     discover_python 2>/dev/null
+    [[ -n "${PYTHON_FOR_VENV:-}" ]] || { fail "discover_python failed"; exit 1; }
 
     # Create a real venv and install all 8 canonical deps
     echo "  (creating venv and installing deps -- this takes ~30-60s)..."
@@ -236,6 +237,11 @@ echo "=== Task 1.1d: dep array alignment with pyproject.toml ==="
 
 (
     PYPROJECT="$SCRIPT_DIR/../pyproject.toml"
+
+    # Assert requires-python floor is >= 3.14 (guards against a floor
+    # regression in pyproject.toml going undetected)
+    requires_python_line=$(grep '^requires-python' "$PYPROJECT" 2>/dev/null || echo "")
+    assert_contains "$requires_python_line" ">=3.14" "pyproject.toml requires-python floor is >=3.14"
 
     # Source bootstrap-venv.sh to get DEP_PIP_NAMES array
     source "$SCRIPT_DIR/bootstrap-venv.sh"
@@ -643,6 +649,7 @@ echo "=== Task 3.1c: missing dep self-heal (AC-2.4) ==="
     # before calling them outside of bootstrap_venv's own Step 1.
     SERVER_NAME="selfheal-setup"
     discover_python 2>/dev/null
+    [[ -n "${PYTHON_FOR_VENV:-}" ]] || { fail "discover_python failed"; exit 1; }
 
     # Create venv with all deps
     create_venv "$VENV" "selfheal-setup" 2>/dev/null
@@ -770,6 +777,7 @@ echo "=== Task 3.1e: fast-path and sentinel recovery ==="
     # before calling them outside of bootstrap_venv's own Step 1.
     SERVER_NAME="fastpath-setup"
     discover_python 2>/dev/null
+    [[ -n "${PYTHON_FOR_VENV:-}" ]] || { fail "discover_python failed"; exit 1; }
 
     # Create venv with all deps + sentinel
     create_venv "$VENV" "fastpath-setup" 2>/dev/null
@@ -813,6 +821,7 @@ echo "=== Task 3.1e: fast-path and sentinel recovery ==="
     # before calling them outside of bootstrap_venv's own Step 1.
     SERVER_NAME="sentinel-setup"
     discover_python 2>/dev/null
+    [[ -n "${PYTHON_FOR_VENV:-}" ]] || { fail "discover_python failed"; exit 1; }
 
     # Create venv with all deps but NO sentinel
     create_venv "$VENV" "sentinel-setup" 2>/dev/null
@@ -1292,6 +1301,13 @@ echo "=== D5-MUT: version comparison operator ==="
     else
         pass "discover_python does not use -gt 14"
     fi
+
+    # discover_python performs this comparison at TWO call sites (Tier 2-3
+    # hardcoded-path probe and Tier 4 bare `python3` fallback). A single
+    # occurrence of the pattern above is satisfied even if only one site is
+    # correct, so pin the exact count to catch a Tier-4-only revert to -ge 12.
+    minor_ge_14_count=$(grep -c 'minor.*-ge.*14' "$bootstrap_file" 2>/dev/null || echo 0)
+    assert_eq "2" "$minor_ge_14_count" "discover_python uses -ge 14 at both version-comparison call sites"
 ) || true
 
 # ############################################################################
@@ -1480,6 +1496,19 @@ MOCK_EOF
     (PATH="$MOCK_DIR:$PATH"; source "$DOCTOR_SCRIPT"; check_python3) >/dev/null 2>&1 || exit_code=$?
     assert_exit_code 1 "$exit_code" "doctor check_python3 rejects 3.11"
 
+    # Test 3.12 — must be rejected (discriminating boundary: a revert of the
+    # floor from `minor < 14` back to `minor < 12` would wrongly accept this)
+    create_doctor_version_mock "3.12"
+    exit_code=0
+    (PATH="$MOCK_DIR:$PATH"; source "$DOCTOR_SCRIPT"; check_python3) >/dev/null 2>&1 || exit_code=$?
+    assert_exit_code 1 "$exit_code" "doctor check_python3 rejects 3.12"
+
+    # Test 3.13 — must be rejected (discriminating boundary: same as above)
+    create_doctor_version_mock "3.13"
+    exit_code=0
+    (PATH="$MOCK_DIR:$PATH"; source "$DOCTOR_SCRIPT"; check_python3) >/dev/null 2>&1 || exit_code=$?
+    assert_exit_code 1 "$exit_code" "doctor check_python3 rejects 3.13"
+
     # Test 3.14 — must be accepted
     create_doctor_version_mock "3.14"
     exit_code=0
@@ -1505,6 +1534,7 @@ echo "=== F042: sentinel written on system python path ==="
     # before calling them outside of bootstrap_venv's own Step 1.
     SERVER_NAME="sys-python-test"
     discover_python 2>/dev/null
+    [[ -n "${PYTHON_FOR_VENV:-}" ]] || { fail "discover_python failed"; exit 1; }
 
     # Create venv with all deps first (system python check needs all deps importable)
     create_venv "$VENV" "sys-python-test" 2>/dev/null
