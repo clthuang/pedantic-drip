@@ -1,5 +1,5 @@
 ---
-last-updated: 2026-04-15T00:00:00Z
+last-updated: 2026-07-10T00:00:00Z
 source-feature: 078-cc-native-integration
 ---
 
@@ -46,7 +46,7 @@ Inside Claude Code, register and install the local plugin:
 
 ```
 /plugin marketplace add .claude-plugin/marketplace.json
-/plugin install pd@my-local-plugins
+/plugin install pd@pedantic-drip-marketplace
 ```
 
 After making changes to any plugin file (`plugins/pd/`), sync the cache so Claude Code picks up the update:
@@ -74,26 +74,26 @@ Use the plugin venv for all test commands — the system Python does not have MC
 ### Core test suites
 
 ```bash
-# Entity registry (database, backfill, server helpers, frontmatter, search — 940+ tests)
+# Entity registry (database, backfill, server helpers, frontmatter, search)
 plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/entity_registry/ -v
 
-# Transition gate (gate functions, constants, models — 257 tests)
+# Transition gate (gate functions, constants, models)
 plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/transition_gate/ -v
 
-# Workflow engine (state engine, hydration, transitions, degradation — 309 tests)
+# Workflow engine (state engine, hydration, transitions, degradation)
 plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/workflow_engine/ -v
 
-# Workflow state MCP server (processing + reconciliation integration — 272 tests)
+# Workflow state MCP server (processing + reconciliation integration)
 plugins/pd/.venv/bin/python -m pytest plugins/pd/mcp/test_workflow_state_server.py -v
 ```
 
 ### UI and doctor
 
 ```bash
-# UI server (app + CLI + deepened — 190+ tests)
+# UI server (app + CLI + deepened)
 PYTHONPATH="plugins/pd/hooks/lib:plugins/pd" plugins/pd/.venv/bin/python -m pytest plugins/pd/ui/tests/ -v
 
-# Doctor diagnostic (150 tests)
+# Doctor diagnostic
 PYTHONPATH=plugins/pd/hooks/lib plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/doctor/ -v
 ```
 

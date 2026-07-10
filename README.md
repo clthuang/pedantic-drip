@@ -22,7 +22,7 @@ Optional: `rsync` and `gtimeout` (macOS: `brew install coreutils`).
 
 ```bash
 /plugin marketplace add clthuang/pedantic-drip
-/plugin install pd@my-local-plugins
+/plugin install pd@pedantic-drip-marketplace
 ```
 
 Core dependencies auto-install on first session.
@@ -33,7 +33,7 @@ Core dependencies auto-install on first session.
 bash "$(ls -d ~/.claude/plugins/cache/*/pd/*/scripts/doctor.sh 2>/dev/null | head -1)"
 ```
 
-Read-only health check across system prerequisites, plugin environment, and project context with OS-specific fix commands. Runs 21 checks including security-review command presence, stale worktree detection, status write-path enforcement, free-text status-parser regression detection, and severity vocabulary validation.
+Read-only health check across system prerequisites, plugin environment, and project context with OS-specific fix commands (12 environment checks). For workspace data-consistency diagnostics, run `/pd:doctor` inside a session instead — it runs 21 checks including security-review command presence, stale worktree detection, status write-path enforcement, free-text status-parser regression detection, and severity vocabulary validation.
 
 ## Quick Start
 
@@ -160,13 +160,7 @@ flowchart TD
         PE[Executor] <-->|Fix| PR{{"Reviewer<br/>Practical?"}}
     end
     PLN -->|Fix| PG{Plan Gate}
-    PG -->|Pass| TSK
-
-    subgraph TSK["TASKS"]
-        TE[Executor] <-->|Fix| TR{{"Reviewer<br/>Executable?"}}
-    end
-    TSK -->|Fix| TG{Task Gate}
-    TG -->|Pass| IMP
+    PG -->|Pass| IMP
 
     subgraph IMP["IMPLEMENT"]
         IE["Spec to Interface TDD"] <-->|Fix| IR{{"Reviewer<br/>Complete?"}}
@@ -177,8 +171,6 @@ flowchart TD
     FIN["FINISH<br/>Docs / PR / Merge"] --> RET
     RET["RETROSPECTIVE<br/>Capture Learnings"] --> DONE([Complete])
 ```
-
-![Workflow Overview](./docs/workflow-overview.png)
 
 ### Review System
 
@@ -310,7 +302,6 @@ pd includes 29 skills and 29 agents that run automatically during the workflow. 
 | project-decomposer | Decomposes project PRD into ordered features with dependencies and milestones |
 | generic-worker | General-purpose implementation agent for mixed-domain tasks |
 | documentation-writer | Writes and updates documentation based on research findings |
-| code-simplifier | Identifies unnecessary complexity and suggests simplifications |
 | ras-synthesizer | Synthesizes multi-source research findings into thematic analysis with confidence calibration |
 | relevance-verifier | Verifies coherence across the full artifact chain (spec→design→plan→tasks) before implementation |
 | test-deepener | Systematically deepens test coverage after TDD scaffolding with spec-driven adversarial testing |

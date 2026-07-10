@@ -1,5 +1,5 @@
 ---
-last-updated: 2026-05-13T00:00:00Z
+last-updated: 2026-07-10T00:00:00Z
 source-feature: 109-polymorphic-taxonomy-and-event
 ---
 
@@ -26,7 +26,7 @@ Everything is prompts. Skills and agents are instruction files that Claude follo
 | Skills | `plugins/pd/skills/{name}/SKILL.md` | 29 |
 | Agents | `plugins/pd/agents/{name}.md` | 29 |
 | Commands | `plugins/pd/commands/{name}.md` | 33 |
-| Hooks | `plugins/pd/hooks/` | 12 |
+| Hooks | `plugins/pd/hooks/` | 17 scripts (15 registered) |
 | MCP servers | `plugins/pd/mcp/` | 2 |
 | Shared Python libs | `plugins/pd/hooks/lib/` | — |
 
@@ -35,7 +35,7 @@ Everything is prompts. Skills and agents are instruction files that Claude follo
 Features progress through a linear phase sequence managed by the workflow engine:
 
 ```
-brainstorm → specify → design → create-plan → create-tasks → implement → finish-feature
+brainstorm → specify → design → create-plan → implement → finish
 ```
 
 Each phase command calls `validateAndSetup` (from `workflow-transitions` SKILL.md) before doing phase work, and `commitAndComplete` after. These two shared procedures handle transition validation, branch checks, partial-phase recovery, state recording, auto-commit, and phase summary storage.
@@ -67,9 +67,9 @@ Feature 075 adds the `phase_summaries` append-list to entity metadata, projected
 
 Agents are isolated subprocesses spawned by skills and commands via Task dispatch. They have a specific focus and return structured JSON results.
 
-**Reviewers (13):** spec-reviewer, design-reviewer, plan-reviewer, task-reviewer, implementation-reviewer, code-quality-reviewer, security-reviewer, phase-reviewer, brainstorm-reviewer, prd-reviewer, project-decomposition-reviewer, ds-analysis-reviewer, ds-code-reviewer
+**Reviewers (14):** spec-reviewer, design-reviewer, plan-reviewer, task-reviewer, implementation-reviewer, code-quality-reviewer, security-reviewer, phase-reviewer, brainstorm-reviewer, prd-reviewer, project-decomposition-reviewer, relevance-verifier, ds-analysis-reviewer, ds-code-reviewer
 
-**Workers (7):** implementer, generic-worker, documentation-writer, documentation-researcher, code-simplifier, ras-synthesizer, test-deepener
+**Workers (6):** implementer, generic-worker, documentation-writer, documentation-researcher, ras-synthesizer, test-deepener
 
 **Researchers (5):** codebase-explorer, investigation-agent, internet-researcher, skill-searcher, project-decomposer
 
@@ -90,12 +90,15 @@ Hooks fire automatically at Claude Code lifecycle points and are defined in `plu
 | `session-start` | SessionStart | Injects active feature context, runs doctor auto-fix |
 | `inject-secretary-context` | SessionStart | Injects available agent/command context for secretary routing |
 | `start-ui-server` | SessionStart | Auto-starts the Kanban board UI server |
+| `cleanup-stale-versions` | SessionStart | Deletes cached pd plugin versions older than the active one |
+| `pre-exit-plan-review` | PreToolUse (ExitPlanMode) | Gates plan exit behind plan-reviewer dispatch |
 | `pre-commit-guard` | PreToolUse (Bash) | Branch protection; warns on commits to main/master |
-| `meta-json-guard` | PreToolUse (Write/Edit) | Protects `.meta.json` files from unauthorized edits |
+| `pre-push-guard` | PreToolUse (Bash) | Validates `.meta.json` consistency before git push |
+| `data-file-guard` | PreToolUse (Write/Edit) | Config-driven guard protecting `.meta.json` and other pd data files from unauthorized edits |
+| `pre-edit-unicode-guard` | PreToolUse (Write/Edit) | Non-blocking warning for risky Unicode codepoints |
 | `yolo-guard` | PreToolUse (.*) | Enforces YOLO mode safety boundaries |
 | `post-enter-plan` | PostToolUse (EnterPlanMode) | Injects plan review instructions |
 | `post-exit-plan` | PostToolUse (ExitPlanMode) | Injects task breakdown and implementation workflow |
-| `pre-exit-plan-review` | PreToolUse (ExitPlanMode) | Gates plan exit behind plan-reviewer dispatch |
 | `yolo-stop` | Stop | Detects YOLO mode stop events and chains to next phase |
 
 SessionStart hooks match `startup|resume|clear` only — they do not fire on `compact` events.
@@ -106,7 +109,7 @@ Two MCP servers provide persistent state to Claude across sessions:
 
 ### Entity Registry Server (`mcp/entity_server.py`)
 
-Tools: `register_entity`, `set_parent`, `get_entity`, `get_lineage`, `update_entity`, `export_lineage_markdown`, `search_entities`, `export_entities`, `create_key_result`
+Tools (19): `register_entity`, `issue_spawn`, `set_parent`, `get_entity`, `get_lineage`, `update_entity`, `export_lineage_markdown`, `search_entities`, `export_entities`, `delete_entity`, `add_entity_tag`, `get_entity_tags`, `add_dependency`, `remove_dependency`, `add_okr_alignment`, `get_okr_alignments`, `create_key_result`, `update_kr_score`, `list_projects`
 
 Tracks lineage of pd artifacts (backlog items, brainstorms, projects, features) in a cross-project SQLite DB at `~/.claude/pd/entities/entities.db`. The `type_id` format is `{entity_type}:{entity_id}` with a colon separator (e.g., `feature:075-phase-context-accumulation`).
 
@@ -114,7 +117,7 @@ The `metadata` field on entities stores structured JSON. Entity-level metadata f
 
 ### Workflow State Server (`mcp/workflow_state_server.py`)
 
-Tools: `get_phase`, `transition_phase`, `complete_phase`, `validate_prerequisites`, `list_features_by_phase`, `list_features_by_status`, `reconcile_check`, `reconcile_apply`, `reconcile_frontmatter`, `reconcile_status`, `init_feature_state`, `init_project_state`, `activate_feature`, `init_entity_workflow`, `transition_entity_phase`
+Tools (21): `get_phase`, `transition_phase`, `complete_phase`, `validate_prerequisites`, `list_features_by_phase`, `list_features_by_status`, `reconcile_check`, `reconcile_apply`, `reconcile_frontmatter`, `reconcile_status`, `init_feature_state`, `init_project_state`, `activate_feature`, `init_entity_workflow`, `transition_entity_phase`, `get_notifications`, `promote_task`, `query_ready_tasks`, `get_progress_view`, `record_backward_event`, `query_phase_analytics`
 
 Manages feature lifecycle state as a SQLite-backed state machine. The state engine is defined in `hooks/lib/workflow_engine/`. Drift between the DB and `.meta.json` is detected and repaired by `reconcile_check` / `reconcile_apply`.
 
@@ -144,12 +147,12 @@ Each feature produces a set of files under `{artifacts_root}/features/{id}-{slug
 | `spec.md` | specify phase |
 | `design.md` | design phase |
 | `plan.md` | create-plan phase |
-| `tasks.md` | create-tasks phase |
+| `tasks.md` | create-plan phase |
 | `impl-log.md` | implement phase |
 | `.meta.json` | workflow engine (auto-managed) |
 | `.review-history.md` | reviewer agents (auto-managed) |
 
-`.meta.json` is the source of truth for workflow state. Modifications to it outside the workflow engine (MCP tools) are blocked by the `meta-json-guard` hook.
+`.meta.json` is the source of truth for workflow state. Modifications to it outside the workflow engine (MCP tools) are blocked by the `data-file-guard` hook.
 
 ## Design Principles
 

@@ -4,10 +4,12 @@
 # Validate components
 ./validate.sh
 
+# For a current test count of any pytest suite below, append: --collect-only -q
+
 # Run MCP bootstrap shared library tests (unit + integration, ~2-5 min)
 bash plugins/pd/mcp/test_bootstrap_venv.sh
 
-# Run entity registry tests (database, backfill, server helpers, frontmatter, frontmatter_sync, search, metadata — 940+ tests)
+# Run entity registry tests (database, backfill, server helpers, frontmatter, frontmatter_sync, search, metadata)
 plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/entity_registry/ -v
 
 # Run sqlite retry unit tests
@@ -22,35 +24,35 @@ plugins/pd/.venv/bin/python -m pytest plugins/pd/mcp/test_search_mcp.py -v
 # Run entity server bootstrap wrapper tests
 bash plugins/pd/mcp/test_entity_server.sh
 
-# Run transition gate tests (gate functions, constants, models — 257 tests)
+# Run transition gate tests (gate functions, constants, models)
 plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/transition_gate/ -v
 
-# Run workflow engine tests (state engine, hydration, transitions, degradation — 309 tests)
+# Run workflow engine tests (state engine, hydration, transitions, degradation)
 plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/workflow_engine/ -v
 
-# Run reconciliation orchestrator tests (entity sync, backlog parsing, brainstorm archive — 62 tests)
+# Run reconciliation orchestrator tests (entity sync, backlog parsing, brainstorm archive)
 plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/reconciliation_orchestrator/ -v
 
-# Run reconciliation module tests (drift detection, apply, frontmatter sync — 118 tests)
+# Run reconciliation module tests (drift detection, apply, frontmatter sync)
 plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/workflow_engine/test_reconciliation.py -v
 
-# Run workflow state MCP server tests (processing + reconciliation integration — 272 tests)
+# Run workflow state MCP server tests (processing + reconciliation integration)
 plugins/pd/.venv/bin/python -m pytest plugins/pd/mcp/test_workflow_state_server.py -v
 
 # Run workflow server bootstrap wrapper tests
 bash plugins/pd/mcp/test_run_workflow_server.sh
 
-# Run UI server tests (app + CLI + deepened — 190+ tests, requires PYTHONPATH for entity_registry + ui)
+# Run UI server tests (app + CLI + deepened; requires PYTHONPATH for entity_registry + ui)
 PYTHONPATH="plugins/pd/hooks/lib:plugins/pd" plugins/pd/.venv/bin/python -m pytest plugins/pd/ui/tests/ -v
 # Known pre-existing test issues (not regressions):
 # - test_deepened_app.py: intermittent segfault (SQLite threading)
 # - test_cli.py::test_cli_startup_url_output: fails when port 8718 in use
 
-# Run doctor diagnostic + auto-fix tests (150 tests)
+# Run doctor diagnostic + auto-fix tests
 PYTHONPATH=plugins/pd/hooks/lib plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/doctor/ -v
 # Doctor CLI supports --fix (apply safe fixes) and --fix --dry-run (preview fixes)
 
-# Run migration tool tests (system python3, not plugin venv — 128 tests)
+# Run migration tool tests (system python3, not plugin venv)
 python3 -m pytest scripts/test_migrate_db.py scripts/test_migrate_e2e.py scripts/test_migrate_deepened.py -v
 bash scripts/test_migrate_bash.sh
 

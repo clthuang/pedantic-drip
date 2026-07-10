@@ -1,5 +1,5 @@
 ---
-last-updated: 2026-04-29T00:00:00Z
+last-updated: 2026-07-10T00:00:00Z
 source-feature: 078-cc-native-integration
 audit-feature: 098-tier-doc-frontmatter-sweep
 ---
@@ -21,7 +21,7 @@ Optional: `rsync` and `gtimeout` (macOS: `brew install coreutils`).
 
 ```bash
 /plugin marketplace add clthuang/pedantic-drip
-/plugin install pd@my-local-plugins
+/plugin install pd@pedantic-drip-marketplace
 ```
 
 Core dependencies auto-install on first session.
