@@ -901,8 +901,16 @@ while IFS= read -r f; do
 done < <(grep -rlE '"hookSpecificOutput"[[:space:]]*:' plugins/pd/hooks/ 2>/dev/null || true)
 if [ "$bad_hook_schema" -gt 0 ]; then
     echo -e "${RED}Hook schema validation failed: $bad_hook_schema file(s) missing hookEventName${NC}"
-    echo -e "${RED}  → Prefer the shared helper: source lib/common.sh; emit_hook_json <event> <payload>${NC}"
+    echo -e "${RED}  → Build the full payload (incl. hookEventName) with jq and emit via safe_emit_hook_json from lib/session-start-helpers.sh${NC}"
     exit 1
+fi
+echo ""
+
+# Doc-drift gate: living docs must match the implementation
+# (component/tool counts, hooks cross-check, stale-string blocklist).
+echo "Checking documentation drift..."
+if ! bash scripts/check-doc-drift.sh; then
+    log_error "Documentation drift detected (see scripts/check-doc-drift.sh output above)"
 fi
 echo ""
 
