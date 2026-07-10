@@ -1,5 +1,5 @@
 ---
-last-updated: 2026-05-13T00:00:00Z
+last-updated: 2026-07-10T00:00:00Z
 source-feature: 109-polymorphic-taxonomy-and-event
 audit-feature: 098-tier-doc-frontmatter-sweep
 ---
@@ -9,6 +9,8 @@ audit-feature: 098-tier-doc-frontmatter-sweep
 # API Reference
 
 Internal contracts for MCP tools and key module interfaces. This document covers the MCP tool signatures used by workflow skills and commands, and the entity metadata contracts consumed by the workflow engine.
+
+**Scope note:** this is a selective contracts reference, not a full inventory. The servers expose 19 entity-registry tools and 21 workflow-engine tools — see the tool tables in `plugins/pd/README.md` for the complete list. Sections below marked "EntityDatabase method" document the Python DB layer (`database.py`), which is not exposed over MCP.
 
 ## MCP: Workflow Engine Server
 
@@ -26,10 +28,11 @@ complete_phase(
     iterations: int | None = None,          # Review iteration count (optional)
     reviewer_notes: str | None = None,      # JSON-serialized array OR null; raw string passed directly
     ref: str | None = None,                 # Alternative to feature_type_id (UUID or slug-based)
+    closes: list[str] | None = None,        # Issue entity UUIDs to atomically close with this phase
 ) -> str
 ```
 
-Writes to `phase_timing[phase].{completed, iterations, reviewerNotes}` in entity metadata. Does not write `phase_summaries` — that is handled separately via `update_entity` in `commitAndComplete` Step 3a. Note: `reviewer_notes` is parsed as a JSON blob, not passed as a Python list — callers must pre-serialize.
+Writes to `phase_timing[phase].{completed, iterations, reviewerNotes}` in entity metadata. Does not write `phase_summaries` — that is handled separately via `update_entity` in `commitAndComplete` Step 3a. Note: `reviewer_notes` is parsed as a JSON blob, not passed as a Python list — callers must pre-serialize. The optional `closes=[uuid...]` atomically transitions each referenced issue entity to its terminal status and writes `entity_relations(kind='fixes')` rows.
 
 ### transition_phase
 
@@ -51,8 +54,9 @@ Checks artifact prerequisites before entering a phase.
 
 ```
 validate_prerequisites(
-    type_id: str,
-    target_phase: str,
+    feature_type_id: str | None = None,
+    target_phase: str = "",
+    ref: str | None = None,                 # Alternative to feature_type_id
 ) -> {"valid": bool, "missing": list[str], "warnings": list[str]}
 ```
 
@@ -61,8 +65,8 @@ validate_prerequisites(
 Drift detection and repair between engine state and filesystem artifacts.
 
 ```
-reconcile_check(type_id: str) -> {"drifts": list[dict], "status": str}
-reconcile_apply(type_id: str, dry_run: bool) -> {"applied": list[str], "errors": list[str]}
+reconcile_check(feature_type_id: str | None = None) -> {"drifts": list[dict], "status": str}
+reconcile_apply(feature_type_id: str | None = None, dry_run: bool = False) -> {"applied": list[str], "errors": list[str]}
 ```
 
 ## MCP: Entity Registry Server
@@ -77,27 +81,38 @@ Raises `EntityExistsError` on `(workspace_uuid, type_id)` conflict — no silent
 
 ```
 register_entity(
-    type_id: str,           # "{kind}:{entity_id}", colon separator (not slash)
-    name: str,
-    artifact_path: str | None,
-    parent_type_id: str | None,
-    metadata: dict | str,   # dict preferred; auto-coerced to JSON string
-) -> str                    # entity uuid
+    entity_type: str,               # kind, e.g. "feature", "backlog" — combined with entity_id into "{kind}:{entity_id}" (colon separator, not slash)
+    entity_id: str | None = None,
+    name: str = "",
+    artifact_path: str | None = None,
+    status: str | None = None,
+    parent_uuid: str | None = None,
+    metadata: str | dict | None = None,   # dict preferred; auto-coerced to JSON string
+    workspace_uuid: str | None = None,
+    project_id: str | None = None,
+    auto_id: bool = False,
+) -> str                            # entity uuid
 ```
 
 **Exception:** `EntityExistsError(ValueError)` — raised when the `(workspace_uuid, type_id)` pair already exists. Carries `.workspace_uuid` and `.type_id` attributes for caller inspection. Defined in `database.py` (not a separate `exceptions.py`).
 
-### upsert_entity
+### upsert_entity — EntityDatabase method (database.py, not an MCP tool)
 
-Idempotent insert-or-status-update. Byte-identical signature to `register_entity` (feature 109, FR-4).
+Idempotent insert-or-status-update. Byte-identical signature to the DB-layer `EntityDatabase.register_entity` (feature 109, FR-4).
 
 ```
-upsert_entity(
-    type_id: str,
+EntityDatabase.upsert_entity(
+    entity_type: str,
+    entity_id: str,
     name: str,
-    artifact_path: str | None,
-    parent_type_id: str | None,
-    metadata: dict | str,
+    *,
+    workspace_uuid: str | None = None,
+    project_id: str | None = None,
+    artifact_path: str | None = None,
+    status: str | None = None,
+    parent_uuid: str | None = None,
+    parent_type_id: str | None = None,
+    metadata: dict | None = None,
 ) -> str                    # entity uuid (existing or newly created)
 ```
 
@@ -111,15 +126,16 @@ upsert_entity(
 
 `name`, `parent_uuid`, and `metadata` are **never updated** on the conflict branch. Use `update_entity` for those fields.
 
-### promote_entity
+### promote_entity — EntityDatabase method (database.py, not an MCP tool)
 
 Atomically promotes an entity to a new kind within the same workspace, rewriting the `type_id` prefix (feature 109, FR-3).
 
 ```
-promote_entity(
+EntityDatabase.promote_entity(
     uuid: str,
     new_kind: str,
     new_lifecycle_class: str,
+    *,
     project_id: str | None = None,
 ) -> dict                   # updated entity row
 ```
@@ -172,19 +188,23 @@ get_lineage(
 
 Returns a human-readable formatted tree, not a structured list. Parse caller-side if structured access is needed.
 
-### append_phase_event
+### append_phase_event — EntityDatabase method (database.py, not an MCP tool)
 
 Sole write path for `entities.status` and `workflow_phases.workflow_phase` mutations (feature 109, FR-2 Path A). Returns the event uuid.
 
 ```
-append_phase_event(
+EntityDatabase.append_phase_event(
+    *,                              # keyword-only
     type_id: str,
+    project_id: str,
     event_type: str,                # see domain table below
-    *,
-    metadata: dict | None = None,   # event-specific JSON payload
-    project_id: str | None = None,
+    timestamp: str | None = None,
+    phase: str | None = None,       # required for workflow event types
     iterations: int | None = None,
     reviewer_notes: str | None = None,
+    backward_reason: str | None = None,
+    backward_target: str | None = None,
+    metadata: dict | None = None,   # event-specific JSON payload
 ) -> str                            # event uuid
 ```
 

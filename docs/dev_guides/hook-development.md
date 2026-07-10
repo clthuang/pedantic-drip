@@ -106,16 +106,18 @@ Claude Code enforces a schema on hook JSON output. **Every `hookSpecificOutput` 
 }
 ```
 
-### Preferred: use the shared helper
+### Preferred: use the shared emitter
 
-Instead of emitting JSON by hand, source `lib/common.sh` and call `emit_hook_json`:
+Build the complete payload yourself — including `hookEventName` — then emit it via the EPIPE-safe `safe_emit_hook_json` helper from `lib/session-start-helpers.sh`:
 
 ```bash
-source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
-emit_hook_json "PreToolUse" '{"permissionDecision":"allow"}'
+trap '' PIPE   # co-load-bearing: without it, bash dies of SIGPIPE before the helper's || true runs
+source "$(dirname "${BASH_SOURCE[0]}")/lib/session-start-helpers.sh"
+payload=$(jq -nc '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "allow"}}')
+safe_emit_hook_json "$payload"
 ```
 
-`emit_hook_json` always wraps the payload with the correct `hookEventName`. Prefer this over hand-rolled `printf '{"hookSpecificOutput":{...}}'` to prevent the bug class documented in `docs/rca/20260419-hookSpecificOutput-missing-hookEventName-round2.md`.
+`safe_emit_hook_json` emits the payload exactly as given — it does NOT wrap or add `hookEventName` for you; its job is EPIPE-safe delivery (see "Broken-pipe handling" below). Building the payload with `jq -nc` and passing it whole prevents the missing-`hookEventName` bug class documented in `docs/rca/20260419-hookSpecificOutput-missing-hookEventName-round2.md`.
 
 ### Common pitfall: missing `hookEventName`
 

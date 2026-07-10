@@ -29,13 +29,7 @@ flowchart TD
         PE[Executor] <-->|Fix| PR{{"Reviewer<br/>Practical?"}}
     end
     PLN -->|Fix| PG{Plan Gate}
-    PG -->|Pass| TSK
-
-    subgraph TSK["TASKS"]
-        TE[Executor] <-->|Fix| TR{{"Reviewer<br/>Executable?"}}
-    end
-    TSK -->|Fix| TG{Task Gate}
-    TG -->|Pass| IMP
+    PG -->|Pass| IMP
 
     subgraph IMP["IMPLEMENT"]
         IE["Spec to Interface TDD"] <-->|Fix| IR{{"Reviewer<br/>Complete?"}}
@@ -63,14 +57,14 @@ flowchart TD
 **Start:**
 | Command | Description |
 |---------|-------------|
-| `/pd:brainstorm [topic]` | 7-stage PRD creation with research subagents and domain enrichment |
+| `/pd:brainstorm [topic]` | 6-stage PRD creation with research subagents and domain enrichment |
 | `/pd:create-feature <desc>` | Start building (creates folder + branch) |
 
 **Build phases** (run in order):
 | Command | Output |
 |---------|--------|
 | `/pd:specify [--feature=ID]` | spec.md |
-| `/pd:design` | design.md (4-stage workflow) |
+| `/pd:design` | design.md (5-stage workflow) |
 | `/pd:create-plan` | plan.md |
 | `/pd:create-tasks` | _(deprecated — merged into create-plan)_ |
 | `/pd:taskify` | Break any existing plan into tasks (standalone regeneration) |
@@ -158,7 +152,7 @@ Stage 2: PHASE-REVIEWER (Execution Readiness)
 
 ### Implementation Review
 
-The `/pd:implement` command uses three reviewers in an iterative loop (up to 3 iterations). Only reviewers that failed re-run in intermediate iterations — passing reviewers are skipped. When all three have individually passed, a mandatory final validation round runs all three regardless to confirm end-to-end correctness.
+The `/pd:implement` command uses four reviewers in an iterative loop (up to 3 iterations). Only reviewers that failed re-run in intermediate iterations — passing reviewers are skipped. When all four have individually passed, a mandatory final validation round runs all four regardless to confirm end-to-end correctness.
 
 | Reviewer | Focus | Validation |
 |----------|-------|------------|
@@ -175,7 +169,6 @@ The `/pd:implement` command uses three reviewers in an iterative loop (up to 3 i
 | ds-analysis-reviewer | Reviews data analysis for statistical pitfalls and methodology |
 | brainstorm-reviewer | Reviews brainstorm artifacts for completeness before promotion |
 | code-quality-reviewer | Reviews implementation quality by severity |
-| code-simplifier | Identifies unnecessary complexity and suggests simplifications |
 | codebase-explorer | Analyzes codebase for patterns and constraints |
 | design-reviewer | Challenges design assumptions and finds gaps (skeptic) |
 | documentation-researcher | Researches documentation state and identifies update needs |
@@ -208,7 +201,7 @@ Both MCP servers (entity registry, workflow engine) share a common lifecycle lay
 
 ### Entity Registry Server
 
-The entity registry server (`mcp/entity_server.py`) exposes nineteen tools for entity lineage tracking:
+The entity registry server (`mcp/entity_server.py`) exposes 19 tools for entity lineage tracking:
 
 | Tool | Purpose |
 |------|---------|
@@ -236,7 +229,7 @@ The server is bootstrapped by `mcp/run-entity-server.sh` and declared in `plugin
 
 ### Workflow Engine Server
 
-The workflow engine server (`mcp/workflow_state_server.py`) exposes fifteen tools for workflow state management:
+The workflow engine server (`mcp/workflow_state_server.py`) exposes 21 tools for workflow state management:
 
 | Tool | Purpose |
 |------|---------|
@@ -255,6 +248,12 @@ The workflow engine server (`mcp/workflow_state_server.py`) exposes fifteen tool
 | `activate_feature` | Activate a planned feature for development |
 | `init_entity_workflow` | Initialize entity workflow tracking |
 | `transition_entity_phase` | Transition an entity to a new workflow phase |
+| `get_notifications` | Drain pending notifications for the current project |
+| `promote_task` | Promote a task from tasks.md to a tracked task entity |
+| `query_ready_tasks` | List task entities ready for execution |
+| `get_progress_view` | Get cross-level progress view for an entity's ancestor chain |
+| `record_backward_event` | Record a backward phase transition event for analytics |
+| `query_phase_analytics` | Query structured phase execution data for analytics |
 
 The server is bootstrapped by `mcp/run-workflow-server.sh` and declared in `plugin.json` via `mcpServers`. Like the entity server, it starts in degraded mode if the workflow state DB is locked and recovers automatically.
 
@@ -281,5 +280,5 @@ Run `doctor.sh` anytime to troubleshoot issues — it provides OS-specific fix i
 
 ```bash
 /plugin marketplace add .
-/plugin install pd@my-local-plugins
+/plugin install pd@pedantic-drip-marketplace
 ```

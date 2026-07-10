@@ -86,7 +86,7 @@ In Claude Code:
 
 ```
 /plugin marketplace add .claude-plugin/marketplace.json
-/plugin install pd@my-local-plugins
+/plugin install pd@pedantic-drip-marketplace
 ```
 
 After making changes to plugin files, sync the cache:
@@ -142,8 +142,8 @@ flowchart TD
     subgraph WORKFLOW["Workflow Phases"]
         direction LR
         WF1[brainstorm] --> WF2[specify] --> WF3[design]
-        WF3 --> WF4[create-plan] --> WF5[create-tasks]
-        WF5 --> WF6[implement] --> WF7[finish-feature]
+        WF3 --> WF4[create-plan] --> WF5[implement]
+        WF5 --> WF6[finish]
     end
 
     SK --> WORKFLOW
@@ -151,8 +151,8 @@ flowchart TD
 
     subgraph AG["Agents · 29 subagents"]
         direction TB
-        A1["Reviewers (13)<br/>spec, design, plan, impl,<br/>security, code-quality, ..."]
-        A2["Workers (7)<br/>implementer, code-simplifier,<br/>ras-synthesizer, test-deepener, ..."]
+        A1["Reviewers (14)<br/>spec, design, plan, impl,<br/>security, code-quality, ..."]
+        A2["Workers (6)<br/>implementer, documentation-writer,<br/>ras-synthesizer, test-deepener, ..."]
         A3["Researchers (5)<br/>codebase-explorer,<br/>investigation-agent, ..."]
         A4["Advisory (1) · Orchestration (3)"]
     end
@@ -165,8 +165,8 @@ flowchart TD
     end
 
     subgraph HOOKS["Hooks · scripts"]
-        H1["SessionStart (5)<br/>sync-cache, session-start,<br/>inject-secretary-context,<br/>cleanup-locks, start-ui-server"]
-        H2["PreToolUse (4)<br/>pre-commit-guard,<br/>pre-exit-plan-review,<br/>meta-json-guard,<br/>yolo-guard"]
+        H1["SessionStart (6)<br/>sync-cache, cleanup-locks,<br/>session-start,<br/>inject-secretary-context,<br/>start-ui-server,<br/>cleanup-stale-versions"]
+        H2["PreToolUse (6)<br/>pre-exit-plan-review,<br/>pre-commit-guard,<br/>pre-push-guard,<br/>data-file-guard,<br/>pre-edit-unicode-guard,<br/>yolo-guard"]
         H3["PostToolUse (2)<br/>post-enter-plan,<br/>post-exit-plan"]
         H4["Stop (1)<br/>yolo-stop"]
     end
@@ -174,7 +174,7 @@ flowchart TD
     HOOKS -.->|"lifecycle events"| SK
     HOOKS -.->|"lifecycle events"| AG
 
-    subgraph ENT["Entity Registry · 8 MCP tools"]
+    subgraph ENT["Entity Registry · 19 MCP tools"]
         direction TB
         ET1[register_entity] ~~~ ET2[set_parent] ~~~ ET3[get_entity]
         ET4[get_lineage] ~~~ ET5[update_entity] ~~~ ET6[export_lineage_markdown]
@@ -294,7 +294,7 @@ doctor_schedule: "0 */4 * * *"   # Every 4 hours
 
 Agents are isolated subprocesses spawned by the workflow. Located in `plugins/pd/agents/{name}.md`.
 
-**Reviewers (13):**
+**Reviewers (14):**
 - `brainstorm-reviewer` — Reviews brainstorm artifacts with universal + type-specific criteria before promotion
 - `code-quality-reviewer` — Reviews implementation quality after spec compliance is confirmed
 - `design-reviewer` — Challenges design assumptions and finds gaps
@@ -306,6 +306,7 @@ Agents are isolated subprocesses spawned by the workflow. Located in `plugins/pd
 - `spec-reviewer` — Reviews spec.md for testability, assumptions, and scope discipline
 - `security-reviewer` — Reviews implementation for security vulnerabilities; uses WebSearch + Context7 for external claim verification
 - `task-reviewer` — Validates task breakdown quality for immediate executability
+- `relevance-verifier` — Verifies full artifact chain coherence (spec → design → plan → tasks) before implementation and during 360 QA
 - `ds-analysis-reviewer` — Reviews data analysis for statistical pitfalls, methodology issues, and conclusion validity; uses WebSearch + Context7
 - `ds-code-reviewer` — Reviews DS Python code for anti-patterns, pipeline quality, and best practices; uses Context7 for API verification
 
@@ -314,7 +315,6 @@ Agents are isolated subprocesses spawned by the workflow. Located in `plugins/pd
 - `project-decomposer` — Decomposes project PRD into ordered features with dependencies and milestones
 - `generic-worker` — General-purpose implementation agent for mixed-domain tasks
 - `documentation-writer` — Writes and updates documentation based on research findings
-- `code-simplifier` — Identifies unnecessary complexity and suggests simplifications
 - `ras-synthesizer` — Synthesizes multi-source research findings into thematic analysis with confidence calibration
 - `test-deepener` — Systematically deepens test coverage after TDD scaffolding with spec-driven adversarial testing
 
@@ -351,14 +351,19 @@ Hooks execute automatically at lifecycle points.
 | `session-start` | SessionStart (startup\|resume\|clear) | Injects active feature context and runs doctor auto-fix |
 | `inject-secretary-context` | SessionStart (startup\|resume\|clear) | Injects available agent/command context for secretary |
 | `start-ui-server` | SessionStart (startup\|resume\|clear) | Auto-starts UI server (Kanban board) in background |
-| `cleanup-sandbox` | (utility) | Cleans up agent_sandbox/ temporary files |
+| `cleanup-stale-versions` | SessionStart (startup\|resume\|clear) | Deletes cached pd plugin versions older than the active one |
+| `pre-exit-plan-review` | PreToolUse (ExitPlanMode) | Gates ExitPlanMode behind plan-reviewer dispatch; denies first call with instructions, allows second. YOLO mode skips the gate entirely. |
 | `pre-commit-guard` | PreToolUse (Bash) | Branch protection and pd directory protection |
-| `meta-json-guard` | PreToolUse (Write\|Edit) | Protects .meta.json files from unauthorized modifications |
+| `pre-push-guard` | PreToolUse (Bash) | Validates .meta.json consistency before git push |
+| `data-file-guard` | PreToolUse (Write\|Edit) | Config-driven dispatcher protecting pd data files (`.meta.json` and other guarded paths) from unauthorized modifications |
+| `pre-edit-unicode-guard` | PreToolUse (Write\|Edit) | Non-blocking warning for risky Unicode codepoints in edits |
 | `yolo-guard` | PreToolUse (.*) | Enforces YOLO mode safety boundaries on all tool calls |
 | `post-enter-plan` | PostToolUse (EnterPlanMode) | Injects plan review instructions before approval |
 | `post-exit-plan` | PostToolUse (ExitPlanMode) | Injects task breakdown and implementation workflow |
-| `pre-exit-plan-review` | PreToolUse (ExitPlanMode) | Gates ExitPlanMode behind plan-reviewer dispatch; denies first call with instructions, allows second. YOLO mode skips the gate entirely. |
 | `yolo-stop` | Stop | Detects YOLO mode stop events and chains to next phase |
+| `cleanup-sandbox` | (utility, unregistered) | Cleans up agent_sandbox/ temporary files |
+
+`pre-edit-unicode-guard.sh` delegates to `pre-edit-unicode-guard.py` — a worker module invoked by the wrapper, not separately registered.
 
 SessionStart hooks match `startup|resume|clear` only -- they do not fire on `compact` events, preserving context window savings from compaction.
 
@@ -370,25 +375,29 @@ The `pre-commit-guard` hook warns when committing to protected branches (main/ma
 
 ## Workflow Details
 
-### Create-Tasks Workflow
+### Create-Plan Workflow
 
-The `/create-tasks` command uses a two-stage review process:
+The `/create-plan` command produces `plan.md` AND `tasks.md` in a single phase (task breakdown was merged into create-plan in feature 073; `/pd:create-tasks` survives only as a deprecated redirect). It runs a combined review loop (max 5 iterations; all three reviewers must pass):
 
-1. **Task Breakdown**: `breaking-down-tasks` skill produces `tasks.md` with:
+1. **Produce artifacts**: `planning` skill creates/revises `plan.md`; `breaking-down-tasks` skill creates/revises `tasks.md` from the plan:
    - Mermaid dependency graph
    - Parallel execution groups
    - Detailed task specifications (files, steps, tests, done criteria)
 
-2. **Task Review**: `task-reviewer` validates (up to 3 iterations):
+2. **Plan Review**: `plan-reviewer` challenges failure modes, untested assumptions, dependency accuracy, and TDD order
+
+3. **Task Review**: `task-reviewer` validates:
    - Plan fidelity (every plan item has tasks)
    - Task executability (any engineer can start immediately)
    - Task size (5-15 min each)
    - Dependency accuracy (parallel groups correct)
    - Testability (binary done criteria)
 
-3. **Phase Review**: `phase-reviewer` validates readiness for implementation phase
+4. **Phase Review**: `phase-reviewer` validates readiness for the implement phase
 
-4. **Completion**: Prompts user to start `/implement`
+5. **Relevance Gate**: `relevance-verifier` checks full artifact chain coherence (PRD → spec → design → plan → tasks) before auto-chaining
+
+6. **Completion**: Prompts user to start `/implement` (auto-chains in YOLO mode)
 
 ### Implement Workflow
 
@@ -401,10 +410,9 @@ Hard prerequisites: spec.md AND tasks.md must pass 4-level validation before imp
    - Falls back to full artifact loading when traceability fields are absent or unparseable
    - Includes project context block (~200-500 tokens) for project-linked features
    - Produces `implementation-log.md` with per-task decisions, deviations, and concerns
-2. **Simplification**: `code-simplifier` removes unnecessary complexity
-3. **Test Deepening**: `test-deepener` generates spec-driven test outlines (Phase A) then writes executable tests (Phase B), reporting spec divergences
-4. **Review** (iterative, up to 5 iterations): `implementation-reviewer` -> `code-quality-reviewer` -> `security-reviewer`. Only failed reviewers re-run in intermediate iterations. When all three have individually passed, a mandatory final validation round runs all three reviewers regardless.
-5. **Completion**: Prompts user to run `/finish-feature`
+2. **Test Deepening**: `test-deepener` generates spec-driven test outlines (Phase A) then writes executable tests (Phase B), reporting spec divergences
+3. **Review** (iterative, up to 3 iterations total including the final validation round): `implementation-reviewer` -> `relevance-verifier` -> `code-quality-reviewer` -> `security-reviewer`. Only failed reviewers re-run in intermediate iterations. When all four have individually passed, a mandatory final validation round runs all four reviewers regardless.
+4. **Completion**: Prompts user to run `/finish-feature`
 
 The `implementation-log.md` artifact is read by the retro skill during `/finish-feature` and then deleted alongside `.review-history.md`.
 
@@ -447,10 +455,10 @@ Each phase command includes `[YOLO_MODE]` in the args when invoking the next com
 ### Hard Stop Points
 
 YOLO mode stops and reports to user (does not force through):
-1. Implementation circuit breaker — 5 review iterations without approval
+1. Implementation circuit breaker — 3 review iterations without approval
 2. Git merge conflict — cannot auto-resolve
 3. Pre-merge validation failure — 3 fix attempts exhausted
-4. Hard prerequisite failures — design.md (for create-plan), plan.md (for create-tasks), spec.md or tasks.md (for implement) missing/invalid
+4. Hard prerequisite failures — design.md (for create-plan), spec.md or tasks.md (for implement) missing/invalid
 5. Git push failure — network or auth issues
 
 ### Files Modified for YOLO Support
@@ -464,8 +472,7 @@ YOLO mode stops and reports to user (does not force through):
 | `commands/create-feature.md` | Auto-select conflict resolution and mode |
 | `commands/specify.md` | Auto-select feature, auto-chain to design |
 | `commands/design.md` | Auto-proceed research, auto-chain to create-plan |
-| `commands/create-plan.md` | Auto-chain to create-tasks |
-| `commands/create-tasks.md` | Auto-chain to implement |
+| `commands/create-plan.md` | Auto-chain to implement |
 | `commands/implement.md` | Circuit breaker STOP, auto-chain to finish-feature |
 | `commands/abandon-feature.md` | Skip confirmation prompt |
 | `commands/finish-feature.md` | Auto-continue, auto-merge, STOP on conflict |
@@ -497,16 +504,26 @@ The entity registry tracks the lineage of pd artifacts (backlog items, brainstor
 
 **MCP Server:** `plugins/pd/mcp/entity_server.py` (bootstrapped via `plugins/pd/mcp/run-entity-server.sh`)
 
-**MCP Tools (9):**
+**MCP Tools (19):**
 - `register_entity` -- Register a new entity (backlog, brainstorm, project, or feature) with optional parent link and metadata
+- `issue_spawn` -- Spawn a new issue entity (kind='bug' or 'task') linked to a parent
 - `set_parent` -- Set or change the parent of an entity (with circular reference detection)
-- `get_entity` -- Retrieve a single entity by type_id
+- `get_entity` -- Retrieve a single entity by type_id or ref
 - `get_lineage` -- Traverse the entity hierarchy upward (toward root) or downward (toward leaves) with depth limiting
 - `update_entity` -- Update mutable fields (name, status, artifact_path, metadata) of an existing entity
 - `export_lineage_markdown` -- Export entity lineage as a markdown tree, optionally writing to a file
-- `search_entities` -- Search entities by name, type, status, or metadata
-- `export_entities` -- Export all entities as structured data
+- `search_entities` -- Full-text search across all entities
+- `export_entities` -- Export all entities (or a filtered subset) as structured JSON
+- `delete_entity` -- Delete an entity and all associated data (FTS, workflow_phases)
+- `add_entity_tag` -- Add a tag to an entity
+- `get_entity_tags` -- Get all tags for an entity
+- `add_dependency` -- Add a dependency: entity is blocked by another entity
+- `remove_dependency` -- Remove a dependency between two entities
+- `add_okr_alignment` -- Link an entity to a key result for lateral OKR alignment
+- `get_okr_alignments` -- Get all key results aligned to an entity
 - `create_key_result` -- Create a key_result entity with parent link, metric_type, and optional weight
+- `update_kr_score` -- Manually update score for a baseline_target (or binary-no-children) key result
+- `list_projects` -- List all known projects in the entity registry
 
 **Metadata Module:** `plugins/pd/hooks/lib/entity_registry/metadata.py` — centralized `parse_metadata()` (returns `{}` for None/invalid, never `None`) and `validate_metadata()` (warn-only schema checks per entity type). All entity_registry and workflow_engine modules import from here instead of hand-rolling `json.loads` patterns.
 
@@ -522,7 +539,7 @@ The workflow engine manages feature lifecycle state, phase transitions, and drif
 
 **MCP Server:** `plugins/pd/mcp/workflow_state_server.py` (bootstrapped via `plugins/pd/mcp/run-workflow-server.sh`)
 
-**MCP Tools (17):**
+**MCP Tools (21):**
 - `get_phase` -- Get current workflow phase for a feature
 - `transition_phase` -- Transition a feature to the next workflow phase (dual-writes to `phase_events`)
 - `complete_phase` -- Mark the current phase as complete (dual-writes to `phase_events`)
@@ -538,6 +555,10 @@ The workflow engine manages feature lifecycle state, phase transitions, and drif
 - `activate_feature` -- Activate a planned feature for development
 - `init_entity_workflow` -- Initialize entity workflow tracking
 - `transition_entity_phase` -- Transition an entity to a new workflow phase
+- `get_notifications` -- Drain pending notifications for the current project
+- `promote_task` -- Promote a task from tasks.md to a tracked task entity
+- `query_ready_tasks` -- List task entities ready for execution
+- `get_progress_view` -- Get cross-level progress view for an entity's ancestor chain
 - `record_backward_event` -- Record a backward phase transition event for analytics
 - `query_phase_analytics` -- Query structured phase execution data (phase_duration, iteration_summary, backward_frequency, raw_events)
 

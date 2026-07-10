@@ -110,7 +110,7 @@ When the `openai-codex/codex` plugin is installed (detected by presence of `~/.c
 
 - **Knowledge bank:** `docs/knowledge-bank/{patterns,anti-patterns,heuristics}.md` — inert reference markdown (no tooling reads/writes it)
 - **Entity registry DB:** `~/.claude/pd/entities/entities.db` — cross-project entity lineage (overridable via `ENTITY_DB_PATH` env var)
-- **Entity type_id format gotcha:** `type_id` uses colon separator: `"{entity_type}:{entity_id}"` (e.g., `"feature:043-my-feature"`), NOT slash. See `database.py:627`.
+- **Entity type_id format gotcha:** `type_id` uses colon separator: `"{entity_type}:{entity_id}"` (e.g., `"feature:043-my-feature"`), NOT slash. See `EntityDatabase.register_entity` in `database.py`.
 - **Entity registry MCP metadata gotcha:** `register_entity` and `update_entity` accept `metadata` as either a dict or JSON string (dict preferred). Dicts are auto-coerced to JSON string via `json.dumps()` before `parse_metadata`. When updating entity state, prefer updating `.meta.json` directly (source of truth) and skip MCP metadata updates.
 - **Entity metadata parsing:** Always use `from entity_registry.metadata import parse_metadata` — returns `{}` for None/invalid (never returns None). Do NOT use raw `json.loads` on metadata fields. `validate_metadata(entity_type, meta_dict)` returns warning strings for type mismatches.
 - **Entity table schema gotcha:** The `entities` table has a `uuid TEXT NOT NULL PRIMARY KEY` column. Raw SQL `INSERT` in test helpers must include a uuid value or the insert silently fails with `INSERT OR IGNORE`. Use `import uuid; str(uuid.uuid4())`.

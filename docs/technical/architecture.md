@@ -1,5 +1,5 @@
 ---
-last-updated: 2026-05-13T00:00:00Z
+last-updated: 2026-07-10T00:00:00Z
 source-feature: 109-polymorphic-taxonomy-and-event
 audit-feature: 098-tier-doc-frontmatter-sweep
 ---
@@ -12,7 +12,7 @@ audit-feature: 098-tier-doc-frontmatter-sweep
 
 Pedantic Drip (pd) is a Claude Code plugin providing a structured feature development workflow. It is not a standalone application — it runs entirely within Claude Code sessions and extends Claude's behavior through commands, skills, agents, and hooks.
 
-The system is organized around a pipeline of workflow phases (brainstorm → specify → design → create-plan → create-tasks → implement → finish-feature). Each phase produces file artifacts. State is persisted across sessions via SQLite-backed MCP servers and JSON files in the feature directory.
+The system is organized around a pipeline of workflow phases (brainstorm → specify → design → create-plan → implement → finish). Each phase produces file artifacts. State is persisted across sessions via SQLite-backed MCP servers and JSON files in the feature directory.
 
 ## Component Map
 
@@ -41,7 +41,7 @@ User
 ## Workflow Phase Sequence
 
 ```
-brainstorm → specify → design → create-plan → create-tasks → implement → finish-feature
+brainstorm → specify → design → create-plan → implement → finish
 ```
 
 Each phase transition is guarded by `validateAndSetup` (in `workflow-transitions` skill) and recorded in entity metadata via `complete_phase` MCP. Phase timing, iteration counts, and reviewer notes accumulate in `phase_timing` within entity metadata and are projected to `.meta.json`.
@@ -261,20 +261,21 @@ Constraints: max 2000 chars per entry (serialized JSON). Truncation order: `revi
 
 Hooks are shell scripts in `plugins/pd/hooks/` executed by Claude Code at lifecycle points defined in `hooks.json`.
 
-Total: 16 hooks. Subset shown below; see [README_FOR_DEV.md](../../README_FOR_DEV.md) for the complete table.
+Total: 17 hook scripts, 15 registered in `hooks.json` (plus the unregistered `cleanup-sandbox.sh` utility and the `pre-edit-unicode-guard.py` worker module). Subset shown below; see [README_FOR_DEV.md](../../README_FOR_DEV.md) for the complete table.
 
 | Hook | Trigger | Key behavior |
 |------|---------|-------------|
 | `session-start` | SessionStart | Reads active feature `.meta.json`, injects context into session |
-| `meta-json-guard` | PreToolUse (Write/Edit) | Blocks unauthorized `.meta.json` modifications |
+| `data-file-guard` | PreToolUse (Write/Edit) | Config-driven guard blocking unauthorized `.meta.json` and other pd data-file modifications |
 | `pre-commit-guard` | PreToolUse (Bash) | Branch protection, pd directory protection |
-| `pre-push-guard` | PreToolUse (Bash) | Pre-push validation hooks |
+| `pre-push-guard` | PreToolUse (Bash) | Pre-push `.meta.json` consistency validation |
+| `pre-edit-unicode-guard` | PreToolUse (Write/Edit) | Non-blocking warning for risky Unicode codepoints |
 | `pre-exit-plan-review` | PreToolUse (ExitPlanMode) | Gates plan exit behind `plan-reviewer` dispatch |
-| `post-enter-plan` / `post-exit-plan` | PostToolUse (ExitPlanMode) | Post-plan-mode lifecycle |
+| `post-enter-plan` / `post-exit-plan` | PostToolUse (EnterPlanMode / ExitPlanMode) | Plan-mode lifecycle |
 | `yolo-guard` | PreToolUse (.*) | Enforces YOLO mode safety boundaries |
 | `yolo-stop` | Stop | Chains to next phase on YOLO stop events |
-| `cleanup-locks` / `cleanup-sandbox` / `cleanup-stale-versions` | SessionStart | Clean up SQLite locks, agent sandboxes, stale plugin versions |
-| `inject-secretary-context` | PreToolUse (Task) | Injects secretary routing context |
+| `cleanup-locks` / `cleanup-stale-versions` | SessionStart | Clean up SQLite locks and stale cached plugin versions |
+| `inject-secretary-context` | SessionStart | Injects secretary routing context |
 | `start-ui-server` / `sync-cache` | SessionStart | Auto-start Kanban UI server, sync plugin cache |
 
 ## Agent Categories

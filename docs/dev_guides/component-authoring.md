@@ -14,7 +14,7 @@ This repository uses a two-level plugin system:
 
 ```json
 {
-  "name": "my-local-plugins",
+  "name": "example-marketplace",
   "description": "Personal local plugins marketplace",
   "owner": { "name": "username" },
   "plugins": [
@@ -256,18 +256,13 @@ Hooks are configured in `hooks/hooks.json` within the plugin:
 
 ## Plugin Self-References
 
-When referencing commands, skills, or agents within plugin files, use the plugin's own name as the prefix:
+When referencing commands, skills, or agents within plugin files, always use the fully-qualified `pd:` prefix:
 
 | Plugin | Command Reference | Subagent Reference |
 |--------|-------------------|-------------------|
 | `pd` | `/pd:show-status` | `pd:prd-reviewer` |
-| `pd` | `/pd:show-status` | `pd:prd-reviewer` |
 
-**Why this matters:** Using the wrong prefix causes cross-plugin invocation. For example, `/pd:show-status` in `pd` would invoke the production plugin instead of the dev plugin.
-
-**Build-time conversion:** The release script (`scripts/release.sh`) automatically converts `pd:` → `pd:` when copying files from `pd` to `pd`. This allows development to use the correct dev prefix while production uses the correct production prefix.
-
-**Validation:** The release script validates that no `/pd:` references exist in `pd` before copying. This prevents accidental cross-plugin references.
+**Why this matters:** A bare reference (`/show-status`, `prd-reviewer`) resolves against whatever plugins happen to be installed — it can silently invoke a different plugin's component or fail entirely when pd runs from the marketplace cache. The `pd:` prefix pins the reference to this plugin.
 
 ---
 
@@ -302,7 +297,7 @@ Use these terms consistently across all skills, commands, agents, and documentat
 |------|---------|---------|
 | **Stage** | Top-level division within a skill. Stages are the major sections of work a skill defines. | A skill with stages: "Analysis", "Design", "Implementation" |
 | **Step** | A section within a command, or a sub-item within a skill stage. Steps are the actionable units inside a stage or command. | Command steps: "1. Gather context", "2. Generate output" |
-| **Phase** | Reserved for workflow-state phase names only. Refers to the phases defined in the `workflow-state` skill that track feature lifecycle. | Phases: `brainstorm`, `design`, `plan`, `implement`, `review` |
+| **Phase** | Reserved for workflow-state phase names only. Refers to the phases defined in the `workflow-state` skill that track feature lifecycle. | Phases: `brainstorm`, `specify`, `design`, `create-plan`, `implement`, `finish` |
 
 **Why this matters:** Mixing these terms (e.g., calling a workflow-state phase a "stage", or calling a skill division a "phase") creates ambiguity in prompts and documentation. Consistent terminology improves LLM instruction-following and reduces author confusion.
 
@@ -352,5 +347,5 @@ Precedent: feature 105 originally prescribed `agent_sandbox/2026-05-06/feature-1
 
 ## See Also
 
-- [Architecture Design](../prds/claude_code_special_force_design.md) - Three-tier configuration hierarchy
+- [Developer Guide](../../README_FOR_DEV.md) - Architecture, design principles, and release workflow
 - [Anthropic Skills Repo](https://github.com/anthropics/skills) - Reference implementations
