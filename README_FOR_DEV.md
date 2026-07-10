@@ -183,8 +183,6 @@ flowchart TD
     end
 ```
 
-![Architecture Overview](./docs/architecture-overview.png)
-
 ## Design Principles
 
 | Principle | Meaning |

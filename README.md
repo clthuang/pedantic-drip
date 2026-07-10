@@ -172,8 +172,6 @@ flowchart TD
     RET["RETROSPECTIVE<br/>Capture Learnings"] --> DONE([Complete])
 ```
 
-![Workflow Overview](./docs/workflow-overview.png)
-
 ### Review System
 
 Every phase has a skeptic reviewer that challenges assumptions and a gatekeeper that validates completeness. Quality gates prevent issues from compounding across phases.

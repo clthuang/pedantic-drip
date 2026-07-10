@@ -41,8 +41,6 @@ flowchart TD
     RET["RETROSPECTIVE<br/>Capture Learnings"] --> DONE([Complete])
 ```
 
-![Workflow Overview](../../docs/workflow-overview.png)
-
 ## Components
 
 | Type | Count |
