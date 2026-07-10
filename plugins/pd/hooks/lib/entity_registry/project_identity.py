@@ -18,8 +18,9 @@ import subprocess
 import sys
 import sqlite3
 import tempfile
-import uuid as uuid_mod
 from datetime import datetime, timezone
+
+from entity_registry.uuid7 import generate_uuid7
 
 
 # ---------------------------------------------------------------------------
@@ -560,7 +561,7 @@ def resolve_workspace_uuid(
          workspaces table (adopt the project_root row, or insert the missing
          row) so file and DB stay consistent.
       3. workspaces-table lookup by ``project_root`` match (single row only).
-      4. Fresh write — generate uuid4, persist via flock-synchronised atomic
+      4. Fresh write — generate uuid7, persist via flock-synchronised atomic
          write, then record the matching workspaces row.
 
     Parameters
@@ -682,7 +683,7 @@ def resolve_workspace_uuid(
             f"Create .claude/ (e.g., 'mkdir .claude') to enable pd for this "
             f"project, or set ENTITY_WORKSPACE_UUID explicitly."
         )
-    fresh_uuid = str(uuid_mod.uuid4())
+    fresh_uuid = generate_uuid7()
     # Write the file FIRST (flock decides the race winner and the returned
     # uuid is authoritative), THEN record the matching workspaces row so the
     # file and DB never diverge. Never hold the flock across the DB write.

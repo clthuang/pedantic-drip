@@ -6772,7 +6772,8 @@ class EntityDatabase:
             else:
                 resolved_project_id = "__unknown__"
 
-        entity_uuid = str(uuid_mod.uuid4())
+        from entity_registry.uuid7 import generate_uuid7
+        entity_uuid = generate_uuid7()
         with self.transaction():
             # Plain INSERT (no OR IGNORE). UNIQUE conflict on
             # (workspace_uuid, type_id) raises sqlite3.IntegrityError, which
@@ -7798,7 +7799,8 @@ class EntityDatabase:
                 # mint only when the root is genuinely unclaimed.
                 target_ws_uuid = _single_root_or_raise()
                 if target_ws_uuid is None:
-                    target_ws_uuid = str(uuid_mod.uuid4())
+                    from entity_registry.uuid7 import generate_uuid7
+                    target_ws_uuid = generate_uuid7()
                     now = self._now_iso()
                     self._conn.execute(
                         "INSERT INTO workspaces "
@@ -9733,7 +9735,8 @@ class EntityDatabase:
                 # mint only when the root is genuinely unclaimed.
                 workspace_uuid = _single_root_or_raise("upsert_project()")
                 if workspace_uuid is None:
-                    workspace_uuid = str(uuid_mod.uuid4())
+                    from entity_registry.uuid7 import generate_uuid7
+                    workspace_uuid = generate_uuid7()
                     self._conn.execute(
                         "INSERT INTO workspaces "
                         "(uuid, project_id_legacy, project_root, created_at, "

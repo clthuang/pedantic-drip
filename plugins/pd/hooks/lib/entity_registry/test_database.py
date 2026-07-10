@@ -8329,3 +8329,103 @@ class TestProvidedWorkspaceUuidMembership:
             "SELECT 1 FROM workspaces WHERE uuid = ?",
             (_UNKNOWN_WORKSPACE_UUID,),
         ).fetchone() is not None
+
+
+# ---------------------------------------------------------------------------
+# Task 3 (feature 118 / design D6, Testing Strategy #9): uuid7 round-trip.
+# ---------------------------------------------------------------------------
+
+
+class TestUuid7RegisterEntityRoundTrip:
+    """register_entity mints uuid7 (not uuid4); the minted uuid flows
+    through get_entity's uuid branch, resolve_ref's uuid branch, and
+    frontmatter.validate_header without error (design Testing Strategy #9).
+    """
+
+    def test_minted_uuid_round_trips_through_lookup_and_validation(
+        self, db: EntityDatabase
+    ):
+        from entity_registry import frontmatter
+
+        minted = db.register_entity(
+            "feature", "001-uuid7-round-trip", "UUID7 Round Trip",
+            project_id="__unknown__",
+        )
+
+        # Non-vacuous: the version nibble sits at string index 14 in the
+        # 8-4-4-4-12 layout (after the second hyphen). This assertion is
+        # impossible to satisfy before Task 3's rewiring, when
+        # register_entity minted str(uuid.uuid4()) (version nibble '4').
+        assert minted[14] == "7", (
+            f"Expected a uuid7 mint (version nibble '7' at index 14), "
+            f"got {minted!r}"
+        )
+
+        # get_entity(uuid) resolves via the uuid branch of
+        # _resolve_identifier (database.py's
+        # `if _UUID_RE.match(identifier.lower())` path).
+        fetched = db.get_entity(minted)
+        assert fetched is not None
+        assert fetched["uuid"] == minted
+
+        # resolve_ref(uuid) resolves via its own uuid branch
+        # (`if _UUID_RE.match(ref.lower())`).
+        assert db.resolve_ref(minted) == minted
+
+        # frontmatter.validate_header accepts the minted uuid7 with no
+        # errors — the widened _UUID_RE (Task 2) plus the uuid7 mint
+        # (Task 3) together satisfy the v17 gated-path acceptance chain.
+        header = {
+            "entity_uuid": minted,
+            "entity_type_id": "feature:001-uuid7-round-trip",
+            "artifact_type": "spec",
+            "created_at": "2026-01-01T00:00:00+00:00",
+        }
+        assert frontmatter.validate_header(header) == []
+
+
+# ---------------------------------------------------------------------------
+# Task 3 (feature 118) / design Testing Strategy #12: residual-uuid4 scan.
+# ---------------------------------------------------------------------------
+
+
+class TestResidualUuid4Scan:
+    """Pins spec SC4: after the 4-site rewiring (design D6), ``uuid4(``
+    occurs in non-test entity_registry/ sources at EXACTLY the two frozen
+    migration sites (database.py:272 inside _migrate_to_uuid_pk, :1855
+    inside _migration_11_workspace_identity — both untouched by Task 3).
+
+    Pinned by function identity via MIGRATIONS/MIGRATIONS_DOWN +
+    ``inspect.getsource``, never by line number — Task 3's own local
+    import insertions shift every line below each mint site.
+    """
+
+    def test_uuid4_residual_sites_are_exactly_the_frozen_migrations(self):
+        import inspect
+        import pathlib
+
+        from entity_registry.database import MIGRATIONS_DOWN
+
+        pkg_dir = pathlib.Path(__file__).resolve().parent
+        non_test_sources = sorted(
+            p for p in pkg_dir.glob("*.py") if not p.name.startswith("test_")
+        )
+        total = sum(p.read_text().count("uuid4(") for p in non_test_sources)
+        assert total == 2, (
+            f"Expected exactly 2 residual uuid4( occurrences in non-test "
+            f"entity_registry/*.py; found {total}. Task 3 rewires every "
+            f"non-migration mint site to generate_uuid7()."
+        )
+
+        migration_fns = (
+            list(MIGRATIONS.values()) + list(MIGRATIONS_DOWN.values())
+        )
+        in_migrations = sum(
+            inspect.getsource(fn).count("uuid4(") for fn in migration_fns
+        )
+        assert in_migrations == 2, (
+            f"Expected both residual uuid4( occurrences to be inside "
+            f"registered migration function bodies (frozen per design D6); "
+            f"only {in_migrations} were found there — a stray uuid4( mint "
+            f"exists outside the frozen migration bodies."
+        )
