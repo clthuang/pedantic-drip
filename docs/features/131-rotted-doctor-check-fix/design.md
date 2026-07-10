@@ -50,19 +50,28 @@ Private helper in `checks.py` implementing spec SC#4's surface/tolerate discrimi
 **Control flow (the old if/else collapses into two named row-sets):**
 
 ```python
-db_features_all = _run_live_schema_query(   # ALWAYS runs (was the :1398 else-branch)
-    entities_conn, "SELECT type_id, entity_id, artifact_path FROM entities "
+db_features_all, features_tolerated = _run_live_schema_query(
+    entities_conn,                          # ALWAYS runs (was the :1398 else-branch)
+    "SELECT type_id, entity_id, artifact_path FROM entities "
     "WHERE kind = 'feature'", (), "entity_orphans", issues, ("kind",))
 db_feature_ids = {row[1] for row in db_features_all}      # step-2 membership, UNSCOPED
 
 if scoped:                                   # exactly one workspaces row matched
-    db_features_step1 = _run_live_schema_query(  # two-arm predicate (was :1391)
+    db_features_step1, _ = _run_live_schema_query(   # two-arm predicate (was :1391)
         entities_conn, "... WHERE kind = 'feature' AND "
         "(workspace_uuid = ? OR workspace_uuid = ?)",
         (root_uuids[0], _UNKNOWN_WORKSPACE_UUID), "entity_orphans", issues,
         ("kind", "workspace_uuid"))
 else:
     db_features_step1 = db_features_all
+
+# Steps 2 and 4 are gated on the tolerated flags (docstring MUST clause):
+#   step 2 (checks.py:1438-1454) runs ONLY if not features_tolerated
+#   step 4 (:1494-1522) runs ONLY if not brainstorms_tolerated
+#     where: db_brainstorms, brainstorms_tolerated = _run_live_schema_query(
+#                ..., "... WHERE kind = 'brainstorm'", ..., ("kind",))  # was :1488
+# Tolerated membership is UNKNOWN, not empty -- flagging would violate the
+# spec tolerate AC.
 ```
 
 - **Step-2 membership** (`db_feature_ids`, consumed at `checks.py:1444`) always comes from `db_features_all` — a dir whose entity exists under ANY workspace is never flagged "has .meta.json but no entity in DB" (spec SC#2 holds for every exists-in-both case, foreign-real-workspace included; matches today's only-reachable behavior).
@@ -97,9 +106,10 @@ Workspace resolution mirrors `check_unknown_workspace_orphans` (`checks.py:582-5
 1. Per-check regression: for each retained check, build a live-schema DB via `_make_live_db()` and assert the check's queries execute (no schema `sqlite3.Error` surfaces, no tolerate-branch engagement — assert via returned candidate sets being non-vacuous where the fixture registers rows).
 2. Committed EXPLAIN scan: AST-walk `checks.py` for constant SQL in `execute()` calls (same technique as the authoring harness), `EXPLAIN` each against a live-schema connection, assert zero failures. Durable form of spec SC#1.
 3. Surface-branch test: live-schema DB, monkeypatch/corrupt a query to fail while `kind` exists → assert one `error` Issue naming the check.
-4. Tolerate-branch test: LEGACY fixture (`_make_db`, genuinely no `kind` column) → assert clean completion, zero Issues from the rewritten sites — the legacy fixture guards against vacuous green by construction.
+4. Tolerate-branch test: LEGACY fixture (`_make_db`, genuinely no `kind` column) with a registered feature AND its on-disk directory created → assert the WHOLE check emits zero Issues (spec's tolerate AC — proves the tolerated-membership skip of steps 2/4, not merely quiet SQL sites).
 5. Scoping tests (non-vacuous by construction — each controls `local_entity_ids` via the on-disk features dir AND workspace placement via `_insert_workspace` + per-entity `workspace_uuid`, and fails if the two-arm predicate is removed): (a) foreign-workspace entity, missing dir, EMPTY features dir → info bucket, not warning (legacy branch would warn — proves the predicate discriminates); (b) unknown-bucket entity, missing dir, scoped → warning (treated local); (c) foreign-real-workspace ON-DISK dir → not step-2-flagged (unscoped membership); (d) zero and multiple workspace matches → legacy `local_entity_ids` branching verbatim.
 6. Deletion tests: doctor run emits zero `project_attribution` issues; `test_doctor.py` `expected_names` updated and its `CHECK_ORDER` assertion passes.
+7. Empty-DB boundary: `_make_live_db()` with zero registered rows → all three retained checks run clean, zero Issues, no exception (spec's empty-DB AC).
 
 ## Interfaces
 
@@ -111,8 +121,8 @@ def _run_live_schema_query(
     check_name: str,
     issues: list[Issue],
     required_columns: tuple[str, ...],   # e.g. ("kind",) or ("kind", "workspace_uuid")
-) -> list[tuple]:
-    """Execute sql; return rows.
+) -> tuple[list[tuple], bool]:
+    """Execute sql; return (rows, tolerated).
 
     On sqlite3.Error:
       - If every column in required_columns exists in entities' current schema
@@ -126,10 +136,43 @@ def _run_live_schema_query(
         (spec SC#4 / error-AC say ONE Issue).
       - If any required column is absent (pre-Migration-11 DB) -> return []
         silently (tolerate branch, spec SC#4).
+
+    RETURN SHAPE: returns (rows, tolerated: bool) so callers can distinguish
+    "schema too old, could not read" from "genuinely zero rows". Membership
+    consumers MUST honor it: when db_features_all or the brainstorm set
+    (:1488) is tolerated, check_entity_orphans SKIPS step-2 (checks.py:
+    1438-1454) and step-4 (:1494-1522) disk->DB flagging entirely --
+    membership is UNKNOWN, not empty, and flagging every on-disk dir would
+    violate the spec's tolerate AC ("no Issue is emitted, check completes
+    cleanly"). Candidate-set consumers (feature_status, brainstorm_status,
+    step-1) just use rows and need no branch: empty rows = nothing to report.
     """
 ```
 
-Call-site contract: every rewritten site passes its `required_columns`; sites keep their existing downstream logic operating on returned rows (`db_features`, candidate sets). The helper NEVER raises. `:1083`'s `.fetchone()` usage adapts to the list return (`rows[0] if rows else None`), and its enclosing `try/except sqlite3.Error` at `checks.py:1066-1099` STAYS — it also guards EXPLAIN-clean sibling queries (`:1068`, `:1074`) that are out of scope.
+Call-site contract: every rewritten site passes its `required_columns`; sites keep their existing downstream logic operating on returned rows (`db_features`, candidate sets). The helper NEVER raises. `:1083`'s `.fetchone()` usage adapts to the list return (`rows[0] if rows else None`), and its enclosing `try/except sqlite3.Error` at `checks.py:1066-1099` STAYS — it also guards EXPLAIN-clean sibling queries (`:1068`, `:1074`) that are out of scope. `:988`'s own enclosing `try/except sqlite3.Error: pass` (`checks.py:985-993`) is likewise RETAINED as a harmless dead guard (the helper never raises; consistent treatment with :1083, no wrapper surgery in this feature).
+
+Merged step-1 loop (pins the disjoint warn-vs-count partition and the bypass-`local_entity_ids`-when-scoped rule):
+
+```python
+step1_ids = {row[1] for row in db_features_step1}
+# (db_features_all / db_features_step1 unpacked from the helper's
+#  (rows, tolerated) return above; step-1 iteration needs no tolerate gate --
+#  tolerated sets are empty, so the loop is a no-op by construction)
+for type_id, entity_id, artifact_path in db_features_all:
+    feature_dir = os.path.join(artifacts_root, "features", entity_id)
+    if os.path.isdir(feature_dir):
+        continue
+    if scoped:
+        if entity_id in step1_ids:      # ours by workspace fact -> warning
+            issues.append(Issue(...))   # "in DB but feature directory not found"
+        else:                           # foreign workspace -> info bucket
+            cross_project_count += 1
+    else:                               # legacy branching, verbatim
+        if entity_id in local_entity_ids or not local_entity_ids:
+            issues.append(Issue(...))
+        else:
+            cross_project_count += 1
+```
 
 Workspace resolution (mirrors `checks.py:582-592` exactly — abspath, NULL-guard, tolerated failure):
 
