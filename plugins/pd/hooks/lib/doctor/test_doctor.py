@@ -21,7 +21,6 @@ def test_check_order_preserved_post_f116():
         "check_entity_orphans",
         "check_referential_integrity",
         "check_stale_dependencies",
-        "check_project_attribution",
         "check_config_validity",
         "check_security_review_command",
         "check_stale_worktrees",

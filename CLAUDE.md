@@ -43,6 +43,14 @@ Claude Code plugin providing a structured feature development workflow—skills,
 *Why:* 3-5 iteration cycles consumed large context/time portions.
 *Enforced by:* Iteration cap in `implement.md`.
 
+**Reviewer-claim verification:** When a reviewer's finding asserts a specific, checkable fact about existing code ("X writes column Y", "helper Z is unused"), verify it against the source (file:line) BEFORE writing it into a spec/design/plan. Reviewer output is not self-verifying.
+*Why:* Feature 131's spec absorbed a false reviewer claim about `backfill_project_ids` for a full round; only a second independent dispatch caught it.
+*Enforced by:* Convention — cite the verifying file:line in the applied-fix note.
+
+**Non-vacuity test guard:** When a change adds a new/rewritten code path beside an existing tolerate/fallback path, every test targeting the new path must assert a fact true ONLY on that path — "no exception / zero issues" is satisfied by the fallback too. Interface-contract edits inside one doc must sweep ALL restatements (signature, snippets, prose) in the same revision.
+*Why:* Feature 131 re-flagged vacuous-green in 4 separate review rounds, and a half-swept doc contract cost a handoff blocker.
+*Enforced by:* Design/plan reviewer checklists; design docs pin contracts in ONE code block where possible.
+
 **SQLite lock recovery:** When encountering "database is locked" errors: (1) check for orphaned processes with `lsof +D ~/.claude/pd | grep .db`, (2) kill stale Python/MCP processes, (3) verify WAL mode with `PRAGMA journal_mode`. Do not silently swallow database exceptions.
 *Why:* SQLite locking from stale MCP processes was the most persistent friction source.
 *Addressed by:* Doctor auto-fix at session start, WAL mode on connect, `cleanup-locks.sh` hook.

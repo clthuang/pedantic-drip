@@ -156,6 +156,7 @@ Verified 2026-07-10 (verbosity census + dispatch-count analysis + the repo's own
 2. Triage rubric signals: estimated diff size, novelty, blast radius, security surface — which are load-bearing, and what's the default when uncertain (recommend: deep)?
 3. Do brainstorm and specify merge into one "shape" phase in deep mode? (R1.2 spirit-compatible either way; decide at design.)
 4. Codex-routing preamble: factor into workflow-transitions once, or drop entirely while the toggle is disabled?
+5. Single-reviewer-per-gate vs false-reviewer-claims (evidence from feature 131 retro, 2026-07-10): FR-4 collapses skeptic+gatekeeper into one reviewer pass per gate, but 131's spec loop absorbed a FALSE reviewer claim (backfill_project_ids "writes dropped project_id" — refuted at database.py:7818-7824) that only a SECOND independent dispatch caught. Before design: decide how one-reviewer-per-gate preserves that self-correction (e.g., reviewer must cite verifying file:line for factual claims — now a CLAUDE.md guardrail — or the next phase gate doubles as the independent recheck).
 
 ## Next Steps
 
