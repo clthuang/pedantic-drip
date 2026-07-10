@@ -1256,13 +1256,6 @@ def _process_complete_phase(
                             f"complete_phase: closure target not found: "
                             f"{to_uuid}"
                         )
-                    if row.get("workspace_uuid") != caller_workspace_uuid:
-                        raise InvalidCloseTargetError(
-                            f"complete_phase: cross-workspace closure "
-                            f"forbidden: {to_uuid} is in workspace "
-                            f"{row.get('workspace_uuid')}, caller is in "
-                            f"{caller_workspace_uuid}"
-                        )
                     lc = row.get("lifecycle_class")
                     if lc not in _CLOSES_TERMINAL:
                         if lc == "feature_flow":

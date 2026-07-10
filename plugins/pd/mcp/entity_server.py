@@ -619,8 +619,8 @@ def _catch_issue_spawn_errors(func):
 
     Per spec FR-EX.3 / design IF-9: ``issue_spawn`` raises ``ValueError`` (and
     the ``EntityNotFoundError`` ValueError subclass) for ``invalid_kind``,
-    ``parent_not_found``, ``invalid_parent_kind``, and ``cross-workspace
-    parent forbidden``. The envelope shape matches the F10 ``complete_phase``
+    ``parent_not_found``, and ``invalid_parent_kind``. The envelope shape
+    matches the F10 ``complete_phase``
     pattern at ``workflow_state_server.py:_catch_close_errors`` so MCP
     consumers see a uniform contract:
 
@@ -693,10 +693,9 @@ async def issue_spawn(
     Raises
     ------
     ValueError
-        On ``invalid_kind`` (FR-9.5), ``parent_not_found`` (FR-9.6),
-        ``invalid_parent_kind`` (FR-9.6), or ``cross-workspace parent
-        forbidden`` (FR-9.6 design IF-1 step 5b). All four conditions are
-        caught at the MCP boundary by ``_catch_issue_spawn_errors`` and
+        On ``invalid_kind`` (FR-9.5), ``parent_not_found`` (FR-9.6), or
+        ``invalid_parent_kind`` (FR-9.6). All three conditions are caught
+        at the MCP boundary by ``_catch_issue_spawn_errors`` and
         translated to a JSON error envelope (FR-EX.3).
     """
     err = _check_db_available()
@@ -730,25 +729,6 @@ async def issue_spawn(
         raise ValueError(
             f"invalid_parent_kind: {parent_kind!r}; "
             f"expected feature|backlog|project"
-        )
-
-    # FR-9.6 cross-workspace gate (design IF-1 step 5b, security-reviewer iter
-    # 2 BLOCKER 1): parent_uuid MUST resolve to a row in the SAME workspace as
-    # the caller. Resolve the caller's effective workspace_uuid via the same
-    # path register_entity uses (database.py:5635 _resolve_workspace_uuid_kwargs)
-    # so the comparison is canonical (e.g., project_id='__unknown__' resolves
-    # to _UNKNOWN_WORKSPACE_UUID). Run this BEFORE any state-mutating call so
-    # no partial state can be created.
-    resolved_caller_ws = _db._resolve_workspace_uuid_kwargs(
-        resolved_workspace_uuid or None,
-        resolved_project_id if not resolved_workspace_uuid else None,
-        _caller="issue_spawn",
-    )
-    parent_ws = parent_row.get("workspace_uuid")
-    if parent_ws != resolved_caller_ws:
-        raise ValueError(
-            f"cross-workspace parent forbidden: "
-            f"parent in {parent_ws!r}, caller in {resolved_caller_ws!r}"
         )
 
     # Normalize caller metadata to a dict; drop reserved keys that live in
