@@ -208,6 +208,23 @@ class TestDdlRegistryExtensionPoint:
                 "dummy", "CREATE TABLE IF NOT EXISTS other_t (uuid TEXT PRIMARY KEY)"
             )
 
+    def test_register_ddl_owner_core_collision_raises(self):
+        """Registering owner="core" collides with the built-in entry that
+        ships pre-registered in DDL_REGISTRY (not just a test-added dummy).
+
+        Anticipate: a duplicate-owner check implemented as "does this
+        owner appear among entries registered VIA register_ddl this
+        session" (e.g. a separate tracking set populated only inside
+        register_ddl, instead of scanning DDL_REGISTRY itself) would miss
+        the pre-seeded "core" entry and silently accept the collision —
+        this test fails against that mutation, since it never calls
+        register_ddl("core", ...) from a prior test in the same run.
+        """
+        with pytest.raises(ValueError, match="core"):
+            schema_v2.register_ddl(
+                "core", "CREATE TABLE IF NOT EXISTS shadow_core (uuid TEXT PRIMARY KEY)"
+            )
+
 
 # ---------------------------------------------------------------------------
 # Design test #4: bootstrap idempotency
@@ -230,6 +247,47 @@ class TestBootstrapIdempotency:
                 "SELECT COUNT(*) FROM _metadata"
             ).fetchone()[0]
             assert total_metadata_rows == 1
+        finally:
+            second_conn.close()
+
+    def test_registry_extended_between_bootstraps_picks_up_new_entry(self, tmp_path):
+        """A sibling's register_ddl() call made AFTER a path's first
+        bootstrap is picked up by that path's SECOND bootstrap_v2 call
+        (design D4 / Error Handling: "the registry is input to bootstrap,
+        not a post-hoc migration" — re-running replays the full registry,
+        it does not track "what's new since last time").
+
+        Anticipate: a stateful implementation that short-circuits DDL
+        application once `_metadata.schema_version` already exists (e.g.
+        "if already bootstrapped, skip the DDL loop entirely") would never
+        create the newly-registered table on the second call — this test
+        fails against that mutation, while the existing idempotency test
+        (which never extends the registry) would still pass it.
+        """
+        db_path = str(tmp_path / "v2.db")
+        first_conn = schema_v2.bootstrap_v2(db_path)
+        first_conn.close()
+
+        schema_v2.register_ddl(
+            "extra", "CREATE TABLE IF NOT EXISTS extra_t (uuid TEXT PRIMARY KEY)"
+        )
+        second_conn = schema_v2.bootstrap_v2(db_path)
+        try:
+            table_names = {
+                row[0]
+                for row in second_conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                ).fetchall()
+            }
+            assert "extra_t" in table_names
+
+            # Version write stays idempotent even though a new DDL entry
+            # was applied — only the version row itself is INSERT OR IGNORE.
+            version_rows = second_conn.execute(
+                "SELECT value FROM _metadata WHERE key = 'schema_version'"
+            ).fetchall()
+            assert len(version_rows) == 1
+            assert version_rows[0][0] == str(schema_v2.V2_SCHEMA_VERSION)
         finally:
             second_conn.close()
 
@@ -275,3 +333,198 @@ class TestConnectionPragmas:
     def test_busy_timeout_value_on_returned_connection(self, bootstrapped_conn):
         busy_timeout_ms = bootstrapped_conn.execute("PRAGMA busy_timeout").fetchone()[0]
         assert busy_timeout_ms == schema_v2._BUSY_TIMEOUT_MS
+
+
+# ---------------------------------------------------------------------------
+# Gap pass (test-deepener, dimension:error_propagation / dimension:boundary_values):
+# bootstrap_v2 on a path whose parent directory does not exist.
+# ---------------------------------------------------------------------------
+class TestBootstrapPathErrors:
+    def test_bootstrap_missing_parent_directory_raises_operational_error(self, tmp_path):
+        """bootstrap_v2 does not create intermediate directories: a path
+        whose parent is missing fails loudly via sqlite3, not silently or
+        with a confusing later error.
+
+        Anticipate: a caller might assume bootstrap_v2 behaves like
+        `os.makedirs(..., exist_ok=True)` for its target's parent — it
+        does not. This pins the actual failure mode (sqlite3.connect
+        itself refuses to open the file) so a future refactor that adds
+        directory auto-creation is a deliberate, visible design change
+        rather than an accidental behavior shift this suite stays silent on.
+        derived_from: dimension:error_propagation, dimension:boundary_values
+        """
+        # Given a path whose parent directory was never created
+        missing_parent_path = str(tmp_path / "does-not-exist" / "v2.db")
+        # When bootstrap_v2 is called against it
+        # Then sqlite3 raises OperationalError rather than succeeding or
+        # raising some unrelated/confusing error downstream
+        with pytest.raises(sqlite3.OperationalError, match="unable to open database file"):
+            schema_v2.bootstrap_v2(missing_parent_path)
+
+
+# ---------------------------------------------------------------------------
+# Gap pass (test-deepener, dimension:adversarial — "Interrupt" heuristic):
+# D4's documented "convergent, not atomic" recovery contract had zero
+# coverage — every existing test either succeeds cleanly or never partially
+# applies the registry.
+# ---------------------------------------------------------------------------
+class TestPartialBootstrapRecovery:
+    def test_mid_bootstrap_failure_preserves_earlier_entries_then_retry_converges(
+        self, tmp_path
+    ):
+        """A later registry entry with invalid SQL fails its executescript
+        call; the earlier ("core") entry's tables stay applied (each
+        registry entry commits independently — design D4). Fixing the bad
+        entry and re-running bootstrap_v2 on the SAME path then converges,
+        without re-doing (or erroring on) the already-applied prefix.
+
+        Anticipate: if bootstrap_v2 wrapped the whole registry loop in one
+        outer transaction instead of one executescript() per entry, the
+        "core" tables would roll back along with the broken entry, and the
+        post-failure table check below would find them MISSING — this
+        test fails against that "make it atomic" mutation, which is
+        exactly the behavior D4's docstring explicitly rejects.
+        derived_from: design:D4 (convergent-not-atomic recovery contract),
+        dimension:adversarial (Interrupt heuristic)
+        """
+        db_path = str(tmp_path / "v2.db")
+        schema_v2.register_ddl(
+            "broken",
+            # Malformed SQL: trailing commas make this a syntax error.
+            "CREATE TABLE IF NOT EXISTS broken_t (uuid TEXT PRIMARY KEY,,,,)",
+        )
+
+        # Given a registry with a malformed entry AFTER the working "core" entry
+        # When bootstrap_v2 applies the registry in order
+        # Then it raises on the broken entry...
+        with pytest.raises(sqlite3.OperationalError):
+            schema_v2.bootstrap_v2(db_path)
+
+        # ...but the earlier "core" entry's tables (applied via their own
+        # executescript call, before "broken" was reached) already committed.
+        verify_conn = sqlite3.connect(db_path)
+        try:
+            table_names = {
+                row[0]
+                for row in verify_conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                ).fetchall()
+            }
+            for table in _CORE_TABLES_WITH_UUID_PK:
+                assert table in table_names, (
+                    f"{table} should have survived the later entry's failure"
+                )
+            # The version write happens strictly AFTER the registry loop —
+            # a failure mid-loop means it never ran on this attempt.
+            version_rows = verify_conn.execute(
+                "SELECT value FROM _metadata WHERE key = 'schema_version'"
+            ).fetchall()
+            assert version_rows == []
+        finally:
+            verify_conn.close()
+
+        # Now correct the broken entry in place and retry on the SAME path.
+        schema_v2.DDL_REGISTRY[-1] = (
+            "broken", "CREATE TABLE IF NOT EXISTS broken_t (uuid TEXT PRIMARY KEY)"
+        )
+        retry_conn = schema_v2.bootstrap_v2(db_path)
+        try:
+            table_names = {
+                row[0]
+                for row in retry_conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                ).fetchall()
+            }
+            assert "broken_t" in table_names
+            version_rows = retry_conn.execute(
+                "SELECT value FROM _metadata WHERE key = 'schema_version'"
+            ).fetchall()
+            assert len(version_rows) == 1
+        finally:
+            retry_conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Gap pass (test-deepener, dimension:bdd_scenarios): spec's In-Scope bullet
+# ("an allocator `kind` column carries no business-key UNIQUE constraint —
+# not in the forbidden set") pins the sequences table specifically, the way
+# TestBusinessKeyNonUniqueness already pins entities.type_id.
+# ---------------------------------------------------------------------------
+class TestSequencesBusinessKeyNonUniqueness:
+    def test_duplicate_workspace_and_kind_both_insert_succeed(self, bootstrapped_conn):
+        """Two `sequences` rows sharing the same (workspace_uuid, kind)
+        both insert without error — `kind` carries no UNIQUE constraint
+        (spec In Scope: "not in the forbidden set: type_id/slug/name/
+        display fields"; 121 owns allocation atomicity via BEGIN IMMEDIATE,
+        not a UNIQUE index here).
+
+        Anticipate: the generic UNIQUE-index sweep in
+        TestBootstrapShape only checks the named FORBIDDEN columns
+        (type_id/slug/name/display*) — it would stay green even if a
+        UNIQUE(workspace_uuid, kind) index were added to `sequences`,
+        since "kind" alone isn't in that forbidden set. This test closes
+        that blind spot with a direct positive-insertion pin, the same
+        way the entities-table duplicate-type_id test does.
+        derived_from: spec:Scope (sequences kind column, no business-key
+        UNIQUE), design:D3
+        """
+        conn = bootstrapped_conn
+        workspace_uuid = "workspace-uuid-seq-1"
+        conn.execute(
+            "INSERT INTO workspaces (uuid, project_root, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?)",
+            (workspace_uuid, "/tmp/project", _NOW, _NOW),
+        )
+        for sequence_uuid in ("seq-uuid-1", "seq-uuid-2"):
+            conn.execute(
+                "INSERT INTO sequences (uuid, workspace_uuid, kind, current_value) "
+                "VALUES (?, ?, ?, ?)",
+                (sequence_uuid, workspace_uuid, "feature", 0),
+            )
+        row_count = conn.execute(
+            "SELECT COUNT(*) FROM sequences WHERE workspace_uuid = ? AND kind = ?",
+            (workspace_uuid, "feature"),
+        ).fetchone()[0]
+        assert row_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Gap pass (test-deepener, dimension:adversarial — "Never" heuristic): design
+# D1's "ships dark: no live code imports it except its tests" invariant was
+# only pinned by a manual grep in tasks.md's Task 4 Verify step, never by an
+# automated regression test that runs on every suite invocation.
+# ---------------------------------------------------------------------------
+class TestSchemaV2ShipsDark:
+    def test_no_non_test_importer_of_schema_v2(self):
+        """No file under plugins/pd/hooks/lib (other than schema_v2.py
+        itself and test_ files) references `schema_v2` — the module ships
+        dark; only its own tests exercise it (design D1; spec Out of
+        Scope: "nothing reads the v2 DB in this feature").
+
+        Anticipate: a future feature (119/120/121/122) could accidentally
+        wire schema_v2 into a live code path before feature 132's cutover
+        decides where the v2 DB lives. Task 4's tasks.md Verify step has
+        the equivalent grep, but as a one-time manual check it does not
+        run on every `pytest` invocation the way this does — mirrors the
+        residual-uuid4 scan test's source-scan style (test_database.py).
+        derived_from: design:D1 (ships dark), spec:Out-of-Scope (consumer
+        rewiring deferred), dimension:adversarial (Never/Always heuristic)
+        """
+        import pathlib
+
+        hooks_lib_root = pathlib.Path(__file__).resolve().parent.parent
+        assert hooks_lib_root.name == "lib", (
+            f"expected .../hooks/lib, got {hooks_lib_root}"
+        )
+
+        offending_files = []
+        for py_file in hooks_lib_root.rglob("*.py"):
+            if py_file.name.startswith("test_") or py_file.name == "schema_v2.py":
+                continue
+            if "schema_v2" in py_file.read_text():
+                offending_files.append(str(py_file))
+
+        assert offending_files == [], (
+            f"schema_v2 must ship dark (no non-test importers), but found "
+            f"references in: {offending_files}"
+        )

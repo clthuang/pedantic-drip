@@ -128,6 +128,12 @@ def bootstrap_v2(db_path: str) -> sqlite3.Connection:
     idempotency contract above — calling bootstrap_v2 again converges,
     because the already-applied prefix is skipped rather than repeated.
 
+    NOT concurrent-safe: two bootstrap_v2 calls racing on the same path
+    fail ~50% with "database is locked" (DDL takes locks busy_timeout does
+    not retry — empirically measured at 15/30 trials, feature 118 test
+    deepening). Callers must serialize bootstrap; the first concurrent
+    consumer (119+) owns adding a locking wrapper if it ever needs one.
+
     PRAGMA discipline: busy_timeout, journal_mode=WAL, and foreign_keys=ON
     are all issued on a FRESH autocommit=True connection before any
     statement opens a transaction — foreign_keys is a silent no-op if set

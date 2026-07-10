@@ -2114,6 +2114,26 @@ class TestResolveIdentifierBoundary:
         invalid_variant = "550e8400-e29b-41d4-c716-446655440000"
         assert not _UUID_RE.match(invalid_variant.lower())
 
+    def test_uuid_v8_format_not_matched_as_uuid(self, db: EntityDatabase):
+        """UUID-shaped string with version nibble 8 is REJECTED — the
+        widened regex accepts [1-7], not [1-8]. Pins the upper bound the
+        v1/v3/v5-accepted tests above only probe from below.
+        Anticipate: the widening from a literal '4' to a range could
+        plausibly overshoot (e.g. a careless '[1-8]' or '[0-9a-f]' typo
+        instead of '[1-7]') since nothing else in the version position
+        distinguishes "real" version nibbles from arbitrary hex digits.
+        Verify (mutation): swapping '[1-7]' to '[1-8]' in the regex makes
+        this assertion fail while every other test in this class still
+        passes — this is the only test pinning the upper edge.
+        derived_from: spec:R23, dimension:boundary_values, dimension:mutation_mindset
+        """
+        # Given a UUID-shaped string with version nibble 8 (one past the
+        # accepted [1-7] range)
+        v8_like = "550e8400-e29b-81d4-a716-446655440000"
+        # When checking against the regex
+        # Then it must NOT match
+        assert not _UUID_RE.match(v8_like.lower())
+
 
 class TestMigrationEmptyDb:
     """Boundary: migration on a database with 0 existing entities.
@@ -8378,6 +8398,58 @@ class TestUuid7RegisterEntityRoundTrip:
         header = {
             "entity_uuid": minted,
             "entity_type_id": "feature:001-uuid7-round-trip",
+            "artifact_type": "spec",
+            "created_at": "2026-01-01T00:00:00+00:00",
+        }
+        assert frontmatter.validate_header(header) == []
+
+    def test_uppercase_minted_uuid_round_trips_through_all_three_gated_paths(
+        self, db: EntityDatabase
+    ):
+        """The R11 lowercase contract (".lower() before matching") holds
+        for an UPPERCASED uuid7 across all three formerly-v4-gated paths in
+        the SAME round-trip: get_entity, resolve_ref, and
+        frontmatter.validate_header. The sibling boundary test
+        (test_uppercase_uuid_normalizes_to_lowercase in
+        TestResolveIdentifierBoundary) only exercises _resolve_identifier;
+        this closes the gap for resolve_ref and validate_header
+        specifically with a genuinely-minted (not hand-typed v4-shaped)
+        uuid7 value.
+
+        Anticipate: the widened `_UUID_RE` regex itself is case-sensitive
+        ([0-9a-f], not [0-9a-fA-F]) by design (R11's contract is "callers
+        lowercase before matching", not "the regex is case-insensitive").
+        If any ONE of the three call sites forgot its `.lower()` call
+        during the Task 2 rename sweep, an uppercased uuid7 would silently
+        misroute at exactly that site — a lowercase-only round-trip test
+        (the existing one) cannot detect a single missing `.lower()`
+        because a lowercase input can never exercise that branch.
+        derived_from: spec:SC5 (uuid7 round-trip through the three gated
+        paths), spec:R23/R11 (lowercase normalization), dimension:adversarial
+        """
+        from entity_registry import frontmatter
+
+        minted = db.register_entity(
+            "feature", "002-uuid7-uppercase-round-trip", "UUID7 Uppercase Round Trip",
+            project_id="__unknown__",
+        )
+        uppercased = minted.upper()
+        # Sanity: uppercasing actually changed the string (otherwise this
+        # test would vacuously pass no matter what "case handling" does).
+        assert uppercased != minted
+
+        # get_entity(uuid) — uppercase input must still resolve.
+        fetched = db.get_entity(uppercased)
+        assert fetched is not None
+        assert fetched["uuid"] == minted
+
+        # resolve_ref(uuid) — uppercase input must still resolve.
+        assert db.resolve_ref(uppercased) == minted
+
+        # frontmatter.validate_header — uppercase entity_uuid must pass.
+        header = {
+            "entity_uuid": uppercased,
+            "entity_type_id": "feature:002-uuid7-uppercase-round-trip",
             "artifact_type": "spec",
             "created_at": "2026-01-01T00:00:00+00:00",
         }

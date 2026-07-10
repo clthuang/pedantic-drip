@@ -1193,6 +1193,31 @@ class TestValidateHeaderUUIDBoundary:
         # Then no errors — version digit 5 is accepted
         assert errors == [], f"Expected no UUID errors for version=5, got: {errors}"
 
+    def test_validate_header_uuid_version_digit_8_rejected(self):
+        """UUID with version=8 (one past the accepted [1-7] range) is
+        REJECTED. Pins the upper bound of the widened range on
+        frontmatter.py's OWN `_UUID_RE` copy (design D5: the two-file
+        duplication is deliberate, not shared — each copy needs its own
+        boundary pin, since a widening mistake could land in only one of
+        the two files).
+        Anticipate: a version-nibble widening that overshot to '[1-8]' (or
+        further) in THIS file's regex specifically — independent of
+        database.py's copy, which test_database.py's
+        test_uuid_v8_format_not_matched_as_uuid pins separately — would
+        pass validate_header when it must not.
+        derived_from: spec:R11 (UUID regex), dimension:boundary_values,
+        dimension:mutation_mindset
+        """
+        # Given a UUID with version digit 8 (outside the accepted [1-7] range)
+        header = _full_header(entity_uuid="a1b2c3d4-e5f6-8a7b-8c9d-0e1f2a3b4c5d")
+        # When validated
+        errors = validate_header(header)
+        # Then rejected
+        assert len(errors) >= 1
+        assert any("entity_uuid" in e or "UUID" in e for e in errors), (
+            f"Expected UUID rejection for version=8, got: {errors}"
+        )
+
     def test_validate_header_uuid_variant_boundary_8_accepted(self):
         """UUID with variant digit=8 (lower boundary of valid range) accepted.
         derived_from: spec:R11 (variant [89ab]), dimension:boundary_values
