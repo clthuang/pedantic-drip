@@ -168,6 +168,27 @@ def _create_meta_json(
 # ---------------------------------------------------------------------------
 
 
+_LIVE_DB_HANDLES: list = []
+
+
+@pytest.fixture(autouse=True)
+def _close_live_dbs():
+    """Deterministically close every EntityDatabase opened via _make_live_db.
+
+    Call sites close only the raw ``conn`` in their own finally blocks; the
+    EntityDatabase handle is torn down here (mirrors the documented
+    entity_registry/test_database.py fixture convention) so no test leaks a
+    SQLite connection past its own teardown.
+    """
+    yield
+    while _LIVE_DB_HANDLES:
+        db = _LIVE_DB_HANDLES.pop()
+        try:
+            db.close()
+        except Exception:
+            pass
+
+
 def _make_live_db(tmp_path, name: str = "entities.db"):
     """Build a live-schema entity DB and return ``(db, conn)``.
 
@@ -175,12 +196,14 @@ def _make_live_db(tmp_path, name: str = "entities.db"):
     ``conn`` is a raw ``sqlite3`` connection the doctor checks consume as
     ``entities_conn``. Both point at the same file — EntityDatabase runs in
     WAL mode, so committed writes on either connection are visible to the
-    other.
+    other. ``db`` is auto-closed at test teardown by ``_close_live_dbs``;
+    call sites remain responsible only for ``conn``.
     """
     from entity_registry.database import EntityDatabase
 
     db_path = str(tmp_path / name)
     db = EntityDatabase(db_path)
+    _LIVE_DB_HANDLES.append(db)
     conn = _entities_conn(db_path)
     return db, conn
 

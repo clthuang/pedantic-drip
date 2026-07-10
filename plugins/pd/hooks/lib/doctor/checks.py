@@ -1497,7 +1497,7 @@ def check_entity_orphans(
     scoped = len(root_uuids) == 1  # step-1 two-arm scoping iff exactly one
 
     if scoped:
-        db_features_step1, _ = _run_live_schema_query(
+        db_features_step1, _tolerated = _run_live_schema_query(
             entities_conn,
             "SELECT type_id, entity_id, artifact_path FROM entities "
             "WHERE kind = 'feature' "
