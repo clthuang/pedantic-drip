@@ -417,6 +417,28 @@ class TestInitProjectState:
         assert os.path.isfile(result["meta_json_path"])
         mock_db.register_entity.assert_called_once()
 
+    def test_project_id_bypasses_strict_display_gate(self, mock_db, tmp_path):
+        """P{NNN}-prefixed project ids sit outside the feature-110 seq-slug
+        display contract — registration must pass _strict_id_format=False or
+        the ^\\d+-.+ gate rejects every project (create-project regression)."""
+        project_dir = str(tmp_path / "projects" / "entity-db-redesign")
+        os.makedirs(project_dir, exist_ok=True)
+
+        init_project_state(
+            db=mock_db,
+            artifacts_root=str(tmp_path),
+            project_dir=project_dir,
+            project_id="P004",
+            slug="entity-db-redesign",
+            branch="feature/P004",
+            features="[]",
+            milestones="[]",
+        )
+
+        kwargs = mock_db.register_entity.call_args.kwargs
+        assert kwargs["entity_id"] == "P004-entity-db-redesign"
+        assert kwargs["_strict_id_format"] is False
+
     def test_idempotent_existing_project(self, mock_db, tmp_path):
         """If project entity already exists, skip registration."""
         project_dir = str(tmp_path / "projects" / "my-proj")

@@ -267,6 +267,11 @@ def init_project_state(
         # Use ``project_id="__unknown__"`` so the canonical workspaces row is
         # auto-bootstrapped on fresh in-memory DBs (matches feature 108 pattern).
         # F12 audit: conflict-is-error → register_entity, EntityExistsError handled
+        # Projects use "P{NNN}-{slug}" ids, which sit outside the feature-110
+        # seq-slug display contract (_ENTITY_ID_FORMAT_RE requires a numeric
+        # prefix, so the strict gate rejects the 'P'). Projects carry no
+        # entity_display row — same shape as the pre-gate P001/P002 rows —
+        # hence _strict_id_format=False here.
         try:
             db.register_entity(
                 entity_type="project",
@@ -277,6 +282,7 @@ def init_project_state(
                 metadata=metadata,
                 workspace_uuid=workspace_uuid,
                 project_id="__unknown__" if workspace_uuid is None else None,
+                _strict_id_format=False,
             )
         except EntityExistsError as e:
             raise RuntimeError(
