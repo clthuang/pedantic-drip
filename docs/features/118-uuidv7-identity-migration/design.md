@@ -92,10 +92,14 @@ def register_ddl(owner: str, sql_script: str) -> None:
     """Siblings (119 events, 120 views, 122 CHECK rewrites) append at import time,
     BEFORE bootstrap_v2 runs. Re-registration of the same owner is an error."""
 
-def bootstrap_v2(db_path: str) -> None:
+def bootstrap_v2(db_path: str) -> sqlite3.Connection:
     """Idempotent: WAL + busy_timeout + foreign_keys=ON, executescript every
     registry entry in order (all DDL is IF NOT EXISTS), then the single
-    INSERT OR IGNORE version write. Re-run: no error, version unchanged."""
+    INSERT OR IGNORE version write. Re-run: no error, version unchanged.
+    RETURNS the open, PRAGMA-configured connection — caller closes. Rationale:
+    foreign_keys/busy_timeout are per-connection; returning the configured
+    connection lets tests assert the actual PRAGMA state (a fresh connection
+    would test nothing) and gives future callers (119+) a ready connection."""
 ```
 Idempotency is structural (IF NOT EXISTS everywhere + INSERT OR IGNORE for the version row), not stateful (no "already ran" flag to desync). Two SQLite footguns pinned:
 - **PRAGMA ordering:** `journal_mode=WAL`, `busy_timeout`, and `foreign_keys=ON` are issued on a FRESH connection BEFORE any statement opens a transaction — `foreign_keys` is a silent no-op if set mid-transaction. Bootstrap uses `sqlite3.connect(db_path, autocommit=True)` (Python 3.12+ explicit autocommit) for the PRAGMA phase. `foreign_keys` AND `busy_timeout` are both per-connection (non-persistent); the docstring states the future v2 connection factory (later features) must re-issue both.
@@ -131,7 +135,7 @@ New `test_schema_v2.py`:
 3. Extension point: `register_ddl("dummy", "CREATE TABLE IF NOT EXISTS dummy_t (uuid TEXT PRIMARY KEY)")` → bootstrap → table exists; duplicate owner raises.
 4. Idempotent re-bootstrap: second call no error, `schema_version` value unchanged, no duplicate rows.
 5. One-version-location: source scan asserting exactly one SQL write statement targets `_metadata` in `schema_v2.py`.
-6. WAL mode + foreign_keys + busy_timeout set on the bootstrap connection (FK-violating insert fails; `PRAGMA busy_timeout` returns the configured value) — asserted on the SAME connection bootstrap configured (both PRAGMAs are per-connection; a fresh connection would test nothing).
+6. WAL mode + foreign_keys + busy_timeout set on the bootstrap connection (FK-violating insert fails; `PRAGMA busy_timeout` returns the configured value) — asserted on the connection `bootstrap_v2` RETURNS (per D4's caller-closes contract; both PRAGMAs are per-connection, so a fresh connection would test nothing).
 
 New `test_uuid7.py`:
 7. 1000× mint: all version nibble 7, sorted == generation order (empirically holds: 10k venv demo at spec time).
