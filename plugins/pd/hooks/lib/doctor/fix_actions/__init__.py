@@ -345,20 +345,6 @@ def _fix_run_entity_migrations(ctx: FixContext, issue: Issue) -> str:
     return "Ran entity DB migrations"
 
 
-def _fix_project_attribution(ctx: FixContext, issue: Issue) -> str:
-    """Backfill project_id for __unknown__ entities under project_root."""
-    if not ctx.db:
-        raise ValueError("No entity database available")
-    if not ctx.project_root:
-        raise ValueError("No project_root available")
-
-    from entity_registry.project_identity import _compute_legacy_project_id
-
-    project_id = _compute_legacy_project_id(ctx.project_root)
-    count = ctx.db.backfill_project_ids(ctx.project_root, project_id)
-    return f"Backfilled project_id for {count} entities (project={project_id})"
-
-
 def _fix_stale_dependency(ctx: FixContext, issue: Issue) -> str:
     """Remove stale dependency on a completed blocker via cascade_unblock."""
     if ctx.db is None:

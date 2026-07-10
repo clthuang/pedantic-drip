@@ -1769,6 +1769,313 @@ class TestEntityOrphansScoping:
         finally:
             conn.close()
 
+    def test_foreign_workspace_unscoped_missing_dir_warns(self, tmp_path):
+        # (a-inverse) design [D].5 pair: the SAME foreign-workspace entity as
+        # test_foreign_workspace_missing_dir_info_not_warning, but WITHOUT a
+        # project_root workspaces row -> unscoped. The legacy branch (empty
+        # local_entity_ids -> warning arm) warns where the scoped path routed
+        # the foreign entity to the info bucket. The scoped/unscoped pair proves
+        # the two-arm predicate does the work: remove it and (a) collapses onto
+        # this outcome.
+        from doctor.checks import check_entity_orphans
+        import uuid as uuid_mod
+
+        db, conn = _make_live_db(tmp_path)
+        uuid_b = str(uuid_mod.uuid4())
+        # Only the FOREIGN workspace row exists; project_root matches nothing,
+        # so root_uuids == [] -> scoped is False.
+        _insert_workspace(conn, str(tmp_path / "other"), uuid_b)
+        _register_live_feature(db, "001-alpha", workspace_uuid=uuid_b)
+        (tmp_path / "features").mkdir()  # empty features dir
+
+        try:
+            result = check_entity_orphans(
+                conn, str(tmp_path), project_root=str(tmp_path),
+            )
+            warnings_001 = [
+                i for i in result.issues
+                if i.severity == "warning" and "001-alpha" in (i.entity or "")
+            ]
+            assert len(warnings_001) >= 1
+            assert "not found on disk" in warnings_001[0].message
+            # NOT routed to the cross-project info bucket (test (a)'s scoped
+            # outcome for the same placement) -> distinct outcome, so the
+            # predicate is load-bearing.
+            infos = [
+                i for i in result.issues
+                if i.severity == "info" and "other projects" in i.message
+            ]
+            assert infos == []
+        finally:
+            conn.close()
+
+    def test_foreign_workspace_on_disk_not_step2_flagged(self, tmp_path):
+        # (c) design [D].5(c) / spec SC#2 foreign case: an on-disk feature dir
+        # whose entity lives under a FOREIGN workspace is NOT flagged "has
+        # .meta.json but no entity in DB". Step-2 membership (db_feature_ids)
+        # is UNSCOPED (db_features_all), so exists-in-both holds for every
+        # workspace, foreign included.
+        from doctor.checks import check_entity_orphans
+        import uuid as uuid_mod
+
+        db, conn = _make_live_db(tmp_path)
+        uuid_a = str(uuid_mod.uuid4())
+        uuid_b = str(uuid_mod.uuid4())
+        _insert_workspace(conn, str(tmp_path), uuid_a)  # scoped
+        _insert_workspace(conn, str(tmp_path / "other"), uuid_b)  # foreign
+        _register_live_feature(db, "001-alpha", workspace_uuid=uuid_b)
+        _create_meta_json(tmp_path, "001-alpha", status="active")  # on disk
+
+        try:
+            result = check_entity_orphans(
+                conn, str(tmp_path), project_root=str(tmp_path),
+            )
+            meta_flags = [
+                i for i in result.issues
+                if "has .meta.json but" in i.message
+                and "001-alpha" in (i.entity or "")
+            ]
+            assert meta_flags == []
+        finally:
+            conn.close()
+
+    def test_unknown_bucket_on_disk_not_step2_flagged(self, tmp_path):
+        # Additional pin (spec happy-path AC #6, direct): an on-disk feature dir
+        # whose entity sits in the unknown-workspace bucket, scoped run -> the
+        # two-arm predicate keeps it in db_feature_ids, so its directory is NOT
+        # flagged "has .meta.json but no entity in DB". Its claimability stays
+        # check_unknown_workspace_orphans's job.
+        from doctor.checks import check_entity_orphans
+        from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
+        import uuid as uuid_mod
+
+        db, conn = _make_live_db(tmp_path)
+        uuid_a = str(uuid_mod.uuid4())
+        _insert_workspace(conn, str(tmp_path), uuid_a)  # scoped
+        _register_live_feature(
+            db, "001-alpha", workspace_uuid=_UNKNOWN_WORKSPACE_UUID
+        )
+        _create_meta_json(tmp_path, "001-alpha", status="active")  # on disk
+
+        try:
+            result = check_entity_orphans(
+                conn, str(tmp_path), project_root=str(tmp_path),
+            )
+            meta_flags = [
+                i for i in result.issues
+                if "has .meta.json but" in i.message
+                and "001-alpha" in (i.entity or "")
+            ]
+            assert meta_flags == []
+        finally:
+            conn.close()
+
+    def test_ambiguous_workspace_rows_fall_back_to_legacy(self, tmp_path):
+        # (d) design [D].5(d): TWO workspaces rows share project_root ->
+        # len(root_uuids) == 2 -> scoped is False -> legacy local_entity_ids
+        # branching (same outcome as the unscoped variant of (a)). The entity
+        # sits under a FOREIGN workspace, so the assertion is non-vacuous: a
+        # (broken) scoped path would route it to the info bucket, so a warning
+        # proves the ambiguity fallback took the legacy branch.
+        from doctor.checks import check_entity_orphans
+        import uuid as uuid_mod
+
+        db, conn = _make_live_db(tmp_path)
+        uuid_a = str(uuid_mod.uuid4())
+        uuid_c = str(uuid_mod.uuid4())
+        uuid_b = str(uuid_mod.uuid4())
+        _insert_workspace(conn, str(tmp_path), uuid_a)  # ambiguous match #1
+        _insert_workspace(conn, str(tmp_path), uuid_c)  # ambiguous match #2
+        # uuid_b lives at a DIFFERENT root (does not add to the project_root
+        # match count) so the feature can register under a genuinely foreign
+        # workspace — register_entity rejects a workspace_uuid absent from the
+        # workspaces table (split-brain guard).
+        _insert_workspace(conn, str(tmp_path / "foreign"), uuid_b)
+        _register_live_feature(db, "001-alpha", workspace_uuid=uuid_b)  # foreign
+        (tmp_path / "features").mkdir()  # empty features dir
+
+        try:
+            result = check_entity_orphans(
+                conn, str(tmp_path), project_root=str(tmp_path),
+            )
+            warnings_001 = [
+                i for i in result.issues
+                if i.severity == "warning" and "001-alpha" in (i.entity or "")
+            ]
+            assert len(warnings_001) >= 1  # legacy branch (empty local set)
+            assert "not found on disk" in warnings_001[0].message
+        finally:
+            conn.close()
+
+
+class TestEntityOrphansTolerateWholeCheck:
+    """Feature 131 Task 4.1 / design [D].4: a legacy (pre-Migration-11) DB
+    tolerates the WHOLE check — steps 2 and 4 skip, zero Issues.
+    """
+
+    def test_legacy_schema_registered_feature_on_disk_zero_issues(self, tmp_path):
+        # LEGACY fixture (genuinely no `kind` column) + a registered feature +
+        # its on-disk dir with .meta.json. Were step 2 NOT gated on the
+        # tolerated flag, it would false-flag the dir "has .meta.json but no
+        # entity in DB" (db_feature_ids is EMPTY because the kind query
+        # tolerated to []). The zero-Issue result proves the tolerated-
+        # membership skip of steps 2/4 — not merely quiet SQL sites.
+        from doctor.checks import check_entity_orphans
+
+        db_path = _make_db(tmp_path)
+        _register_feature(db_path, slug="001-alpha", status="active")
+        _create_meta_json(tmp_path, "001-alpha", status="active")
+        conn = _entities_conn(db_path)
+
+        try:
+            result = check_entity_orphans(
+                conn, str(tmp_path), project_root=str(tmp_path),
+            )
+            assert result.issues == []
+            assert result.passed is True
+        finally:
+            conn.close()
+
+
+class TestRetainedChecksEmptyDb:
+    """Feature 131 Task 4.1 / design [D].7: an empty live-schema DB yields no
+    false positives and no exceptions across the three retained checks.
+    """
+
+    def test_empty_db_all_three_checks_clean(self, tmp_path):
+        from doctor.checks import (
+            check_brainstorm_status,
+            check_entity_orphans,
+            check_feature_status,
+        )
+
+        db, conn = _make_live_db(tmp_path)  # zero registered rows
+        try:
+            fs = check_feature_status(conn, str(tmp_path))
+            bs = check_brainstorm_status(conn, str(tmp_path))
+            eo = check_entity_orphans(
+                conn, str(tmp_path), project_root=str(tmp_path)
+            )
+            for result in (fs, bs, eo):
+                assert result.issues == []
+                assert result.passed is True
+        finally:
+            conn.close()
+
+
+class TestEntityOrphansSurfaceBranch:
+    """Feature 131 Task 4.1 / design [D].3 / spec SC#4 surface AC: a schema-
+    level sqlite3.Error at a rewritten site (with `kind` PRESENT) surfaces as
+    exactly one error Issue naming the check — end-to-end, distinct from the
+    Task 1.1 helper-level unit test.
+    """
+
+    def test_membership_query_failure_surfaces_one_error(self, tmp_path):
+        from doctor.checks import check_entity_orphans
+
+        db, conn = _make_live_db(tmp_path)
+        _register_live_feature(db, "001-alpha", status="active")
+
+        # Fail ONLY the feature-membership SELECT (step 1). PRAGMA
+        # table_info(entities) and every other query pass through, so `kind`
+        # probes as PRESENT -> the helper takes the SURFACE branch (not
+        # tolerate). No project_root workspaces row -> unscoped, so only the
+        # single unfiltered membership query runs -> exactly one error.
+        sentinel = "injected corruption at membership select"
+
+        class _FailMembershipConn:
+            def __init__(self, real):
+                self._real = real
+
+            def execute(self, sql, *args):
+                if "kind = 'feature'" in sql and "artifact_path" in sql:
+                    raise sqlite3.OperationalError(sentinel)
+                return self._real.execute(sql, *args)
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+        wrapped = _FailMembershipConn(conn)
+        try:
+            result = check_entity_orphans(
+                wrapped, str(tmp_path), project_root=str(tmp_path),
+            )
+            errors = [i for i in result.issues if i.severity == "error"]
+            assert len(errors) == 1
+            assert errors[0].check == "entity_orphans"
+            assert "entity_orphans" in errors[0].message
+            assert sentinel in errors[0].message
+            assert result.passed is False
+        finally:
+            conn.close()
+
+
+def test_all_checks_sql_explains_against_live_schema(tmp_path):
+    """Feature 131 Task 4.2 / design [D].2 / spec SC#1+SC#5: committed EXPLAIN
+    scan over every constant SQL site in checks.py.
+
+    AST-walk checks.py for the constant string first-argument of every
+    ``.execute(...)`` call whose text starts with SELECT/PRAGMA (constants
+    only — f-strings, names, and BinOp concatenations are intentionally
+    skipped, matching the authoring harness), then ``EXPLAIN`` each against a
+    live-schema connection. A statement referencing a dropped column
+    (``entity_type`` / ``project_id``) or any other schema drift fails to
+    compile, so this is the durable, committed form of the authoring harness
+    that found the original 7 rotted sites.
+    """
+    import ast
+
+    checks_path = os.path.join(os.path.dirname(__file__), "checks.py")
+    with open(checks_path) as f:
+        tree = ast.parse(f.read(), filename=checks_path)
+
+    collected: list[tuple[int, str]] = []  # (lineno, sql)
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "execute"
+            and node.args
+        ):
+            continue
+        arg = node.args[0]
+        # Constants only: the parser folds adjacent string literals into one
+        # ast.Constant; f-strings (JoinedStr), Name references, and BinOp
+        # ("a" + b) concatenations are deliberately out of scope.
+        if not (isinstance(arg, ast.Constant) and isinstance(arg.value, str)):
+            continue
+        if arg.value.strip().upper().startswith(("SELECT", "PRAGMA")):
+            collected.append((node.lineno, arg.value))
+
+    # Guard a silently-broken walker (e.g. an AST-shape change that collects
+    # nothing): the checks module carries well over 20 constant SQL sites.
+    assert len(collected) >= 20, (
+        f"walker collected only {len(collected)} SQL sites — expected >= 20; "
+        f"the .execute() AST shape may have drifted"
+    )
+
+    db, conn = _make_live_db(tmp_path)
+    failures: list[tuple[int, str, str]] = []
+    try:
+        for lineno, sql in collected:
+            try:
+                conn.execute("EXPLAIN " + sql, ("x",) * sql.count("?"))
+            except sqlite3.Error as exc:
+                failures.append(
+                    (lineno, str(exc), " ".join(sql.split())[:80])
+                )
+    finally:
+        conn.close()
+
+    assert failures == [], (
+        "SQL sites failed to EXPLAIN against the live schema (dropped column "
+        "or schema drift):\n"
+        + "\n".join(
+            f"  checks.py:{ln}: {err} :: {prefix}"
+            for ln, err, prefix in failures
+        )
+    )
+
 
 # ===========================================================================
 # Task 4.1: Check 9 (Referential Integrity)
@@ -2128,7 +2435,7 @@ class TestOrchestratorReportHas14Checks:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 21  # was 22 pre-memory-extraction (check_memory_health removed)
+        assert len(report.checks) == 20  # feature 131 removed check_project_attribution (was 21)
 
 
 class TestOrchestratorReportEvenWhenLocked:
@@ -2145,7 +2452,7 @@ class TestOrchestratorReportEvenWhenLocked:
         blocker.execute("BEGIN IMMEDIATE")
         try:
             report = run_diagnostics(db_path, str(tmp_path / "docs"), str(tmp_path))
-            assert len(report.checks) == 21  # was 22 pre-memory-extraction (check_memory_health removed)
+            assert len(report.checks) == 20  # feature 131 removed check_project_attribution (was 21)
         finally:
             blocker.rollback()
             blocker.close()
@@ -2205,7 +2512,7 @@ class TestOrchestratorPerCheckExceptionIsolation:
         # The orchestrator wraps each check in try/except
         # Even if a check raises, we still get 10 results
         report = run_diagnostics(db_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 21  # was 22 pre-memory-extraction (check_memory_health removed)
+        assert len(report.checks) == 20  # feature 131 removed check_project_attribution (was 21)
 
 
 class TestOrchestratorMissingDbFile:
@@ -2219,7 +2526,7 @@ class TestOrchestratorMissingDbFile:
 
         report = run_diagnostics(db_path, str(tmp_path / "docs"), str(tmp_path))
         assert not os.path.exists(db_path)
-        assert len(report.checks) == 21  # was 22 pre-memory-extraction (check_memory_health removed)
+        assert len(report.checks) == 20  # feature 131 removed check_project_attribution (was 21)
 
 
 class TestOrchestratorBaseBranchFromConfig:
@@ -2235,7 +2542,7 @@ class TestOrchestratorBaseBranchFromConfig:
         (config_dir / "pd.local.md").write_text("base_branch: develop\n")
 
         report = run_diagnostics(db_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 21  # was 22 pre-memory-extraction (check_memory_health removed)
+        assert len(report.checks) == 20  # feature 131 removed check_project_attribution (was 21)
 
 
 class TestOrchestratorBaseBranchDefaultMain:
@@ -2248,7 +2555,7 @@ class TestOrchestratorBaseBranchDefaultMain:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 21  # was 22 pre-memory-extraction (check_memory_health removed)
+        assert len(report.checks) == 20  # feature 131 removed check_project_attribution (was 21)
 
 
 class TestOrchestratorCheck8RunsFirst:
@@ -2277,7 +2584,7 @@ class TestOrchestratorEntityDbLocked:
         blocker1.execute("BEGIN IMMEDIATE")
         try:
             report = run_diagnostics(db_path, str(tmp_path / "docs"), str(tmp_path))
-            assert len(report.checks) == 21  # was 22 pre-memory-extraction (check_memory_health removed)
+            assert len(report.checks) == 20  # feature 131 removed check_project_attribution (was 21)
             assert report.healthy is False
         finally:
             blocker1.rollback()
@@ -2294,7 +2601,7 @@ class TestOrchestratorFreshProjectEmpty:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 21  # was 22 pre-memory-extraction (check_memory_health removed)
+        assert len(report.checks) == 20  # feature 131 removed check_project_attribution (was 21)
         assert report.elapsed_ms >= 0
 
 
@@ -2309,7 +2616,7 @@ class TestOrchestratorWorksWithoutMcp:
 
         # No MCP servers running -- should still work
         report = run_diagnostics(db_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 21  # was 22 pre-memory-extraction (check_memory_health removed)
+        assert len(report.checks) == 20  # feature 131 removed check_project_attribution (was 21)
 
 
 class TestOrchestratorConnectionsClosedOnSuccess:
@@ -2322,7 +2629,7 @@ class TestOrchestratorConnectionsClosedOnSuccess:
         (tmp_path / "docs").mkdir(exist_ok=True)
 
         report = run_diagnostics(db_path, str(tmp_path / "docs"), str(tmp_path))
-        assert len(report.checks) == 21  # was 22 pre-memory-extraction (check_memory_health removed)
+        assert len(report.checks) == 20  # feature 131 removed check_project_attribution (was 21)
 
         # Verify we can acquire write locks (connections were closed)
         conn = sqlite3.connect(db_path, timeout=1.0)
@@ -2389,7 +2696,7 @@ class TestCliJsonOutputHas14Checks:
         data = json.loads(result.stdout)
         # Phase 2 wraps output: {"diagnostic": ...}
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 21  # was 22 pre-memory-extraction (check_memory_health removed)
+        assert len(diag["checks"]) == 20  # feature 131 removed check_project_attribution (was 21)
 
 
 class TestCliExitCodeAlwaysZero:
@@ -2459,7 +2766,7 @@ class TestCliArtifactsRootCliArgPrecedence:
         assert result.returncode == 0
         data = json.loads(result.stdout)
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 21  # was 22 pre-memory-extraction (check_memory_health removed)
+        assert len(diag["checks"]) == 20  # feature 131 removed check_project_attribution (was 21)
 
 
 class TestCliArtifactsRootConfigFallback:
@@ -2479,7 +2786,7 @@ class TestCliArtifactsRootConfigFallback:
         assert result.returncode == 0
         data = json.loads(result.stdout)
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 21  # was 22 pre-memory-extraction (check_memory_health removed)
+        assert len(diag["checks"]) == 20  # feature 131 removed check_project_attribution (was 21)
 
 
 class TestCliArtifactsRootDefaultDocs:
@@ -2498,7 +2805,7 @@ class TestCliArtifactsRootDefaultDocs:
         assert result.returncode == 0
         data = json.loads(result.stdout)
         diag = data.get("diagnostic", data)
-        assert len(diag["checks"]) == 21  # was 22 pre-memory-extraction (check_memory_health removed)
+        assert len(diag["checks"]) == 20  # feature 131 removed check_project_attribution (was 21)
 
 
 class TestCliNoneSerializesAsJsonNull:
