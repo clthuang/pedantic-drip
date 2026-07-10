@@ -87,7 +87,7 @@ graph TD
   2. Repoint the `check_feature_status` behavioral tests in `test_checks.py` from `_make_db`/`_register_feature` to `_make_live_db`/`_register_live_feature`, preserving every assertion (message strings, counts, severities) unchanged.
   3. Non-vacuity guard (design [D].1 / spec SC#3): add an assertion that with registered live rows, the check's candidate set is NON-EMPTY (e.g., a status-divergent feature IS reported) — a tolerate-branch no-op cannot pass this suite.
 - **Test:** `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/doctor/test_checks.py -k feature_status`
-- **Done when:** Suite passes incl. the non-vacuity assertion; `grep -n "entity_type" plugins/pd/hooks/lib/doctor/checks.py` no longer lists :709's query.
+- **Done when:** Suite passes incl. the non-vacuity assertion; function-scoped check clean: `sed -n '/^def check_feature_status/,/^def /p' plugins/pd/hooks/lib/doctor/checks.py | grep entity_type` → no output.
 
 #### Task 2.2: Rewrite check_brainstorm_status queries to kind column
 - **Why:** Implements Plan S2.1 / Design Component [B] rows 2-3 (sites :988, :1083)
@@ -176,7 +176,7 @@ graph TD
 - **Files:** none (verification only)
 - **Do:**
   1. `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/doctor/` → must be fully green.
-  2. Run the live doctor entity checks against this repo's real DB: `PYTHONPATH=plugins/pd/hooks/lib plugins/pd/.venv/bin/python -m doctor --entities-db ~/.claude/pd/entities/entities.db --project-root . 2>/dev/null` (canonical invocation per `plugins/pd/commands/doctor.md:29-37`; the PYTHONPATH prefix is required for the doctor package import) and capture output.
+  2. Run the live doctor entity checks against this repo's real DB: `PYTHONPATH=plugins/pd/hooks/lib plugins/pd/.venv/bin/python -m doctor --entities-db ~/.claude/pd/entities/entities.db --project-root . 2>/dev/null` (canonical invocation per `plugins/pd/commands/doctor.md:36-41`, the fallback/dev-workspace block; the PYTHONPATH prefix is required for the doctor package import) and capture output.
   3. Assert observations with an explicit false-positive discrimination step: for EVERY remaining "in DB but feature directory not found" or "has .meta.json but no entity in DB" flag, cross-reference the entity_id against actual `docs/features/` directory existence AND DB membership (`SELECT 1 FROM entities WHERE kind='feature' AND entity_id=?`) — only genuinely-both-present entities count as false positives (a truly-deleted directory is a TRUE positive, not a failure). Also assert: zero `project_attribution` issues; `feature_status`/`brainstorm_status` candidate sets non-empty (census guarantees features exist).
   4. Record the before/after doctor issue counts in the task output for the retro.
 - **Test:** `plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/doctor/ -q`
