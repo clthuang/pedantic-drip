@@ -14,7 +14,7 @@ from entity_registry.database import (
     EntityDatabase,
     EntityExistsError,
     MIGRATIONS,
-    _UUID_V4_RE,
+    _UUID_RE,
     _add_project_scoping,
     _create_initial_schema,
     _expand_workflow_phase_check,
@@ -175,7 +175,7 @@ class TestMigration2:
     def test_migration_populated_db_preserves_data(self):
         """Migrating a v1 DB with data should preserve all rows and add UUIDs."""
         import sqlite3
-        from entity_registry.database import _UUID_V4_RE
+        from entity_registry.database import _UUID_RE
 
         conn = sqlite3.connect(":memory:")
         conn.row_factory = sqlite3.Row
@@ -217,9 +217,9 @@ class TestMigration2:
         assert "feature:f1" in type_ids
         assert "project:p1" in type_ids
 
-        # Each row has valid UUID v4
+        # Each row has valid UUID
         for row in rows:
-            assert _UUID_V4_RE.match(row["uuid"]), (
+            assert _UUID_RE.match(row["uuid"]), (
                 f"Row {row['type_id']} has invalid uuid: {row['uuid']}"
             )
 
@@ -234,7 +234,7 @@ class TestMigration2:
     def test_migration_populates_parent_uuid(self):
         """Migration should populate parent_uuid from parent_type_id."""
         import sqlite3
-        from entity_registry.database import _UUID_V4_RE
+        from entity_registry.database import _UUID_RE
 
         conn = sqlite3.connect(":memory:")
         conn.row_factory = sqlite3.Row
@@ -266,7 +266,7 @@ class TestMigration2:
         ).fetchone()
 
         assert child["parent_uuid"] == parent["uuid"]
-        assert _UUID_V4_RE.match(parent["uuid"])
+        assert _UUID_RE.match(parent["uuid"])
 
         conn.close()
 
@@ -668,7 +668,7 @@ class TestRegisterEntity:
     def test_happy_path(self, db: EntityDatabase):
         """Register a feature entity and retrieve it."""
         result = db.register_entity("feature", "feat-001", "My Feature", project_id="__unknown__")
-        assert _UUID_V4_RE.match(result), f"Expected UUID v4, got {result!r}"
+        assert _UUID_RE.match(result), f"Expected a valid UUID, got {result!r}"
         cur = db._conn.execute(
             "SELECT * FROM entities WHERE type_id = 'feature:feat-001'"
         )
@@ -682,7 +682,7 @@ class TestRegisterEntity:
     def test_type_id_auto_constructed(self, db: EntityDatabase):
         """type_id should be f'{entity_type}:{entity_id}'."""
         result = db.register_entity("backlog", "item-42", "Backlog Item", project_id="__unknown__")
-        assert _UUID_V4_RE.match(result), f"Expected UUID v4, got {result!r}"
+        assert _UUID_RE.match(result), f"Expected a valid UUID, got {result!r}"
         # Verify the type_id was constructed correctly in the DB
         row = db._conn.execute(
             "SELECT type_id FROM entities WHERE uuid = ?", (result,)
@@ -699,7 +699,7 @@ class TestRegisterEntity:
         """
         uuid1 = db.upsert_entity("project", "proj-1", "Project One", project_id="__unknown__")
         uuid2 = db.upsert_entity("project", "proj-1", "Project One Updated", project_id="__unknown__")
-        assert _UUID_V4_RE.match(uuid1)
+        assert _UUID_RE.match(uuid1)
         assert uuid1 == uuid2
         cur = db._conn.execute("SELECT COUNT(*) FROM entities")
         assert cur.fetchone()[0] == 1
@@ -718,14 +718,14 @@ class TestRegisterEntity:
         """All eight valid types should succeed."""
         for etype in EntityDatabase.VALID_ENTITY_TYPES:
             result = db.register_entity(etype, f"id-{etype}", f"Name {etype}", project_id="__unknown__")
-            assert _UUID_V4_RE.match(result), f"Expected UUID v4 for {etype}"
+            assert _UUID_RE.match(result), f"Expected a valid UUID for {etype}"
 
     def test_new_entity_types_register_successfully(self, db: EntityDatabase):
         """New entity types (initiative, objective, key_result, task) register."""
         new_types = ("initiative", "objective", "key_result", "task")
         for etype in new_types:
             uuid_str = db.register_entity(etype, f"001-test-{etype}", f"Test {etype}", project_id="__unknown__")
-            assert _UUID_V4_RE.match(uuid_str), f"{etype} should return valid UUID"
+            assert _UUID_RE.match(uuid_str), f"{etype} should return valid UUID"
             # Verify entity is queryable
             # F11 (feature 109): entity_type column dropped; kind replaces it.
             row = db._conn.execute(
@@ -797,10 +797,10 @@ class TestRegisterEntity:
         assert row["updated_at"] is not None
 
     def test_returns_uuid_string(self, db: EntityDatabase):
-        """register_entity should return a UUID v4 string."""
+        """register_entity should return a valid UUID string."""
         result = db.register_entity("feature", "f99", "Feature 99", project_id="__unknown__")
         assert isinstance(result, str)
-        assert _UUID_V4_RE.match(result), f"Expected UUID v4, got {result!r}"
+        assert _UUID_RE.match(result), f"Expected a valid UUID, got {result!r}"
 
     def test_metadata_stored_as_json(self, db: EntityDatabase):
         """metadata dict should be stored as JSON string in the database."""
@@ -1703,7 +1703,7 @@ class TestBoundaryEntityIdEmpty:
         # When registering with entity_id=""
         entity_uuid = db.register_entity("feature", "", "Empty ID Feature", project_id="__unknown__")
         # Then the return is a UUID
-        assert _UUID_V4_RE.match(entity_uuid)
+        assert _UUID_RE.match(entity_uuid)
         # And the type_id is "feature:" (colon-separated format), retrievable
         entity = db.get_entity("feature:")
         assert entity is not None
@@ -1770,7 +1770,7 @@ class TestTypeIdFormat:
         # Given a feature entity with entity_id "my-feature"
         entity_uuid = db.register_entity("feature", "my-feature", "My Feature", project_id="__unknown__")
         # Then the return is a UUID
-        assert _UUID_V4_RE.match(entity_uuid)
+        assert _UUID_RE.match(entity_uuid)
         # And the type_id in the DB uses a colon separator
         entity = db.get_entity(entity_uuid)
         type_id = entity["type_id"]
@@ -1847,7 +1847,7 @@ class TestBacklogIdWithLeadingZeros:
         # Given a backlog entity with leading zeros in ID
         entity_uuid = db.register_entity("backlog", "00019", "Item with zeros", project_id="__unknown__")
         # Then the return is a UUID
-        assert _UUID_V4_RE.match(entity_uuid)
+        assert _UUID_RE.match(entity_uuid)
         # And the type_id preserves leading zeros
         entity = db.get_entity("backlog:00019")
         assert entity is not None
@@ -1904,10 +1904,10 @@ class TestResolveIdentifier:
 
 # T2.2.1: register_entity UUID return tests
 class TestRegisterEntityUUID:
-    def test_register_returns_uuid_v4_format(self, db: EntityDatabase):
-        """register_entity should return a valid UUID v4 string."""
+    def test_register_returns_valid_uuid_format(self, db: EntityDatabase):
+        """register_entity should return a valid UUID string."""
         result = db.register_entity("feature", "test", "Test", project_id="__unknown__")
-        assert _UUID_V4_RE.match(result), f"Expected UUID v4, got {result!r}"
+        assert _UUID_RE.match(result), f"Expected a valid UUID, got {result!r}"
 
     def test_register_duplicate_returns_existing_uuid(self, db: EntityDatabase):
         """Upserting same entity twice returns the same UUID (F12 idempotent path)."""
@@ -2071,46 +2071,48 @@ class TestResolveIdentifierBoundary:
         # Then it resolves correctly (case-insensitive)
         assert result == (entity_uuid, "feature:case-test")
 
-    def test_uuid_v1_format_not_matched_as_uuid(self, db: EntityDatabase):
-        """UUID v1 format should NOT match v4 regex (version nibble = 1).
-        Anticipate: If regex is too loose (e.g., accepts any hex), a v1
-        UUID would be treated as a UUID lookup instead of type_id.
+    def test_uuid_v1_format_matched_as_uuid(self, db: EntityDatabase):
+        """UUID v1 format matches the version-agnostic UUID regex.
+        Versions 1-7 are accepted; uuid-vs-type_id routing is now
+        version-agnostic (position 13 accepts any digit in [1-7]).
         derived_from: spec:R23, dimension:mutation_mindset
         """
-        # Given a UUID v1 string (version nibble is 1, not 4)
+        # Given a UUID v1 string (version nibble is 1)
         v1_like = "550e8400-e29b-11d4-a716-446655440000"
         # When checking against the regex
-        # Then it should NOT match (position 13 must be '4')
-        assert not _UUID_V4_RE.match(v1_like.lower())
+        # Then it SHOULD match (version nibble 1 is within [1-7])
+        assert _UUID_RE.match(v1_like.lower())
 
-    def test_uuid_v5_format_not_matched_as_uuid(self, db: EntityDatabase):
-        """UUID v5 format should NOT match v4 regex (version nibble = 5).
-        Anticipate: Weak regex accepting any version would incorrectly
-        route this to UUID lookup path.
+    def test_uuid_v5_format_matched_as_uuid(self, db: EntityDatabase):
+        """UUID v5 format matches the version-agnostic UUID regex.
+        Versions 1-7 are accepted; uuid-vs-type_id routing is now
+        version-agnostic.
         derived_from: spec:R23, dimension:boundary_values
         """
         # Given a UUID v5 string (version nibble is 5)
         v5_like = "550e8400-e29b-51d4-a716-446655440000"
-        assert not _UUID_V4_RE.match(v5_like.lower())
+        assert _UUID_RE.match(v5_like.lower())
 
-    def test_uuid_v3_format_not_matched_as_uuid(self, db: EntityDatabase):
-        """UUID v3 format should NOT match v4 regex (version nibble = 3).
+    def test_uuid_v3_format_matched_as_uuid(self, db: EntityDatabase):
+        """UUID v3 format matches the version-agnostic UUID regex.
+        Versions 1-7 are accepted; uuid-vs-type_id routing is now
+        version-agnostic.
         derived_from: spec:R23, dimension:boundary_values
         """
         v3_like = "550e8400-e29b-31d4-a716-446655440000"
-        assert not _UUID_V4_RE.match(v3_like.lower())
+        assert _UUID_RE.match(v3_like.lower())
 
     def test_uuid_with_invalid_variant_nibble_not_matched(
         self, db: EntityDatabase,
     ):
-        """UUID with variant nibble outside [89ab] should not match v4 regex.
+        """UUID with variant nibble outside [89ab] should not match the UUID regex.
         Anticipate: If regex variant check is missing, UUIDs with variant 0
         would be mismatched.
         derived_from: spec:R23, dimension:mutation_mindset
         """
         # Position 19 (variant nibble) must be [89ab]; 'c' is outside
         invalid_variant = "550e8400-e29b-41d4-c716-446655440000"
-        assert not _UUID_V4_RE.match(invalid_variant.lower())
+        assert not _UUID_RE.match(invalid_variant.lower())
 
 
 class TestMigrationEmptyDb:
@@ -2176,9 +2178,9 @@ class TestMigrationLargeDataset:
         # And all UUIDs are unique
         uuids = [r["uuid"] for r in rows]
         assert len(set(uuids)) == 100
-        # And all UUIDs are valid v4
+        # And all UUIDs are valid
         for u in uuids:
-            assert _UUID_V4_RE.match(u)
+            assert _UUID_RE.match(u)
         conn.close()
 
 
@@ -2705,7 +2707,7 @@ class TestGetEntityDictContainsBothIdentifiers:
         # Then both fields are present and valid
         assert "uuid" in entity
         assert "type_id" in entity
-        assert _UUID_V4_RE.match(entity["uuid"])
+        assert _UUID_RE.match(entity["uuid"])
         assert entity["type_id"] == "feature:both-ids"
 
     def test_lineage_dicts_have_both_identifiers(self, db: EntityDatabase):
@@ -2724,7 +2726,7 @@ class TestGetEntityDictContainsBothIdentifiers:
         for entry in lineage:
             assert "uuid" in entry
             assert "type_id" in entry
-            assert _UUID_V4_RE.match(entry["uuid"])
+            assert _UUID_RE.match(entry["uuid"])
 
 
 # ---------------------------------------------------------------------------
@@ -4087,7 +4089,7 @@ class TestExportEntitiesJson:
     # -- Lineage, Metadata, Ordering, Performance (Task 1.1.1b) ------------
 
     def test_uuid_in_entity(self, mem_db: EntityDatabase):
-        """Each entity dict has a uuid field matching UUID v4 pattern."""
+        """Each entity dict has a uuid field matching the UUID pattern."""
         mem_db.register_entity("feature", "f1", "Feature One", project_id="__unknown__")
 
         result = mem_db.export_entities_json()
@@ -4095,8 +4097,8 @@ class TestExportEntitiesJson:
         for entity in result["entities"]:
             assert "uuid" in entity
             assert re.match(
-                _UUID_V4_RE, entity["uuid"],
-            ), f"uuid '{entity['uuid']}' does not match UUID v4 pattern"
+                _UUID_RE, entity["uuid"],
+            ), f"uuid '{entity['uuid']}' does not match UUID pattern"
 
     def test_include_lineage_true(self, mem_db: EntityDatabase):
         """include_lineage=True includes parent_type_id in entity dicts."""
@@ -5328,7 +5330,7 @@ class TestBatchRegistration:
         uuids = db.register_entities_batch(entities, project_id="__unknown__")
         assert len(uuids) == 3
         for uid in uuids:
-            assert _UUID_V4_RE.match(uid)
+            assert _UUID_RE.match(uid)
 
     def test_batch_single_commit(self, db):
         """100 entities should succeed in batch."""

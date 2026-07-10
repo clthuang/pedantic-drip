@@ -22,8 +22,8 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
-_UUID_V4_RE = re.compile(
-    r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+_UUID_RE = re.compile(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-7][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
 )
 
 # Tag format: lowercase letters, digits, hyphens. 1-50 chars. No leading/trailing hyphens.
@@ -6029,7 +6029,7 @@ class EntityDatabase:
         Parameters
         ----------
         identifier:
-            Either a UUID v4 string or a type_id string.
+            Either a UUID string or a type_id string.
         workspace_uuid:
             If provided, restrict type_id lookup to this workspace.
             UUID lookups are unchanged (UUID is globally unique).
@@ -6051,7 +6051,7 @@ class EntityDatabase:
             is ambiguous across workspaces (when neither kwarg is
             provided).
         """
-        if _UUID_V4_RE.match(identifier.lower()):
+        if _UUID_RE.match(identifier.lower()):
             row = self._conn.execute(
                 "SELECT uuid, type_id FROM entities WHERE uuid = ?",
                 (identifier.lower(),),
@@ -6280,7 +6280,7 @@ class EntityDatabase:
             If ref is ambiguous (multiple prefix matches) or not found.
         """
         # 1. Try as UUID (globally unique, scoping not needed)
-        if _UUID_V4_RE.match(ref.lower()):
+        if _UUID_RE.match(ref.lower()):
             entity = self.get_entity_by_uuid(ref.lower())
             if entity is not None:
                 return entity["uuid"]

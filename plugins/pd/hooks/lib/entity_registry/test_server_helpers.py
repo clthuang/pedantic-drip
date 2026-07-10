@@ -8,11 +8,11 @@ import pytest
 
 import re
 
-from entity_registry.database import EntityDatabase, _UUID_V4_RE
+from entity_registry.database import EntityDatabase, _UUID_RE
 
 # Non-anchored version for searching within longer strings
-_UUID_V4_SEARCH_RE = re.compile(
-    r'[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}'
+_UUID_SEARCH_RE = re.compile(
+    r'[0-9a-f]{8}-[0-9a-f]{4}-[1-7][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}'
 )
 from entity_registry.server_helpers import (
     _format_entity_label,
@@ -498,7 +498,7 @@ class TestProcessGetLineage:
                 _process_get_lineage(db, "feature:leaf", "up", 10)
                 # render_tree(entities, root_id, max_depth) -- root_id is args[1]
                 root_arg = mock_rt.call_args.args[1]
-                assert _UUID_V4_RE.match(root_arg), (
+                assert _UUID_RE.match(root_arg), (
                     f"Expected UUID, got: {root_arg}"
                 )
         finally:
@@ -900,7 +900,7 @@ class TestRegisterEntityDualIdentityMessage:
         )
         # Then the message contains only type_id, no UUID
         assert result == "Registered: project:p1"
-        assert not _UUID_V4_SEARCH_RE.search(result), (
+        assert not _UUID_SEARCH_RE.search(result), (
             f"UUID found in message, should be type_id only: {result}"
         )
 
@@ -1015,7 +1015,7 @@ class TestProcessGetLineageUuidRoot:
             _process_get_lineage(db, "project:root", "down", 10)
             # Then render_tree's root_id arg is a UUID
             root_arg = mock_rt.call_args.args[1]
-            assert _UUID_V4_RE.match(root_arg), (
+            assert _UUID_RE.match(root_arg), (
                 f"Expected UUID root_id for downward lineage, got: {root_arg}"
             )
 
