@@ -22,7 +22,6 @@ from entity_registry.frontmatter import (
 
 # Internal symbols — tested directly to verify low-level contracts
 from entity_registry.frontmatter import (
-    _UUID_RE,
     _parse_block,
     _serialize_header,
 )

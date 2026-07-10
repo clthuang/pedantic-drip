@@ -27,11 +27,11 @@ from entity_registry.uuid7 import generate_uuid7
 # Phase D: workspace UUID resolution (FR-3 precedence chain).
 # ---------------------------------------------------------------------------
 
-# 36-char lowercase hyphenated UUID format. Accepts both v4 and v7 (the
-# version nibble is allowed to be any hex digit so a future F6 uuid7 deploy
-# does not need to widen this regex).
+# 36-char lowercase hyphenated UUID format. Version nibble [1-7] accepts
+# both v4 and v7 mints; variant nibble pinned to the RFC 9562 [89ab] class,
+# matching the sibling _UUID_RE copies in database.py / frontmatter.py.
 _WORKSPACE_UUID_RE = re.compile(
-    r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-7][0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-7][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
 )
 
 

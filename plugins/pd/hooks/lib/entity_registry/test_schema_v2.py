@@ -113,7 +113,10 @@ class TestBootstrapShape:
         'uuid', typed TEXT."""
         for table in _CORE_TABLES_WITH_UUID_PK:
             columns = bootstrapped_conn.execute(f"PRAGMA table_info({table})").fetchall()
-            pk_columns = [col for col in columns if col[5] == 1]
+            # table_info's pk field is the column's 1-based POSITION within
+            # the PK (0 = not part of it) — filtering == 1 would match only
+            # the first column of a composite key and mask that regression.
+            pk_columns = [col for col in columns if col[5] != 0]
             assert len(pk_columns) == 1, f"{table} must have exactly one PK column"
             pk_name, pk_type = pk_columns[0][1], pk_columns[0][2]
             assert pk_name == "uuid", f"{table} PK must be 'uuid', got {pk_name!r}"
