@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **UUIDv7 identity foundation (feature 118, P004 cluster 1)** — new dark-shipped `entity_registry/schema_v2.py`: v2 core DDL (`workspaces`, `entities`, `entity_relations`, `sequences`) with uuid TEXT primary keys throughout, no uniqueness constraints on human-readable fields (PRD FR-4), CASCADE relation FKs with a structural dedup index, one schema-version write site (FR-12), and a DDL registry extension point for the sibling features (119 events, 120 views, 122 axes). New `entity_registry/uuid7.py` — `generate_uuid7()` over stdlib `uuid.uuid7()` with an import-time Python-floor guard. Nothing live reads the v2 module yet; cutover is feature 132.
+
+### Changed
+
+- **Python floor raised to 3.14** (PRD NFR-2) — `requires-python >= 3.14` in `pyproject.toml`/`uv.lock` (which also reconciled 51 orphaned lock entries from the knowledge-bank teardown), and every external floor consumer migrated: `mcp/bootstrap-venv.sh` interpreter discovery, `scripts/doctor.sh` version check, CI `python-version`. Prevents bootstrapping a venv on 3.12/3.13 whose entity-registry imports would crash at runtime.
+- **Entity/workspace uuid minting is now time-ordered uuid7** — the 4 runtime `uuid4` mint sites route through `generate_uuid7()`; the two uuid4 sites inside frozen v17 migration functions are deliberately untouched. Both `_UUID_V4_RE` validators widened to `_UUID_RE` (versions 1-7; RFC 9562 variant pinned), so minted uuid7 values round-trip entity lookup, `resolve_ref`, and frontmatter validation; `_WORKSPACE_UUID_RE`'s variant nibble tightened to `[89ab]` for parity.
+
 ## [5.0.1] - 2026-07-10
 
 ### Fixed
