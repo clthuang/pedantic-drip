@@ -1,0 +1,19 @@
+{
+  "feature": "129-workspace-scoped-queries",
+  "gate_date": "2026-07-11",
+  "reviewers": [
+    {"lens": "correctness", "model": "opus", "findings": {"HIGH": 0, "MED": 0, "LOW": 1}, "verdict": "safe to merge"},
+    {"lens": "integration", "model": "opus", "findings": {"HIGH": 0, "MED": 0, "LOW": 2}, "verdict": "no merge blocker"},
+    {"lens": "test-integrity", "model": "sonnet", "findings": {"HIGH": 0, "MED": 1, "LOW": 0}, "verdict": "clean; 1 operational flake filed"},
+    {"lens": "docs-artifacts", "model": "sonnet", "findings": {"HIGH": 1, "MED": 2, "LOW": 1}, "verdict": "no blocking correctness issues"}
+  ],
+  "dispositions": {
+    "HIGH_fixed_in_branch": ["D1 README 21→19 check-count (3 lines, two phrasings) + CLAUDE.md docs-sync checklist line"],
+    "MED_fixed_in_branch": ["D2 roadmap 129 scope bounded", "D3 roadmap 133 carry-forward note"],
+    "MED_filed": ["T1 → backlog:059-migration11-race-test-flake"],
+    "LOW_fixed_in_branch": ["N1 stale InvalidCloseTargetError docstring bullet", "D4 CHANGELOG doctor parenthetical enumerated"],
+    "LOW_sidecar": ["C1 fail-fast cwd decision", "N2 P004 PRD tallies → refresh at 133"]
+  },
+  "post_fix_verification": {"tests": "1851 passed / 2 skipped (entity_registry+mcp)", "validate_sh": "0 errors / 29 pre-existing warnings"},
+  "result": "PASS"
+}

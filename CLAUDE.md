@@ -155,6 +155,7 @@ When the `openai-codex/codex` plugin is installed (detected by presence of `~/.c
 - `plugins/pd/skills/workflow-state/SKILL.md` — Phase Sequence one-liner (if phase names change)
 - `plugins/pd/commands/secretary.md` — Specialist Fast-Path table (if renaming agents listed there)
 - `README_FOR_DEV.md` — hooks table (if adding/removing hooks)
+- `README.md` + `plugins/pd/README.md` — the `/pd:doctor` check-count claims (if adding/removing doctor checks; drifted silently across features 131 AND 129)
 
 A hookify rule (`.claude/hookify.docs-sync.local.md`) will remind you on plugin component edits.
 

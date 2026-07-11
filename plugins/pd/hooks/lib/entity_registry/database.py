@@ -5738,7 +5738,6 @@ class InvalidCloseTargetError(ValueError):
 
     Used by F10 complete_phase(closes=) for:
     - lifecycle_class not in _CLOSES_TERMINAL (FR-10.3 step 3)
-    - cross-workspace closure attempt (FR-10.3 step 2)
     - already terminal with different prior closer (FR-10.3 step 4)
     - already terminal with no prior closer record (FR-10.3 step 4)
     """

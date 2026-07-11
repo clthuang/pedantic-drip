@@ -13,7 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- **Cross-workspace enforcement surface (feature 129, P004 cluster 1)** — cross-workspace entity links are now ordinary permitted operations. Deleted all five members: the DB-layer gate (`CrossWorkspaceError`, `_assert_same_workspace_pairwise`, the 3 gate calls in `add_dependency`/`set_parent`/`add_okr_alignment` and their catch/envelope sites), the two inline MCP gates (`issue_spawn` parent check incl. its dead workspace-resolution inputs; `complete_phase` closes workspace-inequality branch), and the doctor surface (`check_cross_workspace_parent_uuid` — check count 20→19 — plus the triage fixer, its private validator block, and the callerless trigger-dance helper). The `cross_workspace_allowlist` table is left inert (frozen Migration 17; dropped at feature 132's rebuild). Reversal tests re-scoped to positive round-trips.
+- **Cross-workspace enforcement surface (feature 129, P004 cluster 1)** — cross-workspace entity links are now ordinary permitted operations. Deleted all five members: the DB-layer gate (`CrossWorkspaceError`, `_assert_same_workspace_pairwise`, the 3 gate calls in `add_dependency`/`set_parent`/`add_okr_alignment` and their catch/envelope sites), the two inline MCP gates (`issue_spawn` parent check incl. its dead workspace-resolution inputs; `complete_phase` closes workspace-inequality branch), and the doctor surface:
+  - `check_cross_workspace_parent_uuid` (check count 20→19)
+  - the `_fix_triage_cross_workspace_link` triage fixer
+  - its private validator block (`_normalize_and_validate_fix_hint` et al.)
+  - the callerless trigger-dance helper (both call sites lived inside the deleted fixer) The `cross_workspace_allowlist` table is left inert (frozen Migration 17; dropped at feature 132's rebuild). Reversal tests re-scoped to positive round-trips.
 
 ### Changed
 
