@@ -8,6 +8,8 @@ bootstrap_v2 returns.
 """
 from __future__ import annotations
 
+import fcntl
+import multiprocessing
 import re
 import sqlite3
 from pathlib import Path
@@ -343,25 +345,34 @@ class TestConnectionPragmas:
 # bootstrap_v2 on a path whose parent directory does not exist.
 # ---------------------------------------------------------------------------
 class TestBootstrapPathErrors:
-    def test_bootstrap_missing_parent_directory_raises_operational_error(self, tmp_path):
+    def test_bootstrap_missing_parent_directory_raises_file_not_found_error(self, tmp_path):
         """bootstrap_v2 does not create intermediate directories: a path
-        whose parent is missing fails loudly via sqlite3, not silently or
-        with a confusing later error.
+        whose parent is missing fails loudly, not silently or with a
+        confusing later error.
+
+        Feature 119 (design D3) wraps bootstrap_v2's entire body — including
+        the sqlite3.connect call — in `_bootstrap_lock`, which opens a
+        sidecar lock file under the same (missing) parent directory FIRST.
+        That `open()` call now fails with FileNotFoundError before sqlite3
+        ever gets a chance to raise its own "unable to open database file"
+        error — design's Error Handling section documents this class of
+        failure as "OSError propagates ... fail loud ... not defended
+        further" (FileNotFoundError is a subclass of OSError).
 
         Anticipate: a caller might assume bootstrap_v2 behaves like
         `os.makedirs(..., exist_ok=True)` for its target's parent — it
-        does not. This pins the actual failure mode (sqlite3.connect
-        itself refuses to open the file) so a future refactor that adds
-        directory auto-creation is a deliberate, visible design change
-        rather than an accidental behavior shift this suite stays silent on.
+        does not. This pins the actual failure mode so a future refactor
+        that adds directory auto-creation (to either the lock file or the
+        database file) is a deliberate, visible design change rather than
+        an accidental behavior shift this suite stays silent on.
         derived_from: dimension:error_propagation, dimension:boundary_values
         """
         # Given a path whose parent directory was never created
         missing_parent_path = str(tmp_path / "does-not-exist" / "v2.db")
         # When bootstrap_v2 is called against it
-        # Then sqlite3 raises OperationalError rather than succeeding or
-        # raising some unrelated/confusing error downstream
-        with pytest.raises(sqlite3.OperationalError, match="unable to open database file"):
+        # Then the lock sidecar's open() raises FileNotFoundError rather
+        # than succeeding or raising some unrelated/confusing error downstream
+        with pytest.raises(FileNotFoundError):
             schema_v2.bootstrap_v2(missing_parent_path)
 
 
@@ -531,3 +542,66 @@ class TestSchemaV2ShipsDark:
             f"schema_v2 must ship dark (no non-test importers), but found "
             f"references in: {offending_files}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Module-level worker for the two-process bootstrap race (test group #7a).
+# Must be a top-level function: the default multiprocessing start method on
+# darwin (and this suite's CI) is "spawn", which pickles a module-qualified
+# function reference to hand the target to the child process — a closure or
+# nested function is not picklable under spawn.
+# ---------------------------------------------------------------------------
+def _bootstrap_v2_race_worker(db_path: str) -> None:
+    """Worker process: bootstrap db_path and close the connection."""
+    conn = schema_v2.bootstrap_v2(db_path)
+    conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Design test #7: bootstrap lock concurrency (feature 119, D3). #7a is the
+# regression for feature 118's measured ~50% "database is locked" failure
+# rate (15/30 trials) on two bootstrap_v2 calls racing the same path; #7b
+# checks the sidecar lock is fully released once bootstrap_v2 returns.
+# ---------------------------------------------------------------------------
+class TestBootstrapLockConcurrency:
+    def test_thirty_trials_two_process_bootstrap_race_both_succeed(self, tmp_path):
+        """30 independent trials, each racing 2 fresh processes against a
+        fresh db path. Pre-lock (feature 118), this failed ~50% of trials
+        with "database is locked" (DDL takes locks busy_timeout does not
+        retry). The sidecar flock in _bootstrap_lock (design D3) turns the
+        race into a deterministic wait instead of a failure — both
+        processes must exit 0 in every trial.
+        """
+        num_trials = 30
+        for trial in range(num_trials):
+            db_path = str(tmp_path / f"race-{trial}.db")
+            processes = [
+                multiprocessing.Process(
+                    target=_bootstrap_v2_race_worker, args=(db_path,)
+                )
+                for _ in range(2)
+            ]
+            for process in processes:
+                process.start()
+            for process in processes:
+                process.join(timeout=10)
+
+            for process in processes:
+                assert process.exitcode == 0, (
+                    f"trial {trial}: worker exited with code {process.exitcode}"
+                )
+
+    def test_lock_released_after_bootstrap_returns(self, tmp_path):
+        """After bootstrap_v2() returns and its connection is closed, the
+        sidecar lock file is fully released: a fresh, non-blocking
+        LOCK_EX acquisition on it succeeds immediately — no leaked fd or
+        lock (_bootstrap_lock's `finally` releases before bootstrap_v2
+        returns)."""
+        db_path = str(tmp_path / "v2.db")
+        conn = schema_v2.bootstrap_v2(db_path)
+        conn.close()
+
+        lock_path = f"{db_path}.bootstrap.lock"
+        with open(lock_path, "a+") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)

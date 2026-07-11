@@ -9,7 +9,9 @@ a v2 database comes online.
 """
 from __future__ import annotations
 
+import fcntl
 import sqlite3
+from contextlib import contextmanager
 
 V2_SCHEMA_VERSION = 1
 
@@ -104,6 +106,25 @@ def register_ddl(owner: str, sql_script: str) -> None:
     DDL_REGISTRY.append((owner, sql_script))
 
 
+@contextmanager
+def _bootstrap_lock(db_path: str):
+    """Serialize bootstrap_v2() calls racing on the same *db_path* (design D3).
+
+    Takes a blocking exclusive flock on a sidecar file
+    ``{db_path}.bootstrap.lock`` (opened "a+"), released in a ``finally``
+    (LOCK_UN, then close). A dedicated sidecar file keeps this advisory
+    lock's namespace entirely separate from SQLite's own POSIX byte-range
+    locks on *db_path* itself — the two never interact.
+    """
+    lock_file = open(f"{db_path}.bootstrap.lock", "a+")
+    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+    try:
+        yield
+    finally:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        lock_file.close()
+
+
 def bootstrap_v2(db_path: str) -> sqlite3.Connection:
     """Apply every registered DDL entry to *db_path* and return the open connection.
 
@@ -128,17 +149,18 @@ def bootstrap_v2(db_path: str) -> sqlite3.Connection:
     idempotency contract above — calling bootstrap_v2 again converges,
     because the already-applied prefix is skipped rather than repeated.
 
-    NOT concurrent-safe: two bootstrap_v2 calls racing on the same path
-    fail ~50% with "database is locked" (DDL takes locks busy_timeout does
-    not retry — empirically measured at 15/30 trials, feature 118 test
-    deepening). Callers must serialize bootstrap; the first concurrent
-    consumer (119+) owns adding a locking wrapper if it ever needs one.
+    Concurrent-safe: bootstrap_v2 calls racing on the same path are
+    serialized via a sidecar file lock (_bootstrap_lock,
+    {db_path}.bootstrap.lock, blocking fcntl.flock). The kernel releases
+    the lock on process death, so no stale-lock cleanup path exists. No
+    timeout: a live peer holds the lock only for bootstrap's own bounded
+    runtime.
 
     PRAGMA discipline: busy_timeout, journal_mode=WAL, and foreign_keys=ON
     are all issued on a FRESH autocommit=True connection before any
     statement opens a transaction — foreign_keys is a silent no-op if set
     mid-transaction. Both settings are per-connection and non-persistent:
-    a future v2 connection factory (119+) MUST re-issue foreign_keys AND
+    connect_v2 (entity_registry.events) MUST re-issue foreign_keys AND
     busy_timeout itself; neither carries over from this connection to a
     caller's own.
 
@@ -148,21 +170,22 @@ def bootstrap_v2(db_path: str) -> sqlite3.Connection:
     connection would only show SQLite's defaults, not what bootstrap set
     up) and gives future callers (119+) a connection that's already ready.
     """
-    conn = sqlite3.connect(db_path, autocommit=True)
+    with _bootstrap_lock(db_path):
+        conn = sqlite3.connect(db_path, autocommit=True)
 
-    # busy_timeout first — journal_mode=WAL requires a write that can be
-    # blocked by a concurrent connection during init (matches v17's
-    # EntityDatabase._set_pragmas ordering in database.py).
-    conn.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS}")
-    conn.execute("PRAGMA journal_mode = WAL")
-    conn.execute("PRAGMA foreign_keys = ON")
+        # busy_timeout first — journal_mode=WAL requires a write that can be
+        # blocked by a concurrent connection during init (matches v17's
+        # EntityDatabase._set_pragmas ordering in database.py).
+        conn.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS}")
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA foreign_keys = ON")
 
-    for _owner, sql_script in DDL_REGISTRY:
-        conn.executescript(sql_script)
+        for _owner, sql_script in DDL_REGISTRY:
+            conn.executescript(sql_script)
 
-    conn.execute(
-        "INSERT OR IGNORE INTO _metadata (key, value) VALUES (?, ?)",
-        ("schema_version", str(V2_SCHEMA_VERSION)),
-    )
+        conn.execute(
+            "INSERT OR IGNORE INTO _metadata (key, value) VALUES (?, ?)",
+            ("schema_version", str(V2_SCHEMA_VERSION)),
+        )
 
-    return conn
+        return conn
