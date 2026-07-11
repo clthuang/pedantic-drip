@@ -1,0 +1,72 @@
+# Backlog (manual register)
+
+Durable, git-tracked MANUAL backlog. Distinct from `docs/backlog.md` (the
+gitignored DB projection, `.gitignore:69`) because the entity-DB backlog
+write path is silently lossy — see #060. This file is the source of truth
+until #060 is diagnosed / the P004 cutover (feature 132) restores a
+reliable DB path; entries then migrate into the DB and this file retires.
+
+## Open
+
+- **#054 — Feature-132 cutover checklist items** *(P004, source: feature 118 QA)*
+  At cutover, decide: (a) what replaces the dropped-UNIQUE reliance on human-readable
+  fields (v17 consumers that leaned on uniqueness must be enumerated); (b) whether
+  mixed uuid4/uuid7 populations get re-minted at backfill or grandfathered.
+
+- **#055 — MCP workflow-state phase-events write path broken (silent data loss)** *(source: feature 118 QA)*
+  Every `complete_phase`/`transition_phase` intermittently reports
+  `phase_events_write_failed: true` — projections (.meta.json) are correct but the
+  `phase_events` rows are lost. **Consequence measured at feature 119's retro:** under
+  the projection-lag workaround (transition called at phase END right before complete),
+  `.meta.json` started_at collapses into completed_at (11-15s deltas across all four
+  phases) — per-phase timing is unrecoverable for retros until this is fixed. Root fix
+  is the events-write path, not skill edits. The P004 track (119/120/132) replaces this
+  machinery wholesale; fix-forward there rather than patching v1.
+
+- **#056 — complete_phase reviewer_notes ergonomics** *(source: feature 118 QA)*
+  `reviewer_notes` requires a doubly-JSON-encoded string (`"[\"...\"]"`) because the
+  harness re-parses JSON-shaped args; a plain list is rejected by pydantic. Accept a
+  native list (or document the contract in the tool description).
+
+- **#057 — Reviewer severity rubric: split BLOCKER by failure signature** *(source: feature 129 retro Tune 1; owner: workflow-rebuild track)*
+  4 of 9 artifact-phase blockers were self-signaling (collection ImportError,
+  missing-default TypeError — would fail loudly at the next task's own Verify step);
+  5 were silent (dead code, dropped coverage, contradicted contract). Both consume
+  identical iteration budget under the 3-cap. Proposal: self-signaling issues downgrade
+  to WARNING; BLOCKER reserved for ship-undetected classes. Confidence: medium
+  (single-feature sample).
+
+- **#058 — Skip confirmatory phase-gate second rounds when round-1's fix is a small quoted diff** *(source: feature 129 retro Tune 5; owner: workflow-rebuild track)*
+  18 reviewer/gate dispatches on 129; the only pure zero-finding rerun was design's
+  second phase-gate round reconfirming an already-closed blocker. Proposal: allow the
+  orchestrator to close a phase gate without a second dispatch when round-1's sole
+  blocker fix is mechanically verifiable inline. Do NOT extend to artifact skeptic
+  reviewers (8 of their 9 blockers were real). Feature 119 note: every gate converged
+  in 1 round — proposal untested there; weak n=2 signal that the DESIGN gate
+  specifically is the lowest-yield dispatch.
+
+- **#059 — Stabilize TestMigration11ConcurrentRunners fork-race flake** *(source: feature 129 QA gate T1, MED)*
+  `test_database.py` `test_migration_11_concurrent_runners`: pre-existing flake
+  (develop ~5% isolated-rerun fail) measurably worse on the 129 branch (12/19 targeted
+  stress reruns; `database is locked` from the forked child's `PRAGMA journal_mode=WAL`
+  racing the parent). Test + SUT byte-identical to develop — likely fork-timing shift
+  from file growth. Full suite stable (2× identical 3423-pass runs). Options:
+  lock-retry/backoff around the race fixture's opens, or serial/isolated marking.
+  Watch post-merge CI red rate. (Feature 119's new 30-trial bootstrap harness is a
+  DIFFERENT, lock-serialized path — passes 30/30 deterministically.)
+
+- **#060 — Entity-registry register_entity silently loses backlog registrations** *(source: feature 119 finish phase, 2026-07-11)*
+  `register_entity(entity_type="backlog", ...)` returned success
+  ("Registered: backlog:057-reviewer-severity-rubric" etc. for 057/058/059; same for
+  054/055/056 in the prior session) but NO row persisted — invisible to `get_entity`,
+  `search_entities` (any project scope), AND raw sqlite over
+  `~/.claude/pd/entities/entities.db` (WAL included; 552 entities, zero matches).
+  Feature-entity writes from the SAME server session persist fine (129/119 phase
+  updates all landed). Suspects: success-before-commit with a rolled-back transaction
+  on a post-step, or a divergent DB path for the backlog code path. Same family as
+  #055 (acknowledged-but-lost writes). Diagnose before trusting ANY backlog
+  registration; this file is the interim source of truth.
+
+## Completed / Promoted
+
+(none tracked here yet — historical items live in the entity DB)

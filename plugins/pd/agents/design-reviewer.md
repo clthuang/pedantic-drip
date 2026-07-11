@@ -119,6 +119,7 @@ Only include `backward_to` when the root cause is genuinely in an upstream artif
 - [ ] For any renamed public symbol: the design enumerates by-name imports across test modules — a definition-only rename fails at COLLECTION time (ImportError), not at an assertion (feature 118 design blocker)
 - [ ] Testing strategy is non-vacuous: new-path tests assert facts true ONLY on the new path (a test green on both old and new behavior pins nothing — feature 131/118 vacuous-green class)
 - [ ] Any test fixture that differentiates rows by column X is checked against the target table's PK/UNIQUE constraints (CREATE TABLE / PRAGMA table_info) — two rows cannot differ only in X if X's containing key IS the row identity (feature 129: a design-pinned assertion was physically unconstructible; only building the fixture caught it)
+- [ ] Any design claim asserting SPECIFIC stdlib/third-party API behavior (transaction semantics, method side effects, locking, encoding) carries a cited doc reference or a runnable snippet check — prose review cannot adjudicate runtime semantics (feature 119: design pinned `conn.rollback()`, a documented NO-OP under autocommit=True; six review dispatches missed it, one scratch-test caught it)
 
 **Challenge patterns:**
 - Component A outputs `userId` but B expects `user_id`
