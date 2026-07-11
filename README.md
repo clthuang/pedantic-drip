@@ -77,7 +77,7 @@ Built-in specialist knowledge for brainstorming and code review:
 
 ### Kanban Board (UI Server)
 
-The plugin auto-starts a local Kanban board at `http://localhost:8718/` on every session start. The board shows all features, brainstorms, backlog items, and projects with their workflow phases and lineage in real time. No manual setup required.
+The plugin auto-starts a local Kanban board at `http://localhost:8718/` on every session start. The board shows features, brainstorms, backlog items, and projects with their workflow phases and lineage in real time, scoped to the current project's workspace by default. A header dropdown switches the view to any other populated workspace or to all workspaces at once (selection persists via cookie). No manual setup required.
 
 Configure via `.claude/pd.local.md`:
 - `ui_server_enabled: false` — disable auto-start

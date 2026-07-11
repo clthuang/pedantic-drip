@@ -165,8 +165,10 @@ def create_app(db_path: str | None = None) -> FastAPI:
     # Routes
     from ui.routes.board import router as board_router
     from ui.routes.entities import router as entities_router
+    from ui.routes.workspace import router as workspace_router
 
     app.include_router(board_router)
     app.include_router(entities_router)
+    app.include_router(workspace_router)
 
     return app

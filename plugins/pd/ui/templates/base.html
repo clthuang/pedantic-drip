@@ -25,6 +25,21 @@
                 <a href="/entities" class="btn btn-sm btn-ghost {{ 'btn-active' if active_page|default('') == 'entities' else '' }}">Entities</a>
             </div>
         </div>
+        {% if switcher %}
+        <div class="flex-none px-4">
+            <form action="/workspace/select" method="get">
+                <select name="uuid" onchange="this.form.submit()" class="select select-sm select-bordered">
+                    <option value="*" {% if switcher.selected == "*" or (switcher.selected is none and switcher.default_uuid is none) %}selected{% endif %}>All workspaces</option>
+                    {% for w in switcher.workspaces %}
+                    <option value="{{ w.uuid }}" {% if switcher.selected == w.uuid or (switcher.selected is none and switcher.default_uuid == w.uuid) %}selected{% endif %}>{{ w.label }}{% if switcher.selected is none and switcher.default_uuid == w.uuid %} (current dir){% endif %} ({{ w.entity_count }})</option>
+                    {% endfor %}
+                    {% if switcher.effective_unmatched %}
+                    <option value="{{ switcher.effective_unmatched }}" selected disabled>unknown workspace · {{ switcher.effective_unmatched[:8] }}</option>
+                    {% endif %}
+                </select>
+            </form>
+        </div>
+        {% endif %}
     </div>
     <main class="p-4">
         {% block content %}{% endblock %}

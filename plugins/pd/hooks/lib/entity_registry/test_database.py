@@ -8738,3 +8738,133 @@ class TestResidualUuid4Scan:
             f"only {in_migrations} were found there — a stray uuid4( mint "
             f"exists outside the frozen migration bodies."
         )
+
+
+# ===========================================================================
+# Feature 130 (workspace switcher UI): list_workspaces_with_entities (D1)
+# ===========================================================================
+
+
+class TestListWorkspacesWithEntities:
+    """SC1/D1: cross-workspace directory read for the UI switcher.
+
+    INNER JOIN against entities means zero-entity workspaces never appear
+    in the result; ordering is entity_count DESC, project_root ASC as the
+    deterministic tie-breaker.
+    """
+
+    def _make_workspace(
+        self,
+        db: EntityDatabase,
+        *,
+        project_root: str | None,
+        legacy_id: str,
+    ) -> str:
+        """Insert a fresh workspaces row with an explicit project_root."""
+        ws_uuid = str(uuid.uuid4())
+        now = db._now_iso()
+        db._conn.execute(
+            "INSERT INTO workspaces (uuid, project_id_legacy, "
+            "project_root, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (ws_uuid, legacy_id, project_root, now, now),
+        )
+        db._conn.commit()
+        return ws_uuid
+
+    def test_populated_only_empty_workspace_absent(self, db: EntityDatabase):
+        """Two populated workspaces plus one empty row -> empty is absent."""
+        ws_populated_1 = self._make_workspace(
+            db, project_root="/tmp/ws-pop-1", legacy_id="ws-pop-1",
+        )
+        db.register_entity(
+            "feature", "001-a", "A", workspace_uuid=ws_populated_1,
+        )
+        ws_populated_2 = self._make_workspace(
+            db, project_root="/tmp/ws-pop-2", legacy_id="ws-pop-2",
+        )
+        db.register_entity(
+            "feature", "001-b", "B", workspace_uuid=ws_populated_2,
+        )
+        ws_empty = self._make_workspace(
+            db, project_root="/tmp/ws-empty", legacy_id="ws-empty",
+        )
+
+        result = db.list_workspaces_with_entities()
+        result_uuids = {row["uuid"] for row in result}
+
+        assert ws_populated_1 in result_uuids
+        assert ws_populated_2 in result_uuids
+        assert ws_empty not in result_uuids
+        # The db fixture also bootstraps 2 empty workspaces (__test__,
+        # __other__) — confirms only the 2 populated rows above surface.
+        assert len(result) == 2
+
+    def test_counts_exact_with_mixed_kinds_and_statuses(
+        self, db: EntityDatabase,
+    ):
+        """A feature + a task + a completed backlog in one workspace -> 3."""
+        ws = self._make_workspace(
+            db, project_root="/tmp/ws-mixed", legacy_id="ws-mixed",
+        )
+        db.register_entity("feature", "001-x", "X", workspace_uuid=ws)
+        db.register_entity("task", "001-y", "Y", workspace_uuid=ws)
+        db.register_entity(
+            "backlog", "001-z", "Z", status="completed", workspace_uuid=ws,
+        )
+
+        result = db.list_workspaces_with_entities()
+        row = next(r for r in result if r["uuid"] == ws)
+
+        assert row["entity_count"] == 3
+
+    def test_desc_order_by_entity_count(self, db: EntityDatabase):
+        """Higher entity_count sorts first."""
+        ws_low = self._make_workspace(
+            db, project_root="/tmp/ws-low", legacy_id="ws-low",
+        )
+        db.register_entity("feature", "001-a", "A", workspace_uuid=ws_low)
+
+        ws_high = self._make_workspace(
+            db, project_root="/tmp/ws-high", legacy_id="ws-high",
+        )
+        db.register_entity("feature", "001-b", "B", workspace_uuid=ws_high)
+        db.register_entity("feature", "001-c", "C", workspace_uuid=ws_high)
+        db.register_entity("feature", "001-d", "D", workspace_uuid=ws_high)
+
+        result = db.list_workspaces_with_entities()
+        result_uuids = [row["uuid"] for row in result]
+
+        assert result_uuids.index(ws_high) < result_uuids.index(ws_low)
+
+    def test_count_tie_breaks_by_project_root_ascending(
+        self, db: EntityDatabase,
+    ):
+        """Equal entity_count -> project_root ASC order."""
+        ws_zzz = self._make_workspace(
+            db, project_root="/tmp/zzz-project", legacy_id="ws-zzz",
+        )
+        db.register_entity("feature", "001-a", "A", workspace_uuid=ws_zzz)
+
+        ws_aaa = self._make_workspace(
+            db, project_root="/tmp/aaa-project", legacy_id="ws-aaa",
+        )
+        db.register_entity("feature", "001-b", "B", workspace_uuid=ws_aaa)
+
+        result = db.list_workspaces_with_entities()
+
+        assert [row["uuid"] for row in result] == [ws_aaa, ws_zzz]
+
+    def test_null_project_root_workspace_present(self, db: EntityDatabase):
+        """A populated workspace with NULL project_root is included as None."""
+        ws_null_root = self._make_workspace(
+            db, project_root=None, legacy_id="ws-null-root",
+        )
+        db.register_entity(
+            "feature", "001-a", "A", workspace_uuid=ws_null_root,
+        )
+
+        result = db.list_workspaces_with_entities()
+        row = next(r for r in result if r["uuid"] == ws_null_root)
+
+        assert row["project_root"] is None

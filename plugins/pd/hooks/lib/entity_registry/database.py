@@ -9011,6 +9011,29 @@ class EntityDatabase:
         rows = self._conn.execute(sql, params).fetchall()
         return [dict(row) for row in rows]
 
+    def list_workspaces_with_entities(self) -> list[dict]:
+        """List workspaces that have at least one entity, with counts.
+
+        Cross-workspace directory for the UI switcher (feature 130); the
+        INNER JOIN against entities hides workspaces with zero entities.
+
+        Returns
+        -------
+        list[dict]
+            One dict per populated workspace with ``uuid``, ``project_root``,
+            and ``entity_count`` keys. Ordered by ``entity_count`` descending,
+            then ``project_root`` ascending as a tie-breaker (rows tying on
+            BOTH keys -- e.g. split-brain duplicates sharing a project_root
+            -- have no further contractual ordering).
+        """
+        sql = (
+            "SELECT w.uuid, w.project_root, COUNT(e.uuid) AS entity_count "
+            "FROM workspaces w JOIN entities e ON e.workspace_uuid = w.uuid "
+            "GROUP BY w.uuid ORDER BY entity_count DESC, w.project_root"
+        )
+        rows = self._conn.execute(sql).fetchall()
+        return [dict(row) for row in rows]
+
     # ------------------------------------------------------------------
     # Metadata helpers
     # ------------------------------------------------------------------

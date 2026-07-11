@@ -597,3 +597,760 @@ def test_create_app_database_error_during_lookup_workspace_uuid_none_and_warns(
     assert app.state.workspace_uuid is None
     captured = capsys.readouterr()
     assert "WARN" in captured.err
+
+
+# ===========================================================================
+# Feature 130 Task 2: Workspace switcher UI — dropdown states + poll guard
+# ===========================================================================
+
+import uuid
+
+from ui.routes.helpers import COOKIE_NAME
+
+
+def _option_element(html: str, value: str) -> str:
+    """Return the full <option value="{value}" ...>...</option> element
+    (attributes AND inner text), so assertions can check `selected` and
+    rendered label text without false-positiving on unrelated 'selected'
+    occurrences elsewhere in the page."""
+    start = html.index(f'<option value="{value}"')
+    end = html.index("</option>", start)
+    return html[start:end + len("</option>")]
+
+
+def test_board_full_page_switcher_selection_states(tmp_path):
+    """Full-page board <select name="uuid"> pre-selects the right option
+    across three normal states plus the fourth-state 'unknown cookie' path,
+    all against one two-workspace fixture + a shared client:
+      1. cookie names a listed workspace -> that option selected.
+      2. cookie='*' -> 'All workspaces' selected.
+      3. no cookie, startup default matches a listed workspace -> that
+         option selected AND its label gains ' (current dir)'.
+      4a. cookie names an unknown (unlisted, but shaped) workspace -> the
+          transient disabled 'unknown workspace' option is selected, and
+          no listed option (nor 'All workspaces') is."""
+    db_file = str(tmp_path / "test.db")
+    db = EntityDatabase(db_file)
+    ws_a = _bootstrap_workspace(db_file, project_root=str(tmp_path / "proj-a"))
+    ws_b = _bootstrap_workspace(db_file, project_root=str(tmp_path / "proj-b"))
+    db.register_entity("feature", "1-alpha", "Alpha Card", workspace_uuid=ws_a)
+    db.register_entity("feature", "2-beta", "Beta Card", workspace_uuid=ws_b)
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+
+    # State 1: cookie names a listed workspace (ws_b).
+    client.cookies.set(COOKIE_NAME, ws_b)
+    r1 = client.get("/")
+    assert r1.status_code == 200
+    assert '<select name="uuid"' in r1.text
+    assert "selected" in _option_element(r1.text, ws_b)
+    assert "selected" not in _option_element(r1.text, ws_a)
+    assert "selected" not in _option_element(r1.text, "*")
+    client.cookies.clear()
+
+    # State 2: cookie='*' -> All workspaces.
+    client.cookies.set(COOKIE_NAME, "*")
+    r2 = client.get("/")
+    assert "selected" in _option_element(r2.text, "*")
+    assert "selected" not in _option_element(r2.text, ws_a)
+    assert "selected" not in _option_element(r2.text, ws_b)
+    client.cookies.clear()
+
+    # State 3: no cookie, startup default matches ws_a -> "(current dir)".
+    app.state.workspace_uuid = ws_a
+    r3 = client.get("/")
+    element_a = _option_element(r3.text, ws_a)
+    assert "selected" in element_a
+    assert "(current dir)" in element_a
+    assert "selected" not in _option_element(r3.text, "*")
+
+    # State 4a: cookie names an unknown (shaped, unlisted) workspace.
+    unknown_uuid = str(uuid.uuid4())
+    client.cookies.set(COOKIE_NAME, unknown_uuid)
+    r4a = client.get("/")
+    unmatched_element = _option_element(r4a.text, unknown_uuid)
+    assert "selected" in unmatched_element
+    assert "disabled" in unmatched_element
+    assert f"unknown workspace · {unknown_uuid[:8]}" in unmatched_element
+    assert "selected" not in _option_element(r4a.text, ws_a)
+    assert "selected" not in _option_element(r4a.text, ws_b)
+    assert "selected" not in _option_element(r4a.text, "*")
+    client.cookies.clear()
+
+
+def test_board_full_page_switcher_unpopulated_default_shows_unmatched_option(
+    tmp_path,
+):
+    """Fourth state, path B: no cookie, but the startup default names a
+    workspace with zero entities (absent from the populated listing) ->
+    the transient disabled 'unknown workspace' option is selected, and
+    neither the populated workspace's option nor 'All workspaces' is."""
+    db_file = str(tmp_path / "test.db")
+    db = EntityDatabase(db_file)
+    ws_populated = _bootstrap_workspace(
+        db_file, project_root=str(tmp_path / "proj-populated")
+    )
+    db.register_entity(
+        "feature", "1-only", "Only Card", workspace_uuid=ws_populated
+    )
+    ws_empty = _bootstrap_workspace(
+        db_file, project_root=str(tmp_path / "proj-empty")
+    )
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    app.state.workspace_uuid = ws_empty
+    client = TestClient(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    unmatched_element = _option_element(response.text, ws_empty)
+    assert "selected" in unmatched_element
+    assert "disabled" in unmatched_element
+    assert f"unknown workspace · {ws_empty[:8]}" in unmatched_element
+    assert "selected" not in _option_element(response.text, ws_populated)
+    assert "selected" not in _option_element(response.text, "*")
+
+
+def test_board_htmx_partial_has_no_switcher_select(tmp_path):
+    """HX-Request board partial never renders the switcher <select> —
+    the builder is confined to the full-page branch (hot-path cost)."""
+    db_file = str(tmp_path / "test.db")
+    db = EntityDatabase(db_file)
+    ws_a = _bootstrap_workspace(db_file, project_root=str(tmp_path / "proj-a"))
+    db.register_entity("feature", "1-alpha", "Alpha Card", workspace_uuid=ws_a)
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+
+    response = client.get("/", headers={"HX-Request": "true"})
+
+    assert response.status_code == 200
+    assert '<select name="uuid"' not in response.text
+
+
+def test_board_missing_db_page_has_no_switcher_select():
+    """The board's missing-DB error.html never renders the switcher (no
+    context is passed at all on that path)."""
+    from ui import create_app
+
+    app = create_app(db_path="/nonexistent/path.db")
+    client = TestClient(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert '<select name="uuid"' not in response.text
+
+
+def test_board_error_page_has_no_switcher_select(tmp_path):
+    """The board's DB-query-error error.html never renders the switcher."""
+    db_file = str(tmp_path / "test.db")
+    EntityDatabase(db_file)
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    app.state.db.list_workflow_phases = unittest.mock.MagicMock(
+        side_effect=Exception("DB error")
+    )
+    client = TestClient(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert '<select name="uuid"' not in response.text
+
+
+def test_board_poll_guard_switcher_builder_scoped_to_full_page(tmp_path):
+    """PAIRED (non-vacuous) poll-path guard: with list_workspaces_with_entities
+    monkeypatched to raise on the SAME app —
+    (a) an HX-Request board partial still renders 200 with a seeded card's
+        text and does NOT contain the error copy (the builder never runs
+        on the poll path);
+    (b) a full-page board GET renders the error page (the builder DID run
+        and its failure is caught by the page's existing DB-error handling).
+    The contrast is the proof: a never-wired or exception-swallowing
+    builder would pass leg (a) trivially but would ALSO wrongly pass
+    leg (b)."""
+    db_file = str(tmp_path / "test.db")
+    EntityDatabase(db_file)
+    _seed_workflow_row(db_file, "feature:poll-guard", kanban_column="wip",
+                       workflow_phase="implement")
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    app.state.db.list_workspaces_with_entities = unittest.mock.MagicMock(
+        side_effect=Exception("workspace directory query failed")
+    )
+    client = TestClient(app)
+
+    # Leg (a): HX-Request partial — builder never runs, page renders fine.
+    partial = client.get("/", headers={"HX-Request": "true"})
+    assert partial.status_code == 200
+    assert "poll-guard" in partial.text
+    assert "An error occurred while querying the database" not in partial.text
+
+    # Leg (b): full-page GET — builder runs; its failure surfaces as the
+    # SAME error.html path as any other DB read failure.
+    full_page = client.get("/")
+    assert full_page.status_code == 200
+    assert "An error occurred while querying the database" in full_page.text
+
+
+# ===========================================================================
+# Feature 130 Task 2, test group #2: /workspace/select route
+# ===========================================================================
+
+
+def test_select_route_wildcard_sets_cookie_with_d2_attributes(tmp_path):
+    """uuid=* sets the D2-attributed cookie and 303-redirects to the
+    referer's path+query."""
+    db_file = str(tmp_path / "test.db")
+    EntityDatabase(db_file)
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+
+    response = client.get(
+        "/workspace/select",
+        params={"uuid": "*"},
+        headers={"referer": "http://testserver/entities?type=feature"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/entities?type=feature"
+    assert response.cookies.get(COOKIE_NAME) == "*"
+    set_cookie = response.headers.get("set-cookie", "").lower()
+    assert "max-age=2592000" in set_cookie
+    assert "httponly" in set_cookie
+    assert "samesite=lax" in set_cookie
+
+
+def test_select_route_canonical_uuid_sets_cookie_with_d2_attributes(tmp_path):
+    """A canonical 36-char uuid sets the cookie to that uuid, with the
+    same D2 attributes, and honors the referer's path+query."""
+    db_file = str(tmp_path / "test.db")
+    EntityDatabase(db_file)
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+    ws_uuid = str(uuid.uuid4())
+
+    response = client.get(
+        "/workspace/select",
+        params={"uuid": ws_uuid},
+        headers={"referer": "http://testserver/?foo=bar"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/?foo=bar"
+    assert response.cookies.get(COOKIE_NAME) == ws_uuid
+    set_cookie = response.headers.get("set-cookie", "").lower()
+    assert "max-age=2592000" in set_cookie
+    assert "httponly" in set_cookie
+    assert "samesite=lax" in set_cookie
+
+
+def test_select_route_xss_uuid_sets_no_cookie(tmp_path):
+    """A `<script>` payload is neither '*' nor uuid-shaped -> no Set-Cookie
+    header, but the redirect still happens (fail quiet)."""
+    db_file = str(tmp_path / "test.db")
+    EntityDatabase(db_file)
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+
+    response = client.get(
+        "/workspace/select",
+        params={"uuid": "<script>alert(1)</script>"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert "set-cookie" not in response.headers
+
+
+def test_select_route_32char_hex_sets_no_cookie(tmp_path):
+    """A bare 32-char hex string parses via uuid.UUID() but is not the
+    canonical 36-char form -> rejected, no Set-Cookie header."""
+    db_file = str(tmp_path / "test.db")
+    EntityDatabase(db_file)
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+
+    response = client.get(
+        "/workspace/select",
+        params={"uuid": "a" * 32},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert "set-cookie" not in response.headers
+
+
+def test_select_route_empty_uuid_sets_no_cookie(tmp_path):
+    """An empty uuid value -> rejected, no Set-Cookie header, still 303."""
+    db_file = str(tmp_path / "test.db")
+    EntityDatabase(db_file)
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+
+    response = client.get(
+        "/workspace/select",
+        params={"uuid": ""},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert "set-cookie" not in response.headers
+
+
+def test_select_route_protocol_relative_referer_redirects_home(tmp_path):
+    """A `//evil.com`-style referer (protocol-relative) redirects to '/' —
+    a bare startswith('/') check would wrongly accept it."""
+    db_file = str(tmp_path / "test.db")
+    EntityDatabase(db_file)
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+
+    response = client.get(
+        "/workspace/select",
+        params={"uuid": "*"},
+        headers={"referer": "http://localhost//evil.com"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/"
+
+
+def test_select_route_absent_referer_redirects_home(tmp_path):
+    """No referer header -> redirect target is '/'."""
+    db_file = str(tmp_path / "test.db")
+    EntityDatabase(db_file)
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+
+    response = client.get(
+        "/workspace/select",
+        params={"uuid": "*"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/"
+
+
+# ===========================================================================
+# Feature 130 Task 2, test group #3: cookie-scoped board e2e
+# ===========================================================================
+
+
+def test_board_scoping_via_cookie_names_workspace(tmp_path):
+    """Client cookie naming W2 -> board shows only W2's card (+ orphan
+    rows, per 129's existing non-None-scope retention behavior)."""
+    db_file = str(tmp_path / "test.db")
+    db = EntityDatabase(db_file)
+    ws_a = _bootstrap_workspace(db_file)
+    ws_b = _bootstrap_workspace(db_file)
+    db.register_entity("feature", "1-alpha", "Alpha Card", workspace_uuid=ws_a)
+    db.create_workflow_phase("feature:1-alpha", kanban_column="wip")
+    db.register_entity("feature", "2-beta", "Beta Card", workspace_uuid=ws_b)
+    db.create_workflow_phase("feature:2-beta", kanban_column="wip")
+    _seed_workflow_row(db_file, "feature:orphan-cookie", kanban_column="backlog")
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+    client.cookies.set(COOKIE_NAME, ws_b)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "Beta Card" in response.text
+    assert "orphan-cookie" in response.text
+    assert "Alpha Card" not in response.text
+
+
+def test_board_scoping_via_cookie_wildcard_shows_all(tmp_path):
+    """Client cookie='*' -> board shows every workspace's cards (unscoped),
+    overriding a non-None startup default."""
+    db_file = str(tmp_path / "test.db")
+    db = EntityDatabase(db_file)
+    ws_a = _bootstrap_workspace(db_file)
+    ws_b = _bootstrap_workspace(db_file)
+    db.register_entity("feature", "1-alpha", "Alpha Card", workspace_uuid=ws_a)
+    db.create_workflow_phase("feature:1-alpha", kanban_column="wip")
+    db.register_entity("feature", "2-beta", "Beta Card", workspace_uuid=ws_b)
+    db.create_workflow_phase("feature:2-beta", kanban_column="wip")
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    app.state.workspace_uuid = ws_a  # startup default would otherwise scope
+    client = TestClient(app)
+    client.cookies.set(COOKIE_NAME, "*")
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "Alpha Card" in response.text
+    assert "Beta Card" in response.text
+
+
+def test_board_scoping_shaped_unknown_cookie_shows_empty_board(tmp_path):
+    """A shaped-but-unknown cookie is honored (not silently ignored) ->
+    200 with no W1/W2 entity cards; the orphan row still renders because
+    the 129 orphan-retention predicate applies to ANY non-None scope
+    (truthful, not a silent fallback)."""
+    db_file = str(tmp_path / "test.db")
+    db = EntityDatabase(db_file)
+    ws_a = _bootstrap_workspace(db_file)
+    ws_b = _bootstrap_workspace(db_file)
+    db.register_entity("feature", "1-alpha", "Alpha Card", workspace_uuid=ws_a)
+    db.create_workflow_phase("feature:1-alpha", kanban_column="wip")
+    db.register_entity("feature", "2-beta", "Beta Card", workspace_uuid=ws_b)
+    db.create_workflow_phase("feature:2-beta", kanban_column="wip")
+    _seed_workflow_row(db_file, "feature:orphan-unknown", kanban_column="backlog")
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+    client.cookies.set(COOKIE_NAME, str(uuid.uuid4()))
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "Alpha Card" not in response.text
+    assert "Beta Card" not in response.text
+    assert "orphan-unknown" in response.text
+
+
+def test_board_scoping_malformed_cookie_falls_back_to_startup_default(tmp_path):
+    """A malformed cookie value (not shaped like a uuid) is NOT honored --
+    the read-side effective_workspace_uuid fallback renders the startup
+    default's cards, the functional OPPOSITE of the shaped-unknown case
+    above (spec SC3's malformed-vs-default clause)."""
+    db_file = str(tmp_path / "test.db")
+    db = EntityDatabase(db_file)
+    ws_a = _bootstrap_workspace(db_file)
+    ws_b = _bootstrap_workspace(db_file)
+    db.register_entity("feature", "1-alpha", "Alpha Card", workspace_uuid=ws_a)
+    db.create_workflow_phase("feature:1-alpha", kanban_column="wip")
+    db.register_entity("feature", "2-beta", "Beta Card", workspace_uuid=ws_b)
+    db.create_workflow_phase("feature:2-beta", kanban_column="wip")
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    app.state.workspace_uuid = ws_a
+    client = TestClient(app)
+    client.cookies.set(COOKIE_NAME, "not-a-uuid")
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "Alpha Card" in response.text
+    assert "Beta Card" not in response.text
+
+
+# ===========================================================================
+# Test deepening: verified thin-spot coverage (referer edge cases, cookie
+# case sensitivity, cookie-injection boundary, cookie path attribute,
+# empty-listing render) -- see docs/features/130-workspace-switcher-ui/
+# ===========================================================================
+
+import http.cookies
+
+
+def test_safe_referer_path_drops_fragment(tmp_path):
+    """A referer with a URL fragment redirects to path+query ONLY -- the
+    fragment is silently dropped (D4: "urlsplit(referer).path (+query)",
+    fragment is never in the kept set). Kills a mutation that appends
+    `#{fragment}` onto `dest`."""
+    db_file = str(tmp_path / "test.db")
+    EntityDatabase(db_file)
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+
+    response = client.get(
+        "/workspace/select",
+        params={"uuid": "*"},
+        headers={
+            "referer": "http://testserver/entities?type=feature#section-anchor"
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/entities?type=feature"
+    assert "#" not in response.headers["location"]
+
+
+def test_safe_referer_path_no_leading_slash_redirects_home(tmp_path):
+    """A referer whose urlsplit().path is EMPTY (a bare origin with no
+    path segment, e.g. 'http://testserver') is neither protocol-relative
+    ('//...') nor leading-slash -- falls back to '/'. Every existing
+    referer test either starts with '/' (accepted) or with '//' (rejected
+    by the second clause) or omits the header entirely (short-circuited by
+    the `if not referer` guard before this line ever runs) -- none
+    exercise `dest.startswith("/")` being False. Kills a mutation that
+    swaps the `and` to `or`: under that mutation, dest='' would wrongly
+    pass because `not dest.startswith("//")` is True for an empty
+    string."""
+    db_file = str(tmp_path / "test.db")
+    EntityDatabase(db_file)
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+
+    response = client.get(
+        "/workspace/select",
+        params={"uuid": "*"},
+        headers={"referer": "http://testserver"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/"
+
+
+def test_select_route_uppercase_hex_uuid_sets_cookie_verbatim(tmp_path):
+    """An uppercase-hex canonical uuid is accepted by `_is_uuid_shaped`
+    (uuid.UUID() parses case-insensitively) and the cookie is set to the
+    EXACT uppercase string -- no lowercasing/normalization happens at the
+    write site. Every other select-route test uses str(uuid.uuid4()),
+    which the stdlib always renders lowercase, so none of them exercise
+    this branch of the case-insensitive parse. Kills a mutation that
+    normalizes the value (e.g. `.lower()`) before storing it."""
+    db_file = str(tmp_path / "test.db")
+    EntityDatabase(db_file)
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+    upper_uuid = str(uuid.uuid4()).upper()
+
+    response = client.get(
+        "/workspace/select",
+        params={"uuid": upper_uuid},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.cookies.get(COOKIE_NAME) == upper_uuid
+
+
+def test_board_scoping_uppercase_cookie_case_mismatch_is_unmatched(tmp_path):
+    """A cookie holding the SAME uuid as a real, populated workspace but in
+    UPPERCASE is honored as shaped (passes _is_uuid_shaped) yet never
+    matches that workspace's lowercase-stored uuid: SQLite TEXT equality is
+    case-sensitive by default (no COLLATE NOCASE anywhere in the schema)
+    and neither _is_uuid_shaped nor effective_workspace_uuid normalize
+    case. Board scoping therefore treats it as an unknown scope (Alpha
+    Card's workflow row is excluded -- same class of behavior as the
+    shaped-but-unknown-uuid case, but reached via case mismatch rather than
+    a nonexistent uuid) and the switcher renders the fourth-state 'unknown
+    workspace' option keyed on the UPPERCASE value -- ws_a's real
+    (lowercase) option is not selected. Kills a mutation that lowercases
+    the cookie, or introduces case-insensitive comparison, anywhere in
+    this chain."""
+    db_file = str(tmp_path / "test.db")
+    db = EntityDatabase(db_file)
+    ws_a = _bootstrap_workspace(db_file, project_root=str(tmp_path / "proj-a"))
+    db.register_entity("feature", "1-alpha", "Alpha Card", workspace_uuid=ws_a)
+    db.create_workflow_phase("feature:1-alpha", kanban_column="wip")
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+    client.cookies.set(COOKIE_NAME, ws_a.upper())
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "Alpha Card" not in response.text
+    unmatched_element = _option_element(response.text, ws_a.upper())
+    assert "selected" in unmatched_element
+    assert "disabled" in unmatched_element
+    assert "selected" not in _option_element(response.text, ws_a)
+    assert "selected" not in _option_element(response.text, "*")
+
+
+def test_select_route_36char_semicolon_injected_uuid_sets_no_cookie(tmp_path):
+    """A value that is exactly 36 characters (matching the canonical-length
+    check) but has its final hex digit replaced with ';' fails
+    uuid.UUID()'s parse -- no Set-Cookie header, redirect still happens.
+    Complements test_select_route_32char_hex_sets_no_cookie, which kills
+    the mutation "drop the len==36 check, keep only UUID() parsing" (a
+    32-char value passes UUID() but is caught by the length check): THIS
+    test kills the other half, "drop the UUID() parse, keep only
+    len(v)==36" -- a mutant missing the parse call would see this 36-char
+    value and wrongly treat it as shaped, feeding a ';'-containing value
+    into response.set_cookie(). Documents that a cookie/header-injection
+    payload can never reach set_cookie via this param."""
+    db_file = str(tmp_path / "test.db")
+    EntityDatabase(db_file)
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+    near_uuid = str(uuid.uuid4())
+    injected = near_uuid[:-1] + ";"
+    assert len(injected) == 36  # sanity: exact canonical length preserved
+
+    response = client.get(
+        "/workspace/select",
+        params={"uuid": injected},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert "set-cookie" not in response.headers
+
+
+def test_select_route_cookie_path_attribute_is_root(tmp_path):
+    """The D2 cookie contract includes path="/" -- pinned separately from
+    the existing D2-attribute tests, which check max-age/httponly/samesite
+    but never assert on path. Starlette's set_cookie() already DEFAULTS
+    path to "/", so dropping the kwarg entirely is not a live mutation;
+    the real risk is path being set to something ELSE (e.g. "/workspace",
+    matching the route's own path -- a plausible copy-paste mistake from a
+    handler that scopes a cookie to itself). Parses the Set-Cookie header
+    with http.cookies.SimpleCookie for an EXACT attribute match rather
+    than substring-matching "path=/", which would false-pass a mutant
+    "path=/workspace" (that string still contains "path=/" as a
+    prefix)."""
+    db_file = str(tmp_path / "test.db")
+    EntityDatabase(db_file)
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+
+    response = client.get(
+        "/workspace/select",
+        params={"uuid": "*"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    parsed_cookie = http.cookies.SimpleCookie()
+    parsed_cookie.load(response.headers["set-cookie"])
+    assert parsed_cookie[COOKIE_NAME]["path"] == "/"
+
+
+def test_board_full_page_switcher_zero_populated_workspaces_unmatched_default(
+    tmp_path,
+):
+    """switcher_context() when list_workspaces_with_entities() returns a
+    truly EMPTY list (no populated workspaces at all -- the existing
+    unpopulated-default test always has ONE other populated workspace in
+    the list), combined with a non-None startup default: the dropdown
+    still renders (no crash on the empty `workspaces` loop), contains NO
+    per-workspace <option> besides '*' and the transient unmatched one,
+    'All workspaces' is NOT selected, and the fourth-state 'unknown
+    workspace' option IS selected for the default's uuid. Kills a mutation
+    that assumes `workspaces` is non-empty (e.g. an unguarded
+    `workspaces[0]` access) or that only sets effective_unmatched when the
+    listing is non-empty."""
+    db_file = str(tmp_path / "test.db")
+    EntityDatabase(db_file)  # zero entities, zero workspaces rows
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    default_uuid = str(uuid.uuid4())
+    app.state.workspace_uuid = default_uuid
+    client = TestClient(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert '<select name="uuid"' in response.text
+    unmatched_element = _option_element(response.text, default_uuid)
+    assert "selected" in unmatched_element
+    assert "disabled" in unmatched_element
+    assert "selected" not in _option_element(response.text, "*")
+    # Only '*' and the transient unmatched option -- no populated-workspace
+    # <option> elements exist since list_workspaces_with_entities() is [].
+    assert response.text.count("<option value=") == 2
+
+
+def test_safe_referer_path_backslash_redirects_home(tmp_path):
+    """A referer whose path contains a backslash (`/\\evil.com`) redirects
+    to '/' -- browsers normalize `/\\host` to protocol-relative `//host`,
+    so the guard must reject it itself rather than lean on Starlette's
+    Location percent-encoding (security review, defense-in-depth). Kills
+    a mutation that drops the `"\\\\" not in dest` conjunct."""
+    db_file = str(tmp_path / "test.db")
+    EntityDatabase(db_file)
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+
+    response = client.get(
+        "/workspace/select",
+        params={"uuid": "*"},
+        headers={"referer": "http://localhost/\\evil.com"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/"
+
+
+def test_board_full_page_switcher_none_default_no_cookie_selects_all(tmp_path):
+    """No cookie AND app.state.workspace_uuid is None (129's WARN path --
+    the default runtime state when the server starts outside any known
+    workspace): 'All workspaces' is the selected option and no transient
+    'unknown workspace' option renders (implementation review: the
+    `switcher.selected is none and switcher.default_uuid is none` template
+    clause was previously untested -- a mutation dropping the second
+    conjunct went uncaught)."""
+    db_file = str(tmp_path / "test.db")
+    db = EntityDatabase(db_file)
+    ws_a = _bootstrap_workspace(db_file, project_root=str(tmp_path / "proj-a"))
+    db.register_entity("feature", "1-alpha", "Alpha Card", workspace_uuid=ws_a)
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    app.state.workspace_uuid = None
+    client = TestClient(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "selected" in _option_element(response.text, "*")
+    assert "selected" not in _option_element(response.text, ws_a)
+    assert "unknown workspace" not in response.text

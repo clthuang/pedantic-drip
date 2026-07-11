@@ -1,0 +1,23 @@
+{
+  "feature": "130-workspace-switcher-ui",
+  "gate_date": "2026-07-11",
+  "lanes": {
+    "code_adversarial": {"verdict": "PASS", "findings": {"HIGH": 0, "MED": 0, "LOW": 3}},
+    "artifact_claims": {"verdict": "FAIL_THEN_RESOLVED", "findings": {"HIGH": 1, "MED": 2, "LOW": 1}},
+    "regression_merge": {"verdict": "PASS", "findings": {"HIGH": 0, "MED": 0, "LOW": 2}}
+  },
+  "dispositions": {
+    "HIGH_battery_streak_claim": "VERIFIED-CORRECT against 118/129/119 primary battery records; upstream error was 119's own undercounted self-label — corrected in 119/.review-history.md with dated marker; 130 artifacts now state the streak basis explicitly",
+    "MED_plan_tasks_guard_restatement": "FIXED — backslash conjunct swept into plan.md step 2 + tasks.md item 2 (the two restatements e5ade18b missed)",
+    "MED_retro_footprint": "FIXED — QA-gate addendum in retro.md Raw Data: final diff = 13 plugin files (10 inventory + test_cli.py flake fix + 2 reviewer-checklist files), all finish-sanctioned",
+    "LOW_all": "see .qa-gate-low-findings.md sidecar (gitignored); #064 filed; docstring determinism FIXED; rest recorded"
+  },
+  "verification": {
+    "full_suite": "3501 passed, 3 skipped",
+    "ui_suite": "230 passed",
+    "validate_sh": "0 errors, 25 warnings (baseline)",
+    "hook_tests": "67/67 (1 branch-conditional skip per suite convention)",
+    "merge_base": "065c22e1 == develop HEAD (no drift; clean merge)"
+  },
+  "final_verdict": "PASS — merge approved"
+}

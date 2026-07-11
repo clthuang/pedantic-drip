@@ -1650,3 +1650,315 @@ def test_entity_list_search_workspace_scoping(tmp_path):
     assert unscoped.status_code == 200
     assert "Findme Alpha" in unscoped.text
     assert "Findme Beta" in unscoped.text
+
+
+# ===========================================================================
+# Feature 130 Task 2: Workspace switcher UI — dropdown states (entity list)
+# ===========================================================================
+
+from ui.routes.helpers import COOKIE_NAME
+
+
+def _option_element(html: str, value: str) -> str:
+    """Return the full <option value="{value}" ...>...</option> element
+    (attributes AND inner text), so assertions can check `selected` and
+    rendered label text without false-positiving on unrelated 'selected'
+    occurrences elsewhere in the page."""
+    start = html.index(f'<option value="{value}"')
+    end = html.index("</option>", start)
+    return html[start:end + len("</option>")]
+
+
+def test_entity_list_full_page_switcher_selection_states(tmp_path):
+    """Full-page entity list <select name="uuid"> pre-selects the right
+    option across three normal states plus the fourth-state 'unknown
+    cookie' path, all against one two-workspace fixture + shared client:
+      1. cookie names a listed workspace -> that option selected.
+      2. cookie='*' -> 'All workspaces' selected.
+      3. no cookie, startup default matches a listed workspace -> that
+         option selected AND its label gains ' (current dir)'.
+      4a. cookie names an unknown (unlisted, but shaped) workspace -> the
+          transient disabled 'unknown workspace' option is selected, and
+          no listed option (nor 'All workspaces') is."""
+    db_file = str(tmp_path / "test.db")
+    db = EntityDatabase(db_file)
+    ws_a = _bootstrap_workspace(db_file, project_root=str(tmp_path / "proj-a"))
+    ws_b = _bootstrap_workspace(db_file, project_root=str(tmp_path / "proj-b"))
+    db.register_entity(
+        "feature", "1-alpha", "Alpha Entity", status="active", workspace_uuid=ws_a
+    )
+    db.register_entity(
+        "feature", "2-beta", "Beta Entity", status="active", workspace_uuid=ws_b
+    )
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+
+    # State 1: cookie names a listed workspace (ws_b).
+    client.cookies.set(COOKIE_NAME, ws_b)
+    r1 = client.get("/entities")
+    assert r1.status_code == 200
+    assert '<select name="uuid"' in r1.text
+    assert "selected" in _option_element(r1.text, ws_b)
+    assert "selected" not in _option_element(r1.text, ws_a)
+    assert "selected" not in _option_element(r1.text, "*")
+    client.cookies.clear()
+
+    # State 2: cookie='*' -> All workspaces.
+    client.cookies.set(COOKIE_NAME, "*")
+    r2 = client.get("/entities")
+    assert "selected" in _option_element(r2.text, "*")
+    assert "selected" not in _option_element(r2.text, ws_a)
+    assert "selected" not in _option_element(r2.text, ws_b)
+    client.cookies.clear()
+
+    # State 3: no cookie, startup default matches ws_a -> "(current dir)".
+    app.state.workspace_uuid = ws_a
+    r3 = client.get("/entities")
+    element_a = _option_element(r3.text, ws_a)
+    assert "selected" in element_a
+    assert "(current dir)" in element_a
+    assert "selected" not in _option_element(r3.text, "*")
+
+    # State 4a: cookie names an unknown (shaped, unlisted) workspace.
+    unknown_uuid = str(uuid_mod.uuid4())
+    client.cookies.set(COOKIE_NAME, unknown_uuid)
+    r4a = client.get("/entities")
+    unmatched_element = _option_element(r4a.text, unknown_uuid)
+    assert "selected" in unmatched_element
+    assert "disabled" in unmatched_element
+    assert f"unknown workspace · {unknown_uuid[:8]}" in unmatched_element
+    assert "selected" not in _option_element(r4a.text, ws_a)
+    assert "selected" not in _option_element(r4a.text, ws_b)
+    assert "selected" not in _option_element(r4a.text, "*")
+    client.cookies.clear()
+
+
+def test_entity_list_full_page_switcher_unpopulated_default_shows_unmatched_option(
+    tmp_path,
+):
+    """Fourth state, path B: no cookie, but the startup default names a
+    workspace with zero entities (absent from the populated listing) ->
+    the transient disabled 'unknown workspace' option is selected, and
+    neither the populated workspace's option nor 'All workspaces' is."""
+    db_file = str(tmp_path / "test.db")
+    db = EntityDatabase(db_file)
+    ws_populated = _bootstrap_workspace(
+        db_file, project_root=str(tmp_path / "proj-populated")
+    )
+    db.register_entity(
+        "feature", "1-only", "Only Entity", status="active",
+        workspace_uuid=ws_populated,
+    )
+    ws_empty = _bootstrap_workspace(
+        db_file, project_root=str(tmp_path / "proj-empty")
+    )
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    app.state.workspace_uuid = ws_empty
+    client = TestClient(app)
+
+    response = client.get("/entities")
+
+    assert response.status_code == 200
+    unmatched_element = _option_element(response.text, ws_empty)
+    assert "selected" in unmatched_element
+    assert "disabled" in unmatched_element
+    assert f"unknown workspace · {ws_empty[:8]}" in unmatched_element
+    assert "selected" not in _option_element(response.text, ws_populated)
+    assert "selected" not in _option_element(response.text, "*")
+
+
+def test_entity_list_htmx_partial_has_no_switcher_select(tmp_path):
+    """HX-Request entity-list partial never renders the switcher <select>
+    — the builder is confined to the full-page branch (hot-path cost)."""
+    db_file = str(tmp_path / "test.db")
+    db = EntityDatabase(db_file)
+    ws_a = _bootstrap_workspace(db_file, project_root=str(tmp_path / "proj-a"))
+    db.register_entity(
+        "feature", "1-alpha", "Alpha Entity", status="active", workspace_uuid=ws_a
+    )
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+
+    response = client.get("/entities", headers={"HX-Request": "true"})
+
+    assert response.status_code == 200
+    assert '<select name="uuid"' not in response.text
+
+
+def test_entity_list_missing_db_page_has_no_switcher_select():
+    """The entity list's missing-DB error.html never renders the switcher
+    (no context is passed at all on that path)."""
+    from ui import create_app
+
+    app = create_app(db_path="/nonexistent/path.db")
+    client = TestClient(app)
+
+    response = client.get("/entities")
+
+    assert response.status_code == 200
+    assert '<select name="uuid"' not in response.text
+
+
+def test_entity_list_error_page_has_no_switcher_select(tmp_path):
+    """The entity list's DB-query-error error.html never renders the
+    switcher."""
+    db_file = str(tmp_path / "test.db")
+    EntityDatabase(db_file)
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    app.state.db.list_entities = unittest.mock.MagicMock(
+        side_effect=Exception("entity query failed")
+    )
+    client = TestClient(app)
+
+    response = client.get("/entities")
+
+    assert response.status_code == 200
+    assert '<select name="uuid"' not in response.text
+
+
+def test_entity_detail_has_no_switcher_select(tmp_path):
+    """The entity detail page never renders the switcher — the detail
+    route passes no `switcher` context at all (structurally unscoped,
+    spec SC4)."""
+    db_file = str(tmp_path / "test.db")
+    db = EntityDatabase(db_file)
+    db._register_entity_no_display(
+        "feature", "detail-no-switcher", "Detail No Switcher",
+        status="active", project_id="__unknown__",
+    )
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+
+    response = client.get("/entities/feature:detail-no-switcher")
+
+    assert response.status_code == 200
+    assert '<select name="uuid"' not in response.text
+
+
+# ===========================================================================
+# Feature 130 Task 2, test group #5: entity detail is unscoped by cookie
+# ===========================================================================
+
+
+def test_entity_detail_unscoped_by_cookie(tmp_path):
+    """GET /entities/{W1 entity} renders 200 even when the client cookie
+    names a DIFFERENT workspace (W2) -- detail is a by-uuid lookup with no
+    workspace_uuid parameter at all, so the cookie never narrows it."""
+    db_file = str(tmp_path / "test.db")
+    db = EntityDatabase(db_file)
+    ws_a = _bootstrap_workspace(db_file)
+    ws_b = _bootstrap_workspace(db_file)
+    db.register_entity(
+        "feature", "1-alpha", "Alpha Entity", status="active", workspace_uuid=ws_a
+    )
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+    client.cookies.set(COOKIE_NAME, ws_b)
+
+    response = client.get("/entities/feature:1-alpha")
+
+    assert response.status_code == 200
+    assert "Alpha Entity" in response.text
+
+
+# ===========================================================================
+# Feature 130 Task 2, test group #6: switcher label collision
+# ===========================================================================
+
+
+def test_switcher_label_collision_gets_uuid_suffix(tmp_path):
+    """Two populated workspaces sharing a basename both get the
+    ` · {uuid[:8]}` disambiguation suffix; a NULL-project_root workspace is
+    labeled by its uuid prefix alone; no label leaks a fixture entity
+    name (labels are structurally basenames/uuid-prefixes/counts only)."""
+    db_file = str(tmp_path / "test.db")
+    db = EntityDatabase(db_file)
+    ws_collide_1 = _bootstrap_workspace(
+        db_file, project_root=str(tmp_path / "one" / "shared-name")
+    )
+    ws_collide_2 = _bootstrap_workspace(
+        db_file, project_root=str(tmp_path / "two" / "shared-name")
+    )
+    ws_null_root = _bootstrap_workspace(db_file, project_root=None)
+    db.register_entity(
+        "feature", "1-a", "Entity In Collide One",
+        status="active", workspace_uuid=ws_collide_1,
+    )
+    db.register_entity(
+        "feature", "1-b", "Entity In Collide Two",
+        status="active", workspace_uuid=ws_collide_2,
+    )
+    db.register_entity(
+        "feature", "1-c", "Entity In Null Root",
+        status="active", workspace_uuid=ws_null_root,
+    )
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+
+    response = client.get("/entities")
+
+    assert response.status_code == 200
+    element_1 = _option_element(response.text, ws_collide_1)
+    element_2 = _option_element(response.text, ws_collide_2)
+    assert f"shared-name · {ws_collide_1[:8]}" in element_1
+    assert f"shared-name · {ws_collide_2[:8]}" in element_2
+    element_null = _option_element(response.text, ws_null_root)
+    assert ws_null_root[:8] in element_null
+
+    select_start = response.text.index('<select name="uuid"')
+    select_end = response.text.index("</select>", select_start)
+    select_html = response.text[select_start:select_end]
+    for entity_name in (
+        "Entity In Collide One", "Entity In Collide Two", "Entity In Null Root",
+    ):
+        assert entity_name not in select_html
+
+
+def test_entity_list_full_page_switcher_none_default_no_cookie_selects_all(
+    tmp_path,
+):
+    """No cookie AND app.state.workspace_uuid is None (129's WARN path):
+    'All workspaces' is the selected option on the entity-list page and no
+    transient 'unknown workspace' option renders (implementation review:
+    the template's `selected is none and default_uuid is none` clause was
+    previously reached by no test on either page)."""
+    db_file = str(tmp_path / "test.db")
+    db = EntityDatabase(db_file)
+    ws_a = _bootstrap_workspace(db_file, project_root=str(tmp_path / "proj-a"))
+    db.register_entity(
+        "feature", "1-alpha", "Alpha Entity", status="active", workspace_uuid=ws_a
+    )
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    app.state.workspace_uuid = None
+    client = TestClient(app)
+
+    response = client.get("/entities")
+
+    assert response.status_code == 200
+    assert "selected" in _option_element(response.text, "*")
+    assert "selected" not in _option_element(response.text, ws_a)
+    assert "unknown workspace" not in response.text

@@ -5,7 +5,12 @@ import sys
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
-from ui.routes.helpers import DB_ERROR_USER_MESSAGE, missing_db_response
+from ui.routes.helpers import (
+    DB_ERROR_USER_MESSAGE,
+    effective_workspace_uuid,
+    missing_db_response,
+    switcher_context,
+)
 
 router = APIRouter()
 
@@ -55,10 +60,13 @@ def board(request: Request) -> HTMLResponse:
         return missing_db_response(templates, request, db_path)
 
     # Path 2: DB query error
+    switcher = None
     try:
         rows = db.list_workflow_phases(
-            workspace_uuid=request.app.state.workspace_uuid
+            workspace_uuid=effective_workspace_uuid(request)
         )
+        if not request.headers.get("HX-Request"):
+            switcher = switcher_context(request, db)
     except Exception as exc:
         print(f"DB query error: {exc}", file=sys.stderr)
         return templates.TemplateResponse(
@@ -93,5 +101,6 @@ def board(request: Request) -> HTMLResponse:
             "columns": columns,
             "column_order": COLUMN_ORDER,
             "active_page": "board",
+            "switcher": switcher,
         },
     )
