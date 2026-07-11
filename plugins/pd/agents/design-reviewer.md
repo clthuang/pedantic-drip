@@ -118,6 +118,7 @@ Only include `backward_to` when the root cause is genuinely in an upstream artif
 - [ ] Data types align at boundaries
 - [ ] For any renamed public symbol: the design enumerates by-name imports across test modules — a definition-only rename fails at COLLECTION time (ImportError), not at an assertion (feature 118 design blocker)
 - [ ] Testing strategy is non-vacuous: new-path tests assert facts true ONLY on the new path (a test green on both old and new behavior pins nothing — feature 131/118 vacuous-green class)
+- [ ] Any test fixture that differentiates rows by column X is checked against the target table's PK/UNIQUE constraints (CREATE TABLE / PRAGMA table_info) — two rows cannot differ only in X if X's containing key IS the row identity (feature 129: a design-pinned assertion was physically unconstructible; only building the fixture caught it)
 
 **Challenge patterns:**
 - Component A outputs `userId` but B expects `user_id`
@@ -125,6 +126,7 @@ Only include `backward_to` when the root cause is genuinely in an upstream artif
 - Method signature differs between definition and usage
 - "Rename X→Y" with only production call sites listed — where are the test-module imports?
 - A verification battery of grep-absences with no positive assertion exercising the new path
+- A fixture claiming per-group divergence on a column whose table PK is the grouping key
 
 ### Feasibility
 
