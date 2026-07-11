@@ -16,9 +16,12 @@ file picks it up as a result.
 """
 from __future__ import annotations
 
+import subprocess
 import sqlite3
+import sys
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -222,6 +225,36 @@ class TestAppendEventRoundTrip:
         assert [row["uuid"] for row in rows] == [first_uuid, second_uuid]
         assert first_uuid < second_uuid
 
+    # -----------------------------------------------------------------
+    # Gap pass (test-deepener, dimension:boundary_values): every existing
+    # test in this class either omits *timestamp* (exercising the
+    # default UTC-now stamp) or never inspects it — passing one
+    # explicitly was unexercised.
+    # -----------------------------------------------------------------
+    def test_explicit_timestamp_is_stored_verbatim_not_restamped(
+        self, v2_conn, seeded_entity_uuid
+    ):
+        """Anticipate: an implementation that always stamps
+        datetime.now(timezone.utc) regardless of a caller-supplied
+        *timestamp* (e.g. an `or` used instead of an `is not None` check)
+        would silently overwrite this with something close to "now" —
+        this test fails against that mutation because 2020 is asserted
+        verbatim and would be wildly different from "now".
+        derived_from: spec:In-Scope item 3 (append_event timestamp
+        parameter), dimension:boundary_values
+        """
+        # Given a timestamp far from "now" passed explicitly
+        explicit_timestamp = "2020-06-15T12:00:00+00:00"
+        # When append_event is called with that timestamp
+        event_uuid = events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="phase_completed",
+            axis="pipeline", actor="test-actor", timestamp=explicit_timestamp,
+        )
+        # Then the stored row carries it verbatim, not a re-stamped "now"
+        rows = events.read_events(v2_conn, seeded_entity_uuid)
+        (matching_row,) = [row for row in rows if row["uuid"] == event_uuid]
+        assert matching_row["timestamp"] == explicit_timestamp
+
 
 # ---------------------------------------------------------------------------
 # Design test #4 (a-c): transaction composition — caller-owned rollback,
@@ -246,6 +279,43 @@ class TestAppendEventTransactionComposition:
             "SELECT COUNT(*) FROM events WHERE uuid = ?", (event_uuid,)
         ).fetchone()[0]
         assert row_count == 0
+
+    # -----------------------------------------------------------------
+    # Gap pass (test-deepener, dimension:adversarial): the mirror image of
+    # the rollback test above — only the discard half of the composition
+    # contract was pinned; the persist half never was.
+    # -----------------------------------------------------------------
+    def test_caller_transaction_commit_persists_the_event(self, v2_conn, seeded_entity_uuid):
+        """The caller commits its own transaction with raw SQL (same
+        autocommit=True / raw-SQL rationale as the rollback sibling
+        above) — the event must actually be readable afterward, not just
+        "append_event didn't raise".
+
+        Anticipate: a mutation that had append_event issue its own
+        COMMIT/ROLLBACK even when conn.in_transaction is True (breaking
+        the compose-or-wrap contract, design D5) would make the caller's
+        own COMMIT below either double-commit or hit "cannot commit - no
+        transaction is active" — this test's positive persistence
+        assertion is the half of the contract the rollback sibling
+        structurally cannot exercise.
+        derived_from: spec:SC4a (transaction composition), design:D5,
+        dimension:adversarial
+        """
+        # Given a caller-owned transaction
+        v2_conn.execute("BEGIN IMMEDIATE")
+        # When append_event runs inside it and the CALLER commits
+        event_uuid = events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="phase_completed",
+            axis="pipeline", actor="test-actor",
+        )
+        v2_conn.execute("COMMIT")
+
+        # Then the event is actually persisted, not just exception-free
+        assert v2_conn.in_transaction is False
+        row_count = v2_conn.execute(
+            "SELECT COUNT(*) FROM events WHERE uuid = ?", (event_uuid,)
+        ).fetchone()[0]
+        assert row_count == 1
 
     def test_standalone_unknown_entity_uuid_raises_with_no_partial_row(self, v2_conn):
         with pytest.raises(sqlite3.IntegrityError):
@@ -328,6 +398,35 @@ class _FirstBeginImmediateLockedConnection:
         return self._real_conn.in_transaction
 
 
+# ---------------------------------------------------------------------------
+# Gap pass (test-deepener, dimension:error_propagation): with_retry
+# EXHAUSTION. _FirstBeginImmediateLockedConnection above only fails the
+# first attempt then lets the retry succeed — the boundary where every
+# attempt fails (max_attempts reached, sqlite_retry.py's default is 3) was
+# unexercised, so nothing pinned that the error actually propagates
+# instead of looping forever or being swallowed.
+# ---------------------------------------------------------------------------
+class _AlwaysBeginImmediateLockedConnection:
+    """Wraps a real sqlite3.Connection: EVERY execute() of "BEGIN
+    IMMEDIATE" raises a transient OperationalError, unconditionally —
+    unlike _FirstBeginImmediateLockedConnection above, no attempt ever
+    succeeds. Drives with_retry to its exhaustion path."""
+
+    def __init__(self, real_conn: sqlite3.Connection):
+        self._real_conn = real_conn
+        self.begin_immediate_attempts = 0
+
+    def execute(self, sql, *args, **kwargs):
+        if sql == "BEGIN IMMEDIATE":
+            self.begin_immediate_attempts += 1
+            raise sqlite3.OperationalError("database is locked")
+        return self._real_conn.execute(sql, *args, **kwargs)
+
+    @property
+    def in_transaction(self):
+        return self._real_conn.in_transaction
+
+
 class TestAppendEventRetryPath:
     def test_first_begin_immediate_locked_then_retry_succeeds(
         self, monkeypatch, bootstrapped_db_path, seeded_entity_uuid
@@ -354,6 +453,38 @@ class TestAppendEventRetryPath:
         finally:
             verify_conn.close()
         assert row_count == 1
+
+    def test_always_locked_exhausts_retries_and_propagates(
+        self, monkeypatch, bootstrapped_db_path, seeded_entity_uuid
+    ):
+        """Anticipate: a bug that swallows the exhausted OperationalError
+        (e.g. returning a sentinel instead of `raise last_exc`) or one
+        that retries indefinitely (hangs) would either return silently
+        here or never complete — this test fails against both: it
+        asserts the specific exception propagates AND that exactly
+        max_attempts (3, sqlite_retry.py's current default) BEGIN
+        IMMEDIATE attempts were made — not more (no infinite loop) and
+        not fewer (retry actually happened).
+        derived_from: spec:In-Scope item 3 (NFR-1 with_retry clause),
+        dimension:error_propagation
+        """
+        monkeypatch.setattr(time, "sleep", lambda seconds: None)
+
+        # Given a connection where BEGIN IMMEDIATE always reports "locked"
+        real_conn = events.connect_v2(bootstrapped_db_path)
+        wrapper_conn = _AlwaysBeginImmediateLockedConnection(real_conn)
+        try:
+            # When append_event is called standalone
+            # Then the OperationalError propagates after exactly 3 attempts
+            with pytest.raises(sqlite3.OperationalError, match="locked"):
+                events.append_event(
+                    wrapper_conn, entity_uuid=seeded_entity_uuid,
+                    event_type="phase_completed", axis="pipeline", actor="test-actor",
+                )
+        finally:
+            real_conn.close()
+
+        assert wrapper_conn.begin_immediate_attempts == 3
 
 
 # ---------------------------------------------------------------------------
@@ -439,3 +570,358 @@ class TestPayloadRegistry:
         assert v2_conn.in_transaction is False
         row_count = v2_conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
         assert row_count == 0
+
+    # -----------------------------------------------------------------
+    # Gap pass (test-deepener, dimension:boundary_values): the round-trip
+    # test above always supplies a non-empty payload dict — the None
+    # default and the falsy-but-non-null {} case were both unexercised.
+    # -----------------------------------------------------------------
+    def test_payload_omitted_round_trips_as_none(self, v2_conn, seeded_entity_uuid):
+        # Given append_event called with no payload argument
+        event_uuid = events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="phase_completed",
+            axis="pipeline", actor="test-actor",
+        )
+        # When the row is read back
+        rows = events.read_events(v2_conn, seeded_entity_uuid)
+        (matching_row,) = [row for row in rows if row["uuid"] == event_uuid]
+        # Then payload is None, not the string "null" or an empty dict
+        assert matching_row["payload"] is None
+
+    def test_payload_empty_dict_round_trips_as_empty_dict_not_none(
+        self, v2_conn, seeded_entity_uuid
+    ):
+        """Anticipate: a payload-serialization helper written as
+        `json.dumps(payload) if payload else None` (a truthy guard
+        instead of an `is not None` check) would silently collapse an
+        explicitly-empty dict into SQL NULL, since `{}` is falsy in
+        Python — this test fails against that mutation because it
+        asserts the read-back value IS `{}`, distinct from the None the
+        sibling test above pins for the omitted case.
+        derived_from: spec:In-Scope item 1 (payload TEXT, nullable),
+        dimension:boundary_values
+        """
+        # Given append_event called with an explicit empty dict payload
+        event_uuid = events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="phase_completed",
+            axis="pipeline", actor="test-actor", payload={},
+        )
+        # When the row is read back
+        rows = events.read_events(v2_conn, seeded_entity_uuid)
+        (matching_row,) = [row for row in rows if row["uuid"] == event_uuid]
+        # Then payload is {}, not coalesced into None
+        assert matching_row["payload"] == {}
+        assert matching_row["payload"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Gap pass (test-deepener, dimension:boundary_values): axis CHECK boundary
+# — every existing test in this file hardcodes axis="pipeline"; the other
+# two valid values and the CHECK's case-sensitivity were unexercised.
+# ---------------------------------------------------------------------------
+class TestAxisBoundaryValues:
+    @pytest.mark.parametrize("axis_value", ["pipeline", "execution", "lifecycle"])
+    def test_each_valid_axis_value_round_trips(
+        self, v2_conn, seeded_entity_uuid, axis_value
+    ):
+        """Anticipate: a CHECK constraint (or an equivalent Python-side
+        allowlist) that only lists two of the three axis values — e.g. a
+        typo'd 'exection', or a copy/paste that dropped 'lifecycle' —
+        would still pass every OTHER test in this suite, all of which
+        hardcode 'pipeline'. This parametrized sweep exercises each of
+        the three values individually so a narrowed CHECK fails loudly
+        on exactly the value it silently dropped.
+        derived_from: spec:In-Scope item 1 (axis CHECK), design:D7,
+        dimension:boundary_values
+        """
+        # Given one of the three spec-documented axis values
+        # When an event is appended with it
+        event_uuid = events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="phase_completed",
+            axis=axis_value, actor="test-actor",
+        )
+        # Then it round-trips through read_events unchanged
+        rows = events.read_events(v2_conn, seeded_entity_uuid)
+        (matching_row,) = [row for row in rows if row["uuid"] == event_uuid]
+        assert matching_row["axis"] == axis_value
+
+    def test_axis_case_variant_is_rejected_by_check_constraint(
+        self, v2_conn, seeded_entity_uuid
+    ):
+        """'Pipeline' (capital P) is not one of the three literal CHECK
+        values — SQLite's IN comparison is case-sensitive for TEXT by
+        default (no COLLATE NOCASE in the DDL), so this must be rejected
+        outright, not silently normalized.
+
+        Anticipate: a Python-side pre-validation added later that
+        lowercases *axis* before the INSERT (e.g. `axis.lower()`) would
+        silently accept this and mask the CHECK's case-sensitivity
+        contract — this test fails against that mutation both via the
+        expected exception AND the follow-up zero-rows assertion (not
+        just "no exception happened").
+        derived_from: design:D7 (exact axis CHECK values),
+        dimension:boundary_values
+        """
+        # Given a case-variant of a valid axis value
+        # When append_event is called with it
+        # Then the CHECK constraint rejects it, with no row inserted
+        with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed"):
+            events.append_event(
+                v2_conn, entity_uuid=seeded_entity_uuid, event_type="phase_completed",
+                axis="Pipeline", actor="test-actor",
+            )
+        row_count = v2_conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+        assert row_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Gap pass (test-deepener, dimension:boundary_values): from_value/to_value
+# — spec's Error & Boundary Cases notes CHECKs only cover event_type/actor,
+# leaving from_value/to_value nullable with no CHECK; no existing test ever
+# passes either one.
+# ---------------------------------------------------------------------------
+class TestFromToValueBoundaries:
+    def test_from_value_and_to_value_default_to_none_when_omitted(
+        self, v2_conn, seeded_entity_uuid
+    ):
+        # Given append_event called without from_value/to_value
+        event_uuid = events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="entity_created",
+            axis="pipeline", actor="test-actor",
+        )
+        # When the row is read back
+        rows = events.read_events(v2_conn, seeded_entity_uuid)
+        (matching_row,) = [row for row in rows if row["uuid"] == event_uuid]
+        # Then both columns are None (creation events have no "from")
+        assert matching_row["from_value"] is None
+        assert matching_row["to_value"] is None
+
+    def test_from_value_and_to_value_empty_string_round_trips_distinct_from_none(
+        self, v2_conn, seeded_entity_uuid
+    ):
+        """Anticipate: a helper that coalesces falsy values (e.g.
+        `from_value or None`) before the INSERT would silently turn an
+        explicit empty string into SQL NULL, blurring "explicitly empty"
+        with "never set" — this test fails against that mutation because
+        it asserts the read-back value IS the empty string, distinct
+        from the None the sibling test above pins for the omitted case.
+        derived_from: spec:Error & Boundary Cases (from_value/to_value
+        nullable, no CHECK), dimension:boundary_values
+        """
+        # Given append_event called with explicit empty-string from/to values
+        event_uuid = events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="transition",
+            axis="pipeline", from_value="", to_value="", actor="test-actor",
+        )
+        # When the row is read back
+        rows = events.read_events(v2_conn, seeded_entity_uuid)
+        (matching_row,) = [row for row in rows if row["uuid"] == event_uuid]
+        # Then both columns are "", not coalesced into None
+        assert matching_row["from_value"] == ""
+        assert matching_row["to_value"] == ""
+
+
+# ---------------------------------------------------------------------------
+# Gap pass (test-deepener, dimension:adversarial): read_events' filters —
+# no existing test interleaves two entities' appends (every read_events
+# call in this file operates against a single entity_uuid in isolation),
+# and no existing test ever passes axis= at all.
+# ---------------------------------------------------------------------------
+class TestReadEventsFiltering:
+    def test_interleaved_appends_across_two_entities_preserve_per_entity_order(
+        self, v2_conn
+    ):
+        """Two entities' appends interleave in insertion order (A1, B1,
+        A2, B2, i.e. NOT grouped by entity): read_events(entity) must
+        return only THAT entity's rows, in their own insertion order —
+        not the other entity's rows mixed in, and not merely "whatever
+        order the table happens to be in".
+
+        Anticipate: a read_events that dropped or mis-targeted its
+        entity_uuid WHERE clause would still pass the existing
+        single-entity sequential-order test (nothing else is in that
+        table to leak in) but would return all 4 rows here — this test
+        fails against that mutation because entity B's rows are
+        interleaved and would surface in entity A's read.
+        derived_from: dimension:adversarial (Follow the Data / interleaving)
+        """
+        # Given two entities under one workspace
+        workspace_uuid = "workspace-uuid-interleave-test"
+        entity_a = "entity-uuid-interleave-a"
+        entity_b = "entity-uuid-interleave-b"
+        v2_conn.execute(
+            "INSERT INTO workspaces (uuid, project_root, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?)",
+            (workspace_uuid, "/tmp/project", _NOW, _NOW),
+        )
+        for entity_uuid in (entity_a, entity_b):
+            v2_conn.execute(
+                "INSERT INTO entities (uuid, workspace_uuid, type, kind, lifecycle_class, "
+                "type_id, name, artifact_path, parent_uuid, created_at, updated_at, metadata) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    entity_uuid, workspace_uuid, "feature", "feature", "artifact",
+                    "119-interleave", "Test Entity", None, None, _NOW, _NOW, None,
+                ),
+            )
+
+        # When appends interleave across the two entities: A1, B1, A2, B2
+        first_a_uuid = events.append_event(
+            v2_conn, entity_uuid=entity_a, event_type="event-a1",
+            axis="pipeline", actor="test-actor",
+        )
+        first_b_uuid = events.append_event(
+            v2_conn, entity_uuid=entity_b, event_type="event-b1",
+            axis="pipeline", actor="test-actor",
+        )
+        second_a_uuid = events.append_event(
+            v2_conn, entity_uuid=entity_a, event_type="event-a2",
+            axis="pipeline", actor="test-actor",
+        )
+        second_b_uuid = events.append_event(
+            v2_conn, entity_uuid=entity_b, event_type="event-b2",
+            axis="pipeline", actor="test-actor",
+        )
+
+        # Then each entity's read_events returns only its own rows, in order
+        assert [row["uuid"] for row in events.read_events(v2_conn, entity_a)] == [
+            first_a_uuid, second_a_uuid,
+        ]
+        assert [row["uuid"] for row in events.read_events(v2_conn, entity_b)] == [
+            first_b_uuid, second_b_uuid,
+        ]
+
+    def test_axis_filter_excludes_other_axis_rows_for_same_entity(
+        self, v2_conn, seeded_entity_uuid
+    ):
+        """One entity, two events on different axes: axis= filters
+        correctly both ways, and the no-filter call still returns both.
+
+        Anticipate: a read_events whose axis branch targeted the wrong
+        column (e.g. filtered on event_type instead of axis) or whose
+        `if axis is None` check was inverted would either return the
+        wrong subset or an empty list here — no existing test calls
+        read_events with axis= at all.
+        derived_from: spec:In-Scope item 4 (read_events axis filter),
+        dimension:adversarial
+        """
+        # Given one entity with events on two different axes
+        pipeline_uuid = events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="phase_completed",
+            axis="pipeline", actor="test-actor",
+        )
+        lifecycle_uuid = events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="entity_archived",
+            axis="lifecycle", actor="test-actor",
+        )
+
+        # When read_events is called with axis="pipeline"
+        # Then only the pipeline-axis row comes back
+        pipeline_rows = events.read_events(v2_conn, seeded_entity_uuid, axis="pipeline")
+        assert [row["uuid"] for row in pipeline_rows] == [pipeline_uuid]
+
+        # When read_events is called with axis="lifecycle"
+        # Then only the lifecycle-axis row comes back
+        lifecycle_rows = events.read_events(v2_conn, seeded_entity_uuid, axis="lifecycle")
+        assert [row["uuid"] for row in lifecycle_rows] == [lifecycle_uuid]
+
+        # When read_events is called with no axis filter
+        # Then both rows come back
+        all_rows = events.read_events(v2_conn, seeded_entity_uuid)
+        assert {row["uuid"] for row in all_rows} == {pipeline_uuid, lifecycle_uuid}
+
+
+# ---------------------------------------------------------------------------
+# Gap pass (test-deepener, dimension:error_propagation): append_event
+# against a core-only bootstrap (events.py never imported before
+# bootstrap_v2 ran) — design's Data Flow (dark-phase) section documents
+# this hazard, but nothing pinned it. This requires a genuinely fresh
+# subprocess: this module's own top-level `from entity_registry import
+# events` import (module top of this file) has already registered the
+# events DDL for THIS test process by the time any test here runs, so the
+# "core-only" scenario cannot be reproduced in-process.
+# ---------------------------------------------------------------------------
+class TestCoreOnlyBootstrapMissingEventsTable:
+    def test_append_event_on_core_only_bootstrap_raises_no_such_table(self, tmp_path):
+        """Anticipate: if append_event (or connect_v2) silently created
+        missing tables on demand, or if importing events retroactively
+        applied its DDL to already-bootstrapped paths, this documented
+        dark-phase hazard would go unnoticed until feature 132's cutover
+        hit it live — this test fails against either "helpful" mutation
+        because it asserts the SPECIFIC no-such-table failure the design
+        docstring predicts, not just "some exception happens".
+        derived_from: design:Data Flow (dark-phase) section,
+        dimension:error_propagation
+        """
+        hooks_lib_root = Path(__file__).resolve().parent.parent
+        db_path = str(tmp_path / "core-only.db")
+        # Given a subprocess that bootstraps a path having imported ONLY
+        # schema_v2 (never entity_registry.events) — a core-only DB —
+        # and only imports events AFTER that bootstrap already ran
+        script = (
+            "import sqlite3\n"
+            "from entity_registry import schema_v2\n"
+            f"conn = schema_v2.bootstrap_v2({db_path!r})\n"
+            "conn.close()\n"
+            "from entity_registry import events\n"
+            f"v2_conn = events.connect_v2({db_path!r})\n"
+            "try:\n"
+            "    events.append_event(\n"
+            "        v2_conn, entity_uuid='entity-uuid-does-not-matter',\n"
+            "        event_type='phase_completed', axis='pipeline', actor='test-actor',\n"
+            "    )\n"
+            "except sqlite3.OperationalError as exc:\n"
+            "    print('CAUGHT:' + str(exc))\n"
+            "else:\n"
+            "    print('NO_ERROR_RAISED')\n"
+        )
+        # When append_event is called against that core-only DB
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=str(hooks_lib_root),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        # Then it raises OperationalError("no such table: events") — the
+        # exact failure design's Data Flow section predicts
+        assert result.returncode == 0, (
+            f"subprocess crashed unexpectedly: stdout={result.stdout!r} "
+            f"stderr={result.stderr!r}"
+        )
+        assert "CAUGHT:no such table: events" in result.stdout, (
+            f"expected the core-only path's append_event to fail with "
+            f"'no such table: events', got stdout={result.stdout!r} "
+            f"stderr={result.stderr!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Gap pass (test-deepener, dimension:mutation_mindset): read_events' output
+# shape — pins the exact 9-column dict-key contract so column drift (add/
+# rename/reorder) between the DDL, _EVENT_COLUMNS, and either SELECT
+# statement shows up here instead of silently leaking through to callers.
+# ---------------------------------------------------------------------------
+class TestReadEventsColumnContract:
+    def test_read_events_dict_keys_match_exactly_nine_documented_columns(
+        self, v2_conn, seeded_entity_uuid
+    ):
+        """Anticipate: a future column addition to the events table
+        (schema drift — e.g. a 120/121/122 sibling ALTERing the table)
+        that isn't mirrored into _EVENT_COLUMNS and both SELECT
+        statements in lockstep would leave read_events silently missing
+        the new column from its dict output, or leak a stray extra key
+        — this test fails against either drift direction because it
+        asserts set EQUALITY, not just membership of the known keys.
+        derived_from: spec:SC1 (exact FR-2 column set), design:D7,
+        dimension:mutation_mindset
+        """
+        events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="phase_completed",
+            axis="pipeline", actor="test-actor",
+        )
+        (row,) = events.read_events(v2_conn, seeded_entity_uuid)
+        assert set(row.keys()) == {
+            "uuid", "entity_uuid", "event_type", "axis",
+            "from_value", "to_value", "actor", "timestamp", "payload",
+        }

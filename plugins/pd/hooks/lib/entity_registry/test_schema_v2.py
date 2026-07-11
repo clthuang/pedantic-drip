@@ -611,6 +611,39 @@ class TestSchemaV2ShipsDark:
 
         assert offending_files == [str(offender_path)]
 
+    # -------------------------------------------------------------
+    # Gap pass (test-deepener, dimension:mutation_mindset): the sibling
+    # test above only seeds the NON-dotted spelling (`from entity_registry
+    # import events`) — the DOTTED needle ("entity_registry.events") had
+    # no seeded-offender regression test of its own, even though design
+    # D6 explicitly widened the needle set to catch both spellings.
+    # -------------------------------------------------------------
+    def test_scan_flags_seeded_offender_with_dotted_import_spelling(self, tmp_path):
+        """Anticipate: a future edit to _V2_LIVE_REFERENCE_NEEDLES that
+        dropped or typo'd the "entity_registry.events" entry (leaving
+        only the "schema_v2" and "from entity_registry import events"
+        needles) would still pass the non-dotted sibling test above,
+        since that needle isn't the one it seeds — this test fails
+        against that specific regression because its fixture contains
+        ONLY the dotted spelling (no "schema_v2" substring, no
+        non-dotted "from entity_registry import events" substring), so
+        detection here can only be coming from the "entity_registry.events"
+        needle itself.
+        """
+        offender_path = tmp_path / "some_other_consumer.py"
+        offender_path.write_text(
+            "import entity_registry.events\n"
+            "\n"
+            "def wire_it_up():\n"
+            "    entity_registry.events.append_event(entity_uuid='x')\n"
+        )
+
+        offending_files = _scan_for_live_v2_references(
+            tmp_path, _V2_DARK_MODULES, _V2_LIVE_REFERENCE_NEEDLES
+        )
+
+        assert offending_files == [str(offender_path)]
+
 
 # ---------------------------------------------------------------------------
 # Design test #9: events.py's module-import side effect registers
@@ -701,6 +734,49 @@ class TestBootstrapLockConcurrency:
         conn = schema_v2.bootstrap_v2(db_path)
         conn.close()
 
+        lock_path = f"{db_path}.bootstrap.lock"
+        with open(lock_path, "a+") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+    # -------------------------------------------------------------
+    # Gap pass (test-deepener, dimension:mutation_mindset): the sibling
+    # test above only pins lock release on the SUCCESS path — whether
+    # _bootstrap_lock's `finally` also releases when bootstrap_v2's body
+    # raises partway through was unexercised.
+    # -------------------------------------------------------------
+    def test_lock_released_after_bootstrap_body_raises(self, tmp_path):
+        """Same broken-DDL-entry recipe as TestPartialBootstrapRecovery
+        above, but this test's own concern is the lock, not the
+        registry's convergent-recovery contract.
+
+        Anticipate: an implementation of _bootstrap_lock that released
+        the lock via code placed after `yield` but OUTSIDE a try/finally
+        (e.g. relying on the caller never raising) would leave the
+        sidecar lock held forever once bootstrap_v2's body raises — this
+        test fails against that mutation because the fresh non-blocking
+        LOCK_EX attempt below would raise BlockingIOError instead of
+        succeeding immediately, whereas the success-path sibling test
+        above cannot exercise the finally-on-exception branch at all.
+        derived_from: design:D3 (_bootstrap_lock finally-released
+        contract), dimension:mutation_mindset
+        """
+        db_path = str(tmp_path / "v2.db")
+        schema_v2.register_ddl(
+            "broken-lock-release-probe",
+            # Malformed SQL: trailing commas make this a syntax error,
+            # same recipe as TestPartialBootstrapRecovery.
+            "CREATE TABLE IF NOT EXISTS broken_probe_t (uuid TEXT PRIMARY KEY,,,,)",
+        )
+
+        # Given a registry entry that will make bootstrap_v2's body raise
+        # When bootstrap_v2 is called
+        # Then it raises, AFTER having acquired the lock...
+        with pytest.raises(sqlite3.OperationalError):
+            schema_v2.bootstrap_v2(db_path)
+
+        # ...but the lock is nonetheless released: a fresh, non-blocking
+        # LOCK_EX acquisition on the sidecar file succeeds immediately.
         lock_path = f"{db_path}.bootstrap.lock"
         with open(lock_path, "a+") as lock_file:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
