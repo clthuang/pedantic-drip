@@ -454,3 +454,84 @@ class TestQueryReadyTasks:
 
         result = query_ready_tasks(db)
         assert result == []
+
+
+class TestQueryReadyTasksWorkspaceScoping:
+    """Feature 129 Task 4 / design D5: workspace_uuid scoping on
+    query_ready_tasks's candidate query.
+
+    Design Testing Strategy #7 (lib layer): a scoped call returns only
+    the target workspace's ready tasks; unscoped (``None``, the default)
+    returns tasks from all workspaces; the per-task
+    query_dependencies/get_workflow_phase lookups stay unscoped -- a
+    cross-workspace blocker still blocks the scoped candidate.
+    """
+
+    def _seed_ready_task(self, db, ws_uuid, suffix):
+        """Register a feature (in implement phase) + one ready task.
+
+        Returns the task's uuid.
+        """
+        type_id = f"feature:040-feat-{suffix}"
+        feature_uuid = db.register_entity(
+            entity_type="feature", entity_id=f"040-feat-{suffix}",
+            name=f"Feature {suffix}", status="active", workspace_uuid=ws_uuid,
+        )
+        db.create_workflow_phase(type_id, mode="standard", workflow_phase="implement")
+        task_uuid = db.register_entity(
+            entity_type="task", entity_id=f"041-task-{suffix}",
+            name=f"Task {suffix}", status="planned",
+            parent_uuid=feature_uuid, workspace_uuid=ws_uuid,
+        )
+        db.create_workflow_phase(f"task:041-task-{suffix}", mode="standard")
+        return task_uuid
+
+    def test_scoped_excludes_other_workspace_tasks(self):
+        from entity_registry.test_helpers import bootstrap_test_workspace
+        from workflow_engine.task_promotion import query_ready_tasks
+
+        db = _make_db()
+        ws_a = bootstrap_test_workspace(db, "qrt-ws-a")
+        ws_b = bootstrap_test_workspace(db, "qrt-ws-b")
+        task_a = self._seed_ready_task(db, ws_a, "a")
+        self._seed_ready_task(db, ws_b, "b")
+
+        result = query_ready_tasks(db, workspace_uuid=ws_a)
+        uuids = {r["uuid"] for r in result}
+        assert uuids == {task_a}
+
+    def test_unscoped_returns_all_workspaces(self):
+        from entity_registry.test_helpers import bootstrap_test_workspace
+        from workflow_engine.task_promotion import query_ready_tasks
+
+        db = _make_db()
+        ws_a = bootstrap_test_workspace(db, "qrt-ws-a2")
+        ws_b = bootstrap_test_workspace(db, "qrt-ws-b2")
+        task_a = self._seed_ready_task(db, ws_a, "a2")
+        task_b = self._seed_ready_task(db, ws_b, "b2")
+
+        result = query_ready_tasks(db)
+        uuids = {r["uuid"] for r in result}
+        assert uuids == {task_a, task_b}
+
+    def test_cross_workspace_blocker_still_honored(self):
+        """Blocker in a different workspace still blocks the scoped
+        candidate (dependency edges are deliberately unscoped)."""
+        from entity_registry.test_helpers import bootstrap_test_workspace
+        from workflow_engine.task_promotion import query_ready_tasks
+
+        db = _make_db()
+        ws_a = bootstrap_test_workspace(db, "qrt-ws-block-a")
+        ws_b = bootstrap_test_workspace(db, "qrt-ws-block-b")
+        task_a = self._seed_ready_task(db, ws_a, "blocker-owner")
+        task_b_blocker = self._seed_ready_task(db, ws_b, "blocker")
+
+        dep_mgr = DependencyManager()
+        dep_mgr.add_dependency(db, task_a, task_b_blocker)
+
+        result = query_ready_tasks(db, workspace_uuid=ws_a)
+        uuids = {r["uuid"] for r in result}
+        assert task_a not in uuids, (
+            "Cross-workspace blocker must still be honored -- edges are "
+            "deliberately unscoped"
+        )

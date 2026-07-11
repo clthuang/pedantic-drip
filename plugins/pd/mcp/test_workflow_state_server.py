@@ -1021,13 +1021,29 @@ class TestProcessListFeaturesByPhase:
     def test_unexpected_exception(self, seeded_engine, monkeypatch):
         monkeypatch.setattr(
             seeded_engine, "list_by_phase",
-            lambda *a: (_ for _ in ()).throw(RuntimeError("boom")),
+            lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("boom")),
         )
         result = _process_list_features_by_phase(seeded_engine, "specify")
         data = json.loads(result)
         assert data["error"] is True
         assert data["error_type"] == "internal"
         assert "RuntimeError" in data["message"]
+
+    def test_workspace_uuid_forwarded_to_engine(self, seeded_engine, monkeypatch):
+        """Feature 129 / D4: workspace_uuid kwarg threads through to
+        engine.list_by_phase -- non-vacuous pin for the wiring hop."""
+        recorded: dict = {}
+        real_list_by_phase = seeded_engine.list_by_phase
+
+        def _spy(*args, **kwargs):
+            recorded.update(kwargs)
+            return real_list_by_phase(*args, **kwargs)
+
+        monkeypatch.setattr(seeded_engine, "list_by_phase", _spy)
+        _process_list_features_by_phase(
+            seeded_engine, "specify", workspace_uuid="some-ws-uuid"
+        )
+        assert recorded.get("workspace_uuid") == "some-ws-uuid"
 
 
 # ---------------------------------------------------------------------------
@@ -1050,13 +1066,29 @@ class TestProcessListFeaturesByStatus:
     def test_unexpected_exception(self, seeded_engine, monkeypatch):
         monkeypatch.setattr(
             seeded_engine, "list_by_status",
-            lambda *a: (_ for _ in ()).throw(RuntimeError("boom")),
+            lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("boom")),
         )
         result = _process_list_features_by_status(seeded_engine, "active")
         data = json.loads(result)
         assert data["error"] is True
         assert data["error_type"] == "internal"
         assert "RuntimeError" in data["message"]
+
+    def test_workspace_uuid_forwarded_to_engine(self, seeded_engine, monkeypatch):
+        """Feature 129 / D4: workspace_uuid kwarg threads through to
+        engine.list_by_status -- non-vacuous pin for the wiring hop."""
+        recorded: dict = {}
+        real_list_by_status = seeded_engine.list_by_status
+
+        def _spy(*args, **kwargs):
+            recorded.update(kwargs)
+            return real_list_by_status(*args, **kwargs)
+
+        monkeypatch.setattr(seeded_engine, "list_by_status", _spy)
+        _process_list_features_by_status(
+            seeded_engine, "active", workspace_uuid="some-ws-uuid"
+        )
+        assert recorded.get("workspace_uuid") == "some-ws-uuid"
 
 
 # ---------------------------------------------------------------------------
@@ -1466,7 +1498,7 @@ class TestErrorPropagation:
         # Given: monkeypatch to raise ValueError (simulating corrupt DB row)
         monkeypatch.setattr(
             seeded_engine, "list_by_phase",
-            lambda *a: (_ for _ in ()).throw(ValueError("corrupt row")),
+            lambda *a, **kw: (_ for _ in ()).throw(ValueError("corrupt row")),
         )
         # When listing by phase
         result = _process_list_features_by_phase(seeded_engine, "specify")
@@ -1485,7 +1517,7 @@ class TestErrorPropagation:
         # Given: monkeypatch to raise ValueError
         monkeypatch.setattr(
             seeded_engine, "list_by_status",
-            lambda *a: (_ for _ in ()).throw(ValueError("corrupt data")),
+            lambda *a, **kw: (_ for _ in ()).throw(ValueError("corrupt data")),
         )
         # When listing by status
         result = _process_list_features_by_status(seeded_engine, "active")
@@ -1817,7 +1849,7 @@ class TestSqlite3ErrorThroughMcpTools:
         # Given: monkeypatch to raise sqlite3.Error
         monkeypatch.setattr(
             seeded_engine, "list_by_phase",
-            lambda *a: (_ for _ in ()).throw(
+            lambda *a, **kw: (_ for _ in ()).throw(
                 sqlite3.OperationalError("table locked")
             ),
         )
@@ -1836,7 +1868,7 @@ class TestSqlite3ErrorThroughMcpTools:
         # Given: monkeypatch to raise sqlite3.Error
         monkeypatch.setattr(
             seeded_engine, "list_by_status",
-            lambda *a: (_ for _ in ()).throw(
+            lambda *a, **kw: (_ for _ in ()).throw(
                 sqlite3.OperationalError("disk space")
             ),
         )
@@ -7444,6 +7476,110 @@ class TestListFeaturesByDefaultSingleWorkspace:
         )
 
 
+class TestListFeaturesByPhaseWorkspaceScopingContract:
+    """Feature 129 Task 4 / design D4: resolve-then-pass-down replaces
+    post-filtering for list_features_by_phase/status.
+
+    Design Testing Strategy #6: non-orphan outputs are IDENTICAL (full
+    envelope) to the pre-change post-filter shape; PLUS an explicit
+    orphan-inclusion pin -- the ONE declared output change (orphan
+    workflow_phases rows are now RETAINED on the scoped phase path, where
+    the old post-filter used to drop them via
+    ``get_entity(orphan) -> None -> dropped``).
+    """
+
+    def test_scoped_non_orphan_output_matches_expected_envelope(self, tmp_path):
+        """Scoped list_features_by_phase envelope is field-by-field
+        identical to the pre-change shape for a no-orphan fixture."""
+        import asyncio
+        import workflow_state_server as wss
+
+        db = EntityDatabase(str(tmp_path / "ws.db"))
+        from entity_registry.test_helpers import bootstrap_test_workspace
+        ws_a = bootstrap_test_workspace(db, "ws_contract_a")
+        ws_b = bootstrap_test_workspace(db, "ws_contract_b")
+
+        db.register_entity(
+            entity_type="feature", entity_id="020-alpha", name="alpha",
+            status="active", workspace_uuid=ws_a,
+        )
+        db.create_workflow_phase(
+            "feature:020-alpha", workflow_phase="specify", kanban_column="wip",
+        )
+        db.register_entity(
+            entity_type="feature", entity_id="020-beta", name="beta",
+            status="active", workspace_uuid=ws_b,
+        )
+        db.create_workflow_phase(
+            "feature:020-beta", workflow_phase="specify", kanban_column="wip",
+        )
+
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, "docs")
+        wss._workspace_uuid = ws_a
+
+        result = asyncio.run(wss.list_features_by_phase("specify", project_id=""))
+        entries = json.loads(result)
+        assert entries == [
+            {
+                "feature_type_id": "feature:020-alpha",
+                "current_phase": "specify",
+                "last_completed_phase": None,
+                "mode": None,
+                "degraded": False,
+            }
+        ], (
+            f"Scoped non-orphan envelope must be byte-identical to the "
+            f"pre-change post-filter shape, got {entries!r}"
+        )
+
+    def test_orphan_row_retained_on_scoped_phase_path(self, tmp_path):
+        """Declared D4 output change: an orphaned workflow_phases row (no
+        matching entity) is now RETAINED on the scoped phase path -- the
+        old post-filter dropped it via get_entity(orphan) -> None."""
+        import asyncio
+        import workflow_state_server as wss
+        from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
+
+        db = EntityDatabase(str(tmp_path / "ws.db"))
+        from entity_registry.test_helpers import bootstrap_test_workspace
+        ws_a = bootstrap_test_workspace(db, "ws_orphan_a")
+
+        db.register_entity(
+            entity_type="feature", entity_id="021-owner", name="owner",
+            status="active", workspace_uuid=ws_a,
+        )
+        db.create_workflow_phase(
+            "feature:021-owner", workflow_phase="specify", kanban_column="wip",
+        )
+
+        # Orphan workflow_phases row: no matching entity. Pass workspace_uuid
+        # explicitly to bypass wp_reject_orphaned_insert.
+        db._conn.execute("PRAGMA foreign_keys = OFF")
+        db._conn.execute(
+            "INSERT INTO workflow_phases "
+            "(type_id, kanban_column, workflow_phase, updated_at, workspace_uuid) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("feature:021-ghost", "wip", "specify", "2026-01-01T00:00:00Z",
+             _UNKNOWN_WORKSPACE_UUID),
+        )
+        db._conn.commit()
+        db._conn.execute("PRAGMA foreign_keys = ON")
+
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, "docs")
+        wss._workspace_uuid = ws_a
+
+        result = asyncio.run(wss.list_features_by_phase("specify", project_id=""))
+        entries = json.loads(result)
+        type_ids = {e["feature_type_id"] for e in entries}
+        assert type_ids == {"feature:021-owner", "feature:021-ghost"}, (
+            f"Orphan row must be RETAINED on the scoped path (D4), got {type_ids}"
+        )
+
+
 class TestWorkspaceUuidEmptyStringNormalization:
     """FR-6: empty-string ``_workspace_uuid`` normalizes to None at db.* boundary.
 
@@ -7553,85 +7689,142 @@ class TestWorkspaceUuidEmptyStringNormalization:
             )
 
 
-class TestFilterStatesByWorkspaceExceptionHandling:
-    """FR-7: _filter_states_by_workspace narrows its except clause.
+class TestQueryReadyTasksWorkspaceScoping:
+    """Feature 129 Task 4 / design D5: query_ready_tasks scope end-to-end.
 
-    Pre-fix: ``except (json.JSONDecodeError, Exception):`` swallowed every
-    exception (including DB errors and bugs) and silently returned the
-    unfiltered cross-workspace JSON.
-
-    Post-fix:
-        - ``json.JSONDecodeError`` → return as-is (malformed engine output)
-        - ``sqlite3.OperationalError`` → ``_make_error`` JSON (db_unavailable)
-        - All other exceptions PROPAGATE to caller.
+    Design Testing Strategy #7: default (current-workspace) vs '*'
+    (cross-workspace) tool behavior; a cross-workspace blocker still
+    reports the task as blocked (dependency edges are deliberately
+    unscoped -- scoping candidates, not edges); an invalid project_id
+    returns 'invalid_project_id', not 'internal' (D5 isolated-try
+    requirement, mirroring the list_features_by_* siblings).
     """
 
-    def test_filter_states_db_error_returns_error_json(
-        self, tmp_path, monkeypatch,
-    ):
-        """OperationalError from db.get_entity → _make_error JSON (FR-7.1)."""
+    def _seed_ready_task(self, db, ws_uuid, suffix):
+        """Register a feature (in implement phase) + one ready task.
+
+        Returns the task's uuid.
+        """
+        type_id = f"feature:030-feat-{suffix}"
+        feature_uuid = db.register_entity(
+            entity_type="feature", entity_id=f"030-feat-{suffix}",
+            name=f"Feature {suffix}", status="active", workspace_uuid=ws_uuid,
+        )
+        db.create_workflow_phase(type_id, workflow_phase="implement")
+        task_uuid = db.register_entity(
+            entity_type="task", entity_id=f"031-task-{suffix}",
+            name=f"Task {suffix}", status="planned",
+            parent_uuid=feature_uuid, workspace_uuid=ws_uuid,
+        )
+        db.create_workflow_phase(f"task:031-task-{suffix}")
+        return task_uuid
+
+    def test_default_returns_current_workspace_tasks_only(self, tmp_path):
+        import asyncio
         import workflow_state_server as wss
 
         db = EntityDatabase(str(tmp_path / "ws.db"))
         from entity_registry.test_helpers import bootstrap_test_workspace
-        ws_a = bootstrap_test_workspace(db, "ws_a")
-        db.register_entity(
-            entity_type="feature",
-            entity_id="010-foo",
-            name="foo",
-            status="active",
-            workspace_uuid=ws_a,
+        ws_a = bootstrap_test_workspace(db, "ws_ready_a")
+        ws_b = bootstrap_test_workspace(db, "ws_ready_b")
+        task_a = self._seed_ready_task(db, ws_a, "a")
+        self._seed_ready_task(db, ws_b, "b")
+
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, "docs")
+        wss._workspace_uuid = ws_a
+
+        result = asyncio.run(wss.query_ready_tasks())
+        data = json.loads(result)
+        uuids = {t["uuid"] for t in data["tasks"]}
+        assert uuids == {task_a}, (
+            f"Default scope should return only ws_a's ready task, got {uuids}"
         )
 
-        def _boom(*args, **kwargs):
-            raise sqlite3.OperationalError("database is locked")
-
-        monkeypatch.setattr(db, "get_entity", _boom)
-        monkeypatch.setattr(wss, "_db", db)
-
-        results_json = json.dumps([
-            {"feature_type_id": "feature:010-foo"},
-        ])
-        out = wss._filter_states_by_workspace(results_json, ws_a)
-        parsed = json.loads(out)
-        assert parsed.get("error") is True, (
-            f"Expected _make_error JSON, got: {parsed!r}"
-        )
-        assert parsed.get("error_type") == "db_unavailable", (
-            f"Expected error_type='db_unavailable', got: {parsed!r}"
-        )
-        assert "database is locked" in parsed.get("message", ""), (
-            f"Expected exc message in response, got: {parsed!r}"
-        )
-
-    def test_filter_states_unexpected_error_propagates(
-        self, tmp_path, monkeypatch,
-    ):
-        """RuntimeError from db.get_entity must propagate (FR-7.1)."""
+    def test_star_returns_cross_workspace_tasks(self, tmp_path):
+        import asyncio
         import workflow_state_server as wss
 
         db = EntityDatabase(str(tmp_path / "ws.db"))
         from entity_registry.test_helpers import bootstrap_test_workspace
-        ws_a = bootstrap_test_workspace(db, "ws_a")
-        db.register_entity(
-            entity_type="feature",
-            entity_id="011-bar",
-            name="bar",
-            status="active",
-            workspace_uuid=ws_a,
+        ws_a = bootstrap_test_workspace(db, "ws_ready_star_a")
+        ws_b = bootstrap_test_workspace(db, "ws_ready_star_b")
+        task_a = self._seed_ready_task(db, ws_a, "sa")
+        task_b = self._seed_ready_task(db, ws_b, "sb")
+
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, "docs")
+        wss._workspace_uuid = ws_a
+
+        result = asyncio.run(wss.query_ready_tasks(project_id="*"))
+        data = json.loads(result)
+        uuids = {t["uuid"] for t in data["tasks"]}
+        assert uuids == {task_a, task_b}, (
+            f"'*' should return cross-workspace ready tasks, got {uuids}"
         )
 
-        def _boom(*args, **kwargs):
-            raise RuntimeError("unexpected")
+    def test_cross_workspace_blocker_still_honored(self, tmp_path):
+        """A task's blocker in another workspace still blocks it, even
+        though the candidate set is scoped to the task's own workspace
+        (dependency edges are deliberately unscoped -- scoping
+        candidates, not edges)."""
+        import asyncio
+        import workflow_state_server as wss
 
-        monkeypatch.setattr(db, "get_entity", _boom)
-        monkeypatch.setattr(wss, "_db", db)
+        db = EntityDatabase(str(tmp_path / "ws.db"))
+        from entity_registry.test_helpers import bootstrap_test_workspace
+        ws_a = bootstrap_test_workspace(db, "ws_ready_block_a")
+        ws_b = bootstrap_test_workspace(db, "ws_ready_block_b")
+        task_a = self._seed_ready_task(db, ws_a, "blocker-owner")
+        task_b_blocker = self._seed_ready_task(db, ws_b, "blocker")
 
-        results_json = json.dumps([
-            {"feature_type_id": "feature:011-bar"},
-        ])
-        with pytest.raises(RuntimeError, match="unexpected"):
-            wss._filter_states_by_workspace(results_json, ws_a)
+        # task_a is blocked by a task that lives in ws_b.
+        db.add_dependency(task_a, task_b_blocker)
+
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, "docs")
+        wss._workspace_uuid = ws_a
+
+        # Default scope: candidate set is ws_a-only (task_a), but task_a
+        # must still be excluded because its blocker (out-of-scope) is
+        # honored regardless of candidate scoping.
+        result = asyncio.run(wss.query_ready_tasks())
+        data = json.loads(result)
+        uuids = {t["uuid"] for t in data["tasks"]}
+        assert task_a not in uuids, (
+            "Cross-workspace blocker must still be honored -- edges are "
+            "deliberately unscoped"
+        )
+
+    def test_invalid_project_id_returns_invalid_project_id_not_internal(
+        self, tmp_path,
+    ):
+        """An invalid legacy project_id must surface 'invalid_project_id',
+        matching the list_features_by_* siblings -- NOT the generic
+        'internal' catch-all (D5 isolated-try requirement)."""
+        import asyncio
+        import workflow_state_server as wss
+
+        db = EntityDatabase(str(tmp_path / "ws.db"))
+        from entity_registry.test_helpers import bootstrap_test_workspace
+        ws_a = bootstrap_test_workspace(db, "ws_ready_bad_project")
+
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, "docs")
+        wss._workspace_uuid = ws_a
+
+        result = asyncio.run(wss.query_ready_tasks(project_id="ffffffffffff"))
+        data = json.loads(result)
+        assert data.get("error") is True, (
+            f"Invalid legacy hex must return error envelope, got {data!r}"
+        )
+        assert data.get("error_type") == "invalid_project_id", (
+            f"Expected error_type='invalid_project_id', got {data!r}"
+        )
 
 
 class TestSerializeStateDegradedLogicDeepened:

@@ -3618,6 +3618,99 @@ class TestWorkflowPhaseCRUD:
 
 
 # ---------------------------------------------------------------------------
+# Feature 129 / D2 -- list_workflow_phases workspace_uuid scoping
+# ---------------------------------------------------------------------------
+
+
+class TestListWorkflowPhasesWorkspaceScoping:
+    """Feature 129 Task 4 / design D2: ``workspace_uuid`` scope on
+    ``list_workflow_phases``.
+
+    Design Testing Strategy #4: unscoped returns all rows unchanged;
+    scoped returns the target workspace's rows PLUS orphan rows (retained
+    for anomaly visibility); scoped excludes other-workspace rows; a
+    type_id-collision fixture pins the WHERE-clause (not ON-clause)
+    placement of the scoping predicate.
+    """
+
+    def test_unscoped_returns_all_rows_unchanged(self, db: EntityDatabase):
+        """workspace_uuid=None (default) preserves the unscoped return."""
+        ws_a = _bootstrap_test_workspace(db, "ws-scope-a")
+        ws_b = _bootstrap_test_workspace(db, "ws-scope-b")
+        db.register_entity("feature", "scope-a1", "A1", workspace_uuid=ws_a)
+        db.register_entity("feature", "scope-b1", "B1", workspace_uuid=ws_b)
+        db.create_workflow_phase("feature:scope-a1", kanban_column="wip")
+        db.create_workflow_phase("feature:scope-b1", kanban_column="backlog")
+
+        result = db.list_workflow_phases()
+        assert len(result) == 2
+
+    def test_scoped_returns_only_target_workspace_rows(
+        self, db: EntityDatabase
+    ):
+        """scoped-to-W excludes rows belonging to other workspaces."""
+        ws_a = _bootstrap_test_workspace(db, "ws-scope-excl-a")
+        ws_b = _bootstrap_test_workspace(db, "ws-scope-excl-b")
+        db.register_entity("feature", "excl-a1", "A1", workspace_uuid=ws_a)
+        db.register_entity("feature", "excl-b1", "B1", workspace_uuid=ws_b)
+        db.create_workflow_phase("feature:excl-a1", kanban_column="wip")
+        db.create_workflow_phase("feature:excl-b1", kanban_column="backlog")
+
+        result = db.list_workflow_phases(workspace_uuid=ws_a)
+        assert len(result) == 1
+        assert result[0]["type_id"] == "feature:excl-a1"
+
+    def test_scoped_retains_orphan_rows(self, db: EntityDatabase):
+        """Orphan workflow_phases rows (no matching entity) are RETAINED
+        under scope -- the ``OR e.uuid IS NULL`` non-vacuity pin (D2)."""
+        ws_a = _bootstrap_test_workspace(db, "ws-scope-orphan")
+        db.register_entity(
+            "feature", "orphan-owner", "Owner", workspace_uuid=ws_a
+        )
+        db.create_workflow_phase("feature:orphan-owner", kanban_column="wip")
+
+        # Manually insert an orphaned workflow_phases row (no matching
+        # entity). Pass workspace_uuid explicitly to bypass the
+        # wp_reject_orphaned_insert trigger.
+        from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
+        db._conn.execute("PRAGMA foreign_keys = OFF")
+        db._conn.execute(
+            "INSERT INTO workflow_phases "
+            "(type_id, kanban_column, updated_at, workspace_uuid) "
+            "VALUES (?, ?, ?, ?)",
+            ("feature:scope-orphan", "backlog", "2026-01-01T00:00:00Z",
+             _UNKNOWN_WORKSPACE_UUID),
+        )
+        db._conn.commit()
+        db._conn.execute("PRAGMA foreign_keys = ON")
+
+        result = db.list_workflow_phases(workspace_uuid=ws_a)
+        type_ids = {r["type_id"] for r in result}
+        assert type_ids == {"feature:orphan-owner", "feature:scope-orphan"}
+
+    def test_scoped_type_id_collision_dedupes_to_target_workspace(
+        self, db: EntityDatabase
+    ):
+        """Two entities sharing one type_id across workspaces, joined to a
+        single workflow_phases row: scoped-to-W yields exactly the
+        W-entity row -- no phantom/duplicate from the colliding
+        workspace (pins WHERE-not-ON placement, D2)."""
+        ws_a = _bootstrap_test_workspace(db, "ws-collide-a")
+        ws_b = _bootstrap_test_workspace(db, "ws-collide-b")
+        db.register_entity(
+            "feature", "collide", "Feature In A", workspace_uuid=ws_a
+        )
+        db.register_entity(
+            "feature", "collide", "Feature In B", workspace_uuid=ws_b
+        )
+        db.create_workflow_phase("feature:collide", kanban_column="wip")
+
+        result = db.list_workflow_phases(workspace_uuid=ws_a)
+        assert len(result) == 1
+        assert result[0]["entity_name"] == "Feature In A"
+
+
+# ---------------------------------------------------------------------------
 # Phase B Deepened Tests: Workflow Phase CRUD & Migration edge cases
 # ---------------------------------------------------------------------------
 

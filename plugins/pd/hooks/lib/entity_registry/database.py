@@ -8962,6 +8962,7 @@ class EntityDatabase:
         *,
         kanban_column: str | None = None,
         workflow_phase: str | None = None,
+        workspace_uuid: str | None = None,
     ) -> list[dict]:
         """List workflow_phases rows with optional filters.
 
@@ -8971,11 +8972,18 @@ class EntityDatabase:
             If provided, filter by kanban_column.
         workflow_phase:
             If provided, filter by workflow_phase.
+        workspace_uuid:
+            If provided, scope to rows whose joined entity belongs to this
+            workspace, PLUS orphan rows (workflow_phases rows whose entity
+            was deleted — ``e.uuid IS NULL`` post-join). Orphans are
+            RETAINED under scope for anomaly visibility (declared output
+            change — see design D2/D4). ``None`` preserves today's
+            unscoped return exactly.
 
         Returns
         -------
         list[dict]
-            Matching rows as plain dicts. Both filters use AND logic.
+            Matching rows as plain dicts. All filters use AND logic.
         """
         clauses: list[str] = []
         params: list = []
@@ -8986,6 +8994,9 @@ class EntityDatabase:
         if workflow_phase is not None:
             clauses.append("wp.workflow_phase = ?")
             params.append(workflow_phase)
+        if workspace_uuid is not None:
+            clauses.append("(e.workspace_uuid = ? OR e.uuid IS NULL)")
+            params.append(workspace_uuid)
 
         # F11 (Group 6): project ``e.kind`` to the legacy ``entity_type``
         # result-set key for caller compatibility (TD-8 public API surface).

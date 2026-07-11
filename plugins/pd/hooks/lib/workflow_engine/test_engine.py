@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from entity_registry.database import EntityDatabase
+from entity_registry.test_helpers import bootstrap_test_workspace
 from transition_gate import PHASE_SEQUENCE
 from transition_gate.constants import COMMAND_PHASES, HARD_PREREQUISITES
 
@@ -883,6 +884,96 @@ class TestBatchQueries:
         assert results[0].current_phase is None
         assert results[0].completed_phases == ()
         assert results[0].source == "db"
+
+
+class TestBatchQueriesWorkspaceScoping:
+    """Feature 129 Task 4 / design D3: workspace_uuid threading through
+    ``list_by_phase``/``list_by_status``.
+
+    Design Testing Strategy #5: scoped calls return only the target
+    workspace's features; ``list_by_status`` threads the scope into BOTH
+    of its data sources (list_entities AND list_workflow_phases) -- not
+    just one of them.
+    """
+
+    def test_list_by_phase_scoped_excludes_other_workspace(
+        self, tmp_path
+    ) -> None:
+        db = _make_db()
+        ws_a = bootstrap_test_workspace(db, "ws-engine-phase-a")
+        ws_b = bootstrap_test_workspace(db, "ws-engine-phase-b")
+        tid_a = "feature:001-a"
+        tid_b = "feature:001-b"
+        db.register_entity("feature", "001-a", "Feature A", workspace_uuid=ws_a)
+        db.register_entity("feature", "001-b", "Feature B", workspace_uuid=ws_b)
+        db.create_workflow_phase(tid_a, workflow_phase="design")
+        db.create_workflow_phase(tid_b, workflow_phase="design")
+
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        results = engine.list_by_phase("design", workspace_uuid=ws_a)
+
+        assert len(results) == 1
+        assert results[0].feature_type_id == tid_a
+
+    def test_list_by_status_scoped_excludes_other_workspace(
+        self, tmp_path
+    ) -> None:
+        db = _make_db()
+        ws_a = bootstrap_test_workspace(db, "ws-engine-status-a")
+        ws_b = bootstrap_test_workspace(db, "ws-engine-status-b")
+        tid_a = "feature:001-a"
+        tid_b = "feature:001-b"
+        db.register_entity(
+            "feature", "001-a", "Feature A", status="active", workspace_uuid=ws_a
+        )
+        db.register_entity(
+            "feature", "001-b", "Feature B", status="active", workspace_uuid=ws_b
+        )
+        db.create_workflow_phase(tid_a, workflow_phase="design")
+        db.create_workflow_phase(tid_b, workflow_phase="implement")
+
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        results = engine.list_by_status("active", workspace_uuid=ws_a)
+
+        assert len(results) == 1
+        assert results[0].feature_type_id == tid_a
+
+    def test_list_by_status_threads_scope_into_both_data_sources(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """Both db.list_entities AND db.list_workflow_phases receive the
+        workspace_uuid kwarg -- non-vacuous pin that scoping is not applied
+        to only one of list_by_status's two data sources (D3)."""
+        db = _make_db()
+        ws_a = bootstrap_test_workspace(db, "ws-engine-status-both")
+        tid_a = "feature:001-a"
+        db.register_entity(
+            "feature", "001-a", "Feature A", status="active", workspace_uuid=ws_a
+        )
+        db.create_workflow_phase(tid_a, workflow_phase="design")
+
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        recorded_entities_kwargs: dict = {}
+        recorded_wp_kwargs: dict = {}
+        real_list_entities = db.list_entities
+        real_list_workflow_phases = db.list_workflow_phases
+
+        def _spy_list_entities(*args, **kwargs):
+            recorded_entities_kwargs.update(kwargs)
+            return real_list_entities(*args, **kwargs)
+
+        def _spy_list_workflow_phases(*args, **kwargs):
+            recorded_wp_kwargs.update(kwargs)
+            return real_list_workflow_phases(*args, **kwargs)
+
+        monkeypatch.setattr(db, "list_entities", _spy_list_entities)
+        monkeypatch.setattr(db, "list_workflow_phases", _spy_list_workflow_phases)
+
+        engine.list_by_status("active", workspace_uuid=ws_a)
+
+        assert recorded_entities_kwargs.get("workspace_uuid") == ws_a
+        assert recorded_wp_kwargs.get("workspace_uuid") == ws_a
 
 
 # ===========================================================================
