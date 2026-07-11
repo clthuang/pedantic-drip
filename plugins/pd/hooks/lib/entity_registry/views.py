@@ -62,6 +62,14 @@ from entity_registry import schema_v2
 # orphan event with no matching entities row appears in
 # entity_axis_state but not entity_state — the primitive is exhaustive
 # over events, the face is exhaustive over entities.
+#
+# Scale expectation: entity_state's six correlated subqueries recompute
+# the GROUP BY over events on every read (no materialization). The
+# per-entity lookup shape is covered by idx_events_entity_axis
+# (events.py), but the nested-view query plan is UNVERIFIED beyond
+# test scale (~10^2 events). Whoever wires the first live,
+# frequently-polled consumer (feature 132 cutover) must EXPLAIN QUERY
+# PLAN and benchmark at live-DB scale before shipping.
 _VIEWS_DDL = """
 CREATE VIEW IF NOT EXISTS entity_axis_state AS
 SELECT entity_uuid, axis, to_value, MAX(uuid) AS event_uuid, timestamp
