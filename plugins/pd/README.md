@@ -199,11 +199,12 @@ Both MCP servers (entity registry, workflow engine) share a common lifecycle lay
 
 ### Entity Registry Server
 
-The entity registry server (`mcp/entity_server.py`) exposes 19 tools for entity lineage tracking:
+The entity registry server (`mcp/entity_server.py`) exposes 20 tools for entity lineage tracking:
 
 | Tool | Purpose |
 |------|---------|
 | `register_entity` | Register a new entity (feature, project, brainstorm) with type and status; raises `EntityExistsError` on `(workspace_uuid, type_id)` conflict |
+| `allocate_entity_id` | Atomically allocate the next `{seq:03d}-{slug}` id for an entity type, before any filesystem/DB write |
 | `issue_spawn` | Capture a mid-flight bug or task as a child entity linked to a parent; appends `spawned_child` phase event without modifying parent workflow state |
 | `set_parent` | Set a parent-child relationship between two entities |
 | `get_entity` | Retrieve entity details by type_id |

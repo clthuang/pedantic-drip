@@ -6519,6 +6519,15 @@ class EntityDatabase:
     # Entity CRUD
     # ------------------------------------------------------------------
 
+    # Feature 121 FR-5 / design D2: single source of truth for the
+    # blank/whitespace-name rejection message so register_entity,
+    # upsert_entity, and update_entity's name branch raise byte-identical
+    # text (blank display fields corrupt the registry).
+    _BLANK_NAME_ERROR = (
+        "entity name must be non-empty "
+        "(feature 121 FR-5: blank display fields corrupt the registry)"
+    )
+
     def register_entity(
         self,
         entity_type: str,
@@ -6608,6 +6617,11 @@ class EntityDatabase:
         :meth:`update_entity` explicitly, or use the existing
         :meth:`set_parent` API.
         """
+        # Feature 121 FR-5 / design D2: reject blank/whitespace names
+        # before any write.
+        if not name or not name.strip():
+            raise ValueError(self._BLANK_NAME_ERROR)
+
         self._validate_entity_type(entity_type)
 
         # Feature 110 Group 2 (Task 2.0): fail-fast entity_id format check.
@@ -6872,6 +6886,11 @@ class EntityDatabase:
             The entity's UUID (newly generated on insert branch; existing
             on conflict branches).
         """
+        # Feature 121 FR-5 / design D2: reject blank/whitespace names
+        # before any write.
+        if not name or not name.strip():
+            raise ValueError(self._BLANK_NAME_ERROR)
+
         type_id = f"{entity_type}:{entity_id}"
         with self.transaction():
             try:
@@ -7367,7 +7386,9 @@ class EntityDatabase:
         Raises
         ------
         ValueError
-            If the entity does not exist.
+            If the entity does not exist, or if ``name`` is supplied but
+            blank/whitespace-only (feature 121 FR-5 — ``name=None`` is
+            fine; that means "not updating name").
         NotImplementedError
             If ``new_project_id`` is supplied (re-attribution path
             disabled until the workspace-aware replacement lands).
@@ -7389,6 +7410,12 @@ class EntityDatabase:
 
         set_parts: list[str] = ["updated_at = ?"]
         params: list = [self._now_iso()]
+
+        # Feature 121 FR-5 / design D2: reject a supplied-but-blank name
+        # before any write. name=None ("not updating name") stays legal —
+        # absent is not the same as blank.
+        if name is not None and not name.strip():
+            raise ValueError(self._BLANK_NAME_ERROR)
 
         if name is not None:
             set_parts.append("name = ?")

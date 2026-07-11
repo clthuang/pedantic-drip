@@ -1,0 +1,44 @@
+{
+  "feature": "121-atomic-display-id-allocation",
+  "gate_date": "2026-07-11",
+  "lanes": {
+    "code_adversarial": {
+      "verdict": "PASS",
+      "findings": {
+        "HIGH": 0,
+        "MED": 1,
+        "LOW": 1
+      }
+    },
+    "artifact_claims": {
+      "verdict": "PASS",
+      "findings": {
+        "HIGH": 0,
+        "MED": 1,
+        "LOW": 1
+      }
+    },
+    "regression_merge": {
+      "verdict": "PASS",
+      "findings": {
+        "HIGH": 0,
+        "MED": 1,
+        "LOW": 1
+      }
+    }
+  },
+  "dispositions": {
+    "MED_dark_rename_blank_fields": "FIXED at gate \u2014 rename_entity strip() guards (blank name/type_id -> ValueError before any I/O) + 3 tests; the FR-5 vector on the v2 rename path, live at 132, missed by battery+360+deepener; execution-probe find",
+    "MED_retro_fabricated_cite": "FIXED \u2014 facilitator's :900 cite was fabricated (unrelated body code); corrected with explicit marker; two real sites (:880/:1900) stand",
+    "MED_test_stray_pollution": "MITIGATED+FILED \u2014 plugins/**/.claude/ gitignore line (deliberately not root .claude/); root cause = pre-existing feature-108 writer, backlog #066",
+    "LOW_all": "see .qa-gate-low-findings.md sidecar; phantom-kind sequences + cluster-label informality + tracked pollution instance recorded"
+  },
+  "verification": {
+    "full_suite_post_fix": "3552 passed, 3 skipped",
+    "validate_sh": "0 errors, 23 warnings (baseline)",
+    "hook_tests": "67/67 + 5/5",
+    "merge_base": "9c4cacbe == develop HEAD (no drift; clean merge)",
+    "execution_probes": "4-proc x25 allocation contention distinct+contiguous both paths; bootstrap 001..133 -> 134; '0121' -> 121 decimal"
+  },
+  "final_verdict": "PASS \u2014 merge approved after fix-at-gate items"
+}

@@ -11,7 +11,14 @@ reliable DB path; entries then migrate into the DB and this file retires.
 - **#054 — Feature-132 cutover checklist items** *(P004, source: feature 118 QA)*
   At cutover, decide: (a) what replaces the dropped-UNIQUE reliance on human-readable
   fields (v17 consumers that leaned on uniqueness must be enumerated); (b) whether
-  mixed uuid4/uuid7 populations get re-minted at backfill or grandfathered.
+  mixed uuid4/uuid7 populations get re-minted at backfill or grandfathered;
+  (c) *(added at 121 spec, 2026-07-11)* rewire `create-project.md:26-31`'s `P{NNN}`
+  filesystem scan to the atomic allocator — deferred from 121 because the v1 bootstrap
+  regex `^(\d+)` (database.py:9368) is blind to `P`-leading project ids and would
+  deterministically re-mint P001; 132's backfill seeds v2 sequences for every kind
+  from the census, so the rewire is a one-line command edit at cutover. Also honor
+  121's D-5 lean: the live `allocate_entity_id` MCP tool rejects `entity_type="project"`
+  until this lands — remove that guard in the same change.
 
 - **#055 — MCP workflow-state phase-events write path broken (silent data loss)** *(source: feature 118 QA)*
   Every `complete_phase`/`transition_phase` intermittently reports
@@ -27,6 +34,11 @@ reliable DB path; entries then migrate into the DB and this file retires.
   `reviewer_notes` requires a doubly-JSON-encoded string (`"[\"...\"]"`) because the
   harness re-parses JSON-shaped args; a plain list is rejected by pydantic. Accept a
   native list (or document the contract in the tool description).
+  *(121 retro addendum, 2026-07-11):* `transition_phase`'s `skipped_phases: str | None`
+  is the same class — the transport JSON-parses the doubly-encoded string back into a
+  list, pydantic rejects it, and NO string form reaches the server intact. Live
+  workaround: omit the param entirely; guard G-23 self-detects skipped phases and
+  emits a soft warn (verified during 121's specify transition). Fix both params together.
 
 - **#057 — Reviewer severity rubric: split BLOCKER by failure signature** *(source: feature 129 retro Tune 1; owner: workflow-rebuild track)*
   4 of 9 artifact-phase blockers were self-signaling (collection ImportError,
@@ -91,3 +103,11 @@ In 130's implement battery, code-quality-reviewer was the only member with zero 
 ## #064 — Sentinel workspace renders as cryptic dropdown option in the UI switcher
 **Filed:** 2026-07-11 (130 finish QA, code lane). **Type:** UX wart, LOW.
 `_UNKNOWN_WORKSPACE_UUID` gets a real `workspaces` row (database.py:5826, project_root=NULL); when any entity is registered under it (real live-board fallback for un-mappable project_ids), `list_workspaces_with_entities()` surfaces it and the switcher renders a selectable `6250c8a6 (N)` option (NULL-root → uuid-prefix label rule). Truthful and functional but cryptic, and visually collides in concept with the transient fourth-state `unknown workspace · 6250c8a6` option. Candidate fix at 132 (backfill dedupes junk) or a dedicated label for the sentinel uuid ("unassigned entities"). Verified by probe during 130's QA gate.
+
+## #065 — claude-mem observation-hook noise misleads subagents at scale
+**Filed:** 2026-07-11 (121 implement Process Notes). **Type:** tooling friction, MED.
+The PreToolUse:Read observation hook injects "prior observation" system-reminders into every file read. During feature 121, SIX separate subagents independently flagged them as suspected prompt injection, and one injected observation asserted a FABRICATED blocker ("nameFrom/nameTo missing from events.py docstring") that two agents had to disprove at source. All agents behaved correctly (ignore + verify independently), but the noise costs a paragraph of every subagent report, a disproof detour per dispatch, and trains agents to distrust system-reminders wholesale. Candidate fixes: suppress the hook for subagent sessions; or label its output explicitly as non-authoritative local memory; or stop echoing observation TITLES (the fabrication vector — titles written by a summarizer, not verified facts).
+
+## #066 — Workspace-mapping migration writer pollutes source tree during test runs
+**Filed:** 2026-07-11 (121 finish QA, regression lane). **Type:** test hygiene, MED (pre-existing, NOT introduced by 121).
+`_atomic_write_workspace_mapping` (database.py:1726, feature-108 migration machinery) writes `{}` marker files to `<cwd-subdir>/.claude/pd/migrations/migration-11-workspace-mapping.json` when suites/imports run from package directories — creating untracked strays under `plugins/**` (a `git add -A` would stage them). Interim fix shipped with 121's gate: `plugins/**/.claude/` gitignore line (deliberately narrower than root `.claude/`, which holds real config). Root-cause fix: redirect the writer's workspace_root to tmp in test fixtures, or gate the write on being under a real project root. Note: one TRACKED instance (`plugins/pd/.claude/pd/migrations/...`, identical blob on develop) predates 121 — remove alongside the root-cause fix.

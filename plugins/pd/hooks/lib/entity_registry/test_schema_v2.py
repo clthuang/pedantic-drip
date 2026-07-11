@@ -516,18 +516,24 @@ class TestSequencesBusinessKeyNonUniqueness:
 
 # Every dark v2 module this guard exempts from being its own offender (a
 # dark module's own source legitimately mentions its sibling dark modules
-# — e.g. events.py imports schema_v2). uuid7.py is deliberately NOT in this
-# set: it is already live via database.py's uuid7 mints (design D6).
-_V2_DARK_MODULES = {"schema_v2.py", "events.py"}
+# — e.g. events.py imports schema_v2, display.py imports events). uuid7.py
+# is deliberately NOT in this set: it is already live via database.py's
+# uuid7 mints (design D6).
+_V2_DARK_MODULES = {"schema_v2.py", "events.py", "display.py"}
 
 # Every import spelling that would wire a dark v2 module into a live path.
 # A bare "events" needle is deliberately excluded — it false-positives on
-# unrelated names like phase_events / event_type.
+# unrelated names like phase_events / event_type. Same rationale keeps a
+# bare "display" needle out — it would false-positive on unrelated names
+# like entity_display_table / display_name.
 _V2_LIVE_REFERENCE_NEEDLES = (
     "schema_v2",
     "entity_registry.events",
     "from entity_registry import events",
     "from .events import",
+    "entity_registry.display",
+    "from entity_registry import display",
+    "from .display import",
 )
 
 
@@ -637,6 +643,74 @@ class TestSchemaV2ShipsDark:
             "def wire_it_up():\n"
             "    entity_registry.events.append_event(entity_uuid='x')\n"
         )
+
+        offending_files = _scan_for_live_v2_references(
+            tmp_path, _V2_DARK_MODULES, _V2_LIVE_REFERENCE_NEEDLES
+        )
+
+        assert offending_files == [str(offender_path)]
+
+    # -------------------------------------------------------------
+    # Design D8 (feature 121): display.py joins the dark-module set — its
+    # own three-way needle coverage (dotted / non-dotted / relative) gets
+    # the same seeded-offender teeth as the events.py pair above, PLUS the
+    # relative-import spelling neither events.py test exercises (the
+    # likeliest false-negative per D8: "the relative form is exactly how
+    # a same-package sibling like database.py would wire it at 132").
+    # -------------------------------------------------------------
+    def test_scan_flags_seeded_offender_with_display_nondotted_import_spelling(
+        self, tmp_path
+    ):
+        """Mirrors test_scan_flags_seeded_offender_with_nondotted_import_spelling
+        above, for the "display" needle set instead of "events"."""
+        offender_path = tmp_path / "some_display_consumer.py"
+        offender_path.write_text("from entity_registry import display\n")
+
+        offending_files = _scan_for_live_v2_references(
+            tmp_path, _V2_DARK_MODULES, _V2_LIVE_REFERENCE_NEEDLES
+        )
+
+        assert offending_files == [str(offender_path)]
+
+    def test_scan_flags_seeded_offender_with_display_dotted_import_spelling(
+        self, tmp_path
+    ):
+        """Mirrors test_scan_flags_seeded_offender_with_dotted_import_spelling
+        above, for the "display" needle set instead of "events"."""
+        offender_path = tmp_path / "some_other_display_consumer.py"
+        offender_path.write_text(
+            "import entity_registry.display\n"
+            "\n"
+            "def wire_it_up():\n"
+            "    entity_registry.display.next_display_seq(\n"
+            "        conn, workspace_uuid='x', kind='feature')\n"
+        )
+
+        offending_files = _scan_for_live_v2_references(
+            tmp_path, _V2_DARK_MODULES, _V2_LIVE_REFERENCE_NEEDLES
+        )
+
+        assert offending_files == [str(offender_path)]
+
+    def test_scan_flags_seeded_offender_with_display_relative_import_spelling(
+        self, tmp_path
+    ):
+        """The relative spelling design D8 singles out as the likeliest
+        false-negative — exactly how a same-package sibling (e.g.
+        database.py at feature 132's cutover) would wire display.py in:
+        neither of the two sibling tests above seeds this form, so a
+        typo'd or dropped "from .display import" entry in
+        _V2_LIVE_REFERENCE_NEEDLES would pass both of them silently.
+
+        Anticipate: an implementation of the needle-set widening that
+        added only the dotted and non-dotted display spellings (the
+        pattern the existing events.py pair already established) and
+        forgot the relative form would still pass both sibling tests
+        above — this test fails against that specific omission because
+        its fixture contains ONLY the relative spelling.
+        """
+        offender_path = tmp_path / "some_relative_display_consumer.py"
+        offender_path.write_text("from .display import next_display_seq\n")
 
         offending_files = _scan_for_live_v2_references(
             tmp_path, _V2_DARK_MODULES, _V2_LIVE_REFERENCE_NEEDLES
