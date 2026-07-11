@@ -1076,3 +1076,230 @@ def test_board_scoping_malformed_cookie_falls_back_to_startup_default(tmp_path):
     assert response.status_code == 200
     assert "Alpha Card" in response.text
     assert "Beta Card" not in response.text
+
+
+# ===========================================================================
+# Test deepening: verified thin-spot coverage (referer edge cases, cookie
+# case sensitivity, cookie-injection boundary, cookie path attribute,
+# empty-listing render) -- see docs/features/130-workspace-switcher-ui/
+# ===========================================================================
+
+import http.cookies
+
+
+def test_safe_referer_path_drops_fragment(tmp_path):
+    """A referer with a URL fragment redirects to path+query ONLY -- the
+    fragment is silently dropped (D4: "urlsplit(referer).path (+query)",
+    fragment is never in the kept set). Kills a mutation that appends
+    `#{fragment}` onto `dest`."""
+    db_file = str(tmp_path / "test.db")
+    EntityDatabase(db_file)
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+
+    response = client.get(
+        "/workspace/select",
+        params={"uuid": "*"},
+        headers={
+            "referer": "http://testserver/entities?type=feature#section-anchor"
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/entities?type=feature"
+    assert "#" not in response.headers["location"]
+
+
+def test_safe_referer_path_no_leading_slash_redirects_home(tmp_path):
+    """A referer whose urlsplit().path is EMPTY (a bare origin with no
+    path segment, e.g. 'http://testserver') is neither protocol-relative
+    ('//...') nor leading-slash -- falls back to '/'. Every existing
+    referer test either starts with '/' (accepted) or with '//' (rejected
+    by the second clause) or omits the header entirely (short-circuited by
+    the `if not referer` guard before this line ever runs) -- none
+    exercise `dest.startswith("/")` being False. Kills a mutation that
+    swaps the `and` to `or`: under that mutation, dest='' would wrongly
+    pass because `not dest.startswith("//")` is True for an empty
+    string."""
+    db_file = str(tmp_path / "test.db")
+    EntityDatabase(db_file)
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+
+    response = client.get(
+        "/workspace/select",
+        params={"uuid": "*"},
+        headers={"referer": "http://testserver"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/"
+
+
+def test_select_route_uppercase_hex_uuid_sets_cookie_verbatim(tmp_path):
+    """An uppercase-hex canonical uuid is accepted by `_is_uuid_shaped`
+    (uuid.UUID() parses case-insensitively) and the cookie is set to the
+    EXACT uppercase string -- no lowercasing/normalization happens at the
+    write site. Every other select-route test uses str(uuid.uuid4()),
+    which the stdlib always renders lowercase, so none of them exercise
+    this branch of the case-insensitive parse. Kills a mutation that
+    normalizes the value (e.g. `.lower()`) before storing it."""
+    db_file = str(tmp_path / "test.db")
+    EntityDatabase(db_file)
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+    upper_uuid = str(uuid.uuid4()).upper()
+
+    response = client.get(
+        "/workspace/select",
+        params={"uuid": upper_uuid},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.cookies.get(COOKIE_NAME) == upper_uuid
+
+
+def test_board_scoping_uppercase_cookie_case_mismatch_is_unmatched(tmp_path):
+    """A cookie holding the SAME uuid as a real, populated workspace but in
+    UPPERCASE is honored as shaped (passes _is_uuid_shaped) yet never
+    matches that workspace's lowercase-stored uuid: SQLite TEXT equality is
+    case-sensitive by default (no COLLATE NOCASE anywhere in the schema)
+    and neither _is_uuid_shaped nor effective_workspace_uuid normalize
+    case. Board scoping therefore treats it as an unknown scope (Alpha
+    Card's workflow row is excluded -- same class of behavior as the
+    shaped-but-unknown-uuid case, but reached via case mismatch rather than
+    a nonexistent uuid) and the switcher renders the fourth-state 'unknown
+    workspace' option keyed on the UPPERCASE value -- ws_a's real
+    (lowercase) option is not selected. Kills a mutation that lowercases
+    the cookie, or introduces case-insensitive comparison, anywhere in
+    this chain."""
+    db_file = str(tmp_path / "test.db")
+    db = EntityDatabase(db_file)
+    ws_a = _bootstrap_workspace(db_file, project_root=str(tmp_path / "proj-a"))
+    db.register_entity("feature", "1-alpha", "Alpha Card", workspace_uuid=ws_a)
+    db.create_workflow_phase("feature:1-alpha", kanban_column="wip")
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+    client.cookies.set(COOKIE_NAME, ws_a.upper())
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "Alpha Card" not in response.text
+    unmatched_element = _option_element(response.text, ws_a.upper())
+    assert "selected" in unmatched_element
+    assert "disabled" in unmatched_element
+    assert "selected" not in _option_element(response.text, ws_a)
+    assert "selected" not in _option_element(response.text, "*")
+
+
+def test_select_route_36char_semicolon_injected_uuid_sets_no_cookie(tmp_path):
+    """A value that is exactly 36 characters (matching the canonical-length
+    check) but has its final hex digit replaced with ';' fails
+    uuid.UUID()'s parse -- no Set-Cookie header, redirect still happens.
+    Complements test_select_route_32char_hex_sets_no_cookie, which kills
+    the mutation "drop the len==36 check, keep only UUID() parsing" (a
+    32-char value passes UUID() but is caught by the length check): THIS
+    test kills the other half, "drop the UUID() parse, keep only
+    len(v)==36" -- a mutant missing the parse call would see this 36-char
+    value and wrongly treat it as shaped, feeding a ';'-containing value
+    into response.set_cookie(). Documents that a cookie/header-injection
+    payload can never reach set_cookie via this param."""
+    db_file = str(tmp_path / "test.db")
+    EntityDatabase(db_file)
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+    near_uuid = str(uuid.uuid4())
+    injected = near_uuid[:-1] + ";"
+    assert len(injected) == 36  # sanity: exact canonical length preserved
+
+    response = client.get(
+        "/workspace/select",
+        params={"uuid": injected},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert "set-cookie" not in response.headers
+
+
+def test_select_route_cookie_path_attribute_is_root(tmp_path):
+    """The D2 cookie contract includes path="/" -- pinned separately from
+    the existing D2-attribute tests, which check max-age/httponly/samesite
+    but never assert on path. Starlette's set_cookie() already DEFAULTS
+    path to "/", so dropping the kwarg entirely is not a live mutation;
+    the real risk is path being set to something ELSE (e.g. "/workspace",
+    matching the route's own path -- a plausible copy-paste mistake from a
+    handler that scopes a cookie to itself). Parses the Set-Cookie header
+    with http.cookies.SimpleCookie for an EXACT attribute match rather
+    than substring-matching "path=/", which would false-pass a mutant
+    "path=/workspace" (that string still contains "path=/" as a
+    prefix)."""
+    db_file = str(tmp_path / "test.db")
+    EntityDatabase(db_file)
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+
+    response = client.get(
+        "/workspace/select",
+        params={"uuid": "*"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    parsed_cookie = http.cookies.SimpleCookie()
+    parsed_cookie.load(response.headers["set-cookie"])
+    assert parsed_cookie[COOKIE_NAME]["path"] == "/"
+
+
+def test_board_full_page_switcher_zero_populated_workspaces_unmatched_default(
+    tmp_path,
+):
+    """switcher_context() when list_workspaces_with_entities() returns a
+    truly EMPTY list (no populated workspaces at all -- the existing
+    unpopulated-default test always has ONE other populated workspace in
+    the list), combined with a non-None startup default: the dropdown
+    still renders (no crash on the empty `workspaces` loop), contains NO
+    per-workspace <option> besides '*' and the transient unmatched one,
+    'All workspaces' is NOT selected, and the fourth-state 'unknown
+    workspace' option IS selected for the default's uuid. Kills a mutation
+    that assumes `workspaces` is non-empty (e.g. an unguarded
+    `workspaces[0]` access) or that only sets effective_unmatched when the
+    listing is non-empty."""
+    db_file = str(tmp_path / "test.db")
+    EntityDatabase(db_file)  # zero entities, zero workspaces rows
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    default_uuid = str(uuid.uuid4())
+    app.state.workspace_uuid = default_uuid
+    client = TestClient(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert '<select name="uuid"' in response.text
+    unmatched_element = _option_element(response.text, default_uuid)
+    assert "selected" in unmatched_element
+    assert "disabled" in unmatched_element
+    assert "selected" not in _option_element(response.text, "*")
+    # Only '*' and the transient unmatched option -- no populated-workspace
+    # <option> elements exist since list_workspaces_with_entities() is [].
+    assert response.text.count("<option value=") == 2
