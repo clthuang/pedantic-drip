@@ -67,6 +67,19 @@ reliable DB path; entries then migrate into the DB and this file retires.
   #055 (acknowledged-but-lost writes). Diagnose before trusting ANY backlog
   registration; this file is the interim source of truth.
 
+- **#061 — append_event factory-contract guard before feature 120** *(source: 119 QA gate C2, LOW)*
+  The "conn MUST come from connect_v2" contract is purely advisory — a bare
+  `sqlite3.connect` silently skips FK enforcement and can write a PERMANENT orphan
+  into the immutable events table. Before 120/132 wire consumers: add a cheap
+  structural guard (`PRAGMA foreign_keys` == 1 assert at append_event entry, or a
+  connect_v2 sentinel attribute), and update the FK-pair test's bare-connection half.
+
+- **#062 — schema_version write is OR IGNORE (write-once) — upsert at 132** *(source: 119 QA gate C3, LOW)*
+  Bumping V2_SCHEMA_VERSION and re-bootstrapping keeps the stale recorded version
+  while new DDL applies — silent mismatch. When 132's migration story lands: ON
+  CONFLICT DO UPDATE (or read-compare-write) + a version-bump re-bootstrap test.
+  Until then the write-once behavior is correct for V2_SCHEMA_VERSION=1.
+
 ## Completed / Promoted
 
 (none tracked here yet — historical items live in the entity DB)

@@ -48,7 +48,7 @@ BEGIN SELECT RAISE(ABORT, 'events rows are immutable (PRD NFR-4)'); END;
 CREATE TRIGGER IF NOT EXISTS events_no_delete BEFORE DELETE ON events
 BEGIN SELECT RAISE(ABORT, 'events rows are immutable (PRD NFR-4)'); END;
 ```
-No `created_at` besides `timestamp` (one time column; v1 phase_events' separate created_at duplicated it). No `source` column (v1 had live/backfill — v2 encodes provenance in `actor`, e.g. `backfill:132`; one mechanism, not two).
+PRD FR-2's `id` shorthand is realized as `uuid TEXT PRIMARY KEY` (FR-4: uuid is the sole identity; 118 precedent). No `created_at` besides `timestamp` (one time column; v1 phase_events' separate created_at duplicated it). No `source` column (v1 had live/backfill — v2 encodes provenance in `actor`, e.g. `backfill:132`; one mechanism, not two).
 
 ## Data Flow (dark-phase)
 

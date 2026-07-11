@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Concurrent `bootstrap_v2` race (118 retro action 2)** — bootstrap is now serialized via a sidecar advisory flock (`{db_path}.bootstrap.lock`; kernel-released on process death, no stale-lock cleanup path). Two processes racing bootstrap previously hit `SQLITE_LOCKED` in 27/30 trials; the new 30-trial regression harness passes 30/30. Side effect (dark path only): a missing parent directory now fails as `FileNotFoundError` at the lock open rather than sqlite's later `OperationalError`.
+- **Concurrent `bootstrap_v2` race (118 retro action 2)** — bootstrap is now serialized via a sidecar advisory flock (`{db_path}.bootstrap.lock`; kernel-released on process death, no stale-lock cleanup path). Two processes racing bootstrap previously failed with `sqlite3.OperationalError` ("database is locked") in 27/30 trials; the new 30-trial regression harness passes 30/30. Side effect (dark path only): a missing parent directory now fails as `FileNotFoundError` at the lock open rather than sqlite's later `OperationalError`.
 
 ### Removed
 

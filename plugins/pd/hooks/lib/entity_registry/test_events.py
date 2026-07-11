@@ -587,6 +587,13 @@ class TestPayloadRegistry:
         (matching_row,) = [row for row in rows if row["uuid"] == event_uuid]
         # Then payload is None, not the string "null" or an empty dict
         assert matching_row["payload"] is None
+        # SQL-level pin (QA-gate C1): omitted payload is a REAL SQL NULL —
+        # one representation of "no payload" in the immutable log, so 120's
+        # projections / 132's backfill can trust IS NULL semantics.
+        row_type = v2_conn.execute(
+            "SELECT typeof(payload) FROM events WHERE uuid = ?", (event_uuid,)
+        ).fetchone()[0]
+        assert row_type == "null"
 
     def test_payload_empty_dict_round_trips_as_empty_dict_not_none(
         self, v2_conn, seeded_entity_uuid

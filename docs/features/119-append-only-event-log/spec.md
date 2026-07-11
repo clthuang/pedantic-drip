@@ -4,7 +4,7 @@
 
 The v2 schema (118, dark-shipped) deliberately carries NO state columns on `entities` — state is to be events projected via views. The events table does not exist yet. Today's v1 `phase_events` (`database.py:1503-1520`) is phase-axis-only (`phase`, `event_type IN (started/completed/skipped/backward)`), keyed by business key (`type_id TEXT` + `project_id`), INTEGER-autoincrement PK, and is one of several write paths rather than the sole one. PRD FR-2 requires a generalized append-only `events` table as the ONLY write path for state; the roadmap scopes 119 to: create the table, enforce row immutability, and wrap writes in a shared BEGIN IMMEDIATE transaction.
 
-Separately, 118's retro (action 2) assigned 119 ownership of the `bootstrap_v2` concurrency gap: two processes bootstrapping the same path concurrently hit `SQLITE_LOCKED` ~50% (15/30 trials) — the docstring at `schema_v2.py:131-135` names 119 as the first concurrent consumer owning the fix.
+Separately, 118's retro (action 2) assigned 119 ownership of the `bootstrap_v2` concurrency gap: two processes bootstrapping the same path concurrently failed with "database is locked" (`OperationalError`) ~50% (15/30 trials) — the docstring at `schema_v2.py:131-135` names 119 as the first concurrent consumer owning the fix.
 
 ## Scope
 

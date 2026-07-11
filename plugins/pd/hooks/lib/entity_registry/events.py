@@ -142,7 +142,7 @@ def append_event(
       function decorated ``@with_retry("events")`` and is invoked
       immediately.
 
-    ``json.dumps(payload)`` runs BEFORE any SQL on both paths: a
+    ``json.dumps(payload)`` (None → SQL NULL, never TEXT 'null') runs BEFORE any SQL on both paths: a
     non-serializable *payload* (e.g. a set) raises ``TypeError`` with no
     transaction ever opened, on either path.
 
@@ -159,7 +159,10 @@ def append_event(
     none open — so the ``if conn.in_transaction:`` guard below stays
     load-bearing.
     """
-    payload_json = json.dumps(payload)
+    # None binds SQL NULL (not the 4-char TEXT 'null') so the immutable log
+    # carries ONE representation of "no payload" — SQL-level consumers
+    # (120 projections, 132 backfill) can trust IS NULL semantics.
+    payload_json = json.dumps(payload) if payload is not None else None
     event_uuid = generate_uuid7()
     event_timestamp = (
         timestamp if timestamp is not None else datetime.now(timezone.utc).isoformat()

@@ -178,4 +178,4 @@ Skills/commands reference these as `{pd_artifacts_root}`, `{pd_base_branch}`, `{
 
 **Agent concurrency:** `max_concurrent_agents` in `.claude/pd.local.md` controls max parallel Task dispatches (default: 5). Skills and commands batch accordingly.
 
-**Backlog:** Capture ad-hoc ideas with `/pd:add-to-backlog <description>`. Review at [docs/backlog.md](docs/backlog.md).
+**Backlog:** Capture ad-hoc ideas with `/pd:add-to-backlog <description>`. Review at [docs/backlog.md](docs/backlog.md) — AND [docs/backlog-manual.md](docs/backlog-manual.md) while backlog #060 (entity-DB backlog writes silently lost) is open; the manual file is the interim source of truth.

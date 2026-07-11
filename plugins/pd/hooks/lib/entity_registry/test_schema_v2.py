@@ -696,7 +696,7 @@ def _bootstrap_v2_race_worker(db_path: str) -> None:
 # rate (15/30 trials) on two bootstrap_v2 calls racing the same path; #7b
 # checks the sidecar lock is fully released once bootstrap_v2 returns.
 # ---------------------------------------------------------------------------
-class TestBootstrapLockConcurrency:
+class TestConcurrentBootstrapLock:
     def test_thirty_trials_two_process_bootstrap_race_both_succeed(self, tmp_path):
         """30 independent trials, each racing 2 fresh processes against a
         fresh db path. Pre-lock (feature 118), this failed ~50% of trials

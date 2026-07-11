@@ -23,7 +23,7 @@ Per-phase `started`→`completed` deltas in `.meta.json` are 11-15s for ALL four
 
 1. **Both create-plan blockers landed at task-review, not plan-review** — a CHECK-count miscount (tasks said 4, design D7 has 3) and a payload-casing fork. A clean plan-reviewer iter-1 approval did not predict a clean task-review round.
 2. **The casing fork originated in design D2, not the task breakdown** — `spec.md:22` already specified camelCase (`reviewerNotes`, `skippedPhases`); design D2's first draft flipped to snake_case; plan.md and tasks.md both copied the fork forward untouched. Caught only when task-review checked it against the live consumer (`workflow_state_server.py:474/:481/:1218` — camelCase is the live contract).
-3. **Two runtime facts survived all 6 specify/design/create-plan review dispatches and were caught only by running real code** — (a) `autocommit=True` makes `conn.commit()`/`conn.rollback()` documented no-ops against a raw `BEGIN IMMEDIATE`; design D5 originally read `conn.rollback()`, corrected after the implementer scratch-tested it; (b) the committed 30-trial harness measured 27/30 pre-lock failures, worse than 118's uncommitted ~15/30 exploratory number — neither figure existed before someone ran the contention scenario.
+3. **Two runtime facts survived all 6 CONTENT-reviewer dispatches across specify/design/create-plan (spec+design+plan+task×2+relevance; the 3 phase-gate checks excluded from the count) and were caught only by running real code** — (a) `autocommit=True` makes `conn.commit()`/`conn.rollback()` documented no-ops against a raw `BEGIN IMMEDIATE`; design D5 originally read `conn.rollback()`, corrected after the implementer scratch-tested it; (b) the committed 30-trial harness measured 27/30 pre-lock failures, worse than 118's uncommitted ~15/30 exploratory number — neither figure existed before someone ran the contention scenario.
 
 ### Tune (Process Recommendations)
 
@@ -51,6 +51,6 @@ Per-phase `started`→`completed` deltas in `.meta.json` are 11-15s for ALL four
 - Feature: 119-append-only-event-log · Mode: standard · lastCompletedPhase: implement
 - Blocker-severity: 2 (0/0/2/0) vs campaign 131=7, 118=5, 129=9
 - Review/gate dispatches: 13 (2/2/5/4) + 1 test-deepener; 9 commits over develop at retro time
-- Tests: 3444 passed; SC6 grep 0; validate.sh 0 errors; hooks 67/67; doctor 19 (no live surface)
+- Tests: 3444 passed at task-3 QA (pre-deepening; 3461+3 skipped at finish); SC6 grep 0; validate.sh 0 errors; hooks 67/67; doctor 19 (no live surface)
 - **Scope confound (Q1):** 119 is the only campaign feature with BOTH zero live wiring AND zero deletions. The 9→2 drop (129→119) is more plausibly scope-driven than guardrail-driven — 129 ran AFTER 118's guardrails and still hit 9. Guardrails contributed at the margin (task-review's 2 mechanical catches; relevance-verifier's backport catch), not as the primary driver.
 - Retro-facilitator correction absorbed: review-history cannot confirm clean checklist passes (only findings) — the "129 lines fired and were validated" claim in the dispatch brief was not verifiable from artifacts and is not asserted here.
