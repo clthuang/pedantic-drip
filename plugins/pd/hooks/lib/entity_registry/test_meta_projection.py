@@ -31,7 +31,10 @@ fixtures.
 from __future__ import annotations
 
 import json
+import random
 import sqlite3
+import time
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -39,6 +42,7 @@ from entity_registry import display
 from entity_registry import events
 from entity_registry import meta_projection
 from entity_registry import schema_v2
+from entity_registry.uuid7 import generate_uuid7
 
 _NOW = "2026-01-01T00:00:00Z"
 
@@ -920,3 +924,452 @@ class TestQueryOnlyCanary:
                 )
         finally:
             query_only_conn.close()
+
+
+# =============================================================================
+# D6 property test (spec SC2): replay against a pure-Python fold oracle.
+#
+# A stdlib-seeded pseudo-random generator produces MASTER_SEED-derived
+# per-case seeds; each case builds its OWN `random.Random(case_seed)` and
+# EVERY stochastic draw for that case -- phase sequence shape, re-entries,
+# backward targets, skip shape, status changes on both axes, renames,
+# payload presence/absence, falsy backward values, actor, and timestamp
+# jitter (including exact ties) -- comes from that one instance. The
+# global `random` module is never called (no bare `random.*` below; every
+# draw is `case_rng.*` or `master_rng.*`), mirroring test_views.py's
+# TestReplayProperty discipline (design 120 D4) verbatim (design D6).
+#
+# `generate_uuid7()` is NEVER seeded -- entity uuids come straight from
+# the real, unseeded minter; determinism lives in the seeded DECISION
+# stream, not the uuids.
+#
+# ONE bootstrapped DB + ONE connect_v2 connection serve all N_CASES cases.
+# Events are immutable (DELETE is trigger-forbidden), so there is no
+# cleanup between cases -- isolation instead comes from each case using
+# its own fresh entity uuid.
+#
+# The oracle (`_fold_oracle`) is a SEPARATE, hand-maintained pure-Python
+# re-implementation of the D1/D2/D3 fold rules -- including its OWN
+# copies of the status-fold denylist and completed-fallback event-type
+# sets (`_ORACLE_NON_STATUS_EVENT_TYPES` /
+# `_ORACLE_COMPLETED_FALLBACK_EVENT_TYPES`, deliberately NOT imported
+# from meta_projection.py) -- built from each case's GENERATED SPECS,
+# never by re-reading the DB (design D6: "kills a projection that
+# misreads storage").
+# =============================================================================
+MASTER_SEED = 0x126
+N_CASES = 200
+_PROPERTY_TIME_GUARD_SECONDS = 5.0
+
+_PHASE_POOL = ("brainstorm", "specify", "design", "create-plan", "implement", "finish")
+_EXECUTION_STATUS_POOL = ("in_progress", "blocked", "reviewing", None)
+_LIFECYCLE_TERMINAL_EVENTS = {
+    "completed": "completed", "abandoned": "abandoned",
+    "archived": "archived", "activated": "active",
+}
+_MODE_POOL = ("standard", "yolo", "full")
+_ACTOR_POOL = ("tester-alpha", "tester-beta", "tester-gamma")
+
+# A fixed epoch + wide random offset keeps generated `timestamp` values
+# uncorrelated with generation order -- the "timestamp jitter" draw
+# (design D6), mirrors test_views.py's helper of the same name.
+_TIMESTAMP_EPOCH = datetime(2020, 1, 1, tzinfo=timezone.utc)
+_TIMESTAMP_SPAN_SECONDS = 5 * 365 * 24 * 3600
+
+# Sentinel distinguishing "never carried" from "carried, falsy" in the
+# oracle -- a local, independent counterpart to meta_projection.py's own
+# `_UNSET` (deliberately not imported; see module comment above).
+_ABSENT = object()
+
+# Independent local copies of meta_projection.py's denylist/fallback sets
+# (design D2/D3) -- see module comment above for why these are hand
+# duplicated rather than imported.
+_ORACLE_NON_STATUS_EVENT_TYPES = frozenset({
+    "renamed", "phase_started", "phase_completed", "phase_backward",
+})
+_ORACLE_COMPLETED_FALLBACK_EVENT_TYPES = frozenset({
+    "completed", "abandoned", "archived", "activated",
+})
+
+
+def _random_timestamp(case_rng: random.Random) -> str:
+    """Uniform draw across a 5-year span, uncorrelated with generation
+    order (mirrors test_views.py's helper of the same name)."""
+    offset_seconds = case_rng.uniform(0, _TIMESTAMP_SPAN_SECONDS)
+    moment = _TIMESTAMP_EPOCH + timedelta(seconds=offset_seconds)
+    return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _next_timestamp(case_rng: random.Random, previous: str) -> str:
+    """Jittered timestamp draw with a ~15% chance of returning *previous*
+    verbatim -- design D6's "exact ties" draw (mirrors
+    TestSameTimestampTieGuard's tie discipline at property-test scale)."""
+    if case_rng.random() < 0.15:
+        return previous
+    return _random_timestamp(case_rng)
+
+
+def _build_case(case_index: int, case_seed: int) -> dict:
+    """Generate one property-test case's entity + full event-step
+    sequence from *case_seed* alone -- every stochastic draw (phase
+    sequence shape, re-entries, backward targets, skip shape, status
+    changes on both axes, renames, payload presence/absence, falsy
+    backward values, actor, timestamp jitter incl. ties) comes from this
+    case's own `random.Random(case_seed)` instance; the global `random`
+    module is never touched (design D6)."""
+    case_rng = random.Random(case_seed)
+    entity_uuid = generate_uuid7()
+    initial_type_id = f"feature:{case_index:04d}-case{case_seed & 0xFFFFFFFF:x}"
+    created_at = _random_timestamp(case_rng)
+
+    steps: list[dict] = []
+    last_ts = created_at
+
+    def _draw_ts() -> str:
+        nonlocal last_ts
+        last_ts = _next_timestamp(case_rng, last_ts)
+        return last_ts
+
+    def _actor() -> str:
+        return case_rng.choice(_ACTOR_POOL)
+
+    init_payload = {
+        "mode": case_rng.choice(_MODE_POOL),
+        "branch": f"feature/{case_index:04d}-case-branch",
+    }
+    if case_rng.random() < 0.5:
+        init_payload["brainstorm_source"] = f"docs/brainstorms/case-{case_index}.md"
+    if case_rng.random() < 0.5:
+        init_payload["backlog_source"] = f"docs/backlog.md#case-{case_index}"
+    steps.append({
+        "kind": "event", "event_type": "initialized", "axis": "lifecycle",
+        "to_value": case_rng.choice(("planned", "active")),
+        "timestamp": _draw_ts(), "payload": init_payload, "actor": _actor(),
+    })
+
+    final_type_id = initial_type_id
+    entered_phases: list[str] = []
+
+    for _ in range(case_rng.randint(3, 14)):
+        roll = case_rng.random()
+        if roll < 0.35 or not entered_phases:
+            if entered_phases and case_rng.random() < 0.4:
+                phase = case_rng.choice(entered_phases)  # re-entry
+            else:
+                phase = case_rng.choice(_PHASE_POOL)
+                if phase not in entered_phases:
+                    entered_phases.append(phase)
+            payload = {}
+            shape_roll = case_rng.random()
+            if shape_roll < 0.3:
+                payload["skippedPhases"] = '["brainstorm"]'
+            elif shape_roll < 0.6:
+                payload["skippedPhases"] = [{"phase": "brainstorm", "reason": "already done"}]
+            steps.append({
+                "kind": "event", "event_type": "phase_started", "axis": "pipeline",
+                "to_value": phase, "timestamp": _draw_ts(),
+                "payload": payload or None, "actor": _actor(),
+            })
+        elif roll < 0.55:
+            phase = case_rng.choice(entered_phases)
+            payload = {}
+            if case_rng.random() < 0.8:
+                payload["iterations"] = case_rng.randint(1, 6)
+            if case_rng.random() < 0.8:
+                payload["reviewerNotes"] = f"notes for {phase} case {case_index}"
+            if case_rng.random() < 0.4:
+                payload["phaseSummaryEntry"] = {
+                    "phase": phase, "outcome": "Approved.", "case_index": case_index,
+                }
+            steps.append({
+                "kind": "event", "event_type": "phase_completed", "axis": "pipeline",
+                "to_value": phase, "timestamp": _draw_ts(),
+                "payload": payload or None, "actor": _actor(),
+            })
+        elif roll < 0.70:
+            target = case_rng.choice(_PHASE_POOL)
+            payload = {}
+            context_roll = case_rng.random()
+            if context_roll < 0.5:
+                payload["backwardContext"] = {"source_phase": case_rng.choice(entered_phases)}
+            elif context_roll < 0.7:
+                payload["backwardContext"] = case_rng.choice(({}, "", None))
+            target_roll = case_rng.random()
+            if target_roll < 0.5:
+                payload["backwardReturnTarget"] = case_rng.choice(_PHASE_POOL)
+            elif target_roll < 0.7:
+                payload["backwardReturnTarget"] = ""
+            if target not in entered_phases:
+                entered_phases.append(target)
+            steps.append({
+                "kind": "event", "event_type": "phase_backward", "axis": "pipeline",
+                "to_value": target, "timestamp": _draw_ts(),
+                "payload": payload or None, "actor": _actor(),
+            })
+        elif roll < 0.85:
+            if case_rng.random() < 0.5:
+                steps.append({
+                    "kind": "event", "event_type": "status_changed", "axis": "execution",
+                    "to_value": case_rng.choice(_EXECUTION_STATUS_POOL),
+                    "timestamp": _draw_ts(), "payload": None, "actor": _actor(),
+                })
+            else:
+                event_type, terminal_to_value = case_rng.choice(
+                    list(_LIFECYCLE_TERMINAL_EVENTS.items())
+                )
+                steps.append({
+                    "kind": "event", "event_type": event_type, "axis": "lifecycle",
+                    "to_value": terminal_to_value, "timestamp": _draw_ts(),
+                    "payload": None, "actor": _actor(),
+                })
+        else:
+            new_type_id = f"feature:{case_index:04d}-renamed{case_rng.randint(0, 999999):06d}"
+            final_type_id = new_type_id
+            steps.append({"kind": "rename", "new_type_id": new_type_id, "actor": _actor()})
+
+    # design D3/D6 non-vacuity requirement: on ~half the cases, force a
+    # "finish" completion AND a terminal lifecycle event whose timestamps
+    # DIFFER by construction (not left to random-draw chance) -- proving
+    # the primary/fallback `completed` rule genuinely prefers the finish
+    # timestamp over the terminal one, not merely producing the same
+    # value either way.
+    if case_rng.random() < 0.5:
+        if "finish" not in entered_phases:
+            steps.append({
+                "kind": "event", "event_type": "phase_started", "axis": "pipeline",
+                "to_value": "finish", "timestamp": _draw_ts(),
+                "payload": None, "actor": _actor(),
+            })
+            entered_phases.append("finish")
+        finish_ts = _draw_ts()
+        steps.append({
+            "kind": "event", "event_type": "phase_completed", "axis": "pipeline",
+            "to_value": "finish", "timestamp": finish_ts,
+            "payload": {"iterations": case_rng.randint(1, 3), "reviewerNotes": "finish notes"},
+            "actor": _actor(),
+        })
+        terminal_moment = datetime.strptime(
+            finish_ts, "%Y-%m-%dT%H:%M:%SZ"
+        ).replace(tzinfo=timezone.utc) + timedelta(seconds=case_rng.randint(60, 3600))
+        terminal_ts = terminal_moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+        event_type, terminal_to_value = case_rng.choice(list(_LIFECYCLE_TERMINAL_EVENTS.items()))
+        steps.append({
+            "kind": "event", "event_type": event_type, "axis": "lifecycle",
+            "to_value": terminal_to_value, "timestamp": terminal_ts,
+            "payload": None, "actor": _actor(),
+        })
+
+    return {
+        "case_index": case_index, "case_seed": case_seed, "entity_uuid": entity_uuid,
+        "initial_type_id": initial_type_id, "final_type_id": final_type_id,
+        "created_at": created_at, "steps": steps,
+    }
+
+
+def _fold_oracle(case: dict) -> tuple[dict, dict]:
+    """Independent pure-Python re-implementation of the D1/D2/D3 fold
+    rules (design D6) -- consumes *case*'s GENERATED steps directly,
+    never touches the DB. Returns (expected_meta, diagnostics);
+    diagnostics exposes the finish-vs-terminal timestamp pair the D3
+    primary/fallback rule chooses between, so the property test can
+    assert the non-vacuity requirement (design D3) actually fired across
+    the run."""
+    status = None
+    mode = None
+    branch = None
+    brainstorm_source = _ABSENT
+    backlog_source = _ABSENT
+    skipped_phases = _ABSENT
+    backward_context = None
+    backward_return_target = None
+    phase_summaries: list = []
+    phases: dict[str, dict] = {}
+    last_completed_phase = None
+    finish_completed_ts = None
+    terminal_lifecycle_ts = None
+
+    for step in case["steps"]:
+        if step["kind"] == "rename":
+            continue  # `renamed` projects into NOTHING (design D1)
+        event_type = step["event_type"]
+        to_value = step["to_value"]
+        timestamp = step["timestamp"]
+        payload = step["payload"] or {}
+
+        if event_type not in _ORACLE_NON_STATUS_EVENT_TYPES:
+            status = to_value
+        if event_type in _ORACLE_COMPLETED_FALLBACK_EVENT_TYPES:
+            terminal_lifecycle_ts = timestamp
+
+        if "mode" in payload:
+            mode = payload["mode"]
+        if "branch" in payload:
+            branch = payload["branch"]
+        if "brainstorm_source" in payload:
+            brainstorm_source = payload["brainstorm_source"]
+        if "backlog_source" in payload:
+            backlog_source = payload["backlog_source"]
+        if "skippedPhases" in payload:
+            skipped_phases = payload["skippedPhases"]
+        if "backwardContext" in payload:
+            backward_context = payload["backwardContext"]
+        if "backwardReturnTarget" in payload:
+            backward_return_target = payload["backwardReturnTarget"]
+
+        if event_type in ("phase_started", "phase_backward"):
+            phases.setdefault(to_value, {})["started"] = timestamp
+        elif event_type == "phase_completed":
+            phase_entry = phases.setdefault(to_value, {})
+            phase_entry["completed"] = timestamp
+            if "iterations" in payload:
+                phase_entry["iterations"] = payload["iterations"]
+            if "reviewerNotes" in payload:
+                phase_entry["reviewerNotes"] = payload["reviewerNotes"]
+            if "phaseSummaryEntry" in payload:
+                phase_summaries.append(payload["phaseSummaryEntry"])
+            last_completed_phase = to_value
+            if to_value == "finish":
+                finish_completed_ts = timestamp
+
+    tail = case["final_type_id"].split(":", 1)[1]
+    id_part, _, slug_part = tail.partition("-")
+
+    meta: dict = {
+        "id": id_part, "slug": slug_part, "mode": mode, "status": status,
+        "created": case["created_at"], "branch": branch,
+    }
+    completed_value = (
+        finish_completed_ts if finish_completed_ts is not None else terminal_lifecycle_ts
+    )
+    if completed_value is not None:
+        meta["completed"] = completed_value
+    if brainstorm_source is not _ABSENT:
+        meta["brainstorm_source"] = brainstorm_source
+    if backlog_source is not _ABSENT:
+        meta["backlog_source"] = backlog_source
+    meta["lastCompletedPhase"] = last_completed_phase
+    meta["phases"] = phases
+    if skipped_phases is not _ABSENT:
+        meta["skippedPhases"] = skipped_phases
+    if backward_context:
+        meta["backward_context"] = backward_context
+    if backward_return_target:
+        meta["backward_return_target"] = backward_return_target
+    if phase_summaries:
+        meta["phase_summaries"] = phase_summaries
+
+    diagnostics = {
+        "finish_completed_ts": finish_completed_ts,
+        "terminal_lifecycle_ts": terminal_lifecycle_ts,
+    }
+    return meta, diagnostics
+
+
+def _apply_case(conn: sqlite3.Connection, workspace_uuid: str, case: dict) -> None:
+    """Write *case*'s entity row + every generated step to *conn* (a
+    connect_v2 connection). Renames go through `display.rename_entity` --
+    the REAL v2 rename mechanism (matches D5 fixture (f)), which updates
+    `entities.type_id` AND appends the `renamed` event in one step, so
+    the entities row and the event stream can never drift out of sync
+    the way a hand-rolled UPDATE could. Everything else goes through
+    `events.append_event`."""
+    conn.execute(
+        "INSERT INTO entities (uuid, workspace_uuid, type, kind, lifecycle_class, "
+        "type_id, name, artifact_path, parent_uuid, created_at, updated_at, metadata) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            case["entity_uuid"], workspace_uuid, "feature", "feature", "artifact",
+            case["initial_type_id"], "Property Test Entity", None, None,
+            case["created_at"], case["created_at"], None,
+        ),
+    )
+    for step in case["steps"]:
+        if step["kind"] == "rename":
+            display.rename_entity(
+                conn, entity_uuid=case["entity_uuid"], actor=step["actor"],
+                new_type_id=step["new_type_id"],
+            )
+        else:
+            events.append_event(
+                conn, entity_uuid=case["entity_uuid"], event_type=step["event_type"],
+                axis=step["axis"], to_value=step["to_value"], actor=step["actor"],
+                timestamp=step["timestamp"], payload=step["payload"],
+            )
+
+
+def _fail_case(case: dict, detail: str) -> None:
+    """Fail with the case seed + full step sequence so a failure is
+    reproducible (design D6's failure-output contract). Re-running
+    `_build_case(case["case_index"], case["case_seed"])` reproduces the
+    same DECISION stream; the entity uuid legitimately differs run-to-run
+    since `generate_uuid7` is never seeded."""
+    pytest.fail(
+        f"seed={case['case_seed']} case_index={case['case_index']}: {detail}\n"
+        f"entity_uuid={case['entity_uuid']!r} "
+        f"initial_type_id={case['initial_type_id']!r} "
+        f"final_type_id={case['final_type_id']!r}\n"
+        f"steps={case['steps']!r}"
+    )
+
+
+def _assert_case_matches_oracle(conn: sqlite3.Connection, case: dict, expected: dict) -> None:
+    """Field-by-field compare `project_meta`'s real output against the
+    oracle's *expected* dict (design D6)."""
+    actual = meta_projection.project_meta(conn, case["entity_uuid"])
+    for field in sorted(set(expected) | set(actual)):
+        if field not in expected:
+            _fail_case(case, f"field={field!r}: unexpected in actual: {actual[field]!r}")
+        elif field not in actual:
+            _fail_case(
+                case, f"field={field!r}: missing from actual; oracle expected {expected[field]!r}"
+            )
+        elif actual[field] != expected[field]:
+            _fail_case(
+                case,
+                f"field={field!r}: expected {expected[field]!r}, got {actual[field]!r}",
+            )
+
+
+class TestReplayProperty:
+    """Design D6 / spec SC2: N_CASES seeded random event sequences, each
+    checked field-by-field against `project_meta` via a pure-Python fold
+    oracle built from the GENERATED SPECS (never re-reads the DB). One
+    bootstrapped DB + one connect_v2 connection for the whole run;
+    per-case entity uuids provide isolation (events are immutable, so
+    there is no cleanup between cases). Mirrors test_views.py's
+    TestReplayProperty discipline (design 120 D4) verbatim."""
+
+    def test_project_meta_matches_oracle_across_n_cases_seeded_replay(
+        self, bootstrapped_db_path, v2_conn
+    ):
+        workspace_uuid = "workspace-uuid-meta-projection-property-test"
+        _seed_workspace(bootstrapped_db_path, workspace_uuid)
+
+        master_rng = random.Random(MASTER_SEED)
+        case_seeds = [master_rng.getrandbits(64) for _ in range(N_CASES)]
+
+        divergent_finish_vs_terminal_seen = False
+        start = time.perf_counter()
+        for case_index, case_seed in enumerate(case_seeds):
+            case = _build_case(case_index, case_seed)
+            expected, diagnostics = _fold_oracle(case)
+            _apply_case(v2_conn, workspace_uuid, case)
+            _assert_case_matches_oracle(v2_conn, case, expected)
+            if (
+                diagnostics["finish_completed_ts"] is not None
+                and diagnostics["terminal_lifecycle_ts"] is not None
+                and diagnostics["finish_completed_ts"] != diagnostics["terminal_lifecycle_ts"]
+            ):
+                divergent_finish_vs_terminal_seen = True
+        elapsed = time.perf_counter() - start
+
+        assert elapsed < _PROPERTY_TIME_GUARD_SECONDS, (
+            f"property loop over {N_CASES} cases took {elapsed:.3f}s "
+            f"(>= {_PROPERTY_TIME_GUARD_SECONDS}s non-regression guard, design 126 D6)"
+        )
+        assert divergent_finish_vs_terminal_seen, (
+            f"design D3/D6 non-vacuity requirement: no case among {N_CASES} produced "
+            "a finish-phase completion AND a terminal lifecycle event with DIFFERING "
+            "timestamps -- the primary/fallback `completed` rule was never exercised "
+            "non-vacuously this run"
+        )
