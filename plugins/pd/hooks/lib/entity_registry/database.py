@@ -9022,7 +9022,9 @@ class EntityDatabase:
         list[dict]
             One dict per populated workspace with ``uuid``, ``project_root``,
             and ``entity_count`` keys. Ordered by ``entity_count`` descending,
-            then ``project_root`` ascending as a deterministic tie-breaker.
+            then ``project_root`` ascending as a tie-breaker (rows tying on
+            BOTH keys -- e.g. split-brain duplicates sharing a project_root
+            -- have no further contractual ordering).
         """
         sql = (
             "SELECT w.uuid, w.project_root, COUNT(e.uuid) AS entity_count "
