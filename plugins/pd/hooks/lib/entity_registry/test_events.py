@@ -236,7 +236,7 @@ class TestAppendEventRoundTrip:
     ):
         """Anticipate: an implementation that always stamps
         datetime.now(timezone.utc) regardless of a caller-supplied
-        *timestamp* (e.g. an `or` used instead of an `is not None` check)
+        *timestamp* (e.g. a branch that ignores the caller-supplied timestamp and stamps now() unconditionally)
         would silently overwrite this with something close to "now" —
         this test fails against that mutation because 2020 is asserted
         verbatim and would be wildly different from "now".

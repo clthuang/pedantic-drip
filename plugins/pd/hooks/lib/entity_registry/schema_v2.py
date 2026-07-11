@@ -117,11 +117,13 @@ def _bootstrap_lock(db_path: str):
     locks on *db_path* itself — the two never interact.
     """
     lock_file = open(f"{db_path}.bootstrap.lock", "a+")
-    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
     try:
-        yield
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
     finally:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
         lock_file.close()
 
 

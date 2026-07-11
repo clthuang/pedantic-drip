@@ -60,7 +60,7 @@ No `created_at` besides `timestamp` (one time column; v1 phase_events' separate 
 - CHECK violations (bad axis, empty actor/event_type) → `IntegrityError`, same handling.
 - Non-serializable payload → `TypeError` before SQL (both paths).
 - UPDATE/DELETE on events → trigger `RAISE(ABORT)` surfaces as `sqlite3.IntegrityError` with the immutability message, Python-import-independent (spec SC2).
-- Lock-file open failure (read-only dir) → OSError propagates — bootstrap cannot proceed safely without the lock; fail loud (single-user tool; not defended further).
+- Lock-file open failure (read-only dir; MISSING PARENT DIR — the lock opens before sqlite3.connect, so ENOENT now surfaces as FileNotFoundError rather than sqlite's later OperationalError) → OSError propagates — bootstrap cannot proceed safely without the lock; fail loud (single-user tool; not defended further).
 
 ## Testing Strategy
 

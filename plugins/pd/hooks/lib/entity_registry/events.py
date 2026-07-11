@@ -127,6 +127,10 @@ def append_event(
 ) -> str:
     """Append one immutable event row; return its newly minted uuid7.
 
+    ``conn`` MUST come from ``connect_v2`` — FK enforcement
+    (``foreign_keys=ON``) is per-connection; a bare ``sqlite3.connect``
+    silently disables the entity_uuid FK check.
+
     Composes on ``conn.in_transaction`` (design D5):
 
     - **True** (caller already opened a transaction, e.g. its own
@@ -200,6 +204,10 @@ def read_events(
     conn: sqlite3.Connection, entity_uuid: str, *, axis: str | None = None
 ) -> list[dict]:
     """Return every event row for *entity_uuid*, oldest first.
+
+    ``conn`` MUST come from ``connect_v2`` — FK enforcement
+    (``foreign_keys=ON``) is per-connection; a bare ``sqlite3.connect``
+    silently disables the entity_uuid FK check.
 
     ORDER BY uuid: uuid7 is time-ordered (RFC 9562), so ascending uuid
     order already agrees with insertion order — no separate sequence
