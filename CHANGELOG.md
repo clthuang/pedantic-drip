@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **UUIDv7 identity foundation (feature 118, P004 cluster 1)** — new dark-shipped `entity_registry/schema_v2.py`: v2 core DDL (`workspaces`, `entities`, `entity_relations`, `sequences`) with uuid TEXT primary keys throughout, no uniqueness constraints on human-readable fields (PRD FR-4), CASCADE relation FKs with a structural dedup index, one schema-version write site (FR-12), and a DDL registry extension point for the sibling features (119 events, 120 views, 122 axes). New `entity_registry/uuid7.py` — `generate_uuid7()` over stdlib `uuid.uuid7()` with an import-time Python-floor guard. Nothing live reads the v2 module yet; cutover is feature 132.
 
+### Added
+
+- **Append-only event log foundation (feature 119, P004 cluster 1)** — dark-shipped `entity_registry/events.py`: the v2 `events` table (uuid7 PK; plain-`REFERENCES` entity FK — audit rows outlive intent-to-forget; three-axis CHECK `pipeline|execution|lifecycle`; non-empty `event_type`/`actor` CHECKs) registered into 118's DDL registry, with DB-resident immutability (`BEFORE UPDATE`/`DELETE` triggers per PRD NFR-4), a single-writer `append_event` (composes into a caller's `BEGIN IMMEDIATE` via `conn.in_transaction`, or standalone under the shared `with_retry`; raw `COMMIT`/`ROLLBACK` SQL — the connection methods are documented no-ops under `autocommit=True`), `read_events` (one query = full per-entity history), and the `connect_v2` factory (per-connection `busy_timeout`/WAL/`foreign_keys=ON` — the pragma set does not carry over between connections). Nothing live reads it until the 132 cutover; the ships-dark guard now allowlists dark v2 siblings while still failing on live wiring, with seeded-offender teeth tests for both import spellings.
+
+### Fixed
+
+- **Concurrent `bootstrap_v2` race (118 retro action 2)** — bootstrap is now serialized via a sidecar advisory flock (`{db_path}.bootstrap.lock`; kernel-released on process death, no stale-lock cleanup path). Two processes racing bootstrap previously failed with `sqlite3.OperationalError` ("database is locked") in 27/30 trials; the new 30-trial regression harness passes 30/30. Side effect (dark path only): a missing parent directory now fails as `FileNotFoundError` at the lock open rather than sqlite's later `OperationalError`.
+
 ### Removed
 
 - **Cross-workspace enforcement surface (feature 129, P004 cluster 1)** — cross-workspace entity links are now ordinary permitted operations. Deleted all five members: the DB-layer gate (`CrossWorkspaceError`, `_assert_same_workspace_pairwise`, the 3 gate calls in `add_dependency`/`set_parent`/`add_okr_alignment` and their catch/envelope sites), the two inline MCP gates (`issue_spawn` parent check incl. its dead workspace-resolution inputs; `complete_phase` closes workspace-inequality branch), and the doctor surface:

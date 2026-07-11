@@ -8,12 +8,15 @@ bootstrap_v2 returns.
 """
 from __future__ import annotations
 
+import fcntl
+import multiprocessing
 import re
 import sqlite3
 from pathlib import Path
 
 import pytest
 
+from entity_registry import events  # noqa: F401 -- side effect: registers "events" DDL (design D4); needed by TestEventsDdlRegistrationPin
 from entity_registry import schema_v2
 
 # The 4 core tables carrying a uuid7 TEXT primary key. `_metadata` is
@@ -343,25 +346,34 @@ class TestConnectionPragmas:
 # bootstrap_v2 on a path whose parent directory does not exist.
 # ---------------------------------------------------------------------------
 class TestBootstrapPathErrors:
-    def test_bootstrap_missing_parent_directory_raises_operational_error(self, tmp_path):
+    def test_bootstrap_missing_parent_directory_raises_file_not_found_error(self, tmp_path):
         """bootstrap_v2 does not create intermediate directories: a path
-        whose parent is missing fails loudly via sqlite3, not silently or
-        with a confusing later error.
+        whose parent is missing fails loudly, not silently or with a
+        confusing later error.
+
+        Feature 119 (design D3) wraps bootstrap_v2's entire body — including
+        the sqlite3.connect call — in `_bootstrap_lock`, which opens a
+        sidecar lock file under the same (missing) parent directory FIRST.
+        That `open()` call now fails with FileNotFoundError before sqlite3
+        ever gets a chance to raise its own "unable to open database file"
+        error — design's Error Handling section documents this class of
+        failure as "OSError propagates ... fail loud ... not defended
+        further" (FileNotFoundError is a subclass of OSError).
 
         Anticipate: a caller might assume bootstrap_v2 behaves like
         `os.makedirs(..., exist_ok=True)` for its target's parent — it
-        does not. This pins the actual failure mode (sqlite3.connect
-        itself refuses to open the file) so a future refactor that adds
-        directory auto-creation is a deliberate, visible design change
-        rather than an accidental behavior shift this suite stays silent on.
+        does not. This pins the actual failure mode so a future refactor
+        that adds directory auto-creation (to either the lock file or the
+        database file) is a deliberate, visible design change rather than
+        an accidental behavior shift this suite stays silent on.
         derived_from: dimension:error_propagation, dimension:boundary_values
         """
         # Given a path whose parent directory was never created
         missing_parent_path = str(tmp_path / "does-not-exist" / "v2.db")
         # When bootstrap_v2 is called against it
-        # Then sqlite3 raises OperationalError rather than succeeding or
-        # raising some unrelated/confusing error downstream
-        with pytest.raises(sqlite3.OperationalError, match="unable to open database file"):
+        # Then the lock sidecar's open() raises FileNotFoundError rather
+        # than succeeding or raising some unrelated/confusing error downstream
+        with pytest.raises(FileNotFoundError):
             schema_v2.bootstrap_v2(missing_parent_path)
 
 
@@ -496,38 +508,276 @@ class TestSequencesBusinessKeyNonUniqueness:
 # D1's "ships dark: no live code imports it except its tests" invariant was
 # only pinned by a manual grep in tasks.md's Task 4 Verify step, never by an
 # automated regression test that runs on every suite invocation.
+#
+# Re-scoped for feature 119 (design D6): the dark set grew from a single
+# module (schema_v2.py) to a named set (_V2_DARK_MODULES), and the needle
+# set widened to catch every import spelling of the new `events` module.
 # ---------------------------------------------------------------------------
+
+# Every dark v2 module this guard exempts from being its own offender (a
+# dark module's own source legitimately mentions its sibling dark modules
+# — e.g. events.py imports schema_v2). uuid7.py is deliberately NOT in this
+# set: it is already live via database.py's uuid7 mints (design D6).
+_V2_DARK_MODULES = {"schema_v2.py", "events.py"}
+
+# Every import spelling that would wire a dark v2 module into a live path.
+# A bare "events" needle is deliberately excluded — it false-positives on
+# unrelated names like phase_events / event_type.
+_V2_LIVE_REFERENCE_NEEDLES = (
+    "schema_v2",
+    "entity_registry.events",
+    "from entity_registry import events",
+    "from .events import",
+)
+
+
+def _scan_for_live_v2_references(
+    root: Path, dark_modules: set[str], needles: tuple[str, ...]
+) -> list[str]:
+    """Return paths of every ``*.py`` file under *root* (recursively) whose
+    content contains at least one of *needles*, excluding test files
+    (name starts with "test_") and files named in *dark_modules*.
+
+    Shared by the real-source scan (expects []) and the seeded-fixture
+    teeth test (expects the offender) below — see TestSchemaV2ShipsDark.
+    """
+    offending_files = []
+    for py_file in root.rglob("*.py"):
+        if py_file.name.startswith("test_") or py_file.name in dark_modules:
+            continue
+        content = py_file.read_text()
+        if any(needle in content for needle in needles):
+            offending_files.append(str(py_file))
+    return offending_files
+
+
 class TestSchemaV2ShipsDark:
-    def test_no_non_test_importer_of_schema_v2(self):
-        """No file under plugins/pd/hooks/lib (other than schema_v2.py
-        itself and test_ files) references `schema_v2` — the module ships
-        dark; only its own tests exercise it (design D1; spec Out of
-        Scope: "nothing reads the v2 DB in this feature").
+    """Design D1 (schema_v2) + D6 (events, re-scoped for 119): every dark
+    v2 module in _V2_DARK_MODULES ships with no live importer anywhere
+    under hooks/lib — only test_ files (and the dark modules' own mutual
+    references) may mention them.
 
-        Anticipate: a future feature (119/120/121/122) could accidentally
-        wire schema_v2 into a live code path before feature 132's cutover
-        decides where the v2 DB lives. Task 4's tasks.md Verify step has
-        the equivalent grep, but as a one-time manual check it does not
-        run on every `pytest` invocation the way this does — mirrors the
-        residual-uuid4 scan test's source-scan style (test_database.py).
-        derived_from: design:D1 (ships dark), spec:Out-of-Scope (consumer
-        rewiring deferred), dimension:adversarial (Never/Always heuristic)
+    Scope note: the scan root is hooks/lib (this guard's historical
+    scope, D1) — it does NOT cover plugins/pd/mcp/. MCP wiring is
+    enforced separately by spec SC6's repo-wide grep at verification
+    time, not by this every-pytest guard.
+    """
+
+    def test_no_non_test_importer_of_dark_v2_modules(self):
+        """No non-test file under hooks/lib references a dark v2 module
+        via any known import spelling (design D6; spec Out of Scope:
+        "nothing reads the v2 DB in this feature").
+
+        Anticipate: a future feature (120/121/122) could accidentally
+        wire schema_v2 or events into a live code path before feature
+        132's cutover decides where the v2 DB lives. Task 4's tasks.md
+        Verify step has the equivalent grep, but as a one-time manual
+        check it does not run on every `pytest` invocation the way this
+        does — mirrors the residual-uuid4 scan test's source-scan style
+        (test_database.py).
+        derived_from: design:D1/D6 (ships dark), spec:Out-of-Scope
+        (consumer rewiring deferred), dimension:adversarial (Never/Always
+        heuristic)
         """
-        import pathlib
-
-        hooks_lib_root = pathlib.Path(__file__).resolve().parent.parent
+        hooks_lib_root = Path(__file__).resolve().parent.parent
         assert hooks_lib_root.name == "lib", (
             f"expected .../hooks/lib, got {hooks_lib_root}"
         )
 
-        offending_files = []
-        for py_file in hooks_lib_root.rglob("*.py"):
-            if py_file.name.startswith("test_") or py_file.name == "schema_v2.py":
-                continue
-            if "schema_v2" in py_file.read_text():
-                offending_files.append(str(py_file))
+        offending_files = _scan_for_live_v2_references(
+            hooks_lib_root, _V2_DARK_MODULES, _V2_LIVE_REFERENCE_NEEDLES
+        )
 
         assert offending_files == [], (
-            f"schema_v2 must ship dark (no non-test importers), but found "
-            f"references in: {offending_files}"
+            f"v2 dark modules must ship dark (no non-test importers), but "
+            f"found references in: {offending_files}"
         )
+
+    def test_scan_flags_seeded_offender_with_nondotted_import_spelling(self, tmp_path):
+        """Teeth check the other direction: a fixture dir containing a
+        file that imports events via the NON-dotted spelling (`from
+        entity_registry import events`) IS flagged — proves the widened
+        needle set actually catches this spelling, not just the dotted
+        `entity_registry.events` one (design D6: "the seeded-offender
+        fixture uses one of the NON-dotted spellings so the teeth test is
+        non-vacuous for the hardened gap").
+        """
+        offender_path = tmp_path / "some_consumer.py"
+        offender_path.write_text("from entity_registry import events\n")
+
+        offending_files = _scan_for_live_v2_references(
+            tmp_path, _V2_DARK_MODULES, _V2_LIVE_REFERENCE_NEEDLES
+        )
+
+        assert offending_files == [str(offender_path)]
+
+    # -------------------------------------------------------------
+    # Gap pass (test-deepener, dimension:mutation_mindset): the sibling
+    # test above only seeds the NON-dotted spelling (`from entity_registry
+    # import events`) — the DOTTED needle ("entity_registry.events") had
+    # no seeded-offender regression test of its own, even though design
+    # D6 explicitly widened the needle set to catch both spellings.
+    # -------------------------------------------------------------
+    def test_scan_flags_seeded_offender_with_dotted_import_spelling(self, tmp_path):
+        """Anticipate: a future edit to _V2_LIVE_REFERENCE_NEEDLES that
+        dropped or typo'd the "entity_registry.events" entry (leaving
+        only the "schema_v2" and "from entity_registry import events"
+        needles) would still pass the non-dotted sibling test above,
+        since that needle isn't the one it seeds — this test fails
+        against that specific regression because its fixture contains
+        ONLY the dotted spelling (no "schema_v2" substring, no
+        non-dotted "from entity_registry import events" substring), so
+        detection here can only be coming from the "entity_registry.events"
+        needle itself.
+        """
+        offender_path = tmp_path / "some_other_consumer.py"
+        offender_path.write_text(
+            "import entity_registry.events\n"
+            "\n"
+            "def wire_it_up():\n"
+            "    entity_registry.events.append_event(entity_uuid='x')\n"
+        )
+
+        offending_files = _scan_for_live_v2_references(
+            tmp_path, _V2_DARK_MODULES, _V2_LIVE_REFERENCE_NEEDLES
+        )
+
+        assert offending_files == [str(offender_path)]
+
+
+# ---------------------------------------------------------------------------
+# Design test #9: events.py's module-import side effect registers
+# ("events", _EVENTS_DDL) into schema_v2.DDL_REGISTRY, positioned after
+# "core" — and a direct second register_ddl("events", ...) call still
+# raises ValueError (118's double-registration contract, D4). Relies on
+# the module-top `from entity_registry import events` import above (that
+# import's side effect is what puts "events" into DDL_REGISTRY at all;
+# the existing autouse _reset_ddl_registry fixture snapshots/restores
+# around every test in this file, this test needs no fixture of its own).
+# ---------------------------------------------------------------------------
+class TestEventsDdlRegistrationPin:
+    def test_core_then_events_membership_and_relative_order(self):
+        """Membership + relative order, NOT whole-list equality —
+        DDL_REGISTRY is shared module state and future registrants
+        (120/121/122) may share the process (design D6/Testing Strategy
+        #9)."""
+        owners = [owner for owner, _ in schema_v2.DDL_REGISTRY]
+        assert "core" in owners
+        assert "events" in owners
+        assert owners.index("core") < owners.index("events")
+
+    def test_direct_second_register_ddl_events_raises_value_error(self):
+        """events.py already registered "events" at import time (module
+        top, D4) — a direct second call for the same owner still raises;
+        the pre-mutation check in register_ddl fires regardless of how
+        the first registration happened."""
+        with pytest.raises(ValueError, match="events"):
+            schema_v2.register_ddl(
+                "events", "CREATE TABLE IF NOT EXISTS shadow_events (uuid TEXT PRIMARY KEY)"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Module-level worker for the two-process bootstrap race (test group #7a).
+# Must be a top-level function: the default multiprocessing start method on
+# darwin (and this suite's CI) is "spawn", which pickles a module-qualified
+# function reference to hand the target to the child process — a closure or
+# nested function is not picklable under spawn.
+# ---------------------------------------------------------------------------
+def _bootstrap_v2_race_worker(db_path: str) -> None:
+    """Worker process: bootstrap db_path and close the connection."""
+    conn = schema_v2.bootstrap_v2(db_path)
+    conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Design test #7: bootstrap lock concurrency (feature 119, D3). #7a is the
+# regression for feature 118's measured ~50% "database is locked" failure
+# rate (15/30 trials) on two bootstrap_v2 calls racing the same path; #7b
+# checks the sidecar lock is fully released once bootstrap_v2 returns.
+# ---------------------------------------------------------------------------
+class TestConcurrentBootstrapLock:
+    def test_thirty_trials_two_process_bootstrap_race_both_succeed(self, tmp_path):
+        """30 independent trials, each racing 2 fresh processes against a
+        fresh db path. Pre-lock (feature 118), this failed ~50% of trials
+        with "database is locked" (DDL takes locks busy_timeout does not
+        retry). The sidecar flock in _bootstrap_lock (design D3) turns the
+        race into a deterministic wait instead of a failure — both
+        processes must exit 0 in every trial.
+        """
+        num_trials = 30
+        for trial in range(num_trials):
+            db_path = str(tmp_path / f"race-{trial}.db")
+            processes = [
+                multiprocessing.Process(
+                    target=_bootstrap_v2_race_worker, args=(db_path,)
+                )
+                for _ in range(2)
+            ]
+            for process in processes:
+                process.start()
+            for process in processes:
+                process.join(timeout=10)
+
+            for process in processes:
+                assert process.exitcode == 0, (
+                    f"trial {trial}: worker exited with code {process.exitcode}"
+                )
+
+    def test_lock_released_after_bootstrap_returns(self, tmp_path):
+        """After bootstrap_v2() returns and its connection is closed, the
+        sidecar lock file is fully released: a fresh, non-blocking
+        LOCK_EX acquisition on it succeeds immediately — no leaked fd or
+        lock (_bootstrap_lock's `finally` releases before bootstrap_v2
+        returns)."""
+        db_path = str(tmp_path / "v2.db")
+        conn = schema_v2.bootstrap_v2(db_path)
+        conn.close()
+
+        lock_path = f"{db_path}.bootstrap.lock"
+        with open(lock_path, "a+") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+    # -------------------------------------------------------------
+    # Gap pass (test-deepener, dimension:mutation_mindset): the sibling
+    # test above only pins lock release on the SUCCESS path — whether
+    # _bootstrap_lock's `finally` also releases when bootstrap_v2's body
+    # raises partway through was unexercised.
+    # -------------------------------------------------------------
+    def test_lock_released_after_bootstrap_body_raises(self, tmp_path):
+        """Same broken-DDL-entry recipe as TestPartialBootstrapRecovery
+        above, but this test's own concern is the lock, not the
+        registry's convergent-recovery contract.
+
+        Anticipate: an implementation of _bootstrap_lock that released
+        the lock via code placed after `yield` but OUTSIDE a try/finally
+        (e.g. relying on the caller never raising) would leave the
+        sidecar lock held forever once bootstrap_v2's body raises — this
+        test fails against that mutation because the fresh non-blocking
+        LOCK_EX attempt below would raise BlockingIOError instead of
+        succeeding immediately, whereas the success-path sibling test
+        above cannot exercise the finally-on-exception branch at all.
+        derived_from: design:D3 (_bootstrap_lock finally-released
+        contract), dimension:mutation_mindset
+        """
+        db_path = str(tmp_path / "v2.db")
+        schema_v2.register_ddl(
+            "broken-lock-release-probe",
+            # Malformed SQL: trailing commas make this a syntax error,
+            # same recipe as TestPartialBootstrapRecovery.
+            "CREATE TABLE IF NOT EXISTS broken_probe_t (uuid TEXT PRIMARY KEY,,,,)",
+        )
+
+        # Given a registry entry that will make bootstrap_v2's body raise
+        # When bootstrap_v2 is called
+        # Then it raises, AFTER having acquired the lock...
+        with pytest.raises(sqlite3.OperationalError):
+            schema_v2.bootstrap_v2(db_path)
+
+        # ...but the lock is nonetheless released: a fresh, non-blocking
+        # LOCK_EX acquisition on the sidecar file succeeds immediately.
+        lock_path = f"{db_path}.bootstrap.lock"
+        with open(lock_path, "a+") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)

@@ -51,6 +51,10 @@ Claude Code plugin providing a structured feature development workflow—skills,
 *Why:* Feature 131 re-flagged vacuous-green in 4 separate review rounds, and a half-swept doc contract cost a handoff blocker.
 *Enforced by:* Design/plan reviewer checklists; design docs pin contracts in ONE code block where possible.
 
+**Author-restated literals drift across artifacts:** When an artifact restates a literal from an upstream artifact (key names, casing, constants, signatures), verify it against BOTH the immediately-prior artifact AND the live consumer code before trusting it. A spec-correct literal can be silently flipped by design and copied forward through plan/tasks unchallenged.
+*Why:* Feature 119's payload-key casing was correct in spec, forked to snake_case in design D2, and copied through two more artifacts — caught only by checking the live .meta.json writer.
+*Enforced by:* Reviewer-claim verification practice; task-reviewer checks.
+
 **Shared-config blast radius:** When a change bumps a repo-wide config value (`requires-python`, a version pin, a default path), grep the ENTIRE repo for the old value's consumers (CI workflows, shell scripts — `bootstrap-venv.sh`, `doctor.sh` — and docs) before the phase gate.
 *Why:* Feature 118's Python-floor bump left bootstrap/doctor/CI enforcing 3.12 — every reviewer was scoped to the feature diff, so the stale consumers were invisible until a finish-phase grep; a 3.12 venv would have crashed at runtime with a false all-clear.
 *Enforced by:* plan-reviewer checklist line ("shared-config value change … repo-wide consumer sweep").
@@ -174,4 +178,4 @@ Skills/commands reference these as `{pd_artifacts_root}`, `{pd_base_branch}`, `{
 
 **Agent concurrency:** `max_concurrent_agents` in `.claude/pd.local.md` controls max parallel Task dispatches (default: 5). Skills and commands batch accordingly.
 
-**Backlog:** Capture ad-hoc ideas with `/pd:add-to-backlog <description>`. Review at [docs/backlog.md](docs/backlog.md).
+**Backlog:** Capture ad-hoc ideas with `/pd:add-to-backlog <description>`. Review at [docs/backlog.md](docs/backlog.md) — AND [docs/backlog-manual.md](docs/backlog-manual.md) while backlog #060 (entity-DB backlog writes silently lost) is open; the manual file is the interim source of truth.
