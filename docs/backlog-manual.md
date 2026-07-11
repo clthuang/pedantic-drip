@@ -110,7 +110,12 @@ The PreToolUse:Read observation hook injects "prior observation" system-reminder
 
 ## #066 — Workspace-mapping migration writer pollutes source tree during test runs
 **Filed:** 2026-07-11 (121 finish QA, regression lane). **Type:** test hygiene, MED (pre-existing, NOT introduced by 121).
-`_atomic_write_workspace_mapping` (database.py:1726, feature-108 migration machinery) writes `{}` marker files to `<cwd-subdir>/.claude/pd/migrations/migration-11-workspace-mapping.json` when suites/imports run from package directories — creating untracked strays under `plugins/**` (a `git add -A` would stage them). Interim fix shipped with 121's gate: `plugins/**/.claude/` gitignore line (deliberately narrower than root `.claude/`, which holds real config). Root-cause fix: redirect the writer's workspace_root to tmp in test fixtures, or gate the write on being under a real project root. Note: one TRACKED instance (`plugins/pd/.claude/pd/migrations/...`, identical blob on develop) predates 121 — remove alongside the root-cause fix.
+`_atomic_write_workspace_mapping` (database.py:1726, feature-108 migration machinery) writes `{}` marker files to `<cwd-subdir>/.claude/pd/migrations/migration-11-workspace-mapping.json` when suites/imports run from package directories — creating untracked strays under `plugins/**` (a `git add -A` would stage them). Interim fix shipped with 121's gate: `plugins/**/.claude/` gitignore line (deliberately narrower than root `.claude/`, which holds real config). Root-cause fix: redirect the writer's workspace_root to tmp in test fixtures, or gate the write on being under a real project root.
+**Root cause located (126 QA lane B, 2026-07-12):** `database.py:1859` —
+`workspace_root = os.environ.get("PD_WORKSPACE_ROOT") or os.getcwd()`; no
+production caller sets the env var, so test/bootstrap paths write relative to
+cwd. test_database.py's migration-11 class balances set/pop correctly (17/17);
+the residual stray writer is some other test path not yet isolated. Note: one TRACKED instance (`plugins/pd/.claude/pd/migrations/...`, identical blob on develop) predates 121 — remove alongside the root-cause fix.
 
 ## #067 — Carry nested-view scale-benchmark obligation into 132's spec inputs
 **Filed:** 2026-07-12 (120 retro Tune-4). **Type:** obligation carrier, LOW-MED.

@@ -76,14 +76,21 @@ extract_sentinel() {
             line=$0; sub(/^[[:space:]]+/, "", line)
             return line == m || index(line, m " ") == 1
         }
-        is_marker(s) { found=1; next }
-        is_marker(e) { found=0 }
+        is_marker(s) { found=1; saw_start=1; next }
+        is_marker(e) { found=0; saw_end=1 }
         found { print }
+        END { if (saw_start && !saw_end) exit 9 }
     ' "$SESSION_START_SH"
 }
+# A deleted/reordered END marker must be DRIFT (exit 3), not a silent
+# over-capture to EOF that happens to contain the load-bearing strings
+# (QA lane A finding: 615-line blob passed every substring guard).
 
-walk_block=$(extract_sentinel "# BENCH-WALK-START" "# BENCH-WALK-END")
-glob_block=$(extract_sentinel "# BENCH-GLOB-START" "# BENCH-GLOB-END")
+
+walk_block=$(extract_sentinel "# BENCH-WALK-START" "# BENCH-WALK-END") || {
+    echo "ERROR: drift — BENCH-WALK-START without a following BENCH-WALK-END" >&2; exit 3; }
+glob_block=$(extract_sentinel "# BENCH-GLOB-START" "# BENCH-GLOB-END") || {
+    echo "ERROR: drift — BENCH-GLOB-START without a following BENCH-GLOB-END" >&2; exit 3; }
 
 # Drift guard also pins the bash variable names the eval sites bind (a rename
 # inside the sentinels would otherwise surface as set -u's unbound-variable

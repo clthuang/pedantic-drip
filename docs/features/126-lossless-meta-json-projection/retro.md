@@ -5,7 +5,7 @@
 ## Figure corrections (the restated-literal class, caught by re-derivation)
 
 1. **Blocker total is 12 (8 fresh / 4 self-inflicted), not the 13 (9F/4S) the running tallies asserted.** The itemized findings sum to 12; the phantom was a FRESH design blocker — the skippedPhases finding double-counted across its design-gate detection and its spec-layer correction. Self-inflicted count (4) was correct. `.review-history.md` corrected with dated markers.
-2. **"Campaign's first spec-layer self-inflicted blocker" was FALSE** — 121 had three spec-layer self-inflicted blockers one feature earlier (121-retro:16/:25/:61). True only for the false-premise-about-unread-code sub-type. Third campaign label correction (119's battery, 120's design-gate, now this) — and it slipped WHILE the battery streak was being checked, so the superlative check must be exhaustive, not one-claim (Tune 2).
+2. **"Campaign's first spec-layer self-inflicted blocker" was FALSE** — 121 had three spec-layer self-inflicted blockers two features earlier (121-retro:16/:25/:61). True only for the false-premise-about-unread-code sub-type. Third campaign label correction (119's battery, 120's design-gate, now this) — and it slipped WHILE the battery streak was being checked, so the superlative check must be exhaustive, not one-claim (Tune 2).
 
 ## A — Activities (re-derived)
 
@@ -20,7 +20,7 @@
 
 ## O — Outcomes
 
-**Shipped:** dark `meta_projection.py` (232 lines) + 21 tests (`6442fce1`) · 453-line seeded property test (`23560163`) · NFR-3 two-component harness + census seeder (`86410074`) · baseline artifact (`c892ad75`) · +17 deepener tests + matcher hardening (`add79b48`) · battery absorptions (`762f1781`). FR-11 registry +3 keys (073/075) with consumer attribution corrected. Suite 3631 post-everything; validate 0 errors; hooks 67/67. NFR-3: walk 29/31 ms p50/p95 @ recorded N=22 (40/42 @ 220); glob no-match 29/32 (36/38); census 533/5,644/7 in 0.113 s.
+**Shipped:** dark `meta_projection.py` (232 lines) + 21 tests (`6442fce1`) · 453-line seeded property test (`23560163`) · NFR-3 two-component harness + census seeder (`86410074`) · baseline artifact (`c892ad75`) · +16 deepener tests + matcher hardening (`add79b48`) · battery absorptions (`762f1781`). FR-11 registry +3 keys (073/075) with consumer attribution corrected. Suite 3631 post-everything; validate 0 errors; hooks 67/67. NFR-3: walk 29/31 ms p50/p95 @ recorded N=22 (40/42 @ 220); glob no-match 29/32 (36/38); census 533/5,644/7 in 0.113 s.
 
 **Campaign blocker trajectory (per-retro re-derived):** 131:7 → 118:5 → 129:9 → 119:2 → 130:3 → 121:10 → 120:1 → **126:12**. Self-inflicted (tracked since 120): 121:5 (50%) → 120:0 → **126:4 (33%)** — 120's zero-self profile did NOT replicate; all 4 of 126's are the fix-introduced/half-sweep family.
 
@@ -52,4 +52,5 @@
 ## Process notes
 
 - **#065 injected-observation noise:** disregarded at the specify gate, the 360° verification (a fabricated "Restored from Backup Copy" claim), and 6 reminders at retro compilation. Standing item.
+- **QA lane C found the correction layer's own off-by-ones (fixed 2026-07-12):** the "+17 deepener tests" count was 16 (net-new def test_ recount), and the label correction misplaced 121 as "one feature earlier" (it is two — 121→120→126). The restated-literal class does not spare correction passes; both fixed across all artifact restatements (the commit subject's "17" is immutable — recorded here).
 - **Nothing material unrecorded** — task-2 overflow retry, the broken-then-refined matcher hardening, and the claim-ahead incident all landed in Process Notes in-phase.

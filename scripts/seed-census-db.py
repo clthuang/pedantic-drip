@@ -166,6 +166,8 @@ def seed_census_db(target_dir: str, *, entity_count: int, workspace_count: int, 
     """
     os.makedirs(target_dir, exist_ok=True)
     db_path = os.path.join(target_dir, "v2.db")
+    if os.path.exists(db_path):
+        sys.exit(f"ERROR: {db_path} already exists — re-running into the same target silently duplicates rows (type_id is deliberately non-unique, FR-4). Use a fresh --target-dir.")
 
     bootstrap_conn = schema_v2.bootstrap_v2(db_path)
     bootstrap_conn.close()

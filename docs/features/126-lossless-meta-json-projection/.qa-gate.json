@@ -1,0 +1,42 @@
+{
+  "feature": "126-lossless-meta-json-projection",
+  "gate_date": "2026-07-12",
+  "verdict": "PASS",
+  "lanes": {
+    "A_execution_adversarial": {
+      "agent": "general-purpose/sonnet",
+      "verdict": "PASS",
+      "high": 0,
+      "med": 2,
+      "low": 3,
+      "notes": "Core deliverable clean: 11/11 grammar-edge probes pass (shape-switch passthrough both directions, completion-without-start, double finish completion, nested registry keys ignored, init-with-both-sources, renamed-only stream); round-trip vs REALITY — 118/119/121/129's real non-fixture files reproduce byte-for-field identical, incl. 118's historical started-less phases with zero special-casing. MED-1: bench drift guard passed silently on deleted/swapped END markers (615-line over-capture to EOF contained all load-bearing substrings) — FIXED: awk exits 9 on START-without-END, bash maps to exit 3; deleted-END probe now verified 3. MED-2: seeder re-run into same target silently duplicated all rows — FIXED: loud refusal when v2.db exists. LOWs to sidecar."
+    },
+    "B_regression_integration": {
+      "agent": "general-purpose/sonnet",
+      "verdict": "PASS",
+      "high": 0,
+      "med": 1,
+      "low": 0,
+      "notes": "Suites 3631 green; hooks 67/67; validate 0 errors; doctor pin 19 intact (142 green); repeat-run byte-identical (serial per lane-A-of-121's lesson); 17-file inventory fully sanctioned; session-start.sh diff 0 non-comment lines + live hook run clean; 119/120/121 surfaces 133/133; dark invariant zero live importers. MED (pre-existing, not 126): located #066's root cause — database.py:1859 os.getcwd() fallback when PD_WORKSPACE_ROOT unset — FILED into #066 (backlog enriched)."
+    },
+    "C_artifact_truth_audit": {
+      "agent": "general-purpose/opus",
+      "verdict": "PASS",
+      "high": 0,
+      "med": 2,
+      "low": 1,
+      "notes": "No fabricated cites. All 6 shas + branch point verified; blocker sum independently re-derived = 12 (8F/4S) confirming the retro correction; dispatch count 22 recounted exact; battery chain + trajectory + streak caveats all resolve; CHANGELOG technical claims verified against code incl. the pre-fix 'feature 120's projection' misattribution at the branch point; baseline p50/p95 spot-computed from the verbatim distribution. MED-1 FIXED: '121 one feature earlier' — 121 is TWO features before 126; corrected in retro + review-history. MED-2 FIXED: '+17 deepener tests' is 16 (net-new recount) — corrected in retro, review-history ×2, CHANGELOG; commit subject immutable, recorded in retro Process Notes. LOW (~137 dirs now 149 — hedged, accurate at capture) to sidecar."
+    }
+  },
+  "policy": "HIGH blocks; MED fix-or-file; LOW fix-or-sidecar",
+  "dispositions": {
+    "med_fixed": [
+      "bench END-marker drift hole (awk saw_start/!saw_end → exit 9 → bash exit 3; probe re-verified)",
+      "seeder re-run duplication (loud refusal on existing v2.db)",
+      "retro/review-history '121 one feature earlier' → two",
+      "deepener test count 17 → 16 across retro/review-history/CHANGELOG"
+    ],
+    "med_filed": ["#066 enriched with database.py:1859 root cause (pre-existing, not 126's)"],
+    "low_sidecar": [".qa-gate-low-findings.md: empty-extraction message conflation; --features 0 double-run; ~137→149 dir drift note"]
+  }
+}
