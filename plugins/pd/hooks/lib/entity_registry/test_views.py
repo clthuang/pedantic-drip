@@ -2,9 +2,10 @@
 
 Covers design 120 Testing Strategy #1 (SC1, the six D5 deterministic
 fixtures: three-axis latest, out-of-order timestamp, rowid-confound,
-single-axis entity, zero-event entity, NULL-to_value latest) and #2 (SC2,
+single-axis entity, zero-event entity, NULL-to_value latest), #2 (SC2,
 view immutability + the entities column-set pin against feature 118's
-DDL).
+DDL), and #3 (SC3, a stdlib-seeded replay property test over 200 cases —
+design D4).
 
 Imports `views` at module top like its siblings (test_events.py,
 test_display.py) — views.py's own module-top `import entity_registry.events`
@@ -16,7 +17,10 @@ events + views DDL as a result.
 """
 from __future__ import annotations
 
+import random
 import sqlite3
+import time
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -433,3 +437,316 @@ class TestEntitiesColumnSetUnchanged:
             "type_id", "name", "artifact_path", "parent_uuid",
             "created_at", "updated_at", "metadata",
         ]
+
+
+# ---------------------------------------------------------------------------
+# Design D4 / spec SC3: replay property test.
+#
+# A stdlib-seeded pseudo-random generator produces MASTER_SEED-derived
+# per-case seeds; each case builds its OWN `random.Random(case_seed)` and
+# EVERY stochastic draw for that case — entity count, per-entity event
+# count, axis, to_value (including None), actor, timestamp, the
+# shuffled-insert coin flip, and the uuid shuffle — comes from that one
+# instance. The global `random` module is never called (no bare `random.*`
+# below; every draw is `case_rng.*` or `master_rng.*`), which is what
+# makes the whole 200-case run reproducible from MASTER_SEED alone.
+#
+# `generate_uuid7()` itself is NEVER seeded — entity uuids and (for the
+# raw-INSERT half) event uuids come straight from the real, unseeded
+# minter, so their concrete values legitimately differ run-to-run;
+# determinism lives in the seeded DECISION stream, not the uuids.
+#
+# ONE bootstrapped DB + ONE connect_v2 connection serve all 200 cases.
+# Events are immutable (DELETE is trigger-forbidden), so there is no
+# cleanup between cases — isolation instead comes from each case using its
+# own fresh entity uuids and every read below being scoped
+# `WHERE entity_uuid IN (case uuids)`.
+#
+# Roughly half the cases (the per-case coin flip) pre-mint all their event
+# uuids, SHUFFLE that list, and raw-INSERT on the connect_v2 connection
+# binding the (now shuffled) uuid explicitly — so the physical
+# insertion/rowid sequence no longer agrees with uuid magnitude order,
+# which is what actually exercises the rowid-confound property at scale
+# (mirrors the deterministic TestRowidConfound fixture above, but via
+# random data). The other half writes every event through the real
+# `append_event` (API-path realism) with no shuffling.
+#
+# The replay oracle is a pure-Python max-uuid fold per (entity_uuid,
+# axis); each case's per-axis and pivoted view rows are compared
+# field-by-field against that fold. A failing case calls `pytest.fail`
+# with the case seed and the full event sequence so it is reproducible.
+# ---------------------------------------------------------------------------
+MASTER_SEED = 0x120
+_PROPERTY_CASE_COUNT = 200
+_PROPERTY_TIME_GUARD_SECONDS = 5.0
+
+_AXES = ("pipeline", "execution", "lifecycle")
+_TO_VALUE_POOL = ("alpha", "beta", "gamma", "delta", "epsilon", None)
+_ACTOR_POOL = ("tester-alpha", "tester-beta", "tester-gamma")
+
+# A fixed epoch + random offset keeps generated `timestamp` values
+# uncorrelated with generation/mint order — the "out-of-order timestamps"
+# draw (design D4) that stops a view rewrite from accidentally keying off
+# `timestamp` instead of `MAX(uuid)` (mirrors TestOutOfOrderTimestamp
+# above, at property-test scale).
+_TIMESTAMP_EPOCH = datetime(2020, 1, 1, tzinfo=timezone.utc)
+_TIMESTAMP_SPAN_SECONDS = 5 * 365 * 24 * 3600
+
+_RAW_INSERT_EVENT_SQL = (
+    "INSERT INTO events "
+    "(uuid, entity_uuid, event_type, axis, from_value, to_value, actor, timestamp, payload) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+)
+
+
+def _random_timestamp(case_rng: random.Random) -> str:
+    """Return a random ISO-8601 UTC timestamp string, uncorrelated with
+    generation order (design D4's "out-of-order timestamps" draw)."""
+    offset_seconds = case_rng.uniform(0, _TIMESTAMP_SPAN_SECONDS)
+    moment = _TIMESTAMP_EPOCH + timedelta(seconds=offset_seconds)
+    return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _build_case(case_index: int, case_seed: int) -> dict:
+    """Generate one property-test case's plan from *case_seed* alone.
+
+    Every stochastic draw — entity count, per-entity event count, axis,
+    to_value, actor, timestamp, the shuffled-insert coin flip, and (for
+    the raw-INSERT half) the uuid shuffle — comes from this case's own
+    `random.Random(case_seed)` instance; the global `random` module is
+    never touched (design D4).
+    """
+    case_rng = random.Random(case_seed)
+    use_raw_insert = case_rng.random() < 0.5
+    entity_uuids = [generate_uuid7() for _ in range(case_rng.randint(1, 8))]
+
+    event_specs = []
+    for entity_uuid in entity_uuids:
+        for _ in range(case_rng.randint(0, 12)):
+            event_specs.append({
+                "entity_uuid": entity_uuid,
+                "axis": case_rng.choice(_AXES),
+                "to_value": case_rng.choice(_TO_VALUE_POOL),
+                "actor": case_rng.choice(_ACTOR_POOL),
+                "timestamp": _random_timestamp(case_rng),
+            })
+
+    if use_raw_insert:
+        # Pre-mint ALL this case's event uuids (mint order is monotonic —
+        # see uuid7.py — so this list is what "real" append order would
+        # look like), then SHUFFLE it before binding: the raw-INSERT loop
+        # in _apply_case walks event_specs in plain generation order, so
+        # once the shuffled uuids are bound below, physical
+        # insertion/rowid order no longer agrees with uuid magnitude
+        # order — the rowid-confound constraint (design D4) that kills a
+        # rowid-latest (or no-aggregate bare-column) view rewrite.
+        minted_uuids = [generate_uuid7() for _ in event_specs]
+        case_rng.shuffle(minted_uuids)
+        for spec, event_uuid in zip(event_specs, minted_uuids):
+            spec["uuid"] = event_uuid
+    # else: append_event (in _apply_case) mints + assigns spec["uuid"]
+    # itself, in generation order — no shuffle on this half (API-path
+    # realism: a typical caller does not pre-mint or reorder its writes).
+
+    return {
+        "case_index": case_index,
+        "case_seed": case_seed,
+        "use_raw_insert": use_raw_insert,
+        "entity_uuids": entity_uuids,
+        "event_specs": event_specs,
+    }
+
+
+def _apply_case(conn: sqlite3.Connection, workspace_uuid: str, case: dict) -> None:
+    """Write *case*'s entities + events to *conn* (a connect_v2
+    connection). No manual transaction wrapping: connect_v2 is
+    autocommit=True, so every bare `conn.execute(...)` below commits on
+    its own, and `append_event` manages its own standalone
+    BEGIN IMMEDIATE/INSERT/COMMIT internally — the most literal reading
+    of "raw INSERT on the connect_v2 conn" / "writes through
+    append_event" (design D4)."""
+    for index, entity_uuid in enumerate(case["entity_uuids"]):
+        conn.execute(
+            "INSERT INTO entities (uuid, workspace_uuid, type, kind, lifecycle_class, "
+            "type_id, name, artifact_path, parent_uuid, created_at, updated_at, metadata) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                entity_uuid, workspace_uuid, "feature", "feature", "artifact",
+                f"120-property-{case['case_index']}-{case['case_seed']}-{index}",
+                "Property Test Entity", None, None, _NOW, _NOW, None,
+            ),
+        )
+
+    if case["use_raw_insert"]:
+        for spec in case["event_specs"]:
+            conn.execute(
+                _RAW_INSERT_EVENT_SQL,
+                (
+                    spec["uuid"], spec["entity_uuid"], "property_event", spec["axis"],
+                    None, spec["to_value"], spec["actor"], spec["timestamp"], None,
+                ),
+            )
+    else:
+        for spec in case["event_specs"]:
+            spec["uuid"] = events.append_event(
+                conn, entity_uuid=spec["entity_uuid"], event_type="property_event",
+                axis=spec["axis"], to_value=spec["to_value"], actor=spec["actor"],
+                timestamp=spec["timestamp"],
+            )
+
+
+def _replay_fold(event_specs: list[dict]) -> dict[tuple[str, str], dict]:
+    """Pure-Python replay oracle: max-uuid fold per (entity_uuid, axis)
+    (design D4) — the "real" latest event per axis, independent of
+    insertion order or the `timestamp` field's value."""
+    latest: dict[tuple[str, str], dict] = {}
+    for spec in event_specs:
+        key = (spec["entity_uuid"], spec["axis"])
+        current = latest.get(key)
+        if current is None or spec["uuid"] > current["uuid"]:
+            latest[key] = spec
+    return latest
+
+
+def _read_case_axis_state(conn: sqlite3.Connection, entity_uuids: list[str]) -> dict:
+    """entity_axis_state rows for *entity_uuids*, keyed by
+    (entity_uuid, axis) — the case-scoped counterpart to the
+    single-entity `_read_axis_state` fixture helper above."""
+    placeholders = ",".join("?" * len(entity_uuids))
+    rows = conn.execute(
+        f"SELECT entity_uuid, axis, to_value, event_uuid, timestamp "
+        f"FROM entity_axis_state WHERE entity_uuid IN ({placeholders})",
+        entity_uuids,
+    ).fetchall()
+    return {
+        (row[0], row[1]): {"to_value": row[2], "event_uuid": row[3], "timestamp": row[4]}
+        for row in rows
+    }
+
+
+def _read_case_pivoted_state(conn: sqlite3.Connection, entity_uuids: list[str]) -> dict:
+    """entity_state rows for *entity_uuids*, keyed by entity_uuid — the
+    case-scoped counterpart to the single-entity `_read_pivoted_state`
+    fixture helper above."""
+    placeholders = ",".join("?" * len(entity_uuids))
+    columns = (
+        "entity_uuid", "pipeline_value", "pipeline_at",
+        "execution_value", "execution_at", "lifecycle_value", "lifecycle_at",
+    )
+    rows = conn.execute(
+        f"SELECT entity_uuid, pipeline_value, pipeline_at, execution_value, "
+        f"execution_at, lifecycle_value, lifecycle_at FROM entity_state "
+        f"WHERE entity_uuid IN ({placeholders})",
+        entity_uuids,
+    ).fetchall()
+    return {row[0]: dict(zip(columns, row)) for row in rows}
+
+
+def _fail_case(case: dict, detail: str) -> None:
+    """Fail with the case seed + full event sequence so a failure is
+    reproducible (design D4's failure-output contract). Re-running
+    `_build_case(case["case_index"], case["case_seed"])` reproduces the
+    same DECISION stream (counts/axes/values/coin-flip/shuffle) — the
+    concrete uuid7 values will legitimately differ, since generate_uuid7
+    is never seeded."""
+    pytest.fail(
+        f"seed={case['case_seed']} case_index={case['case_index']}: {detail}\n"
+        f"use_raw_insert={case['use_raw_insert']} entity_uuids={case['entity_uuids']!r}\n"
+        f"sequence={case['event_specs']!r}"
+    )
+
+
+def _assert_case_matches_replay(conn: sqlite3.Connection, case: dict) -> None:
+    """Compare *case*'s written rows against the pure-Python replay fold,
+    field-by-field, for both `entity_axis_state` and the pivoted
+    `entity_state` (design D4)."""
+    entity_uuids = case["entity_uuids"]
+    expected_axis = _replay_fold(case["event_specs"])
+    actual_axis = _read_case_axis_state(conn, entity_uuids)
+    actual_pivoted = _read_case_pivoted_state(conn, entity_uuids)
+
+    for entity_uuid in entity_uuids:
+        pivoted_row = actual_pivoted.get(entity_uuid)
+        if pivoted_row is None:
+            _fail_case(
+                case,
+                f"entity={entity_uuid} missing from entity_state "
+                f"(expected an all-NULL pivoted row)",
+            )
+
+        for axis in _AXES:
+            expected = expected_axis.get((entity_uuid, axis))
+            actual = actual_axis.get((entity_uuid, axis))
+
+            if expected is None and actual is not None:
+                _fail_case(
+                    case,
+                    f"entity={entity_uuid} axis={axis}: expected ABSENT from "
+                    f"entity_axis_state (no events on this axis), got {actual!r}",
+                )
+            if expected is not None and actual is None:
+                _fail_case(
+                    case,
+                    f"entity={entity_uuid} axis={axis}: expected a row "
+                    f"(to_value={expected['to_value']!r}, uuid={expected['uuid']!r}), "
+                    f"got NONE from entity_axis_state",
+                )
+            if expected is not None and actual is not None:
+                for field, expected_value in (
+                    ("to_value", expected["to_value"]),
+                    ("event_uuid", expected["uuid"]),
+                    ("timestamp", expected["timestamp"]),
+                ):
+                    if actual[field] != expected_value:
+                        _fail_case(
+                            case,
+                            f"entity={entity_uuid} axis={axis} field={field}: "
+                            f"expected {expected_value!r}, got {actual[field]!r} "
+                            f"(entity_axis_state)",
+                        )
+
+            value_column, at_column = f"{axis}_value", f"{axis}_at"
+            expected_value = expected["to_value"] if expected is not None else None
+            expected_at = expected["timestamp"] if expected is not None else None
+            if pivoted_row[value_column] != expected_value:
+                _fail_case(
+                    case,
+                    f"entity={entity_uuid} pivoted {value_column}: "
+                    f"expected {expected_value!r}, got {pivoted_row[value_column]!r}",
+                )
+            if pivoted_row[at_column] != expected_at:
+                _fail_case(
+                    case,
+                    f"entity={entity_uuid} pivoted {at_column}: "
+                    f"expected {expected_at!r}, got {pivoted_row[at_column]!r}",
+                )
+
+
+class TestReplayProperty:
+    """Design D4 / spec SC3: N=200 seeded random event sequences, each
+    checked field-by-field against both views via a pure-Python replay
+    oracle. One bootstrapped DB + one connect_v2 connection for the whole
+    run; per-case entity namespaces provide isolation (events are
+    immutable, so there is no cleanup between cases)."""
+
+    def test_view_matches_replay_across_200_seeded_cases(
+        self, bootstrapped_db_path, v2_conn
+    ):
+        workspace_uuid = "workspace-uuid-views-property-test"
+        _seed_workspace(bootstrapped_db_path, workspace_uuid)
+
+        master_rng = random.Random(MASTER_SEED)
+        case_seeds = [master_rng.getrandbits(64) for _ in range(_PROPERTY_CASE_COUNT)]
+
+        start = time.perf_counter()
+        for case_index, case_seed in enumerate(case_seeds):
+            case = _build_case(case_index, case_seed)
+            _apply_case(v2_conn, workspace_uuid, case)
+            _assert_case_matches_replay(v2_conn, case)
+        elapsed = time.perf_counter() - start
+
+        assert elapsed < _PROPERTY_TIME_GUARD_SECONDS, (
+            f"property loop over {_PROPERTY_CASE_COUNT} cases took "
+            f"{elapsed:.3f}s (>= {_PROPERTY_TIME_GUARD_SECONDS}s non-regression "
+            f"guard, design 120 SC3)"
+        )
