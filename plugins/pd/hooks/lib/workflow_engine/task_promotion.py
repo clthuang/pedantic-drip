@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
 
 def query_ready_tasks(
-    db: "EntityDatabase", workspace_uuid: str | None = None
+    db: "EntityDatabase", *, workspace_uuid: str | None = None
 ) -> list[dict]:
     """Return task entities that are ready for execution.
 

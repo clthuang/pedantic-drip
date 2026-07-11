@@ -133,7 +133,9 @@ def create_app(db_path: str | None = None) -> FastAPI:
     )
 
     try:
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        # sqlite hand-built URIs do not auto-escape ?/#/% in the path
+        escaped = db_path.replace("%", "%25").replace("?", "%3F").replace("#", "%23")
+        conn = sqlite3.connect(f"file:{escaped}?mode=ro", uri=True)
         try:
             app.state.workspace_uuid = _lookup_workspace_uuid_by_project_root(
                 conn, os.path.abspath(os.getcwd())
