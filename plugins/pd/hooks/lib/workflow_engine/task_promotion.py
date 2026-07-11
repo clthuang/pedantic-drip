@@ -27,7 +27,9 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
-def query_ready_tasks(db: "EntityDatabase") -> list[dict]:
+def query_ready_tasks(
+    db: "EntityDatabase", *, workspace_uuid: str | None = None
+) -> list[dict]:
     """Return task entities that are ready for execution.
 
     Ready = type=task, status=planned, no blocked_by entries,
@@ -39,13 +41,20 @@ def query_ready_tasks(db: "EntityDatabase") -> list[dict]:
     ----------
     db:
         Open EntityDatabase instance.
+    workspace_uuid:
+        If provided, scopes the CANDIDATE query to this workspace. The
+        per-task ``query_dependencies``/``get_workflow_phase`` lookups
+        below are single-entity reads on the already-scoped candidate and
+        stay unscoped -- a blocker may legitimately live in a different
+        workspace and must still be honored (scoping candidates, not
+        edges). ``None`` (default) preserves the unscoped return.
 
     Returns
     -------
     list[dict]
         Each dict: {uuid, type_id, name, status, parent_type_id, parent_phase}.
     """
-    tasks = db.list_entities(entity_type="task")
+    tasks = db.list_entities(entity_type="task", workspace_uuid=workspace_uuid)
     if not tasks:
         return []
 

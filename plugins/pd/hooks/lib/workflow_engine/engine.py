@@ -211,8 +211,18 @@ class WorkflowStateEngine:
             state, target_phase, existing_artifacts, yolo_active=False
         )
 
-    def list_by_phase(self, phase: str) -> list[FeatureWorkflowState]:
-        """All features currently in the given phase."""
+    def list_by_phase(
+        self, phase: str, *, workspace_uuid: str | None = None
+    ) -> list[FeatureWorkflowState]:
+        """All features currently in the given phase.
+
+        ``workspace_uuid``, when provided, scopes the DB-backed query to
+        that workspace (plus orphan rows -- see
+        ``EntityDatabase.list_workflow_phases``). The degraded filesystem
+        fallback below takes no workspace argument: a local
+        ``artifacts_root`` scan is implicitly current-workspace-only, so a
+        ``'*'`` (all-workspaces) request cannot be served while degraded.
+        """
         if not self._check_db_health():
             print(
                 f"workflow-engine: DB unhealthy, falling back to filesystem "
@@ -225,7 +235,9 @@ class WorkflowStateEngine:
             ]
 
         try:
-            rows = self.db.list_workflow_phases(workflow_phase=phase)
+            rows = self.db.list_workflow_phases(
+                workflow_phase=phase, workspace_uuid=workspace_uuid
+            )
             return [self._row_to_state(row) for row in rows]
         except sqlite3.Error as exc:
             print(
@@ -238,8 +250,19 @@ class WorkflowStateEngine:
                 if s.current_phase == phase
             ]
 
-    def list_by_status(self, status: str) -> list[FeatureWorkflowState]:
-        """All features with the given entity status."""
+    def list_by_status(
+        self, status: str, *, workspace_uuid: str | None = None
+    ) -> list[FeatureWorkflowState]:
+        """All features with the given entity status.
+
+        ``workspace_uuid``, when provided, scopes BOTH data sources this
+        method reads -- the ``list_entities`` call and the
+        ``list_workflow_phases`` call -- so the two stay consistent. The
+        degraded filesystem fallback below takes no workspace argument: a
+        local ``artifacts_root`` scan is implicitly current-workspace-only,
+        so a ``'*'`` (all-workspaces) request cannot be served while
+        degraded.
+        """
         if not self._check_db_health():
             print(
                 f"workflow-engine: DB unhealthy, falling back to filesystem "
@@ -249,11 +272,13 @@ class WorkflowStateEngine:
             return self._scan_features_by_status(status)
 
         try:
-            entities = self.db.list_entities(entity_type="feature")
+            entities = self.db.list_entities(
+                entity_type="feature", workspace_uuid=workspace_uuid
+            )
             matching = [e for e in entities if e.get("status") == status]
 
             # 2-query pattern: fetch all workflow rows once, join in Python
-            wp_rows = self.db.list_workflow_phases()
+            wp_rows = self.db.list_workflow_phases(workspace_uuid=workspace_uuid)
             wp_map = {r["type_id"]: r for r in wp_rows}
 
             results: list[FeatureWorkflowState] = []

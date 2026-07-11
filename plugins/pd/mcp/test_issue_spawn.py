@@ -310,9 +310,9 @@ class TestAC95ParentValidation:
     """AC-9.5 + FR-9.6 + FR-EX.3: non-existent parent →
     ``entitynotfounderror`` envelope with ``parent_not_found`` substring;
     disallowed parent kind → ``valueerror`` envelope with
-    ``invalid_parent_kind`` substring; cross-workspace parent →
-    ``valueerror`` envelope with ``cross-workspace parent forbidden``
-    substring (design IF-1 step 5b).
+    ``invalid_parent_kind`` substring. Cross-workspace parent spawn is no
+    longer gated (feature 129 Task 2) — see
+    ``test_cross_workspace_parent_spawn_succeeds`` below.
     """
 
     def test_nonexistent_parent_returns_error_envelope(self, server, db):
@@ -352,16 +352,16 @@ class TestAC95ParentValidation:
         assert data.get("error_type") == "valueerror"
         assert "invalid_parent_kind" in data.get("message", "")
 
-    def test_cross_workspace_parent_returns_error_envelope(
+    def test_cross_workspace_parent_spawn_succeeds(
         self, server, db, tmp_path, monkeypatch
     ):
-        """AC-9.5 extension + FR-9.6 cross-workspace gate (design IF-1
-        step 5b).
+        """Feature 129 Task 2: the FR-9.6 cross-workspace gate is deleted —
+        cross-workspace parent spawn is now an ordinary permitted operation.
 
         Create the parent feature in workspace_B; the caller is in
-        __unknown__ (default fixture). The call must (a) return a JSON
-        error envelope and (b) leave entities + phase_events row counts
-        byte-identical.
+        __unknown__ (default fixture). The call must (a) succeed (no error
+        envelope; a uuid is returned) and (b) the parent link reads back —
+        the new entity's parent_uuid points at the workspace_B parent.
         """
         # Set up a SECOND workspace (mirrors test_complete_phase_closes.py
         # AC-10.6 pattern at :393).
@@ -385,47 +385,28 @@ class TestAC95ParentValidation:
         )
 
         # Caller is in __unknown__ workspace (server fixture set
-        # _workspace_uuid=""), so resolved caller workspace will be
-        # _UNKNOWN_WORKSPACE_UUID — different from ws_b_uuid.
-        entities_before = db._conn.execute(
-            "SELECT COUNT(*) FROM entities WHERE kind = 'bug'"
-        ).fetchone()[0]
-        events_before = db._conn.execute(
-            "SELECT COUNT(*) FROM phase_events "
-            "WHERE event_type = 'spawned_child'"
-        ).fetchone()[0]
-
+        # _workspace_uuid=""), so resolved caller workspace differs from
+        # ws_b_uuid — but that mismatch no longer blocks the spawn.
         result_raw = _run(server.issue_spawn(
             parent_uuid=parent_uuid_ws_b,
             kind="bug",
-            summary="Should not be created",
+            summary="Cross workspace child",
         ))
         data = json.loads(result_raw)
-        assert data.get("error") is True, (
-            f"expected error envelope, got {data!r}"
-        )
-        assert data.get("error_type") == "valueerror", (
-            f"expected error_type='valueerror', got {data!r}"
-        )
-        assert "cross-workspace parent forbidden" in data.get("message", ""), (
-            f"expected 'cross-workspace parent forbidden' in message, got "
-            f"{data!r}"
-        )
+        assert "error" not in data, f"expected success, got {data!r}"
+        new_uuid = data.get("uuid")
+        assert new_uuid, f"expected uuid in response, got {data!r}"
 
-        # No partial state: bug count unchanged, no spawned_child event.
-        entities_after = db._conn.execute(
-            "SELECT COUNT(*) FROM entities WHERE kind = 'bug'"
-        ).fetchone()[0]
-        events_after = db._conn.execute(
-            "SELECT COUNT(*) FROM phase_events "
-            "WHERE event_type = 'spawned_child'"
-        ).fetchone()[0]
-        assert entities_before == entities_after, (
-            f"bug entity count changed: {entities_before} → {entities_after}"
-        )
-        assert events_before == events_after, (
-            f"spawned_child event count changed: "
-            f"{events_before} → {events_after}"
+        # Parent link reads back even though the parent lives in a
+        # different workspace than the caller.
+        row = db._conn.execute(
+            "SELECT parent_uuid FROM entities WHERE uuid = ?",
+            (new_uuid,),
+        ).fetchone()
+        assert row is not None
+        assert row["parent_uuid"] == parent_uuid_ws_b, (
+            f"expected parent_uuid={parent_uuid_ws_b!r}, "
+            f"got {row['parent_uuid']!r}"
         )
 
     def test_no_partial_state_on_parent_not_found(

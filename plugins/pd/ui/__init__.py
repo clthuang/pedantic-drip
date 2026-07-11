@@ -1,6 +1,8 @@
 """pd UI server — FastAPI app factory."""
 
 import os
+import sqlite3
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -98,6 +100,9 @@ def create_app(db_path: str | None = None) -> FastAPI:
     -------
     FastAPI application instance. If the DB file does not exist,
     app.state.db is set to None (board route renders error page).
+    app.state.workspace_uuid holds the resolved workspace scope (None if
+    resolution fails or no workspace matches the current project root;
+    routes then fall back to an unscoped, all-workspaces view).
     """
     # Resolve DB path: param -> env -> default
     if db_path is None:
@@ -117,6 +122,33 @@ def create_app(db_path: str | None = None) -> FastAPI:
         app.state.db = None
 
     app.state.db_path = db_path
+
+    # Workspace scoping (design D6): resolve once at startup via a
+    # READ-ONLY connection. Never uses the minting resolver
+    # (resolve_workspace_uuid) — a read-only board must never write
+    # workspace.json or a workspaces row. None means "unscoped" and routes
+    # fall back to today's board-wide view.
+    from entity_registry.project_identity import (
+        _lookup_workspace_uuid_by_project_root,
+    )
+
+    try:
+        # sqlite hand-built URIs do not auto-escape ?/#/% in the path
+        escaped = db_path.replace("%", "%25").replace("?", "%3F").replace("#", "%23")
+        conn = sqlite3.connect(f"file:{escaped}?mode=ro", uri=True)
+        try:
+            app.state.workspace_uuid = _lookup_workspace_uuid_by_project_root(
+                conn, os.path.abspath(os.getcwd())
+            )
+        finally:
+            conn.close()
+    except (sqlite3.Error, ValueError) as exc:
+        app.state.workspace_uuid = None
+        print(
+            f"[ui] WARN: workspace_uuid resolution failed ({exc!r}); "
+            "falling back to unscoped view",
+            file=sys.stderr,
+        )
 
     # Templates
     templates_dir = Path(__file__).parent / "templates"

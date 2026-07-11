@@ -1256,13 +1256,6 @@ def _process_complete_phase(
                             f"complete_phase: closure target not found: "
                             f"{to_uuid}"
                         )
-                    if row.get("workspace_uuid") != caller_workspace_uuid:
-                        raise InvalidCloseTargetError(
-                            f"complete_phase: cross-workspace closure "
-                            f"forbidden: {to_uuid} is in workspace "
-                            f"{row.get('workspace_uuid')}, caller is in "
-                            f"{caller_workspace_uuid}"
-                        )
                     lc = row.get("lifecycle_class")
                     if lc not in _CLOSES_TERMINAL:
                         if lc == "feature_flow":
@@ -1426,14 +1419,18 @@ def _process_validate_prerequisites(
 
 
 @_with_error_handling
-def _process_list_features_by_phase(engine: WorkflowStateEngine, phase: str) -> str:
-    states = engine.list_by_phase(phase)
+def _process_list_features_by_phase(
+    engine: WorkflowStateEngine, phase: str, workspace_uuid: str | None = None
+) -> str:
+    states = engine.list_by_phase(phase, workspace_uuid=workspace_uuid)
     return json.dumps([_serialize_state(s) for s in states])
 
 
 @_with_error_handling
-def _process_list_features_by_status(engine: WorkflowStateEngine, status: str) -> str:
-    states = engine.list_by_status(status)
+def _process_list_features_by_status(
+    engine: WorkflowStateEngine, status: str, workspace_uuid: str | None = None
+) -> str:
+    states = engine.list_by_status(status, workspace_uuid=workspace_uuid)
     return json.dumps([_serialize_state(s) for s in states])
 
 
@@ -2016,33 +2013,6 @@ def _resolve_list_handler_workspace_filter(
     return _workspace_uuid or None
 
 
-def _filter_states_by_workspace(
-    results_json: str, target_ws_uuid: str | None,
-) -> str:
-    """Post-filter a list_features_* result JSON by workspace_uuid.
-
-    ``target_ws_uuid is None`` means cross-workspace (no filter).
-    """
-    if target_ws_uuid is None or _db is None:
-        return results_json
-    try:
-        states = json.loads(results_json)
-        filtered = []
-        for s in states:
-            entity = _db.get_entity(s.get("feature_type_id", ""))
-            if entity and entity.get("workspace_uuid") == target_ws_uuid:
-                filtered.append(s)
-        return json.dumps(filtered)
-    except json.JSONDecodeError:
-        return results_json  # malformed JSON from engine — return as-is
-    except sqlite3.OperationalError as exc:
-        return _make_error(
-            "db_unavailable", str(exc),
-            "Database temporarily unavailable; retry shortly",
-        )
-    # FR-7: other exceptions PROPAGATE (no except Exception clause).
-
-
 @mcp.tool()
 async def list_features_by_phase(phase: str, project_id: str | None = None) -> str:
     """All features currently in a given workflow phase.
@@ -2071,8 +2041,7 @@ async def list_features_by_phase(phase: str, project_id: str | None = None) -> s
             "Pass project_id='*' for cross-workspace OR omit for "
             "current-workspace default",
         )
-    results = _process_list_features_by_phase(_engine, phase)
-    return _filter_states_by_workspace(results, ws_filter)
+    return _process_list_features_by_phase(_engine, phase, workspace_uuid=ws_filter)
 
 
 @mcp.tool()
@@ -2103,8 +2072,7 @@ async def list_features_by_status(status: str, project_id: str | None = None) ->
             "Pass project_id='*' for cross-workspace OR omit for "
             "current-workspace default",
         )
-    results = _process_list_features_by_status(_engine, status)
-    return _filter_states_by_workspace(results, ws_filter)
+    return _process_list_features_by_status(_engine, status, workspace_uuid=ws_filter)
 
 
 @mcp.tool()
@@ -2326,11 +2294,21 @@ async def promote_task(feature_ref: str, task_heading: str) -> str:
 
 
 @mcp.tool()
-async def query_ready_tasks() -> str:
+async def query_ready_tasks(project_id: str | None = None) -> str:
     """List task entities ready for execution.
 
     Returns tasks that are: type=task, status=planned, no blocked_by
     dependencies, and parent entity in implement phase.
+
+    Parameters
+    ----------
+    project_id:
+        Project scope. **Default: single-workspace** (current
+        ``_workspace_uuid``). Pass ``'*'`` to opt into cross-workspace
+        results. A legacy 12-char project_id resolves via
+        ``workspaces.project_id_legacy``. Dependency edges (blockers) are
+        always checked unscoped -- a blocker in another workspace still
+        blocks the scoped candidate.
     """
     err = _check_db_available()
     if err:
@@ -2338,7 +2316,17 @@ async def query_ready_tasks() -> str:
     if _db is None:
         return _NOT_INITIALIZED
     try:
-        tasks = _lib_query_ready_tasks(_db)
+        ws_filter = _resolve_list_handler_workspace_filter(project_id)
+    except ValueError as exc:
+        # FR-3.2-style isolation (D5): invalid legacy project_id must not
+        # be mislabeled by the generic "internal" handler below.
+        return _make_error(
+            "invalid_project_id", str(exc),
+            "Pass project_id='*' for cross-workspace OR omit for "
+            "current-workspace default",
+        )
+    try:
+        tasks = _lib_query_ready_tasks(_db, workspace_uuid=ws_filter)
         return json.dumps({"count": len(tasks), "tasks": tasks})
     except Exception as exc:
         return _make_error("internal", str(exc), "Report this error")

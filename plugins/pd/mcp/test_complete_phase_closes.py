@@ -378,12 +378,17 @@ class TestAc10_5CrossCloserConflict:
 
 
 # ---------------------------------------------------------------------------
-# AC-10.6 — cross-workspace closure forbidden
+# AC-10.6 — cross-workspace closure permitted
 # ---------------------------------------------------------------------------
 
 
-class TestAc10_6CrossWorkspaceForbidden:
-    def test_cross_workspace_close_raises(self, seeded, tmp_path):
+class TestAc10_6CrossWorkspacePermitted:
+    """Feature 129 Task 2: the FR-10.3 cross-workspace closure gate is
+    deleted — closing an entity that lives in a different workspace than
+    the caller is now an ordinary permitted operation.
+    """
+
+    def test_cross_workspace_close_succeeds(self, seeded, tmp_path):
         db = seeded["db"]
 
         # Create a second workspace + a bug inside it.
@@ -404,22 +409,31 @@ class TestAc10_6CrossWorkspaceForbidden:
             workspace_uuid=ws2_uuid,
         )
 
-        # Caller is in __unknown__ workspace (wss._workspace_uuid set via fixture).
+        # Caller is in __unknown__ workspace (wss._workspace_uuid set via
+        # fixture); the workspace mismatch no longer blocks the closure.
         result = _process_complete_phase(
             seeded["engine"], seeded["feature_type_id"], "finish",
             db=db, entity_engine=seeded["entity_engine"],
             closes=[u_bug_ws2],
         )
         data = json.loads(result)
-        assert data.get("error") is True
-        assert data["error_type"] == "invalidclosetargeterror"
-        assert "cross-workspace closure forbidden" in data["message"]
+        assert "error" not in data, f"expected success; got {data}"
+        assert data.get("closes_applied") == [u_bug_ws2]
 
-        # Bug status untouched
+        # Bug transitioned to 'closed'
         st = db._conn.execute(
             "SELECT status FROM entities WHERE uuid = ?", (u_bug_ws2,)
         ).fetchone()["status"]
-        assert st == "open"
+        assert st == "closed"
+
+        # `fixes` relation created from the feature to the foreign-workspace bug
+        feature_uuid = _get_uuid(db, seeded["feature_type_id"])
+        rel_count = db._conn.execute(
+            "SELECT COUNT(*) FROM entity_relations "
+            "WHERE from_uuid=? AND to_uuid=? AND kind='fixes'",
+            (feature_uuid, u_bug_ws2),
+        ).fetchone()[0]
+        assert rel_count == 1
 
 
 # ---------------------------------------------------------------------------

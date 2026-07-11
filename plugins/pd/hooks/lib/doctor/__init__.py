@@ -11,9 +11,6 @@ import time
 from doctor.check_audit_counter_write_path import (
     check_audit_counter_write_path,
 )
-from doctor.check_cross_workspace_parent_uuid import (
-    check_cross_workspace_parent_uuid,
-)
 from doctor.check_no_free_text_status_parsers import (
     check_no_free_text_status_parsers,
 )
@@ -60,9 +57,6 @@ CHECK_ORDER = [
     # Feature 111 / AC-CL.4 (Group E): lint for re-introduction of
     # free-text status-suffix parsers at the 3 production sites.
     check_no_free_text_status_parsers,
-    # Feature 115 C13-115.3 / FR-E-115.1: warning-only doctor check for
-    # unallowlisted cross-workspace parent_uuid rows.
-    check_cross_workspace_parent_uuid,
     # Feature 115 C10-115.4 / AC-C.7c: AST audit that only M15 mutates the
     # audit_emit_failed_count counter (sole-writer invariant).
     check_audit_counter_write_path,
@@ -92,7 +86,6 @@ _ENTITY_DB_CHECKS = {
     "check_entity_orphans",
     "check_referential_integrity",
     "check_stale_dependencies",
-    "check_cross_workspace_parent_uuid",
     "check_audit_emit_failed_count",
 }
 

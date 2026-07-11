@@ -5738,7 +5738,6 @@ class InvalidCloseTargetError(ValueError):
 
     Used by F10 complete_phase(closes=) for:
     - lifecycle_class not in _CLOSES_TERMINAL (FR-10.3 step 3)
-    - cross-workspace closure attempt (FR-10.3 step 2)
     - already terminal with different prior closer (FR-10.3 step 4)
     - already terminal with no prior closer record (FR-10.3 step 4)
     """
@@ -5766,33 +5765,6 @@ class PromotionConflictError(ValueError):
         self.workspace_uuid = workspace_uuid
         self.old_type_id = old_type_id
         self.new_type_id = new_type_id
-
-
-class CrossWorkspaceError(ValueError):
-    """Feature 115 FR-E.3 / 114 IF-3: raised when an MCP op would create a
-    cross-workspace link between entities that reside in different workspaces.
-
-    Inherits ValueError so existing MCP error handlers catch via the standard
-    ValueError path. The MCP envelope translator branch in entity_server.py
-    and server_helpers.py recognizes this typed exception and emits
-    ``error_type=cross_workspace_forbidden`` instead of the generic envelope.
-    """
-
-    def __init__(
-        self,
-        op_name: str,
-        pairs: list[tuple[str, str | None, str, str | None]],
-    ):
-        # Each tuple: (uuid_a, ws_a, uuid_b, ws_b) — pairs that mismatch
-        self.op_name = op_name
-        self.pairs = pairs
-        super().__init__(
-            f"cross-workspace {op_name} forbidden: "
-            + "; ".join(
-                f"{ua}@{wa} vs {ub}@{wb}"
-                for ua, wa, ub, wb in pairs
-            )
-        )
 
 
 class EntityDatabase:
@@ -6138,46 +6110,6 @@ class EntityDatabase:
             (to_uuid,),
         ).fetchone()
         return row[0] if row is not None else None
-
-    def _assert_same_workspace_pairwise(
-        self,
-        pair: tuple[str, str],
-        op_name: str,
-    ) -> None:
-        """Feature 115 FR-E.1 / 114 IF-3: assert two entities share workspace.
-
-        Raises :class:`CrossWorkspaceError` if the two entities reside in
-        different workspaces AND the pair is not present in
-        ``cross_workspace_allowlist`` (either ordering).
-
-        Per spec FR-E.2: pairwise comparison between the two entities — NOT
-        a check against the caller's workspace (which may differ from both).
-        """
-        uuid_a, uuid_b = pair
-        rows = self._conn.execute(
-            "SELECT uuid, workspace_uuid FROM entities WHERE uuid IN (?, ?)",
-            (uuid_a, uuid_b),
-        ).fetchall()
-        if len(rows) < 2:
-            # One or both entities not found — let downstream NOT-FOUND
-            # handling cover it. Don't raise here; that would mask the
-            # real "entity missing" error with a workspace mismatch.
-            return
-        by_uuid = {r["uuid"]: r["workspace_uuid"] for r in rows}
-        ws_a = by_uuid.get(uuid_a)
-        ws_b = by_uuid.get(uuid_b)
-        if ws_a == ws_b:
-            return  # Same workspace — fine.
-        # Mismatch detected. Check allowlist by entity-UUID pair (both orderings).
-        allow_row = self._conn.execute(
-            "SELECT id FROM cross_workspace_allowlist "
-            "WHERE (parent_uuid = ? AND child_uuid = ?) "
-            "OR (parent_uuid = ? AND child_uuid = ?)",
-            (uuid_a, uuid_b, uuid_b, uuid_a),
-        ).fetchone()
-        if allow_row is not None:
-            return  # Allowlisted — skip the assertion.
-        raise CrossWorkspaceError(op_name, [(uuid_a, ws_a, uuid_b, ws_b)])
 
     def insert_entity_relation(
         self,
@@ -6535,10 +6467,6 @@ class EntityDatabase:
 
         Idempotent (duplicate is ignored via INSERT OR IGNORE).
 
-        Feature 115 FR-E.2: cross-workspace gate. Raises CrossWorkspaceError
-        if entity and key_result reside in different workspaces (unless
-        allowlisted via cross_workspace_allowlist).
-
         Parameters
         ----------
         entity_uuid:
@@ -6546,9 +6474,6 @@ class EntityDatabase:
         key_result_uuid:
             UUID of the key_result entity to align with.
         """
-        self._assert_same_workspace_pairwise(
-            (entity_uuid, key_result_uuid), "add_okr_alignment"
-        )
         self._conn.execute(
             "INSERT OR IGNORE INTO entity_okr_alignment "
             "(entity_uuid, key_result_uuid) VALUES (?, ?)",
@@ -7068,10 +6993,6 @@ class EntityDatabase:
         # Self-parent check using UUIDs
         if child_uuid == parent_uuid:
             raise ValueError("entity cannot be its own parent")
-
-        # Feature 115 FR-E.2: cross-workspace gate. Raises CrossWorkspaceError
-        # if child and parent reside in different workspaces (unless allowlisted).
-        self._assert_same_workspace_pairwise((child_uuid, parent_uuid), "set_parent")
 
         # Circular reference detection via UUID-based CTE (depth-guarded)
         cur = self._conn.execute(
@@ -9040,6 +8961,7 @@ class EntityDatabase:
         *,
         kanban_column: str | None = None,
         workflow_phase: str | None = None,
+        workspace_uuid: str | None = None,
     ) -> list[dict]:
         """List workflow_phases rows with optional filters.
 
@@ -9049,11 +8971,18 @@ class EntityDatabase:
             If provided, filter by kanban_column.
         workflow_phase:
             If provided, filter by workflow_phase.
+        workspace_uuid:
+            If provided, scope to rows whose joined entity belongs to this
+            workspace, PLUS orphan rows (workflow_phases rows whose entity
+            was deleted — ``e.uuid IS NULL`` post-join). Orphans are
+            RETAINED under scope for anomaly visibility (declared output
+            change — see design D2/D4). ``None`` preserves today's
+            unscoped return exactly.
 
         Returns
         -------
         list[dict]
-            Matching rows as plain dicts. Both filters use AND logic.
+            Matching rows as plain dicts. All filters use AND logic.
         """
         clauses: list[str] = []
         params: list = []
@@ -9064,6 +8993,9 @@ class EntityDatabase:
         if workflow_phase is not None:
             clauses.append("wp.workflow_phase = ?")
             params.append(workflow_phase)
+        if workspace_uuid is not None:
+            clauses.append("(e.workspace_uuid = ? OR e.uuid IS NULL)")
+            params.append(workspace_uuid)
 
         # F11 (Group 6): project ``e.kind`` to the legacy ``entity_type``
         # result-set key for caller compatibility (TD-8 public API surface).
@@ -9112,14 +9044,7 @@ class EntityDatabase:
         """Add a dependency: entity_uuid is blocked by blocked_by_uuid.
 
         Uses INSERT OR IGNORE for idempotency.
-
-        Feature 115 FR-E.2: cross-workspace gate. Raises CrossWorkspaceError
-        if entity and blocked_by reside in different workspaces (unless
-        allowlisted via cross_workspace_allowlist).
         """
-        self._assert_same_workspace_pairwise(
-            (entity_uuid, blocked_by_uuid), "add_dependency"
-        )
         self._conn.execute(
             "INSERT OR IGNORE INTO entity_dependencies "
             "(entity_uuid, blocked_by_uuid) VALUES (?, ?)",

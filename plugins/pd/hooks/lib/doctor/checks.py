@@ -628,9 +628,12 @@ def check_unknown_workspace_orphans(
         )
 
     from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
+    from entity_registry.project_identity import (
+        _lookup_workspace_uuid_by_project_root,
+    )
 
     orphan_count = 0
-    root_uuids: list[str] = []
+    ws: str | None = None
     conn = None
     try:
         conn = sqlite3.connect(
@@ -646,16 +649,11 @@ def check_unknown_workspace_orphans(
             # Pre-Mig-11 schema has no workspace_uuid column — nothing to claim.
             orphan_count = 0
         try:
-            root_uuids = [
-                r[0]
-                for r in conn.execute(
-                    "SELECT uuid FROM workspaces "
-                    "WHERE project_root IS NOT NULL AND project_root = ?",
-                    (os.path.abspath(project_root),),
-                ).fetchall()
-            ]
+            ws = _lookup_workspace_uuid_by_project_root(
+                conn, os.path.abspath(project_root)
+            )
         except sqlite3.Error:
-            root_uuids = []
+            ws = None
     except sqlite3.Error:
         elapsed = int((time.monotonic() - start) * 1000)
         return CheckResult(
@@ -672,12 +670,12 @@ def check_unknown_workspace_orphans(
                 pass
 
     if orphan_count > 0:
-        if len(root_uuids) == 1:
+        if ws is not None:
             # The "Claim unknown-workspace entities into" prefix is the contract
             # with fixer._SAFE_PATTERNS; do not vary it.
             fix_hint = (
                 f"Claim unknown-workspace entities into workspace "
-                f"{root_uuids[0]}"
+                f"{ws}"
             )
         else:
             # Orphans exist but the current workspace is ambiguous (0 or >1 rows
@@ -1466,6 +1464,9 @@ def check_entity_orphans(
     #    workspace-scoped set when the project root resolves to exactly one
     #    workspace, else the unfiltered set (legacy behavior preserved).
     from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
+    from entity_registry.project_identity import (
+        _lookup_workspace_uuid_by_project_root,
+    )
 
     cross_project_count = 0
 
@@ -1484,17 +1485,12 @@ def check_entity_orphans(
     # abspath, NULL-guard, tolerated failure (missing workspaces table ->
     # unfiltered fallback, never a raise).
     try:
-        root_uuids = [
-            r[0]
-            for r in entities_conn.execute(
-                "SELECT uuid FROM workspaces "
-                "WHERE project_root IS NOT NULL AND project_root = ?",
-                (os.path.abspath(project_root),),
-            )
-        ]
+        ws = _lookup_workspace_uuid_by_project_root(
+            entities_conn, os.path.abspath(project_root)
+        )
     except sqlite3.Error:
-        root_uuids = []
-    scoped = len(root_uuids) == 1  # step-1 two-arm scoping iff exactly one
+        ws = None
+    scoped = ws is not None  # step-1 two-arm scoping iff exactly one match
 
     if scoped:
         db_features_step1, _tolerated = _run_live_schema_query(
@@ -1502,7 +1498,7 @@ def check_entity_orphans(
             "SELECT type_id, entity_id, artifact_path FROM entities "
             "WHERE kind = 'feature' "
             "AND (workspace_uuid = ? OR workspace_uuid = ?)",
-            (root_uuids[0], _UNKNOWN_WORKSPACE_UUID),
+            (ws, _UNKNOWN_WORKSPACE_UUID),
             "entity_orphans",
             issues,
             ("kind", "workspace_uuid"),
@@ -2178,10 +2174,3 @@ def check_audit_emit_failed_count(
         issues=issues,
         elapsed_ms=elapsed,
     )
-
-
-# ---------------------------------------------------------------------------
-# Feature 115 C13-115.3 / FR-E-115.1: cross-workspace parent_uuid check.
-# Function extracted to doctor/check_cross_workspace_parent_uuid.py per
-# Feature 116 FR-8 / F115 T2b.6 carry-forward (design rev 2).
-# ---------------------------------------------------------------------------
