@@ -27,7 +27,7 @@ from entity_registry.database import (
     EntityNotFoundError,
     PromotionConflictError,
 )
-from entity_registry.id_generator import generate_entity_id
+from entity_registry.id_generator import _slugify, generate_entity_id
 from entity_registry.project_identity import (
     GitProjectInfo,
     _compute_legacy_project_id,
@@ -531,7 +531,10 @@ async def register_entity(
         Unique identifier within the entity_type namespace
         (e.g. '029-entity-lineage-tracking'). Required unless auto_id=True.
     name:
-        Human-readable name (e.g. 'Entity Lineage Tracking').
+        Human-readable name (e.g. 'Entity Lineage Tracking'). Must be
+        non-blank — a blank/whitespace-only name returns an
+        ``invalid_input`` error envelope (feature 121 FR-5) instead of
+        registering.
     artifact_path:
         Optional filesystem path to the entity's artifact.
     status:
@@ -563,6 +566,24 @@ async def register_entity(
     if _db is None:
         return "Error: database not initialized (server not started)"
 
+    # Feature 121 D2: blank/whitespace name corrupts the registry (FR-5) —
+    # pre-check BEFORE any sequence consumption (the auto_id branch below
+    # calls generate_entity_id, which burns a counter value). Fires for
+    # BOTH auto_id and explicit-id calls: register_entity always persists
+    # `name`, so both call shapes need the same guard. Replaces the old
+    # auto_id-only truthy guard, which let a blank explicit-id name reach
+    # the DB-layer raise unguarded (bare crash, no structured error).
+    if not name or not name.strip():
+        return json.dumps({
+            "error": True,
+            "error_type": "invalid_input",
+            "message": (
+                "entity name must be non-empty (feature 121 FR-5: blank "
+                "display fields corrupt the registry)"
+            ),
+            "recovery_hint": "pass a non-blank name",
+        })
+
     # Feature 108 FR-13: resolve workspace_uuid via lazy global if caller
     # did not supply it. Default to the empty string when no workspace
     # context is set (legacy fixture path).
@@ -577,8 +598,6 @@ async def register_entity(
     if auto_id and entity_id:
         return "Error: cannot specify both auto_id=True and entity_id"
     if auto_id:
-        if not name:
-            return "Error: name is required when auto_id=True"
         entity_id = generate_entity_id(_db, entity_type, name, resolved_project_id)
     elif not entity_id:
         return "Error: entity_id is required (or use auto_id=True)"
@@ -602,6 +621,83 @@ async def register_entity(
         parent_uuid=parent_uuid,
         workspace_uuid=resolved_workspace_uuid,
     )
+
+
+# ---------------------------------------------------------------------------
+# Feature 121 D1 — allocate_entity_id MCP tool
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def allocate_entity_id(entity_type: str = "", name: str = "") -> str:   # async: matches every sibling @mcp.tool def (19 today)
+    """Atomically allocate the next {seq:03d}-{slug} entity id for a type.
+
+    Direct plumbing over ``next_sequence_value`` + ``_slugify`` (design
+    D1) — the same atomic ``BEGIN IMMEDIATE`` counter every registration
+    path uses, exposed standalone so callers (create-feature, decomposing)
+    can mint an id BEFORE any filesystem/DB write (feature 121 SC1). No
+    sequence value is consumed when an error envelope is returned.
+
+    Parameters
+    ----------
+    entity_type:
+        The entity type to allocate a sequence value for (e.g. 'feature').
+        Required. ``'project'`` is refused (``kind_deferred`` — project
+        ids stay ``P{NNN}`` until the 132 cutover).
+    name:
+        Human-readable name; slugified into the id's suffix. Must slugify
+        to a non-empty string.
+
+    Returns
+    -------
+    str
+        JSON ``{"seq": <int>, "entity_id": "<seq:03d>-<slug>"}`` on
+        success, or a structured error envelope (``workspace_unresolved``,
+        ``kind_deferred``, ``invalid_input``) on failure.
+    """
+    err = _check_db_available()
+    if err:
+        return json.dumps(err)
+    if _db is None:
+        return "Error: database not initialized (server not started)"
+
+    if not _workspace_uuid:
+        return json.dumps({
+            "error": True,
+            "error_type": "workspace_unresolved",
+            "message": (
+                "workspace identity not resolved (degraded startup) — "
+                "allocation refused"
+            ),
+            "recovery_hint": "restart the MCP server from the project root / run doctor",
+        })
+    if entity_type == "project":
+        return json.dumps({
+            "error": True,
+            "error_type": "kind_deferred",
+            "message": (
+                "project ids stay P{NNN} until the 132 cutover "
+                "(v1 bootstrap is regex-blind to P-leading ids)"
+            ),
+            "recovery_hint": "see backlog-manual #054(c)",
+        })
+    if not entity_type:
+        return json.dumps({
+            "error": True,
+            "error_type": "invalid_input",
+            "message": "entity_type is required",
+            "recovery_hint": "pass entity_type, e.g. 'feature'",
+        })
+    slug = _slugify(name or "")
+    if not slug:
+        return json.dumps({
+            "error": True,
+            "error_type": "invalid_input",
+            "message": "name must be non-empty and slugify to a non-empty slug",
+            "recovery_hint": "supply a descriptive name containing letters/digits",
+        })
+    seq = _db.next_sequence_value(entity_type=entity_type, workspace_uuid=_workspace_uuid)
+    return json.dumps({"seq": seq, "entity_id": f"{seq:03d}-{slug}"})
 
 
 # ---------------------------------------------------------------------------
