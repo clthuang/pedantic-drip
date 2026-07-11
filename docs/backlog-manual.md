@@ -11,7 +11,14 @@ reliable DB path; entries then migrate into the DB and this file retires.
 - **#054 — Feature-132 cutover checklist items** *(P004, source: feature 118 QA)*
   At cutover, decide: (a) what replaces the dropped-UNIQUE reliance on human-readable
   fields (v17 consumers that leaned on uniqueness must be enumerated); (b) whether
-  mixed uuid4/uuid7 populations get re-minted at backfill or grandfathered.
+  mixed uuid4/uuid7 populations get re-minted at backfill or grandfathered;
+  (c) *(added at 121 spec, 2026-07-11)* rewire `create-project.md:26-31`'s `P{NNN}`
+  filesystem scan to the atomic allocator — deferred from 121 because the v1 bootstrap
+  regex `^(\d+)` (database.py:9368) is blind to `P`-leading project ids and would
+  deterministically re-mint P001; 132's backfill seeds v2 sequences for every kind
+  from the census, so the rewire is a one-line command edit at cutover. Also honor
+  121's D-5 lean: the live `allocate_entity_id` MCP tool rejects `entity_type="project"`
+  until this lands — remove that guard in the same change.
 
 - **#055 — MCP workflow-state phase-events write path broken (silent data loss)** *(source: feature 118 QA)*
   Every `complete_phase`/`transition_phase` intermittently reports
