@@ -29,12 +29,29 @@ def test_cli_port_conflict_exits():
 # Task 4.2.3: CLI startup URL output (AC-1)
 # ---------------------------------------------------------------------------
 def test_cli_startup_url_output(capsys):
-    """CLI prints startup URL to stdout before starting uvicorn."""
+    """CLI prints startup URL to stdout before starting uvicorn.
+
+    Runs on an ephemeral free port, not the 8718 default: the plugin's
+    session-start hook legitimately holds 8718 whenever a real pd session
+    is live, which made the old `main([])` form environmentally flaky.
+    The pid-file/watchdog lifecycle trio is mocked for the same reason --
+    the unmocked test overwrote (then atexit-DELETED) the live server's
+    pid bookkeeping.
+    """
     from ui.__main__ import main
 
-    with unittest.mock.patch("ui.__main__.uvicorn") as mock_uvicorn:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        free_port = probe.getsockname()[1]
+
+    with (
+        unittest.mock.patch("ui.__main__.uvicorn") as mock_uvicorn,
+        unittest.mock.patch("ui.__main__.write_pid"),
+        unittest.mock.patch("ui.__main__.remove_pid"),
+        unittest.mock.patch("ui.__main__.start_lifetime_watchdog"),
+    ):
         mock_uvicorn.run = unittest.mock.MagicMock()
-        main([])
+        main(["--port", str(free_port)])
 
     captured = capsys.readouterr()
-    assert "http://127.0.0.1:8718/" in captured.out
+    assert f"http://127.0.0.1:{free_port}/" in captured.out
