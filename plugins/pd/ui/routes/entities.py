@@ -7,7 +7,12 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
 from ui.mermaid import build_mermaid_dag
-from ui.routes.helpers import DB_ERROR_USER_MESSAGE, missing_db_response
+from ui.routes.helpers import (
+    DB_ERROR_USER_MESSAGE,
+    effective_workspace_uuid,
+    missing_db_response,
+    switcher_context,
+)
 
 router = APIRouter(prefix="/entities")
 
@@ -62,11 +67,12 @@ def entity_list(
         return missing_db_response(templates, request, db_path)
 
     # Path 2: DB query error (wraps all DB calls)
+    switcher = None
     try:
         search_available = True
         type_filter = type if type in ENTITY_TYPES else None
 
-        workspace_uuid = request.app.state.workspace_uuid
+        workspace_uuid = effective_workspace_uuid(request)
 
         # Path 3: Search with FTS fallback
         if q:
@@ -96,6 +102,9 @@ def entity_list(
         workflow_lookup = _build_workflow_lookup(db, workspace_uuid=workspace_uuid)
         for e in entities:
             e["kanban_column"] = workflow_lookup.get(e["type_id"], {}).get("kanban_column")
+
+        if not request.headers.get("HX-Request"):
+            switcher = switcher_context(request, db)
 
     except Exception as exc:
         print(f"DB query error: {exc}", file=sys.stderr)
@@ -131,7 +140,7 @@ def entity_list(
     return templates.TemplateResponse(
         request=request,
         name="entities.html",
-        context=context,
+        context={**context, "switcher": switcher},
     )
 
 
