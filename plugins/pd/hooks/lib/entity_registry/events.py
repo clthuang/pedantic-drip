@@ -26,6 +26,12 @@ validating consumer is feature 120's projection, not this module):
   - ``branch``            camelCase — PRD FR-11 / .meta.json projection contract
   - ``brainstorm_source`` snake_case — matches live .meta.json
   - ``backlog_source``    snake_case — matches live .meta.json
+  - ``nameFrom``          camelCase — feature 121 D6 rename event payload
+                          (entity_registry.display.rename_entity; NOT an
+                          FR-11/.meta.json key)
+  - ``nameTo``            camelCase — feature 121 D6 rename event payload
+                          (entity_registry.display.rename_entity; NOT an
+                          FR-11/.meta.json key)
 """
 from __future__ import annotations
 
