@@ -47,7 +47,7 @@ Claude Code plugin providing a structured feature development workflow—skills,
 *Why:* Feature 131's spec absorbed a false reviewer claim about `backfill_project_ids` for a full round; only a second independent dispatch caught it.
 *Enforced by:* Convention — cite the verifying file:line in the applied-fix note.
 
-**Non-vacuity test guard:** When a change adds a new/rewritten code path beside an existing tolerate/fallback path, every test targeting the new path must assert a fact true ONLY on that path — "no exception / zero issues" is satisfied by the fallback too. Interface-contract edits inside one doc must sweep ALL restatements (signature, snippets, prose) in the same revision.
+**Non-vacuity test guard:** When a change adds a new/rewritten code path beside an existing tolerate/fallback path, every test targeting the new path must assert a fact true ONLY on that path — "no exception / zero issues" is satisfied by the fallback too. Interface-contract edits inside one doc must sweep ALL restatements (signature, snippets, prose) in the same revision — MECHANICALLY: after any contract-changing fix, grep the whole current-phase artifact set for the fact's other restatements (headline/table/prose/risk-note quadruple) before declaring the fix done; a reviewer naming one location is not evidence the others were checked (feature 130+121: four half-sweep occurrences across two features, all gate-caught, all iteration-budget burns).
 *Why:* Feature 131 re-flagged vacuous-green in 4 separate review rounds, and a half-swept doc contract cost a handoff blocker.
 *Enforced by:* Design/plan reviewer checklists; design docs pin contracts in ONE code block where possible.
 
@@ -59,7 +59,8 @@ Claude Code plugin providing a structured feature development workflow—skills,
 *Why:* Feature 130's retro briefing carried three source-contradicting figures (an iteration count, a swapped campaign trajectory, a reviewer-breakdown miscount) — the 119 author-restated-literal class, one layer up at the briefing↔artifact boundary. The retro-facilitator caught all three only because it re-derived.
 *Enforced by:* retro-facilitator re-derivation practice; orchestrator briefing hygiene.
 
-**Shared-config blast radius:** When a change bumps a repo-wide config value (`requires-python`, a version pin, a default path), grep the ENTIRE repo for the old value's consumers (CI workflows, shell scripts — `bootstrap-venv.sh`, `doctor.sh` — and docs) before the phase gate.
+**Shared-config blast radius:** When a change bumps a repo-wide config value (`requires-python`, a version pin, a default path), grep the ENTIRE repo for the old value's consumers (CI workflows, shell scripts — `bootstrap-venv.sh`, `doctor.sh` — and docs) before the phase gate. Same trigger applies when a REVIEWER FIX pulls a previously out-of-scope file/surface into an artifact: the pull-in is a second, independent finding needing its own adjacent-surface check (shared regexes, id formats, sibling consumers) — satisfying the original blocker's criterion is not that check.
+*Also-why:* Feature 121's specify iter-1 fix pulled create-project.md in; iter-2 found the pull-in would deterministically re-mint P001 via a format/regex interaction the fix never examined — 2 of the feature's 10 blockers came from that one unchecked scope-widening.
 *Why:* Feature 118's Python-floor bump left bootstrap/doctor/CI enforcing 3.12 — every reviewer was scoped to the feature diff, so the stale consumers were invisible until a finish-phase grep; a 3.12 venv would have crashed at runtime with a false all-clear.
 *Enforced by:* plan-reviewer checklist line ("shared-config value change … repo-wide consumer sweep").
 

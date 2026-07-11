@@ -34,6 +34,11 @@ reliable DB path; entries then migrate into the DB and this file retires.
   `reviewer_notes` requires a doubly-JSON-encoded string (`"[\"...\"]"`) because the
   harness re-parses JSON-shaped args; a plain list is rejected by pydantic. Accept a
   native list (or document the contract in the tool description).
+  *(121 retro addendum, 2026-07-11):* `transition_phase`'s `skipped_phases: str | None`
+  is the same class — the transport JSON-parses the doubly-encoded string back into a
+  list, pydantic rejects it, and NO string form reaches the server intact. Live
+  workaround: omit the param entirely; guard G-23 self-detects skipped phases and
+  emits a soft warn (verified during 121's specify transition). Fix both params together.
 
 - **#057 — Reviewer severity rubric: split BLOCKER by failure signature** *(source: feature 129 retro Tune 1; owner: workflow-rebuild track)*
   4 of 9 artifact-phase blockers were self-signaling (collection ImportError,
@@ -98,3 +103,7 @@ In 130's implement battery, code-quality-reviewer was the only member with zero 
 ## #064 — Sentinel workspace renders as cryptic dropdown option in the UI switcher
 **Filed:** 2026-07-11 (130 finish QA, code lane). **Type:** UX wart, LOW.
 `_UNKNOWN_WORKSPACE_UUID` gets a real `workspaces` row (database.py:5826, project_root=NULL); when any entity is registered under it (real live-board fallback for un-mappable project_ids), `list_workspaces_with_entities()` surfaces it and the switcher renders a selectable `6250c8a6 (N)` option (NULL-root → uuid-prefix label rule). Truthful and functional but cryptic, and visually collides in concept with the transient fourth-state `unknown workspace · 6250c8a6` option. Candidate fix at 132 (backfill dedupes junk) or a dedicated label for the sentinel uuid ("unassigned entities"). Verified by probe during 130's QA gate.
+
+## #065 — claude-mem observation-hook noise misleads subagents at scale
+**Filed:** 2026-07-11 (121 implement Process Notes). **Type:** tooling friction, MED.
+The PreToolUse:Read observation hook injects "prior observation" system-reminders into every file read. During feature 121, SIX separate subagents independently flagged them as suspected prompt injection, and one injected observation asserted a FABRICATED blocker ("nameFrom/nameTo missing from events.py docstring") that two agents had to disprove at source. All agents behaved correctly (ignore + verify independently), but the noise costs a paragraph of every subagent report, a disproof detour per dispatch, and trains agents to distrust system-reminders wholesale. Candidate fixes: suppress the hook for subagent sessions; or label its output explicitly as non-authoritative local memory; or stop echoing observation TITLES (the fabrication vector — titles written by a summarizer, not verified facts).
