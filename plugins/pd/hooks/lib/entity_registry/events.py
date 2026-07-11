@@ -135,7 +135,9 @@ def append_event(
 
     ``conn`` MUST come from ``connect_v2`` — FK enforcement
     (``foreign_keys=ON``) is per-connection; a bare ``sqlite3.connect``
-    silently disables the entity_uuid FK check.
+    silently disables the entity_uuid FK check. Enforced at entry: a
+    connection reporting ``foreign_keys`` off raises ``ValueError``
+    before any write, on either transaction path (backlog #061).
 
     Composes on ``conn.in_transaction`` (design D5):
 
@@ -165,6 +167,14 @@ def append_event(
     none open — so the ``if conn.in_transaction:`` guard below stays
     load-bearing.
     """
+    row = conn.execute("PRAGMA foreign_keys").fetchone()
+    if row is None or row[0] != 1:
+        raise ValueError(
+            "append_event requires a connect_v2 connection "
+            "(PRAGMA foreign_keys=ON is per-connection; a bare sqlite3.connect "
+            "would write orphan-capable rows into the immutable events table — backlog #061)"
+        )
+
     # None binds SQL NULL (not the 4-char TEXT 'null') so the immutable log
     # carries ONE representation of "no payload" — SQL-level consumers
     # (120 projections, 132 backfill) can trust IS NULL semantics.

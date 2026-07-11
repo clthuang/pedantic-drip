@@ -535,6 +535,70 @@ class TestForeignKeyEnforcementPair:
 
 
 # ---------------------------------------------------------------------------
+# Design test (SC4, design D3): #061 guard — append_event's first statement
+# probes PRAGMA foreign_keys and rejects any non-connect_v2 connection
+# before the conn.in_transaction branch runs, so both transaction-
+# composition paths are covered by construction.
+# ---------------------------------------------------------------------------
+class TestAppendEventConnectionGuard:
+    """TestForeignKeyEnforcementPair above documents that a bare
+    connection silently disables FK enforcement; this class documents
+    that append_event itself now refuses to write through one at all
+    (backlog #061), independent of whether the write would otherwise
+    have succeeded."""
+
+    def test_bare_connection_standalone_raises_before_any_write(
+        self, bootstrapped_db_path, seeded_entity_uuid
+    ):
+        bare_conn = sqlite3.connect(bootstrapped_db_path)
+        try:
+            with pytest.raises(ValueError, match="connect_v2"):
+                events.append_event(
+                    bare_conn, entity_uuid=seeded_entity_uuid, event_type="phase_completed",
+                    axis="pipeline", actor="test-actor",
+                )
+            row_count = bare_conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+            assert row_count == 0
+        finally:
+            bare_conn.close()
+
+    def test_bare_connection_with_open_transaction_raises_before_any_write(
+        self, bootstrapped_db_path, seeded_entity_uuid
+    ):
+        """The compose path (caller already opened a transaction): the
+        probe runs before the `conn.in_transaction` branch, so this
+        raises identically to the standalone case above."""
+        bare_conn = sqlite3.connect(bootstrapped_db_path)
+        try:
+            bare_conn.execute("BEGIN IMMEDIATE")
+            with pytest.raises(ValueError, match="connect_v2"):
+                events.append_event(
+                    bare_conn, entity_uuid=seeded_entity_uuid, event_type="phase_completed",
+                    axis="pipeline", actor="test-actor",
+                )
+            row_count = bare_conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+            assert row_count == 0
+        finally:
+            bare_conn.close()
+
+    def test_connect_v2_connection_passes_the_guard_unchanged(
+        self, v2_conn, seeded_entity_uuid
+    ):
+        """Smoke test: a connect_v2 connection (foreign_keys=ON) is
+        unaffected by the guard — the broader regression net is the
+        rest of this file's append_event suite, all of which already
+        runs through connect_v2 or a proxy over one."""
+        event_uuid = events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="phase_completed",
+            axis="pipeline", actor="test-actor",
+        )
+        row_count = v2_conn.execute(
+            "SELECT COUNT(*) FROM events WHERE uuid = ?", (event_uuid,)
+        ).fetchone()[0]
+        assert row_count == 1
+
+
+# ---------------------------------------------------------------------------
 # Design test #6: payload registry round-trip + non-serializable TypeError
 # ---------------------------------------------------------------------------
 class TestPayloadRegistry:
