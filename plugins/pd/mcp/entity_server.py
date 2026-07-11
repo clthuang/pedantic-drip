@@ -577,10 +577,9 @@ async def register_entity(
         return json.dumps({
             "error": True,
             "error_type": "invalid_input",
-            "message": (
-                "entity name must be non-empty (feature 121 FR-5: blank "
-                "display fields corrupt the registry)"
-            ),
+            # Single-sourced from the DB layer's constant — a hand-typed
+            # copy here would silently drift (author-restated-literal class).
+            "message": EntityDatabase._BLANK_NAME_ERROR,
             "recovery_hint": "pass a non-blank name",
         })
 
@@ -629,7 +628,7 @@ async def register_entity(
 
 
 @mcp.tool()
-async def allocate_entity_id(entity_type: str = "", name: str = "") -> str:   # async: matches every sibling @mcp.tool def (19 today)
+async def allocate_entity_id(entity_type: str = "", name: str = "") -> str:   # async: matches every sibling @mcp.tool def
     """Atomically allocate the next {seq:03d}-{slug} entity id for a type.
 
     Direct plumbing over ``next_sequence_value`` + ``_slugify`` (design
