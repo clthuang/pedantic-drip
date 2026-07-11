@@ -79,13 +79,6 @@ reliable DB path; entries then migrate into the DB and this file retires.
   #055 (acknowledged-but-lost writes). Diagnose before trusting ANY backlog
   registration; this file is the interim source of truth.
 
-- **#061 — append_event factory-contract guard before feature 120** *(source: 119 QA gate C2, LOW)*
-  The "conn MUST come from connect_v2" contract is purely advisory — a bare
-  `sqlite3.connect` silently skips FK enforcement and can write a PERMANENT orphan
-  into the immutable events table. Before 120/132 wire consumers: add a cheap
-  structural guard (`PRAGMA foreign_keys` == 1 assert at append_event entry, or a
-  connect_v2 sentinel attribute), and update the FK-pair test's bare-connection half.
-
 - **#062 — schema_version write is OR IGNORE (write-once) — upsert at 132** *(source: 119 QA gate C3, LOW)*
   Bumping V2_SCHEMA_VERSION and re-bootstrapping keeps the stale recorded version
   while new DDL applies — silent mismatch. When 132's migration story lands: ON
@@ -94,7 +87,14 @@ reliable DB path; entries then migrate into the DB and this file retires.
 
 ## Completed / Promoted
 
-(none tracked here yet — historical items live in the entity DB)
+- **#061 — append_event factory-contract guard** *(closed by feature 120, 2026-07-12)*
+  Shipped as design D3: `PRAGMA foreign_keys` probe as append_event's FIRST
+  statement — bare connections raise `ValueError` (naming connect_v2 and this
+  item) before any write, on both transaction paths. The sentinel-attribute
+  alternative was REJECTED at spec review (would AttributeError the retry-wrapper
+  tests). Raw-INSERT orphans remain the documented residual surface
+  (`test_events.py:506` preserved as the pin); structural closure is FR-3's
+  state-as-view invariant at the 132 cutover.
 
 ## #063 — Watch: code-quality-reviewer fix-rate on UI-track features
 **Filed:** 2026-07-11 (130 retro Tune-3). **Type:** process watch-item.
@@ -111,3 +111,22 @@ The PreToolUse:Read observation hook injects "prior observation" system-reminder
 ## #066 — Workspace-mapping migration writer pollutes source tree during test runs
 **Filed:** 2026-07-11 (121 finish QA, regression lane). **Type:** test hygiene, MED (pre-existing, NOT introduced by 121).
 `_atomic_write_workspace_mapping` (database.py:1726, feature-108 migration machinery) writes `{}` marker files to `<cwd-subdir>/.claude/pd/migrations/migration-11-workspace-mapping.json` when suites/imports run from package directories — creating untracked strays under `plugins/**` (a `git add -A` would stage them). Interim fix shipped with 121's gate: `plugins/**/.claude/` gitignore line (deliberately narrower than root `.claude/`, which holds real config). Root-cause fix: redirect the writer's workspace_root to tmp in test fixtures, or gate the write on being under a real project root. Note: one TRACKED instance (`plugins/pd/.claude/pd/migrations/...`, identical blob on develop) predates 121 — remove alongside the root-cause fix.
+
+## #067 — Carry nested-view scale-benchmark obligation into 132's spec inputs
+**Filed:** 2026-07-12 (120 retro Tune-4). **Type:** obligation carrier, LOW-MED.
+`entity_state`'s six correlated subqueries recompute the GROUP BY over events on
+every read; the query plan through the nested view is UNVERIFIED beyond test
+scale (~10^2 events). The obligation — EXPLAIN QUERY PLAN + benchmark at live-DB
+scale before wiring the first frequently-polled consumer — currently lives only
+in a views.py code comment and a quality-review suggestion (weakest carriers;
+echoes 118's SQLITE_LOCKED docstring-only risk that 119 nearly missed). 132's
+spec MUST list this as an explicit input/prerequisite alongside #054/#062/#064.
+**Measured (120 QA lane A, 2026-07-12):** per-entity `entity_state` lookups are
+O(total events in DB), NOT O(that entity's events) — idx_events_entity_axis
+covers entity_axis_state's per-entity path but the pivoted view's correlated
+subqueries materialize the WHOLE grouped view per lookup (SQLite's AUTOMATIC
+PARTIAL COVERING INDEX only kicks in on full-table reads). ~2.5ms/lookup at 5k
+events, near-linear in total events (0.22ms@500 → 9.6ms@20k); full-table
+`SELECT * FROM entity_state` is fine (6.75ms for 500 rows @ 5k events).
+Consumers at 132 should read entity_axis_state per-entity or the pivoted view
+full-table; a frequently-polled per-entity entity_state read needs a plan fix.

@@ -1094,6 +1094,8 @@ AskUserQuestion:
 
 Where `{final_validation_tag}` is `[FINAL VALIDATION]` when the iteration is a mandatory full regression review, otherwise empty. Skipped reviewers show which iteration they last passed in.
 
+**Process Notes (REQUIRED fixture, 120-retro Tune-2):** The implement-phase section of `.review-history.md` MUST end with a `**Process notes (implement):**` line before the phase-complete marker — recording mid-phase incidents that were recovered without reviewer involvement (orchestrator command errors, dispatch retries, environment flukes), or explicitly `none`. Recovered-but-unrecorded incidents are invisible to retros (recurred at features 129, 130, and 120 before this fixture).
+
 ### 8. Update State on Completion
 
 **Construct reviewerNotes before committing:**

@@ -135,7 +135,13 @@ def append_event(
 
     ``conn`` MUST come from ``connect_v2`` — FK enforcement
     (``foreign_keys=ON``) is per-connection; a bare ``sqlite3.connect``
-    silently disables the entity_uuid FK check.
+    silently disables the entity_uuid FK check. Enforced at entry: a
+    connection reporting ``foreign_keys`` off raises ``ValueError``
+    before any write, on either transaction path (backlog #061). The
+    guard trusts the connection's own PRAGMA self-report — it defends
+    against ACCIDENTAL bare connections, not an adversarial proxy that
+    lies about the pragma (raw INSERT is the equal-effort documented
+    residual either way; see the preserved orphan pin in test_events).
 
     Composes on ``conn.in_transaction`` (design D5):
 
@@ -148,9 +154,11 @@ def append_event(
       function decorated ``@with_retry("events")`` and is invoked
       immediately.
 
-    ``json.dumps(payload)`` (None → SQL NULL, never TEXT 'null') runs BEFORE any SQL on both paths: a
-    non-serializable *payload* (e.g. a set) raises ``TypeError`` with no
-    transaction ever opened, on either path.
+    ``json.dumps(payload)`` (None → SQL NULL, never TEXT 'null') runs
+    before any WRITE on both paths — only the read-only #061 PRAGMA
+    probe above precedes it: a non-serializable *payload* (e.g. a set)
+    raises ``TypeError`` with no transaction ever opened, on either
+    path (and the guard fires even earlier — pinned by test).
 
     The standalone path issues COMMIT/ROLLBACK as raw SQL via
     ``conn.execute()``, not the ``sqlite3.Connection.commit()`` /
@@ -165,6 +173,14 @@ def append_event(
     none open — so the ``if conn.in_transaction:`` guard below stays
     load-bearing.
     """
+    row = conn.execute("PRAGMA foreign_keys").fetchone()
+    if row is None or row[0] != 1:
+        raise ValueError(
+            "append_event requires a connect_v2 connection "
+            "(PRAGMA foreign_keys=ON is per-connection; a bare sqlite3.connect "
+            "would write orphan-capable rows into the immutable events table — backlog #061)"
+        )
+
     # None binds SQL NULL (not the 4-char TEXT 'null') so the immutable log
     # carries ONE representation of "no payload" — SQL-level consumers
     # (120 projections, 132 backfill) can trust IS NULL semantics.

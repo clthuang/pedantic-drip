@@ -1,0 +1,37 @@
+{
+  "feature": "120-state-projection-views",
+  "gate_date": "2026-07-12",
+  "verdict": "PASS",
+  "lanes": {
+    "A_execution_adversarial": {
+      "agent": "general-purpose/sonnet",
+      "verdict": "PASS",
+      "high": 0,
+      "med": 1,
+      "low": 2,
+      "notes": "681-event hand-folded oracle match (adversarial values, same-ms bursts, shuffled raw-inserts); orphan primitive-vs-face contract holds; NULL semantics correct; ~30k concurrent poll iterations with 0 torn reads (4- and 6-writer zero-jitter contention); guard holds against PRAGMA-off, open-transaction, and executescript sneaks. MED: per-entity entity_state lookup measured O(total events) — absorbed into backlog #067 + views.py scale comment (dark module, no live consumer; not a regression). LOW: lying duck-type proxy defeats the pragma self-report (equal-effort to the documented raw-INSERT residual; docstring caveat added); ordinary SQLite write-privilege can add INSTEAD OF triggers / drop immutability triggers (generic substrate fact, recorded in sidecar)."
+    },
+    "B_regression_integration": {
+      "agent": "general-purpose/sonnet",
+      "verdict": "PASS",
+      "high": 0,
+      "med": 0,
+      "low": 0,
+      "notes": "Suites 3586/3586 (ran twice, identical); hooks 67/67; validate 0 errors/21 pre-existing warnings; doctor pin EXPECTED_CHECK_COUNT=19 intact (142 doctor tests green); tree clean after all runs; bench-results.txt diff empty; 17-file inventory fully sanctioned; dark-module grep zero live importers; 121 surfaces 80/80 and 119 surfaces 95/95 green. Pre-existing tracked items confirmed unrelated: migration-11 concurrent-runner flake (backlog-manual ~5% baseline; 15/15 isolated reruns green on this branch, 8/8 on a develop worktree), ResourceWarning GC flicker (database.py:897, untouched), tracked plugins/pd/.claude migration stray (backlog #066)."
+    },
+    "C_artifact_truth_audit": {
+      "agent": "general-purpose/opus",
+      "verdict": "PASS",
+      "high": 0,
+      "med": 0,
+      "low": 4,
+      "notes": "First dispatch died instantly with garbage output (0 tool uses) — re-dispatched once per fallback policy; retry completed fully. No fabricated cites (the 121 class). All 10 shas, campaign figures, named tests, streak chains, and tune-edit claims verified at source; suite-count arithmetic reconciles (1503+14=1517; 3572+14=3586; 62 collected). 4 LOW cite-precision fixes ALL APPLIED to retro.md: events.py:140→:150-157 stale-claim location; 119-retro:21→:20 off-by-one; #065 vantage basis made explicit; implement suggestion tally parenthetical."
+    }
+  },
+  "policy": "HIGH blocks; MED fix-or-file; LOW fix-or-sidecar",
+  "dispositions": {
+    "med": ["lane A entity_state per-entity scaling → measured data folded into backlog #067 and the views.py scale comment (obligation carrier for feature 132)"],
+    "low_fixed": ["retro.md cite corrections ×4 (lane C)", "events.py guard docstring self-report caveat (lane A)"],
+    "low_sidecar": [".qa-gate-low-findings.md: SQLite write-privilege trigger tampering residual; lane B methodology note (parallel-run flake artifact, isolated reruns authoritative)"]
+  }
+}
