@@ -35,7 +35,7 @@ UI-track only: FastAPI routes + templates + one read-only DB helper. No MCP chan
 ## Error & Boundary Cases
 
 - Cookie value shaped like a uuid but unknown → honored (empty board is truthful); NEVER an exception path.
-- `referer` header absent or external-origin → redirect to `/`: take `urlsplit(referer).path` (+query), dropping scheme/netloc, and accept only `dest.startswith('/') and not dest.startswith('//')` (a bare startswith-`/` check passes protocol-relative `//evil.com` — reject it), else `/`.
+- `referer` header absent or external-origin → redirect to `/`: take `urlsplit(referer).path` (+query), dropping scheme/netloc, and accept only `dest.startswith('/') and not dest.startswith('//') and '\\' not in dest` (a bare startswith-`/` check passes protocol-relative `//evil.com` — reject it; backslash-bearing paths like `/\evil.com` browser-normalize to `//evil.com` — reject those too, added at implement security review), else `/`.
 - `project_root=None` workspace rows in the listing → labeled by uuid prefix, selectable, functional.
 - Startup default itself None (129's WARN path — DB missing at boot) → dropdown still renders from the (possibly empty) listing; "All workspaces" remains selectable; effective scope stays None.
 - Cookie set while `app.state.workspace_uuid` is None → cookie wins (precedence is cookie-first regardless of default's nullness).
