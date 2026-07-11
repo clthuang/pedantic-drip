@@ -55,6 +55,10 @@ Claude Code plugin providing a structured feature development workflow—skills,
 *Why:* Feature 119's payload-key casing was correct in spec, forked to snake_case in design D2, and copied through two more artifacts — caught only by checking the live .meta.json writer.
 *Enforced by:* Reviewer-claim verification practice; task-reviewer checks.
 
+**Dispatch-briefing figures are restated literals too:** Headline metrics in a prompt handed to a downstream agent (iteration counts, blocker trajectories, commit counts) must be re-derived from primary sources (`.review-history.md`, `.meta.json`, git) at composition time — and any agent SYNTHESIZING from a briefing should re-derive them again before enshrining them in an artifact.
+*Why:* Feature 130's retro briefing carried three source-contradicting figures (an iteration count, a swapped campaign trajectory, a reviewer-breakdown miscount) — the 119 author-restated-literal class, one layer up at the briefing↔artifact boundary. The retro-facilitator caught all three only because it re-derived.
+*Enforced by:* retro-facilitator re-derivation practice; orchestrator briefing hygiene.
+
 **Shared-config blast radius:** When a change bumps a repo-wide config value (`requires-python`, a version pin, a default path), grep the ENTIRE repo for the old value's consumers (CI workflows, shell scripts — `bootstrap-venv.sh`, `doctor.sh` — and docs) before the phase gate.
 *Why:* Feature 118's Python-floor bump left bootstrap/doctor/CI enforcing 3.12 — every reviewer was scoped to the feature diff, so the stale consumers were invisible until a finish-phase grep; a 3.12 venv would have crashed at runtime with a false all-clear.
 *Enforced by:* plan-reviewer checklist line ("shared-config value change … repo-wide consumer sweep").

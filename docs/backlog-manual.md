@@ -83,3 +83,7 @@ reliable DB path; entries then migrate into the DB and this file retires.
 ## Completed / Promoted
 
 (none tracked here yet — historical items live in the entity DB)
+
+## #063 — Watch: code-quality-reviewer fix-rate on UI-track features
+**Filed:** 2026-07-11 (130 retro Tune-3). **Type:** process watch-item.
+In 130's implement battery, code-quality-reviewer was the only member with zero actionable fixes (4 nits, all consciously recorded-not-churned; implementation + security reviewers each produced a shipped fix). Do NOT downgrade yet — track its fix-rate across the next 2-3 UI-track (routes/templates-only) features. **Check at feature 125 (kanban-axis-rewire, the next UI-heavy feature):** if still zero actionable findings on UI-track work, consider a lighter/summary-only quality pass for that track while keeping it fully gating on DB/engine-track features. n=1 as of filing.

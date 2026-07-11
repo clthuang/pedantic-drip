@@ -118,6 +118,7 @@ Only include `backward_to` when the root cause is genuinely in an upstream artif
 - [ ] For any renamed public symbol in the plan: is the by-name-import sweep across test modules an explicit step? (definition-only rename = collection-time ImportError — feature 118 blocker class)
 - [ ] Are the plan's verification steps non-vacuous — does at least one check assert a fact true ONLY after the change lands, not a grep-absence that passes on both old and new code? (feature 131/118 vacuous-green class)
 - [ ] When the plan deletes a function/class: has EVERY other `_`-prefixed symbol in the containing file been swept for callers outside the deletion span — a whole-file closure, not just the deletion target's own call graph? (feature 129: plan review caught one callerless validator block by tracing the deleted fixer, but a sibling dead helper in the same file survived to implementation)
+- [ ] For every boundary condition the spec states as symmetric/complementary branches: does the plan's test enumeration name a distinct test per branch, not one test for the shared condition? (feature 130: write-side rejection tested, read-side fallback untested — caught only by relevance-verifier diffing spec SC vs the literal test list)
 
 **Challenge patterns:**
 - "The API supports X" → "Has this been verified? Link to docs?"
