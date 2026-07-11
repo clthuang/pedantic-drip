@@ -7579,6 +7579,80 @@ class TestListFeaturesByPhaseWorkspaceScopingContract:
             f"Orphan row must be RETAINED on the scoped path (D4), got {type_ids}"
         )
 
+    def test_mixed_fixture_scoped_returns_exact_row_multiset_with_orphan_and_cross_workspace_exclusion(
+        self, tmp_path
+    ):
+        """Combines a target-workspace pair, an other-workspace entity
+        (must be EXCLUDED), AND an orphan row (must be RETAINED) in ONE
+        fixture -- the two tests above each isolate ONE of these facts
+        in isolation; this pins their INTERACTION. Kills a mutation
+        where e.g. a JOIN-cardinality bug double-counts the orphan once
+        a second workspace's rows are present in the same phase, or
+        where the presence of cross-workspace rows somehow suppresses
+        the `OR e.uuid IS NULL` orphan arm.
+        derived_from: dimension:mutation_mindset, design:D4 (declared
+                      orphan inclusion), design:Testing Strategy #6
+        """
+        import asyncio
+        import workflow_state_server as wss
+        from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
+
+        db = EntityDatabase(str(tmp_path / "ws.db"))
+        from entity_registry.test_helpers import bootstrap_test_workspace
+        ws_a = bootstrap_test_workspace(db, "ws_mixed_a")
+        ws_b = bootstrap_test_workspace(db, "ws_mixed_b")
+
+        # Target workspace: TWO entities on the queried phase.
+        db.register_entity(
+            entity_type="feature", entity_id="022-alpha", name="alpha",
+            status="active", workspace_uuid=ws_a,
+        )
+        db.create_workflow_phase(
+            "feature:022-alpha", workflow_phase="specify", kanban_column="wip",
+        )
+        db.register_entity(
+            entity_type="feature", entity_id="022-gamma", name="gamma",
+            status="active", workspace_uuid=ws_a,
+        )
+        db.create_workflow_phase(
+            "feature:022-gamma", workflow_phase="specify", kanban_column="wip",
+        )
+        # Other workspace: must be EXCLUDED.
+        db.register_entity(
+            entity_type="feature", entity_id="022-beta", name="beta",
+            status="active", workspace_uuid=ws_b,
+        )
+        db.create_workflow_phase(
+            "feature:022-beta", workflow_phase="specify", kanban_column="wip",
+        )
+        # Orphan row: must be RETAINED.
+        db._conn.execute("PRAGMA foreign_keys = OFF")
+        db._conn.execute(
+            "INSERT INTO workflow_phases "
+            "(type_id, kanban_column, workflow_phase, updated_at, workspace_uuid) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("feature:022-ghost", "wip", "specify", "2026-01-01T00:00:00Z",
+             _UNKNOWN_WORKSPACE_UUID),
+        )
+        db._conn.commit()
+        db._conn.execute("PRAGMA foreign_keys = ON")
+
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, "docs")
+        wss._workspace_uuid = ws_a
+
+        result = asyncio.run(wss.list_features_by_phase("specify", project_id=""))
+        entries = json.loads(result)
+        assert len(entries) == 3, (
+            f"Expected exactly 3 rows (2 ws_a entities + 1 orphan, ws_b "
+            f"excluded) with no duplication, got {len(entries)}: {entries!r}"
+        )
+        type_ids = {e["feature_type_id"] for e in entries}
+        assert type_ids == {
+            "feature:022-alpha", "feature:022-gamma", "feature:022-ghost",
+        }, f"Expected exactly {{alpha, gamma, ghost}}, got {type_ids}"
+
 
 class TestWorkspaceUuidEmptyStringNormalization:
     """FR-6: empty-string ``_workspace_uuid`` normalizes to None at db.* boundary.

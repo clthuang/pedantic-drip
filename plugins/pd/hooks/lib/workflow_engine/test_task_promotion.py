@@ -535,3 +535,62 @@ class TestQueryReadyTasksWorkspaceScoping:
             "Cross-workspace blocker must still be honored -- edges are "
             "deliberately unscoped"
         )
+
+    def test_cross_workspace_blocker_removed_task_becomes_ready(self):
+        """Once a cross-workspace blocker's dependency edge is removed,
+        the scoped candidate becomes ready again. Kills a mutation where
+        remove_dependency (or the ready-check) implicitly re-scopes to
+        the candidate's own workspace and silently no-ops on a
+        cross-workspace edge -- which would leave the task incorrectly
+        stuck 'blocked' forever after the blocker is actually resolved.
+        derived_from: dimension:adversarial (Follow the Data),
+                      design:D5 (edges deliberately unscoped)
+        """
+        from entity_registry.test_helpers import bootstrap_test_workspace
+        from workflow_engine.task_promotion import query_ready_tasks
+
+        db = _make_db()
+        ws_a = bootstrap_test_workspace(db, "qrt-ws-unblock-a")
+        ws_b = bootstrap_test_workspace(db, "qrt-ws-unblock-b")
+        task_a = self._seed_ready_task(db, ws_a, "unblock-owner")
+        task_b_blocker = self._seed_ready_task(db, ws_b, "unblock-blocker")
+
+        dep_mgr = DependencyManager()
+        dep_mgr.add_dependency(db, task_a, task_b_blocker)
+
+        # Sanity: blocked while the cross-workspace edge exists (mirrors
+        # test_cross_workspace_blocker_still_honored above).
+        blocked_result = query_ready_tasks(db, workspace_uuid=ws_a)
+        assert task_a not in {r["uuid"] for r in blocked_result}
+
+        dep_mgr.remove_dependency(db, task_a, task_b_blocker)
+
+        result = query_ready_tasks(db, workspace_uuid=ws_a)
+        assert task_a in {r["uuid"] for r in result}, (
+            "task_a must become ready once its cross-workspace blocker "
+            "edge is removed -- the removal must not be silently scoped "
+            "away"
+        )
+
+    def test_star_sentinel_treated_as_literal_uuid_at_lib_layer(self):
+        """The '*' cross-workspace opt-out is resolved to None at the
+        MCP boundary (_resolve_list_handler_workspace_filter, design D5)
+        BEFORE query_ready_tasks is ever called. This function itself
+        must treat '*' as an ordinary non-matching literal if a caller
+        bypasses the MCP layer -- kills a mutation that special-cases
+        '*' inside query_ready_tasks (a layering violation).
+        derived_from: spec:SC3 ('*' sentinel never reaches the lib
+                      layer), dimension:boundary_values
+        """
+        from entity_registry.test_helpers import bootstrap_test_workspace
+        from workflow_engine.task_promotion import query_ready_tasks
+
+        db = _make_db()
+        ws_a = bootstrap_test_workspace(db, "qrt-ws-star-a")
+        self._seed_ready_task(db, ws_a, "star-a")
+
+        result = query_ready_tasks(db, workspace_uuid="*")
+        assert result == [], (
+            f"'*' passed directly to the lib layer must match no real "
+            f"workspace, got {result!r}"
+        )

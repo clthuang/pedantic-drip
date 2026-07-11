@@ -560,3 +560,40 @@ def test_create_app_missing_db_workspace_uuid_none_and_warns(capsys):
     assert app.state.workspace_uuid is None
     captured = capsys.readouterr()
     assert "WARN" in captured.err
+
+
+def test_create_app_database_error_during_lookup_workspace_uuid_none_and_warns(
+    monkeypatch, tmp_path, capsys,
+):
+    """GIVEN the read-only workspace lookup raises sqlite3.DatabaseError
+    (e.g. the db file became corrupted/invalid between the read-write
+    open at line ~120 and the read-only lookup -- a DISTINCT sqlite3.Error
+    subtype from the OperationalError a merely-missing file raises, which
+    test_create_app_missing_db_workspace_uuid_none_and_warns above already
+    covers)
+    WHEN create_app() runs its startup resolution
+    THEN app.state.workspace_uuid is None and a WARN is logged -- pins that
+    the except clause catches sqlite3.Error broadly (DatabaseError
+    included), not just the narrower OperationalError subtype. Kills a
+    mutation that narrows `except (sqlite3.Error, ValueError)` to
+    `except (sqlite3.OperationalError, ValueError)`."""
+    import sqlite3
+
+    db_file = str(tmp_path / "test.db")
+    EntityDatabase(db_file)  # valid db -- app.state.db construction succeeds
+
+    def _raise_database_error(conn, project_root_abs):
+        raise sqlite3.DatabaseError("file is not a database")
+
+    monkeypatch.setattr(
+        "entity_registry.project_identity._lookup_workspace_uuid_by_project_root",
+        _raise_database_error,
+    )
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+
+    assert app.state.workspace_uuid is None
+    captured = capsys.readouterr()
+    assert "WARN" in captured.err

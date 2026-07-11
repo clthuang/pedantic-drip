@@ -3709,6 +3709,150 @@ class TestListWorkflowPhasesWorkspaceScoping:
         assert len(result) == 1
         assert result[0]["entity_name"] == "Feature In A"
 
+    def test_scoped_empty_string_workspace_uuid_matches_no_entities_but_retains_orphans(
+        self, db: EntityDatabase
+    ):
+        """Anticipate: a truthy-check (`if workspace_uuid:`) instead of the
+        actual `is not None` guard would treat "" as "no scope" and
+        silently return ALL rows instead of filtering to (nothing) +
+        orphans. "" is a valid, non-None str, so it must still bind into
+        the WHERE clause -- kills the truthy-vs-is-not-None boundary
+        mutation (D2).
+        derived_from: design:D2, dimension:boundary_values
+        """
+        ws_a = _bootstrap_test_workspace(db, "ws-scope-empty-a")
+        db.register_entity("feature", "empty-a1", "A1", workspace_uuid=ws_a)
+        db.create_workflow_phase("feature:empty-a1", kanban_column="wip")
+
+        # Orphan row so "unscoped" (would return both) is distinguishable
+        # from "scoped to a value matching nothing" (orphan only).
+        from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
+        db._conn.execute("PRAGMA foreign_keys = OFF")
+        db._conn.execute(
+            "INSERT INTO workflow_phases "
+            "(type_id, kanban_column, updated_at, workspace_uuid) "
+            "VALUES (?, ?, ?, ?)",
+            ("feature:empty-orphan", "backlog", "2026-01-01T00:00:00Z",
+             _UNKNOWN_WORKSPACE_UUID),
+        )
+        db._conn.commit()
+        db._conn.execute("PRAGMA foreign_keys = ON")
+
+        result = db.list_workflow_phases(workspace_uuid="")
+        type_ids = {r["type_id"] for r in result}
+        assert type_ids == {"feature:empty-orphan"}, (
+            f"workspace_uuid='' must filter out the real entity (matches "
+            f"no workspace) while retaining the orphan row, got {type_ids}"
+        )
+
+    def test_scoped_star_sentinel_treated_as_literal_uuid_at_db_layer(
+        self, db: EntityDatabase
+    ):
+        """The '*' cross-workspace opt-out is an MCP-boundary concept --
+        _resolve_list_handler_workspace_filter resolves '*' -> None
+        BEFORE calling this method (design D4/D5). This method itself
+        must treat '*' as an ordinary non-matching literal if a caller
+        bypasses the MCP layer -- kills a mutation that special-cases
+        '*' inside list_workflow_phases itself (a layering violation).
+        derived_from: spec:SC3 ('*' sentinel never reaches the lib
+                      layer), dimension:boundary_values
+        """
+        ws_a = _bootstrap_test_workspace(db, "ws-scope-star-a")
+        db.register_entity("feature", "star-a1", "A1", workspace_uuid=ws_a)
+        db.create_workflow_phase("feature:star-a1", kanban_column="wip")
+
+        result = db.list_workflow_phases(workspace_uuid="*")
+        assert result == [], (
+            f"'*' passed directly to the DB layer must match no real "
+            f"workspace (only the MCP boundary resolves '*' to None), "
+            f"got {result!r}"
+        )
+
+    def test_scoped_workspace_with_zero_entities_returns_empty_list(
+        self, db: EntityDatabase
+    ):
+        """A syntactically valid, registered workspace that owns zero
+        entities/phases must return [] gracefully -- not None, not a
+        crash. Kills a mutation that returns None on an empty result set
+        or otherwise assumes at least one matching row exists.
+        derived_from: dimension:boundary_values, design:Testing Strategy #4
+        """
+        ws_a = _bootstrap_test_workspace(db, "ws-scope-populated")
+        ws_empty = _bootstrap_test_workspace(db, "ws-scope-empty-owner")
+        db.register_entity("feature", "pop-a1", "A1", workspace_uuid=ws_a)
+        db.create_workflow_phase("feature:pop-a1", kanban_column="wip")
+
+        result = db.list_workflow_phases(workspace_uuid=ws_empty)
+        assert result == []
+
+    def test_scoped_filter_independent_of_workspaces_registry_population(
+        self, db: EntityDatabase
+    ):
+        """list_workflow_phases's scoping predicate reads only
+        entities.workspace_uuid -- it never JOINs or validates against
+        the `workspaces` registry table (rejected alternative in D2).
+        Wiping the registry entirely (simulating a cleaned-up/deregistered
+        workspace whose entities still carry the old workspace_uuid)
+        must not change scoped results. Kills a mutation that adds a
+        `JOIN workspaces` / registry-membership check to the predicate.
+        derived_from: design:D2 (rejected _resolve_optional_workspace_filter
+                      routing), dimension:error_propagation
+        """
+        ws_a = _bootstrap_test_workspace(db, "ws-e2-a")
+        db.register_entity("feature", "e2-a1", "A1", workspace_uuid=ws_a)
+        db.create_workflow_phase("feature:e2-a1", kanban_column="wip")
+
+        # Wipe the ENTIRE workspaces registry (including the `db` fixture's
+        # own pre-bootstrapped rows) -- entities/workflow_phases rows still
+        # carry workspace_uuid=ws_a, but no `workspaces` row for it exists.
+        db._conn.execute("PRAGMA foreign_keys = OFF")
+        db._conn.execute("DELETE FROM workspaces")
+        db._conn.commit()
+        db._conn.execute("PRAGMA foreign_keys = ON")
+        assert db._conn.execute(
+            "SELECT COUNT(*) FROM workspaces"
+        ).fetchone()[0] == 0
+
+        result = db.list_workflow_phases(workspace_uuid=ws_a)
+        assert len(result) == 1
+        assert result[0]["type_id"] == "feature:e2-a1"
+
+    def test_scoped_combines_with_kanban_column_filter_via_and(
+        self, db: EntityDatabase
+    ):
+        """workspace_uuid scoping must combine with kanban_column via
+        AND, not override or OR it. Kills a mutation to the
+        clause-joining logic (" AND ".join(clauses)) that would let a
+        same-workspace-wrong-column row leak through, or a
+        right-column-other-workspace row leak through.
+        derived_from: design:D2 (WHERE clauses list, AND-joined),
+                      dimension:mutation_mindset
+        """
+        ws_a = _bootstrap_test_workspace(db, "ws-scope-and-a")
+        ws_b = _bootstrap_test_workspace(db, "ws-scope-and-b")
+        db.register_entity(
+            "feature", "and-a-wip", "A wip", workspace_uuid=ws_a
+        )
+        db.create_workflow_phase("feature:and-a-wip", kanban_column="wip")
+        db.register_entity(
+            "feature", "and-a-backlog", "A backlog", workspace_uuid=ws_a
+        )
+        db.create_workflow_phase(
+            "feature:and-a-backlog", kanban_column="backlog"
+        )
+        db.register_entity(
+            "feature", "and-b-wip", "B wip", workspace_uuid=ws_b
+        )
+        db.create_workflow_phase("feature:and-b-wip", kanban_column="wip")
+
+        result = db.list_workflow_phases(
+            kanban_column="wip", workspace_uuid=ws_a
+        )
+        type_ids = {r["type_id"] for r in result}
+        assert type_ids == {"feature:and-a-wip"}, (
+            f"Expected only the ws_a+wip row (AND semantics), got {type_ids}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Phase B Deepened Tests: Workflow Phase CRUD & Migration edge cases
