@@ -63,13 +63,17 @@ from entity_registry import schema_v2
 # entity_axis_state but not entity_state — the primitive is exhaustive
 # over events, the face is exhaustive over entities.
 #
-# Scale expectation: entity_state's six correlated subqueries recompute
-# the GROUP BY over events on every read (no materialization). The
-# per-entity lookup shape is covered by idx_events_entity_axis
-# (events.py), but the nested-view query plan is UNVERIFIED beyond
-# test scale (~10^2 events). Whoever wires the first live,
-# frequently-polled consumer (feature 132 cutover) must EXPLAIN QUERY
-# PLAN and benchmark at live-DB scale before shipping.
+# Scale expectation (measured, 120 QA probe — see backlog #067):
+# entity_state's six correlated subqueries recompute the GROUP BY over
+# events on every read (no materialization). idx_events_entity_axis
+# covers entity_axis_state's per-entity path (~0.007ms/lookup @ 5k
+# events), but a per-entity entity_state lookup materializes the WHOLE
+# grouped view — O(total events in DB), ~2.5ms @ 5k events, linear
+# (SQLite's automatic covering index only builds for full-table reads,
+# which stay fast: 500 rows in ~7ms). Consumers should read
+# entity_axis_state per-entity or entity_state full-table; whoever
+# wires a frequently-polled per-entity entity_state read (feature 132
+# cutover) must EXPLAIN QUERY PLAN and benchmark at live-DB scale.
 _VIEWS_DDL = """
 CREATE VIEW IF NOT EXISTS entity_axis_state AS
 SELECT entity_uuid, axis, to_value, MAX(uuid) AS event_uuid, timestamp

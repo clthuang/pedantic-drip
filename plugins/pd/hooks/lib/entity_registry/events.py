@@ -137,7 +137,11 @@ def append_event(
     (``foreign_keys=ON``) is per-connection; a bare ``sqlite3.connect``
     silently disables the entity_uuid FK check. Enforced at entry: a
     connection reporting ``foreign_keys`` off raises ``ValueError``
-    before any write, on either transaction path (backlog #061).
+    before any write, on either transaction path (backlog #061). The
+    guard trusts the connection's own PRAGMA self-report — it defends
+    against ACCIDENTAL bare connections, not an adversarial proxy that
+    lies about the pragma (raw INSERT is the equal-effort documented
+    residual either way; see the preserved orphan pin in test_events).
 
     Composes on ``conn.in_transaction`` (design D5):
 

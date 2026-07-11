@@ -121,3 +121,12 @@ scale before wiring the first frequently-polled consumer — currently lives onl
 in a views.py code comment and a quality-review suggestion (weakest carriers;
 echoes 118's SQLITE_LOCKED docstring-only risk that 119 nearly missed). 132's
 spec MUST list this as an explicit input/prerequisite alongside #054/#062/#064.
+**Measured (120 QA lane A, 2026-07-12):** per-entity `entity_state` lookups are
+O(total events in DB), NOT O(that entity's events) — idx_events_entity_axis
+covers entity_axis_state's per-entity path but the pivoted view's correlated
+subqueries materialize the WHOLE grouped view per lookup (SQLite's AUTOMATIC
+PARTIAL COVERING INDEX only kicks in on full-table reads). ~2.5ms/lookup at 5k
+events, near-linear in total events (0.22ms@500 → 9.6ms@20k); full-table
+`SELECT * FROM entity_state` is fine (6.75ms for 500 rows @ 5k events).
+Consumers at 132 should read entity_axis_state per-entity or the pivoted view
+full-table; a frequently-polled per-entity entity_state read needs a plan fix.

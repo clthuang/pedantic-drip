@@ -6,9 +6,9 @@
 
 Per the standing briefing order (*trust no number in the prompt*), every figure is cited to a primary source. Re-derivation catches this feature:
 
-- **Injected "prior observation" system-reminders disregarded** (the #065 pattern), including one asserting "11 Files Changed, 1333 Insertions, 7 Deletions" — conflates code + doc files and is not corroborable from the design's 7-row inventory (design.md:82-92); rejected. Second independent vantage on #065 (matches 121-retro obs-6).
+- **Injected "prior observation" system-reminders disregarded** (the #065 pattern), including one asserting "11 Files Changed, 1333 Insertions, 7 Deletions" — conflates code + doc files and is not corroborable from the design's 7-row inventory (design.md:82-92); rejected. Second retro-layer vantage on #065 (121-retro obs-6 was the first at this layer; counting the original 121-implement filing it is the third overall).
 - **"campaign-first clean design gate" (.review-history.md:36) — OVERSTATED self-label**, corrected with dated marker: 118's and 119's design gates were also clean 0/0 (118-retro:14, 119-retro:18). Defensible claim: **third clean design gate** (118, 119, 120) and **second fully-clean design phase** (skeptic iter-1 + gate 0/0: 119, then 120). Same self-label-miscount class as 130's "(second consecutive)" correction of 119.
-- **"6th consecutive clean battery" — VERIFIED** (chain: 118-retro:22 → 129-retro:57 → 119-retro:21 → 130-retro:19 → 121-retro:19 → .review-history.md:79). Caveat: 131's battery was also all-approved-iter-1 (131-retro:21); its exclusion is definitional (streak basis fixed at 130-retro:19 counts P004 features benefiting from 131's encoded guardrails), not because 131's battery was dirty.
+- **"6th consecutive clean battery" — VERIFIED** (chain: 118-retro:22 → 129-retro:57 → 119-retro:20 → 130-retro:19 → 121-retro:19 → .review-history.md:79). Caveat: 131's battery was also all-approved-iter-1 (131-retro:21); its exclusion is definitional (streak basis fixed at 130-retro:19 counts P004 features benefiting from 131's encoded guardrails), not because 131's battery was dirty.
 - **"zero-blocker phases" — TRUE for design + create-plan + implement** (3 consecutive); specify carried the feature's 1 fresh blocker. The feature is not all-zero-blocker.
 
 ## A — Activities (re-derived)
@@ -20,7 +20,7 @@ Durations: `.meta.json` phase timestamps unusable (9-14s started≈completed win
 | specify | 3 (skeptic ×2, gate ×1) | 1 / 0 | 1B + 10W + 5S | PASS iter 2/3; gate round 1 | ~22m |
 | design | 2 (skeptic ×1, gate ×1) | 0 / 0 | 1W + 2S | PASS iter 1; gate 0-issue | ~38m |
 | create-plan | 4 (plan, task, relevance, gate) | 0 / 0 | 4W + 9S | all PASS iter 1 | ~14m |
-| implement | 9 (4 implementer, deepener, battery ×3, 360°) | 0 / 0 | 2W + 2S; +14 deepener tests | tasks iter-1; battery 3/3; 360° approved | ~1h13m |
+| implement | 9 (4 implementer, deepener, battery ×3, 360°) | 0 / 0 | 2W + 2S (+1 self-referential 360° bookkeeping S, excluded from the tally); +14 deepener tests | tasks iter-1; battery 3/3; 360° approved | ~1h13m |
 
 **Totals:** 18 agent dispatches (13 review/gate + 4 implementer + 1 deepener). Absorption rate ≈ 100% — only deferrals are explicit ownership transfers: NFR-3 populated baseline → 126/127 (.review-history.md:17); #061 closure → finish (design.md:92); nested-view scale benchmark → 132 cutover (views.py scale note, commit `143b2251`). Fresh/self-inflicted tagging (121-Tune-2) adopted here for the first time (.review-history.md:26).
 
@@ -50,7 +50,7 @@ Durations: `.meta.json` phase timestamps unusable (9-14s started≈completed win
 - **Fresh/self-inflicted tagging paid off on first use** — 120's "1 blocker, 0%" is legible against 121's "10, 50%" with zero re-derivation.
 
 **What didn't:**
-- **The half-sweep/adjacent-literal class recurred — now inside CODE.** The D3 guard (a PRAGMA read preceding `json.dumps`) left the neighboring append_event docstring's "json.dumps runs BEFORE any SQL" claim stale; D3 scoped one docstring line and the adjacent literal rotted. Caught at the last gate (implement 360°). Lineage: 131 (RC4, intra-doc) → 130 (stale inventory) → 121 (half-swept restatements ×4, all artifacts) → **120 (the class migrates from prose artifacts into a shipped code docstring)**. The post-contract-fix sweep must now cover code docstrings/comments adjacent to a changed contract — Tune 1.
+- **The half-sweep/adjacent-literal class recurred — now inside CODE.** The D3 guard (a PRAGMA read preceding `json.dumps`) left the neighboring append_event docstring's "json.dumps runs BEFORE any SQL" claim stale; D3 scoped one docstring line and the adjacent literal rotted. Caught at the last gate (implement 360°). Lineage: 131 (RC4, intra-doc) → 130 (stale inventory) → 121 (half-swept restatements ×4, all artifacts) → **120 (the class migrates from prose artifacts into a shipped code docstring — the stale claim sat at events.py:150-152 pre-fix, reworded at :153-157; cite corrected 2026-07-12 by QA lane C from an erroneous :140)**. The post-contract-fix sweep must now cover code docstrings/comments adjacent to a changed contract — Tune 1.
 - **The briefing-figure guardrail fired twice:** (i) task-1 implementer re-derived the design's sqlite version, correcting stale 3.51.0 → 3.53.2 against the live venv; (ii) this retro rejected the injected 11-files/1333-insertions observation. Both are the CLAUDE.md "Dispatch-briefing figures are restated literals too" class working as intended.
 - **Create-plan three-gate convergence didn't replicate:** relevance-verifier was zero-issue at create-plan (unlike 130/121 where it caught distinct blockers there) but earned its keep at the implement 360° instead. "Keep all three mandatory" still validates; "all three independently productive at create-plan" did not.
 
