@@ -65,6 +65,65 @@ class TestSeederSmoke:
 
 
 # ---------------------------------------------------------------------------
+# Seeder determinism (test-deepening dimension 5): two independent runs at
+# the SAME seed must produce identical row content, not merely identical
+# row COUNTS (the existing smoke test above already pins exact counts, but
+# never compares two runs against each other). entity_uuid/workspace_uuid
+# VALUES legitimately differ run-to-run (generate_uuid7() is never seeded,
+# per the script's own docstring) -- determinism lives in the SEEDED
+# content (type_id, status, mode, phase depth, iterations, reviewerNotes),
+# which is why this test compares type_id + project_meta shape, not uuids.
+# ---------------------------------------------------------------------------
+class TestSeederDeterminism:
+    def test_two_runs_with_same_seed_produce_identical_type_ids_and_meta_shape(
+        self, tmp_path
+    ):
+        module = _load_seed_census_db_module()
+        # Given two independent seed_census_db() runs at the same seed,
+        # into two separate target directories
+        summary_1 = module.seed_census_db(
+            str(tmp_path / "run1"), entity_count=20, workspace_count=2, seed=0x126,
+        )
+        summary_2 = module.seed_census_db(
+            str(tmp_path / "run2"), entity_count=20, workspace_count=2, seed=0x126,
+        )
+
+        # Then row counts match (row-count equality)
+        assert summary_1["entities"] == summary_2["entities"]
+        assert summary_1["events"] == summary_2["events"]
+        assert summary_1["workspaces"] == summary_2["workspaces"]
+
+        conn_1 = events.connect_v2(summary_1["db_path"])
+        conn_2 = events.connect_v2(summary_2["db_path"])
+        try:
+            # And every entity's type_id (seed-derived, NOT uuid-derived)
+            # is identical across both runs, in the same order (sample-row
+            # equality across the FULL row set, not just a spot check)
+            type_ids_1 = conn_1.execute(
+                "SELECT type_id FROM entities ORDER BY type_id"
+            ).fetchall()
+            type_ids_2 = conn_2.execute(
+                "SELECT type_id FROM entities ORDER BY type_id"
+            ).fetchall()
+            assert type_ids_1 == type_ids_2
+
+            # And the first entity's projected shape (status/mode/phase
+            # set) matches too -- proving determinism survives the full
+            # event-append + project_meta round trip, not just the raw
+            # entities-row INSERT.
+            meta_1 = meta_projection.project_meta(conn_1, summary_1["first_entity_uuid"])
+            meta_2 = meta_projection.project_meta(conn_2, summary_2["first_entity_uuid"])
+            assert meta_1["id"] == meta_2["id"] == "0000"
+            assert meta_1["slug"] == meta_2["slug"]
+            assert meta_1["status"] == meta_2["status"]
+            assert meta_1["mode"] == meta_2["mode"]
+            assert meta_1["phases"].keys() == meta_2["phases"].keys()
+        finally:
+            conn_1.close()
+            conn_2.close()
+
+
+# ---------------------------------------------------------------------------
 # Sentinel-existence test (tasks.md Task 3 item 4(ii); design D8 second
 # guard layer): a cheap, suite-visible drift signal that runs on every
 # `pytest` invocation, independent of whether anyone runs the bench script.

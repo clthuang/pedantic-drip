@@ -927,6 +927,599 @@ class TestQueryOnlyCanary:
 
 
 # =============================================================================
+# Test deepening (dimensions 1-4): boundary, adversarial, contract-edge, and
+# mutation-resistance pins beyond the D5-D7 scaffolding above. Every
+# mutation-resistance test below was validated empirically (hand-edited
+# meta_projection.py, confirmed red, restored byte-clean) before being
+# written -- see each class docstring for the exact mutation and which
+# existing test (if any) already caught it.
+# =============================================================================
+
+
+class TestBoundaryUnicodeEmojiKBScaleReviewerNotes:
+    """Boundary: reviewerNotes carrying unicode, emoji, and real-world
+    KB-scale content (fixture (a)'s own reviewerNotes strings are
+    ~1-2KB) round-trips byte-identical through JSON encode/store/decode
+    -- not merely ASCII short strings like most other fixtures use."""
+
+    def test_unicode_emoji_and_kb_scale_notes_reproduced_byte_identical(
+        self, v2_conn, seeded_entity_uuid
+    ):
+        # Given reviewerNotes mixing CJK unicode, emoji, and a >1.5KB
+        # payload (real-world KB-scale, matching fixture (a)'s ~1-2KB
+        # reviewerNotes strings). A raw string, not a nested json.dumps()
+        # -- the fold's OUTER payload decode (read_events' json.loads)
+        # only unescapes ONE JSON layer; nesting a second json.dumps()
+        # here would leave literal backslash-u escapes in the result
+        # instead of the real unicode characters, since nothing in the
+        # fold re-decodes reviewerNotes as JSON a second time.
+        huge_notes = (
+            "无效负载审查 — 🔥🚀 blockers: " + ("x" * 1500) + " ✅✅✅ approved 👍"
+        )
+        events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="initialized",
+            axis="lifecycle", to_value="active", actor="tester",
+            payload={"mode": "standard", "branch": "feature/126-unicode-kb-scale"},
+        )
+        events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="phase_completed",
+            axis="pipeline", to_value="specify", actor="tester",
+            payload={"iterations": 1, "reviewerNotes": huge_notes},
+        )
+
+        # When projecting
+        result = meta_projection.project_meta(v2_conn, seeded_entity_uuid)
+
+        # Then the notes reproduce byte-identical, unicode/emoji intact,
+        # length unmangled -- no truncation, no mojibake.
+        assert result["phases"]["specify"]["reviewerNotes"] == huge_notes
+        assert len(result["phases"]["specify"]["reviewerNotes"]) > 1500
+        assert "🚀" in result["phases"]["specify"]["reviewerNotes"]
+        assert "无效负载审查" in result["phases"]["specify"]["reviewerNotes"]
+
+
+class TestBoundaryPhaseNameOutsideCanonicalVocabulary:
+    """Boundary: the grammar is vocabulary-agnostic (122 owns the
+    vocabulary; design D1's module docstring: "the projection never
+    translates") -- a phase name outside today's known pool must
+    reproduce verbatim, not be dropped, renamed, or raise."""
+
+    def test_unrecognized_phase_name_reproduced_verbatim(
+        self, v2_conn, seeded_entity_uuid
+    ):
+        # Given a phase name that is not in any currently-documented
+        # phase vocabulary
+        weird_phase = "database-migration-dry-run"
+        events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="initialized",
+            axis="lifecycle", to_value="active", actor="tester",
+            payload={"mode": "standard", "branch": "feature/126-unknown-phase"},
+        )
+        events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="phase_started",
+            axis="pipeline", to_value=weird_phase, actor="tester",
+            timestamp="2026-01-01T00:01:00Z",
+        )
+        events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="phase_completed",
+            axis="pipeline", to_value=weird_phase, actor="tester",
+            timestamp="2026-01-01T00:02:00Z",
+            payload={"iterations": 1, "reviewerNotes": "n"},
+        )
+
+        # When projecting
+        result = meta_projection.project_meta(v2_conn, seeded_entity_uuid)
+
+        # Then the unrecognized phase name is a first-class key in
+        # `phases` and `lastCompletedPhase`, reproduced verbatim.
+        assert weird_phase in result["phases"]
+        assert result["phases"][weird_phase]["started"] == "2026-01-01T00:01:00Z"
+        assert result["lastCompletedPhase"] == weird_phase
+
+
+class TestMultipleEntitiesEventsInterleaved:
+    """Boundary: `project_meta` isolates by entity_uuid even when two
+    entities' event rows are physically INTERLEAVED in insertion order
+    (not grouped by entity) -- pins the `read_events` WHERE entity_uuid
+    filter, not just the fold logic downstream of it."""
+
+    def test_projection_isolates_events_by_entity_uuid_when_interleaved(
+        self, v2_conn, bootstrapped_db_path
+    ):
+        # Given two feature entities in the SAME workspace whose events
+        # are appended in INTERLEAVED order (a, b, a, b, a, b)
+        workspace_uuid = "workspace-uuid-interleaved"
+        entity_a = "entity-uuid-interleaved-a"
+        entity_b = "entity-uuid-interleaved-b"
+        _seed_workspace(bootstrapped_db_path, workspace_uuid)
+        _seed_entity(
+            bootstrapped_db_path, workspace_uuid=workspace_uuid,
+            entity_uuid=entity_a, type_id="feature:0900-entity-a",
+        )
+        _seed_entity(
+            bootstrapped_db_path, workspace_uuid=workspace_uuid,
+            entity_uuid=entity_b, type_id="feature:0901-entity-b",
+        )
+
+        events.append_event(
+            v2_conn, entity_uuid=entity_a, event_type="initialized",
+            axis="lifecycle", to_value="active", actor="tester",
+            payload={"mode": "standard", "branch": "feature/0900-a"},
+        )
+        events.append_event(
+            v2_conn, entity_uuid=entity_b, event_type="initialized",
+            axis="lifecycle", to_value="planned", actor="tester",
+            payload={"mode": "full", "branch": "feature/0901-b"},
+        )
+        events.append_event(
+            v2_conn, entity_uuid=entity_a, event_type="phase_started",
+            axis="pipeline", to_value="specify", actor="tester",
+        )
+        events.append_event(
+            v2_conn, entity_uuid=entity_b, event_type="phase_started",
+            axis="pipeline", to_value="design", actor="tester",
+        )
+        events.append_event(
+            v2_conn, entity_uuid=entity_a, event_type="phase_completed",
+            axis="pipeline", to_value="specify", actor="tester",
+            payload={"iterations": 1, "reviewerNotes": "a notes"},
+        )
+        events.append_event(
+            v2_conn, entity_uuid=entity_b, event_type="status_changed",
+            axis="execution", to_value="blocked", actor="tester",
+        )
+
+        # When projecting each entity independently
+        result_a = meta_projection.project_meta(v2_conn, entity_a)
+        result_b = meta_projection.project_meta(v2_conn, entity_b)
+
+        # Then each entity's projection carries ONLY its own data --
+        # no cross-contamination from the interleaved insertion order.
+        assert result_a["mode"] == "standard"
+        assert result_a["status"] == "active"
+        assert list(result_a["phases"].keys()) == ["specify"]
+        assert "design" not in result_a["phases"]
+
+        assert result_b["mode"] == "full"
+        assert result_b["status"] == "blocked"
+        assert list(result_b["phases"].keys()) == ["design"]
+        assert "specify" not in result_b["phases"]
+
+
+class TestNonDictPayloadShapeAdversarial:
+    """Adversarial: `read_events`' ``json.loads`` succeeds on any valid
+    JSON text (array/string/number), but the fold's ``"key" in payload``
+    / ``payload["key"]`` idiom assumes a dict. This is a DIFFERENT
+    failure mode than TestMalformedPayloadGuard (which covers
+    unparseable JSON text, raising ``json.JSONDecodeError`` at the
+    ``read_events`` layer itself) -- here the JSON is perfectly valid,
+    just the wrong root shape. This class characterizes the currently
+    shipped (accidental, not spec-mandated -- the spec is silent on
+    root-payload-shape validation) behavior: truthy non-dict shapes
+    raise LOUD ``TypeError`` (caught at the very first "in" check for
+    non-iterables, or at the indexing step for list membership hits);
+    FALSY non-dict shapes are SILENTLY absorbed into ``{}`` via the
+    ``event["payload"] or {}`` idiom, contributing nothing with no
+    error at all."""
+
+    def test_truthy_list_payload_raises_type_error_not_silently_skipped(
+        self, v2_conn, seeded_entity_uuid
+    ):
+        # Given an `initialized` event whose payload is a JSON ARRAY
+        # containing the literal string "mode" (valid JSON, wrong shape)
+        events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="initialized",
+            axis="lifecycle", to_value="active", actor="tester",
+            payload=["mode"],
+        )
+
+        # When projecting -- `"mode" in ["mode"]` is True (list
+        # membership), then `payload["mode"]` fails because list indices
+        # must be integers, not str
+        # Then a loud TypeError surfaces; the malformed event is never
+        # silently skipped.
+        with pytest.raises(TypeError, match="list indices"):
+            meta_projection.project_meta(v2_conn, seeded_entity_uuid)
+
+    def test_truthy_int_payload_raises_type_error_at_membership_check(
+        self, v2_conn, seeded_entity_uuid
+    ):
+        # Given an `initialized` event whose payload is a JSON NUMBER
+        events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="initialized",
+            axis="lifecycle", to_value="active", actor="tester",
+            payload=42,
+        )
+
+        # When projecting -- ints are not iterable/containers at all, so
+        # the VERY FIRST `"mode" in payload` check itself raises
+        # Then a loud TypeError surfaces immediately.
+        with pytest.raises(TypeError, match="not a container"):
+            meta_projection.project_meta(v2_conn, seeded_entity_uuid)
+
+    def test_falsy_zero_payload_silently_absorbed_as_empty_no_exception(
+        self, v2_conn, seeded_entity_uuid
+    ):
+        # Given a valid init, then a phase_completed event whose payload
+        # is the FALSY JSON scalar 0
+        events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="initialized",
+            axis="lifecycle", to_value="active", actor="tester",
+            payload={"mode": "standard", "branch": "feature/126-falsy-scalar-payload"},
+        )
+        events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="phase_completed",
+            axis="pipeline", to_value="specify", actor="tester",
+            timestamp="2026-01-01T00:01:00Z",
+            payload=0,
+        )
+
+        # When projecting -- `event["payload"] or {}` treats falsy 0
+        # identically to no payload at all, so no exception is raised
+        result = meta_projection.project_meta(v2_conn, seeded_entity_uuid)
+
+        # Then the phase still completes (timestamp is payload-
+        # independent) but carries NEITHER iterations NOR reviewerNotes
+        # -- the malformed payload silently contributed nothing.
+        assert result["phases"]["specify"]["completed"] == "2026-01-01T00:01:00Z"
+        assert "iterations" not in result["phases"]["specify"]
+        assert "reviewerNotes" not in result["phases"]["specify"]
+
+    def test_non_colliding_string_payload_silently_ignored_no_exception(
+        self, v2_conn, seeded_entity_uuid
+    ):
+        # Given a valid init, then a status_changed event whose payload
+        # is a JSON STRING containing none of the registry key names as
+        # substrings (verified: no collision with mode/branch/etc.)
+        events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="initialized",
+            axis="lifecycle", to_value="active", actor="tester",
+            payload={"mode": "standard", "branch": "feature/126-silent-string-payload"},
+        )
+        events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="status_changed",
+            axis="execution", to_value="in_progress", actor="tester",
+            payload="zzz-unstructured-payload-zzz",
+        )
+
+        # When projecting -- every "in payload" check in the fold is
+        # False for this string (no substring collision), so none of
+        # them ever attempts to index into it
+        result = meta_projection.project_meta(v2_conn, seeded_entity_uuid)
+
+        # Then no exception is raised; `status` still folds correctly
+        # (it reads to_value, not payload) and mode/branch are untouched
+        # from the earlier init event.
+        assert result["status"] == "in_progress"
+        assert result["mode"] == "standard"
+        assert result["branch"] == "feature/126-silent-string-payload"
+
+
+class TestAxisOutsideCheckConstraintUnreachable:
+    """Adversarial: is a raw-INSERT event row with an axis value outside
+    the events table's CHECK enumeration ('pipeline','execution',
+    'lifecycle') reachable at all? Answer: no -- SQLite rejects it at
+    INSERT time (the events DDL's CHECK constraint, events.py), so
+    meta_projection's fold never has to defend against an
+    out-of-vocabulary axis the way it must for payload shape (which has
+    no CHECK)."""
+
+    def test_raw_insert_with_axis_outside_check_constraint_is_rejected(
+        self, v2_conn, seeded_entity_uuid
+    ):
+        # Given a raw INSERT attempting an axis value the CHECK
+        # constraint does not enumerate
+        # When executed directly against the events table
+        # Then SQLite raises IntegrityError before the row is ever
+        # written -- this shape can never reach project_meta's fold.
+        with pytest.raises(sqlite3.IntegrityError):
+            v2_conn.execute(
+                "INSERT INTO events "
+                "(uuid, entity_uuid, event_type, axis, to_value, actor, timestamp, payload) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "event-uuid-bad-axis", seeded_entity_uuid, "phase_started",
+                    "bogus_axis", "specify", "tester", "2026-01-01T00:00:00Z", None,
+                ),
+            )
+
+
+class TestDuplicatePhaseSummaryEntriesNotDeduplicated:
+    """Adversarial: two `phase_completed` events carrying the IDENTICAL
+    `phaseSummaryEntry` dict -- accumulation is a bare
+    ``list.append``, never a dedup/set operation (design D3:
+    "ACCUMULATE ... in uuid order")."""
+
+    def test_identical_phase_summary_entry_appears_twice(
+        self, v2_conn, seeded_entity_uuid
+    ):
+        # Given two phase_completed events whose phaseSummaryEntry
+        # payloads are BYTE-IDENTICAL dicts
+        duplicate_entry = {
+            "phase": "specify", "outcome": "Approved.",
+            "artifacts_produced": ["spec.md"],
+        }
+        events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="initialized",
+            axis="lifecycle", to_value="active", actor="tester",
+            payload={"mode": "standard", "branch": "feature/126-duplicate-summary"},
+        )
+        events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="phase_completed",
+            axis="pipeline", to_value="specify", actor="tester",
+            timestamp="2026-01-01T00:01:00Z",
+            payload={"iterations": 1, "reviewerNotes": "n1", "phaseSummaryEntry": duplicate_entry},
+        )
+        events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="phase_completed",
+            axis="pipeline", to_value="specify", actor="tester",
+            timestamp="2026-01-01T00:02:00Z",
+            payload={"iterations": 2, "reviewerNotes": "n2", "phaseSummaryEntry": duplicate_entry},
+        )
+
+        # When projecting
+        result = meta_projection.project_meta(v2_conn, seeded_entity_uuid)
+
+        # Then BOTH entries are present in insertion order -- no dedup,
+        # even though the payload dicts are equal.
+        assert result["phase_summaries"] == [duplicate_entry, duplicate_entry]
+        assert len(result["phase_summaries"]) == 2
+
+
+class TestProjectMetaCalledTwiceReturnsEqualIndependentDicts:
+    """Contract edge: project_meta is a pure read -- calling it twice on
+    the same entity/connection with no intervening writes returns
+    field-equal dicts that are NOT the same object (no hidden module-
+    level cache a careless caller could corrupt for a later caller)."""
+
+    def test_two_calls_produce_equal_but_distinct_dict_objects(
+        self, v2_conn, seeded_entity_uuid
+    ):
+        # Given a seeded entity with a short event stream
+        events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="initialized",
+            axis="lifecycle", to_value="active", actor="tester",
+            payload={"mode": "standard", "branch": "feature/126-idempotent-call"},
+        )
+        events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="phase_started",
+            axis="pipeline", to_value="specify", actor="tester",
+        )
+
+        # When project_meta is called twice, with no writes in between
+        first = meta_projection.project_meta(v2_conn, seeded_entity_uuid)
+        second = meta_projection.project_meta(v2_conn, seeded_entity_uuid)
+
+        # Then the two results are field-equal but independent objects:
+        # mutating one cannot leak into the other or into a future call.
+        assert first == second
+        assert first is not second
+        assert first["phases"] is not second["phases"]
+        first["phases"]["specify"]["started"] = "MUTATED"
+        assert second["phases"]["specify"]["started"] != "MUTATED"
+
+
+class TestRenameImmediatelyAfterInitDoesNotLeakIntoStatus:
+    """Contract edge / D2 denylist boundary: rename is the *second*
+    event ever (zero events between init and rename) -- the tightest
+    possible boundary for the denylist filter, distinct from fixture
+    (f) (TestFixtureFRenamedEntity) which interposes a full phase run
+    before the rename."""
+
+    def test_rename_as_second_event_ever_leaves_status_at_init_value(
+        self, v2_conn, bootstrapped_db_path
+    ):
+        # Given an entity whose SECOND event ever (immediately after
+        # `initialized`, zero phase events in between) is a rename
+        workspace_uuid = "workspace-uuid-rename-immediately"
+        entity_uuid = "entity-uuid-rename-immediately"
+        _seed_workspace(bootstrapped_db_path, workspace_uuid)
+        _seed_entity(
+            bootstrapped_db_path, workspace_uuid=workspace_uuid,
+            entity_uuid=entity_uuid, type_id="feature:126-rename-immediately-before",
+        )
+        conn = events.connect_v2(bootstrapped_db_path)
+        try:
+            events.append_event(
+                conn, entity_uuid=entity_uuid, event_type="initialized",
+                axis="lifecycle", to_value="active", actor="tester",
+                payload={"mode": "standard", "branch": "feature/126-rename-immediately"},
+            )
+            display.rename_entity(
+                conn, entity_uuid=entity_uuid, actor="tester",
+                new_type_id="feature:0999-rename-immediately-after",
+            )
+
+            # When projecting
+            result = meta_projection.project_meta(conn, entity_uuid)
+        finally:
+            conn.close()
+
+        # Then status is still "active" (from init) even though the
+        # `renamed` event -- structurally excluded from the status fold
+        # -- is the chronologically latest event with zero buffer events
+        # separating it from init.
+        assert result["status"] == "active"
+        assert result["id"] == "0999"
+        assert result["slug"] == "rename-immediately-after"
+
+
+class TestBackwardIntoNeverStartedPhaseCreatesEntry:
+    """Contract edge (design D3 re-entry rule via ``setdefault``): a
+    ``phase_backward`` event targeting a phase with NO prior
+    phase_started/phase_completed event anywhere in the stream still
+    CREATES that phase's entry -- ``setdefault`` primes the container
+    on first mention regardless of whether that first mention is
+    forward or backward. Distinct from TestReEnteredPhaseLastEntryWinsGuard
+    (which re-enters an ALREADY-started phase) and fixture (d) (whose
+    backward target "specify" was already forward-entered earlier)."""
+
+    def test_backward_into_phase_with_zero_prior_events_creates_started_only_entry(
+        self, v2_conn, seeded_entity_uuid
+    ):
+        # Given an entity that only ever forward-entered "design", then
+        # jumps backward into "finish" -- a phase NEVER forward-entered
+        events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="initialized",
+            axis="lifecycle", to_value="active", actor="tester",
+            payload={"mode": "standard", "branch": "feature/126-backward-never-started"},
+        )
+        events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="phase_started",
+            axis="pipeline", to_value="design", actor="tester",
+            timestamp="2026-01-01T00:01:00Z",
+        )
+        events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="phase_backward",
+            axis="pipeline", to_value="finish", actor="tester",
+            timestamp="2026-01-01T00:02:00Z",
+            payload={"backwardContext": {"source_phase": "design"}, "backwardReturnTarget": "finish"},
+        )
+
+        # When projecting
+        result = meta_projection.project_meta(v2_conn, seeded_entity_uuid)
+
+        # Then "finish" exists with `started` ONLY (never completed),
+        # created purely by the backward event's setdefault -- not
+        # merely overwritten from a pre-existing forward entry.
+        assert result["phases"]["finish"] == {"started": "2026-01-01T00:02:00Z"}
+        assert "completed" not in result["phases"]["finish"]
+
+
+class TestPhaseBackwardAsLastEventDoesNotLeakIntoStatus:
+    """Mutation-resistance pin (design D2's denylist). Empirically
+    verified (hand-edited ``_NON_STATUS_EVENT_TYPES`` to drop
+    "phase_backward", ran the suite, confirmed red, restored
+    byte-clean): removing "phase_backward" from the denylist is caught
+    ONLY by TestReplayProperty's random case content (case_index=0 at
+    this file's fixed MASTER_SEED) -- no DETERMINISTIC fixture catches
+    it. Fixture (d) (TestFixtureDBackwardAndBacklogSourced) also ends
+    its stream on a `phase_backward` event but never asserts
+    ``result["status"]``. This test closes that gap directly."""
+
+    def test_status_unaffected_when_phase_backward_is_the_most_recent_event(
+        self, v2_conn, seeded_entity_uuid
+    ):
+        # Given an entity whose event stream's ABSOLUTE LAST event is a
+        # phase_backward (no other event follows it)
+        events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="initialized",
+            axis="lifecycle", to_value="active", actor="tester",
+            payload={"mode": "standard", "branch": "feature/126-mutation-backward-last"},
+            timestamp="2026-01-01T00:00:00Z",
+        )
+        events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="phase_started",
+            axis="pipeline", to_value="design", actor="tester",
+            timestamp="2026-01-01T00:01:00Z",
+        )
+        events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="phase_backward",
+            axis="pipeline", to_value="specify", actor="tester",
+            timestamp="2026-01-01T00:02:00Z",
+            payload={"backwardContext": {"source_phase": "design"}, "backwardReturnTarget": "specify"},
+        )
+
+        # When projecting -- the latest event by uuid order is the
+        # phase_backward above, whose to_value is "specify"
+        result = meta_projection.project_meta(v2_conn, seeded_entity_uuid)
+
+        # Then status still reflects "active" from `initialized`, NOT
+        # "specify" (the backward event's to_value) -- the denylist
+        # holds even at the tightest boundary: the excluded event_type
+        # is the single most recent row in the entire stream.
+        assert result["status"] == "active"
+
+
+class TestCompletedPrimaryPreferredOverDivergentFallback:
+    """Mutation-resistance pin (design D3's PRIMARY/FALLBACK `completed`
+    rule). Empirically verified (hand-edited the PRIMARY/FALLBACK
+    expression to swap branches, ran the suite, confirmed red, restored
+    byte-clean): swapping which branch is primary vs fallback is caught
+    ONLY by TestReplayProperty's engineered non-vacuity case (design
+    D3: "The D6 generator MUST produce cases where the lifecycle-
+    terminal ts differs from finish.completed") -- no deterministic
+    fixture exercises a finish completion AND a terminal lifecycle
+    event with genuinely DIFFERING timestamps. Fixtures (a)/(c) happen
+    to carry IDENTICAL finish/terminal timestamps (byte-derived from
+    real files where the writer stamps both from the same moment), so
+    they exercise the code path but cannot discriminate the rule."""
+
+    def test_finish_timestamp_wins_over_later_terminal_lifecycle_timestamp(
+        self, v2_conn, seeded_entity_uuid
+    ):
+        # Given a "finish" phase_completed event, followed by a LATER,
+        # DIFFERENT-timestamped terminal lifecycle event ("abandoned")
+        events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="initialized",
+            axis="lifecycle", to_value="active", actor="tester",
+            payload={"mode": "standard", "branch": "feature/126-mutation-primary-fallback"},
+            timestamp="2026-01-01T00:00:00Z",
+        )
+        events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="phase_started",
+            axis="pipeline", to_value="finish", actor="tester",
+            timestamp="2026-01-01T00:01:00Z",
+        )
+        events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="phase_completed",
+            axis="pipeline", to_value="finish", actor="tester",
+            timestamp="2026-01-01T00:02:00Z",
+            payload={"iterations": 1, "reviewerNotes": "finish notes"},
+        )
+        events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="abandoned",
+            axis="lifecycle", to_value="abandoned", actor="tester",
+            timestamp="2026-01-01T01:00:00Z",  # one hour LATER, deliberately different
+        )
+
+        # When projecting
+        result = meta_projection.project_meta(v2_conn, seeded_entity_uuid)
+
+        # Then top-level `completed` is the FINISH timestamp (PRIMARY),
+        # never the later terminal-lifecycle timestamp (FALLBACK) -- the
+        # PRIMARY rule fires whenever a finish completion exists,
+        # independent of a later terminal status (spec FR126-2).
+        assert result["completed"] == "2026-01-01T00:02:00Z"
+        assert result["status"] == "abandoned"
+
+
+class TestFalsyBackwardValuesProjectAbsent:
+    """Mutation-resistance pin (design D3: "a FALSY carried value
+    (None/`{}`/`""`) projects ABSENT"). Empirically verified
+    (hand-edited both truthy checks to `is not None`, ran the suite,
+    confirmed red, restored byte-clean): inverting the truthy check is
+    caught ONLY by TestReplayProperty's random falsy-value draws (the
+    generator's `context_roll`/`target_roll` branches) -- no
+    deterministic fixture pins this rule; fixture (d)
+    (TestFixtureDBackwardAndBacklogSourced) only exercises NON-falsy
+    backward values."""
+
+    def test_empty_dict_backward_context_and_empty_string_return_target_are_absent(
+        self, v2_conn, seeded_entity_uuid
+    ):
+        # Given a phase_backward event carrying FALSY-but-not-None
+        # values for both backward fields ({} and "")
+        events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="initialized",
+            axis="lifecycle", to_value="active", actor="tester",
+            payload={"mode": "standard", "branch": "feature/126-mutation-falsy-backward"},
+        )
+        events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="phase_backward",
+            axis="pipeline", to_value="design", actor="tester",
+            payload={"backwardContext": {}, "backwardReturnTarget": ""},
+        )
+
+        # When projecting
+        result = meta_projection.project_meta(v2_conn, seeded_entity_uuid)
+
+        # Then BOTH fields are absent from the result, not present-as-falsy.
+        assert "backward_context" not in result
+        assert "backward_return_target" not in result
+
+
+# =============================================================================
 # D6 property test (spec SC2): replay against a pure-Python fold oracle.
 #
 # A stdlib-seeded pseudo-random generator produces MASTER_SEED-derived

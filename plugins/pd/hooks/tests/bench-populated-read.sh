@@ -63,9 +63,17 @@ SCALES=("$FEATURES_N" "$((FEATURES_N * 10))")
 # ---------------------------------------------------------------------------
 extract_sentinel() {
     local start_marker="$1" end_marker="$2"
+    # Marker must be the whole line OR be followed by whitespace (annotations
+    # like "(feature 126, design D8)" are legitimate). A FUSED suffix (e.g.
+    # "# BENCH-WALK-START-DISABLED") must read as a MISSING sentinel — the
+    # original substring index() matcher silently accepted it.
     awk -v s="$start_marker" -v e="$end_marker" '
-        index($0, s) { found=1; next }
-        index($0, e) { found=0 }
+        function is_marker(m,  line) {
+            line=$0; sub(/^[[:space:]]+/, "", line)
+            return line == m || index(line, m " ") == 1
+        }
+        is_marker(s) { found=1; next }
+        is_marker(e) { found=0 }
         found { print }
     ' "$SESSION_START_SH"
 }
