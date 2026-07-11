@@ -147,6 +147,13 @@ def rename_entity(
     """
     if new_type_id is None and new_name is None:
         raise ValueError("rename_entity requires at least one of new_type_id/new_name")
+    # A rename may never BLANK a display field (feature 121 FR-5 — the
+    # same corruption vector the v1 register/upsert/update guards close;
+    # this is the v2 rename path's equivalent, live at the 132 cutover).
+    if new_type_id is not None and not new_type_id.strip():
+        raise ValueError("rename must not blank display fields (feature 121 FR-5)")
+    if new_name is not None and not new_name.strip():
+        raise ValueError("rename must not blank display fields (feature 121 FR-5)")
 
     if conn.in_transaction:
         return _rename(conn, entity_uuid, actor, new_type_id, new_name)

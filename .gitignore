@@ -68,3 +68,9 @@ docs/features/**/.qa-gate-low-findings.md
 **/.meta.json
 docs/backlog.md
 pd-state.diff.md
+
+# Test-run pollution: workspace-mapping migration writer creates nested
+# .claude/pd/migrations/ marker files under plugins/ when suites run from
+# package dirs (QA gate 121, pre-existing feature-108 writer — backlog #066).
+# Deliberately NOT the root .claude/ (real config lives there).
+plugins/**/.claude/

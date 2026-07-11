@@ -784,3 +784,56 @@ class TestRenameEntity:
             "SELECT COUNT(*) FROM events WHERE entity_uuid = ?", (seeded_entity_uuid,)
         ).fetchone()[0]
         assert event_count == 0
+
+
+class TestRenameEntityBlankFieldRejection:
+    """QA-gate fix: a rename may never BLANK a display field (the FR-5
+    corruption vector, recurring on the v2 rename path — missed by every
+    pre-gate review round). Kills a mutation dropping either strip()
+    guard: without it, rename_entity(new_name="") persists name='' and
+    the entity loses display identity at the 132 cutover."""
+
+    def test_blank_new_name_raises_and_persists_nothing(
+        self, v2_conn, seeded_entity_uuid
+    ):
+        for blank in ("", "   "):
+            with pytest.raises(ValueError, match="must not blank"):
+                display.rename_entity(
+                    v2_conn,
+                    entity_uuid=seeded_entity_uuid,
+                    actor="test",
+                    new_name=blank,
+                )
+        row = v2_conn.execute(
+            "SELECT name FROM entities WHERE uuid = ?", (seeded_entity_uuid,)
+        ).fetchone()
+        assert row[0] == "Original Name"
+        event_count = v2_conn.execute(
+            "SELECT COUNT(*) FROM events WHERE entity_uuid = ?",
+            (seeded_entity_uuid,),
+        ).fetchone()[0]
+        assert event_count == 0
+
+    def test_blank_new_type_id_raises_and_persists_nothing(
+        self, v2_conn, seeded_entity_uuid
+    ):
+        for blank in ("", "   "):
+            with pytest.raises(ValueError, match="must not blank"):
+                display.rename_entity(
+                    v2_conn,
+                    entity_uuid=seeded_entity_uuid,
+                    actor="test",
+                    new_type_id=blank,
+                )
+        row = v2_conn.execute(
+            "SELECT type_id FROM entities WHERE uuid = ?", (seeded_entity_uuid,)
+        ).fetchone()
+        assert row[0] == "121-original-type-id"
+
+    def test_blank_guard_precedes_missing_entity_check(self, v2_conn):
+        """Validation order pin: blank input fails on the blank rule even
+        for a nonexistent uuid (input validation before I/O)."""
+        with pytest.raises(ValueError, match="must not blank"):
+            display.rename_entity(
+                v2_conn, entity_uuid="no-such-uuid", actor="test", new_name=""
+            )
