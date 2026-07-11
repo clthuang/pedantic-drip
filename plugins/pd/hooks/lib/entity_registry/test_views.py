@@ -440,6 +440,460 @@ class TestEntitiesColumnSetUnchanged:
 
 
 # ---------------------------------------------------------------------------
+# test-deepener additions below (feature 120 deepening pass). Each closes a
+# gap the six D5 fixtures and the 200-case property test leave open:
+# boundary partitions the property test only covers stochastically (never
+# pinned deterministically), adversarial input content, contract-edge
+# cardinality invariants (row-count/GROUP BY), and cross-connection view
+# visibility. See individual class docstrings for the specific mutation
+# each one targets.
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Dimension: boundary values — exactly two of three axes populated. Neither
+# the single-axis (1 populated) nor three-axis (3 populated) D5 fixtures
+# exercise this partition. PARAMETRIZED over which axis is the missing
+# one: manual mutation testing (dropping the `AND s.axis = '...'` filter
+# from one pivoted subquery at a time) showed the un-parametrized,
+# single-case version of this test — along with TestThreeAxisLatest and
+# TestSingleAxisEntity — does NOT catch a dropped filter on the
+# `execution_value` subquery specifically: SQLite's unfiltered scalar
+# subquery happens to return `entity_axis_state`'s row in an order where
+# "execution" (alphabetically first of the three axis names) coincides
+# with the correct answer whenever execution IS one of the populated
+# axes in those fixtures. Parametrizing over all three "which axis is
+# missing" cases — including the pipeline+lifecycle-populated,
+# execution-ABSENT case — closes that coincidence for good instead of
+# patching one axis at a time.
+# ---------------------------------------------------------------------------
+class TestTwoOfThreeAxesPopulated:
+    @pytest.mark.parametrize("missing_axis", ["pipeline", "execution", "lifecycle"])
+    def test_two_populated_axes_leave_third_null_triple(
+        self, v2_conn, seeded_entity_uuid, missing_axis
+    ):
+        """Anticipate: a view rewrite that derives "is this axis NULL" from
+        entity_axis_state's overall row count, or that drops the `AND
+        s.axis = '...'` filter from exactly one pivoted subquery, would
+        behave correctly at the 1-of-3 and 3-of-3 partitions already
+        pinned (TestSingleAxisEntity, TestThreeAxisLatest) yet fail at
+        this 2-of-3 partition. Verified empirically to matter: dropping
+        the filter from ONLY the `execution_value` subquery slips past
+        every OTHER fixture in this file (including an earlier,
+        non-parametrized version of this very test) because of an
+        axis-name-sort coincidence — this parametrization is the fix, not
+        just a nice-to-have.
+        derived_from: spec:SC1 (per-axis latest, other axes NULL),
+        dimension:boundary_values, dimension:mutation_mindset
+        """
+        # Given an entity with events on the two axes OTHER than
+        # missing_axis
+        populated_axes = [
+            axis for axis in ("pipeline", "execution", "lifecycle")
+            if axis != missing_axis
+        ]
+        populated = {}
+        for axis in populated_axes:
+            value = f"value-for-{axis}"
+            event_uuid = events.append_event(
+                v2_conn, entity_uuid=seeded_entity_uuid, event_type=f"{axis}_event",
+                axis=axis, to_value=value, actor="tester",
+            )
+            populated[axis] = (value, event_uuid)
+
+        # When the per-axis view is queried
+        axis_rows = _read_axis_state(v2_conn, seeded_entity_uuid)
+
+        # Then exactly the two populated axes have rows — missing_axis absent
+        assert len(axis_rows) == 2
+        by_axis = {row["axis"]: row for row in axis_rows}
+        for axis, (value, event_uuid) in populated.items():
+            assert by_axis[axis]["to_value"] == value
+            assert by_axis[axis]["event_uuid"] == event_uuid
+        assert missing_axis not in by_axis
+
+        # And the pivoted row shows the two populated axes, missing_axis NULL
+        pivoted = _read_pivoted_state(v2_conn, seeded_entity_uuid)
+        for axis, (value, _event_uuid) in populated.items():
+            assert pivoted[f"{axis}_value"] == value
+        assert pivoted[f"{missing_axis}_value"] is None
+        assert pivoted[f"{missing_axis}_at"] is None
+
+
+# ---------------------------------------------------------------------------
+# Dimension: boundary values / mutation resistance — multiple entities
+# interleaved in ONE axis query. Every deterministic fixture above hangs
+# its events off a single entity (seeded_entity_uuid); only the stochastic
+# property test ever writes more than one, and never pins this shape
+# deterministically. This is also the one test in this file that would
+# catch a `GROUP BY axis` rewrite (entity_uuid dropped from the GROUP BY):
+# such a mutation collapses every entity sharing an axis into a single
+# global row — invisible to any single-entity fixture, since with one
+# entity "collapse across entities" and "no collapse" produce an identical
+# result.
+# ---------------------------------------------------------------------------
+class TestMultipleEntitiesInterleavedAxisQuery:
+    def test_per_entity_axis_rows_stay_attributed_not_collapsed_across_entities(
+        self, v2_conn, bootstrapped_db_path
+    ):
+        """Anticipate: a `GROUP BY axis` rewrite (dropping entity_uuid from
+        the GROUP BY clause) would still pass every single-entity fixture
+        in this file. Three entities sharing the pipeline axis is the
+        minimum shape that makes the two GROUP BY clauses diverge.
+        derived_from: spec:SC1, design:D1 (GROUP BY entity_uuid, axis),
+        dimension:boundary_values, dimension:mutation_mindset
+        """
+        workspace_uuid = "workspace-uuid-multi-entity-axis-test"
+        _seed_workspace(bootstrapped_db_path, workspace_uuid)
+        entity_uuids = [
+            "entity-uuid-multi-axis-a",
+            "entity-uuid-multi-axis-b",
+            "entity-uuid-multi-axis-c",
+        ]
+        for entity_uuid in entity_uuids:
+            _seed_entity(
+                bootstrapped_db_path, workspace_uuid=workspace_uuid,
+                entity_uuid=entity_uuid, type_id="120-multi-axis-test",
+            )
+
+        # Given three entities, each with its OWN distinct pipeline-axis
+        # value, appended in interleaved order (A, B, C)
+        expected = {}
+        for entity_uuid in entity_uuids:
+            value = f"value-for-{entity_uuid}"
+            event_uuid = events.append_event(
+                v2_conn, entity_uuid=entity_uuid, event_type="phase_completed",
+                axis="pipeline", to_value=value, actor="tester",
+            )
+            expected[entity_uuid] = (value, event_uuid)
+
+        # When entity_axis_state is queried by axis alone, with NO entity
+        # filter at all (the shape a dropped entity_uuid GROUP BY column
+        # would collapse)
+        rows = v2_conn.execute(
+            "SELECT entity_uuid, to_value, event_uuid FROM entity_axis_state "
+            "WHERE axis = 'pipeline'"
+        ).fetchall()
+
+        # Then each entity gets exactly its OWN row with its OWN value —
+        # three rows, not one
+        assert len(rows) == 3
+        by_entity = {row[0]: (row[1], row[2]) for row in rows}
+        assert by_entity == expected
+
+
+# ---------------------------------------------------------------------------
+# Dimension: boundary values — the two MOST RECENT events on one axis
+# share the IDENTICAL to_value, so the value itself gives no signal to
+# tell them apart; only uuid ordering can. (An earlier draft of this test
+# used a non-adjacent repeat — verified via manual mutation testing to be
+# redundant with TestThreeAxisLatest/TestOutOfOrderTimestamp/
+# TestNullToValueLatest, which already catch a `to_value` folded into
+# GROUP BY through their own distinct-per-axis values producing extra
+# rows. This adjacent-repeat shape targets a DIFFERENT, uncovered
+# mutation — see docstring below.)
+# ---------------------------------------------------------------------------
+class TestRepeatedToValueLatestStillWinsByUuid:
+    def test_latest_event_matching_predecessors_value_still_identified_by_its_own_uuid(
+        self, v2_conn, seeded_entity_uuid
+    ):
+        """Anticipate: an implementation that derives "latest" by tracking
+        DISTINCT value TRANSITIONS (e.g. a hand-rolled "skip this event,
+        to_value is unchanged from the previous one" dedup pass — a
+        real-world pattern in naive state-change logs) would treat the
+        third event below as a redundant repeat of the second and report
+        the SECOND event's uuid/timestamp as "the latest change" instead
+        of the third's. This test fails against that mutation because it
+        asserts event_uuid equals the THIRD event's uuid specifically,
+        not the second's, even though the two share an identical
+        to_value — a plain `MAX(uuid)` is indifferent to whether to_value
+        repeated; a value-transition-tracking rewrite would not be.
+        derived_from: spec:SC1 (latest-wins is uuid-keyed, not
+        value-keyed), design:D1 (GROUP BY entity_uuid, axis only — no
+        value-transition logic), dimension:boundary_values
+        """
+        # Given three events on one axis: "draft", then "review", then
+        # "review" again — the LATEST TWO events share the identical value
+        first_uuid = events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="phase_started",
+            axis="pipeline", to_value="draft", actor="tester",
+        )
+        second_uuid = events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="phase_review",
+            axis="pipeline", to_value="review", actor="tester",
+        )
+        third_uuid = events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="phase_review_repeated",
+            axis="pipeline", to_value="review", actor="tester",
+        )
+        assert third_uuid > second_uuid > first_uuid  # sanity: strictly later mints
+
+        # When the per-axis view is queried
+        axis_rows = _read_axis_state(v2_conn, seeded_entity_uuid, axis="pipeline")
+
+        # Then exactly one row survives, carrying the THIRD event's own
+        # uuid — not the second event's, even though both carry "review"
+        assert len(axis_rows) == 1
+        assert axis_rows[0]["to_value"] == "review"
+        assert axis_rows[0]["event_uuid"] == third_uuid
+        assert axis_rows[0]["event_uuid"] != second_uuid
+
+
+# ---------------------------------------------------------------------------
+# Dimension: adversarial input — axis values outside the three canonical
+# values, attempted via a RAW INSERT (not append_event). test_events.py's
+# TestAxisBoundaryValues pins CHECK rejection via append_event (and a
+# case-variant of a valid value); this closes the views-specific question
+# the pivoted view's "no phantom axes" claim depends on — that a wholly
+# novel axis string can never reach entity_axis_state/entity_state even
+# via a write path that bypasses append_event's Python entirely, mirroring
+# TestEventsImmutability's existing philosophy of proving DB-residence via
+# a bare connection rather than trusting application code discipline.
+# ---------------------------------------------------------------------------
+class TestAxisOutsideCanonicalSetRejected:
+    def test_raw_insert_with_unknown_axis_rejected_before_reaching_views(
+        self, bootstrapped_db_path, seeded_entity_uuid
+    ):
+        """Anticipate: if the axis CHECK were ever loosened (e.g. to an
+        open-ended TEXT column, anticipating feature 122's future axis
+        additions) without updating the pivoted view's hardcoded
+        three-column shape, an out-of-vocabulary axis event would
+        silently vanish from entity_state (no column to land in) while
+        still existing in entity_axis_state — a phantom-data hazard the
+        spec's Error & Boundary Cases section explicitly rules out ("no
+        phantom axes"). This test fails against that loosening because it
+        expects the WRITE itself to be rejected outright, not merely
+        absent from the pivot.
+        derived_from: spec:Error & Boundary Cases (no phantom axes),
+        dimension:adversarial
+        """
+        # Given a bare connection (even less privileged than connect_v2 —
+        # CHECK constraints, unlike FK enforcement, need no PRAGMA opt-in)
+        conn = sqlite3.connect(bootstrapped_db_path)
+        try:
+            # When a raw INSERT uses an axis value outside the canonical
+            # three, bypassing append_event's Python entirely
+            with pytest.raises(sqlite3.IntegrityError, match="CHECK constraint failed"):
+                conn.execute(
+                    "INSERT INTO events "
+                    "(uuid, entity_uuid, event_type, axis, to_value, actor, timestamp) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        "event-uuid-bogus-axis", seeded_entity_uuid, "probe",
+                        "bogus_axis", "some-value", "tester", _NOW,
+                    ),
+                )
+            # Then it never reaches entity_axis_state at all
+            axis_rows = _read_axis_state(conn, seeded_entity_uuid)
+            assert axis_rows == []
+        finally:
+            conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Dimension: adversarial input — to_value content that stresses the read
+# path itself: embedded quotes/SQL metacharacters, multi-byte unicode, and
+# a very long string. No existing fixture in either test_views.py or
+# test_events.py passes anything but short plain-ASCII words (or "" /
+# None) through to_value; this pins that the views' bare-column
+# passthrough (design D1 CONTRACT) does not escape, truncate, or
+# mis-encode content on the way through the GROUP BY/MAX projection.
+# ---------------------------------------------------------------------------
+class TestToValueContentRoundTrip:
+    @pytest.mark.parametrize(
+        "to_value",
+        [
+            pytest.param("O'Brien\"; DROP TABLE events; --", id="quotes-and-sql-metachars"),
+            pytest.param("阶段-🚀-完了-café", id="unicode-multibyte"),
+            pytest.param("x" * 10_000, id="very-long-value"),
+        ],
+    )
+    def test_special_content_survives_the_view_projection_verbatim(
+        self, v2_conn, seeded_entity_uuid, to_value
+    ):
+        """Anticipate: a view rewrite that materialized state through any
+        string-formatting step (rather than the pure bare-column /
+        parameterized path both views use today) could mangle embedded
+        quotes, truncate long values, or corrupt multi-byte encoding —
+        this test fails against any of those because it asserts exact
+        equality against the original string, through both views.
+        derived_from: dimension:adversarial (wrong/edge-case data)
+        """
+        # Given an event whose to_value contains adversarial content
+        event_uuid = events.append_event(
+            v2_conn, entity_uuid=seeded_entity_uuid, event_type="phase_completed",
+            axis="pipeline", to_value=to_value, actor="tester",
+        )
+
+        # When both views are read back
+        (axis_row,) = _read_axis_state(v2_conn, seeded_entity_uuid, axis="pipeline")
+        pivoted = _read_pivoted_state(v2_conn, seeded_entity_uuid)
+
+        # Then the value survives verbatim through both, with the correct
+        # winning event_uuid
+        assert axis_row["to_value"] == to_value
+        assert axis_row["event_uuid"] == event_uuid
+        assert pivoted["pipeline_value"] == to_value
+
+
+# ---------------------------------------------------------------------------
+# Dimension: contract edges / mutation resistance — entity_state's row
+# count exactly equals entities' row count (no fan-out, no drop), and
+# entity_axis_state never exceeds one row per (entity_uuid, axis) pair at
+# multi-entity scale. This is the regression net design D1's own docstring
+# calls out by name: "Any future view adding a second min/max must
+# materialize the winning uuid first (join/subquery), not rely on
+# bare-column provenance." Entities here carry MULTIPLE events on the SAME
+# axis (maximum fan-out surface for a rewrite that joins raw `events`
+# instead of the aggregated entity_axis_state) plus TWO zero-event
+# entities (drop surface — an INNER-JOIN-style rewrite would lose them).
+# ---------------------------------------------------------------------------
+class TestEntityStateRowCountMatchesEntitiesNoFanout:
+    @pytest.fixture
+    def five_entities_with_varied_events(self, v2_conn, bootstrapped_db_path):
+        workspace_uuid = "workspace-uuid-no-fanout-test"
+        _seed_workspace(bootstrapped_db_path, workspace_uuid)
+        entity_uuids = [f"entity-uuid-no-fanout-{index}" for index in range(5)]
+        for entity_uuid in entity_uuids:
+            _seed_entity(
+                bootstrapped_db_path, workspace_uuid=workspace_uuid,
+                entity_uuid=entity_uuid, type_id="120-no-fanout-test",
+            )
+        # entity_uuids[0]: THREE events on the SAME axis (fan-out surface)
+        for repeat in range(3):
+            events.append_event(
+                v2_conn, entity_uuid=entity_uuids[0], event_type="phase_progress",
+                axis="pipeline", to_value=f"step-{repeat}", actor="tester",
+            )
+        # entity_uuids[1]: two axes, one event each
+        events.append_event(
+            v2_conn, entity_uuid=entity_uuids[1], event_type="phase_completed",
+            axis="pipeline", to_value="done", actor="tester",
+        )
+        events.append_event(
+            v2_conn, entity_uuid=entity_uuids[1], event_type="execution_started",
+            axis="execution", to_value="in_progress", actor="tester",
+        )
+        # entity_uuids[2]: all three axes, one event each
+        for axis in ("pipeline", "execution", "lifecycle"):
+            events.append_event(
+                v2_conn, entity_uuid=entity_uuids[2], event_type=f"{axis}_event",
+                axis=axis, to_value=f"{axis}-value", actor="tester",
+            )
+        # entity_uuids[3] and entity_uuids[4]: zero events each (drop surface)
+        return entity_uuids
+
+    def test_entity_state_has_exactly_one_row_per_entity_no_duplication_or_drop(
+        self, v2_conn, five_entities_with_varied_events
+    ):
+        """Anticipate: a rewrite that joins `entities` directly against
+        `events` (e.g. three LEFT JOINs, one per axis, instead of against
+        the aggregated `entity_axis_state`) without re-deriving MAX(uuid)
+        first would fan out — one entity_state row per matching events
+        row, not per entity. This test fails against that mutation via
+        the exact row-count assertion; it also fails against an
+        INNER-JOIN-style rewrite that drops zero-event entities, since two
+        are deliberately included here.
+        derived_from: design:D1 (bare-columns-with-MAX CONTRACT, "any
+        future view adding a second min/max must materialize the winning
+        uuid first"), dimension:mutation_mindset
+        """
+        entity_uuids = five_entities_with_varied_events
+        placeholders = ",".join("?" * len(entity_uuids))
+
+        (entities_count,) = v2_conn.execute(
+            f"SELECT COUNT(*) FROM entities WHERE uuid IN ({placeholders})",
+            entity_uuids,
+        ).fetchone()
+        (state_count,) = v2_conn.execute(
+            f"SELECT COUNT(*) FROM entity_state WHERE entity_uuid IN ({placeholders})",
+            entity_uuids,
+        ).fetchone()
+        (distinct_state_count,) = v2_conn.execute(
+            f"SELECT COUNT(DISTINCT entity_uuid) FROM entity_state "
+            f"WHERE entity_uuid IN ({placeholders})",
+            entity_uuids,
+        ).fetchone()
+
+        # 5 entities in, exactly 5 entity_state rows out — no fan-out, no
+        # drop, no duplication
+        assert entities_count == 5
+        assert state_count == 5
+        assert distinct_state_count == 5
+
+    def test_entity_axis_state_group_by_cardinality_never_exceeds_one_per_pair(
+        self, v2_conn, five_entities_with_varied_events
+    ):
+        """Anticipate: a GROUP BY weakened to a strict subset of
+        (entity_uuid, axis) — e.g. GROUP BY dropped entirely — would leave
+        one row per underlying EVENT rather than one per (entity, axis)
+        pair; entity_uuids[0]'s three same-axis events are the substrate
+        that exposes it (re-grouping the view's own output by
+        (entity_uuid, axis) would then show a group of size 3, not 1).
+        derived_from: spec:SC1 (GROUP BY entity_uuid, axis contract),
+        dimension:mutation_mindset
+        """
+        entity_uuids = five_entities_with_varied_events
+        placeholders = ",".join("?" * len(entity_uuids))
+        rows = v2_conn.execute(
+            f"SELECT COUNT(*) AS cnt FROM entity_axis_state "
+            f"WHERE entity_uuid IN ({placeholders}) "
+            f"GROUP BY entity_uuid, axis",
+            entity_uuids,
+        ).fetchall()
+        assert rows, "expected at least one (entity, axis) group to exist"
+        assert all(count == 1 for (count,) in rows)
+
+
+# ---------------------------------------------------------------------------
+# Dimension: concurrency-adjacent determinism — two SEPARATE connect_v2
+# connections to the same DB; a write committed on one is visible to a
+# view read on the OTHER. Every fixture above reads back through the SAME
+# connection that wrote (v2_conn throughout); this is the one test that
+# opens a second, independent connection and proves the views recompute on
+# every read rather than being connection-scoped or cached (views.py's own
+# module docstring: "Both recompute on every read; there is no
+# materialized/cached state").
+# ---------------------------------------------------------------------------
+class TestCrossConnectionViewVisibility:
+    def test_second_connection_sees_first_connections_committed_append(
+        self, bootstrapped_db_path, seeded_entity_uuid
+    ):
+        """Anticipate: if a future rewrite ever introduced connection-
+        local caching (e.g. memoizing a view read per connection object)
+        to work around SQLite's lack of true materialized views, a
+        second, independently-opened connection would show stale/absent
+        state even after the first connection's write commits — this
+        test fails against that mutation because it never reads through
+        the writing connection at all.
+        derived_from: design:D1/D2 (views recompute on every read; no
+        materialized/cached state), dimension:mutation_mindset
+        """
+        # Given two independent connect_v2 connections to the same DB
+        writer_conn = events.connect_v2(bootstrapped_db_path)
+        reader_conn = events.connect_v2(bootstrapped_db_path)
+        try:
+            # When an event is appended (and committed, standalone path)
+            # through the WRITER connection only
+            event_uuid = events.append_event(
+                writer_conn, entity_uuid=seeded_entity_uuid, event_type="phase_completed",
+                axis="pipeline", to_value="design", actor="tester",
+            )
+
+            # Then the READER connection — which never wrote anything —
+            # sees the committed state through both views
+            (axis_row,) = _read_axis_state(reader_conn, seeded_entity_uuid, axis="pipeline")
+            assert axis_row["to_value"] == "design"
+            assert axis_row["event_uuid"] == event_uuid
+
+            pivoted = _read_pivoted_state(reader_conn, seeded_entity_uuid)
+            assert pivoted["pipeline_value"] == "design"
+        finally:
+            writer_conn.close()
+            reader_conn.close()
+
+
+# ---------------------------------------------------------------------------
 # Design D4 / spec SC3: replay property test.
 #
 # A stdlib-seeded pseudo-random generator produces MASTER_SEED-derived

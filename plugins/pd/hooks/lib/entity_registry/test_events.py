@@ -599,6 +599,86 @@ class TestAppendEventConnectionGuard:
 
 
 # ---------------------------------------------------------------------------
+# test-deepener addition (feature 120 deepening pass, dimension:adversarial
+# + dimension:mutation_mindset): #061 guard hardening.
+# TestAppendEventConnectionGuard above proves a bare sqlite3.connect (which
+# never had foreign_keys=ON at all) is rejected; this class closes two
+# adjacent gaps design D3 explicitly cares about: (1) the guard reads the
+# LIVE PRAGMA state, not connect_v2 provenance — proving the (a)-vs-(b)
+# design choice actually holds (D3's REJECTED option (b), a sentinel
+# attribute set once at connect_v2 time, would pass a connection that
+# later toggles foreign_keys off; the chosen PRAGMA-probe option (a) must
+# not); (2) the guard fires BEFORE payload serialization, not merely
+# before the SQL write — proven with a non-serializable payload that
+# would raise TypeError if payload serialization were ever reached first.
+# ---------------------------------------------------------------------------
+class TestAppendEventConnectionGuardHardening:
+    def test_foreign_keys_toggled_off_after_connect_v2_is_still_guarded(
+        self, bootstrapped_db_path, seeded_entity_uuid
+    ):
+        """Anticipate: a guard implemented as a provenance/sentinel check
+        (design D3's explicitly REJECTED option (b) — e.g. an attribute
+        connect_v2 sets once) would pass this connection, since it
+        genuinely came from connect_v2 — only a LIVE `PRAGMA
+        foreign_keys` probe (D3's chosen option (a)) catches a connection
+        that started compliant and was toggled off afterward.
+        derived_from: design:D3 (PRAGMA probe checks the live property,
+        not provenance), dimension:adversarial, dimension:mutation_mindset
+        """
+        # Given a genuine connect_v2 connection with foreign_keys
+        # explicitly turned OFF after the fact
+        conn = events.connect_v2(bootstrapped_db_path)
+        try:
+            conn.execute("PRAGMA foreign_keys = OFF")
+            row = conn.execute("PRAGMA foreign_keys").fetchone()
+            assert row[0] == 0  # sanity: the toggle actually took effect
+
+            # When append_event is called on it
+            # Then the guard still raises, and writes zero rows
+            with pytest.raises(ValueError, match="connect_v2"):
+                events.append_event(
+                    conn, entity_uuid=seeded_entity_uuid, event_type="phase_completed",
+                    axis="pipeline", actor="test-actor",
+                )
+            row_count = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+            assert row_count == 0
+        finally:
+            conn.close()
+
+    def test_guard_raises_before_payload_serialization_not_a_type_error(
+        self, bootstrapped_db_path, seeded_entity_uuid
+    ):
+        """Anticipate: if the PRAGMA guard were ever reordered to run
+        AFTER `json.dumps(payload)` (design D3 pins it as append_event's
+        FIRST statement), a bare connection combined with a
+        non-serializable payload would raise TypeError (from json.dumps)
+        instead of the guard's ValueError — masking the guard entirely
+        behind whatever exception payload validation happens to raise.
+        This test fails against that reordering because it asserts the
+        SPECIFIC exception type and message, not just "some exception".
+        derived_from: design:D3 (guard is append_event's first statement,
+        before any other side effect), dimension:adversarial
+        """
+        # Given a bare (non-connect_v2) connection and a payload that
+        # would fail JSON serialization if ever reached
+        bare_conn = sqlite3.connect(bootstrapped_db_path)
+        non_serializable_payload = {"bad_value": {1, 2, 3}}
+        try:
+            # When append_event is called with both
+            # Then the GUARD's ValueError fires — not a TypeError from
+            # payload serialization
+            with pytest.raises(ValueError, match="connect_v2"):
+                events.append_event(
+                    bare_conn, entity_uuid=seeded_entity_uuid, event_type="phase_completed",
+                    axis="pipeline", actor="test-actor", payload=non_serializable_payload,
+                )
+            row_count = bare_conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+            assert row_count == 0
+        finally:
+            bare_conn.close()
+
+
+# ---------------------------------------------------------------------------
 # Design test #6: payload registry round-trip + non-serializable TypeError
 # ---------------------------------------------------------------------------
 class TestPayloadRegistry:
