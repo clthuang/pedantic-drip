@@ -45,8 +45,9 @@ Before creating, check if a feature is already active:
 ## Gather Information
 
 1. **Get feature description** from argument or ask user
-2. **Determine feature ID**: Find highest number in `{pd_artifacts_root}/features/` and add 1
-3. **Create slug** from description (lowercase, hyphens, max 30 chars)
+2. **Allocate the feature ID atomically**: call the `allocate_entity_id` MCP tool (entity-registry server) with `entity_type="feature"` and `name=<description>`. Use the returned `entity_id` as `{id}-{slug}` (directory name, branch name, registrations) and the returned `seq` as the feature number. The tool's slug is authoritative — do NOT derive a slug locally.
+   - **On MCP error (any error envelope or unavailable tool): STOP** and surface the error to the user. Allocation is a hard prerequisite — never fall back to scanning the filesystem or guessing a number.
+   - **Drift cross-check**: if the returned `seq` is ≤ any existing `{NNN}-*` directory number in `{pd_artifacts_root}/features/`, STOP — workspace drift; tell the user to run doctor. (First-allocation bootstrap seeds from DB rows; feature 132's backfill-completeness gate is the formal guarantee.)
 
 ## Suggest Workflow Mode
 

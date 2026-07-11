@@ -155,18 +155,11 @@ Max 3 iterations. After Stage 3 returns `review_result`:
 
 ## Stage 5: Name-to-ID-Slug Mapping
 
-1. Scan `{pd_artifacts_root}/features/` for all `{NNN}-*` directories. Extract numeric prefixes, find the highest `NNN`. If none exist, start at 0.
-2. Flatten all features across all modules from `decomposition` into a single ordered list (preserve module order, then feature order within module).
-3. Assign sequential IDs starting from `NNN + 1`.
-4. Derive slug from each feature name:
-   - Lowercase the name
-   - Replace spaces and special characters with hyphens
-   - Collapse consecutive hyphens
-   - Truncate to 30 characters
-   - Trim trailing hyphens
-5. Build mapping table: `{ "Human Readable Name" -> "{id}-{slug}" }` for all features.
-6. Remap every `depends_on` entry in `decomposition` from human-readable names to their `{id}-{slug}` equivalents using the mapping table.
-7. Remap `suggested_milestones[].features` entries the same way.
+1. Flatten all features across all modules from `decomposition` into a single ordered list (preserve module order, then feature order within module).
+2. For EACH feature in that order, call the `allocate_entity_id` MCP tool (entity-registry server) with `entity_type="feature"` and `name=<feature name>`. The returned `entity_id` IS the feature's `{id}-{slug}` — atomic, workspace-scoped, race-free. Do NOT scan the filesystem for numbers and do NOT derive slugs locally: the tool's slug is the single slugify source (a locally-derived slug can diverge on truncation and silently break the dependency remap below). On any MCP error envelope: STOP and surface it — never fall back to a filesystem scan.
+3. Build mapping table: `{ "Human Readable Name" -> <returned entity_id> }` for all features.
+4. Remap every `depends_on` entry in `decomposition` from human-readable names to their `{id}-{slug}` equivalents using the mapping table.
+5. Remap `suggested_milestones[].features` entries the same way.
 
 Store the updated decomposition as `mapped_decomposition` and the mapping table as `name_to_id_slug`.
 
