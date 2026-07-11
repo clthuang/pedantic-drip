@@ -819,6 +819,63 @@ class TestRegisterEntity:
 
 
 # ---------------------------------------------------------------------------
+# Feature 121 Task 1 (D2): blank/whitespace name validation tests
+# ---------------------------------------------------------------------------
+
+
+class TestEntityNameValidation:
+    """register_entity/upsert_entity/update_entity reject blank or
+    whitespace-only names before any write (feature 121 FR-5 / design D2).
+    All three sites raise the identical message."""
+
+    _BLANK_NAME_MESSAGE = (
+        "entity name must be non-empty "
+        "(feature 121 FR-5: blank display fields corrupt the registry)"
+    )
+
+    def test_register_entity_empty_name_raises(self, db: EntityDatabase):
+        with pytest.raises(ValueError, match=re.escape(self._BLANK_NAME_MESSAGE)):
+            db.register_entity("feature", "f1", "", project_id="__unknown__")
+
+    def test_register_entity_whitespace_name_raises(self, db: EntityDatabase):
+        with pytest.raises(ValueError, match=re.escape(self._BLANK_NAME_MESSAGE)):
+            db.register_entity("feature", "f1", "   ", project_id="__unknown__")
+
+    def test_upsert_entity_empty_name_raises(self, db: EntityDatabase):
+        with pytest.raises(ValueError, match=re.escape(self._BLANK_NAME_MESSAGE)):
+            db.upsert_entity("feature", "f1", "", project_id="__unknown__")
+
+    def test_upsert_entity_whitespace_name_raises(self, db: EntityDatabase):
+        with pytest.raises(ValueError, match=re.escape(self._BLANK_NAME_MESSAGE)):
+            db.upsert_entity("feature", "f1", "   ", project_id="__unknown__")
+
+    def test_update_entity_empty_name_raises(self, db: EntityDatabase):
+        db.register_entity("feature", "f1", "Original", project_id="__unknown__")
+        with pytest.raises(ValueError, match=re.escape(self._BLANK_NAME_MESSAGE)):
+            db.update_entity("feature:f1", name="")
+
+    def test_update_entity_whitespace_name_raises(self, db: EntityDatabase):
+        db.register_entity("feature", "f1", "Original", project_id="__unknown__")
+        with pytest.raises(ValueError, match=re.escape(self._BLANK_NAME_MESSAGE)):
+            db.update_entity("feature:f1", name="   ")
+
+    def test_update_entity_name_none_stays_legal(self, db: EntityDatabase):
+        """Absent name (None) is not blank: update_entity(name=None) must
+        not raise (name update is simply skipped)."""
+        db.register_entity("feature", "f1", "Original", project_id="__unknown__")
+        db.update_entity("feature:f1", name=None)
+        result = db.get_entity("feature:f1")
+        assert result["name"] == "Original"
+
+    def test_register_entity_real_name_canary(self, db: EntityDatabase):
+        """Regression guard: a real non-blank name still registers fine."""
+        result = db.register_entity(
+            "feature", "f-canary", "A Real Name", project_id="__unknown__"
+        )
+        assert _UUID_RE.match(result), f"Expected a valid UUID, got {result!r}"
+
+
+# ---------------------------------------------------------------------------
 # Task 1.6: Immutable field trigger tests
 # ---------------------------------------------------------------------------
 
