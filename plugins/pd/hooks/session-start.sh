@@ -72,6 +72,9 @@ find_active_feature() {
     # Use portable find + python for cross-platform compatibility (macOS + Linux)
     # FR-1.1: single-quoted Python source + positional args (no bash var interpolation).
     local latest_meta
+    # BENCH-WALK-START (feature 126, design D8): bench-populated-read.sh
+    # extracts this assignment verbatim at run time. Comment-only sentinel
+    # — do not add code between these markers besides the assignment.
     latest_meta=$(python3 -c '
 import os
 import json
@@ -100,6 +103,7 @@ if active_features:
     active_features.sort(reverse=True)
     print(active_features[0][1])
 ' "$features_dir" 2>/dev/null)
+    # BENCH-WALK-END
 
     if [[ -z "$latest_meta" ]]; then
         return 1
@@ -406,6 +410,9 @@ build_context() {
                 workspace_uuid_short="${WORKSPACE_UUID:0:8}"
                 artifacts_root_val=$(resolve_artifacts_root)
                 # FR-1.1: single-quoted Python source + positional args (no bash expansion).
+                # BENCH-GLOB-START (feature 126, design D8): bench-populated-read.sh
+                # extracts this assignment verbatim at run time. Comment-only sentinel
+                # — do not add code between these markers besides the assignment.
                 project_slug=$(python3 -c '
 import os, json, glob, sys
 dirs = glob.glob(os.path.join(sys.argv[1], sys.argv[3], "projects", "*/"))
@@ -425,6 +432,7 @@ for d in dirs:
 else:
     print("unknown")
 ' "$PROJECT_ROOT" "$feature_workspace_uuid" "$artifacts_root_val" 2>/dev/null)
+                # BENCH-GLOB-END
                 context+="Workspace: ${workspace_uuid_short}-${project_slug}\n"
             fi
 

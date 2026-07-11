@@ -16,7 +16,8 @@ phase; feature 132 owns the canonical "import every DDL owner, then
 bootstrap" entrypoint.
 
 FR-11 payload key registry (prose contract only — design D2; the actual
-validating consumer is feature 120's projection, not this module):
+validating consumer is ``entity_registry.meta_projection`` (feature 126),
+not this module):
   - ``iterations``        camelCase — PRD FR-11 / .meta.json projection contract
   - ``reviewerNotes``     camelCase — PRD FR-11 / .meta.json projection contract
                           (NOT the same thing as the v1 DB column
@@ -32,6 +33,27 @@ validating consumer is feature 120's projection, not this module):
   - ``nameTo``            camelCase — feature 121 D6 rename event payload
                           (entity_registry.display.rename_entity; NOT an
                           FR-11/.meta.json key)
+  - ``phaseSummaryEntry`` camelCase (payload side) — PRD FR-11 /
+                          .meta.json projection contract (feature 126,
+                          feature 075 origin); ONE dict per
+                          `phase_completed` event, ACCUMULATED by
+                          entity_registry.meta_projection into the
+                          FILE-side key ``phase_summaries`` (snake_case,
+                          PLURAL — not the same spelling as the payload
+                          key)
+  - ``backwardContext``   camelCase (payload side) — PRD FR-11 /
+                          .meta.json projection contract (feature 126,
+                          feature 073 origin); projected by
+                          entity_registry.meta_projection to the
+                          FILE-side key ``backward_context`` (snake_case
+                          — not the same spelling as the payload key)
+  - ``backwardReturnTarget`` camelCase (payload side) — PRD FR-11 /
+                          .meta.json projection contract (feature 126,
+                          feature 073 origin); projected by
+                          entity_registry.meta_projection to the
+                          FILE-side key ``backward_return_target``
+                          (snake_case — not the same spelling as the
+                          payload key)
 """
 from __future__ import annotations
 
