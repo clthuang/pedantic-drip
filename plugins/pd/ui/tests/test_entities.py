@@ -1933,3 +1933,32 @@ def test_switcher_label_collision_gets_uuid_suffix(tmp_path):
         "Entity In Collide One", "Entity In Collide Two", "Entity In Null Root",
     ):
         assert entity_name not in select_html
+
+
+def test_entity_list_full_page_switcher_none_default_no_cookie_selects_all(
+    tmp_path,
+):
+    """No cookie AND app.state.workspace_uuid is None (129's WARN path):
+    'All workspaces' is the selected option on the entity-list page and no
+    transient 'unknown workspace' option renders (implementation review:
+    the template's `selected is none and default_uuid is none` clause was
+    previously reached by no test on either page)."""
+    db_file = str(tmp_path / "test.db")
+    db = EntityDatabase(db_file)
+    ws_a = _bootstrap_workspace(db_file, project_root=str(tmp_path / "proj-a"))
+    db.register_entity(
+        "feature", "1-alpha", "Alpha Entity", status="active", workspace_uuid=ws_a
+    )
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    app.state.workspace_uuid = None
+    client = TestClient(app)
+
+    response = client.get("/entities")
+
+    assert response.status_code == 200
+    assert "selected" in _option_element(response.text, "*")
+    assert "selected" not in _option_element(response.text, ws_a)
+    assert "unknown workspace" not in response.text

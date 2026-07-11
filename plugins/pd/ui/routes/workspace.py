@@ -22,13 +22,16 @@ def _safe_referer_path(referer: str | None) -> str:
     Only accepts a destination that starts with a single ``/`` (rejects
     absolute URLs stripped to their path/query, and protocol-relative
     ``//host/...`` referers that a bare ``startswith("/")`` would let
-    through); anything else falls back to ``"/"``.
+    through) and contains no backslash (browsers normalize ``/\host`` to
+    ``//host`` -- today Starlette percent-encodes ``\`` in Location, but
+    this guard's contract must not lean on that); anything else falls
+    back to ``"/"``.
     """
     if not referer:
         return "/"
     parts = urlsplit(referer)
     dest = parts.path + ("?" + parts.query if parts.query else "")
-    if dest.startswith("/") and not dest.startswith("//"):
+    if dest.startswith("/") and not dest.startswith("//") and "\\" not in dest:
         return dest
     return "/"
 

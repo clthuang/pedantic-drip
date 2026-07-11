@@ -1303,3 +1303,54 @@ def test_board_full_page_switcher_zero_populated_workspaces_unmatched_default(
     # Only '*' and the transient unmatched option -- no populated-workspace
     # <option> elements exist since list_workspaces_with_entities() is [].
     assert response.text.count("<option value=") == 2
+
+
+def test_safe_referer_path_backslash_redirects_home(tmp_path):
+    """A referer whose path contains a backslash (`/\\evil.com`) redirects
+    to '/' -- browsers normalize `/\\host` to protocol-relative `//host`,
+    so the guard must reject it itself rather than lean on Starlette's
+    Location percent-encoding (security review, defense-in-depth). Kills
+    a mutation that drops the `"\\\\" not in dest` conjunct."""
+    db_file = str(tmp_path / "test.db")
+    EntityDatabase(db_file)
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+
+    response = client.get(
+        "/workspace/select",
+        params={"uuid": "*"},
+        headers={"referer": "http://localhost/\\evil.com"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/"
+
+
+def test_board_full_page_switcher_none_default_no_cookie_selects_all(tmp_path):
+    """No cookie AND app.state.workspace_uuid is None (129's WARN path --
+    the default runtime state when the server starts outside any known
+    workspace): 'All workspaces' is the selected option and no transient
+    'unknown workspace' option renders (implementation review: the
+    `switcher.selected is none and switcher.default_uuid is none` template
+    clause was previously untested -- a mutation dropping the second
+    conjunct went uncaught)."""
+    db_file = str(tmp_path / "test.db")
+    db = EntityDatabase(db_file)
+    ws_a = _bootstrap_workspace(db_file, project_root=str(tmp_path / "proj-a"))
+    db.register_entity("feature", "1-alpha", "Alpha Card", workspace_uuid=ws_a)
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    app.state.workspace_uuid = None
+    client = TestClient(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "selected" in _option_element(response.text, "*")
+    assert "selected" not in _option_element(response.text, ws_a)
+    assert "unknown workspace" not in response.text
