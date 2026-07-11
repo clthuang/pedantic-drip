@@ -150,9 +150,11 @@ def append_event(
       function decorated ``@with_retry("events")`` and is invoked
       immediately.
 
-    ``json.dumps(payload)`` (None → SQL NULL, never TEXT 'null') runs BEFORE any SQL on both paths: a
-    non-serializable *payload* (e.g. a set) raises ``TypeError`` with no
-    transaction ever opened, on either path.
+    ``json.dumps(payload)`` (None → SQL NULL, never TEXT 'null') runs
+    before any WRITE on both paths — only the read-only #061 PRAGMA
+    probe above precedes it: a non-serializable *payload* (e.g. a set)
+    raises ``TypeError`` with no transaction ever opened, on either
+    path (and the guard fires even earlier — pinned by test).
 
     The standalone path issues COMMIT/ROLLBACK as raw SQL via
     ``conn.execute()``, not the ``sqlite3.Connection.commit()`` /
