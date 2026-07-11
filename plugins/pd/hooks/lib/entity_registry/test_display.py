@@ -425,6 +425,66 @@ class TestNextDisplaySeqDuplicateRows:
 
 
 # ---------------------------------------------------------------------------
+# Test-deepening addition (dimension: mutation_mindset). The suites above
+# pin correct issuance and convergence WITHIN one (workspace_uuid, kind)
+# scope, but every assertion checks either a return value or a re-SELECT
+# that is ITSELF scoped by (workspace_uuid, kind) — none of them re-reads a
+# *sibling* row after a bump. A _bump UPDATE whose WHERE clause dropped
+# either predicate (e.g. `WHERE kind = ?` alone, or no WHERE at all) would
+# silently overwrite sibling (workspace_uuid, kind) rows' current_value,
+# yet next_display_seq's return values would stay correct (SELECT MAX
+# already scopes properly on read) and TestNextDisplaySeqDuplicateRows
+# above only ever seeds ONE (workspace_uuid, kind) pair, so it cannot
+# observe cross-pair leakage either.
+# ---------------------------------------------------------------------------
+class TestNextDisplaySeqCrossScopeIsolation:
+    def test_bumping_one_workspace_kind_pair_does_not_touch_sibling_rows(
+        self, bootstrapped_db_path
+    ):
+        """Seeds three DISTINCT (workspace_uuid, kind) pairs via real
+        next_display_seq calls (one row per pair), then bumps ONLY
+        (ws_a, 'feature') twice more and re-reads the OTHER two rows
+        directly from the DB. Both the same-workspace/different-kind axis
+        (ws_a, 'backlog') and the different-workspace/same-kind axis
+        (ws_b, 'feature') are covered, since either half of the WHERE
+        predicate could be dropped independently."""
+        ws_a = "workspace-uuid-isolation-a"
+        ws_b = "workspace-uuid-isolation-b"
+        _seed_workspace(bootstrapped_db_path, ws_a)
+        _seed_workspace(bootstrapped_db_path, ws_b)
+        conn = sqlite3.connect(bootstrapped_db_path, autocommit=True)
+        try:
+            display.next_display_seq(conn, workspace_uuid=ws_a, kind="feature")
+            display.next_display_seq(conn, workspace_uuid=ws_a, kind="backlog")
+            display.next_display_seq(conn, workspace_uuid=ws_b, kind="feature")
+
+            def _current_value(workspace_uuid: str, kind: str) -> int:
+                row = conn.execute(
+                    "SELECT current_value FROM sequences "
+                    "WHERE workspace_uuid = ? AND kind = ?",
+                    (workspace_uuid, kind),
+                ).fetchone()
+                return row[0]
+
+            before_backlog = _current_value(ws_a, "backlog")
+            before_ws_b_feature = _current_value(ws_b, "feature")
+            assert (before_backlog, before_ws_b_feature) == (1, 1)
+
+            # Bump (ws_a, "feature") twice more — the sibling rows above
+            # must not move.
+            display.next_display_seq(conn, workspace_uuid=ws_a, kind="feature")
+            issued = display.next_display_seq(conn, workspace_uuid=ws_a, kind="feature")
+            assert issued == 3
+
+            after_backlog = _current_value(ws_a, "backlog")
+            after_ws_b_feature = _current_value(ws_b, "feature")
+            assert after_backlog == before_backlog == 1
+            assert after_ws_b_feature == before_ws_b_feature == 1
+        finally:
+            conn.close()
+
+
+# ---------------------------------------------------------------------------
 # Design D5: compose-precondition docstring pin ("trust-the-docstring" —
 # conn.in_transaction cannot distinguish DEFERRED from IMMEDIATE, so the
 # docstring + this contention suite are the enforcement).
@@ -460,6 +520,36 @@ class TestRenameEntity:
         assert event["to_value"] == "121-renamed-type-id"
         assert event["actor"] == "tester"
         assert event["payload"] == {"nameFrom": "Original Name", "nameTo": "Renamed Name"}
+
+    def test_rename_advances_updated_at_past_the_seeded_value(
+        self, v2_conn, seeded_entity_uuid
+    ):
+        """seeded_entity_uuid's updated_at is frozen at _NOW
+        ('2026-01-01T00:00:00Z') by the fixture. A successful rename must
+        actually advance it via `datetime.now(timezone.utc).isoformat()`
+        in `_rename`. test_uuid_and_relations_rows_byte_unchanged below
+        deliberately excludes updated_at from its SELECT (it's SUPPOSED
+        to change), so a mutation that dropped the `updated_at = ?` SET
+        clause from _rename's UPDATE would slip past every other
+        assertion in this class silently — this is the only test that
+        would catch it."""
+        before = v2_conn.execute(
+            "SELECT updated_at FROM entities WHERE uuid = ?", (seeded_entity_uuid,)
+        ).fetchone()[0]
+        assert before == _NOW
+
+        display.rename_entity(
+            v2_conn, entity_uuid=seeded_entity_uuid, actor="tester",
+            new_name="Timestamp Check",
+        )
+
+        after = v2_conn.execute(
+            "SELECT updated_at FROM entities WHERE uuid = ?", (seeded_entity_uuid,)
+        ).fetchone()[0]
+        assert after != _NOW
+        # ISO-8601 strings sort lexicographically; the fixture's seed date
+        # (2026-01-01) is safely in the past relative to any real test run.
+        assert after > _NOW
 
     def test_second_rename_one_to_two_events_chains_from_previous_type_id(
         self, v2_conn, seeded_entity_uuid

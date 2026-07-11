@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sqlite3
 import sys
 
 import pytest
@@ -815,6 +816,134 @@ class TestAllocateEntityId:
             ),
             "recovery_hint": "restart the MCP server from the project root / run doctor",
         }
+
+    # -----------------------------------------------------------------
+    # Test-deepening additions (dimensions: boundary_values, adversarial,
+    # error_propagation) — the tool tests above cover the format/race/
+    # cross-workspace/rejection contract; these pin edges the outline
+    # above left thin.
+    # -----------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_symbols_and_single_letter_name_slugifies_to_valid_one_char_slug(
+        self, ws_db
+    ):
+        """A name that is almost entirely hyphens/spaces around one letter
+        ("- a -") slugifies to "a" (non-empty) via _slugify's collapse+
+        strip rules (verified: _slugify("- a -") == "a") — this must NOT
+        trip the empty-slug rejection. Kills a mutation that tightens the
+        tool's `if not slug:` gate to also reject short-but-valid slugs
+        (e.g. accidentally requiring `len(slug) >= 2`)."""
+        result = await entity_server.allocate_entity_id(
+            entity_type="feature", name="- a -"
+        )
+        parsed = json.loads(result)
+        assert parsed == {"seq": 1, "entity_id": "001-a"}
+
+    @pytest.mark.asyncio
+    async def test_long_name_truncates_on_hyphen_boundary_through_tool_wiring(
+        self, ws_db
+    ):
+        """_slugify's 30-char hyphen-boundary truncation (id_generator.py
+        :33-37) is unit-pinned directly in test_id_generator.py's
+        TestSlugify, but never exercised through allocate_entity_id's own
+        wiring. Reuses that suite's exact truncation-boundary input
+        (slugifies to 'enterprise-reliability', 22 chars, no trailing
+        hyphen — verified empirically) to pin that the TOOL composes
+        `{seq:03d}-{slug}` from the already-truncated, trailing-hyphen-
+        free slug byte-for-byte — not a naive slice of the raw name that
+        would land mid-word or leave a dangling hyphen."""
+        result = await entity_server.allocate_entity_id(
+            entity_type="feature", name="enterprise reliability platform"
+        )
+        parsed = json.loads(result)
+        assert parsed == {"seq": 1, "entity_id": "001-enterprise-reliability"}
+        assert not parsed["entity_id"].endswith("-")
+
+    @pytest.mark.asyncio
+    async def test_four_digit_sequence_value_not_clipped_to_three_digits(
+        self, ws_db
+    ):
+        """`{seq:03d}` is a MINIMUM-width spec, not a fixed width — once a
+        workspace's counter crosses 999, the next allocation must render
+        as '1000-...', not a clipped/reformatted 3-digit value. No
+        existing test (here or in test_id_generator.py) exercises a
+        sequence value >999 through either generate_entity_id or
+        allocate_entity_id. Pre-seeds the v1 `sequences` row directly
+        (mirrors test_id_generator.py's
+        test_continues_from_existing_via_sequences pattern) so the next
+        call returns exactly 1000 without 999 prior allocations."""
+        database, ws_uuid = ws_db
+        database._conn.execute(
+            "INSERT INTO sequences(workspace_uuid, entity_type, next_val) "
+            "VALUES(?, ?, ?)",
+            (ws_uuid, "feature", 1000),
+        )
+        database._conn.commit()
+
+        result = await entity_server.allocate_entity_id(
+            entity_type="feature", name="Boundary Seq"
+        )
+        parsed = json.loads(result)
+        assert parsed == {"seq": 1000, "entity_id": "1000-boundary-seq"}
+
+    @pytest.mark.asyncio
+    async def test_titlecase_project_not_treated_as_deferred_kind(self, ws_db):
+        """The kind gate is a literal `entity_type == "project"` check
+        (design D-5) — case variants are NOT normalized before the
+        comparison. Pins the ACTUAL behavior: 'Project' slips past the
+        gate and mints a sequence under a DISTINCT kind-string 'Project'
+        rather than hitting kind_deferred. Would catch a mutation that
+        added implicit case-folding (e.g. `entity_type.lower() ==
+        "project"`), which would silently start rejecting a kind string
+        the current contract allows through."""
+        result = await entity_server.allocate_entity_id(
+            entity_type="Project", name="Case Variant"
+        )
+        parsed = json.loads(result)
+        assert parsed == {"seq": 1, "entity_id": "001-case-variant"}
+
+    @pytest.mark.asyncio
+    async def test_whitespace_padded_project_not_treated_as_deferred_kind(
+        self, ws_db
+    ):
+        """Same gap, whitespace axis: ' project ' is not `.strip()`-
+        normalized before the literal comparison, so it also slips past
+        the kind_deferred gate and mints under its own distinct
+        (unstripped) kind-string, independent from 'project' and
+        'Project'. Would catch a mutation that added implicit
+        `.strip()` normalization to the gate."""
+        result = await entity_server.allocate_entity_id(
+            entity_type=" project ", name="Whitespace Variant"
+        )
+        parsed = json.loads(result)
+        assert parsed == {"seq": 1, "entity_id": "001-whitespace-variant"}
+
+    @pytest.mark.asyncio
+    async def test_next_sequence_value_operational_error_propagates_unhandled(
+        self, ws_db, monkeypatch
+    ):
+        """allocate_entity_id has no try/except around
+        next_sequence_value (unlike, e.g., create_key_result's `except
+        Exception as exc: return json.dumps({"error": str(exc)})`
+        wrapper) — a DB-layer failure here propagates as a raw, uncaught
+        exception rather than a structured §3.5 envelope. Pins
+        design.md's Error Handling line ('next_sequence_value sqlite
+        errors propagate to the server's existing exception translation')
+        at the unit level: calling the tool function directly (bypassing
+        the FastMCP transport, which is what would apply any outer
+        translation) surfaces the raw exception. Would catch a mutation
+        that silently swallowed the error into a truthy-ish envelope
+        (e.g. a bare `except Exception: return "{}"`)."""
+        database, ws_uuid = ws_db
+
+        def _boom(*args, **kwargs):
+            raise sqlite3.OperationalError("database is locked")
+
+        monkeypatch.setattr(database, "next_sequence_value", _boom)
+
+        with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+            await entity_server.allocate_entity_id(entity_type="feature", name="Boom")
 
 
 class TestRegisterEntityBlankNameGuard:
