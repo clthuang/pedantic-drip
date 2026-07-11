@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from entity_registry import events  # noqa: F401 -- side effect: registers "events" DDL (design D4); needed by TestEventsDdlRegistrationPin
 from entity_registry import schema_v2
 
 # The 4 core tables carrying a uuid7 TEXT primary key. `_metadata` is
@@ -507,41 +508,140 @@ class TestSequencesBusinessKeyNonUniqueness:
 # D1's "ships dark: no live code imports it except its tests" invariant was
 # only pinned by a manual grep in tasks.md's Task 4 Verify step, never by an
 # automated regression test that runs on every suite invocation.
+#
+# Re-scoped for feature 119 (design D6): the dark set grew from a single
+# module (schema_v2.py) to a named set (_V2_DARK_MODULES), and the needle
+# set widened to catch every import spelling of the new `events` module.
 # ---------------------------------------------------------------------------
+
+# Every dark v2 module this guard exempts from being its own offender (a
+# dark module's own source legitimately mentions its sibling dark modules
+# — e.g. events.py imports schema_v2). uuid7.py is deliberately NOT in this
+# set: it is already live via database.py's uuid7 mints (design D6).
+_V2_DARK_MODULES = {"schema_v2.py", "events.py"}
+
+# Every import spelling that would wire a dark v2 module into a live path.
+# A bare "events" needle is deliberately excluded — it false-positives on
+# unrelated names like phase_events / event_type.
+_V2_LIVE_REFERENCE_NEEDLES = (
+    "schema_v2",
+    "entity_registry.events",
+    "from entity_registry import events",
+    "from .events import",
+)
+
+
+def _scan_for_live_v2_references(
+    root: Path, dark_modules: set[str], needles: tuple[str, ...]
+) -> list[str]:
+    """Return paths of every ``*.py`` file under *root* (recursively) whose
+    content contains at least one of *needles*, excluding test files
+    (name starts with "test_") and files named in *dark_modules*.
+
+    Shared by the real-source scan (expects []) and the seeded-fixture
+    teeth test (expects the offender) below — see TestSchemaV2ShipsDark.
+    """
+    offending_files = []
+    for py_file in root.rglob("*.py"):
+        if py_file.name.startswith("test_") or py_file.name in dark_modules:
+            continue
+        content = py_file.read_text()
+        if any(needle in content for needle in needles):
+            offending_files.append(str(py_file))
+    return offending_files
+
+
 class TestSchemaV2ShipsDark:
-    def test_no_non_test_importer_of_schema_v2(self):
-        """No file under plugins/pd/hooks/lib (other than schema_v2.py
-        itself and test_ files) references `schema_v2` — the module ships
-        dark; only its own tests exercise it (design D1; spec Out of
-        Scope: "nothing reads the v2 DB in this feature").
+    """Design D1 (schema_v2) + D6 (events, re-scoped for 119): every dark
+    v2 module in _V2_DARK_MODULES ships with no live importer anywhere
+    under hooks/lib — only test_ files (and the dark modules' own mutual
+    references) may mention them.
 
-        Anticipate: a future feature (119/120/121/122) could accidentally
-        wire schema_v2 into a live code path before feature 132's cutover
-        decides where the v2 DB lives. Task 4's tasks.md Verify step has
-        the equivalent grep, but as a one-time manual check it does not
-        run on every `pytest` invocation the way this does — mirrors the
-        residual-uuid4 scan test's source-scan style (test_database.py).
-        derived_from: design:D1 (ships dark), spec:Out-of-Scope (consumer
-        rewiring deferred), dimension:adversarial (Never/Always heuristic)
+    Scope note: the scan root is hooks/lib (this guard's historical
+    scope, D1) — it does NOT cover plugins/pd/mcp/. MCP wiring is
+    enforced separately by spec SC6's repo-wide grep at verification
+    time, not by this every-pytest guard.
+    """
+
+    def test_no_non_test_importer_of_dark_v2_modules(self):
+        """No non-test file under hooks/lib references a dark v2 module
+        via any known import spelling (design D6; spec Out of Scope:
+        "nothing reads the v2 DB in this feature").
+
+        Anticipate: a future feature (120/121/122) could accidentally
+        wire schema_v2 or events into a live code path before feature
+        132's cutover decides where the v2 DB lives. Task 4's tasks.md
+        Verify step has the equivalent grep, but as a one-time manual
+        check it does not run on every `pytest` invocation the way this
+        does — mirrors the residual-uuid4 scan test's source-scan style
+        (test_database.py).
+        derived_from: design:D1/D6 (ships dark), spec:Out-of-Scope
+        (consumer rewiring deferred), dimension:adversarial (Never/Always
+        heuristic)
         """
-        import pathlib
-
-        hooks_lib_root = pathlib.Path(__file__).resolve().parent.parent
+        hooks_lib_root = Path(__file__).resolve().parent.parent
         assert hooks_lib_root.name == "lib", (
             f"expected .../hooks/lib, got {hooks_lib_root}"
         )
 
-        offending_files = []
-        for py_file in hooks_lib_root.rglob("*.py"):
-            if py_file.name.startswith("test_") or py_file.name == "schema_v2.py":
-                continue
-            if "schema_v2" in py_file.read_text():
-                offending_files.append(str(py_file))
+        offending_files = _scan_for_live_v2_references(
+            hooks_lib_root, _V2_DARK_MODULES, _V2_LIVE_REFERENCE_NEEDLES
+        )
 
         assert offending_files == [], (
-            f"schema_v2 must ship dark (no non-test importers), but found "
-            f"references in: {offending_files}"
+            f"v2 dark modules must ship dark (no non-test importers), but "
+            f"found references in: {offending_files}"
         )
+
+    def test_scan_flags_seeded_offender_with_nondotted_import_spelling(self, tmp_path):
+        """Teeth check the other direction: a fixture dir containing a
+        file that imports events via the NON-dotted spelling (`from
+        entity_registry import events`) IS flagged — proves the widened
+        needle set actually catches this spelling, not just the dotted
+        `entity_registry.events` one (design D6: "the seeded-offender
+        fixture uses one of the NON-dotted spellings so the teeth test is
+        non-vacuous for the hardened gap").
+        """
+        offender_path = tmp_path / "some_consumer.py"
+        offender_path.write_text("from entity_registry import events\n")
+
+        offending_files = _scan_for_live_v2_references(
+            tmp_path, _V2_DARK_MODULES, _V2_LIVE_REFERENCE_NEEDLES
+        )
+
+        assert offending_files == [str(offender_path)]
+
+
+# ---------------------------------------------------------------------------
+# Design test #9: events.py's module-import side effect registers
+# ("events", _EVENTS_DDL) into schema_v2.DDL_REGISTRY, positioned after
+# "core" — and a direct second register_ddl("events", ...) call still
+# raises ValueError (118's double-registration contract, D4). Relies on
+# the module-top `from entity_registry import events` import above (that
+# import's side effect is what puts "events" into DDL_REGISTRY at all;
+# the existing autouse _reset_ddl_registry fixture snapshots/restores
+# around every test in this file, this test needs no fixture of its own).
+# ---------------------------------------------------------------------------
+class TestEventsDdlRegistrationPin:
+    def test_core_then_events_membership_and_relative_order(self):
+        """Membership + relative order, NOT whole-list equality —
+        DDL_REGISTRY is shared module state and future registrants
+        (120/121/122) may share the process (design D6/Testing Strategy
+        #9)."""
+        owners = [owner for owner, _ in schema_v2.DDL_REGISTRY]
+        assert "core" in owners
+        assert "events" in owners
+        assert owners.index("core") < owners.index("events")
+
+    def test_direct_second_register_ddl_events_raises_value_error(self):
+        """events.py already registered "events" at import time (module
+        top, D4) — a direct second call for the same owner still raises;
+        the pre-mutation check in register_ddl fires regardless of how
+        the first registration happened."""
+        with pytest.raises(ValueError, match="events"):
+            schema_v2.register_ddl(
+                "events", "CREATE TABLE IF NOT EXISTS shadow_events (uuid TEXT PRIMARY KEY)"
+            )
 
 
 # ---------------------------------------------------------------------------
