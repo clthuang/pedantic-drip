@@ -64,7 +64,7 @@ Reading: python interpreter startup (~28 ms) dominates both components at live s
 ```bash
 # from the project root, clean committed tree
 bash plugins/pd/hooks/tests/bench-populated-read.sh --features 22   # recorded N — do not re-derive
-plugins/pd/.venv/bin/python scripts/seed-census-db.py --target "$(mktemp -d)"
+plugins/pd/.venv/bin/python scripts/seed-census-db.py --target-dir "$(mktemp -d)"
 ```
 
 Residual: synthetic payload sizes approximate the real distribution; real-world `.meta.json` payloads vary (reviewerNotes strings especially). The comparison discipline (same harness, same seeds, same N) keeps this residual common to both sides of 127's comparison.

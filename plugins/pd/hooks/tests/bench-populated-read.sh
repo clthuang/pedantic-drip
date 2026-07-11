@@ -46,6 +46,10 @@ command -v perl >/dev/null 2>&1 || {
     echo "ERROR: perl required for nanosecond timing (Time::HiRes)" >&2
     exit 2
 }
+command -v python3 >/dev/null 2>&1 || {
+    echo "ERROR: python3 required (seeded-tree generation + the extracted hook snippets)" >&2
+    exit 2
+}
 
 if [[ -z "$FEATURES_N" ]]; then
     FEATURES_N=$(find docs/features -name .meta.json | wc -l | tr -d ' ')
@@ -80,6 +84,12 @@ extract_sentinel() {
 
 walk_block=$(extract_sentinel "# BENCH-WALK-START" "# BENCH-WALK-END")
 glob_block=$(extract_sentinel "# BENCH-GLOB-START" "# BENCH-GLOB-END")
+
+# Drift guard also pins the bash variable names the eval sites bind (a rename
+# inside the sentinels would otherwise surface as set -u's unbound-variable
+# error, not the documented exit-3 drift contract).
+case "$walk_block" in *latest_meta=*) ;; *) echo "ERROR: drift — walk block no longer binds latest_meta" >&2; exit 3;; esac
+case "$glob_block" in *project_slug=*) ;; *) echo "ERROR: drift — glob block no longer binds project_slug" >&2; exit 3;; esac
 
 if [[ -z "$walk_block" ]] || [[ "$walk_block" != *"os.walk"* ]] || [[ "$walk_block" != *"json.load"* ]]; then
     echo "ERROR: BENCH-WALK sentinel extraction from ${SESSION_START_SH} is empty" \

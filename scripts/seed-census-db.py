@@ -77,6 +77,8 @@ def _weighted_status(rng: random.Random) -> str:
     return _STATUS_WEIGHTS[-1][0]
 
 
+# Doubles as filler-text generator for reviewerNotes (word_count 15-60) —
+# same hyphen-joined synthetic words, different length regime.
 def _slug(rng: random.Random, word_count: int = 3) -> str:
     return "-".join(rng.choice(_SLUG_WORDS) for _ in range(word_count))
 
@@ -111,6 +113,10 @@ def _seed_entity_row(conn, *, entity_uuid: str, workspace_uuid: str, type_id: st
 
 
 def _append_event_stream(conn, rng: random.Random, *, entity_uuid: str, status: str) -> None:
+    # NOTE (127): `status` drives event-stream DEPTH only, not the PROJECTED
+    # status — init emits to_value="planned" and no status_changed/activated
+    # events are seeded, so project_meta reports "planned" for these rows.
+    # 5b is a scale substrate, not a status-distribution reproduction.
     """Append a synthetic initialized (+ phase) event stream for one
     entity, shaped by *status* (design D1 grammar; census-proportioned
     depth — not a literal reproduction of any real feature's history)."""

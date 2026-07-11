@@ -1923,6 +1923,20 @@ def _assert_case_matches_oracle(conn: sqlite3.Connection, case: dict, expected: 
             )
 
 
+class TestDenylistExactMembership:
+    """Pins _NON_STATUS_EVENT_TYPES' EXACT membership (design D2 forward rule).
+
+    127's integration must assert its event vocabulary against this set; an
+    unreviewed membership change should fail HERE first, not surface as a
+    silent status corruption downstream (battery suggestion, feature 126).
+    """
+
+    def test_exact_membership(self):
+        assert meta_projection._NON_STATUS_EVENT_TYPES == frozenset(
+            {"renamed", "phase_started", "phase_completed", "phase_backward"}
+        )
+
+
 class TestReplayProperty:
     """Design D6 / spec SC2: N_CASES seeded random event sequences, each
     checked field-by-field against `project_meta` via a pure-Python fold
