@@ -56,7 +56,9 @@ def board(request: Request) -> HTMLResponse:
 
     # Path 2: DB query error
     try:
-        rows = db.list_workflow_phases()
+        rows = db.list_workflow_phases(
+            workspace_uuid=request.app.state.workspace_uuid
+        )
     except Exception as exc:
         print(f"DB query error: {exc}", file=sys.stderr)
         return templates.TemplateResponse(

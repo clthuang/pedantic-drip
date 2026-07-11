@@ -14,9 +14,12 @@ router = APIRouter(prefix="/entities")
 ENTITY_TYPES = ["backlog", "brainstorm", "project", "feature"]
 
 
-def _build_workflow_lookup(db) -> dict:
+def _build_workflow_lookup(db, workspace_uuid=None) -> dict:
     """Return {type_id: workflow_phase_row} from db.list_workflow_phases()."""
-    return {wp["type_id"]: wp for wp in db.list_workflow_phases()}
+    return {
+        wp["type_id"]: wp
+        for wp in db.list_workflow_phases(workspace_uuid=workspace_uuid)
+    }
 
 
 def _strip_self_from_lineage(lineage: list[dict], type_id: str) -> list[dict]:
@@ -63,15 +66,24 @@ def entity_list(
         search_available = True
         type_filter = type if type in ENTITY_TYPES else None
 
+        workspace_uuid = request.app.state.workspace_uuid
+
         # Path 3: Search with FTS fallback
         if q:
             try:
-                entities = db.search_entities(q, entity_type=type_filter, limit=100)
+                entities = db.search_entities(
+                    q, entity_type=type_filter, limit=100,
+                    workspace_uuid=workspace_uuid,
+                )
             except ValueError:
                 search_available = False
-                entities = db.list_entities(entity_type=type_filter)
+                entities = db.list_entities(
+                    entity_type=type_filter, workspace_uuid=workspace_uuid,
+                )
         else:
-            entities = db.list_entities(entity_type=type_filter)
+            entities = db.list_entities(
+                entity_type=type_filter, workspace_uuid=workspace_uuid,
+            )
 
         # Apply status filter in-memory (DB doesn't support combined filtering)
         if status:
@@ -81,7 +93,7 @@ def entity_list(
         entities = sorted(entities, key=lambda e: e.get("updated_at", ""), reverse=True)
 
         # Annotate entities with kanban_column from workflow phase data
-        workflow_lookup = _build_workflow_lookup(db)
+        workflow_lookup = _build_workflow_lookup(db, workspace_uuid=workspace_uuid)
         for e in entities:
             e["kanban_column"] = workflow_lookup.get(e["type_id"], {}).get("kanban_column")
 

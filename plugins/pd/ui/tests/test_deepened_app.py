@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import pytest
 from starlette.testclient import TestClient
 
-from entity_registry.database import EntityDatabase
+from entity_registry.database import EntityDatabase, _UNKNOWN_WORKSPACE_UUID
 from ui import create_app
 from ui.routes.board import COLUMN_ORDER, _group_by_column
 
@@ -29,14 +29,20 @@ def _seed_workflow_row(
     backward_transition_reason=None,
     updated_at="2026-03-08T00:00:00Z",
 ):
-    """Insert a workflow_phases row (FKs disabled for test isolation)."""
+    """Insert an orphan workflow_phases row (FKs disabled for test isolation).
+
+    Passes workspace_uuid explicitly so the wp_reject_orphaned_insert
+    trigger (which aborts inserts with no matching entity and no explicit
+    workspace_uuid) does not fire.
+    """
     conn = sqlite3.connect(db_file)
     conn.execute("PRAGMA foreign_keys = OFF")
     conn.execute(
         "INSERT OR IGNORE INTO workflow_phases "
         "(type_id, kanban_column, workflow_phase, mode, "
-        "last_completed_phase, backward_transition_reason, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "last_completed_phase, backward_transition_reason, updated_at, "
+        "workspace_uuid) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (
             type_id,
             kanban_column,
@@ -45,6 +51,7 @@ def _seed_workflow_row(
             last_completed_phase,
             backward_transition_reason,
             updated_at,
+            _UNKNOWN_WORKSPACE_UUID,
         ),
     )
     conn.commit()

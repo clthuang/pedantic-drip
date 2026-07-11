@@ -1,7 +1,11 @@
 """Unit tests for create_app() and _group_by_column()."""
 
 from fastapi import FastAPI
-from entity_registry.database import EntityDatabase
+from entity_registry.database import (
+    EntityDatabase,
+    _UNKNOWN_WORKSPACE_UUID,
+    _derive_type_and_lifecycle,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -112,15 +116,22 @@ from ui.routes.board import COLUMN_ORDER
 # ---------------------------------------------------------------------------
 def _seed_workflow_row(db_file, type_id, kanban_column="backlog",
                        workflow_phase=None, mode=None):
-    """Insert a workflow_phases row with the matching entities FK row."""
+    """Insert an orphan workflow_phases row (no matching entities row).
+
+    Passes workspace_uuid explicitly so the wp_reject_orphaned_insert
+    trigger (which aborts inserts with no matching entity and no explicit
+    workspace_uuid) does not fire.
+    """
     conn = sqlite3.connect(db_file)
     conn.execute("PRAGMA foreign_keys = OFF")
     now = "2026-03-08T00:00:00Z"
     conn.execute(
         "INSERT OR IGNORE INTO workflow_phases "
-        "(type_id, kanban_column, workflow_phase, mode, updated_at) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (type_id, kanban_column, workflow_phase, mode, now),
+        "(type_id, kanban_column, workflow_phase, mode, updated_at, "
+        "workspace_uuid) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (type_id, kanban_column, workflow_phase, mode, now,
+         _UNKNOWN_WORKSPACE_UUID),
     )
     conn.commit()
     conn.close()
@@ -374,14 +385,17 @@ def _seed_entity_and_workflow_row(
     """Insert both an entities row and a workflow_phases row."""
     import uuid
     entity_type, entity_id = type_id.split(":", 1)
+    kind_type, lifecycle_class = _derive_type_and_lifecycle(entity_type)
     conn = sqlite3.connect(db_file)
     conn.execute("PRAGMA foreign_keys = OFF")
     now = "2026-03-08T00:00:00Z"
     conn.execute(
         "INSERT OR IGNORE INTO entities "
-        "(uuid, type_id, entity_type, entity_id, name, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (str(uuid.uuid4()), type_id, entity_type, entity_id, name, now, now),
+        "(uuid, workspace_uuid, type_id, kind, entity_id, name, created_at, "
+        "updated_at, type, lifecycle_class) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (str(uuid.uuid4()), _UNKNOWN_WORKSPACE_UUID, type_id, entity_type,
+         entity_id, name, now, now, kind_type, lifecycle_class),
     )
     conn.execute(
         "INSERT OR IGNORE INTO workflow_phases "
@@ -451,3 +465,98 @@ def test_board_renders_with_join_data(tmp_path):
     assert response.status_code == 200
     assert "Feature One" in response.text
     assert "Brainstorm Title" in response.text
+
+
+# ===========================================================================
+# Feature 129 Task 5: workspace-scoped board (design D6)
+# ===========================================================================
+
+
+def _bootstrap_workspace(db_file, project_root=None):
+    """Insert a fresh workspaces row directly (FKs disabled); returns its uuid."""
+    import uuid
+    ws_uuid = str(uuid.uuid4())
+    conn = sqlite3.connect(db_file)
+    conn.execute("PRAGMA foreign_keys = OFF")
+    now = "2026-03-08T00:00:00Z"
+    conn.execute(
+        "INSERT INTO workspaces "
+        "(uuid, project_id_legacy, project_root, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (ws_uuid, None, project_root, now, now),
+    )
+    conn.commit()
+    conn.close()
+    return ws_uuid
+
+
+def test_board_workspace_scoping(tmp_path):
+    """GIVEN two workspaces with cards plus an orphan workflow_phases row
+    WHEN app.state.workspace_uuid is set to one workspace
+    THEN the board shows only that workspace's card and the orphan row;
+    with None it shows all rows (unchanged unscoped behavior)."""
+    db_file = str(tmp_path / "test.db")
+    db = EntityDatabase(db_file)
+    ws_a = _bootstrap_workspace(db_file)
+    ws_b = _bootstrap_workspace(db_file)
+    db.register_entity("feature", "1-alpha", "Alpha Card", workspace_uuid=ws_a)
+    db.create_workflow_phase("feature:1-alpha", kanban_column="wip")
+    db.register_entity("feature", "2-beta", "Beta Card", workspace_uuid=ws_b)
+    db.create_workflow_phase("feature:2-beta", kanban_column="wip")
+    # Orphan row: no matching entity anywhere.
+    _seed_workflow_row(db_file, "feature:orphan-card", kanban_column="backlog")
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+
+    app.state.workspace_uuid = ws_a
+    scoped = client.get("/")
+    assert scoped.status_code == 200
+    assert "Alpha Card" in scoped.text
+    assert "orphan-card" in scoped.text
+    assert "Beta Card" not in scoped.text
+
+    app.state.workspace_uuid = None
+    unscoped = client.get("/")
+    assert unscoped.status_code == 200
+    assert "Alpha Card" in unscoped.text
+    assert "Beta Card" in unscoped.text
+    assert "orphan-card" in unscoped.text
+
+
+def test_create_app_resolves_workspace_uuid_matching_project_root(
+    tmp_path, monkeypatch
+):
+    """GIVEN a workspaces row whose project_root matches the process cwd
+    WHEN create_app() runs its startup resolution
+    THEN app.state.workspace_uuid is set to that row's uuid."""
+    import os
+
+    db_file = str(tmp_path / "test.db")
+    EntityDatabase(db_file)
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    monkeypatch.chdir(project_dir)
+    real_cwd = os.path.abspath(os.getcwd())
+    ws_uuid = _bootstrap_workspace(db_file, project_root=real_cwd)
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+
+    assert app.state.workspace_uuid == ws_uuid
+
+
+def test_create_app_missing_db_workspace_uuid_none_and_warns(capsys):
+    """GIVEN a nonexistent DB path
+    WHEN create_app() runs its startup resolution
+    THEN app.state.workspace_uuid is None and a WARN is logged to stderr."""
+    from ui import create_app
+
+    app = create_app(db_path="/nonexistent/path/entities.db")
+
+    assert app.state.workspace_uuid is None
+    captured = capsys.readouterr()
+    assert "WARN" in captured.err

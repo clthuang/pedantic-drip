@@ -12,7 +12,7 @@ class _StubDB:
     def __init__(self, phases: list[dict]):
         self._phases = phases
 
-    def list_workflow_phases(self) -> list[dict]:
+    def list_workflow_phases(self, *, workspace_uuid=None) -> list[dict]:
         return self._phases
 
 
@@ -141,7 +141,11 @@ def test_format_metadata_invalid_json():
 import sqlite3
 import unittest.mock
 from starlette.testclient import TestClient
-from entity_registry.database import EntityDatabase
+from entity_registry.database import (
+    EntityDatabase,
+    _UNKNOWN_WORKSPACE_UUID,
+    _derive_type_and_lifecycle,
+)
 
 
 def _seed_entity(db_file, type_id, entity_type="feature", name=None,
@@ -150,13 +154,15 @@ def _seed_entity(db_file, type_id, entity_type="feature", name=None,
     conn = sqlite3.connect(db_file)
     conn.execute("PRAGMA foreign_keys = OFF")
     now = "2026-03-08T00:00:00Z"
+    kind_type, lifecycle_class = _derive_type_and_lifecycle(entity_type)
     conn.execute(
         "INSERT OR IGNORE INTO entities "
-        "(type_id, uuid, entity_type, entity_id, name, status, "
-        "artifact_path, metadata, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (type_id, f"uuid-{type_id}", entity_type, entity_id or type_id,
-         name or type_id, status, None, None, now, now),
+        "(type_id, uuid, workspace_uuid, kind, entity_id, name, status, "
+        "artifact_path, metadata, created_at, updated_at, type, lifecycle_class) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (type_id, f"uuid-{type_id}", _UNKNOWN_WORKSPACE_UUID, entity_type,
+         entity_id or type_id, name or type_id, status, None, None, now, now,
+         kind_type, lifecycle_class),
     )
     conn.commit()
     conn.close()
@@ -421,10 +427,10 @@ def integration_client(tmp_path):
     db = EntityDatabase(str(tmp_path / "test.db"))
 
     # Seed entities via the DB API
-    db.register_entity("feature", "feat-alpha", "Alpha Feature", status="active", project_id="__unknown__")
-    db.register_entity("feature", "feat-beta", "Beta Feature", status="completed", project_id="__unknown__")
-    db.register_entity("brainstorm", "bs-one", "Brainstorm One", status="active", project_id="__unknown__")
-    db.register_entity("project", "proj-one", "Project One", status="active", project_id="__unknown__")
+    db._register_entity_no_display("feature", "feat-alpha", "Alpha Feature", status="active", project_id="__unknown__")
+    db._register_entity_no_display("feature", "feat-beta", "Beta Feature", status="completed", project_id="__unknown__")
+    db._register_entity_no_display("brainstorm", "bs-one", "Brainstorm One", status="active", project_id="__unknown__")
+    db._register_entity_no_display("project", "proj-one", "Project One", status="active", project_id="__unknown__")
 
     # Set parent relationship: feat-alpha -> proj-one
     db.set_parent("feature:feat-alpha", "project:proj-one")
@@ -567,7 +573,7 @@ def test_integration_search_fts_fallback(tmp_path):
     """When search_entities raises ValueError, fallback returns all entities
     with search input disabled."""
     db = EntityDatabase(str(tmp_path / "test.db"))
-    db.register_entity("feature", "fb-test", "Fallback Test", status="active", project_id="__unknown__")
+    db._register_entity_no_display("feature", "fb-test", "Fallback Test", status="active", project_id="__unknown__")
 
     from ui import create_app
 
@@ -642,8 +648,8 @@ def test_entity_list_sorted_by_updated_at_descending(tmp_path):
     # Given entities with different updated_at timestamps
     db_file = str(tmp_path / "test.db")
     db = EntityDatabase(db_file)
-    db.register_entity("feature", "older", "Older Feature", status="active", project_id="__unknown__")
-    db.register_entity("feature", "newer", "Newer Feature", status="active", project_id="__unknown__")
+    db._register_entity_no_display("feature", "older", "Older Feature", status="active", project_id="__unknown__")
+    db._register_entity_no_display("feature", "newer", "Newer Feature", status="active", project_id="__unknown__")
 
     # Manually set different updated_at values via raw SQL
     conn = sqlite3.connect(db_file)
@@ -908,7 +914,7 @@ def test_entity_list_single_entity(tmp_path):
     """
     db_file = str(tmp_path / "test.db")
     db = EntityDatabase(db_file)
-    db.register_entity("feature", "solo", "Solo Feature", status="active", project_id="__unknown__")
+    db._register_entity_no_display("feature", "solo", "Solo Feature", status="active", project_id="__unknown__")
 
     from ui import create_app
 
@@ -932,7 +938,7 @@ def test_entity_detail_with_null_fields(tmp_path):
     """
     db_file = str(tmp_path / "test.db")
     db = EntityDatabase(db_file)
-    db.register_entity("brainstorm", "minimal", "Minimal Entity", status="active", project_id="__unknown__")
+    db._register_entity_no_display("brainstorm", "minimal", "Minimal Entity", status="active", project_id="__unknown__")
 
     from ui import create_app
 
@@ -1038,7 +1044,7 @@ def test_entity_list_xss_in_entity_name(tmp_path):
     """
     db_file = str(tmp_path / "test.db")
     db = EntityDatabase(db_file)
-    db.register_entity(
+    db._register_entity_no_display(
         "feature", "xss-test",
         '<script>alert("xss")</script>',
         status="active",
@@ -1090,7 +1096,7 @@ def test_entity_detail_lineage_error_shows_error_page(tmp_path):
     """
     db_file = str(tmp_path / "test.db")
     db = EntityDatabase(db_file)
-    db.register_entity("feature", "lin-err", "Lineage Error Test", status="active", project_id="__unknown__")
+    db._register_entity_no_display("feature", "lin-err", "Lineage Error Test", status="active", project_id="__unknown__")
 
     from ui import create_app
 
@@ -1115,7 +1121,7 @@ def test_entity_detail_workflow_error_shows_error_page(tmp_path):
     """
     db_file = str(tmp_path / "test.db")
     db = EntityDatabase(db_file)
-    db.register_entity("feature", "wf-err", "Workflow Error Test", status="active", project_id="__unknown__")
+    db._register_entity_no_display("feature", "wf-err", "Workflow Error Test", status="active", project_id="__unknown__")
 
     from ui import create_app
 
@@ -1141,7 +1147,7 @@ def test_entity_list_workflow_lookup_error_shows_error_page(tmp_path):
     """
     db_file = str(tmp_path / "test.db")
     db = EntityDatabase(db_file)
-    db.register_entity("feature", "wl-err", "Workflow Lookup Error", status="active", project_id="__unknown__")
+    db._register_entity_no_display("feature", "wl-err", "Workflow Lookup Error", status="active", project_id="__unknown__")
 
     from ui import create_app
 
@@ -1285,7 +1291,7 @@ def test_entity_list_search_passes_limit_100(tmp_path):
     """
     db_file = str(tmp_path / "test.db")
     db = EntityDatabase(db_file)
-    db.register_entity("feature", "lim", "Limit Test", status="active", project_id="__unknown__")
+    db._register_entity_no_display("feature", "lim", "Limit Test", status="active", project_id="__unknown__")
 
     from ui import create_app
 
@@ -1326,7 +1332,7 @@ def test_entity_detail_lineage_directions(tmp_path):
     """
     db_file = str(tmp_path / "test.db")
     db = EntityDatabase(db_file)
-    db.register_entity("feature", "dir-test", "Direction Test", status="active", project_id="__unknown__")
+    db._register_entity_no_display("feature", "dir-test", "Direction Test", status="active", project_id="__unknown__")
 
     from ui import create_app
 
@@ -1382,13 +1388,15 @@ def _seed_entity_with_parent(db_file, type_id, name, entity_type,
             parent_uuid = row[0]
 
     now = "2026-03-08T12:00:00Z"
+    kind_type, lifecycle_class = _derive_type_and_lifecycle(entity_type)
     conn.execute(
         "INSERT OR IGNORE INTO entities "
-        "(uuid, type_id, entity_type, entity_id, name, status, "
-        "parent_type_id, parent_uuid, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (entity_uuid, type_id, entity_type, type_id, name, "active",
-         parent_type_id, parent_uuid, now, now),
+        "(uuid, workspace_uuid, type_id, entity_id, name, status, "
+        "parent_uuid, created_at, updated_at, type, kind, lifecycle_class) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (entity_uuid, _UNKNOWN_WORKSPACE_UUID, type_id, type_id, name,
+         "active", parent_uuid, now, now, kind_type, entity_type,
+         lifecycle_class),
     )
     conn.commit()
     conn.close()
@@ -1528,3 +1536,117 @@ def test_entity_list_no_mermaid_script(tmp_path):
 
     assert response.status_code == 200
     assert "cdn.jsdelivr.net/npm/mermaid" not in response.text
+
+
+# ===========================================================================
+# Feature 129 Task 5: workspace-scoped entity list (design D6)
+# ===========================================================================
+
+
+def _bootstrap_workspace(db_file, project_root=None):
+    """Insert a fresh workspaces row directly (FKs disabled); returns its uuid."""
+    import uuid as uuid_mod
+    ws_uuid = str(uuid_mod.uuid4())
+    conn = sqlite3.connect(db_file)
+    conn.execute("PRAGMA foreign_keys = OFF")
+    now = "2026-03-08T00:00:00Z"
+    conn.execute(
+        "INSERT INTO workspaces "
+        "(uuid, project_id_legacy, project_root, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (ws_uuid, None, project_root, now, now),
+    )
+    conn.commit()
+    conn.close()
+    return ws_uuid
+
+
+def test_build_workflow_lookup_scoped_to_workspace_on_type_id_collision(tmp_path):
+    """#6b: on a REAL two-workspace DB where the same type_id exists in both
+    workspaces (joined to one shared workflow_phases row), scoping to W
+    returns exactly W's joined row -- not a last-wins pick across the
+    fanned-out join, which could surface the OTHER workspace's entity.
+    """
+    from ui.routes.entities import _build_workflow_lookup
+
+    db_file = str(tmp_path / "test.db")
+    db = EntityDatabase(db_file)
+    ws_a = _bootstrap_workspace(db_file)
+    ws_b = _bootstrap_workspace(db_file)
+    db.register_entity("feature", "1-collide", "Feature In A", workspace_uuid=ws_a)
+    db.register_entity("feature", "1-collide", "Feature In B", workspace_uuid=ws_b)
+    db.create_workflow_phase("feature:1-collide", kanban_column="wip")
+
+    result = _build_workflow_lookup(db, workspace_uuid=ws_a)
+
+    assert len(result) == 1
+    assert result["feature:1-collide"]["entity_name"] == "Feature In A"
+    assert result["feature:1-collide"]["kanban_column"] == "wip"
+
+
+def test_entity_list_workspace_scoping(tmp_path):
+    """GIVEN two workspaces with entities
+    WHEN app.state.workspace_uuid is set to one workspace
+    THEN /entities shows only that workspace's entities; with None it
+    shows both (unchanged unscoped behavior)."""
+    db_file = str(tmp_path / "test.db")
+    db = EntityDatabase(db_file)
+    ws_a = _bootstrap_workspace(db_file)
+    ws_b = _bootstrap_workspace(db_file)
+    db.register_entity(
+        "feature", "1-alpha", "Alpha Entity", status="active", workspace_uuid=ws_a
+    )
+    db.register_entity(
+        "feature", "2-beta", "Beta Entity", status="active", workspace_uuid=ws_b
+    )
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+
+    app.state.workspace_uuid = ws_a
+    scoped = client.get("/entities")
+    assert scoped.status_code == 200
+    assert "Alpha Entity" in scoped.text
+    assert "Beta Entity" not in scoped.text
+
+    app.state.workspace_uuid = None
+    unscoped = client.get("/entities")
+    assert unscoped.status_code == 200
+    assert "Alpha Entity" in unscoped.text
+    assert "Beta Entity" in unscoped.text
+
+
+def test_entity_list_search_workspace_scoping(tmp_path):
+    """GIVEN two workspaces with entities matching a search query
+    WHEN app.state.workspace_uuid is set to one workspace
+    THEN the search results (search_entities) only include that
+    workspace's match; with None both matches are returned."""
+    db_file = str(tmp_path / "test.db")
+    db = EntityDatabase(db_file)
+    ws_a = _bootstrap_workspace(db_file)
+    ws_b = _bootstrap_workspace(db_file)
+    db.register_entity(
+        "feature", "1-alpha", "Findme Alpha", status="active", workspace_uuid=ws_a
+    )
+    db.register_entity(
+        "feature", "2-beta", "Findme Beta", status="active", workspace_uuid=ws_b
+    )
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+
+    app.state.workspace_uuid = ws_a
+    scoped = client.get("/entities?q=Findme")
+    assert scoped.status_code == 200
+    assert "Findme Alpha" in scoped.text
+    assert "Findme Beta" not in scoped.text
+
+    app.state.workspace_uuid = None
+    unscoped = client.get("/entities?q=Findme")
+    assert unscoped.status_code == 200
+    assert "Findme Alpha" in unscoped.text
+    assert "Findme Beta" in unscoped.text
