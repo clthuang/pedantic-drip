@@ -188,7 +188,9 @@ def entity_detail(request: Request, identifier: str) -> HTMLResponse:
         children = _strip_self_from_lineage(child_lineage, type_id)
 
         mermaid_dag = build_mermaid_dag(entity, ancestors, children)
-        rows = db.list_workflow_phases()  # unscoped — preserves get_workflow_phase's non-scoped semantics
+        # list (not get_workflow_phase) for its v2 aliases; unscoped preserves
+        # the prior non-scoped semantics. O(N) scan — fine at pd scale.
+        rows = db.list_workflow_phases()
         workflow = next((r for r in rows if r.get("type_id") == type_id), None)
         if workflow is not None:
             workflow["execution_status"] = resolve_execution_status(workflow.get("execution_status"))

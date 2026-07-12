@@ -426,7 +426,7 @@ def test_board_column_headers_render_in_execution_statuses_order(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Task 4.1.1: Full page load (AC-3) — all 8 column headers rendered
+# Task 4.1.1: Full page load (AC-3) — every COLUMN_ORDER column header rendered
 # ---------------------------------------------------------------------------
 def test_integration_full_page_load_contains_all_columns(tmp_path):
     """GET / returns 200 with all EXECUTION_STATUSES column header names in
