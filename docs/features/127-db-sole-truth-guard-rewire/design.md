@@ -72,7 +72,7 @@ In `plugins/pd/hooks/lib/doctor/test_audit_writes.py`:
 
 **Spec sweep (upward, same revision):** FR127-7's fallback branch and Scope In updated to name the chosen chain (recorded in spec.md + .review-history.md); FR127-2's zero-consumers claim UNCHANGED — route D never touches the bypass env, the caveat stays un-triggered.
 
-**Docs-sync check:** grep README.md / plugins/pd/README.md for MCP-tool enumerations or counts during implement; update if the tool list is rendered anywhere (component counts cover skills/commands/agents/hooks — tool tables to be verified, not assumed absent).
+**Docs-sync (DEFINITE deliverable — plan review B1; count verified live):** plugins/pd/README.md:231 renders "exposes 21 tools" + a tool table (:235-247) for workflow_state_server; the live `@mcp.tool()` count IS 21 (re-counted at plan review per the 131/129 drift lesson, not assumed) → task 3 edits it to 22 AND adds a `reproject_meta_json` table row. Top-level README.md renders no MCP-tool enumeration (verified). entity-server's "20 tools" (:202) untouched.
 
 ## D5 — NFR-3 measurement (FR127-4, SC3; OQ-2 resolved)
 
@@ -110,11 +110,11 @@ The deny-matrix tests set up sentinel worlds that `decide()` no longer probes �
 6. `docs/features/127-db-sole-truth-guard-rewire/db-read-latency-verification.md` — NEW artifact (D5)
 7. Feature docs (spec/design/plan/tasks/.review-history)
 
-Plus (route D): `plugins/pd/mcp/workflow_state_server.py` (+`reproject_meta_json` tool + handler) and `plugins/pd/mcp/test_workflow_state_server.py` (+3 tests).
+Plus (route D): `plugins/pd/mcp/workflow_state_server.py` (+`reproject_meta_json` tool + handler), `plugins/pd/mcp/test_workflow_state_server.py` (+3 tests), and `plugins/pd/README.md` (21→22 tools + table row — plan review B1).
 
-No command/skill/agent/hook add/remove → README component counts unchanged (MCP-tool enumerations verified per D4's docs-sync check). No doctor check changes → pin unchanged.
+No command/skill/agent/hook add/remove → README COMPONENT counts unchanged; the MCP-tool count line IS touched (D4 docs-sync, definite). No doctor check changes → pin unchanged.
 
-**QA deliverables (assigned here per design iteration 1):** (a) FR127-6's suite baseline re-derived at merge-base in a scratch worktree (the 122/128 pattern) before the feature-branch run, deltas fully accounted; (b) SC4's checks named explicitly: dispatcher fail-open infra tests green unchanged AND `git diff` shows zero lines on backlog_decision.py + its tests (part of the regression sweep, not left to inference); (c) SC6's repo-wide direct-write sweep executed with the disposition table in the task report (grep instructed `.meta.json` writes across plugins/pd/{commands,skills,agents}; known hit abandon-feature.md:50 → fixed by D4; design-time sweep found no second offender — the task-phase re-run confirms on the final tree).
+**QA deliverables (assigned here per design iteration 1):** (a) FR127-6's suite baseline re-derived at merge-base in a scratch worktree (the 122/128 pattern) before the feature-branch run, deltas fully accounted; (b) SC4's checks named explicitly: dispatcher fail-open infra tests green unchanged AND backlog_decision.py zero-diff AND the function-scoped check that `test_backlog_decision_always_denies` (test_dispatcher.py:160-171 — it lives in the file task 1 edits, whole-file zero-diff impossible) has no overlapping diff hunks (wording synced to spec SC4 at relevance round 1 — the task-review W3 sweep had missed this restatement); (c) SC6's repo-wide direct-write sweep executed with the disposition table in the task report (grep instructed `.meta.json` writes across plugins/pd/{commands,skills,agents}; known hit abandon-feature.md:50 → fixed by D4; design-time sweep found no second offender — the task-phase re-run confirms on the final tree).
 
 ## D8 — 133 handoff check (spec Dependencies)
 
