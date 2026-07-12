@@ -71,7 +71,7 @@ class CompletionResult:
     unblocked_uuids:
         UUIDs of entities unblocked by cascade.
     parent_progress:
-        Updated parent progress value (None if no parent or cascade skipped).
+        Updated parent progress value (None if no parent, or if cascade raised -- see cascade_error).
     cascade_error:
         Error message if cascade failed (completion still persists).
     """

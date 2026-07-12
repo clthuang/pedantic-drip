@@ -310,8 +310,8 @@ def test_no_unaudited_meta_json_writes() -> None:
 
 
 def test_scratch_offender_function_is_detected_by_the_ast_walker(tmp_path) -> None:
-    """FR128-5: post-128 the allow-list no longer names
-    _write_meta_json_fallback -- the audit's teeth must still catch a
+    """FR128-5: post-128 the allow-list no longer names the deleted
+    engine fallback writer -- the audit's teeth must still catch a
     hypothetical FUTURE offender reappearing in the engine. This plants a
     synthetic, non-allow-listed .meta.json writer in a SCRATCH file (never
     touches the real engine.py) and drives it through

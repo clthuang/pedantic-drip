@@ -1555,11 +1555,11 @@ class TestErrorPropagation:
 
 
 class TestIntegrationDegradation:
-    """Verify degraded=True propagates correctly when DB is closed.
-
-    Each test closes the DB connection to trigger the engine's fallback path.
-    A .meta.json file is created so the fallback has data to return.
-    """
+    """DB-closed behavior split by operation type (feature 128): READ paths
+    (get_phase, list_by_phase, list_by_status) still degrade to degraded=True
+    serving the last projection; MUTATION paths (transition_phase,
+    complete_phase) now raise WorkflowDBUnavailableError, surfaced as
+    db_unavailable envelopes."""
 
     @pytest.fixture
     def degraded_engine(self, db, tmp_path):

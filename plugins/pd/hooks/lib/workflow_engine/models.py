@@ -47,6 +47,12 @@ class WorkflowDBUnavailableError(sqlite3.OperationalError):
 
 
 def db_unavailable_error(operation: str, feature_type_id: str, cause: BaseException | None) -> WorkflowDBUnavailableError:
+    """Build the one canonical fail-loud error (feature 128, FR128-2).
+
+    Embeds only type(cause).__name__ -- never str(cause) -- honouring the
+    class MESSAGE CONTRACT (no "locked" substring; cause chains via
+    ``raise ... from``).
+    """
     cause_name = f" ({type(cause).__name__})" if cause is not None else ""
     return WorkflowDBUnavailableError(
         f"{operation} failed for {feature_type_id}: database unavailable{cause_name}. "
