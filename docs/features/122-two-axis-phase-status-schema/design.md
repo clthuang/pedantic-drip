@@ -31,6 +31,8 @@ BEGIN SELECT RAISE(ABORT, 'out-of-vocabulary to_value ' || quote(NEW.to_value) |
 
 (Both triggers spelled verbatim per events.py's stated-DDL convention, events.py:86-89.)
 
+(Dated note 2026-07-12, battery absorption: BOTH D2 guards — the module-load apostrophe check and register_vocab_ddl's version check — ship as TYPED raises (ValueError / RuntimeError), not bare `assert`: two independent battery reviewers (security + quality) flagged that `python -O` strips asserts, and the sibling idiom (events.py, schema_v2.py) is typed raises. Same trigger points, same messages, strictly louder.)
+
 (Dated note 2026-07-12, implement task 1: `{pipeline_list}`/`{execution_list}` denote the ALREADY-PARENTHESIZED product of the pinned interpolation above — reading this block's literal `NOT IN ({...})` as adding its own parens double-parenthesizes, a SQLite "row value misused" error, empirically probed on 3.53.2. Shipped DDL is `NOT IN {list}` with the mechanism's own parens; trigger names, WHEN shape, and RAISE message text are verbatim. Design-internal inconsistency resolved in favor of the pinned mechanism.)
 
 Expression messages in RAISE require SQLite ≥ 3.47.0 (2024-10-21); this venv runs 3.53.2 and the form was EMPIRICALLY PROBED here (in-vocab accepted; out-of-vocab rejected with `out-of-vocabulary to_value 'bogus-value' on pipeline axis (feature 122)`). `register_vocab_ddl()` asserts `sqlite3.sqlite_version_info >= (3, 47, 0)` before registering — a pre-3.47 runtime fails loud at registration, never with malformed-DDL confusion. SC2's rejection tests assert BOTH the axis and the offending value appear in the message text. Lifecycle has NO trigger (spec: vocab-free, renames carry type_ids).

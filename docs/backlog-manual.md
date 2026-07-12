@@ -85,6 +85,17 @@ reliable DB path; entries then migrate into the DB and this file retires.
   CONFLICT DO UPDATE (or read-compare-write) + a version-bump re-bootstrap test.
   Until then the write-once behavior is correct for V2_SCHEMA_VERSION=1.
 
+- **#068 — `INSERT OR REPLACE` bypasses the events immutability triggers** *(P004, source: feature 122 security battery, 2026-07-12; owned by 119's contract / 132's cutover)*
+  REPLACE's implicit delete-half does NOT fire `events_no_delete` (BEFORE DELETE
+  triggers skip REPLACE-deletes unless `PRAGMA recursive_triggers` is ON — default
+  OFF, and connect_v2/bootstrap_v2 never enable it; verified against
+  sqlite.org/lang_conflict.html at 122's security review). A raw
+  `INSERT OR REPLACE INTO events (uuid, ...)` on an existing event uuid silently
+  delete+reinserts, defeating 119's append-only guarantee. Pre-existing (NOT
+  122-introduced — 122's vocab triggers DO fire on the insert half). Remediation
+  candidates for 132: enable `recursive_triggers` on connect_v2, or a
+  uuid-collision BEFORE INSERT guard trigger, or both; add a teeth test either way.
+
 ## Completed / Promoted
 
 - **#061 — append_event factory-contract guard** *(closed by feature 120, 2026-07-12)*

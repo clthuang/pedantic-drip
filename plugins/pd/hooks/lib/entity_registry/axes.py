@@ -90,11 +90,12 @@ for _axis_name, _vocabulary in (
     ("execution", EXECUTION_STATUSES),
 ):
     for _value in _vocabulary:
-        assert "'" not in _value, (
-            f"vocabulary value {_value!r} on the {_axis_name} axis contains "
-            f"an apostrophe — the trigger DDL's naive '{{value}}' SQL-literal "
-            f"interpolation (design 122 D2) cannot safely quote it"
-        )
+        if "'" in _value:  # typed raise, not assert: survives python -O
+            raise ValueError(
+                f"vocabulary value {_value!r} on the {_axis_name} axis contains "
+                f"an apostrophe — the trigger DDL's naive '{{value}}' SQL-literal "
+                f"interpolation (design 122 D2) cannot safely quote it"
+            )
 
 # D2 PINNED MECHANISM: build each axis's SQL `IN (...)` list directly
 # from its vocabulary tuple — the trigger DDL below is BUILT FROM these
@@ -152,7 +153,8 @@ def register_vocab_ddl() -> None:
     "axes_vocab_triggers" DDL owner — NEVER called at import (see module
     docstring's register-on-demand rationale).
 
-    Asserts the running SQLite reports >= 3.47.0 BEFORE registering:
+    Checks the running SQLite reports >= 3.47.0 BEFORE registering
+    (typed RuntimeError, not assert — survives ``python -O``):
     expression RAISE (the offending value interpolated via
     ``quote(NEW.to_value)``, design D2) requires that version, and a
     pre-3.47 runtime must fail loud here rather than register DDL that
@@ -163,12 +165,13 @@ def register_vocab_ddl() -> None:
     guard with ``is_vocab_registered()`` first (this module's own test
     fixture does).
     """
-    assert sqlite3.sqlite_version_info >= _MIN_SQLITE_VERSION_FOR_EXPRESSION_RAISE, (
-        f"register_vocab_ddl requires SQLite >= "
-        f"{_MIN_SQLITE_VERSION_FOR_EXPRESSION_RAISE} for the vocabulary "
-        f"triggers' expression RAISE (design 122 D2); this runtime reports "
-        f"{sqlite3.sqlite_version_info}"
-    )
+    if sqlite3.sqlite_version_info < _MIN_SQLITE_VERSION_FOR_EXPRESSION_RAISE:
+        raise RuntimeError(
+            f"register_vocab_ddl requires SQLite >= "
+            f"{_MIN_SQLITE_VERSION_FOR_EXPRESSION_RAISE} for the vocabulary "
+            f"triggers' expression RAISE (design 122 D2); this runtime reports "
+            f"{sqlite3.sqlite_version_info}"
+        )
     schema_v2.register_ddl("axes_vocab_triggers", _VOCAB_TRIGGER_DDL)
 
 

@@ -29,7 +29,7 @@ import sqlite3
 
 import pytest
 
-from entity_registry import axes  # noqa: F401 -- side effect: registers "axes" view DDL (design D4)
+from entity_registry import axes  # module under test; importing also registers the "axes" view DDL (design D4)
 from entity_registry import events
 from entity_registry import schema_v2
 
@@ -140,6 +140,13 @@ class TestVocabularyExactMembership:
         assert axes.EXECUTION_STATUSES == (
             "backlog", "prioritised", "ready", "wip", "blocked", "documenting", "completed",
         )
+
+    def test_frozenset_views_mirror_the_tuples(self):
+        # design D1: "membership tests use frozenset views derived from
+        # them (single objects, exported)" — pin BOTH exports (the
+        # execution one is also exercised by the kanban subset test).
+        assert axes.PIPELINE_PHASES_SET == frozenset(axes.PIPELINE_PHASES)
+        assert axes.EXECUTION_STATUSES_SET == frozenset(axes.EXECUTION_STATUSES)
 
 
 # ---------------------------------------------------------------------------
@@ -403,6 +410,11 @@ class TestVocabTriggerRejection:
             pytest.param("pipeline", "wip", id="pipeline-rejects-execution-vocab-value"),
             pytest.param("execution", "design", id="execution-rejects-pipeline-vocab-value"),
             pytest.param("execution", "WIP", id="execution-wrong-case"),
+            # pipeline twin of wrong-case: the two triggers are independently
+            # interpolated CREATE TRIGGER statements (design D2) — a case-
+            # sensitivity regression isolated to one would escape a
+            # single-axis probe.
+            pytest.param("pipeline", "Design", id="pipeline-wrong-case"),
         ],
     )
     def test_rejected_value_raises_integrity_error_naming_axis_and_value(
@@ -790,55 +802,27 @@ class TestEntityPhaseStatusNullAxisSemantics:
 # ---------------------------------------------------------------------------
 class TestRegisterVocabDdlVersionGuard:
     """The second test closes a partial-mutation gap: if a future
-    refactor ever reordered the assert to run AFTER register_ddl, the
+    refactor ever reordered the version check to run AFTER register_ddl, the
     failed attempt would have already appended 'axes_vocab_triggers' to
     DDL_REGISTRY, and a SUBSEQUENT legitimate call on a real (>= 3.47.0)
     runtime would hit register_ddl's duplicate-owner ValueError instead
     of succeeding -- this pins that the recovery path stays clean."""
 
-    def test_pre_3_47_sqlite_raises_assertion_error_before_registering(self, monkeypatch):
+    def test_pre_3_47_sqlite_raises_runtime_error_before_registering(self, monkeypatch):
         monkeypatch.setattr(axes.sqlite3, "sqlite_version_info", (3, 46, 0))
-        with pytest.raises(AssertionError):
+        with pytest.raises(RuntimeError, match="3, 47, 0"):
             axes.register_vocab_ddl()
         assert axes.is_vocab_registered() is False
 
     def test_registration_succeeds_after_version_guard_clears(self, monkeypatch):
         real_version = axes.sqlite3.sqlite_version_info
         monkeypatch.setattr(axes.sqlite3, "sqlite_version_info", (3, 46, 0))
-        with pytest.raises(AssertionError):
+        with pytest.raises(RuntimeError):
             axes.register_vocab_ddl()
 
         monkeypatch.setattr(axes.sqlite3, "sqlite_version_info", real_version)
         axes.register_vocab_ddl()
         assert axes.is_vocab_registered() is True
-
-
-# ---------------------------------------------------------------------------
-# The existing rejection battery (TestVocabTriggerRejection) pins wrong-
-# case rejection on the EXECUTION axis only ('WIP' vs 'wip').
-# ---------------------------------------------------------------------------
-class TestVocabTriggerPipelineCaseSensitivity:
-    """The pipeline and execution triggers are two independently-
-    interpolated CREATE TRIGGER statements (design D2) -- a case-
-    sensitivity regression isolated to ONLY the pipeline trigger (e.g.
-    an accidental COLLATE NOCASE on that one statement) would not be
-    caught by an execution-only probe. Closes that asymmetry."""
-
-    def test_pipeline_axis_rejects_wrong_case_value(
-        self, _vocab_triggers_registered, bootstrapped_db_path, seeded_entity_uuid
-    ):
-        conn = sqlite3.connect(bootstrapped_db_path)
-        try:
-            with pytest.raises(sqlite3.IntegrityError) as excinfo:
-                _raw_insert_event(
-                    conn, entity_uuid=seeded_entity_uuid, axis="pipeline",
-                    to_value="Design",
-                )
-        finally:
-            conn.close()
-        message = str(excinfo.value)
-        assert "pipeline" in message
-        assert "Design" in message
 
 
 # ---------------------------------------------------------------------------
