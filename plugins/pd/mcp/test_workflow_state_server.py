@@ -10969,3 +10969,151 @@ class TestReprojectMetaJson:
         data = json.loads(result)
         assert data["error"] is True
         assert data["error_type"] == "db_unavailable"
+
+    def test_reproject_via_feature_type_id_direct_path_regenerates_meta_json(
+        self, db, tmp_path
+    ):
+        """feature_type_id= direct call path (ref=None) -- the ref= path is
+        covered by the happy-path test above; this pins that
+        `_resolve_ref_to_feature_type_id`'s OTHER branch (feature_type_id is
+        not None -> returned verbatim, `db.resolve_ref` never touched) also
+        projects correctly and shouldn't regress alongside the ref path.
+        Uses status='active' (non-terminal) as a complementary case to the
+        ref-path test's 'abandoned': the regenerated `.meta.json` must NOT
+        carry a top-level 'completed' key here -- a distinct behavior, not
+        merely a data variation of the same logical path.
+        """
+        import asyncio
+        import workflow_state_server as wss
+
+        feature_dir = os.path.join(str(tmp_path), "features", "097-directpath")
+        os.makedirs(feature_dir, exist_ok=True)
+        db.register_entity(
+            "feature", "097-directpath", "directpath",
+            artifact_path=feature_dir,
+            status="active",
+            metadata={
+                "id": "097", "slug": "directpath",
+                "mode": "standard", "branch": "feature/097-directpath",
+            },
+            project_id="__unknown__",
+        )
+        db.create_workflow_phase("feature:097-directpath", workflow_phase="specify")
+
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, str(tmp_path))
+        wss._artifacts_root = str(tmp_path)
+
+        result = asyncio.run(
+            wss.reproject_meta_json(feature_type_id="feature:097-directpath")
+        )
+        data = json.loads(result)
+        assert data["projected"] is True
+        assert data["feature_type_id"] == "feature:097-directpath"
+        assert data["warning"] is None
+
+        meta_path = os.path.join(feature_dir, ".meta.json")
+        with open(meta_path) as f:
+            meta = json.load(f)
+        assert meta["status"] == "active"
+        assert "completed" not in meta
+
+    def test_reproject_feature_type_id_takes_precedence_over_unresolvable_ref(
+        self, db, tmp_path
+    ):
+        """Design D4 (:1851): `_resolve_ref_to_feature_type_id` treats any
+        non-None `feature_type_id` as authoritative, returned verbatim
+        without ever calling `db.resolve_ref` -- when BOTH params are
+        provided, resolution must go via `feature_type_id`. Pinned with a
+        `ref` that CANNOT resolve (nonexistent entity): if the precedence
+        were ever reversed (ref checked/preferred first), this call would
+        fail with `invalid_ref` instead of succeeding.
+        """
+        import asyncio
+        import workflow_state_server as wss
+
+        feature_dir = os.path.join(str(tmp_path), "features", "095-winner")
+        os.makedirs(feature_dir, exist_ok=True)
+        db.register_entity(
+            "feature", "095-winner", "winner",
+            artifact_path=feature_dir,
+            status="active",
+            project_id="__unknown__",
+        )
+        db.create_workflow_phase("feature:095-winner", workflow_phase="specify")
+
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, str(tmp_path))
+        wss._artifacts_root = str(tmp_path)
+
+        result = asyncio.run(
+            wss.reproject_meta_json(
+                feature_type_id="feature:095-winner",
+                ref="feature:999-does-not-exist",
+            )
+        )
+        data = json.loads(result)
+        assert "error" not in data, f"feature_type_id should have won, got: {data!r}"
+        assert data["projected"] is True
+        assert data["feature_type_id"] == "feature:095-winner"
+
+    def test_reproject_entity_without_artifact_path_returns_projected_false_with_warning(
+        self, db, tmp_path
+    ):
+        """`_project_meta_json` surfaces a non-None warning when
+        `artifact_path` is unset (:400-403) -- no existing test drives this
+        branch; the 3 original tests all assert `warning is None` /
+        `projected: true`. A mutation hard-coding `"projected": True`
+        unconditionally (or dropping the `warning` key) would pass every
+        current test and only be caught here.
+        """
+        import asyncio
+        import workflow_state_server as wss
+
+        db.register_entity(
+            "feature", "096-noartifact", "noartifact",
+            status="active",
+            project_id="__unknown__",
+        )
+
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, str(tmp_path))
+        wss._artifacts_root = str(tmp_path)
+
+        result = asyncio.run(
+            wss.reproject_meta_json(feature_type_id="feature:096-noartifact")
+        )
+        data = json.loads(result)
+        assert data["projected"] is False
+        assert data["feature_type_id"] == "feature:096-noartifact"
+        assert data["warning"] is not None
+        assert "artifact_path" in data["warning"]
+
+    def test_reproject_not_initialized_when_engine_and_db_unset(self):
+        """Tool-level guard: `reproject_meta_json` is a NEW handler beside
+        the 6 enumerated in `TestNotInitializedGuards` (source-inspection
+        only, and its hardcoded handler list doesn't include this tool) --
+        this is the first RUNTIME check (mirroring
+        `test_error_uninitialized_guard`'s idiom) that the guard actually
+        fires when the server hasn't started.
+        """
+        import asyncio
+        import workflow_state_server as wss
+
+        orig_engine = wss._engine
+        orig_db = wss._db
+        wss._engine = None
+        wss._db = None
+        try:
+            result = asyncio.run(
+                wss.reproject_meta_json(feature_type_id="feature:000-anything")
+            )
+            data = json.loads(result)
+            assert data["error"] is True
+            assert data["error_type"] == "not_initialized"
+        finally:
+            wss._engine = orig_engine
+            wss._db = orig_db

@@ -290,3 +290,170 @@ def test_meta_json_deny_valid_sentinel(monkeypatch, tmp_path):
         sys.path.pop(0)
     out = meta_json_decision.decide("docs/features/043/.meta.json", "Write", {})
     _assert_meta_json_deny(out)
+
+
+# ---------------------------------------------------------------------------
+# Test-deepener additions (feature 127 deepening pass) -- decide() seams
+# beyond the D2 deny matrix: bypass vocabulary boundaries (mirrors the
+# TD1_MATRIX idiom above), tool_name / payload independence, OQ-1's
+# creation-vs-edit path parity, and one dispatcher-level integration test.
+# Every meta_json_decision test above (D2 included) imports the module and
+# calls decide() directly in-process; none exercise the subprocess
+# dispatcher's config-driven routing end-to-end the way
+# test_dispatcher_denies_backlog_write does for backlog_decision.
+# ---------------------------------------------------------------------------
+
+_BYPASS_VOCAB_MATRIX = [
+    # (env value, expected permissionDecision). "1" is already pinned by
+    # test_meta_json_decision_env_bypass_allows (:174) -- excluded here to
+    # avoid restating that exact assertion.
+    ("0", "deny"),
+    ("false", "deny"),
+    ("FALSE", "deny"),
+    ("False", "deny"),
+    ("no", "deny"),
+    ("NO", "deny"),
+    ("", "deny"),
+    ("yes", "allow"),
+    ("true", "allow"),
+    ("TRUE", "allow"),
+    ("banana", "allow"),
+    ("2", "allow"),
+]
+
+
+@pytest.mark.parametrize("env_value,expected", _BYPASS_VOCAB_MATRIX)
+def test_meta_json_decision_bypass_vocabulary_matrix(monkeypatch, env_value, expected):
+    """FR127-2 / error-boundary case ("Bypass set but empty/'0'/'false':
+    _is_truthy semantics unchanged -- still deny"): `_is_truthy`'s exclusion
+    tuple is ``("", "0", "false", "no")``, matched case-insensitively via
+    `.lower()` -- every other test in this file that sets the bypass env
+    uses '1' only, so the string branch (as opposed to the `val is None`
+    early return for an unset env) has zero coverage today. Pins the exact
+    4-member falsy set (dropping any ONE member, e.g. "no", in a future edit
+    would silently permit ``PD_META_JSON_WRITE_ALLOWED=no``) plus
+    case-insensitivity, and confirms arbitrary non-excluded strings
+    ("banana", "2") still permit per the module's documented "match the bash
+    convention" contract -- not a strict true/false parse.
+    """
+    monkeypatch.setenv("PD_META_JSON_WRITE_ALLOWED", env_value)
+    sys.path.insert(0, str(LIB_DIR))
+    try:
+        from data_file_guards import meta_json_decision  # type: ignore
+    finally:
+        sys.path.pop(0)
+    out = meta_json_decision.decide("docs/features/043/.meta.json", "Write", {})
+    if expected == "deny":
+        _assert_meta_json_deny(out)
+    else:
+        assert out["permissionDecision"] == "allow", (
+            f"expected allow for PD_META_JSON_WRITE_ALLOWED={env_value!r}, got {out!r}"
+        )
+
+
+@pytest.mark.parametrize("tool_name", ["Write", "Edit", "NotebookEdit", "SomeArbitraryTool"])
+def test_meta_json_deny_is_tool_name_independent(monkeypatch, tool_name):
+    """FR127-1: `decide()`'s contract signature accepts `tool_name` but the
+    two-branch body (design D1) never inspects it -- every existing test in
+    this file hardcodes `tool_name="Write"`. This pins that the deny applies
+    uniformly to Write, Edit, NotebookEdit, and (defensively) an arbitrary
+    string: a mutation that special-cased one tool name (e.g. `if tool_name
+    == "NotebookEdit": allow`) would flip exactly one parametrize case here
+    and nowhere else in the suite.
+    """
+    monkeypatch.delenv("PD_META_JSON_WRITE_ALLOWED", raising=False)
+    sys.path.insert(0, str(LIB_DIR))
+    try:
+        from data_file_guards import meta_json_decision  # type: ignore
+    finally:
+        sys.path.pop(0)
+    out = meta_json_decision.decide("docs/features/043/.meta.json", tool_name, {})
+    _assert_meta_json_deny(out)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"content": "malicious .meta.json content"},
+        {"old_string": "x", "new_string": "y", "replace_all": True},
+        {"force": True, "bypass": True},
+    ],
+)
+def test_meta_json_decision_ignores_payload_contents(monkeypatch, payload):
+    """FR127-1: the ONLY permit is the break-glass env (spec FR127-2) --
+    `decide()`'s `payload` parameter (the tool_input dict; e.g. Edit's
+    old_string/new_string, or a hypothetical "force"/"bypass" key) must
+    never be consulted. Denies even when payload contains keys shaped like a
+    bypass attempt, closing the seam a naive `if payload.get('force')`
+    backdoor would open -- every existing test in this file passes `{}`.
+    """
+    monkeypatch.delenv("PD_META_JSON_WRITE_ALLOWED", raising=False)
+    sys.path.insert(0, str(LIB_DIR))
+    try:
+        from data_file_guards import meta_json_decision  # type: ignore
+    finally:
+        sys.path.pop(0)
+    out = meta_json_decision.decide("docs/features/043/.meta.json", "Edit", payload)
+    _assert_meta_json_deny(out)
+
+
+def test_meta_json_deny_regardless_of_file_existence_creation_vs_edit(monkeypatch, tmp_path):
+    """OQ-1 resolved (design D1): the deny applies to file CREATION too, not
+    only edits of an existing file -- `decide()` is path-keyed and never
+    consults file existence. This is the first test that actually probes
+    disk state: one path points at a real, pre-existing `.meta.json` (an
+    Edit-shaped call); the other points at a path with no file and no parent
+    directory anywhere on disk (a Write-shaped creation call). Both must
+    deny with the IDENTICAL reason -- a regression that added an `if not
+    os.path.exists(file_path): <permit>` creation carve-out would flip only
+    the second case and the final equality assertion.
+    """
+    monkeypatch.delenv("PD_META_JSON_WRITE_ALLOWED", raising=False)
+    existing_dir = tmp_path / "features" / "043-existing"
+    existing_dir.mkdir(parents=True)
+    existing_meta = existing_dir / ".meta.json"
+    existing_meta.write_text('{"id": "043"}')
+    assert existing_meta.exists()
+
+    creation_path = tmp_path / "features" / "999-never-created" / ".meta.json"
+    assert not creation_path.exists()
+    assert not creation_path.parent.exists()
+
+    sys.path.insert(0, str(LIB_DIR))
+    try:
+        from data_file_guards import meta_json_decision  # type: ignore
+    finally:
+        sys.path.pop(0)
+
+    out_edit = meta_json_decision.decide(str(existing_meta), "Edit", {})
+    out_create = meta_json_decision.decide(str(creation_path), "Write", {})
+    _assert_meta_json_deny(out_edit)
+    _assert_meta_json_deny(out_create)
+    assert out_edit == out_create, "creation and edit paths must deny identically (OQ-1)"
+
+
+@pytest.mark.parametrize("tool_name", ["Write", "Edit"])
+def test_dispatcher_denies_meta_json_write_end_to_end(tool_name):
+    """Integration gap: every meta_json_decision test above (D2's deny
+    matrix included) imports the module and calls `decide()` directly --
+    NONE exercise the actual subprocess dispatcher's config-driven routing
+    (fnmatch against data_file_guards.json's "*.meta.json" entry ->
+    importlib -> decide()) for a non-excluded feature `.meta.json`, the way
+    `test_dispatcher_denies_backlog_write` does for `backlog_decision`. Also
+    confirms the dispatcher's `_WRITE_TOOLS` set (Write/Edit/NotebookEdit)
+    actually reaches `meta_json_decision` for BOTH Write and Edit -- every
+    other dispatcher-level test in this file uses only "Write".
+    """
+    rc, stdout, stderr = _run_dispatcher(
+        {"tool_name": tool_name, "tool_input": {"file_path": "docs/features/043/.meta.json"}},
+        env_overrides={"PD_META_JSON_WRITE_ALLOWED": "0"},
+    )
+    assert rc == 0, f"dispatcher exited {rc}; stderr: {stderr}"
+    out = json.loads(stdout)
+    decision = out["hookSpecificOutput"]["permissionDecision"]
+    reason = out["hookSpecificOutput"]["permissionDecisionReason"]
+    assert decision == "deny", f"expected deny, got {decision!r}; full: {out!r}"
+    assert "_project_meta_json" in reason
+    assert "PD_META_JSON_WRITE_ALLOWED" in reason
+    assert "doctor" in reason
