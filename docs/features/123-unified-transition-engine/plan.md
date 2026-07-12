@@ -54,4 +54,4 @@ One commit per task; task 1 reverts as a unit (router + move + tests); task 2 re
 
 ## Success Check (spec SCs)
 
-SC1 → task 1 (test_router.py + secondary grep); SC2 → task 2 (red-first ×3); SC3 → task 2 (fault-injection ×2 + grep); SC4 → task 1 (red-first + production grep at task 3); SC5 → task 3; SC6 → task 3.
+SC1 → task 1 (test_router.py + secondary grep; re-verified at task 3); SC2 → task 2 (red-first ×3); SC3 → task 2 (fault-injection ×2 + grep; re-verified at task 3); SC4 → task 1 (red-first + production grep at task 3); SC5 → task 3; SC6 → task 3.
