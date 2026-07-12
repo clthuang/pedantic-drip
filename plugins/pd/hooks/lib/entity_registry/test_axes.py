@@ -269,3 +269,270 @@ class TestEntityPhaseStatusImmutability:
                 conn.execute(sql)
         finally:
             conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Task 2 (design D2 semantics; D5 groups 2-4/7; spec SC2/SC3/SC6-structural):
+# trigger-teeth acceptance/rejection battery, leak-detection pin, and the
+# derive_kanban compatibility pin. See tasks.md Task 2.
+# ---------------------------------------------------------------------------
+@pytest.fixture
+def _vocab_triggers_registered():
+    """OPT-IN (non-autouse): registers design D2's per-axis vocabulary
+    CHECK triggers via ``axes.register_vocab_ddl()``, guarded by
+    ``axes.is_vocab_registered()`` so requesting it is a safe no-op if
+    something upstream already registered them within the same test's
+    snapshot scope (rather than tripping register_ddl's duplicate-owner
+    ValueError).
+
+    NON-AUTOUSE is load-bearing (design D5 group 3 / spec SC6):
+    TestVocabTriggerLeakDetection below bootstraps a DB WITHOUT
+    requesting this fixture and must see an out-of-vocab pipeline INSERT
+    SUCCEED — an autouse fixture would register the triggers for every
+    test in this module unconditionally, either breaking that pin or
+    making the whole acceptance/rejection battery vacuous (every DB
+    would carry the triggers regardless of whether register-on-demand
+    actually gates anything).
+
+    Declaration ORDER is also load-bearing: every test below that
+    combines this fixture with ``bootstrapped_db_path`` (directly, or
+    transitively via ``seeded_entity_uuid``) lists this fixture FIRST in
+    its parameter list. ``register_vocab_ddl()`` only appends to
+    ``schema_v2.DDL_REGISTRY`` (module-global list state) — it is
+    ``bootstrapped_db_path``'s own body that reads that registry when it
+    calls ``schema_v2.bootstrap_v2()`` — so the trigger DDL must land in
+    the registry first. Same-scope, non-interdependent pytest fixtures
+    instantiate in the order they're declared as test parameters.
+    """
+    if not axes.is_vocab_registered():
+        axes.register_vocab_ddl()
+    yield
+
+
+def _raw_insert_event(
+    conn: sqlite3.Connection,
+    *,
+    entity_uuid: str,
+    axis: str,
+    to_value: str | None,
+    event_uuid: str | None = None,
+    event_type: str = "raw_insert_probe",
+    actor: str = "tester",
+    timestamp: str = _NOW,
+) -> None:
+    """INSERT one events row via a bare parameterized ``conn.execute`` —
+    never ``entity_registry.events.append_event`` — then commit. Design
+    D5 group 7 / spec FR122-3: every probe in this battery calls this
+    helper, so a rejection is structural proof the vocabulary triggers
+    enforce on ANY writer to the events table, not just Python callers
+    routed through append_event's own guards.
+
+    *conn* may be a bare ``sqlite3.connect()`` connection (not
+    ``connect_v2``) — the vocabulary triggers fire on any INSERT
+    regardless of the connection's own PRAGMA state.
+    """
+    if event_uuid is None:
+        event_uuid = f"raw-insert-probe-{axis}-{to_value}"
+    conn.execute(
+        "INSERT INTO events "
+        "(uuid, entity_uuid, event_type, axis, from_value, to_value, actor, timestamp, payload) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (event_uuid, entity_uuid, event_type, axis, None, to_value, actor, timestamp, None),
+    )
+    conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Design D5 group 2 (acceptance half) / spec SC2: EVERY member of both
+# vocab tuples is accepted on its own axis via a raw INSERT — 13 probes
+# total (6 pipeline + 7 execution), parametrized OVER axes.PIPELINE_PHASES
+# / axes.EXECUTION_STATUSES so vocabulary drift auto-updates the matrix.
+# ---------------------------------------------------------------------------
+class TestVocabTriggerAcceptance:
+    @pytest.mark.parametrize("to_value", axes.PIPELINE_PHASES)
+    def test_every_pipeline_phase_value_accepted(
+        self, _vocab_triggers_registered, bootstrapped_db_path, seeded_entity_uuid, to_value
+    ):
+        conn = sqlite3.connect(bootstrapped_db_path)
+        try:
+            _raw_insert_event(
+                conn, entity_uuid=seeded_entity_uuid, axis="pipeline", to_value=to_value,
+            )
+            row = conn.execute(
+                "SELECT to_value FROM events WHERE axis = 'pipeline' AND to_value = ?",
+                (to_value,),
+            ).fetchone()
+        finally:
+            conn.close()
+        assert row == (to_value,)
+
+    @pytest.mark.parametrize("to_value", axes.EXECUTION_STATUSES)
+    def test_every_execution_status_value_accepted(
+        self, _vocab_triggers_registered, bootstrapped_db_path, seeded_entity_uuid, to_value
+    ):
+        conn = sqlite3.connect(bootstrapped_db_path)
+        try:
+            _raw_insert_event(
+                conn, entity_uuid=seeded_entity_uuid, axis="execution", to_value=to_value,
+            )
+            row = conn.execute(
+                "SELECT to_value FROM events WHERE axis = 'execution' AND to_value = ?",
+                (to_value,),
+            ).fetchone()
+        finally:
+            conn.close()
+        assert row == (to_value,)
+
+
+# ---------------------------------------------------------------------------
+# Design D5 group 2 (rejection half) / spec SC2 + boundary cases + D5
+# group 7 (FR122-3's raw-INSERT structural proof): out-of-vocab per axis,
+# cross-axis vocabulary, and wrong-case are ALL rejected with
+# sqlite3.IntegrityError EXACTLY (RAISE(ABORT) in a BEFORE INSERT trigger
+# surfaces as SQLITE_CONSTRAINT_TRIGGER -> IntegrityError; 119's
+# immutability-trigger precedent, test_events.py), with BOTH the axis
+# name and the offending value present in str(excinfo.value) (expression
+# RAISE, design D2).
+# ---------------------------------------------------------------------------
+class TestVocabTriggerRejection:
+    @pytest.mark.parametrize(
+        "axis, to_value",
+        [
+            pytest.param("pipeline", "bogus-value", id="pipeline-out-of-vocab"),
+            pytest.param("execution", "bogus-value", id="execution-out-of-vocab"),
+            pytest.param("pipeline", "wip", id="pipeline-rejects-execution-vocab-value"),
+            pytest.param("execution", "design", id="execution-rejects-pipeline-vocab-value"),
+            pytest.param("execution", "WIP", id="execution-wrong-case"),
+        ],
+    )
+    def test_rejected_value_raises_integrity_error_naming_axis_and_value(
+        self,
+        _vocab_triggers_registered,
+        bootstrapped_db_path,
+        seeded_entity_uuid,
+        axis,
+        to_value,
+    ):
+        conn = sqlite3.connect(bootstrapped_db_path)
+        try:
+            with pytest.raises(sqlite3.IntegrityError) as excinfo:
+                _raw_insert_event(
+                    conn, entity_uuid=seeded_entity_uuid, axis=axis, to_value=to_value,
+                )
+        finally:
+            conn.close()
+        message = str(excinfo.value)
+        assert axis in message
+        assert to_value in message
+
+
+# ---------------------------------------------------------------------------
+# Design D5 group 2 (NULL half) / spec boundary case: NULL to_value stays
+# legal on all three axes even with the vocab triggers registered (each
+# trigger's own WHEN clause guards `to_value IS NOT NULL`).
+# ---------------------------------------------------------------------------
+class TestVocabTriggerNullAcceptance:
+    @pytest.mark.parametrize("axis", ["pipeline", "execution", "lifecycle"])
+    def test_null_to_value_accepted_on_every_axis(
+        self, _vocab_triggers_registered, bootstrapped_db_path, seeded_entity_uuid, axis
+    ):
+        conn = sqlite3.connect(bootstrapped_db_path)
+        try:
+            _raw_insert_event(conn, entity_uuid=seeded_entity_uuid, axis=axis, to_value=None)
+            row = conn.execute(
+                "SELECT to_value FROM events WHERE axis = ?", (axis,)
+            ).fetchone()
+        finally:
+            conn.close()
+        assert row == (None,)
+
+
+# ---------------------------------------------------------------------------
+# Design D5 group 2 (lifecycle half) / spec boundary case: the lifecycle
+# axis stays vocab-FREE at 122 by design (module docstring) — no
+# lifecycle trigger exists, so free-text, a type_id-shaped rename target,
+# and a legacy pipeline-vocab-shaped `completed` value all pass through.
+# ---------------------------------------------------------------------------
+class TestLifecycleAxisVocabFree:
+    @pytest.mark.parametrize(
+        "to_value",
+        [
+            pytest.param("some free-text lifecycle note", id="free-text"),
+            pytest.param(
+                "feature:122-two-axis-phase-status-schema",
+                id="type-id-shaped-rename-target",
+            ),
+            pytest.param("completed", id="legacy-completed-pipeline-vocab-shaped-value"),
+        ],
+    )
+    def test_lifecycle_axis_accepts_vocab_free_values(
+        self, _vocab_triggers_registered, bootstrapped_db_path, seeded_entity_uuid, to_value
+    ):
+        conn = sqlite3.connect(bootstrapped_db_path)
+        try:
+            _raw_insert_event(
+                conn, entity_uuid=seeded_entity_uuid, axis="lifecycle", to_value=to_value,
+            )
+            row = conn.execute(
+                "SELECT to_value FROM events WHERE axis = 'lifecycle' AND to_value = ?",
+                (to_value,),
+            ).fetchone()
+        finally:
+            conn.close()
+        assert row == (to_value,)
+
+
+# ---------------------------------------------------------------------------
+# Design D5 group 3 / spec SC6's structural isolation guarantee: a
+# bootstrap that never requests _vocab_triggers_registered (so never
+# calls register_vocab_ddl()) accepts an out-of-vocab pipeline value —
+# proving sibling suites (119/120/126, none of which call
+# register_vocab_ddl either) can never be affected by this module's
+# triggers.
+# ---------------------------------------------------------------------------
+class TestVocabTriggerLeakDetection:
+    def test_bootstrap_without_vocab_fixture_accepts_out_of_vocab_pipeline_value(
+        self, bootstrapped_db_path, seeded_entity_uuid
+    ):
+        conn = sqlite3.connect(bootstrapped_db_path)
+        try:
+            _raw_insert_event(
+                conn, entity_uuid=seeded_entity_uuid, axis="pipeline", to_value="bogus-value",
+            )
+            row = conn.execute(
+                "SELECT to_value FROM events WHERE axis = 'pipeline' AND to_value = 'bogus-value'"
+            ).fetchone()
+        finally:
+            conn.close()
+        assert row == ("bogus-value",)
+
+
+# ---------------------------------------------------------------------------
+# Design D5 group 4 / spec SC3: EXECUTION_STATUSES is a STRICT superset of
+# every value workflow_engine.kanban.derive_kanban can reach. Importing
+# the LIVE kanban module from this test is unrestricted (the dark guard
+# only polices the reverse — live code importing a dark v2 module);
+# precedent: test_backfill.py:1112.
+# ---------------------------------------------------------------------------
+class TestDeriveKanbanCompatibility:
+    def test_reachable_derive_kanban_outputs_are_strict_subset_of_execution_statuses(self):
+        from workflow_engine.kanban import PHASE_TO_KANBAN, derive_kanban
+
+        # The terminal-branch outputs ('completed', 'blocked', 'backlog')
+        # are literals INSIDE derive_kanban's body (its status in (...) /
+        # == "blocked" / == "planned" checks), not exported module
+        # constants — captured here by actually CALLING derive_kanban for
+        # a representative status per branch rather than hand-copying the
+        # strings (the author-restated-literal drift class).
+        terminal_outputs = {
+            derive_kanban("completed", None),
+            derive_kanban("abandoned", None),
+            derive_kanban("blocked", None),
+            derive_kanban("planned", None),
+        }
+        assert terminal_outputs == {"completed", "blocked", "backlog"}
+
+        reachable = set(PHASE_TO_KANBAN.values()) | terminal_outputs
+
+        assert reachable <= axes.EXECUTION_STATUSES_SET
+        assert reachable < axes.EXECUTION_STATUSES_SET  # strict: "ready" (FR-8) unreachable
