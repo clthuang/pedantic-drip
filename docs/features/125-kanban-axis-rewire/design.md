@@ -79,7 +79,7 @@ Additive keys; the aliases create DISTINCT column names beside wp.*'s originals 
 
 ## D4 — entities.py (both read paths) — the ZERO-occurrence detail path
 
-**List annotation (:101-104):** the lookup rows already come from `list_workflow_phases` — the annotation becomes `e["execution_status"] = resolve_execution_status(workflow_lookup.get(e["type_id"], {}).get("execution_status"))`. The `kanban_column` key name dies here.
+**List annotation (:101-104):** the lookup rows already come from `list_workflow_phases` — the annotation becomes `e["execution_status"] = resolve_execution_status(workflow_lookup.get(e["type_id"], {}).get("execution_status"))`. The `kanban_column` key name dies here — INCLUDING the :101 COMMENT ("Annotate entities with kanban_column from...") which carries the banned token in the SC2 grep path (plan review W1: the adjacent-comment sweep had enumerated only test-file comments; this is the one production comment).
 
 **Detail route (:148-196):** adopts the iteration-1 W1 path — `get_workflow_phase` is NOT called anymore by this route (the method itself stays byte-untouched for its 18 non-UI callers); the route instead reads the ALREADY-ALIASED list and filters to the one row:
 
