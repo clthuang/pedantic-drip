@@ -495,3 +495,15 @@ class TestFiveDSingleDefinedWeightBlocksOthers:
         # Then it blocks with the TEMPLATE guard, not PHASE_SEQ
         assert decision.allowed is False
         assert decision.guard_id == "TEMPLATE"
+
+
+# ---------------------------------------------------------------------------
+# GraphDescriptor protocol smoke-check (battery quality-S2: the
+# @runtime_checkable declaration must be consumed, not decorative)
+# ---------------------------------------------------------------------------
+def test_every_registry_machine_satisfies_graph_descriptor_protocol():
+    """isinstance() against the runtime-checkable Protocol for all 8 machines."""
+    from workflow_engine.router import MACHINE_REGISTRY, GraphDescriptor
+
+    for kind, machine in MACHINE_REGISTRY.items():
+        assert isinstance(machine, GraphDescriptor), kind

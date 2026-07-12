@@ -163,3 +163,6 @@ full-table; a frequently-polled per-entity entity_state read needs a plan fix.
 
 ## #071 — Consolidate duplicate _seed_workflow_row test helper into conftest.py
 **Source:** feature 125 battery (code-quality-reviewer S5, pre-existing). `_seed_workflow_row` is defined twice with divergent signatures — a 5-param version in `plugins/pd/ui/tests/test_app.py` (:299) and an 8-param superset in `plugins/pd/ui/tests/test_deepened_app.py` (:22; adds last_completed_phase/backward_transition_reason/updated_at). Consolidate into `plugins/pd/ui/tests/conftest.py` next time either file is churned (candidate: feature 132's seed-token removal sweep). Out of 125's diff scope; does not affect correctness.
+
+## #072 — Generic MCP error handler embeds str(exc) — mirror db_unavailable_error's sanitization
+**Source:** feature 123 security battery (pre-existing, not introduced by 123). `workflow_state_server.py:788-793`'s `except sqlite3.Error` branch embeds `f"Database error: {type(exc).__name__}: {exc}"` — a raw sqlite3 error can carry the DB file path or a "database is locked" string into the MCP response. The 128/123 fail-loud path (`db_unavailable_error`, models.py) already does this right: embed only `type(cause).__name__`, never `str(cause)`. Mirror that in the generic handler. Low severity (local tooling, own paths to own caller).

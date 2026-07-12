@@ -40,8 +40,6 @@ _SEVERITY_MAP: dict[str, Severity] = {
     "error": Severity.block,
 }
 
-
-
 # Feature 109 AC-1.5: the legacy frozenset of phase-sequence kinds was
 # removed per spec §1. The dispatch logic now reads ``entity["kind"]``
 # directly (kind values are byte-identical to the legacy entity_type

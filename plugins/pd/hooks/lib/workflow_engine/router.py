@@ -306,7 +306,13 @@ def get_machine(kind: str) -> Machine:
     FR123-5) and for any kind outside FR123-1's table (workspace, unknown
     values). Callers that special-case bug today keep doing so BEFORE
     routing — this function never silently no-ops.
-    """
+
+        Role note: this method exists for the Machine protocol and the
+        SC1 graph-diff harness; the PRODUCTION enforcement path for
+        lifecycle kinds is the moved transition_entity_phase below,
+        which reads the SAME ENTITY_MACHINES dict inline (design D6's
+        bodies-unchanged move contract) — one data source, two readers.
+        """
     machine = MACHINE_REGISTRY.get(kind)
     if machine is None:
         raise ValueError(f"no transition machine for kind: {kind}")
