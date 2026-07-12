@@ -59,7 +59,6 @@ _REPO_ROOT = _PLUGIN_ROOT.parent.parent                  # repo root
 # the names if a future regression re-introduces direct writes.
 META_JSON_WRITER_ALLOWLIST: tuple[str, ...] = (
     "_project_meta_json",          # MCP projection (canonical write path)
-    "_write_meta_json_fallback",   # degraded-mode writer (engine.py)
     "init_project_state",          # project-type writer (deferred to feature 111)
     "_fix_last_completed_phase",   # MCP-routing wrapper (TD-11 #1)
     "_fix_completed_timestamp",    # MCP-routing wrapper (TD-11 #2)
@@ -383,7 +382,6 @@ def test_audit_comments_present() -> None:
     that need an audit comment.
     """
     expected_names = [
-        "_write_meta_json_fallback",  # engine.py
         "init_project_state",         # feature_lifecycle.py
         "_fix_last_completed_phase",  # fix_actions.py
         "_fix_completed_timestamp",   # fix_actions.py

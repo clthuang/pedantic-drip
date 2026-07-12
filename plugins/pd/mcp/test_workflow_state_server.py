@@ -1592,33 +1592,34 @@ class TestIntegrationDegradation:
         assert data["degraded"] is True
         assert data["feature_type_id"] == "feature:009-test"
 
-    def test_transition_phase_db_closed_returns_degraded(self, degraded_engine):
-        """_process_transition_phase with closed DB returns response with degraded=True."""
+    def test_transition_phase_db_closed_returns_db_unavailable(self, degraded_engine):
+        """_process_transition_phase with closed DB returns a db_unavailable
+        envelope (feature 128: mutations fail loud, no success-shaped
+        degraded=True response)."""
         result = _process_transition_phase(
             degraded_engine, "feature:009-test", "design", False,
             db=None,  # DB is closed; skip entity metadata update
         )
         data = json.loads(result)
-        # Must be a transition response dict (not an error), with degraded=True
-        assert "error" not in data
-        assert data["degraded"] is True
-        assert "results" in data
-        assert "transitioned" in data
+        assert data["error"] is True
+        assert data["error_type"] == "db_unavailable"
+        assert "transition_phase" in data["message"]
+        assert "feature:009-test" in data["message"]
+        assert "doctor" in data["message"]
 
-    def test_complete_phase_db_closed_returns_degraded(self, degraded_engine):
-        """_process_complete_phase with closed DB writes to .meta.json and returns degraded=True.
-
-        The .meta.json has lastCompletedPhase=null and status=active, so the
-        fallback engine resolves current_phase='brainstorm' (first phase).
-        Completing 'brainstorm' matches that current phase and succeeds.
-        """
+    def test_complete_phase_db_closed_returns_db_unavailable(self, degraded_engine):
+        """_process_complete_phase with closed DB returns a db_unavailable
+        envelope and does not write .meta.json (feature 128: mutations fail
+        loud, no fallback write)."""
         result = _process_complete_phase(
             degraded_engine, "feature:009-test", "brainstorm"
         )
         data = json.loads(result)
-        # Must be a state dict (not an error), with degraded=True
-        assert "error" not in data
-        assert data["degraded"] is True
+        assert data["error"] is True
+        assert data["error_type"] == "db_unavailable"
+        assert "complete_phase" in data["message"]
+        assert "feature:009-test" in data["message"]
+        assert "doctor" in data["message"]
 
     def test_list_features_by_phase_db_closed_returns_degraded_states(
         self, degraded_engine
@@ -1921,21 +1922,18 @@ class TestNotInitializedGuards:
 
 
 class TestCompletePhaseDegradedSourceValue:
-    """Dimension 5 (mutation mindset): When complete_phase returns via degraded
-    fallback, the serialized source field must be 'meta_json_fallback' and
-    degraded must be True.
-
-    Anticipate: If source is set to 'db' or 'meta_json' instead of
-    'meta_json_fallback', the degraded derivation in _serialize_state would
-    incorrectly return False.
-    derived_from: dimension:mutation_mindset (source field exact value)
+    """Feature 128: When the DB is unavailable, complete_phase raises
+    WorkflowDBUnavailableError (surfaced as a db_unavailable envelope)
+    instead of returning a serialized state with source='meta_json_fallback'.
+    The surviving sibling test below pins the healthy-path source='db'
+    contract.
     """
 
-    def test_degraded_complete_phase_source_and_degraded_field(
+    def test_degraded_complete_phase_returns_db_unavailable(
         self, db, tmp_path
     ):
-        """complete_phase via MCP with closed DB returns source='meta_json_fallback'
-        and degraded=True in serialized output.
+        """complete_phase via MCP with closed DB returns a db_unavailable
+        envelope, not a serialized state.
         """
         # Given: set up feature and close DB
         db.register_entity("feature", "010-test", "Test Feature", status="active", project_id="__unknown__")
@@ -1952,14 +1950,15 @@ class TestCompletePhaseDegradedSourceValue:
         engine = WorkflowStateEngine(db, str(tmp_path))
         db.close()
 
-        # When completing brainstorm (first phase in degraded mode)
+        # When completing brainstorm (first phase, DB unavailable)
         result = _process_complete_phase(engine, "feature:010-test", "brainstorm")
         data = json.loads(result)
 
-        # Then degraded is True (source was meta_json_fallback)
-        assert "error" not in data, f"Unexpected error: {data}"
+        # Then a structured db_unavailable envelope is returned, not a state
+        assert data["error"] is True
+        assert data["error_type"] == "db_unavailable"
         assert "source" not in data
-        assert data["degraded"] is True
+        assert "degraded" not in data
 
     def test_normal_complete_phase_source_is_db(self, seeded_engine):
         """Normal complete_phase returns source='db' and degraded=False.
@@ -2019,16 +2018,17 @@ class TestValidatePrerequisitesDegradedMode:
 
 
 class TestTransitionDegradedResponseShape:
-    """Dimension 3 (adversarial): transition_phase in degraded mode still returns
-    the exact same JSON shape as non-degraded: {transitioned, results, degraded}.
+    """Feature 128: transition_phase with the DB unavailable now returns the
+    structured db_unavailable ERROR envelope shape ({error, error_type,
+    message, recovery_hint}) instead of a success-shaped {transitioned,
+    results, degraded} response.
 
-    Anticipate: A degraded code path might return a different shape (e.g., missing
-    'results' key or adding an 'error' key), breaking MCP clients.
-    derived_from: dimension:adversarial (JSON shape contract in degraded mode)
+    derived_from: dimension:adversarial (JSON shape contract when DB unavailable)
     """
 
-    def test_degraded_transition_has_exact_key_set(self, db, tmp_path):
-        """Degraded transition response has {transitioned, results, degraded}.
+    def test_degraded_transition_returns_db_unavailable_envelope(self, db, tmp_path):
+        """Transition response with the DB unavailable has the exact error
+        envelope key set, not the success-shaped transition key set.
         """
         # Given: set up feature and close DB
         db.register_entity("feature", "010-shape", "Test", status="active", project_id="__unknown__")
@@ -2045,20 +2045,16 @@ class TestTransitionDegradedResponseShape:
         engine = WorkflowStateEngine(db, str(tmp_path))
         db.close()
 
-        # When transitioning in degraded mode
+        # When transitioning with the DB unavailable
         result = _process_transition_phase(
             engine, "feature:010-shape", "brainstorm", False,
             db=None,  # DB is closed; skip entity metadata update
         )
         data = json.loads(result)
 
-        # Then exact same key set as non-degraded
-        assert set(data.keys()) == {"transitioned", "results", "degraded"}
-        assert data["degraded"] is True
-        assert isinstance(data["results"], list)
-        # Each result item has the correct shape
-        for item in data["results"]:
-            assert set(item.keys()) == {"allowed", "reason", "severity", "guard_id"}
+        # Then the exact error envelope key set -- not {transitioned, results, degraded}
+        assert set(data.keys()) == {"error", "error_type", "message", "recovery_hint"}
+        assert data["error_type"] == "db_unavailable"
 
 
 # ===========================================================================
@@ -8517,6 +8513,63 @@ class TestTransitionPhaseAtomicRollback:
         assert metadata_after == metadata_before, (
             "Entity metadata was persisted despite update_workflow_phase failure — "
             "transaction rollback not working (complete_phase)"
+        )
+
+    def test_complete_phase_finish_update_entity_failure_rolls_back_workflow_phase(
+        self, db, tmp_path
+    ):
+        """SC2 fault-injection (feature 128) -- the non-vacuous successor to
+        the test above, which injects on phase='specify' where the
+        finish-only entity-status sync never fires. This probe completes
+        phase 'finish' so engine.py's finish-status sync (self.db.update_entity)
+        actually runs: db.update_workflow_phase succeeds first, then
+        db.update_entity is mocked to raise. The whole MCP transaction
+        (:1126) must roll back -- workflow_phases unchanged -- and the
+        surfaced envelope must be db_unavailable (one probe covers SC2 + SC5,
+        per spec)."""
+        db.register_entity(
+            "feature", "011-finish-rollback", "Finish Rollback Test",
+            status="active", project_id="__unknown__",
+        )
+        db.create_workflow_phase(
+            "feature:011-finish-rollback",
+            workflow_phase="finish", last_completed_phase="implement",
+            mode="standard",
+        )
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        # Snapshot the workflow_phases row before the attempt.
+        row_before = db.get_workflow_phase("feature:011-finish-rollback")
+
+        # update_workflow_phase succeeds; update_entity (the finish-only
+        # entity-status sync, engine.py's complete_phase) fails AFTER it.
+        original_update_entity = db.update_entity
+
+        def exploding_update_entity(*args, **kwargs):
+            raise sqlite3.OperationalError("injected entity-sync failure")
+
+        db.update_entity = exploding_update_entity
+
+        try:
+            result = _process_complete_phase(
+                engine, "feature:011-finish-rollback", "finish", db=db,
+                iterations=None, reviewer_notes=None,
+            )
+        finally:
+            db.update_entity = original_update_entity
+
+        data = json.loads(result)
+        assert data["error"] is True
+        assert data["error_type"] == "db_unavailable"
+        assert "complete_phase" in data["message"]
+        assert "doctor" in data["message"]
+
+        # The transaction must roll back update_workflow_phase's
+        # already-succeeded write -- no partially-advanced state visible.
+        row_after = db.get_workflow_phase("feature:011-finish-rollback")
+        assert row_after == row_before, (
+            "workflow_phases row changed despite update_entity failing inside "
+            "the same transaction -- rollback not working"
         )
 
 
