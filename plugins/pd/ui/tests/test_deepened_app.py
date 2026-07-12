@@ -1006,10 +1006,11 @@ def test_producer_union_lands_in_execution_statuses_after_remap():
     ENTITY_MACHINES column value; every resulting value resolves into
     EXECUTION_STATUSES_SET via resolve_execution_status (PHASE_TO_KANBAN
     .values() alone would under-cover: completed/blocked are body literals
-    in derive_kanban, kanban.py:34-39, and ENTITY_MACHINES' agent_review
-    only resolves via the legacy remap)."""
+    in derive_kanban, kanban.py:34-39; ENTITY_MACHINES' columns are unioned
+    in defensively — post-FR123-4 they no longer require the legacy remap,
+    but a future producer drift would still be caught here)."""
     from entity_registry.axes import EXECUTION_STATUSES_SET
-    from entity_registry.entity_lifecycle import ENTITY_MACHINES
+    from workflow_engine.router import ENTITY_MACHINES
     from ui.routes.helpers import resolve_execution_status
     from workflow_engine.kanban import PHASE_TO_KANBAN, derive_kanban
 

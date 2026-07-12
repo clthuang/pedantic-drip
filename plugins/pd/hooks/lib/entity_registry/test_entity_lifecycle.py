@@ -1,4 +1,5 @@
-"""Tests for entity_registry.entity_lifecycle module.
+"""Tests for workflow_engine.router's lifecycle entry points (moved from
+entity_registry's former lifecycle module, feature 123 D6).
 
 Unit tests for init_entity_workflow and transition_entity_phase extracted
 from workflow_state_server.py.
@@ -8,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 from entity_registry.database import EntityDatabase
-from entity_registry.entity_lifecycle import (
+from workflow_engine.router import (
     ENTITY_MACHINES,
     init_entity_workflow,
     transition_entity_phase,
@@ -157,7 +158,7 @@ class TestTransitionEntityPhase:
         assert result["transitioned"] is True
         assert result["from_phase"] == "draft"
         assert result["to_phase"] == "reviewing"
-        assert result["kanban_column"] == "agent_review"
+        assert result["kanban_column"] == "wip"
 
     def test_valid_forward_transition_backlog(self, db):
         type_id = _create_backlog(db)
@@ -277,7 +278,7 @@ class TestTransitionEntityPhase:
               'promoted'; workflow_phase row → 'promoted' / 'completed'.
           (2) ws_b's parallel entity UNCHANGED (no cross-workspace leak).
           (3) db.update_workflow_phase received workspace_uuid=ws_a kwarg —
-              direct pin on the FR-5.1 forwarding line (entity_lifecycle.py
+              direct pin on the FR-5.1 forwarding line (router.py
               update_kwargs dict).
           (4) Mismatch path with workspace_uuid=ws_b against a ws_a-scoped
               entity raises ValueError (FR-5.1 symmetric scope rejection).
@@ -320,7 +321,7 @@ class TestTransitionEntityPhase:
 
         # Instrument db.update_workflow_phase to capture kwargs. The pin is
         # specifically on the 'workspace_uuid' kwarg in update_kwargs dict
-        # at entity_lifecycle.py:185-193. We wrap the real method (not a
+        # at router.py:452-460. We wrap the real method (not a
         # mock) so the actual DB writes still happen and assertions (1)/(2)
         # remain meaningful.
         captured_update_kwargs: list[dict] = []
@@ -370,7 +371,7 @@ class TestTransitionEntityPhase:
         # (3) FR-5.1 mutation pin: db.update_workflow_phase received
         # workspace_uuid=ws_a as a forwarded kwarg. Without the
         # `"workspace_uuid": workspace_uuid` entry in the update_kwargs dict
-        # at entity_lifecycle.py:185-193, this assertion fails (kwarg absent
+        # at router.py:452-460, this assertion fails (kwarg absent
         # from captured call).
         assert len(captured_update_kwargs) == 1, captured_update_kwargs
         call_kwargs = captured_update_kwargs[0]
@@ -412,9 +413,12 @@ class TestTransitionEntityPhase:
 # Feature 111 AC-BL.7 — defensive raise on bug/task type_ids
 # ---------------------------------------------------------------------------
 #
-# bug and task entities use the status-only lifecycle model (FR-BL.1); they
-# do NOT have ENTITY_MACHINES entries. The existing first-line validation in
-# transition_entity_phase at entity_lifecycle.py:148 (raises
+# bug and task type_ids are not lifecycle-GRAPH kinds: they do NOT have
+# ENTITY_MACHINES entries (feature 123 — task IS machine-bearing via
+# MACHINE_REGISTRY's FiveDMachine, but ENTITY_MACHINES itself stays scoped
+# to brainstorm/backlog only; bug remains the sole machine-less kind, spec
+# FR123-5). The existing first-line validation in transition_entity_phase
+# at router.py:413 (raises
 # "invalid_entity_type: {entity_type} — only brainstorm and backlog supported")
 # fires naturally for these type_ids. These tests pin that behavior so a
 # future refactor of ENTITY_MACHINES does not accidentally widen routing.

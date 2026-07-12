@@ -39,7 +39,7 @@ from entity_registry.database import (
     _UNKNOWN_WORKSPACE_UUID,
 )
 from entity_registry.project_identity import _compute_legacy_project_id, resolve_startup_workspace_uuid
-from entity_registry.entity_lifecycle import (
+from workflow_engine.router import (
     init_entity_workflow as _lib_init_entity_workflow,
     transition_entity_phase as _lib_transition_entity_phase,
 )
@@ -1765,7 +1765,7 @@ def _process_activate_feature(
 def _process_init_entity_workflow(
     db: EntityDatabase, type_id: str, workflow_phase: str, kanban_column: str
 ) -> str:
-    """Thin wrapper — delegates to entity_lifecycle.init_entity_workflow."""
+    """Thin wrapper — delegates to workflow_engine.router.init_entity_workflow."""
     return json.dumps(_lib_init_entity_workflow(
         db, type_id, workflow_phase, kanban_column,
         workspace_uuid=_workspace_uuid or None,
@@ -1778,7 +1778,7 @@ def _process_init_entity_workflow(
 def _process_transition_entity_phase(
     db: EntityDatabase, type_id: str, target_phase: str
 ) -> str:
-    """Thin wrapper — delegates to entity_lifecycle.transition_entity_phase."""
+    """Thin wrapper — delegates to workflow_engine.router.transition_entity_phase."""
     return json.dumps(_lib_transition_entity_phase(
         db, type_id, target_phase,
         workspace_uuid=_workspace_uuid or None,

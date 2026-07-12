@@ -29,7 +29,7 @@ from workflow_engine.reconciliation import (
     WorkflowMismatch,
 )
 
-from entity_registry.entity_lifecycle import ENTITY_MACHINES
+from workflow_engine.router import ENTITY_MACHINES
 
 
 def _bootstrap_test_workspace(db, legacy_id: str) -> str:
@@ -6356,7 +6356,7 @@ class TestTransitionEntityPhase:
         db._conn.commit()
 
     def test_transition_brainstorm_draft_to_reviewing(self, db):
-        """Forward transition: draft -> reviewing, kanban_column -> agent_review."""
+        """Forward transition: draft -> reviewing, kanban_column -> wip."""
         self._seed_entity_with_workflow(db, "brainstorm", "idea-1", "draft", "wip")
         result = json.loads(
             _process_transition_entity_phase(db, "brainstorm:idea-1", "reviewing")
@@ -6364,7 +6364,7 @@ class TestTransitionEntityPhase:
         assert result["transitioned"] is True
         assert result["from_phase"] == "draft"
         assert result["to_phase"] == "reviewing"
-        assert result["kanban_column"] == "agent_review"
+        assert result["kanban_column"] == "wip"
 
     def test_transition_brainstorm_reviewing_to_promoted(self, db):
         """Terminal forward: reviewing -> promoted, kanban_column -> completed."""
@@ -6580,7 +6580,7 @@ class TestTransitionEntityPhaseDeepened:
         # All brainstorm transitions: draft->reviewing, draft->abandoned,
         # reviewing->promoted, reviewing->draft, reviewing->abandoned
         transitions = [
-            ("draft", "reviewing", "agent_review"),
+            ("draft", "reviewing", "wip"),
             ("draft", "abandoned", "completed"),
         ]
         for i, (from_phase, to_phase, expected_kanban) in enumerate(transitions):
