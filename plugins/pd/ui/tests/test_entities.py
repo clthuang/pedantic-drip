@@ -516,11 +516,125 @@ def test_integration_entity_detail_with_workflow(integration_client):
     assert "Alpha Feature" in response.text
     assert "feature:feat-alpha" in response.text
     assert "active" in response.text
-    # Workflow fields from the template (kanban_column, workflow_phase)
+    # Workflow fields from the template (execution_status, workflow_phase)
     assert "wip" in response.text
     assert "implement" in response.text
     # Workflow State section should be rendered
     assert "Workflow State" in response.text
+
+
+# ---------------------------------------------------------------------------
+# derived_from: dimension:mutation (design:D4's next() row-selection filter)
+# ---------------------------------------------------------------------------
+def test_entity_detail_selects_correct_row_by_type_id_when_multiple_rows_exist(tmp_path):
+    """When the unscoped workflow_phases list has rows for several
+    entities, each entity's detail page shows only ITS OWN
+    execution_status -- proving the route's next() lookup actually filters
+    by type_id rather than e.g. always returning the first row in the
+    unscoped list.
+
+    Anticipate: if the filter predicate were dropped (`rows[0] if rows
+    else None` instead of the type_id-matching next()), both pages below
+    would show the SAME value.
+    """
+    # Given two entities with DIFFERING vocabulary execution_status values
+    db_file = str(tmp_path / "test.db")
+    db = EntityDatabase(db_file)
+    db._register_entity_no_display(
+        "feature", "multi-blocked", "Multi Blocked",
+        status="active", project_id="__unknown__",
+    )
+    db.create_workflow_phase("feature:multi-blocked", kanban_column="blocked")
+    db._register_entity_no_display(
+        "feature", "multi-documenting", "Multi Documenting",
+        status="active", project_id="__unknown__",
+    )
+    db.create_workflow_phase("feature:multi-documenting", kanban_column="documenting")
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+
+    # When each entity's own detail page is requested
+    blocked_response = client.get("/entities/feature:multi-blocked")
+    documenting_response = client.get("/entities/feature:multi-documenting")
+
+    # Then each shows only its own value, never the other's
+    assert blocked_response.status_code == 200
+    assert documenting_response.status_code == 200
+    assert "blocked" in blocked_response.text
+    assert "documenting" not in blocked_response.text
+    assert "documenting" in documenting_response.text
+    assert "blocked" not in documenting_response.text
+
+
+# ---------------------------------------------------------------------------
+# derived_from: spec:FR125-1, FR125-2 (detail route is the third read
+# surface required to apply the shared remap; design:D4's zero-occurrence
+# path, exercised with a second, unrelated row also present)
+# ---------------------------------------------------------------------------
+def test_entity_detail_renders_legacy_agent_review_as_wip_with_other_rows_present(tmp_path):
+    """The detail page for an entity stored with the legacy agent_review
+    value shows 'wip', not the raw legacy string -- with a second,
+    unrelated workflow_phases row also present in the (unscoped) table."""
+    # Given an agent_review entity AND a second, unrelated vocabulary row
+    db_file = str(tmp_path / "test.db")
+    db = EntityDatabase(db_file)
+    db._register_entity_no_display(
+        "brainstorm", "legacy-agent-detail", "Legacy Agent Detail",
+        status="active", project_id="__unknown__",
+    )
+    db.create_workflow_phase("brainstorm:legacy-agent-detail", kanban_column="agent_review")
+    db._register_entity_no_display(
+        "feature", "other-row-present", "Other Row Present",
+        status="active", project_id="__unknown__",
+    )
+    db.create_workflow_phase("feature:other-row-present", kanban_column="blocked")
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+
+    # When the legacy entity's detail page is requested
+    response = client.get("/entities/brainstorm:legacy-agent-detail")
+
+    # Then it shows 'wip', and the raw legacy value never appears
+    assert response.status_code == 200
+    assert "wip" in response.text
+    assert "agent_review" not in response.text
+
+
+# ---------------------------------------------------------------------------
+# derived_from: spec:FR125-1 (human_review's defensive remap, exercised on
+# the detail surface -- SC3c and the board sibling above only cover it via
+# the board)
+# ---------------------------------------------------------------------------
+def test_entity_detail_renders_legacy_human_review_as_wip(tmp_path):
+    """The detail page for an entity stored with the defensive
+    human_review legacy value shows 'wip', not the raw legacy string."""
+    # Given an entity seeded with the legacy human_review value
+    db_file = str(tmp_path / "test.db")
+    db = EntityDatabase(db_file)
+    db._register_entity_no_display(
+        "feature", "legacy-human-detail", "Legacy Human Detail",
+        status="active", project_id="__unknown__",
+    )
+    db.create_workflow_phase("feature:legacy-human-detail", kanban_column="human_review")
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+
+    # When the detail page is requested
+    response = client.get("/entities/feature:legacy-human-detail")
+
+    # Then it shows 'wip', and the raw legacy value never appears
+    assert response.status_code == 200
+    assert "wip" in response.text
+    assert "human_review" not in response.text
 
 
 # ---------------------------------------------------------------------------
@@ -1114,8 +1228,8 @@ def test_entity_detail_lineage_error_shows_error_page(tmp_path):
 
 # derived_from: dimension:error_propagation (workflow_phase query failure)
 def test_entity_detail_workflow_error_shows_error_page(tmp_path):
-    """Given a valid entity but get_workflow_phase raises an exception, when
-    viewing the detail page, then the error page is shown.
+    """Given a valid entity but list_workflow_phases raises an exception,
+    when viewing the detail page, then the error page is shown.
 
     Anticipate: If workflow errors aren't caught, the page crashes with 500.
     """
@@ -1126,8 +1240,10 @@ def test_entity_detail_workflow_error_shows_error_page(tmp_path):
     from ui import create_app
 
     app = create_app(db_path=db_file)
-    # get_lineage needs to work, but get_workflow_phase fails
-    app.state.db.get_workflow_phase = unittest.mock.MagicMock(
+    # get_lineage needs to work, but list_workflow_phases fails -- the
+    # detail route's workflow read (feature 125 D4: the zero-occurrence
+    # aliased-list-filter path; get_workflow_phase is no longer called here)
+    app.state.db.list_workflow_phases = unittest.mock.MagicMock(
         side_effect=Exception("workflow query failed")
     )
     client = TestClient(app)
@@ -1215,25 +1331,151 @@ def test_entity_list_status_filter_exact_match(integration_client):
     assert "No entities found" in response.text
 
 
-# derived_from: dimension:mutation (kanban_column annotation correctness)
-def test_entity_list_kanban_column_annotation(integration_client):
-    """Mutation check: verify that kanban_column from workflow_phases is
+# derived_from: dimension:mutation (execution_status annotation correctness)
+def test_entity_list_execution_status_annotation(integration_client):
+    """Mutation check: verify that execution_status from workflow_phases is
     correctly annotated on entity rows.
 
     If the workflow lookup dict is keyed wrong or annotation is skipped,
-    kanban_column would be blank for all entities.
+    execution_status would be blank for all entities.
     """
     response = integration_client.get("/entities")
 
     assert response.status_code == 200
-    # feat-alpha has workflow phase with kanban_column='wip'
+    # feat-alpha has workflow phase with execution_status='wip'
     assert "wip" in response.text
+
+
+# ---------------------------------------------------------------------------
+# derived_from: spec:FR125-1, FR125-2 (the shared helper covers ALL THREE
+# read surfaces -- board, entities-list annotation, entity-detail; SC3c
+# only proves the board surface, this proves the list surface)
+# ---------------------------------------------------------------------------
+def test_entity_list_renders_legacy_values_remapped_to_wip_not_raw(tmp_path):
+    """Entities whose stored kanban_column is a legacy value (agent_review,
+    human_review) show 'wip' in the entities-list table, and the raw
+    legacy strings never leak into the rendered page.
+
+    Anticipate: if the list annotation forgot to call
+    resolve_execution_status (or a board-only remap was implemented
+    instead of the shared helper), these cells would show the raw legacy
+    value instead of 'wip'.
+    """
+    # Given two entities seeded with the two legacy kanban_column values
+    db_file = str(tmp_path / "test.db")
+    db = EntityDatabase(db_file)
+    db._register_entity_no_display(
+        "feature", "legacy-agent-list", "Legacy Agent List",
+        status="active", project_id="__unknown__",
+    )
+    db.create_workflow_phase("feature:legacy-agent-list", kanban_column="agent_review")
+    db._register_entity_no_display(
+        "feature", "legacy-human-list", "Legacy Human List",
+        status="active", project_id="__unknown__",
+    )
+    db.create_workflow_phase("feature:legacy-human-list", kanban_column="human_review")
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+
+    # When the entities list renders
+    response = client.get("/entities")
+
+    # Then both rows resolve to 'wip' (exact cell match) and the raw
+    # legacy values never leak into the page
+    assert response.status_code == 200
+    assert "Legacy Agent List" in response.text
+    assert "Legacy Human List" in response.text
+    assert response.text.count("<td>wip</td>") == 2
+    assert "agent_review" not in response.text
+    assert "human_review" not in response.text
+
+
+# ---------------------------------------------------------------------------
+# derived_from: design:D1 (helpers.py docstring: "the entities
+# annotation/detail render whatever comes back" -- the deliberate flip
+# side of board's loud fallback, which this test's mixed-batch sibling in
+# test_app.py pins from the board side)
+# ---------------------------------------------------------------------------
+def test_entity_list_renders_raw_unknown_execution_status_verbatim_no_warning(tmp_path, capsys):
+    """Unlike board grouping, the entities-list annotation renders an
+    unknown execution_status value VERBATIM with no stderr warning --
+    resolve_execution_status only remaps known legacy keys and otherwise
+    passes the value through unchanged, and entities.py never defaults or
+    warns on it (that's board.py's job alone).
+
+    An unknown value can't be DB-seeded (the CHECK constraint on
+    kanban_column excludes it), so it's injected via a mocked
+    list_workflow_phases -- the same technique the existing
+    error-path tests in this file already use.
+    """
+    # Given an entity whose workflow lookup returns an unknown value
+    db_file = str(tmp_path / "test.db")
+    db = EntityDatabase(db_file)
+    db._register_entity_no_display(
+        "feature", "raw-unknown-list", "Raw Unknown List",
+        status="active", project_id="__unknown__",
+    )
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    app.state.db.list_workflow_phases = unittest.mock.MagicMock(
+        return_value=[
+            {"type_id": "feature:raw-unknown-list", "execution_status": "totally-not-real"}
+        ]
+    )
+    client = TestClient(app)
+
+    # When the entities list renders
+    response = client.get("/entities")
+
+    # Then the raw value renders verbatim, with no stderr warning at all
+    assert response.status_code == 200
+    assert "<td>totally-not-real</td>" in response.text
+    captured = capsys.readouterr()
+    assert captured.err == ""
+
+
+# ---------------------------------------------------------------------------
+# derived_from: dimension:mutation (the `is not none` template guard on the
+# execution_status cell)
+# ---------------------------------------------------------------------------
+def test_entity_list_execution_status_blank_not_literal_none_for_entity_without_workflow_row(tmp_path):
+    """An entity with no workflow_phases row at all renders an EMPTY
+    execution_status cell, never the literal text 'None' -- pins the
+    `is not none` Jinja guard against a deletion mutation that would
+    stringify Python's None straight into the table (Jinja renders a bare
+    None as the text 'None').
+    """
+    # Given an entity with no workflow_phases row
+    db_file = str(tmp_path / "test.db")
+    db = EntityDatabase(db_file)
+    db._register_entity_no_display(
+        "brainstorm", "no-workflow-row", "No Workflow Row",
+        status="active", project_id="__unknown__",
+    )
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+
+    # When the entities list renders
+    response = client.get("/entities")
+
+    # Then the row renders with an empty cell, never the literal word 'None'
+    assert response.status_code == 200
+    assert "No Workflow Row" in response.text
+    assert "<td>None</td>" not in response.text
 
 
 # derived_from: dimension:mutation (entity list table columns match spec)
 def test_entity_list_table_has_required_columns():
     """Mutation check: verify _entities_content.html table has all required
-    columns from spec FR-1: Name, Type ID, Type, Status, Kanban Column, Updated.
+    columns from spec FR-1: Name, Type ID, Type, Status, Execution Status, Updated.
 
     If a column header is deleted, data would be misaligned or missing.
     """
@@ -1244,7 +1486,7 @@ def test_entity_list_table_has_required_columns():
     )
     content = template_path.read_text()
 
-    required_columns = ["Name", "Type ID", "Type", "Status", "Kanban Column", "Updated"]
+    required_columns = ["Name", "Type ID", "Type", "Status", "Execution Status", "Updated"]
     for col in required_columns:
         assert col in content, f"Missing required column header: {col}"
 
@@ -1581,7 +1823,7 @@ def test_build_workflow_lookup_scoped_to_workspace_on_type_id_collision(tmp_path
 
     assert len(result) == 1
     assert result["feature:1-collide"]["entity_name"] == "Feature In A"
-    assert result["feature:1-collide"]["kanban_column"] == "wip"
+    assert result["feature:1-collide"]["execution_status"] == "wip"
 
 
 def test_entity_list_workspace_scoping(tmp_path):

@@ -1,0 +1,39 @@
+{
+  "feature": "125-kanban-axis-rewire",
+  "gate_run_at": "2026-07-13T02:20:00+08:00",
+  "head_at_gate": "868a735f",
+  "lanes": {
+    "A_execution": {
+      "model": "sonnet",
+      "verdict": "PASS",
+      "findings": {
+        "HIGH": 0,
+        "MED": 0,
+        "LOW": 0
+      },
+      "note": "8/8 executable claims exact"
+    },
+    "B_regression": {
+      "model": "sonnet",
+      "verdict": "PASS",
+      "findings": {
+        "HIGH": 0,
+        "MED": 0,
+        "LOW": 2
+      },
+      "note": "both LOW = orchestrator briefing imprecision; 0 merge conflicts; 0 net test loss; develop tip == merge-base"
+    },
+    "C_artifact_truth": {
+      "model": "opus",
+      "verdict": "PASS",
+      "findings": {
+        "HIGH": 0,
+        "MED": 0,
+        "LOW": 5
+      },
+      "note": "all figures/streaks chain-verified; 3 LOWs fixed in-tree, 2 closed by cross-lane/committed evidence"
+    }
+  },
+  "dispositions": "3 LOW fixed (backlog #071 param counts; CHANGELOG survivors clause; retro/CLAUDE.md six-layers precision), 2 LOW closed by evidence (commit count via lane A; facilitator corroboration via .review-history Finish section), 2 LOW recorded (lane B briefing notes)",
+  "verdict": "PASS \u2014 merge to develop approved"
+}

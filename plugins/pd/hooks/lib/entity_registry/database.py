@@ -9010,6 +9010,9 @@ class EntityDatabase:
         -------
         list[dict]
             Matching rows as plain dicts. All filters use AND logic.
+            Each row also carries ``execution_status`` / ``pipeline_phase``
+            aliases of ``kanban_column`` / ``workflow_phase`` (feature 125's
+            v1->v2 read bridge; physical columns rename at feature 132).
         """
         clauses: list[str] = []
         params: list = []
@@ -9026,8 +9029,13 @@ class EntityDatabase:
 
         # F11 (Group 6): project ``e.kind`` to the legacy ``entity_type``
         # result-set key for caller compatibility (TD-8 public API surface).
+        # The execution_status/pipeline_phase aliases are feature 125's
+        # v1->v2 read bridge (additive; UI reads them, non-UI callers keep
+        # the wp.* keys) — collapses when 132 renames the physical columns.
         sql = (
-            "SELECT wp.*, e.name AS entity_name, e.kind AS entity_type,"
+            "SELECT wp.*, wp.kanban_column AS execution_status,"
+            " wp.workflow_phase AS pipeline_phase,"
+            " e.name AS entity_name, e.kind AS entity_type,"
             " e.artifact_path AS entity_artifact_path"
             " FROM workflow_phases wp"
             " LEFT JOIN entities e ON wp.type_id = e.type_id"

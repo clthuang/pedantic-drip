@@ -81,12 +81,24 @@ class TestColorMaps:
         }
         assert set(PHASE_COLORS.keys()) == expected
 
-    def test_column_colors_match_db_check_constraint(self):
-        expected = {
-            "backlog", "prioritised", "wip", "agent_review",
-            "human_review", "blocked", "documenting", "completed",
-        }
-        assert set(COLUMN_COLORS.keys()) == expected
+    def test_column_colors_match_execution_statuses(self):
+        """COLUMN_COLORS keys must match EXECUTION_STATUSES (v2 vocabulary),
+        not the v1 DB CHECK constraint -- feature 125 dropped the dead
+        agent_review/human_review review columns and added 'ready'."""
+        from entity_registry.axes import EXECUTION_STATUSES
+
+        assert set(COLUMN_COLORS.keys()) == set(EXECUTION_STATUSES)
+
+    # -----------------------------------------------------------------
+    # derived_from: design:D6 (ready reuses agent_review's freed
+    # badge-secondary slot; an earlier badge-info choice collided with
+    # the adjacent 'prioritised' column -- pin the resolved, distinct pair)
+    # -----------------------------------------------------------------
+    def test_column_colors_ready_uses_distinct_badge_from_prioritised(self):
+        """'ready' is badge-secondary and stays visually distinct from the
+        adjacent 'prioritised' column's own color."""
+        assert COLUMN_COLORS["ready"] == "badge-secondary"
+        assert COLUMN_COLORS["prioritised"] != COLUMN_COLORS["ready"]
 
     def test_all_color_values_are_badge_classes(self):
         for color_map in (STATUS_COLORS, PHASE_COLORS, COLUMN_COLORS):

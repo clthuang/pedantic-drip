@@ -162,11 +162,11 @@ def test_concurrent_requests_all_succeed_with_thread_safe_db(tmp_path):
 # ---------------------------------------------------------------------------
 def test_group_by_column_with_100_rows_distributed():
     """100 rows distributed across all columns sum correctly."""
-    # Given 100 rows distributed across all 8 kanban columns
+    # Given 100 rows distributed across all 7 execution-status columns
     rows = []
     for i in range(100):
-        col = COLUMN_ORDER[i % 8]
-        rows.append({"kanban_column": col, "type_id": f"feature:item-{i}"})
+        col = COLUMN_ORDER[i % len(COLUMN_ORDER)]
+        rows.append({"execution_status": col, "type_id": f"feature:item-{i}"})
 
     # When _group_by_column is called
     result = _group_by_column(rows)
@@ -174,9 +174,9 @@ def test_group_by_column_with_100_rows_distributed():
     # Then the total count across all columns sums to 100
     total = sum(len(items) for items in result.values())
     assert total == 100
-    # Each column gets 12 or 13 items (100 / 8 = 12.5)
+    # Each column gets 14 or 15 items (100 / 7 = 14.29)
     for col in COLUMN_ORDER:
-        assert len(result[col]) in (12, 13)
+        assert len(result[col]) in (14, 15)
 
 
 # ---------------------------------------------------------------------------
@@ -184,9 +184,9 @@ def test_group_by_column_with_100_rows_distributed():
 # derived_from: dimension:boundary (all-in-one partition)
 # ---------------------------------------------------------------------------
 def test_group_by_column_all_rows_in_single_column():
-    """50 rows all with kanban_column='blocked' cluster in one column."""
-    # Given 50 rows all with kanban_column='blocked'
-    rows = [{"kanban_column": "blocked", "type_id": f"f:{i}"} for i in range(50)]
+    """50 rows all with execution_status='blocked' cluster in one column."""
+    # Given 50 rows all with execution_status='blocked'
+    rows = [{"execution_status": "blocked", "type_id": f"f:{i}"} for i in range(50)]
 
     # When _group_by_column is called
     result = _group_by_column(rows)
@@ -199,12 +199,12 @@ def test_group_by_column_all_rows_in_single_column():
 
 
 # ---------------------------------------------------------------------------
-# test_group_by_column_missing_kanban_column_key_defaults_to_backlog
+# test_group_by_column_missing_execution_status_key_defaults_to_backlog
 # derived_from: dimension:boundary (missing key), design:C3
 # ---------------------------------------------------------------------------
-def test_group_by_column_missing_kanban_column_key_defaults_to_backlog():
-    """A row dict without 'kanban_column' key defaults to backlog."""
-    # Given a row dict that has no 'kanban_column' key at all
+def test_group_by_column_missing_execution_status_key_defaults_to_backlog():
+    """A row dict without 'execution_status' key defaults to backlog."""
+    # Given a row dict that has no 'execution_status' key at all
     row = {"type_id": "feature:no-key"}
 
     # When _group_by_column is called with this row
@@ -566,9 +566,8 @@ def test_column_order_matches_spec_exactly():
     expected = [
         "backlog",
         "prioritised",
+        "ready",
         "wip",
-        "agent_review",
-        "human_review",
         "blocked",
         "documenting",
         "completed",
@@ -579,15 +578,15 @@ def test_column_order_matches_spec_exactly():
 
 
 # ---------------------------------------------------------------------------
-# test_column_order_has_exactly_8_entries
+# test_column_order_has_exactly_7_entries
 # derived_from: spec:SC-2
 # ---------------------------------------------------------------------------
-def test_column_order_has_exactly_8_entries():
-    """COLUMN_ORDER has exactly 8 entries."""
+def test_column_order_has_exactly_7_entries():
+    """COLUMN_ORDER has exactly 7 entries."""
     # Given COLUMN_ORDER constant is defined
     # When its length is checked
-    # Then len(COLUMN_ORDER) == 8
-    assert len(COLUMN_ORDER) == 8
+    # Then len(COLUMN_ORDER) == 7
+    assert len(COLUMN_ORDER) == 7
 
 
 # ---------------------------------------------------------------------------
@@ -595,9 +594,9 @@ def test_column_order_has_exactly_8_entries():
 # derived_from: design:C3
 # ---------------------------------------------------------------------------
 def test_group_by_column_default_is_backlog_not_other_column():
-    """None kanban_column defaults to 'backlog', not any other column."""
-    # Given a row with kanban_column=None
-    row = {"kanban_column": None, "type_id": "feature:null-col"}
+    """None execution_status defaults to 'backlog', not any other column."""
+    # Given a row with execution_status=None
+    row = {"execution_status": None, "type_id": "feature:null-col"}
 
     # When _group_by_column processes it
     result = _group_by_column([row])
@@ -930,8 +929,17 @@ def test_ttfb_under_200ms_for_100_features(tmp_path):
     # Given a warm server with 100 pre-seeded workflow_phases rows
     db_file = str(tmp_path / "test.db")
     EntityDatabase(db_file)
+    # DB-CHECK-valid kanban_column values (database.py:1211-1216's
+    # workflow_phases CHECK constraint) -- deliberately NOT COLUMN_ORDER
+    # (7 entries post-125): cycling the new value would seed a
+    # CHECK-invalid "ready" pre-132, silently dropped by INSERT OR IGNORE
+    # and starving this test of its promised 100 rows.
+    db_check_valid_columns = (
+        "backlog", "prioritised", "wip", "agent_review",
+        "human_review", "blocked", "documenting", "completed",
+    )
     for i in range(100):
-        col = COLUMN_ORDER[i % 8]
+        col = db_check_valid_columns[i % 8]
         _seed_workflow_row(
             db_file,
             f"feature:perf-{i:03d}",
@@ -958,3 +966,62 @@ def test_ttfb_under_200ms_for_100_features(tmp_path):
     times.sort()
     median_ms = times[len(times) // 2] * 1000
     assert median_ms < 200, f"Median TTFB was {median_ms:.1f}ms, expected <200ms"
+
+
+# ===========================================================================
+# Feature 125: Kanban Axis Rewire — SC4 (card KEY pin) + SC6 (producer union)
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# SC4 non-vacuous KEY test (iteration-1 W5): a synthetic item with
+# DIFFERING marker values on pipeline_phase vs workflow_phase proves the
+# KEY the badge reads -- a value-equality test would pass vacuously
+# pre-132, since both keys carry the same value today.
+# ---------------------------------------------------------------------------
+def test_card_template_renders_pipeline_phase_not_workflow_phase():
+    """_card.html's phase badge reads item.pipeline_phase, not
+    item.workflow_phase."""
+    app = create_app(db_path="/nonexistent/path.db")
+    template = app.state.templates.get_template("_card.html")
+    item = {
+        "type_id": "feature:x",
+        "pipeline_phase": "marker-pp",
+        "workflow_phase": "marker-wf",
+    }
+
+    html = template.render(item=item)
+
+    assert "marker-pp" in html
+    assert "marker-wf" not in html
+
+
+# ---------------------------------------------------------------------------
+# SC6 producer-union pin (iteration-1 W7 — executable enumeration, no
+# hand-copied literals): every value derive_kanban or ENTITY_MACHINES can
+# produce lands in EXECUTION_STATUSES after resolve_execution_status.
+# ---------------------------------------------------------------------------
+def test_producer_union_lands_in_execution_statuses_after_remap():
+    """Drives derive_kanban over its full input space and unions in every
+    ENTITY_MACHINES column value; every resulting value resolves into
+    EXECUTION_STATUSES_SET via resolve_execution_status (PHASE_TO_KANBAN
+    .values() alone would under-cover: completed/blocked are body literals
+    in derive_kanban, kanban.py:34-39, and ENTITY_MACHINES' agent_review
+    only resolves via the legacy remap)."""
+    from entity_registry.axes import EXECUTION_STATUSES_SET
+    from entity_registry.entity_lifecycle import ENTITY_MACHINES
+    from ui.routes.helpers import resolve_execution_status
+    from workflow_engine.kanban import PHASE_TO_KANBAN, derive_kanban
+
+    produced = set()
+    for status in ("active", "completed", "abandoned", "blocked", "planned"):
+        for phase in list(PHASE_TO_KANBAN) + [None]:
+            produced.add(derive_kanban(status, phase))
+    produced |= {
+        col for m in ENTITY_MACHINES.values() for col in m["columns"].values()
+    }
+
+    for value in produced:
+        assert resolve_execution_status(value) in EXECUTION_STATUSES_SET, (
+            f"{value!r} does not resolve into EXECUTION_STATUSES"
+        )

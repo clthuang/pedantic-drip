@@ -47,16 +47,15 @@ def test_create_app_missing_db_sets_none():
 # Task 2.1.3: _group_by_column() empty input
 # ---------------------------------------------------------------------------
 def test_group_by_column_empty_input():
-    """_group_by_column([]) returns dict with 8 keys, all mapping to []."""
+    """_group_by_column([]) returns a dict with one key per
+    EXECUTION_STATUSES column, all mapping to []."""
+    from entity_registry.axes import EXECUTION_STATUSES
     from ui.routes.board import _group_by_column
 
     result = _group_by_column([])
 
-    assert len(result) == 8
-    expected_keys = {
-        "backlog", "prioritised", "wip", "agent_review",
-        "human_review", "blocked", "documenting", "completed",
-    }
+    expected_keys = set(EXECUTION_STATUSES)
+    assert len(result) == len(expected_keys)
     assert set(result.keys()) == expected_keys
     for key in expected_keys:
         assert result[key] == []
@@ -66,10 +65,10 @@ def test_group_by_column_empty_input():
 # Task 2.1.4: _group_by_column() routes to correct column
 # ---------------------------------------------------------------------------
 def test_group_by_column_routes_to_correct_column():
-    """A row with kanban_column='wip' appears in the wip list only."""
+    """A row with execution_status='wip' appears in the wip list only."""
     from ui.routes.board import _group_by_column
 
-    row = {"kanban_column": "wip", "type_id": "feature:test"}
+    row = {"execution_status": "wip", "type_id": "feature:test"}
     result = _group_by_column([row])
 
     assert result["wip"] == [row]
@@ -79,27 +78,210 @@ def test_group_by_column_routes_to_correct_column():
 
 
 # ---------------------------------------------------------------------------
-# Task 2.1.5: _group_by_column() default and drop
+# Task 2.1.5: _group_by_column() default (None -> backlog)
 # ---------------------------------------------------------------------------
 def test_group_by_column_none_defaults_to_backlog():
-    """A row with kanban_column=None falls into backlog."""
+    """A row with execution_status=None falls into backlog."""
     from ui.routes.board import _group_by_column
 
-    row = {"kanban_column": None, "type_id": "feature:no-col"}
+    row = {"execution_status": None, "type_id": "feature:no-col"}
     result = _group_by_column([row])
 
     assert result["backlog"] == [row]
 
 
-def test_group_by_column_unknown_column_dropped():
-    """A row with kanban_column='archived' (not in COLUMN_ORDER) is dropped."""
+# ---------------------------------------------------------------------------
+# SC3b / design D7 :94-102 inversion (RED-FIRST): unknown execution_status
+# values bucket to backlog WITH a stderr warning -- never silently dropped
+# (FR125-4). Pre-rewire, unknown values are silently dropped instead.
+# ---------------------------------------------------------------------------
+def test_group_by_column_unknown_value_bucketed_to_backlog_with_warning(capsys):
+    """A row with execution_status='archived' (unknown, not in
+    EXECUTION_STATUSES) lands in 'backlog' WITH one stderr warning."""
     from ui.routes.board import _group_by_column
 
-    row = {"kanban_column": "archived", "type_id": "feature:archive-test"}
+    row = {"execution_status": "archived", "type_id": "feature:archive-test"}
     result = _group_by_column([row])
 
-    for col_items in result.values():
-        assert col_items == []
+    assert result["backlog"] == [row]
+    captured = capsys.readouterr()
+    assert "archived" in captured.err
+    assert "feature:archive-test" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# SC3a (RED-FIRST -- dropped today): _group_by_column() 'ready' bucket
+# ---------------------------------------------------------------------------
+def test_group_by_column_ready_bucket_synthetic():
+    """A synthetic row with execution_status='ready' lands in the 'ready'
+    bucket. 'ready' is not a pre-rewire COLUMN_ORDER key, so the read uses
+    a KeyError-safe `.get()` -- this fails today (the row is dropped)."""
+    from ui.routes.board import _group_by_column
+
+    row = {"execution_status": "ready", "type_id": "feature:ready-test"}
+    result = _group_by_column([row])
+
+    assert row in result.get("ready", [])
+
+
+# ---------------------------------------------------------------------------
+# derived_from: spec:FR125-4 (truth table branch (1): "value None/empty ->
+# backlog, no warning" -- empty string is a DISTINCT input from a missing
+# key or None, exercising the `or "backlog"` falsy short-circuit rather
+# than the None-default path test_group_by_column_none_defaults_to_backlog
+# already covers)
+# ---------------------------------------------------------------------------
+def test_group_by_column_empty_string_execution_status_defaults_to_backlog_no_warning(capsys):
+    """An empty-string execution_status (not None, not a missing key) lands
+    in 'backlog' with NO warning -- spec FR125-4 groups None and empty
+    together under the silent-default branch; a naive `is None` check in
+    place of the falsy-value `or` would misroute '' into the loud-unknown
+    branch instead."""
+    from ui.routes.board import _group_by_column
+
+    # Given a row whose execution_status is an empty string
+    row = {"execution_status": "", "type_id": "feature:empty-status"}
+
+    # When _group_by_column processes it
+    result = _group_by_column([row])
+
+    # Then it lands in backlog with no warning at all
+    assert result["backlog"] == [row]
+    captured = capsys.readouterr()
+    assert captured.err == ""
+
+
+# ---------------------------------------------------------------------------
+# derived_from: dimension:boundary_values (equivalence-partition near-miss:
+# values that differ from a real vocabulary/legacy entry only by case)
+# ---------------------------------------------------------------------------
+def test_group_by_column_case_sensitive_value_treated_as_unknown(capsys):
+    """A value differing from a real vocabulary/legacy entry only by case
+    ('WIP', 'Agent_Review') is NOT matched -- the lookups are exact
+    case-sensitive dict/list membership, so near-miss casing lands in
+    backlog WITH a warning like any other unknown value, not silently
+    normalized into the matching bucket."""
+    from ui.routes.board import _group_by_column
+
+    # Given two rows whose values differ from real ones only by case
+    row_upper_vocab = {"execution_status": "WIP", "type_id": "feature:case-vocab"}
+    row_mixed_legacy = {"execution_status": "Agent_Review", "type_id": "feature:case-legacy"}
+
+    # When grouped
+    result = _group_by_column([row_upper_vocab, row_mixed_legacy])
+
+    # Then both are treated as unknown -- backlog, each with its own warning
+    assert result["backlog"] == [row_upper_vocab, row_mixed_legacy]
+    assert result["wip"] == []
+    captured = capsys.readouterr()
+    assert "feature:case-vocab" in captured.err
+    assert "feature:case-legacy" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# derived_from: spec:FR125-4 (all four truth-table branches exercised in
+# ONE render) + dimension:adversarial (Zero/One/Many, Never/Always: warnings
+# must never fire for legitimate rows and must never be deduped by value)
+# ---------------------------------------------------------------------------
+def test_group_by_column_mixed_batch_buckets_each_row_with_one_warning_per_unknown_row(capsys):
+    """A single render mixing a vocabulary row, a legacy row, a 'ready'
+    row, and two unknown rows SHARING one bogus value under different
+    type_ids buckets every row correctly and warns exactly once per
+    unknown row -- proving warnings aren't deduped by value and never leak
+    onto legitimate rows when several precedence branches fire together."""
+    from ui.routes.board import _group_by_column
+
+    # Given one vocabulary row, one legacy row, one ready row, and two
+    # unknown rows that share the SAME bogus value under different type_ids
+    row_wip = {"execution_status": "wip", "type_id": "feature:vocab-wip"}
+    row_legacy = {"execution_status": "agent_review", "type_id": "feature:legacy-agent"}
+    row_ready = {"execution_status": "ready", "type_id": "feature:vocab-ready"}
+    row_unknown_a = {"execution_status": "bogus-shared", "type_id": "feature:unknown-a"}
+    row_unknown_b = {"execution_status": "bogus-shared", "type_id": "feature:unknown-b"}
+
+    # When they are grouped together in one call
+    result = _group_by_column(
+        [row_wip, row_legacy, row_ready, row_unknown_a, row_unknown_b]
+    )
+
+    # Then each row lands in its correct bucket -- vocab and remapped
+    # legacy rows share 'wip' without clobbering one another
+    assert result["wip"] == [row_wip, row_legacy]
+    assert result["ready"] == [row_ready]
+    assert result["backlog"] == [row_unknown_a, row_unknown_b]
+
+    # And exactly one warning line is emitted per unknown row -- not
+    # deduped by the shared value, not emitted for the legitimate rows
+    captured = capsys.readouterr()
+    err_lines = [line for line in captured.err.splitlines() if line.strip()]
+    assert len(err_lines) == 2
+    assert any("feature:unknown-a" in line for line in err_lines)
+    assert any("feature:unknown-b" in line for line in err_lines)
+    assert all("bogus-shared" in line for line in err_lines)
+    assert "feature:vocab-wip" not in captured.err
+    assert "feature:legacy-agent" not in captured.err
+    assert "feature:vocab-ready" not in captured.err
+
+
+# ---------------------------------------------------------------------------
+# derived_from: dimension:error_propagation (FR125-4 "never silently
+# vanishes" -- pinned across independent renders, not just the first)
+# ---------------------------------------------------------------------------
+def test_group_by_column_unknown_value_warns_on_every_independent_call(capsys):
+    """The same unknown-value row warns again on a SECOND independent
+    _group_by_column call -- the warning isn't a one-time/memoized event,
+    so every render re-surfaces the offending row rather than only the
+    first sighting of it."""
+    from ui.routes.board import _group_by_column
+
+    # Given a row with an unknown execution_status value
+    row = {"execution_status": "repeat-offender", "type_id": "feature:repeat-test"}
+
+    # When _group_by_column processes it twice, as two independent renders
+    _group_by_column([row])
+    first_call_err = capsys.readouterr().err
+    _group_by_column([row])
+    second_call_err = capsys.readouterr().err
+
+    # Then BOTH calls warn -- the second isn't suppressed by the first
+    assert "repeat-offender" in first_call_err
+    assert "feature:repeat-test" in first_call_err
+    assert "repeat-offender" in second_call_err
+    assert "feature:repeat-test" in second_call_err
+
+
+# ---------------------------------------------------------------------------
+# D7 helper unit matrix: resolve_execution_status passthrough/remap/None
+# ---------------------------------------------------------------------------
+def test_resolve_execution_status_passthrough_remap_and_none_matrix():
+    """Vocabulary/unknown values pass through unchanged; legacy values
+    remap via LEGACY_VALUE_REMAP; None passes through unchanged (helpers.py
+    D1 -- the caller decides defaulting/warning)."""
+    from ui.routes.helpers import LEGACY_VALUE_REMAP, resolve_execution_status
+
+    assert resolve_execution_status("wip") == "wip"
+    assert resolve_execution_status("totally-unknown") == "totally-unknown"
+    for legacy, expected in LEGACY_VALUE_REMAP.items():
+        assert resolve_execution_status(legacy) == expected
+    assert resolve_execution_status(None) is None
+
+
+# ---------------------------------------------------------------------------
+# derived_from: dimension:boundary_values (equivalence-partition near-miss
+# of a LEGACY_VALUE_REMAP key, at the helper layer directly)
+# ---------------------------------------------------------------------------
+def test_resolve_execution_status_near_miss_values_pass_through_unchanged():
+    """Values that are near-misses of a real LEGACY_VALUE_REMAP key --
+    empty string, wrong case, or padded with whitespace -- are NOT treated
+    as that key. resolve_execution_status does an exact dict-key lookup;
+    it is the caller's job to decide what to do with the untouched
+    result."""
+    from ui.routes.helpers import resolve_execution_status
+
+    assert resolve_execution_status("") == ""
+    assert resolve_execution_status("AGENT_REVIEW") == "AGENT_REVIEW"
+    assert resolve_execution_status("Agent_Review") == "Agent_Review"
+    assert resolve_execution_status(" agent_review") == " agent_review"
 
 
 # ===========================================================================
@@ -138,10 +320,117 @@ def _seed_workflow_row(db_file, type_id, kanban_column="backlog",
 
 
 # ---------------------------------------------------------------------------
-# Task 4.1.1: Full page load (AC-3) — all 8 column headers rendered
+# SC3c (RED-FIRST -- renders in agent_review today): DB-seeded agent_review
+# row renders under the 'wip' board column with no stderr warning
+# ---------------------------------------------------------------------------
+def _column_card_html(html: str, column_label: str) -> str:
+    """Return the card-container HTML slice for one rendered board column,
+    located by its header text (e.g. 'wip') -- the header is unique per
+    column-order iteration, so slicing from this column's <h2> to the next
+    column's opening <div> (or end of string) isolates just its cards."""
+    marker = (
+        '<h2 class="text-sm font-semibold uppercase tracking-wide">'
+        f"{column_label}</h2>"
+    )
+    start = html.index(marker)
+    next_col = html.find('<div class="flex-shrink-0 w-56', start + len(marker))
+    end = next_col if next_col != -1 else len(html)
+    return html[start:end]
+
+
+def test_group_by_column_seeded_agent_review_renders_in_wip(tmp_path, capsys):
+    """A DB-seeded agent_review row (CHECK-legal v1 value) renders under
+    the 'wip' board column with no stderr warning. Pre-rewire it lands
+    under its own 'agent review' column instead (agent_review is still a
+    COLUMN_ORDER member today)."""
+    db_file = str(tmp_path / "test.db")
+    EntityDatabase(db_file)
+    _seed_workflow_row(db_file, "feature:legacy-review", kanban_column="agent_review")
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    wip_section = _column_card_html(response.text, "wip")
+    assert "legacy-review" in wip_section
+
+    captured = capsys.readouterr()
+    assert "[board] unknown execution_status" not in captured.err
+
+
+# ---------------------------------------------------------------------------
+# derived_from: spec:FR125-1 (human_review is defensive -- zero live
+# producers, but the v1 CHECK still admits stored rows, so a legacy row
+# must still remap and render end-to-end through the route, exactly like
+# agent_review's SC3c sibling above -- SC3c only exercises agent_review)
+# ---------------------------------------------------------------------------
+def test_group_by_column_seeded_human_review_renders_in_wip(tmp_path, capsys):
+    """A DB-seeded human_review row (CHECK-legal v1 value, zero live
+    producers) renders under the 'wip' board column with no stderr
+    warning -- the defensive half of LEGACY_VALUE_REMAP."""
+    # Given a workflow_phases row seeded with the legacy human_review value
+    db_file = str(tmp_path / "test.db")
+    EntityDatabase(db_file)
+    _seed_workflow_row(db_file, "feature:legacy-human", kanban_column="human_review")
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+
+    # When the board is rendered
+    response = client.get("/")
+
+    # Then the row appears under 'wip', not its own column, with no warning
+    assert response.status_code == 200
+    wip_section = _column_card_html(response.text, "wip")
+    assert "legacy-human" in wip_section
+
+    captured = capsys.readouterr()
+    assert "[board] unknown execution_status" not in captured.err
+
+
+# ---------------------------------------------------------------------------
+# SC1: rendered board column headers appear in EXECUTION_STATUSES order
+# ---------------------------------------------------------------------------
+def test_board_column_headers_render_in_execution_statuses_order(tmp_path):
+    """The board's column headers render in EXECUTION_STATUSES order -- a
+    route-level check of actual rendering, not just the COLUMN_ORDER
+    constant (spec SC1)."""
+    from entity_registry.axes import EXECUTION_STATUSES
+
+    db_file = str(tmp_path / "test.db")
+    EntityDatabase(db_file)
+    _seed_workflow_row(db_file, "feature:sc1-test", kanban_column="backlog")
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    positions = [
+        response.text.index(
+            '<h2 class="text-sm font-semibold uppercase tracking-wide">'
+            f'{col.replace("_", " ")}</h2>'
+        )
+        for col in EXECUTION_STATUSES
+    ]
+    assert positions == sorted(positions)
+
+
+# ---------------------------------------------------------------------------
+# Task 4.1.1: Full page load (AC-3) — every COLUMN_ORDER column header rendered
 # ---------------------------------------------------------------------------
 def test_integration_full_page_load_contains_all_columns(tmp_path):
-    """GET / returns 200 with all 8 column header names in the HTML."""
+    """GET / returns 200 with all EXECUTION_STATUSES column header names in
+    the HTML."""
     db_file = str(tmp_path / "test.db")
     EntityDatabase(db_file)
 

@@ -47,11 +47,13 @@
         <div class="overflow-x-auto">
             <table class="table table-sm">
                 <tbody>
-                    <tr><td class="font-semibold w-48">Kanban Column</td><td>
-                        {% if workflow.kanban_column %}
-                        <span class="badge badge-sm {{ column_colors.get(workflow.kanban_column, 'badge-ghost') }}">{{ workflow.kanban_column }}</span>
+                    <tr><td class="font-semibold w-48">Execution Status</td><td>
+                        {% if workflow.execution_status %}
+                        <span class="badge badge-sm {{ column_colors.get(workflow.execution_status, 'badge-ghost') }}">{{ workflow.execution_status }}</span>
                         {% else %}-{% endif %}
                     </td></tr>
+                    {# workflow_phase (not pipeline_phase) is deliberate — FR125-3
+                       scopes the rename to the card badge; this row is not a badge #}
                     <tr><td class="font-semibold">Workflow Phase</td><td>
                         {% if workflow.workflow_phase %}
                         <span class="badge badge-sm {{ phase_colors.get(workflow.workflow_phase, 'badge-ghost') }}">{{ workflow.workflow_phase }}</span>

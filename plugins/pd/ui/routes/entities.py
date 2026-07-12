@@ -11,6 +11,7 @@ from ui.routes.helpers import (
     DB_ERROR_USER_MESSAGE,
     effective_workspace_uuid,
     missing_db_response,
+    resolve_execution_status,
     switcher_context,
 )
 
@@ -98,10 +99,12 @@ def entity_list(
         # Sort by updated_at DESC (most recently updated first)
         entities = sorted(entities, key=lambda e: e.get("updated_at", ""), reverse=True)
 
-        # Annotate entities with kanban_column from workflow phase data
+        # Annotate entities with execution_status from workflow phase data
         workflow_lookup = _build_workflow_lookup(db, workspace_uuid=workspace_uuid)
         for e in entities:
-            e["kanban_column"] = workflow_lookup.get(e["type_id"], {}).get("kanban_column")
+            e["execution_status"] = resolve_execution_status(
+                workflow_lookup.get(e["type_id"], {}).get("execution_status")
+            )
 
         if not request.headers.get("HX-Request"):
             switcher = switcher_context(request, db)
@@ -185,7 +188,12 @@ def entity_detail(request: Request, identifier: str) -> HTMLResponse:
         children = _strip_self_from_lineage(child_lineage, type_id)
 
         mermaid_dag = build_mermaid_dag(entity, ancestors, children)
-        workflow = db.get_workflow_phase(type_id)
+        # list (not get_workflow_phase) for its v2 aliases; unscoped preserves
+        # the prior non-scoped semantics. O(N) scan — fine at pd scale.
+        rows = db.list_workflow_phases()
+        workflow = next((r for r in rows if r.get("type_id") == type_id), None)
+        if workflow is not None:
+            workflow["execution_status"] = resolve_execution_status(workflow.get("execution_status"))
         metadata_formatted = _format_metadata(entity.get("metadata"))
 
         return templates.TemplateResponse(

@@ -9,9 +9,9 @@
     {# Extract entity type from type_id #}
     {% set entity_type = item.type_id.split(':')[0] if ':' in item.type_id else 'unknown' %}
     <div class="flex flex-wrap gap-1 mt-2">
-        {% if item.workflow_phase %}
-        <span class="badge badge-xs {{ phase_colors.get(item.workflow_phase, 'badge-ghost') }}">
-            {{ item.workflow_phase }}
+        {% if item.pipeline_phase %}
+        <span class="badge badge-xs {{ phase_colors.get(item.pipeline_phase, 'badge-ghost') }}">
+            {{ item.pipeline_phase }}
         </span>
         {% endif %}
         {% if entity_type == 'feature' %}

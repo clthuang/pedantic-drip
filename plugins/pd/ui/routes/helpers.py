@@ -133,3 +133,27 @@ def switcher_context(request, db) -> dict:
         "default_uuid": request.app.state.workspace_uuid,
         "effective_unmatched": effective_unmatched,
     }
+
+
+# Stored v1 Kanban-column values with no v2 EXECUTION_STATUSES home.
+# agent_review IS live (brainstorm reviewing -> agent_review,
+# entity_lifecycle.py:26); human_review is defensive (zero producers, but
+# the v1 CHECK still admits stored rows). DELETE at 132 once the backfill
+# translates stored values at source (this mapping is its display precedent).
+LEGACY_VALUE_REMAP: dict[str, str] = {
+    "agent_review": "wip",
+    "human_review": "wip",
+}
+
+
+def resolve_execution_status(value: str | None) -> str | None:
+    """Map a stored v1 Kanban-column value to its v2 execution_status.
+
+    Vocabulary values pass through; legacy values remap; None/unknown pass
+    through unchanged (the CALLER decides defaulting/warning — board
+    grouping defaults None->backlog and warns on unknowns per FR125-4;
+    the entities annotation/detail render whatever comes back).
+    """
+    if value in LEGACY_VALUE_REMAP:
+        return LEGACY_VALUE_REMAP[value]
+    return value
