@@ -89,6 +89,17 @@ class TestColorMaps:
 
         assert set(COLUMN_COLORS.keys()) == set(EXECUTION_STATUSES)
 
+    # -----------------------------------------------------------------
+    # derived_from: design:D6 (ready reuses agent_review's freed
+    # badge-secondary slot; an earlier badge-info choice collided with
+    # the adjacent 'prioritised' column -- pin the resolved, distinct pair)
+    # -----------------------------------------------------------------
+    def test_column_colors_ready_uses_distinct_badge_from_prioritised(self):
+        """'ready' is badge-secondary and stays visually distinct from the
+        adjacent 'prioritised' column's own color."""
+        assert COLUMN_COLORS["ready"] == "badge-secondary"
+        assert COLUMN_COLORS["prioritised"] != COLUMN_COLORS["ready"]
+
     def test_all_color_values_are_badge_classes(self):
         for color_map in (STATUS_COLORS, PHASE_COLORS, COLUMN_COLORS):
             for key, value in color_map.items():
