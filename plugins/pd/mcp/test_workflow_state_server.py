@@ -11184,6 +11184,63 @@ class TestReprojectMetaJson:
         assert data["warning"] is not None
         assert "artifact_path" in data["warning"]
 
+    def test_reproject_feature_id_produces_exact_feature_shape_keys(
+        self, db, tmp_path,
+    ):
+        """SC2's 'no OTHER kind's projection behavior changes' claim,
+        pinned as an EXACT key-set assertion for the feature branch
+        through the D5 kind-dispatch -- complementing
+        test_project_kind_builds_project_shape's exact-dict pin on the
+        project side. With metadata carrying none of the OPTIONAL
+        feature-shape fields (no phase_timing/skipped_phases/backward_*/
+        phase_summaries/*_source -- :503-541), the base feature shape is
+        exactly 8 keys, INCLUDING the two unconditional
+        lastCompletedPhase/phases fields (:509-526, easy to miss on a
+        partial read of the function -- an earlier draft of this test
+        under-read the function and asserted only 6 keys). The real
+        target claim -- zero cross-contamination from D5's NEW
+        project-shape branch -- is asserted separately below.
+        derived_from: spec:SC2 (no other kind's projection changes),
+        dimension:mutation_mindset
+        """
+        feature_dir = os.path.join(str(tmp_path), "features", "222-shapecheck")
+        os.makedirs(feature_dir, exist_ok=True)
+        db.register_entity(
+            "feature", "222-shapecheck", "shapecheck",
+            artifact_path=feature_dir,
+            status="active",
+            metadata={
+                "id": "222", "slug": "shapecheck",
+                "mode": "standard", "branch": "feature/222-shapecheck",
+            },
+            project_id="__unknown__",
+        )
+        db.create_workflow_phase("feature:222-shapecheck", workflow_phase="specify")
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        result = _process_reproject_meta_json(
+            engine, db, str(tmp_path), "feature:222-shapecheck",
+        )
+        data = json.loads(result)
+        assert data["projected"] is True
+
+        with open(os.path.join(feature_dir, ".meta.json")) as f:
+            meta = json.load(f)
+        assert set(meta.keys()) == {
+            "id", "slug", "mode", "status", "created", "branch",
+            "lastCompletedPhase", "phases",
+        }, (
+            f"feature-shape projection with no optional metadata set must "
+            f"carry EXACTLY these keys, got {sorted(meta)!r}"
+        )
+        assert meta["lastCompletedPhase"] is None
+        assert meta["phases"] == {}
+        # The actual D5 cross-contamination claim: none of the NEW
+        # project-shape keys leak into the feature branch's output.
+        assert "features" not in meta
+        assert "milestones" not in meta
+        assert "brainstorm_source" not in meta
+
     def test_reproject_not_initialized_when_engine_and_db_unset(self):
         """Tool-level guard: `reproject_meta_json` is a NEW handler beside
         the 6 enumerated in `TestNotInitializedGuards` (source-inspection
@@ -11209,3 +11266,234 @@ class TestReprojectMetaJson:
         finally:
             wss._engine = orig_engine
             wss._db = orig_db
+
+
+# ---------------------------------------------------------------------------
+# Test-deepener (feature 123): _project_meta_json kind-dispatch, beyond the
+# existing TestProjectMetaJson coverage (project shape, brainstorm_source
+# omission, task-kind no-op). dimension:bdd_scenarios,
+# dimension:boundary_values, dimension:adversarial
+# ---------------------------------------------------------------------------
+
+
+class TestProjectMetaJsonKindDispatchDeepened:
+    """The existing test_other_kind_is_noop_without_writing only exercises
+    a 5D-non-project kind (task). This class adds a LIFECYCLE kind
+    (brainstorm) -- the exact 'today's would-have-been clobber victim' the
+    design cites -- plus two boundary cases inside the project-shape
+    branch itself (missing features/milestones KEYS; falsy created_at).
+    """
+
+    def test_brainstorm_kind_with_artifact_path_is_noop(self, db, tmp_path, capsys):
+        """A brainstorm entity WITH an artifact_path set (today's
+        would-have-been clobber victim per design D5) must be a defensive
+        no-op: no .meta.json written, no exception, and a structured
+        stderr log line naming the kind.
+        derived_from: design:D5 (no-op branch), dimension:bdd_scenarios
+
+        Anticipate: if the kind-dispatch `if kind not in ("feature",
+        "project")` guard were ever narrowed to an explicit tuple of only
+        5D kinds, a LIFECYCLE kind like brainstorm would fall through to
+        the feature-shape branch -- this is the only test in the suite
+        that would catch that (the existing no-op test uses "task", a 5D
+        kind, not a lifecycle kind).
+        """
+        # Given a brainstorm entity with an artifact_path set
+        brainstorm_dir = os.path.join(str(tmp_path), "brainstorms", "001-noop")
+        os.makedirs(brainstorm_dir, exist_ok=True)
+        db.register_entity(
+            "brainstorm", "001-noop", "noop",
+            artifact_path=brainstorm_dir,
+            status="draft",
+            project_id="__unknown__",
+        )
+
+        # When _project_meta_json is called for it
+        result = _project_meta_json(db, None, "brainstorm:001-noop", brainstorm_dir)
+
+        # Then it is a structured no-op: no warning, no file, a log line
+        assert result is None
+        assert not os.path.exists(os.path.join(brainstorm_dir, ".meta.json"))
+        err = capsys.readouterr().err
+        assert "no-op for kind='brainstorm'" in err
+
+    def test_project_missing_features_milestones_keys_defaults_to_empty_lists(
+        self, db, tmp_path,
+    ):
+        """metadata lacking 'features'/'milestones' KEYS entirely (distinct
+        from holding explicit empty lists, already covered by
+        test_project_kind_omits_brainstorm_source_when_absent) must still
+        project cleanly via the dict.get(..., []) fallback -- no KeyError.
+        derived_from: design:D5 (features/milestones from DB metadata),
+        dimension:boundary_values (Optional/nullable: missing key)
+        """
+        project_dir = os.path.join(str(tmp_path), "projects", "P04-nokeys")
+        os.makedirs(project_dir, exist_ok=True)
+        db.register_entity(
+            "project", "P04-nokeys", "nokeys",
+            artifact_path=project_dir,
+            status="active",
+            metadata={},  # no "features"/"milestones" keys at all
+            project_id="__unknown__",
+        )
+
+        result = _project_meta_json(db, None, "project:P04-nokeys", project_dir)
+        assert result is None
+
+        with open(os.path.join(project_dir, ".meta.json")) as f:
+            meta = json.load(f)
+        assert meta["features"] == []
+        assert meta["milestones"] == []
+        assert "brainstorm_source" not in meta
+
+    def test_project_missing_created_at_falls_back_to_iso_now(
+        self, db, tmp_path, monkeypatch,
+    ):
+        """entity.get('created_at') or _iso_now(): the DB column is NOT
+        NULL in practice (every existing test only ever observes the
+        truthy branch, per test_project_kind_builds_project_shape's own
+        "DB entities.created_at is NOT NULL -- always truthy" comment) --
+        this monkeypatches db.get_entity to simulate a falsy created_at
+        and pins that the fallback produces a usable timestamp rather
+        than writing None/"" to disk.
+        derived_from: design:D5 (created fallback pattern),
+        dimension:boundary_values (Optional/nullable: null)
+        """
+        project_dir = os.path.join(str(tmp_path), "projects", "P06-nocreated")
+        os.makedirs(project_dir, exist_ok=True)
+        db.register_entity(
+            "project", "P06-nocreated", "nocreated",
+            artifact_path=project_dir,
+            status="active",
+            metadata={"features": [], "milestones": []},
+            project_id="__unknown__",
+        )
+
+        real_get_entity = db.get_entity
+
+        def _get_entity_falsy_created(type_id):
+            entity = real_get_entity(type_id)
+            if entity is not None:
+                entity = dict(entity)
+                entity["created_at"] = None
+            return entity
+
+        monkeypatch.setattr(db, "get_entity", _get_entity_falsy_created)
+
+        result = _project_meta_json(db, None, "project:P06-nocreated", project_dir)
+        assert result is None
+
+        with open(os.path.join(project_dir, ".meta.json")) as f:
+            meta = json.load(f)
+        assert meta["created"], (
+            "falsy created_at must fall back to _iso_now(), not write "
+            "None/empty to disk"
+        )
+        assert "T" in meta["created"], "fallback must be an ISO 8601 timestamp"
+
+
+# ---------------------------------------------------------------------------
+# Test-deepener (feature 123 SC3): the MCP envelope for a 5D DB-error.
+# TestFiveDFailLoud (test_entity_engine.py) asserts at the
+# EntityWorkflowEngine layer per the plan's red-first placement (the MCP
+# envelope would have been vacuous THERE pre-fix -- the :925 guard/the
+# completion_failed branch already produced SOME structured error before
+# this feature). This closes the loop POST-fix: the MCP envelope's
+# error_type for a 5D DB failure is NOW specifically 'db_unavailable', and
+# the transaction rolled back. dimension:error_propagation
+# ---------------------------------------------------------------------------
+
+
+class TestFiveDDbUnavailableEnvelope:
+    """SC3 'Server surgical checks' + FR123-3, verified at the MCP
+    envelope boundary for a 5D (project) kind -- distinct from
+    TestFiveDFailLoud's engine-layer assertions and from
+    TestSqlite3ErrorThroughMcpTools (which only exercises the FEATURE
+    path via seeded_engine, never entity_engine/5D).
+    """
+
+    def test_transition_phase_5d_db_error_envelope_is_db_unavailable(
+        self, db, tmp_path, monkeypatch,
+    ):
+        """derived_from: spec:SC3 (MCP envelope, transaction rollback),
+        dimension:error_propagation
+        """
+        # Given a project mid-5D-lifecycle
+        db.register_entity(
+            "project", "105-envelope-t", "envelopet",
+            status="active", project_id="__unknown__",
+        )
+        db.create_workflow_phase(
+            "project:105-envelope-t", workflow_phase="discover", mode="standard",
+        )
+        row_before = db.get_workflow_phase("project:105-envelope-t")
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        entity_engine = EntityWorkflowEngine(db, str(tmp_path))
+
+        def _boom(*args, **kwargs):
+            raise sqlite3.OperationalError("database is locked")
+
+        monkeypatch.setattr(db, "update_workflow_phase", _boom)
+
+        # When transition_phase hits a DB fault mid-write
+        result = _process_transition_phase(
+            engine, "project:105-envelope-t", "define", False,
+            db=db, entity_engine=entity_engine,
+        )
+        data = json.loads(result)
+
+        # Then the envelope reports db_unavailable (not a generic/other
+        # error_type), the message excludes "locked" (models.py MESSAGE
+        # CONTRACT), and the transaction rolled back (row untouched)
+        assert data["error"] is True
+        assert data["error_type"] == "db_unavailable"
+        assert "locked" not in data["message"].lower()
+
+        row_after = db.get_workflow_phase("project:105-envelope-t")
+        assert row_after == row_before, "transaction must roll back -- no partial write"
+
+    def test_complete_phase_5d_db_error_envelope_is_db_unavailable(
+        self, db, tmp_path, monkeypatch,
+    ):
+        """Contract change: PRE-123 this same fault returned
+        error_type='completion_failed' (the None-state branch at
+        workflow_state_server.py:~1216-1221) -- NOT db_unavailable, since
+        _fived_complete used to swallow the DB error into a None return.
+        POST-123 the identical fault now surfaces the correct fail-loud
+        signal -- no existing test pins this envelope-level contract
+        change for the 5D complete path.
+        derived_from: spec:SC3 (MCP envelope, transaction rollback),
+        dimension:error_propagation
+        """
+        # Given a project mid-5D-lifecycle
+        db.register_entity(
+            "project", "106-envelope-c", "envelopec",
+            status="active", project_id="__unknown__",
+        )
+        db.create_workflow_phase(
+            "project:106-envelope-c", workflow_phase="discover", mode="standard",
+        )
+        row_before = db.get_workflow_phase("project:106-envelope-c")
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        entity_engine = EntityWorkflowEngine(db, str(tmp_path))
+
+        def _boom(*args, **kwargs):
+            raise sqlite3.OperationalError("database is locked")
+
+        monkeypatch.setattr(db, "update_workflow_phase", _boom)
+
+        # When complete_phase hits a DB fault mid-write
+        result = _process_complete_phase(
+            engine, "project:106-envelope-c", "discover",
+            db=db, entity_engine=entity_engine,
+        )
+        data = json.loads(result)
+
+        # Then the envelope reports db_unavailable, excludes "locked",
+        # and the transaction rolled back
+        assert data["error"] is True
+        assert data["error_type"] == "db_unavailable"
+        assert "locked" not in data["message"].lower()
+
+        row_after = db.get_workflow_phase("project:106-envelope-c")
+        assert row_after == row_before, "transaction must roll back -- no partial write"

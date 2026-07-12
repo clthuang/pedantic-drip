@@ -377,3 +377,121 @@ class TestEntityMachinesRawDict:
             assert "transitions" in machine, f"{kind} missing transitions"
             assert "columns" in machine, f"{kind} missing columns"
             assert "forward" in machine, f"{kind} missing forward"
+
+
+# ---------------------------------------------------------------------------
+# Test-deepener (feature 123): get_machine boundary inputs beyond named
+# invalid kinds. TestRegistryCompleteness above only parametrizes over
+# semantically-real-but-unregistered kind NAMES (bug/workspace/nonsense) --
+# it never probes None, "", or case/whitespace variance of a REAL key.
+# dimension:boundary_values, dimension:adversarial.
+# ---------------------------------------------------------------------------
+
+
+class TestGetMachineBoundaryInputs:
+    """D1: get_machine(kind) raises ValueError for ANY kind not exactly
+    matching a MACHINE_REGISTRY key -- verified here for None, empty
+    string, case-variance, and whitespace padding of a real key ("task").
+
+    derived_from: design:D1 (get_machine contract), dimension:boundary_values
+
+    Anticipate: if get_machine ever normalized its input (e.g. `.lower()`
+    or `.strip()`) to be "helpful", a caller passing "Feature" or " task"
+    would silently match the wrong machine instead of raising -- a bug
+    that TestRegistryCompleteness's named-invalid-kind cases cannot catch
+    since none of them collide with a real key under any transform.
+    """
+
+    @pytest.mark.parametrize("kind", [None, "", "Feature", "PROJECT", " task"])
+    def test_get_machine_raises_for_none_empty_and_case_variance(self, kind):
+        # Given a kind that is None, empty, differently-cased, or padded
+        # (each one character-transform away from a REAL registry key)
+        # When get_machine is called
+        # Then it raises ValueError with the exact contract message --
+        # never a silent case/whitespace-insensitive match.
+        with pytest.raises(ValueError) as excinfo:
+            get_machine(kind)
+        assert str(excinfo.value) == f"no transition machine for kind: {kind}"
+
+
+# ---------------------------------------------------------------------------
+# Test-deepener (feature 123): FiveDMachine cross-template target rejection
+# -- a target phase name valid in a DIFFERENT (kind, weight) pair but absent
+# from THIS one's own template. The existing full-cross-product test
+# (TestFiveDGraphDiff) only ever supplies targets drawn from the SAME
+# (kind, weight)'s own phase list, so it structurally cannot catch a
+# machine that validated against the union of all templates instead of
+# its own. dimension:boundary_values, dimension:mutation_mindset.
+# ---------------------------------------------------------------------------
+
+
+class TestFiveDCrossTemplateTargetRejection:
+    """SC1: the PHASE_SEQ 'target not in phases' guard is scoped to THIS
+    (kind, weight)'s own template. task/light is templates.py's only
+    single-phase list (["deliver"]) -- the sharpest instance: 'define' and
+    'debrief' are real phase names (valid for task/standard) that must
+    still be rejected for task/light.
+
+    derived_from: spec:SC1 (FiveDMachine.validate PHASE_SEQ guard)
+
+    Challenge: a machine that validated `target in get_template(*ANY*
+    weight for this kind*)` instead of `target in phases(weight)` would
+    incorrectly ALLOW 'define'/'debrief' here -- only a foreign-but-real
+    target catches that, a nonsense string would not.
+    """
+
+    def test_task_light_rejects_target_valid_only_in_other_templates(self):
+        machine = MACHINE_REGISTRY["task"]
+        assert machine.phases("light") == ("deliver",)
+
+        for current in (None, "deliver"):
+            for foreign_target in ("define", "debrief"):
+                decision = machine.validate(current, foreign_target, weight="light")
+                assert decision.allowed is False, (current, foreign_target, decision)
+                assert decision.guard_id == "PHASE_SEQ", (current, foreign_target, decision)
+
+        # The machine's ONE actual phase is still allowed as a same-phase
+        # target -- proves the rejection above is target-scoped, not a
+        # blanket block on the whole (kind, weight) pair.
+        decision = machine.validate("deliver", "deliver", weight="light")
+        assert decision.allowed is True
+        assert decision.guard_id == "PHASE_SEQ"
+
+
+# ---------------------------------------------------------------------------
+# Test-deepener (feature 123): kinds with exactly ONE defined weight --
+# every OTHER weight string blocks with the TEMPLATE guard. Distinct
+# equivalence class from the existing test_unknown_weight_blocks_with_
+# template_guard (task has 1 of 3 weights undefined): objective and
+# key_result each have ONLY "standard" in WEIGHT_TEMPLATES -- BOTH "full"
+# and "light" are undefined. dimension:boundary_values.
+# ---------------------------------------------------------------------------
+
+
+class TestFiveDSingleDefinedWeightBlocksOthers:
+    """SC1 TEMPLATE guard, equivalence-partitioned by 'how many weights are
+    undefined for this kind': task has 1 of 3 undefined (existing
+    coverage); objective/key_result have 2 of 3 undefined -- a boundary
+    the single-kind existing test cannot exercise.
+
+    derived_from: spec:SC1 (TEMPLATE guard), dimension:boundary_values
+    """
+
+    @pytest.mark.parametrize(
+        "kind,weight",
+        [
+            ("objective", "full"),
+            ("objective", "light"),
+            ("key_result", "full"),
+            ("key_result", "light"),
+        ],
+    )
+    def test_undefined_weight_blocks_with_template_guard(self, kind, weight):
+        # Given a kind with only ONE (kind, weight) pair in WEIGHT_TEMPLATES
+        # When validate() is called with a weight OUTSIDE that one pair
+        # (using a target name that IS valid at this kind's real weight,
+        # so a pass here could only mean the TEMPLATE guard fired first)
+        decision = MACHINE_REGISTRY[kind].validate(None, "define", weight=weight)
+        # Then it blocks with the TEMPLATE guard, not PHASE_SEQ
+        assert decision.allowed is False
+        assert decision.guard_id == "TEMPLATE"
