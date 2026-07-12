@@ -1415,6 +1415,39 @@ def _process_validate_prerequisites(
 
 
 @_with_error_handling
+@_catch_value_error
+def _process_reproject_meta_json(
+    engine: WorkflowStateEngine,
+    db: EntityDatabase,
+    artifacts_root: str,
+    feature_type_id: str,
+) -> str:
+    """Re-render one feature's ``.meta.json`` from DB state.
+
+    Feature 127 FR127-7 / design D4: a FIFTH call site for the sole
+    allowlisted writer ``_project_meta_json``, beside the mutation sites
+    in transition_phase / complete_phase / init_feature_state /
+    activate_feature. This one fires with no preceding DB write of its
+    own -- it exists so a caller that just changed ``entities.status``
+    via a separate tool (e.g. ``update_entity``) can re-render the
+    projection through the sanctioned MCP boundary instead of a denied
+    direct Write. ``artifacts_root`` mirrors the sibling mutation
+    handlers' signature shape but is unused here: ``_project_meta_json``
+    resolves ``feature_dir`` from the entity's own ``artifact_path``
+    column, not from ``artifacts_root``.
+
+    A non-None ``warning`` means NO file was written (entity missing or
+    ``artifact_path`` unset) -- ``projected`` is False in that case.
+    """
+    warning = _project_meta_json(db, engine, feature_type_id)
+    return json.dumps({
+        "projected": warning is None,
+        "feature_type_id": feature_type_id,
+        "warning": warning,
+    })
+
+
+@_with_error_handling
 def _process_list_features_by_phase(
     engine: WorkflowStateEngine, phase: str, workspace_uuid: str | None = None
 ) -> str:
@@ -1962,6 +1995,28 @@ async def validate_prerequisites(
     except ValueError as exc:
         return _make_error("invalid_ref", str(exc), "Provide a valid feature_type_id or ref")
     return _process_validate_prerequisites(_engine, resolved, target_phase)
+
+
+@mcp.tool()
+async def reproject_meta_json(feature_type_id: str | None = None, ref: str | None = None) -> str:
+    """Re-render a feature's `.meta.json` from DB state (no DB mutation).
+
+    The sanctioned re-projection path for callers that changed
+    `entities.status` (or other projected fields) via a separate tool --
+    e.g. `/pd:abandon-feature` calling `update_entity(status="abandoned")`
+    then this tool -- now that direct `.meta.json` Writes are denied by
+    the sole-truth guard (feature 127).
+    """
+    err = _check_db_available()
+    if err:
+        return err
+    if _engine is None or _db is None:
+        return _NOT_INITIALIZED
+    try:
+        resolved = _resolve_ref_to_feature_type_id(_db, feature_type_id, ref)
+    except ValueError as exc:
+        return _make_error("invalid_ref", str(exc), "Provide a valid feature_type_id or ref")
+    return _process_reproject_meta_json(_engine, _db, _artifacts_root, resolved)
 
 
 def _resolve_list_handler_workspace_filter(

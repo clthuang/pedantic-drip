@@ -10859,3 +10859,113 @@ class TestReconcileHandlersForwardWorkspaceUuid:
             f"workspace_uuid not forwarded from reconcile_status; "
             f"captured kwargs={captured!r}"
         )
+
+
+class TestReprojectMetaJson:
+    """Feature 127 FR127-7 / design D4: the ``reproject_meta_json`` MCP
+    tool is the sanctioned re-projection path a caller invokes after a
+    DB-only status mutation (e.g. /pd:abandon-feature's ``update_entity``
+    call), now that direct ``.meta.json`` Writes are denied by the
+    sole-truth guard.
+    """
+
+    def test_reproject_via_ref_after_status_mutation_regenerates_abandoned_meta_json(
+        self, db, tmp_path
+    ):
+        """Happy path VIA ``ref=`` -- the exact shape abandon-feature uses
+        (a ``feature_type_id=`` call would be vacuous-green: it never
+        exercises ref resolution). A prior ``update_entity(status=
+        'abandoned')`` is what the projection picks up: the regenerated
+        ``.meta.json`` carries ``status: abandoned`` AND the terminal
+        top-level ``completed`` timestamp, and the envelope reports
+        ``projected: true``.
+        """
+        import asyncio
+        import workflow_state_server as wss
+
+        feature_dir = os.path.join(str(tmp_path), "features", "099-abandonme")
+        os.makedirs(feature_dir, exist_ok=True)
+        db.register_entity(
+            "feature", "099-abandonme", "abandonme",
+            artifact_path=feature_dir,
+            status="active",
+            metadata={
+                "id": "099", "slug": "abandonme",
+                "mode": "standard", "branch": "feature/099-abandonme",
+            },
+            project_id="__unknown__",
+        )
+        db.create_workflow_phase("feature:099-abandonme", workflow_phase="specify")
+
+        # abandon-feature's new Step 4 (sole status mutation) -- happens
+        # BEFORE reproject_meta_json is ever called.
+        db.update_entity(type_id="feature:099-abandonme", status="abandoned")
+
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, str(tmp_path))
+        wss._artifacts_root = str(tmp_path)
+
+        result = asyncio.run(wss.reproject_meta_json(ref="feature:099-abandonme"))
+        data = json.loads(result)
+        assert data["projected"] is True
+        assert data["feature_type_id"] == "feature:099-abandonme"
+        assert data["warning"] is None
+
+        meta_path = os.path.join(feature_dir, ".meta.json")
+        with open(meta_path) as f:
+            meta = json.load(f)
+        assert meta["status"] == "abandoned"
+        assert "completed" in meta
+
+    def test_reproject_unknown_ref_returns_invalid_ref_envelope(self, db, tmp_path):
+        """An unresolvable ref surfaces as ``invalid_ref`` -- resolved in
+        the TOOL BODY (the ``get_phase`` idiom), never mislabeled
+        ``invalid_transition`` by the handler's ``@_catch_value_error``.
+        """
+        import asyncio
+        import workflow_state_server as wss
+
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, str(tmp_path))
+        wss._artifacts_root = str(tmp_path)
+
+        result = asyncio.run(wss.reproject_meta_json(ref="feature:999-nope"))
+        data = json.loads(result)
+        assert data["error"] is True
+        assert data["error_type"] == "invalid_ref"
+
+    def test_reproject_db_read_sqlite_error_returns_db_unavailable_envelope(
+        self, db, tmp_path, monkeypatch
+    ):
+        """DB-down fault injection RAISES ``sqlite3.Error`` at the DB read
+        (``_project_meta_json``'s entity lookup) -- NEVER toggles the
+        module-global ``_db_unavailable``, which would yield a different
+        bare envelope with no ``error_type`` key.
+        """
+        import asyncio
+        import workflow_state_server as wss
+
+        db.register_entity(
+            "feature", "098-dbdown", "dbdown",
+            artifact_path=str(tmp_path), status="active",
+            project_id="__unknown__",
+        )
+
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, str(tmp_path))
+        wss._artifacts_root = str(tmp_path)
+
+        monkeypatch.setattr(
+            db, "get_entity",
+            lambda *a, **kw: (_ for _ in ()).throw(
+                sqlite3.OperationalError("database is locked")
+            ),
+        )
+
+        result = asyncio.run(wss.reproject_meta_json(ref="feature:098-dbdown"))
+        data = json.loads(result)
+        assert data["error"] is True
+        assert data["error_type"] == "db_unavailable"
