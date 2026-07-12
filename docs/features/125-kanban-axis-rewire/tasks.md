@@ -1,6 +1,6 @@
 # Tasks: Kanban Axis Rewire (feature 125)
 
-**Global context (every task):** `pytest` = `plugins/pd/.venv/bin/python -m pytest`. Binding references (open alongside EVERY task): design.md + spec.md in this directory — every "D*n*" pointer resolves to exact pinned text there (code blocks are VERBATIM contracts); they are source, not context.
+**Global context (every task):** `pytest` = `plugins/pd/.venv/bin/python -m pytest`. Binding references (open alongside EVERY task): design.md + spec.md + plan.md in this directory — every "D*n*" and "plan Task *n*" pointer resolves to exact pinned text there (code blocks are VERBATIM contracts); they are source, not context.
 
 Serial: task 2 depends on task 1's aliases; task 3 runs whole-tree QA last.
 
@@ -33,5 +33,5 @@ Serial: task 2 depends on task 1's aliases; task 3 runs whole-tree QA last.
 **Why:** design D8 QA deliverables; spec FR125-6; SC2-tests-side + SC5; backlog #063 staging.
 **Files:** none (QA + report; scratch worktree for baseline)
 **Depends on:** tasks 1-2
-**Do:** plan Task 3 verbatim — merge-base baseline (scratch worktree; account the known venv-missing artifact) then feature-branch run, deltas accounted; full suite (`plugins/pd/hooks/lib/ plugins/pd/mcp/ plugins/pd/ui/`); `./validate.sh`; hooks suite; doctor pin; SC2 tests-side inspection (list every remaining `kanban_column` under ui/tests/ — all must be DB-seed write sites); final-tree `agent_review|human_review` sweep (survivors: helpers.py remap dict + comment ONLY); diff gate as SET-MEMBERSHIP vs D8 items 1-8; #063 pointer recorded for the battery.
+**Do:** plan Task 3 verbatim — merge-base baseline (scratch worktree; account the known venv-missing artifact) then feature-branch run, deltas accounted; full suite (`plugins/pd/hooks/lib/ plugins/pd/mcp/ plugins/pd/ui/`); `./validate.sh`; hooks suite; doctor pin; SC2 COMPLETE = the production grep re-run (routes/templates/__init__ → 0 hits) PLUS the tests-side inspection (list every remaining `kanban_column` under ui/tests/ — all must be DB-seed write sites) — both halves inline per task review i2; final-tree `agent_review|human_review` sweep (survivors: helpers.py remap dict + comment ONLY); diff gate as SET-MEMBERSHIP vs D8 items 1-8 where item 8's feature-docs bundle INCLUDES task reports + .review-history (the plan-review S2 clarification, inline per task review i2); #063 pointer recorded for the battery.
 **Acceptance:** all gates green; delta arithmetic exact; sweep survivors match D8(e); zero undispositioned diff-gate files.
