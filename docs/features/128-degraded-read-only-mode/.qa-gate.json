@@ -1,0 +1,38 @@
+{
+  "feature": "128-degraded-read-only-mode",
+  "gate_date": "2026-07-12",
+  "verdict": "PASS",
+  "lanes": {
+    "A_execution_adversarial": {
+      "agent": "general-purpose/sonnet",
+      "verdict": "PASS",
+      "high": 0,
+      "med": 0,
+      "low": 2,
+      "notes": "8/8 probes with REAL faults (closed/missing/corrupt DB files, not mocked strings): E2E fail-loud with byte-identical .meta.json (sha256) across all variants; message-contract abuse incl. the locked-ref accepted vector through MCP (full 0.68s budget, canonical text intact); envelope key-set exactly {error, error_type, message, recovery_hint} — zero leak; rollback under a DIFFERENT fault boundary than SC2's; the :925 guard driven with a REAL 5D entity on a real dead connection; fix_actions decoupled ctx + full apply_fixes run (recorded failed fix, no crash); determinism x2 byte-identical; -O smoke via assert-free harness (zero asserts in the raise path). LOWs to sidecar: one-shot-death retry downgrades the message (envelope stays db_unavailable, atomic — pre-existing safety-net); POSIX unlinked-fd blind spot (not 128-introduced)."
+    },
+    "B_regression_integration": {
+      "agent": "general-purpose/sonnet",
+      "verdict": "PASS",
+      "high": 0,
+      "med": 0,
+      "low": 0,
+      "notes": "10/10 gates: 3684/3 exact; flakiness x2 byte-identical (1251); validate 0 errors/15 pre-existing warnings; hooks 67/67; doctor pin 19 (test_checks.py diff empty, zero check files touched); inventory 15 files = D7's 8 + 6 docs + CHANGELOG; session-start LIVE exit 0 valid JSON; MCP server boot clean (engine surface 6 public methods intact, deleted symbols genuinely gone); baseline worktree DIRECTLY measured 3682 → +2 net exact; grep sweeps 0 hits in code all three patterns."
+    },
+    "C_artifact_truth_audit": {
+      "agent": "general-purpose/opus",
+      "verdict": "PASS after fix",
+      "high": 0,
+      "med": 1,
+      "low": 2,
+      "notes": "No fabrications. All 11 shas + captions; 12=5+2+5+0 blockers with 8F/4S recomputed incl. the specify classification subtlety; 23 dispatches; 10 deepener defs awk-counted; suite chain measured per-commit in a throwaway worktree (682→674→684 on the touched files — whole-suite +2 provable); all green figures ran green at their commits (588/477/1251/1489); every streak chain-verified (9th battery, ties-126-exactly, 3rd-at-33%, 4th-briefing-corrections); narrowed live-behavior label verified against 118/129/131; :925 comment byte-exact vs D3; OQ-1 pin verified asserting what's claimed; SC1 attribution correction verified by commit timestamps. MED-1 FIXED: CHANGELOG '+19 added' internally inconsistent (−16+19=+3≠+2) → '+18 = 8 task + 10 deepener'. LOW-1 FIXED inline (measurement-scope parenthetical); LOW-2 sidecar (dated-vs-feature-tagged terminology)."
+    }
+  },
+  "policy": "HIGH blocks; MED fix-or-file; LOW fix-or-sidecar",
+  "dispositions": {
+    "med_fixed": ["CHANGELOG test-arithmetic +19 → +18 (= 8 task additions + 10 deepener; single restatement location)"],
+    "med_filed": [],
+    "low_fixed": ["suite-scope convention named inline in CHANGELOG"],
+    "low_sidecar": [".qa-gate-low-findings.md: one-shot-death retry message downgrade (pre-existing safety-net, 123/132 interest); POSIX unlinked-fd blind spot (not 128-introduced); dated-comment terminology"]
+  }
+}
