@@ -188,3 +188,105 @@ def test_meta_json_decision_env_bypass_allows():
         else:
             os.environ["PD_META_JSON_WRITE_ALLOWED"] = old
     assert out["permissionDecision"] == "allow"
+
+
+# ---------------------------------------------------------------------------
+# D2 — deny-matrix tests (FR127-5, SC1). meta_json_decision.decide() must
+# deny .meta.json writes in EVERY sentinel world (no sentinel / stale
+# sentinel / valid sentinel) unless the bypass env is set. Tests 1-2 are
+# RED-FIRST: against the pre-D1 module they flip allow->deny (the degraded
+# permit is being deleted). Test 3 is a regression pin — post-D1 all three
+# worlds share one deny branch, proving the deletion left no state-dependence
+# (design D6). Each world is built via monkeypatch.setenv("HOME", tmp_path)
+# so the sentinel glob in the pre-D1 module resolves under an isolated tree.
+# ---------------------------------------------------------------------------
+
+
+def _write_sentinel(home: Path, content: str) -> None:
+    """Create a sentinel file at the path the pre-D1 module's glob matches.
+
+    Pattern (pre-D1 _find_sentinel): ~/.claude/plugins/cache/*/pd*/*/.venv/
+    .bootstrap-complete.
+    """
+    sentinel = (
+        home
+        / ".claude"
+        / "plugins"
+        / "cache"
+        / "marketplace"
+        / "pd-plugin"
+        / "1.0.0"
+        / ".venv"
+        / ".bootstrap-complete"
+    )
+    sentinel.parent.mkdir(parents=True, exist_ok=True)
+    sentinel.write_text(content)
+
+
+def _assert_meta_json_deny(out: dict) -> None:
+    """SC1: every deny reason must name all three FR127-2 elements."""
+    assert out["permissionDecision"] == "deny", f"expected deny, got {out!r}"
+    reason = out["permissionDecisionReason"]
+    assert "_project_meta_json" in reason, reason
+    assert "PD_META_JSON_WRITE_ALLOWED" in reason, reason
+    assert "doctor" in reason, reason
+
+
+def test_meta_json_deny_no_sentinel(monkeypatch, tmp_path):
+    """FR127-1/SC1: no sentinel anywhere -> deny.
+
+    RED-FIRST (design D2 item 1): against the pre-D1 module, `_find_sentinel()`
+    finds nothing under the monkeypatched empty HOME and step 2's fail-open
+    branch (meta_json_decision.py:86-88, pre-rewrite) returns allow. This
+    test must FAIL (allow instead of deny) until the D1 rewrite lands.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("PD_META_JSON_WRITE_ALLOWED", raising=False)
+    sys.path.insert(0, str(LIB_DIR))
+    try:
+        from data_file_guards import meta_json_decision  # type: ignore
+    finally:
+        sys.path.pop(0)
+    out = meta_json_decision.decide("docs/features/043/.meta.json", "Write", {})
+    _assert_meta_json_deny(out)
+
+
+def test_meta_json_deny_stale_sentinel(monkeypatch, tmp_path):
+    """FR127-1/SC1: sentinel content names a non-executable interpreter -> deny.
+
+    RED-FIRST (design D2 item 2): against the pre-D1 module, `_sentinel_is_valid()`
+    returns False for a non-executable interpreter path, so step 3's degraded
+    permit (meta_json_decision.py:96-97, pre-rewrite) returns allow. This test
+    must FAIL (allow instead of deny) until the D1 rewrite lands.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("PD_META_JSON_WRITE_ALLOWED", raising=False)
+    _write_sentinel(tmp_path, "/nonexistent/not-a-real-interpreter:3.14.4")
+    sys.path.insert(0, str(LIB_DIR))
+    try:
+        from data_file_guards import meta_json_decision  # type: ignore
+    finally:
+        sys.path.pop(0)
+    out = meta_json_decision.decide("docs/features/043/.meta.json", "Write", {})
+    _assert_meta_json_deny(out)
+
+
+def test_meta_json_deny_valid_sentinel(monkeypatch, tmp_path):
+    """FR127-1/SC1: sentinel names a real executable -> deny (regression pin).
+
+    NOT red-first (design D2 item 3): the pre-D1 module already denies here
+    (`_sentinel_is_valid` returns True for sys.executable) — cannot flip,
+    since it's already the deny outcome. Post-D1, all three sentinel worlds
+    share one deny branch; this pins that the deletion left this world's
+    outcome unchanged.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("PD_META_JSON_WRITE_ALLOWED", raising=False)
+    _write_sentinel(tmp_path, f"{sys.executable}:3.14.4")
+    sys.path.insert(0, str(LIB_DIR))
+    try:
+        from data_file_guards import meta_json_decision  # type: ignore
+    finally:
+        sys.path.pop(0)
+    out = meta_json_decision.decide("docs/features/043/.meta.json", "Write", {})
+    _assert_meta_json_deny(out)
