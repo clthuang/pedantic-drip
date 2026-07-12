@@ -9027,7 +9027,9 @@ class EntityDatabase:
         # F11 (Group 6): project ``e.kind`` to the legacy ``entity_type``
         # result-set key for caller compatibility (TD-8 public API surface).
         sql = (
-            "SELECT wp.*, e.name AS entity_name, e.kind AS entity_type,"
+            "SELECT wp.*, wp.kanban_column AS execution_status,"
+            " wp.workflow_phase AS pipeline_phase,"
+            " e.name AS entity_name, e.kind AS entity_type,"
             " e.artifact_path AS entity_artifact_path"
             " FROM workflow_phases wp"
             " LEFT JOIN entities e ON wp.type_id = e.type_id"
