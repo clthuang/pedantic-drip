@@ -6,7 +6,6 @@ import json
 import os
 import sqlite3
 import sys
-import tempfile
 from collections.abc import Callable
 from datetime import datetime, timezone
 
@@ -23,7 +22,7 @@ from transition_gate import (
 from transition_gate.constants import HARD_PREREQUISITES
 
 from .kanban import derive_kanban
-from .models import FeatureWorkflowState, TransitionResponse
+from .models import FeatureWorkflowState, TransitionResponse, db_unavailable_error
 
 # Precomputed constants from immutable sources
 _PHASE_VALUES: tuple[str, ...] = tuple(p.value for p in PHASE_SEQUENCE)
@@ -94,7 +93,7 @@ class WorkflowStateEngine:
 
         # Primary defense: health probe already failed during get_state
         if state.source == "meta_json_fallback":
-            return TransitionResponse(results=tuple(results), degraded=True)
+            raise db_unavailable_error("transition_phase", feature_type_id, None)
 
         if all(r.allowed for r in results):
             # Secondary defense: catch DB write failures
@@ -105,14 +104,9 @@ class WorkflowStateEngine:
                     workspace_uuid=workspace_uuid,
                 )
             except sqlite3.Error as exc:
-                print(
-                    f"workflow-engine: DB write failed in transition_phase "
-                    f"for {feature_type_id}: {exc}",
-                    file=sys.stderr,
-                )
-                return TransitionResponse(
-                    results=tuple(results), degraded=True
-                )
+                raise db_unavailable_error(
+                    "transition_phase", feature_type_id, exc
+                ) from exc
 
         return TransitionResponse(results=tuple(results), degraded=False)
 
@@ -158,14 +152,7 @@ class WorkflowStateEngine:
 
         # Primary defense: DB was already unhealthy during get_state
         if state.source == "meta_json_fallback":
-            print(
-                f"workflow-engine: DB already degraded, writing "
-                f"complete_phase to .meta.json for {feature_type_id}",
-                file=sys.stderr,
-            )
-            return self._write_meta_json_fallback(
-                feature_type_id, phase, state
-            )
+            raise db_unavailable_error("complete_phase", feature_type_id, None)
 
         # Secondary defense: catch DB write failures
         try:
@@ -179,14 +166,9 @@ class WorkflowStateEngine:
             if phase == "finish":
                 self.db.update_entity(feature_type_id, status="completed", workspace_uuid=workspace_uuid)
         except sqlite3.Error as exc:
-            print(
-                f"workflow-engine: DB write failed in complete_phase "
-                f"for {feature_type_id}: {exc}",
-                file=sys.stderr,
-            )
-            return self._write_meta_json_fallback(
-                feature_type_id, phase, state
-            )
+            raise db_unavailable_error(
+                "complete_phase", feature_type_id, exc
+            ) from exc
 
         return FeatureWorkflowState(
             feature_type_id=feature_type_id,
@@ -464,79 +446,6 @@ class WorkflowStateEngine:
             return None
         return self._derive_state_from_meta(
             meta, feature_type_id, source="meta_json_fallback"
-        )
-
-    # F4-AUDIT: degraded-mode-only
-    def _write_meta_json_fallback(
-        self,
-        feature_type_id: str,
-        phase: str,
-        state: FeatureWorkflowState,
-    ) -> FeatureWorkflowState:
-        """Atomic .meta.json update when DB is unavailable.
-
-        Reads current .meta.json, updates lastCompletedPhase and phase
-        timestamps, writes atomically via NamedTemporaryFile + os.replace().
-
-        Only state.mode is read from the state parameter -- all other data
-        comes from the .meta.json file and the phase argument.
-        """
-        slug = self._extract_slug(feature_type_id)
-        meta_path = os.path.join(
-            self.artifacts_root, "features", slug, ".meta.json"
-        )
-
-        try:
-            with open(meta_path) as f:
-                meta = json.load(f)
-        except (OSError, json.JSONDecodeError) as exc:
-            raise ValueError(f"Cannot update .meta.json: {exc}") from exc
-
-        now = _iso_now()
-        meta["lastCompletedPhase"] = phase
-        meta.setdefault("phases", {})
-        meta["phases"].setdefault(phase, {})
-        if "started" not in meta["phases"][phase]:
-            meta["phases"][phase]["started"] = now
-        meta["phases"][phase]["completed"] = now
-
-        next_phase = self._next_phase_value(phase)
-        workflow_phase = next_phase if next_phase is not None else phase
-
-        if next_phase is None:
-            meta["status"] = "completed"
-            meta["completed"] = now
-
-        # Atomic write: NamedTemporaryFile + os.replace().
-        # Catches BaseException (not just Exception) to clean up temp file
-        # on KeyboardInterrupt or SystemExit, preventing stale .tmp files.
-        tmp_name = None
-        try:
-            with tempfile.NamedTemporaryFile(
-                mode="w",
-                dir=os.path.dirname(meta_path),
-                suffix=".tmp",
-                delete=False,
-                encoding="utf-8",
-            ) as fd:
-                tmp_name = fd.name
-                json.dump(meta, fd, indent=2)
-            os.replace(tmp_name, meta_path)
-        except BaseException:
-            if tmp_name is not None:
-                try:
-                    os.unlink(tmp_name)
-                except OSError:
-                    pass
-            raise
-
-        return FeatureWorkflowState(
-            feature_type_id=feature_type_id,
-            current_phase=workflow_phase,
-            last_completed_phase=phase,
-            completed_phases=self._derive_completed_phases(phase),
-            mode=state.mode,
-            source="meta_json_fallback",
         )
 
     def _iter_meta_jsons(self):

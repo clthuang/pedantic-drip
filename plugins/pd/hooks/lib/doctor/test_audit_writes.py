@@ -59,7 +59,6 @@ _REPO_ROOT = _PLUGIN_ROOT.parent.parent                  # repo root
 # the names if a future regression re-introduces direct writes.
 META_JSON_WRITER_ALLOWLIST: tuple[str, ...] = (
     "_project_meta_json",          # MCP projection (canonical write path)
-    "_write_meta_json_fallback",   # degraded-mode writer (engine.py)
     "init_project_state",          # project-type writer (deferred to feature 111)
     "_fix_last_completed_phase",   # MCP-routing wrapper (TD-11 #1)
     "_fix_completed_timestamp",    # MCP-routing wrapper (TD-11 #2)
@@ -310,6 +309,46 @@ def test_no_unaudited_meta_json_writes() -> None:
         )
 
 
+def test_scratch_offender_function_is_detected_by_the_ast_walker(tmp_path) -> None:
+    """FR128-5: post-128 the allow-list no longer names the deleted
+    engine fallback writer -- the audit's teeth must still catch a
+    hypothetical FUTURE offender reappearing in the engine. This plants a
+    synthetic, non-allow-listed .meta.json writer in a SCRATCH file (never
+    touches the real engine.py) and drives it through
+    _collect_writes_for_marker -- the same detection primitive
+    test_no_unaudited_meta_json_writes walks the real tree with -- proving
+    the teeth still bite. Red-first proof the audit mechanism still works,
+    not just that today's real tree happens to be clean (a vacuous-green
+    risk: FR128-1 deleting the writer could have been paired with an audit
+    regression and this suite would stay green either way without this
+    test).
+    """
+    offender = tmp_path / "fake_engine.py"
+    offender.write_text(
+        "import os\n"
+        "\n"
+        "def _reintroduced_fallback_writer(artifacts_root, feature_type_id, data):\n"
+        "    with open(\n"
+        "        os.path.join(\n"
+        "            artifacts_root, 'features', feature_type_id, '.meta.json'\n"
+        "        ),\n"
+        "        'w',\n"
+        "    ) as f:\n"
+        "        f.write(data)\n"
+    )
+
+    hits = _collect_writes_for_marker(offender, ".meta.json")
+
+    assert len(hits) == 1, f"expected the AST walker to flag exactly one write, got {hits}"
+    _call_node, fn_node = hits[0]
+    assert fn_node is not None
+    assert fn_node.name == "_reintroduced_fallback_writer"
+    assert fn_node.name not in META_JSON_WRITER_ALLOWLIST, (
+        "the synthetic offender must NOT be allow-listed -- if it were, "
+        "this test would be proving nothing"
+    )
+
+
 def test_no_unaudited_backlog_md_writes() -> None:
     """AC-1.2: every backlog.md write must live in an allow-listed function."""
     violations: list[str] = []
@@ -383,7 +422,6 @@ def test_audit_comments_present() -> None:
     that need an audit comment.
     """
     expected_names = [
-        "_write_meta_json_fallback",  # engine.py
         "init_project_state",         # feature_lifecycle.py
         "_fix_last_completed_phase",  # fix_actions.py
         "_fix_completed_timestamp",   # fix_actions.py
@@ -588,6 +626,73 @@ class TestFixActionWrappersForwardToDriftHelper:
         assert _fix_completed_timestamp(ctx, issue) == "ok"
         assert called["drift_class"] == fix_actions._DRIFT_STATUS_MISMATCH
         assert called["feature_type_id"] == "feature:043-bar"
+
+
+class TestFixLastCompletedPhaseSurfacesDbUnavailable:
+    """Feature 128 / FR128-2 caller-analysis smoke (design D3): doctor's
+    fix_actions is a PRODUCTION, non-MCP caller of the frozen engine's
+    complete_phase (``_fix_meta_json_via_mcp`` :84). Post-128, a DB-down
+    engine must RAISE ``WorkflowDBUnavailableError`` instead of the pre-128
+    silent divergent ``.meta.json`` write -- ``apply_fixes`` already catches
+    ``Exception`` (fixer.py:155) and records the failed fix; no crash.
+
+    Decoupled wiring per ``TestTd11DriftClassRouting._make_ctx`` (:428-439):
+    ``ctx.db`` is a HEALTHY stub returning a valid ``last_completed_phase``
+    row -- the :69 row lookup runs BEFORE the :84 engine call, so a shared
+    down-DB would raise a plain ``sqlite3.Error`` there and never reach the
+    engine -- while ``ctx.engine`` wraps the genuinely-unavailable DB.
+    """
+
+    def test_fix_last_completed_phase_raises_when_engine_db_unavailable(
+        self, tmp_path
+    ) -> None:
+        from doctor.fix_actions import FixContext, _fix_last_completed_phase
+        from doctor.models import Issue
+        from entity_registry.database import EntityDatabase
+        from workflow_engine.engine import WorkflowStateEngine
+        from workflow_engine.models import WorkflowDBUnavailableError
+
+        class _HealthyDbStub:
+            """ctx.db: the :69 row lookup must succeed (healthy, decoupled
+            from ctx.engine's DB)."""
+
+            def get_workflow_phase(self, feature_type_id: str) -> dict:
+                return {"last_completed_phase": "specify"}
+
+        # .meta.json so the down engine's get_state fallback resolves a real
+        # state: lastCompletedPhase="brainstorm" -> current_phase="specify",
+        # matching the stub's db_phase so complete_phase reaches the
+        # primary-defense degraded check instead of a phase-mismatch
+        # ValueError (mirrors TestFailLoudDegradedMode's setup).
+        feature_dir = tmp_path / "features" / "042-foo"
+        feature_dir.mkdir(parents=True, exist_ok=True)
+        (feature_dir / ".meta.json").write_text(
+            '{"id": "042", "slug": "042-foo", "status": "active", '
+            '"mode": "standard", "lastCompletedPhase": "brainstorm"}'
+        )
+
+        # ctx.engine: wraps a genuinely-unavailable DB (closed connection).
+        unavailable_db = EntityDatabase(":memory:")
+        unavailable_db.close()
+        engine = WorkflowStateEngine(unavailable_db, str(tmp_path))
+
+        ctx = FixContext(
+            entities_db_path="",
+            artifacts_root="",
+            project_root="",
+            db=_HealthyDbStub(),
+            engine=engine,
+            entities_conn=None,
+        )
+        issue = Issue(
+            check="workflow_phase", severity="error",
+            entity="feature:042-foo",
+            message="missing lastCompletedPhase",
+            fix_hint="Set lastCompletedPhase",
+        )
+
+        with pytest.raises(WorkflowDBUnavailableError):
+            _fix_last_completed_phase(ctx, issue)
 
 
 # ---------------------------------------------------------------------------

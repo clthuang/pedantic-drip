@@ -15,8 +15,13 @@ from transition_gate.constants import COMMAND_PHASES, HARD_PREREQUISITES
 
 from transition_gate.models import Severity, TransitionResult
 
+from sqlite_retry import is_transient
 from workflow_engine import FeatureWorkflowState, WorkflowStateEngine
-from workflow_engine.models import TransitionResponse
+from workflow_engine.models import (
+    TransitionResponse,
+    WorkflowDBUnavailableError,
+    db_unavailable_error,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -2318,283 +2323,6 @@ class TestReadStateFromMetaJson:
         assert result is None
 
 
-# ---------------------------------------------------------------------------
-# _write_meta_json_fallback (Task 2.2)
-# ---------------------------------------------------------------------------
-
-
-class TestWriteMetaJsonFallback:
-    """Task 2.2: _write_meta_json_fallback() atomic .meta.json writer tests."""
-
-    def test_normal_write_updates_last_completed_and_phase_timestamp(
-        self, tmp_path
-    ) -> None:
-        """Normal write updates lastCompletedPhase and phases.{phase}.completed."""
-        db = _make_db()
-        engine = WorkflowStateEngine(db, str(tmp_path))
-        slug = "008-write-test"
-        _create_meta_json(
-            tmp_path, slug, status="active", mode="standard",
-            last_completed_phase="specify",
-        )
-
-        input_state = FeatureWorkflowState(
-            feature_type_id=f"feature:{slug}",
-            current_phase="design",
-            last_completed_phase="specify",
-            completed_phases=("brainstorm", "specify"),
-            mode="standard",
-            source="meta_json_fallback",
-        )
-
-        result = engine._write_meta_json_fallback(
-            f"feature:{slug}", "design", input_state
-        )
-
-        # Verify returned FeatureWorkflowState
-        assert result is not None
-        assert result.source == "meta_json_fallback"
-        assert result.last_completed_phase == "design"
-        assert result.current_phase == "create-plan"  # next after design
-        assert result.completed_phases == ("brainstorm", "specify", "design")
-        assert result.mode == "standard"
-        assert result.feature_type_id == f"feature:{slug}"
-
-        # Verify .meta.json file was updated
-        meta_path = tmp_path / "features" / slug / ".meta.json"
-        with open(meta_path) as f:
-            meta = json.load(f)
-
-        assert meta["lastCompletedPhase"] == "design"
-        assert "design" in meta["phases"]
-        assert "completed" in meta["phases"]["design"]
-        # Verify timestamp is ISO 8601 with timezone
-        import re
-        iso_pattern = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}"
-        assert re.match(iso_pattern, meta["phases"]["design"]["completed"])
-
-    def test_atomic_replacement_cleans_up_temp_file(self, tmp_path) -> None:
-        """After successful write, no temp files remain in the feature dir."""
-        import glob
-
-        db = _make_db()
-        engine = WorkflowStateEngine(db, str(tmp_path))
-        slug = "008-atomic-test"
-        _create_meta_json(
-            tmp_path, slug, status="active", mode="standard",
-            last_completed_phase="brainstorm",
-        )
-
-        input_state = FeatureWorkflowState(
-            feature_type_id=f"feature:{slug}",
-            current_phase="specify",
-            last_completed_phase="brainstorm",
-            completed_phases=("brainstorm",),
-            mode="standard",
-            source="meta_json_fallback",
-        )
-
-        engine._write_meta_json_fallback(
-            f"feature:{slug}", "specify", input_state
-        )
-
-        # No .tmp files should remain in the feature directory
-        feature_dir = tmp_path / "features" / slug
-        tmp_files = glob.glob(str(feature_dir / "*.tmp"))
-        assert tmp_files == [], f"Temp files left behind: {tmp_files}"
-
-    def test_missing_meta_json_raises_value_error(self, tmp_path) -> None:
-        """Missing .meta.json raises ValueError."""
-        db = _make_db()
-        engine = WorkflowStateEngine(db, str(tmp_path))
-        slug = "008-missing"
-        # Do NOT create .meta.json
-
-        input_state = FeatureWorkflowState(
-            feature_type_id=f"feature:{slug}",
-            current_phase="specify",
-            last_completed_phase="brainstorm",
-            completed_phases=("brainstorm",),
-            mode="standard",
-            source="meta_json_fallback",
-        )
-
-        with pytest.raises(ValueError, match="Cannot update .meta.json"):
-            engine._write_meta_json_fallback(
-                f"feature:{slug}", "specify", input_state
-            )
-
-    def test_corrupt_meta_json_raises_value_error(self, tmp_path) -> None:
-        """Corrupt .meta.json raises ValueError."""
-        db = _make_db()
-        engine = WorkflowStateEngine(db, str(tmp_path))
-        slug = "008-corrupt-write"
-        feature_dir = tmp_path / "features" / slug
-        feature_dir.mkdir(parents=True)
-        (feature_dir / ".meta.json").write_text("{broken json!!!")
-
-        input_state = FeatureWorkflowState(
-            feature_type_id=f"feature:{slug}",
-            current_phase="specify",
-            last_completed_phase="brainstorm",
-            completed_phases=("brainstorm",),
-            mode="standard",
-            source="meta_json_fallback",
-        )
-
-        with pytest.raises(ValueError, match="Cannot update .meta.json"):
-            engine._write_meta_json_fallback(
-                f"feature:{slug}", "specify", input_state
-            )
-
-    def test_terminal_phase_finish_sets_status_completed(
-        self, tmp_path
-    ) -> None:
-        """Completing 'finish' phase sets status='completed' and completed timestamp."""
-        db = _make_db()
-        engine = WorkflowStateEngine(db, str(tmp_path))
-        slug = "008-finish-test"
-        _create_meta_json(
-            tmp_path, slug, status="active", mode="standard",
-            last_completed_phase="implement",
-        )
-
-        input_state = FeatureWorkflowState(
-            feature_type_id=f"feature:{slug}",
-            current_phase="finish",
-            last_completed_phase="implement",
-            completed_phases=(
-                "brainstorm", "specify", "design",
-                "create-plan", "implement",
-            ),
-            mode="standard",
-            source="meta_json_fallback",
-        )
-
-        result = engine._write_meta_json_fallback(
-            f"feature:{slug}", "finish", input_state
-        )
-
-        # Verify returned state
-        assert result.current_phase == "finish"  # terminal: stays at finish
-        assert result.last_completed_phase == "finish"
-        assert result.source == "meta_json_fallback"
-        assert "finish" in result.completed_phases
-
-        # Verify .meta.json
-        meta_path = tmp_path / "features" / slug / ".meta.json"
-        with open(meta_path) as f:
-            meta = json.load(f)
-
-        assert meta["status"] == "completed"
-        assert meta["lastCompletedPhase"] == "finish"
-        assert "finish" in meta["phases"]
-        assert "completed" in meta["phases"]["finish"]
-        # completed timestamp at top level
-        assert "completed" in meta
-
-    def test_partial_write_cleanup_removes_temp_file(self, tmp_path) -> None:
-        """When json.dump raises mid-write, temp file is cleaned up."""
-        import glob
-
-        db = _make_db()
-        engine = WorkflowStateEngine(db, str(tmp_path))
-        slug = "008-partial-write"
-        _create_meta_json(
-            tmp_path, slug, status="active", mode="standard",
-            last_completed_phase="brainstorm",
-        )
-
-        input_state = FeatureWorkflowState(
-            feature_type_id=f"feature:{slug}",
-            current_phase="specify",
-            last_completed_phase="brainstorm",
-            completed_phases=("brainstorm",),
-            mode="standard",
-            source="meta_json_fallback",
-        )
-
-        # Mock json.dump to raise mid-write
-        with patch("workflow_engine.engine.json.dump", side_effect=IOError("disk full")):
-            with pytest.raises(IOError, match="disk full"):
-                engine._write_meta_json_fallback(
-                    f"feature:{slug}", "specify", input_state
-                )
-
-        # Verify no temp files left behind
-        feature_dir = tmp_path / "features" / slug
-        tmp_files = glob.glob(str(feature_dir / "*.tmp"))
-        assert tmp_files == [], f"Temp files left behind after failure: {tmp_files}"
-
-        # Verify original .meta.json is unchanged (not corrupted)
-        meta_path = feature_dir / ".meta.json"
-        with open(meta_path) as f:
-            meta = json.load(f)
-        assert meta["lastCompletedPhase"] == "brainstorm"  # unchanged
-
-    def test_state_mode_is_used_from_input_state(self, tmp_path) -> None:
-        """Only state.mode is read from the input state parameter."""
-        db = _make_db()
-        engine = WorkflowStateEngine(db, str(tmp_path))
-        slug = "008-mode-test"
-        _create_meta_json(
-            tmp_path, slug, status="active", mode="standard",
-            last_completed_phase="brainstorm",
-        )
-
-        # Input state has mode="full" which differs from .meta.json mode="standard"
-        input_state = FeatureWorkflowState(
-            feature_type_id=f"feature:{slug}",
-            current_phase="specify",
-            last_completed_phase="brainstorm",
-            completed_phases=("brainstorm",),
-            mode="full",
-            source="meta_json_fallback",
-        )
-
-        result = engine._write_meta_json_fallback(
-            f"feature:{slug}", "specify", input_state
-        )
-
-        # Returned state uses input_state.mode, not .meta.json mode
-        assert result.mode == "full"
-
-    def test_phases_setdefault_creates_missing_phases_dict(
-        self, tmp_path
-    ) -> None:
-        """When .meta.json has no 'phases' key, it is created."""
-        db = _make_db()
-        engine = WorkflowStateEngine(db, str(tmp_path))
-        slug = "008-no-phases"
-        # Create .meta.json without 'phases' key
-        feature_dir = tmp_path / "features" / slug
-        feature_dir.mkdir(parents=True)
-        meta = {"id": "008", "slug": slug, "status": "active", "mode": "standard"}
-        (feature_dir / ".meta.json").write_text(json.dumps(meta))
-
-        input_state = FeatureWorkflowState(
-            feature_type_id=f"feature:{slug}",
-            current_phase="brainstorm",
-            last_completed_phase=None,
-            completed_phases=(),
-            mode="standard",
-            source="meta_json_fallback",
-        )
-
-        result = engine._write_meta_json_fallback(
-            f"feature:{slug}", "brainstorm", input_state
-        )
-
-        assert result is not None
-        # Verify the file now has phases dict
-        meta_path = feature_dir / ".meta.json"
-        with open(meta_path) as f:
-            updated = json.load(f)
-        assert "phases" in updated
-        assert "brainstorm" in updated["phases"]
-        assert "completed" in updated["phases"]["brainstorm"]
-
-
 class TestScanFeaturesFilesystem:
     """Task 3.1: _scan_features_filesystem() directory scanner tests."""
 
@@ -3046,11 +2774,13 @@ class TestGetStateFallback:
 
 
 class TestTransitionPhaseFallback:
-    """transition_phase() degrades gracefully when DB is unavailable."""
+    """transition_phase() raises WorkflowDBUnavailableError when the DB is
+    unavailable (feature 128: mutations fail loud, no success-shaped
+    degraded response)."""
 
-    def test_probe_fail_returns_degraded_response(self, tmp_path) -> None:
-        """When _check_db_health returns False, transition_phase returns
-        TransitionResponse with degraded=True."""
+    def test_probe_fail_raises_db_unavailable(self, tmp_path) -> None:
+        """When _check_db_health returns False, transition_phase raises
+        WorkflowDBUnavailableError."""
         engine, db, type_id = _setup_engine(
             tmp_path,
             workflow_phase="specify",
@@ -3066,18 +2796,14 @@ class TestTransitionPhaseFallback:
         # Force health probe to fail -- get_state will use .meta.json fallback
         engine._check_db_health = lambda: False  # type: ignore[assignment]
 
-        response = engine.transition_phase(type_id, "specify")
+        with pytest.raises(WorkflowDBUnavailableError):
+            engine.transition_phase(type_id, "specify")
 
-        assert isinstance(response, TransitionResponse)
-        assert response.degraded is True
-        assert isinstance(response.results, tuple)
-        assert len(response.results) > 0
-
-    def test_db_write_fail_returns_degraded_response(
+    def test_db_write_fail_raises_db_unavailable(
         self, tmp_path, monkeypatch
     ) -> None:
         """When probe passes but db.update_workflow_phase raises sqlite3.Error,
-        transition_phase returns TransitionResponse with degraded=True."""
+        transition_phase raises WorkflowDBUnavailableError."""
         engine, db, type_id = _setup_engine(
             tmp_path,
             workflow_phase="specify",
@@ -3104,36 +2830,38 @@ class TestTransitionPhaseFallback:
             ),
         )
 
-        response = engine.transition_phase(type_id, "design")
+        with pytest.raises(WorkflowDBUnavailableError) as exc_info:
+            engine.transition_phase(type_id, "design")
 
-        assert isinstance(response, TransitionResponse)
-        assert response.degraded is True
-        assert isinstance(response.results, tuple)
-        # The transition should still be "allowed" from gate evaluation
-        assert all(r.allowed for r in response.results)
+        # The typed error's message must not leak the cause's "locked" text
+        # (sqlite_retry.is_transient would otherwise retry a permanent
+        # failure) -- only type(cause).__name__ is embedded, never str(cause).
+        assert "locked" not in str(exc_info.value).lower()
 
 
 class TestCompletePhaseFallback:
-    """complete_phase() degrades gracefully when DB is unavailable."""
+    """complete_phase() raises WorkflowDBUnavailableError when the DB is
+    unavailable (feature 128: mutations fail loud, no .meta.json fallback
+    write)."""
 
-    def test_db_write_fail_falls_back_to_meta_json(
+    def test_db_write_fail_raises_db_unavailable(
         self, tmp_path, monkeypatch
     ) -> None:
-        """When db.update_workflow_phase raises sqlite3.Error,
-        complete_phase falls back to _write_meta_json_fallback and returns
-        source='meta_json_fallback'."""
+        """When db.update_workflow_phase raises sqlite3.Error, complete_phase
+        raises WorkflowDBUnavailableError and does not touch .meta.json."""
         engine, db, type_id = _setup_engine(
             tmp_path,
             workflow_phase="specify",
             last_completed_phase="brainstorm",
         )
-        # .meta.json must exist for the fallback writer
         _create_meta_json(
             tmp_path,
             "008-test-feature",
             status="active",
             last_completed_phase="brainstorm",
         )
+        meta_path = tmp_path / "features" / "008-test-feature" / ".meta.json"
+        before = meta_path.read_bytes()
 
         # Probe passes (DB healthy for reads) but write raises
         monkeypatch.setattr(
@@ -3144,16 +2872,14 @@ class TestCompletePhaseFallback:
             ),
         )
 
-        state = engine.complete_phase(type_id, "specify")
+        with pytest.raises(WorkflowDBUnavailableError):
+            engine.complete_phase(type_id, "specify")
 
-        assert state.source == "meta_json_fallback"
-        assert state.last_completed_phase == "specify"
-        assert state.current_phase == "design"
-        assert "specify" in state.completed_phases
+        assert meta_path.read_bytes() == before
 
-    def test_probe_fail_uses_meta_json_fallback(self, tmp_path) -> None:
+    def test_probe_fail_raises_db_unavailable(self, tmp_path) -> None:
         """When _check_db_health returns False (probe fail), complete_phase
-        skips DB write entirely and writes to .meta.json."""
+        raises WorkflowDBUnavailableError and does not touch .meta.json."""
         engine, db, type_id = _setup_engine(
             tmp_path,
             workflow_phase="specify",
@@ -3165,14 +2891,15 @@ class TestCompletePhaseFallback:
             status="active",
             last_completed_phase="brainstorm",
         )
+        meta_path = tmp_path / "features" / "008-test-feature" / ".meta.json"
+        before = meta_path.read_bytes()
         # Force health probe to fail -- get_state returns meta_json_fallback
         engine._check_db_health = lambda: False  # type: ignore[assignment]
 
-        state = engine.complete_phase(type_id, "specify")
+        with pytest.raises(WorkflowDBUnavailableError):
+            engine.complete_phase(type_id, "specify")
 
-        assert state.source == "meta_json_fallback"
-        assert state.last_completed_phase == "specify"
-        assert state.current_phase == "design"
+        assert meta_path.read_bytes() == before
 
     def test_db_write_succeeds_readback_fails_returns_source_db(
         self, tmp_path, monkeypatch
@@ -3235,57 +2962,6 @@ class TestCompletePhaseFallback:
         assert state.source == "db"
         assert state.last_completed_phase == "specify"
         assert state.current_phase == "design"
-
-    def test_fallback_sets_started_when_missing(self, tmp_path) -> None:
-        """When fallback writes to .meta.json and phase has no 'started'
-        timestamp, it adds one (spec R2, design I4)."""
-        engine, db, type_id = _setup_engine(
-            tmp_path,
-            workflow_phase="specify",
-            last_completed_phase="brainstorm",
-        )
-        # Create .meta.json with no 'started' on the specify phase
-        _create_meta_json(
-            tmp_path,
-            "008-test-feature",
-            status="active",
-            last_completed_phase="brainstorm",
-        )
-        engine._check_db_health = lambda: False  # type: ignore[assignment]
-
-        engine.complete_phase(type_id, "specify")
-
-        meta_path = tmp_path / "features" / "008-test-feature" / ".meta.json"
-        meta = json.loads(meta_path.read_text())
-        phase_obj = meta["phases"]["specify"]
-        assert "started" in phase_obj, "started timestamp must be set when missing"
-        assert "completed" in phase_obj
-
-    def test_fallback_preserves_existing_started(self, tmp_path) -> None:
-        """When fallback writes to .meta.json and phase already has 'started',
-        it preserves the original value."""
-        engine, db, type_id = _setup_engine(
-            tmp_path,
-            workflow_phase="specify",
-            last_completed_phase="brainstorm",
-        )
-        feature_dir = tmp_path / "features" / "008-test-feature"
-        feature_dir.mkdir(parents=True, exist_ok=True)
-        original_started = "2026-01-01T00:00:00+00:00"
-        meta = {
-            "id": "008",
-            "slug": "test-feature",
-            "status": "active",
-            "lastCompletedPhase": "brainstorm",
-            "phases": {"specify": {"started": original_started}},
-        }
-        (feature_dir / ".meta.json").write_text(json.dumps(meta))
-        engine._check_db_health = lambda: False  # type: ignore[assignment]
-
-        engine.complete_phase(type_id, "specify")
-
-        updated = json.loads((feature_dir / ".meta.json").read_text())
-        assert updated["phases"]["specify"]["started"] == original_started
 
 
 # ===========================================================================
@@ -3483,11 +3159,13 @@ class TestIntegrationDegradation:
         assert state_after.last_completed_phase == "specify"
         assert state_after.current_phase == "design"
 
-    def test_complete_phase_fallback_writes_meta_json(self, tmp_path) -> None:
-        """Full workflow: create feature in DB -> close DB -> complete_phase() writes .meta.json.
+    def test_complete_phase_db_closed_raises_db_unavailable(self, tmp_path) -> None:
+        """Full workflow: create feature in DB -> close DB -> complete_phase()
+        raises WorkflowDBUnavailableError and does not write .meta.json.
 
-        Covers: complete_phase() detecting source='meta_json_fallback' and calling
-        _write_meta_json_fallback() instead of updating the DB.
+        Covers: complete_phase() detecting source='meta_json_fallback' and
+        raising the typed error instead of updating the DB or the file
+        (feature 128: mutations fail loud, no fallback write).
         """
         db = EntityDatabase(":memory:")
         slug = "009-integration-complete"
@@ -3516,30 +3194,20 @@ class TestIntegrationDegradation:
             mode="standard",
             last_completed_phase="brainstorm",
         )
+        meta_path = feature_dir / ".meta.json"
+        before = meta_path.read_bytes()
 
         engine = WorkflowStateEngine(db, str(tmp_path))
 
         # Close the DB to force degradation
         db.close()
 
-        # complete_phase should fall back to writing .meta.json
-        state = engine.complete_phase(type_id, "specify")
+        # complete_phase must raise instead of falling back to a file write
+        with pytest.raises(WorkflowDBUnavailableError) as exc_info:
+            engine.complete_phase(type_id, "specify")
 
-        # Verify returned state reflects the completion
-        assert state.source == "meta_json_fallback"
-        assert state.last_completed_phase == "specify"
-        assert state.current_phase == "design"  # next after specify
-
-        # Verify .meta.json was actually written with updated phase
-        import json as _json
-
-        meta_path = feature_dir / ".meta.json"
-        with open(meta_path) as f:
-            meta = _json.load(f)
-
-        assert meta["lastCompletedPhase"] == "specify"
-        assert "specify" in meta.get("phases", {})
-        assert meta["phases"]["specify"]["completed"] is not None
+        assert "complete_phase" in str(exc_info.value)
+        assert meta_path.read_bytes() == before
 
     def test_list_by_phase_fallback_filesystem_scan(self, tmp_path) -> None:
         """Full workflow: create features in DB -> close DB -> list_by_phase() uses filesystem scan.
@@ -3861,78 +3529,12 @@ class TestHealthProbePerCallNotCached:
 
 
 class TestTransitionPhaseDualConditionDegraded:
-    """Dimension 5 (mutation mindset): transition_phase has TWO degradation paths:
-    1. Primary: get_state returns source='meta_json_fallback' -> skip DB write
-    2. Secondary: DB write fails with sqlite3.Error -> return degraded=True
-
-    Both must set degraded=True. Deleting either path would miss degradation.
-    derived_from: dimension:mutation_mindset (dual-condition degraded)
+    """Feature 128: the two degradation paths this class used to pin (probe
+    failure and mid-write sqlite3.Error) now RAISE WorkflowDBUnavailableError
+    instead of returning a success-shaped degraded=True response -- see
+    TestFailLoudDegradedMode. The surviving test below pins the healthy-path
+    sibling: neither path fires when both the probe and the DB write succeed.
     """
-
-    def test_primary_defense_source_check_sets_degraded(self, tmp_path) -> None:
-        """When get_state returns meta_json_fallback, transition sets degraded=True
-        WITHOUT attempting a DB write.
-        derived_from: dimension:mutation_mindset (dual-condition degraded: primary)
-        """
-        # Given engine with probe failure -> get_state returns meta_json_fallback
-        engine, db, type_id = _setup_engine(
-            tmp_path,
-            workflow_phase="specify",
-            last_completed_phase="brainstorm",
-        )
-        _create_meta_json(
-            tmp_path, "008-test-feature", status="active",
-            last_completed_phase="brainstorm",
-        )
-        engine._check_db_health = lambda: False  # type: ignore[assignment]
-
-        # Track whether update_workflow_phase was called
-        update_called = []
-        original_update = db.update_workflow_phase
-
-        def tracking_update(*a, **kw):
-            update_called.append(True)
-            return original_update(*a, **kw)
-
-        db.update_workflow_phase = tracking_update  # type: ignore[assignment]
-
-        # When transitioning
-        response = engine.transition_phase(type_id, "specify")
-
-        # Then degraded=True and DB write was NOT attempted
-        assert response.degraded is True
-        assert len(update_called) == 0, "DB write should not be attempted in primary defense"
-
-    def test_secondary_defense_write_fail_sets_degraded(
-        self, tmp_path, monkeypatch
-    ) -> None:
-        """When get_state returns source='db' but DB write fails,
-        transition sets degraded=True.
-        derived_from: dimension:mutation_mindset (dual-condition degraded: secondary)
-        """
-        # Given engine with healthy probe but write failure
-        engine, db, type_id = _setup_engine(
-            tmp_path,
-            workflow_phase="specify",
-            last_completed_phase="brainstorm",
-        )
-        feature_dir = tmp_path / "features" / "008-test-feature"
-        feature_dir.mkdir(parents=True, exist_ok=True)
-        (feature_dir / "spec.md").write_text("# Spec")
-
-        monkeypatch.setattr(
-            db, "update_workflow_phase",
-            lambda *a, **kw: (_ for _ in ()).throw(
-                sqlite3.OperationalError("disk full")
-            ),
-        )
-
-        # When transitioning (all gates pass because spec.md exists)
-        response = engine.transition_phase(type_id, "design")
-
-        # Then degraded=True from secondary defense
-        assert response.degraded is True
-        assert all(r.allowed for r in response.results)
 
     def test_normal_path_not_degraded(self, tmp_path) -> None:
         """When both probe and write succeed, degraded=False.
@@ -3957,8 +3559,11 @@ class TestTransitionPhaseDualConditionDegraded:
 
 
 class TestCompletePhaseFallbackWriteVsRead:
-    """Dimension 4 (error propagation): complete_phase distinguishes between
-    read-failure (meta.json unreadable) and write-success-but-degraded.
+    """Dimension 4 (error propagation): complete_phase's read-failure
+    classification (meta.json unreadable) survives feature 128 unchanged --
+    it fires before the primary-defense degraded check ever runs. The
+    write-success-but-degraded half this class used to pin now raises
+    WorkflowDBUnavailableError instead -- see TestFailLoudDegradedMode.
 
     derived_from: dimension:error_propagation (error type classification)
     """
@@ -3986,40 +3591,6 @@ class TestCompletePhaseFallbackWriteVsRead:
         # Then ValueError is raised (feature not found)
         with pytest.raises(ValueError, match="Feature not found"):
             engine.complete_phase(type_id, "specify")
-
-    def test_fallback_write_success_returns_correct_state(
-        self, tmp_path
-    ) -> None:
-        """When DB is degraded but meta.json is readable, complete_phase
-        writes fallback and returns FeatureWorkflowState with source='meta_json_fallback'.
-        derived_from: dimension:error_propagation (partial failure consistency)
-        """
-        # Given engine with probe failure and valid meta.json
-        engine, db, type_id = _setup_engine(
-            tmp_path,
-            workflow_phase="specify",
-            last_completed_phase="brainstorm",
-        )
-        _create_meta_json(
-            tmp_path, "008-test-feature", status="active",
-            last_completed_phase="brainstorm",
-        )
-        engine._check_db_health = lambda: False  # type: ignore[assignment]
-
-        # When completing phase
-        state = engine.complete_phase(type_id, "specify")
-
-        # Then state is correct with fallback source
-        assert state.source == "meta_json_fallback"
-        assert state.last_completed_phase == "specify"
-        assert state.current_phase == "design"
-        assert state.completed_phases == ("brainstorm", "specify")
-
-        # And meta.json was actually updated
-        meta_path = tmp_path / "features" / "008-test-feature" / ".meta.json"
-        with open(meta_path) as f:
-            meta = json.load(f)
-        assert meta["lastCompletedPhase"] == "specify"
 
 
 class TestListByStatusDbQueryRaisesFallback:
@@ -4252,82 +3823,6 @@ class TestValidatePrerequisitesDegradedMode:
         assert "G-23" in guard_ids
 
 
-class TestTransitionPhaseLogsWriteFailure:
-    """Dimension 3 (adversarial): transition_phase logs DB write failure to stderr.
-
-    derived_from: dimension:adversarial (stderr-only logging)
-    """
-
-    def test_write_failure_logged_to_stderr(
-        self, tmp_path, monkeypatch, capsys
-    ) -> None:
-        """When DB write fails in transition_phase, error is logged to stderr.
-        """
-        # Given engine with healthy probe but write failure
-        engine, db, type_id = _setup_engine(
-            tmp_path,
-            workflow_phase="specify",
-            last_completed_phase="brainstorm",
-        )
-        feature_dir = tmp_path / "features" / "008-test-feature"
-        feature_dir.mkdir(parents=True, exist_ok=True)
-        (feature_dir / "spec.md").write_text("# Spec")
-
-        monkeypatch.setattr(
-            db, "update_workflow_phase",
-            lambda *a, **kw: (_ for _ in ()).throw(
-                sqlite3.OperationalError("disk I/O error")
-            ),
-        )
-
-        # When transitioning
-        engine.transition_phase(type_id, "design")
-
-        # Then error is logged to stderr
-        captured = capsys.readouterr()
-        assert "DB write failed in transition_phase" in captured.err
-        assert "disk I/O error" in captured.err
-        assert type_id in captured.err
-
-
-class TestCompletePhaseFallbackLogsToStderr:
-    """Dimension 3 (adversarial): complete_phase logs DB write failure to stderr.
-
-    derived_from: dimension:adversarial (stderr-only logging)
-    """
-
-    def test_write_failure_logged_to_stderr(
-        self, tmp_path, monkeypatch, capsys
-    ) -> None:
-        """When DB write fails in complete_phase, error is logged to stderr.
-        """
-        # Given engine with healthy probe but write failure
-        engine, db, type_id = _setup_engine(
-            tmp_path,
-            workflow_phase="specify",
-            last_completed_phase="brainstorm",
-        )
-        _create_meta_json(
-            tmp_path, "008-test-feature", status="active",
-            last_completed_phase="brainstorm",
-        )
-        monkeypatch.setattr(
-            db, "update_workflow_phase",
-            lambda *a, **kw: (_ for _ in ()).throw(
-                sqlite3.OperationalError("disk full")
-            ),
-        )
-
-        # When completing phase
-        engine.complete_phase(type_id, "specify")
-
-        # Then error is logged to stderr
-        captured = capsys.readouterr()
-        assert "DB write failed in complete_phase" in captured.err
-        assert "disk full" in captured.err
-        assert type_id in captured.err
-
-
 # ===========================================================================
 # Feature 036: Kanban Column Lifecycle Fix
 # ===========================================================================
@@ -4532,3 +4027,330 @@ class TestEngineWorkspaceUuidForwarding:
         )
         with pytest.raises(ValueError, match="workspace_uuid mismatch"):
             engine.complete_phase(type_id, "finish", workspace_uuid=ws_b_uuid)
+
+
+# ===========================================================================
+# Feature 128: Degraded Read-Only Mode -- mutations fail loud
+# ===========================================================================
+
+
+class TestFailLoudDegradedMode:
+    """Feature 128 / PRD FR-10: the frozen engine's MUTATION paths raise
+    WorkflowDBUnavailableError instead of degrading to a fallback write
+    (complete_phase) or a success-shaped response (transition_phase).
+
+    RED-FIRST: authored and run against the un-flipped engine before
+    engine.py's branches were converted (see task 1's report for the
+    recorded pre-flip failures) -- items 1-3 below fail by construction
+    (the old path wrote-and-returned / returned success-shaped degraded);
+    items 4-5 exercise the models.py helper directly and pass unconditionally
+    on both sides of the flip.
+
+    Non-MCP-caller claim (spec FR128-2 / design D3): grep-verified at
+    implement -- engine.py's complete_phase/transition_phase have ONE
+    production caller outside the MCP per-request transaction: doctor's
+    fix_actions calls ctx.engine.complete_phase un-transacted. Benign --
+    the raise is caught by fixer.py:155 and recorded as a failed fix
+    (precision pass at the 360 gate; see task 3's caller-analysis smoke
+    test in test_audit_writes.py).
+    """
+
+    # -- (1) complete_phase: pre-detected degraded branch --------------------
+
+    def test_complete_phase_pre_detected_degraded_raises_and_meta_json_unchanged(
+        self, tmp_path
+    ) -> None:
+        """Pre-detected degraded complete_phase raises the typed error and
+        leaves .meta.json byte-identical (the old path rewrote it)."""
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="specify",
+            last_completed_phase="brainstorm",
+        )
+        _create_meta_json(
+            tmp_path, "008-test-feature", status="active",
+            last_completed_phase="brainstorm",
+        )
+        meta_path = tmp_path / "features" / "008-test-feature" / ".meta.json"
+        before = meta_path.read_bytes()
+        engine._check_db_health = lambda: False  # type: ignore[assignment]
+
+        with pytest.raises(WorkflowDBUnavailableError) as exc_info:
+            engine.complete_phase(type_id, "specify")
+
+        assert "complete_phase" in str(exc_info.value)
+        after = meta_path.read_bytes()
+        assert after == before, ".meta.json must be byte-identical -- no fallback write"
+
+    # -- (2) complete_phase: mid-write sqlite3.Error catch --------------------
+
+    def test_complete_phase_mid_write_sqlite_error_raises_with_cause_chained(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """A mid-write sqlite3.Error (fault-injected db.update_workflow_phase)
+        raises the typed error with __cause__ chained to the original
+        exception."""
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="specify",
+            last_completed_phase="brainstorm",
+        )
+        _create_meta_json(
+            tmp_path, "008-test-feature", status="active",
+            last_completed_phase="brainstorm",
+        )
+        original_exc = sqlite3.OperationalError("disk full")
+        monkeypatch.setattr(
+            db, "update_workflow_phase",
+            lambda *a, **kw: (_ for _ in ()).throw(original_exc),
+        )
+
+        with pytest.raises(WorkflowDBUnavailableError) as exc_info:
+            engine.complete_phase(type_id, "specify")
+
+        assert exc_info.value.__cause__ is original_exc
+
+    # -- (3) transition_phase: both degraded branches -------------------------
+
+    def test_transition_phase_pre_detected_degraded_raises(self, tmp_path) -> None:
+        """Pre-detected degraded transition_phase raises the typed error (old
+        path returned a success-shaped TransitionResponse(degraded=True))."""
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="specify",
+            last_completed_phase="brainstorm",
+        )
+        _create_meta_json(
+            tmp_path, "008-test-feature", status="active",
+            last_completed_phase="brainstorm",
+        )
+        engine._check_db_health = lambda: False  # type: ignore[assignment]
+
+        with pytest.raises(WorkflowDBUnavailableError) as exc_info:
+            engine.transition_phase(type_id, "specify")
+
+        assert "transition_phase" in str(exc_info.value)
+
+    def test_transition_phase_mid_write_sqlite_error_raises_with_cause_chained(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """A mid-write sqlite3.Error in transition_phase raises the typed
+        error with __cause__ chained (old path returned a success-shaped
+        TransitionResponse(degraded=True))."""
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="specify",
+            last_completed_phase="brainstorm",
+        )
+        feature_dir = tmp_path / "features" / "008-test-feature"
+        feature_dir.mkdir(parents=True, exist_ok=True)
+        (feature_dir / "spec.md").write_text("# Spec")
+        original_exc = sqlite3.OperationalError("disk full")
+        monkeypatch.setattr(
+            db, "update_workflow_phase",
+            lambda *a, **kw: (_ for _ in ()).throw(original_exc),
+        )
+
+        with pytest.raises(WorkflowDBUnavailableError) as exc_info:
+            engine.transition_phase(type_id, "design")
+
+        assert exc_info.value.__cause__ is original_exc
+
+    # -- (4) message contract ---------------------------------------------------
+
+    def test_message_names_operation_ref_doctor_and_is_never_transient(
+        self,
+    ) -> None:
+        """db_unavailable_error's message names the operation + feature ref +
+        the doctor recovery hint, and the constructed error is never
+        transient -- even when built from a "database is locked" cause
+        (sqlite_retry.is_transient keys off str(err), not str(cause))."""
+        err = db_unavailable_error(
+            "complete_phase", "feature:008-test-feature", None
+        )
+        message = str(err)
+        assert "complete_phase" in message
+        assert "feature:008-test-feature" in message
+        assert "doctor" in message
+        assert is_transient(err) is False
+
+        locked_cause = sqlite3.OperationalError("database is locked")
+        err2 = db_unavailable_error(
+            "transition_phase", "feature:008-test-feature", locked_cause
+        )
+        assert "transition_phase" in str(err2)
+        assert is_transient(err2) is False
+
+    # -- (5) envelope contract's load-bearing fact -------------------------------
+
+    def test_error_class_is_sqlite_operational_error_subclass(self) -> None:
+        """WorkflowDBUnavailableError IS a sqlite3.OperationalError -- it
+        rides the MCP layer's existing sqlite3.Error mapping with zero new
+        server code."""
+        err = db_unavailable_error(
+            "complete_phase", "feature:008-test-feature", None
+        )
+        assert isinstance(err, sqlite3.OperationalError)
+        assert isinstance(err, sqlite3.Error)
+
+
+# ===========================================================================
+# Feature 128 (deepened): message-contract edges, cause-chain shapes, OQ-1
+# ===========================================================================
+
+
+class TestMessageContractCauseEmbedding:
+    """D1's MESSAGE CONTRACT (models.py docstring): the cause's type name is
+    embedded in parens ONLY when a cause is given; str(cause) itself is
+    NEVER embedded (only type(cause).__name__). These edges exercise the
+    message text directly -- distinct from TestFailLoudDegradedMode's item
+    (4), which only checks substring presence of operation/ref/doctor and
+    the is_transient() outcome.
+    """
+
+    def test_str_matches_exact_constructed_message_for_envelope_interpolation(
+        self,
+    ) -> None:
+        """The MCP _with_error_handling decorator interpolates the raw
+        exception via an f-string (``f"...: {exc}"``), which calls
+        __str__. Pin str(err) to the EXACT D1 template (cause=None) -- a
+        wording/spacing regression here would corrupt the db_unavailable
+        envelope's message field at the MCP boundary, and the existing
+        substring-only checks would miss it."""
+        err = db_unavailable_error(
+            "complete_phase", "feature:008-test-feature", None
+        )
+        expected = (
+            "complete_phase failed for feature:008-test-feature: "
+            "database unavailable. "
+            "State was NOT modified; no fallback file was written (FR-10). "
+            "Recovery: run /pd:doctor, or bash "
+            "plugins/pd/hooks/cleanup-locks.sh for stale-process cleanup."
+        )
+        assert str(err) == expected
+
+    def test_cause_type_name_embedded_never_str_cause_when_cause_given(
+        self,
+    ) -> None:
+        """With a cause, only type(cause).__name__ is embedded in parens --
+        str(cause) (which could carry a path, a "locked" substring, or
+        other unvetted detail) is NEVER embedded."""
+        cause = sqlite3.OperationalError("disk full, path=/secret/db.sqlite3")
+        err = db_unavailable_error(
+            "complete_phase", "feature:008-test-feature", cause
+        )
+        message = str(err)
+        assert "(OperationalError)" in message
+        assert "disk full" not in message
+        assert "/secret/db.sqlite3" not in message
+
+    def test_ref_containing_locked_substring_is_accepted_transient_vector(
+        self,
+    ) -> None:
+        """KNOWN residual vector (D1 docstring, accepted risk): a
+        caller-supplied feature_type_id containing 'locked' makes
+        is_transient() True even though the failure is permanent -- costs
+        ~0.6s of benign retries before the SAME typed error surfaces
+        (outcome stays loud and unwritten; delay only). Document-by-test:
+        this is an accepted trade-off, not a defect to guard against."""
+        err = db_unavailable_error(
+            "complete_phase", "feature:099-fix-database-locked", None
+        )
+        assert is_transient(err) is True
+
+
+class TestCauseChainShapesForBothMutationPaths:
+    """D2: the pre-detected branches raise a bare
+    ``db_unavailable_error(...)`` (no ``from`` clause) -- __cause__ stays
+    None. The mid-write branches chain via ``raise ... from exc``.
+    TestFailLoudDegradedMode's mid-write tests already pin the chained
+    shape; its pre-detected tests only assert the message, not __cause__.
+    This class closes that gap for BOTH complete_phase and transition_phase
+    so a future refactor that accidentally chains a stale exception into
+    the pre-detected raise (e.g. carelessly merging the two branches) is
+    caught.
+    """
+
+    def test_complete_phase_pre_detected_degraded_has_no_cause(
+        self, tmp_path
+    ) -> None:
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="specify",
+            last_completed_phase="brainstorm",
+        )
+        _create_meta_json(
+            tmp_path, "008-test-feature", status="active",
+            last_completed_phase="brainstorm",
+        )
+        engine._check_db_health = lambda: False  # type: ignore[assignment]
+
+        with pytest.raises(WorkflowDBUnavailableError) as exc_info:
+            engine.complete_phase(type_id, "specify")
+
+        assert exc_info.value.__cause__ is None
+
+    def test_transition_phase_pre_detected_degraded_has_no_cause(
+        self, tmp_path
+    ) -> None:
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="specify",
+            last_completed_phase="brainstorm",
+        )
+        _create_meta_json(
+            tmp_path, "008-test-feature", status="active",
+            last_completed_phase="brainstorm",
+        )
+        engine._check_db_health = lambda: False  # type: ignore[assignment]
+
+        with pytest.raises(WorkflowDBUnavailableError) as exc_info:
+            engine.transition_phase(type_id, "specify")
+
+        assert exc_info.value.__cause__ is None
+
+
+class TestOQ1UnconditionalRaiseDespiteRecoveredDb:
+    """Spec Error & Boundary Cases / design D2 OQ-1: 'DB recovers between
+    degraded get_state and the mutation' -- OQ-1 resolved as an
+    UNCONDITIONAL raise, no re-probe. This pins the boundary case the spec
+    names but the RED-FIRST census didn't construct: a transient
+    sqlite3.Error during get_state's DB read (NOT a _check_db_health()
+    failure) produces a meta_json_fallback-sourced state; db.is_healthy()
+    genuinely returns True throughout (the probe itself was never
+    unhealthy -- only the single read call blipped) -- the mutation still
+    raises because the primary defense reads state.source alone and never
+    re-checks live health. Guards a future re-probe regression that would
+    silently let a 'recovered' write through a stale-classified state.
+    """
+
+    def test_complete_phase_raises_even_though_db_is_healthy_at_call_time(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="specify",
+            last_completed_phase="brainstorm",
+        )
+        _create_meta_json(
+            tmp_path, "008-test-feature", status="active",
+            last_completed_phase="brainstorm",
+        )
+        assert db.is_healthy() is True  # sanity: probe is healthy
+
+        # Only the single read call blips -- _check_db_health is untouched
+        # and would report True if called again right now.
+        monkeypatch.setattr(
+            db, "get_workflow_phase",
+            lambda *a, **kw: (_ for _ in ()).throw(
+                sqlite3.OperationalError("transient blip")
+            ),
+        )
+
+        with pytest.raises(WorkflowDBUnavailableError):
+            engine.complete_phase(type_id, "specify")
+
+        # The health probe reports healthy RIGHT NOW -- proving the raise
+        # fired from the stale state.source classification alone, not a
+        # live health re-check (there is none, by design).
+        assert db.is_healthy() is True
