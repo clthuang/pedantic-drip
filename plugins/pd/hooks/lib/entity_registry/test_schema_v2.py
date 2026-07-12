@@ -546,6 +546,9 @@ _V2_LIVE_REFERENCE_NEEDLES = (
     "entity_registry.meta_projection",
     "from entity_registry import meta_projection",
     "from .meta_projection import",
+    "entity_registry.axes",
+    "from entity_registry import axes",
+    "from .axes import",
 )
 
 
@@ -854,6 +857,71 @@ class TestSchemaV2ShipsDark:
         """
         offender_path = tmp_path / "some_relative_meta_projection_consumer.py"
         offender_path.write_text("from .meta_projection import project_meta\n")
+
+        offending_files = _scan_for_live_v2_references(
+            tmp_path, _V2_DARK_MODULES, _V2_LIVE_REFERENCE_NEEDLES
+        )
+
+        assert offending_files == [str(offender_path)]
+
+    # -------------------------------------------------------------
+    # Design D5 group 6 (feature 122): axes.py joins the dark-module set —
+    # its own three-way needle coverage (dotted / non-dotted / relative)
+    # gets the same seeded-offender teeth as the events.py/display.py/
+    # views.py/meta_projection.py pairs above.
+    # -------------------------------------------------------------
+    def test_scan_flags_seeded_offender_with_axes_nondotted_import_spelling(
+        self, tmp_path
+    ):
+        """Mirrors test_scan_flags_seeded_offender_with_nondotted_import_spelling
+        above, for the "axes" needle set instead of "events"."""
+        offender_path = tmp_path / "some_axes_consumer.py"
+        offender_path.write_text("from entity_registry import axes\n")
+
+        offending_files = _scan_for_live_v2_references(
+            tmp_path, _V2_DARK_MODULES, _V2_LIVE_REFERENCE_NEEDLES
+        )
+
+        assert offending_files == [str(offender_path)]
+
+    def test_scan_flags_seeded_offender_with_axes_dotted_import_spelling(
+        self, tmp_path
+    ):
+        """Mirrors test_scan_flags_seeded_offender_with_dotted_import_spelling
+        above, for the "axes" needle set instead of "events"."""
+        offender_path = tmp_path / "some_other_axes_consumer.py"
+        offender_path.write_text(
+            "import entity_registry.axes\n"
+            "\n"
+            "def wire_it_up():\n"
+            "    entity_registry.axes.register_vocab_ddl()\n"
+        )
+
+        offending_files = _scan_for_live_v2_references(
+            tmp_path, _V2_DARK_MODULES, _V2_LIVE_REFERENCE_NEEDLES
+        )
+
+        assert offending_files == [str(offender_path)]
+
+    def test_scan_flags_seeded_offender_with_axes_relative_import_spelling(
+        self, tmp_path
+    ):
+        """The relative spelling — exactly how a same-package sibling
+        (e.g. database.py at feature 132's cutover) would wire axes.py
+        in: neither of the two sibling tests above seeds this form, so a
+        typo'd or dropped "from .axes import" entry in
+        _V2_LIVE_REFERENCE_NEEDLES would pass both of them silently.
+
+        Anticipate: an implementation of the needle-set widening that
+        added only the dotted and non-dotted axes spellings (the pattern
+        the existing events.py/display.py/views.py/meta_projection.py
+        pairs already established) and forgot the relative form would
+        still pass both sibling tests above — this test fails against
+        that specific omission because its fixture contains ONLY the
+        relative spelling.
+        """
+        offender_path = tmp_path / "some_relative_axes_consumer.py"
+        offender_path.write_text("from .axes import PIPELINE_PHASES\n")
 
         offending_files = _scan_for_live_v2_references(
             tmp_path, _V2_DARK_MODULES, _V2_LIVE_REFERENCE_NEEDLES
