@@ -18,7 +18,7 @@ The v2 track has an events log (119) but NO way to read current state from it: t
 ### Out of scope (owning feature)
 - Per-axis VALUE vocabularies / CHECKs on `to_value` (feature 122 — two-axis-phase-status-schema); the view passes values through untyped.
 - `.meta.json` projection fidelity (FR-11 fields: per-phase timing/iterations/reviewerNotes/skippedPhases) — feature 126 owns the lossless meta-projection; 120's view carries CURRENT state per axis, not per-phase history rollups.
-- Wiring any live consumer to the view (132 cutover); Kanban UI rewire (125); `derive_kanban` deletion (125).
+- Wiring any live consumer to the view (132 cutover); Kanban UI rewire (125); `derive_kanban` deletion (125). [CORRECTION 2026-07-12, 122's spec: derive_kanban deletion belongs to 132, not 125 — six live call sites]
 - Doctor changes (133), backfill (132).
 - Any write-path change beyond #061's guard (the event append semantics of 119 are frozen).
 
