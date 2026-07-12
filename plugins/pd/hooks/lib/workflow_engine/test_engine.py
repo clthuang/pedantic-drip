@@ -4047,10 +4047,12 @@ class TestFailLoudDegradedMode:
     on both sides of the flip.
 
     Non-MCP-caller claim (spec FR128-2 / design D3): grep-verified at
-    implement -- engine.py's complete_phase/transition_phase have no
-    production caller that bypasses the MCP transaction boundary; doctor's
-    fix_actions delegates through the MCP layer's ctx.engine, not a direct
-    import (see task 3's caller-analysis smoke test).
+    implement -- engine.py's complete_phase/transition_phase have ONE
+    production caller outside the MCP per-request transaction: doctor's
+    fix_actions calls ctx.engine.complete_phase un-transacted. Benign --
+    the raise is caught by fixer.py:155 and recorded as a failed fix
+    (precision pass at the 360 gate; see task 3's caller-analysis smoke
+    test in test_audit_writes.py).
     """
 
     # -- (1) complete_phase: pre-detected degraded branch --------------------
