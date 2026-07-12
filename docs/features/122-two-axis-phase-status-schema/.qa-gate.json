@@ -1,0 +1,47 @@
+{
+  "feature": "122-two-axis-phase-status-schema",
+  "gate_date": "2026-07-12",
+  "verdict": "PASS",
+  "lanes": {
+    "A_execution_adversarial": {
+      "agent": "general-purpose/sonnet",
+      "verdict": "PASS",
+      "high": 0,
+      "med": 0,
+      "low": 0,
+      "notes": "~55 adversarial assertions, all held: substring/superstring/whitespace/case/NULL-literal grammar edges rejected with axis+value; int/bool/bytes coercion paths rejected; 1MB value renders in <2ms (no truncation/DoS); SQL-injection-shaped to_value safely parameterized, events table intact; NUL-byte value distinguished from 'wip'; wrong-case AXIS caught by 119's CHECK (no layer misattribution); RAISE(ABORT) aborts one statement, transaction composes on; importlib.reload raises duplicate-owner cleanly; -O smoke: both typed raises fire (bare-assert stripping empirically confirmed in control); late-registration semantics verified one-directional create-only, matching spec's declared 132 forward obligation; test_axes.py 2 runs byte-identical (48 cases — figure note fed to gate close). Zero findings."
+    },
+    "B_regression_integration": {
+      "agent": "general-purpose/sonnet",
+      "verdict": "PASS",
+      "high": 0,
+      "med": 1,
+      "low": 0,
+      "notes": "9/9 gates green: full suite 3682/3 skipped; entity_registry 2 runs byte-identical 1613; validate 0 errors/17 pre-existing warnings; hooks 67/67; doctor pin 19 both sides; 13-file inventory fully sanctioned (roadmap.md authorized via FR122-6); sibling diffs 0 bytes verified 3 ways; dark invariant: needle hits only in sanctioned files, 119/120/126 test-fn counts unchanged (34/17/38); session-start.sh live run exit 0 valid JSON zero axes leakage. MED: CHANGELOG 'suite 3631→3671' wrong — measured 3682 at HEAD (+51 = 48+3); root-caused to the 47-vs-48 stale case count never carried into the headline. FIXED."
+    },
+    "C_artifact_truth_audit": {
+      "agent": "general-purpose/opus",
+      "verdict": "FAIL-correctable, PASS after fixes",
+      "high": 0,
+      "med": 3,
+      "low": 3,
+      "notes": "No fabrications. All 10 shas resolve; blocker tally 3 (1+2+0+0, no double-count); 20 dispatches recounted; 8th-consecutive-battery chain verified link-by-link; idle 37h24m exact; ties-130-3rd-lowest recomputed; #068's REPLACE-bypass claim probed BOTH pragma states in live sqlite3; typed raises probed under -O; 184 five-file count ran green. MED-1 FIXED: 3671→3682 (extrapolated figure skipped deepener's +11; chain 3631→3670→3681→3682) across CHANGELOG + retro ×2 + review-history. MED-2 FIXED: retro's briefing-correction #1 misplace 120's blocker at design — 120-retro:12 says SPECIFY (correction-layer error, 2nd occurrence after 126). MED-3 FIXED: CHANGELOG 47→48 cases. LOW-1 FIXED: retro Task-1 '36 cases' misattribution → growth chain 10→36→48. LOW-2 FIXED: rev-list parenthetical claimed 9, returns 10 incl. finish commit (9 pre-finish stands per campaign convention). LOW-3 FIXED: '3rd consecutive briefing' softened — 126's corrections were tally-layer (heading + process note both synced)."
+    }
+  },
+  "policy": "HIGH blocks; MED fix-or-file; LOW fix-or-sidecar",
+  "dispositions": {
+    "med_fixed": [
+      "suite figure 3671 → 3682 with measured chain + dated markers (CHANGELOG, retro trajectory + outcomes, review-history)",
+      "120 blocker phase design → specify in retro briefing-correction #1 (dated)",
+      "CHANGELOG test-case count 47 → 48"
+    ],
+    "med_filed": [],
+    "low_sidecar": [],
+    "low_fixed": [
+      "retro Task-1 case-count misattribution → 10→36→48 growth chain",
+      "rev-list parenthetical 9 → 10-at-gate-time (9 pre-finish stands)",
+      "briefing-error-streak claim softened to figure-correction streak, heading + process note synced"
+    ]
+  },
+  "root_cause_note": "Both MED figure errors trace to one act: shipping an ARITHMETIC EXTRAPOLATION (3670+1) as a measured figure without re-running the full suite post-deepener — the claims-trail-verification class. The five-file 184 figure WAS measured; the full-suite figure was not."
+}
