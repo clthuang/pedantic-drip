@@ -7,10 +7,10 @@ Serial: task 2 depends on task 1's machines; task 3 runs whole-tree QA last.
 ## Task 1 — router.py + machines + lifecycle move
 
 **Why:** design D1/D2/D6/D5b/D7(task-1 half); spec FR123-1 (registry), FR123-4; SC1, SC4-primary.
-**Files:** `plugins/pd/hooks/lib/workflow_engine/router.py` (NEW), `plugins/pd/hooks/lib/workflow_engine/test_router.py` (NEW), `plugins/pd/hooks/lib/entity_registry/entity_lifecycle.py` (DELETE), `plugins/pd/mcp/workflow_state_server.py` (:42 import only), `plugins/pd/hooks/lib/entity_registry/{test_entity_lifecycle.py,test_status_only_lifecycle.py}`, `plugins/pd/mcp/test_workflow_state_server.py` (:32 import + :6359/:6367/:6583), `plugins/pd/ui/tests/test_deepened_app.py` (:1012 import + :1008-1010 comment), `plugins/pd/ui/routes/helpers.py` (D5b comment-only)
+**Files:** `plugins/pd/hooks/lib/workflow_engine/router.py` (NEW), `plugins/pd/hooks/lib/workflow_engine/test_router.py` (NEW), `plugins/pd/hooks/lib/entity_registry/entity_lifecycle.py` (DELETE), `plugins/pd/mcp/workflow_state_server.py` (:42 import + :1768/:1781 wrapper-docstring repoints), `plugins/pd/hooks/lib/entity_registry/{test_entity_lifecycle.py,test_status_only_lifecycle.py}`, `plugins/pd/mcp/test_workflow_state_server.py` (:32 import + :6359/:6367/:6583), `plugins/pd/ui/tests/test_deepened_app.py` (:1012 import + :1008-1010 comment), `plugins/pd/ui/routes/helpers.py` (D5b comment-only)
 **Depends on:** none
 **Do:** plan Task 1 items 1-5 verbatim (red-first SC4 FIRST; derivation literals for test_router.py authored FROM the pre-change tree in the same commit; the reviewing→wip delta asserted as the ONE deliberate change).
-**Acceptance:** full suite green; SC4 red-first evidence in the report; `grep -rnE "agent_review|degraded" plugins/pd/hooks/lib/workflow_engine/router.py` → 0 hits; ENTITY_MACHINES grep resolves to router.py only; report any D-item you could not apply literally — do NOT silently deviate.
+**Acceptance:** full suite green; SC4 red-first evidence in the report; `grep -rnE "agent_review|degraded" plugins/pd/hooks/lib/workflow_engine/router.py` → 0 hits; ENTITY_MACHINES grep resolves to router.py only; `grep -rn "entity_lifecycle" plugins/pd/hooks/lib/ plugins/pd/mcp/ plugins/pd/ui/ --include="*.py"` → 0 hits (module deleted, every textual ref repointed — the mechanized #061 sweep); report any D-item you could not apply literally — do NOT silently deviate.
 
 ## Task 2 — entity_engine/MCP rewire + projector kind-dispatch
 
