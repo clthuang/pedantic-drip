@@ -522,6 +522,7 @@ class TestSequencesBusinessKeyNonUniqueness:
 # uuid7 mints (design D6).
 _V2_DARK_MODULES = {
     "schema_v2.py", "events.py", "display.py", "views.py", "meta_projection.py",
+    "axes.py",
 }
 
 # Every import spelling that would wire a dark v2 module into a live path.
