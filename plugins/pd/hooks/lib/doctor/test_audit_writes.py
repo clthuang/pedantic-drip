@@ -309,6 +309,46 @@ def test_no_unaudited_meta_json_writes() -> None:
         )
 
 
+def test_scratch_offender_function_is_detected_by_the_ast_walker(tmp_path) -> None:
+    """FR128-5: post-128 the allow-list no longer names
+    _write_meta_json_fallback -- the audit's teeth must still catch a
+    hypothetical FUTURE offender reappearing in the engine. This plants a
+    synthetic, non-allow-listed .meta.json writer in a SCRATCH file (never
+    touches the real engine.py) and drives it through
+    _collect_writes_for_marker -- the same detection primitive
+    test_no_unaudited_meta_json_writes walks the real tree with -- proving
+    the teeth still bite. Red-first proof the audit mechanism still works,
+    not just that today's real tree happens to be clean (a vacuous-green
+    risk: FR128-1 deleting the writer could have been paired with an audit
+    regression and this suite would stay green either way without this
+    test).
+    """
+    offender = tmp_path / "fake_engine.py"
+    offender.write_text(
+        "import os\n"
+        "\n"
+        "def _reintroduced_fallback_writer(artifacts_root, feature_type_id, data):\n"
+        "    with open(\n"
+        "        os.path.join(\n"
+        "            artifacts_root, 'features', feature_type_id, '.meta.json'\n"
+        "        ),\n"
+        "        'w',\n"
+        "    ) as f:\n"
+        "        f.write(data)\n"
+    )
+
+    hits = _collect_writes_for_marker(offender, ".meta.json")
+
+    assert len(hits) == 1, f"expected the AST walker to flag exactly one write, got {hits}"
+    _call_node, fn_node = hits[0]
+    assert fn_node is not None
+    assert fn_node.name == "_reintroduced_fallback_writer"
+    assert fn_node.name not in META_JSON_WRITER_ALLOWLIST, (
+        "the synthetic offender must NOT be allow-listed -- if it were, "
+        "this test would be proving nothing"
+    )
+
+
 def test_no_unaudited_backlog_md_writes() -> None:
     """AC-1.2: every backlog.md write must live in an allow-listed function."""
     violations: list[str] = []

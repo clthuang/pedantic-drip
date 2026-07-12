@@ -26,7 +26,7 @@ import pytest
 from entity_registry.database import EntityDatabase
 from entity_registry.dependencies import DependencyManager
 from workflow_engine.entity_engine import CompletionResult, EntityWorkflowEngine
-from workflow_engine.models import TransitionResponse
+from workflow_engine.models import TransitionResponse, WorkflowDBUnavailableError
 from workflow_engine.notifications import Notification, NotificationQueue
 from workflow_engine.rollup import compute_progress
 
@@ -257,6 +257,83 @@ class TestCascadeFailure:
         # Manual cascade retry should work
         unblocked, progress = engine._run_cascade(uuid)
         assert isinstance(unblocked, list)
+
+
+# ---------------------------------------------------------------------------
+# Feature 128 (deepened): frozen-engine delegation inherits the raise
+# ---------------------------------------------------------------------------
+
+
+class TestFrozenEngineDelegationInheritsRaise:
+    """Feature 128 spec Scope / design D4 producer audit: for FEATURE
+    entities, EntityWorkflowEngine.complete_phase/transition_phase's Phase-A
+    call to the frozen engine sits OUTSIDE the Phase-B cascade try/except --
+    so post-128, WorkflowDBUnavailableError "inherits the raise for free"
+    with zero entity_engine.py code changes (design D4/D7: entity_engine.py
+    is touched only for the cascade-skip dedent, not this path). No
+    existing test drives a DB-down scenario THROUGH EntityWorkflowEngine:
+    the MCP-layer degraded tests (test_workflow_state_server.py) construct
+    a bare WorkflowStateEngine directly and never pass entity_engine=...,
+    bypassing this wrapper entirely. This closes that gap.
+
+    Anticipate: a future refactor that wraps Phase A in the same try/except
+    as Phase B (e.g. "simplifying" complete_phase to one try block around
+    the whole method) would silently swallow the raise into a
+    cascade_error string -- resurrecting the FR-10 violation one layer up,
+    above the frozen engine 128 just fixed. These tests would catch that.
+    """
+
+    def test_feature_complete_phase_through_entity_engine_propagates_db_unavailable(
+        self, tmp_path
+    ) -> None:
+        db = _make_db()
+        slug = "013-degraded-delegation"
+        artifacts_root = str(tmp_path)
+        _create_meta_json(
+            artifacts_root, slug, status="active",
+            last_completed_phase="brainstorm",
+        )
+
+        uuid = _register(db, "feature", slug, "Degraded Delegation Feature")
+        _with_phase(
+            db, f"feature:{slug}", "specify", mode="standard",
+            last_completed_phase="brainstorm",
+        )
+
+        engine = _make_engine(db, artifacts_root)
+        engine._frozen_engine._check_db_health = lambda: False  # type: ignore[assignment]
+
+        with pytest.raises(WorkflowDBUnavailableError):
+            engine.complete_phase(uuid, "specify")
+
+    def test_feature_transition_phase_through_entity_engine_propagates_db_unavailable(
+        self, tmp_path
+    ) -> None:
+        db = _make_db()
+        slug = "014-degraded-delegation-t"
+        artifacts_root = str(tmp_path)
+        _create_meta_json(
+            artifacts_root, slug, status="active",
+            last_completed_phase="brainstorm",
+        )
+
+        uuid = _register(
+            db, "feature", slug, "Degraded Delegation Transition Feature",
+        )
+        _with_phase(
+            db, f"feature:{slug}", "specify", mode="standard",
+            last_completed_phase="brainstorm",
+        )
+        feature_dir = os.path.join(artifacts_root, "features", slug)
+        os.makedirs(feature_dir, exist_ok=True)
+        with open(os.path.join(feature_dir, "spec.md"), "w") as f:
+            f.write("# Spec")
+
+        engine = _make_engine(db, artifacts_root)
+        engine._frozen_engine._check_db_health = lambda: False  # type: ignore[assignment]
+
+        with pytest.raises(WorkflowDBUnavailableError):
+            engine.transition_phase(uuid, "design")
 
 
 # ---------------------------------------------------------------------------

@@ -8624,6 +8624,59 @@ class TestTransitionPhaseDegradedInsideTransaction:
         assert entity_after["metadata"] == metadata_before
 
 
+class TestRetainedGuardClassifiesDbUnavailableNotInternal:
+    """Feature 128 (deepened): the retained :925 guard (design D3) raises a
+    bare sqlite3.OperationalError when a degraded=True TransitionResponse
+    reaches the transaction. The existing survivor
+    test_transition_phase_degraded_raises_inside_transaction (above) only
+    asserts data.get('error') is True -- a generic Exception/RuntimeError
+    guard would ALSO satisfy that (caught by _with_error_handling's second
+    except clause and mapped to 'internal'), so it doesn't actually pin the
+    guard's sqlite3.Error typing. This closes that precision gap: the
+    envelope must be error_type == 'db_unavailable' EXACTLY -- the contract
+    feature 123 depends on staying intact until it deletes the guard with
+    the last degraded=True producer (entity_engine._fived_transition).
+    """
+
+    def test_transition_phase_degraded_inside_transaction_is_db_unavailable_not_internal(
+        self, seeded_engine, db, tmp_path, monkeypatch
+    ):
+        feat_dir = os.path.join(str(tmp_path), "features", "009-test")
+        os.makedirs(feat_dir, exist_ok=True)
+        with open(os.path.join(feat_dir, "spec.md"), "w") as f:
+            f.write("# Spec\n")
+        db.update_entity(
+            "feature:009-test",
+            artifact_path=feat_dir,
+            metadata={"id": "009", "slug": "test", "mode": "standard", "branch": "feature/009-test"},
+        )
+
+        degraded_response = TransitionResponse(
+            results=[
+                TransitionResult(
+                    allowed=True, reason="OK", severity=Severity.info, guard_id="G-01",
+                )
+            ],
+            degraded=True,
+        )
+        monkeypatch.setattr(
+            seeded_engine, "transition_phase", lambda *a, **kw: degraded_response
+        )
+
+        result = _process_transition_phase(
+            seeded_engine, "feature:009-test", "design", False, db=db,
+        )
+        data = json.loads(result)
+
+        assert data["error_type"] == "db_unavailable", (
+            f"expected db_unavailable (the sqlite3.Error typing the :925 "
+            f"guard relies on), got {data.get('error_type')!r} -- a "
+            f"generic Exception guard would silently downgrade to "
+            f"'internal'"
+        )
+        assert "engine returned degraded=True inside transaction" in data["message"]
+
+
 class TestProjectMetaJsonCalledAfterTransaction:
     """AC-3: _project_meta_json must be called OUTSIDE the transaction
     (after COMMIT), not inside it."""

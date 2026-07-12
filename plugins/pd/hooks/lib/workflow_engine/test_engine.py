@@ -4190,3 +4190,165 @@ class TestFailLoudDegradedMode:
         )
         assert isinstance(err, sqlite3.OperationalError)
         assert isinstance(err, sqlite3.Error)
+
+
+# ===========================================================================
+# Feature 128 (deepened): message-contract edges, cause-chain shapes, OQ-1
+# ===========================================================================
+
+
+class TestMessageContractCauseEmbedding:
+    """D1's MESSAGE CONTRACT (models.py docstring): the cause's type name is
+    embedded in parens ONLY when a cause is given; str(cause) itself is
+    NEVER embedded (only type(cause).__name__). These edges exercise the
+    message text directly -- distinct from TestFailLoudDegradedMode's item
+    (4), which only checks substring presence of operation/ref/doctor and
+    the is_transient() outcome.
+    """
+
+    def test_str_matches_exact_constructed_message_for_envelope_interpolation(
+        self,
+    ) -> None:
+        """The MCP _with_error_handling decorator interpolates the raw
+        exception via an f-string (``f"...: {exc}"``), which calls
+        __str__. Pin str(err) to the EXACT D1 template (cause=None) -- a
+        wording/spacing regression here would corrupt the db_unavailable
+        envelope's message field at the MCP boundary, and the existing
+        substring-only checks would miss it."""
+        err = db_unavailable_error(
+            "complete_phase", "feature:008-test-feature", None
+        )
+        expected = (
+            "complete_phase failed for feature:008-test-feature: "
+            "database unavailable. "
+            "State was NOT modified; no fallback file was written (FR-10). "
+            "Recovery: run /pd:doctor, or bash "
+            "plugins/pd/hooks/cleanup-locks.sh for stale-process cleanup."
+        )
+        assert str(err) == expected
+
+    def test_cause_type_name_embedded_never_str_cause_when_cause_given(
+        self,
+    ) -> None:
+        """With a cause, only type(cause).__name__ is embedded in parens --
+        str(cause) (which could carry a path, a "locked" substring, or
+        other unvetted detail) is NEVER embedded."""
+        cause = sqlite3.OperationalError("disk full, path=/secret/db.sqlite3")
+        err = db_unavailable_error(
+            "complete_phase", "feature:008-test-feature", cause
+        )
+        message = str(err)
+        assert "(OperationalError)" in message
+        assert "disk full" not in message
+        assert "/secret/db.sqlite3" not in message
+
+    def test_ref_containing_locked_substring_is_accepted_transient_vector(
+        self,
+    ) -> None:
+        """KNOWN residual vector (D1 docstring, accepted risk): a
+        caller-supplied feature_type_id containing 'locked' makes
+        is_transient() True even though the failure is permanent -- costs
+        ~0.6s of benign retries before the SAME typed error surfaces
+        (outcome stays loud and unwritten; delay only). Document-by-test:
+        this is an accepted trade-off, not a defect to guard against."""
+        err = db_unavailable_error(
+            "complete_phase", "feature:099-fix-database-locked", None
+        )
+        assert is_transient(err) is True
+
+
+class TestCauseChainShapesForBothMutationPaths:
+    """D2: the pre-detected branches raise a bare
+    ``db_unavailable_error(...)`` (no ``from`` clause) -- __cause__ stays
+    None. The mid-write branches chain via ``raise ... from exc``.
+    TestFailLoudDegradedMode's mid-write tests already pin the chained
+    shape; its pre-detected tests only assert the message, not __cause__.
+    This class closes that gap for BOTH complete_phase and transition_phase
+    so a future refactor that accidentally chains a stale exception into
+    the pre-detected raise (e.g. carelessly merging the two branches) is
+    caught.
+    """
+
+    def test_complete_phase_pre_detected_degraded_has_no_cause(
+        self, tmp_path
+    ) -> None:
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="specify",
+            last_completed_phase="brainstorm",
+        )
+        _create_meta_json(
+            tmp_path, "008-test-feature", status="active",
+            last_completed_phase="brainstorm",
+        )
+        engine._check_db_health = lambda: False  # type: ignore[assignment]
+
+        with pytest.raises(WorkflowDBUnavailableError) as exc_info:
+            engine.complete_phase(type_id, "specify")
+
+        assert exc_info.value.__cause__ is None
+
+    def test_transition_phase_pre_detected_degraded_has_no_cause(
+        self, tmp_path
+    ) -> None:
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="specify",
+            last_completed_phase="brainstorm",
+        )
+        _create_meta_json(
+            tmp_path, "008-test-feature", status="active",
+            last_completed_phase="brainstorm",
+        )
+        engine._check_db_health = lambda: False  # type: ignore[assignment]
+
+        with pytest.raises(WorkflowDBUnavailableError) as exc_info:
+            engine.transition_phase(type_id, "specify")
+
+        assert exc_info.value.__cause__ is None
+
+
+class TestOQ1UnconditionalRaiseDespiteRecoveredDb:
+    """Spec Error & Boundary Cases / design D2 OQ-1: 'DB recovers between
+    degraded get_state and the mutation' -- OQ-1 resolved as an
+    UNCONDITIONAL raise, no re-probe. This pins the boundary case the spec
+    names but the RED-FIRST census didn't construct: a transient
+    sqlite3.Error during get_state's DB read (NOT a _check_db_health()
+    failure) produces a meta_json_fallback-sourced state; db.is_healthy()
+    genuinely returns True throughout (the probe itself was never
+    unhealthy -- only the single read call blipped) -- the mutation still
+    raises because the primary defense reads state.source alone and never
+    re-checks live health. Guards a future re-probe regression that would
+    silently let a 'recovered' write through a stale-classified state.
+    """
+
+    def test_complete_phase_raises_even_though_db_is_healthy_at_call_time(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        engine, db, type_id = _setup_engine(
+            tmp_path,
+            workflow_phase="specify",
+            last_completed_phase="brainstorm",
+        )
+        _create_meta_json(
+            tmp_path, "008-test-feature", status="active",
+            last_completed_phase="brainstorm",
+        )
+        assert db.is_healthy() is True  # sanity: probe is healthy
+
+        # Only the single read call blips -- _check_db_health is untouched
+        # and would report True if called again right now.
+        monkeypatch.setattr(
+            db, "get_workflow_phase",
+            lambda *a, **kw: (_ for _ in ()).throw(
+                sqlite3.OperationalError("transient blip")
+            ),
+        )
+
+        with pytest.raises(WorkflowDBUnavailableError):
+            engine.complete_phase(type_id, "specify")
+
+        # The health probe reports healthy RIGHT NOW -- proving the raise
+        # fired from the stale state.source classification alone, not a
+        # live health re-check (there is none, by design).
+        assert db.is_healthy() is True
