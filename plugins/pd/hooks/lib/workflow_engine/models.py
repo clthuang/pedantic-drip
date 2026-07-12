@@ -21,14 +21,9 @@ class FeatureWorkflowState:
 
 @dataclass(frozen=True)
 class TransitionResponse:
-    """Wraps transition_phase results with degradation signal."""
+    """Wraps transition_phase results."""
 
     results: tuple[TransitionResult, ...]
-    # Post-128: the frozen engine raises WorkflowDBUnavailableError instead of
-    # producing degraded=True; the SOLE live producer is entity_engine's 5D
-    # _fived_transition DB-error path (until feature 123, which removes this
-    # field with that producer). Retained for envelope schema stability.
-    degraded: bool
 
 
 class WorkflowDBUnavailableError(sqlite3.OperationalError):

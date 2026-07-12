@@ -388,14 +388,36 @@ def _project_meta_json(
 ) -> str | None:
     """Regenerate .meta.json from DB + engine state. Returns warning string or None.
 
+    Kind-dispatches (feature 123 D5): ``feature`` builds the projection
+    below unchanged; ``project`` builds the PROJECT shape (id/slug/status/
+    created/features/milestones/brainstorm_source -- features/milestones/
+    brainstorm_source sourced from DB entity metadata, NOT a read-merge of
+    the existing file); every other kind is a defensive no-op -- bug/
+    brainstorm/backlog/5D-non-project entities have no ``.meta.json``
+    contract, so this closes the H1 clobber hazard at the root instead of
+    gating each of the six call sites individually.
+
     Uses engine.get_state() as authoritative source for last_completed_phase
-    and current_phase. Falls back to entity metadata if engine is None or
-    engine state unavailable. Phase timing details (iterations, reviewerNotes)
-    come from entity metadata only (engine doesn't track these).
+    and current_phase (feature kind only -- the frozen engine has no
+    concept of 5D/lifecycle phases). Falls back to entity metadata if
+    engine is None or engine state unavailable. Phase timing details
+    (iterations, reviewerNotes) come from entity metadata only (engine
+    doesn't track these).
     """
     entity = db.get_entity(feature_type_id)
     if entity is None:
         return f"entity not found: {feature_type_id}"
+
+    kind = entity["kind"]
+    if kind not in ("feature", "project"):
+        # D5: no .meta.json contract is defined for this kind -- a
+        # defensive no-op, not a projection-behavior change (nothing
+        # defined their projection before this feature either).
+        sys.stderr.write(
+            f"[workflow-state] _project_meta_json: no-op for kind={kind!r} "
+            f"({feature_type_id!r}) -- no .meta.json contract for this kind\n"
+        )
+        return None
 
     if feature_dir is None:
         feature_dir = entity.get("artifact_path")
@@ -410,6 +432,33 @@ def _project_meta_json(
         metadata = json.loads(raw_metadata) if isinstance(raw_metadata, str) else raw_metadata
     else:
         metadata = {}
+
+    if kind == "project":
+        # D5: PROJECT shape -- id/slug split from type_id (the 'P{NNN}-slug'
+        # convention feature_lifecycle.init_project_state mints); features/
+        # milestones/brainstorm_source recovered from DB metadata (stored
+        # there by init_project_state, feature_lifecycle.py:257-264);
+        # status from the entity row; created falls back to now only when
+        # the immutable DB column is somehow unset (mirrors the feature
+        # branch's identical pattern below).
+        _, _, id_and_slug = feature_type_id.partition(":")
+        project_id, _, project_slug = id_and_slug.partition("-")
+        project_meta = {
+            "id": project_id,
+            "slug": project_slug,
+            "status": entity.get("status") or "active",
+            "created": entity.get("created_at") or _iso_now(),
+            "features": metadata.get("features", []),
+            "milestones": metadata.get("milestones", []),
+        }
+        if metadata.get("brainstorm_source"):
+            project_meta["brainstorm_source"] = metadata["brainstorm_source"]
+
+        try:
+            _atomic_json_write(meta_path, project_meta)
+            return None  # success
+        except Exception as exc:
+            return f"projection failed: {exc}"
 
     phase_timing = metadata.get("phase_timing", {})
 
@@ -922,12 +971,6 @@ def _process_transition_phase(
                     workspace_uuid=_workspace_uuid or None,
                 )
 
-            # feature 128: STILL LIVE — entity_engine._fived_transition (5D path) returns degraded=True on DB error until feature 123 rebuilds that layer; the frozen engine now raises WorkflowDBUnavailableError instead. 123 deletes this guard with the last producer.
-            if response.degraded:
-                raise sqlite3.OperationalError(
-                    "engine returned degraded=True inside transaction"
-                )
-
             transitioned = all(r.allowed for r in response.results)
 
             if transitioned:
@@ -1004,7 +1047,6 @@ def _process_transition_phase(
     result: dict = {
         "transitioned": transitioned,
         "results": [_serialize_result(r) for r in response.results],
-        "degraded": response.degraded,
     }
     if phase_events_write_failed:
         result["phase_events_write_failed"] = True

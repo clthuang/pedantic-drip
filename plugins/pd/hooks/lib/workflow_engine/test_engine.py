@@ -1900,14 +1900,14 @@ class TestTransitionResponse:
     """Tests for the TransitionResponse frozen dataclass."""
 
     def test_transition_response_construction(self) -> None:
-        """TransitionResponse can be constructed with results tuple and degraded bool."""
+        """TransitionResponse can be constructed with a results tuple."""
         r1 = TransitionResult(
             allowed=True, reason="ok", severity=Severity.info, guard_id="g1"
         )
         r2 = TransitionResult(
             allowed=False, reason="blocked", severity=Severity.block, guard_id="g2"
         )
-        response = TransitionResponse(results=(r1, r2), degraded=False)
+        response = TransitionResponse(results=(r1, r2))
         assert response is not None
 
     def test_transition_response_frozen(self) -> None:
@@ -1915,9 +1915,7 @@ class TestTransitionResponse:
         r1 = TransitionResult(
             allowed=True, reason="ok", severity=Severity.info, guard_id="g1"
         )
-        response = TransitionResponse(results=(r1,), degraded=False)
-        with pytest.raises(FrozenInstanceError):
-            response.degraded = True  # type: ignore[misc]
+        response = TransitionResponse(results=(r1,))
         with pytest.raises(FrozenInstanceError):
             response.results = ()  # type: ignore[misc]
 
@@ -1929,33 +1927,20 @@ class TestTransitionResponse:
         r2 = TransitionResult(
             allowed=False, reason="no", severity=Severity.block, guard_id="g2"
         )
-        response = TransitionResponse(results=(r1, r2), degraded=True)
+        response = TransitionResponse(results=(r1, r2))
         assert response.results == (r1, r2)
-        assert response.degraded is True
 
     def test_transition_response_results_is_tuple(self) -> None:
         """TransitionResponse.results is a tuple, not a list."""
         r1 = TransitionResult(
             allowed=True, reason="ok", severity=Severity.info, guard_id="g1"
         )
-        response = TransitionResponse(results=(r1,), degraded=False)
+        response = TransitionResponse(results=(r1,))
         assert isinstance(response.results, tuple)
-
-    def test_transition_response_degraded_is_bool(self) -> None:
-        """TransitionResponse.degraded is a bool."""
-        r1 = TransitionResult(
-            allowed=True, reason="ok", severity=Severity.info, guard_id="g1"
-        )
-        response_normal = TransitionResponse(results=(r1,), degraded=False)
-        response_degraded = TransitionResponse(results=(r1,), degraded=True)
-        assert isinstance(response_normal.degraded, bool)
-        assert isinstance(response_degraded.degraded, bool)
-        assert response_normal.degraded is False
-        assert response_degraded.degraded is True
 
     def test_transition_response_empty_results(self) -> None:
         """TransitionResponse can have empty results tuple."""
-        response = TransitionResponse(results=(), degraded=False)
+        response = TransitionResponse(results=())
         assert response.results == ()
         assert len(response.results) == 0
 
@@ -3536,8 +3521,9 @@ class TestTransitionPhaseDualConditionDegraded:
     sibling: neither path fires when both the probe and the DB write succeed.
     """
 
-    def test_normal_path_not_degraded(self, tmp_path) -> None:
-        """When both probe and write succeed, degraded=False.
+    def test_normal_path_succeeds(self, tmp_path) -> None:
+        """When both probe and write succeed, the transition succeeds
+        normally (no WorkflowDBUnavailableError; all gates allowed).
         derived_from: dimension:mutation_mindset (return value mutation)
         """
         # Given a fully healthy engine
@@ -3553,8 +3539,7 @@ class TestTransitionPhaseDualConditionDegraded:
         # When transitioning successfully
         response = engine.transition_phase(type_id, "design")
 
-        # Then degraded=False
-        assert response.degraded is False
+        # Then the transition succeeds (no exception; all gates allowed)
         assert all(r.allowed for r in response.results)
 
 
@@ -4114,7 +4099,7 @@ class TestFailLoudDegradedMode:
 
     def test_transition_phase_pre_detected_degraded_raises(self, tmp_path) -> None:
         """Pre-detected degraded transition_phase raises the typed error (old
-        path returned a success-shaped TransitionResponse(degraded=True))."""
+        path returned a success-shaped degraded response)."""
         engine, db, type_id = _setup_engine(
             tmp_path,
             workflow_phase="specify",
@@ -4136,7 +4121,7 @@ class TestFailLoudDegradedMode:
     ) -> None:
         """A mid-write sqlite3.Error in transition_phase raises the typed
         error with __cause__ chained (old path returned a success-shaped
-        TransitionResponse(degraded=True))."""
+        degraded response)."""
         engine, db, type_id = _setup_engine(
             tmp_path,
             workflow_phase="specify",

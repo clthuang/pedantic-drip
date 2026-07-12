@@ -19,6 +19,7 @@ if _hooks_lib not in sys.path:
 from entity_registry.database import EntityDatabase
 from transition_gate.models import Severity, TransitionResult
 from workflow_engine.engine import WorkflowStateEngine
+from workflow_engine.entity_engine import EntityWorkflowEngine
 from workflow_engine.models import FeatureWorkflowState, TransitionResponse
 
 from entity_registry.frontmatter_sync import DriftReport, FieldMismatch
@@ -77,6 +78,7 @@ from workflow_state_server import (
     _process_reconcile_check,
     _process_reconcile_frontmatter,
     _process_reconcile_status,
+    _process_reproject_meta_json,
     _process_transition_entity_phase,
     _process_transition_phase,
     _process_validate_prerequisites,
@@ -412,7 +414,6 @@ class TestProcessTransitionPhase:
         )
         data = json.loads(result)
         assert data["transitioned"] is True
-        assert data["degraded"] is False
 
     def test_blocked_g08(self, seeded_engine):
         # No spec.md in tmp_path → G-08 blocks transition to design
@@ -1326,7 +1327,7 @@ class TestAdversarial:
         assert "not found" in data["message"].lower()
 
     def test_transition_result_json_has_exact_key_set(self, seeded_engine):
-        """Transition response JSON has exactly {transitioned, results, degraded}.
+        """Transition response JSON has exactly {transitioned, results}.
         derived_from: dimension:adversarial (JSON shape contract)
 
         Anticipate: Extra or missing keys would break MCP clients parsing the
@@ -1340,9 +1341,10 @@ class TestAdversarial:
             db=seeded_engine.db,
         )
         data = json.loads(result)
-        # Then the top-level keys are exactly {transitioned, results, degraded}
-        # (blocked transitions don't include started_at or projection keys)
-        assert set(data.keys()) == {"transitioned", "results", "degraded"}
+        # Then the top-level keys are exactly {transitioned, results} (D4:
+        # the mutation-path degraded key is removed; blocked transitions
+        # don't include started_at or projection keys either)
+        assert set(data.keys()) == {"transitioned", "results"}
 
     def test_validate_result_json_has_exact_key_set(self, seeded_engine):
         """Validate response JSON has exactly {all_passed, results}.
@@ -1421,7 +1423,7 @@ class TestMutationMindset:
         ]
         monkeypatch.setattr(
             seeded_engine, "transition_phase",
-            lambda *a, **kw: TransitionResponse(results=tuple(mixed_results), degraded=False),
+            lambda *a, **kw: TransitionResponse(results=tuple(mixed_results)),
         )
         # When transitioning
         result = _process_transition_phase(
@@ -1431,7 +1433,6 @@ class TestMutationMindset:
         data = json.loads(result)
         # Then transitioned must be False (all() would be False, any() would be True)
         assert data["transitioned"] is False
-        assert data["degraded"] is False
 
     def test_all_passed_uses_all_not_any(self, seeded_engine, monkeypatch):
         """all_passed must be True only when ALL results are allowed, not just any.
@@ -2022,7 +2023,7 @@ class TestTransitionDegradedResponseShape:
     """Feature 128: transition_phase with the DB unavailable now returns the
     structured db_unavailable ERROR envelope shape ({error, error_type,
     message, recovery_hint}) instead of a success-shaped {transitioned,
-    results, degraded} response.
+    results} response.
 
     derived_from: dimension:adversarial (JSON shape contract when DB unavailable)
     """
@@ -2053,7 +2054,7 @@ class TestTransitionDegradedResponseShape:
         )
         data = json.loads(result)
 
-        # Then the exact error envelope key set -- not {transitioned, results, degraded}
+        # Then the exact error envelope key set -- not {transitioned, results}
         assert set(data.keys()) == {"error", "error_type", "message", "recovery_hint"}
         assert data["error_type"] == "db_unavailable"
 
@@ -4856,6 +4857,200 @@ class TestProjectMetaJson:
             meta2 = json.load(f)
         # The re-projected data should still have the original value
         assert meta2["phase_summaries"][0]["phase"] == "specify"
+
+    # -- Feature 123 D5: kind-dispatch --
+
+    def test_project_kind_builds_project_shape(self, db, tmp_path):
+        """D5: project kind builds PROJECT shape (id/slug/status/created/
+        features/milestones/brainstorm_source), not the feature shape."""
+        project_dir = os.path.join(str(tmp_path), "projects", "P02-widget")
+        os.makedirs(project_dir, exist_ok=True)
+        metadata = {
+            "features": ["feature:001-a"],
+            "milestones": ["m1", "m2"],
+            "brainstorm_source": "brainstorm:002-source",
+        }
+        db.register_entity(
+            "project", "P02-widget", "widget",
+            artifact_path=project_dir,
+            status="active",
+            metadata=metadata,
+            project_id="__unknown__",
+        )
+
+        result = _project_meta_json(db, None, "project:P02-widget", project_dir)
+        assert result is None
+
+        with open(os.path.join(project_dir, ".meta.json")) as f:
+            meta = json.load(f)
+        created = meta.pop("created", None)
+        assert meta == {
+            "id": "P02",
+            "slug": "widget",
+            "status": "active",
+            "features": ["feature:001-a"],
+            "milestones": ["m1", "m2"],
+            "brainstorm_source": "brainstorm:002-source",
+        }
+        assert created  # DB entities.created_at is NOT NULL -- always truthy
+
+    def test_project_kind_omits_brainstorm_source_when_absent(self, db, tmp_path):
+        """D5: brainstorm_source is optional -- omitted (not null) when the
+        project has none, matching init_project_state's own convention."""
+        project_dir = os.path.join(str(tmp_path), "projects", "P03-nosource")
+        os.makedirs(project_dir, exist_ok=True)
+        metadata = {"features": [], "milestones": []}
+        db.register_entity(
+            "project", "P03-nosource", "nosource",
+            artifact_path=project_dir,
+            status="active",
+            metadata=metadata,
+            project_id="__unknown__",
+        )
+
+        result = _project_meta_json(db, None, "project:P03-nosource", project_dir)
+        assert result is None
+
+        with open(os.path.join(project_dir, ".meta.json")) as f:
+            meta = json.load(f)
+        assert "brainstorm_source" not in meta
+        assert meta["features"] == []
+        assert meta["milestones"] == []
+
+    def test_other_kind_is_noop_without_writing(self, db, tmp_path):
+        """D5: kinds with no .meta.json contract (e.g. task) are a defensive
+        no-op -- no file written, no exception, even with an artifact_path
+        set (the exact latent-clobber shape the design calls out)."""
+        task_dir = os.path.join(str(tmp_path), "tasks", "001-noop")
+        os.makedirs(task_dir, exist_ok=True)
+        db.register_entity(
+            "task", "001-noop", "noop",
+            artifact_path=task_dir,
+            status="active",
+            project_id="__unknown__",
+        )
+        db.create_workflow_phase("task:001-noop", workflow_phase="define")
+
+        result = _project_meta_json(db, None, "task:001-noop", task_dir)
+        assert result is None
+        assert not os.path.exists(os.path.join(task_dir, ".meta.json"))
+
+
+# ---------------------------------------------------------------------------
+# Feature 123 SC2 (red-first): project-kind projection must not clobber
+# features/milestones with the feature-shaped writer (design D5/H1).
+# ---------------------------------------------------------------------------
+
+
+class TestProjectKindProjectionPreservesShape:
+    """SC2: project-kind transitions/completions/reprojects must preserve
+    PROJECT .meta.json shape (features/milestones), never clobber with the
+    feature-shaped writer. RED-FIRST (pre-D5): each of the three entry
+    points below overwrites with feature shape unconditionally, losing
+    features/milestones (H1's clobber hazard). POST-D5: project shape is
+    retained, features/milestones byte-preserved, status updated.
+    """
+
+    @staticmethod
+    def _seed_project(db, tmp_path, *, phase="discover"):
+        project_dir = os.path.join(str(tmp_path), "projects", "P01-demo")
+        os.makedirs(project_dir, exist_ok=True)
+        metadata = {
+            "id": "P01",
+            "slug": "demo",
+            "features": ["feature:001-a", "feature:002-b"],
+            "milestones": ["m1", "m2"],
+            "brainstorm_source": "brainstorm:001-source",
+        }
+        db.register_entity(
+            "project", "P01-demo", "demo",
+            artifact_path=project_dir,
+            status="active",
+            metadata=metadata,
+            project_id="__unknown__",
+        )
+        db.create_workflow_phase(
+            "project:P01-demo", workflow_phase=phase, mode="standard",
+        )
+        # A real PROJECT-shaped .meta.json already on disk, simulating
+        # init_project_state's original write (feature_lifecycle.py:293-306).
+        meta_path = os.path.join(project_dir, ".meta.json")
+        with open(meta_path, "w") as f:
+            json.dump({
+                "id": "P01",
+                "slug": "demo",
+                "status": "active",
+                "created": "2026-01-01T00:00:00+00:00",
+                "features": ["feature:001-a", "feature:002-b"],
+                "milestones": ["m1", "m2"],
+                "brainstorm_source": "brainstorm:001-source",
+            }, f)
+        return "project:P01-demo", project_dir
+
+    def test_transition_phase_preserves_project_shape(self, db, tmp_path):
+        """transition_phase on a project: id must not clobber features/
+        milestones -- TODAY it does (no kind gate on the projector)."""
+        type_id, project_dir = self._seed_project(db, tmp_path, phase="discover")
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        entity_engine = EntityWorkflowEngine(db, str(tmp_path))
+
+        result = _process_transition_phase(
+            engine, type_id, "define", False,
+            db=db, entity_engine=entity_engine,
+        )
+        data = json.loads(result)
+        assert data["transitioned"] is True
+
+        with open(os.path.join(project_dir, ".meta.json")) as f:
+            meta = json.load(f)
+        assert meta["features"] == ["feature:001-a", "feature:002-b"], (
+            f"features lost -- clobbered by feature-shaped writer: {meta!r}"
+        )
+        assert meta["milestones"] == ["m1", "m2"], (
+            f"milestones lost -- clobbered by feature-shaped writer: {meta!r}"
+        )
+
+    def test_complete_phase_preserves_project_shape(self, db, tmp_path):
+        """complete_phase on a project: id must not clobber features/
+        milestones -- TODAY it does (no kind gate on the projector)."""
+        type_id, project_dir = self._seed_project(db, tmp_path, phase="discover")
+        engine = WorkflowStateEngine(db, str(tmp_path))
+        entity_engine = EntityWorkflowEngine(db, str(tmp_path))
+
+        result = _process_complete_phase(
+            engine, type_id, "discover",
+            db=db, entity_engine=entity_engine,
+        )
+        data = json.loads(result)
+        assert "error" not in data, f"unexpected error envelope: {data!r}"
+
+        with open(os.path.join(project_dir, ".meta.json")) as f:
+            meta = json.load(f)
+        assert meta["features"] == ["feature:001-a", "feature:002-b"], (
+            f"features lost -- clobbered by feature-shaped writer: {meta!r}"
+        )
+        assert meta["milestones"] == ["m1", "m2"], (
+            f"milestones lost -- clobbered by feature-shaped writer: {meta!r}"
+        )
+
+    def test_reproject_meta_json_preserves_project_shape(self, db, tmp_path):
+        """reproject_meta_json on a project: id must not clobber features/
+        milestones -- TODAY it does (no kind gate on the projector)."""
+        type_id, project_dir = self._seed_project(db, tmp_path, phase="discover")
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        result = _process_reproject_meta_json(engine, db, str(tmp_path), type_id)
+        data = json.loads(result)
+        assert data["projected"] is True, f"unexpected envelope: {data!r}"
+
+        with open(os.path.join(project_dir, ".meta.json")) as f:
+            meta = json.load(f)
+        assert meta["features"] == ["feature:001-a", "feature:002-b"], (
+            f"features lost -- clobbered by feature-shaped writer: {meta!r}"
+        )
+        assert meta["milestones"] == ["m1", "m2"], (
+            f"milestones lost -- clobbered by feature-shaped writer: {meta!r}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -8572,110 +8767,6 @@ class TestTransitionPhaseAtomicRollback:
             "workflow_phases row changed despite update_entity failing inside "
             "the same transaction -- rollback not working"
         )
-
-
-class TestTransitionPhaseDegradedInsideTransaction:
-    """AC-3: When engine returns degraded=True inside a transaction,
-    an OperationalError should be raised and the transaction rolled back."""
-
-    def test_transition_phase_degraded_raises_inside_transaction(
-        self, seeded_engine, db, tmp_path, monkeypatch
-    ):
-        feat_dir = os.path.join(str(tmp_path), "features", "009-test")
-        os.makedirs(feat_dir, exist_ok=True)
-        with open(os.path.join(feat_dir, "spec.md"), "w") as f:
-            f.write("# Spec\n")
-        db.update_entity(
-            "feature:009-test",
-            artifact_path=feat_dir,
-            metadata={"id": "009", "slug": "test", "mode": "standard", "branch": "feature/009-test"},
-        )
-
-        # Create a degraded response
-        degraded_response = TransitionResponse(
-            results=[
-                TransitionResult(
-                    allowed=True, reason="OK", severity=Severity.info, guard_id="G-01",
-                )
-            ],
-            degraded=True,
-        )
-        monkeypatch.setattr(
-            seeded_engine, "transition_phase", lambda *a, **kw: degraded_response
-        )
-
-        # Snapshot metadata
-        entity_before = db.get_entity("feature:009-test")
-        metadata_before = entity_before["metadata"]
-
-        result = _process_transition_phase(
-            seeded_engine, "feature:009-test", "design", False, db=db,
-        )
-
-        # With atomic transactions + degraded check, the transaction should be
-        # rolled back and the result should indicate an error.
-        data = json.loads(result)
-        assert data.get("error") is True, (
-            "Degraded response inside transaction should raise OperationalError "
-            "which _with_error_handling converts to an error response"
-        )
-
-        # Metadata should not have been updated
-        entity_after = db.get_entity("feature:009-test")
-        assert entity_after["metadata"] == metadata_before
-
-
-class TestRetainedGuardClassifiesDbUnavailableNotInternal:
-    """Feature 128 (deepened): the retained :925 guard (design D3) raises a
-    bare sqlite3.OperationalError when a degraded=True TransitionResponse
-    reaches the transaction. The existing survivor
-    test_transition_phase_degraded_raises_inside_transaction (above) only
-    asserts data.get('error') is True -- a generic Exception/RuntimeError
-    guard would ALSO satisfy that (caught by _with_error_handling's second
-    except clause and mapped to 'internal'), so it doesn't actually pin the
-    guard's sqlite3.Error typing. This closes that precision gap: the
-    envelope must be error_type == 'db_unavailable' EXACTLY -- the contract
-    feature 123 depends on staying intact until it deletes the guard with
-    the last degraded=True producer (entity_engine._fived_transition).
-    """
-
-    def test_transition_phase_degraded_inside_transaction_is_db_unavailable_not_internal(
-        self, seeded_engine, db, tmp_path, monkeypatch
-    ):
-        feat_dir = os.path.join(str(tmp_path), "features", "009-test")
-        os.makedirs(feat_dir, exist_ok=True)
-        with open(os.path.join(feat_dir, "spec.md"), "w") as f:
-            f.write("# Spec\n")
-        db.update_entity(
-            "feature:009-test",
-            artifact_path=feat_dir,
-            metadata={"id": "009", "slug": "test", "mode": "standard", "branch": "feature/009-test"},
-        )
-
-        degraded_response = TransitionResponse(
-            results=[
-                TransitionResult(
-                    allowed=True, reason="OK", severity=Severity.info, guard_id="G-01",
-                )
-            ],
-            degraded=True,
-        )
-        monkeypatch.setattr(
-            seeded_engine, "transition_phase", lambda *a, **kw: degraded_response
-        )
-
-        result = _process_transition_phase(
-            seeded_engine, "feature:009-test", "design", False, db=db,
-        )
-        data = json.loads(result)
-
-        assert data["error_type"] == "db_unavailable", (
-            f"expected db_unavailable (the sqlite3.Error typing the :925 "
-            f"guard relies on), got {data.get('error_type')!r} -- a "
-            f"generic Exception guard would silently downgrade to "
-            f"'internal'"
-        )
-        assert "engine returned degraded=True inside transaction" in data["message"]
 
 
 class TestProjectMetaJsonCalledAfterTransaction:

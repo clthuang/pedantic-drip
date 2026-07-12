@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import tempfile
 from unittest.mock import MagicMock, patch
 
@@ -671,7 +672,6 @@ class TestTransitionPhase:
         engine = _make_engine(db, str(tmp_path))
         response = engine.transition_phase(task_uuid, "deliver")
 
-        assert not response.degraded
         assert any(r.allowed for r in response.results)
 
 
@@ -736,7 +736,6 @@ class TestFiveDProjectTransition:
         phases = ["discover", "define", "design", "deliver", "debrief"]
         for i, phase in enumerate(phases[:-1]):
             response = engine.transition_phase(proj_uuid, phases[i + 1])
-            assert not response.degraded
             assert any(r.allowed for r in response.results), (
                 f"Transition to {phases[i + 1]} should be allowed"
             )
@@ -800,7 +799,6 @@ class TestFiveDOutOfSequence:
         engine = _make_engine(db, str(tmp_path))
         response = engine.transition_phase(proj_uuid, "deliver")
 
-        assert not response.degraded
         assert any(
             not r.allowed and "skip" in r.reason.lower()
             for r in response.results
@@ -1407,7 +1405,6 @@ class TestInitiativeFullLifecycle:
 
         for i in range(len(phases) - 1):
             response = engine.transition_phase(init_uuid, phases[i + 1])
-            assert not response.degraded
             assert any(r.allowed for r in response.results), (
                 f"Transition from {phases[i]} to {phases[i + 1]} should be allowed"
             )
@@ -1460,7 +1457,6 @@ class TestObjectiveFullLifecycle:
 
         for i in range(len(phases) - 1):
             response = engine.transition_phase(obj_uuid, phases[i + 1])
-            assert not response.degraded
             assert any(r.allowed for r in response.results)
 
     def test_objective_discover_phase_rejected(self, tmp_path):
@@ -1941,3 +1937,130 @@ class TestAnomalyPropagation:
         result = engine.complete_phase(task_uuid, "debrief")
         # Should complete without error — no parent to propagate to
         assert result.state is not None
+
+
+# ---------------------------------------------------------------------------
+# Feature 123 SC3 (red-first): both 5D tolerate shapes convert to fail-loud.
+# TODAY: _fived_transition returns TransitionResponse(degraded=True) on a DB
+# error; _fived_complete returns None + stderr. POST-D3: BOTH raise
+# WorkflowDBUnavailableError with pre-state intact (spec FR123-3 / H7).
+# ---------------------------------------------------------------------------
+
+
+class TestFiveDFailLoud:
+    """SC3: 5D DB-error tolerate shapes convert to fail-loud (design D3)."""
+
+    def test_fived_transition_db_error_raises_and_preserves_state(self, tmp_path):
+        db = _make_db()
+        proj_uuid = _register(db, "project", "096-failloud", "FailLoud")
+        _with_phase(db, "project:096-failloud", "discover", mode="standard")
+        engine = _make_engine(db, str(tmp_path))
+
+        row_before = db.get_workflow_phase("project:096-failloud")
+
+        def _boom(*args, **kwargs):
+            raise sqlite3.OperationalError("database is locked")
+
+        with patch.object(db, "update_workflow_phase", side_effect=_boom):
+            with pytest.raises(WorkflowDBUnavailableError):
+                engine.transition_phase(proj_uuid, "define")
+
+        row_after = db.get_workflow_phase("project:096-failloud")
+        assert row_after == row_before, (
+            "workflow_phases row must be unchanged after a fault-injected "
+            "DB error -- no partial write"
+        )
+
+    def test_fived_complete_db_error_raises_and_preserves_state(self, tmp_path):
+        db = _make_db()
+        proj_uuid = _register(db, "project", "097-failloud-c", "FailLoudC")
+        _with_phase(db, "project:097-failloud-c", "discover", mode="standard")
+        engine = _make_engine(db, str(tmp_path))
+
+        row_before = db.get_workflow_phase("project:097-failloud-c")
+
+        def _boom(*args, **kwargs):
+            raise sqlite3.OperationalError("database is locked")
+
+        with patch.object(db, "update_workflow_phase", side_effect=_boom):
+            with pytest.raises(WorkflowDBUnavailableError):
+                engine.complete_phase(proj_uuid, "discover")
+
+        row_after = db.get_workflow_phase("project:097-failloud-c")
+        assert row_after == row_before, (
+            "workflow_phases row must be unchanged after a fault-injected "
+            "DB error -- no partial write"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Feature 123 D7 (new, beyond red-first): H3's kind-collapse regression pin
+# -- an entity dict carrying only ``kind`` (no legacy ``entity_type`` alias)
+# must flow through both FiveDBackend methods without KeyError.
+# ---------------------------------------------------------------------------
+
+
+class TestKindKeyCollapse:
+    """H3 regression guard: FiveDBackend reads ``entity["kind"]`` only."""
+
+    def test_fived_transition_uses_kind_not_entity_type(self, tmp_path):
+        db = _make_db()
+        proj_uuid = _register(db, "project", "098-kindonly", "KindOnly")
+        _with_phase(db, "project:098-kindonly", "discover", mode="standard")
+        engine = _make_engine(db, str(tmp_path))
+
+        entity = db.get_entity_by_uuid(proj_uuid)
+        del entity["entity_type"]
+
+        response = engine._fived_transition(entity, "define")
+        assert response.results[0].allowed
+
+    def test_fived_complete_uses_kind_not_entity_type(self, tmp_path):
+        db = _make_db()
+        proj_uuid = _register(db, "project", "099-kindonly-c", "KindOnlyC")
+        _with_phase(db, "project:099-kindonly-c", "discover", mode="standard")
+        engine = _make_engine(db, str(tmp_path))
+
+        entity = db.get_entity_by_uuid(proj_uuid)
+        del entity["entity_type"]
+
+        state = engine._fived_complete(entity, "discover")
+        assert state is not None
+        assert state.last_completed_phase == "discover"
+
+
+# ---------------------------------------------------------------------------
+# Feature 123 Risk mitigation: double-evaluation regression guard (B2's
+# class). _fived_transition must call get_template exactly once per
+# transition (via the machine's validate()), never twice (template guard +
+# ordering, as the deleted hand-rolled block did).
+# ---------------------------------------------------------------------------
+
+
+class TestFivedTransitionSingleTemplateEvaluation:
+    def test_fived_transition_calls_get_template_exactly_once(
+        self, tmp_path, monkeypatch
+    ):
+        import workflow_engine.router as router_mod
+
+        db = _make_db()
+        proj_uuid = _register(db, "project", "100-spy", "Spy")
+        _with_phase(db, "project:100-spy", "discover", mode="standard")
+        engine = _make_engine(db, str(tmp_path))
+
+        calls = []
+        original = router_mod.get_template
+
+        def _spy(*args, **kwargs):
+            calls.append((args, kwargs))
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(router_mod, "get_template", _spy)
+
+        entity = db.get_entity_by_uuid(proj_uuid)
+        engine._fived_transition(entity, "define")
+
+        assert len(calls) == 1, (
+            f"expected exactly 1 get_template call from FiveDMachine.phases(), "
+            f"got {len(calls)}: {calls!r}"
+        )
