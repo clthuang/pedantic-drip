@@ -14,7 +14,7 @@ Serial: task 2 depends on task 1's machines; task 3 runs whole-tree QA last.
 
 ## Task 2 — entity_engine/MCP rewire + projector kind-dispatch
 
-**Why:** design D3/D4/D5/D7(task-2 half); spec FR123-2/3/5; SC2, SC3.
+**Why:** design D3/D4/D5/D7(task-2 half); spec FR123-2/3/5; SC2, SC3, SC1-partial (the old-paths-DELETED half).
 **Files:** `plugins/pd/hooks/lib/workflow_engine/{entity_engine.py,models.py,engine.py,test_engine.py,test_entity_engine.py}` (engine.py = the one-line :111 `degraded=False` drop ONLY), `plugins/pd/mcp/workflow_state_server.py`, `plugins/pd/mcp/test_workflow_state_server.py` (:1328-1345 + new red-first/no-op/kind-collapse tests)
 **Depends on:** task 1
 **Do:** plan Task 2 items 1-6 verbatim (red-first ×5 FIRST — SC2 across ALL THREE entry points, SC3 both shapes; then D3's :478-546 deletion + fail-loud conversion + three kind-reads; models.py field+comment+docstring; D4's two deletions with :246 untouched; D5's kind-dispatch with created via `entity.get("created_at") or _iso_now()`).
