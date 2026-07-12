@@ -37,7 +37,7 @@ Step 1 ships the module + its shape/registration/view pins as one vertical slice
 ## Risks & Mitigations
 
 - **Trigger leakage into sibling suites:** the register-on-demand mechanism + step 2's leak-detection pin make isolation structural, not conventional.
-- **RAISE expression portability:** version assert in `register_vocab_ddl()` fails loud pre-3.47; venv probed at 3.53.2.
+- **RAISE expression portability:** version check in `register_vocab_ddl()` (typed RuntimeError — dated design D2 battery note) fails loud pre-3.47; venv probed at 3.53.2.
 - **FK failures in raw-INSERT probes:** events.entity_uuid REFERENCES entities — reuse the seeded-entity idiom; a probe failing on FK (not the vocab trigger) is a fixture bug, distinguish via the exception message assert.
 - **Reviewer cap:** 3 iterations per reviewer, then documented escalation.
 
