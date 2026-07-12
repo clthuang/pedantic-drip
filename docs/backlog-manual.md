@@ -160,3 +160,6 @@ full-table; a frequently-polled per-entity entity_state read needs a plan fix.
 **Source:** feature 127 security review (2026-07-12, battery S2). **Owner:** workflow_state_server projection path (pre-existing, shared by 5 call sites incl. reproject_meta_json). **Severity:** LOW (defense-in-depth).
 - The projection writes `<entity.artifact_path>/.meta.json` with no containment check; a poisoned artifact_path (via a separate register/update path — those inputs are parameterized but unconstrained) could steer the write outside the tree.
 - Fix shape: resolve artifact_path and assert it is within artifacts_root before the open(); warn-and-skip otherwise. Evidence: workflow_state_server.py:401-405.
+
+## #071 — Consolidate duplicate _seed_workflow_row test helper into conftest.py
+**Source:** feature 125 battery (code-quality-reviewer S5, pre-existing). `_seed_workflow_row` is defined twice with divergent signatures — a 4-param version in `plugins/pd/ui/tests/test_app.py` and a 7-param superset in `plugins/pd/ui/tests/test_deepened_app.py`. Consolidate into `plugins/pd/ui/tests/conftest.py` next time either file is churned (candidate: feature 132's seed-token removal sweep). Out of 125's diff scope; does not affect correctness.
