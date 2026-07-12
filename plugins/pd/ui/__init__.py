@@ -41,9 +41,8 @@ PHASE_COLORS = {
 COLUMN_COLORS = {
     "backlog": "badge-ghost",
     "prioritised": "badge-info",
+    "ready": "badge-secondary",
     "wip": "badge-primary",
-    "agent_review": "badge-secondary",
-    "human_review": "badge-accent",
     "blocked": "badge-error",
     "documenting": "badge-warning",
     "completed": "badge-success",

@@ -63,7 +63,7 @@
                 <th>Type ID</th>
                 <th>Type</th>
                 <th>Status</th>
-                <th>Kanban Column</th>
+                <th>Execution Status</th>
                 <th>Updated</th>
             </tr>
         </thead>
@@ -78,7 +78,7 @@
                     <span class="badge badge-sm {{ status_colors.get(entity.status, 'badge-ghost') }}">{{ entity.status }}</span>
                     {% endif %}
                 </td>
-                <td>{{ entity.kanban_column if entity.kanban_column is not none else '' }}</td>
+                <td>{{ entity.execution_status if entity.execution_status is not none else '' }}</td>
                 <td>{{ entity.updated_at | timeago }}</td>
             </tr>
             {% endfor %}

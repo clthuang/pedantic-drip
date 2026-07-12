@@ -81,12 +81,13 @@ class TestColorMaps:
         }
         assert set(PHASE_COLORS.keys()) == expected
 
-    def test_column_colors_match_db_check_constraint(self):
-        expected = {
-            "backlog", "prioritised", "wip", "agent_review",
-            "human_review", "blocked", "documenting", "completed",
-        }
-        assert set(COLUMN_COLORS.keys()) == expected
+    def test_column_colors_match_execution_statuses(self):
+        """COLUMN_COLORS keys must match EXECUTION_STATUSES (v2 vocabulary),
+        not the v1 DB CHECK constraint -- feature 125 dropped the dead
+        agent_review/human_review review columns and added 'ready'."""
+        from entity_registry.axes import EXECUTION_STATUSES
+
+        assert set(COLUMN_COLORS.keys()) == set(EXECUTION_STATUSES)
 
     def test_all_color_values_are_badge_classes(self):
         for color_map in (STATUS_COLORS, PHASE_COLORS, COLUMN_COLORS):

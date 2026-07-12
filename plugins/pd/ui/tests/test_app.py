@@ -47,16 +47,15 @@ def test_create_app_missing_db_sets_none():
 # Task 2.1.3: _group_by_column() empty input
 # ---------------------------------------------------------------------------
 def test_group_by_column_empty_input():
-    """_group_by_column([]) returns dict with 8 keys, all mapping to []."""
+    """_group_by_column([]) returns a dict with one key per
+    EXECUTION_STATUSES column, all mapping to []."""
+    from entity_registry.axes import EXECUTION_STATUSES
     from ui.routes.board import _group_by_column
 
     result = _group_by_column([])
 
-    assert len(result) == 8
-    expected_keys = {
-        "backlog", "prioritised", "wip", "agent_review",
-        "human_review", "blocked", "documenting", "completed",
-    }
+    expected_keys = set(EXECUTION_STATUSES)
+    assert len(result) == len(expected_keys)
     assert set(result.keys()) == expected_keys
     for key in expected_keys:
         assert result[key] == []
@@ -66,10 +65,10 @@ def test_group_by_column_empty_input():
 # Task 2.1.4: _group_by_column() routes to correct column
 # ---------------------------------------------------------------------------
 def test_group_by_column_routes_to_correct_column():
-    """A row with kanban_column='wip' appears in the wip list only."""
+    """A row with execution_status='wip' appears in the wip list only."""
     from ui.routes.board import _group_by_column
 
-    row = {"kanban_column": "wip", "type_id": "feature:test"}
+    row = {"execution_status": "wip", "type_id": "feature:test"}
     result = _group_by_column([row])
 
     assert result["wip"] == [row]
@@ -79,27 +78,66 @@ def test_group_by_column_routes_to_correct_column():
 
 
 # ---------------------------------------------------------------------------
-# Task 2.1.5: _group_by_column() default and drop
+# Task 2.1.5: _group_by_column() default (None -> backlog)
 # ---------------------------------------------------------------------------
 def test_group_by_column_none_defaults_to_backlog():
-    """A row with kanban_column=None falls into backlog."""
+    """A row with execution_status=None falls into backlog."""
     from ui.routes.board import _group_by_column
 
-    row = {"kanban_column": None, "type_id": "feature:no-col"}
+    row = {"execution_status": None, "type_id": "feature:no-col"}
     result = _group_by_column([row])
 
     assert result["backlog"] == [row]
 
 
-def test_group_by_column_unknown_column_dropped():
-    """A row with kanban_column='archived' (not in COLUMN_ORDER) is dropped."""
+# ---------------------------------------------------------------------------
+# SC3b / design D7 :94-102 inversion (RED-FIRST): unknown execution_status
+# values bucket to backlog WITH a stderr warning -- never silently dropped
+# (FR125-4). Pre-rewire, unknown values are silently dropped instead.
+# ---------------------------------------------------------------------------
+def test_group_by_column_unknown_value_bucketed_to_backlog_with_warning(capsys):
+    """A row with execution_status='archived' (unknown, not in
+    EXECUTION_STATUSES) lands in 'backlog' WITH one stderr warning."""
     from ui.routes.board import _group_by_column
 
-    row = {"kanban_column": "archived", "type_id": "feature:archive-test"}
+    row = {"execution_status": "archived", "type_id": "feature:archive-test"}
     result = _group_by_column([row])
 
-    for col_items in result.values():
-        assert col_items == []
+    assert result["backlog"] == [row]
+    captured = capsys.readouterr()
+    assert "archived" in captured.err
+    assert "feature:archive-test" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# SC3a (RED-FIRST -- dropped today): _group_by_column() 'ready' bucket
+# ---------------------------------------------------------------------------
+def test_group_by_column_ready_bucket_synthetic():
+    """A synthetic row with execution_status='ready' lands in the 'ready'
+    bucket. 'ready' is not a pre-rewire COLUMN_ORDER key, so the read uses
+    a KeyError-safe `.get()` -- this fails today (the row is dropped)."""
+    from ui.routes.board import _group_by_column
+
+    row = {"execution_status": "ready", "type_id": "feature:ready-test"}
+    result = _group_by_column([row])
+
+    assert row in result.get("ready", [])
+
+
+# ---------------------------------------------------------------------------
+# D7 helper unit matrix: resolve_execution_status passthrough/remap/None
+# ---------------------------------------------------------------------------
+def test_resolve_execution_status_passthrough_remap_and_none_matrix():
+    """Vocabulary/unknown values pass through unchanged; legacy values
+    remap via LEGACY_VALUE_REMAP; None passes through unchanged (helpers.py
+    D1 -- the caller decides defaulting/warning)."""
+    from ui.routes.helpers import LEGACY_VALUE_REMAP, resolve_execution_status
+
+    assert resolve_execution_status("wip") == "wip"
+    assert resolve_execution_status("totally-unknown") == "totally-unknown"
+    for legacy, expected in LEGACY_VALUE_REMAP.items():
+        assert resolve_execution_status(legacy) == expected
+    assert resolve_execution_status(None) is None
 
 
 # ===========================================================================
@@ -138,10 +176,85 @@ def _seed_workflow_row(db_file, type_id, kanban_column="backlog",
 
 
 # ---------------------------------------------------------------------------
+# SC3c (RED-FIRST -- renders in agent_review today): DB-seeded agent_review
+# row renders under the 'wip' board column with no stderr warning
+# ---------------------------------------------------------------------------
+def _column_card_html(html: str, column_label: str) -> str:
+    """Return the card-container HTML slice for one rendered board column,
+    located by its header text (e.g. 'wip') -- the header is unique per
+    column-order iteration, so slicing from this column's <h2> to the next
+    column's opening <div> (or end of string) isolates just its cards."""
+    marker = (
+        '<h2 class="text-sm font-semibold uppercase tracking-wide">'
+        f"{column_label}</h2>"
+    )
+    start = html.index(marker)
+    next_col = html.find('<div class="flex-shrink-0 w-56', start + len(marker))
+    end = next_col if next_col != -1 else len(html)
+    return html[start:end]
+
+
+def test_group_by_column_seeded_agent_review_renders_in_wip(tmp_path, capsys):
+    """A DB-seeded agent_review row (CHECK-legal v1 value) renders under
+    the 'wip' board column with no stderr warning. Pre-rewire it lands
+    under its own 'agent review' column instead (agent_review is still a
+    COLUMN_ORDER member today)."""
+    db_file = str(tmp_path / "test.db")
+    EntityDatabase(db_file)
+    _seed_workflow_row(db_file, "feature:legacy-review", kanban_column="agent_review")
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    wip_section = _column_card_html(response.text, "wip")
+    assert "legacy-review" in wip_section
+
+    captured = capsys.readouterr()
+    assert "[board] unknown execution_status" not in captured.err
+
+
+# ---------------------------------------------------------------------------
+# SC1: rendered board column headers appear in EXECUTION_STATUSES order
+# ---------------------------------------------------------------------------
+def test_board_column_headers_render_in_execution_statuses_order(tmp_path):
+    """The board's column headers render in EXECUTION_STATUSES order -- a
+    route-level check of actual rendering, not just the COLUMN_ORDER
+    constant (spec SC1)."""
+    from entity_registry.axes import EXECUTION_STATUSES
+
+    db_file = str(tmp_path / "test.db")
+    EntityDatabase(db_file)
+    _seed_workflow_row(db_file, "feature:sc1-test", kanban_column="backlog")
+
+    from ui import create_app
+
+    app = create_app(db_path=db_file)
+    client = TestClient(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    positions = [
+        response.text.index(
+            '<h2 class="text-sm font-semibold uppercase tracking-wide">'
+            f'{col.replace("_", " ")}</h2>'
+        )
+        for col in EXECUTION_STATUSES
+    ]
+    assert positions == sorted(positions)
+
+
+# ---------------------------------------------------------------------------
 # Task 4.1.1: Full page load (AC-3) — all 8 column headers rendered
 # ---------------------------------------------------------------------------
 def test_integration_full_page_load_contains_all_columns(tmp_path):
-    """GET / returns 200 with all 8 column header names in the HTML."""
+    """GET / returns 200 with all EXECUTION_STATUSES column header names in
+    the HTML."""
     db_file = str(tmp_path / "test.db")
     EntityDatabase(db_file)
 

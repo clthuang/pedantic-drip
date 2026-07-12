@@ -516,7 +516,7 @@ def test_integration_entity_detail_with_workflow(integration_client):
     assert "Alpha Feature" in response.text
     assert "feature:feat-alpha" in response.text
     assert "active" in response.text
-    # Workflow fields from the template (kanban_column, workflow_phase)
+    # Workflow fields from the template (execution_status, workflow_phase)
     assert "wip" in response.text
     assert "implement" in response.text
     # Workflow State section should be rendered
@@ -1114,8 +1114,8 @@ def test_entity_detail_lineage_error_shows_error_page(tmp_path):
 
 # derived_from: dimension:error_propagation (workflow_phase query failure)
 def test_entity_detail_workflow_error_shows_error_page(tmp_path):
-    """Given a valid entity but get_workflow_phase raises an exception, when
-    viewing the detail page, then the error page is shown.
+    """Given a valid entity but list_workflow_phases raises an exception,
+    when viewing the detail page, then the error page is shown.
 
     Anticipate: If workflow errors aren't caught, the page crashes with 500.
     """
@@ -1126,8 +1126,10 @@ def test_entity_detail_workflow_error_shows_error_page(tmp_path):
     from ui import create_app
 
     app = create_app(db_path=db_file)
-    # get_lineage needs to work, but get_workflow_phase fails
-    app.state.db.get_workflow_phase = unittest.mock.MagicMock(
+    # get_lineage needs to work, but list_workflow_phases fails -- the
+    # detail route's workflow read (feature 125 D4: the zero-occurrence
+    # aliased-list-filter path; get_workflow_phase is no longer called here)
+    app.state.db.list_workflow_phases = unittest.mock.MagicMock(
         side_effect=Exception("workflow query failed")
     )
     client = TestClient(app)
@@ -1215,25 +1217,25 @@ def test_entity_list_status_filter_exact_match(integration_client):
     assert "No entities found" in response.text
 
 
-# derived_from: dimension:mutation (kanban_column annotation correctness)
-def test_entity_list_kanban_column_annotation(integration_client):
-    """Mutation check: verify that kanban_column from workflow_phases is
+# derived_from: dimension:mutation (execution_status annotation correctness)
+def test_entity_list_execution_status_annotation(integration_client):
+    """Mutation check: verify that execution_status from workflow_phases is
     correctly annotated on entity rows.
 
     If the workflow lookup dict is keyed wrong or annotation is skipped,
-    kanban_column would be blank for all entities.
+    execution_status would be blank for all entities.
     """
     response = integration_client.get("/entities")
 
     assert response.status_code == 200
-    # feat-alpha has workflow phase with kanban_column='wip'
+    # feat-alpha has workflow phase with execution_status='wip'
     assert "wip" in response.text
 
 
 # derived_from: dimension:mutation (entity list table columns match spec)
 def test_entity_list_table_has_required_columns():
     """Mutation check: verify _entities_content.html table has all required
-    columns from spec FR-1: Name, Type ID, Type, Status, Kanban Column, Updated.
+    columns from spec FR-1: Name, Type ID, Type, Status, Execution Status, Updated.
 
     If a column header is deleted, data would be misaligned or missing.
     """
@@ -1244,7 +1246,7 @@ def test_entity_list_table_has_required_columns():
     )
     content = template_path.read_text()
 
-    required_columns = ["Name", "Type ID", "Type", "Status", "Kanban Column", "Updated"]
+    required_columns = ["Name", "Type ID", "Type", "Status", "Execution Status", "Updated"]
     for col in required_columns:
         assert col in content, f"Missing required column header: {col}"
 
@@ -1581,7 +1583,7 @@ def test_build_workflow_lookup_scoped_to_workspace_on_type_id_collision(tmp_path
 
     assert len(result) == 1
     assert result["feature:1-collide"]["entity_name"] == "Feature In A"
-    assert result["feature:1-collide"]["kanban_column"] == "wip"
+    assert result["feature:1-collide"]["execution_status"] == "wip"
 
 
 def test_entity_list_workspace_scoping(tmp_path):
