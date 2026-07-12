@@ -1891,8 +1891,8 @@ class TestNotInitializedGuards:
     derived_from: dimension:error_propagation (all-6 not-initialized guards)
     """
 
-    def test_all_6_tool_handlers_have_not_initialized_guard(self):
-        """Verify by inspecting the source that all 6 async tool handlers
+    def test_all_7_tool_handlers_have_not_initialized_guard(self):
+        """Verify by inspecting the source that all 7 async tool handlers
         contain the _engine is None check. Since we cannot call async handlers
         directly without an event loop, we verify structurally.
 
@@ -1901,7 +1901,7 @@ class TestNotInitializedGuards:
         import inspect
         import workflow_state_server as mod
 
-        # All 6 tool handler functions
+        # All 7 tool handler functions
         handlers = [
             mod.get_phase,
             mod.transition_phase,
@@ -1909,6 +1909,7 @@ class TestNotInitializedGuards:
             mod.validate_prerequisites,
             mod.list_features_by_phase,
             mod.list_features_by_status,
+            mod.reproject_meta_json,
         ]
 
         for handler in handlers:

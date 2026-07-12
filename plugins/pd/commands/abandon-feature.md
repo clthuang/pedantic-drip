@@ -5,7 +5,7 @@ argument-hint: "[--feature={id}-{slug}]"
 
 # /pd:abandon-feature Command
 
-Mark a feature as abandoned. Updates `.meta.json` and entity registry. Offers branch cleanup.
+Mark a feature as abandoned. Updates the entity registry and re-projects `.meta.json` from DB state. Offers branch cleanup.
 
 ## Config Variables
 - `{pd_artifacts_root}` — root directory for feature artifacts (default: `docs`)
@@ -54,7 +54,7 @@ update_entity(type_id="feature:{folder-name}", status="abandoned")
 
 If this call fails: STOP and report the error. Recovery: run `/pd:doctor`.
 
-## Step 5: Reproject .meta.json
+## Step 5: Reproject .meta.json (DB-rendered projection, sole file write)
 
 `.meta.json` is a read-only DB projection — direct edits to it are denied. Call `reproject_meta_json` MCP tool to re-render it from the status just set in Step 4:
 ```

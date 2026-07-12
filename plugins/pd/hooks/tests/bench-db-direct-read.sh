@@ -339,9 +339,11 @@ for scale in "${SCALES[@]}"; do
     print_stats "workspace-lookup (DB-direct, NO-MATCH)" "$scale" "${lookup_timings[@]}"
 
     walk_amortized=$("$PY" -c "$_WALK_EQUIV_AMORTIZED_PY" "$db_path" "$ws_uuid" "$probe_uuid" "$N_ITERATIONS")
+    # shellcheck disable=SC2086 # word-split IS the contract: N space-separated timings become N args for print_stats_us's "$@" order-stats
     print_stats_us "walk-equivalent (DB-direct, NO-MATCH by construction)" "$scale" $walk_amortized
 
     lookup_amortized=$("$PY" -c "$_WORKSPACE_LOOKUP_AMORTIZED_PY" "$db_path" "$N_ITERATIONS")
+    # shellcheck disable=SC2086 # word-split IS the contract (see above)
     print_stats_us "workspace-lookup (DB-direct, NO-MATCH)" "$scale" $lookup_amortized
 
     rm -rf "$census_dir"

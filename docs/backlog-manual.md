@@ -146,3 +146,17 @@ events, near-linear in total events (0.22ms@500 → 9.6ms@20k); full-table
 `SELECT * FROM entity_state` is fine (6.75ms for 500 rows @ 5k events).
 Consumers at 132 should read entity_axis_state per-entity or the pivoted view
 full-table; a frequently-polled per-entity entity_state read needs a plan fix.
+
+## #069 — data-file-guard dispatcher: normalize file_path before fnmatch; anchor exclude patterns
+
+**Source:** feature 127 security review (2026-07-12, battery W1). **Owner:** feature-110 dispatcher infra. **Severity:** LOW (defense-in-depth; no confirmed live break).
+- fnmatch's `*` crosses `/` (stdlib-documented), so a RELATIVE `docs/projects/../features/043/.meta.json` satisfies the `docs/projects/*/.meta.json` exclude and bypasses the deny; gated today by Write/Edit's absolute-path invariant.
+- Corollary: the exclusion is start-anchored so it is ALSO inert for legitimate absolute project-meta paths — mis-anchored in both directions (absolute project-meta writes fall through to the deny).
+- Context note (same review, S1): the guard matches Write|Edit only — Bash redirection bypasses the module entirely; pre-existing tool-boundary, backstop is DB-as-truth + doctor/reconciler rebuild.
+- Fix shape: os.path.normpath/resolve before fnmatch, reject `..` segments, root-anchor exclude patterns to artifacts_root. Evidence: dispatcher.py:156,171-174; data_file_guards.json:4.
+
+## #070 — _project_meta_json: assert artifact_path resolves inside artifacts_root before writing
+
+**Source:** feature 127 security review (2026-07-12, battery S2). **Owner:** workflow_state_server projection path (pre-existing, shared by 5 call sites incl. reproject_meta_json). **Severity:** LOW (defense-in-depth).
+- The projection writes `<entity.artifact_path>/.meta.json` with no containment check; a poisoned artifact_path (via a separate register/update path — those inputs are parameterized but unconstrained) could steer the write outside the tree.
+- Fix shape: resolve artifact_path and assert it is within artifacts_root before the open(); warn-and-skip otherwise. Evidence: workflow_state_server.py:401-405.
