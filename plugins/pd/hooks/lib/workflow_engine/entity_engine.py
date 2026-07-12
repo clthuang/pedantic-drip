@@ -96,9 +96,6 @@ class EntityWorkflowEngine:
     FiveDBackend:   L1/L2/L4 — phase-sequence-only, blocked_by at deliver.
     """
 
-    # Shared constant with frozen engine for degraded mode detection
-    _SOURCE_DEGRADED = "meta_json_fallback"
-
     def __init__(
         self,
         db: EntityDatabase,
@@ -174,21 +171,17 @@ class EntityWorkflowEngine:
         parent_progress: float | None = None
         cascade_error: str | None = None
 
-        # Skip cascade if DB is unhealthy (degraded mode)
-        if state is not None and state.source == self._SOURCE_DEGRADED:
-            cascade_error = "cascade skipped: degraded mode"
-        else:
-            try:
-                unblocked, parent_progress = self._run_cascade(entity_uuid)
-                # Anomaly propagation: on terminal phase, check for
-                # systemic_finding and propagate to parent (AC-35 / Task 6.1)
-                self._propagate_anomaly(entity_uuid, entity_type, phase)
-            except Exception as exc:
-                cascade_error = str(exc)
-                print(
-                    f"entity-engine: cascade failed for {entity_uuid}: {exc}",
-                    file=sys.stderr,
-                )
+        try:
+            unblocked, parent_progress = self._run_cascade(entity_uuid)
+            # Anomaly propagation: on terminal phase, check for
+            # systemic_finding and propagate to parent (AC-35 / Task 6.1)
+            self._propagate_anomaly(entity_uuid, entity_type, phase)
+        except Exception as exc:
+            cascade_error = str(exc)
+            print(
+                f"entity-engine: cascade failed for {entity_uuid}: {exc}",
+                file=sys.stderr,
+            )
 
         return CompletionResult(
             state=state,

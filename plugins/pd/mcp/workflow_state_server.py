@@ -922,6 +922,7 @@ def _process_transition_phase(
                     workspace_uuid=_workspace_uuid or None,
                 )
 
+            # feature 128: STILL LIVE — entity_engine._fived_transition (5D path) returns degraded=True on DB error until feature 123 rebuilds that layer; the frozen engine now raises WorkflowDBUnavailableError instead. 123 deletes this guard with the last producer.
             if response.degraded:
                 raise sqlite3.OperationalError(
                     "engine returned degraded=True inside transaction"
@@ -1186,11 +1187,6 @@ def _process_complete_phase(
                 state = engine.complete_phase(
                     feature_type_id, phase,
                     workspace_uuid=_workspace_uuid or None,
-                )
-
-            if getattr(completion, 'degraded', False) if completion is not None else getattr(state, '_degraded', False) if hasattr(state, '_degraded') else False:
-                raise sqlite3.OperationalError(
-                    "engine returned degraded inside transaction"
                 )
 
             # Store timing metadata in entity (MCP-layer responsibility)

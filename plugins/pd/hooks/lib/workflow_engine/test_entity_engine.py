@@ -5,7 +5,6 @@ Covers:
 - Task complete_phase direct DB path + cascade
 - Cascade failure preserves completion (retryable)
 - UUID-to-type_id resolution and delegation
-- Degraded mode cascade skip
 - Rollup with no/mixed/abandoned children
 - Notification queue optional
 - Light feature integration
@@ -27,7 +26,7 @@ import pytest
 from entity_registry.database import EntityDatabase
 from entity_registry.dependencies import DependencyManager
 from workflow_engine.entity_engine import CompletionResult, EntityWorkflowEngine
-from workflow_engine.models import FeatureWorkflowState, TransitionResponse
+from workflow_engine.models import TransitionResponse
 from workflow_engine.notifications import Notification, NotificationQueue
 from workflow_engine.rollup import compute_progress
 
@@ -305,54 +304,6 @@ class TestUuidResolution:
 
         with pytest.raises(ValueError, match="Entity not found"):
             engine.complete_phase("nonexistent-uuid", "brainstorm")
-
-
-# ---------------------------------------------------------------------------
-# Test 5: Degraded mode → cascade skipped
-# ---------------------------------------------------------------------------
-
-
-class TestDegradedMode:
-    """When DB is unhealthy, frozen engine falls back to .meta.json,
-    cascade is skipped."""
-
-    def test_degraded_mode_skips_cascade(self, tmp_path):
-        db = _make_db()
-        slug = "015-degraded"
-        artifacts_root = str(tmp_path)
-        _create_meta_json(
-            artifacts_root, slug,
-            mode="standard",
-            last_completed_phase=None,
-        )
-
-        uuid = _register(db, "feature", slug, "Degraded Feature")
-        _with_phase(db, f"feature:{slug}", "brainstorm", mode="standard")
-
-        engine = _make_engine(db, artifacts_root)
-
-        # Simulate DB becoming unhealthy after entity lookup but during
-        # frozen engine's complete_phase by patching the health check
-        original_complete = engine._frozen_engine.complete_phase
-
-        def degraded_complete(type_id, phase, **kwargs):
-            """Simulate frozen engine returning meta_json_fallback state."""
-            return FeatureWorkflowState(
-                feature_type_id=type_id,
-                current_phase="specify",
-                last_completed_phase="brainstorm",
-                completed_phases=("brainstorm",),
-                mode="standard",
-                source="meta_json_fallback",
-            )
-
-        with patch.object(
-            engine._frozen_engine, "complete_phase", side_effect=degraded_complete
-        ):
-            result = engine.complete_phase(uuid, "brainstorm")
-
-        assert result.cascade_error == "cascade skipped: degraded mode"
-        assert result.unblocked_uuids == []
 
 
 # ---------------------------------------------------------------------------
