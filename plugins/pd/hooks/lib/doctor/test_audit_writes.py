@@ -57,11 +57,12 @@ _REPO_ROOT = _PLUGIN_ROOT.parent.parent                  # repo root
 # in the allow-list for symbol-level continuity; their CURRENT bodies route
 # through MCP (no `.meta.json` write) but the AST walker still recognizes
 # the names if a future regression re-introduces direct writes.
+# Per-entry rationale below pinned by feature 127 design D3 / spec FR127-3.
 META_JSON_WRITER_ALLOWLIST: tuple[str, ...] = (
-    "_project_meta_json",          # MCP projection (canonical write path)
-    "init_project_state",          # project-type writer (deferred to feature 111)
-    "_fix_last_completed_phase",   # MCP-routing wrapper (TD-11 #1)
-    "_fix_completed_timestamp",    # MCP-routing wrapper (TD-11 #2)
+    "_project_meta_json",          # sole FEATURE-meta projection writer -- the sole-truth entry
+    "init_project_state",          # PROJECT-meta writer, feature_lifecycle.py:305-306 -- out of 127 scope
+    "_fix_last_completed_phase",   # MCP-routing symbol continuity; no direct writes today (TD-11 #1)
+    "_fix_completed_timestamp",    # MCP-routing symbol continuity; no direct writes today (TD-11 #2)
 )
 
 
@@ -307,6 +308,23 @@ def test_no_unaudited_meta_json_writes() -> None:
             "AC-1.1: found unaudited `.meta.json` writes outside the "
             f"FR-4.1 allow-list ({len(violations)} hits):\n{bullets}"
         )
+
+
+def test_meta_json_allowlist_exact_membership() -> None:
+    """FR127-3 / SC2: META_JSON_WRITER_ALLOWLIST is pinned to its EXACT
+    4-member set. set() coercion is mandatory -- the allowlist is a
+    tuple (:60-65) and a literal tuple == set comparison is always False
+    (design D3, pinned at design iteration 2). Set EQUALITY (not subset)
+    means any NEW writer symbol added to an audited tree goes red
+    without an explicit allowlist edit, extending 128's outliving-teeth
+    posture to the whole sole-writer claim.
+    """
+    assert set(META_JSON_WRITER_ALLOWLIST) == {
+        "_project_meta_json",
+        "init_project_state",
+        "_fix_last_completed_phase",
+        "_fix_completed_timestamp",
+    }
 
 
 def test_scratch_offender_function_is_detected_by_the_ast_walker(tmp_path) -> None:

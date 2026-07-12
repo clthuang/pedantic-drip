@@ -1891,8 +1891,8 @@ class TestNotInitializedGuards:
     derived_from: dimension:error_propagation (all-6 not-initialized guards)
     """
 
-    def test_all_6_tool_handlers_have_not_initialized_guard(self):
-        """Verify by inspecting the source that all 6 async tool handlers
+    def test_all_7_tool_handlers_have_not_initialized_guard(self):
+        """Verify by inspecting the source that all 7 async tool handlers
         contain the _engine is None check. Since we cannot call async handlers
         directly without an event loop, we verify structurally.
 
@@ -1901,7 +1901,7 @@ class TestNotInitializedGuards:
         import inspect
         import workflow_state_server as mod
 
-        # All 6 tool handler functions
+        # All 7 tool handler functions
         handlers = [
             mod.get_phase,
             mod.transition_phase,
@@ -1909,6 +1909,7 @@ class TestNotInitializedGuards:
             mod.validate_prerequisites,
             mod.list_features_by_phase,
             mod.list_features_by_status,
+            mod.reproject_meta_json,
         ]
 
         for handler in handlers:
@@ -10859,3 +10860,261 @@ class TestReconcileHandlersForwardWorkspaceUuid:
             f"workspace_uuid not forwarded from reconcile_status; "
             f"captured kwargs={captured!r}"
         )
+
+
+class TestReprojectMetaJson:
+    """Feature 127 FR127-7 / design D4: the ``reproject_meta_json`` MCP
+    tool is the sanctioned re-projection path a caller invokes after a
+    DB-only status mutation (e.g. /pd:abandon-feature's ``update_entity``
+    call), now that direct ``.meta.json`` Writes are denied by the
+    sole-truth guard.
+    """
+
+    def test_reproject_via_ref_after_status_mutation_regenerates_abandoned_meta_json(
+        self, db, tmp_path
+    ):
+        """Happy path VIA ``ref=`` -- the exact shape abandon-feature uses
+        (a ``feature_type_id=`` call would be vacuous-green: it never
+        exercises ref resolution). A prior ``update_entity(status=
+        'abandoned')`` is what the projection picks up: the regenerated
+        ``.meta.json`` carries ``status: abandoned`` AND the terminal
+        top-level ``completed`` timestamp, and the envelope reports
+        ``projected: true``.
+        """
+        import asyncio
+        import workflow_state_server as wss
+
+        feature_dir = os.path.join(str(tmp_path), "features", "099-abandonme")
+        os.makedirs(feature_dir, exist_ok=True)
+        db.register_entity(
+            "feature", "099-abandonme", "abandonme",
+            artifact_path=feature_dir,
+            status="active",
+            metadata={
+                "id": "099", "slug": "abandonme",
+                "mode": "standard", "branch": "feature/099-abandonme",
+            },
+            project_id="__unknown__",
+        )
+        db.create_workflow_phase("feature:099-abandonme", workflow_phase="specify")
+
+        # abandon-feature's new Step 4 (sole status mutation) -- happens
+        # BEFORE reproject_meta_json is ever called.
+        db.update_entity(type_id="feature:099-abandonme", status="abandoned")
+
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, str(tmp_path))
+        wss._artifacts_root = str(tmp_path)
+
+        result = asyncio.run(wss.reproject_meta_json(ref="feature:099-abandonme"))
+        data = json.loads(result)
+        assert data["projected"] is True
+        assert data["feature_type_id"] == "feature:099-abandonme"
+        assert data["warning"] is None
+
+        meta_path = os.path.join(feature_dir, ".meta.json")
+        with open(meta_path) as f:
+            meta = json.load(f)
+        assert meta["status"] == "abandoned"
+        assert "completed" in meta
+
+    def test_reproject_unknown_ref_returns_invalid_ref_envelope(self, db, tmp_path):
+        """An unresolvable ref surfaces as ``invalid_ref`` -- resolved in
+        the TOOL BODY (the ``get_phase`` idiom), never mislabeled
+        ``invalid_transition`` by the handler's ``@_catch_value_error``.
+        """
+        import asyncio
+        import workflow_state_server as wss
+
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, str(tmp_path))
+        wss._artifacts_root = str(tmp_path)
+
+        result = asyncio.run(wss.reproject_meta_json(ref="feature:999-nope"))
+        data = json.loads(result)
+        assert data["error"] is True
+        assert data["error_type"] == "invalid_ref"
+
+    def test_reproject_db_read_sqlite_error_returns_db_unavailable_envelope(
+        self, db, tmp_path, monkeypatch
+    ):
+        """DB-down fault injection RAISES ``sqlite3.Error`` at the DB read
+        (``_project_meta_json``'s entity lookup) -- NEVER toggles the
+        module-global ``_db_unavailable``, which would yield a different
+        bare envelope with no ``error_type`` key.
+        """
+        import asyncio
+        import workflow_state_server as wss
+
+        db.register_entity(
+            "feature", "098-dbdown", "dbdown",
+            artifact_path=str(tmp_path), status="active",
+            project_id="__unknown__",
+        )
+
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, str(tmp_path))
+        wss._artifacts_root = str(tmp_path)
+
+        monkeypatch.setattr(
+            db, "get_entity",
+            lambda *a, **kw: (_ for _ in ()).throw(
+                sqlite3.OperationalError("database is locked")
+            ),
+        )
+
+        result = asyncio.run(wss.reproject_meta_json(ref="feature:098-dbdown"))
+        data = json.loads(result)
+        assert data["error"] is True
+        assert data["error_type"] == "db_unavailable"
+
+    def test_reproject_via_feature_type_id_direct_path_regenerates_meta_json(
+        self, db, tmp_path
+    ):
+        """feature_type_id= direct call path (ref=None) -- the ref= path is
+        covered by the happy-path test above; this pins that
+        `_resolve_ref_to_feature_type_id`'s OTHER branch (feature_type_id is
+        not None -> returned verbatim, `db.resolve_ref` never touched) also
+        projects correctly and shouldn't regress alongside the ref path.
+        Uses status='active' (non-terminal) as a complementary case to the
+        ref-path test's 'abandoned': the regenerated `.meta.json` must NOT
+        carry a top-level 'completed' key here -- a distinct behavior, not
+        merely a data variation of the same logical path.
+        """
+        import asyncio
+        import workflow_state_server as wss
+
+        feature_dir = os.path.join(str(tmp_path), "features", "097-directpath")
+        os.makedirs(feature_dir, exist_ok=True)
+        db.register_entity(
+            "feature", "097-directpath", "directpath",
+            artifact_path=feature_dir,
+            status="active",
+            metadata={
+                "id": "097", "slug": "directpath",
+                "mode": "standard", "branch": "feature/097-directpath",
+            },
+            project_id="__unknown__",
+        )
+        db.create_workflow_phase("feature:097-directpath", workflow_phase="specify")
+
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, str(tmp_path))
+        wss._artifacts_root = str(tmp_path)
+
+        result = asyncio.run(
+            wss.reproject_meta_json(feature_type_id="feature:097-directpath")
+        )
+        data = json.loads(result)
+        assert data["projected"] is True
+        assert data["feature_type_id"] == "feature:097-directpath"
+        assert data["warning"] is None
+
+        meta_path = os.path.join(feature_dir, ".meta.json")
+        with open(meta_path) as f:
+            meta = json.load(f)
+        assert meta["status"] == "active"
+        assert "completed" not in meta
+
+    def test_reproject_feature_type_id_takes_precedence_over_unresolvable_ref(
+        self, db, tmp_path
+    ):
+        """Design D4 (:1851): `_resolve_ref_to_feature_type_id` treats any
+        non-None `feature_type_id` as authoritative, returned verbatim
+        without ever calling `db.resolve_ref` -- when BOTH params are
+        provided, resolution must go via `feature_type_id`. Pinned with a
+        `ref` that CANNOT resolve (nonexistent entity): if the precedence
+        were ever reversed (ref checked/preferred first), this call would
+        fail with `invalid_ref` instead of succeeding.
+        """
+        import asyncio
+        import workflow_state_server as wss
+
+        feature_dir = os.path.join(str(tmp_path), "features", "095-winner")
+        os.makedirs(feature_dir, exist_ok=True)
+        db.register_entity(
+            "feature", "095-winner", "winner",
+            artifact_path=feature_dir,
+            status="active",
+            project_id="__unknown__",
+        )
+        db.create_workflow_phase("feature:095-winner", workflow_phase="specify")
+
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, str(tmp_path))
+        wss._artifacts_root = str(tmp_path)
+
+        result = asyncio.run(
+            wss.reproject_meta_json(
+                feature_type_id="feature:095-winner",
+                ref="feature:999-does-not-exist",
+            )
+        )
+        data = json.loads(result)
+        assert "error" not in data, f"feature_type_id should have won, got: {data!r}"
+        assert data["projected"] is True
+        assert data["feature_type_id"] == "feature:095-winner"
+
+    def test_reproject_entity_without_artifact_path_returns_projected_false_with_warning(
+        self, db, tmp_path
+    ):
+        """`_project_meta_json` surfaces a non-None warning when
+        `artifact_path` is unset (:400-403) -- no existing test drives this
+        branch; the 3 original tests all assert `warning is None` /
+        `projected: true`. A mutation hard-coding `"projected": True`
+        unconditionally (or dropping the `warning` key) would pass every
+        current test and only be caught here.
+        """
+        import asyncio
+        import workflow_state_server as wss
+
+        db.register_entity(
+            "feature", "096-noartifact", "noartifact",
+            status="active",
+            project_id="__unknown__",
+        )
+
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, str(tmp_path))
+        wss._artifacts_root = str(tmp_path)
+
+        result = asyncio.run(
+            wss.reproject_meta_json(feature_type_id="feature:096-noartifact")
+        )
+        data = json.loads(result)
+        assert data["projected"] is False
+        assert data["feature_type_id"] == "feature:096-noartifact"
+        assert data["warning"] is not None
+        assert "artifact_path" in data["warning"]
+
+    def test_reproject_not_initialized_when_engine_and_db_unset(self):
+        """Tool-level guard: `reproject_meta_json` is a NEW handler beside
+        the 6 enumerated in `TestNotInitializedGuards` (source-inspection
+        only, and its hardcoded handler list doesn't include this tool) --
+        this is the first RUNTIME check (mirroring
+        `test_error_uninitialized_guard`'s idiom) that the guard actually
+        fires when the server hasn't started.
+        """
+        import asyncio
+        import workflow_state_server as wss
+
+        orig_engine = wss._engine
+        orig_db = wss._db
+        wss._engine = None
+        wss._db = None
+        try:
+            result = asyncio.run(
+                wss.reproject_meta_json(feature_type_id="feature:000-anything")
+            )
+            data = json.loads(result)
+            assert data["error"] is True
+            assert data["error_type"] == "not_initialized"
+        finally:
+            wss._engine = orig_engine
+            wss._db = orig_db

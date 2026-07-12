@@ -5,7 +5,7 @@ argument-hint: "[--feature={id}-{slug}]"
 
 # /pd:abandon-feature Command
 
-Mark a feature as abandoned. Updates `.meta.json` and entity registry. Offers branch cleanup.
+Mark a feature as abandoned. Updates the entity registry and re-projects `.meta.json` from DB state. Offers branch cleanup.
 
 ## Config Variables
 - `{pd_artifacts_root}` — root directory for feature artifacts (default: `docs`)
@@ -45,18 +45,30 @@ AskUserQuestion:
 
 If "Cancel": output "Cancelled." and stop.
 
-## Step 4: Update .meta.json
-
-Write `{pd_artifacts_root}/features/{folder-name}/.meta.json` with `status` set to `"abandoned"`. Preserve all other fields.
-
-## Step 5: Update Entity Registry
+## Step 4: Update Entity Registry (DB truth, sole status mutation)
 
 Call `update_entity` MCP tool:
 ```
 update_entity(type_id="feature:{folder-name}", status="abandoned")
 ```
 
-If MCP call fails: output "Warning: Entity registry update failed. Status will reconcile on next session start." and continue (`.meta.json` change persists).
+If this call fails: STOP and report the error. Recovery: run `/pd:doctor`.
+
+## Step 5: Reproject .meta.json (DB-rendered projection, sole file write)
+
+`.meta.json` is a read-only DB projection — direct edits to it are denied. Call `reproject_meta_json` MCP tool to re-render it from the status just set in Step 4:
+```
+reproject_meta_json(ref="feature:{folder-name}")
+```
+
+If this call fails: STOP and report the error. Recovery: run `/pd:doctor`.
+
+<!-- NOTE (2026-07-12, feature 132 handoff): 132's planned rebuild tool may
+     subsume reproject_meta_json's job with a bulk regeneration path. Keep
+     this single-feature tool regardless — it is the API 132's bulk path
+     can iterate over. -->
+
+Note: abandoned features now receive the top-level `completed` timestamp (the DB projection treats `abandoned` as terminal, same as `completed`) — the prior direct-Write path did not add this field.
 
 ## Step 6: Branch Cleanup
 

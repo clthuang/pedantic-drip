@@ -1,0 +1,57 @@
+{
+  "feature": "127-db-sole-truth-guard-rewire",
+  "date": "2026-07-12",
+  "lanes": {
+    "A_execution": {
+      "model": "sonnet",
+      "verdict": "PASS",
+      "findings": {
+        "HIGH": 0,
+        "MED": 1,
+        "LOW": 0
+      },
+      "med_disposition": "accepted-evidence-note: AC-7.8 fail-open verified end-to-end (exit 0, stdout {}) but the resolve_venv_python failure branch is not black-box-isolable in a checkout with a real .venv \u2014 behavior correct, scope note only"
+    },
+    "B_regression": {
+      "model": "sonnet",
+      "verdict": "PASS",
+      "findings": {
+        "HIGH": 0,
+        "MED": 0,
+        "LOW": 0
+      }
+    },
+    "C_artifact_truth": {
+      "model": "opus",
+      "verdict": "FAIL_THEN_PASS",
+      "findings": {
+        "HIGH": 1,
+        "MED": 0,
+        "LOW": 3
+      },
+      "high_disposition": "FIXED pre-merge: retro briefing-corrections ordinal 6th\u21925th (five-member list; prior chain 122=3rd, 128=4th); root cause = orchestrator briefing overcounted the prior streak and the facilitator's derived ordinal propagated it",
+      "low_dispositions": [
+        "FIXED: commit-count sentence authoring-time-anchored (10 substantive + the retro commit itself = 11th; 122-retro convention)",
+        "FIXED: bench line-count 351\u2192353 with +2 shellcheck-comment provenance",
+        "ABSORBED (re-gate disclosure): streak membership rule pinned in the heading (own-briefing corrections only; 120's earlier-phase-artifact fix deliberately out)"
+      ],
+      "regate": {
+        "model": "sonnet",
+        "verdict": "PASS",
+        "scope": "3 corrected claims + whole-retro superlative sweep (5th-call-site claim independently confirmed; zero fabrications)"
+      }
+    }
+  },
+  "suite": {
+    "merge_base_effective": 3684,
+    "feature_branch": 3718,
+    "skipped": 3,
+    "delta": "+7 task tests +27 deepener cases, arithmetic exact"
+  },
+  "validate": "0 errors",
+  "hooks": "67/67",
+  "backlog_filed": [
+    "#069 dispatcher fnmatch normalization/anchoring (pre-existing feature-110 infra)",
+    "#070 artifact_path containment in projection writer (pre-existing)"
+  ]
+}
