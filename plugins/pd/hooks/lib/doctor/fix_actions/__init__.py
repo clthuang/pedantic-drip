@@ -247,25 +247,6 @@ def _fix_self_referential_parent(ctx: FixContext, issue: Issue) -> str:
     return f"Cleared self-referential parent for {issue.entity}"
 
 
-def _fix_remove_orphan_dependency(ctx: FixContext, issue: Issue) -> str:
-    """Remove orphaned dependency row."""
-    if not ctx.entities_conn:
-        raise ValueError("No entities connection")
-
-    # Extract UUIDs from issue.message
-    uuids = re.findall(r"'([0-9a-f-]{36})'", issue.message)
-    if len(uuids) < 2:
-        raise ValueError(f"Could not extract 2 UUIDs from: {issue.message}")
-
-    entity_uuid, blocked_by_uuid = uuids[0], uuids[1]
-    ctx.entities_conn.execute(
-        "DELETE FROM entity_dependencies WHERE entity_uuid = ? AND blocked_by_uuid = ?",
-        (entity_uuid, blocked_by_uuid),
-    )
-    ctx.entities_conn.commit()
-    return f"Removed orphan dependency {entity_uuid} -> {blocked_by_uuid}"
-
-
 def _fix_remove_orphan_tag(ctx: FixContext, issue: Issue) -> str:
     """Remove orphaned tag row."""
     if not ctx.entities_conn:
@@ -344,8 +325,15 @@ def _fix_run_entity_migrations(ctx: FixContext, issue: Issue) -> str:
     return "Ran entity DB migrations"
 
 
-def _fix_stale_dependency(ctx: FixContext, issue: Issue) -> str:
-    """Remove stale dependency on a completed blocker via cascade_unblock."""
+def _fix_missed_cascade(ctx: FixContext, issue: Issue) -> str:
+    """Run the missed cascade evaluation via cascade_unblock (feature 124 D6).
+
+    Renamed from ``_fix_stale_dependency`` -- the underlying mechanism is
+    unchanged (post-D3, cascade_unblock IS the flip evaluation): re-running
+    it on any one of the flagged entity's now-resolved blockers re-checks
+    ALL of that entity's blockers via ``_all_blockers_resolved`` and flips
+    it (and any other affected dependents) to 'ready'.
+    """
     if ctx.db is None:
         raise ValueError("No entity database")
     uuids = re.findall(r"'([0-9a-f-]{36})'", issue.message)

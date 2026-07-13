@@ -7229,6 +7229,49 @@ class EntityDatabase:
                 timestamp=now,
             )
 
+            # Feature 124 D7 (FR124-3 dual-write): auto-materialize each
+            # resolvable `depends_on_features` metadata ref as a `blocks`
+            # row (from_uuid=blocker, to_uuid=this entity, per D1's
+            # mapping). Runs inside this same transaction so
+            # add_dependency's own _commit() is suppressed -- one atomic
+            # write alongside the entity row. upsert_entity's insert
+            # branch delegates to this method via a re-entrant
+            # transaction(), so it is covered too; its conflict branches
+            # never touch metadata, so no separate hook is needed there.
+            # The RAW db.add_dependency (kwargs form REQUIRED -- the live
+            # signature is arg1=blocked, arg2=blocker) has no cycle-raise,
+            # so an unresolvable or self-referential ref warns to stderr
+            # and is skipped WITHOUT blocking registration (decomposing
+            # SKILL.md:231/:248 stay byte-unchanged).
+            if metadata is not None:
+                for ref in metadata.get("depends_on_features") or []:
+                    if not isinstance(ref, str):
+                        continue
+                    try:
+                        blocker_uuid = self.resolve_ref(
+                            ref, workspace_uuid=ws_uuid,
+                        )
+                    except ValueError as exc:
+                        print(
+                            f"[register_entity] unresolvable "
+                            f"depends_on_features ref {ref!r} on entity "
+                            f"{type_id!r} ({entity_uuid}): {exc}",
+                            file=sys.stderr,
+                        )
+                        continue
+                    if blocker_uuid == entity_uuid:
+                        print(
+                            "[register_entity] skipping self-referential "
+                            f"depends_on_features ref {ref!r} on entity "
+                            f"{type_id!r} ({entity_uuid})",
+                            file=sys.stderr,
+                        )
+                        continue
+                    self.add_dependency(
+                        entity_uuid=entity_uuid,
+                        blocked_by_uuid=blocker_uuid,
+                    )
+
         return entity_uuid
 
     def _register_entity_no_display(

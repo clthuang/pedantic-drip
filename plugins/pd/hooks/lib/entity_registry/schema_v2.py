@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS entity_relations (
   uuid       TEXT PRIMARY KEY,        -- uuid7 (v17 used INTEGER id — FR-4 violation, fixed)
   from_uuid  TEXT NOT NULL REFERENCES entities(uuid) ON DELETE CASCADE,
   to_uuid    TEXT NOT NULL REFERENCES entities(uuid) ON DELETE CASCADE,
-  kind       TEXT NOT NULL,           -- vocabulary CHECK deferred to 124 (owns `blocks` semantics)
+  kind       TEXT NOT NULL,           -- vocabulary CHECK deferred to 132 (physical v2 cutover owns the CHECK)
   created_at TEXT NOT NULL
 );
 -- Carried over from v17 (database.py:4964-4967, :4971): ON DELETE CASCADE (dangling

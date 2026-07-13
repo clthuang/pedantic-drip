@@ -26,9 +26,9 @@ from doctor.checks import (
     check_db_readiness,
     check_entity_orphans,
     check_feature_status,
+    check_missed_cascade,
     check_referential_integrity,
     check_security_review_command,
-    check_stale_dependencies,
     check_stale_worktrees,
     check_unknown_workspace_orphans,
     check_workflow_phase,
@@ -47,7 +47,7 @@ CHECK_ORDER = [
     check_branch_consistency,
     check_entity_orphans,
     check_referential_integrity,
-    check_stale_dependencies,
+    check_missed_cascade,
     check_config_validity,
     check_security_review_command,
     check_stale_worktrees,
@@ -85,7 +85,7 @@ _ENTITY_DB_CHECKS = {
     "check_branch_consistency",
     "check_entity_orphans",
     "check_referential_integrity",
-    "check_stale_dependencies",
+    "check_missed_cascade",
     "check_audit_emit_failed_count",
 }
 

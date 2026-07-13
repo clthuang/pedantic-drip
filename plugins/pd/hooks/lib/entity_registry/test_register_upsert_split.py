@@ -537,6 +537,105 @@ def test_dependency_duplicate_noop(db):
 
 
 # ---------------------------------------------------------------------------
+# Feature 124 D7 / SC7: register_entity + upsert_entity auto-materialize
+# `depends_on_features` metadata refs as `blocks` rows (FR124-3 dual-write).
+# ---------------------------------------------------------------------------
+
+
+def test_register_entity_materializes_depends_on_features(db):
+    """SC7 (register_entity path): a NEW registration carrying
+    depends_on_features produces the corresponding `blocks` row. Direction
+    is asserted, not just existence: from_uuid=the blocker feature,
+    to_uuid=the registered (blocked) entity, per D1's mapping.
+    """
+    blocker_uuid = db.register_entity(
+        "feature", "dep7-blocker", "Blocker", project_id=TEST_PROJECT_ID,
+    )
+    blocked_uuid = db.register_entity(
+        "feature", "dep7-blocked", "Blocked", project_id=TEST_PROJECT_ID,
+        metadata={"depends_on_features": ["feature:dep7-blocker"]},
+    )
+
+    row = db._conn.execute(
+        "SELECT from_uuid, to_uuid FROM entity_relations "
+        "WHERE kind = 'blocks' AND to_uuid = ?",
+        (blocked_uuid,),
+    ).fetchone()
+    assert row is not None, "expected a materialized blocks row"
+    assert row[0] == blocker_uuid, "from_uuid must be the blocker feature"
+    assert row[1] == blocked_uuid, "to_uuid must be the registered entity"
+
+
+def test_upsert_entity_materializes_depends_on_features(db):
+    """SC7 (upsert_entity path): same direction contract via the insert
+    branch -- upsert_entity's insert branch delegates to register_entity.
+    """
+    blocker_uuid = db.register_entity(
+        "feature", "dep7-blocker-u", "Blocker", project_id=TEST_PROJECT_ID,
+    )
+    blocked_uuid = db.upsert_entity(
+        "feature", "dep7-blocked-u", "Blocked", project_id=TEST_PROJECT_ID,
+        metadata={"depends_on_features": ["feature:dep7-blocker-u"]},
+    )
+
+    row = db._conn.execute(
+        "SELECT from_uuid, to_uuid FROM entity_relations "
+        "WHERE kind = 'blocks' AND to_uuid = ?",
+        (blocked_uuid,),
+    ).fetchone()
+    assert row is not None, "expected a materialized blocks row"
+    assert row[0] == blocker_uuid, "from_uuid must be the blocker feature"
+    assert row[1] == blocked_uuid, "to_uuid must be the registered entity"
+
+
+def test_register_entity_depends_on_features_self_edge_filtered(db, capsys):
+    """A depends_on_features ref resolving to the entity itself is skipped
+    with a stderr note (design D7 self-edge filter, mirrors
+    check_dependency_cycle's self-dependency rejection) -- no edge is
+    materialized either direction.
+    """
+    entity_uuid = db.register_entity(
+        "feature", "dep7-self", "Self Ref", project_id=TEST_PROJECT_ID,
+        metadata={"depends_on_features": ["feature:dep7-self"]},
+    )
+
+    count = db._conn.execute(
+        "SELECT COUNT(*) FROM entity_relations WHERE kind = 'blocks' "
+        "AND (from_uuid = ? OR to_uuid = ?)",
+        (entity_uuid, entity_uuid),
+    ).fetchone()[0]
+    assert count == 0, "self-referencing ref must not materialize an edge"
+
+    captured = capsys.readouterr()
+    assert "self" in captured.err.lower()
+
+
+def test_register_entity_depends_on_features_unresolvable_warns_not_blocked(
+    db, capsys,
+):
+    """An unresolvable depends_on_features ref warns to stderr but does
+    NOT block registration (design D7 -- registration is never blocked).
+    """
+    entity_uuid = db.register_entity(
+        "feature", "dep7-unresolvable", "Has Bad Ref",
+        project_id=TEST_PROJECT_ID,
+        metadata={"depends_on_features": ["feature:does-not-exist"]},
+    )
+    assert entity_uuid, "registration must succeed despite the bad ref"
+
+    count = db._conn.execute(
+        "SELECT COUNT(*) FROM entity_relations WHERE kind = 'blocks' "
+        "AND to_uuid = ?",
+        (entity_uuid,),
+    ).fetchone()[0]
+    assert count == 0
+
+    captured = capsys.readouterr()
+    assert "unresolvable" in captured.err.lower()
+    assert "depends_on_features" in captured.err
+
+
+# ---------------------------------------------------------------------------
 # AC-4.8: 1-to-1 F12 audit comment coverage (Group 15.7)
 # ---------------------------------------------------------------------------
 

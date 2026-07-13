@@ -88,12 +88,6 @@ def _make_db(tmp_path, name: str = "entities.db") -> str:
             updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
         );
 
-        CREATE TABLE IF NOT EXISTS entity_dependencies (
-            entity_uuid     TEXT NOT NULL,
-            blocked_by_uuid TEXT NOT NULL,
-            UNIQUE(entity_uuid, blocked_by_uuid)
-        );
-
         CREATE TABLE IF NOT EXISTS entity_tags (
             entity_uuid TEXT NOT NULL,
             tag         TEXT NOT NULL,
@@ -285,11 +279,6 @@ class TestClassifyFix:
         cls, fn = classify_fix("Update .meta.json from DB state")
         assert cls == "safe"
 
-    def test_remove_orphan_dependency(self):
-        from doctor.fixer import classify_fix
-        cls, fn = classify_fix("Remove orphaned dependency row")
-        assert cls == "safe"
-
     def test_remove_orphan_tag(self):
         from doctor.fixer import classify_fix
         cls, fn = classify_fix("Remove orphaned tag row")
@@ -475,59 +464,6 @@ class TestFixActions:
             "SELECT parent_uuid FROM entities WHERE type_id = 'feature:001-self'"
         ).fetchone()
         assert row[0] is None
-        conn.close()
-
-    def test_fix_remove_orphan_dependency(self, tmp_path):
-        from doctor.fix_actions import FixContext, _fix_remove_orphan_dependency
-
-        db_path = _make_db(tmp_path)
-        eu = str(uuid_mod.uuid4())
-        bu = str(uuid_mod.uuid4())
-        conn = sqlite3.connect(db_path)
-        conn.execute(
-            "INSERT INTO entity_dependencies (entity_uuid, blocked_by_uuid) VALUES (?, ?)",
-            (eu, bu),
-        )
-        conn.commit()
-
-        ctx = FixContext(
-            entities_db_path=db_path,
-            artifacts_root="", project_root="",
-            db=None, engine=None, entities_conn=conn,
-        )
-        issue = Issue(
-            check="referential_integrity", severity="error", entity=None,
-            message=f"Orphaned dependency: entity_uuid '{eu}' blocked_by_uuid '{bu}'",
-            fix_hint="Remove orphaned dependency row",
-        )
-
-        action = _fix_remove_orphan_dependency(ctx, issue)
-        assert eu in action
-
-        row = conn.execute("SELECT COUNT(*) FROM entity_dependencies").fetchone()
-        assert row[0] == 0
-        conn.close()
-
-    def test_fix_remove_orphan_dependency_malformed(self, tmp_path):
-        """Edge case: message without enough UUIDs."""
-        from doctor.fix_actions import FixContext, _fix_remove_orphan_dependency
-
-        db_path = _make_db(tmp_path)
-        conn = sqlite3.connect(db_path)
-
-        ctx = FixContext(
-            entities_db_path=db_path,
-            artifacts_root="", project_root="",
-            db=None, engine=None, entities_conn=conn,
-        )
-        issue = Issue(
-            check="referential_integrity", severity="error", entity=None,
-            message="Orphaned dependency with no UUIDs",
-            fix_hint="Remove orphaned dependency row",
-        )
-
-        with pytest.raises(ValueError, match="Could not extract"):
-            _fix_remove_orphan_dependency(ctx, issue)
         conn.close()
 
     def test_fix_remove_orphan_tag(self, tmp_path):
@@ -950,11 +886,12 @@ class TestCLI:
 
 
 class TestFixStaleDependency:
-    """_fix_stale_dependency removes stale edge and promotes blocked entity."""
+    """_fix_missed_cascade (renamed from _fix_stale_dependency) removes the
+    stale edge's downstream block and promotes the blocked entity."""
 
     def test_fix_stale_dependency_removes_edge_and_promotes(self, tmp_path):
         from entity_registry.database import EntityDatabase
-        from doctor.fix_actions import FixContext, _fix_stale_dependency
+        from doctor.fix_actions import FixContext, _fix_missed_cascade
 
         db_path = str(tmp_path / "entities.db")
         db = EntityDatabase(db_path)
@@ -975,15 +912,16 @@ class TestFixStaleDependency:
             db=db, engine=None, entities_conn=None,
         )
         issue = Issue(
-            check="stale_dependencies", severity="warning", entity=None,
+            check="missed_cascade", severity="warning", entity=None,
             message=(
-                f"Stale blocked_by edge: entity '{uuid_blocked}' "
-                f"blocked by completed '{uuid_blocker}' (feature:stale-blocker)"
+                f"Missed cascade: entity '{uuid_blocked}' (feature:stale-blocked) "
+                f"has every blocker resolved but remains 'blocked'; "
+                f"e.g. blocker '{uuid_blocker}'"
             ),
-            fix_hint="Remove stale dependency on completed 'feature:stale-blocker'",
+            fix_hint="Run cascade evaluation",
         )
 
-        action = _fix_stale_dependency(ctx, issue)
+        action = _fix_missed_cascade(ctx, issue)
         assert uuid_blocker in action
         assert "unblocked 1" in action
 

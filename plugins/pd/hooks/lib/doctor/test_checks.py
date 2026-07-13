@@ -93,12 +93,6 @@ def _make_db(tmp_path, name: str = "entities.db") -> str:
             updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
         );
 
-        CREATE TABLE IF NOT EXISTS entity_dependencies (
-            entity_uuid     TEXT NOT NULL,
-            blocked_by_uuid TEXT NOT NULL,
-            UNIQUE(entity_uuid, blocked_by_uuid)
-        );
-
         CREATE TABLE IF NOT EXISTS entity_tags (
             entity_uuid TEXT NOT NULL,
             tag         TEXT NOT NULL,
@@ -1260,7 +1254,8 @@ class TestCheck3BrainstormActiveFeature:
 
 
 class TestCheck3EntityDepsFallback:
-    """Check 3: fallback to entity_dependencies for promotion detection."""
+    """Check 3: fallback to entity_relations (kind='blocks') for promotion
+    detection (feature 124 D6 rewire)."""
 
     def test_check3_entity_deps_fallback(self, tmp_path):
         from doctor.checks import check_brainstorm_status
@@ -2226,21 +2221,6 @@ def test_all_checks_sql_explains_against_live_schema(tmp_path):
         f"the .execute() AST shape may have drifted"
     )
 
-    # Feature 124 (dependency-cascade-blocks) Task 1 exemption: Migration 18
-    # drops entity_dependencies, but its two remaining doctor-check
-    # consumers — check_referential_integrity's orphan section and
-    # check_stale_dependencies — are explicitly OUT of task 1's scope per
-    # the task/plan (task 3 owns their full semantic replacement: D6 retires
-    # the orphan section entirely since FKs preclude orphans, and replaces
-    # the stale-edge query with per-kind missed-cascade SQL). Exempting by
-    # table-name substring narrows this to exactly those two tracked sites
-    # and re-tightens itself automatically once task 3 lands (its
-    # replacement SQL won't reference entity_dependencies).
-    collected = [
-        (lineno, sql) for lineno, sql in collected
-        if "entity_dependencies" not in sql
-    ]
-
     db, conn = _make_live_db(tmp_path)
     failures: list[tuple[int, str, str]] = []
     try:
@@ -2545,35 +2525,6 @@ class TestCheck9CircularParentChain:
             errors = [i for i in result.issues if i.severity == "error"]
             circular = [e for e in errors if "Circular" in e.message]
             assert len(circular) >= 1
-        finally:
-            conn.close()
-
-
-class TestCheck9OrphanedDependencyRow:
-    """Check 9: entity_dependencies with non-existent UUID -> warning."""
-
-    def test_check9_orphaned_dependency_row(self, tmp_path):
-        from doctor.checks import check_referential_integrity
-
-        db_path = _make_db(tmp_path)
-        _register_entity_with_uuid(
-            db_path, "feature:001", "feature", "001",
-            uuid_val="valid-uuid",
-        )
-        conn = sqlite3.connect(db_path)
-        conn.execute(
-            "INSERT INTO entity_dependencies (entity_uuid, blocked_by_uuid) "
-            "VALUES ('valid-uuid', 'nonexistent-uuid')"
-        )
-        conn.commit()
-        conn.close()
-
-        conn = _entities_conn(db_path)
-        try:
-            result = check_referential_integrity(conn)
-            warnings = [i for i in result.issues if i.severity == "warning"]
-            orphan_deps = [w for w in warnings if "nonexistent-uuid" in w.message]
-            assert len(orphan_deps) >= 1
         finally:
             conn.close()
 
@@ -3243,93 +3194,150 @@ class TestLockHolderUnknownFallback:
 
 
 # ---------------------------------------------------------------------------
-# Check 11: Stale Dependencies
+# Check 11: Missed Cascade (feature 124 D6)
 # ---------------------------------------------------------------------------
 
 
-class TestCheck11StaleDependencyDetected:
-    """check_stale_dependencies detects edges to completed blockers."""
+class TestCheck11MissedCascadeDetected:
+    """check_missed_cascade flags a 'blocked' entity whose (single) blocker
+    is already resolved -- cascade_unblock should have flipped it."""
 
-    def test_stale_dependency_detected(self, tmp_path):
-        import uuid as uuid_mod
-        from doctor.checks import check_stale_dependencies
+    def test_missed_cascade_detected(self, tmp_path):
+        from doctor.checks import check_missed_cascade
 
-        db_path = _make_db(tmp_path)
-        uuid_blocked = str(uuid_mod.uuid4())
-        uuid_blocker = str(uuid_mod.uuid4())
+        db, conn = _make_live_db(tmp_path)
+        _register_live_feature(db, "blocker", status="completed")
+        blocker_uuid = _entity_uuid(conn, "feature:blocker")
+        _register_live_feature(db, "blocked", status="blocked")
+        blocked_uuid = _entity_uuid(conn, "feature:blocked")
+        db.add_dependency(blocked_uuid, blocker_uuid)
 
-        # Register blocker as completed
-        _register_entity_with_uuid(
-            db_path, "feature:blocker", "feature", "blocker",
-            uuid_val=uuid_blocker,
-        )
-        # Register blocked entity
-        _register_entity_with_uuid(
-            db_path, "feature:blocked", "feature", "blocked",
-            uuid_val=uuid_blocked,
-        )
-
-        # Set blocker to completed
-        conn = sqlite3.connect(db_path)
-        conn.execute(
-            "UPDATE entities SET status = 'completed' WHERE uuid = ?",
-            (uuid_blocker,),
-        )
-        # Add stale dependency edge
-        conn.execute(
-            "INSERT INTO entity_dependencies (entity_uuid, blocked_by_uuid) VALUES (?, ?)",
-            (uuid_blocked, uuid_blocker),
-        )
-        conn.commit()
-        conn.close()
-
-        conn = _entities_conn(db_path)
         try:
-            result = check_stale_dependencies(entities_conn=conn)
-            assert result.name == "stale_dependencies"
+            result = check_missed_cascade(entities_conn=conn)
+            assert result.name == "missed_cascade"
             assert not result.passed
             assert len(result.issues) == 1
             issue = result.issues[0]
-            assert "Stale blocked_by edge" in issue.message
-            assert uuid_blocked in issue.message
-            assert uuid_blocker in issue.message
-            assert "Remove stale dependency" in issue.fix_hint
+            assert "Missed cascade" in issue.message
+            assert blocked_uuid in issue.message
+            assert blocker_uuid in issue.message
+            assert issue.fix_hint == "Run cascade evaluation"
         finally:
             conn.close()
 
 
 class TestCheck11CleanDependenciesPass:
-    """check_stale_dependencies passes when no stale edges exist."""
+    """check_missed_cascade passes when no missed-cascade edges exist."""
 
     def test_clean_dependencies_pass(self, tmp_path):
-        import uuid as uuid_mod
-        from doctor.checks import check_stale_dependencies
+        from doctor.checks import check_missed_cascade
 
-        db_path = _make_db(tmp_path)
-        uuid_a = str(uuid_mod.uuid4())
-        uuid_b = str(uuid_mod.uuid4())
+        db, conn = _make_live_db(tmp_path)
+        _register_live_feature(db, "a", status="active")
+        a_uuid = _entity_uuid(conn, "feature:a")
+        _register_live_feature(db, "b", status="blocked")
+        b_uuid = _entity_uuid(conn, "feature:b")
 
-        _register_entity_with_uuid(
-            db_path, "feature:a", "feature", "a", uuid_val=uuid_a,
-        )
-        _register_entity_with_uuid(
-            db_path, "feature:b", "feature", "b", uuid_val=uuid_b,
-        )
+        # Blocker NOT resolved (status=active) -- must not fire.
+        db.add_dependency(b_uuid, a_uuid)
 
-        # Add dependency where blocker is NOT completed (status=active)
-        conn = sqlite3.connect(db_path)
-        conn.execute(
-            "INSERT INTO entity_dependencies (entity_uuid, blocked_by_uuid) VALUES (?, ?)",
-            (uuid_a, uuid_b),
-        )
-        conn.commit()
-        conn.close()
-
-        conn = _entities_conn(db_path)
         try:
-            result = check_stale_dependencies(entities_conn=conn)
+            result = check_missed_cascade(entities_conn=conn)
             assert result.passed
             assert len(result.issues) == 0
+        finally:
+            conn.close()
+
+
+class TestCheck11MultiBlockerPartialNoFire:
+    """SC5: fires ONLY when EVERY blocker is resolved -- a blocked entity
+    with one resolved + one unresolved blocker must NOT fire (kills the
+    naive edge-to-completed-blocker false positive)."""
+
+    def test_multi_blocker_partial_completion_no_fire(self, tmp_path):
+        from doctor.checks import check_missed_cascade
+
+        db, conn = _make_live_db(tmp_path)
+        _register_live_feature(db, "resolved-blocker", status="completed")
+        resolved_uuid = _entity_uuid(conn, "feature:resolved-blocker")
+        _register_live_feature(db, "active-blocker", status="active")
+        active_uuid = _entity_uuid(conn, "feature:active-blocker")
+        _register_live_feature(db, "downstream", status="blocked")
+        downstream_uuid = _entity_uuid(conn, "feature:downstream")
+
+        db.add_dependency(downstream_uuid, resolved_uuid)
+        db.add_dependency(downstream_uuid, active_uuid)
+
+        try:
+            result = check_missed_cascade(entities_conn=conn)
+            assert result.passed
+            assert len(result.issues) == 0
+
+            # Resolve the remaining blocker via raw SQL, bypassing
+            # update_entity's OWN live cascade hook -- going through
+            # update_entity here would flip 'downstream' to 'ready'
+            # immediately (the feature working as intended), and it would
+            # never sit in 'blocked' for the doctor to catch. Raw SQL
+            # simulates the actual missed-cascade scenario this check
+            # exists for (e.g. a fail-open cascade failure or an external
+            # write) without exercising the live cascade path.
+            conn.execute(
+                "UPDATE entities SET status = 'completed' WHERE uuid = ?",
+                (active_uuid,),
+            )
+            conn.commit()
+            result2 = check_missed_cascade(entities_conn=conn)
+            assert not result2.passed
+            assert len(result2.issues) == 1
+            assert result2.issues[0].entity == "feature:downstream"
+        finally:
+            conn.close()
+
+
+class TestCheck11PerKindEquivalence:
+    """Feature 124 D6: SQL-vs-Python equivalence, one blocker per CASE arm.
+
+    Asserts the missed-cascade SQL's per-kind CASE agrees with
+    ``DependencyManager._all_blockers_resolved`` (D4) for one blocker of
+    every kind in the design-pinned terminal table.
+    """
+
+    @pytest.mark.parametrize(
+        "kind,resolved_status",
+        [
+            ("brainstorm", "abandoned"),
+            ("backlog", "dropped"),
+            ("task", "closed"),
+            ("bug", "resolved"),
+            ("feature", "completed"),
+        ],
+    )
+    def test_sql_matches_python_helper(self, tmp_path, kind, resolved_status):
+        from doctor.checks import check_missed_cascade
+        from entity_registry.dependencies import DependencyManager
+
+        db, conn = _make_live_db(tmp_path)
+        _register_live_feature(
+            db, "blocker-x", kind=kind, status=resolved_status,
+        )
+        blocker_uuid = _entity_uuid(conn, f"{kind}:blocker-x")
+        _register_live_feature(db, "downstream-x", status="blocked")
+        downstream_uuid = _entity_uuid(conn, "feature:downstream-x")
+        db.add_dependency(downstream_uuid, blocker_uuid)
+
+        try:
+            sql_flagged = {
+                i.entity for i in check_missed_cascade(entities_conn=conn).issues
+            }
+            python_resolved = DependencyManager()._all_blockers_resolved(
+                db, downstream_uuid
+            )
+            # Both sides must agree, and (since this arm's blocker is
+            # resolved) both must say "resolved" -- an arm silently
+            # defaulting to False on both sides would pass the equality
+            # check vacuously.
+            assert python_resolved is True
+            assert ("feature:downstream-x" in sql_flagged) == python_resolved
         finally:
             conn.close()
 

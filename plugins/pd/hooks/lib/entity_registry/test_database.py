@@ -588,7 +588,8 @@ class TestIndexes:
         # Feature 109 Migration 12 Group 7: idx_entity_type and
         # idx_workspace_entity_type dropped (entity_type column removed).
         # Feature 124 Migration 18: idx_ed_entity_uuid / idx_ed_blocked_by_uuid
-        # dropped with entity_dependencies (unified into entity_relations).
+        # dropped along with the pre-124 dependency table (unified into
+        # entity_relations).
         expected = [
             # Feature 109 (AC-1.6): composite polymorphic-query index
             # added to migration 12.
