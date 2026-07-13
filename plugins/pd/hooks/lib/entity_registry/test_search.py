@@ -950,9 +950,9 @@ def test_migration_7_upgrades_v6_database(tmp_path):
             PRIMARY KEY (type_id, tag)
         );
         CREATE TABLE entity_dependencies (
-            from_type_id TEXT NOT NULL, to_type_id TEXT NOT NULL,
-            dependency_type TEXT NOT NULL DEFAULT 'depends_on',
-            PRIMARY KEY (from_type_id, to_type_id, dependency_type)
+            entity_uuid     TEXT NOT NULL,
+            blocked_by_uuid TEXT NOT NULL,
+            UNIQUE(entity_uuid, blocked_by_uuid)
         );
         CREATE TABLE entity_okr_alignment (
             type_id TEXT NOT NULL, objective TEXT NOT NULL,

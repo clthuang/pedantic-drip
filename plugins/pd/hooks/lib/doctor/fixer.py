@@ -18,14 +18,13 @@ from doctor.fix_actions import (
     _fix_entity_status_promoted,
     _fix_insert_workspace_row,
     _fix_last_completed_phase,
+    _fix_missed_cascade,
     _fix_rebuild_fts,
     _fix_reconcile,
-    _fix_remove_orphan_dependency,
     _fix_remove_orphan_tag,
     _fix_remove_orphan_workflow,
     _fix_run_entity_migrations,
     _fix_self_referential_parent,
-    _fix_stale_dependency,
     _fix_wal_entities,
 )
 from doctor.models import DiagnosticReport, FixReport, FixResult
@@ -42,13 +41,12 @@ _SAFE_PATTERNS: list[tuple[str, Callable]] = [
     ("Add (promoted", _fix_backlog_annotation),
     ("Set PRAGMA journal_mode=WAL on the database", _fix_wal_entities),
     ("Update .meta.json from DB state", _fix_reconcile),
-    ("Remove orphaned dependency", _fix_remove_orphan_dependency),
     ("Remove orphaned tag", _fix_remove_orphan_tag),
     ("Remove orphaned workflow_phases", _fix_remove_orphan_workflow),
     ("Clear self-referential parent_uuid", _fix_self_referential_parent),
     ("Rebuild FTS index", _fix_rebuild_fts),
     ("Run migrations to", _fix_run_entity_migrations),
-    ("Remove stale dependency", _fix_stale_dependency),
+    ("Run cascade evaluation", _fix_missed_cascade),
     # Workspace split-brain heal — prefixes are the contract with
     # check_workspace_uuid_consistency's check-time fix_hints.
     ("Adopt workspace UUID from DB row", _fix_adopt_workspace_uuid),

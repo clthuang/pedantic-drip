@@ -20,7 +20,7 @@ import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from entity_registry.database import EntityDatabase
-from entity_registry.dependencies import DependencyManager
+from entity_registry.dependencies import DependencyManager, _blocker_completed
 from transition_gate import Severity, TransitionResult
 
 from .engine import WorkflowStateEngine
@@ -248,10 +248,20 @@ class EntityWorkflowEngine:
             blockers = self._dep_manager.get_blockers(
                 self._db, entity_uuid
             )
-            if blockers:
+            # Feature 124 D4/D8: edges SURVIVE completion (FR124-4c), so
+            # "any edge exists" is no longer the right predicate -- a
+            # blocker whose edge survived because it is already resolved
+            # must not re-block this transition. Filter to blockers that
+            # are still unresolved (same self-nullifying any-edge fix as
+            # task_promotion.py's query_ready_tasks gate).
+            unresolved_blockers = []
+            for b_uuid in blockers:
+                b_entity = self._db.get_entity_by_uuid(b_uuid)
+                if b_entity is None or not _blocker_completed(b_entity):
+                    unresolved_blockers.append((b_uuid, b_entity))
+            if unresolved_blockers:
                 blocker_names = []
-                for b_uuid in blockers:
-                    b_entity = self._db.get_entity_by_uuid(b_uuid)
+                for b_uuid, b_entity in unresolved_blockers:
                     if b_entity:
                         blocker_names.append(b_entity["type_id"])
                     else:
@@ -521,10 +531,12 @@ class EntityWorkflowEngine:
     def _run_cascade(
         self, entity_uuid: str
     ) -> tuple[list[str], float | None]:
-        """Run cascade in a separate transaction.
+        """Run cascade as a follow-on to the triggering write (TD-1).
 
-        1. cascade_unblock — remove completed entity from blocked_by lists
-        2. rollup_parent — recompute parent progress up ancestor chain
+        1. cascade_unblock — flip fully-resolved dependents blocked→ready,
+           each in its own per-flip transaction (feature 124 D3)
+        2. rollup_parent — recompute parent progress up ancestor chain, in
+           its own transaction
         3. notification push (if queue available)
 
         Returns (unblocked_uuids, parent_progress).
@@ -532,11 +544,22 @@ class EntityWorkflowEngine:
         unblocked: list[str] = []
         parent_progress: float | None = None
 
-        # Transaction scope: only the two write operations
+        # Feature 124 D3: cascade_unblock now owns its own per-flip
+        # transactions (DependencyManager._evaluate_and_flip does one
+        # RE-ENTRANT db.transaction() per flip, atomically pairing the
+        # status write with its cascade_ready event -- FR124-4d). Wrapping
+        # this call in an outer transaction would still be race-free
+        # (db.transaction() is re-entrant, unlike begin_immediate(), so it
+        # would not raise) but would SILENTLY collapse every flip plus
+        # rollup_parent into one shared transaction, defeating the
+        # per-flip atomicity boundary the design requires. rollup_parent
+        # runs AFTER, in its OWN transaction -- its atomicity was never
+        # coupled to the cascade's writes; order is preserved (flips, then
+        # rollup).
+        unblocked = self._dep_manager.cascade_unblock(
+            self._db, entity_uuid
+        )
         with self._db.transaction():
-            unblocked = self._dep_manager.cascade_unblock(
-                self._db, entity_uuid
-            )
             rollup_parent(self._db, entity_uuid)
 
         # Read-only operations OUTSIDE transaction (no write lock held).

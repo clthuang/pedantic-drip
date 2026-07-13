@@ -2,6 +2,12 @@
 
 Task 1b.6: DependencyManager with cycle detection via recursive CTE,
 cascade unblock on entity completion.
+
+Feature 124: the store is entity_relations(kind='blocks') (Migration 18
+unified the prior dual-representation into this single table). The cascade
+flips a resolved-blocker's dependents `blocked -> ready` (not `planned`);
+edges SURVIVE completion (FR124-4c) -- only entity_relations' FK ON DELETE
+CASCADE removes rows, and only on entity deletion.
 """
 from __future__ import annotations
 
@@ -13,11 +19,43 @@ class CycleError(ValueError):
     pass
 
 
+# ---------------------------------------------------------------------------
+# Feature 124 D4 -- per-kind completion predicate (design-pinned table, NOT a
+# MACHINE_REGISTRY consultation: 'bug' is deliberately absent from that
+# registry, so a runtime lookup is impossible). Sourced from ENTITY_MACHINES
+# graphs (brainstorm/backlog), _CLOSES_TERMINAL (task/bug closes= terminals,
+# database.py:75-78), and the 5D/feature 'completed' execution status.
+# ---------------------------------------------------------------------------
+_RESOLVED_STATUSES: dict[str, tuple[str, ...]] = {
+    "feature": ("completed",),
+    "project": ("completed",),
+    "initiative": ("completed",),
+    "objective": ("completed",),
+    "key_result": ("completed",),
+    "task": ("completed", "closed"),
+    "bug": ("closed", "resolved", "wont_fix"),
+    "brainstorm": ("promoted", "abandoned"),
+    "backlog": ("promoted", "dropped"),
+}
+
+
+def _blocker_completed(entity: dict) -> bool:
+    """Return True if entity's status is a resolved terminal for its kind.
+
+    The single per-kind predicate (spec FR124-5) -- collapses the four
+    inline `status == "completed"` sites (database.py's cascade trigger,
+    dependency_freshness.py, checks.py's missed-cascade check (task 3),
+    and entity_engine.py's deliver-phase gate) onto one design-pinned table.
+    """
+    kind = entity.get("kind") or entity.get("entity_type")
+    return entity.get("status") in _RESOLVED_STATUSES.get(kind, ())
+
+
 class DependencyManager:
     """Manages entity dependencies (blocked_by relationships).
 
-    Uses the entity_dependencies table created in migration 6.
-    Cycle detection delegated to EntityDatabase.check_dependency_cycle.
+    Uses entity_relations(kind='blocks') (unified in Migration 18). Cycle
+    detection delegated to EntityDatabase.check_dependency_cycle.
     """
 
     def add_dependency(
@@ -80,35 +118,73 @@ class DependencyManager:
     def cascade_unblock(
         self, db: EntityDatabase, completed_uuid: str
     ) -> list[str]:
-        """Remove completed entity from all blocked_by lists.
+        """Flip dependents of a resolved blocker from 'blocked' to 'ready'.
 
-        Returns list of entity UUIDs that are now fully unblocked
-        (have zero remaining blockers after this removal).
+        Feature 124 (FR124-4): edges SURVIVE (no tombstoning -- the blocks
+        row stays as an audit trail); a dependent flips only when ALL of
+        its blockers satisfy `_blocker_completed` (D4), not merely because
+        this one completed. Returns the list of flipped entity UUIDs (shape
+        preserved from the pre-124 tombstone behavior).
         """
-        # Find all entities that were blocked by the completed entity
-        affected_deps = db.query_dependencies(blocked_by_uuid=completed_uuid)
-
-        if not affected_deps:
+        affected = self.get_dependents(db, completed_uuid)
+        if not affected:
             return []
+        return self._evaluate_and_flip(db, affected)
 
-        affected_uuids = [d["entity_uuid"] for d in affected_deps]
+    def _all_blockers_resolved(
+        self, db: EntityDatabase, entity_uuid: str
+    ) -> bool:
+        """Return True iff every blocker of entity_uuid is resolved (D4).
 
-        # Remove all deps where blocked_by = completed_uuid
-        db.remove_dependencies_by_blocker(completed_uuid)
+        Vacuously True when there are no blockers -- load-bearing for the
+        deletion path (D5.3): a dependent whose last blocker was just
+        deleted has zero remaining blockers, so it is vacuously resolved
+        and flips.
+        """
+        for blocker_uuid in self.get_blockers(db, entity_uuid):
+            blocker = db.get_entity_by_uuid(blocker_uuid)
+            if blocker is None or not _blocker_completed(blocker):
+                return False
+        return True
 
-        # Check which affected entities are now fully unblocked
-        # and update their status from 'blocked' to 'planned' (per design C4/AC-29)
-        fully_unblocked = []
-        for uid in affected_uuids:
-            remaining = db.query_dependencies(entity_uuid=uid)
-            if not remaining:
-                fully_unblocked.append(uid)
-                # Update status: blocked → planned
-                entity = db.get_entity_by_uuid(uid)
-                if entity and entity.get("status") == "blocked":
-                    db.update_entity(entity["type_id"], status="planned")
+    def _evaluate_and_flip(
+        self, db: EntityDatabase, dependent_uuids: list[str]
+    ) -> list[str]:
+        """Flip each still-blocked, fully-resolved dependent to 'ready'.
 
-        return fully_unblocked
+        Shared by cascade_unblock (over get_dependents) and delete_entity's
+        unblock-on-delete hook (over its PRE-captured dependents -- the FK
+        cascade has already emptied their edges by the time this runs, so
+        the hook must NOT call cascade_unblock(deleted_uuid) itself).
+
+        Each flip is its own atomic transaction (FR124-4d): the status
+        write and the `cascade_ready` phase_events row land together via a
+        RE-ENTRANT `db.transaction()` (never begin_immediate, which raises
+        under any caller-held transaction).
+        """
+        flipped: list[str] = []
+        for uid in dependent_uuids:
+            entity = db.get_entity_by_uuid(uid)
+            if entity is None or entity.get("status") != "blocked":
+                continue
+            if not self._all_blockers_resolved(db, uid):
+                continue
+            with db.transaction():
+                db.update_entity(entity["type_id"], status="ready")
+                db.append_phase_event(
+                    type_id=entity["type_id"],
+                    project_id=entity.get("project_id") or "__unknown__",
+                    workspace_uuid=entity.get("workspace_uuid"),
+                    event_type="cascade_ready",
+                    phase=None,
+                    metadata={
+                        "from_value": "blocked",
+                        "to_value": "ready",
+                        "actor": "system:cascade",
+                    },
+                )
+            flipped.append(uid)
+        return flipped
 
     def get_blockers(
         self, db: EntityDatabase, entity_uuid: str

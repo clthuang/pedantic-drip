@@ -6,7 +6,7 @@
 # Single-statement (skip): add_tag, remove_tag, add_okr_alignment,
 #   remove_okr_alignment, set_parent, insert_workflow_phase,
 #   update_workflow_phase, delete_workflow_phase, set_metadata,
-#   add_dependency, remove_dependency, remove_dependencies_by_blocker
+#   add_dependency, remove_dependency
 # Infrastructure (skip): _migrate (2 sites)
 from __future__ import annotations
 
@@ -5531,6 +5531,416 @@ def _migration_17_cross_workspace_allowlist_down(conn: sqlite3.Connection) -> No
         raise
 
 
+# Feature 124 (C-124.1): Migration 18 — unify the dependency store.
+# Widens entity_relations.kind to admit 'blocks', copies entity_dependencies
+# rows + resolvable depends_on_features metadata refs into it as blocks
+# rows, then drops entity_dependencies. FORWARD-ONLY — no MIGRATIONS_DOWN
+# entry (see the carve-out on the comment above MIGRATIONS_DOWN): unifying
+# two stores into one is lossy at the table-drop step, so un-dropping is
+# not implementable. 132 owns the physical v2 cutover.
+def _migration_18_unify_dependency_store(conn: sqlite3.Connection) -> None:
+    """Migration 18 — unify entity_dependencies into entity_relations.
+
+    Four steps in ONE ``BEGIN IMMEDIATE`` / single ``COMMIT`` (a step-1-only
+    commit would strand a half-applied run):
+
+    1. Copy-rename rebuild of ``entity_relations`` widening
+       ``CHECK(kind IN ('fixes'))`` to ``CHECK(kind IN ('fixes', 'blocks'))``.
+       Mirrors the :func:`_copy_rename_entities_for_v14` idiom: capture
+       indices, rebuild with the widened CHECK, INSERT-SELECT all rows
+       (byte-identical columns otherwise), drop old, rename new, recreate
+       indices.
+    2. Unification copy: every ``entity_dependencies`` row becomes a
+       ``blocks`` row — ``from_uuid = blocked_by_uuid`` (the blocker),
+       ``to_uuid = entity_uuid`` (the blocked). Rows whose either uuid is
+       missing from ``entities`` (the old table has no FK) are skipped
+       with a stderr note each; self-edges
+       (``entity_uuid == blocked_by_uuid``) are also skipped with a note
+       (the guarded ``DependencyManager`` path rejects self-deps via
+       ``check_dependency_cycle``, but this raw copy bypasses it).
+    3. ``depends_on_features`` metadata materialization: for every entity
+       whose metadata carries the key, resolve each ``feature:{id}-{slug}``
+       ref to a uuid within the SAME workspace and ``INSERT OR IGNORE`` a
+       ``blocks`` row (same self-edge filter). Unresolvable refs warn to
+       stderr; metadata is left untouched (audit trail).
+    4. ``DROP TABLE entity_dependencies`` (+ its 2 indices). Migration 6's
+       CREATE (this file, Step 7 of ``_schema_expansion_v6``) is untouched.
+
+    Pragma bracketing per the Migration 14 ``finally`` idiom:
+    ``foreign_keys=OFF`` (verified) BEFORE ``BEGIN IMMEDIATE``;
+    ``foreign_key_check`` pre-commit inside the transaction;
+    ``foreign_keys=ON`` restored in a ``finally`` AFTER the single COMMIT;
+    defensive post-transaction ``foreign_key_check``.
+
+    Replay-safe: the fingerprint is ``entity_dependencies`` ABSENT from
+    ``sqlite_master`` — only true after step 4 completes, so probing it
+    before this function does any work reflects genuine completion (unlike
+    a CHECK-based fingerprint, which would already be set after step 1).
+
+    Forward-only: no reverse migration is registered for 18 (unification
+    is lossy at the table-drop step — un-dropping is not implementable).
+    """
+    tables = {
+        r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    if "entity_dependencies" not in tables:
+        return
+
+    conn.execute("PRAGMA foreign_keys = OFF")
+    fk_status = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+    if fk_status != 0:
+        raise MigrationError(
+            "PRAGMA foreign_keys = OFF did not take effect — "
+            "aborting migration 18"
+        )
+
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+
+        # Racer-tolerant re-check: a concurrent peer may have completed
+        # migration 18 between our table probe and BEGIN IMMEDIATE
+        # acquisition.
+        tables_in_tx = {
+            r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        if "entity_dependencies" not in tables_in_tx:
+            conn.rollback()
+            return
+
+        # --------------------------------------------------------------
+        # Step 1: Copy-rename rebuild of entity_relations, widening the
+        # kind CHECK to admit 'blocks'.
+        # --------------------------------------------------------------
+        saved_indexes = [
+            (r[0], r[1])
+            for r in conn.execute(
+                "SELECT name, sql FROM sqlite_master "
+                "WHERE type='index' AND tbl_name='entity_relations' "
+                "AND sql IS NOT NULL"
+            ).fetchall()
+        ]
+
+        src_cols = [
+            r[1] for r in conn.execute(
+                "PRAGMA table_info(entity_relations)"
+            ).fetchall()
+        ]
+        expected_cols = {"id", "from_uuid", "to_uuid", "kind", "created_at"}
+        if set(src_cols) != expected_cols:
+            raise MigrationError(
+                "Migration 18 entity_relations copy-rename: column-set "
+                f"mismatch. found={src_cols!r}"
+            )
+
+        conn.execute("""
+            CREATE TABLE entity_relations_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                from_uuid TEXT NOT NULL,
+                to_uuid TEXT NOT NULL,
+                kind TEXT NOT NULL CHECK(kind IN ('fixes', 'blocks')),
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (from_uuid) REFERENCES entities(uuid)
+                    ON DELETE CASCADE,
+                FOREIGN KEY (to_uuid) REFERENCES entities(uuid)
+                    ON DELETE CASCADE
+            )
+        """)
+        conn.execute(
+            "INSERT INTO entity_relations_new "
+            "(id, from_uuid, to_uuid, kind, created_at) "
+            "SELECT id, from_uuid, to_uuid, kind, created_at "
+            "FROM entity_relations"
+        )
+        conn.execute("DROP TABLE entity_relations")
+        conn.execute("PRAGMA legacy_alter_table = OFF")
+        conn.execute(
+            "ALTER TABLE entity_relations_new RENAME TO entity_relations"
+        )
+        for _, idx_sql in saved_indexes:
+            if idx_sql:
+                conn.execute(idx_sql)
+
+        # --------------------------------------------------------------
+        # Step 2: Unification copy from entity_dependencies.
+        # --------------------------------------------------------------
+        migration_ts = datetime.now(timezone.utc).isoformat()
+
+        orphan_rows = conn.execute(
+            "SELECT ed.entity_uuid, ed.blocked_by_uuid "
+            "FROM entity_dependencies ed "
+            "LEFT JOIN entities e1 ON e1.uuid = ed.entity_uuid "
+            "LEFT JOIN entities e2 ON e2.uuid = ed.blocked_by_uuid "
+            "WHERE e1.uuid IS NULL OR e2.uuid IS NULL"
+        ).fetchall()
+        for entity_uuid, blocked_by_uuid in orphan_rows:
+            print(
+                "[migration-18] skipping orphan entity_dependencies row "
+                f"entity_uuid={entity_uuid!r} "
+                f"blocked_by_uuid={blocked_by_uuid!r} "
+                "(uuid not found in entities)",
+                file=sys.stderr,
+            )
+
+        self_edge_rows = conn.execute(
+            "SELECT ed.entity_uuid FROM entity_dependencies ed "
+            "JOIN entities e ON e.uuid = ed.entity_uuid "
+            "WHERE ed.entity_uuid = ed.blocked_by_uuid"
+        ).fetchall()
+        for (self_uuid,) in self_edge_rows:
+            print(
+                "[migration-18] skipping self-edge entity_dependencies "
+                f"row uuid={self_uuid!r}",
+                file=sys.stderr,
+            )
+
+        conn.execute(
+            "INSERT OR IGNORE INTO entity_relations "
+            "(from_uuid, to_uuid, kind, created_at) "
+            "SELECT ed.blocked_by_uuid, ed.entity_uuid, 'blocks', ? "
+            "FROM entity_dependencies ed "
+            "JOIN entities e1 ON e1.uuid = ed.entity_uuid "
+            "JOIN entities e2 ON e2.uuid = ed.blocked_by_uuid "
+            "WHERE ed.entity_uuid != ed.blocked_by_uuid",
+            (migration_ts,),
+        )
+
+        # --------------------------------------------------------------
+        # Step 3: depends_on_features metadata materialization.
+        # --------------------------------------------------------------
+        from entity_registry.metadata import parse_metadata
+
+        meta_rows = conn.execute(
+            "SELECT uuid, workspace_uuid, type_id, metadata FROM entities "
+            "WHERE metadata LIKE '%depends_on_features%'"
+        ).fetchall()
+        for entity_uuid, workspace_uuid, type_id, raw_metadata in meta_rows:
+            meta = parse_metadata(raw_metadata)
+            refs = meta.get("depends_on_features") or []
+            if not isinstance(refs, list):
+                continue
+            for ref in refs:
+                if not isinstance(ref, str):
+                    continue
+                ref_row = conn.execute(
+                    "SELECT uuid FROM entities "
+                    "WHERE type_id = ? AND workspace_uuid = ?",
+                    (ref, workspace_uuid),
+                ).fetchone()
+                if ref_row is None:
+                    print(
+                        "[migration-18] unresolvable depends_on_features "
+                        f"ref {ref!r} on entity {type_id!r} "
+                        f"({entity_uuid}) — metadata left intact",
+                        file=sys.stderr,
+                    )
+                    continue
+                resolved_uuid = ref_row[0]
+                if resolved_uuid == entity_uuid:
+                    print(
+                        "[migration-18] skipping self-referential "
+                        f"depends_on_features ref {ref!r} on entity "
+                        f"{type_id!r} ({entity_uuid})",
+                        file=sys.stderr,
+                    )
+                    continue
+                conn.execute(
+                    "INSERT OR IGNORE INTO entity_relations "
+                    "(from_uuid, to_uuid, kind, created_at) "
+                    "VALUES (?, ?, 'blocks', ?)",
+                    (resolved_uuid, entity_uuid, migration_ts),
+                )
+
+        # --------------------------------------------------------------
+        # Step 4: Drop the legacy entity_dependencies table + indices.
+        # --------------------------------------------------------------
+        conn.execute("DROP INDEX IF EXISTS idx_ed_entity_uuid")
+        conn.execute("DROP INDEX IF EXISTS idx_ed_blocked_by_uuid")
+        conn.execute("DROP TABLE entity_dependencies")
+
+        # --------------------------------------------------------------
+        # Pre-commit FK check (in-transaction).
+        # --------------------------------------------------------------
+        in_tx_fk = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if in_tx_fk:
+            raise MigrationError(
+                f"Migration 18 in-transaction FK check non-empty: {in_tx_fk}"
+            )
+
+        conn.execute(
+            "INSERT OR REPLACE INTO _metadata (key, value) "
+            "VALUES ('schema_version', '18')"
+        )
+
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except sqlite3.Error:
+            pass
+        raise
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
+
+    post_fk = conn.execute("PRAGMA foreign_key_check").fetchall()
+    if post_fk:
+        raise MigrationError(
+            f"Migration 18 post-FK check non-empty: {post_fk}"
+        )
+
+
+# Feature 124 (Task 2 addendum, D3): Migration 19 — widen phase_events'
+# event_type CHECK to admit 'cascade_ready'. D3 pins the cascade flip's
+# atomic record as a phase_events row with event_type='cascade_ready'
+# (from_value/to_value/actor carried in metadata, mirroring the
+# entity_status_changed convention); the live CHECK (widened to 8 values by
+# Migration 14's _copy_rename_phase_events_for_v14) does not admit it, and
+# SQLite CHECKs are immutable in place. Forward-only (no MIGRATIONS_DOWN
+# entry): a pure widen has no data to lose, and 132 owns the physical v2
+# cutover -- adding a reverse here would touch the MIGRATIONS_DOWN keys
+# pin (test_database.py) for no functional benefit, mirroring Migration
+# 18's own forward-only precedent.
+def _migration_19_widen_phase_events_cascade_ready(
+    conn: sqlite3.Connection,
+) -> None:
+    """Migration 19 — widen phase_events.event_type CHECK to admit
+    'cascade_ready'.
+
+    Mirrors the Migration 14 copy-rename idiom
+    (_copy_rename_phase_events_for_v14, database.py:4637): capture indexes
+    + triggers, rebuild with the widened CHECK (9 values, adds
+    'cascade_ready'), INSERT-SELECT all rows (byte-identical columns;
+    the m18-style column-set pre-flight assertion is intentionally omitted
+    -- phase_events' shape is stable and the explicit column list fails
+    loudly on mismatch),
+    DROP old, RENAME new, recreate indexes + triggers. No FK pragma
+    bracketing needed -- phase_events carries no FK constraints (unlike
+    Migration 18's entity_relations rebuild).
+
+    Replay-safe: probes sqlite_master for a `'cascade_ready'` substring in
+    the phase_events CHECK SQL; if present, a prior interrupted attempt
+    already completed the rebuild -- skip.
+    """
+    pe_sql_row = conn.execute(
+        "SELECT sql FROM sqlite_master "
+        "WHERE type='table' AND name='phase_events'"
+    ).fetchone()
+    if "'cascade_ready'" in (pe_sql_row[0] if pe_sql_row else ""):
+        return
+
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        # Racer-tolerant re-check: a concurrent peer may have completed
+        # migration 19 between our probe and BEGIN IMMEDIATE acquisition.
+        pe_sql_row_tx = conn.execute(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type='table' AND name='phase_events'"
+        ).fetchone()
+        if "'cascade_ready'" in (pe_sql_row_tx[0] if pe_sql_row_tx else ""):
+            conn.rollback()
+            return
+
+        pe_pre_count = conn.execute(
+            "SELECT COUNT(*) FROM phase_events"
+        ).fetchone()[0]
+
+        pe_saved_indexes = [
+            (r[0], r[1])
+            for r in conn.execute(
+                "SELECT name, sql FROM sqlite_master "
+                "WHERE type='index' AND tbl_name='phase_events' "
+                "AND sql IS NOT NULL"
+            ).fetchall()
+        ]
+        pe_saved_triggers = [
+            (r[0], r[1])
+            for r in conn.execute(
+                "SELECT name, sql FROM sqlite_master "
+                "WHERE type='trigger' AND tbl_name='phase_events' "
+                "AND sql IS NOT NULL"
+            ).fetchall()
+        ]
+        pe_cross_triggers = [
+            (r[0], r[1])
+            for r in conn.execute(
+                "SELECT name, sql FROM sqlite_master "
+                "WHERE type='trigger' "
+                "AND tbl_name <> 'phase_events' "
+                "AND sql LIKE '%phase_events%' "
+                "AND sql IS NOT NULL"
+            ).fetchall()
+        ]
+        for trg_name, _ in pe_cross_triggers:
+            conn.execute(f"DROP TRIGGER IF EXISTS {trg_name}")
+
+        conn.execute("""
+            CREATE TABLE phase_events_new (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                type_id         TEXT NOT NULL,
+                project_id      TEXT NOT NULL,
+                phase           TEXT,
+                event_type      TEXT NOT NULL CHECK(event_type IN (
+                    'started', 'completed', 'skipped', 'backward',
+                    'entity_created', 'entity_status_changed',
+                    'entity_promoted', 'spawned_child', 'cascade_ready'
+                )),
+                timestamp       TEXT NOT NULL,
+                iterations      INTEGER,
+                reviewer_notes  TEXT,
+                backward_reason TEXT,
+                backward_target TEXT,
+                source          TEXT NOT NULL DEFAULT 'live' CHECK(
+                    source IN ('live', 'backfill')
+                ),
+                created_at      TEXT NOT NULL,
+                metadata        TEXT
+            )
+        """)
+
+        conn.execute(
+            "INSERT INTO phase_events_new "
+            "(id, type_id, project_id, phase, event_type, timestamp, "
+            "iterations, reviewer_notes, backward_reason, "
+            "backward_target, source, created_at, metadata) "
+            "SELECT id, type_id, project_id, phase, event_type, "
+            "timestamp, iterations, reviewer_notes, backward_reason, "
+            "backward_target, source, created_at, metadata "
+            "FROM phase_events"
+        )
+        pe_post_count = conn.execute(
+            "SELECT COUNT(*) FROM phase_events_new"
+        ).fetchone()[0]
+        if pe_post_count != pe_pre_count:
+            raise MigrationError(
+                f"Migration 19 phase_events copy-rename row-count "
+                f"mismatch: pre={pe_pre_count}, post={pe_post_count}"
+            )
+
+        conn.execute("DROP TABLE phase_events")
+        conn.execute("ALTER TABLE phase_events_new RENAME TO phase_events")
+
+        for _, idx_sql in pe_saved_indexes:
+            if idx_sql:
+                conn.execute(idx_sql)
+        for _, trg_sql in pe_saved_triggers:
+            if trg_sql:
+                conn.execute(trg_sql)
+        for _, trg_sql in pe_cross_triggers:
+            if trg_sql:
+                conn.execute(trg_sql)
+
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+
+
 # Ordered mapping of version -> migration function.
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _create_initial_schema,
@@ -5550,11 +5960,16 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     15: _migration_15_audit_emit_counter,
     16: _migration_16_reserved,
     17: _migration_17_cross_workspace_allowlist,
+    18: _migration_18_unify_dependency_store,
+    19: _migration_19_widen_phase_events_cascade_ready,
 }
 
 # Reverse-migration registry (FR-8 / design §6.7). Migrations 1-10 are
 # forward-only; calling _migrate_down() with target_version < 10 raises
-# NotImplementedError. Schema versions 11+ are reversible.
+# NotImplementedError. Schema versions 11-17 are reversible; 18 is
+# forward-only (unifying entity_dependencies into entity_relations is lossy
+# at the table-drop step — un-dropping is not implementable; 132 owns the
+# physical v2 cutover).
 MIGRATIONS_DOWN: dict[int, Callable[[sqlite3.Connection], None]] = {
     11: _migration_11_workspace_identity_down,
     12: _migration_12_polymorphic_taxonomy_and_events_down,
@@ -5672,6 +6087,12 @@ _VALID_PARAMS: dict[str, set[str]] = {
     # future non-issue_spawn caller can promote to required when needed
     # (plan-reviewer iter 3 S3 downgrade).
     "spawned_child":        {"metadata"},
+    # Feature 124 D3/Migration 19: cascade_ready is the atomic flip record
+    # emitted by DependencyManager._evaluate_and_flip (blocked -> ready).
+    # metadata carries from_value/to_value/actor -- required, since the
+    # event is meaningless without that payload (unlike spawned_child,
+    # which has exactly one caller that already guarantees it).
+    "cascade_ready":        {"metadata"},
 }
 _REQUIRED_PARAMS: dict[str, set[str]] = {
     "started":              {"phase"},
@@ -5680,6 +6101,7 @@ _REQUIRED_PARAMS: dict[str, set[str]] = {
     "backward":             {"phase", "backward_reason", "backward_target"},
     "entity_status_changed":{"metadata"},
     "entity_promoted":      {"metadata"},
+    "cascade_ready":        {"metadata"},
 }
 
 # Discriminator kwargs visible to validation (must match the union of all
@@ -6810,6 +7232,49 @@ class EntityDatabase:
                 timestamp=now,
             )
 
+            # Feature 124 D7 (FR124-3 dual-write): auto-materialize each
+            # resolvable `depends_on_features` metadata ref as a `blocks`
+            # row (from_uuid=blocker, to_uuid=this entity, per D1's
+            # mapping). Runs inside this same transaction so
+            # add_dependency's own _commit() is suppressed -- one atomic
+            # write alongside the entity row. upsert_entity's insert
+            # branch delegates to this method via a re-entrant
+            # transaction(), so it is covered too; its conflict branches
+            # never touch metadata, so no separate hook is needed there.
+            # The RAW db.add_dependency (kwargs form REQUIRED -- the live
+            # signature is arg1=blocked, arg2=blocker) has no cycle-raise,
+            # so an unresolvable or self-referential ref warns to stderr
+            # and is skipped WITHOUT blocking registration (decomposing
+            # SKILL.md:231/:248 stay byte-unchanged).
+            if metadata is not None:
+                for ref in metadata.get("depends_on_features") or []:
+                    if not isinstance(ref, str):
+                        continue
+                    try:
+                        blocker_uuid = self.resolve_ref(
+                            ref, workspace_uuid=ws_uuid,
+                        )
+                    except ValueError as exc:
+                        print(
+                            f"[register_entity] unresolvable "
+                            f"depends_on_features ref {ref!r} on entity "
+                            f"{type_id!r} ({entity_uuid}): {exc}",
+                            file=sys.stderr,
+                        )
+                        continue
+                    if blocker_uuid == entity_uuid:
+                        print(
+                            "[register_entity] skipping self-referential "
+                            f"depends_on_features ref {ref!r} on entity "
+                            f"{type_id!r} ({entity_uuid})",
+                            file=sys.stderr,
+                        )
+                        continue
+                    self.add_dependency(
+                        entity_uuid=entity_uuid,
+                        blocked_by_uuid=blocker_uuid,
+                    )
+
         return entity_uuid
 
     def _register_entity_no_display(
@@ -7567,16 +8032,31 @@ class EntityDatabase:
                     pass  # stderr write itself failed; nothing more we can do
                 # NO re-raise. Status UPDATE has already committed.
 
-        # Cascade unblock: when an entity is completed, remove it from all
-        # blocked_by lists and promote fully-unblocked dependents.
+        # Cascade unblock: when an entity reaches a resolved status for its
+        # kind (feature 124 D4's per-kind terminal table -- e.g. 'completed'
+        # for features/5D kinds, but ALSO 'closed' for closes=-closed tasks/
+        # bugs, which the old =='completed' check missed), flip dependents
+        # whose blockers are now all resolved. Edges SURVIVE (FR124-4c);
+        # flip target is 'ready' (FR124-4a) -- idempotent, since a dependent
+        # already flipped to 'ready' no longer satisfies the 'blocked' guard
+        # inside _evaluate_and_flip, so a repeat terminal write re-flips
+        # nothing.
         # Placed AFTER transaction exits (TD-1) to avoid nested transactions.
         # Fail-open: Layers 2 (reconciliation) and 3 (doctor) catch stale edges.
-        if status == "completed":
-            try:
-                from entity_registry.dependencies import DependencyManager
-                DependencyManager().cascade_unblock(self, entity_uuid)
-            except Exception:
-                pass  # fail-open: Layers 2+3 catch stale edges
+        if status is not None and old_row is not None:
+            from entity_registry.dependencies import (
+                DependencyManager,
+                _blocker_completed,
+            )
+            if _blocker_completed({"kind": old_row["kind"], "status": status}):
+                try:
+                    DependencyManager().cascade_unblock(self, entity_uuid)
+                except Exception as exc:
+                    print(
+                        f"cascade_unblock failed (recovered by doctor): "
+                        f"{type(exc).__name__}",
+                        file=sys.stderr,
+                    )
 
         # Re-attribution (TD-8): post-Migration-11 the column is workspace_uuid.
         # We accept the legacy ``new_project_id`` kwarg, resolve it to a
@@ -7814,9 +8294,18 @@ class EntityDatabase:
     ) -> None:
         """Delete an entity and all associated data.
 
-        Extended cascade (TD-6): deletes entity_tags, entity_dependencies,
-        entity_okr_alignment, workflow_phases, entities_fts, and the entity
-        row itself — all by UUID.
+        Extended cascade (TD-6): deletes entity_tags, entity_okr_alignment,
+        workflow_phases, entities_fts, and the entity row itself — all by
+        UUID. Dependency edges are removed via entity_relations' FK ON
+        DELETE CASCADE (fires when the entity row is deleted below — no
+        manual DELETE needed).
+
+        Feature 124 D5.3: this entity's dependents (entities it blocked)
+        are re-evaluated post-commit -- a dependent whose ONLY remaining
+        blockers are now all resolved (vacuously true if this deletion
+        removed its last one) flips 'blocked' -> 'ready', fail-open with a
+        stderr warning on failure (same posture as the completion trigger
+        in update_entity).
 
         Parameters
         ----------
@@ -7844,6 +8333,17 @@ class EntityDatabase:
                 workspace_uuid=workspace_uuid,
             )
 
+            # Feature 124 D5.3: pre-capture this entity's dependents BEFORE
+            # the delete -- entity_relations' FK ON DELETE CASCADE wipes
+            # their blocks-edges at commit (step 6 below), so calling
+            # get_dependents() afterward would see []. Evaluated post-commit
+            # (below): a dependent whose ONLY blocker was this now-deleted
+            # entity has zero REMAINING blockers, which is vacuously
+            # resolved (`all([]) is True`) -- it flips to 'ready'.
+            from entity_registry.dependencies import DependencyManager
+            _dep_mgr = DependencyManager()
+            _dependents = _dep_mgr.get_dependents(self, entity_uuid)
+
             # Fetch rowid for FTS cleanup
             row = self._conn.execute(
                 "SELECT rowid FROM entities WHERE uuid = ?",
@@ -7864,11 +8364,6 @@ class EntityDatabase:
             self._conn.execute(
                 "DELETE FROM entity_tags WHERE entity_uuid = ?",
                 (entity_uuid,),
-            )
-            self._conn.execute(
-                "DELETE FROM entity_dependencies "
-                "WHERE entity_uuid = ? OR blocked_by_uuid = ?",
-                (entity_uuid, entity_uuid),
             )
             self._conn.execute(
                 "DELETE FROM entity_okr_alignment "
@@ -7896,6 +8391,18 @@ class EntityDatabase:
         except Exception:
             self._conn.rollback()
             raise
+
+        # Feature 124 D5.3: unblock-on-delete hook, run post-commit (same
+        # fail-open posture as the completion trigger in update_entity --
+        # a failure here must not undo the already-committed delete).
+        try:
+            _dep_mgr._evaluate_and_flip(self, _dependents)
+        except Exception as exc:
+            print(
+                f"cascade_unblock failed (recovered by doctor): "
+                f"{type(exc).__name__}",
+                file=sys.stderr,
+            )
 
     # ------------------------------------------------------------------
     # Re-attribution (Feature 108 Phase F)
@@ -9095,7 +9602,7 @@ class EntityDatabase:
         return int(self.get_metadata("schema_version") or 0)
 
     # ------------------------------------------------------------------
-    # Dependency management (encapsulates entity_dependencies table)
+    # Dependency management (encapsulates entity_relations kind='blocks')
     # ------------------------------------------------------------------
 
     def add_dependency(self, entity_uuid: str, blocked_by_uuid: str) -> None:
@@ -9104,26 +9611,19 @@ class EntityDatabase:
         Uses INSERT OR IGNORE for idempotency.
         """
         self._conn.execute(
-            "INSERT OR IGNORE INTO entity_dependencies "
-            "(entity_uuid, blocked_by_uuid) VALUES (?, ?)",
-            (entity_uuid, blocked_by_uuid),
+            "INSERT OR IGNORE INTO entity_relations "
+            "(from_uuid, to_uuid, kind, created_at) "
+            "VALUES (?, ?, 'blocks', ?)",
+            (blocked_by_uuid, entity_uuid, self._now_iso()),
         )
         self._commit()
 
     def remove_dependency(self, entity_uuid: str, blocked_by_uuid: str) -> None:
         """Remove a single dependency. No-op if it doesn't exist."""
         self._conn.execute(
-            "DELETE FROM entity_dependencies "
-            "WHERE entity_uuid = ? AND blocked_by_uuid = ?",
+            "DELETE FROM entity_relations "
+            "WHERE to_uuid = ? AND from_uuid = ? AND kind = 'blocks'",
             (entity_uuid, blocked_by_uuid),
-        )
-        self._commit()
-
-    def remove_dependencies_by_blocker(self, blocked_by_uuid: str) -> None:
-        """Remove all dependencies where blocked_by_uuid is the blocker."""
-        self._conn.execute(
-            "DELETE FROM entity_dependencies WHERE blocked_by_uuid = ?",
-            (blocked_by_uuid,),
         )
         self._commit()
 
@@ -9167,10 +9667,10 @@ class EntityDatabase:
         conditions: list[str] = []
         params: list[str] = []
         if entity_uuid is not None:
-            conditions.append("ed.entity_uuid = ?")
+            conditions.append("er.to_uuid = ?")
             params.append(entity_uuid)
         if blocked_by_uuid is not None:
-            conditions.append("ed.blocked_by_uuid = ?")
+            conditions.append("er.from_uuid = ?")
             params.append(blocked_by_uuid)
         if ws_uuid is not None:
             conditions.append("e.workspace_uuid = ?")
@@ -9178,19 +9678,23 @@ class EntityDatabase:
 
         if ws_uuid is not None:
             # JOIN on entities to filter by workspace; the blocked-entity
-            # side carries the workspace identity for filtering.
+            # side (to_uuid) carries the workspace identity for filtering.
             sql = (
-                "SELECT ed.entity_uuid, ed.blocked_by_uuid "
-                "FROM entity_dependencies ed "
-                "JOIN entities e ON e.uuid = ed.entity_uuid"
+                "SELECT er.to_uuid AS entity_uuid, "
+                "er.from_uuid AS blocked_by_uuid "
+                "FROM entity_relations er "
+                "JOIN entities e ON e.uuid = er.to_uuid "
+                "WHERE er.kind = 'blocks'"
             )
         else:
             sql = (
-                "SELECT ed.entity_uuid, ed.blocked_by_uuid "
-                "FROM entity_dependencies ed"
+                "SELECT er.to_uuid AS entity_uuid, "
+                "er.from_uuid AS blocked_by_uuid "
+                "FROM entity_relations er "
+                "WHERE er.kind = 'blocks'"
             )
         if conditions:
-            sql += " WHERE " + " AND ".join(conditions)
+            sql += " AND " + " AND ".join(conditions)
 
         rows = self._conn.execute(sql, params).fetchall()
         return [dict(row) for row in rows]
@@ -9217,14 +9721,14 @@ class EntityDatabase:
         row = self._conn.execute(
             """
             WITH RECURSIVE dep_chain(uid, depth) AS (
-                SELECT blocked_by_uuid, 0
-                FROM entity_dependencies
-                WHERE entity_uuid = :blocked_by
+                SELECT from_uuid, 0
+                FROM entity_relations
+                WHERE to_uuid = :blocked_by AND kind = 'blocks'
                 UNION ALL
-                SELECT ed.blocked_by_uuid, dc.depth + 1
-                FROM entity_dependencies ed
-                JOIN dep_chain dc ON ed.entity_uuid = dc.uid
-                WHERE dc.depth < :max_depth
+                SELECT er.from_uuid, dc.depth + 1
+                FROM entity_relations er
+                JOIN dep_chain dc ON er.to_uuid = dc.uid
+                WHERE dc.depth < :max_depth AND er.kind = 'blocks'
             )
             SELECT 1 FROM dep_chain WHERE uid = :target
             LIMIT 1

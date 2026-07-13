@@ -15,8 +15,8 @@ Scope (Group 12, Tasks 12.1-12.5 + 12.8 — promote_entity + PromotionConflictEr
     lifecycle_class/type_id rewritten, parent/workspace unchanged.
   - AC-3.3(e): ``test_promotion_emits_entity_promoted_event`` — single
     phase_events row with old_*/new_* metadata.
-  - AC-3.4: ``test_promotion_preserves_dependencies`` — entity_dependencies
-    FKs intact after promote.
+  - AC-3.4: ``test_promotion_preserves_dependencies`` — dependency edges
+    (entity_relations kind='blocks') FKs intact after promote.
   - AC-3.5: ``test_promotion_rollback_on_partial_failure`` — monkey-patched
     append_phase_event raises mid-promote; entity row reverts.
   - AC-3.6: ``test_promotion_conflict_raises`` — pre-existing
@@ -300,8 +300,9 @@ def test_promotion_emits_entity_promoted_event(db):
 
 
 def test_promotion_preserves_dependencies(db):
-    """AC-3.4: entity_dependencies referencing the promoted uuid (either as
-    from_uuid or to_uuid) remain valid because uuid is unchanged.
+    """AC-3.4: dependency edges (entity_relations kind='blocks') referencing
+    the promoted uuid (either as from_uuid or to_uuid) remain valid because
+    uuid is unchanged.
     """
     backlog_uuid, _, _ = _register_backlog(db, "fk-pres-003")
     feature_uuid, _, _ = _register_feature(db, "fk-pres-other")
@@ -310,7 +311,7 @@ def test_promotion_preserves_dependencies(db):
     db.add_dependency(backlog_uuid, feature_uuid)
 
     pre_count = db._conn.execute(
-        "SELECT COUNT(*) FROM entity_dependencies"
+        "SELECT COUNT(*) FROM entity_relations WHERE kind = 'blocks'"
     ).fetchone()[0]
 
     db.promote_entity(
@@ -319,7 +320,7 @@ def test_promotion_preserves_dependencies(db):
     )
 
     post_count = db._conn.execute(
-        "SELECT COUNT(*) FROM entity_dependencies"
+        "SELECT COUNT(*) FROM entity_relations WHERE kind = 'blocks'"
     ).fetchone()[0]
     assert post_count == pre_count, (
         "Dependency count changed after promotion — FK preservation failed"
@@ -329,8 +330,9 @@ def test_promotion_preserves_dependencies(db):
     assert db.get_entity_by_uuid(feature_uuid) is not None
     # Dependency endpoints unchanged (uuids stable through promotion).
     dep_row = db._conn.execute(
-        "SELECT entity_uuid, blocked_by_uuid FROM entity_dependencies "
-        "WHERE entity_uuid = ? AND blocked_by_uuid = ?",
+        "SELECT to_uuid AS entity_uuid, from_uuid AS blocked_by_uuid "
+        "FROM entity_relations "
+        "WHERE to_uuid = ? AND from_uuid = ? AND kind = 'blocks'",
         (backlog_uuid, feature_uuid),
     ).fetchone()
     assert dep_row is not None

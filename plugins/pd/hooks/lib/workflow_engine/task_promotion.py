@@ -32,7 +32,7 @@ def query_ready_tasks(
 ) -> list[dict]:
     """Return task entities that are ready for execution.
 
-    Ready = type=task, status=planned, no blocked_by entries,
+    Ready = type=task, status in (planned, ready), no UNRESOLVED blocker,
     and parent entity currently in 'implement' phase.
 
     Returns list of dicts with task info + parent context.
@@ -59,15 +59,23 @@ def query_ready_tasks(
         return []
 
     ready: list[dict] = []
+    dep_mgr = DependencyManager()
 
     for task in tasks:
-        if task.get("status") != "planned":
+        # Feature 124 D8: cascade-flipped tasks arrive as 'ready'
+        # (FR124-4a) -- never-blocked tasks stay 'planned'. Both are
+        # promotable.
+        if task.get("status") not in ("planned", "ready"):
             continue
 
         task_uuid = task["uuid"]
 
-        # Check no blockers
-        if db.query_dependencies(entity_uuid=task_uuid):
+        # Feature 124 D8: edges SURVIVE completion (FR124-4c), so "any
+        # edge exists" would re-exclude every cascade-flipped task and
+        # nullify the status widening above. Gate on UNRESOLVED blockers
+        # only (D4) -- a surviving edge to an already-resolved blocker no
+        # longer blocks.
+        if not dep_mgr._all_blockers_resolved(db, task_uuid):
             continue
 
         # Check parent is in implement phase

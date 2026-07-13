@@ -4,6 +4,7 @@ Covers: DependencyManager cycle detection, add/remove, cascade_unblock.
 """
 from __future__ import annotations
 
+import json
 import time
 import uuid
 
@@ -32,9 +33,12 @@ def mgr():
     return DependencyManager()
 
 
-def _reg(db, suffix: str) -> str:
+def _reg(db, suffix: str, *, status: str | None = None) -> str:
     """Register a feature and return its uuid."""
-    return db.register_entity("feature", f"001-{suffix}", f"Feature {suffix}", project_id="__unknown__")
+    return db.register_entity(
+        "feature", f"001-{suffix}", f"Feature {suffix}",
+        status=status, project_id="__unknown__",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -49,7 +53,7 @@ class TestAddDependency:
         mgr.add_dependency(db, a, b)
         # Verify row exists
         row = db._conn.execute(
-            "SELECT * FROM entity_dependencies WHERE entity_uuid = ? AND blocked_by_uuid = ?",
+            "SELECT * FROM entity_relations WHERE to_uuid = ? AND from_uuid = ? AND kind = 'blocks'",
             (a, b),
         ).fetchone()
         assert row is not None
@@ -62,7 +66,7 @@ class TestAddDependency:
         mgr.add_dependency(db, b, c)  # B blocked by C
         # Both should exist
         rows = db._conn.execute(
-            "SELECT * FROM entity_dependencies"
+            "SELECT * FROM entity_relations WHERE kind = 'blocks'"
         ).fetchall()
         assert len(rows) == 2
 
@@ -82,7 +86,7 @@ class TestAddDependency:
         mgr.add_dependency(db, a, b)
         mgr.add_dependency(db, a, b)  # idempotent
         rows = db._conn.execute(
-            "SELECT * FROM entity_dependencies WHERE entity_uuid = ?", (a,)
+            "SELECT * FROM entity_relations WHERE to_uuid = ? AND kind = 'blocks'", (a,)
         ).fetchall()
         assert len(rows) == 1
 
@@ -181,7 +185,7 @@ class TestRemoveDependency:
         mgr.add_dependency(db, a, b)
         mgr.remove_dependency(db, a, b)
         row = db._conn.execute(
-            "SELECT * FROM entity_dependencies WHERE entity_uuid = ? AND blocked_by_uuid = ?",
+            "SELECT * FROM entity_relations WHERE to_uuid = ? AND from_uuid = ? AND kind = 'blocks'",
             (a, b),
         ).fetchone()
         assert row is None
@@ -200,41 +204,311 @@ class TestRemoveDependency:
 
 class TestCascadeUnblock:
     def test_cascade_removes_completed_from_all_blocked_by(self, db, mgr):
-        a = _reg(db, "a")
-        b = _reg(db, "b")
-        c = _reg(db, "c")
+        # Feature 124: A must itself be resolved (its kind's completion
+        # predicate) for its dependents to flip; B/C must be 'blocked' to
+        # be flip candidates at all.
+        a = _reg(db, "a", status="completed")
+        b = _reg(db, "b", status="blocked")
+        c = _reg(db, "c", status="blocked")
         mgr.add_dependency(db, b, a)  # B blocked by A
         mgr.add_dependency(db, c, a)  # C blocked by A
         unblocked = mgr.cascade_unblock(db, a)
-        # Both B and C should be unblocked
+        # Both B and C should be unblocked (flipped to ready)
         assert set(unblocked) == {b, c}
-        # No remaining deps on A
+        # Feature 124 FR124-4c: edges SURVIVE completion (no tombstoning)
         rows = db._conn.execute(
-            "SELECT * FROM entity_dependencies WHERE blocked_by_uuid = ?", (a,)
+            "SELECT * FROM entity_relations WHERE from_uuid = ? AND kind = 'blocks'", (a,)
         ).fetchall()
-        assert len(rows) == 0
+        assert len(rows) == 2
 
     def test_cascade_returns_only_fully_unblocked(self, db, mgr):
-        """B blocked by A and C. Completing A doesn't fully unblock B."""
-        a = _reg(db, "a")
-        b = _reg(db, "b")
-        c = _reg(db, "c")
+        """SC3-b (regression guard): B blocked by A and C. Completing A
+        (partial) leaves B blocked, with no cascade_ready event; completing
+        C (the remaining blocker) then flips it."""
+        a = _reg(db, "a", status="completed")
+        b = _reg(db, "b", status="blocked")
+        c = _reg(db, "c")  # unresolved -- keeps B blocked
         mgr.add_dependency(db, b, a)
         mgr.add_dependency(db, b, c)
         unblocked = mgr.cascade_unblock(db, a)
-        # B still blocked by C, so should NOT be in unblocked list
+        # B still blocked by unresolved C, so should NOT be in unblocked list
         assert b not in unblocked
-        # A's dep row is removed
+        # Feature 124 FR124-4c: A's dep row on B SURVIVES (edges are never
+        # tombstoned by cascade_unblock)
         row = db._conn.execute(
-            "SELECT * FROM entity_dependencies WHERE entity_uuid = ? AND blocked_by_uuid = ?",
+            "SELECT * FROM entity_relations WHERE to_uuid = ? AND from_uuid = ? AND kind = 'blocks'",
             (b, a),
         ).fetchone()
-        assert row is None
+        assert row is not None
+        # No premature cascade_ready event for the partial completion
+        b_type_id = db.get_entity_by_uuid(b)["type_id"]
+        assert db.query_phase_events(type_id=b_type_id, event_type="cascade_ready") == []
+
+        # Completing the remaining blocker (C) now flips B.
+        db.update_entity(db.get_entity_by_uuid(c)["type_id"], status="completed")
+        entity_b = db.get_entity_by_uuid(b)
+        assert entity_b["status"] == "ready"
 
     def test_cascade_no_deps_returns_empty(self, db, mgr):
-        a = _reg(db, "a")
+        a = _reg(db, "a", status="completed")
         unblocked = mgr.cascade_unblock(db, a)
         assert unblocked == []
+
+    def test_sc3c_wip_dependent_untouched(self, db, mgr):
+        """SC3-c (regression guard): B at 'wip' (not 'blocked'). Completing
+        A does not touch B -- the flip gate is status=='blocked' only,
+        unchanged by feature 124."""
+        a = _reg(db, "a", status="completed")
+        b = _reg(db, "b", status="wip")
+        mgr.add_dependency(db, b, a)
+
+        unblocked = mgr.cascade_unblock(db, a)
+        assert unblocked == []
+
+        entity_b = db.get_entity_by_uuid(b)
+        assert entity_b["status"] == "wip"
+        assert db.query_phase_events(
+            type_id=entity_b["type_id"], event_type="cascade_ready",
+        ) == []
+
+    def test_sc3a_flip_records_cascade_ready_event(self, db, mgr):
+        """SC3-a: completing A flips B to 'ready', appends a cascade_ready
+        event (from_value/to_value/actor in metadata), and the A->B edge
+        SURVIVES."""
+        a = _reg(db, "a", status="completed")
+        b = _reg(db, "b", status="blocked")
+        mgr.add_dependency(db, b, a)
+
+        unblocked = mgr.cascade_unblock(db, a)
+        assert unblocked == [b]
+
+        entity_b = db.get_entity_by_uuid(b)
+        assert entity_b["status"] == "ready"
+
+        row = db._conn.execute(
+            "SELECT * FROM entity_relations WHERE to_uuid = ? AND from_uuid = ? AND kind = 'blocks'",
+            (b, a),
+        ).fetchone()
+        assert row is not None
+
+        events = db.query_phase_events(
+            type_id=entity_b["type_id"], event_type="cascade_ready",
+        )
+        assert len(events) == 1
+        metadata = json.loads(events[0]["metadata"])
+        assert metadata == {
+            "from_value": "blocked",
+            "to_value": "ready",
+            "actor": "system:cascade",
+        }
+
+
+class TestCascadeDiamondAndChains:
+    """Deepened adversarial cases: convergent (diamond) graphs and long
+    chains -- both probe whether cascade_unblock ever transitively flips
+    beyond its DIRECT dependents."""
+
+    def test_diamond_convergence_no_transitive_flip_until_both_sides_resolve(
+        self, db, mgr
+    ):
+        # Given a diamond: A blocks B, A blocks C, B blocks D, C blocks D.
+        a = _reg(db, "a", status="completed")
+        b = _reg(db, "b", status="blocked")
+        c = _reg(db, "c", status="blocked")
+        d = _reg(db, "d", status="blocked")
+        mgr.add_dependency(db, b, a)
+        mgr.add_dependency(db, c, a)
+        mgr.add_dependency(db, d, b)
+        mgr.add_dependency(db, d, c)
+
+        # When A (the shared root blocker) completes.
+        unblocked = mgr.cascade_unblock(db, a)
+
+        # Then only A's DIRECT dependents (B, C) flip -- D is two hops
+        # away and must NOT be transitively flipped, even though both of
+        # D's blockers just became 'ready'.
+        assert set(unblocked) == {b, c}
+        entity_d = db.get_entity_by_uuid(d)
+        assert entity_d["status"] == "blocked"
+
+        # When B and C each subsequently reach THEIR OWN resolved status
+        # (not merely 'ready' -- 'ready' is not itself a resolved status
+        # for kind='feature').
+        db.update_entity(db.get_entity_by_uuid(b)["type_id"], status="completed")
+        entity_d = db.get_entity_by_uuid(d)
+        assert entity_d["status"] == "blocked", (
+            "D must stay blocked while C remains only 'ready', not resolved"
+        )
+
+        db.update_entity(db.get_entity_by_uuid(c)["type_id"], status="completed")
+
+        # Then D flips only once BOTH converge, and exactly once (the
+        # earlier B-completion's cascade found C unresolved and skipped
+        # D; only the later C-completion's cascade performs the flip).
+        entity_d = db.get_entity_by_uuid(d)
+        assert entity_d["status"] == "ready"
+        events = db.query_phase_events(
+            type_id=entity_d["type_id"], event_type="cascade_ready",
+        )
+        assert len(events) == 1
+
+    def test_long_chain_no_transitive_flip_and_intermediate_blocker_itself_blocked(
+        self, db, mgr
+    ):
+        # Given a 3-hop chain: W blocks X, X blocks Y. X therefore starts
+        # 'blocked' (itself pending on W) at the moment W resolves.
+        w = _reg(db, "w", status="active")
+        x = _reg(db, "x", status="blocked")
+        y = _reg(db, "y", status="blocked")
+        mgr.add_dependency(db, x, w)
+        mgr.add_dependency(db, y, x)
+
+        # When W (X's blocker, itself uninvolved in any other edge)
+        # resolves.
+        db.update_entity(db.get_entity_by_uuid(w)["type_id"], status="completed")
+
+        # Then X (the DIRECT dependent) flips to 'ready' -- even though X
+        # was itself sitting in 'blocked' a moment before.
+        entity_x = db.get_entity_by_uuid(x)
+        assert entity_x["status"] == "ready"
+        # And Y (two hops from W) is NOT transitively flipped.
+        entity_y = db.get_entity_by_uuid(y)
+        assert entity_y["status"] == "blocked"
+
+        # When X itself later reaches ITS OWN resolved status.
+        db.update_entity(entity_x["type_id"], status="completed")
+
+        # Then only NOW does Y flip -- one hop per completion, no chain
+        # skipping in either direction.
+        entity_y = db.get_entity_by_uuid(y)
+        assert entity_y["status"] == "ready"
+
+
+class TestEvaluateAndFlipBatchFailureBehavior:
+    """Adversarial / error-propagation: what happens when update_entity
+    raises partway through a multi-dependent batch inside
+    _evaluate_and_flip. Uses the shared helper directly (not
+    cascade_unblock's get_dependents lookup) so the iteration ORDER is
+    explicit and deterministic rather than relying on unordered SQL
+    result order.
+    """
+
+    def test_failure_on_one_dependent_aborts_remaining_batch_without_isolation(
+        self, db, mgr, monkeypatch
+    ):
+        # Given three independently-blocked dependents of a single
+        # resolved blocker.
+        a = _reg(db, "a", status="completed")
+        b1 = _reg(db, "b1", status="blocked")
+        b2 = _reg(db, "b2", status="blocked")
+        b3 = _reg(db, "b3", status="blocked")
+        for dependent in (b1, b2, b3):
+            mgr.add_dependency(db, dependent, a)
+
+        b2_type_id = db.get_entity_by_uuid(b2)["type_id"]
+        original_update_entity = db.update_entity
+
+        def flaky_update_entity(type_id, *args, **kwargs):
+            if type_id == b2_type_id:
+                raise RuntimeError("simulated update_entity failure")
+            return original_update_entity(type_id, *args, **kwargs)
+
+        monkeypatch.setattr(db, "update_entity", flaky_update_entity)
+
+        # When _evaluate_and_flip processes [b1, b2, b3] in that explicit
+        # order and b2's write raises.
+        with pytest.raises(RuntimeError, match="simulated update_entity failure"):
+            mgr._evaluate_and_flip(db, [b1, b2, b3])
+
+        # Then: b1 (processed BEFORE the failure) already committed its
+        # flip -- per-flip atomicity means completed flips are durable.
+        assert db.get_entity_by_uuid(b1)["status"] == "ready"
+        # b2 itself: its own transaction rolled back on the raise, so its
+        # status is untouched.
+        assert db.get_entity_by_uuid(b2)["status"] == "blocked"
+        # b3 (ordered AFTER the failure) was NEVER reached in this call --
+        # there is no per-item isolation in the current implementation;
+        # one dependent's failure aborts the rest of the SAME batch.
+        # Recovery for b3 relies on a LATER call (the doctor's
+        # missed_cascade check, reconciliation, or another completion
+        # event) re-evaluating it, not on intra-call isolation.
+        assert db.get_entity_by_uuid(b3)["status"] == "blocked"
+
+
+class TestAllBlockersResolvedVacuousCase:
+    """D5.3's load-bearing empty-set semantics, pinned directly at the
+    DependencyManager unit level (complementary to the delete_entity
+    end-to-end tests in test_database.py::TestDeleteCascadeUnblock)."""
+
+    def test_zero_blockers_is_vacuously_resolved(self, db, mgr):
+        lone = _reg(db, "lone", status="blocked")
+        assert mgr.get_blockers(db, lone) == []
+        assert mgr._all_blockers_resolved(db, lone) is True
+
+
+class TestCascadeCrossWorkspace:
+    """SC3-e: cascade flips across workspaces (uuid refs are
+    workspace-agnostic per FR-9; query_dependencies is unscoped)."""
+
+    def test_cascade_flips_across_workspaces(self, db, mgr):
+        from entity_registry.test_helpers import bootstrap_test_workspace
+
+        ws_x = bootstrap_test_workspace(db, "sc3e-ws-x")
+        ws_y = bootstrap_test_workspace(db, "sc3e-ws-y")
+
+        # Blocker lives in workspace Y, blocked entity lives in workspace X.
+        blocker = db.register_entity(
+            "feature", "001-blocker", "Blocker", status="completed",
+            workspace_uuid=ws_y,
+        )
+        blocked = db.register_entity(
+            "feature", "002-blocked", "Blocked", status="blocked",
+            workspace_uuid=ws_x,
+        )
+        mgr.add_dependency(db, blocked, blocker)
+
+        unblocked = mgr.cascade_unblock(db, blocker)
+        assert unblocked == [blocked]
+
+        entity = db.get_entity_by_uuid(blocked)
+        assert entity["status"] == "ready"
+        # Edge survives, workspace assignments untouched.
+        assert entity["workspace_uuid"] == ws_x
+
+    def test_cascade_ready_event_fields_track_the_dependent_not_the_blocker(
+        self, db, mgr
+    ):
+        """Follow the data: the cascade_ready event's type_id/phase/
+        project_id are derived from the FLIPPED (dependent) entity's own
+        context -- not the blocker's, and not a hardcoded fallback."""
+        from entity_registry.test_helpers import bootstrap_test_workspace
+
+        ws_blocker = bootstrap_test_workspace(db, "evt-fields-blocker-ws")
+        ws_dependent = bootstrap_test_workspace(db, "evt-fields-dependent-ws")
+
+        blocker = db.register_entity(
+            "feature", "evtf-blocker", "Blocker", status="completed",
+            workspace_uuid=ws_blocker,
+        )
+        dependent = db.register_entity(
+            "feature", "evtf-dependent", "Dependent", status="blocked",
+            workspace_uuid=ws_dependent,
+        )
+        mgr.add_dependency(db, dependent, blocker)
+
+        mgr.cascade_unblock(db, blocker)
+
+        dependent_type_id = db.get_entity_by_uuid(dependent)["type_id"]
+        events = db.query_phase_events(
+            type_id=dependent_type_id, event_type="cascade_ready",
+        )
+        assert len(events) == 1
+        event = events[0]
+        assert event["phase"] is None
+        assert event["project_id"] == "evt-fields-dependent-ws", (
+            "event project_id must reflect the DEPENDENT's own workspace "
+            "legacy id, not the blocker's ('evt-fields-blocker-ws')"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -282,3 +556,62 @@ class TestPerformance:
         # Allow generous margin — the spec says <100ms total
         # but test environments vary; we'll use 5s as ceiling
         assert elapsed < 5.0, f"Took {elapsed:.2f}s for 999 add_dependency calls"
+
+
+# ---------------------------------------------------------------------------
+# D4: per-kind completion predicate (design-pinned table), parametrized over
+# EVERY row.
+# ---------------------------------------------------------------------------
+
+
+class TestBlockerCompletedPredicate:
+    """D4's design-pinned per-kind terminal table, verbatim:
+    feature/project/initiative/objective/key_result={completed};
+    task={completed,closed}; bug={closed,resolved,wont_fix};
+    brainstorm={promoted,abandoned}; backlog={promoted,dropped}."""
+
+    @pytest.mark.parametrize("kind,status", [
+        ("feature", "completed"),
+        ("project", "completed"),
+        ("initiative", "completed"),
+        ("objective", "completed"),
+        ("key_result", "completed"),
+        ("task", "completed"),
+        ("task", "closed"),
+        ("bug", "closed"),
+        ("bug", "resolved"),
+        ("bug", "wont_fix"),  # defensive -- no live writer, D4 pre-empts a
+                              # silent forever-block if one appears
+        ("brainstorm", "promoted"),
+        ("brainstorm", "abandoned"),
+        ("backlog", "promoted"),
+        ("backlog", "dropped"),
+    ])
+    def test_resolved_status_satisfies_predicate(self, kind, status):
+        from entity_registry.dependencies import _blocker_completed
+        assert _blocker_completed({"kind": kind, "status": status}) is True
+
+    @pytest.mark.parametrize("kind,status", [
+        ("feature", "planned"),
+        ("feature", "active"),
+        ("feature", "blocked"),
+        ("project", "blocked"),
+        ("initiative", "wip"),
+        ("objective", "ready"),
+        ("key_result", "active"),
+        ("task", "planned"),
+        ("task", "ready"),
+        ("task", "wip"),
+        ("bug", "open"),
+        ("brainstorm", "active"),
+        ("backlog", "active"),
+    ])
+    def test_unresolved_status_fails_predicate(self, kind, status):
+        from entity_registry.dependencies import _blocker_completed
+        assert _blocker_completed({"kind": kind, "status": status}) is False
+
+    def test_unknown_kind_never_resolved(self):
+        """A kind absent from the table (e.g. 'workspace') never satisfies
+        the predicate, regardless of status -- no accidental fallthrough."""
+        from entity_registry.dependencies import _blocker_completed
+        assert _blocker_completed({"kind": "workspace", "status": "completed"}) is False

@@ -17,7 +17,8 @@ Scope (Group 14, Tasks 14.1-14.4):
     batch re-run produces N events first call, 0 additional after.
   - AC-4.6 non-entities (5 sites): phase_events backfill dedup, entity_tags
     duplicate attach, entity_okr_alignment duplicate attach, workflow_phases
-    init duplicate, entity_dependencies duplicate edge.
+    init duplicate, dependency-edge (entity_relations kind='blocks')
+    duplicate edge.
 """
 from __future__ import annotations
 
@@ -510,7 +511,8 @@ def test_workflow_phases_init_duplicate_noop(db):
 
 
 def test_dependency_duplicate_noop(db):
-    """AC-4.6 (entity_dependencies site 5176): duplicate edge add is a no-op.
+    """AC-4.6 (dependency-edge site, entity_relations kind='blocks'):
+    duplicate edge add is a no-op.
     """
     a_uuid = db.register_entity(
         "feature", "dep-001-a", "Dep A", project_id=TEST_PROJECT_ID,
@@ -524,14 +526,191 @@ def test_dependency_duplicate_noop(db):
     db.add_dependency(a_uuid, b_uuid)
 
     count = db._conn.execute(
-        "SELECT COUNT(*) FROM entity_dependencies "
-        "WHERE entity_uuid = ? AND blocked_by_uuid = ?",
+        "SELECT COUNT(*) FROM entity_relations "
+        "WHERE to_uuid = ? AND from_uuid = ? AND kind = 'blocks'",
         (a_uuid, b_uuid),
     ).fetchone()[0]
     assert count == 1, (
-        f"Expected 1 entity_dependencies row after 3 duplicate adds, "
+        f"Expected 1 entity_relations row after 3 duplicate adds, "
         f"found {count}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Feature 124 D7 / SC7: register_entity + upsert_entity auto-materialize
+# `depends_on_features` metadata refs as `blocks` rows (FR124-3 dual-write).
+# ---------------------------------------------------------------------------
+
+
+def test_register_entity_materializes_depends_on_features(db):
+    """SC7 (register_entity path): a NEW registration carrying
+    depends_on_features produces the corresponding `blocks` row. Direction
+    is asserted, not just existence: from_uuid=the blocker feature,
+    to_uuid=the registered (blocked) entity, per D1's mapping.
+    """
+    blocker_uuid = db.register_entity(
+        "feature", "dep7-blocker", "Blocker", project_id=TEST_PROJECT_ID,
+    )
+    blocked_uuid = db.register_entity(
+        "feature", "dep7-blocked", "Blocked", project_id=TEST_PROJECT_ID,
+        metadata={"depends_on_features": ["feature:dep7-blocker"]},
+    )
+
+    row = db._conn.execute(
+        "SELECT from_uuid, to_uuid FROM entity_relations "
+        "WHERE kind = 'blocks' AND to_uuid = ?",
+        (blocked_uuid,),
+    ).fetchone()
+    assert row is not None, "expected a materialized blocks row"
+    assert row[0] == blocker_uuid, "from_uuid must be the blocker feature"
+    assert row[1] == blocked_uuid, "to_uuid must be the registered entity"
+
+
+def test_upsert_entity_materializes_depends_on_features(db):
+    """SC7 (upsert_entity path): same direction contract via the insert
+    branch -- upsert_entity's insert branch delegates to register_entity.
+    """
+    blocker_uuid = db.register_entity(
+        "feature", "dep7-blocker-u", "Blocker", project_id=TEST_PROJECT_ID,
+    )
+    blocked_uuid = db.upsert_entity(
+        "feature", "dep7-blocked-u", "Blocked", project_id=TEST_PROJECT_ID,
+        metadata={"depends_on_features": ["feature:dep7-blocker-u"]},
+    )
+
+    row = db._conn.execute(
+        "SELECT from_uuid, to_uuid FROM entity_relations "
+        "WHERE kind = 'blocks' AND to_uuid = ?",
+        (blocked_uuid,),
+    ).fetchone()
+    assert row is not None, "expected a materialized blocks row"
+    assert row[0] == blocker_uuid, "from_uuid must be the blocker feature"
+    assert row[1] == blocked_uuid, "to_uuid must be the registered entity"
+
+
+def test_register_entity_depends_on_features_self_edge_filtered(db, capsys):
+    """A depends_on_features ref resolving to the entity itself is skipped
+    with a stderr note (design D7 self-edge filter, mirrors
+    check_dependency_cycle's self-dependency rejection) -- no edge is
+    materialized either direction.
+    """
+    entity_uuid = db.register_entity(
+        "feature", "dep7-self", "Self Ref", project_id=TEST_PROJECT_ID,
+        metadata={"depends_on_features": ["feature:dep7-self"]},
+    )
+
+    count = db._conn.execute(
+        "SELECT COUNT(*) FROM entity_relations WHERE kind = 'blocks' "
+        "AND (from_uuid = ? OR to_uuid = ?)",
+        (entity_uuid, entity_uuid),
+    ).fetchone()[0]
+    assert count == 0, "self-referencing ref must not materialize an edge"
+
+    captured = capsys.readouterr()
+    assert "self" in captured.err.lower()
+
+
+def test_register_entity_depends_on_features_unresolvable_warns_not_blocked(
+    db, capsys,
+):
+    """An unresolvable depends_on_features ref warns to stderr but does
+    NOT block registration (design D7 -- registration is never blocked).
+    """
+    entity_uuid = db.register_entity(
+        "feature", "dep7-unresolvable", "Has Bad Ref",
+        project_id=TEST_PROJECT_ID,
+        metadata={"depends_on_features": ["feature:does-not-exist"]},
+    )
+    assert entity_uuid, "registration must succeed despite the bad ref"
+
+    count = db._conn.execute(
+        "SELECT COUNT(*) FROM entity_relations WHERE kind = 'blocks' "
+        "AND to_uuid = ?",
+        (entity_uuid,),
+    ).fetchone()[0]
+    assert count == 0
+
+    captured = capsys.readouterr()
+    assert "unresolvable" in captured.err.lower()
+    assert "depends_on_features" in captured.err
+
+
+def test_upsert_entity_conflict_status_change_does_not_materialize_dependency(
+    db,
+):
+    """Design D7: materialization lives ONLY in register_entity --
+    upsert_entity's CONFLICT branches never read metadata at all (see
+    upsert_entity's docstring: "Does NOT update ... metadata on the
+    conflict branch"). A depends_on_features ref supplied on a
+    conflicting upsert call is silently ignored for materialization
+    purposes -- even a fully resolvable ref produces NO blocks row. This
+    is a deliberate design decision (verified here, not assumed):
+    callers needing a materialized edge on an existing entity must go
+    through register_entity's insert path or call add_dependency
+    explicitly.
+    """
+    db.register_entity(
+        "feature", "dep7-conflict-blocker", "Blocker",
+        project_id=TEST_PROJECT_ID,
+    )
+    entity_uuid = db.upsert_entity(
+        "feature", "dep7-conflict-target", "Target",
+        project_id=TEST_PROJECT_ID, status="planned",
+    )
+
+    # Conflict + status-change branch, now carrying a RESOLVABLE
+    # depends_on_features ref.
+    second_uuid = db.upsert_entity(
+        "feature", "dep7-conflict-target", "Target",
+        project_id=TEST_PROJECT_ID, status="active",
+        metadata={"depends_on_features": ["feature:dep7-conflict-blocker"]},
+    )
+    assert second_uuid == entity_uuid
+
+    # Sanity: the status change DID happen (the branch was exercised).
+    row = db._conn.execute(
+        "SELECT status FROM entities WHERE uuid = ?", (entity_uuid,),
+    ).fetchone()
+    assert row["status"] == "active"
+
+    count = db._conn.execute(
+        "SELECT COUNT(*) FROM entity_relations WHERE kind = 'blocks' "
+        "AND to_uuid = ?",
+        (entity_uuid,),
+    ).fetchone()[0]
+    assert count == 0, (
+        "upsert_entity's conflict+status-change branch must NOT "
+        "materialize depends_on_features (D7 lives only in register_entity)"
+    )
+
+
+def test_upsert_entity_conflict_no_change_does_not_materialize_dependency(db):
+    """Same D7 scope decision, exercised via the NO-OP conflict branch
+    (same status): the early return happens before metadata is even
+    inspected, so a resolvable depends_on_features ref still produces no
+    edge.
+    """
+    db.register_entity(
+        "feature", "dep7-noop-blocker", "Blocker", project_id=TEST_PROJECT_ID,
+    )
+    entity_uuid = db.upsert_entity(
+        "feature", "dep7-noop-target", "Target",
+        project_id=TEST_PROJECT_ID, status="planned",
+    )
+
+    second_uuid = db.upsert_entity(
+        "feature", "dep7-noop-target", "Target",
+        project_id=TEST_PROJECT_ID, status="planned",  # SAME status
+        metadata={"depends_on_features": ["feature:dep7-noop-blocker"]},
+    )
+    assert second_uuid == entity_uuid
+
+    count = db._conn.execute(
+        "SELECT COUNT(*) FROM entity_relations WHERE kind = 'blocks' "
+        "AND to_uuid = ?",
+        (entity_uuid,),
+    ).fetchone()[0]
+    assert count == 0
 
 
 # ---------------------------------------------------------------------------

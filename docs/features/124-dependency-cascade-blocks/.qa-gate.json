@@ -1,0 +1,27 @@
+{
+  "feature": "124-dependency-cascade-blocks",
+  "gate_run_at": "2026-07-14T01:50:00+08:00",
+  "head_at_gate": "437c594b",
+  "lanes": {
+    "A_execution": {
+      "model": "fable (general-purpose teammate)",
+      "verdict": "PASS",
+      "findings": { "blocker": 0, "warning": 0 },
+      "note": "7/7 probes + 2 adversarial PASS on fresh schema-19 tmp DBs: cascade flip blocked→ready with surviving edge + cascade_ready event (actor system:cascade), per-kind latent-gap (task 'closed' cascades), zero-blocker deletion flip via FK + all([])==True, partial completion stays blocked, materialization direction-correct + fail-open, doctor detect+fix ('flipped 1'), idempotent repeat terminal write. Live DB read-only: integrity ok, schema 19, entity_dependencies absent, 33 blocks rows."
+    },
+    "B_regression": {
+      "model": "fable (general-purpose teammate)",
+      "verdict": "PASS",
+      "findings": { "blocker": 0, "warning": 0 },
+      "note": "strictly serial: standard-scope suite 3890 passed / 3 skipped / 0 failed (85.3s, exact expected); hooks 67/67; validate 0 errors / 7 pre-existing warnings (documented set)."
+    },
+    "C_artifact_truth": {
+      "model": "fable (general-purpose teammate)",
+      "verdict": "PASS after absorption",
+      "findings": { "blocker": 1, "warning": 1 },
+      "note": "M18/M19 registration, symbol deletions/renames, _RESOLVED_STATUSES 4-site consumption, retro figure recount (17=6+6+5+0), suite chain arithmetic, backlog #077-#080 + #065 addendum, SC1-SC7 named coverage incl. self-run SC6 grep, and commit arithmetic (28+1=29) ALL verified exactly. Blocker: CHANGELOG stapled M19's first-ever coverage to the +16 M18 bucket (belongs to +23 deepener, per retro/review-history/git). Warning: task_promotion grouped into 'the FOUR sites' (it is a 5th, indirect consumer via _all_blockers_resolved)."
+    }
+  },
+  "dispositions": "Both lane-C findings absorbed in CHANGELOG.md:12 (rider moved to +23 deepener; 'FOUR canonical sites ... plus task_promotion as fifth, indirect consumer'), then the mandatory restatement sweep ran clean: retro.md:25/:39, .review-history.md:191, and plan.md:24 already stated both facts correctly — CHANGELOG was the sole misstating site. Lane A's 33-blocks-rows live count vs an earlier informal 72 census is environmental (shared live DB, reconciler churn), not a code finding.",
+  "verdict": "PASS — merge to develop approved"
+}

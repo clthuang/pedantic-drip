@@ -1134,7 +1134,8 @@ def check_brainstorm_status(
             ))
             continue
 
-        # Fallback: check entity_dependencies for brainstorm->feature edges
+        # Fallback: check entity_relations (kind='blocks') for
+        # brainstorm->feature edges
         try:
             # Get brainstorm UUID
             bs_row = entities_conn.execute(
@@ -1143,8 +1144,8 @@ def check_brainstorm_status(
             if bs_row:
                 bs_uuid = bs_row[0]
                 dep_cursor = entities_conn.execute(
-                    "SELECT blocked_by_uuid FROM entity_dependencies "
-                    "WHERE entity_uuid = ?",
+                    "SELECT from_uuid AS blocked_by_uuid FROM entity_relations "
+                    "WHERE to_uuid = ? AND kind = 'blocks'",
                     (bs_uuid,),
                 )
                 for dep_row in dep_cursor:
@@ -1785,37 +1786,10 @@ def check_referential_integrity(
                 fix_hint="Check for excessively deep nesting",
             ))
 
-    # 7. entity_dependencies orphans
-    try:
-        cursor = entities_conn.execute(
-            "SELECT entity_uuid, blocked_by_uuid FROM entity_dependencies"
-        )
-        for row in cursor:
-            src, tgt = row
-            if src not in entities_by_uuid:
-                issues.append(Issue(
-                    check="referential_integrity",
-                    severity="warning",
-                    entity=None,
-                    message=(
-                        f"entity_dependencies entity_uuid '{src}' "
-                        "references non-existent entity"
-                    ),
-                    fix_hint="Remove orphaned dependency row",
-                ))
-            if tgt not in entities_by_uuid:
-                issues.append(Issue(
-                    check="referential_integrity",
-                    severity="warning",
-                    entity=None,
-                    message=(
-                        f"entity_dependencies blocked_by_uuid '{tgt}' "
-                        "references non-existent entity"
-                    ),
-                    fix_hint="Remove orphaned dependency row",
-                ))
-    except sqlite3.Error:
-        pass
+    # Feature 124 D6/D1: the orphan-edge check retired here (FKs on
+    # entity_relations make dependency-edge orphans structurally
+    # impossible post-Migration-18; _fix_remove_orphan_dependency +
+    # its fixer.py registry entry retired alongside it).
 
     # 8. entity_tags orphans
     try:
@@ -1849,46 +1823,87 @@ def check_referential_integrity(
 
 
 # ---------------------------------------------------------------------------
-# Check 11: Stale Dependencies
+# Check 11: Missed Cascade
 # ---------------------------------------------------------------------------
 
 
-def check_stale_dependencies(
+def check_missed_cascade(
     entities_conn: sqlite3.Connection, **_
 ) -> CheckResult:
-    """Check 11: Stale Dependencies.
+    """Check 11: Missed Cascade (feature 124 D6).
 
-    Detect blocked_by edges pointing to completed entities.
-    These edges should have been cleaned up by cascade_unblock.
+    Detects a downstream entity stuck at ``blocked`` even though EVERY one
+    of its blockers already satisfies the per-kind completion predicate
+    (D4's design-pinned terminal table, mirrored below as a SQL ``CASE``
+    over ``blocker.kind`` so this check has no import dependency on
+    ``dependencies.py``) -- ``cascade_unblock`` should already have
+    flipped it to ``ready``.
+
+    Requiring at least one ``blocks`` edge (the outer ``EXISTS``) keeps
+    this check scoped to "a cascade opportunity existed and was missed"
+    (an entity ``blocked`` with zero blocker edges ever is a different
+    anomaly class, not a missed cascade) and keeps the fix action's
+    message contract intact (it extracts a representative blocker uuid).
+
+    Replaces the pre-124 naive "any edge to a completed blocker" scan,
+    which false-positived on multi-blocker partial completion (spec SC5).
     """
     start = time.monotonic()
     issues: list[Issue] = []
 
     try:
         cursor = entities_conn.execute(
-            "SELECT ed.entity_uuid, ed.blocked_by_uuid, e_blocker.type_id AS blocker_type_id "
-            "FROM entity_dependencies ed "
-            "JOIN entities e_blocker ON ed.blocked_by_uuid = e_blocker.uuid "
-            "WHERE e_blocker.status = 'completed'"
+            "SELECT e.uuid, e.type_id, "
+            "(SELECT er2.from_uuid FROM entity_relations er2 "
+            "WHERE er2.to_uuid = e.uuid AND er2.kind = 'blocks' LIMIT 1) "
+            "AS blocker_uuid "
+            "FROM entities e "
+            "WHERE e.status = 'blocked' "
+            "AND EXISTS ("
+            "  SELECT 1 FROM entity_relations er0 "
+            "  WHERE er0.to_uuid = e.uuid AND er0.kind = 'blocks'"
+            ") "
+            "AND NOT EXISTS ("
+            "  SELECT 1 FROM entity_relations er "
+            "  JOIN entities blocker ON blocker.uuid = er.from_uuid "
+            "  WHERE er.to_uuid = e.uuid AND er.kind = 'blocks' "
+            "  AND NOT ("
+            "    CASE "
+            "      WHEN blocker.kind IN "
+            "        ('feature','project','initiative','objective','key_result') "
+            "        THEN blocker.status = 'completed' "
+            "      WHEN blocker.kind = 'task' "
+            "        THEN blocker.status IN ('completed','closed') "
+            "      WHEN blocker.kind = 'bug' "
+            "        THEN blocker.status IN ('closed','resolved','wont_fix') "
+            "      WHEN blocker.kind = 'brainstorm' "
+            "        THEN blocker.status IN ('promoted','abandoned') "
+            "      WHEN blocker.kind = 'backlog' "
+            "        THEN blocker.status IN ('promoted','dropped') "
+            "      ELSE 0 "
+            "    END"
+            "  )"
+            ")"
         )
         for row in cursor:
-            entity_uuid, blocked_by_uuid, blocker_type_id = row
+            entity_uuid, type_id, blocker_uuid = row
             issues.append(Issue(
-                check="stale_dependencies",
+                check="missed_cascade",
                 severity="warning",
-                entity=None,
+                entity=type_id,
                 message=(
-                    f"Stale blocked_by edge: entity '{entity_uuid}' "
-                    f"blocked by completed '{blocked_by_uuid}' ({blocker_type_id})"
+                    f"Missed cascade: entity '{entity_uuid}' ({type_id}) "
+                    "has every blocker resolved but remains 'blocked'; "
+                    f"e.g. blocker '{blocker_uuid}'"
                 ),
-                fix_hint=f"Remove stale dependency on completed '{blocker_type_id}'",
+                fix_hint="Run cascade evaluation",
             ))
     except sqlite3.Error:
         pass
 
     elapsed = int((time.monotonic() - start) * 1000)
     return CheckResult(
-        name="stale_dependencies",
+        name="missed_cascade",
         passed=len(issues) == 0,
         issues=issues,
         elapsed_ms=elapsed,

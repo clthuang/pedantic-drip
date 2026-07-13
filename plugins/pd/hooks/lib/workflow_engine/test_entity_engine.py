@@ -681,6 +681,21 @@ class TestCascadeUnblock:
     """Integration: complete blocker → dependent unblocked."""
 
     def test_complete_blocker_unblocks_dependent(self, tmp_path):
+        """Integration: completing a blocker's terminal phase flips its
+        dependent (feature 124).
+
+        Note on `result.unblocked_uuids`: completing a FEATURE's terminal
+        phase ('finish') syncs entities.status='completed' as part of
+        Phase A (FeatureBackend), which fires the SAME cascade trigger as
+        Phase B's explicit `_run_cascade` -- a pre-existing double-fire in
+        entity_engine.complete_phase, orthogonal to feature 124 (the OLD
+        tombstone semantics masked it identically: the second call's
+        query_dependencies also came back empty, since the first call had
+        already removed the edge). The flip lands correctly regardless of
+        which call performs it, so this test asserts the OBSERVABLE
+        OUTCOME (final status + surviving edge + recorded event) rather
+        than attribution to a specific call.
+        """
         db = _make_db()
         slug = "030-blocker"
         artifacts_root = str(tmp_path)
@@ -689,7 +704,15 @@ class TestCascadeUnblock:
         blocker_uuid = _register(
             db, "feature", slug, "Blocker Feature"
         )
-        _with_phase(db, f"feature:{slug}", "brainstorm", mode="standard")
+        # Feature 124: the blocker must reach its OWN kind's resolved
+        # status ('completed' for features) for its dependent to flip --
+        # completing a non-terminal phase (e.g. 'brainstorm') no longer
+        # suffices (D4). 'finish' is FEATURE_7_PHASE's terminal phase,
+        # whose completion syncs entities.status='completed'.
+        _with_phase(
+            db, f"feature:{slug}", "finish", mode="standard",
+            last_completed_phase="implement",
+        )
 
         dependent_uuid = _register(
             db, "feature", "031-dep", "Dependent",
@@ -704,18 +727,78 @@ class TestCascadeUnblock:
         assert len(blockers) == 1
 
         engine = _make_engine(db, artifacts_root)
-        result = engine.complete_phase(blocker_uuid, "brainstorm")
+        result = engine.complete_phase(blocker_uuid, "finish")
+        assert result.cascade_error is None
+        # Attributed to Phase A's internal trigger (see docstring) -- NOT
+        # a feature-124 regression, documented so a future reader doesn't
+        # mistake this for a broken return value.
+        assert result.unblocked_uuids == []
 
-        # Dependent should be unblocked
-        assert dependent_uuid in result.unblocked_uuids
-
-        # Verify dependency removed
+        # Feature 124 FR124-4c: edge SURVIVES (no longer removed)
         blockers_after = dep_mgr.get_blockers(db, dependent_uuid)
-        assert len(blockers_after) == 0
+        assert len(blockers_after) == 1
 
-        # Status should change from blocked to planned
+        # Feature 124 FR124-4a: status should change from blocked to ready
         entity = db.get_entity_by_uuid(dependent_uuid)
-        assert entity["status"] == "planned"
+        assert entity["status"] == "ready"
+
+        # Feature 124 FR124-4d: the flip is recorded as a cascade_ready event
+        events = db.query_phase_events(
+            type_id=entity["type_id"], event_type="cascade_ready",
+        )
+        assert len(events) == 1
+
+    def test_5d_kind_terminal_completion_same_double_fire_observable_outcome(
+        self, tmp_path
+    ):
+        """Same pre-existing double-fire quirk as
+        ``test_complete_blocker_unblocks_dependent`` above, pinned for the
+        5D path: ``_fived_complete`` calls ``update_entity`` directly on
+        reaching its terminal phase, firing the SAME live cascade trigger
+        that Phase B's explicit ``_run_cascade`` fires again immediately
+        after. Uses 'initiative' as a representative 5D kind so a future
+        refactor that decouples FeatureBackend from FiveDBackend can't
+        silently change this contract for one path without the other
+        failing loudly."""
+        db = _make_db()
+        blocker_uuid = _register(
+            db, "initiative", "i103-blocker", "Blocker Initiative"
+        )
+        _with_phase(
+            db, "initiative:i103-blocker", "discover", mode="standard"
+        )
+
+        dependent_uuid = _register(
+            db, "feature", "032-5d-dep", "5D Dependent", status="blocked",
+        )
+        dep_mgr = DependencyManager()
+        dep_mgr.add_dependency(db, dependent_uuid, blocker_uuid)
+
+        engine = _make_engine(db, str(tmp_path))
+        phases = ["discover", "define", "design", "deliver", "debrief"]
+        result = None
+        for phase in phases:
+            result = engine.complete_phase(blocker_uuid, phase)
+        assert result.cascade_error is None
+
+        # Observable outcome: the flip DID happen (correct, load-bearing).
+        entity = db.get_entity_by_uuid(dependent_uuid)
+        assert entity["status"] == "ready"
+        assert len(dep_mgr.get_blockers(db, dependent_uuid)) == 1  # survives
+
+        # Attribution quirk, pinned (same class as the feature-kind test
+        # above): Phase A's update_entity trigger performs the real flip;
+        # Phase B's explicit _run_cascade re-evaluates and finds nothing
+        # left to do, so the terminal complete_phase call's
+        # unblocked_uuids under-reports.
+        assert result.unblocked_uuids == []
+
+        # And the flip is recorded exactly once -- not duplicated by the
+        # second firing.
+        events = db.query_phase_events(
+            type_id=entity["type_id"], event_type="cascade_ready",
+        )
+        assert len(events) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -1090,6 +1173,74 @@ class TestDeliverGateBlockerDetails:
         with pytest.raises(ValueError, match="project:p040-b1"):
             engine.transition_phase(blocked_uuid, "deliver")
 
+    def test_surviving_edge_to_completed_blocker_does_not_block_deliver(
+        self, tmp_path
+    ):
+        """Feature 124 D4/D8 red-first: an entity with a SURVIVING edge to
+        an ALREADY-COMPLETED blocker (edges no longer get removed on
+        completion, FR124-4c) transitions to its deliver phase WITHOUT
+        raising -- the gate must filter to unresolved blockers only, not
+        any-edge-exists."""
+        db = _make_db()
+        blocker_uuid = _register(
+            db, "project", "p043-resolved-blocker", "Resolved Blocker",
+            status="completed",
+        )
+        blocked_uuid = _register(
+            db, "project", "p044-survives", "Survives"
+        )
+        _with_phase(db, "project:p044-survives", "design", mode="standard")
+
+        dep_mgr = DependencyManager()
+        dep_mgr.add_dependency(db, blocked_uuid, blocker_uuid)
+        # Sanity: the edge exists and SURVIVES (no tombstoning on this
+        # direct add -- nothing has completed it via cascade here).
+        assert len(dep_mgr.get_blockers(db, blocked_uuid)) == 1
+
+        engine = _make_engine(db, str(tmp_path))
+        response = engine.transition_phase(blocked_uuid, "deliver")
+
+        assert any(r.allowed for r in response.results)
+        # The edge is still there post-transition (edges never removed by
+        # the gate check itself).
+        assert len(dep_mgr.get_blockers(db, blocked_uuid)) == 1
+
+    def test_mixed_resolved_and_unresolved_blockers_filters_message_and_still_blocks(
+        self, tmp_path
+    ):
+        """Two blockers: one ALREADY RESOLVED (edge survives per
+        FR124-4c) and one still unresolved. The gate must (a) still
+        raise -- one blocker remains unresolved -- and (b) list ONLY the
+        unresolved blocker in the error, proving the filter partitions
+        the blocker list rather than falling back to any-edge-exists
+        (which would wrongly include the resolved blocker too)."""
+        db = _make_db()
+        resolved_blocker_uuid = _register(
+            db, "project", "p045-resolved", "Resolved Blocker",
+            status="completed",
+        )
+        unresolved_blocker_uuid = _register(
+            db, "project", "p046-unresolved", "Unresolved Blocker",
+            status="active",
+        )
+        blocked_uuid = _register(
+            db, "project", "p047-mixed", "Mixed Blocked"
+        )
+        _with_phase(db, "project:p047-mixed", "design", mode="standard")
+
+        dep_mgr = DependencyManager()
+        dep_mgr.add_dependency(db, blocked_uuid, resolved_blocker_uuid)
+        dep_mgr.add_dependency(db, blocked_uuid, unresolved_blocker_uuid)
+
+        engine = _make_engine(db, str(tmp_path))
+
+        with pytest.raises(ValueError) as exc_info:
+            engine.transition_phase(blocked_uuid, "deliver")
+
+        message = str(exc_info.value)
+        assert "project:p046-unresolved" in message
+        assert "project:p045-resolved" not in message
+
     def test_complete_blocker_then_deliver_succeeds(self, tmp_path):
         """End-to-end: feature B blocked by A. Complete A → B can implement."""
         db = _make_db()
@@ -1101,7 +1252,13 @@ class TestDeliverGateBlockerDetails:
 
         a_uuid = _register(db, "feature", slug_a, "Feature A")
         b_uuid = _register(db, "feature", slug_b, "Feature B")
-        _with_phase(db, f"feature:{slug_a}", "brainstorm", mode="standard")
+        # Feature 124: A must reach its OWN resolved status ('completed')
+        # for B to flip (D4) -- 'finish' is FEATURE_7_PHASE's terminal
+        # phase, whose completion syncs entities.status='completed'.
+        _with_phase(
+            db, f"feature:{slug_a}", "finish", mode="standard",
+            last_completed_phase="implement",
+        )
         _with_phase(
             db, f"feature:{slug_b}", "create-plan", mode="standard",
             last_completed_phase="create-plan",
@@ -1112,12 +1269,14 @@ class TestDeliverGateBlockerDetails:
 
         engine = _make_engine(db, artifacts_root)
 
-        # B cannot implement while A is active
+        # B cannot implement while A is unresolved
         with pytest.raises(ValueError, match=f"feature:{slug_a}"):
             engine.transition_phase(b_uuid, "implement")
 
-        # Complete A's brainstorm → cascade_unblock removes the dep
-        engine.complete_phase(a_uuid, "brainstorm")
+        # Complete A's terminal phase → cascade_unblock flips B (edge
+        # SURVIVES per FR124-4c; the deliver-gate filters it out as
+        # resolved)
+        engine.complete_phase(a_uuid, "finish")
 
         # Now B can transition to implement
         response = engine.transition_phase(b_uuid, "implement")
