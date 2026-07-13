@@ -20,7 +20,7 @@ from __future__ import annotations
 import pytest
 
 from entity_registry.database import EntityDatabase
-from entity_registry.entity_lifecycle import (
+from workflow_engine.router import (
     ENTITY_MACHINES,
     transition_entity_phase,
 )
@@ -45,7 +45,11 @@ def db(tmp_path):
 
 
 def test_ac_bl_1_entity_machines_does_not_contain_bug_or_task():
-    """Per FR-BL.1 — bug and task entities use the status-only model."""
+    """Per FR-BL.1 — bug and task are not lifecycle-GRAPH kinds: neither
+    has an ENTITY_MACHINES entry (feature 123 — task IS machine-bearing via
+    MACHINE_REGISTRY's FiveDMachine, but ENTITY_MACHINES itself stays
+    scoped to brainstorm/backlog only; bug remains the sole machine-less
+    kind, spec FR123-5)."""
     assert "bug" not in ENTITY_MACHINES
     assert "task" not in ENTITY_MACHINES
 

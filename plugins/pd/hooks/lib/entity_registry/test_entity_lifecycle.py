@@ -1,4 +1,5 @@
-"""Tests for entity_registry.entity_lifecycle module.
+"""Tests for workflow_engine.router's lifecycle entry points (moved from
+entity_registry's former lifecycle module, feature 123 D6).
 
 Unit tests for init_entity_workflow and transition_entity_phase extracted
 from workflow_state_server.py.
@@ -8,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 from entity_registry.database import EntityDatabase
-from entity_registry.entity_lifecycle import (
+from workflow_engine.router import (
     ENTITY_MACHINES,
     init_entity_workflow,
     transition_entity_phase,
@@ -157,7 +158,7 @@ class TestTransitionEntityPhase:
         assert result["transitioned"] is True
         assert result["from_phase"] == "draft"
         assert result["to_phase"] == "reviewing"
-        assert result["kanban_column"] == "agent_review"
+        assert result["kanban_column"] == "wip"
 
     def test_valid_forward_transition_backlog(self, db):
         type_id = _create_backlog(db)
@@ -277,7 +278,7 @@ class TestTransitionEntityPhase:
               'promoted'; workflow_phase row → 'promoted' / 'completed'.
           (2) ws_b's parallel entity UNCHANGED (no cross-workspace leak).
           (3) db.update_workflow_phase received workspace_uuid=ws_a kwarg —
-              direct pin on the FR-5.1 forwarding line (entity_lifecycle.py
+              direct pin on the FR-5.1 forwarding line (router.py
               update_kwargs dict).
           (4) Mismatch path with workspace_uuid=ws_b against a ws_a-scoped
               entity raises ValueError (FR-5.1 symmetric scope rejection).
@@ -320,7 +321,7 @@ class TestTransitionEntityPhase:
 
         # Instrument db.update_workflow_phase to capture kwargs. The pin is
         # specifically on the 'workspace_uuid' kwarg in update_kwargs dict
-        # at entity_lifecycle.py:185-193. We wrap the real method (not a
+        # at router.py:452-460. We wrap the real method (not a
         # mock) so the actual DB writes still happen and assertions (1)/(2)
         # remain meaningful.
         captured_update_kwargs: list[dict] = []
@@ -370,7 +371,7 @@ class TestTransitionEntityPhase:
         # (3) FR-5.1 mutation pin: db.update_workflow_phase received
         # workspace_uuid=ws_a as a forwarded kwarg. Without the
         # `"workspace_uuid": workspace_uuid` entry in the update_kwargs dict
-        # at entity_lifecycle.py:185-193, this assertion fails (kwarg absent
+        # at router.py:452-460, this assertion fails (kwarg absent
         # from captured call).
         assert len(captured_update_kwargs) == 1, captured_update_kwargs
         call_kwargs = captured_update_kwargs[0]
@@ -412,9 +413,12 @@ class TestTransitionEntityPhase:
 # Feature 111 AC-BL.7 — defensive raise on bug/task type_ids
 # ---------------------------------------------------------------------------
 #
-# bug and task entities use the status-only lifecycle model (FR-BL.1); they
-# do NOT have ENTITY_MACHINES entries. The existing first-line validation in
-# transition_entity_phase at entity_lifecycle.py:148 (raises
+# bug and task type_ids are not lifecycle-GRAPH kinds: they do NOT have
+# ENTITY_MACHINES entries (feature 123 — task IS machine-bearing via
+# MACHINE_REGISTRY's FiveDMachine, but ENTITY_MACHINES itself stays scoped
+# to brainstorm/backlog only; bug remains the sole machine-less kind, spec
+# FR123-5). The existing first-line validation in transition_entity_phase
+# at router.py:413 (raises
 # "invalid_entity_type: {entity_type} — only brainstorm and backlog supported")
 # fires naturally for these type_ids. These tests pin that behavior so a
 # future refactor of ENTITY_MACHINES does not accidentally widen routing.
@@ -457,3 +461,159 @@ class TestTransitionEntityPhaseStatusOnlyBugTask:
         msg = str(excinfo.value)
         assert "invalid_entity_type" in msg
         assert "task" in msg
+
+
+# ---------------------------------------------------------------------------
+# Feature 123 D2.3 (deepened): transitions FROM terminal phases (no
+# outgoing edges) -- exact error message + pre/post state UNCHANGED.
+# derived_from: design:D2.3 (LifecycleMachine graph membership),
+# dimension:adversarial, dimension:error_propagation
+# ---------------------------------------------------------------------------
+
+
+class TestTransitionFromTerminalPhases:
+    """LifecycleMachine's ``transitions`` dict has NO key for terminal
+    phases (promoted/abandoned/dropped) -- ``.get(current, [])`` always
+    returns ``[]``, so EVERY target is rejected from a terminal current
+    phase. test_invalid_transition_rejected (above) exercises exactly ONE
+    terminal phase (brainstorm.promoted) via a real forward transition
+    into it and doesn't pin the exact message or leftover state -- this
+    parametrizes over all FOUR terminal phases across both kinds (seeded
+    directly via init_entity_workflow, the public API) and adds both
+    checks.
+
+    Anticipate: a bug that special-cased "no transitions dict entry" as
+    "allow anything" (instead of "allow nothing") would let a terminal
+    entity silently re-open -- undetectable without an exact-rejection +
+    state-preserved pin.
+    """
+
+    @pytest.mark.parametrize(
+        "kind,terminal_phase,terminal_column,any_target",
+        [
+            ("brainstorm", "promoted", "completed", "draft"),
+            ("brainstorm", "abandoned", "completed", "reviewing"),
+            ("backlog", "promoted", "completed", "open"),
+            ("backlog", "dropped", "completed", "triaged"),
+        ],
+    )
+    def test_transition_from_terminal_phase_rejected_with_unchanged_state(
+        self, db, kind, terminal_phase, terminal_column, any_target,
+    ):
+        # Given an entity whose workflow_phases row is already AT a
+        # terminal phase (no outgoing edges in ENTITY_MACHINES)
+        create = _create_brainstorm if kind == "brainstorm" else _create_backlog
+        type_id = create(db, "terminal-probe")
+        init_entity_workflow(db, type_id, terminal_phase, terminal_column)
+        row_before = db.get_workflow_phase(type_id)
+
+        # When any transition is attempted out of it
+        with pytest.raises(ValueError) as excinfo:
+            transition_entity_phase(db, type_id, any_target)
+
+        # Then it is rejected with the exact graph-membership error string
+        assert str(excinfo.value) == (
+            f"invalid_transition: cannot transition {kind} from "
+            f"{terminal_phase} to {any_target}"
+        )
+        # And the row is left completely unchanged by the rejected call
+        row_after = db.get_workflow_phase(type_id)
+        assert row_after == row_before, (
+            "a rejected transition FROM a terminal phase must not mutate "
+            "the workflow_phases row"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Feature 123 D1 (deepened): init_entity_workflow's idempotency check runs
+# AFTER validation (router.py step 1b validates phase/column against the
+# machine BEFORE step 2's idempotent-row short-circuit) -- an existing row
+# does NOT bypass validation on a re-call with bad args, and a re-call with
+# DIFFERENT-but-individually-valid args returns the ORIGINALLY stored
+# values rather than silently re-writing.
+# derived_from: design:D1 (init_entity_workflow validation ordering),
+# dimension:adversarial
+# ---------------------------------------------------------------------------
+
+
+class TestInitEntityWorkflowIdempotencyOrdering:
+    """test_init_idempotent_returns_existing (above) only ever calls
+    init_entity_workflow twice with IDENTICAL args -- it cannot distinguish
+    'idempotency short-circuits before validation runs' from 'validation
+    always runs, idempotency is just a data return'. These two tests
+    separate that ordering with DIFFERING second-call args.
+    """
+
+    def test_idempotent_call_still_validates_new_args(self, db):
+        # Given a brainstorm with an existing draft/wip workflow row
+        type_id = _create_brainstorm(db, "idempotent-validate")
+        first = init_entity_workflow(db, type_id, "draft", "wip")
+        assert first["created"] is True
+
+        # When init_entity_workflow is called AGAIN with an invalid phase
+        # Then it still raises -- the pre-existing row does not short-
+        # circuit validation.
+        with pytest.raises(ValueError, match="invalid_transition.*bogus"):
+            init_entity_workflow(db, type_id, "bogus", "wip")
+
+        # And the stored row is untouched by the rejected call.
+        row = db.get_workflow_phase(type_id)
+        assert row["workflow_phase"] == "draft"
+        assert row["kanban_column"] == "wip"
+
+    def test_idempotent_call_with_different_valid_args_returns_stored_values(
+        self, db,
+    ):
+        # Given a brainstorm initialized at draft/wip
+        type_id = _create_brainstorm(db, "idempotent-stored")
+        first = init_entity_workflow(db, type_id, "draft", "wip")
+        assert first["created"] is True
+
+        # When init_entity_workflow is called again with a DIFFERENT
+        # phase/column pair that is INDIVIDUALLY valid for brainstorm
+        # (reviewing/wip is a real pair, per FR123-4) but doesn't match
+        # the row already on disk
+        result = init_entity_workflow(db, type_id, "reviewing", "wip")
+
+        # Then the idempotent branch returns the ORIGINALLY stored
+        # draft/wip values, not the newly requested reviewing/wip --
+        # init_entity_workflow never silently overwrites an existing row.
+        assert result["created"] is False
+        assert result["reason"] == "already_exists"
+        assert result["workflow_phase"] == "draft"
+        assert result["kanban_column"] == "wip"
+
+        row = db.get_workflow_phase(type_id)
+        assert row["workflow_phase"] == "draft", "existing row must not be overwritten"
+
+
+# ---------------------------------------------------------------------------
+# Feature 123 D2.3 (deepened): backlog open->dropped forward classification
+# -- named explicitly in ENTITY_MACHINES['backlog']['forward'] but never
+# asserted end-to-end for its last_completed_phase write (the exhaustive
+# tests in test_workflow_state_server.py assert kanban_column only).
+# derived_from: spec:SC1 (backlog forward set), dimension:bdd_scenarios
+# ---------------------------------------------------------------------------
+
+
+class TestBacklogSkipToTerminalForwardClassification:
+    def test_open_to_dropped_is_forward_and_sets_last_completed_phase(self, db):
+        # Given a backlog item at 'open' (its initial phase)
+        type_id = _create_backlog(db, "skip-to-dropped")
+        init_entity_workflow(db, type_id, "open", "backlog")
+
+        # When it transitions directly to the terminal 'dropped' phase
+        # (skipping 'triaged' -- a valid direct edge per ENTITY_MACHINES)
+        result = transition_entity_phase(db, type_id, "dropped")
+
+        # Then it is classified forward (('open', 'dropped') is in the
+        # 'forward' set) -- so last_completed_phase advances to 'open',
+        # exactly as a triaged-mediated path would leave the PRECEDING
+        # phase, not None/unset.
+        assert result["transitioned"] is True
+        assert result["kanban_column"] == "completed"
+        row = db.get_workflow_phase(type_id)
+        assert row["last_completed_phase"] == "open", (
+            "open->dropped is a FORWARD edge (ENTITY_MACHINES['backlog']"
+            "['forward']) -- last_completed_phase must advance, not stay None"
+        )

@@ -108,7 +108,7 @@ class WorkflowStateEngine:
                     "transition_phase", feature_type_id, exc
                 ) from exc
 
-        return TransitionResponse(results=tuple(results), degraded=False)
+        return TransitionResponse(results=tuple(results))
 
     def complete_phase(
         self, feature_type_id: str, phase: str,

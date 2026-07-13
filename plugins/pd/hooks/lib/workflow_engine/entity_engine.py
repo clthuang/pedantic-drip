@@ -21,14 +21,24 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from entity_registry.database import EntityDatabase
 from entity_registry.dependencies import DependencyManager
+from transition_gate import Severity, TransitionResult
 
 from .engine import WorkflowStateEngine
-from .models import FeatureWorkflowState, TransitionResponse
+from .models import FeatureWorkflowState, TransitionResponse, db_unavailable_error
 from .notifications import Notification, NotificationQueue
 from .rollup import compute_progress, rollup_parent
+from .router import get_machine
 from .templates import get_template
 
-
+# TransitionDecision.severity (router.py, string literals) -> TransitionResult
+# severity (transition_gate, Severity enum) -- the two machine roles (D1)
+# mirror the gate-result shape but "blocked" reads "error" on the decision
+# side and "block" on the Severity side.
+_SEVERITY_MAP: dict[str, Severity] = {
+    "info": Severity.info,
+    "warn": Severity.warn,
+    "error": Severity.block,
+}
 
 # Feature 109 AC-1.5: the legacy frozenset of phase-sequence kinds was
 # removed per spec §1. The dispatch logic now reads ``entity["kind"]``
@@ -278,7 +288,7 @@ class EntityWorkflowEngine:
         if entity is None:
             return None
 
-        entity_type = entity["entity_type"]
+        entity_type = entity["kind"]
         type_id = entity["type_id"]
 
         if entity_type == "feature":
@@ -401,7 +411,7 @@ class EntityWorkflowEngine:
     ) -> FeatureWorkflowState | None:
         """Phase A for 5D entities: direct DB update."""
         type_id = entity["type_id"]
-        entity_type = entity["entity_type"]
+        entity_type = entity["kind"]
         weight = self._get_weight(type_id)
 
         try:
@@ -450,11 +460,9 @@ class EntityWorkflowEngine:
             if is_terminal:
                 self._db.update_entity(type_id, status="completed")
         except sqlite3.Error as exc:
-            print(
-                f"entity-engine: DB write failed for task {type_id}: {exc}",
-                file=sys.stderr,
-            )
-            return None
+            raise db_unavailable_error(
+                "complete_phase", type_id, exc
+            ) from exc
 
         return FeatureWorkflowState(
             feature_type_id=type_id,
@@ -468,114 +476,42 @@ class EntityWorkflowEngine:
     def _fived_transition(
         self, entity: dict, target_phase: str
     ) -> TransitionResponse:
-        """Transition for 5D entities: phase-sequence validation."""
-        from transition_gate.models import Severity, TransitionResult
-
+        """Transition for 5D entities: ordering rules owned by the kind's
+        transition machine (feature 123 D3) — the machine's ``validate()``
+        replaces the former hand-rolled template/membership/ordering block;
+        this method only maps the decision onto TransitionResponse and
+        performs the write.
+        """
         type_id = entity["type_id"]
-        entity_type = entity["entity_type"]
+        entity_type = entity["kind"]
         weight = self._get_weight(type_id)
 
-        try:
-            phases = get_template(entity_type, weight)
-        except KeyError:
-            return TransitionResponse(
-                results=(
-                    TransitionResult(
-                        guard_id="TEMPLATE",
-                        allowed=False,
-                        reason=f"No template for ({entity_type}, {weight})",
-                        severity=Severity.block,
-                    ),
-                ),
-                degraded=False,
-            )
-
-        if target_phase not in phases:
-            return TransitionResponse(
-                results=(
-                    TransitionResult(
-                        guard_id="PHASE_SEQ",
-                        allowed=False,
-                        reason=(
-                            f"Phase '{target_phase}' not in sequence: {phases}"
-                        ),
-                        severity=Severity.block,
-                    ),
-                ),
-                degraded=False,
-            )
-
-        # Validate ordering: target must be current or next
         row = self._db.get_workflow_phase(type_id)
-        if row is not None:
-            current = row["workflow_phase"]
-            if current is not None and current in phases:
-                current_idx = phases.index(current)
-                target_idx = phases.index(target_phase)
-                if target_idx < current_idx:
-                    # Backward transition allowed (rework) — warn only,
-                    # matching frozen engine's check_backward_transition (G-18)
-                    return TransitionResponse(
-                        results=(
-                            TransitionResult(
-                                guard_id="G-18",
-                                allowed=True,
-                                reason=(
-                                    f"Backward transition from '{current}' to "
-                                    f"'{target_phase}' (rework)"
-                                ),
-                                severity=Severity.warn,
-                            ),
-                        ),
-                        degraded=False,
-                    )
-                if target_idx > current_idx + 1:
-                    return TransitionResponse(
-                        results=(
-                            TransitionResult(
-                                guard_id="PHASE_SEQ",
-                                allowed=False,
-                                reason=(
-                                    f"Cannot skip from '{current}' to "
-                                    f"'{target_phase}'"
-                                ),
-                                severity=Severity.block,
-                            ),
-                        ),
-                        degraded=False,
-                    )
+        current = row["workflow_phase"] if row is not None else None
 
-        try:
-            self._db.update_workflow_phase(
-                type_id, workflow_phase=target_phase
-            )
-        except sqlite3.Error as exc:
-            print(
-                f"entity-engine: DB write failed for {type_id}: {exc}",
-                file=sys.stderr,
-            )
-            return TransitionResponse(
-                results=(
-                    TransitionResult(
-                        guard_id="DB_ERROR",
-                        allowed=False,
-                        reason=str(exc),
-                        severity=Severity.block,
-                    ),
-                ),
-                degraded=True,
-            )
+        decision = get_machine(entity_type).validate(
+            current, target_phase, weight=weight,
+        )
+
+        if decision.allowed:
+            try:
+                self._db.update_workflow_phase(
+                    type_id, workflow_phase=target_phase
+                )
+            except sqlite3.Error as exc:
+                raise db_unavailable_error(
+                    "transition_phase", type_id, exc
+                ) from exc
 
         return TransitionResponse(
             results=(
                 TransitionResult(
-                    guard_id="PHASE_SEQ",
-                    allowed=True,
-                    reason=f"Transitioned to {target_phase}",
-                    severity=Severity.info,
+                    guard_id=decision.guard_id,
+                    allowed=decision.allowed,
+                    reason=decision.reason,
+                    severity=_SEVERITY_MAP[decision.severity],
                 ),
             ),
-            degraded=False,
         )
 
     # ------------------------------------------------------------------

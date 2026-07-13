@@ -136,9 +136,10 @@ def switcher_context(request, db) -> dict:
 
 
 # Stored v1 Kanban-column values with no v2 EXECUTION_STATUSES home.
-# agent_review IS live (brainstorm reviewing -> agent_review,
-# entity_lifecycle.py:26); human_review is defensive (zero producers, but
-# the v1 CHECK still admits stored rows). DELETE at 132 once the backfill
+# agent_review is defensive-only (zero live producers — brainstorm
+# reviewing now writes wip via workflow_engine/router.py's LifecycleMachine,
+# FR123-4); human_review is defensive too (zero producers, but the v1
+# CHECK still admits stored rows). DELETE at 132 once the backfill
 # translates stored values at source (this mapping is its display precedent).
 LEGACY_VALUE_REMAP: dict[str, str] = {
     "agent_review": "wip",

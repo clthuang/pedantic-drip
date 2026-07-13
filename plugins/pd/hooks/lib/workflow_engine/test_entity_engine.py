@@ -18,10 +18,13 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import tempfile
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+from transition_gate import Severity
 
 from entity_registry.database import EntityDatabase
 from entity_registry.dependencies import DependencyManager
@@ -671,7 +674,6 @@ class TestTransitionPhase:
         engine = _make_engine(db, str(tmp_path))
         response = engine.transition_phase(task_uuid, "deliver")
 
-        assert not response.degraded
         assert any(r.allowed for r in response.results)
 
 
@@ -736,7 +738,6 @@ class TestFiveDProjectTransition:
         phases = ["discover", "define", "design", "deliver", "debrief"]
         for i, phase in enumerate(phases[:-1]):
             response = engine.transition_phase(proj_uuid, phases[i + 1])
-            assert not response.degraded
             assert any(r.allowed for r in response.results), (
                 f"Transition to {phases[i + 1]} should be allowed"
             )
@@ -800,7 +801,6 @@ class TestFiveDOutOfSequence:
         engine = _make_engine(db, str(tmp_path))
         response = engine.transition_phase(proj_uuid, "deliver")
 
-        assert not response.degraded
         assert any(
             not r.allowed and "skip" in r.reason.lower()
             for r in response.results
@@ -1407,7 +1407,6 @@ class TestInitiativeFullLifecycle:
 
         for i in range(len(phases) - 1):
             response = engine.transition_phase(init_uuid, phases[i + 1])
-            assert not response.degraded
             assert any(r.allowed for r in response.results), (
                 f"Transition from {phases[i]} to {phases[i + 1]} should be allowed"
             )
@@ -1460,7 +1459,6 @@ class TestObjectiveFullLifecycle:
 
         for i in range(len(phases) - 1):
             response = engine.transition_phase(obj_uuid, phases[i + 1])
-            assert not response.degraded
             assert any(r.allowed for r in response.results)
 
     def test_objective_discover_phase_rejected(self, tmp_path):
@@ -1941,3 +1939,310 @@ class TestAnomalyPropagation:
         result = engine.complete_phase(task_uuid, "debrief")
         # Should complete without error — no parent to propagate to
         assert result.state is not None
+
+
+# ---------------------------------------------------------------------------
+# Feature 123 SC3 (red-first): both 5D tolerate shapes convert to fail-loud.
+# TODAY: _fived_transition returns TransitionResponse(degraded=True) on a DB
+# error; _fived_complete returns None + stderr. POST-D3: BOTH raise
+# WorkflowDBUnavailableError with pre-state intact (spec FR123-3 / H7).
+# ---------------------------------------------------------------------------
+
+
+class TestFiveDFailLoud:
+    """SC3: 5D DB-error tolerate shapes convert to fail-loud (design D3)."""
+
+    def test_fived_transition_db_error_raises_and_preserves_state(self, tmp_path):
+        db = _make_db()
+        proj_uuid = _register(db, "project", "096-failloud", "FailLoud")
+        _with_phase(db, "project:096-failloud", "discover", mode="standard")
+        engine = _make_engine(db, str(tmp_path))
+
+        row_before = db.get_workflow_phase("project:096-failloud")
+
+        def _boom(*args, **kwargs):
+            raise sqlite3.OperationalError("database is locked")
+
+        with patch.object(db, "update_workflow_phase", side_effect=_boom):
+            with pytest.raises(WorkflowDBUnavailableError):
+                engine.transition_phase(proj_uuid, "define")
+
+        row_after = db.get_workflow_phase("project:096-failloud")
+        assert row_after == row_before, (
+            "workflow_phases row must be unchanged after a fault-injected "
+            "DB error -- no partial write"
+        )
+
+    def test_fived_complete_db_error_raises_and_preserves_state(self, tmp_path):
+        db = _make_db()
+        proj_uuid = _register(db, "project", "097-failloud-c", "FailLoudC")
+        _with_phase(db, "project:097-failloud-c", "discover", mode="standard")
+        engine = _make_engine(db, str(tmp_path))
+
+        row_before = db.get_workflow_phase("project:097-failloud-c")
+
+        def _boom(*args, **kwargs):
+            raise sqlite3.OperationalError("database is locked")
+
+        with patch.object(db, "update_workflow_phase", side_effect=_boom):
+            with pytest.raises(WorkflowDBUnavailableError):
+                engine.complete_phase(proj_uuid, "discover")
+
+        row_after = db.get_workflow_phase("project:097-failloud-c")
+        assert row_after == row_before, (
+            "workflow_phases row must be unchanged after a fault-injected "
+            "DB error -- no partial write"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Feature 123 D7 (new, beyond red-first): H3's kind-collapse regression pin
+# -- an entity dict carrying only ``kind`` (no legacy ``entity_type`` alias)
+# must flow through both FiveDBackend methods without KeyError.
+# ---------------------------------------------------------------------------
+
+
+class TestKindKeyCollapse:
+    """H3 regression guard: FiveDBackend reads ``entity["kind"]`` only."""
+
+    def test_fived_transition_uses_kind_not_entity_type(self, tmp_path):
+        db = _make_db()
+        proj_uuid = _register(db, "project", "098-kindonly", "KindOnly")
+        _with_phase(db, "project:098-kindonly", "discover", mode="standard")
+        engine = _make_engine(db, str(tmp_path))
+
+        entity = db.get_entity_by_uuid(proj_uuid)
+        del entity["entity_type"]
+
+        response = engine._fived_transition(entity, "define")
+        assert response.results[0].allowed
+
+    def test_fived_complete_uses_kind_not_entity_type(self, tmp_path):
+        db = _make_db()
+        proj_uuid = _register(db, "project", "099-kindonly-c", "KindOnlyC")
+        _with_phase(db, "project:099-kindonly-c", "discover", mode="standard")
+        engine = _make_engine(db, str(tmp_path))
+
+        entity = db.get_entity_by_uuid(proj_uuid)
+        del entity["entity_type"]
+
+        state = engine._fived_complete(entity, "discover")
+        assert state is not None
+        assert state.last_completed_phase == "discover"
+
+
+# ---------------------------------------------------------------------------
+# Feature 123 Risk mitigation: double-evaluation regression guard (B2's
+# class). _fived_transition must call get_template exactly once per
+# transition (via the machine's validate()), never twice (template guard +
+# ordering, as the deleted hand-rolled block did).
+# ---------------------------------------------------------------------------
+
+
+class TestFivedTransitionSingleTemplateEvaluation:
+    def test_fived_transition_calls_get_template_exactly_once(
+        self, tmp_path, monkeypatch
+    ):
+        import workflow_engine.router as router_mod
+
+        db = _make_db()
+        proj_uuid = _register(db, "project", "100-spy", "Spy")
+        _with_phase(db, "project:100-spy", "discover", mode="standard")
+        engine = _make_engine(db, str(tmp_path))
+
+        calls = []
+        original = router_mod.get_template
+
+        def _spy(*args, **kwargs):
+            calls.append((args, kwargs))
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(router_mod, "get_template", _spy)
+
+        entity = db.get_entity_by_uuid(proj_uuid)
+        engine._fived_transition(entity, "define")
+
+        assert len(calls) == 1, (
+            f"expected exactly 1 get_template call from FiveDMachine.phases(), "
+            f"got {len(calls)}: {calls!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Feature 123 D3 (deepened): the backward-transition write-path fix. TODAY
+# (pre-123, confirmed via the c44ea200->d34e855b diff) the hand-rolled
+# block returned EARLY on a G-18 backward-warn, WITHOUT ever calling
+# update_workflow_phase. POST-123, _fived_transition computes the decision
+# FIRST and writes whenever decision.allowed -- which is True for backward
+# (G-18) too -- so backward transitions now WRITE. Parity note: this
+# matches the frozen engine's OWN transition_phase (engine.py:100-105),
+# which also unconditionally writes workflow_phase only (never
+# last_completed_phase) regardless of forward/backward/same-phase --
+# last_completed_phase is a complete_phase-only concept for BOTH backends.
+# dimension:mutation_mindset.
+# ---------------------------------------------------------------------------
+
+
+class TestFiveDTransitionWritePathByDecisionKind:
+    """D3: _fived_transition's write fires for EVERY allowed decision kind
+    (same-phase, backward-warn), pinned with an EXACT captured-kwargs
+    assertion -- proves both that the write happens (a spy call was made)
+    and that ONLY workflow_phase is passed (never last_completed_phase).
+
+    derived_from: design:D3 (backward-now-writes fix), dimension:mutation_mindset
+
+    Anticipate: a regression that reverted to the old early-return-on-
+    backward shape would leave the workflow_phases row unchanged after a
+    backward call -- undetectable by decision-only assertions (allowed/
+    guard_id), which is all the existing TestFiveDGraphDiff cross-product
+    checks (it validates the MACHINE's decision, never the BACKEND's write).
+    """
+
+    @staticmethod
+    def _spy_update_workflow_phase(db):
+        """Wrap db.update_workflow_phase, capturing kwargs while still
+        delegating to the real implementation (so DB state stays truthful
+        for the post-call row assertions)."""
+        captured: list[dict] = []
+        real = db.update_workflow_phase
+
+        def _spy(type_id, **kwargs):
+            captured.append({"type_id": type_id, **kwargs})
+            return real(type_id, **kwargs)
+
+        db.update_workflow_phase = _spy
+        return captured, real
+
+    def test_backward_transition_writes_workflow_phase_row(self, tmp_path):
+        # Given a task (standard: define->deliver->debrief) at 'debrief'
+        # with last_completed_phase='deliver'
+        db = _make_db()
+        proj_uuid = _register(db, "task", "101-backward", "Backward")
+        type_id = "task:101-backward"
+        _with_phase(
+            db, type_id, "debrief", mode="standard",
+            last_completed_phase="deliver",
+        )
+        engine = _make_engine(db, str(tmp_path))
+        captured, real = self._spy_update_workflow_phase(db)
+
+        # When it transitions BACKWARD to 'define'
+        try:
+            response = engine.transition_phase(proj_uuid, "define")
+        finally:
+            db.update_workflow_phase = real
+
+        # Then the decision is allowed-with-warn (G-18)
+        result = response.results[0]
+        assert result.allowed is True
+        assert result.guard_id == "G-18"
+        assert result.severity == Severity.warn
+
+        # And the write ACTUALLY happened (captured exactly once, with
+        # ONLY workflow_phase -- the NEW post-123 behavior; the OLD code
+        # never reached this call on a backward decision)
+        assert captured == [
+            {"type_id": type_id, "workflow_phase": "define"}
+        ], captured
+
+        row = db.get_workflow_phase(type_id)
+        assert row["workflow_phase"] == "define", (
+            "a backward 5D transition must WRITE the new (earlier) phase"
+        )
+        assert row["last_completed_phase"] == "deliver", (
+            "last_completed_phase is a complete_phase-only concept -- a "
+            "transition (forward, backward, or same-phase) must never "
+            "touch it, matching the frozen engine's own shape"
+        )
+
+    def test_same_phase_transition_writes_workflow_phase_row(self, tmp_path):
+        # Given a task at 'deliver' with last_completed_phase='define'
+        db = _make_db()
+        proj_uuid = _register(db, "task", "102-samephase", "SamePhase")
+        type_id = "task:102-samephase"
+        _with_phase(
+            db, type_id, "deliver", mode="standard",
+            last_completed_phase="define",
+        )
+        engine = _make_engine(db, str(tmp_path))
+        captured, real = self._spy_update_workflow_phase(db)
+
+        # When it transitions to its OWN current phase (same-phase)
+        try:
+            response = engine.transition_phase(proj_uuid, "deliver")
+        finally:
+            db.update_workflow_phase = real
+
+        # Then the decision is allowed, info-severity, PHASE_SEQ guard
+        result = response.results[0]
+        assert result.allowed is True
+        assert result.guard_id == "PHASE_SEQ"
+        assert result.severity == Severity.info
+
+        # And exactly one write fires, with ONLY workflow_phase
+        assert captured == [
+            {"type_id": type_id, "workflow_phase": "deliver"}
+        ], captured
+
+        row = db.get_workflow_phase(type_id)
+        assert row["workflow_phase"] == "deliver"
+        assert row["last_completed_phase"] == "define", (
+            "same-phase transition must not touch last_completed_phase"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Feature 123 D3 (deepened): the models.py MESSAGE CONTRACT (no "locked"
+# substring) verified END-TO-END through the ACTUAL 5D fail-loud call
+# sites -- not just at the db_unavailable_error() builder level (already
+# covered generically in test_engine.py's builder-focused tests).
+# dimension:error_propagation.
+# ---------------------------------------------------------------------------
+
+
+class TestFiveDFailLoudMessageContract:
+    """FR123-3 / models.py MESSAGE CONTRACT: db_unavailable_error() never
+    string-embeds the cause, verified here through the real 5D call sites
+    -- a regression that reintroduced f"...{exc}" interpolation directly
+    inside entity_engine.py (bypassing the builder) would be caught here
+    even though the builder's own unit tests (test_engine.py) stay green.
+
+    derived_from: spec:FR123-3 (message contract), dimension:error_propagation
+
+    Challenge: TestFiveDFailLoud (above) asserts
+    pytest.raises(WorkflowDBUnavailableError) + row-unchanged, but never
+    inspects the raised message's CONTENT -- a mutant that embedded
+    str(cause) in the message would still pass every assertion there.
+    """
+
+    def test_fived_transition_error_excludes_locked_substring(self, tmp_path):
+        db = _make_db()
+        proj_uuid = _register(db, "project", "103-msgc-t", "MsgContractT")
+        _with_phase(db, "project:103-msgc-t", "discover", mode="standard")
+        engine = _make_engine(db, str(tmp_path))
+
+        def _boom(*args, **kwargs):
+            raise sqlite3.OperationalError("database is locked")
+
+        with patch.object(db, "update_workflow_phase", side_effect=_boom):
+            with pytest.raises(WorkflowDBUnavailableError) as excinfo:
+                engine.transition_phase(proj_uuid, "define")
+
+        assert "locked" not in str(excinfo.value).lower()
+        assert "OperationalError" in str(excinfo.value)
+
+    def test_fived_complete_error_excludes_locked_substring(self, tmp_path):
+        db = _make_db()
+        proj_uuid = _register(db, "project", "104-msgc-c", "MsgContractC")
+        _with_phase(db, "project:104-msgc-c", "discover", mode="standard")
+        engine = _make_engine(db, str(tmp_path))
+
+        def _boom(*args, **kwargs):
+            raise sqlite3.OperationalError("database is locked")
+
+        with patch.object(db, "update_workflow_phase", side_effect=_boom):
+            with pytest.raises(WorkflowDBUnavailableError) as excinfo:
+                engine.complete_phase(proj_uuid, "discover")
+
+        assert "locked" not in str(excinfo.value).lower()
+        assert "OperationalError" in str(excinfo.value)
