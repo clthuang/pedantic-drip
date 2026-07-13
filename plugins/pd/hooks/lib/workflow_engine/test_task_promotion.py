@@ -497,6 +497,45 @@ class TestQueryReadyTasks:
         uuids = {r["uuid"] for r in result}
         assert ready_task_uuid in uuids
 
+    def test_ready_status_task_with_parent_not_implement_excluded(
+        self, tmp_path
+    ):
+        """The 2x2 cell the D8 status-widening must still exclude: a
+        cascade-flipped task (status='ready') whose PARENT is NOT in
+        'implement' phase must NOT be returned. Widening the status gate
+        to admit 'ready' must not accidentally bypass the independent
+        parent-phase gate -- the existing 'parent not implement' test
+        only ever used status='planned', and the existing 'ready' test
+        only ever used a parent already in 'implement'; this closes the
+        untested combination of the two."""
+        from workflow_engine.task_promotion import query_ready_tasks
+
+        db = _make_db()
+        slug = "072-ready-not-implement"
+        type_id = f"feature:{slug}"
+        db.register_entity(
+            entity_type="feature", entity_id=slug,
+            name="Ready But Not Implement Parent", status="active",
+            project_id="__unknown__",
+        )
+        db.create_workflow_phase(
+            type_id, mode="standard", workflow_phase="specify"
+        )
+
+        ready_task_uuid = db.register_entity(
+            entity_type="task", entity_id="007-ready-orphaned",
+            name="Ready Task, Wrong Parent Phase", status="ready",
+            parent_type_id=type_id,
+            project_id="__unknown__",
+        )
+        db.create_workflow_phase(
+            "task:007-ready-orphaned", mode="standard"
+        )
+
+        result = query_ready_tasks(db)
+        uuids = {r["uuid"] for r in result}
+        assert ready_task_uuid not in uuids
+
 
 class TestQueryReadyTasksWorkspaceScoping:
     """Feature 129 Task 4 / design D5: workspace_uuid scoping on

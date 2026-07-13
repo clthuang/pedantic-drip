@@ -635,6 +635,84 @@ def test_register_entity_depends_on_features_unresolvable_warns_not_blocked(
     assert "depends_on_features" in captured.err
 
 
+def test_upsert_entity_conflict_status_change_does_not_materialize_dependency(
+    db,
+):
+    """Design D7: materialization lives ONLY in register_entity --
+    upsert_entity's CONFLICT branches never read metadata at all (see
+    upsert_entity's docstring: "Does NOT update ... metadata on the
+    conflict branch"). A depends_on_features ref supplied on a
+    conflicting upsert call is silently ignored for materialization
+    purposes -- even a fully resolvable ref produces NO blocks row. This
+    is a deliberate design decision (verified here, not assumed):
+    callers needing a materialized edge on an existing entity must go
+    through register_entity's insert path or call add_dependency
+    explicitly.
+    """
+    db.register_entity(
+        "feature", "dep7-conflict-blocker", "Blocker",
+        project_id=TEST_PROJECT_ID,
+    )
+    entity_uuid = db.upsert_entity(
+        "feature", "dep7-conflict-target", "Target",
+        project_id=TEST_PROJECT_ID, status="planned",
+    )
+
+    # Conflict + status-change branch, now carrying a RESOLVABLE
+    # depends_on_features ref.
+    second_uuid = db.upsert_entity(
+        "feature", "dep7-conflict-target", "Target",
+        project_id=TEST_PROJECT_ID, status="active",
+        metadata={"depends_on_features": ["feature:dep7-conflict-blocker"]},
+    )
+    assert second_uuid == entity_uuid
+
+    # Sanity: the status change DID happen (the branch was exercised).
+    row = db._conn.execute(
+        "SELECT status FROM entities WHERE uuid = ?", (entity_uuid,),
+    ).fetchone()
+    assert row["status"] == "active"
+
+    count = db._conn.execute(
+        "SELECT COUNT(*) FROM entity_relations WHERE kind = 'blocks' "
+        "AND to_uuid = ?",
+        (entity_uuid,),
+    ).fetchone()[0]
+    assert count == 0, (
+        "upsert_entity's conflict+status-change branch must NOT "
+        "materialize depends_on_features (D7 lives only in register_entity)"
+    )
+
+
+def test_upsert_entity_conflict_no_change_does_not_materialize_dependency(db):
+    """Same D7 scope decision, exercised via the NO-OP conflict branch
+    (same status): the early return happens before metadata is even
+    inspected, so a resolvable depends_on_features ref still produces no
+    edge.
+    """
+    db.register_entity(
+        "feature", "dep7-noop-blocker", "Blocker", project_id=TEST_PROJECT_ID,
+    )
+    entity_uuid = db.upsert_entity(
+        "feature", "dep7-noop-target", "Target",
+        project_id=TEST_PROJECT_ID, status="planned",
+    )
+
+    second_uuid = db.upsert_entity(
+        "feature", "dep7-noop-target", "Target",
+        project_id=TEST_PROJECT_ID, status="planned",  # SAME status
+        metadata={"depends_on_features": ["feature:dep7-noop-blocker"]},
+    )
+    assert second_uuid == entity_uuid
+
+    count = db._conn.execute(
+        "SELECT COUNT(*) FROM entity_relations WHERE kind = 'blocks' "
+        "AND to_uuid = ?",
+        (entity_uuid,),
+    ).fetchone()[0]
+    assert count == 0
+
+
 # ---------------------------------------------------------------------------
 # AC-4.8: 1-to-1 F12 audit comment coverage (Group 15.7)
 # ---------------------------------------------------------------------------

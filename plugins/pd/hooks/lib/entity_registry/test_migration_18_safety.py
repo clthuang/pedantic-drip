@@ -445,6 +445,214 @@ def test_sc2_entity_dependencies_table_absent_post_migration(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# SC2 (deepened) — edge-corpus adversarial cases: orphan on the BLOCKED
+# side (complementary to the existing blocker-side orphan test), malformed
+# depends_on_features shapes (non-list, mixed-type list), and refs that
+# fail the migration's EXACT type_id match (uuid form, whitespace padding).
+# ---------------------------------------------------------------------------
+
+
+def test_sc2_orphan_blocked_side_missing_entity_skipped_with_note(
+    tmp_path, capsys
+):
+    """The orphan LEFT JOIN filters BOTH sides -- the existing
+    ``test_sc2_orphan_entity_dependencies_row_skipped_with_note`` only
+    exercises a bogus BLOCKER (e2 IS NULL). This is the complementary
+    e1-IS-NULL case: the BLOCKED side (``entity_uuid``) is the one
+    missing from ``entities``."""
+    conn, db_path = _make_v17_conn(tmp_path)
+    ws = _seed_workspace(conn)
+    blocker = _seed_entity(
+        conn, ws, "feature", "sc2-orphan-blocked-side", "Blocker"
+    )
+    bogus_blocked = str(_uuid.uuid4())
+    conn.execute(
+        "INSERT INTO entity_dependencies (entity_uuid, blocked_by_uuid) "
+        "VALUES (?, ?)",
+        (bogus_blocked, blocker),
+    )
+    conn.commit()
+
+    _migration_18_unify_dependency_store(conn)
+    captured = capsys.readouterr()
+    assert bogus_blocked in captured.err
+
+    count = conn.execute(
+        "SELECT COUNT(*) FROM entity_relations WHERE kind='blocks'"
+    ).fetchone()[0]
+    assert count == 0, "an orphan on the BLOCKED side must not materialize"
+    conn.close()
+
+
+def test_sc2_non_list_depends_on_features_skipped_without_crash(
+    tmp_path, capsys
+):
+    """A malformed (non-list) ``depends_on_features`` value -- a bare
+    string instead of a list -- fails the ``isinstance(refs, list)`` guard
+    and skips the WHOLE entity's metadata materialization, without
+    crashing the migration. Metadata is left untouched (audit trail).
+
+    Note: a bare string is itself character-iterable, so this scenario
+    alone would not detect a REMOVED isinstance guard (both with-guard
+    and without-guard code paths converge on zero materialized rows,
+    since no single character matches a real type_id either way) -- see
+    ``test_sc2_non_iterable_depends_on_features_would_crash_without_guard``
+    below for the mutation-lethal complement using a non-iterable value.
+    """
+    conn, db_path = _make_v17_conn(tmp_path)
+    ws = _seed_workspace(conn)
+    entity = _seed_entity(
+        conn, ws, "feature", "sc2-non-list", "NonList",
+        metadata=json.dumps(
+            {"depends_on_features": "feature:sc2-non-list-blocker"}
+        ),
+    )
+
+    _migration_18_unify_dependency_store(conn)  # must not raise
+
+    count = conn.execute(
+        "SELECT COUNT(*) FROM entity_relations WHERE kind='blocks'"
+    ).fetchone()[0]
+    assert count == 0
+
+    row = conn.execute(
+        "SELECT metadata FROM entities WHERE uuid = ?", (entity,)
+    ).fetchone()
+    assert "depends_on_features" in row[0]
+    conn.close()
+
+
+def test_sc2_non_iterable_depends_on_features_would_crash_without_guard(
+    tmp_path,
+):
+    """Mutation-lethal complement to the bare-string case above: an
+    integer ``depends_on_features`` value is NOT iterable at all. If the
+    ``isinstance(refs, list): continue`` guard were ever removed or
+    weakened, ``for ref in refs`` would raise ``TypeError: 'int' object
+    is not iterable`` and abort the ENTIRE migration mid-scan (all
+    subsequent entities' metadata unprocessed) -- this test would then
+    fail loudly on the ``_migration_18_unify_dependency_store(conn)``
+    call itself, unlike the string case which converges to the same
+    zero-rows outcome whether or not the guard is present."""
+    conn, db_path = _make_v17_conn(tmp_path)
+    ws = _seed_workspace(conn)
+    entity = _seed_entity(
+        conn, ws, "feature", "sc2-non-iterable", "NonIterable",
+        metadata=json.dumps({"depends_on_features": 12345}),
+    )
+
+    _migration_18_unify_dependency_store(conn)  # must not raise TypeError
+
+    count = conn.execute(
+        "SELECT COUNT(*) FROM entity_relations WHERE kind='blocks'"
+    ).fetchone()[0]
+    assert count == 0
+
+    row = conn.execute(
+        "SELECT metadata FROM entities WHERE uuid = ?", (entity,)
+    ).fetchone()
+    assert "depends_on_features" in row[0]
+    conn.close()
+
+
+def test_sc2_mixed_type_list_skips_non_string_entries_only(tmp_path, capsys):
+    """A ``depends_on_features`` list mixing non-string entries (int,
+    None) with a valid resolvable ref: the per-ref ``isinstance(ref, str)``
+    guard skips only the bad entries -- the valid sibling ref still
+    materializes. One bad element does not poison the whole list.
+
+    Also asserts NO stderr note names the non-string entries: with the
+    guard in place they never reach the unresolvable-ref branch at all
+    (mutation check -- if the guard were removed, ``123``/``None`` would
+    fall through to the "unresolvable ref" print, which would show up in
+    captured stderr and fail this assertion)."""
+    conn, db_path = _make_v17_conn(tmp_path)
+    ws = _seed_workspace(conn)
+    blocker = _seed_entity(conn, ws, "feature", "sc2-mixed-blocker", "Blocker")
+    blocked = _seed_entity(
+        conn, ws, "feature", "sc2-mixed-blocked", "Blocked",
+        metadata=json.dumps(
+            {"depends_on_features": [123, "feature:sc2-mixed-blocker", None]}
+        ),
+    )
+
+    _migration_18_unify_dependency_store(conn)
+    captured = capsys.readouterr()
+    assert "123" not in captured.err
+    assert "None" not in captured.err
+
+    rows = conn.execute(
+        "SELECT 1 FROM entity_relations "
+        "WHERE from_uuid = ? AND to_uuid = ? AND kind = 'blocks'",
+        (blocker, blocked),
+    ).fetchall()
+    assert len(rows) == 1
+    conn.close()
+
+
+def test_sc2_uuid_form_ref_unresolvable_via_exact_type_id_match(
+    tmp_path, capsys
+):
+    """Migration 18 step 3's resolution is a PLAIN exact ``type_id`` match
+    (``WHERE type_id = ? AND workspace_uuid = ?``) -- no ``resolve_ref``,
+    no uuid fallback (design decision: the migration context has no
+    'self', and the writer vocabulary is fully-qualified type_id literals
+    per SKILL.md). A ref supplied as a raw uuid string never matches any
+    ``type_id`` -- warn-and-skip, not a crash and not a mismatched
+    resolution."""
+    conn, db_path = _make_v17_conn(tmp_path)
+    ws = _seed_workspace(conn)
+    blocker = _seed_entity(conn, ws, "feature", "sc2-uuidref-blocker", "Blocker")
+    uuid_ref = blocker  # the blocker's own UUID, not its type_id
+    blocked = _seed_entity(
+        conn, ws, "feature", "sc2-uuidref-blocked", "Blocked",
+        metadata=json.dumps({"depends_on_features": [uuid_ref]}),
+    )
+
+    _migration_18_unify_dependency_store(conn)
+    captured = capsys.readouterr()
+    assert uuid_ref in captured.err
+
+    count = conn.execute(
+        "SELECT COUNT(*) FROM entity_relations WHERE kind='blocks'"
+    ).fetchone()[0]
+    assert count == 0
+
+    row = conn.execute(
+        "SELECT metadata FROM entities WHERE uuid = ?", (blocked,)
+    ).fetchone()
+    assert "depends_on_features" in row[0]
+    conn.close()
+
+
+def test_sc2_whitespace_padded_ref_unresolvable_via_exact_match(
+    tmp_path, capsys
+):
+    """A ``depends_on_features`` ref with incidental whitespace padding
+    fails the migration's EXACT ``type_id`` equality (no trim/strip) --
+    warn and skip, metadata left intact for audit rather than silently
+    'fixed' by a lenient match."""
+    conn, db_path = _make_v17_conn(tmp_path)
+    ws = _seed_workspace(conn)
+    _seed_entity(conn, ws, "feature", "sc2-ws-blocker", "Blocker")
+    padded_ref = " feature:sc2-ws-blocker"
+    blocked = _seed_entity(
+        conn, ws, "feature", "sc2-ws-blocked", "Blocked",
+        metadata=json.dumps({"depends_on_features": [padded_ref]}),
+    )
+
+    _migration_18_unify_dependency_store(conn)
+    captured = capsys.readouterr()
+    assert padded_ref in captured.err
+
+    count = conn.execute(
+        "SELECT COUNT(*) FROM entity_relations WHERE kind='blocks'"
+    ).fetchone()[0]
+    assert count == 0
+    conn.close()
+
+
+# ---------------------------------------------------------------------------
 # SC4 — cycle CTE + self-dependency rejection on the new store
 # ---------------------------------------------------------------------------
 

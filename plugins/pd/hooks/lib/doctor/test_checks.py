@@ -3342,6 +3342,63 @@ class TestCheck11PerKindEquivalence:
             conn.close()
 
 
+class TestCheck11ZeroBlockerEdgeDivergence:
+    """Feature 124 D6 (checks.py's missed_cascade docstring, ~:1842-1846):
+    an entity that is 'blocked' but has ZERO recorded blocker edges is a
+    DIFFERENT anomaly class from a missed cascade -- the check's outer
+    EXISTS clause deliberately scopes it to "a cascade opportunity
+    existed and was missed". The Python helper
+    (``DependencyManager._all_blockers_resolved``), by contrast, treats a
+    zero-blocker entity as vacuously resolved (``all([]) is True`` --
+    load-bearing for the delete-hook's D5.3 empty-set case).
+
+    Both sides of this INTENTIONAL divergence are pinned here, in the
+    SAME test class, so a future change to either one is a deliberate
+    choice rather than an accidental drift caught only by a flaky
+    cross-file coincidence.
+    """
+
+    def test_python_helper_says_vacuously_resolved_with_zero_blockers(
+        self, tmp_path
+    ):
+        # Given a 'blocked' entity with NO blocker edges ever recorded.
+        from entity_registry.dependencies import DependencyManager
+
+        db, conn = _make_live_db(tmp_path)
+        _register_live_feature(db, "lone-blocked", status="blocked")
+        lone_uuid = _entity_uuid(conn, "feature:lone-blocked")
+
+        try:
+            # Then the Python helper is vacuously True (all([]) is True).
+            assert DependencyManager().get_blockers(db, lone_uuid) == []
+            assert (
+                DependencyManager()._all_blockers_resolved(db, lone_uuid)
+                is True
+            )
+        finally:
+            conn.close()
+
+    def test_doctor_check_does_not_fire_for_the_same_zero_blocker_entity(
+        self, tmp_path
+    ):
+        # Given the SAME construction: 'blocked' with zero blocker edges.
+        from doctor.checks import check_missed_cascade
+
+        db, conn = _make_live_db(tmp_path)
+        _register_live_feature(db, "lone-blocked-2", status="blocked")
+
+        try:
+            # When the doctor's missed_cascade check runs.
+            result = check_missed_cascade(entities_conn=conn)
+            # Then it does NOT fire -- the outer EXISTS(an edge) clause
+            # excludes it; this is a different anomaly class than a
+            # missed cascade, not a false negative.
+            assert result.passed
+            assert result.issues == []
+        finally:
+            conn.close()
+
+
 # ===========================================================================
 # Check: security-review command installation
 # ===========================================================================

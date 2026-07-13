@@ -748,6 +748,58 @@ class TestCascadeUnblock:
         )
         assert len(events) == 1
 
+    def test_5d_kind_terminal_completion_same_double_fire_observable_outcome(
+        self, tmp_path
+    ):
+        """Same pre-existing double-fire quirk as
+        ``test_complete_blocker_unblocks_dependent`` above, pinned for the
+        5D path: ``_fived_complete`` calls ``update_entity`` directly on
+        reaching its terminal phase, firing the SAME live cascade trigger
+        that Phase B's explicit ``_run_cascade`` fires again immediately
+        after. Uses 'initiative' as a representative 5D kind so a future
+        refactor that decouples FeatureBackend from FiveDBackend can't
+        silently change this contract for one path without the other
+        failing loudly."""
+        db = _make_db()
+        blocker_uuid = _register(
+            db, "initiative", "i103-blocker", "Blocker Initiative"
+        )
+        _with_phase(
+            db, "initiative:i103-blocker", "discover", mode="standard"
+        )
+
+        dependent_uuid = _register(
+            db, "feature", "032-5d-dep", "5D Dependent", status="blocked",
+        )
+        dep_mgr = DependencyManager()
+        dep_mgr.add_dependency(db, dependent_uuid, blocker_uuid)
+
+        engine = _make_engine(db, str(tmp_path))
+        phases = ["discover", "define", "design", "deliver", "debrief"]
+        result = None
+        for phase in phases:
+            result = engine.complete_phase(blocker_uuid, phase)
+        assert result.cascade_error is None
+
+        # Observable outcome: the flip DID happen (correct, load-bearing).
+        entity = db.get_entity_by_uuid(dependent_uuid)
+        assert entity["status"] == "ready"
+        assert len(dep_mgr.get_blockers(db, dependent_uuid)) == 1  # survives
+
+        # Attribution quirk, pinned (same class as the feature-kind test
+        # above): Phase A's update_entity trigger performs the real flip;
+        # Phase B's explicit _run_cascade re-evaluates and finds nothing
+        # left to do, so the terminal complete_phase call's
+        # unblocked_uuids under-reports.
+        assert result.unblocked_uuids == []
+
+        # And the flip is recorded exactly once -- not duplicated by the
+        # second firing.
+        events = db.query_phase_events(
+            type_id=entity["type_id"], event_type="cascade_ready",
+        )
+        assert len(events) == 1
+
 
 # ---------------------------------------------------------------------------
 # Task 4.1: FiveDBackend tests — project/initiative/objective/key_result
@@ -1152,6 +1204,42 @@ class TestDeliverGateBlockerDetails:
         # The edge is still there post-transition (edges never removed by
         # the gate check itself).
         assert len(dep_mgr.get_blockers(db, blocked_uuid)) == 1
+
+    def test_mixed_resolved_and_unresolved_blockers_filters_message_and_still_blocks(
+        self, tmp_path
+    ):
+        """Two blockers: one ALREADY RESOLVED (edge survives per
+        FR124-4c) and one still unresolved. The gate must (a) still
+        raise -- one blocker remains unresolved -- and (b) list ONLY the
+        unresolved blocker in the error, proving the filter partitions
+        the blocker list rather than falling back to any-edge-exists
+        (which would wrongly include the resolved blocker too)."""
+        db = _make_db()
+        resolved_blocker_uuid = _register(
+            db, "project", "p045-resolved", "Resolved Blocker",
+            status="completed",
+        )
+        unresolved_blocker_uuid = _register(
+            db, "project", "p046-unresolved", "Unresolved Blocker",
+            status="active",
+        )
+        blocked_uuid = _register(
+            db, "project", "p047-mixed", "Mixed Blocked"
+        )
+        _with_phase(db, "project:p047-mixed", "design", mode="standard")
+
+        dep_mgr = DependencyManager()
+        dep_mgr.add_dependency(db, blocked_uuid, resolved_blocker_uuid)
+        dep_mgr.add_dependency(db, blocked_uuid, unresolved_blocker_uuid)
+
+        engine = _make_engine(db, str(tmp_path))
+
+        with pytest.raises(ValueError) as exc_info:
+            engine.transition_phase(blocked_uuid, "deliver")
+
+        message = str(exc_info.value)
+        assert "project:p046-unresolved" in message
+        assert "project:p045-resolved" not in message
 
     def test_complete_blocker_then_deliver_succeeds(self, tmp_path):
         """End-to-end: feature B blocked by A. Complete A → B can implement."""
