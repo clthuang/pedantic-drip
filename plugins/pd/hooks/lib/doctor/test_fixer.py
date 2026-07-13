@@ -987,12 +987,14 @@ class TestFixStaleDependency:
         assert uuid_blocker in action
         assert "unblocked 1" in action
 
-        # Edge should be gone
+        # Feature 124 FR124-4c: edge SURVIVES (cascade_unblock no longer
+        # tombstones edges)
         deps = db.query_dependencies(entity_uuid=uuid_blocked)
-        assert len(deps) == 0
+        assert len(deps) == 1
 
-        # Blocked entity should be promoted to planned
+        # Feature 124 FR124-4a: blocked entity should be promoted to ready
+        # (not planned)
         entity = db.get_entity_by_uuid(uuid_blocked)
-        assert entity["status"] == "planned"
+        assert entity["status"] == "ready"
 
         db.close()

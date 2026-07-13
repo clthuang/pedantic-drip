@@ -5792,6 +5792,152 @@ def _migration_18_unify_dependency_store(conn: sqlite3.Connection) -> None:
         )
 
 
+# Feature 124 (Task 2 addendum, D3): Migration 19 — widen phase_events'
+# event_type CHECK to admit 'cascade_ready'. D3 pins the cascade flip's
+# atomic record as a phase_events row with event_type='cascade_ready'
+# (from_value/to_value/actor carried in metadata, mirroring the
+# entity_status_changed convention); the live CHECK (widened to 8 values by
+# Migration 14's _copy_rename_phase_events_for_v14) does not admit it, and
+# SQLite CHECKs are immutable in place. Forward-only (no MIGRATIONS_DOWN
+# entry): a pure widen has no data to lose, and 132 owns the physical v2
+# cutover -- adding a reverse here would touch the MIGRATIONS_DOWN keys
+# pin (test_database.py) for no functional benefit, mirroring Migration
+# 18's own forward-only precedent.
+def _migration_19_widen_phase_events_cascade_ready(
+    conn: sqlite3.Connection,
+) -> None:
+    """Migration 19 — widen phase_events.event_type CHECK to admit
+    'cascade_ready'.
+
+    Mirrors the Migration 14 copy-rename idiom
+    (_copy_rename_phase_events_for_v14, database.py:4637): capture indexes
+    + triggers, rebuild with the widened CHECK (9 values, adds
+    'cascade_ready'), INSERT-SELECT all rows (byte-identical columns),
+    DROP old, RENAME new, recreate indexes + triggers. No FK pragma
+    bracketing needed -- phase_events carries no FK constraints (unlike
+    Migration 18's entity_relations rebuild).
+
+    Replay-safe: probes sqlite_master for a `'cascade_ready'` substring in
+    the phase_events CHECK SQL; if present, a prior interrupted attempt
+    already completed the rebuild -- skip.
+    """
+    pe_sql_row = conn.execute(
+        "SELECT sql FROM sqlite_master "
+        "WHERE type='table' AND name='phase_events'"
+    ).fetchone()
+    if "'cascade_ready'" in (pe_sql_row[0] if pe_sql_row else ""):
+        return
+
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        # Racer-tolerant re-check: a concurrent peer may have completed
+        # migration 19 between our probe and BEGIN IMMEDIATE acquisition.
+        pe_sql_row_tx = conn.execute(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type='table' AND name='phase_events'"
+        ).fetchone()
+        if "'cascade_ready'" in (pe_sql_row_tx[0] if pe_sql_row_tx else ""):
+            conn.rollback()
+            return
+
+        pe_pre_count = conn.execute(
+            "SELECT COUNT(*) FROM phase_events"
+        ).fetchone()[0]
+
+        pe_saved_indexes = [
+            (r[0], r[1])
+            for r in conn.execute(
+                "SELECT name, sql FROM sqlite_master "
+                "WHERE type='index' AND tbl_name='phase_events' "
+                "AND sql IS NOT NULL"
+            ).fetchall()
+        ]
+        pe_saved_triggers = [
+            (r[0], r[1])
+            for r in conn.execute(
+                "SELECT name, sql FROM sqlite_master "
+                "WHERE type='trigger' AND tbl_name='phase_events' "
+                "AND sql IS NOT NULL"
+            ).fetchall()
+        ]
+        pe_cross_triggers = [
+            (r[0], r[1])
+            for r in conn.execute(
+                "SELECT name, sql FROM sqlite_master "
+                "WHERE type='trigger' "
+                "AND tbl_name <> 'phase_events' "
+                "AND sql LIKE '%phase_events%' "
+                "AND sql IS NOT NULL"
+            ).fetchall()
+        ]
+        for trg_name, _ in pe_cross_triggers:
+            conn.execute(f"DROP TRIGGER IF EXISTS {trg_name}")
+
+        conn.execute("""
+            CREATE TABLE phase_events_new (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                type_id         TEXT NOT NULL,
+                project_id      TEXT NOT NULL,
+                phase           TEXT,
+                event_type      TEXT NOT NULL CHECK(event_type IN (
+                    'started', 'completed', 'skipped', 'backward',
+                    'entity_created', 'entity_status_changed',
+                    'entity_promoted', 'spawned_child', 'cascade_ready'
+                )),
+                timestamp       TEXT NOT NULL,
+                iterations      INTEGER,
+                reviewer_notes  TEXT,
+                backward_reason TEXT,
+                backward_target TEXT,
+                source          TEXT NOT NULL DEFAULT 'live' CHECK(
+                    source IN ('live', 'backfill')
+                ),
+                created_at      TEXT NOT NULL,
+                metadata        TEXT
+            )
+        """)
+
+        conn.execute(
+            "INSERT INTO phase_events_new "
+            "(id, type_id, project_id, phase, event_type, timestamp, "
+            "iterations, reviewer_notes, backward_reason, "
+            "backward_target, source, created_at, metadata) "
+            "SELECT id, type_id, project_id, phase, event_type, "
+            "timestamp, iterations, reviewer_notes, backward_reason, "
+            "backward_target, source, created_at, metadata "
+            "FROM phase_events"
+        )
+        pe_post_count = conn.execute(
+            "SELECT COUNT(*) FROM phase_events_new"
+        ).fetchone()[0]
+        if pe_post_count != pe_pre_count:
+            raise MigrationError(
+                f"Migration 19 phase_events copy-rename row-count "
+                f"mismatch: pre={pe_pre_count}, post={pe_post_count}"
+            )
+
+        conn.execute("DROP TABLE phase_events")
+        conn.execute("ALTER TABLE phase_events_new RENAME TO phase_events")
+
+        for _, idx_sql in pe_saved_indexes:
+            if idx_sql:
+                conn.execute(idx_sql)
+        for _, trg_sql in pe_saved_triggers:
+            if trg_sql:
+                conn.execute(trg_sql)
+        for _, trg_sql in pe_cross_triggers:
+            if trg_sql:
+                conn.execute(trg_sql)
+
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+
+
 # Ordered mapping of version -> migration function.
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _create_initial_schema,
@@ -5812,6 +5958,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     16: _migration_16_reserved,
     17: _migration_17_cross_workspace_allowlist,
     18: _migration_18_unify_dependency_store,
+    19: _migration_19_widen_phase_events_cascade_ready,
 }
 
 # Reverse-migration registry (FR-8 / design §6.7). Migrations 1-10 are
@@ -5937,6 +6084,12 @@ _VALID_PARAMS: dict[str, set[str]] = {
     # future non-issue_spawn caller can promote to required when needed
     # (plan-reviewer iter 3 S3 downgrade).
     "spawned_child":        {"metadata"},
+    # Feature 124 D3/Migration 19: cascade_ready is the atomic flip record
+    # emitted by DependencyManager._evaluate_and_flip (blocked -> ready).
+    # metadata carries from_value/to_value/actor -- required, since the
+    # event is meaningless without that payload (unlike spawned_child,
+    # which has exactly one caller that already guarantees it).
+    "cascade_ready":        {"metadata"},
 }
 _REQUIRED_PARAMS: dict[str, set[str]] = {
     "started":              {"phase"},
@@ -5945,6 +6098,7 @@ _REQUIRED_PARAMS: dict[str, set[str]] = {
     "backward":             {"phase", "backward_reason", "backward_target"},
     "entity_status_changed":{"metadata"},
     "entity_promoted":      {"metadata"},
+    "cascade_ready":        {"metadata"},
 }
 
 # Discriminator kwargs visible to validation (must match the union of all
@@ -7832,16 +7986,31 @@ class EntityDatabase:
                     pass  # stderr write itself failed; nothing more we can do
                 # NO re-raise. Status UPDATE has already committed.
 
-        # Cascade unblock: when an entity is completed, remove it from all
-        # blocked_by lists and promote fully-unblocked dependents.
+        # Cascade unblock: when an entity reaches a resolved status for its
+        # kind (feature 124 D4's per-kind terminal table -- e.g. 'completed'
+        # for features/5D kinds, but ALSO 'closed' for closes=-closed tasks/
+        # bugs, which the old =='completed' check missed), flip dependents
+        # whose blockers are now all resolved. Edges SURVIVE (FR124-4c);
+        # flip target is 'ready' (FR124-4a) -- idempotent, since a dependent
+        # already flipped to 'ready' no longer satisfies the 'blocked' guard
+        # inside _evaluate_and_flip, so a repeat terminal write re-flips
+        # nothing.
         # Placed AFTER transaction exits (TD-1) to avoid nested transactions.
         # Fail-open: Layers 2 (reconciliation) and 3 (doctor) catch stale edges.
-        if status == "completed":
-            try:
-                from entity_registry.dependencies import DependencyManager
-                DependencyManager().cascade_unblock(self, entity_uuid)
-            except Exception:
-                pass  # fail-open: Layers 2+3 catch stale edges
+        if status is not None and old_row is not None:
+            from entity_registry.dependencies import (
+                DependencyManager,
+                _blocker_completed,
+            )
+            if _blocker_completed({"kind": old_row["kind"], "status": status}):
+                try:
+                    DependencyManager().cascade_unblock(self, entity_uuid)
+                except Exception as exc:
+                    print(
+                        f"cascade_unblock failed (recovered by doctor): "
+                        f"{type(exc).__name__}",
+                        file=sys.stderr,
+                    )
 
         # Re-attribution (TD-8): post-Migration-11 the column is workspace_uuid.
         # We accept the legacy ``new_project_id`` kwarg, resolve it to a
@@ -8085,6 +8254,13 @@ class EntityDatabase:
         DELETE CASCADE (fires when the entity row is deleted below — no
         manual DELETE needed).
 
+        Feature 124 D5.3: this entity's dependents (entities it blocked)
+        are re-evaluated post-commit -- a dependent whose ONLY remaining
+        blockers are now all resolved (vacuously true if this deletion
+        removed its last one) flips 'blocked' -> 'ready', fail-open with a
+        stderr warning on failure (same posture as the completion trigger
+        in update_entity).
+
         Parameters
         ----------
         type_id : str
@@ -8110,6 +8286,17 @@ class EntityDatabase:
                 project_id=project_id,
                 workspace_uuid=workspace_uuid,
             )
+
+            # Feature 124 D5.3: pre-capture this entity's dependents BEFORE
+            # the delete -- entity_relations' FK ON DELETE CASCADE wipes
+            # their blocks-edges at commit (step 6 below), so calling
+            # get_dependents() afterward would see []. Evaluated post-commit
+            # (below): a dependent whose ONLY blocker was this now-deleted
+            # entity has zero REMAINING blockers, which is vacuously
+            # resolved (`all([]) is True`) -- it flips to 'ready'.
+            from entity_registry.dependencies import DependencyManager
+            _dep_mgr = DependencyManager()
+            _dependents = _dep_mgr.get_dependents(self, entity_uuid)
 
             # Fetch rowid for FTS cleanup
             row = self._conn.execute(
@@ -8158,6 +8345,18 @@ class EntityDatabase:
         except Exception:
             self._conn.rollback()
             raise
+
+        # Feature 124 D5.3: unblock-on-delete hook, run post-commit (same
+        # fail-open posture as the completion trigger in update_entity --
+        # a failure here must not undo the already-committed delete).
+        try:
+            _dep_mgr._evaluate_and_flip(self, _dependents)
+        except Exception as exc:
+            print(
+                f"cascade_unblock failed (recovered by doctor): "
+                f"{type(exc).__name__}",
+                file=sys.stderr,
+            )
 
     # ------------------------------------------------------------------
     # Re-attribution (Feature 108 Phase F)

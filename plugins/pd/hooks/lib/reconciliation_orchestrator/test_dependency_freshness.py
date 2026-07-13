@@ -36,14 +36,16 @@ class TestCleanupStaleDependencies:
         # Run cleanup
         count = cleanup_stale_dependencies(db)
 
+        # 1 entity flipped (the reworked blocked-downstream scan still
+        # returns a flip-count here — one blocked entity, one flip).
         assert count == 1
 
-        # Edge should be removed
+        # Feature 124 FR124-4c: edge SURVIVES (no longer removed)
         deps = db.query_dependencies(entity_uuid=uuid_blocked)
-        assert len(deps) == 0
+        assert len(deps) == 1
 
-        # Blocked entity should be promoted to planned
+        # Feature 124 FR124-4a: blocked entity should be promoted to ready
         entity = db.get_entity_by_uuid(uuid_blocked)
-        assert entity["status"] == "planned"
+        assert entity["status"] == "ready"
 
         db.close()

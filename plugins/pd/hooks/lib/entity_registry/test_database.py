@@ -6681,6 +6681,101 @@ class TestDeleteCascade:
         assert mem_db.get_entity_by_uuid(uid_other) is not None
 
 
+class TestDeleteCascadeUnblock:
+    """SC3-d: deleting a blocker (not completing it) unblocks its
+    dependents via entity_relations' FK ON DELETE CASCADE + the D5.3
+    unblock-on-delete hook in delete_entity."""
+
+    def test_delete_only_blocker_flips_dependent_empty_set(self, mem_db):
+        """A is B's ONLY blocker. Deleting A: the edge is gone (FK cascade),
+        and B flips to 'ready' because its REMAINING blocker set is empty
+        -- vacuously resolved (`all([]) is True`, feature 124 design D5.3's
+        load-bearing empty-set case)."""
+        a = mem_db.register_entity(
+            "feature", "d01-a", "Blocker A", status="active",
+            project_id=TEST_PROJECT_ID,
+        )
+        b = mem_db.register_entity(
+            "feature", "d02-b", "Blocked B", status="blocked",
+            project_id=TEST_PROJECT_ID,
+        )
+        mem_db.add_dependency(b, a)
+        assert len(mem_db.query_dependencies(entity_uuid=b)) == 1
+
+        mem_db.delete_entity("feature:d01-a", project_id=TEST_PROJECT_ID)
+
+        # Edge is gone (FK ON DELETE CASCADE -- the live deletion mechanism
+        # post-124, not a manual DELETE).
+        assert mem_db.query_dependencies(entity_uuid=b) == []
+        entity_b = mem_db.get_entity_by_uuid(b)
+        assert entity_b["status"] == "ready"
+        events = mem_db.query_phase_events(
+            type_id=entity_b["type_id"], event_type="cascade_ready",
+        )
+        assert len(events) == 1
+
+    def test_delete_one_of_two_blockers_stays_blocked_if_other_unresolved(
+        self, mem_db
+    ):
+        """Over-eager-flip guard (not a red-first case: pre-124 delete_entity
+        had no unblock-on-delete hook at all, so "B stays blocked" trivially
+        held before 124 too -- green both before and after, like SC3-b/c).
+        A and C both block B. Deleting A (unresolved C remains) must leave
+        B blocked -- the hook must not flip on a merely-shrunk, still
+        non-empty unresolved remainder (this WOULD catch a naive
+        "flip whenever a blocker is deleted, ignoring what's left" mutant)."""
+        a = mem_db.register_entity(
+            "feature", "d03-a", "Blocker A", status="active",
+            project_id=TEST_PROJECT_ID,
+        )
+        c = mem_db.register_entity(
+            "feature", "d04-c", "Blocker C", status="active",
+            project_id=TEST_PROJECT_ID,
+        )
+        b = mem_db.register_entity(
+            "feature", "d05-b", "Blocked B", status="blocked",
+            project_id=TEST_PROJECT_ID,
+        )
+        mem_db.add_dependency(b, a)
+        mem_db.add_dependency(b, c)
+
+        mem_db.delete_entity("feature:d03-a", project_id=TEST_PROJECT_ID)
+
+        remaining = mem_db.query_dependencies(entity_uuid=b)
+        assert len(remaining) == 1
+        assert remaining[0]["blocked_by_uuid"] == c
+        entity_b = mem_db.get_entity_by_uuid(b)
+        assert entity_b["status"] == "blocked"
+
+    def test_delete_one_of_two_blockers_flips_if_remaining_already_resolved(
+        self, mem_db
+    ):
+        """A and C both block B; C is ALREADY resolved. Deleting A leaves
+        only the resolved C -- all remaining blockers resolved -> B flips."""
+        a = mem_db.register_entity(
+            "feature", "d06-a", "Blocker A", status="active",
+            project_id=TEST_PROJECT_ID,
+        )
+        c = mem_db.register_entity(
+            "feature", "d07-c", "Blocker C", status="completed",
+            project_id=TEST_PROJECT_ID,
+        )
+        b = mem_db.register_entity(
+            "feature", "d08-b", "Blocked B", status="blocked",
+            project_id=TEST_PROJECT_ID,
+        )
+        mem_db.add_dependency(b, a)
+        mem_db.add_dependency(b, c)
+
+        mem_db.delete_entity("feature:d06-a", project_id=TEST_PROJECT_ID)
+
+        remaining = mem_db.query_dependencies(entity_uuid=b)
+        assert len(remaining) == 1
+        assert remaining[0]["blocked_by_uuid"] == c
+        entity_b = mem_db.get_entity_by_uuid(b)
+        assert entity_b["status"] == "ready"
+
+
 class TestReattribution:
     """T3.8: update_entity with project_id and re-attribution (TD-8)."""
 
@@ -6845,16 +6940,16 @@ class TestCascadeOnComplete:
         )
         db.add_dependency(uuid_a, uuid_b)  # A blocked_by B
 
-        # Complete B — should cascade: remove edge, promote A blocked→planned
+        # Complete B — should cascade: edge SURVIVES, promote A blocked→ready
         db.update_entity("feature:cas-b", status="completed")
 
-        # Edge should be gone
+        # Feature 124 FR124-4c: edge SURVIVES (no longer tombstoned)
         deps = db.query_dependencies(entity_uuid=uuid_a)
-        assert len(deps) == 0, f"Expected edge removed, got {deps}"
+        assert len(deps) == 1, f"Expected edge to survive, got {deps}"
 
-        # A should be promoted to planned
+        # Feature 124 FR124-4a: A should be promoted to ready (not planned)
         entity_a = db.get_entity_by_uuid(uuid_a)
-        assert entity_a["status"] == "planned"
+        assert entity_a["status"] == "ready"
 
     def test_non_completed_status_no_cascade(self, db):
         """Non-completed status (e.g., 'active') does not trigger cascade."""
@@ -6903,13 +6998,23 @@ class TestCascadeOnComplete:
         db.add_dependency(uuid_a, uuid_b)
 
         db.update_entity("feature:idem-b", status="completed")
-        # Second completion — should not raise
+        # Second completion — should not raise, and should not re-flip
+        # (idempotent: A is already 'ready', so the 'blocked' guard inside
+        # _evaluate_and_flip skips it on the repeat terminal write).
         db.update_entity("feature:idem-b", status="completed")
 
+        # Feature 124 FR124-4c: edge SURVIVES completion
         deps = db.query_dependencies(entity_uuid=uuid_a)
-        assert len(deps) == 0
+        assert len(deps) == 1
+        # Feature 124 FR124-4a: flip target is 'ready', not 'planned'
         entity_a = db.get_entity_by_uuid(uuid_a)
-        assert entity_a["status"] == "planned"
+        assert entity_a["status"] == "ready"
+        # Idempotency is airtight: exactly ONE cascade_ready event, not two
+        # -- the repeat terminal write re-flips nothing (:7574 widen).
+        events = db.query_phase_events(
+            type_id=entity_a["type_id"], event_type="cascade_ready",
+        )
+        assert len(events) == 1
 
 
 # ===========================================================================

@@ -4,6 +4,7 @@ Covers: DependencyManager cycle detection, add/remove, cascade_unblock.
 """
 from __future__ import annotations
 
+import json
 import time
 import uuid
 
@@ -32,9 +33,12 @@ def mgr():
     return DependencyManager()
 
 
-def _reg(db, suffix: str) -> str:
+def _reg(db, suffix: str, *, status: str | None = None) -> str:
     """Register a feature and return its uuid."""
-    return db.register_entity("feature", f"001-{suffix}", f"Feature {suffix}", project_id="__unknown__")
+    return db.register_entity(
+        "feature", f"001-{suffix}", f"Feature {suffix}",
+        status=status, project_id="__unknown__",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -200,41 +204,133 @@ class TestRemoveDependency:
 
 class TestCascadeUnblock:
     def test_cascade_removes_completed_from_all_blocked_by(self, db, mgr):
-        a = _reg(db, "a")
-        b = _reg(db, "b")
-        c = _reg(db, "c")
+        # Feature 124: A must itself be resolved (its kind's completion
+        # predicate) for its dependents to flip; B/C must be 'blocked' to
+        # be flip candidates at all.
+        a = _reg(db, "a", status="completed")
+        b = _reg(db, "b", status="blocked")
+        c = _reg(db, "c", status="blocked")
         mgr.add_dependency(db, b, a)  # B blocked by A
         mgr.add_dependency(db, c, a)  # C blocked by A
         unblocked = mgr.cascade_unblock(db, a)
-        # Both B and C should be unblocked
+        # Both B and C should be unblocked (flipped to ready)
         assert set(unblocked) == {b, c}
-        # No remaining deps on A
+        # Feature 124 FR124-4c: edges SURVIVE completion (no tombstoning)
         rows = db._conn.execute(
             "SELECT * FROM entity_relations WHERE from_uuid = ? AND kind = 'blocks'", (a,)
         ).fetchall()
-        assert len(rows) == 0
+        assert len(rows) == 2
 
     def test_cascade_returns_only_fully_unblocked(self, db, mgr):
-        """B blocked by A and C. Completing A doesn't fully unblock B."""
-        a = _reg(db, "a")
-        b = _reg(db, "b")
-        c = _reg(db, "c")
+        """SC3-b (regression guard): B blocked by A and C. Completing A
+        (partial) leaves B blocked, with no cascade_ready event; completing
+        C (the remaining blocker) then flips it."""
+        a = _reg(db, "a", status="completed")
+        b = _reg(db, "b", status="blocked")
+        c = _reg(db, "c")  # unresolved -- keeps B blocked
         mgr.add_dependency(db, b, a)
         mgr.add_dependency(db, b, c)
         unblocked = mgr.cascade_unblock(db, a)
-        # B still blocked by C, so should NOT be in unblocked list
+        # B still blocked by unresolved C, so should NOT be in unblocked list
         assert b not in unblocked
-        # A's dep row is removed
+        # Feature 124 FR124-4c: A's dep row on B SURVIVES (edges are never
+        # tombstoned by cascade_unblock)
         row = db._conn.execute(
             "SELECT * FROM entity_relations WHERE to_uuid = ? AND from_uuid = ? AND kind = 'blocks'",
             (b, a),
         ).fetchone()
-        assert row is None
+        assert row is not None
+        # No premature cascade_ready event for the partial completion
+        b_type_id = db.get_entity_by_uuid(b)["type_id"]
+        assert db.query_phase_events(type_id=b_type_id, event_type="cascade_ready") == []
+
+        # Completing the remaining blocker (C) now flips B.
+        db.update_entity(db.get_entity_by_uuid(c)["type_id"], status="completed")
+        entity_b = db.get_entity_by_uuid(b)
+        assert entity_b["status"] == "ready"
 
     def test_cascade_no_deps_returns_empty(self, db, mgr):
-        a = _reg(db, "a")
+        a = _reg(db, "a", status="completed")
         unblocked = mgr.cascade_unblock(db, a)
         assert unblocked == []
+
+    def test_sc3c_wip_dependent_untouched(self, db, mgr):
+        """SC3-c (regression guard): B at 'wip' (not 'blocked'). Completing
+        A does not touch B -- the flip gate is status=='blocked' only,
+        unchanged by feature 124."""
+        a = _reg(db, "a", status="completed")
+        b = _reg(db, "b", status="wip")
+        mgr.add_dependency(db, b, a)
+
+        unblocked = mgr.cascade_unblock(db, a)
+        assert unblocked == []
+
+        entity_b = db.get_entity_by_uuid(b)
+        assert entity_b["status"] == "wip"
+        assert db.query_phase_events(
+            type_id=entity_b["type_id"], event_type="cascade_ready",
+        ) == []
+
+    def test_sc3a_flip_records_cascade_ready_event(self, db, mgr):
+        """SC3-a: completing A flips B to 'ready', appends a cascade_ready
+        event (from_value/to_value/actor in metadata), and the A->B edge
+        SURVIVES."""
+        a = _reg(db, "a", status="completed")
+        b = _reg(db, "b", status="blocked")
+        mgr.add_dependency(db, b, a)
+
+        unblocked = mgr.cascade_unblock(db, a)
+        assert unblocked == [b]
+
+        entity_b = db.get_entity_by_uuid(b)
+        assert entity_b["status"] == "ready"
+
+        row = db._conn.execute(
+            "SELECT * FROM entity_relations WHERE to_uuid = ? AND from_uuid = ? AND kind = 'blocks'",
+            (b, a),
+        ).fetchone()
+        assert row is not None
+
+        events = db.query_phase_events(
+            type_id=entity_b["type_id"], event_type="cascade_ready",
+        )
+        assert len(events) == 1
+        metadata = json.loads(events[0]["metadata"])
+        assert metadata == {
+            "from_value": "blocked",
+            "to_value": "ready",
+            "actor": "system:cascade",
+        }
+
+
+class TestCascadeCrossWorkspace:
+    """SC3-e: cascade flips across workspaces (uuid refs are
+    workspace-agnostic per FR-9; query_dependencies is unscoped)."""
+
+    def test_cascade_flips_across_workspaces(self, db, mgr):
+        from entity_registry.test_helpers import bootstrap_test_workspace
+
+        ws_x = bootstrap_test_workspace(db, "sc3e-ws-x")
+        ws_y = bootstrap_test_workspace(db, "sc3e-ws-y")
+
+        # Blocker lives in workspace Y, blocked entity lives in workspace X.
+        blocker = db.register_entity(
+            "feature", "001-blocker", "Blocker", status="completed",
+            workspace_uuid=ws_y,
+        )
+        blocked = db.register_entity(
+            "feature", "002-blocked", "Blocked", status="blocked",
+            workspace_uuid=ws_x,
+        )
+        mgr.add_dependency(db, blocked, blocker)
+
+        unblocked = mgr.cascade_unblock(db, blocker)
+        assert unblocked == [blocked]
+
+        entity = db.get_entity_by_uuid(blocked)
+        assert entity["status"] == "ready"
+        # Edge survives, workspace assignments untouched.
+        assert entity["workspace_uuid"] == ws_x
 
 
 # ---------------------------------------------------------------------------
@@ -282,3 +378,62 @@ class TestPerformance:
         # Allow generous margin — the spec says <100ms total
         # but test environments vary; we'll use 5s as ceiling
         assert elapsed < 5.0, f"Took {elapsed:.2f}s for 999 add_dependency calls"
+
+
+# ---------------------------------------------------------------------------
+# D4: per-kind completion predicate (design-pinned table), parametrized over
+# EVERY row.
+# ---------------------------------------------------------------------------
+
+
+class TestBlockerCompletedPredicate:
+    """D4's design-pinned per-kind terminal table, verbatim:
+    feature/project/initiative/objective/key_result={completed};
+    task={completed,closed}; bug={closed,resolved,wont_fix};
+    brainstorm={promoted,abandoned}; backlog={promoted,dropped}."""
+
+    @pytest.mark.parametrize("kind,status", [
+        ("feature", "completed"),
+        ("project", "completed"),
+        ("initiative", "completed"),
+        ("objective", "completed"),
+        ("key_result", "completed"),
+        ("task", "completed"),
+        ("task", "closed"),
+        ("bug", "closed"),
+        ("bug", "resolved"),
+        ("bug", "wont_fix"),  # defensive -- no live writer, D4 pre-empts a
+                              # silent forever-block if one appears
+        ("brainstorm", "promoted"),
+        ("brainstorm", "abandoned"),
+        ("backlog", "promoted"),
+        ("backlog", "dropped"),
+    ])
+    def test_resolved_status_satisfies_predicate(self, kind, status):
+        from entity_registry.dependencies import _blocker_completed
+        assert _blocker_completed({"kind": kind, "status": status}) is True
+
+    @pytest.mark.parametrize("kind,status", [
+        ("feature", "planned"),
+        ("feature", "active"),
+        ("feature", "blocked"),
+        ("project", "blocked"),
+        ("initiative", "wip"),
+        ("objective", "ready"),
+        ("key_result", "active"),
+        ("task", "planned"),
+        ("task", "ready"),
+        ("task", "wip"),
+        ("bug", "open"),
+        ("brainstorm", "active"),
+        ("backlog", "active"),
+    ])
+    def test_unresolved_status_fails_predicate(self, kind, status):
+        from entity_registry.dependencies import _blocker_completed
+        assert _blocker_completed({"kind": kind, "status": status}) is False
+
+    def test_unknown_kind_never_resolved(self):
+        """A kind absent from the table (e.g. 'workspace') never satisfies
+        the predicate, regardless of status -- no accidental fallthrough."""
+        from entity_registry.dependencies import _blocker_completed
+        assert _blocker_completed({"kind": "workspace", "status": "completed"}) is False
