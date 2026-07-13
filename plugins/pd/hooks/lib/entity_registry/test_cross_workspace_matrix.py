@@ -154,7 +154,7 @@ def _reset_per_case(entity_db):
     `_commit()` method becomes a no-op (matching the `transaction()` context
     manager's suppression contract at database.py:6395).
 
-    Each case's mutations (set_parent UPDATE, INSERT into entity_dependencies
+    Each case's mutations (set_parent UPDATE, INSERT into entity_relations
     / entity_okr_alignment / cross_workspace_allowlist) are confined to the
     savepoint scope; ROLLBACK TO SAVEPOINT discards them so subsequent cases
     see the same pristine seeded state. The outer transaction is then

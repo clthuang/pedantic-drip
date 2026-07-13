@@ -1134,7 +1134,8 @@ def check_brainstorm_status(
             ))
             continue
 
-        # Fallback: check entity_dependencies for brainstorm->feature edges
+        # Fallback: check entity_relations (kind='blocks') for
+        # brainstorm->feature edges
         try:
             # Get brainstorm UUID
             bs_row = entities_conn.execute(
@@ -1143,8 +1144,8 @@ def check_brainstorm_status(
             if bs_row:
                 bs_uuid = bs_row[0]
                 dep_cursor = entities_conn.execute(
-                    "SELECT blocked_by_uuid FROM entity_dependencies "
-                    "WHERE entity_uuid = ?",
+                    "SELECT from_uuid AS blocked_by_uuid FROM entity_relations "
+                    "WHERE to_uuid = ? AND kind = 'blocks'",
                     (bs_uuid,),
                 )
                 for dep_row in dep_cursor:

@@ -587,9 +587,9 @@ class TestIndexes:
         # idx_wp_workspace_uuid added.
         # Feature 109 Migration 12 Group 7: idx_entity_type and
         # idx_workspace_entity_type dropped (entity_type column removed).
+        # Feature 124 Migration 18: idx_ed_entity_uuid / idx_ed_blocked_by_uuid
+        # dropped with entity_dependencies (unified into entity_relations).
         expected = [
-            "idx_ed_blocked_by_uuid",
-            "idx_ed_entity_uuid",
             # Feature 109 (AC-1.6): composite polymorphic-query index
             # added to migration 12.
             "idx_entities_type_kind",
@@ -6298,8 +6298,9 @@ class TestMigration8Data:
             db2 = EntityDatabase(db_path)
             v2 = db2.get_schema_version()
             db2.close()
-            # Feature 111 Migration 14 bumps the version to 14.
-            assert v1 == v2 == 17
+            # Dynamic head version (F117 FR-B.2a sweep site) — was 14 post-
+            # Feature 111, 17 post-115, 18 post-124.
+            assert v1 == v2 == _latest_entity_version()
 
     def test_migration_8_schema_version_set_to_8(self):
         """Schema version is 8 after migration."""
@@ -6632,7 +6633,8 @@ class TestDeleteCascade:
     """T3.7: delete_entity with project_id and extended cascade (TD-6)."""
 
     def test_delete_cascade_tags_deps_okr(self, mem_db):
-        """Delete cleans up entity_tags, entity_dependencies, entity_okr_alignment."""
+        """Delete cleans up entity_tags, dependency edges (entity_relations
+        kind='blocks'), entity_okr_alignment."""
         uid = mem_db.register_entity(
             "feature", "del1", "Deletable", project_id=TEST_PROJECT_ID
         )
@@ -7711,11 +7713,11 @@ class TestMigration11ConcurrentRunners:
                 [(db_path, str(tmp_path))] * 2,
             )
 
-        # Both workers should converge on the latest schema_version (14 after
-        # feature 111 added migration 14). The race condition under test is
+        # Both workers should converge on the latest schema_version (dynamic
+        # head — F117 FR-B.2a sweep site). The race condition under test is
         # migration 11's concurrent-runner short-circuit; subsequent migrations
         # run sequentially after 11 stamps in both workers.
-        assert all(r == "17" for r in results), results
+        assert all(r == str(_latest_entity_version()) for r in results), results
 
         # Open the DB again and check exactly one row per legacy project_id.
         verify_conn = sqlite3.connect(db_path)

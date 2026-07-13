@@ -49,7 +49,7 @@ class TestAddDependency:
         mgr.add_dependency(db, a, b)
         # Verify row exists
         row = db._conn.execute(
-            "SELECT * FROM entity_dependencies WHERE entity_uuid = ? AND blocked_by_uuid = ?",
+            "SELECT * FROM entity_relations WHERE to_uuid = ? AND from_uuid = ? AND kind = 'blocks'",
             (a, b),
         ).fetchone()
         assert row is not None
@@ -62,7 +62,7 @@ class TestAddDependency:
         mgr.add_dependency(db, b, c)  # B blocked by C
         # Both should exist
         rows = db._conn.execute(
-            "SELECT * FROM entity_dependencies"
+            "SELECT * FROM entity_relations WHERE kind = 'blocks'"
         ).fetchall()
         assert len(rows) == 2
 
@@ -82,7 +82,7 @@ class TestAddDependency:
         mgr.add_dependency(db, a, b)
         mgr.add_dependency(db, a, b)  # idempotent
         rows = db._conn.execute(
-            "SELECT * FROM entity_dependencies WHERE entity_uuid = ?", (a,)
+            "SELECT * FROM entity_relations WHERE to_uuid = ? AND kind = 'blocks'", (a,)
         ).fetchall()
         assert len(rows) == 1
 
@@ -181,7 +181,7 @@ class TestRemoveDependency:
         mgr.add_dependency(db, a, b)
         mgr.remove_dependency(db, a, b)
         row = db._conn.execute(
-            "SELECT * FROM entity_dependencies WHERE entity_uuid = ? AND blocked_by_uuid = ?",
+            "SELECT * FROM entity_relations WHERE to_uuid = ? AND from_uuid = ? AND kind = 'blocks'",
             (a, b),
         ).fetchone()
         assert row is None
@@ -210,7 +210,7 @@ class TestCascadeUnblock:
         assert set(unblocked) == {b, c}
         # No remaining deps on A
         rows = db._conn.execute(
-            "SELECT * FROM entity_dependencies WHERE blocked_by_uuid = ?", (a,)
+            "SELECT * FROM entity_relations WHERE from_uuid = ? AND kind = 'blocks'", (a,)
         ).fetchall()
         assert len(rows) == 0
 
@@ -226,7 +226,7 @@ class TestCascadeUnblock:
         assert b not in unblocked
         # A's dep row is removed
         row = db._conn.execute(
-            "SELECT * FROM entity_dependencies WHERE entity_uuid = ? AND blocked_by_uuid = ?",
+            "SELECT * FROM entity_relations WHERE to_uuid = ? AND from_uuid = ? AND kind = 'blocks'",
             (b, a),
         ).fetchone()
         assert row is None

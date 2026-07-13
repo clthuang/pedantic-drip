@@ -17,7 +17,8 @@ Scope (Group 14, Tasks 14.1-14.4):
     batch re-run produces N events first call, 0 additional after.
   - AC-4.6 non-entities (5 sites): phase_events backfill dedup, entity_tags
     duplicate attach, entity_okr_alignment duplicate attach, workflow_phases
-    init duplicate, entity_dependencies duplicate edge.
+    init duplicate, dependency-edge (entity_relations kind='blocks')
+    duplicate edge.
 """
 from __future__ import annotations
 
@@ -510,7 +511,8 @@ def test_workflow_phases_init_duplicate_noop(db):
 
 
 def test_dependency_duplicate_noop(db):
-    """AC-4.6 (entity_dependencies site 5176): duplicate edge add is a no-op.
+    """AC-4.6 (dependency-edge site, entity_relations kind='blocks'):
+    duplicate edge add is a no-op.
     """
     a_uuid = db.register_entity(
         "feature", "dep-001-a", "Dep A", project_id=TEST_PROJECT_ID,
@@ -524,12 +526,12 @@ def test_dependency_duplicate_noop(db):
     db.add_dependency(a_uuid, b_uuid)
 
     count = db._conn.execute(
-        "SELECT COUNT(*) FROM entity_dependencies "
-        "WHERE entity_uuid = ? AND blocked_by_uuid = ?",
+        "SELECT COUNT(*) FROM entity_relations "
+        "WHERE to_uuid = ? AND from_uuid = ? AND kind = 'blocks'",
         (a_uuid, b_uuid),
     ).fetchone()[0]
     assert count == 1, (
-        f"Expected 1 entity_dependencies row after 3 duplicate adds, "
+        f"Expected 1 entity_relations row after 3 duplicate adds, "
         f"found {count}"
     )
 
