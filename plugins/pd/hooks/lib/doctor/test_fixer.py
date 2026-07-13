@@ -885,11 +885,11 @@ class TestCLI:
         assert result.returncode == 0
 
 
-class TestFixStaleDependency:
+class TestFixMissedCascade:
     """_fix_missed_cascade (renamed from _fix_stale_dependency) removes the
     stale edge's downstream block and promotes the blocked entity."""
 
-    def test_fix_stale_dependency_removes_edge_and_promotes(self, tmp_path):
+    def test_fix_missed_cascade_flips_dependent_to_ready(self, tmp_path):
         from entity_registry.database import EntityDatabase
         from doctor.fix_actions import FixContext, _fix_missed_cascade
 
@@ -923,7 +923,7 @@ class TestFixStaleDependency:
 
         action = _fix_missed_cascade(ctx, issue)
         assert uuid_blocker in action
-        assert "unblocked 1" in action
+        assert "flipped 1" in action
 
         # Feature 124 FR124-4c: edge SURVIVES (cascade_unblock no longer
         # tombstones edges)

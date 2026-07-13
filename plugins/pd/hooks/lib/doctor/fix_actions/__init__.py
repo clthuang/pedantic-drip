@@ -343,8 +343,8 @@ def _fix_missed_cascade(ctx: FixContext, issue: Issue) -> str:
     from entity_registry.dependencies import DependencyManager
     result = DependencyManager().cascade_unblock(ctx.db, blocked_by_uuid)
     if result:
-        return f"Removed stale dependency on {blocked_by_uuid}, unblocked {len(result)} entities"
-    return f"Stale dependency on {blocked_by_uuid} already cleaned"
+        return f"Re-evaluated blocker {blocked_by_uuid}, flipped {len(result)} entities to ready"
+    return f"Cascade for blocker {blocked_by_uuid} already applied"
 
 
 def _read_workspace_json_file_uuid(project_root: str) -> tuple[str, str | None]:

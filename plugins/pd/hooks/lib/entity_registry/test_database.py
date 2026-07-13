@@ -5500,14 +5500,6 @@ class TestDependencyMethods:
         a, b = self._make_two_entities(db)
         db.remove_dependency(a, b)  # Should not raise
 
-    def test_remove_dependencies_by_blocker(self, db):
-        a, b = self._make_two_entities(db)
-        c = db.register_entity("feature", "dep-c", "Feature C", project_id="__unknown__")
-        db.add_dependency(a, b)
-        db.add_dependency(c, b)
-        db.remove_dependencies_by_blocker(b)
-        assert len(db.query_dependencies(blocked_by_uuid=b)) == 0
-
     def test_query_dependencies_by_blocker(self, db):
         a, b = self._make_two_entities(db)
         c = db.register_entity("feature", "dep-c", "Feature C", project_id="__unknown__")
@@ -7011,7 +7003,8 @@ class TestCascadeOnComplete:
         entity_a = db.get_entity_by_uuid(uuid_a)
         assert entity_a["status"] == "ready"
         # Idempotency is airtight: exactly ONE cascade_ready event, not two
-        # -- the repeat terminal write re-flips nothing (:7574 widen).
+        # -- the repeat terminal write re-flips nothing (the Migration-19-widened
+        # completion trigger in database.py update_entity).
         events = db.query_phase_events(
             type_id=entity_a["type_id"], event_type="cascade_ready",
         )

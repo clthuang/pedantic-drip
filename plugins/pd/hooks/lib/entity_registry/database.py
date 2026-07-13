@@ -6,7 +6,7 @@
 # Single-statement (skip): add_tag, remove_tag, add_okr_alignment,
 #   remove_okr_alignment, set_parent, insert_workflow_phase,
 #   update_workflow_phase, delete_workflow_phase, set_metadata,
-#   add_dependency, remove_dependency, remove_dependencies_by_blocker
+#   add_dependency, remove_dependency
 # Infrastructure (skip): _migrate (2 sites)
 from __future__ import annotations
 
@@ -5812,7 +5812,10 @@ def _migration_19_widen_phase_events_cascade_ready(
     Mirrors the Migration 14 copy-rename idiom
     (_copy_rename_phase_events_for_v14, database.py:4637): capture indexes
     + triggers, rebuild with the widened CHECK (9 values, adds
-    'cascade_ready'), INSERT-SELECT all rows (byte-identical columns),
+    'cascade_ready'), INSERT-SELECT all rows (byte-identical columns;
+    the m18-style column-set pre-flight assertion is intentionally omitted
+    -- phase_events' shape is stable and the explicit column list fails
+    loudly on mismatch),
     DROP old, RENAME new, recreate indexes + triggers. No FK pragma
     bracketing needed -- phase_events carries no FK constraints (unlike
     Migration 18's entity_relations rebuild).
@@ -9621,14 +9624,6 @@ class EntityDatabase:
             "DELETE FROM entity_relations "
             "WHERE to_uuid = ? AND from_uuid = ? AND kind = 'blocks'",
             (entity_uuid, blocked_by_uuid),
-        )
-        self._commit()
-
-    def remove_dependencies_by_blocker(self, blocked_by_uuid: str) -> None:
-        """Remove all dependencies where blocked_by_uuid is the blocker."""
-        self._conn.execute(
-            "DELETE FROM entity_relations WHERE from_uuid = ? AND kind = 'blocks'",
-            (blocked_by_uuid,),
         )
         self._commit()
 
