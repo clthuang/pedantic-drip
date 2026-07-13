@@ -25,13 +25,13 @@ Implements design.md (8096dd3). Three SERIAL tasks — the store swap is atomic 
 - D3: `_evaluate_and_flip` shared unit; per-flip re-entrant `db.transaction()`; survive (no remove_dependencies_by_blocker call); `cascade_ready` phase_events row in-transaction; `_run_cascade` unwrap + rollup_parent own-transaction; :7577 stderr warn (type-name only).
 - D5.3 (D5.1 landed in task 1): pre-capture `get_dependents` + post-commit `_evaluate_and_flip`; dependency_freshness narrowed to blocked-downstream scan.
 - D8: task_promotion :64 gate + :70 unresolved-predicate.
-- **Existing-test FLIP INVENTORY (task 2 owns the tombstone->survive / planned->ready assertion inversion — create-plan i1 B1, completed at i2 where BOTH reviewers independently found 3 missed files). The list below is a FLOOR, not a ceiling: before starting task 2, run `grep -rnE "cascade_unblock|_fix_stale_dependency|cleanup_stale_dependencies" plugins/pd/ --include="test_*.py"` and invert EVERY hit asserting zero-dependency-count or status=='planned' post-cascade:**
+- **Existing-test FLIP INVENTORY (task 2 owns the tombstone->survive / planned->ready assertion inversion — create-plan i1 B1, completed at i2 where BOTH reviewers independently found 3 missed files). The table is AUTHORITATIVE and complete (plan-i3 verified via three independent nets); the grep below is a SUPPLEMENTARY safety net only — for test_entity_engine and test_database its hits land on incidental comments/docstrings, so never skip a table row because its grep hit looks non-flip: `grep -rnE "cascade_unblock|_fix_stale_dependency|cleanup_stale_dependencies" plugins/pd/ --include="test_*.py"`**
 
 | file | asserting lines | old -> new |
 |---|---|---|
 | test_dependencies.py TestCascadeUnblock | :202-232 (return-set + edge-gone) | edge SURVIVES; flipped set = blocked-only |
 | test_database.py | :6851/:6855/:6908/:6910 | len(deps)==0 -> ==1 survived; 'planned' -> 'ready' |
-| reconciliation_orchestrator/test_dependency_freshness.py test_stale_edge_cleaned | :43/:47 | len==0 -> ==1; 'planned' -> 'ready' |
+| reconciliation_orchestrator/test_dependency_freshness.py test_stale_edge_cleaned | :43/:47 (+ :39 count==1 on the return — confirm the reworked scan still returns flip-count, else add :39 to the flip) | len==0 -> ==1; 'planned' -> 'ready' |
 | doctor/test_fixer.py TestFixStaleDependency | :992/:996 | len==0 -> ==1; 'planned' -> 'ready' |
 | workflow_engine/test_entity_engine.py TestCascadeUnblock (NAME COLLISION with test_dependencies' class — different file) | :714/:718 | len==0 -> ==1; 'planned' -> 'ready' |
 
@@ -42,9 +42,9 @@ These stay green through task 1 (old behavior retained) and are INVERTED here, n
 ## Task 3 — Materialization, doctor, sweeps (D6, D7, schema_v2, SC5/SC6)
 
 - D7: register_entity + upsert_entity auto-materialization (kwargs form, self-edge filter, unresolvable warn-skip); SC7 red-first on BOTH paths asserting edge DIRECTION.
-- D6: :1146 rewire (+ :1137 comment); missed-cascade check replaces :1856-1885 (CASE over kind per D4's table; SQL-vs-Python equivalence test with ONE blocker per arm: abandoned brainstorm, dropped backlog, closes=-closed task, resolved bug, completed feature); orphan check (:1788-1818 — through its closing `except sqlite3.Error: pass`, else a dangling except; create-plan i1) + `_fix_remove_orphan_dependency` (:250-266) + fixer.py:45 entry DELETED; `_fix_stale_dependency` (:347-359) renamed to the missed-cascade action, registry updated.
+- D6: :1146 rewire (+ :1137 comment); missed-cascade check replaces :1856-1885 (CASE over kind per D4's table; SQL-vs-Python equivalence test with ONE blocker per arm: abandoned brainstorm, dropped backlog, closes=-closed task, resolved bug, completed feature); orphan check (:1788-1818 — through its closing `except sqlite3.Error: pass`, else a dangling except; create-plan i1) + `_fix_remove_orphan_dependency` (:250-266) + fixer.py:45 entry DELETED; `_fix_stale_dependency` (:347-359) renamed to the missed-cascade action, registry updated — **incl. TestFixStaleDependency's THIRD role (plan-i3 W1): test_fixer.py imports the old name at :957 and calls it at :986 (LIVE-db test, outside the _make_db carve-out) — rename the import+call, update the Issue check= id at :978, align assertions to missed-cascade semantics, else module-wide collection ImportError.**
 - Sweeps: schema_v2.py:64 comment → names 132 (dependencies.py/dependency_freshness docstrings moved to task 2; checks.py:1137 moved to task 1).
-- SC5 test (fires ONLY when all blockers resolved and downstream blocked; multi-blocker partial case does NOT fire); SC6 grep gate (exemptions: m6 CREATE :872-887 + :637 docstring line, the M18 function, migration-test seeding).
+- SC5 test (fires ONLY when all blockers resolved and downstream blocked; multi-blocker partial case does NOT fire); SC6 grep gate (exemptions: m6 CREATE :872-887 + :637 docstring line, the M18 function, migration-test seeding). **The 9 hand-rolled `_make_db` sites are NOT exempt and must be stripped here (plan-i3 W2): test_checks.py :96 CREATE + :1263/:2538/:2550/:3265/:3307; test_fixer.py :91 CREATE + :488/:507.**
 - Gate: suite green; hooks 67/67; validate.sh 0 errors; SC6 grep exact; diff-vs-develop file list ⊆ D10 inventory.
 
 ## Risks
