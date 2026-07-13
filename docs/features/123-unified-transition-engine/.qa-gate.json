@@ -1,0 +1,40 @@
+{
+  "feature": "123-unified-transition-engine",
+  "gate_run_at": "2026-07-13T09:30:00+08:00",
+  "head_at_gate": "331644c2",
+  "mode": "INLINE-DEGRADED — all three subagent lanes failed at spawn (account monthly spend limit); the orchestrator ran every lane check itself, sequentially. Dispatch independence lost; check substance preserved (all checks are mechanical: command runs, greps, figure re-derivation). Prior independent layers unaffected: 3-reviewer battery, test-deepener, 360°, read-only retro facilitator with full re-derivation.",
+  "lanes": {
+    "A_execution": {
+      "model": "inline (orchestrator)",
+      "verdict": "PASS",
+      "findings": {
+        "HIGH": 0,
+        "MED": 0,
+        "LOW": 2
+      },
+      "note": "standard-scope suite 3810/3 exact; hooks 67/67; validate 0 err/9 warn; router smoke (8 kinds, LifecycleMachine, draft->reviewing allowed, columns.reviewing=='wip'); entity_lifecycle.py DELETED. LOW-1: broader `pytest plugins/pd/` collects 3937 (3933 passed/4 skipped — ALSO all green): +124 tests in hooks/tests, scripts/tests, skills/*/scripts OUTSIDE the campaign's standard 3-path scope (hooks/lib+mcp+ui). Not a regression — a derivation-method mismatch; recorded so future gates compare like-for-like. LOW-2: first smoke attempt mis-specified FR123-4 as a transition edge (reviewing->wip rejected = CORRECT fail-loud; FR123-4 is the columns MAPPING) — resolved against spec.md:30 + test_router.py:372; no artifact states it wrong."
+    },
+    "B_regression": {
+      "model": "inline (orchestrator)",
+      "verdict": "PASS",
+      "findings": {
+        "HIGH": 0,
+        "MED": 0,
+        "LOW": 0
+      },
+      "note": "diff vs 64ab6b9e = 14 non-docs files, every one in design D8's inventory (ui/routes/helpers.py + ui/tests/test_deepened_app.py are the FR123-4/D5b-mandated comment refreshes); engine.py = exactly the one-line degraded=False drop (:111); zero dangling entity_registry.entity_lifecycle module refs; models.py degraded-free; read-side get_phase degraded (:246) KEPT per FR-10; kanban.py/database.py/hook shell scripts untouched."
+    },
+    "C_artifact_truth": {
+      "model": "inline (orchestrator)",
+      "verdict": "PASS",
+      "findings": {
+        "HIGH": 0,
+        "MED": 0,
+        "LOW": 0
+      },
+      "note": "blocker arithmetic re-derived from .review-history.md: specify 2+2+0=4, design 2+3+0=5, create-plan 1(plan-i1)+1(relevance-r1)=2, implement 0 — TOTAL 11, matching the facilitator-corrected retro. Commit count: git rev-list 64ab6b9e..331644c2^ = 22. Ordinal/superlative sweep chain-verified against 125/retro.md (:5 sole zero-correction briefing, :18 battery 11th, :21 trajectory with 126:12/128:12 and '125:11 sole rank-3' — now joint with 123). CHANGELOG entry figures agree with retro (3737->3810 chain, validate 11->9, 12th consecutive, #072, backward-write git-verified framing, FR123-4 stated as the columns mapping). #073/#074/#075 present; #075 premise verified live (workflow_state_server.py has NO .validate() call — transition_entity_phase enforces inline per D6; entity_engine.py:492 is the get_machine().validate() consumer). #063 n=3 addendum present."
+    }
+  },
+  "dispositions": "2 LOW recorded in-lane (suite-scope derivation mismatch; smoke mis-specification — both orchestrator-side, no artifact edits needed). 0 fix-or-file items.",
+  "verdict": "PASS — merge to develop approved (inline-degraded mode documented above)"
+}
