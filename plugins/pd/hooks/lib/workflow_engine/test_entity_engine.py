@@ -28,10 +28,28 @@ from transition_gate import Severity
 
 from entity_registry.database import EntityDatabase
 from entity_registry.dependencies import DependencyManager
+from entity_registry import schema_v2
+# Test-deepening addition: imported at MODULE (collection) time -- see
+# test_database.py's identically-documented import of the same name for
+# the full rationale (registers "events"/"views"/"axes" into
+# schema_v2.DDL_REGISTRY BEFORE _reset_ddl_registry_for_v2_fixtures'
+# first snapshot below, so that fixture's restore never wipes them out).
+from entity_registry import rebuild_tool
 from workflow_engine.entity_engine import CompletionResult, EntityWorkflowEngine
 from workflow_engine.models import TransitionResponse, WorkflowDBUnavailableError
 from workflow_engine.notifications import Notification, NotificationQueue
 from workflow_engine.rollup import compute_progress
+
+
+@pytest.fixture(autouse=True)
+def _reset_ddl_registry_for_v2_fixtures():
+    """Snapshot/restore ``schema_v2.DDL_REGISTRY`` around every test in
+    this file -- see test_database.py's identically-documented fixture of
+    the same name for the full rationale (mirrors test_dependencies.py/
+    test_rebuild_tool.py's established idiom)."""
+    original_registry = list(schema_v2.DDL_REGISTRY)
+    yield
+    schema_v2.DDL_REGISTRY[:] = original_registry
 
 
 # ---------------------------------------------------------------------------
@@ -227,7 +245,11 @@ class TestCascadeFailure:
 
         engine = _make_engine(db, artifacts_root)
 
-        # Patch cascade to fail
+        # Patch cascade to fail. Patches the WHOLE method (still valid
+        # post-feature-132: Phase A's update_entity call already performed
+        # any cascade_unblock flip before Phase B's _run_cascade even runs,
+        # so failing this method's mocked stand-in only exercises the
+        # rollup_parent/notification failure path, not the flip itself).
         with patch.object(engine, "_run_cascade", side_effect=RuntimeError("cascade boom")):
             result = engine.complete_phase(uuid, "brainstorm")
 
@@ -241,7 +263,18 @@ class TestCascadeFailure:
         assert row["last_completed_phase"] == "brainstorm"
 
     def test_cascade_is_retryable_after_failure(self, tmp_path):
-        """After cascade failure, re-running cascade succeeds."""
+        """After a Phase-B failure, re-running _run_cascade doesn't raise.
+
+        Feature 132 D5/#080: since _run_cascade no longer owns a
+        cascade_unblock call (that flip is update_entity's alone, performed
+        during Phase A -- unaffected by this mocked Phase-B failure), this
+        "retry" only re-runs rollup_parent + notifications; it is no
+        longer a retry of the unblock flip. Kept as a smoke test that a
+        second `_run_cascade` call is safe to make (does not raise, still
+        returns the (list, float|None) shape), which is a real property
+        callers may depend on even though its cascade_unblock-retry
+        rationale no longer applies.
+        """
         db = _make_db()
         slug = "012-retry"
         artifacts_root = str(tmp_path)
@@ -257,7 +290,8 @@ class TestCascadeFailure:
             result1 = engine.complete_phase(uuid, "brainstorm")
         assert result1.cascade_error is not None
 
-        # Manual cascade retry should work
+        # Manual re-run of the (now cascade_unblock-free) Phase-B tail
+        # succeeds without raising.
         unblocked, progress = engine._run_cascade(uuid)
         assert isinstance(unblocked, list)
 
@@ -686,15 +720,15 @@ class TestCascadeUnblock:
 
         Note on `result.unblocked_uuids`: completing a FEATURE's terminal
         phase ('finish') syncs entities.status='completed' as part of
-        Phase A (FeatureBackend), which fires the SAME cascade trigger as
-        Phase B's explicit `_run_cascade` -- a pre-existing double-fire in
-        entity_engine.complete_phase, orthogonal to feature 124 (the OLD
-        tombstone semantics masked it identically: the second call's
-        query_dependencies also came back empty, since the first call had
-        already removed the edge). The flip lands correctly regardless of
-        which call performs it, so this test asserts the OBSERVABLE
-        OUTCOME (final status + surviving edge + recorded event) rather
-        than attribution to a specific call.
+        Phase A (FeatureBackend) via update_entity, which owns the flip's
+        SOLE cascade_unblock call (feature 132 D5/#080: Phase B's
+        `_run_cascade` used to ALSO call cascade_unblock -- a pre-existing
+        double-fire, masked by the OLD tombstone semantics' idempotence --
+        that second call is now DELETED, so the flip is single-fire by
+        construction, not merely idempotent-if-repeated). This test still
+        asserts the OBSERVABLE OUTCOME (final status + surviving edge +
+        recorded event) rather than internal attribution, since that
+        remains the right level of assertion for an integration test.
         """
         db = _make_db()
         slug = "030-blocker"
@@ -729,8 +763,11 @@ class TestCascadeUnblock:
         engine = _make_engine(db, artifacts_root)
         result = engine.complete_phase(blocker_uuid, "finish")
         assert result.cascade_error is None
-        # Attributed to Phase A's internal trigger (see docstring) -- NOT
-        # a feature-124 regression, documented so a future reader doesn't
+        # unblocked_uuids is [] by construction post-132 (see docstring):
+        # update_entity performed the flip during Phase A; Phase B's
+        # _run_cascade no longer attempts cascade_unblock at all, so its
+        # contribution to this return value is always empty -- NOT a
+        # feature-124 regression, documented so a future reader doesn't
         # mistake this for a broken return value.
         assert result.unblocked_uuids == []
 
@@ -748,18 +785,20 @@ class TestCascadeUnblock:
         )
         assert len(events) == 1
 
-    def test_5d_kind_terminal_completion_same_double_fire_observable_outcome(
+    def test_5d_kind_terminal_completion_single_fire_observable_outcome(
         self, tmp_path
     ):
-        """Same pre-existing double-fire quirk as
+        """Same single-fire cascade contract as
         ``test_complete_blocker_unblocks_dependent`` above, pinned for the
         5D path: ``_fived_complete`` calls ``update_entity`` directly on
-        reaching its terminal phase, firing the SAME live cascade trigger
-        that Phase B's explicit ``_run_cascade`` fires again immediately
-        after. Uses 'initiative' as a representative 5D kind so a future
-        refactor that decouples FeatureBackend from FiveDBackend can't
-        silently change this contract for one path without the other
-        failing loudly."""
+        reaching its terminal phase, and update_entity's cascade_unblock
+        call is the flip's ONLY site (feature 132 D5/#080 -- Phase B's
+        `_run_cascade` no longer attempts its own). Uses 'initiative' as a
+        representative 5D kind so a future refactor that decouples
+        FeatureBackend from FiveDBackend can't silently change this
+        contract for one path without the other failing loudly. (Renamed
+        from ..._same_double_fire_observable_outcome: the double-fire this
+        name described was deleted by feature 132's #080 fix.)"""
         db = _make_db()
         blocker_uuid = _register(
             db, "initiative", "i103-blocker", "Blocker Initiative"
@@ -786,15 +825,15 @@ class TestCascadeUnblock:
         assert entity["status"] == "ready"
         assert len(dep_mgr.get_blockers(db, dependent_uuid)) == 1  # survives
 
-        # Attribution quirk, pinned (same class as the feature-kind test
-        # above): Phase A's update_entity trigger performs the real flip;
-        # Phase B's explicit _run_cascade re-evaluates and finds nothing
-        # left to do, so the terminal complete_phase call's
-        # unblocked_uuids under-reports.
+        # unblocked_uuids is [] by construction (same class as the
+        # feature-kind test above): Phase A's update_entity call performs
+        # the real flip; Phase B's _run_cascade no longer attempts
+        # cascade_unblock at all post-132, so its contribution here is
+        # always empty -- not an under-report of a missed flip.
         assert result.unblocked_uuids == []
 
-        # And the flip is recorded exactly once -- not duplicated by the
-        # second firing.
+        # And the flip is recorded exactly once -- single-fire by
+        # construction now, not merely idempotent-if-repeated.
         events = db.query_phase_events(
             type_id=entity["type_id"], event_type="cascade_ready",
         )
@@ -2405,3 +2444,69 @@ class TestFiveDFailLoudMessageContract:
 
         assert "locked" not in str(excinfo.value).lower()
         assert "OperationalError" in str(excinfo.value)
+
+
+# ---------------------------------------------------------------------------
+# Test-deepening addition (feature 132 D5/#080): cascade single-fire
+# dual-write, driven through the REAL engine.complete_phase() entrypoint
+# on a v2-generation file. dimension:state_transitions
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def v2_db(tmp_path):
+    """A v2-generation EntityDatabase (feature 132 D1's three build
+    steps, via rebuild_tool.build_staging_database) -- mirrors
+    test_database.py/test_dependencies.py's identically-named,
+    identically-built fixture."""
+    staging_path = str(tmp_path / "entities.db.v2-cascade-test")
+    rebuild_tool.build_staging_database(staging_path)
+    database = EntityDatabase(staging_path)
+    yield database
+    database.close()
+
+
+class TestCascadeSingleFireDualWriteIntegration:
+    """test_dependencies.py's TestFeature132CascadeFlipDualWrite proves
+    ``DependencyManager.cascade_unblock()`` ALONE emits exactly one
+    ``cascade_ready`` v2 event; TestCascadeUnblock above proves the
+    OBSERVABLE OUTCOME through the real ``engine.complete_phase()`` ->
+    ``_run_cascade()`` path, but only on a v1 (no events table) db.
+    Neither proves the two halves TOGETHER: that ``_run_cascade``'s
+    deleted call site plus Phase A's update_entity-owned
+    ``cascade_unblock`` call still produce exactly ONE v2 events row when
+    driven through the REAL engine entrypoint on a v2-generation file --
+    not a direct DependencyManager call in isolation.
+    """
+
+    def test_complete_phase_end_to_end_emits_exactly_one_cascade_ready_event(
+        self, v2_db, tmp_path,
+    ):
+        artifacts_root = str(tmp_path)
+        slug = "042-cascade-e2e"
+        _create_meta_json(artifacts_root, slug)
+
+        blocker_uuid = _register(v2_db, "feature", slug, "Cascade E2E Blocker")
+        _with_phase(
+            v2_db, f"feature:{slug}", "finish", mode="standard",
+            last_completed_phase="implement",
+        )
+        dependent_uuid = _register(
+            v2_db, "feature", "043-cascade-e2e-dep", "Dependent",
+            status="blocked",
+        )
+        DependencyManager().add_dependency(v2_db, dependent_uuid, blocker_uuid)
+
+        engine = _make_engine(v2_db, artifacts_root)
+        result = engine.complete_phase(blocker_uuid, "finish")
+        assert result.cascade_error is None
+
+        entity = v2_db.get_entity_by_uuid(dependent_uuid)
+        assert entity["status"] == "ready"
+
+        events = v2_db._conn.execute(
+            "SELECT * FROM events WHERE entity_uuid = ? "
+            "AND event_type = 'cascade_ready'",
+            (dependent_uuid,),
+        ).fetchall()
+        assert len(events) == 1

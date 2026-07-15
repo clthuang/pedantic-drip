@@ -135,26 +135,17 @@ def switcher_context(request, db) -> dict:
     }
 
 
-# Stored v1 Kanban-column values with no v2 EXECUTION_STATUSES home.
-# agent_review is defensive-only (zero live producers — brainstorm
-# reviewing now writes wip via workflow_engine/router.py's LifecycleMachine,
-# FR123-4); human_review is defensive too (zero producers, but the v1
-# CHECK still admits stored rows). DELETE at 132 once the backfill
-# translates stored values at source (this mapping is its display precedent).
-LEGACY_VALUE_REMAP: dict[str, str] = {
-    "agent_review": "wip",
-    "human_review": "wip",
-}
-
-
 def resolve_execution_status(value: str | None) -> str | None:
-    """Map a stored v1 Kanban-column value to its v2 execution_status.
+    """Pass a stored v1 kanban_column value through unchanged.
 
-    Vocabulary values pass through; legacy values remap; None/unknown pass
-    through unchanged (the CALLER decides defaulting/warning — board
-    grouping defaults None->backlog and warns on unknowns per FR125-4;
-    the entities annotation/detail render whatever comes back).
+    Feature 132: the former agent_review/human_review -> wip legacy-value
+    remap dict is deleted — the rebuild tool's backfill translates every
+    stored value at source (via the frozen kanban derivation, run once at
+    import), so no stored row can carry a pre-FR123-4 legacy value
+    post-cutover; this helper is now a pure passthrough kept as the
+    stable seam callers already import (the CALLER decides
+    defaulting/warning — board grouping defaults None->backlog and warns
+    on unknowns per FR125-4; the entities annotation/detail render
+    whatever comes back).
     """
-    if value in LEGACY_VALUE_REMAP:
-        return LEGACY_VALUE_REMAP[value]
     return value

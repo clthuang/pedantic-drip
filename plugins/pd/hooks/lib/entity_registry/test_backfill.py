@@ -1106,10 +1106,10 @@ from entity_registry.backfill import (
     PHASE_SEQUENCE,
     VALID_MODES,
     _derive_next_phase,
+    _kanban_column_for,
     _resolve_meta_path,
     backfill_workflow_phases,
 )
-from workflow_engine.kanban import derive_kanban
 
 
 class TestWorkflowPhaseBackfill:
@@ -1123,24 +1123,26 @@ class TestWorkflowPhaseBackfill:
         db.close()
 
     # -------------------------------------------------------------------
-    # Task 3.1: Kanban derivation (via derive_kanban — replaced STATUS_TO_KANBAN)
+    # Task 3.1: Kanban derivation (via _kanban_column_for — replaced STATUS_TO_KANBAN;
+    # this module's own private replica since feature 132 D6.1-.3 retired
+    # the shared workflow_engine.kanban module)
     # -------------------------------------------------------------------
 
     def test_status_planned_maps_to_backlog(self):
-        assert derive_kanban("planned", None) == "backlog"
+        assert _kanban_column_for("planned", None) == "backlog"
 
     def test_status_active_no_phase_maps_to_backlog(self):
-        assert derive_kanban("active", None) == "backlog"
+        assert _kanban_column_for("active", None) == "backlog"
 
     def test_status_completed_maps_to_completed(self):
-        assert derive_kanban("completed", None) == "completed"
+        assert _kanban_column_for("completed", None) == "completed"
 
     def test_status_abandoned_maps_to_completed(self):
-        assert derive_kanban("abandoned", None) == "completed"
+        assert _kanban_column_for("abandoned", None) == "completed"
 
     def test_unmapped_status_falls_back_to_backlog(self):
-        """Unmapped statuses like 'draft' fall back to backlog via derive_kanban."""
-        assert derive_kanban("draft", None) == "backlog"
+        """Unmapped statuses like 'draft' fall back to backlog via _kanban_column_for."""
+        assert _kanban_column_for("draft", None) == "backlog"
 
     # -------------------------------------------------------------------
     # Task 3.2: _derive_next_phase
@@ -1834,14 +1836,14 @@ class TestWorkflowPhaseBackfill:
         """
         assert VALID_MODES == frozenset({"standard", "full", "light"})
 
-    def test_derive_kanban_covers_four_statuses(self):
-        """derive_kanban handles the 4 core statuses correctly.
+    def test_kanban_column_for_covers_four_statuses(self):
+        """_kanban_column_for handles the 4 core statuses correctly.
         derived_from: dimension:mutation_mindset, spec:D-5
         """
-        assert derive_kanban("planned", None) == "backlog"
-        assert derive_kanban("active", None) == "backlog"
-        assert derive_kanban("completed", None) == "completed"
-        assert derive_kanban("abandoned", None) == "completed"
+        assert _kanban_column_for("planned", None) == "backlog"
+        assert _kanban_column_for("active", None) == "backlog"
+        assert _kanban_column_for("completed", None) == "completed"
+        assert _kanban_column_for("abandoned", None) == "completed"
 
     # -------------------------------------------------------------------
     # Phase 4: Brainstorm/backlog phase-aware backfill (Tasks 4.3)

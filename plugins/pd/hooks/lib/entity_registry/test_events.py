@@ -127,7 +127,9 @@ class TestEventsTableIntrospection:
         assert "idx_events_entity_axis" in index_names
         assert "idx_events_timestamp" in index_names
 
-    def test_two_immutability_triggers_present(self, bootstrapped_db_path):
+    def test_three_immutability_triggers_present(self, bootstrapped_db_path):
+        """Feature 132 D7b adds events_no_replace (FR132-7) alongside the
+        original two update/delete guards."""
         conn = sqlite3.connect(bootstrapped_db_path)
         try:
             trigger_names = {
@@ -139,7 +141,9 @@ class TestEventsTableIntrospection:
             }
         finally:
             conn.close()
-        assert trigger_names == {"events_no_update", "events_no_delete"}
+        assert trigger_names == {
+            "events_no_update", "events_no_delete", "events_no_replace",
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -184,6 +188,57 @@ class TestEventsImmutability:
                     "DELETE FROM events WHERE uuid = ?",
                     ("event-uuid-immutability-1",),
                 )
+        finally:
+            conn.close()
+
+    def test_insert_or_replace_rejected(self, bootstrapped_db_path):
+        """FR132-7 / design D7b teeth test: INSERT OR REPLACE targeting an
+        existing uuid must not silently delete+reinsert the row — the
+        events_no_replace BEFORE INSERT guard trigger raises, and the
+        original row is byte-unchanged afterward (the REJECTED
+        alternative, recursive_triggers=ON, would not hold here: that
+        pragma is connection-scoped and neither _set_pragmas nor
+        connect_v2 sets it — this trigger is structural instead)."""
+        conn = sqlite3.connect(bootstrapped_db_path)
+        try:
+            conn.execute(
+                "INSERT INTO events "
+                "(uuid, entity_uuid, event_type, axis, to_value, actor, timestamp) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "event-uuid-no-replace-1", "entity-uuid-no-replace-1",
+                    "phase_completed", "pipeline", "original-value",
+                    "test-actor", _NOW,
+                ),
+            )
+            conn.commit()
+
+            with pytest.raises(sqlite3.IntegrityError, match="events rows are immutable"):
+                conn.execute(
+                    "INSERT OR REPLACE INTO events "
+                    "(uuid, entity_uuid, event_type, axis, to_value, actor, timestamp) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        "event-uuid-no-replace-1", "entity-uuid-no-replace-1",
+                        "phase_completed", "pipeline", "REPLACED-value",
+                        "test-actor", _NOW,
+                    ),
+                )
+
+            row = conn.execute(
+                "SELECT entity_uuid, event_type, axis, to_value, actor, timestamp "
+                "FROM events WHERE uuid = ?",
+                ("event-uuid-no-replace-1",),
+            ).fetchone()
+            assert row == (
+                "entity-uuid-no-replace-1", "phase_completed", "pipeline",
+                "original-value", "test-actor", _NOW,
+            )
+            row_count = conn.execute(
+                "SELECT COUNT(*) FROM events WHERE uuid = ?",
+                ("event-uuid-no-replace-1",),
+            ).fetchone()[0]
+            assert row_count == 1
         finally:
             conn.close()
 

@@ -1358,8 +1358,11 @@ class TestIncidentReplay:
             _atomic_workspace_json_write(str(target), _UUID_A)
 
             # Pre-heal: the orphaned identity fails LOUD (not a bare FK error).
+            # Feature 132 D6.4: the (workspace_uuid, project_id) dual-kwarg
+            # wrapper this used to call is deleted; the surviving helper it
+            # always delegated to for a provided workspace_uuid is direct now.
             with pytest.raises(ValueError, match="split-brain"):
-                db._resolve_workspace_uuid_kwargs(_UUID_A, None)
+                db._validated_provided_workspace_uuid(_UUID_A, "register_entity")
 
             # Resolve self-heals the file to the canonical row B.
             assert resolve_workspace_uuid(str(proj)) == _UUID_B

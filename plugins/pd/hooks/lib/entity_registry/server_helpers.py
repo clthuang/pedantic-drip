@@ -264,9 +264,10 @@ def _process_register_entity(
                 )
                 # Fall through with parent_uuid=None
         # Normalize empty string → None so the deprecation-warning gate in
-        # _resolve_workspace_uuid_kwargs only fires when BOTH kwargs are
-        # genuinely supplied. Callers in the MCP layer coerce missing
-        # workspace identity to "" before reaching this wrapper.
+        # the shared workspace-identity resolution (database.py, feature
+        # 132 D6.4) only fires when BOTH kwargs are genuinely supplied.
+        # Callers in the MCP layer coerce missing workspace identity to ""
+        # before reaching this wrapper.
         ws_uuid_kwarg = workspace_uuid or None
         # F12 audit: conflict-is-error -> register_entity, EntityExistsError handled
         # Server-helpers wraps register_entity so MCP callers see the legacy

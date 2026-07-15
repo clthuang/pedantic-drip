@@ -953,7 +953,7 @@ class TestCheck2InSync:
         from doctor.checks import check_workflow_phase
 
         db_path = _make_db(tmp_path)
-        # kanban must match derive_kanban("active", "design") == "prioritised"
+        # kanban must match the stored active+design -> prioritised mapping
         _setup_workflow_feature(
             db_path, "001-alpha", wp="design", lcp="specify",
             mode="standard", kanban="prioritised",

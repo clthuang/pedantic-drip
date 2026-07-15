@@ -67,7 +67,10 @@ PIPELINE_PHASES: tuple[str, ...] = (
 )
 
 # FR122-2 / design D1 (OQ-3 resolved): the universal Kanban execution
-# enum — the six reachable workflow_engine.kanban.derive_kanban outputs
+# enum — the six reachable kanban-column outputs (formerly
+# workflow_engine.kanban's derive() function, retired at feature 132
+# D6.1-.3; now the per-call-site stored-value producers, pinned by
+# entity_registry/test_axes.py's TestStoredKanbanProducersCompatibility)
 # PLUS "ready" (PRD FR-8's blocked -> ready cascade target, feature 124),
 # in the live board's render order with "ready" inserted after
 # "prioritised" (design D1's full rationale).

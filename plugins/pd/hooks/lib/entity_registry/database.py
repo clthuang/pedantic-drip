@@ -1723,52 +1723,6 @@ def _migration_10_phase_events(conn: sqlite3.Connection) -> None:
         raise
 
 
-def _atomic_write_workspace_mapping(
-    workspace_root: str, mapping: dict[str, str]
-) -> str:
-    """Atomic-write the migration-11 workspace mapping audit JSON.
-
-    Writes ``<workspace_root>/.claude/pd/migrations/migration-11-workspace-mapping.json``
-    using the same-directory tempfile + os.replace pattern (NFR-7 atomicity).
-
-    Parameters
-    ----------
-    workspace_root:
-        Absolute path of the directory that owns ``.claude/``.
-    mapping:
-        ``{old_project_id_hex: new_workspace_uuid}`` dict.
-
-    Returns
-    -------
-    str
-        Absolute path to the emitted file.
-    """
-    import tempfile as _tempfile
-
-    target_dir = os.path.join(
-        workspace_root, ".claude", "pd", "migrations"
-    )
-    os.makedirs(target_dir, exist_ok=True)
-    target_path = os.path.join(target_dir, "migration-11-workspace-mapping.json")
-
-    fd, tmp_path = _tempfile.mkstemp(
-        prefix=".migration-11-workspace-mapping.", suffix=".json", dir=target_dir,
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(mapping, fh, indent=2, sort_keys=True)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp_path, target_path)
-    except Exception:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
-    return target_path
-
-
 def _migration_11_workspace_identity(conn: sqlite3.Connection) -> None:
     """Migration 11: workspaces table + entities.workspace_uuid + drop parent_type_id.
 
@@ -1854,18 +1808,15 @@ def _migration_11_workspace_identity(conn: sqlite3.Connection) -> None:
         else:
             mapping[pid] = str(uuid_mod.uuid4())
 
-    # Emit the mapping JSON. PD_WORKSPACE_ROOT may override the workspace
-    # root (used by tests); falls back to os.getcwd().
-    workspace_root = os.environ.get("PD_WORKSPACE_ROOT") or os.getcwd()
-    try:
-        _atomic_write_workspace_mapping(workspace_root, mapping)
-    except OSError as e:
-        # Audit emit failure is non-fatal in dev environments where
-        # workspace_root may not be writable; warn and continue.
-        print(
-            f"[migration-11] workspace mapping audit emit failed: {e}",
-            file=sys.stderr,
-        )
+    # Feature 132 (D6.5): the workspace-mapping audit JSON write is
+    # REMOVED here — a filesystem side effect inside a migration body,
+    # incompatible with the rebuild tool's step-1 chain replay running
+    # this same function against an empty staging file (spec FR132-5b;
+    # #066's root cause). DDL/DML is unchanged: `mapping` (built above)
+    # still seeds the `workspaces` table below; only the JSON emission is
+    # gone. The helper that used to perform that write (task 1's call-half
+    # removal left it callerless) is deleted in the same change (D6.5
+    # body-half, task 5).
 
     if unknown_count:
         print(
@@ -5941,6 +5892,24 @@ def _migration_19_widen_phase_events_cascade_ready(
         raise
 
 
+def _upsert_metadata(conn: sqlite3.Connection, key: str, value: str) -> None:
+    """Upsert one ``_metadata`` key/value pair (ON CONFLICT DO UPDATE).
+
+    Feature 132 #062: a plain ``INSERT OR IGNORE`` would silently skip a
+    version bump against an existing cell. Takes a raw connection (not an
+    ``EntityDatabase`` instance) so both schema generations' stamp-write
+    sites share this one implementation: ``EntityDatabase._migrate()``'s
+    per-version write (v1, below) and the v2 rebuild tool's
+    staging-connection generation stamp (``entity_registry.rebuild_tool``,
+    design 132 D1 step 3).
+    """
+    conn.execute(
+        "INSERT INTO _metadata (key, value) VALUES (?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (key, value),
+    )
+
+
 # Ordered mapping of version -> migration function.
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _create_initial_schema,
@@ -6111,6 +6080,35 @@ _DISCRIMINATOR_KWARGS: tuple[str, ...] = (
     "phase", "iterations", "reviewer_notes",
     "backward_reason", "backward_target", "metadata",
 )
+
+# Feature 132 D5/D3: the LIVE half of the axis-mapping table design D3
+# pins for the backfill (rebuild_tool.py's ``_classify_phase_event``,
+# which this mirrors byte-for-byte in rule, not by import -- rebuild_tool.py
+# imports FROM this module, so importing back would be circular).
+_V2_PHASE_NAMED_EVENT_TYPES = frozenset({"started", "completed", "skipped", "backward"})
+
+
+def _v2_classify_phase_event(
+    kind: str, event_type: str, phase: str | None, metadata: dict | None
+) -> tuple[str, str | None]:
+    """Route one ``append_phase_event`` call onto its v2 (axis, to_value).
+
+    Phase-named event_types go to the ``pipeline`` axis (122's 6-value
+    vocab) for feature-kind entities, ``lifecycle`` (vocab-free) for every
+    other kind -- matching FR132-2b / D3's table. Every other event_type
+    (``entity_created``, ``entity_status_changed``, ``entity_promoted``,
+    ``spawned_child``, ``cascade_ready``) goes to ``lifecycle`` with
+    ``to_value`` set to ``metadata['new_status']`` when present, else
+    NULL -- NEVER the ``execution`` axis (that axis is backfill-only: the
+    one-time ``status_backfilled`` synthesis, D3). Same rule
+    rebuild_tool.py's ``_classify_phase_event`` applies to copied rows, so
+    a live-written event and a backfilled event of the same shape land on
+    the same axis with the same to_value.
+    """
+    if event_type in _V2_PHASE_NAMED_EVENT_TYPES:
+        axis = "pipeline" if kind == "feature" else "lifecycle"
+        return axis, phase
+    return "lifecycle", (metadata or {}).get("new_status")
 
 
 # ---------------------------------------------------------------------------
@@ -6283,73 +6281,6 @@ class EntityDatabase:
             )
         return workspace_uuid
 
-    def _resolve_workspace_uuid_kwargs(
-        self,
-        workspace_uuid: str | None,
-        project_id: str | None,
-        *,
-        _caller: str = "register_entity",
-    ) -> str:
-        """Resolve the (workspace_uuid, project_id) kwarg pair to a canonical
-        workspace_uuid.
-
-        Compatibility shim for Feature 108 Migration 11 transition window.
-
-        Resolution rules
-        ----------------
-        * Both supplied → ``workspace_uuid`` wins; emits DeprecationWarning.
-        * Only ``workspace_uuid`` → returned as-is.
-        * Only ``project_id == "__unknown__"`` → returns canonical
-          ``_UNKNOWN_WORKSPACE_UUID`` and ensures the workspaces row exists.
-        * Only ``project_id == "<other>"`` → JOIN on
-          ``workspaces.project_id_legacy``; raises if no row matches.
-        * Neither → ``ValueError``.
-
-        Returns
-        -------
-        str
-            The resolved workspace_uuid (FK target satisfied).
-
-        Raises
-        ------
-        ValueError
-            If neither kwarg is supplied, or if a non-``__unknown__``
-            ``project_id`` cannot be resolved against the workspaces table.
-        """
-        if workspace_uuid is not None and project_id is not None:
-            warnings.warn(
-                f"{_caller}() received both workspace_uuid and project_id; "
-                f"workspace_uuid wins. project_id is deprecated.",
-                DeprecationWarning,
-                stacklevel=3,
-            )
-            return self._validated_provided_workspace_uuid(
-                workspace_uuid, _caller
-            )
-        if workspace_uuid is not None:
-            return self._validated_provided_workspace_uuid(
-                workspace_uuid, _caller
-            )
-        if project_id is None:
-            raise ValueError(
-                f"{_caller}() requires workspace_uuid or project_id"
-            )
-        # Legacy project_id path
-        if project_id == "__unknown__":
-            self._ensure_unknown_workspace_row()
-            return _UNKNOWN_WORKSPACE_UUID
-        row = self._conn.execute(
-            "SELECT uuid FROM workspaces WHERE project_id_legacy = ?",
-            (project_id,),
-        ).fetchone()
-        if row is None:
-            raise ValueError(
-                f"{_caller}(): project_id={project_id!r} has no matching "
-                f"workspaces.project_id_legacy row. Either pass "
-                f"workspace_uuid directly or pre-register the workspace."
-            )
-        return row["uuid"]
-
     def _resolve_optional_workspace_filter(
         self,
         workspace_uuid: str | None,
@@ -6359,10 +6290,24 @@ class EntityDatabase:
     ) -> str | None:
         """Resolve an optional (workspace_uuid, project_id) scope filter.
 
-        Variant of :meth:`_resolve_workspace_uuid_kwargs` for read paths
-        that treat ``None`` as "no scoping" rather than an error. Used by
-        ``list_entities``, ``search_entities``, ``_resolve_identifier``,
-        ``resolve_ref``, etc.
+        Originally a read-path-only variant of the Feature 108 Migration 11
+        transition shim (the dedicated (workspace_uuid, project_id) resolver
+        method retired at feature 132 D6.4). Two call-site shapes now share
+        it:
+
+        * Read paths (``list_entities``, ``search_entities``,
+          ``_resolve_identifier``, ``resolve_ref``, etc.) use the return
+          value AS-IS — ``None`` means "no scoping", and an unrecognized
+          ``workspace_uuid`` is not an error (a query against it just
+          yields zero rows).
+        * Write paths (``register_entity``, ``upsert_entity``,
+          ``update_entity``'s re-attribution branch, ``upsert_workflow_phase``,
+          ``next_sequence_value``, ``register_entities_batch``) additionally
+          require a resolved value AND run it through
+          :meth:`_validated_provided_workspace_uuid` — the split-brain
+          fail-loud guard the retired shim used to apply directly. This
+          reproduces the old shim's exact behavior (same messages, same
+          ``stacklevel``) without a dedicated wrapper.
 
         Resolution rules
         ----------------
@@ -7082,8 +7027,15 @@ class EntityDatabase:
             for w in validate_metadata(entity_type, metadata):
                 print(f"metadata warning: {w}", file=sys.stderr)
 
-        ws_uuid = self._resolve_workspace_uuid_kwargs(
+        ws_uuid = self._resolve_optional_workspace_filter(
             workspace_uuid, project_id, _caller="register_entity"
+        )
+        if ws_uuid is None:
+            raise ValueError(
+                "register_entity() requires workspace_uuid or project_id"
+            )
+        ws_uuid = self._validated_provided_workspace_uuid(
+            ws_uuid, "register_entity"
         )
 
         # Compat shim (Feature 108 transition): resolve deprecated
@@ -7378,8 +7330,15 @@ class EntityDatabase:
                 # that helper raises ValueError on cross-workspace ambiguity
                 # (database.py get_entity body); upsert knows the workspace
                 # so we scope the lookup explicitly.
-                ws_uuid = self._resolve_workspace_uuid_kwargs(
+                ws_uuid = self._resolve_optional_workspace_filter(
                     workspace_uuid, project_id, _caller="upsert_entity"
+                )
+                if ws_uuid is None:
+                    raise ValueError(
+                        "upsert_entity() requires workspace_uuid or project_id"
+                    )
+                ws_uuid = self._validated_provided_workspace_uuid(
+                    ws_uuid, "upsert_entity"
                 )
                 row = self._conn.execute(
                     "SELECT uuid, status FROM entities "
@@ -7961,13 +7920,31 @@ class EntityDatabase:
             )
             self._commit()  # no-op inside transaction(); commit handled by context manager
 
-        # Feature 115 FR-C-115.1: audit invariant emit.
-        # When status mutates (status is not None AND status != old), emit an
-        # entity_status_changed phase_event. Fail-open per spec FR-C.2 + 114 TD-2:
-        # status UPDATE has already committed; emit failures NEVER propagate.
-        # Per spec AC-C.4: no-op writes (same status) do NOT emit.
-        if status is not None and old_row is not None and old_row["status"] != status:
-            try:
+            # Feature 115 FR-C-115.1 / Feature 132 FR132-4b + D5: audit
+            # invariant emit. When status mutates (status is not None AND
+            # status != old), emit an entity_status_changed phase_event
+            # (which itself dual-writes a v2 events row per Step 6 of
+            # append_phase_event, above). Per spec AC-C.4: no-op writes
+            # (same status) do NOT emit.
+            #
+            # MOVED in-transaction and made FAIL-CLOSED (feature 132):
+            # previously this ran AFTER the block above committed, wrapped
+            # in a swallow-everything except (fail-open per old spec FR-C.2
+            # / 114 TD-2, incrementing an `audit_emit_failed_count` counter
+            # on failure) -- meaning the status UPDATE could commit while
+            # its audit trail silently vanished, exactly the #055/#060
+            # acknowledged-but-lost class FR132-4b closes at cutover. Now a
+            # failure here (e.g. the emit raising, or the 122 vocab trigger
+            # rejecting an out-of-vocabulary value) propagates and rolls
+            # back the status UPDATE too, via this same self.transaction().
+            # The audit_emit_failed_count counter-increment/except-swallow
+            # that used to live here is DELETED, confined to this block
+            # only -- the doctor check_audit_emit_failed_count check, the
+            # check_audit_counter_write_path AST guard, and Migration 15's
+            # counter row are feature 133's concern and are untouched (the
+            # AST guard scopes only `_migration_*` functions, so this
+            # deletion cannot break it).
+            if status is not None and old_row is not None and old_row["status"] != status:
                 # Resolve type_id + workspace_uuid for the emit. project_id is
                 # derived from workspace_uuid via the workspaces JOIN (post-F109).
                 entity_meta = self._conn.execute(
@@ -7997,40 +7974,6 @@ class EntityDatabase:
                             "new_status": status,
                         },
                     )
-            except Exception as exc:
-                # Outer fail-open: emit failure must NEVER propagate (TD-2).
-                # Inner fail-open: counter write may itself fail (e.g., lock
-                # contention); emit a secondary stderr line so the failure is
-                # at least visible.
-                try:
-                    _md = self._conn.execute(
-                        "SELECT value FROM _metadata WHERE key='audit_emit_failed_count'"
-                    ).fetchone()
-                    _ct = (int(_md[0]) if _md else 0) + 1
-                    self._conn.execute(
-                        "INSERT OR REPLACE INTO _metadata(key, value) VALUES (?, ?)",
-                        ("audit_emit_failed_count", str(_ct)),
-                    )
-                    self._conn.commit()
-                except Exception as counter_exc:
-                    print(
-                        f"pd.audit.counter_write_failed: "
-                        f'{{"type_id": {entity_uuid!r}, '
-                        f'"exception_class": {type(counter_exc).__name__!r}}}',
-                        file=sys.stderr,
-                    )
-                try:
-                    print(
-                        f"pd.audit.emit_failed: "
-                        f'{{"type_id": {entity_uuid!r}, '
-                        f'"old_status": {(old_row["status"] if old_row else None)!r}, '
-                        f'"new_status": {status!r}, '
-                        f'"exception_class": {type(exc).__name__!r}}}',
-                        file=sys.stderr,
-                    )
-                except Exception:
-                    pass  # stderr write itself failed; nothing more we can do
-                # NO re-raise. Status UPDATE has already committed.
 
         # Cascade unblock: when an entity reaches a resolved status for its
         # kind (feature 124 D4's per-kind terminal table -- e.g. 'completed'
@@ -8067,8 +8010,11 @@ class EntityDatabase:
             # Resolve the target workspace, bootstrapping the canonical
             # __unknown__ row when applicable. For arbitrary legacy ids we
             # require an existing workspaces row (callers must pre-register).
-            target_ws_uuid = self._resolve_workspace_uuid_kwargs(
+            target_ws_uuid = self._resolve_optional_workspace_filter(
                 None, new_project_id, _caller="update_entity"
+            )
+            target_ws_uuid = self._validated_provided_workspace_uuid(
+                target_ws_uuid, "update_entity"
             )
             self._conn.commit()  # flush implicit transaction
             self._conn.execute("BEGIN IMMEDIATE")
@@ -8306,6 +8252,35 @@ class EntityDatabase:
         removed its last one) flips 'blocked' -> 'ready', fail-open with a
         stderr warning on failure (same posture as the completion trigger
         in update_entity).
+
+        Feature 132 D5 finding, NOT implemented here (deliberate, recorded
+        gap -- flagged for follow-up, not silently dropped): design D5
+        classifies this method as an ``entity_deleted`` lifecycle-event
+        emitter alongside register_entity/upsert_entity. It is NOT wired
+        that way. ``events.entity_uuid`` is ``NOT NULL REFERENCES
+        entities(uuid)`` with no ``ON DELETE`` clause, and ``events_no_delete``
+        (BEFORE DELETE, immutable) fires even on an FK CASCADE-induced
+        delete (verified empirically) -- so ANY events row referencing this
+        uuid, from ANY writer, at ANY prior time (not just an emit attempted
+        HERE), makes step 6's hard ``DELETE FROM entities`` below
+        unconditionally raise ``sqlite3.IntegrityError``, in every
+        statement order and with or without ``PRAGMA defer_foreign_keys``
+        (all verified). Since ``register_entity``'s existing
+        ``entity_created`` dual-write (via append_phase_event) means every
+        entity gets an events row at birth on a v2-generation file, this is
+        not a corner case: it is a standing incompatibility between "hard-
+        delete this row" and "this row has audit history" under the
+        current schema, pre-existing this method's own code and NOT fixable
+        by any ordering/transaction change within this function. Resolving
+        it needs a schema decision (e.g. a nullable ``entity_uuid`` +
+        ``ON DELETE SET NULL``, out of this feature's file scope -- events.py
+        is not in task 3's diff) or a soft-delete redesign of this method's
+        contract (a behavior change beyond "wire an emit", not invented
+        unilaterally here). v1 files are unaffected (no ``events`` table
+        exists to reference). See feature 132's task-3 implementation
+        report for the full analysis; a v2-generation regression test
+        (test_database.py) pins the current, honest behavior rather than
+        asserting a fabricated success case.
 
         Parameters
         ----------
@@ -9053,6 +9028,45 @@ class EntityDatabase:
                     (phase, timestamp, type_id),
                 )
 
+            # Step 6 (feature 132 D5): v2 dual-write, same transaction as
+            # steps 2-5. Pre-checking ``_is_v2_generation`` (rather than
+            # relying solely on ``_emit_v2_event``'s own gate) skips the
+            # entity lookup entirely on v1 files -- the overwhelming
+            # majority of callers today. Resolve (entity_uuid, kind) from
+            # type_id, workspace-scoped when workspace_uuid is known
+            # (register_entity / upsert_entity / promote_entity /
+            # update_entity / dependencies.py's cascade_ready all pass it).
+            # Phase-transition callers (workflow_state_server.py) may pass
+            # workspace_uuid=None; the unscoped fallback is exact for them
+            # in practice because Step 5's own projection is ALSO keyed on
+            # the bare type_id, which create_workflow_phase's UNIQUE
+            # constraint makes globally unique in workflow_phases -- the
+            # same scoping the v1 write above already relies on.
+            if self._is_v2_generation:
+                if workspace_uuid is not None:
+                    entity_row = self._conn.execute(
+                        "SELECT uuid, kind FROM entities "
+                        "WHERE workspace_uuid = ? AND type_id = ?",
+                        (workspace_uuid, type_id),
+                    ).fetchone()
+                else:
+                    entity_row = self._conn.execute(
+                        "SELECT uuid, kind FROM entities WHERE type_id = ?",
+                        (type_id,),
+                    ).fetchone()
+                if entity_row is not None:
+                    v2_axis, v2_to_value = _v2_classify_phase_event(
+                        entity_row["kind"], event_type, phase, metadata
+                    )
+                    self._emit_v2_event(
+                        entity_uuid=entity_row["uuid"],
+                        event_type=event_type,
+                        axis=v2_axis,
+                        to_value=v2_to_value,
+                        actor="live:append_phase_event",
+                        payload=metadata if event_type == "entity_created" else None,
+                    )
+
         return None
 
     def query_phase_events(
@@ -9213,25 +9227,50 @@ class EntityDatabase:
             If the entity does not exist, a row already exists, or a
             CHECK constraint is violated.
         """
-        # FK check: entity must exist
+        # FK check: entity must exist. uuid + kind are also fetched here
+        # (feature 132 D5) so the v2 establishment emit below can resolve
+        # entity_uuid and route pipeline-vs-lifecycle without a second query.
         row = self._conn.execute(
-            "SELECT type_id FROM entities WHERE type_id = ?", (type_id,)
+            "SELECT type_id, uuid, kind FROM entities WHERE type_id = ?", (type_id,)
         ).fetchone()
         if row is None:
             raise ValueError(f"Entity not found: {type_id}")
 
         now = self._now_iso()
         try:
-            self._conn.execute(
-                "INSERT INTO workflow_phases "
-                "(type_id, kanban_column, workflow_phase, "
-                "last_completed_phase, mode, backward_transition_reason, "
-                "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (type_id, kanban_column, workflow_phase,
-                 last_completed_phase, mode, backward_transition_reason,
-                 now),
-            )
-            self._commit()
+            # Feature 132 D5: INSERT + initial-establishment emit are ONE
+            # self.transaction() unit, the same fail-closed shape as the
+            # other four dual-write writers (battery-r1 blocker: the
+            # earlier bare-implicit-transaction version left the INSERT
+            # pending on emit failure, to be silently persisted by the
+            # next unrelated commit while the caller saw ValueError).
+            # transaction() rolls back BOTH writes on any failure and
+            # commits on success. Without the emit, entities created
+            # post-cutover would diverge from a replayed entity at SC3's
+            # axis-parity check (every OTHER entity gets its first axis
+            # event from register_entity/append_phase_event; this writer
+            # previously emitted nothing at all). Pipeline for
+            # feature-kind (122's 6-value vocab), lifecycle for every
+            # other kind; to_value = the initial workflow_phase, NULL-safe
+            # (the vocab trigger's own `to_value IS NOT NULL` guard never
+            # fires on NULL).
+            with self.transaction():
+                self._conn.execute(
+                    "INSERT INTO workflow_phases "
+                    "(type_id, kanban_column, workflow_phase, "
+                    "last_completed_phase, mode, backward_transition_reason, "
+                    "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (type_id, kanban_column, workflow_phase,
+                     last_completed_phase, mode, backward_transition_reason,
+                     now),
+                )
+                self._emit_v2_event(
+                    entity_uuid=row["uuid"],
+                    event_type="workflow_established",
+                    axis="pipeline" if row["kind"] == "feature" else "lifecycle",
+                    to_value=workflow_phase,
+                    actor="live:create_workflow_phase",
+                )
         except sqlite3.IntegrityError as e:
             msg = str(e)
             if "UNIQUE constraint" in msg:
@@ -9273,6 +9312,18 @@ class EntityDatabase:
         Only fields explicitly passed are updated. Omitted fields (using
         the ``_UNSET`` sentinel) are left unchanged. Passing ``None``
         explicitly sets the column to NULL.
+
+        Feature 132 D5: deliberately EXCLUDED from v2 dual-write duty.
+        Per the check_status_write_path doctor guard's own fix_hint
+        (``"Use upsert_workflow_phase / update_workflow_phase for
+        non-state-change writes (kanban_column, mode, etc.)"``), this
+        method is the PRESENTATIONAL sibling of append_phase_event's
+        state-change writes -- it has no axis meaning of its own
+        (kanban_column/mode/last_completed_phase are display/bookkeeping
+        fields, not one of the three v2 axes), so it emits nothing.
+        Contrast :meth:`create_workflow_phase`, which DOES emit (the
+        INITIAL establishment of the row itself, not a presentational
+        field update on an existing one).
 
         Parameters
         ----------
@@ -9382,14 +9433,19 @@ class EntityDatabase:
         existing rows in a single call. Column names in *kwargs* are
         validated against an allow-list to prevent SQL injection.
 
+        Feature 132 D5: deliberately EXCLUDED from v2 dual-write duty --
+        presentational, same rationale as :meth:`update_workflow_phase`'s
+        docstring (kanban_column/mode/etc. carry no axis meaning).
+
         Parameters
         ----------
         type_id:
             The entity type_id (e.g. ``"feature:my-feat"``).
         project_id:
             DEPRECATED — legacy alias for ``workspace_uuid``. Resolved via
-            ``_resolve_workspace_uuid_kwargs``. Defaults to ``"__unknown__"``
-            when neither this nor ``workspace_uuid`` is supplied.
+            the shared workspace-identity resolution (feature 132 D6.4).
+            Defaults to ``"__unknown__"`` when neither this nor
+            ``workspace_uuid`` is supplied.
         workspace_uuid:
             Workspace scope for entity existence check. Post-Migration-11
             the entities table is keyed on (workspace_uuid, type_id).
@@ -9420,8 +9476,16 @@ class EntityDatabase:
         if workspace_uuid is None and project_id is None:
             project_id = "__unknown__"
         try:
-            ws_uuid = self._resolve_workspace_uuid_kwargs(
+            ws_uuid = self._resolve_optional_workspace_filter(
                 workspace_uuid, project_id, _caller="upsert_workflow_phase"
+            )
+            if ws_uuid is None:
+                raise ValueError(
+                    "upsert_workflow_phase() requires workspace_uuid or "
+                    "project_id"
+                )
+            ws_uuid = self._validated_provided_workspace_uuid(
+                ws_uuid, "upsert_workflow_phase"
             )
         except ValueError:
             # Unknown project_id_legacy → entity is "not found in project"
@@ -9863,8 +9927,9 @@ class EntityDatabase:
         ----------
         project_id:
             DEPRECATED — legacy alias for ``workspace_uuid``. Resolved via
-            ``_resolve_workspace_uuid_kwargs``. Accepted as the first
-            positional arg for backward compat with id_generator and tests.
+            the shared workspace-identity resolution (feature 132 D6.4).
+            Accepted as the first positional arg for backward compat with
+            id_generator and tests.
         entity_type:
             The entity type (e.g. "feature", "task"). Required.
         workspace_uuid:
@@ -9880,8 +9945,15 @@ class EntityDatabase:
             raise TypeError(
                 "next_sequence_value() requires entity_type"
             )
-        ws_uuid = self._resolve_workspace_uuid_kwargs(
+        ws_uuid = self._resolve_optional_workspace_filter(
             workspace_uuid, project_id, _caller="next_sequence_value"
+        )
+        if ws_uuid is None:
+            raise ValueError(
+                "next_sequence_value() requires workspace_uuid or project_id"
+            )
+        ws_uuid = self._validated_provided_workspace_uuid(
+            ws_uuid, "next_sequence_value"
         )
         self._conn.commit()  # flush any implicit transaction
         self._conn.execute("BEGIN IMMEDIATE")
@@ -10031,8 +10103,16 @@ class EntityDatabase:
 
         # Resolve workspace_uuid once so we pass it consistently to
         # upsert_entity (avoids per-row __unknown__ workspace bootstrap).
-        ws_uuid = self._resolve_workspace_uuid_kwargs(
+        ws_uuid = self._resolve_optional_workspace_filter(
             workspace_uuid, project_id, _caller="register_entities_batch"
+        )
+        if ws_uuid is None:
+            raise ValueError(
+                "register_entities_batch() requires workspace_uuid or "
+                "project_id"
+            )
+        ws_uuid = self._validated_provided_workspace_uuid(
+            ws_uuid, "register_entities_batch"
         )
 
         with self.transaction():
@@ -10098,18 +10178,97 @@ class EntityDatabase:
         )
         self._commit()
 
+        # Feature 132 FR132-1: a v2-generation file's migrations are
+        # already fully applied. The rebuild tool's own step-1 chain
+        # replay (this very _migrate() call, against the still-unstamped
+        # fresh staging file) is the sanctioned initial use — it runs
+        # BEFORE the tool's step-3 stamp, so `schema_generation` is unset
+        # here and this guard is a no-op for it. Every open AFTER the
+        # stamp lands must short-circuit before the loop below: without
+        # this guard, a future migration 20+ would silently auto-run
+        # against the v2 file (rejected alternative: leaving the file at
+        # v1 schema_version=19 with no marker — see spec FR132-1).
+        generation_row = self._conn.execute(
+            "SELECT value FROM _metadata WHERE key='schema_generation'"
+        ).fetchone()
+        # Feature 132 D5: cache the v2-generation flag on `self` (NOT a
+        # module-level dict keyed by the connection -- sqlite3.Connection
+        # supports neither custom attributes nor weakrefs, so an id()-keyed
+        # cache would risk a stale hit after id() reuse once a connection is
+        # GC'd). One EntityDatabase instance wraps exactly one connection for
+        # its whole lifetime and the generation is one-way (nothing ever
+        # downgrades a stamped file back to v1), so computing it once here --
+        # reusing the `_metadata` read the guard below already performs, no
+        # extra query -- is correct for every subsequent `_emit_v2_event`
+        # call on this instance.
+        self._is_v2_generation = (
+            generation_row is not None and generation_row[0] == "v2"
+        )
+        if self._is_v2_generation:
+            return
+
         current = self.get_schema_version()
         target = max(MIGRATIONS)
 
         for version in range(current + 1, target + 1):
             migration_fn = MIGRATIONS[version]
             migration_fn(self._conn)
-            self._conn.execute(
-                "INSERT INTO _metadata (key, value) VALUES (?, ?) "
-                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                ("schema_version", str(version)),
-            )
+            _upsert_metadata(self._conn, "schema_version", str(version))
             self._commit()
+
+    # ------------------------------------------------------------------
+    # Feature 132 D5: v2 dual-write
+    # ------------------------------------------------------------------
+
+    def _emit_v2_event(
+        self,
+        *,
+        entity_uuid: str,
+        event_type: str,
+        axis: str,
+        to_value: str | None,
+        from_value: str | None = None,
+        actor: str,
+        payload: dict | None = None,
+    ) -> None:
+        """Append a v2 ``events`` row alongside a v1 write, same transaction.
+
+        Gated on ``self._is_v2_generation`` (cached once per connection in
+        :meth:`_migrate`) -- a REAL branch, not decorative (design D5 /
+        plan.md): v1 files have no ``events`` table at all, so an
+        unconditional emit would raise ``OperationalError: no such table``
+        on every v1 fixture in the suite; a never-emit stub would silently
+        fail SC8 on v2 files. ONE shared implementation for every writer
+        below so the axis/event_type/to_value mapping can never drift
+        between call sites (design D5's explicit rationale for a single
+        helper).
+
+        Callers invoke this from INSIDE their own already-open
+        ``self.transaction()`` -- ALL five writers, including
+        ``create_workflow_phase`` (whose earlier bare-implicit-transaction
+        shape was a battery-r1 blocker: propagation without ROLLBACK left
+        the v1 INSERT pending, not rolled back) -- :func:`append_event`
+        composes on ``conn.in_transaction`` and issues a bare parameterized
+        INSERT with no COMMIT/ROLLBACK of its own in that case, so this
+        call becomes part of the caller's atomic unit: an emit failure
+        (e.g. the 122 vocab trigger rejecting an out-of-vocabulary
+        ``to_value``, or the D7b uuid-collision guard) propagates and
+        ``transaction()`` rolls back the caller's v1 write too
+        (fail-closed, FR132-4b).
+        """
+        if not self._is_v2_generation:
+            return
+        from entity_registry.events import append_event
+        append_event(
+            self._conn,
+            entity_uuid=entity_uuid,
+            event_type=event_type,
+            axis=axis,
+            from_value=from_value,
+            to_value=to_value,
+            actor=actor,
+            payload=payload,
+        )
 
     # ------------------------------------------------------------------
     # Project table operations

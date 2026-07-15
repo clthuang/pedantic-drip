@@ -998,26 +998,40 @@ def test_card_template_renders_pipeline_phase_not_workflow_phase():
 
 # ---------------------------------------------------------------------------
 # SC6 producer-union pin (iteration-1 W7 — executable enumeration, no
-# hand-copied literals): every value derive_kanban or ENTITY_MACHINES can
-# produce lands in EXECUTION_STATUSES after resolve_execution_status.
+# hand-copied literals): every value the stored-kanban producers or
+# ENTITY_MACHINES can produce lands in EXECUTION_STATUSES after
+# resolve_execution_status. RE-PINNED at feature 132 task 4 (D6.1-.3):
+# the shared workflow_engine.kanban module is retired — each live call
+# site now carries its own private (_PHASE_TO_KANBAN, _kanban_column_for)
+# replica (see hooks/lib/workflow_engine/test_constants.py's parity pin).
 # ---------------------------------------------------------------------------
 def test_producer_union_lands_in_execution_statuses_after_remap():
-    """Drives derive_kanban over its full input space and unions in every
-    ENTITY_MACHINES column value; every resulting value resolves into
-    EXECUTION_STATUSES_SET via resolve_execution_status (PHASE_TO_KANBAN
-    .values() alone would under-cover: completed/blocked are body literals
-    in derive_kanban, kanban.py:34-39; ENTITY_MACHINES' columns are unioned
-    in defensively — post-FR123-4 they no longer require the legacy remap,
-    but a future producer drift would still be caught here)."""
+    """Drives every stored-kanban producer over its full input space and
+    unions in every ENTITY_MACHINES column value; every resulting value
+    resolves into EXECUTION_STATUSES_SET via resolve_execution_status
+    (a single producer's _PHASE_TO_KANBAN.values() alone would under-cover:
+    completed/blocked are body literals in _kanban_column_for, not dict
+    values; ENTITY_MACHINES' columns are unioned in defensively —
+    post-FR123-4 they no longer require the legacy remap, but a future
+    producer drift would still be caught here)."""
+    from entity_registry import backfill as _backfill_producer
     from entity_registry.axes import EXECUTION_STATUSES_SET
+    from workflow_engine import engine as _engine_producer
+    from workflow_engine import feature_lifecycle as _feature_lifecycle_producer
+    from workflow_engine import reconciliation as _reconciliation_producer
     from workflow_engine.router import ENTITY_MACHINES
     from ui.routes.helpers import resolve_execution_status
-    from workflow_engine.kanban import PHASE_TO_KANBAN, derive_kanban
+
+    producers = (
+        _engine_producer, _feature_lifecycle_producer,
+        _reconciliation_producer, _backfill_producer,
+    )
 
     produced = set()
-    for status in ("active", "completed", "abandoned", "blocked", "planned"):
-        for phase in list(PHASE_TO_KANBAN) + [None]:
-            produced.add(derive_kanban(status, phase))
+    for producer in producers:
+        for status in ("active", "completed", "abandoned", "blocked", "planned"):
+            for phase in list(producer._PHASE_TO_KANBAN) + [None]:
+                produced.add(producer._kanban_column_for(status, phase))
     produced |= {
         col for m in ENTITY_MACHINES.values() for col in m["columns"].values()
     }

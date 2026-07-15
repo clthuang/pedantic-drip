@@ -12,11 +12,29 @@ import pytest
 
 from entity_registry.database import EntityDatabase
 from entity_registry.dependencies import CycleError, DependencyManager
+from entity_registry import schema_v2
+# Feature 132 Task 3: imported at MODULE (collection) time -- load-bearing,
+# see test_database.py's identically-documented import of the same name for
+# the full rationale (registers "events"/"views"/"axes" into
+# schema_v2.DDL_REGISTRY BEFORE _reset_ddl_registry_for_v2_fixtures' first
+# snapshot, so that fixture's restore never wipes them back out).
+from entity_registry import rebuild_tool
 
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _reset_ddl_registry_for_v2_fixtures():
+    """Snapshot/restore ``schema_v2.DDL_REGISTRY`` around every test in
+    this file -- see test_database.py's identically-documented fixture
+    of the same name for the full rationale (mirrors test_rebuild_tool.py/
+    test_axes.py's established idiom)."""
+    original_registry = list(schema_v2.DDL_REGISTRY)
+    yield
+    schema_v2.DDL_REGISTRY[:] = original_registry
 
 
 @pytest.fixture
@@ -615,3 +633,89 @@ class TestBlockerCompletedPredicate:
         the predicate, regardless of status -- no accidental fallthrough."""
         from entity_registry.dependencies import _blocker_completed
         assert _blocker_completed({"kind": "workspace", "status": "completed"}) is False
+
+
+# ---------------------------------------------------------------------------
+# Feature 132 Task 3 (D5/FR132-4b/#080): cascade-flip v2 dual-write
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def v2_db(tmp_path):
+    """A v2-generation EntityDatabase (feature 132 D1's three build steps,
+    via rebuild_tool.build_staging_database -- see test_database.py's
+    identically-documented fixture of the same name for the full
+    rationale)."""
+    staging_path = str(tmp_path / "entities.db.v2-test")
+    rebuild_tool.build_staging_database(staging_path)
+    database = EntityDatabase(staging_path)
+    yield database
+    database.close()
+
+
+class TestFeature132CascadeFlipDualWrite:
+    """SC8's cascade-flip class: a flip produces exactly ONE
+    ``cascade_ready`` v2 events row, dual-written alongside the existing
+    phase_events row inside _evaluate_and_flip's per-flip
+    ``db.transaction()`` (design D5). The "exactly one" half of #080's
+    single-fire requirement is proven two ways below: a single flip
+    emitting exactly one event (baseline), and a REPEATED cascade_unblock
+    call on the SAME already-flipped dependent emitting no additional
+    event (the idempotence design's orphan-proofing relies on -- this is
+    what makes deleting entity_engine.py's redundant call site safe:
+    even if some OTHER caller mistakenly re-invoked cascade_unblock, the
+    'already ready, not blocked' guard in _evaluate_and_flip would still
+    cap it at one).
+    """
+
+    def test_cascade_flip_emits_exactly_one_cascade_ready_event(self, v2_db, mgr):
+        a = _reg(v2_db, "a", status="completed")
+        b = _reg(v2_db, "b", status="blocked")
+        mgr.add_dependency(v2_db, b, a)
+
+        unblocked = mgr.cascade_unblock(v2_db, a)
+        assert unblocked == [b]
+
+        entity_b = v2_db.get_entity_by_uuid(b)
+        assert entity_b["status"] == "ready"
+
+        events = v2_db._conn.execute(
+            "SELECT * FROM events WHERE entity_uuid = ? AND event_type = 'cascade_ready'",
+            (b,),
+        ).fetchall()
+        assert len(events) == 1
+        # Non-phase-named event type -> lifecycle axis, vocab-free (D3);
+        # to_value is NULL because the live mapping's uniform
+        # metadata['new_status'] lookup mirrors rebuild_tool.py's
+        # _classify_phase_event exactly, and cascade_ready's metadata
+        # carries from_value/to_value/actor keys, not new_status -- the
+        # SAME rule the backfill applies to a copied cascade_ready row,
+        # so a live-written and a backfilled cascade_ready event land
+        # identically.
+        assert events[0]["axis"] == "lifecycle"
+        assert events[0]["to_value"] is None
+
+    def test_repeated_cascade_unblock_on_already_flipped_dependent_adds_no_event(
+        self, v2_db, mgr,
+    ):
+        """The idempotence property #080's orphan-proofing depends on:
+        re-invoking cascade_unblock for the SAME blocker after its
+        dependent has already flipped adds nothing -- proving that even
+        if a second call site existed (as entity_engine.py's now-deleted
+        one did), it could never have produced a SECOND cascade_ready
+        event, only a wasted no-op call."""
+        a = _reg(v2_db, "a", status="completed")
+        b = _reg(v2_db, "b", status="blocked")
+        mgr.add_dependency(v2_db, b, a)
+
+        first = mgr.cascade_unblock(v2_db, a)
+        assert first == [b]
+
+        second = mgr.cascade_unblock(v2_db, a)
+        assert second == []  # b is already 'ready', not 'blocked' -- skipped
+
+        events = v2_db._conn.execute(
+            "SELECT * FROM events WHERE entity_uuid = ? AND event_type = 'cascade_ready'",
+            (b,),
+        ).fetchall()
+        assert len(events) == 1

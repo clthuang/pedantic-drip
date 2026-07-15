@@ -572,6 +572,34 @@ class TestTransitionPhaseEntityMetadata:
         metadata = json.loads(entity["metadata"])
         assert "skipped_phases" not in metadata
 
+    def test_skipped_phases_double_encoded_string_rejected_no_char_rows(
+        self, seeded_engine, db, tmp_path,
+    ):
+        """QA132-A finding: a DOUBLE-encoded skipped_phases reaches
+        json.loads as a JSON string, comes back a plain str, and the
+        dual-write loop then iterated it CHAR-BY-CHAR — one 'skipped'
+        phase_events row per character (73 such rows exist in the real
+        census across two features). Must now be rejected up-front with
+        ZERO writes: no transition, no metadata, no phase_events rows."""
+        feat_dir = os.path.join(str(tmp_path), "features", "009-test")
+        os.makedirs(feat_dir, exist_ok=True)
+        with open(os.path.join(feat_dir, "spec.md"), "w") as f:
+            f.write("# Spec\n")
+        db.update_entity("feature:009-test", artifact_path=feat_dir, metadata={"id": "009", "slug": "test", "mode": "standard", "branch": "feature/009-test"})
+        double_encoded = json.dumps(json.dumps(["brainstorm"]))
+        result = _process_transition_phase(
+            seeded_engine, "feature:009-test", "design", False,
+            db=db, skipped_phases=double_encoded,
+        )
+        data = json.loads(result)
+        assert data.get("error") is True
+        assert data.get("error_type") == "invalid_skipped_phases"
+        rows = db.query_phase_events(type_id="feature:009-test", limit=500)
+        skipped_rows = [r for r in rows if r["event_type"] == "skipped"]
+        assert skipped_rows == []  # pre-fix: 13 single-char rows
+        entity = db.get_entity("feature:009-test")
+        assert "skipped_phases" not in json.loads(entity["metadata"])
+
     def test_started_at_included_in_response(self, seeded_engine, db, tmp_path):
         feat_dir = os.path.join(str(tmp_path), "features", "009-test")
         os.makedirs(feat_dir, exist_ok=True)
@@ -5252,7 +5280,7 @@ class TestInitFeatureState:
     # -- Kanban column lifecycle tests (AC-6) --------------------------------
 
     def test_init_feature_state_active_sets_kanban_from_phase(self, db, tmp_path):
-        """Active feature init sets kanban_column from phase via derive_kanban.
+        """Active feature init sets kanban_column from phase via _kanban_column_for.
         Initial phase is brainstorm -> kanban_column = 'backlog'.
         derived_from: spec:AC-6, feature:052 AC-4
         """
@@ -7146,7 +7174,7 @@ class TestKanbanColumnLifecycleDeepened:
     def test_init_feature_state_completed_status_sets_kanban_completed(self, db, tmp_path):
         """Init with status='completed' should set kanban_column to 'completed'.
 
-        Anticipate: If derive_kanban doesn't handle 'completed' status or
+        Anticipate: If _kanban_column_for doesn't handle 'completed' status or
         the update_workflow_phase call is skipped, kanban stays at default 'backlog'.
         derived_from: spec:AC-6 (init-time kanban from status)
         """
@@ -7171,7 +7199,7 @@ class TestKanbanColumnLifecycleDeepened:
     def test_init_feature_state_abandoned_status_sets_kanban_completed(self, db, tmp_path):
         """Init with status='abandoned' should set kanban_column to 'completed'.
 
-        Anticipate: 'abandoned' maps to 'completed' via derive_kanban.
+        Anticipate: 'abandoned' maps to 'completed' via _kanban_column_for.
         If the mapping is missing, kanban would stay at 'backlog'.
         derived_from: spec:AC-6 (init-time kanban from status)
         """
@@ -7198,7 +7226,7 @@ class TestKanbanColumnLifecycleDeepened:
     def test_complete_finish_kanban_is_completed_not_documenting(self, db, tmp_path):
         """Completing finish must set kanban to 'completed', not 'documenting'.
 
-        Anticipate: If complete_phase uses derive_kanban with 'active' status
+        Anticipate: If complete_phase uses _kanban_column_for with 'active' status
         instead of 'completed' for finish, kanban would be
         'documenting' (the phase mapping for 'finish').
         derived_from: dimension:mutation_mindset (arithmetic swap)
@@ -7228,7 +7256,7 @@ class TestKanbanColumnLifecycleDeepened:
     def test_transition_uses_target_phase_not_current_phase(self, db, tmp_path):
         """Transition kanban must come from the TARGET phase, not the source.
 
-        Anticipate: If code uses current_phase for derive_kanban lookup
+        Anticipate: If code uses current_phase for the _kanban_column_for lookup
         instead of target_phase, kanban would stay 'backlog' (specify's column)
         instead of becoming 'prioritised' (design's column).
         derived_from: dimension:mutation_mindset (return value mutation)
@@ -7294,15 +7322,23 @@ class TestKanbanColumnLifecycleDeepened:
 
 
 # ---------------------------------------------------------------------------
-# Feature 052: derive_kanban integration (AC-4)
+# Feature 052: kanban derivation integration (AC-4). RE-PINNED at feature
+# 132 task 4 (D6.1-.3): the shared workflow_engine.kanban module (and its
+# oracle-function-call assertion style) is retired — this class now
+# asserts stored-value equality (the exact expected literal) instead of
+# computing an oracle value via an imported function at test time.
 # ---------------------------------------------------------------------------
 
 
-class TestCompletePhaseKanbanMatchesDeriveKanban:
-    """Integration test: complete_phase kanban_column must match derive_kanban output.
+class TestCompletePhaseKanbanStoredValue:
+    """Integration test: complete_phase kanban_column must match the
+    stored expected value for (status, phase).
 
     Verifies the single source of truth for kanban derivation after
-    replacing FEATURE_PHASE_TO_KANBAN and STATUS_TO_KANBAN with derive_kanban().
+    replacing FEATURE_PHASE_TO_KANBAN and STATUS_TO_KANBAN with a
+    dedicated derivation helper (the shared workflow_engine.kanban
+    module's function, historically; now this module's own private
+    _kanban_column_for, since feature 132 D6.1-.3 retired that module).
     derived_from: feature:052, AC-4
     """
 
@@ -7327,13 +7363,12 @@ class TestCompletePhaseKanbanMatchesDeriveKanban:
         engine = WorkflowStateEngine(db, str(tmp_path))
         return engine, type_id
 
-    def test_complete_specify_kanban_matches_derive_kanban(self, db, tmp_path):
-        """Completing specify advances to design; kanban must match derive_kanban('active', 'design').
+    def test_complete_specify_kanban_is_prioritised(self, db, tmp_path):
+        """Completing specify advances to design; kanban must be 'prioritised'
+        (the stored active+design mapping).
 
         derived_from: feature:052, AC-4 (single source of truth)
         """
-        from workflow_engine.kanban import derive_kanban
-
         engine, type_id = self._setup_feature(
             db, tmp_path, 400, "dk-specify", "specify", kanban="backlog",
         )
@@ -7346,18 +7381,17 @@ class TestCompletePhaseKanbanMatchesDeriveKanban:
         assert data["current_phase"] == "design"
 
         wp = db.get_workflow_phase(type_id)
-        expected = derive_kanban("active", "design")
-        assert wp["kanban_column"] == expected, (
-            f"Expected kanban '{expected}' from derive_kanban, got '{wp['kanban_column']}'"
+        assert wp["kanban_column"] == "prioritised", (
+            f"Expected kanban 'prioritised' (active+design), got '{wp['kanban_column']}'"
         )
 
-    def test_complete_finish_kanban_matches_derive_kanban(self, db, tmp_path):
-        """Completing finish sets status completed; kanban must match derive_kanban('completed', 'finish').
+    def test_complete_finish_kanban_is_completed(self, db, tmp_path):
+        """Completing finish sets status completed; kanban must be 'completed'
+        (the stored terminal-status mapping, overriding the phase-based
+        'documenting' finish would otherwise produce).
 
         derived_from: feature:052, AC-4 (single source of truth)
         """
-        from workflow_engine.kanban import derive_kanban
-
         engine, type_id = self._setup_feature(
             db, tmp_path, 401, "dk-finish", "finish", kanban="documenting",
         )
@@ -7370,9 +7404,8 @@ class TestCompletePhaseKanbanMatchesDeriveKanban:
         assert "error" not in data
 
         wp = db.get_workflow_phase(type_id)
-        expected = derive_kanban("completed", "finish")
-        assert wp["kanban_column"] == expected, (
-            f"Expected kanban '{expected}' from derive_kanban, got '{wp['kanban_column']}'"
+        assert wp["kanban_column"] == "completed", (
+            f"Expected kanban 'completed' (terminal status), got '{wp['kanban_column']}'"
         )
 
 
@@ -11497,3 +11530,40 @@ class TestFiveDDbUnavailableEnvelope:
 
         row_after = db.get_workflow_phase("project:106-envelope-c")
         assert row_after == row_before, "transaction must roll back -- no partial write"
+
+
+# ---------------------------------------------------------------------------
+# Test-deepening addition (feature 132 D6.1-.3): the fifth
+# _kanban_column_for replica (this module) is only proven behaviorally
+# equivalent to its four same-tree siblings via
+# TestCompletePhaseKanbanStoredValue's individual literal pins above --
+# nothing directly compares its _PHASE_TO_KANBAN dict, or drives
+# _kanban_column_for over the FULL input space, against the four-way
+# same-tree parity workflow_engine/test_constants.py already proves.
+# This module sits in mcp/, a separate import root from
+# workflow_engine/backfill.py's same-tree siblings -- closing that
+# cross-import-root gap directly. dimension:boundary
+# ---------------------------------------------------------------------------
+class TestKanbanProducerCrossImportRootParity:
+    def test_phase_to_kanban_dict_matches_hooks_lib_representative(self):
+        from workflow_engine import engine as _engine_producer
+        from workflow_state_server import _PHASE_TO_KANBAN
+
+        assert _PHASE_TO_KANBAN == _engine_producer._PHASE_TO_KANBAN
+
+    def test_kanban_column_for_agrees_with_hooks_lib_representative_over_full_input_space(
+        self,
+    ):
+        from workflow_engine import engine as _engine_producer
+        from workflow_state_server import _kanban_column_for
+
+        statuses = (
+            "planned", "active", "completed", "abandoned",
+            "blocked", "unmapped-status",
+        )
+        phases = list(_engine_producer._PHASE_TO_KANBAN) + [None, "nonexistent-phase"]
+        for status in statuses:
+            for phase in phases:
+                mine = _kanban_column_for(status, phase)
+                theirs = _engine_producer._kanban_column_for(status, phase)
+                assert mine == theirs, (status, phase, mine, theirs)

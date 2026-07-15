@@ -507,3 +507,47 @@ def test_every_registry_machine_satisfies_graph_descriptor_protocol():
 
     for kind, machine in MACHINE_REGISTRY.items():
         assert isinstance(machine, GraphDescriptor), kind
+
+
+# ---------------------------------------------------------------------------
+# Test-deepening addition (feature 132 #075): transition_entity_phase's
+# rejection path now calls get_machine(kind).validate() instead of
+# re-walking ENTITY_MACHINES inline (design D6.8, task-5 record: "verified
+# byte-for-byte message-preserving ... before relying on the regression
+# suite"). mcp/test_workflow_state_server.py proves the WRAPPER's
+# error_type classification (invalid_transition); nothing proves the
+# raised ValueError's actual TEXT is the machine's own decision.reason,
+# verbatim, at this (non-MCP-wrapped) layer. Kills a mutation that changes
+# the message text at either site without the other -- a generic "raises
+# ValueError" assertion would not. dimension:adversarial
+# ---------------------------------------------------------------------------
+class TestTransitionEntityPhaseDelegatesToMachineValidate:
+    @pytest.mark.parametrize(
+        "kind, entity_id, current, target",
+        [
+            ("brainstorm", "msg-probe-1", "draft", "bogus-target"),
+            ("backlog", "msg-probe-2", "open", "bogus-target"),
+        ],
+    )
+    def test_invalid_transition_message_matches_machine_validate_verbatim(
+        self, db, kind, entity_id, current, target,
+    ):
+        # Given an entity parked at a real current phase
+        db.register_entity(
+            entity_type=kind, entity_id=entity_id, name="Probe",
+            status=current, project_id="__unknown__",
+        )
+        type_id = f"{kind}:{entity_id}"
+        init_entity_workflow(
+            db, type_id, current, ENTITY_MACHINES[kind]["columns"][current],
+        )
+        expected = get_machine(kind).validate(current, target).reason
+
+        # When transition_entity_phase is asked for a bogus target phase
+        with pytest.raises(ValueError) as excinfo:
+            transition_entity_phase(db, type_id, target)
+
+        # Then the raised message is EXACTLY the machine's own decision
+        # reason -- not a hand-rolled string that happens to land in the
+        # same error bucket.
+        assert str(excinfo.value) == expected

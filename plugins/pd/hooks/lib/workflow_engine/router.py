@@ -8,7 +8,9 @@ MCP surfaces, each consuming this registry (no new dispatch function):
 transition_phase/complete_phase route feature kind to the frozen engine
 unchanged and 5D kinds to ``get_machine(kind).validate(...)``; the moved
 init_entity_workflow/transition_entity_phase below are the lifecycle-kind
-entry points.
+entry points, and (feature 132 #075) transition_entity_phase ALSO routes
+its transition check through ``get_machine(kind).validate(...)`` — one
+enforcement route per kind, matching the 5D dispatch above.
 
 Two roles a machine can implement (D1, B1 resolution):
   - ``GraphDescriptor`` (ALL machines): phases/is_forward/column_for — the
@@ -66,8 +68,10 @@ class GraphDescriptor(Protocol):
 
     def column_for(self, phase: str) -> str | None:
         """Kanban column for ``phase``, or None. Lifecycle kinds return
-        their column; feature/5D return None (kanban derivation stays
-        derive_kanban's own until 132)."""
+        their column; feature/5D return None (kanban derivation for
+        those kinds is a separate, per-call-site stored-value producer
+        since feature 132 D6.1-.3 retired the shared kanban.py module —
+        not routed through this Protocol)."""
         ...
 
 
@@ -307,11 +311,12 @@ def get_machine(kind: str) -> Machine:
     values). Callers that special-case bug today keep doing so BEFORE
     routing — this function never silently no-ops.
 
-        Role note: this method exists for the Machine protocol and the
-        SC1 graph-diff harness; the PRODUCTION enforcement path for
-        lifecycle kinds is the moved transition_entity_phase below,
-        which reads the SAME ENTITY_MACHINES dict inline (design D6's
-        bodies-unchanged move contract) — one data source, two readers.
+        Role note: this method backs the Machine protocol and the SC1
+        graph-diff harness, AND (feature 132 #075) is now the PRODUCTION
+        enforcement route for lifecycle kinds too — the moved
+        transition_entity_phase below calls ``get_machine(kind).validate()``
+        instead of re-walking ENTITY_MACHINES inline, retiring the
+        redundant duplicate the design D6 move originally left in place.
         """
     machine = MACHINE_REGISTRY.get(kind)
     if machine is None:
@@ -400,7 +405,9 @@ def transition_entity_phase(
     """Transition a brainstorm/backlog entity to a new lifecycle phase.
 
     Preserves ALL behavior from _process_transition_entity_phase:
-    - Transition graph validation against ENTITY_MACHINES
+    - Transition graph validation via get_machine(kind).validate() (feature
+      132 #075 — the former inline ENTITY_MACHINES re-walk is retired;
+      LifecycleMachine.validate/column_for/is_forward read the SAME dict)
     - Forward/backward distinction via 'forward' set
     - entities.status update via db.update_entity()
     - workflow_phases update: forward sets last_completed_phase, backward preserves it
@@ -413,7 +420,10 @@ def transition_entity_phase(
         raise ValueError(f"invalid_entity_type: malformed type_id: {type_id}")
     entity_type = type_id.split(":", 1)[0]
 
-    # 2. Validate entity_type has a state machine
+    # 2. Validate entity_type has a state machine (this endpoint is
+    # lifecycle-kind-only — brainstorm/backlog; unlike get_machine(), which
+    # would also resolve feature/5D kinds, ENTITY_MACHINES membership is
+    # the correct gate here).
     if entity_type not in ENTITY_MACHINES:
         raise ValueError(
             f"invalid_entity_type: {entity_type} — only brainstorm and backlog supported"
@@ -435,20 +445,22 @@ def transition_entity_phase(
             "call init_entity_workflow first"
         )
 
-    # 5. Validate transition against graph
-    machine = ENTITY_MACHINES[entity_type]
-    valid_targets = machine["transitions"].get(current_phase, [])
-    if target_phase not in valid_targets:
-        raise ValueError(
-            f"invalid_transition: cannot transition {entity_type} from "
-            f"{current_phase} to {target_phase}"
-        )
+    # 5. Validate transition via the machine's own validate() (feature 132
+    # #075: one enforcement route per kind, matching 123's 5D rewire —
+    # the former inline ENTITY_MACHINES[entity_type]["transitions"] walk
+    # duplicated exactly what LifecycleMachine.validate() already does).
+    machine = get_machine(entity_type)
+    decision = machine.validate(current_phase, target_phase)
+    if not decision.allowed:
+        raise ValueError(decision.reason)
 
-    # 6. Look up target kanban column
-    kanban_column = machine["columns"][target_phase]
+    # 6. Look up target kanban column via the machine (not the raw dict).
+    kanban_column = machine.column_for(target_phase)
 
-    # 7. Determine if forward transition (for last_completed_phase)
-    is_forward = (current_phase, target_phase) in machine["forward"]
+    # 7. Determine if forward transition (for last_completed_phase), via
+    # the machine (current_phase is validated non-None above, so this
+    # matches the former inline tuple-membership check exactly).
+    is_forward = machine.is_forward(current_phase, target_phase)
 
     # 8. Update entities.status via public API
     db.update_entity(type_id, status=target_phase, workspace_uuid=workspace_uuid)

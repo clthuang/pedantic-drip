@@ -24,9 +24,10 @@ def _group_by_column(rows: list[dict]) -> dict[str, list[dict]]:
     """Group rows by execution_status (v2 vocabulary).
 
     Returns dict with every EXECUTION_STATUSES column as a key (empty list
-    if no rows). None defaults to 'backlog'; legacy values remap via
-    LEGACY_VALUE_REMAP; unknown values land in 'backlog' WITH one stderr
-    warning (never silently dropped).
+    if no rows). None defaults to 'backlog'; unknown values (including the
+    pre-feature-132 agent_review/human_review legacy values, now unmapped
+    since the backfill translates stored values at source) land in
+    'backlog' WITH one stderr warning (never silently dropped).
     """
     columns: dict[str, list[dict]] = {col: [] for col in COLUMN_ORDER}
     for row in rows:

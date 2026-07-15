@@ -78,7 +78,6 @@ async def test_register_entity_handler_concise_message(db):
         entity_type="feature",
         entity_id="reg-test",
         name="Registration Test",
-        project_id="__unknown__",
     )
     assert isinstance(result, str)
     assert result == "Registered: feature:reg-test"
@@ -214,7 +213,6 @@ class TestMetadataDictCoercion:
             entity_server.register_entity(
                 entity_type="feature", entity_id="meta-dict-001",
                 name="Dict Test", metadata={"description": "test value"},
-                project_id="__unknown__",
             )
         )
         assert "Registered:" in result
@@ -230,7 +228,6 @@ class TestMetadataDictCoercion:
             entity_server.register_entity(
                 entity_type="feature", entity_id="meta-str-001",
                 name="String Test", metadata='{"key": "val"}',
-                project_id="__unknown__",
             )
         )
         assert "Registered:" in result
@@ -246,7 +243,6 @@ class TestMetadataDictCoercion:
             entity_server.register_entity(
                 entity_type="feature", entity_id="meta-none-001",
                 name="None Test", metadata=None,
-                project_id="__unknown__",
             )
         )
         assert "Registered:" in result
@@ -277,7 +273,6 @@ class TestMetadataDictCoercion:
             entity_server.register_entity(
                 entity_type="feature", entity_id="meta-bad-001",
                 name="Bad JSON Test", metadata="{bad json}",
-                project_id="__unknown__",
             )
         )
         # Should succeed (parse_metadata returns {"error": "..."} for invalid JSON)
@@ -764,31 +759,53 @@ class TestAllocateEntityId:
         assert after == before
 
     @pytest.mark.asyncio
-    async def test_project_kind_deferred_no_consumption(self, ws_db):
-        """entity_type='project' -> kind_deferred envelope (D-5 lean); no
-        sequences row is touched for the 'project' kind."""
+    async def test_allocator_cutover_project_kind(self, ws_db):
+        """Feature 132 D6.9: the entity_type == 'project' kind_deferred
+        rejection guard is retired post-cutover -- allocate_entity_id now
+        succeeds for 'project' exactly like any other kind, CONTINUING
+        from wherever the `sequences` row was left. The rebuild tool's own
+        D6.9 seed-half plants that row at the live census max per
+        kind x workspace (task 2's SC2/D6.9 concern, not this MCP-tool
+        unit's); simulated here via direct pre-seed, mirroring
+        test_four_digit_sequence_value_not_clipped_to_three_digits' pattern
+        above. Asserts a fact true ONLY on the post-cutover path: the
+        returned seq CAME FROM the sequences table (the pre-seeded
+        continuation value, not 1, and not a kind_deferred envelope) --
+        and a second allocation advances it sequentially, proving the
+        counter genuinely advances rather than being a static readback."""
         database, ws_uuid = ws_db
-        before = _sequences_row(database, ws_uuid, "project")
+        database._conn.execute(
+            "INSERT INTO sequences(workspace_uuid, entity_type, next_val) "
+            "VALUES(?, ?, ?)",
+            (ws_uuid, "project", 5),
+        )
+        database._conn.commit()
+
         result = await entity_server.allocate_entity_id(
-            entity_type="project", name="Some Project"
+            entity_type="project", name="Post Cutover Project"
         )
         parsed = json.loads(result)
-        assert parsed == {
-            "error": True,
-            "error_type": "kind_deferred",
-            "message": (
-                "project ids stay P{NNN} until the 132 cutover "
-                "(v1 bootstrap is regex-blind to P-leading ids)"
-            ),
-            "recovery_hint": "see backlog-manual #054(c)",
-        }
+        assert parsed == {"seq": 5, "entity_id": "005-post-cutover-project"}
+
+        # A second, distinct allocation in the same workspace continues
+        # sequentially -- two concurrent-ish allocations land distinct,
+        # ascending seq values, not a repeat of the first.
+        result2 = await entity_server.allocate_entity_id(
+            entity_type="project", name="Second Post Cutover Project"
+        )
+        parsed2 = json.loads(result2)
+        assert parsed2["seq"] == 6
+
+        # The sequences row itself advanced on disk (not just in the
+        # response) -- the fact the counter is genuinely stateful, not a
+        # readback.
         after = _sequences_row(database, ws_uuid, "project")
-        assert after == before
+        assert after["next_val"] == 7
 
     @pytest.mark.asyncio
     async def test_missing_entity_type_invalid_input(self, ws_db):
         """Missing entity_type -> invalid_input envelope, checked BEFORE
-        the kind_deferred / slug checks."""
+        the slug check."""
         result = await entity_server.allocate_entity_id(entity_type="", name="Some Name")
         parsed = json.loads(result)
         assert parsed == {
@@ -888,38 +905,6 @@ class TestAllocateEntityId:
         assert parsed == {"seq": 1000, "entity_id": "1000-boundary-seq"}
 
     @pytest.mark.asyncio
-    async def test_titlecase_project_not_treated_as_deferred_kind(self, ws_db):
-        """The kind gate is a literal `entity_type == "project"` check
-        (design D-5) — case variants are NOT normalized before the
-        comparison. Pins the ACTUAL behavior: 'Project' slips past the
-        gate and mints a sequence under a DISTINCT kind-string 'Project'
-        rather than hitting kind_deferred. Would catch a mutation that
-        added implicit case-folding (e.g. `entity_type.lower() ==
-        "project"`), which would silently start rejecting a kind string
-        the current contract allows through."""
-        result = await entity_server.allocate_entity_id(
-            entity_type="Project", name="Case Variant"
-        )
-        parsed = json.loads(result)
-        assert parsed == {"seq": 1, "entity_id": "001-case-variant"}
-
-    @pytest.mark.asyncio
-    async def test_whitespace_padded_project_not_treated_as_deferred_kind(
-        self, ws_db
-    ):
-        """Same gap, whitespace axis: ' project ' is not `.strip()`-
-        normalized before the literal comparison, so it also slips past
-        the kind_deferred gate and mints under its own distinct
-        (unstripped) kind-string, independent from 'project' and
-        'Project'. Would catch a mutation that added implicit
-        `.strip()` normalization to the gate."""
-        result = await entity_server.allocate_entity_id(
-            entity_type=" project ", name="Whitespace Variant"
-        )
-        parsed = json.loads(result)
-        assert parsed == {"seq": 1, "entity_id": "001-whitespace-variant"}
-
-    @pytest.mark.asyncio
     async def test_next_sequence_value_operational_error_propagates_unhandled(
         self, ws_db, monkeypatch
     ):
@@ -959,7 +944,7 @@ class TestRegisterEntityBlankNameGuard:
         """auto_id=True + name="" -> invalid_input envelope (not the old
         bare 'Error: name is required when auto_id=True' string)."""
         result = await entity_server.register_entity(
-            entity_type="feature", name="", auto_id=True, project_id="__unknown__",
+            entity_type="feature", name="", auto_id=True,
         )
         parsed = json.loads(result)
         assert parsed["error"] is True
@@ -973,7 +958,6 @@ class TestRegisterEntityBlankNameGuard:
         unguarded."""
         result = await entity_server.register_entity(
             entity_type="feature", entity_id="explicit-blank", name="   ",
-            project_id="__unknown__",
         )
         parsed = json.loads(result)
         assert parsed["error"] is True
@@ -986,7 +970,7 @@ class TestRegisterEntityBlankNameGuard:
         next_sequence_value)."""
         before = db._conn.execute("SELECT COUNT(*) AS n FROM sequences").fetchone()["n"]
         result = await entity_server.register_entity(
-            entity_type="feature", name="", auto_id=True, project_id="__unknown__",
+            entity_type="feature", name="", auto_id=True,
         )
         parsed = json.loads(result)
         assert parsed["error"] is True
@@ -1000,3 +984,25 @@ class TestRegisterEntityBlankNameGuard:
         with open(server_path, encoding="utf-8") as fh:
             content = fh.read()
         assert "name is required when auto_id=True" not in content
+
+
+# ---------------------------------------------------------------------------
+# Test-deepening addition (feature 132 D6.4): the register_entity MCP
+# tool's caller-facing project_id passthrough kwarg was dropped from the
+# signature (only entity_server's OWN legacy-project-id global is
+# consulted internally now). No existing test proves REMOVAL -- every
+# `project_id=` reference in this file targets EntityDatabase.
+# register_entity (the DB method, which retains the kwarg per the
+# amended FR132-5b reading), never this MCP tool function. Proves the
+# structural removal non-vacuously: passing project_id= must raise
+# TypeError synchronously (argument binding fails before the coroutine
+# is even scheduled), the same as any other unknown kwarg would.
+# dimension:adversarial
+# ---------------------------------------------------------------------------
+class TestRegisterEntityToolProjectIdKwargRemoved:
+    def test_project_id_kwarg_raises_type_error_not_silently_accepted(self):
+        with pytest.raises(TypeError, match="project_id"):
+            entity_server.register_entity(
+                entity_type="feature", entity_id="001-x", name="X",
+                project_id="should-not-exist",
+            )

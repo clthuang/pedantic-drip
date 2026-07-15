@@ -27,6 +27,41 @@ from entity_registry.database import (
 
 from entity_registry.database import EXPORT_SCHEMA_VERSION
 from entity_registry.test_helpers import TEST_PROJECT_ID
+from entity_registry import schema_v2
+# Feature 132 Task 3: imported at MODULE (collection) time, not lazily
+# inside the v2_db fixture below -- this is load-bearing, not stylistic.
+# rebuild_tool.py's own top-level imports (events/views/axes) register
+# "events"/"views"/"axes" into schema_v2.DDL_REGISTRY as a ONE-TIME,
+# process-wide side effect of the FIRST import (Python's module cache
+# means a later `import` is a no-op re-registration-wise). Collection
+# happens before any autouse fixture ever runs, so importing here --
+# mirroring test_rebuild_tool.py's own top-level `from entity_registry
+# import axes` -- guarantees _reset_ddl_registry_for_v2_fixtures' FIRST
+# snapshot already includes those three owners. Without this, the first
+# test to use v2_db would trigger the registration LAZILY mid-test
+# (AFTER that test's snapshot was already taken), and that same test's
+# OWN teardown would then wipe "events"/"views"/"axes" back out --
+# breaking every v2_db use after the first with a "no such table:
+# events" error (the module cache prevents re-registration on retry).
+from entity_registry import rebuild_tool
+
+
+@pytest.fixture(autouse=True)
+def _reset_ddl_registry_for_v2_fixtures():
+    """Snapshot/restore ``schema_v2.DDL_REGISTRY`` around every test in
+    this file (mirrors test_rebuild_tool.py/test_axes.py's established
+    idiom). Feature 132 Task 3's ``v2_db`` fixture below calls
+    ``rebuild_tool.build_staging_database``, which calls
+    ``axes.register_vocab_ddl()`` as PRODUCTION behavior (D1 step 2) —
+    without this, "axes_vocab_triggers" would leak into whatever test
+    runs next in this process (H4/H6 discipline: this suite's OWN
+    fixtures must not become a NEW dark-suite-reconciliation hazard for
+    test_views.py/test_meta_projection.py/test_events.py, which
+    deliberately write out-of-vocabulary axis values in their own,
+    unrelated tests)."""
+    original_registry = list(schema_v2.DDL_REGISTRY)
+    yield
+    schema_v2.DDL_REGISTRY[:] = original_registry
 
 
 def _latest_entity_version() -> int:
@@ -7454,20 +7489,21 @@ class TestMigration11WorkspaceBootstrap:
                 / "migrations"
                 / "migration-11-workspace-mapping.json"
             )
-            assert mapping_path.exists(), (
-                f"Mapping file not emitted: {mapping_path}"
+            # Feature 132 (D6.5 call-half): the audit-JSON side effect is
+            # REMOVED from migration 11 — the mapping now feeds ONLY the
+            # workspaces INSERTs. The old file must NOT appear (its stray
+            # writes were the #066 class), while the real migration output
+            # (one workspaces row per legacy id) is unchanged.
+            assert not mapping_path.exists(), (
+                f"Audit JSON should no longer be emitted (132): {mapping_path}"
             )
-            data = json.loads(mapping_path.read_text())
-            # Map every legacy id to its new workspace UUID.
-            assert "wsA" in data
-            assert "wsB" in data
-            for legacy, new_uuid in data.items():
+            for legacy in ("wsA", "wsB"):
                 row = conn.execute(
                     "SELECT uuid FROM workspaces WHERE project_id_legacy=?",
                     (legacy,),
                 ).fetchone()
-                assert row is not None
-                assert row[0] == new_uuid
+                assert row is not None, f"workspaces row missing for {legacy}"
+                assert row[0]
         finally:
             conn.close()
 
@@ -8702,29 +8738,63 @@ def test_m15_safe_to_rerun_with_documented_reset_semantics(tmp_path):
 
 
 class TestProvidedWorkspaceUuidMembership:
-    """Task #5: _resolve_workspace_uuid_kwargs fails loud on an orphaned
-    provided workspace_uuid instead of letting a bare FK error escape."""
+    """Task #5: ``_validated_provided_workspace_uuid`` fails loud on an
+    orphaned provided workspace_uuid instead of letting a bare FK error
+    escape. Feature 132 D6.4 deleted the (workspace_uuid, project_id)
+    dual-kwarg wrapper this class used to exercise indirectly — every
+    method below rewires to call the surviving helper the wrapper always
+    delegated to for the provided-workspace_uuid branches; the
+    split-brain guard is re-homed here, not dropped."""
 
     _ORPHAN = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
 
     def test_orphan_uuid_raises_actionable(self, db):
         with pytest.raises(ValueError, match="split-brain"):
-            db._resolve_workspace_uuid_kwargs(self._ORPHAN, None)
+            db._validated_provided_workspace_uuid(self._ORPHAN, "register_entity")
 
     def test_orphan_uuid_message_names_doctor_and_restart(self, db):
         with pytest.raises(ValueError) as exc:
-            db._resolve_workspace_uuid_kwargs(self._ORPHAN, None)
+            db._validated_provided_workspace_uuid(self._ORPHAN, "register_entity")
         msg = str(exc.value)
         assert "pd:doctor --fix" in msg and "restart the session" in msg
 
-    def test_both_supplied_branch_also_checked(self, db):
-        # workspace_uuid wins over project_id, and is still validated.
-        with pytest.raises(ValueError, match="split-brain"):
-            db._resolve_workspace_uuid_kwargs(self._ORPHAN, "__test__")
+    def test_caller_label_interpolated_into_message(self, db):
+        """The guard's error names WHICHEVER caller invoked it -- ``_caller``
+        is a required, caller-supplied label on the direct helper (the
+        retired wrapper's "both workspace_uuid and project_id supplied"
+        precedence dance collapsed away with it, since D6.4's six rewired
+        callers no longer route a second kwarg through this guard).
+        Uses a caller distinct from the other tests in this class, proving
+        the interpolation is live rather than a hardcoded string -- a fact
+        true only when the label genuinely flows through."""
+        with pytest.raises(ValueError) as exc:
+            db._validated_provided_workspace_uuid(
+                self._ORPHAN, "upsert_workflow_phase"
+            )
+        assert "upsert_workflow_phase():" in str(exc.value)
 
     def test_present_uuid_returns_it(self, db):
         ws = _bootstrap_test_workspace(db, "membership-present")
-        assert db._resolve_workspace_uuid_kwargs(ws, None) == ws
+        assert db._validated_provided_workspace_uuid(ws, "register_entity") == ws
+
+    def test_register_entity_end_to_end_raises_split_brain_before_any_insert(
+        self, db,
+    ):
+        """Every method above calls ``_validated_provided_workspace_uuid``
+        directly -- none drives it through a REAL caller's own call chain
+        (``_resolve_optional_workspace_filter`` -> the guard, D6.4's
+        six-caller rewire). ``register_entity(workspace_uuid=<orphan>)``
+        must raise the identical error, and -- non-vacuously -- must do
+        so BEFORE any entities row lands, proving the rewire is genuinely
+        wired into the write path rather than merely directly callable in
+        isolation. dimension:adversarial
+        """
+        with pytest.raises(ValueError, match="split-brain"):
+            db.register_entity(
+                "feature", "001-orphan-e2e", "Orphan E2E",
+                workspace_uuid=self._ORPHAN,
+            )
+        assert db.get_entity("feature:001-orphan-e2e") is None
 
     def test_unknown_uuid_bootstraps_not_raises(self, db):
         from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
@@ -8735,8 +8805,8 @@ class TestProvidedWorkspaceUuidMembership:
             "DELETE FROM workspaces WHERE uuid = ?", (_UNKNOWN_WORKSPACE_UUID,)
         )
         db._conn.commit()
-        result = db._resolve_workspace_uuid_kwargs(
-            _UNKNOWN_WORKSPACE_UUID, None
+        result = db._validated_provided_workspace_uuid(
+            _UNKNOWN_WORKSPACE_UUID, "register_entity"
         )
         assert result == _UNKNOWN_WORKSPACE_UUID
         # Row now exists.
@@ -9026,3 +9096,546 @@ class TestListWorkspacesWithEntities:
         row = next(r for r in result if r["uuid"] == ws_null_root)
 
         assert row["project_root"] is None
+
+
+# ---------------------------------------------------------------------------
+# Feature 132 Task 3 (D5/FR132-4b): v2 dual-write
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def v2_db(tmp_path):
+    """A v2-generation EntityDatabase.
+
+    Built via rebuild_tool.build_staging_database (feature 132 D1's three
+    ordered steps -- chain replay, selective v2 seed, generation stamp),
+    NOT a hand-rolled stamp: this is the exact core+v2 shape the real
+    cutover produces, so tests against it exercise the real
+    ``self._is_v2_generation`` gate rather than a synthetic approximation.
+    Bootstraps the same two legacy workspace rows as the plain ``db``
+    fixture above.
+    """
+    staging_path = str(tmp_path / "entities.db.v2-test")
+    rebuild_tool.build_staging_database(staging_path)
+    database = EntityDatabase(staging_path)
+    _bootstrap_test_workspace(database)
+    _bootstrap_test_workspace(database, "__other__")
+    yield database
+    database.close()
+
+
+def _events_for(v2_db, entity_uuid: str, *, axis: str | None = None) -> list[dict]:
+    """Raw SELECT over the v2 ``events`` table for *entity_uuid*.
+
+    No production code reads events.py at feature 132's scope (the Scope
+    model's post-cutover reads stay v1), so tests query the table
+    directly rather than via a public read API.
+    """
+    sql = "SELECT * FROM events WHERE entity_uuid = ?"
+    params: list = [entity_uuid]
+    if axis is not None:
+        sql += " AND axis = ?"
+        params.append(axis)
+    sql += " ORDER BY uuid"
+    return [dict(r) for r in v2_db._conn.execute(sql, params).fetchall()]
+
+
+def _db_file_path(db: EntityDatabase) -> str:
+    """The 'main' database's file path, via PRAGMA database_list."""
+    return db._conn.execute("PRAGMA database_list").fetchone()[2]
+
+
+class _EventsInsertFailureProxy:
+    """Thin proxy that fails on the ``INSERT INTO events`` statement,
+    forwarding everything else to the real connection. Mirrors
+    test_event_sourced_state.py's ``_Proxy`` (built fresh here rather
+    than patching ``sqlite3.Connection.execute`` directly because the
+    C-extension method is read-only).
+    """
+
+    def __init__(self, target):
+        self._target = target
+
+    def execute(self, sql, params=None):
+        if "INSERT INTO events" in sql:
+            raise RuntimeError("test injection: events insert failed")
+        if params is None:
+            return self._target.execute(sql)
+        return self._target.execute(sql, params)
+
+    def __getattr__(self, item):
+        return getattr(self._target, item)
+
+
+class TestV2GenerationCachedFlag:
+    """``_is_v2_generation`` is computed once, in ``_migrate()`` (D5's
+    'one _metadata read, cached per connection')."""
+
+    def test_v1_file_flag_is_false(self, db: EntityDatabase):
+        assert db._is_v2_generation is False
+
+    def test_v2_file_flag_is_true(self, v2_db: EntityDatabase):
+        assert v2_db._is_v2_generation is True
+
+    def test_v1_generation_emit_is_a_silent_no_op(self, db: EntityDatabase):
+        """The guard is a REAL branch, not decorative (plan.md): a v1 file
+        has no ``events`` table at all, so calling the dual-write-wired
+        methods must NOT attempt to touch it -- proven here by asserting
+        no exception (an unconditional emit would raise
+        'no such table: events' on every v1 fixture in the suite)."""
+        ws_uuid = _bootstrap_test_workspace(db, "v1-guard-proj")
+        entity_uuid = db.register_entity(
+            "backlog", "000-v1", "V1 Item", workspace_uuid=ws_uuid,
+        )
+        db.update_entity(entity_uuid, status="archived")
+        assert db.get_entity_by_uuid(entity_uuid)["status"] == "archived"
+
+
+class TestSC7AcknowledgedButLostRegression:
+    """SC7 (#055/#060 incident pins): success is reported only AFTER
+    commit. Each test opens a SEPARATE, freshly-opened connection to the
+    SAME file immediately after the call returns -- proving durable
+    commit, not merely same-connection/same-transaction visibility (the
+    exact shape of the original incident: a caller reported success while
+    a DIFFERENT reader still saw nothing)."""
+
+    def test_backlog_registration_visible_to_get_entity_and_raw_sql(self, v2_db):
+        ws_uuid = _bootstrap_test_workspace(v2_db, "backlog-proj")
+        entity_uuid = v2_db.register_entity(
+            "backlog", "001-example", "Example backlog item",
+            workspace_uuid=ws_uuid,
+        )
+
+        # get_entity() sees it via the same connection.
+        assert v2_db.get_entity("backlog:001-example") is not None
+
+        # A SEPARATE connection to the SAME file also sees it immediately.
+        other_conn = sqlite3.connect(_db_file_path(v2_db))
+        try:
+            row = other_conn.execute(
+                "SELECT uuid FROM entities WHERE uuid = ?", (entity_uuid,)
+            ).fetchone()
+        finally:
+            other_conn.close()
+        assert row is not None
+
+    def test_phase_event_exists_after_complete_reports_success(self, v2_db):
+        ws_uuid = _bootstrap_test_workspace(v2_db, "feat-proj")
+        v2_db.register_entity(
+            "feature", "002-example", "Example feature", workspace_uuid=ws_uuid,
+        )
+        v2_db.create_workflow_phase(
+            "feature:002-example", workflow_phase="brainstorm",
+        )
+
+        v2_db.append_phase_event(
+            type_id="feature:002-example", project_id="feat-proj",
+            event_type="completed", phase="brainstorm", iterations=1,
+            workspace_uuid=ws_uuid,
+        )
+
+        rows = v2_db.query_phase_events(
+            type_id="feature:002-example", event_type="completed",
+        )
+        assert len(rows) == 1
+
+        other_conn = sqlite3.connect(_db_file_path(v2_db))
+        try:
+            count = other_conn.execute(
+                "SELECT COUNT(*) FROM phase_events "
+                "WHERE type_id = ? AND event_type = 'completed'",
+                ("feature:002-example",),
+            ).fetchone()[0]
+        finally:
+            other_conn.close()
+        assert count == 1
+
+
+class TestSC8DualWritePerClass:
+    """SC8: per-class dual-write atomicity, tool-built v2 files.
+
+    5 of the 6 funnel classes are covered here (phase transition, entity
+    registration, status change via update_entity, cascade flip lives in
+    test_dependencies.py, initial establishment via create_workflow_phase).
+    The 6th -- entity deletion -- is NOT implemented (see delete_entity's
+    docstring + TestDeleteEntityV2GenerationFKFinding below): wiring an
+    ``entity_deleted`` emit is provably impossible to also succeed at
+    hard-deleting the row, given events.entity_uuid's FK. Recorded as a
+    deliberate, flagged gap, not a silently-skipped class.
+    """
+
+    def test_phase_transition_emits_pipeline_axis_event_for_feature_kind(
+        self, v2_db,
+    ):
+        ws_uuid = _bootstrap_test_workspace(v2_db, "phase-proj")
+        entity_uuid = v2_db.register_entity(
+            "feature", "004-flow", "Flow Feature", workspace_uuid=ws_uuid,
+        )
+        v2_db.create_workflow_phase("feature:004-flow", workflow_phase="brainstorm")
+
+        v2_db.append_phase_event(
+            type_id="feature:004-flow", project_id="phase-proj",
+            event_type="started", phase="specify", workspace_uuid=ws_uuid,
+        )
+
+        started = [
+            e for e in _events_for(v2_db, entity_uuid, axis="pipeline")
+            if e["event_type"] == "started"
+        ]
+        assert len(started) == 1
+        assert started[0]["to_value"] == "specify"
+
+    def test_phase_transition_resolves_entity_without_workspace_uuid(self, v2_db):
+        """The unscoped fallback branch (workspace_uuid=None -- exactly
+        how workflow_state_server.py's `_workspace_uuid or None` pattern
+        calls append_phase_event for phase transitions): still resolves
+        the right entity and emits, since workflow_phases.type_id is
+        globally unique (this entity's type_id has no cross-workspace
+        duplicate here)."""
+        ws_uuid = _bootstrap_test_workspace(v2_db, "unscoped-proj")
+        entity_uuid = v2_db.register_entity(
+            "feature", "013-unscoped", "Unscoped Feature", workspace_uuid=ws_uuid,
+        )
+        v2_db.create_workflow_phase("feature:013-unscoped", workflow_phase="brainstorm")
+
+        v2_db.append_phase_event(
+            type_id="feature:013-unscoped", project_id="unscoped-proj",
+            event_type="started", phase="specify", workspace_uuid=None,
+        )
+
+        started = [
+            e for e in _events_for(v2_db, entity_uuid, axis="pipeline")
+            if e["event_type"] == "started"
+        ]
+        assert len(started) == 1
+        assert started[0]["to_value"] == "specify"
+
+    def test_register_entity_emits_entity_created_event(self, v2_db):
+        ws_uuid = _bootstrap_test_workspace(v2_db, "reg-proj")
+        entity_uuid = v2_db.register_entity(
+            "backlog", "003-widget", "Widget", workspace_uuid=ws_uuid,
+            status="active",
+        )
+
+        events = _events_for(v2_db, entity_uuid)
+        assert len(events) == 1
+        assert events[0]["event_type"] == "entity_created"
+        assert events[0]["axis"] == "lifecycle"
+        assert events[0]["to_value"] is None
+        payload = json.loads(events[0]["payload"])
+        assert payload == {"kind": "backlog", "name": "Widget", "status": "active"}
+
+    def test_update_entity_emits_entity_status_changed_event(self, v2_db):
+        ws_uuid = _bootstrap_test_workspace(v2_db, "upd-proj")
+        entity_uuid = v2_db.register_entity(
+            "backlog", "007-item", "Item", workspace_uuid=ws_uuid,
+            status="active",
+        )
+
+        v2_db.update_entity(entity_uuid, status="archived")
+
+        changed = [
+            e for e in _events_for(v2_db, entity_uuid, axis="lifecycle")
+            if e["event_type"] == "entity_status_changed"
+        ]
+        assert len(changed) == 1
+        assert changed[0]["to_value"] == "archived"
+
+    def test_update_entity_no_op_status_write_emits_nothing(self, v2_db):
+        """AC-C.4 (pre-existing, re-verified post-132): no status change
+        (same value) means no emit at all."""
+        ws_uuid = _bootstrap_test_workspace(v2_db, "noop-proj")
+        entity_uuid = v2_db.register_entity(
+            "backlog", "008-steady", "Steady", workspace_uuid=ws_uuid,
+            status="active",
+        )
+
+        v2_db.update_entity(entity_uuid, status="active")
+
+        changed = [
+            e for e in _events_for(v2_db, entity_uuid)
+            if e["event_type"] == "entity_status_changed"
+        ]
+        assert changed == []
+
+    def test_create_workflow_phase_emits_pipeline_establishment_for_feature(
+        self, v2_db,
+    ):
+        ws_uuid = _bootstrap_test_workspace(v2_db, "estab-proj")
+        entity_uuid = v2_db.register_entity(
+            "feature", "005-newborn", "Newborn Feature", workspace_uuid=ws_uuid,
+        )
+
+        v2_db.create_workflow_phase("feature:005-newborn", workflow_phase="brainstorm")
+
+        established = [
+            e for e in _events_for(v2_db, entity_uuid, axis="pipeline")
+            if e["event_type"] == "workflow_established"
+        ]
+        assert len(established) == 1
+        assert established[0]["to_value"] == "brainstorm"
+
+    def test_create_workflow_phase_emits_lifecycle_establishment_for_5d_kind(
+        self, v2_db,
+    ):
+        ws_uuid = _bootstrap_test_workspace(v2_db, "estab-5d-proj")
+        entity_uuid = v2_db.register_entity(
+            "initiative", "i009-newborn", "Newborn Initiative",
+            workspace_uuid=ws_uuid,
+        )
+
+        v2_db.create_workflow_phase("initiative:i009-newborn", workflow_phase="discover")
+
+        established = [
+            e for e in _events_for(v2_db, entity_uuid, axis="lifecycle")
+            if e["event_type"] == "workflow_established"
+        ]
+        assert len(established) == 1
+        assert established[0]["to_value"] == "discover"
+
+    def test_create_workflow_phase_null_workflow_phase_is_null_safe(self, v2_db):
+        """to_value = the initial workflow_phase, NULL-safe (design D5):
+        the default (no workflow_phase kwarg) must not crash and must not
+        trip the pipeline vocab trigger (which only fires on NON-NULL
+        out-of-vocabulary values)."""
+        ws_uuid = _bootstrap_test_workspace(v2_db, "null-estab-proj")
+        entity_uuid = v2_db.register_entity(
+            "feature", "010-blank", "Blank Feature", workspace_uuid=ws_uuid,
+        )
+
+        v2_db.create_workflow_phase("feature:010-blank")
+
+        established = [
+            e for e in _events_for(v2_db, entity_uuid, axis="pipeline")
+            if e["event_type"] == "workflow_established"
+        ]
+        assert len(established) == 1
+        assert established[0]["to_value"] is None
+
+    def test_create_workflow_phase_emit_failure_rolls_back_establishment_insert(
+        self, v2_db,
+    ):
+        """SC8 / battery-r1 blocker: an emit failure inside
+        create_workflow_phase rolls back the workflow_phases INSERT too --
+        both-or-neither asserted on BOTH tables via a SEPARATE connection,
+        and only AFTER forcing a subsequent commit on the primary
+        connection. Pre-fix, the INSERT stayed pending (no transaction
+        wrapper; the IntegrityError handler re-raised without ROLLBACK)
+        and silently persisted at that next commit while the caller had
+        already been told the call failed -- the #055/#060 class inverted.
+
+        The failure is a REAL 122 vocab-trigger rejection, not an injected
+        proxy: 'discover' passes the v1 workflow_phases CHECK (the 5D arm
+        of the union) but is out-of-vocabulary for the pipeline axis a
+        feature-kind establishment emit targets.
+        """
+        ws_uuid = _bootstrap_test_workspace(v2_db, "estab-rollback-proj")
+        v2_db.register_entity(
+            "feature", "011-fumble", "Fumbled Feature", workspace_uuid=ws_uuid,
+        )
+
+        with pytest.raises(ValueError, match="out-of-vocabulary"):
+            v2_db.create_workflow_phase(
+                "feature:011-fumble", workflow_phase="discover",
+            )
+
+        # Force a subsequent commit on the SAME connection: pre-fix, this
+        # is the exact moment the orphaned pending INSERT persisted.
+        v2_db.register_entity(
+            "feature", "012-bystander", "Bystander", workspace_uuid=ws_uuid,
+        )
+
+        other_conn = sqlite3.connect(_db_file_path(v2_db))
+        try:
+            wp_count = other_conn.execute(
+                "SELECT COUNT(*) FROM workflow_phases WHERE type_id = ?",
+                ("feature:011-fumble",),
+            ).fetchone()[0]
+            established_count = other_conn.execute(
+                "SELECT COUNT(*) FROM events "
+                "WHERE event_type = 'workflow_established'"
+            ).fetchone()[0]
+        finally:
+            other_conn.close()
+        assert wp_count == 0
+        assert established_count == 0
+
+    def test_update_entity_emit_failure_rolls_back_status_write(self, v2_db):
+        """SC8: an injected events-append failure rolls back the v1
+        write, asserted on BOTH tables -- for update_entity specifically,
+        the ROLLBACK of the status write (a fact true only on this
+        fail-closed path, not merely 'no exception')."""
+        ws_uuid = _bootstrap_test_workspace(v2_db, "rollback-proj")
+        entity_uuid = v2_db.register_entity(
+            "backlog", "011-brittle", "Brittle", workspace_uuid=ws_uuid,
+            status="active",
+        )
+
+        real_conn = v2_db._conn
+        v2_db._conn = _EventsInsertFailureProxy(real_conn)
+        try:
+            with pytest.raises(RuntimeError, match="test injection"):
+                v2_db.update_entity(entity_uuid, status="archived")
+        finally:
+            v2_db._conn = real_conn
+
+        # Both tables rolled back: status reverted...
+        entity = v2_db.get_entity_by_uuid(entity_uuid)
+        assert entity["status"] == "active"
+        # ...and no entity_status_changed event was added.
+        changed = [
+            e for e in _events_for(v2_db, entity_uuid)
+            if e["event_type"] == "entity_status_changed"
+        ]
+        assert changed == []
+
+    def test_register_entity_emit_failure_rolls_back_the_whole_insert(self, v2_db):
+        """Both-or-neither for the registration class too: an injected
+        events-append failure means the entity row itself never lands."""
+        ws_uuid = _bootstrap_test_workspace(v2_db, "reg-rollback-proj")
+
+        real_conn = v2_db._conn
+        v2_db._conn = _EventsInsertFailureProxy(real_conn)
+        try:
+            with pytest.raises(RuntimeError, match="test injection"):
+                v2_db.register_entity(
+                    "backlog", "012-never", "Never Lands",
+                    workspace_uuid=ws_uuid,
+                )
+        finally:
+            v2_db._conn = real_conn
+
+        assert v2_db.get_entity("backlog:012-never") is None
+
+
+class TestDeleteEntityV2GenerationFKFinding:
+    """Feature 132 task-3 finding (see delete_entity's docstring for the
+    full analysis): once ANY events row exists for an entity -- which
+    register_entity's own entity_created dual-write guarantees at birth
+    on a v2-generation file -- delete_entity's hard ``DELETE FROM
+    entities`` can never succeed again. ``events.entity_uuid`` is ``NOT
+    NULL REFERENCES entities(uuid)`` with no ``ON DELETE`` clause, and
+    ``events_no_delete`` fires even on an FK CASCADE-induced delete
+    (verified empirically, all 3 statement orderings, with and without
+    ``PRAGMA defer_foreign_keys``). This is an emergent consequence of
+    dual-write landing at all, NOT something delete_entity's own code
+    introduces (task 3 deliberately does NOT wire an emit into it).
+    Pinned here as an HONEST regression test -- not a fabricated success
+    case -- so a future v1-retirement effort has a concrete starting
+    point (options: a nullable entity_uuid + ON DELETE SET NULL in
+    events.py, or a soft-delete redesign of delete_entity's contract;
+    both are design decisions outside task 3's scope).
+    """
+
+    def test_delete_entity_raises_once_the_entity_has_any_v2_event(self, v2_db):
+        ws_uuid = _bootstrap_test_workspace(v2_db, "del-proj")
+        entity_uuid = v2_db.register_entity(
+            "feature", "099-doomed", "Doomed Feature", workspace_uuid=ws_uuid,
+        )
+        pre_events = v2_db._conn.execute(
+            "SELECT COUNT(*) FROM events WHERE entity_uuid = ?", (entity_uuid,)
+        ).fetchone()[0]
+        assert pre_events == 1  # register_entity's own entity_created row
+
+        with pytest.raises(sqlite3.IntegrityError):
+            v2_db.delete_entity("feature:099-doomed", workspace_uuid=ws_uuid)
+
+        # delete_entity's own (feature-132-unrelated) except/rollback
+        # already leaves the entity intact.
+        assert v2_db.get_entity("feature:099-doomed") is not None
+
+    def test_delete_entity_still_works_on_v1_file(self, db: EntityDatabase):
+        """Confirms the finding is v2-only: a v1 file has no events table
+        at all, so delete_entity's existing (pre-132) behavior is
+        completely unaffected -- see also TestDeleteEntity::
+        test_delete_entity_success above, this just makes the v1/v2
+        contrast explicit in one place."""
+        ws_uuid = _bootstrap_test_workspace(db, "del-v1-proj")
+        entity_uuid = db.register_entity(
+            "feature", "098-fine", "Fine Feature", workspace_uuid=ws_uuid,
+        )
+        db.delete_entity("feature:098-fine", workspace_uuid=ws_uuid)
+        assert db.get_entity("feature:098-fine") is None
+
+
+# ---------------------------------------------------------------------------
+# Test-deepening addition: TestSC8DualWritePerClass's rollback tests above
+# all use an INJECTED proxy failure (_EventsInsertFailureProxy);
+# TestVocabTriggerRejection (test_axes.py) proves the REAL 122 vocab
+# trigger rejects a raw INSERT, never through append_phase_event's own
+# production call path. Closes that gap: an out-of-vocabulary phase value
+# on a feature-kind entity's phase transition hits the SAME production
+# ``_emit_v2_event`` call as every legitimate transition and must roll
+# back the v1 phase_events INSERT + workflow_phases UPDATE too --
+# both-or-neither via the REAL mechanism, not a synthetic substitute.
+# dimension:error_paths, dimension:concurrency
+# ---------------------------------------------------------------------------
+class TestRealVocabTriggerRejectionRollsBackDualWrite:
+    def test_append_phase_event_real_vocab_rejection_rolls_back_v1_write_too(
+        self, v2_db,
+    ):
+        ws_uuid = _bootstrap_test_workspace(v2_db, "vocab-reject-proj")
+        v2_db.register_entity(
+            "feature", "014-vocab-reject", "Vocab Reject", workspace_uuid=ws_uuid,
+        )
+        v2_db.create_workflow_phase(
+            "feature:014-vocab-reject", workflow_phase="brainstorm",
+        )
+
+        with pytest.raises(sqlite3.IntegrityError):
+            v2_db.append_phase_event(
+                type_id="feature:014-vocab-reject", project_id="vocab-reject-proj",
+                event_type="started", phase="not-a-real-phase", workspace_uuid=ws_uuid,
+            )
+
+        rows = v2_db.query_phase_events(
+            type_id="feature:014-vocab-reject", event_type="started",
+        )
+        assert rows == []
+        wf = v2_db.get_workflow_phase("feature:014-vocab-reject")
+        assert wf["workflow_phase"] == "brainstorm"
+
+        entity_uuid = v2_db.get_entity("feature:014-vocab-reject")["uuid"]
+        started = [
+            e for e in _events_for(v2_db, entity_uuid, axis="pipeline")
+            if e["event_type"] == "started"
+        ]
+        assert started == []
+
+    def test_rejection_rollback_is_invisible_to_a_separate_connection(self, v2_db):
+        """Same failure as above, but proved via a SEPARATE connection to
+        the SAME file -- durable isolation, not merely same-connection
+        visibility (a rollback that somehow left a dirty read visible to
+        another connection would still pass a same-connection-only
+        check)."""
+        ws_uuid = _bootstrap_test_workspace(v2_db, "vocab-reject-iso-proj")
+        v2_db.register_entity(
+            "feature", "015-vocab-reject-iso", "Vocab Reject Iso",
+            workspace_uuid=ws_uuid,
+        )
+        v2_db.create_workflow_phase(
+            "feature:015-vocab-reject-iso", workflow_phase="brainstorm",
+        )
+
+        with pytest.raises(sqlite3.IntegrityError):
+            v2_db.append_phase_event(
+                type_id="feature:015-vocab-reject-iso",
+                project_id="vocab-reject-iso-proj",
+                event_type="started", phase="not-a-real-phase",
+                workspace_uuid=ws_uuid,
+            )
+
+        other_conn = sqlite3.connect(_db_file_path(v2_db))
+        try:
+            pe_count = other_conn.execute(
+                "SELECT COUNT(*) FROM phase_events "
+                "WHERE type_id = ? AND event_type = 'started'",
+                ("feature:015-vocab-reject-iso",),
+            ).fetchone()[0]
+            ev_count = other_conn.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type = 'started'"
+            ).fetchone()[0]
+        finally:
+            other_conn.close()
+        assert pe_count == 0
+        assert ev_count == 0

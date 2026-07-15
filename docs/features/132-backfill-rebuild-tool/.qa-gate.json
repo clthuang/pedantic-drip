@@ -1,0 +1,27 @@
+{
+  "feature": "132-backfill-rebuild-tool",
+  "gate_run_at": "2026-07-16T02:50:00+08:00",
+  "head_at_gate": "c29186ad",
+  "lanes": {
+    "A_execution": {
+      "model": "fable (general-purpose teammate)",
+      "verdict": "machinery PASS (6/6 probe families); dress-rehearsal outcome FAIL -> absorbed",
+      "findings": { "blocker": 1, "warning": 2 },
+      "note": "FIRST tool run against a copy of the REAL census (552 entities): staging build + v2 stamp + vocab triggers firing; counts parity EXACT 552->552 per kindxworkspace on cleaned copy; idempotent re-runs BYTE-IDENTICAL; dual-write all classes incl. battery-fix both-table rollback on real data; INSERT OR REPLACE/DELETE/UPDATE on events all rejected; live DB untouched by probes (mtime advanced from 4+ concurrent live MCP writer PIDs - a cutover-runbook fact). BLOCKER = the census, not the tool: pre-import vocab diff (fail-closed, zero writes) refuses 127 out-of-vocab feature phase rows / 41 features (54 retired 'create-tasks' + 73 char-exploded corruption rows). Warnings: char-explosion writer possibly live; 16 tolerated hygiene anomalies to review pre-cutover."
+    },
+    "B_regression": {
+      "model": "fable (general-purpose teammate)",
+      "verdict": "PASS",
+      "findings": { "blocker": 0, "warning": 0 },
+      "note": "strictly serial at efcde2f4: suite 3946/3/0 exact (clean first pass, neither known flake recurred); hooks 67/67; validate 0 errors / 5 warnings; doc-drift counts OK (commands 33 / agents 29 / skills 29 / entity_tools 20 / workflow_tools 22)."
+    },
+    "C_artifact_truth": {
+      "model": "fable (general-purpose teammate)",
+      "verdict": "PASS after absorption",
+      "findings": { "blocker": 0, "warning": 2 },
+      "note": "Substance of ALL finish artifacts TRUE at source (rtk-unfiltered re-runs): SC5 four symbols zero tracked refs; transaction wrapper + exactly 2 _emit_v2_event sites; allocator guard gone + create-project.md allocates atomically; #075 live at router; SC8/parity/rollback tests present; suite chain 3890->3946 arithmetic-exact; 64 files EXACT; backlog #081-#084 present; placeholder + CUTOVER-NOT-RUN stated consistently; retro 21=6+8+7 faithful; streak-break quotes 124's '13th consecutive' accurately; campaign-high 21>17 correct; 360-gate 47-file diff exact. W1: retro footnote framed derivation-time figures as current (38 commits was through efcde2f4 - 40 at audit HEAD; 1,348 kwarg sites was at impl-t5 - 1,354 at HEAD after deepener test files). W2: the 18-vs-17 round half-sweep - already resolved mid-audit by commit 30828ce7."
+    }
+  },
+  "dispositions": "Lane A blocker -> NOT a merge blocker (the tool's fail-closed refusal is designed behavior; cutover is manual/post-merge by contract): filed #085 (cleaning pre-pass runbook incl. stop-live-MCP-writers) and root-caused+FIXED the char-explosion's still-live writer vector in-gate (unguarded json.loads in _process_transition_phase; guard + red-proven test, suite 3946->3947 exact; #086 records it; leave-ground-tidier). Lane A warning-2's 16 hygiene anomalies folded into #085. Lane C W1 -> retro footnote corrected with per-figure derivation points (the moving-target-figure class, named as such in the retro). Lane C W2 -> pre-resolved by 30828ce7. CHANGELOG cutover note extended with the dress-rehearsal outcome. Restatement sweeps ran after each absorption.",
+  "verdict": "PASS — merge to develop approved; live cutover BLOCKED behind #085's pre-pass (by design, post-merge)"
+}

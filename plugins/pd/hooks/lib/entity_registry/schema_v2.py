@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS entity_relations (
   uuid       TEXT PRIMARY KEY,        -- uuid7 (v17 used INTEGER id — FR-4 violation, fixed)
   from_uuid  TEXT NOT NULL REFERENCES entities(uuid) ON DELETE CASCADE,
   to_uuid    TEXT NOT NULL REFERENCES entities(uuid) ON DELETE CASCADE,
-  kind       TEXT NOT NULL,           -- vocabulary CHECK deferred to 132 (physical v2 cutover owns the CHECK)
+  kind       TEXT NOT NULL,           -- vocabulary CHECK: done at 132 -- the cutover keeps entity_relations in its chain-produced (v1) shape, which already carries the ('fixes','blocks') CHECK; this core-owner DDL stays dark (unused at 132) until a later v1-retirement phase revisits it
   created_at TEXT NOT NULL
 );
 -- Carried over from v17 (database.py:4964-4967, :4971): ON DELETE CASCADE (dangling
