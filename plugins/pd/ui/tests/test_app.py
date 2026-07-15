@@ -179,34 +179,34 @@ def test_group_by_column_case_sensitive_value_treated_as_unknown(capsys):
 
 
 # ---------------------------------------------------------------------------
-# derived_from: spec:FR125-4 (all four truth-table branches exercised in
-# ONE render) + dimension:adversarial (Zero/One/Many, Never/Always: warnings
-# must never fire for legitimate rows and must never be deduped by value)
+# derived_from: spec:FR125-4 (all three truth-table branches exercised in
+# ONE render -- feature 132 retired the legacy-remap branch, so vocab/
+# ready/unknown are what's left) + dimension:adversarial (Zero/One/Many,
+# Never/Always: warnings must never fire for legitimate rows and must
+# never be deduped by value)
 # ---------------------------------------------------------------------------
 def test_group_by_column_mixed_batch_buckets_each_row_with_one_warning_per_unknown_row(capsys):
-    """A single render mixing a vocabulary row, a legacy row, a 'ready'
-    row, and two unknown rows SHARING one bogus value under different
-    type_ids buckets every row correctly and warns exactly once per
-    unknown row -- proving warnings aren't deduped by value and never leak
-    onto legitimate rows when several precedence branches fire together."""
+    """A single render mixing a vocabulary row, a 'ready' row, and two
+    unknown rows SHARING one bogus value under different type_ids buckets
+    every row correctly and warns exactly once per unknown row -- proving
+    warnings aren't deduped by value and never leak onto legitimate rows
+    when several precedence branches fire together."""
     from ui.routes.board import _group_by_column
 
-    # Given one vocabulary row, one legacy row, one ready row, and two
-    # unknown rows that share the SAME bogus value under different type_ids
+    # Given one vocabulary row, one ready row, and two unknown rows that
+    # share the SAME bogus value under different type_ids
     row_wip = {"execution_status": "wip", "type_id": "feature:vocab-wip"}
-    row_legacy = {"execution_status": "agent_review", "type_id": "feature:legacy-agent"}
     row_ready = {"execution_status": "ready", "type_id": "feature:vocab-ready"}
     row_unknown_a = {"execution_status": "bogus-shared", "type_id": "feature:unknown-a"}
     row_unknown_b = {"execution_status": "bogus-shared", "type_id": "feature:unknown-b"}
 
     # When they are grouped together in one call
     result = _group_by_column(
-        [row_wip, row_legacy, row_ready, row_unknown_a, row_unknown_b]
+        [row_wip, row_ready, row_unknown_a, row_unknown_b]
     )
 
-    # Then each row lands in its correct bucket -- vocab and remapped
-    # legacy rows share 'wip' without clobbering one another
-    assert result["wip"] == [row_wip, row_legacy]
+    # Then each row lands in its correct bucket
+    assert result["wip"] == [row_wip]
     assert result["ready"] == [row_ready]
     assert result["backlog"] == [row_unknown_a, row_unknown_b]
 
@@ -219,7 +219,6 @@ def test_group_by_column_mixed_batch_buckets_each_row_with_one_warning_per_unkno
     assert any("feature:unknown-b" in line for line in err_lines)
     assert all("bogus-shared" in line for line in err_lines)
     assert "feature:vocab-wip" not in captured.err
-    assert "feature:legacy-agent" not in captured.err
     assert "feature:vocab-ready" not in captured.err
 
 
@@ -251,33 +250,28 @@ def test_group_by_column_unknown_value_warns_on_every_independent_call(capsys):
 
 
 # ---------------------------------------------------------------------------
-# D7 helper unit matrix: resolve_execution_status passthrough/remap/None
+# D7 helper unit matrix: resolve_execution_status is a pure passthrough.
+# Feature 132 deleted the legacy-value remap dict (the backfill normalizes
+# stored values at source, so the display layer no longer remaps) -- this test
+# replaces the former passthrough/remap/None matrix AND the former
+# near-miss test (both collapsed into one scenario once there is no remap
+# branch left to miss).
 # ---------------------------------------------------------------------------
-def test_resolve_execution_status_passthrough_remap_and_none_matrix():
-    """Vocabulary/unknown values pass through unchanged; legacy values
-    remap via LEGACY_VALUE_REMAP; None passes through unchanged (helpers.py
-    D1 -- the caller decides defaulting/warning)."""
-    from ui.routes.helpers import LEGACY_VALUE_REMAP, resolve_execution_status
+def test_resolve_execution_status_is_pure_passthrough():
+    """Every value -- vocabulary, the former legacy-remap keys, unknown
+    strings, case/whitespace near-misses, and None -- passes through
+    resolve_execution_status completely unchanged (helpers.py D1 -- the
+    caller decides defaulting/warning). Asserts a fact true ONLY post-
+    deletion: agent_review/human_review no longer remap to wip."""
+    from ui.routes.helpers import resolve_execution_status
 
     assert resolve_execution_status("wip") == "wip"
     assert resolve_execution_status("totally-unknown") == "totally-unknown"
-    for legacy, expected in LEGACY_VALUE_REMAP.items():
-        assert resolve_execution_status(legacy) == expected
     assert resolve_execution_status(None) is None
-
-
-# ---------------------------------------------------------------------------
-# derived_from: dimension:boundary_values (equivalence-partition near-miss
-# of a LEGACY_VALUE_REMAP key, at the helper layer directly)
-# ---------------------------------------------------------------------------
-def test_resolve_execution_status_near_miss_values_pass_through_unchanged():
-    """Values that are near-misses of a real LEGACY_VALUE_REMAP key --
-    empty string, wrong case, or padded with whitespace -- are NOT treated
-    as that key. resolve_execution_status does an exact dict-key lookup;
-    it is the caller's job to decide what to do with the untouched
-    result."""
-    from ui.routes.helpers import resolve_execution_status
-
+    # The FORMER legacy-remap keys -- now indistinguishable from any other
+    # unmapped value.
+    assert resolve_execution_status("agent_review") == "agent_review"
+    assert resolve_execution_status("human_review") == "human_review"
     assert resolve_execution_status("") == ""
     assert resolve_execution_status("AGENT_REVIEW") == "AGENT_REVIEW"
     assert resolve_execution_status("Agent_Review") == "Agent_Review"
@@ -320,8 +314,13 @@ def _seed_workflow_row(db_file, type_id, kanban_column="backlog",
 
 
 # ---------------------------------------------------------------------------
-# SC3c (RED-FIRST -- renders in agent_review today): DB-seeded agent_review
-# row renders under the 'wip' board column with no stderr warning
+# Feature 132: the legacy-value remap dict is deleted -- a DB-seeded
+# agent_review row (still CHECK-legal on the v1 workflow_phases.kanban_column
+# column) no longer remaps to 'wip'. It now falls through the SAME
+# unknown-value path as any other unmapped string: bucketed to 'backlog'
+# WITH a stderr warning. These two tests replace the former SC3c
+# (feature 125) pair, which asserted the opposite (renders in 'wip', no
+# warning).
 # ---------------------------------------------------------------------------
 def _column_card_html(html: str, column_label: str) -> str:
     """Return the card-container HTML slice for one rendered board column,
@@ -338,11 +337,11 @@ def _column_card_html(html: str, column_label: str) -> str:
     return html[start:end]
 
 
-def test_group_by_column_seeded_agent_review_renders_in_wip(tmp_path, capsys):
+def test_group_by_column_seeded_agent_review_renders_in_backlog_with_warning(tmp_path, capsys):
     """A DB-seeded agent_review row (CHECK-legal v1 value) renders under
-    the 'wip' board column with no stderr warning. Pre-rewire it lands
-    under its own 'agent review' column instead (agent_review is still a
-    COLUMN_ORDER member today)."""
+    the 'backlog' board column WITH a stderr warning, post-legacy-remap
+    deletion -- the value is no longer special-cased, so it takes the same
+    unknown-value fallback every other unmapped string takes."""
     db_file = str(tmp_path / "test.db")
     EntityDatabase(db_file)
     _seed_workflow_row(db_file, "feature:legacy-review", kanban_column="agent_review")
@@ -355,23 +354,24 @@ def test_group_by_column_seeded_agent_review_renders_in_wip(tmp_path, capsys):
     response = client.get("/")
 
     assert response.status_code == 200
-    wip_section = _column_card_html(response.text, "wip")
-    assert "legacy-review" in wip_section
+    backlog_section = _column_card_html(response.text, "backlog")
+    assert "legacy-review" in backlog_section
 
     captured = capsys.readouterr()
-    assert "[board] unknown execution_status" not in captured.err
+    assert "[board] unknown execution_status 'agent_review'" in captured.err
+    assert "feature:legacy-review" in captured.err
 
 
 # ---------------------------------------------------------------------------
-# derived_from: spec:FR125-1 (human_review is defensive -- zero live
-# producers, but the v1 CHECK still admits stored rows, so a legacy row
-# must still remap and render end-to-end through the route, exactly like
-# agent_review's SC3c sibling above -- SC3c only exercises agent_review)
+# derived_from: spec:FR125-1 (human_review was the defensive-only sibling
+# of agent_review -- both were CHECK-legal but zero-producer legacy
+# values; feature 132 retires the remap for both alike)
 # ---------------------------------------------------------------------------
-def test_group_by_column_seeded_human_review_renders_in_wip(tmp_path, capsys):
+def test_group_by_column_seeded_human_review_renders_in_backlog_with_warning(tmp_path, capsys):
     """A DB-seeded human_review row (CHECK-legal v1 value, zero live
-    producers) renders under the 'wip' board column with no stderr
-    warning -- the defensive half of LEGACY_VALUE_REMAP."""
+    producers) renders under the 'backlog' board column WITH a stderr
+    warning -- the same post-deletion fallback as agent_review's sibling
+    above."""
     # Given a workflow_phases row seeded with the legacy human_review value
     db_file = str(tmp_path / "test.db")
     EntityDatabase(db_file)
@@ -385,13 +385,14 @@ def test_group_by_column_seeded_human_review_renders_in_wip(tmp_path, capsys):
     # When the board is rendered
     response = client.get("/")
 
-    # Then the row appears under 'wip', not its own column, with no warning
+    # Then the row appears under 'backlog' (not its own column), WITH a warning
     assert response.status_code == 200
-    wip_section = _column_card_html(response.text, "wip")
-    assert "legacy-human" in wip_section
+    backlog_section = _column_card_html(response.text, "backlog")
+    assert "legacy-human" in backlog_section
 
     captured = capsys.readouterr()
-    assert "[board] unknown execution_status" not in captured.err
+    assert "[board] unknown execution_status 'human_review'" in captured.err
+    assert "feature:legacy-human" in captured.err
 
 
 # ---------------------------------------------------------------------------

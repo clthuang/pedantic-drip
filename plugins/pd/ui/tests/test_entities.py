@@ -571,12 +571,14 @@ def test_entity_detail_selects_correct_row_by_type_id_when_multiple_rows_exist(t
 
 # ---------------------------------------------------------------------------
 # derived_from: spec:FR125-1, FR125-2 (detail route is the third read
-# surface required to apply the shared remap; design:D4's zero-occurrence
-# path, exercised with a second, unrelated row also present)
+# surface; feature 132 deleted the legacy-value remap dict -- the backfill
+# now normalizes stored values at source, so this surface's contract
+# flips to "renders whatever comes back", exercised with a second,
+# unrelated row also present)
 # ---------------------------------------------------------------------------
-def test_entity_detail_renders_legacy_agent_review_as_wip_with_other_rows_present(tmp_path):
+def test_entity_detail_renders_legacy_agent_review_verbatim_with_other_rows_present(tmp_path):
     """The detail page for an entity stored with the legacy agent_review
-    value shows 'wip', not the raw legacy string -- with a second,
+    value shows the raw string verbatim (no remap), with a second,
     unrelated workflow_phases row also present in the (unscoped) table."""
     # Given an agent_review entity AND a second, unrelated vocabulary row
     db_file = str(tmp_path / "test.db")
@@ -600,20 +602,19 @@ def test_entity_detail_renders_legacy_agent_review_as_wip_with_other_rows_presen
     # When the legacy entity's detail page is requested
     response = client.get("/entities/brainstorm:legacy-agent-detail")
 
-    # Then it shows 'wip', and the raw legacy value never appears
+    # Then it shows the raw legacy value verbatim -- no remap to 'wip'
     assert response.status_code == 200
-    assert "wip" in response.text
-    assert "agent_review" not in response.text
+    assert "agent_review" in response.text
 
 
 # ---------------------------------------------------------------------------
-# derived_from: spec:FR125-1 (human_review's defensive remap, exercised on
-# the detail surface -- SC3c and the board sibling above only cover it via
-# the board)
+# derived_from: spec:FR125-1 (human_review was agent_review's defensive
+# sibling -- feature 132 retires the remap for both alike, exercised here
+# on the detail surface)
 # ---------------------------------------------------------------------------
-def test_entity_detail_renders_legacy_human_review_as_wip(tmp_path):
+def test_entity_detail_renders_legacy_human_review_verbatim(tmp_path):
     """The detail page for an entity stored with the defensive
-    human_review legacy value shows 'wip', not the raw legacy string."""
+    human_review legacy value shows the raw string verbatim (no remap)."""
     # Given an entity seeded with the legacy human_review value
     db_file = str(tmp_path / "test.db")
     db = EntityDatabase(db_file)
@@ -631,10 +632,9 @@ def test_entity_detail_renders_legacy_human_review_as_wip(tmp_path):
     # When the detail page is requested
     response = client.get("/entities/feature:legacy-human-detail")
 
-    # Then it shows 'wip', and the raw legacy value never appears
+    # Then it shows the raw legacy value verbatim -- no remap to 'wip'
     assert response.status_code == 200
-    assert "wip" in response.text
-    assert "human_review" not in response.text
+    assert "human_review" in response.text
 
 
 # ---------------------------------------------------------------------------
@@ -1348,18 +1348,18 @@ def test_entity_list_execution_status_annotation(integration_client):
 
 # ---------------------------------------------------------------------------
 # derived_from: spec:FR125-1, FR125-2 (the shared helper covers ALL THREE
-# read surfaces -- board, entities-list annotation, entity-detail; SC3c
-# only proves the board surface, this proves the list surface)
+# read surfaces -- board, entities-list annotation, entity-detail; feature
+# 132 deleted the legacy-value remap dict, so this surface's contract
+# flips to "renders whatever comes back" like its detail-page sibling)
 # ---------------------------------------------------------------------------
-def test_entity_list_renders_legacy_values_remapped_to_wip_not_raw(tmp_path):
+def test_entity_list_renders_legacy_values_verbatim_not_remapped(tmp_path):
     """Entities whose stored kanban_column is a legacy value (agent_review,
-    human_review) show 'wip' in the entities-list table, and the raw
-    legacy strings never leak into the rendered page.
+    human_review) show the raw value verbatim in the entities-list table --
+    no remap to 'wip' (feature 132 retired the remap; the backfill
+    normalizes stored values at source instead).
 
-    Anticipate: if the list annotation forgot to call
-    resolve_execution_status (or a board-only remap was implemented
-    instead of the shared helper), these cells would show the raw legacy
-    value instead of 'wip'.
+    Anticipate: if a remap mechanism were reintroduced at this display
+    layer, these cells would show 'wip' instead of the raw legacy value.
     """
     # Given two entities seeded with the two legacy kanban_column values
     db_file = str(tmp_path / "test.db")
@@ -1383,14 +1383,13 @@ def test_entity_list_renders_legacy_values_remapped_to_wip_not_raw(tmp_path):
     # When the entities list renders
     response = client.get("/entities")
 
-    # Then both rows resolve to 'wip' (exact cell match) and the raw
-    # legacy values never leak into the page
+    # Then both rows show their raw legacy value verbatim -- no remap
     assert response.status_code == 200
     assert "Legacy Agent List" in response.text
     assert "Legacy Human List" in response.text
-    assert response.text.count("<td>wip</td>") == 2
-    assert "agent_review" not in response.text
-    assert "human_review" not in response.text
+    assert "<td>agent_review</td>" in response.text
+    assert "<td>human_review</td>" in response.text
+    assert response.text.count("<td>wip</td>") == 0
 
 
 # ---------------------------------------------------------------------------
