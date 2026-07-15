@@ -23,17 +23,17 @@ If no `--prd` argument: ask user for PRD path via AskUserQuestion.
 2. Check file is non-empty (> 100 bytes)
 3. If validation fails: show error, stop
 
-## Step 3: Derive Project ID
-
-1. Scan `{pd_artifacts_root}/projects/` for existing `P{NNN}-*` directories
-2. Extract highest NNN, increment by 1
-3. If no projects exist, start at P001
-4. Zero-pad to 3 digits
-
-## Step 4: Derive Slug
+## Step 3: Derive Slug
 
 1. Extract title from PRD first heading (e.g., `# PRD: Feature Name` → `feature-name`)
 2. Lowercase, replace spaces/special chars with hyphens, max 30 chars, trim trailing hyphens
+
+## Step 4: Derive Project ID
+
+Allocate the project ID atomically: call the `allocate_entity_id` MCP tool (entity-registry server) with `entity_type="project"` and `name="{slug}"` (from Step 3). Use the returned `seq` to build `P{NNN}` (zero-padded to 3 digits) — projects use the `P{NNN}` shape, not the tool's `{seq:03d}-{slug}` `entity_id` field; discard that field for this call (feature 132 D6.9 — the `P{NNN}-*` filesystem-directory scan is retired; the atomic `sequences` table is now the single source of truth for every kind, including `project`).
+
+- **On MCP error (any error envelope or unavailable tool): STOP** and surface the error to the user. Allocation is a hard prerequisite — never fall back to scanning the filesystem for `P{NNN}-*` directories.
+- **Drift cross-check**: if the returned `seq` is ≤ any existing `P{NNN}-*` directory number in `{pd_artifacts_root}/projects/`, STOP — workspace drift; tell the user to run doctor. (Feature 132's backfill seeds the `sequences` row from the live census max, so this should not fire on a healthy workspace.)
 
 ## Step 5: Create Project Directory
 

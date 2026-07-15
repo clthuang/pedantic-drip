@@ -981,9 +981,9 @@ def _emit_all_events(
 
 # Project ids are "P{NNN}" (no dash-slug suffix, commands/create-project.md)
 # — the generic leading-digit-run pattern next_sequence_value's own
-# bootstrap uses (database.py) is regex-blind to the leading "P" by
-# design (entity_server.py's allocate_entity_id kind_deferred docstring
-# names this explicitly); every other kind uses "{seq:03d}-{slug}".
+# bootstrap uses (database.py) is regex-blind to the leading "P"; every
+# other kind uses "{seq:03d}-{slug}" (entity_server.py's allocate_entity_id,
+# task 5's D6.9 cutover — "project" is no longer refused there either).
 _PROJECT_DISPLAY_RE = re.compile(r"^P(\d+)$")
 _GENERIC_DISPLAY_RE = re.compile(r"^(\d+)")
 

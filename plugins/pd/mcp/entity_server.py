@@ -518,7 +518,6 @@ async def register_entity(
     parent_uuid: str | None = None,
     metadata: str | dict | None = None,
     workspace_uuid: str | None = None,
-    project_id: str | None = None,
     auto_id: bool = False,
 ) -> str:
     """Register a new entity in the lineage registry.
@@ -549,11 +548,6 @@ async def register_entity(
         Workspace identity (feature 108). When ``None``, the MCP server
         resolves it via the lazy ``_workspace_uuid`` global populated at
         server startup from ``.claude/pd/workspace.json``.
-    project_id:
-        Legacy project scope (pre-Migration-11). Retained for the duration
-        of the Migration 11 transition: when ``UNIQUE(workspace_uuid,
-        type_id)`` semantics are fully wired through database.py the kwarg
-        is dropped.
     auto_id:
         If True, auto-generate entity_id from name. Cannot be used
         together with an explicit entity_id.
@@ -589,10 +583,15 @@ async def register_entity(
     # NOTE: Feature 114 FR-D.2 originally proposed defaulting to
     # _UNKNOWN_WORKSPACE_UUID here, but that broke test fixtures that pass
     # project_id="__unknown__" without seeding the workspaces table.
-    # _resolve_workspace_uuid_kwargs downstream maps "__unknown__" project_id
-    # to _UNKNOWN_WORKSPACE_UUID correctly when workspace_uuid is "".
+    # database.py's shared workspace-identity resolution (feature 132
+    # D6.4) maps "__unknown__" project_id to _UNKNOWN_WORKSPACE_UUID
+    # correctly when workspace_uuid is "".
     resolved_workspace_uuid = workspace_uuid or _workspace_uuid or ""
-    resolved_project_id = project_id or _project_id or "__unknown__"
+    # Feature 132 D6.4: the caller-facing project_id kwarg (Migration 11
+    # transition alias) is retired from this tool's surface -- resolution
+    # now falls back only to the server's own legacy-project-id global,
+    # which database.py's register_entity(project_id=...) still accepts.
+    resolved_project_id = _project_id or "__unknown__"
 
     if auto_id and entity_id:
         return "Error: cannot specify both auto_id=True and entity_id"
@@ -641,8 +640,12 @@ async def allocate_entity_id(entity_type: str = "", name: str = "") -> str:   # 
     ----------
     entity_type:
         The entity type to allocate a sequence value for (e.g. 'feature').
-        Required. ``'project'`` is refused (``kind_deferred`` — project
-        ids stay ``P{NNN}`` until the 132 cutover).
+        Required. ``'project'`` is accepted like any other kind (feature
+        132 D6.9 cutover — the backfill seeds the `sequences` table from
+        the live census max, so callers building ``P{NNN}`` ids use the
+        returned ``seq`` directly and discard the ``entity_id`` field,
+        which is shaped ``{seq:03d}-{slug}`` for every kind including
+        ``project``).
     name:
         Human-readable name; slugified into the id's suffix. Must slugify
         to a non-empty string.
@@ -652,7 +655,7 @@ async def allocate_entity_id(entity_type: str = "", name: str = "") -> str:   # 
     str
         JSON ``{"seq": <int>, "entity_id": "<seq:03d>-<slug>"}`` on
         success, or a structured error envelope (``workspace_unresolved``,
-        ``kind_deferred``, ``invalid_input``) on failure.
+        ``invalid_input``) on failure.
     """
     err = _check_db_available()
     if err:
@@ -669,16 +672,6 @@ async def allocate_entity_id(entity_type: str = "", name: str = "") -> str:   # 
                 "allocation refused"
             ),
             "recovery_hint": "restart the MCP server from the project root / run doctor",
-        })
-    if entity_type == "project":
-        return json.dumps({
-            "error": True,
-            "error_type": "kind_deferred",
-            "message": (
-                "project ids stay P{NNN} until the 132 cutover "
-                "(v1 bootstrap is regex-blind to P-leading ids)"
-            ),
-            "recovery_hint": "see backlog-manual #054(c)",
         })
     if not entity_type:
         return json.dumps({
