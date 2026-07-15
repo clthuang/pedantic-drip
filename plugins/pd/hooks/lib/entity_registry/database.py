@@ -1854,18 +1854,15 @@ def _migration_11_workspace_identity(conn: sqlite3.Connection) -> None:
         else:
             mapping[pid] = str(uuid_mod.uuid4())
 
-    # Emit the mapping JSON. PD_WORKSPACE_ROOT may override the workspace
-    # root (used by tests); falls back to os.getcwd().
-    workspace_root = os.environ.get("PD_WORKSPACE_ROOT") or os.getcwd()
-    try:
-        _atomic_write_workspace_mapping(workspace_root, mapping)
-    except OSError as e:
-        # Audit emit failure is non-fatal in dev environments where
-        # workspace_root may not be writable; warn and continue.
-        print(
-            f"[migration-11] workspace mapping audit emit failed: {e}",
-            file=sys.stderr,
-        )
+    # Feature 132 (D6.5 call-half): the workspace-mapping audit JSON
+    # write (_atomic_write_workspace_mapping) is REMOVED here — a
+    # filesystem side effect inside a migration body, incompatible with
+    # the rebuild tool's step-1 chain replay running this same function
+    # against an empty staging file (spec FR132-5b; #066's root cause).
+    # DDL/DML is unchanged: `mapping` (built above) still seeds the
+    # `workspaces` table below; only the JSON emission is gone. The now
+    # callerless `_atomic_write_workspace_mapping` function body is
+    # retained (feature 132 task 5 deletes it).
 
     if unknown_count:
         print(
@@ -5939,6 +5936,24 @@ def _migration_19_widen_phase_events_cascade_ready(
         except Exception:
             pass
         raise
+
+
+def _upsert_metadata(conn: sqlite3.Connection, key: str, value: str) -> None:
+    """Upsert one ``_metadata`` key/value pair (ON CONFLICT DO UPDATE).
+
+    Feature 132 #062: a plain ``INSERT OR IGNORE`` would silently skip a
+    version bump against an existing cell. Takes a raw connection (not an
+    ``EntityDatabase`` instance) so both schema generations' stamp-write
+    sites share this one implementation: ``EntityDatabase._migrate()``'s
+    per-version write (v1, below) and the v2 rebuild tool's
+    staging-connection generation stamp (``entity_registry.rebuild_tool``,
+    design 132 D1 step 3).
+    """
+    conn.execute(
+        "INSERT INTO _metadata (key, value) VALUES (?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (key, value),
+    )
 
 
 # Ordered mapping of version -> migration function.
@@ -10098,17 +10113,29 @@ class EntityDatabase:
         )
         self._commit()
 
+        # Feature 132 FR132-1: a v2-generation file's migrations are
+        # already fully applied. The rebuild tool's own step-1 chain
+        # replay (this very _migrate() call, against the still-unstamped
+        # fresh staging file) is the sanctioned initial use — it runs
+        # BEFORE the tool's step-3 stamp, so `schema_generation` is unset
+        # here and this guard is a no-op for it. Every open AFTER the
+        # stamp lands must short-circuit before the loop below: without
+        # this guard, a future migration 20+ would silently auto-run
+        # against the v2 file (rejected alternative: leaving the file at
+        # v1 schema_version=19 with no marker — see spec FR132-1).
+        generation_row = self._conn.execute(
+            "SELECT value FROM _metadata WHERE key='schema_generation'"
+        ).fetchone()
+        if generation_row is not None and generation_row[0] == "v2":
+            return
+
         current = self.get_schema_version()
         target = max(MIGRATIONS)
 
         for version in range(current + 1, target + 1):
             migration_fn = MIGRATIONS[version]
             migration_fn(self._conn)
-            self._conn.execute(
-                "INSERT INTO _metadata (key, value) VALUES (?, ?) "
-                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                ("schema_version", str(version)),
-            )
+            _upsert_metadata(self._conn, "schema_version", str(version))
             self._commit()
 
     # ------------------------------------------------------------------

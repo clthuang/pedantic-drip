@@ -2,11 +2,13 @@
 
 Owns everything event-log-shaped for v2 (design 119, D4/D7): DDL
 registration for the ``events`` table (immutable via BEFORE UPDATE/DELETE
-triggers), ``connect_v2`` (a v2 connection factory carrying the full
-PRAGMA contract), ``append_event``, and ``read_events``. Ships dark: no
-live v17 code path imports this module, only its own tests do (mirrors
-schema_v2.py, design D1) — feature 132's cutover decides when a v2
-database (and this event log) comes online.
+triggers, plus a BEFORE INSERT uuid-collision guard against
+``INSERT OR REPLACE`` — feature 132 design D7b, FR132-7), ``connect_v2``
+(a v2 connection factory carrying the full PRAGMA contract),
+``append_event``, and ``read_events``. Ships dark: no live v17 code path
+imports this module, only its own tests do (mirrors schema_v2.py, design
+D1) — feature 132's cutover decides when a v2 database (and this event
+log) comes online.
 
 Importing this module registers "events" into
 ``entity_registry.schema_v2.DDL_REGISTRY`` as a side effect (module top,
@@ -65,7 +67,8 @@ from entity_registry import schema_v2
 from entity_registry.uuid7 import generate_uuid7
 from sqlite_retry import with_retry
 
-# events DDL (design 119, D7 — verbatim). No `created_at` besides
+# events DDL (design 119, D7 — verbatim, plus feature 132 D7b's
+# events_no_replace trigger appended below). No `created_at` besides
 # `timestamp` (one time column; v1 phase_events' separate created_at
 # duplicated it). No `source` column (v1 had live/backfill — v2 encodes
 # provenance in `actor`, e.g. "backfill:132"; one mechanism, not two).
@@ -86,6 +89,9 @@ CREATE INDEX IF NOT EXISTS idx_events_timestamp   ON events(timestamp);
 CREATE TRIGGER IF NOT EXISTS events_no_update BEFORE UPDATE ON events
 BEGIN SELECT RAISE(ABORT, 'events rows are immutable (PRD NFR-4)'); END;
 CREATE TRIGGER IF NOT EXISTS events_no_delete BEFORE DELETE ON events
+BEGIN SELECT RAISE(ABORT, 'events rows are immutable (PRD NFR-4)'); END;
+CREATE TRIGGER IF NOT EXISTS events_no_replace BEFORE INSERT ON events
+WHEN EXISTS(SELECT 1 FROM events WHERE uuid = NEW.uuid)
 BEGIN SELECT RAISE(ABORT, 'events rows are immutable (PRD NFR-4)'); END;
 """
 
