@@ -568,12 +568,14 @@ class WorkflowStateEngine:
                 mode=state.mode,
             )
         except ValueError:
-            # Two ValueError sources post-132: a duplicate-row conflict
-            # (another writer won the race) or a rolled-back v2 emit
-            # failure (create_workflow_phase is transaction-wrapped, so
-            # its row is GONE on that path). The re-fetch discriminates:
-            # a row exists only for the duplicate case -- return it;
-            # an emit failure finds nothing and re-raises loudly.
+            # Three ValueError sources post-132 (battery-r2 count): a
+            # duplicate-row conflict (another writer won the race), a v1
+            # CHECK-constraint rejection (bad values from parsed
+            # .meta.json), or a rolled-back v2 emit failure
+            # (create_workflow_phase is transaction-wrapped, so its row
+            # is GONE on that path). The re-fetch discriminates: a row
+            # exists only for the duplicate case -- return it; the other
+            # two find nothing and re-raise loudly.
             row = self.db.get_workflow_phase(feature_type_id)
             if row is not None:
                 return self._row_to_state(row, source="meta_json")
