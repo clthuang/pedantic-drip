@@ -627,10 +627,11 @@ class TestMigrateGenerationGuardNonVacuity:
 
 
 # ---------------------------------------------------------------------------
-# D6.5 call-half / plan.md "chain-replay DDL-identity": removing the
-# _atomic_write_workspace_mapping call from migration 11 must not change
-# what migration 11 BUILDS — only that it no longer writes a JSON audit
-# file (#066's root cause).
+# D6.5 / plan.md "chain-replay DDL-identity": removing the migration-11
+# workspace-mapping audit-JSON write (its call site was neutralized at
+# task 1; the now-callerless helper itself is deleted at task 5) must not
+# change what migration 11 BUILDS — only that it no longer writes a JSON
+# audit file (#066's root cause).
 # ---------------------------------------------------------------------------
 class TestMigrationElevenCallSiteRemoved:
     def test_workspace_identity_ddl_survives_the_removed_call(

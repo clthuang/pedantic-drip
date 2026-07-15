@@ -8738,29 +8738,44 @@ def test_m15_safe_to_rerun_with_documented_reset_semantics(tmp_path):
 
 
 class TestProvidedWorkspaceUuidMembership:
-    """Task #5: _resolve_workspace_uuid_kwargs fails loud on an orphaned
-    provided workspace_uuid instead of letting a bare FK error escape."""
+    """Task #5: ``_validated_provided_workspace_uuid`` fails loud on an
+    orphaned provided workspace_uuid instead of letting a bare FK error
+    escape. Feature 132 D6.4 deleted the (workspace_uuid, project_id)
+    dual-kwarg wrapper this class used to exercise indirectly — every
+    method below rewires to call the surviving helper the wrapper always
+    delegated to for the provided-workspace_uuid branches; the
+    split-brain guard is re-homed here, not dropped."""
 
     _ORPHAN = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
 
     def test_orphan_uuid_raises_actionable(self, db):
         with pytest.raises(ValueError, match="split-brain"):
-            db._resolve_workspace_uuid_kwargs(self._ORPHAN, None)
+            db._validated_provided_workspace_uuid(self._ORPHAN, "register_entity")
 
     def test_orphan_uuid_message_names_doctor_and_restart(self, db):
         with pytest.raises(ValueError) as exc:
-            db._resolve_workspace_uuid_kwargs(self._ORPHAN, None)
+            db._validated_provided_workspace_uuid(self._ORPHAN, "register_entity")
         msg = str(exc.value)
         assert "pd:doctor --fix" in msg and "restart the session" in msg
 
-    def test_both_supplied_branch_also_checked(self, db):
-        # workspace_uuid wins over project_id, and is still validated.
-        with pytest.raises(ValueError, match="split-brain"):
-            db._resolve_workspace_uuid_kwargs(self._ORPHAN, "__test__")
+    def test_caller_label_interpolated_into_message(self, db):
+        """The guard's error names WHICHEVER caller invoked it -- ``_caller``
+        is a required, caller-supplied label on the direct helper (the
+        retired wrapper's "both workspace_uuid and project_id supplied"
+        precedence dance collapsed away with it, since D6.4's six rewired
+        callers no longer route a second kwarg through this guard).
+        Uses a caller distinct from the other tests in this class, proving
+        the interpolation is live rather than a hardcoded string -- a fact
+        true only when the label genuinely flows through."""
+        with pytest.raises(ValueError) as exc:
+            db._validated_provided_workspace_uuid(
+                self._ORPHAN, "upsert_workflow_phase"
+            )
+        assert "upsert_workflow_phase():" in str(exc.value)
 
     def test_present_uuid_returns_it(self, db):
         ws = _bootstrap_test_workspace(db, "membership-present")
-        assert db._resolve_workspace_uuid_kwargs(ws, None) == ws
+        assert db._validated_provided_workspace_uuid(ws, "register_entity") == ws
 
     def test_unknown_uuid_bootstraps_not_raises(self, db):
         from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
@@ -8771,8 +8786,8 @@ class TestProvidedWorkspaceUuidMembership:
             "DELETE FROM workspaces WHERE uuid = ?", (_UNKNOWN_WORKSPACE_UUID,)
         )
         db._conn.commit()
-        result = db._resolve_workspace_uuid_kwargs(
-            _UNKNOWN_WORKSPACE_UUID, None
+        result = db._validated_provided_workspace_uuid(
+            _UNKNOWN_WORKSPACE_UUID, "register_entity"
         )
         assert result == _UNKNOWN_WORKSPACE_UUID
         # Row now exists.

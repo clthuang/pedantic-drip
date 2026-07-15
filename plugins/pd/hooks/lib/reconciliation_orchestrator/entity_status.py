@@ -35,8 +35,10 @@ def _sync_meta_json_entities(db, full_artifacts_path, subdir, entity_type, proje
     """
     results = {"updated": 0, "skipped": 0, "archived": 0, "warnings": []}
 
-    # FR-10: when workspace_uuid is supplied, suppress project_id to avoid the
-    # _resolve_workspace_uuid_kwargs DeprecationWarning on the post-FR-2 path.
+    # FR-10: when workspace_uuid is supplied, suppress project_id to avoid
+    # the shared workspace-identity resolution's DeprecationWarning (used
+    # by update_entity's project_id->workspace_uuid alias, database.py,
+    # feature 132 D6.4) on the post-FR-2 path.
     effective_project_id = project_id if workspace_uuid is None else None
 
     scan_dir = os.path.join(full_artifacts_path, subdir)

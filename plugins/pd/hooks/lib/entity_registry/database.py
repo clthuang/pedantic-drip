@@ -1723,52 +1723,6 @@ def _migration_10_phase_events(conn: sqlite3.Connection) -> None:
         raise
 
 
-def _atomic_write_workspace_mapping(
-    workspace_root: str, mapping: dict[str, str]
-) -> str:
-    """Atomic-write the migration-11 workspace mapping audit JSON.
-
-    Writes ``<workspace_root>/.claude/pd/migrations/migration-11-workspace-mapping.json``
-    using the same-directory tempfile + os.replace pattern (NFR-7 atomicity).
-
-    Parameters
-    ----------
-    workspace_root:
-        Absolute path of the directory that owns ``.claude/``.
-    mapping:
-        ``{old_project_id_hex: new_workspace_uuid}`` dict.
-
-    Returns
-    -------
-    str
-        Absolute path to the emitted file.
-    """
-    import tempfile as _tempfile
-
-    target_dir = os.path.join(
-        workspace_root, ".claude", "pd", "migrations"
-    )
-    os.makedirs(target_dir, exist_ok=True)
-    target_path = os.path.join(target_dir, "migration-11-workspace-mapping.json")
-
-    fd, tmp_path = _tempfile.mkstemp(
-        prefix=".migration-11-workspace-mapping.", suffix=".json", dir=target_dir,
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(mapping, fh, indent=2, sort_keys=True)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp_path, target_path)
-    except Exception:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
-    return target_path
-
-
 def _migration_11_workspace_identity(conn: sqlite3.Connection) -> None:
     """Migration 11: workspaces table + entities.workspace_uuid + drop parent_type_id.
 
@@ -1854,15 +1808,15 @@ def _migration_11_workspace_identity(conn: sqlite3.Connection) -> None:
         else:
             mapping[pid] = str(uuid_mod.uuid4())
 
-    # Feature 132 (D6.5 call-half): the workspace-mapping audit JSON
-    # write (_atomic_write_workspace_mapping) is REMOVED here — a
-    # filesystem side effect inside a migration body, incompatible with
-    # the rebuild tool's step-1 chain replay running this same function
-    # against an empty staging file (spec FR132-5b; #066's root cause).
-    # DDL/DML is unchanged: `mapping` (built above) still seeds the
-    # `workspaces` table below; only the JSON emission is gone. The now
-    # callerless `_atomic_write_workspace_mapping` function body is
-    # retained (feature 132 task 5 deletes it).
+    # Feature 132 (D6.5): the workspace-mapping audit JSON write is
+    # REMOVED here — a filesystem side effect inside a migration body,
+    # incompatible with the rebuild tool's step-1 chain replay running
+    # this same function against an empty staging file (spec FR132-5b;
+    # #066's root cause). DDL/DML is unchanged: `mapping` (built above)
+    # still seeds the `workspaces` table below; only the JSON emission is
+    # gone. The helper that used to perform that write (task 1's call-half
+    # removal left it callerless) is deleted in the same change (D6.5
+    # body-half, task 5).
 
     if unknown_count:
         print(
@@ -6327,73 +6281,6 @@ class EntityDatabase:
             )
         return workspace_uuid
 
-    def _resolve_workspace_uuid_kwargs(
-        self,
-        workspace_uuid: str | None,
-        project_id: str | None,
-        *,
-        _caller: str = "register_entity",
-    ) -> str:
-        """Resolve the (workspace_uuid, project_id) kwarg pair to a canonical
-        workspace_uuid.
-
-        Compatibility shim for Feature 108 Migration 11 transition window.
-
-        Resolution rules
-        ----------------
-        * Both supplied → ``workspace_uuid`` wins; emits DeprecationWarning.
-        * Only ``workspace_uuid`` → returned as-is.
-        * Only ``project_id == "__unknown__"`` → returns canonical
-          ``_UNKNOWN_WORKSPACE_UUID`` and ensures the workspaces row exists.
-        * Only ``project_id == "<other>"`` → JOIN on
-          ``workspaces.project_id_legacy``; raises if no row matches.
-        * Neither → ``ValueError``.
-
-        Returns
-        -------
-        str
-            The resolved workspace_uuid (FK target satisfied).
-
-        Raises
-        ------
-        ValueError
-            If neither kwarg is supplied, or if a non-``__unknown__``
-            ``project_id`` cannot be resolved against the workspaces table.
-        """
-        if workspace_uuid is not None and project_id is not None:
-            warnings.warn(
-                f"{_caller}() received both workspace_uuid and project_id; "
-                f"workspace_uuid wins. project_id is deprecated.",
-                DeprecationWarning,
-                stacklevel=3,
-            )
-            return self._validated_provided_workspace_uuid(
-                workspace_uuid, _caller
-            )
-        if workspace_uuid is not None:
-            return self._validated_provided_workspace_uuid(
-                workspace_uuid, _caller
-            )
-        if project_id is None:
-            raise ValueError(
-                f"{_caller}() requires workspace_uuid or project_id"
-            )
-        # Legacy project_id path
-        if project_id == "__unknown__":
-            self._ensure_unknown_workspace_row()
-            return _UNKNOWN_WORKSPACE_UUID
-        row = self._conn.execute(
-            "SELECT uuid FROM workspaces WHERE project_id_legacy = ?",
-            (project_id,),
-        ).fetchone()
-        if row is None:
-            raise ValueError(
-                f"{_caller}(): project_id={project_id!r} has no matching "
-                f"workspaces.project_id_legacy row. Either pass "
-                f"workspace_uuid directly or pre-register the workspace."
-            )
-        return row["uuid"]
-
     def _resolve_optional_workspace_filter(
         self,
         workspace_uuid: str | None,
@@ -6403,10 +6290,24 @@ class EntityDatabase:
     ) -> str | None:
         """Resolve an optional (workspace_uuid, project_id) scope filter.
 
-        Variant of :meth:`_resolve_workspace_uuid_kwargs` for read paths
-        that treat ``None`` as "no scoping" rather than an error. Used by
-        ``list_entities``, ``search_entities``, ``_resolve_identifier``,
-        ``resolve_ref``, etc.
+        Originally a read-path-only variant of the Feature 108 Migration 11
+        transition shim (the dedicated (workspace_uuid, project_id) resolver
+        method retired at feature 132 D6.4). Two call-site shapes now share
+        it:
+
+        * Read paths (``list_entities``, ``search_entities``,
+          ``_resolve_identifier``, ``resolve_ref``, etc.) use the return
+          value AS-IS — ``None`` means "no scoping", and an unrecognized
+          ``workspace_uuid`` is not an error (a query against it just
+          yields zero rows).
+        * Write paths (``register_entity``, ``upsert_entity``,
+          ``update_entity``'s re-attribution branch, ``upsert_workflow_phase``,
+          ``next_sequence_value``, ``register_entities_batch``) additionally
+          require a resolved value AND run it through
+          :meth:`_validated_provided_workspace_uuid` — the split-brain
+          fail-loud guard the retired shim used to apply directly. This
+          reproduces the old shim's exact behavior (same messages, same
+          ``stacklevel``) without a dedicated wrapper.
 
         Resolution rules
         ----------------
@@ -7126,8 +7027,15 @@ class EntityDatabase:
             for w in validate_metadata(entity_type, metadata):
                 print(f"metadata warning: {w}", file=sys.stderr)
 
-        ws_uuid = self._resolve_workspace_uuid_kwargs(
+        ws_uuid = self._resolve_optional_workspace_filter(
             workspace_uuid, project_id, _caller="register_entity"
+        )
+        if ws_uuid is None:
+            raise ValueError(
+                "register_entity() requires workspace_uuid or project_id"
+            )
+        ws_uuid = self._validated_provided_workspace_uuid(
+            ws_uuid, "register_entity"
         )
 
         # Compat shim (Feature 108 transition): resolve deprecated
@@ -7422,8 +7330,15 @@ class EntityDatabase:
                 # that helper raises ValueError on cross-workspace ambiguity
                 # (database.py get_entity body); upsert knows the workspace
                 # so we scope the lookup explicitly.
-                ws_uuid = self._resolve_workspace_uuid_kwargs(
+                ws_uuid = self._resolve_optional_workspace_filter(
                     workspace_uuid, project_id, _caller="upsert_entity"
+                )
+                if ws_uuid is None:
+                    raise ValueError(
+                        "upsert_entity() requires workspace_uuid or project_id"
+                    )
+                ws_uuid = self._validated_provided_workspace_uuid(
+                    ws_uuid, "upsert_entity"
                 )
                 row = self._conn.execute(
                     "SELECT uuid, status FROM entities "
@@ -8095,8 +8010,11 @@ class EntityDatabase:
             # Resolve the target workspace, bootstrapping the canonical
             # __unknown__ row when applicable. For arbitrary legacy ids we
             # require an existing workspaces row (callers must pre-register).
-            target_ws_uuid = self._resolve_workspace_uuid_kwargs(
+            target_ws_uuid = self._resolve_optional_workspace_filter(
                 None, new_project_id, _caller="update_entity"
+            )
+            target_ws_uuid = self._validated_provided_workspace_uuid(
+                target_ws_uuid, "update_entity"
             )
             self._conn.commit()  # flush implicit transaction
             self._conn.execute("BEGIN IMMEDIATE")
@@ -9522,8 +9440,9 @@ class EntityDatabase:
             The entity type_id (e.g. ``"feature:my-feat"``).
         project_id:
             DEPRECATED — legacy alias for ``workspace_uuid``. Resolved via
-            ``_resolve_workspace_uuid_kwargs``. Defaults to ``"__unknown__"``
-            when neither this nor ``workspace_uuid`` is supplied.
+            the shared workspace-identity resolution (feature 132 D6.4).
+            Defaults to ``"__unknown__"`` when neither this nor
+            ``workspace_uuid`` is supplied.
         workspace_uuid:
             Workspace scope for entity existence check. Post-Migration-11
             the entities table is keyed on (workspace_uuid, type_id).
@@ -9554,8 +9473,16 @@ class EntityDatabase:
         if workspace_uuid is None and project_id is None:
             project_id = "__unknown__"
         try:
-            ws_uuid = self._resolve_workspace_uuid_kwargs(
+            ws_uuid = self._resolve_optional_workspace_filter(
                 workspace_uuid, project_id, _caller="upsert_workflow_phase"
+            )
+            if ws_uuid is None:
+                raise ValueError(
+                    "upsert_workflow_phase() requires workspace_uuid or "
+                    "project_id"
+                )
+            ws_uuid = self._validated_provided_workspace_uuid(
+                ws_uuid, "upsert_workflow_phase"
             )
         except ValueError:
             # Unknown project_id_legacy → entity is "not found in project"
@@ -9997,8 +9924,9 @@ class EntityDatabase:
         ----------
         project_id:
             DEPRECATED — legacy alias for ``workspace_uuid``. Resolved via
-            ``_resolve_workspace_uuid_kwargs``. Accepted as the first
-            positional arg for backward compat with id_generator and tests.
+            the shared workspace-identity resolution (feature 132 D6.4).
+            Accepted as the first positional arg for backward compat with
+            id_generator and tests.
         entity_type:
             The entity type (e.g. "feature", "task"). Required.
         workspace_uuid:
@@ -10014,8 +9942,15 @@ class EntityDatabase:
             raise TypeError(
                 "next_sequence_value() requires entity_type"
             )
-        ws_uuid = self._resolve_workspace_uuid_kwargs(
+        ws_uuid = self._resolve_optional_workspace_filter(
             workspace_uuid, project_id, _caller="next_sequence_value"
+        )
+        if ws_uuid is None:
+            raise ValueError(
+                "next_sequence_value() requires workspace_uuid or project_id"
+            )
+        ws_uuid = self._validated_provided_workspace_uuid(
+            ws_uuid, "next_sequence_value"
         )
         self._conn.commit()  # flush any implicit transaction
         self._conn.execute("BEGIN IMMEDIATE")
@@ -10165,8 +10100,16 @@ class EntityDatabase:
 
         # Resolve workspace_uuid once so we pass it consistently to
         # upsert_entity (avoids per-row __unknown__ workspace bootstrap).
-        ws_uuid = self._resolve_workspace_uuid_kwargs(
+        ws_uuid = self._resolve_optional_workspace_filter(
             workspace_uuid, project_id, _caller="register_entities_batch"
+        )
+        if ws_uuid is None:
+            raise ValueError(
+                "register_entities_batch() requires workspace_uuid or "
+                "project_id"
+            )
+        ws_uuid = self._validated_provided_workspace_uuid(
+            ws_uuid, "register_entities_batch"
         )
 
         with self.transaction():
