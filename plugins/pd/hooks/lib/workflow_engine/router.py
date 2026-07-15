@@ -66,8 +66,10 @@ class GraphDescriptor(Protocol):
 
     def column_for(self, phase: str) -> str | None:
         """Kanban column for ``phase``, or None. Lifecycle kinds return
-        their column; feature/5D return None (kanban derivation stays
-        derive_kanban's own until 132)."""
+        their column; feature/5D return None (kanban derivation for
+        those kinds is a separate, per-call-site stored-value producer
+        since feature 132 D6.1-.3 retired the shared kanban.py module —
+        not routed through this Protocol)."""
         ...
 
 

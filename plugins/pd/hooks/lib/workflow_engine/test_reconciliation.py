@@ -2335,7 +2335,7 @@ class TestDeriveExpectedKanban:
         assert _derive_expected_kanban("implement", "specify") == "wip"
 
     def test_derive_expected_kanban_unknown_phase(self):
-        """Unknown phase falls back to 'backlog' via derive_kanban."""
+        """Unknown phase falls back to 'backlog' via _kanban_column_for."""
         assert _derive_expected_kanban("nonexistent", None) == "backlog"
 
 
@@ -2540,7 +2540,7 @@ class TestDeriveExpectedKanbanDeepened:
 
         Anticipate: If the special-case check for finish+finish is inverted
         (checking for None instead of 'finish'), this would incorrectly return
-        'completed'. The function should fall through to derive_kanban
+        'completed'. The function should fall through to _kanban_column_for
         which maps finish -> 'documenting'.
         derived_from: dimension:boundary_values (finish phase boundary)
         """
@@ -2698,7 +2698,7 @@ class TestKanbanDriftDetectionDeepened:
 class TestDeriveExpectedKanbanStatusAwareness:
     """Tests for _derive_expected_kanban with terminal status override (AC-2.1..AC-2.3)."""
 
-    def test_derive_kanban_completed_status(self):
+    def test_expected_kanban_completed_status(self):
         """AC-2.1: status='completed' overrides phase-based kanban to 'completed'."""
         result = _derive_expected_kanban(
             workflow_phase="implement",
@@ -2707,7 +2707,7 @@ class TestDeriveExpectedKanbanStatusAwareness:
         )
         assert result == "completed"
 
-    def test_derive_kanban_abandoned_status(self):
+    def test_expected_kanban_abandoned_status(self):
         """AC-2.2: status='abandoned' also maps to 'completed' kanban column."""
         result = _derive_expected_kanban(
             workflow_phase="implement",
@@ -2716,9 +2716,9 @@ class TestDeriveExpectedKanbanStatusAwareness:
         )
         assert result == "completed"
 
-    def test_derive_kanban_active_unchanged(self):
+    def test_expected_kanban_active_unchanged(self):
         """AC-2.3: status='active' does not override — uses phase-based lookup."""
-        # implement phase -> 'wip' (from derive_kanban)
+        # implement phase -> 'wip' (from _kanban_column_for)
         result_with_status = _derive_expected_kanban(
             workflow_phase="implement",
             last_completed_phase=None,
