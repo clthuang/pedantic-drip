@@ -5,8 +5,11 @@ Task 1 (design 122 D1-D4, D5 groups 1/5): exact-membership vocabulary
 pins, register_vocab_ddl()/is_vocab_registered() registration semantics,
 and the entity_phase_status view's name/round-trip/immutability pins.
 Task 2 appends the trigger-teeth acceptance/rejection battery, the
-leak-detection pin, and the derive_kanban compatibility pin to this same
-file (design D5 groups 2-4/7) — see tasks.md.
+leak-detection pin, and the stored-kanban-producers compatibility pin to
+this same file (design D5 groups 2-4/7) — see tasks.md. The compatibility
+pin was RE-PINNED at feature 132 task 4 (D6.1-.3): the former shared
+workflow_engine.kanban module is retired, so the pin now unions the
+per-file replicas that replaced it.
 
 Defines its OWN local snapshot/restore DDL_REGISTRY fixture and its own
 bootstrapped-DB/connect_v2/seeded-entity idioms (test_views.py's pattern)
@@ -281,7 +284,7 @@ class TestEntityPhaseStatusImmutability:
 # ---------------------------------------------------------------------------
 # Task 2 (design D2 semantics; D5 groups 2-4/7; spec SC2/SC3/SC6-structural):
 # trigger-teeth acceptance/rejection battery, leak-detection pin, and the
-# derive_kanban compatibility pin. See tasks.md Task 2.
+# stored-kanban-producers compatibility pin. See tasks.md Task 2.
 # ---------------------------------------------------------------------------
 @pytest.fixture
 def _vocab_triggers_registered():
@@ -520,31 +523,51 @@ class TestVocabTriggerLeakDetection:
 
 
 # ---------------------------------------------------------------------------
-# Design D5 group 4 / spec SC3: EXECUTION_STATUSES is a STRICT superset of
-# every value workflow_engine.kanban.derive_kanban can reach. Importing
-# the LIVE kanban module from this test is unrestricted (the dark guard
-# only polices the reverse — live code importing a dark v2 module);
-# precedent: test_backfill.py:1112.
+# Design D5 group 4 / spec SC3, RE-PINNED at feature 132 task 4 (D6.1-.3):
+# EXECUTION_STATUSES is a STRICT superset of every value the STORED-VALUE
+# kanban producers can reach. The former shared workflow_engine.kanban
+# module (its derive() function / PHASE_TO_KANBAN) is retired — each live
+# call site now carries its own private, byte-identical replica
+# (_kanban_column_for / _PHASE_TO_KANBAN). This pin unions the four
+# replicas that live in this same hooks/lib tree (engine.py,
+# feature_lifecycle.py, reconciliation.py, entity_registry.backfill);
+# workflow_state_server.py's replica lives in the separate mcp/ import
+# root and is covered by mcp/test_workflow_state_server.py instead.
+# Importing this live code from a test is unrestricted (the dark guard
+# only polices the reverse — live code importing a dark v2 module).
 # ---------------------------------------------------------------------------
-class TestDeriveKanbanCompatibility:
-    def test_reachable_derive_kanban_outputs_are_strict_subset_of_execution_statuses(self):
-        from workflow_engine.kanban import PHASE_TO_KANBAN, derive_kanban
+class TestStoredKanbanProducersCompatibility:
+    def test_reachable_kanban_column_outputs_are_strict_subset_of_execution_statuses(self):
+        from entity_registry import backfill as _backfill_producer
+        from workflow_engine import engine as _engine_producer
+        from workflow_engine import feature_lifecycle as _feature_lifecycle_producer
+        from workflow_engine import reconciliation as _reconciliation_producer
+
+        producers = (
+            _engine_producer,
+            _feature_lifecycle_producer,
+            _reconciliation_producer,
+            _backfill_producer,
+        )
 
         # The terminal-branch outputs ('completed', 'blocked', 'backlog')
-        # are literals INSIDE derive_kanban's body (its status in (...) /
-        # == "blocked" / == "planned" checks), not exported module
-        # constants — captured here by actually CALLING derive_kanban for
-        # a representative status per branch rather than hand-copying the
-        # strings (the author-restated-literal drift class).
+        # are literals INSIDE each producer's _kanban_column_for body (its
+        # status in (...) / == "blocked" / == "planned" checks), not
+        # exported module constants — captured here by actually CALLING
+        # each producer for a representative status per branch rather than
+        # hand-copying the strings (the author-restated-literal drift
+        # class). Every producer must agree (parity — a lone divergence is
+        # caught here too, not just by test_constants.py's dedicated pin).
         terminal_outputs = {
-            derive_kanban("completed", None),
-            derive_kanban("abandoned", None),
-            derive_kanban("blocked", None),
-            derive_kanban("planned", None),
+            producer._kanban_column_for(status, None)
+            for producer in producers
+            for status in ("completed", "abandoned", "blocked", "planned")
         }
         assert terminal_outputs == {"completed", "blocked", "backlog"}
 
-        reachable = set(PHASE_TO_KANBAN.values()) | terminal_outputs
+        reachable = set(terminal_outputs)
+        for producer in producers:
+            reachable |= set(producer._PHASE_TO_KANBAN.values())
 
         assert reachable <= axes.EXECUTION_STATUSES_SET
         assert reachable < axes.EXECUTION_STATUSES_SET  # strict: "ready" (FR-8) unreachable

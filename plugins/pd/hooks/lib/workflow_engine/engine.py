@@ -21,7 +21,6 @@ from transition_gate import (
 )
 from transition_gate.constants import HARD_PREREQUISITES
 
-from .kanban import derive_kanban
 from .models import FeatureWorkflowState, TransitionResponse, db_unavailable_error
 
 # Precomputed constants from immutable sources
@@ -29,6 +28,43 @@ _PHASE_VALUES: tuple[str, ...] = tuple(p.value for p in PHASE_SEQUENCE)
 _ALL_HARD_ARTIFACTS: frozenset[str] = frozenset(
     name for names in HARD_PREREQUISITES.values() for name in names
 )
+
+# Local replica of the former workflow_engine.kanban module (deleted at
+# feature 132, Scope model D6.1-.3 — post-cutover call sites carry their
+# own copy instead of importing the shared kanban.py helper). Byte-identical to
+# its siblings in backfill.py / feature_lifecycle.py / reconciliation.py /
+# workflow_state_server.py — kept in sync via test_constants.py's parity
+# pin.
+_PHASE_TO_KANBAN: dict[str, str] = {
+    "brainstorm": "backlog",
+    "specify": "backlog",
+    "design": "prioritised",
+    "create-plan": "prioritised",
+    "implement": "wip",
+    "finish": "documenting",
+    "discover": "backlog",
+    "define": "backlog",
+    "deliver": "wip",
+    "debrief": "documenting",
+}
+
+
+def _kanban_column_for(status: str, workflow_phase: str | None) -> str:
+    """Kanban column for (status, workflow_phase).
+
+    Priority order (unchanged from the retired kanban.py logic):
+    1. Terminal statuses (completed, abandoned) -> "completed"
+    2. Blocked status -> "blocked"
+    3. Planned status -> "backlog"
+    4. Phase-based lookup with "backlog" fallback
+    """
+    if status in ("completed", "abandoned"):
+        return "completed"
+    if status == "blocked":
+        return "blocked"
+    if status == "planned":
+        return "backlog"
+    return _PHASE_TO_KANBAN.get(workflow_phase, "backlog")
 
 
 def _iso_now() -> str:
@@ -526,7 +562,7 @@ class WorkflowStateEngine:
         try:
             self.db.create_workflow_phase(
                 feature_type_id,
-                kanban_column=derive_kanban("active", state.current_phase),
+                kanban_column=_kanban_column_for("active", state.current_phase),
                 workflow_phase=state.current_phase,
                 last_completed_phase=state.last_completed_phase,
                 mode=state.mode,
