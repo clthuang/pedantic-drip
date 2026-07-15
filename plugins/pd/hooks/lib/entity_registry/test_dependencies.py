@@ -13,6 +13,12 @@ import pytest
 from entity_registry.database import EntityDatabase
 from entity_registry.dependencies import CycleError, DependencyManager
 from entity_registry import schema_v2
+# Feature 132 Task 3: imported at MODULE (collection) time -- load-bearing,
+# see test_database.py's identically-documented import of the same name for
+# the full rationale (registers "events"/"views"/"axes" into
+# schema_v2.DDL_REGISTRY BEFORE _reset_ddl_registry_for_v2_fixtures' first
+# snapshot, so that fixture's restore never wipes them back out).
+from entity_registry import rebuild_tool
 
 
 # ---------------------------------------------------------------------------
@@ -640,7 +646,6 @@ def v2_db(tmp_path):
     via rebuild_tool.build_staging_database -- see test_database.py's
     identically-documented fixture of the same name for the full
     rationale)."""
-    from entity_registry import rebuild_tool
     staging_path = str(tmp_path / "entities.db.v2-test")
     rebuild_tool.build_staging_database(staging_path)
     database = EntityDatabase(staging_path)

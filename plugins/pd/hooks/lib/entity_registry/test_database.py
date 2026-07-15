@@ -28,6 +28,22 @@ from entity_registry.database import (
 from entity_registry.database import EXPORT_SCHEMA_VERSION
 from entity_registry.test_helpers import TEST_PROJECT_ID
 from entity_registry import schema_v2
+# Feature 132 Task 3: imported at MODULE (collection) time, not lazily
+# inside the v2_db fixture below -- this is load-bearing, not stylistic.
+# rebuild_tool.py's own top-level imports (events/views/axes) register
+# "events"/"views"/"axes" into schema_v2.DDL_REGISTRY as a ONE-TIME,
+# process-wide side effect of the FIRST import (Python's module cache
+# means a later `import` is a no-op re-registration-wise). Collection
+# happens before any autouse fixture ever runs, so importing here --
+# mirroring test_rebuild_tool.py's own top-level `from entity_registry
+# import axes` -- guarantees _reset_ddl_registry_for_v2_fixtures' FIRST
+# snapshot already includes those three owners. Without this, the first
+# test to use v2_db would trigger the registration LAZILY mid-test
+# (AFTER that test's snapshot was already taken), and that same test's
+# OWN teardown would then wipe "events"/"views"/"axes" back out --
+# breaking every v2_db use after the first with a "no such table:
+# events" error (the module cache prevents re-registration on retry).
+from entity_registry import rebuild_tool
 
 
 @pytest.fixture(autouse=True)
@@ -9065,7 +9081,6 @@ def v2_db(tmp_path):
     Bootstraps the same two legacy workspace rows as the plain ``db``
     fixture above.
     """
-    from entity_registry import rebuild_tool
     staging_path = str(tmp_path / "entities.db.v2-test")
     rebuild_tool.build_staging_database(staging_path)
     database = EntityDatabase(staging_path)
@@ -9227,6 +9242,31 @@ class TestSC8DualWritePerClass:
         v2_db.append_phase_event(
             type_id="feature:004-flow", project_id="phase-proj",
             event_type="started", phase="specify", workspace_uuid=ws_uuid,
+        )
+
+        started = [
+            e for e in _events_for(v2_db, entity_uuid, axis="pipeline")
+            if e["event_type"] == "started"
+        ]
+        assert len(started) == 1
+        assert started[0]["to_value"] == "specify"
+
+    def test_phase_transition_resolves_entity_without_workspace_uuid(self, v2_db):
+        """The unscoped fallback branch (workspace_uuid=None -- exactly
+        how workflow_state_server.py's `_workspace_uuid or None` pattern
+        calls append_phase_event for phase transitions): still resolves
+        the right entity and emits, since workflow_phases.type_id is
+        globally unique (this entity's type_id has no cross-workspace
+        duplicate here)."""
+        ws_uuid = _bootstrap_test_workspace(v2_db, "unscoped-proj")
+        entity_uuid = v2_db.register_entity(
+            "feature", "013-unscoped", "Unscoped Feature", workspace_uuid=ws_uuid,
+        )
+        v2_db.create_workflow_phase("feature:013-unscoped", workflow_phase="brainstorm")
+
+        v2_db.append_phase_event(
+            type_id="feature:013-unscoped", project_id="unscoped-proj",
+            event_type="started", phase="specify", workspace_uuid=None,
         )
 
         started = [
