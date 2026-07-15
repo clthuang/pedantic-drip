@@ -4,7 +4,7 @@ description: Run diagnostic checks on pd workspace health
 
 # /pd:doctor Command
 
-Run 21 data consistency checks across entity DB, workflow state, and filesystem artifacts. Optionally apply safe auto-fixes.
+Run 10 data consistency checks across entity DB, workflow state, and filesystem artifacts. Optionally apply safe auto-fixes.
 
 ## Config Variables
 Use these values from session context (injected at session start):

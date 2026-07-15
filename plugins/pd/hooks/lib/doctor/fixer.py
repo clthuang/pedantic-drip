@@ -10,17 +10,8 @@ from collections.abc import Callable
 
 from doctor.fix_actions import (
     FixContext,
-    _fix_adopt_workspace_uuid,
-    _fix_backlog_annotation,
-    _fix_claim_unknown_entities,
-    _fix_completed_timestamp,
-    _fix_entity_status_dropped,
-    _fix_entity_status_promoted,
-    _fix_insert_workspace_row,
-    _fix_last_completed_phase,
     _fix_missed_cascade,
     _fix_rebuild_fts,
-    _fix_reconcile,
     _fix_remove_orphan_tag,
     _fix_remove_orphan_workflow,
     _fix_run_entity_migrations,
@@ -32,28 +23,13 @@ from doctor.models import DiagnosticReport, FixReport, FixResult
 # Pattern prefix -> fix function mapping.
 # Order matters: first match wins. More specific prefixes before general ones.
 _SAFE_PATTERNS: list[tuple[str, Callable]] = [
-    ("Set completed timestamp", _fix_completed_timestamp),
-    ("Set lastCompletedPhase", _fix_last_completed_phase),
-    ("Run reconcile_apply", _fix_reconcile),
-    ("Update brainstorm entity status", _fix_entity_status_promoted),
-    ("Update entity status to 'dropped'", _fix_entity_status_dropped),
-    ("Update entity status to", _fix_entity_status_promoted),
-    ("Add (promoted", _fix_backlog_annotation),
     ("Set PRAGMA journal_mode=WAL on the database", _fix_wal_entities),
-    ("Update .meta.json from DB state", _fix_reconcile),
     ("Remove orphaned tag", _fix_remove_orphan_tag),
     ("Remove orphaned workflow_phases", _fix_remove_orphan_workflow),
     ("Clear self-referential parent_uuid", _fix_self_referential_parent),
     ("Rebuild FTS index", _fix_rebuild_fts),
     ("Run migrations to", _fix_run_entity_migrations),
     ("Run cascade evaluation", _fix_missed_cascade),
-    # Workspace split-brain heal — prefixes are the contract with
-    # check_workspace_uuid_consistency's check-time fix_hints.
-    ("Adopt workspace UUID from DB row", _fix_adopt_workspace_uuid),
-    ("Insert missing workspaces row", _fix_insert_workspace_row),
-    # Unknown-workspace orphan claim — prefix is the contract with
-    # check_unknown_workspace_orphans's check-time fix_hint.
-    ("Claim unknown-workspace entities into", _fix_claim_unknown_entities),
 ]
 
 

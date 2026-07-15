@@ -8,9 +8,6 @@ import os
 import sqlite3
 import time
 
-from doctor.check_audit_counter_write_path import (
-    check_audit_counter_write_path,
-)
 from doctor.check_no_free_text_status_parsers import (
     check_no_free_text_status_parsers,
 )
@@ -18,22 +15,12 @@ from doctor.check_severity_vocab import check_severity_vocab
 from doctor.check_status_write_path import check_status_write_path
 from doctor.check_v2_cutover_window import check_v2_cutover_window
 from doctor.checks import (
-    _build_local_entity_set,
-    check_audit_emit_failed_count,
-    check_backlog_status,
-    check_brainstorm_status,
-    check_branch_consistency,
     check_config_validity,
     check_db_readiness,
-    check_entity_orphans,
-    check_feature_status,
     check_missed_cascade,
     check_referential_integrity,
     check_security_review_command,
     check_stale_worktrees,
-    check_unknown_workspace_orphans,
-    check_workflow_phase,
-    check_workspace_uuid_consistency,
 )
 from doctor.models import CheckResult, DiagnosticReport, Issue
 
@@ -41,12 +28,6 @@ from doctor.models import CheckResult, DiagnosticReport, Issue
 # Ordered list of all check functions
 CHECK_ORDER = [
     check_db_readiness,
-    check_feature_status,
-    check_workflow_phase,
-    check_brainstorm_status,
-    check_backlog_status,
-    check_branch_consistency,
-    check_entity_orphans,
     check_referential_integrity,
     check_missed_cascade,
     check_config_validity,
@@ -58,23 +39,9 @@ CHECK_ORDER = [
     # Feature 111 / AC-CL.4 (Group E): lint for re-introduction of
     # free-text status-suffix parsers at the 3 production sites.
     check_no_free_text_status_parsers,
-    # Feature 115 C10-115.4 / AC-C.7c: AST audit that only M15 mutates the
-    # audit_emit_failed_count counter (sole-writer invariant).
-    check_audit_counter_write_path,
-    # Feature 115 AC-C.5: doctor health check for audit_emit_failed_count > 0.
-    check_audit_emit_failed_count,
     # Feature 116 FR-2 / AC-2.x: AST audit that all doctor checks emit
     # severity from {error, warning, info}.
     check_severity_vocab,
-    # Workspace split-brain fix: detect (and, via fix actions, repair) a
-    # workspace.json whose uuid is absent from the workspaces table. NOT in
-    # _ENTITY_DB_CHECKS — it self-guards a missing DB and its fresh-checkout
-    # warning is meaningful without one.
-    check_workspace_uuid_consistency,
-    # Unknown-workspace orphan claim: count entities still stranded in the
-    # canonical unknown-workspace bucket and (via the fix action) re-attribute
-    # them. Self-guards a missing/locked DB, so NOT in _ENTITY_DB_CHECKS.
-    check_unknown_workspace_orphans,
     # Feature 133 D3: v1->v2 cutover escape-hatch window marker check. Reads
     # a file, not the DB, so NOT in _ENTITY_DB_CHECKS — must run silently
     # even on a DB-less workspace. Registered LAST per design.
@@ -83,15 +50,8 @@ CHECK_ORDER = [
 
 # Checks that require entity DB
 _ENTITY_DB_CHECKS = {
-    "check_feature_status",
-    "check_workflow_phase",
-    "check_brainstorm_status",
-    "check_backlog_status",
-    "check_branch_consistency",
-    "check_entity_orphans",
     "check_referential_integrity",
     "check_missed_cascade",
-    "check_audit_emit_failed_count",
 }
 
 
@@ -144,9 +104,6 @@ def run_diagnostics(
     # Guard DB paths -- don't create files
     entity_db_exists = os.path.isfile(entities_db_path)
 
-    # Build local entity IDs
-    local_entity_ids = _build_local_entity_set(artifacts_root)
-
     # Open connections (only if files exist)
     entities_conn = None
 
@@ -163,7 +120,6 @@ def run_diagnostics(
             "artifacts_root": artifacts_root,
             "project_root": project_root,
             "base_branch": base_branch,
-            "local_entity_ids": local_entity_ids,
         }
 
         # Track skip conditions

@@ -279,7 +279,7 @@ class TestFixtureCPhaseSummariesMultiEntryAccumulation:
         {
             "phase": "specify", "timestamp": "2026-07-10T12:14:33Z",
             "outcome": "Approved with notes.", "artifacts_produced": ["spec.md"],
-            "key_decisions": "DELETE check_project_attribution + full deregistration surface (duplicates live check_unknown_workspace_orphans); entity_type→kind renames in 3 retained checks; two-arm workspace predicate (current OR unknown-bucket, single-match only); PRAGMA-probe surface/tolerate error discriminator; committed EXPLAIN scan over all checks.py SQL sites.",
+            "key_decisions": "DELETE check_project_attribution + full deregistration surface (duplicates the live unknown-workspace orphan claimer); entity_type→kind renames in 3 retained checks; two-arm workspace predicate (current OR unknown-bucket, single-match only); PRAGMA-probe surface/tolerate error discriminator; committed EXPLAIN scan over all checks.py SQL sites.",
             "reviewer_feedback_summary": "spec-reviewer 4 rounds (iter-2 blocker: fix-branch would duplicate live sibling check — drove delete decision; iter-4 corrected false fixer-rot claim). phase-reviewer 2 rounds (iter-1 blocker: SC#4 vs boundary-AC contradiction — AC split into surface/tolerate branches).",
             "rework_trigger": None,
         },

@@ -17,8 +17,8 @@ Failure mode:
 - ``SyntaxError`` from ``ast.parse`` → single error-severity Issue per file.
 - Source file missing or unreadable → silently skipped (defensive).
 
-The check follows the same dispatch contract as ``check_status_write_path``
-and ``check_audit_counter_write_path`` (``(project_root=None, **_kwargs)
+The check follows the same dispatch contract as the other AST-audit doctor
+checks, e.g. ``check_status_write_path`` (``(project_root=None, **_kwargs)
 -> CheckResult``) so the doctor runner can invoke it with the standard ``ctx``.
 """
 from __future__ import annotations
@@ -115,8 +115,8 @@ def check_severity_vocab(
 
     Returns a ``CheckResult`` with one ``Issue(severity="error")`` per
     violation. ``validate.sh`` is the CI enforcement layer; session-start
-    does not abort on these findings (existing convention, matches
-    ``check_status_write_path`` and ``check_audit_counter_write_path``).
+    does not abort on these findings (existing convention, matches the
+    other AST-audit doctor checks, e.g. ``check_status_write_path``).
     """
     start = time.perf_counter()
     issues: list[Issue] = []

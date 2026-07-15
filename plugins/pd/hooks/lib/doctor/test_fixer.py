@@ -99,43 +99,6 @@ def _make_db(tmp_path, name: str = "entities.db") -> str:
     return db_path
 
 
-def _register_feature(db_path: str, slug: str = "008-test-feature", status: str = "active") -> str:
-    """Register a feature entity directly via SQL. Returns type_id."""
-    type_id = f"feature:{slug}"
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        "INSERT OR IGNORE INTO entities "
-        "(uuid, type_id, project_id, entity_type, entity_id, name, status, created_at, updated_at) "
-        "VALUES (?, ?, '__unknown__', 'feature', ?, ?, ?, datetime('now'), datetime('now'))",
-        (str(uuid_mod.uuid4()), type_id, slug, f"Test Feature {slug}", status),
-    )
-    conn.commit()
-    conn.close()
-    return type_id
-
-
-def _create_meta_json(
-    tmp_path,
-    slug: str = "008-test-feature",
-    *,
-    status: str = "active",
-    last_completed_phase: str | None = None,
-    phases: dict | None = None,
-) -> None:
-    """Create a .meta.json file in the expected location."""
-    feature_dir = tmp_path / "features" / slug
-    feature_dir.mkdir(parents=True, exist_ok=True)
-    meta = {
-        "id": slug.split("-", 1)[0],
-        "slug": slug,
-        "status": status,
-        "mode": "standard",
-        "lastCompletedPhase": last_completed_phase,
-        "phases": phases or {},
-    }
-    (feature_dir / ".meta.json").write_text(json.dumps(meta, indent=2))
-
-
 def _make_report(*issues_by_check: tuple[str, list[Issue]]) -> DiagnosticReport:
     """Build a DiagnosticReport from (check_name, issues) tuples."""
     checks = []
@@ -219,64 +182,9 @@ class TestFixReport:
 class TestClassifyFix:
     """Test classify_fix for all safe patterns + manual default."""
 
-    def test_set_last_completed_phase(self):
-        from doctor.fixer import classify_fix
-        cls, fn = classify_fix("Set lastCompletedPhase to the latest completed phase")
-        assert cls == "safe"
-        assert fn is not None
-
-    def test_run_reconcile_apply_sync(self):
-        from doctor.fixer import classify_fix
-        cls, fn = classify_fix("Run reconcile_apply to sync DB from .meta.json")
-        assert cls == "safe"
-
-    def test_run_reconcile_apply_kanban(self):
-        from doctor.fixer import classify_fix
-        cls, fn = classify_fix("Run reconcile_apply to sync kanban column")
-        assert cls == "safe"
-
-    def test_run_reconcile_apply_create(self):
-        from doctor.fixer import classify_fix
-        cls, fn = classify_fix("Run reconcile_apply to create DB entry")
-        assert cls == "safe"
-
-    def test_update_brainstorm_status(self):
-        from doctor.fixer import classify_fix
-        cls, fn = classify_fix("Update brainstorm entity status to 'promoted'")
-        assert cls == "safe"
-
-    def test_update_entity_status(self):
-        from doctor.fixer import classify_fix
-        cls, fn = classify_fix("Update entity status to 'promoted'")
-        assert cls == "safe"
-
-    def test_update_entity_status_dropped(self):
-        from doctor.fixer import classify_fix
-        cls, fn = classify_fix("Update entity status to 'dropped'")
-        assert cls == "safe"
-        assert fn.__name__ == "_fix_entity_status_dropped"
-
-    def test_dropped_routes_to_dropped_not_promoted(self):
-        """Ensure prefix ordering routes dropped and promoted to correct functions."""
-        from doctor.fixer import classify_fix
-        _, fn_dropped = classify_fix("Update entity status to 'dropped'")
-        _, fn_promoted = classify_fix("Update entity status to 'promoted'")
-        assert fn_dropped.__name__ == "_fix_entity_status_dropped"
-        assert fn_promoted.__name__ == "_fix_entity_status_promoted"
-
-    def test_add_promoted_annotation(self):
-        from doctor.fixer import classify_fix
-        cls, fn = classify_fix("Add (promoted -> feature) annotation to backlog.md")
-        assert cls == "safe"
-
     def test_set_wal_entities(self):
         from doctor.fixer import classify_fix
         cls, fn = classify_fix("Set PRAGMA journal_mode=WAL on the database")
-        assert cls == "safe"
-
-    def test_update_meta_from_db(self):
-        from doctor.fixer import classify_fix
-        cls, fn = classify_fix("Update .meta.json from DB state")
         assert cls == "safe"
 
     def test_remove_orphan_tag(self):
@@ -293,31 +201,6 @@ class TestClassifyFix:
         from doctor.fixer import classify_fix
         cls, fn = classify_fix("Clear self-referential parent_uuid")
         assert cls == "safe"
-
-    def test_adopt_workspace_uuid_safe(self):
-        from doctor.fixer import classify_fix
-        cls, fn = classify_fix(
-            "Adopt workspace UUID from DB row abc (file has orphan def)"
-        )
-        assert cls == "safe"
-        assert fn.__name__ == "_fix_adopt_workspace_uuid"
-
-    def test_insert_workspace_row_safe(self):
-        from doctor.fixer import classify_fix
-        cls, fn = classify_fix(
-            "Insert missing workspaces row for file UUID abc"
-        )
-        assert cls == "safe"
-        assert fn.__name__ == "_fix_insert_workspace_row"
-
-    def test_workspace_manual_hint_stays_manual(self):
-        from doctor.fixer import classify_fix
-        # The ambiguous multi-row hint is not auto-fixable.
-        cls, fn = classify_fix(
-            "Multiple workspaces rows match this project_root; resolve manually"
-        )
-        assert cls == "manual"
-        assert fn is None
 
     def test_rebuild_fts(self):
         from doctor.fixer import classify_fix
@@ -338,8 +221,32 @@ class TestClassifyFix:
     def test_classify_returns_callable(self):
         """Design I2: classify_fix returns Callable | None, not string."""
         from doctor.fixer import classify_fix
-        _, fn = classify_fix("Set lastCompletedPhase to the latest completed phase")
+        _, fn = classify_fix("Set PRAGMA journal_mode=WAL on the database")
         assert callable(fn)
+
+    def test_survivor_safe_patterns_preserve_first_match_order(self):
+        """H2 regression: after feature 133 retired 11 fix fns, the 7
+        surviving _SAFE_PATTERNS rows still resolve each survivor's own
+        prefix to its own fn, in the documented relative order (deletions
+        must not re-order surviving prefixes' first-match-wins semantics).
+        """
+        from doctor.fixer import _SAFE_PATTERNS, classify_fix
+
+        expected_order = [
+            "_fix_wal_entities",
+            "_fix_remove_orphan_tag",
+            "_fix_remove_orphan_workflow",
+            "_fix_self_referential_parent",
+            "_fix_rebuild_fts",
+            "_fix_run_entity_migrations",
+            "_fix_missed_cascade",
+        ]
+        assert [fn.__name__ for _, fn in _SAFE_PATTERNS] == expected_order
+
+        for prefix, fn in _SAFE_PATTERNS:
+            cls, resolved = classify_fix(prefix)
+            assert cls == "safe"
+            assert resolved is fn
 
 
 # ===========================================================================
@@ -349,64 +256,6 @@ class TestClassifyFix:
 
 class TestFixActions:
     """Test individual fix functions."""
-
-    def test_fix_last_completed_phase_requires_engine(self, tmp_path):
-        """Feature 110 TD-11: _fix_last_completed_phase no longer writes
-        .meta.json directly; it routes through engine.complete_phase MCP.
-        Without engine + DB on the FixContext, it MUST raise ValueError
-        (no silent fallback to direct write).
-        """
-        from doctor.fix_actions import FixContext, _fix_last_completed_phase
-
-        ctx = FixContext(
-            entities_db_path="",
-            artifacts_root=str(tmp_path), project_root=str(tmp_path),
-            db=None, engine=None, entities_conn=None,
-        )
-        issue = Issue(check="workflow_phase", severity="error",
-                      entity="feature:008-test-feature",
-                      message="missing lastCompletedPhase",
-                      fix_hint="Set lastCompletedPhase to the latest completed phase")
-
-        with pytest.raises(ValueError, match="Engine \\+ DB required"):
-            _fix_last_completed_phase(ctx, issue)
-
-    def test_fix_entity_status_promoted(self, tmp_path):
-        from doctor.fix_actions import FixContext, _fix_entity_status_promoted
-        from entity_registry.database import EntityDatabase
-
-        # Use EntityDatabase constructor to get full schema (including FTS)
-        db_path = str(tmp_path / "entities_promoted.db")
-        db = EntityDatabase(db_path)
-        # Register entity via the DB's own API
-        db.register_entity(
-            entity_type="feature",
-            entity_id="009-brainstorm",
-            name="Brainstorm 009",
-            status="active",
-            project_id="__unknown__",
-        )
-
-        ctx = FixContext(
-            entities_db_path=db_path,
-            artifacts_root="", project_root="",
-            db=db, engine=None, entities_conn=db._conn,
-        )
-        issue = Issue(check="brainstorm_status", severity="warning",
-                      entity="feature:009-brainstorm",
-                      message="not promoted",
-                      fix_hint="Update brainstorm entity status to 'promoted'")
-
-        action = _fix_entity_status_promoted(ctx, issue)
-        assert "promoted" in action
-
-        # Verify
-        row = db._conn.execute(
-            "SELECT status FROM entities WHERE type_id = ?",
-            ("feature:009-brainstorm",),
-        ).fetchone()
-        assert row[0] == "promoted"
-        db.close()
 
     def test_fix_wal_entities(self, tmp_path):
         from doctor.fix_actions import FixContext, _fix_wal_entities
@@ -539,59 +388,6 @@ class TestFixActions:
 
         with pytest.raises(FileNotFoundError, match="migrate_db.py"):
             _fix_rebuild_fts(ctx, issue)
-
-    def test_fix_backlog_annotation(self, tmp_path):
-        from doctor.fix_actions import FixContext, _fix_backlog_annotation
-
-        backlog_path = tmp_path / "backlog.md"
-        backlog_path.write_text(
-            "| ID | Description | Status |\n"
-            "|----|-------------|--------|\n"
-            "| 00042 | Cool idea | pending |\n"
-            "| 00043 | Another idea | pending |\n"
-        )
-
-        ctx = FixContext(
-            entities_db_path="",
-            artifacts_root=str(tmp_path), project_root=str(tmp_path),
-            db=None, engine=None, entities_conn=None,
-        )
-        issue = Issue(
-            check="backlog_status", severity="warning",
-            entity="backlog:00042",
-            message="Backlog 00042 promoted but not annotated",
-            fix_hint="Add (promoted -> feature) annotation to backlog.md",
-        )
-
-        action = _fix_backlog_annotation(ctx, issue)
-        assert "00042" in action
-
-        content = backlog_path.read_text()
-        assert "(promoted)" in content
-        # Other rows unaffected
-        assert "00043" in content
-
-    def test_fix_backlog_annotation_parse_failure(self, tmp_path):
-        """Edge case: backlog row not found."""
-        from doctor.fix_actions import FixContext, _fix_backlog_annotation
-
-        backlog_path = tmp_path / "backlog.md"
-        backlog_path.write_text("| ID | Description |\n| 99999 | something |\n")
-
-        ctx = FixContext(
-            entities_db_path="",
-            artifacts_root=str(tmp_path), project_root=str(tmp_path),
-            db=None, engine=None, entities_conn=None,
-        )
-        issue = Issue(
-            check="backlog_status", severity="warning",
-            entity="backlog:00042",
-            message="not annotated",
-            fix_hint="Add (promoted -> feature) annotation to backlog.md",
-        )
-
-        with pytest.raises(ValueError, match="Could not find"):
-            _fix_backlog_annotation(ctx, issue)
 
     def test_fix_run_entity_migrations(self, tmp_path):
         from doctor.fix_actions import _fix_run_entity_migrations, FixContext

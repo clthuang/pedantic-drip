@@ -33,7 +33,7 @@ Core dependencies auto-install on first session.
 bash "$(ls -d ~/.claude/plugins/cache/*/pd/*/scripts/doctor.sh 2>/dev/null | head -1)"
 ```
 
-Read-only health check across system prerequisites, plugin environment, and project context with OS-specific fix commands (12 environment checks). For workspace data-consistency diagnostics, run `/pd:doctor` inside a session instead — it runs 19 checks including security-review command presence, stale worktree detection, status write-path enforcement, free-text status-parser regression detection, and severity vocabulary validation.
+Read-only health check across system prerequisites, plugin environment, and project context with OS-specific fix commands (12 environment checks). For workspace data-consistency diagnostics, run `/pd:doctor` inside a session instead — it runs 10 checks including security-review command presence, stale worktree detection, status write-path enforcement, free-text status-parser regression detection, and severity vocabulary validation.
 
 ## Quick Start
 
@@ -114,7 +114,7 @@ Configure via `.claude/pd.local.md`:
 | `/pd:retrospect` | Run retrospective on a feature |
 | `/pd:add-to-backlog` | Capture ad-hoc ideas and todos |
 | `/pd:cleanup-brainstorms` | Delete old brainstorm scratch files |
-| `/pd:doctor` | Run 19 diagnostic checks on pd workspace health (incl. security-review command, stale worktrees, status-parser regression, and severity vocabulary) |
+| `/pd:doctor` | Run 10 diagnostic checks on pd workspace health (incl. security-review command, stale worktrees, status-parser regression, and severity vocabulary) |
 | `/pd:secretary` | Intelligent task routing to agents and skills (supports YOLO mode with orchestrate subcommand) |
 | `/pd:create-specialist-team` | Create ephemeral specialist teams for complex tasks |
 | `/pd:root-cause-analysis` | Investigate bugs systematically |

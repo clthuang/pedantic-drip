@@ -196,11 +196,13 @@ class TestACCL2BackfillNoMarkerDerivation:
 class TestACCL3DoctorIdentifiesClosureViaDb:
     """AC-CL.3 — synthetic backlog row at status='dropped' + an
     ``entity_relations(from=<feature>, to=<backlog>, kind='fixes')`` row is
-    correctly identified by doctor as ``closed by feature_X`` via DB query,
-    not via prose parsing.
+    correctly resolved as ``closed by feature_X`` via DB query, not via
+    prose parsing.
 
-    The doctor's post-cleanup ``check_backlog_status`` body MUST surface
-    closures via the DB cross-ref alone. Hand-crafted DB fixtures only;
+    Verifies ``EntityDatabase.get_prior_closer`` -- the DB-only closure
+    resolution helper introduced for feature 111's cleanup, which the
+    equivalent doctor closure-linkage check (retired in feature 133) once
+    mirrored via its own cross-ref query. Hand-crafted DB fixtures only;
     no ``complete_phase`` invocation (parallel-safe with Group D).
     """
 
