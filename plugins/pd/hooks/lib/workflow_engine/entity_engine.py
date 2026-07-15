@@ -533,32 +533,41 @@ class EntityWorkflowEngine:
     ) -> tuple[list[str], float | None]:
         """Run cascade as a follow-on to the triggering write (TD-1).
 
-        1. cascade_unblock — flip fully-resolved dependents blocked→ready,
-           each in its own per-flip transaction (feature 124 D3)
-        2. rollup_parent — recompute parent progress up ancestor chain, in
+        1. rollup_parent — recompute parent progress up ancestor chain, in
            its own transaction
-        3. notification push (if queue available)
+        2. notification push (if queue available)
 
-        Returns (unblocked_uuids, parent_progress).
+        Returns (unblocked_uuids, parent_progress). ``unblocked_uuids`` is
+        now ALWAYS ``[]`` from this method's own contribution (feature 132
+        D5/#080 single-fire fix, see below) -- callers observe the real
+        flip via the entity's status/via a `cascade_ready` events query,
+        not via this return value.
         """
         unblocked: list[str] = []
         parent_progress: float | None = None
 
-        # Feature 124 D3: cascade_unblock now owns its own per-flip
-        # transactions (DependencyManager._evaluate_and_flip does one
-        # RE-ENTRANT db.transaction() per flip, atomically pairing the
-        # status write with its cascade_ready event -- FR124-4d). Wrapping
-        # this call in an outer transaction would still be race-free
-        # (db.transaction() is re-entrant, unlike begin_immediate(), so it
-        # would not raise) but would SILENTLY collapse every flip plus
-        # rollup_parent into one shared transaction, defeating the
-        # per-flip atomicity boundary the design requires. rollup_parent
-        # runs AFTER, in its OWN transaction -- its atomicity was never
-        # coupled to the cascade's writes; order is preserved (flips, then
-        # rollup).
-        unblocked = self._dep_manager.cascade_unblock(
-            self._db, entity_uuid
-        )
+        # Feature 132 D5/#080 (was feature 124 D3's cascade_unblock call,
+        # DELETED here): every terminal status write funnels through
+        # update_entity (both completion paths -- engine.py's FeatureBackend
+        # and entity_engine.py's FiveDBackend, verified at design time), and
+        # update_entity's OWN post-terminal-status cascade_unblock call
+        # (database.py, fail-open, same region as its Feature 132 dual-write
+        # emit fix) already covers every cascade-reachable path -- including
+        # direct writers that never pass through this engine at all (the
+        # MCP update_entity tool, cleanup_backlog.py's archival,
+        # abandon-feature). This method calling cascade_unblock TOO was a
+        # double-fire, harmless-but-real in every era: pre-124 tombstone
+        # semantics meant the second call's own get_dependents() query came
+        # back empty (the first call had already removed the edge); post-124
+        # edge-survival means the edge is still there, but the second call's
+        # dependent is already 'ready' (not 'blocked'), so _evaluate_and_flip's
+        # own guard skips it (see TestCascadeUnblock in test_entity_engine.py
+        # for the observable-outcome pin). Idempotence masked the double-fire
+        # in both eras; it never made the second call CORRECT to attempt.
+        # Deleting it here collapses the cascade to the single site
+        # update_entity owns; rollup_parent below is UNRELATED to
+        # cascade_unblock and keeps running in its own transaction exactly
+        # as before.
         with self._db.transaction():
             rollup_parent(self._db, entity_uuid)
 

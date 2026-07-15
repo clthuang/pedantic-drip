@@ -528,9 +528,21 @@ _V2_DARK_MODULES = {
 # Feature 132: the rebuild tool is the guard's DESIGNED endpoint — the
 # docstring below always said the dark window ends when "feature 132's
 # cutover decides where the v2 DB lives". It is a sanctioned importer,
-# not a dark module; task 3 widens this further (database.py's dual-write
-# emit) at which point this guard's premise retires entirely.
-_SANCTIONED_V2_IMPORTERS = {"rebuild_tool.py"}
+# not a dark module.
+#
+# Task 3 (impl-t1's forward-hazard note) widens this further: database.py
+# now legitimately imports ``entity_registry.events.append_event`` for its
+# dual-write emit (design D5, FR132-4b) -- the guard's original premise
+# ("no live module wires a dark v2 module in before 132 decides") is now
+# moot for database.py specifically, since 132 IS the cutover feature and
+# database.py IS the live write path it wires in on purpose. Re-adjudicated
+# here as a WIDEN, not a retirement: the guard still has residual value for
+# every OTHER file under hooks/lib (an accidental schema_v2/axes/display/
+# views/meta_projection import anywhere else remains exactly the class of
+# bug this scan exists to catch), so the class itself and its five
+# seeded-offender teeth tests below are unchanged and still exercise
+# tmp_path fixtures unrelated to this exemption.
+_SANCTIONED_V2_IMPORTERS = {"rebuild_tool.py", "database.py"}
 
 # Every import spelling that would wire a dark v2 module into a live path.
 # A bare "events" needle is deliberately excluded — it false-positives on
