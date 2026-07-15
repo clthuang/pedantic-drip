@@ -1856,3 +1856,46 @@ class TestVerifyCountsExplainedDirect:
             ]},  # explains exactly 1
         )
         rebuild_tool._verify_counts_explained(state)  # must not raise
+
+
+class TestAxisClassifierParity:
+    """Battery-r1 (quality) warning absorption: the live-side classifier
+    (database.py ``_v2_classify_phase_event``) and the backfill-side
+    classifier (rebuild_tool ``_classify_phase_event``) are DELIBERATE
+    duplicates across a module boundary. This is their mechanical parity
+    pin — the same treatment test_constants.py gives the kanban replicas —
+    so a silent routing divergence between live and backfilled events
+    fails loudly here instead of surfacing as replay drift at SC3.
+    """
+
+    def test_phase_named_event_type_sets_are_identical(self):
+        assert (
+            database._V2_PHASE_NAMED_EVENT_TYPES
+            == rebuild_tool._PHASE_NAMED_EVENT_TYPES
+        )
+
+    def test_routing_agreement_across_the_full_input_matrix(self):
+        """Every (event_type × kind × metadata) combination routes to the
+        same (axis, to_value) on both sides. The metadata shapes differ by
+        signature (dict vs JSON string) — parity is about the DECISION,
+        so each side gets its native encoding of the same value."""
+        event_types = sorted(rebuild_tool._PHASE_NAMED_EVENT_TYPES) + [
+            "entity_created", "entity_status_changed", "entity_promoted",
+            "spawned_child", "cascade_ready",
+        ]
+        kinds = [
+            "feature", "brainstorm", "backlog", "task", "project",
+            "initiative", "bug",
+        ]
+        metadatas = [None, {}, {"new_status": "archived"}, {"unrelated": 1}]
+        for event_type in event_types:
+            for kind in kinds:
+                for metadata in metadatas:
+                    live = database._v2_classify_phase_event(
+                        kind, event_type, "implement", metadata,
+                    )
+                    backfill = rebuild_tool._classify_phase_event(
+                        kind, event_type, "implement",
+                        json.dumps(metadata) if metadata is not None else None,
+                    )
+                    assert live == backfill, (event_type, kind, metadata)

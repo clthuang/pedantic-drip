@@ -568,10 +568,12 @@ class WorkflowStateEngine:
                 mode=state.mode,
             )
         except ValueError:
-            # All inputs (workflow_phase, last_completed, mode) are pre-validated
-            # by _next_phase_value / _derive_completed_phases above, so the only
-            # ValueError from create_workflow_phase is a duplicate-row conflict.
-            # Re-fetch handles the race condition; re-raise if no row found.
+            # Two ValueError sources post-132: a duplicate-row conflict
+            # (another writer won the race) or a rolled-back v2 emit
+            # failure (create_workflow_phase is transaction-wrapped, so
+            # its row is GONE on that path). The re-fetch discriminates:
+            # a row exists only for the duplicate case -- return it;
+            # an emit failure finds nothing and re-raises loudly.
             row = self.db.get_workflow_phase(feature_type_id)
             if row is not None:
                 return self._row_to_state(row, source="meta_json")

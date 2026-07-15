@@ -9238,36 +9238,39 @@ class EntityDatabase:
 
         now = self._now_iso()
         try:
-            self._conn.execute(
-                "INSERT INTO workflow_phases "
-                "(type_id, kanban_column, workflow_phase, "
-                "last_completed_phase, mode, backward_transition_reason, "
-                "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (type_id, kanban_column, workflow_phase,
-                 last_completed_phase, mode, backward_transition_reason,
-                 now),
-            )
-            # Feature 132 D5: the initial-establishment event, in the same
-            # implicit transaction as the INSERT above (no self.transaction()
-            # wrapper exists here; self._commit() below is the existing
-            # atomicity boundary -- emitting before it keeps both writes
-            # atomic without introducing a new transaction wrapper). Without
-            # this, entities created post-cutover would diverge from a
-            # replayed entity at SC3's axis-parity check (every OTHER entity
-            # gets its first axis event from register_entity/append_phase_event;
-            # this is the one writer of the five that currently emits nothing
-            # at all). Pipeline for feature-kind (122's 6-value vocab),
-            # lifecycle for every other kind; to_value = the initial
-            # workflow_phase, NULL-safe (the vocab trigger's own
-            # `to_value IS NOT NULL` guard never fires on NULL).
-            self._emit_v2_event(
-                entity_uuid=row["uuid"],
-                event_type="workflow_established",
-                axis="pipeline" if row["kind"] == "feature" else "lifecycle",
-                to_value=workflow_phase,
-                actor="live:create_workflow_phase",
-            )
-            self._commit()
+            # Feature 132 D5: INSERT + initial-establishment emit are ONE
+            # self.transaction() unit, the same fail-closed shape as the
+            # other four dual-write writers (battery-r1 blocker: the
+            # earlier bare-implicit-transaction version left the INSERT
+            # pending on emit failure, to be silently persisted by the
+            # next unrelated commit while the caller saw ValueError).
+            # transaction() rolls back BOTH writes on any failure and
+            # commits on success. Without the emit, entities created
+            # post-cutover would diverge from a replayed entity at SC3's
+            # axis-parity check (every OTHER entity gets its first axis
+            # event from register_entity/append_phase_event; this writer
+            # previously emitted nothing at all). Pipeline for
+            # feature-kind (122's 6-value vocab), lifecycle for every
+            # other kind; to_value = the initial workflow_phase, NULL-safe
+            # (the vocab trigger's own `to_value IS NOT NULL` guard never
+            # fires on NULL).
+            with self.transaction():
+                self._conn.execute(
+                    "INSERT INTO workflow_phases "
+                    "(type_id, kanban_column, workflow_phase, "
+                    "last_completed_phase, mode, backward_transition_reason, "
+                    "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (type_id, kanban_column, workflow_phase,
+                     last_completed_phase, mode, backward_transition_reason,
+                     now),
+                )
+                self._emit_v2_event(
+                    entity_uuid=row["uuid"],
+                    event_type="workflow_established",
+                    axis="pipeline" if row["kind"] == "feature" else "lifecycle",
+                    to_value=workflow_phase,
+                    actor="live:create_workflow_phase",
+                )
         except sqlite3.IntegrityError as e:
             msg = str(e)
             if "UNIQUE constraint" in msg:
@@ -10241,14 +10244,17 @@ class EntityDatabase:
         helper).
 
         Callers invoke this from INSIDE their own already-open
-        ``self.transaction()`` (or, for ``create_workflow_phase``, the
-        bare implicit transaction its INSERT opens) -- :func:`append_event`
+        ``self.transaction()`` -- ALL five writers, including
+        ``create_workflow_phase`` (whose earlier bare-implicit-transaction
+        shape was a battery-r1 blocker: propagation without ROLLBACK left
+        the v1 INSERT pending, not rolled back) -- :func:`append_event`
         composes on ``conn.in_transaction`` and issues a bare parameterized
         INSERT with no COMMIT/ROLLBACK of its own in that case, so this
         call becomes part of the caller's atomic unit: an emit failure
         (e.g. the 122 vocab trigger rejecting an out-of-vocabulary
         ``to_value``, or the D7b uuid-collision guard) propagates and
-        rolls back the caller's v1 write too (fail-closed, FR132-4b).
+        ``transaction()`` rolls back the caller's v1 write too
+        (fail-closed, FR132-4b).
         """
         if not self._is_v2_generation:
             return

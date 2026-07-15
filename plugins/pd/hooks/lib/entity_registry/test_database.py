@@ -9412,6 +9412,54 @@ class TestSC8DualWritePerClass:
         assert len(established) == 1
         assert established[0]["to_value"] is None
 
+    def test_create_workflow_phase_emit_failure_rolls_back_establishment_insert(
+        self, v2_db,
+    ):
+        """SC8 / battery-r1 blocker: an emit failure inside
+        create_workflow_phase rolls back the workflow_phases INSERT too --
+        both-or-neither asserted on BOTH tables via a SEPARATE connection,
+        and only AFTER forcing a subsequent commit on the primary
+        connection. Pre-fix, the INSERT stayed pending (no transaction
+        wrapper; the IntegrityError handler re-raised without ROLLBACK)
+        and silently persisted at that next commit while the caller had
+        already been told the call failed -- the #055/#060 class inverted.
+
+        The failure is a REAL 122 vocab-trigger rejection, not an injected
+        proxy: 'discover' passes the v1 workflow_phases CHECK (the 5D arm
+        of the union) but is out-of-vocabulary for the pipeline axis a
+        feature-kind establishment emit targets.
+        """
+        ws_uuid = _bootstrap_test_workspace(v2_db, "estab-rollback-proj")
+        v2_db.register_entity(
+            "feature", "011-fumble", "Fumbled Feature", workspace_uuid=ws_uuid,
+        )
+
+        with pytest.raises(ValueError, match="out-of-vocabulary"):
+            v2_db.create_workflow_phase(
+                "feature:011-fumble", workflow_phase="discover",
+            )
+
+        # Force a subsequent commit on the SAME connection: pre-fix, this
+        # is the exact moment the orphaned pending INSERT persisted.
+        v2_db.register_entity(
+            "feature", "012-bystander", "Bystander", workspace_uuid=ws_uuid,
+        )
+
+        other_conn = sqlite3.connect(_db_file_path(v2_db))
+        try:
+            wp_count = other_conn.execute(
+                "SELECT COUNT(*) FROM workflow_phases WHERE type_id = ?",
+                ("feature:011-fumble",),
+            ).fetchone()[0]
+            established_count = other_conn.execute(
+                "SELECT COUNT(*) FROM events "
+                "WHERE event_type = 'workflow_established'"
+            ).fetchone()[0]
+        finally:
+            other_conn.close()
+        assert wp_count == 0
+        assert established_count == 0
+
     def test_update_entity_emit_failure_rolls_back_status_write(self, v2_db):
         """SC8: an injected events-append failure rolls back the v1
         write, asserted on BOTH tables -- for update_entity specifically,

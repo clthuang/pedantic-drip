@@ -748,6 +748,12 @@ def _classify_phase_event(
     once per entity, not derived from a phase_events row, and are handled
     by :func:`_emit_events_for_entity` directly).
 
+    Live-side counterpart: database.py's ``_v2_classify_phase_event`` —
+    a DELIBERATE duplicate across the module boundary (battery-r1),
+    pinned in agreement by test_rebuild_tool.py's
+    ``TestAxisClassifierParity`` (the same mechanical-parity treatment
+    task 4 gave the kanban replicas).
+
     Phase-named event_types (started/completed/skipped/backward) go to
     the pipeline axis for feature-kind entities, lifecycle for every
     other kind — including a feature-kind row whose phase is NOT one of
@@ -919,6 +925,10 @@ def _emit_all_events(
             # constraint on this table shaped this way. Anything else
             # (a NOT NULL/CHECK violation, an unrelated collision) is a
             # real bug and must propagate, not be silently absorbed.
+            # Coupled to SQLite's message wording by design: a future
+            # SQLite reformatting makes this raise (fail-loud), and
+            # TestPhaseEventsBackfillDedupCollision exercises a REAL
+            # collision, so wording drift surfaces as a test failure.
             if (
                 "phase_events.type_id, phase_events.phase, "
                 "phase_events.event_type, phase_events.timestamp"
