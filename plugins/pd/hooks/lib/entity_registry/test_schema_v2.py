@@ -525,6 +525,13 @@ _V2_DARK_MODULES = {
     "axes.py",
 }
 
+# Feature 132: the rebuild tool is the guard's DESIGNED endpoint — the
+# docstring below always said the dark window ends when "feature 132's
+# cutover decides where the v2 DB lives". It is a sanctioned importer,
+# not a dark module; task 3 widens this further (database.py's dual-write
+# emit) at which point this guard's premise retires entirely.
+_SANCTIONED_V2_IMPORTERS = {"rebuild_tool.py"}
+
 # Every import spelling that would wire a dark v2 module into a live path.
 # A bare "events" needle is deliberately excluded — it false-positives on
 # unrelated names like phase_events / event_type. Same rationale keeps a
@@ -564,7 +571,11 @@ def _scan_for_live_v2_references(
     """
     offending_files = []
     for py_file in root.rglob("*.py"):
-        if py_file.name.startswith("test_") or py_file.name in dark_modules:
+        if (
+            py_file.name.startswith("test_")
+            or py_file.name in dark_modules
+            or py_file.name in _SANCTIONED_V2_IMPORTERS
+        ):
             continue
         content = py_file.read_text()
         if any(needle in content for needle in needles):

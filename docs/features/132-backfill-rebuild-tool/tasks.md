@@ -15,7 +15,7 @@ Serial ×5 (plan-i1 split). Each ends with the full standard-scope suite green +
 ## Task 3 — Dual-write
 
 **Implements:** D5 complete. **Files:** database.py (`_emit_v2_event` v2-generation-gated + five writers + update_entity fail-closed + counter-increment/except-swallow deletion CONFINED to update_entity's ~:7930-8020 emit block — the doctor check/AST guard/M15 counter row are 133's concern, RETAINED + presentational-exclusion comment), entity_engine.py (:559 deletion, `_run_cascade` retained), cleanup_backlog.py (VERIFY the archival path's emit need — record verdict, edit only if needed), test_entity_engine.py (:231/:256/:261/:690/:758/:791), test_database.py + test_dependencies.py additions (in D10 per plan-i1).
-**Acceptance:** SC7 (#055/#060 incident pins); SC8 (6 classes atomic; update_entity ROLLBACK asserted on both tables; exactly one `cascade_ready` per flip); v1 fixtures unaffected. Diff ⊆ task-3 file list.
+**Acceptance:** SC7 (#055/#060 incident pins); SC8 (6 classes atomic; update_entity ROLLBACK asserted on both tables; exactly one `cascade_ready` per flip); v1 fixtures unaffected; test_schema_v2.py's ships-dark guard RE-ADJUDICATED (impl-t1 note: database.py becoming an events importer retires the guard's premise — widen `_SANCTIONED_V2_IMPORTERS` or retire the guard with a record, never silently break it). Diff ⊆ task-3 file list (+ test_schema_v2.py for that adjudication).
 
 ## Task 4 — derive_kanban retirement
 

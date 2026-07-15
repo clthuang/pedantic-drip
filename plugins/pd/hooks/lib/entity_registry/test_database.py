@@ -7454,20 +7454,21 @@ class TestMigration11WorkspaceBootstrap:
                 / "migrations"
                 / "migration-11-workspace-mapping.json"
             )
-            assert mapping_path.exists(), (
-                f"Mapping file not emitted: {mapping_path}"
+            # Feature 132 (D6.5 call-half): the audit-JSON side effect is
+            # REMOVED from migration 11 — the mapping now feeds ONLY the
+            # workspaces INSERTs. The old file must NOT appear (its stray
+            # writes were the #066 class), while the real migration output
+            # (one workspaces row per legacy id) is unchanged.
+            assert not mapping_path.exists(), (
+                f"Audit JSON should no longer be emitted (132): {mapping_path}"
             )
-            data = json.loads(mapping_path.read_text())
-            # Map every legacy id to its new workspace UUID.
-            assert "wsA" in data
-            assert "wsB" in data
-            for legacy, new_uuid in data.items():
+            for legacy in ("wsA", "wsB"):
                 row = conn.execute(
                     "SELECT uuid FROM workspaces WHERE project_id_legacy=?",
                     (legacy,),
                 ).fetchone()
-                assert row is not None
-                assert row[0] == new_uuid
+                assert row is not None, f"workspaces row missing for {legacy}"
+                assert row[0]
         finally:
             conn.close()
 
