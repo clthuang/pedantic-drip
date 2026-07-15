@@ -572,6 +572,34 @@ class TestTransitionPhaseEntityMetadata:
         metadata = json.loads(entity["metadata"])
         assert "skipped_phases" not in metadata
 
+    def test_skipped_phases_double_encoded_string_rejected_no_char_rows(
+        self, seeded_engine, db, tmp_path,
+    ):
+        """QA132-A finding: a DOUBLE-encoded skipped_phases reaches
+        json.loads as a JSON string, comes back a plain str, and the
+        dual-write loop then iterated it CHAR-BY-CHAR — one 'skipped'
+        phase_events row per character (73 such rows exist in the real
+        census across two features). Must now be rejected up-front with
+        ZERO writes: no transition, no metadata, no phase_events rows."""
+        feat_dir = os.path.join(str(tmp_path), "features", "009-test")
+        os.makedirs(feat_dir, exist_ok=True)
+        with open(os.path.join(feat_dir, "spec.md"), "w") as f:
+            f.write("# Spec\n")
+        db.update_entity("feature:009-test", artifact_path=feat_dir, metadata={"id": "009", "slug": "test", "mode": "standard", "branch": "feature/009-test"})
+        double_encoded = json.dumps(json.dumps(["brainstorm"]))
+        result = _process_transition_phase(
+            seeded_engine, "feature:009-test", "design", False,
+            db=db, skipped_phases=double_encoded,
+        )
+        data = json.loads(result)
+        assert data.get("error") is True
+        assert data.get("error_type") == "invalid_skipped_phases"
+        rows = db.query_phase_events(type_id="feature:009-test", limit=500)
+        skipped_rows = [r for r in rows if r["event_type"] == "skipped"]
+        assert skipped_rows == []  # pre-fix: 13 single-char rows
+        entity = db.get_entity("feature:009-test")
+        assert "skipped_phases" not in json.loads(entity["metadata"])
+
     def test_started_at_included_in_response(self, seeded_engine, db, tmp_path):
         feat_dir = os.path.join(str(tmp_path), "features", "009-test")
         os.makedirs(feat_dir, exist_ok=True)

@@ -981,6 +981,24 @@ def _process_transition_phase(
     ts: str | None = None
     skipped_list: list[str] = []
 
+    # QA132-A guard: json.loads of a DOUBLE-encoded skipped_phases returns
+    # a plain str, and the dual-write loop below would then iterate it
+    # CHAR-BY-CHAR — one 'skipped' phase_events row per character (73 such
+    # rows exist in the pre-fix real census across two features). Parse and
+    # shape-check ONCE, before any write. Element-level validation is left
+    # to the writers (dict items are metadata-only by long-standing shape).
+    parsed_skipped: list | None = None
+    if skipped_phases:
+        parsed_skipped = json.loads(skipped_phases)
+        if not isinstance(parsed_skipped, list):
+            return _make_error(
+                "invalid_skipped_phases",
+                "skipped_phases must be a JSON array, got "
+                f"{type(parsed_skipped).__name__}",
+                'Pass a JSON array of phase names, e.g. \'["design"]\' — '
+                "do not double-encode",
+            )
+
     if db is not None:
         with db.transaction():
             if entity_engine is not None:
@@ -1028,9 +1046,10 @@ def _process_transition_phase(
                 phase_timing[target_phase]["started"] = ts
                 metadata["phase_timing"] = phase_timing
 
-                # Store skipped phases if provided
-                if skipped_phases:
-                    skipped_list = json.loads(skipped_phases)
+                # Store skipped phases if provided (parsed + shape-checked
+                # up-front by the QA132-A guard above)
+                if parsed_skipped is not None:
+                    skipped_list = parsed_skipped
                     metadata["skipped_phases"] = skipped_list
 
                 db.update_entity(
