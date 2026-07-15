@@ -28,10 +28,28 @@ from transition_gate import Severity
 
 from entity_registry.database import EntityDatabase
 from entity_registry.dependencies import DependencyManager
+from entity_registry import schema_v2
+# Test-deepening addition: imported at MODULE (collection) time -- see
+# test_database.py's identically-documented import of the same name for
+# the full rationale (registers "events"/"views"/"axes" into
+# schema_v2.DDL_REGISTRY BEFORE _reset_ddl_registry_for_v2_fixtures'
+# first snapshot below, so that fixture's restore never wipes them out).
+from entity_registry import rebuild_tool
 from workflow_engine.entity_engine import CompletionResult, EntityWorkflowEngine
 from workflow_engine.models import TransitionResponse, WorkflowDBUnavailableError
 from workflow_engine.notifications import Notification, NotificationQueue
 from workflow_engine.rollup import compute_progress
+
+
+@pytest.fixture(autouse=True)
+def _reset_ddl_registry_for_v2_fixtures():
+    """Snapshot/restore ``schema_v2.DDL_REGISTRY`` around every test in
+    this file -- see test_database.py's identically-documented fixture of
+    the same name for the full rationale (mirrors test_dependencies.py/
+    test_rebuild_tool.py's established idiom)."""
+    original_registry = list(schema_v2.DDL_REGISTRY)
+    yield
+    schema_v2.DDL_REGISTRY[:] = original_registry
 
 
 # ---------------------------------------------------------------------------
@@ -2426,3 +2444,69 @@ class TestFiveDFailLoudMessageContract:
 
         assert "locked" not in str(excinfo.value).lower()
         assert "OperationalError" in str(excinfo.value)
+
+
+# ---------------------------------------------------------------------------
+# Test-deepening addition (feature 132 D5/#080): cascade single-fire
+# dual-write, driven through the REAL engine.complete_phase() entrypoint
+# on a v2-generation file. dimension:state_transitions
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def v2_db(tmp_path):
+    """A v2-generation EntityDatabase (feature 132 D1's three build
+    steps, via rebuild_tool.build_staging_database) -- mirrors
+    test_database.py/test_dependencies.py's identically-named,
+    identically-built fixture."""
+    staging_path = str(tmp_path / "entities.db.v2-cascade-test")
+    rebuild_tool.build_staging_database(staging_path)
+    database = EntityDatabase(staging_path)
+    yield database
+    database.close()
+
+
+class TestCascadeSingleFireDualWriteIntegration:
+    """test_dependencies.py's TestFeature132CascadeFlipDualWrite proves
+    ``DependencyManager.cascade_unblock()`` ALONE emits exactly one
+    ``cascade_ready`` v2 event; TestCascadeUnblock above proves the
+    OBSERVABLE OUTCOME through the real ``engine.complete_phase()`` ->
+    ``_run_cascade()`` path, but only on a v1 (no events table) db.
+    Neither proves the two halves TOGETHER: that ``_run_cascade``'s
+    deleted call site plus Phase A's update_entity-owned
+    ``cascade_unblock`` call still produce exactly ONE v2 events row when
+    driven through the REAL engine entrypoint on a v2-generation file --
+    not a direct DependencyManager call in isolation.
+    """
+
+    def test_complete_phase_end_to_end_emits_exactly_one_cascade_ready_event(
+        self, v2_db, tmp_path,
+    ):
+        artifacts_root = str(tmp_path)
+        slug = "042-cascade-e2e"
+        _create_meta_json(artifacts_root, slug)
+
+        blocker_uuid = _register(v2_db, "feature", slug, "Cascade E2E Blocker")
+        _with_phase(
+            v2_db, f"feature:{slug}", "finish", mode="standard",
+            last_completed_phase="implement",
+        )
+        dependent_uuid = _register(
+            v2_db, "feature", "043-cascade-e2e-dep", "Dependent",
+            status="blocked",
+        )
+        DependencyManager().add_dependency(v2_db, dependent_uuid, blocker_uuid)
+
+        engine = _make_engine(v2_db, artifacts_root)
+        result = engine.complete_phase(blocker_uuid, "finish")
+        assert result.cascade_error is None
+
+        entity = v2_db.get_entity_by_uuid(dependent_uuid)
+        assert entity["status"] == "ready"
+
+        events = v2_db._conn.execute(
+            "SELECT * FROM events WHERE entity_uuid = ? "
+            "AND event_type = 'cascade_ready'",
+            (dependent_uuid,),
+        ).fetchall()
+        assert len(events) == 1

@@ -1458,3 +1458,401 @@ class TestSwapNeverImpliedByOrdinaryRun:
         assert Path(old_db_path).exists()  # now the PROMOTED staging file
         assert Path(old_db_path + ".v1-readonly").exists()
         assert not staging_path.exists()  # renamed away
+
+
+# ---------------------------------------------------------------------------
+# Test-deepening additions below (dimensions: boundary, error_paths,
+# state_transitions, concurrency, idempotency, adversarial). Every test
+# below targets a spec/design-anchored property existing coverage left
+# thin -- see each class docstring's "derived_from"-style rationale.
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# D4 negative paths: perform_cutover_swap's two abort branches (pre-
+# existing archive, non-empty staging sidecar) have zero coverage --
+# every existing swap test exercises only the happy path.
+# dimension:error_paths
+# ---------------------------------------------------------------------------
+class TestPerformCutoverSwapPreExistingArchiveRefuses:
+    """D4's choreography checks ``readonly_target.exists()`` AFTER
+    checkpointing/hashing the old file but BEFORE any rename -- untested
+    anywhere (every existing swap test starts from a clean directory).
+    Proves the refusal fires and that NEITHER file moved: a half-finished
+    swap (old file gone, nothing yet in its place) would be strictly
+    worse than refusing outright.
+    """
+
+    def test_refuses_and_leaves_both_files_and_the_existing_archive_untouched(
+        self, tmp_path,
+    ):
+        old_db_path = str(tmp_path / "entities.db")
+        db = database.EntityDatabase(old_db_path)
+        db.close()
+
+        staging_path = str(tmp_path / "entities.db.rebuild-test")
+        rebuild_tool.build_staging_database(staging_path)
+
+        readonly_target = old_db_path + ".v1-readonly"
+        Path(readonly_target).write_bytes(b"pre-existing archive sentinel")
+
+        with pytest.raises(FileExistsError):
+            rebuild_tool.perform_cutover_swap(
+                old_db_path, staging_path,
+                marker_dir=str(tmp_path / "marker-home"),
+            )
+
+        assert Path(old_db_path).exists()
+        assert Path(staging_path).exists()
+        assert Path(readonly_target).read_bytes() == b"pre-existing archive sentinel"
+
+
+class TestPerformCutoverSwapNonEmptyStagingSidecarAborts:
+    """D4's Step-2 sidecar check ('staging checkpoint left a non-empty
+    sidecar') has zero coverage -- every existing swap test's checkpoint
+    genuinely truncates the WAL to empty. Simulates a checkpoint that
+    fails to fully truncate by monkeypatching ``_checkpoint_wal`` to a
+    no-op and pre-seeding a non-empty '-wal' sidecar file directly
+    (deterministic -- no forked/threaded race, H6/#059 discipline). Pins
+    the ACTUAL recovery starting point D10's rollback contract describes:
+    Step 1's old-file archive rename already landed by the time Step 2's
+    check fires, so the old file sits at its ``.v1-readonly`` path, NOT
+    at its original location -- staging is never promoted into its place.
+    """
+
+    def test_non_empty_sidecar_aborts_before_promoting_staging(
+        self, tmp_path, monkeypatch,
+    ):
+        old_db_path = str(tmp_path / "entities.db")
+        db = database.EntityDatabase(old_db_path)
+        db.close()
+
+        staging_path = str(tmp_path / "entities.db.rebuild-test")
+        rebuild_tool.build_staging_database(staging_path)
+
+        monkeypatch.setattr(rebuild_tool, "_checkpoint_wal", lambda path: None)
+        stray_wal = Path(f"{staging_path}-wal")
+        stray_wal.write_bytes(b"unflushed-wal-content")
+
+        with pytest.raises(RuntimeError, match="non-empty sidecar"):
+            rebuild_tool.perform_cutover_swap(
+                old_db_path, staging_path,
+                marker_dir=str(tmp_path / "marker-home"),
+            )
+
+        # Step 1 (old-file archive rename) already landed by the time
+        # Step 2's check fires -- this IS the D10 rollback's starting
+        # point, not an untouched pre-swap state.
+        assert not Path(old_db_path).exists()
+        assert Path(old_db_path + ".v1-readonly").exists()
+        # Staging itself was never promoted -- still exactly where it
+        # was, sidecar and all.
+        assert Path(staging_path).exists()
+        assert stray_wal.read_bytes() == b"unflushed-wal-content"
+
+
+# ---------------------------------------------------------------------------
+# FR132-3 checksum: TestIdempotentRerun proves STABILITY across two runs
+# of the SAME corpus; it cannot prove content-sensitivity (a checksum
+# hardcoded to a constant string would pass that test too).
+# dimension:idempotency
+# ---------------------------------------------------------------------------
+class TestChecksumContentSensitivity:
+    def test_different_corpora_produce_different_checksums(self, tmp_path):
+        def _build_a(path):
+            db = database.EntityDatabase(str(path))
+            db.close()
+            conn = sqlite3.connect(str(path))
+            _seed_workspace(conn, "ws-1", "p1")
+            _seed_entity(
+                conn, uuid_="entity-a", workspace_uuid="ws-1", kind="task",
+                entity_id="001-a", name="Entity A", lifecycle_class="task_flow",
+            )
+            conn.commit()
+            conn.close()
+            return str(path)
+
+        def _build_b(path):
+            db = database.EntityDatabase(str(path))
+            db.close()
+            conn = sqlite3.connect(str(path))
+            _seed_workspace(conn, "ws-1", "p1")
+            _seed_entity(
+                conn, uuid_="entity-b", workspace_uuid="ws-1", kind="task",
+                entity_id="001-b", name="Entity B", lifecycle_class="task_flow",
+            )
+            conn.commit()
+            conn.close()
+            return str(path)
+
+        _, _, report_a = _build_and_backfill(tmp_path, _build_a, name="corpus-a")
+        _, _, report_b = _build_and_backfill(tmp_path, _build_b, name="corpus-b")
+
+        assert report_a["checksum"] != report_b["checksum"]
+
+
+class TestBuildStagingDatabaseReentrantOnAlreadyV2File:
+    """``build_staging_database``'s own docstring claims re-entry safety
+    on an ALREADY-v2-stamped file ('happens to be idempotent-safe
+    regardless ... a no-op, per the FR132-1 guard plus this function's
+    own IF-NOT-EXISTS/upsert DDL') -- untested: every existing call site
+    in this file targets a FRESH path. Proves the claim directly: a
+    second call on the SAME already-v2 file does not raise, does not
+    duplicate DDL objects, and leaves the generation marker correct.
+    dimension:idempotency
+    """
+
+    def test_second_call_on_same_v2_file_is_a_true_no_op(self, tmp_path):
+        staging_path = str(tmp_path / "reentrant.db")
+        rebuild_tool.build_staging_database(staging_path)
+
+        conn = sqlite3.connect(staging_path)
+        try:
+            trigger_count_before = conn.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'"
+            ).fetchone()[0]
+            table_count_before = conn.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+
+        # Second call, SAME path -- must not raise.
+        rebuild_tool.build_staging_database(staging_path)
+
+        conn = sqlite3.connect(staging_path)
+        try:
+            trigger_count_after = conn.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'"
+            ).fetchone()[0]
+            table_count_after = conn.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'"
+            ).fetchone()[0]
+            rows = dict(
+                conn.execute(
+                    "SELECT key, value FROM _metadata "
+                    "WHERE key IN ('schema_generation', 'schema_version')"
+                ).fetchall()
+            )
+        finally:
+            conn.close()
+
+        assert trigger_count_after == trigger_count_before
+        assert table_count_after == table_count_before
+        assert rows["schema_generation"] == "v2"
+        assert rows["schema_version"] == str(schema_v2.V2_SCHEMA_VERSION)
+
+
+# ---------------------------------------------------------------------------
+# D2 normalization: the pathological corpus's blank-id case only exercises
+# a FULLY empty string; `.strip()` is the actual guard (rebuild_tool.py),
+# which a whitespace-only value distinguishes from a naive truthiness check.
+# dimension:boundary
+# ---------------------------------------------------------------------------
+class TestWhitespaceOnlyIdentifiersNormalized:
+    def test_whitespace_only_entity_id_and_name_get_normalized(self, tmp_path):
+        def _build(path):
+            db = database.EntityDatabase(str(path))
+            db.close()
+            conn = sqlite3.connect(str(path))
+            _seed_workspace(conn, "ws-1", "p1")
+            _seed_entity(
+                conn, uuid_="whitespace-entity", workspace_uuid="ws-1", kind="task",
+                entity_id="   ", name="\t\n", status="active",
+                lifecycle_class="task_flow",
+            )
+            conn.commit()
+            conn.close()
+            return str(path)
+
+        _, staging_path, report = _build_and_backfill(tmp_path, _build, name="ws-only")
+        normalized = report["anomalies"]["empty_id_normalized"]
+        fields = {a["field"] for a in normalized}
+        assert fields == {"entity_id", "name"}
+        assert all(a["old_uuid"] == "whitespace-entity" for a in normalized)
+
+        conn = _new_conn(staging_path)
+        row = conn.execute("SELECT entity_id, name FROM entities").fetchone()
+        assert row["entity_id"].startswith("unnamed-")
+        assert row["name"].startswith("unnamed-")
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# D2 lineage: the pathological corpus's only parent reference is a single
+# hop (feature -> project). Proves the parent-topological order + uuid
+# remap holds across a THREE-level chain.
+# dimension:state_transitions
+# ---------------------------------------------------------------------------
+class TestMultiHopParentChainRemapsCorrectly:
+    def test_three_level_chain_parent_uuids_remap_to_new_uuids_at_every_level(
+        self, tmp_path,
+    ):
+        def _build(path):
+            db = database.EntityDatabase(str(path))
+            db.close()
+            conn = sqlite3.connect(str(path))
+            _seed_workspace(conn, "ws-1", "p1")
+            _seed_entity(
+                conn, uuid_="grandparent", workspace_uuid="ws-1", kind="project",
+                entity_id="P001", name="Grandparent", entity_type="container",
+                lifecycle_class="container_flow",
+            )
+            _seed_entity(
+                conn, uuid_="parent", workspace_uuid="ws-1", kind="feature",
+                entity_id="001-parent", name="Parent", parent_uuid="grandparent",
+            )
+            _seed_entity(
+                conn, uuid_="child", workspace_uuid="ws-1", kind="task",
+                entity_id="002-child", name="Child", parent_uuid="parent",
+                lifecycle_class="task_flow",
+            )
+            conn.commit()
+            conn.close()
+            return str(path)
+
+        _, staging_path, _ = _build_and_backfill(tmp_path, _build, name="chain")
+        conn = _new_conn(staging_path)
+        by_type_id = {
+            r["type_id"]: r
+            for r in conn.execute("SELECT uuid, type_id, parent_uuid FROM entities")
+        }
+        grandparent_new = by_type_id["project:P001"]["uuid"]
+        parent_row = by_type_id["feature:001-parent"]
+        child_row = by_type_id["task:002-child"]
+
+        assert parent_row["parent_uuid"] == grandparent_new
+        assert child_row["parent_uuid"] == parent_row["uuid"]
+        # Neither parent_uuid is an OLD uuid leaking through unmapped.
+        assert parent_row["parent_uuid"] not in ("grandparent", "parent", "child")
+        assert child_row["parent_uuid"] not in ("grandparent", "parent", "child")
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# H1 ('a partial remap is worse than no rebuild'): the whole import is ONE
+# transaction, but no existing test proves a CONCURRENT reader is isolated
+# from a partial (uncommitted) import -- every existing test only observes
+# the committed end state.
+# dimension:concurrency
+# ---------------------------------------------------------------------------
+class TestImportTransactionIsolationFromConcurrentReaders:
+    """Drives the import's own internal helpers directly (a whitebox
+    sequence, mirroring this file's existing
+    ``rebuild_tool._replay_v1_chain(staging_path)`` direct-call
+    precedent) up to a deliberately uncommitted midpoint, then opens a
+    SECOND, independent connection to prove it. Two plain sequential
+    sqlite3 connections in one process -- H6/#059 discipline (no forked
+    child, no threading).
+    """
+
+    def test_partial_import_invisible_to_a_second_connection_until_commit(
+        self, tmp_path,
+    ):
+        old_db_path = _build_pathological_corpus(tmp_path / "iso-old.db")
+        staging_path = str(tmp_path / "iso-staging.db")
+        rebuild_tool.build_staging_database(staging_path)
+
+        new_conn = sqlite3.connect(staging_path, autocommit=True)
+        old_conn = sqlite3.connect(f"file:{old_db_path}?mode=ro", uri=True)
+        old_conn.row_factory = sqlite3.Row
+        state = None
+        try:
+            new_conn.execute("PRAGMA foreign_keys = ON")
+            new_conn.execute("BEGIN IMMEDIATE")
+            rebuild_tool._import_workspaces(old_conn, new_conn)
+            state = rebuild_tool._import_entities(old_conn, new_conn)
+            assert state.survivors  # sanity: the partial import wrote something
+
+            # A SECOND, independent connection to the SAME file, opened
+            # while the first connection's transaction is still open.
+            reader = sqlite3.connect(staging_path, timeout=2.0)
+            try:
+                count = reader.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
+            finally:
+                reader.close()
+            assert count == 0, "a concurrent reader must never see a partial import"
+
+            new_conn.execute("COMMIT")
+        except Exception:
+            if new_conn.in_transaction:
+                new_conn.execute("ROLLBACK")
+            raise
+        finally:
+            old_conn.close()
+            new_conn.close()
+
+        # After commit, a FRESH connection sees the full survivor set.
+        reader = sqlite3.connect(staging_path)
+        try:
+            count_after = reader.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
+        finally:
+            reader.close()
+        assert count_after == len(state.survivors)
+
+
+# ---------------------------------------------------------------------------
+# D3's vendored derivation is only exercised INDIRECTLY, through the full
+# pathological-corpus backfill elsewhere in this file -- no test drives
+# its priority ladder directly.
+# dimension:boundary
+# ---------------------------------------------------------------------------
+class TestFrozenKanbanDerivationDirectBoundaryInputs:
+    def test_priority_ladder_branches_and_none_none_fallback(self):
+        # Terminal statuses outrank any phase value.
+        assert rebuild_tool._frozen_kanban_derivation("completed", "brainstorm") == "completed"
+        assert rebuild_tool._frozen_kanban_derivation("abandoned", None) == "completed"
+        # Blocked outranks phase.
+        assert rebuild_tool._frozen_kanban_derivation("blocked", "implement") == "blocked"
+        # Planned outranks phase.
+        assert rebuild_tool._frozen_kanban_derivation("planned", "finish") == "backlog"
+        # Neither terminal/blocked/planned -> phase lookup.
+        assert rebuild_tool._frozen_kanban_derivation("active", "deliver") == "wip"
+        # Both status and phase absent/unmapped -> "backlog" fallback, not
+        # a crash.
+        assert rebuild_tool._frozen_kanban_derivation(None, None) == "backlog"
+        assert rebuild_tool._frozen_kanban_derivation("active", "not-a-real-phase") == "backlog"
+
+    def test_output_is_always_one_of_the_fixed_six_values(self):
+        """Docstring claim: the codomain is EXACTLY six literals, a fixed
+        subset of both ``axes.EXECUTION_STATUSES_SET`` and the v1
+        ``workflow_phases.kanban_column`` CHECK. Sweeps a representative
+        cross-product rather than trusting the docstring's own count."""
+        statuses = ("completed", "abandoned", "blocked", "planned", "active", None, "weird")
+        phases = list(rebuild_tool._PHASE_TO_KANBAN) + [None, "bogus"]
+        seen = set()
+        for status in statuses:
+            for phase in phases:
+                seen.add(rebuild_tool._frozen_kanban_derivation(status, phase))
+        assert seen == {
+            "completed", "blocked", "backlog", "prioritised", "wip", "documenting",
+        }
+
+
+# ---------------------------------------------------------------------------
+# FR132-3: "Non-zero unexplained delta = tool exits non-zero" has no test
+# forcing _verify_counts_explained to actually raise -- the real import
+# path's own bookkeeping structurally can't produce a mismatched delta
+# organically, so this drives the function directly with a fabricated
+# _ImportState.
+# dimension:error_paths
+# ---------------------------------------------------------------------------
+class TestVerifyCountsExplainedDirect:
+    def test_unexplained_delta_raises_integrity_error(self):
+        state = rebuild_tool._ImportState(
+            counts={"feature": {"ws-1": {"old": 3, "new": 1}}},  # delta=2
+            anomalies={"duplicate_type_id": [
+                {"type_id": "feature:001-x", "workspace_uuid": "ws-1"},
+            ]},  # explains only 1 of the 2
+        )
+        with pytest.raises(rebuild_tool.BackfillIntegrityError, match="unexplained"):
+            rebuild_tool._verify_counts_explained(state)
+
+    def test_fully_explained_delta_does_not_raise(self):
+        state = rebuild_tool._ImportState(
+            counts={"feature": {"ws-1": {"old": 3, "new": 2}}},  # delta=1
+            anomalies={"duplicate_type_id": [
+                {"type_id": "feature:001-x", "workspace_uuid": "ws-1"},
+            ]},  # explains exactly 1
+        )
+        rebuild_tool._verify_counts_explained(state)  # must not raise

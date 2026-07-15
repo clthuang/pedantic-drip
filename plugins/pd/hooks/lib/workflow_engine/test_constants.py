@@ -155,3 +155,19 @@ class TestKanbanProducerCompleteness:
     def test_no_phase_fallback(self) -> None:
         """Active status with no phase falls back to 'backlog'."""
         assert _REPRESENTATIVE._kanban_column_for("active", None) == "backlog"
+
+
+# ---------------------------------------------------------------------------
+# Test-deepening addition: TestKanbanProducerParity's own status tuple
+# never includes `None` -- only string values, even though
+# `_kanban_column_for`'s type hint (`status: str`) doesn't stop a caller
+# from passing it (reconciliation.py's OWN call site guards with
+# `status or "active"`, implying this was a real concern at some call
+# site). Pins the actual, currently-safe behavior across all four
+# same-tree producers. dimension:boundary
+# ---------------------------------------------------------------------------
+class TestKanbanProducerNoneStatusBoundary:
+    def test_none_status_falls_back_to_phase_lookup_across_all_producers(self) -> None:
+        for name, mod in PRODUCERS.items():
+            assert mod._kanban_column_for(None, "specify") == "backlog", name
+            assert mod._kanban_column_for(None, None) == "backlog", name

@@ -11502,3 +11502,40 @@ class TestFiveDDbUnavailableEnvelope:
 
         row_after = db.get_workflow_phase("project:106-envelope-c")
         assert row_after == row_before, "transaction must roll back -- no partial write"
+
+
+# ---------------------------------------------------------------------------
+# Test-deepening addition (feature 132 D6.1-.3): the fifth
+# _kanban_column_for replica (this module) is only proven behaviorally
+# equivalent to its four same-tree siblings via
+# TestCompletePhaseKanbanStoredValue's individual literal pins above --
+# nothing directly compares its _PHASE_TO_KANBAN dict, or drives
+# _kanban_column_for over the FULL input space, against the four-way
+# same-tree parity workflow_engine/test_constants.py already proves.
+# This module sits in mcp/, a separate import root from
+# workflow_engine/backfill.py's same-tree siblings -- closing that
+# cross-import-root gap directly. dimension:boundary
+# ---------------------------------------------------------------------------
+class TestKanbanProducerCrossImportRootParity:
+    def test_phase_to_kanban_dict_matches_hooks_lib_representative(self):
+        from workflow_engine import engine as _engine_producer
+        from workflow_state_server import _PHASE_TO_KANBAN
+
+        assert _PHASE_TO_KANBAN == _engine_producer._PHASE_TO_KANBAN
+
+    def test_kanban_column_for_agrees_with_hooks_lib_representative_over_full_input_space(
+        self,
+    ):
+        from workflow_engine import engine as _engine_producer
+        from workflow_state_server import _kanban_column_for
+
+        statuses = (
+            "planned", "active", "completed", "abandoned",
+            "blocked", "unmapped-status",
+        )
+        phases = list(_engine_producer._PHASE_TO_KANBAN) + [None, "nonexistent-phase"]
+        for status in statuses:
+            for phase in phases:
+                mine = _kanban_column_for(status, phase)
+                theirs = _engine_producer._kanban_column_for(status, phase)
+                assert mine == theirs, (status, phase, mine, theirs)

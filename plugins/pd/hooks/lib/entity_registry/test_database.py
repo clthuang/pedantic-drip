@@ -8777,6 +8777,25 @@ class TestProvidedWorkspaceUuidMembership:
         ws = _bootstrap_test_workspace(db, "membership-present")
         assert db._validated_provided_workspace_uuid(ws, "register_entity") == ws
 
+    def test_register_entity_end_to_end_raises_split_brain_before_any_insert(
+        self, db,
+    ):
+        """Every method above calls ``_validated_provided_workspace_uuid``
+        directly -- none drives it through a REAL caller's own call chain
+        (``_resolve_optional_workspace_filter`` -> the guard, D6.4's
+        six-caller rewire). ``register_entity(workspace_uuid=<orphan>)``
+        must raise the identical error, and -- non-vacuously -- must do
+        so BEFORE any entities row lands, proving the rewire is genuinely
+        wired into the write path rather than merely directly callable in
+        isolation. dimension:adversarial
+        """
+        with pytest.raises(ValueError, match="split-brain"):
+            db.register_entity(
+                "feature", "001-orphan-e2e", "Orphan E2E",
+                workspace_uuid=self._ORPHAN,
+            )
+        assert db.get_entity("feature:001-orphan-e2e") is None
+
     def test_unknown_uuid_bootstraps_not_raises(self, db):
         from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
 
@@ -9489,3 +9508,86 @@ class TestDeleteEntityV2GenerationFKFinding:
         )
         db.delete_entity("feature:098-fine", workspace_uuid=ws_uuid)
         assert db.get_entity("feature:098-fine") is None
+
+
+# ---------------------------------------------------------------------------
+# Test-deepening addition: TestSC8DualWritePerClass's rollback tests above
+# all use an INJECTED proxy failure (_EventsInsertFailureProxy);
+# TestVocabTriggerRejection (test_axes.py) proves the REAL 122 vocab
+# trigger rejects a raw INSERT, never through append_phase_event's own
+# production call path. Closes that gap: an out-of-vocabulary phase value
+# on a feature-kind entity's phase transition hits the SAME production
+# ``_emit_v2_event`` call as every legitimate transition and must roll
+# back the v1 phase_events INSERT + workflow_phases UPDATE too --
+# both-or-neither via the REAL mechanism, not a synthetic substitute.
+# dimension:error_paths, dimension:concurrency
+# ---------------------------------------------------------------------------
+class TestRealVocabTriggerRejectionRollsBackDualWrite:
+    def test_append_phase_event_real_vocab_rejection_rolls_back_v1_write_too(
+        self, v2_db,
+    ):
+        ws_uuid = _bootstrap_test_workspace(v2_db, "vocab-reject-proj")
+        v2_db.register_entity(
+            "feature", "014-vocab-reject", "Vocab Reject", workspace_uuid=ws_uuid,
+        )
+        v2_db.create_workflow_phase(
+            "feature:014-vocab-reject", workflow_phase="brainstorm",
+        )
+
+        with pytest.raises(sqlite3.IntegrityError):
+            v2_db.append_phase_event(
+                type_id="feature:014-vocab-reject", project_id="vocab-reject-proj",
+                event_type="started", phase="not-a-real-phase", workspace_uuid=ws_uuid,
+            )
+
+        rows = v2_db.query_phase_events(
+            type_id="feature:014-vocab-reject", event_type="started",
+        )
+        assert rows == []
+        wf = v2_db.get_workflow_phase("feature:014-vocab-reject")
+        assert wf["workflow_phase"] == "brainstorm"
+
+        entity_uuid = v2_db.get_entity("feature:014-vocab-reject")["uuid"]
+        started = [
+            e for e in _events_for(v2_db, entity_uuid, axis="pipeline")
+            if e["event_type"] == "started"
+        ]
+        assert started == []
+
+    def test_rejection_rollback_is_invisible_to_a_separate_connection(self, v2_db):
+        """Same failure as above, but proved via a SEPARATE connection to
+        the SAME file -- durable isolation, not merely same-connection
+        visibility (a rollback that somehow left a dirty read visible to
+        another connection would still pass a same-connection-only
+        check)."""
+        ws_uuid = _bootstrap_test_workspace(v2_db, "vocab-reject-iso-proj")
+        v2_db.register_entity(
+            "feature", "015-vocab-reject-iso", "Vocab Reject Iso",
+            workspace_uuid=ws_uuid,
+        )
+        v2_db.create_workflow_phase(
+            "feature:015-vocab-reject-iso", workflow_phase="brainstorm",
+        )
+
+        with pytest.raises(sqlite3.IntegrityError):
+            v2_db.append_phase_event(
+                type_id="feature:015-vocab-reject-iso",
+                project_id="vocab-reject-iso-proj",
+                event_type="started", phase="not-a-real-phase",
+                workspace_uuid=ws_uuid,
+            )
+
+        other_conn = sqlite3.connect(_db_file_path(v2_db))
+        try:
+            pe_count = other_conn.execute(
+                "SELECT COUNT(*) FROM phase_events "
+                "WHERE type_id = ? AND event_type = 'started'",
+                ("feature:015-vocab-reject-iso",),
+            ).fetchone()[0]
+            ev_count = other_conn.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type = 'started'"
+            ).fetchone()[0]
+        finally:
+            other_conn.close()
+        assert pe_count == 0
+        assert ev_count == 0

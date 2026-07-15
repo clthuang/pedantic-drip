@@ -984,3 +984,25 @@ class TestRegisterEntityBlankNameGuard:
         with open(server_path, encoding="utf-8") as fh:
             content = fh.read()
         assert "name is required when auto_id=True" not in content
+
+
+# ---------------------------------------------------------------------------
+# Test-deepening addition (feature 132 D6.4): the register_entity MCP
+# tool's caller-facing project_id passthrough kwarg was dropped from the
+# signature (only entity_server's OWN legacy-project-id global is
+# consulted internally now). No existing test proves REMOVAL -- every
+# `project_id=` reference in this file targets EntityDatabase.
+# register_entity (the DB method, which retains the kwarg per the
+# amended FR132-5b reading), never this MCP tool function. Proves the
+# structural removal non-vacuously: passing project_id= must raise
+# TypeError synchronously (argument binding fails before the coroutine
+# is even scheduled), the same as any other unknown kwarg would.
+# dimension:adversarial
+# ---------------------------------------------------------------------------
+class TestRegisterEntityToolProjectIdKwargRemoved:
+    def test_project_id_kwarg_raises_type_error_not_silently_accepted(self):
+        with pytest.raises(TypeError, match="project_id"):
+            entity_server.register_entity(
+                entity_type="feature", entity_id="001-x", name="X",
+                project_id="should-not-exist",
+            )
