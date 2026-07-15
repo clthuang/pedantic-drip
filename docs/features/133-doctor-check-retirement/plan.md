@@ -22,4 +22,4 @@ Each task is an independently-revertible commit set (no data/schema changes anyw
 
 ## Gates
 
-Per task: full standard-scope suite + confined-diff check vs the task's file list. Feature end (task 4): hooks 67/67 + validate 0 errors + SC7's widened reconciliation grep + diff-vs-develop ⊆ D9.
+Per task: full standard-scope suite + confined-diff check vs the task's file list. Feature end (task 4): hooks 67/67 + validate 0 errors + SC7's widened reconciliation grep (deliberate RE-RUN of task 3's gate — task 4's rename edit could reintroduce a count-shaped string; re-verification, not duplicate ownership — tasks-i2 S1) + diff-vs-develop ⊆ D9.
