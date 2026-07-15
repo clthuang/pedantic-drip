@@ -28,7 +28,7 @@ Implements design.md (578cd7d). FIVE serial tasks (i1 split of the old task 4 �
 
 ## Task 3 — Dual-write (D5)
 
-- `_emit_v2_event` + five-writer wiring; update_entity emit IN-transaction fail-closed (+ counter machinery deleted); create_workflow_phase establishment event; presentational-exclusion comment; entity_engine.py:559 deletion (`_run_cascade` rollup/notifications retained; test_entity_engine.py 6 refs); cleanup_backlog.py archival-path emit VERIFIED (edit only if needed — record the verdict).
+- `_emit_v2_event` + five-writer wiring; update_entity emit IN-transaction fail-closed (+ counter-increment/except-swallow deletion CONFINED to that emit block — doctor check/AST guard/M15 row RETAINED, 133's concern); create_workflow_phase establishment event; presentational-exclusion comment; entity_engine.py:559 deletion (`_run_cascade` rollup/notifications retained; test_entity_engine.py 6 refs); cleanup_backlog.py archival-path emit VERIFIED (edit only if needed — record the verdict).
 - Gate: SC7 + SC8 green on tool-built v2 files; v1 fixtures unaffected; diff ⊆ {database.py, entity_engine.py, cleanup_backlog.py?, test_entity_engine.py, test_database.py, test_dependencies.py, test_rebuild_tool.py} (D10 updated at plan-i1 to carry the test files).
 
 ## Task 4 — derive_kanban retirement (D6.1-.3 + comment sweep)
