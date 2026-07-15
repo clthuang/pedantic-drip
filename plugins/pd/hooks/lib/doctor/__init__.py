@@ -16,6 +16,7 @@ from doctor.check_no_free_text_status_parsers import (
 )
 from doctor.check_severity_vocab import check_severity_vocab
 from doctor.check_status_write_path import check_status_write_path
+from doctor.check_v2_cutover_window import check_v2_cutover_window
 from doctor.checks import (
     _build_local_entity_set,
     check_audit_emit_failed_count,
@@ -74,6 +75,10 @@ CHECK_ORDER = [
     # canonical unknown-workspace bucket and (via the fix action) re-attribute
     # them. Self-guards a missing/locked DB, so NOT in _ENTITY_DB_CHECKS.
     check_unknown_workspace_orphans,
+    # Feature 133 D3: v1->v2 cutover escape-hatch window marker check. Reads
+    # a file, not the DB, so NOT in _ENTITY_DB_CHECKS — must run silently
+    # even on a DB-less workspace. Registered LAST per design.
+    check_v2_cutover_window,
 ]
 
 # Checks that require entity DB

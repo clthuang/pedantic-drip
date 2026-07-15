@@ -31,6 +31,7 @@ def test_check_order_preserved_post_f116():
         "check_severity_vocab",
         "check_workspace_uuid_consistency",
         "check_unknown_workspace_orphans",
+        "check_v2_cutover_window",
     ]
     actual_names = [c.__name__ for c in CHECK_ORDER]
     assert actual_names == expected_names, (
@@ -44,3 +45,7 @@ def test_check_order_preserved_post_f116():
     # The unknown-workspace orphan check also self-guards a missing/locked DB,
     # so it is likewise NOT gated behind the entity-DB prerequisite set.
     assert "check_unknown_workspace_orphans" not in _ENTITY_DB_CHECKS
+    # The v2 cutover-window check reads a marker FILE, not the DB, and must
+    # run (silently) even on a DB-less workspace, so it is likewise NOT
+    # gated behind the entity-DB prerequisite set.
+    assert "check_v2_cutover_window" not in _ENTITY_DB_CHECKS

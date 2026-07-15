@@ -2647,7 +2647,7 @@ class TestCheck10MissingConfigFileUsesDefaults:
 # Feature 131 removed check_project_attribution: 21 checks -> 20. Feature 129
 # removed check_cross_workspace_parent_uuid: 20 checks -> 19. Single source
 # for the orchestrator/CLI check-count assertions below.
-EXPECTED_CHECK_COUNT = 19
+EXPECTED_CHECK_COUNT = 20
 
 
 class TestOrchestratorReportHas14Checks:
