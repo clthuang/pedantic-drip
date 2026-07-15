@@ -1668,6 +1668,8 @@ def _process_reconcile_check(
     db: EntityDatabase,
     artifacts_root: str,
     feature_type_id: str | None,
+    *,
+    workspace_uuid: str | None = None,
 ) -> str:
     """Workflow drift detection. Returns JSON string.
 
@@ -1675,10 +1677,16 @@ def _process_reconcile_check(
     requires the directory to exist (spec I7), so a feature with a DB row but no
     filesystem directory returns feature_not_found. db_only is only observable
     through the bulk scan path (feature_type_id=None).
+
+    Feature 133 FR133-2.ii: forwards ``workspace_uuid`` to
+    ``check_workflow_drift`` so the bulk db_only scan is workspace-scoped.
     """
     if feature_type_id is not None:
         _validate_feature_type_id(feature_type_id, artifacts_root)
-    result = check_workflow_drift(engine, db, artifacts_root, feature_type_id)
+    result = check_workflow_drift(
+        engine, db, artifacts_root, feature_type_id,
+        workspace_uuid=workspace_uuid,
+    )
     # Feature 088 FR-10.9 / AC-42: additive sibling key surfacing drift between
     # entities.metadata.phase_timing and phase_events rows. Does not affect the
     # existing WorkflowDriftResult (frozen dataclass) schema.
@@ -2235,7 +2243,11 @@ async def reconcile_check(feature_type_id: str | None = None) -> str:
         return err
     if _engine is None or _db is None:
         return _NOT_INITIALIZED
-    return _process_reconcile_check(_engine, _db, _artifacts_root, feature_type_id)
+    return _process_reconcile_check(
+        _engine, _db, _artifacts_root, feature_type_id,
+        # FR133-2.ii: thread workspace_uuid; empty string == unset → None.
+        workspace_uuid=_workspace_uuid or None,
+    )
 
 
 @mcp.tool()

@@ -10865,6 +10865,50 @@ class TestReconcileHandlersForwardWorkspaceUuid:
     any of the 3 async handler bodies fails the corresponding test.
     """
 
+    def test_reconcile_check_forwards_workspace_uuid(self, tmp_path, monkeypatch):
+        """FR133-2.ii pin (D4 three-layer thread): reconcile_check →
+        _process_reconcile_check → check_workflow_drift receives the
+        workspace_uuid kwarg.
+        """
+        import asyncio
+        import workflow_state_server as wss
+
+        db = EntityDatabase(str(tmp_path / "ws.db"))
+        from entity_registry.test_helpers import bootstrap_test_workspace
+        ws_a = bootstrap_test_workspace(db, "ws_a_reccheck")
+
+        wss._db = db
+        wss._db_unavailable = False
+        wss._engine = WorkflowStateEngine(db, str(tmp_path))
+        wss._workspace_uuid = ws_a
+        wss._artifacts_root = str(tmp_path)
+
+        captured: list[dict] = []
+
+        def capture_check(*args, **kwargs):
+            captured.append(dict(kwargs))
+            from workflow_engine.reconciliation import WorkflowDriftResult
+            return WorkflowDriftResult(
+                features=(),
+                summary={
+                    "in_sync": 0, "meta_json_ahead": 0, "db_ahead": 0,
+                    "meta_json_only": 0, "db_only": 0, "error": 0,
+                    "artifact_missing_count": 0,
+                },
+            )
+
+        monkeypatch.setattr(wss, "check_workflow_drift", capture_check)
+
+        result = asyncio.run(wss.reconcile_check())
+        data = json.loads(result)
+        assert "error" not in data, f"handler errored: {data!r}"
+
+        assert captured, "check_workflow_drift was never invoked"
+        assert captured[0].get("workspace_uuid") == ws_a, (
+            f"workspace_uuid not forwarded from reconcile_check; "
+            f"captured kwargs={captured!r}"
+        )
+
     def test_reconcile_apply_forwards_workspace_uuid(self, tmp_path, monkeypatch):
         """FR-11.3 pin: reconcile_apply → _process_reconcile_apply →
         apply_workflow_reconciliation receives workspace_uuid kwarg.

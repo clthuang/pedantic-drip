@@ -765,6 +765,63 @@ class TestCheckWorkflowDrift:
         # since _iter_meta_jsons skips unparseable files
         assert isinstance(result, WorkflowDriftResult)
 
+    def test_bulk_scan_workspace_scoped_excludes_other_workspace(self, tmp_path) -> None:
+        """FR133-2.ii / SC4: workspace-scoped bulk scan excludes a workspace-B
+        db_only row while retaining workspace-A's own.
+
+        D4 orphan-retention nuance: list_workflow_phases() always retains
+        workflow_phases rows whose entity was deleted (``e.uuid IS NULL``),
+        even under scope. To prove REAL exclusion (not an accident of that
+        retention), the excluded subject must have a LIVE entities row in
+        workspace B -- otherwise it would be retained as an orphan and the
+        assertion would misread.
+        """
+        db = _make_db()
+        from entity_registry.test_helpers import bootstrap_test_workspace
+        ws_a = bootstrap_test_workspace(db, "ws-133-drift-a")
+        ws_b = bootstrap_test_workspace(db, "ws-133-drift-b")
+
+        # Workspace A: live entity + workflow_phases row, no .meta.json ->
+        # db_only under an A-scoped scan.
+        db.register_entity(
+            entity_type="feature", entity_id="001-feat-a", name="Feat A",
+            status="active", workspace_uuid=ws_a,
+        )
+        db.create_workflow_phase(
+            "feature:001-feat-a", workflow_phase="design",
+            last_completed_phase="specify", mode="standard",
+        )
+
+        # Workspace B: live entity + workflow_phases row, no .meta.json --
+        # would ALSO be db_only if unscoped, so exclusion is non-vacuous.
+        db.register_entity(
+            entity_type="feature", entity_id="002-feat-b", name="Feat B",
+            status="active", workspace_uuid=ws_b,
+        )
+        db.create_workflow_phase(
+            "feature:002-feat-b", workflow_phase="design",
+            last_completed_phase="specify", mode="standard",
+        )
+
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        result = check_workflow_drift(engine, db, str(tmp_path), workspace_uuid=ws_a)
+
+        type_ids = {r.feature_type_id for r in result.features}
+        assert "feature:001-feat-a" in type_ids, (
+            f"workspace-A's own db_only row must be retained under A-scope; "
+            f"got {type_ids}"
+        )
+        assert "feature:002-feat-b" not in type_ids, (
+            f"workspace-B's LIVE-entity db_only row must be excluded under "
+            f"A-scope; got {type_ids}"
+        )
+
+        # Sanity: unscoped call still returns both (byte-behavior baseline).
+        unscoped = check_workflow_drift(engine, db, str(tmp_path))
+        unscoped_ids = {r.feature_type_id for r in unscoped.features}
+        assert {"feature:001-feat-a", "feature:002-feat-b"} <= unscoped_ids
+
 
 # ===========================================================================
 # Task 3.1: Single-feature reconcile

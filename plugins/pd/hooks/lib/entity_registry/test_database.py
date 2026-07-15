@@ -6608,6 +6608,21 @@ class TestProjectScopedQueryListEntities:
         all_result = mem_db.export_entities_json()
         assert all_result["entity_count"] == 2
 
+    def test_workspace_scoped_query_export_entities_json(self, mem_db):
+        """FR133-2.i / SC4: workspace_uuid filter excludes other-workspace
+        entities from the export (content-asserted, not just no-exception)."""
+        ws_a = _bootstrap_test_workspace(mem_db)
+        ws_b = _bootstrap_test_workspace(mem_db, "__other__")
+        mem_db.register_entity("feature", "ews1", "EWS1", workspace_uuid=ws_a)
+        mem_db.register_entity("feature", "ews2", "EWS2", workspace_uuid=ws_b)
+
+        result = mem_db.export_entities_json(workspace_uuid=ws_a)
+        assert result["entity_count"] == 1
+        assert result["entities"][0]["entity_id"] == "ews1"
+
+        all_result = mem_db.export_entities_json()
+        assert all_result["entity_count"] == 2
+
     def test_project_scoped_query_export_lineage_markdown(self, mem_db):
         _bootstrap_test_workspace(mem_db)
         _bootstrap_test_workspace(mem_db, "__other__")

@@ -8757,6 +8757,7 @@ class EntityDatabase:
         status: str | None = None,
         include_lineage: bool = True,
         project_id: str | None = None,
+        workspace_uuid: str | None = None,
     ) -> dict:
         """Export entities as a structured dict with schema version metadata.
 
@@ -8773,6 +8774,11 @@ class EntityDatabase:
         project_id:
             If provided, only export entities from this project.
             If None, export entities across all projects.
+        workspace_uuid:
+            Feature 133 FR133-2.i: if provided, only export entities from
+            this workspace. ``None`` preserves today's unscoped behavior
+            exactly. Additive-optional alongside ``project_id`` (132 #082
+            precedent) -- the MCP export tool does not expose this filter.
 
         Returns
         -------
@@ -8813,6 +8819,9 @@ class EntityDatabase:
         if project_id is not None:
             conditions.append("w.project_id_legacy = ?")
             params.append(project_id)
+        if workspace_uuid is not None:
+            conditions.append("e.workspace_uuid = ?")
+            params.append(workspace_uuid)
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
         query += " ORDER BY e.created_at ASC, e.type_id ASC"
