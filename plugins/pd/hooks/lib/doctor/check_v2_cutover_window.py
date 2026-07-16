@@ -75,6 +75,10 @@ def check_v2_cutover_window(
         cutover_at = marker["cutover_at"]
         expiry_str = marker["expiry"]
         old_file = marker["old_file"]
+        if not isinstance(old_file, str):
+            raise TypeError(
+                f"old_file must be a string, got {type(old_file).__name__}"
+            )
         expiry = datetime.strptime(expiry_str, _TIMESTAMP_FORMAT).replace(
             tzinfo=timezone.utc
         )

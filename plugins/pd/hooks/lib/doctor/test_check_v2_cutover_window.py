@@ -178,6 +178,22 @@ class TestMalformedMarker:
         assert result.issues[0].severity == "warning"
         assert result.passed is False
 
+    def test_old_file_non_string_routes_to_malformed_warning(self, tmp_path):
+        """A past-expiry marker whose ``old_file`` is well-formed JSON but
+        not a string (null here) must land in the malformed-marker warning,
+        not raise TypeError out of the check at the ``Path(old_file)`` call
+        (batt-133-sec: that elif sits outside the parse guard; the runner's
+        per-check isolation would contain the crash but emit the unfriendly
+        generic failed-result instead of the actionable warning)."""
+        _write_marker(tmp_path, old_file=None)
+
+        result = check_v2_cutover_window(project_root=str(tmp_path))
+
+        assert len(result.issues) == 1
+        assert result.issues[0].severity == "warning"
+        assert "malformed" in result.issues[0].message
+        assert result.passed is False
+
     def test_expiry_missing_z_suffix_emits_one_warning(self, tmp_path):
         """A present, well-typed ``expiry`` value that doesn't match the
         writer's exact literal-Z format (e.g. a bare offset-less ISO

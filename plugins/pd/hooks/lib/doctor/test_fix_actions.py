@@ -22,10 +22,6 @@ The sole remaining coverage area:
 """
 from __future__ import annotations
 
-import pytest
-
-from doctor.fix_actions import FixContext
-
 
 # F117 TA.1: canonical CREATE TRIGGER SQL for enforce_immutable_workspace_uuid.
 # MUST be byte-identical to plugins/pd/hooks/lib/entity_registry/database.py
