@@ -286,8 +286,8 @@ class TestFixtureCPhaseSummariesMultiEntryAccumulation:
         {
             "phase": "design", "timestamp": "2026-07-10T13:00:28Z",
             "outcome": "Approved with notes.", "artifacts_produced": ["design.md"],
-            "key_decisions": "_run_live_schema_query helper returning (rows, tolerated) — one discriminator, six call sites, EMIT-ONCE dedupe; steps 2/4 gated on tolerated flags; scoped step-1 replaces local_entity_ids heuristic (workspace fact over directory proxy), unscoped legacy verbatim; fixture fork _make_live_db + _insert_workspace; full deletion surface incl. test_doctor.py expected_names.",
-            "reviewer_feedback_summary": "design-reviewer 3 rounds (iter-1 blocker: legacy-fixture strategy; iter-2 blocker: local_entity_ids reconciliation; iter-3 approved, tolerate-leak warning fixed in-text). phase-reviewer 2 rounds (iter-1 blocker: half-applied tolerate contract — signature+snippets synced).",
+            "key_decisions": "live-schema-query helper (retired at 133) returning (rows, tolerated) — one discriminator, six call sites, EMIT-ONCE dedupe; steps 2/4 gated on tolerated flags; scoped step-1 replaces the local-entity-ids heuristic (workspace fact over directory proxy), unscoped legacy verbatim; fixture fork _make_live_db + _insert_workspace; full deletion surface incl. test_doctor.py expected_names.",
+            "reviewer_feedback_summary": "design-reviewer 3 rounds (iter-1 blocker: legacy-fixture strategy; iter-2 blocker: local-entity-ids reconciliation; iter-3 approved, tolerate-leak warning fixed in-text). phase-reviewer 2 rounds (iter-1 blocker: half-applied tolerate contract — signature+snippets synced).",
             "rework_trigger": None,
         },
     ]

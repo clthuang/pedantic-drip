@@ -343,7 +343,6 @@ class TestDbLessRun:
             artifacts_root=str(tmp_path),
             project_root=str(tmp_path),
             base_branch="main",
-            local_entity_ids=set(),
         )
         assert result.issues == []
         assert result.passed is True
