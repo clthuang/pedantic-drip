@@ -248,6 +248,40 @@ class TestClassifyFix:
             assert cls == "safe"
             assert resolved is fn
 
+    def test_first_match_wins_survives_synthetic_prefix_overlap(self, monkeypatch):
+        """H2 strengthened: the 7 REAL survivor prefixes above happen not
+        to overlap each other (none is a literal prefix of another), so
+        the order-pin in test_survivor_safe_patterns_preserve_first_match_order
+        is actually order-INSENSITIVE in practice -- every assertion there
+        would pass identically under last-match-wins or longest-prefix-wins,
+        because no real fix_hint can ever match two rows at once. Force a
+        genuine overlap via a synthetic _SAFE_PATTERNS and confirm the
+        FIRST-registered row wins, pinning first-match-wins as a property
+        of classify_fix's scan algorithm itself, not an artifact of the
+        survivors' non-overlapping strings.
+        """
+        import doctor.fixer as fixer_module
+
+        def _first_fn():
+            pass
+
+        def _second_fn():
+            pass
+
+        overlapping_patterns = [
+            ("Remove orphaned", _first_fn),
+            ("Remove orphaned workflow_phases", _second_fn),
+        ]
+        monkeypatch.setattr(fixer_module, "_SAFE_PATTERNS", overlapping_patterns)
+
+        cls, fn = fixer_module.classify_fix("Remove orphaned workflow_phases row")
+
+        assert cls == "safe"
+        assert fn is _first_fn, (
+            "classify_fix must resolve to the FIRST matching prefix's fn "
+            f"even when a later row's prefix also matches; got {fn!r}"
+        )
+
 
 # ===========================================================================
 # Task 2: Fix Action Tests

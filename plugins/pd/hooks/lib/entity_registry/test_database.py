@@ -4861,6 +4861,71 @@ class TestExportEntitiesJsonDeepened:
         assert result["schema_version"] != 2
 
 
+class TestExportEntitiesJsonWorkspaceFilterDeepened:
+    """Feature 133 FR133-2.i / SC4 deepening: workspace_uuid combined with
+    project_id, and workspace_uuid against a workspace with zero entities.
+
+    Supplements test_workspace_scoped_query_export_entities_json (proves
+    workspace_uuid ALONE excludes) and
+    test_project_scoped_query_export_entities_json (proves project_id
+    ALONE excludes) -- neither combines the two filters or exercises a
+    zero-match scope.
+    """
+
+    def test_workspace_uuid_and_project_id_are_anded_not_ored(
+        self, mem_db: EntityDatabase
+    ):
+        """Both filters present must be ANDed (production builds two
+        independent ``conditions.append(...)`` clauses joined by
+        ``' AND '.join(conditions)``) -- a workspace_uuid match paired
+        with a MISMATCHED project_id must exclude the entity, proving
+        neither filter is silently ignored once the other is supplied.
+        """
+        ws_a = _bootstrap_test_workspace(mem_db, "combo-proj-a")
+        mem_db.register_entity(
+            "feature", "combo1", "Combo1", workspace_uuid=ws_a,
+        )
+
+        # Matching pair: both filters describe the SAME workspace -> included.
+        matching = mem_db.export_entities_json(
+            workspace_uuid=ws_a, project_id="combo-proj-a"
+        )
+        assert matching["entity_count"] == 1
+        assert matching["entities"][0]["entity_id"] == "combo1"
+
+        # Mismatched pair: workspace_uuid is right, project_id names a
+        # DIFFERENT project -- AND semantics must exclude, not silently
+        # honor only one of the two filters.
+        mismatched = mem_db.export_entities_json(
+            workspace_uuid=ws_a, project_id="some-other-project"
+        )
+        assert mismatched["entity_count"] == 0
+        assert mismatched["entities"] == []
+
+    def test_workspace_with_zero_entities_exports_empty_but_valid(
+        self, mem_db: EntityDatabase
+    ):
+        """A workspace_uuid that resolves to a real workspace with no
+        entities registered under it must export an empty-but-well-formed
+        envelope -- not raise, not omit envelope keys, not accidentally
+        fall back to the unscoped (all-workspaces) result."""
+        ws_empty = _bootstrap_test_workspace(mem_db, "combo-empty-ws")
+        # A DIFFERENT workspace with a live entity, so the empty result
+        # proves a real per-workspace filter, not just an empty table.
+        ws_other = _bootstrap_test_workspace(mem_db, "combo-other-ws")
+        mem_db.register_entity(
+            "feature", "combo2", "Combo2", workspace_uuid=ws_other,
+        )
+
+        result = mem_db.export_entities_json(workspace_uuid=ws_empty)
+
+        assert result["entity_count"] == 0
+        assert result["entities"] == []
+        assert result["schema_version"] == 1
+        assert "filters_applied" in result
+        assert "exported_at" in result
+
+
 # ---------------------------------------------------------------------------
 # Migration 5: Expand workflow_phase CHECK constraint
 # ---------------------------------------------------------------------------

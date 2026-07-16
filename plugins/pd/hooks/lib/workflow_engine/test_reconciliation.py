@@ -822,6 +822,70 @@ class TestCheckWorkflowDrift:
         unscoped_ids = {r.feature_type_id for r in unscoped.features}
         assert {"feature:001-feat-a", "feature:002-feat-b"} <= unscoped_ids
 
+    def test_bulk_scan_workspace_scoped_retains_orphan_workflow_phases_row(
+        self, tmp_path
+    ) -> None:
+        """FR133-2.ii / D4 orphan-retention clause: a TRUE orphan
+        workflow_phases row (no entities row at all -- not merely a
+        DIFFERENT workspace's row) must still surface under an unrelated
+        workspace's scoped scan, per list_workflow_phases' documented
+        ``(e.workspace_uuid = ? OR e.uuid IS NULL)`` clause.
+
+        This is the converse of
+        test_bulk_scan_workspace_scoped_excludes_other_workspace above
+        (which proves a LIVE other-workspace row IS excluded): together
+        they pin that scoping excludes by workspace MEMBERSHIP, not by
+        "wasn't explicitly requested" -- which orphan-retention would
+        otherwise blur if this converse case went unchecked.
+        """
+        from entity_registry.database import _UNKNOWN_WORKSPACE_UUID
+        from entity_registry.test_helpers import bootstrap_test_workspace
+
+        db = _make_db()
+        ws_a = bootstrap_test_workspace(db, "ws-133-drift-orphan-a")
+
+        # Workspace A: live entity + workflow_phases row, no .meta.json ->
+        # db_only under an A-scoped scan (in-scope control, mirrors the
+        # sibling test above).
+        db.register_entity(
+            entity_type="feature", entity_id="003-feat-a", name="Feat A3",
+            status="active", workspace_uuid=ws_a,
+        )
+        db.create_workflow_phase(
+            "feature:003-feat-a", workflow_phase="design",
+            last_completed_phase="specify", mode="standard",
+        )
+
+        # A TRUE orphan: workflow_phases row with NO entities row in
+        # EITHER workspace (disable FK to allow the orphan insert, supply
+        # workspace_uuid explicitly to bypass wp_reject_orphaned_insert --
+        # entity_registry/test_database.py's established precedent).
+        db._conn.execute("PRAGMA foreign_keys = OFF")
+        db._conn.execute(
+            "INSERT INTO workflow_phases "
+            "(type_id, kanban_column, updated_at, workspace_uuid) "
+            "VALUES (?, ?, ?, ?)",
+            ("feature:004-orphan", "backlog", "2026-01-01T00:00:00Z",
+             _UNKNOWN_WORKSPACE_UUID),
+        )
+        db._conn.commit()
+        db._conn.execute("PRAGMA foreign_keys = ON")
+
+        engine = WorkflowStateEngine(db, str(tmp_path))
+
+        result = check_workflow_drift(engine, db, str(tmp_path), workspace_uuid=ws_a)
+
+        type_ids = {r.feature_type_id for r in result.features}
+        assert "feature:003-feat-a" in type_ids, (
+            f"workspace-A's own db_only row must be retained under "
+            f"A-scope; got {type_ids}"
+        )
+        assert "feature:004-orphan" in type_ids, (
+            f"a TRUE orphan row (no entity at all, in neither workspace) "
+            f"must be RETAINED under A-scope per the orphan-retention "
+            f"clause -- got {type_ids}"
+        )
+
 
 # ===========================================================================
 # Task 3.1: Single-feature reconcile

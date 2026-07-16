@@ -1133,6 +1133,42 @@ class TestOrchestratorHealthyProject:
         assert len(self_ref_errors) >= 1
         assert report.error_count >= 1
 
+    def test_config_validity_fault_control_still_fires(self, tmp_path, monkeypatch):
+        """Non-vacuity control #2: a DIFFERENT retained-check FAMILY (the
+        config surface, not an entity-DB query) also still fires on the
+        SAME hermetic fixture -- proving the SC1 zero isn't an artifact
+        specific to referential-integrity faults but generalizes across
+        check families.
+
+        missed_cascade would be a poor second control here: this
+        fixture's legacy v9 schema (``_make_db``) has no entity_relations
+        table at all, and check_missed_cascade silently swallows
+        sqlite3.Error, so it can't be faulted without first adding DDL
+        the healthy fixture deliberately doesn't have. config_validity's
+        artifacts_root-missing branch is a clean, single-surface fault
+        that doesn't perturb any other check's prerequisites.
+        """
+        from doctor import run_diagnostics
+        import shutil
+
+        db_path, artifacts_root = self._seed_healthy_fixture(tmp_path, monkeypatch)
+        shutil.rmtree(artifacts_root)
+
+        report = run_diagnostics(db_path, artifacts_root, str(tmp_path))
+
+        config_check = next(
+            c for c in report.checks if c.name == "config_validity"
+        )
+        missing_dir_errors = [
+            i for i in config_check.issues
+            if i.severity == "error" and "does not exist" in i.message
+        ]
+        assert len(missing_dir_errors) >= 1, (
+            f"expected an artifacts_root-missing error; got "
+            f"{config_check.issues}"
+        )
+        assert report.error_count >= 1
+
 
 class TestOrchestratorEntityDbLockSkips:
     """Orchestrator: entity DB lock skips dependent checks."""
