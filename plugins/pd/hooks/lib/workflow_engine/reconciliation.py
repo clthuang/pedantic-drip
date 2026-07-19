@@ -682,6 +682,8 @@ def check_workflow_drift(
     db: EntityDatabase,
     artifacts_root: str,
     feature_type_id: str | None = None,
+    *,
+    workspace_uuid: str | None = None,
 ) -> WorkflowDriftResult:
     """Detect workflow state drift between .meta.json and DB.
 
@@ -696,6 +698,12 @@ def check_workflow_drift(
         Root directory for artifact files.
     feature_type_id : str | None
         If provided, check single feature. If None, scan all.
+    workspace_uuid : str | None
+        Feature 133 FR133-2.ii: forwarded to the bulk path's
+        ``db.list_workflow_phases`` call so db_only detection is
+        workspace-scoped. ``None`` preserves today's unscoped behavior
+        exactly (orphan workflow_phases rows are always retained --
+        see ``list_workflow_phases`` docstring).
 
     Returns
     -------
@@ -773,7 +781,7 @@ def check_workflow_drift(
 
         # Detect db_only features via set difference
         # Only include feature: type_ids (exclude non-feature entities)
-        all_wp_rows = db.list_workflow_phases()
+        all_wp_rows = db.list_workflow_phases(workspace_uuid=workspace_uuid)
         db_rows_by_id = {
             row["type_id"]: row for row in all_wp_rows
             if row["type_id"].startswith("feature:")

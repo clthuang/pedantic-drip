@@ -505,9 +505,9 @@ class TestSequencesBusinessKeyNonUniqueness:
 
 # ---------------------------------------------------------------------------
 # Gap pass (test-deepener, dimension:adversarial — "Never" heuristic): design
-# D1's "ships dark: no live code imports it except its tests" invariant was
-# only pinned by a manual grep in tasks.md's Task 4 Verify step, never by an
-# automated regression test that runs on every suite invocation.
+# D1's "only test files import it" invariant was only pinned by a manual
+# grep in tasks.md's Task 4 Verify step, never by an automated regression
+# test that runs on every suite invocation.
 #
 # Re-scoped for feature 119 (design D6): the dark set grew from a single
 # module (schema_v2.py) to a named set (_V2_DARK_MODULES), and the needle
@@ -525,23 +525,20 @@ _V2_DARK_MODULES = {
     "axes.py",
 }
 
-# Feature 132: the rebuild tool is the guard's DESIGNED endpoint — the
-# docstring below always said the dark window ends when "feature 132's
-# cutover decides where the v2 DB lives". It is a sanctioned importer,
-# not a dark module.
+# Feature 132: the rebuild tool is a sanctioned importer of the v2 event
+# core — bootstrap/backfill infrastructure that legitimately reads and
+# writes schema_v2 tables directly, not a dark module.
 #
 # Task 3 (impl-t1's forward-hazard note) widens this further: database.py
 # now legitimately imports ``entity_registry.events.append_event`` for its
-# dual-write emit (design D5, FR132-4b) -- the guard's original premise
-# ("no live module wires a dark v2 module in before 132 decides") is now
-# moot for database.py specifically, since 132 IS the cutover feature and
-# database.py IS the live write path it wires in on purpose. Re-adjudicated
-# here as a WIDEN, not a retirement: the guard still has residual value for
-# every OTHER file under hooks/lib (an accidental schema_v2/axes/display/
-# views/meta_projection import anywhere else remains exactly the class of
-# bug this scan exists to catch), so the class itself and its five
-# seeded-offender teeth tests below are unchanged and still exercise
-# tmp_path fixtures unrelated to this exemption.
+# dual-write emit (design D5, FR132-4b) — database.py is the live v2 write
+# path, wiring the event core in on purpose. Re-adjudicated here as a WIDEN
+# of the sanctioned-importer set, not a retirement of the guard: the guard
+# still has residual value for every OTHER file under hooks/lib (an
+# accidental schema_v2/axes/display/views/meta_projection import anywhere
+# else remains exactly the class of bug this scan exists to catch), so the
+# class itself and its five seeded-offender teeth tests below are unchanged
+# and still exercise tmp_path fixtures unrelated to this exemption.
 _SANCTIONED_V2_IMPORTERS = {"rebuild_tool.py", "database.py"}
 
 # Every import spelling that would wire a dark v2 module into a live path.
@@ -579,7 +576,7 @@ def _scan_for_live_v2_references(
     (name starts with "test_") and files named in *dark_modules*.
 
     Shared by the real-source scan (expects []) and the seeded-fixture
-    teeth test (expects the offender) below — see TestSchemaV2ShipsDark.
+    teeth test (expects the offender) below — see TestSchemaV2SanctionedImporters.
     """
     offending_files = []
     for py_file in root.rglob("*.py"):
@@ -595,11 +592,12 @@ def _scan_for_live_v2_references(
     return offending_files
 
 
-class TestSchemaV2ShipsDark:
+class TestSchemaV2SanctionedImporters:
     """Design D1 (schema_v2) + D6 (events, re-scoped for 119): every dark
     v2 module in _V2_DARK_MODULES ships with no live importer anywhere
-    under hooks/lib — only test_ files (and the dark modules' own mutual
-    references) may mention them.
+    under hooks/lib except the sanctioned set in _SANCTIONED_V2_IMPORTERS
+    — only test_ files, the dark modules' own mutual references, and the
+    sanctioned importers (rebuild_tool.py, database.py) may mention them.
 
     Scope note: the scan root is hooks/lib (this guard's historical
     scope, D1) — it does NOT cover plugins/pd/mcp/. MCP wiring is
@@ -609,17 +607,17 @@ class TestSchemaV2ShipsDark:
 
     def test_no_non_test_importer_of_dark_v2_modules(self):
         """No non-test file under hooks/lib references a dark v2 module
-        via any known import spelling (design D6; spec Out of Scope:
-        "nothing reads the v2 DB in this feature").
+        via any known import spelling, outside the sanctioned importer
+        set (design D6; spec Out of Scope: "nothing reads the v2 DB in
+        this feature").
 
         Anticipate: a future feature (120/121/122) could accidentally
-        wire schema_v2 or events into a live code path before feature
-        132's cutover decides where the v2 DB lives. Task 4's tasks.md
-        Verify step has the equivalent grep, but as a one-time manual
-        check it does not run on every `pytest` invocation the way this
-        does — mirrors the residual-uuid4 scan test's source-scan style
-        (test_database.py).
-        derived_from: design:D1/D6 (ships dark), spec:Out-of-Scope
+        wire schema_v2 or events into a live code path without going
+        through a sanctioned importer. Task 4's tasks.md Verify step has
+        the equivalent grep, but as a one-time manual check it does not
+        run on every `pytest` invocation the way this does — mirrors the
+        residual-uuid4 scan test's source-scan style (test_database.py).
+        derived_from: design:D1/D6 (sanctioned importers), spec:Out-of-Scope
         (consumer rewiring deferred), dimension:adversarial (Never/Always
         heuristic)
         """
@@ -694,7 +692,7 @@ class TestSchemaV2ShipsDark:
     # the same seeded-offender teeth as the events.py pair above, PLUS the
     # relative-import spelling neither events.py test exercises (the
     # likeliest false-negative per D8: "the relative form is exactly how
-    # a same-package sibling like database.py would wire it at 132").
+    # a same-package sibling would wire it in").
     # -------------------------------------------------------------
     def test_scan_flags_seeded_offender_with_display_nondotted_import_spelling(
         self, tmp_path
@@ -734,11 +732,10 @@ class TestSchemaV2ShipsDark:
         self, tmp_path
     ):
         """The relative spelling design D8 singles out as the likeliest
-        false-negative — exactly how a same-package sibling (e.g.
-        database.py at feature 132's cutover) would wire display.py in:
-        neither of the two sibling tests above seeds this form, so a
-        typo'd or dropped "from .display import" entry in
-        _V2_LIVE_REFERENCE_NEEDLES would pass both of them silently.
+        false-negative — exactly how a same-package sibling module would
+        wire display.py in: neither of the two sibling tests above seeds
+        this form, so a typo'd or dropped "from .display import" entry
+        in _V2_LIVE_REFERENCE_NEEDLES would pass both of them silently.
 
         Anticipate: an implementation of the needle-set widening that
         added only the dotted and non-dotted display spellings (the
@@ -799,10 +796,10 @@ class TestSchemaV2ShipsDark:
         self, tmp_path
     ):
         """The relative spelling — exactly how a same-package sibling
-        (e.g. database.py at feature 132's cutover) would wire views.py
-        in: neither of the two sibling tests above seeds this form, so a
-        typo'd or dropped "from .views import" entry in
-        _V2_LIVE_REFERENCE_NEEDLES would pass both of them silently.
+        module would wire views.py in: neither of the two sibling tests
+        above seeds this form, so a typo'd or dropped
+        "from .views import" entry in _V2_LIVE_REFERENCE_NEEDLES would
+        pass both of them silently.
 
         Anticipate: an implementation of the needle-set widening that
         added only the dotted and non-dotted views spellings (the
@@ -864,11 +861,10 @@ class TestSchemaV2ShipsDark:
         self, tmp_path
     ):
         """The relative spelling — exactly how a same-package sibling
-        (e.g. database.py at feature 132's cutover) would wire
-        meta_projection.py in: neither of the two sibling tests above
-        seeds this form, so a typo'd or dropped "from .meta_projection
-        import" entry in _V2_LIVE_REFERENCE_NEEDLES would pass both of
-        them silently.
+        module would wire meta_projection.py in: neither of the two
+        sibling tests above seeds this form, so a typo'd or dropped
+        "from .meta_projection import" entry in
+        _V2_LIVE_REFERENCE_NEEDLES would pass both of them silently.
 
         Anticipate: an implementation of the needle-set widening that
         added only the dotted and non-dotted meta_projection spellings
@@ -930,10 +926,10 @@ class TestSchemaV2ShipsDark:
         self, tmp_path
     ):
         """The relative spelling — exactly how a same-package sibling
-        (e.g. database.py at feature 132's cutover) would wire axes.py
-        in: neither of the two sibling tests above seeds this form, so a
-        typo'd or dropped "from .axes import" entry in
-        _V2_LIVE_REFERENCE_NEEDLES would pass both of them silently.
+        module would wire axes.py in: neither of the two sibling tests
+        above seeds this form, so a typo'd or dropped
+        "from .axes import" entry in _V2_LIVE_REFERENCE_NEEDLES would
+        pass both of them silently.
 
         Anticipate: an implementation of the needle-set widening that
         added only the dotted and non-dotted axes spellings (the pattern

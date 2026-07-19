@@ -10,7 +10,7 @@ Combines four audit lints:
    ``META_JSON_WRITER_ALLOWLIST``.
 
 2. **`docs/backlog.md` write allow-list (AC-1.2).** Same AST walk pattern,
-   allow-listing ``_project_backlog_md`` and ``_fix_backlog_annotation``.
+   allow-listing ``_project_backlog_md`` (the sole writer post-feature-133).
 
 3. **Audit comment proximity (AC-1.1b).** Each allow-listed writer's
    enclosing function MUST have a ``# F4-AUDIT:`` comment within 5 source
@@ -22,10 +22,6 @@ Combines four audit lints:
    else indicate a caller that should have been ported to read seq/slug
    from ``entity_display`` per FR-8.3 but was missed.
 
-5. **TD-11 drift-class routing (AC-9.x).** Tests confirming that the four
-   drift classes route through the correct MCP / projection invocation
-   (or downgrade to WARN for unknown drift).
-
 Grace mode (design TD-7b): if the entity_id audit finds unported sites,
 the lint test is marked ``xfail`` (not ``fail``) so the contract exists
 for CI without blocking integration.
@@ -35,7 +31,6 @@ from __future__ import annotations
 import ast
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -53,23 +48,20 @@ _REPO_ROOT = _PLUGIN_ROOT.parent.parent                  # repo root
 
 
 # Allow-list for `.meta.json` writes per spec FR-4.1 + design TD-11.
-# `_fix_last_completed_phase` and `_fix_completed_timestamp` are retained
-# in the allow-list for symbol-level continuity; their CURRENT bodies route
-# through MCP (no `.meta.json` write) but the AST walker still recognizes
-# the names if a future regression re-introduces direct writes.
 # Per-entry rationale below pinned by feature 127 design D3 / spec FR127-3.
+# Feature 133 retired the two MCP-routing-only fix fns that were kept here
+# for symbol-level continuity (their TD-11 drift-routing helper retired too).
 META_JSON_WRITER_ALLOWLIST: tuple[str, ...] = (
     "_project_meta_json",          # sole FEATURE-meta projection writer -- the sole-truth entry
     "init_project_state",          # PROJECT-meta writer, feature_lifecycle.py:305-306 -- out of 127 scope
-    "_fix_last_completed_phase",   # MCP-routing symbol continuity; no direct writes today (TD-11 #1)
-    "_fix_completed_timestamp",    # MCP-routing symbol continuity; no direct writes today (TD-11 #2)
 )
 
 
 # Allow-list for `docs/backlog.md` writes per spec FR-4.3.
+# Feature 133 retired the annotation-only doctor fix that used to share this
+# allow-list; `_project_backlog_md` is now the sole writer.
 BACKLOG_MD_WRITER_ALLOWLIST: tuple[str, ...] = (
     "_project_backlog_md",     # MCP projection (canonical write path)
-    "_fix_backlog_annotation", # annotation-only (F4-AUDIT) doctor fix
 )
 
 
@@ -312,18 +304,17 @@ def test_no_unaudited_meta_json_writes() -> None:
 
 def test_meta_json_allowlist_exact_membership() -> None:
     """FR127-3 / SC2: META_JSON_WRITER_ALLOWLIST is pinned to its EXACT
-    4-member set. set() coercion is mandatory -- the allowlist is a
-    tuple (:60-65) and a literal tuple == set comparison is always False
-    (design D3, pinned at design iteration 2). Set EQUALITY (not subset)
-    means any NEW writer symbol added to an audited tree goes red
-    without an explicit allowlist edit, extending 128's outliving-teeth
-    posture to the whole sole-writer claim.
+    2-member set (shrunk from 4 at feature 133 -- the two MCP-routing-only
+    fix fns retired with their TD-11 drift-routing helper). set() coercion
+    is mandatory -- the allowlist is a tuple and a literal tuple == set
+    comparison is always False (design D3, pinned at design iteration 2).
+    Set EQUALITY (not subset) means any NEW writer symbol added to an
+    audited tree goes red without an explicit allowlist edit, extending
+    128's outliving-teeth posture to the whole sole-writer claim.
     """
     assert set(META_JSON_WRITER_ALLOWLIST) == {
         "_project_meta_json",
         "init_project_state",
-        "_fix_last_completed_phase",
-        "_fix_completed_timestamp",
     }
 
 
@@ -438,12 +429,14 @@ def test_audit_comments_present() -> None:
     Projection functions (`_project_meta_json`, `_project_backlog_md`)
     are EXEMPT — they ARE the canonical write path, not residual writers
     that need an audit comment.
+
+    Feature 133 retired the three fix_actions.py writers that used to be
+    named here (their checks and TD-11 drift-routing helper retired too);
+    `init_project_state` is the sole remaining allow-listed writer outside
+    the exempt projection functions.
     """
     expected_names = [
         "init_project_state",         # feature_lifecycle.py
-        "_fix_last_completed_phase",  # fix_actions.py
-        "_fix_completed_timestamp",   # fix_actions.py
-        "_fix_backlog_annotation",    # fix_actions.py
     ]
     missing: list[str] = []
     found_any: set[str] = set()
@@ -473,244 +466,6 @@ def test_audit_comments_present() -> None:
             "AC-1.1b: missing F4-AUDIT proximity comments on writer "
             f"functions ({len(missing)}):\n{bullets}"
         )
-
-
-# ---------------------------------------------------------------------------
-# AC-9.x — TD-11 drift-class routing tests (Task 11.8)
-# ---------------------------------------------------------------------------
-
-
-class TestTd11DriftClassRouting:
-    """Verify TD-11 4 drift classes route through the correct MCP/projection."""
-
-    def _make_ctx(self, *, with_engine: bool = True, with_db: bool = True):
-        from doctor.fix_actions import FixContext
-        engine_mock = MagicMock() if with_engine else None
-        db_mock = MagicMock() if with_db else None
-        return FixContext(
-            entities_db_path="",
-            artifacts_root="",
-            project_root="",
-            db=db_mock,
-            engine=engine_mock,
-            entities_conn=None,
-        ), engine_mock, db_mock
-
-    def test_fix_lastcompletedphase_routes_through_complete_phase(self) -> None:
-        """Drift class #1: lastCompletedPhase mismatch -> engine.complete_phase."""
-        from doctor.fix_actions import (
-            _DRIFT_LAST_COMPLETED_PHASE,
-            _fix_meta_json_via_mcp,
-        )
-
-        ctx, engine_mock, db_mock = self._make_ctx()
-        # db.get_workflow_phase returns a row with last_completed_phase='design'.
-        db_mock.get_workflow_phase.return_value = {"last_completed_phase": "design"}
-
-        result = _fix_meta_json_via_mcp(
-            ctx, _DRIFT_LAST_COMPLETED_PHASE, "feature:042-foo"
-        )
-
-        engine_mock.complete_phase.assert_called_once_with(
-            "feature:042-foo", "design"
-        )
-        assert "feature:042-foo" in result
-        assert "design" in result
-
-    def test_fix_status_mismatch_routes_through_complete_phase_finish(self) -> None:
-        """Drift class #2: status mismatch -> engine.complete_phase(phase='finish')."""
-        from doctor.fix_actions import (
-            _DRIFT_STATUS_MISMATCH,
-            _fix_meta_json_via_mcp,
-        )
-
-        ctx, engine_mock, _db_mock = self._make_ctx()
-        result = _fix_meta_json_via_mcp(
-            ctx, _DRIFT_STATUS_MISMATCH, "feature:043-bar"
-        )
-        engine_mock.complete_phase.assert_called_once_with(
-            "feature:043-bar", "finish"
-        )
-        assert "feature:043-bar" in result
-        assert "finish" in result
-
-    def test_fix_branch_field_stale_routes_through_project_meta_json(self) -> None:
-        """Drift class #3: branch field stale -> _project_meta_json re-projection."""
-        from doctor.fix_actions import (
-            _DRIFT_BRANCH_FIELD_STALE,
-            _fix_meta_json_via_mcp,
-        )
-
-        ctx, _engine_mock, db_mock = self._make_ctx()
-
-        # Inject a mock _project_meta_json into a `workflow_state_server` shim
-        # module so the in-function `from workflow_state_server import
-        # _project_meta_json` resolves to our mock instead of triggering MCP
-        # server bootstrap.
-        import sys
-        import types
-        proj_mock = MagicMock(return_value=None)  # None = no warning
-        shim = types.ModuleType("workflow_state_server")
-        shim._project_meta_json = proj_mock
-        original = sys.modules.get("workflow_state_server")
-        sys.modules["workflow_state_server"] = shim
-        try:
-            result = _fix_meta_json_via_mcp(
-                ctx, _DRIFT_BRANCH_FIELD_STALE, "feature:044-baz"
-            )
-        finally:
-            if original is None:
-                del sys.modules["workflow_state_server"]
-            else:
-                sys.modules["workflow_state_server"] = original
-
-        proj_mock.assert_called_once_with(db_mock, ctx.engine, "feature:044-baz")
-        assert "feature:044-baz" in result
-        assert "Re-projected" in result
-
-    def test_fix_unknown_drift_returns_warn(self) -> None:
-        """Drift class #4: unknown -> WARN string (no autofix)."""
-        from doctor.fix_actions import _fix_meta_json_via_mcp
-
-        ctx, engine_mock, _db_mock = self._make_ctx()
-        result = _fix_meta_json_via_mcp(
-            ctx, "weird-mystery-drift", "feature:045-unknown"
-        )
-        # No MCP invocation happened.
-        engine_mock.complete_phase.assert_not_called()
-        # WARN-only finding returned, mentioning the drift type and entity.
-        assert result.startswith("WARN:")
-        assert "weird-mystery-drift" in result
-        assert "feature:045-unknown" in result
-
-
-class TestFixActionWrappersForwardToDriftHelper:
-    """Smoke tests: the public fix-action wrappers delegate to the helper."""
-
-    def test_fix_last_completed_phase_invokes_drift_helper(self, monkeypatch) -> None:
-        from doctor import fix_actions
-        from doctor.fix_actions import FixContext, _fix_last_completed_phase
-        from doctor.models import Issue
-
-        called = {}
-
-        def fake_drift(ctx, drift_class, feature_type_id):
-            called["drift_class"] = drift_class
-            called["feature_type_id"] = feature_type_id
-            return "ok"
-
-        monkeypatch.setattr(fix_actions, "_fix_meta_json_via_mcp", fake_drift)
-
-        ctx = FixContext(
-            entities_db_path="",
-            artifacts_root="", project_root="",
-            db=None, engine=None, entities_conn=None,
-        )
-        issue = Issue(
-            check="workflow_phase", severity="error",
-            entity="feature:042-foo",
-            message="missing lastCompletedPhase",
-            fix_hint="Set lastCompletedPhase",
-        )
-        assert _fix_last_completed_phase(ctx, issue) == "ok"
-        assert called["drift_class"] == fix_actions._DRIFT_LAST_COMPLETED_PHASE
-        assert called["feature_type_id"] == "feature:042-foo"
-
-    def test_fix_completed_timestamp_invokes_drift_helper(self, monkeypatch) -> None:
-        from doctor import fix_actions
-        from doctor.fix_actions import FixContext, _fix_completed_timestamp
-        from doctor.models import Issue
-
-        called = {}
-
-        def fake_drift(ctx, drift_class, feature_type_id):
-            called["drift_class"] = drift_class
-            called["feature_type_id"] = feature_type_id
-            return "ok"
-
-        monkeypatch.setattr(fix_actions, "_fix_meta_json_via_mcp", fake_drift)
-
-        ctx = FixContext(
-            entities_db_path="",
-            artifacts_root="", project_root="",
-            db=None, engine=None, entities_conn=None,
-        )
-        issue = Issue(
-            check="workflow_phase", severity="error",
-            entity="feature:043-bar",
-            message="missing completed timestamp",
-            fix_hint="Set completed timestamp",
-        )
-        assert _fix_completed_timestamp(ctx, issue) == "ok"
-        assert called["drift_class"] == fix_actions._DRIFT_STATUS_MISMATCH
-        assert called["feature_type_id"] == "feature:043-bar"
-
-
-class TestFixLastCompletedPhaseSurfacesDbUnavailable:
-    """Feature 128 / FR128-2 caller-analysis smoke (design D3): doctor's
-    fix_actions is a PRODUCTION, non-MCP caller of the frozen engine's
-    complete_phase (``_fix_meta_json_via_mcp`` :84). Post-128, a DB-down
-    engine must RAISE ``WorkflowDBUnavailableError`` instead of the pre-128
-    silent divergent ``.meta.json`` write -- ``apply_fixes`` already catches
-    ``Exception`` (fixer.py:155) and records the failed fix; no crash.
-
-    Decoupled wiring per ``TestTd11DriftClassRouting._make_ctx`` (:428-439):
-    ``ctx.db`` is a HEALTHY stub returning a valid ``last_completed_phase``
-    row -- the :69 row lookup runs BEFORE the :84 engine call, so a shared
-    down-DB would raise a plain ``sqlite3.Error`` there and never reach the
-    engine -- while ``ctx.engine`` wraps the genuinely-unavailable DB.
-    """
-
-    def test_fix_last_completed_phase_raises_when_engine_db_unavailable(
-        self, tmp_path
-    ) -> None:
-        from doctor.fix_actions import FixContext, _fix_last_completed_phase
-        from doctor.models import Issue
-        from entity_registry.database import EntityDatabase
-        from workflow_engine.engine import WorkflowStateEngine
-        from workflow_engine.models import WorkflowDBUnavailableError
-
-        class _HealthyDbStub:
-            """ctx.db: the :69 row lookup must succeed (healthy, decoupled
-            from ctx.engine's DB)."""
-
-            def get_workflow_phase(self, feature_type_id: str) -> dict:
-                return {"last_completed_phase": "specify"}
-
-        # .meta.json so the down engine's get_state fallback resolves a real
-        # state: lastCompletedPhase="brainstorm" -> current_phase="specify",
-        # matching the stub's db_phase so complete_phase reaches the
-        # primary-defense degraded check instead of a phase-mismatch
-        # ValueError (mirrors TestFailLoudDegradedMode's setup).
-        feature_dir = tmp_path / "features" / "042-foo"
-        feature_dir.mkdir(parents=True, exist_ok=True)
-        (feature_dir / ".meta.json").write_text(
-            '{"id": "042", "slug": "042-foo", "status": "active", '
-            '"mode": "standard", "lastCompletedPhase": "brainstorm"}'
-        )
-
-        # ctx.engine: wraps a genuinely-unavailable DB (closed connection).
-        unavailable_db = EntityDatabase(":memory:")
-        unavailable_db.close()
-        engine = WorkflowStateEngine(unavailable_db, str(tmp_path))
-
-        ctx = FixContext(
-            entities_db_path="",
-            artifacts_root="",
-            project_root="",
-            db=_HealthyDbStub(),
-            engine=engine,
-            entities_conn=None,
-        )
-        issue = Issue(
-            check="workflow_phase", severity="error",
-            entity="feature:042-foo",
-            message="missing lastCompletedPhase",
-            fix_hint="Set lastCompletedPhase",
-        )
-
-        with pytest.raises(WorkflowDBUnavailableError):
-            _fix_last_completed_phase(ctx, issue)
 
 
 # ---------------------------------------------------------------------------

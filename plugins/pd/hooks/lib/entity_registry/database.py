@@ -5357,8 +5357,9 @@ def _migration_15_audit_emit_counter(conn: sqlite3.Connection) -> None:
 
     Per spec FR-C.3: counter is touched only by the FR-C-115.1 fail-open
     emit path in db.update_entity (on emit failure). Migration 15 is the
-    ONLY initializer; subsequent migrations MUST NOT touch this key
-    (enforced by check_audit_counter_write_path AST check, C10-115.4).
+    ONLY initializer; subsequent migrations MUST NOT touch this key (an
+    AST guard enforced this invariant until feature 133 retired it
+    alongside the counter's now-dead consuming doctor checks).
     """
     conn.execute("BEGIN IMMEDIATE")
     try:
@@ -7939,11 +7940,9 @@ class EntityDatabase:
             # back the status UPDATE too, via this same self.transaction().
             # The audit_emit_failed_count counter-increment/except-swallow
             # that used to live here is DELETED, confined to this block
-            # only -- the doctor check_audit_emit_failed_count check, the
-            # check_audit_counter_write_path AST guard, and Migration 15's
-            # counter row are feature 133's concern and are untouched (the
-            # AST guard scopes only `_migration_*` functions, so this
-            # deletion cannot break it).
+            # only -- the two doctor checks that used to watch the dead
+            # counter were retired in feature 133; Migration 15's counter
+            # row remains untouched, now permanently inert.
             if status is not None and old_row is not None and old_row["status"] != status:
                 # Resolve type_id + workspace_uuid for the emit. project_id is
                 # derived from workspace_uuid via the workspaces JOIN (post-F109).
@@ -8757,6 +8756,7 @@ class EntityDatabase:
         status: str | None = None,
         include_lineage: bool = True,
         project_id: str | None = None,
+        workspace_uuid: str | None = None,
     ) -> dict:
         """Export entities as a structured dict with schema version metadata.
 
@@ -8773,6 +8773,11 @@ class EntityDatabase:
         project_id:
             If provided, only export entities from this project.
             If None, export entities across all projects.
+        workspace_uuid:
+            Feature 133 FR133-2.i: if provided, only export entities from
+            this workspace. ``None`` preserves today's unscoped behavior
+            exactly. Additive-optional alongside ``project_id`` (132 #082
+            precedent) -- the MCP export tool does not expose this filter.
 
         Returns
         -------
@@ -8813,6 +8818,9 @@ class EntityDatabase:
         if project_id is not None:
             conditions.append("w.project_id_legacy = ?")
             params.append(project_id)
+        if workspace_uuid is not None:
+            conditions.append("e.workspace_uuid = ?")
+            params.append(workspace_uuid)
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
         query += " ORDER BY e.created_at ASC, e.type_id ASC"
