@@ -8,7 +8,8 @@ reliable DB path; entries then migrate into the DB and this file retires.
 
 ## Open
 
-- **#054 — Feature-132 cutover checklist items** *(P004, source: feature 118 QA)*
+- **#054 — CLOSED 2026-07-25** — (a)/(b) decided at 132 (backfill re-minted all 552 uuids; UNIQUE(workspace_uuid, type_id) is the identity contract); (c) delivered by feature 134: create-project.md uses `allocate_entity_id(entity_type="project", ...)`, allocator guard removed at 132 D6.9. Original entry:
+  **Feature-132 cutover checklist items** *(P004, source: feature 118 QA)*
   At cutover, decide: (a) what replaces the dropped-UNIQUE reliance on human-readable
   fields (v17 consumers that leaned on uniqueness must be enumerated); (b) whether
   mixed uuid4/uuid7 populations get re-minted at backfill or grandfathered;
@@ -42,7 +43,8 @@ reliable DB path; entries then migrate into the DB and this file retires.
   workaround: omit the param entirely; guard G-23 self-detects skipped phases and
   emits a soft warn (verified during 121's specify transition). Fix both params together.
 
-- **#057 — Reviewer severity rubric: split BLOCKER by failure signature** *(source: feature 129 retro Tune 1; owner: workflow-rebuild track)*
+- **#057 — DELIVERED by feature 134** — self-signaling classes are warnings, not blockers (code-quality-reviewer independence rules + workflow-transitions review gate). Original entry:
+  **Reviewer severity rubric: split BLOCKER by failure signature** *(source: feature 129 retro Tune 1; owner: workflow-rebuild track)*
   4 of 9 artifact-phase blockers were self-signaling (collection ImportError,
   missing-default TypeError — would fail loudly at the next task's own Verify step);
   5 were silent (dead code, dropped coverage, contradicted contract). Both consume
@@ -50,7 +52,8 @@ reliable DB path; entries then migrate into the DB and this file retires.
   to WARNING; BLOCKER reserved for ship-undetected classes. Confidence: medium
   (single-feature sample).
 
-- **#058 — Skip confirmatory phase-gate second rounds when round-1's fix is a small quoted diff** *(source: feature 129 retro Tune 5; owner: workflow-rebuild track)*
+- **#058 — SUPERSEDED by feature 134** — the one-pass + one-fix-round protocol has no confirmatory second rounds at all; mechanical gates replaced per-phase reviewer dispatches. Original entry:
+  **Skip confirmatory phase-gate second rounds when round-1's fix is a small quoted diff** *(source: feature 129 retro Tune 5; owner: workflow-rebuild track)*
   18 reviewer/gate dispatches on 129; the only pure zero-finding rerun was design's
   second phase-gate round reconfirming an already-closed blocker. Proposal: allow the
   orchestrator to close a phase gate without a second dispatch when round-1's sole
@@ -82,7 +85,8 @@ reliable DB path; entries then migrate into the DB and this file retires.
   #055 (acknowledged-but-lost writes). Diagnose before trusting ANY backlog
   registration; this file is the interim source of truth.
 
-- **#062 — schema_version write is OR IGNORE (write-once) — upsert at 132** *(source: 119 QA gate C3, LOW)*
+- **#062 — CLOSED 2026-07-25 (feature 134)** — stamp sites upsert; `max(V2_MIGRATIONS) == V2_SCHEMA_VERSION` asserted at import; version-bump re-bootstrap covered by the v2 migration tests. Original entry:
+  **schema_version write is OR IGNORE (write-once) — upsert at 132** *(source: 119 QA gate C3, LOW)*
   Bumping V2_SCHEMA_VERSION and re-bootstrapping keeps the stale recorded version
   while new DDL applies — silent mismatch. When 132's migration story lands: ON
   CONFLICT DO UPDATE (or read-compare-write) + a version-bump re-bootstrap test.
@@ -224,7 +228,7 @@ Two coupled forward-looking facts the 132 battery pinned for the eventual v2-REA
 2. **The 5+1 vendored `_kanban_column_for`/`_PHASE_TO_KANBAN` producer replicas** (engine, feature_lifecycle, reconciliation, backfill, workflow_state_server + rebuild_tool's frozen copy) should consolidate when reads move to stored `execution_status` — at that point producers stop needing a mapping at all (adjudicated acceptable at 132: all sites are producers, parity-pinned by test_constants.py; see .review-history.md task-4/battery records).
 Related: [[#081]], [[#082]] (same v1-retirement decision window).
 
-## #085 — v1→v2 cutover pre-pass: the real census is dirty (dress-rehearsal blocker)
+## #085 — CLOSED 2026-07-25: cutover executed (pre-pass cleaned 127 rows, parity 552→552, checksum matched rehearsal; entities.db.v1-readonly archived, window to 2026-08-24)
 **Source:** feature 132 QA gate lane A (2026-07-16), first tool run against a copy of the real census. **Type:** cutover runbook, v1-retirement track, HIGH (blocks the actual cutover, NOT the 132 merge — the tool's fail-closed pre-import vocab diff is doing its job).
 Lane A's dress rehearsal: machinery green end-to-end (staging build, counts parity EXACT 552→552 per kind×workspace on a cleaned copy, byte-identical idempotent re-runs, dual-write incl. the battery-fix rollback verified on real data, immutability guards hold) — but the RAW census aborts the pre-import vocab diff with zero writes: **127 out-of-vocab feature `phase` rows across 41 features**: (a) 54 rows `phase='create-tasks'` (retired 7-phase-era name, mostly source='backfill'); (b) 73 rows where a JSON phase-list was written ONE-ROW-PER-CHARACTER (`phase='['`, `'"'`, `'d'`, …) on 'skipped' events for feature:011-tier-action-protocol (14) + feature:013-discord-identify-budget (59) — historical corruption, writer root-caused and guard-fixed at [[#086]]. Pre-pass required before cutover: (1) one-off cleaning SQL with its own verification (map create-tasks → a sanctioned phase or delete-with-record; delete the 73 char rows); (2) review the 16 tolerated hygiene anomalies the cleaned-run report lists (2 empty-id normalized, 11 orphan phase_events, 3 orphan workflow_phases); (3) **stop ALL sessions/MCP servers first** — lane A observed 4+ live pd MCP PIDs holding the DB open read-write with the WAL actively growing; the swap's checkpoint+rename must not race live writers (the tool's marker warns, the runbook must enforce); (4) re-run tool → verify report parity → --swap; (5) also review workspaces-table cardinality (2,185 rows for 7 logical workspaces — m11-era mapping residue worth a look, not a blocker).
 **Progress (2026-07-25):** pre-pass SQL persisted at `scripts/dev/cutover-prepass.sql` (remap create-tasks→create-plan + delete char rows, both with full-row records), operator runbook at `docs/dev_guides/cutover-runbook.md`. Rehearsal on a fresh live copy: raw abort reproduced exactly (create-tasks + 23 corruption chars); post-prepass 0 residual, 54+73=127 recorded; two clean runs 552→552 parity per kind×workspace with byte-identical checksums. Remaining: the LIVE execution — operator-run from a plain terminal with all writers stopped (runbook §1). New data points: workspaces 2,329 (+144 in 9 days — the m11-era writer is still live, investigate before v1 retirement); orphan phase_events 11→13 same window.

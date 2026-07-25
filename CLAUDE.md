@@ -39,8 +39,8 @@ Claude Code plugin providing a structured feature development workflow—skills,
 *Why:* YOLO mode disabling forces user intervention, defeating autonomous execution.
 *Enforced by:* `yolo-guard.sh` hook intercepts AskUserQuestion in YOLO mode.
 
-**Reviewer iteration targets:** Target 1-2 reviewer iterations per phase. Hard cap: 3 iterations. After 3 rounds, summarize remaining issues and ask user for guidance.
-*Why:* 3-5 iteration cycles consumed large context/time portions.
+**Review gate protocol (feature 134):** One reviewer pass → at most one fix round → remaining blockers escalate to the user. Never iterate to a cap; a zero-finding confirmatory rerun is an anti-pattern. Two standing review moments per deep feature (design, code) plus the conditional security review at finish.
+*Why:* 3-5 iteration cycles consumed large context/time portions; the rebuilt workflow encodes the one-pass rule in workflow-transitions.
 *Enforced by:* Iteration cap in `implement.md`.
 
 **Reviewer-claim verification:** When a reviewer's finding asserts a specific, checkable fact about existing code ("X writes column Y", "helper Z is unused"), verify it against the source (file:line) BEFORE writing it into a spec/design/plan. Reviewer output is not self-verifying.
@@ -59,7 +59,7 @@ Claude Code plugin providing a structured feature development workflow—skills,
 *Why:* Feature 119's payload-key casing was correct in spec, forked to snake_case in design D2, and copied through two more artifacts — caught only by checking the live .meta.json writer.
 *Enforced by:* Reviewer-claim verification practice; task-reviewer checks.
 
-**Dispatch-briefing figures are restated literals too:** Headline metrics in a prompt handed to a downstream agent (iteration counts, blocker trajectories, commit counts) must be re-derived from primary sources (`.review-history.md`, `.meta.json`, git) at composition time — and any agent SYNTHESIZING from a briefing should re-derive them again before enshrining them in an artifact.
+**Dispatch-briefing figures are restated literals too:** Headline metrics in a prompt handed to a downstream agent (iteration counts, blocker trajectories, commit counts) must be re-derived from primary sources (phase-event reviewer notes via the engine, `.meta.json`, git; pre-134 features used `.review-history.md`) at composition time — and any agent SYNTHESIZING from a briefing should re-derive them again before enshrining them in an artifact.
 *Why:* Feature 130's retro briefing carried three source-contradicting figures (an iteration count, a swapped campaign trajectory, a reviewer-breakdown miscount) — the 119 author-restated-literal class, one layer up at the briefing↔artifact boundary. The retro-facilitator caught all three only because it re-derived. Superlative self-labels ("campaign-first", "Nth consecutive") are the same class: before an artifact ships, grep it for EVERY first/only/Nth/consecutive/highest claim and chain-verify each against the prior-retro record — checking one streak is not checking them all (119's battery label, 120's design-gate label, and 126's "first spec-layer self-inflicted" all needed dated corrections; 126's slipped while the battery streak WAS being checked).
 *Enforced by:* retro-facilitator re-derivation practice; orchestrator briefing hygiene.
 
