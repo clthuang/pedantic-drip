@@ -1,5 +1,5 @@
 ---
-last-updated: 2026-04-29T00:00:00Z
+last-updated: 2026-07-25T12:00:00Z
 source-feature: 075-phase-context-accumulation
 audit-feature: 098-tier-doc-frontmatter-sweep
 ---
@@ -25,14 +25,9 @@ pd imposes a proven workflow on top of Claude Code:
 
 Features advance through named phases. Two artifacts carry a feature: `shape.md` (requirements from specify, design from design) and `plan.md` (the ordered task list). Each phase boundary runs `scripts/phase-gate.sh`, which must pass before the phase closes.
 
-### Phase Context on Rework
+### Rework
 
-When a reviewer sends a feature backward for rework, pd injects a `## Phase Context` block into the re-entered phase. This block contains:
-
-- The reviewer referral (what triggered the rework)
-- Prior phase summaries — key decisions, artifacts produced, and reviewer notes from earlier cycles
-
-This prevents blind rework: the re-entered phase has full knowledge of what was decided before, so reviewers don't re-raise resolved issues and drafters don't contradict prior conclusions.
+Backward moves are engine-recorded (`record_backward_event`: source, target, reason), and reviewer notes ride each phase's completed event. Re-entering a phase, the event history IS the context — nothing is injected or hand-maintained, and nothing goes stale.
 
 ### Autonomous Operation (YOLO Mode)
 

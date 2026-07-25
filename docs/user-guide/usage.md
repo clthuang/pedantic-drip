@@ -1,115 +1,81 @@
 ---
-last-updated: 2026-04-29T00:00:00Z
-source-feature: 078-cc-native-integration
+last-updated: 2026-07-25T12:00:00Z
+source-feature: 134-workflow-rebuild
 audit-feature: 098-tier-doc-frontmatter-sweep
 ---
 
-<!-- AUTO-GENERATED: START - source: 078-cc-native-integration -->
+<!-- AUTO-GENERATED: START - source: 134-workflow-rebuild -->
 # Usage
 
 ## Quick Start
 
-The easiest entry point is `/pd:secretary`. Describe what you want to do and it routes to the right workflow automatically:
+The easiest entry point is `/pd:secretary`. It triages your request into a mode — deep, express, or specialist — states its rationale, and routes:
 
 ```bash
 /pd:secretary "add email validation to the signup form"
 ```
 
-Or start a phase directly:
+Or start directly:
 
 ```bash
 /pd:brainstorm "your idea here"    # Explore an idea, produce a PRD
-/pd:create-feature "add user auth" # Skip brainstorming, start a feature directly
+/pd:create-feature "add user auth" # Start a deep feature
+/pd:create-feature --express "fix the off-by-one in pagination"  # Express lane
 ```
 
-## The Feature Workflow
+## The Deep Workflow
 
-Features move through phases in sequence. After creating a feature, advance phase by phase:
+Features move through phases in sequence; the workflow engine validates every transition and owns all state:
 
 ```bash
-/pd:specify        # Write requirements (spec.md)
-/pd:design         # Define architecture (design.md)
-/pd:create-plan    # Plan implementation (plan.md + tasks.md)
-/pd:implement      # Write code with TDD
-/pd:finish-feature # Merge, retrospective, branch cleanup
+/pd:specify        # shape.md ## Requirements
+/pd:design         # shape.md ## Design  → design review (1 of 2)
+/pd:create-plan    # plan.md (tasks derive at dispatch time)
+/pd:implement      # code + tests → QA agent + code review (2 of 2)
+/pd:finish-feature # QA battery, retro, merge, cleanup
 ```
 
-Each phase runs a reviewer before closing. If the reviewer finds issues, it sends the feature back with referral notes.
+Phase boundaries are checked mechanically (`scripts/phase-gate.sh`: artifact existence, required sections, duplicate-contract detection) at zero dispatch cost. LLM review happens at exactly two moments — design review and adversarial code review — each running one pass, at most one fix round, then escalating anything left to you. Security-surface diffs get a conditional third review (`pd:security-reviewer`) at finish.
 
-**`/pd:implement` — parallel task execution:** Tasks are dispatched in parallel using git worktrees (created under `.pd-worktrees/`, gitignored). If worktree creation fails for a specific task, that task runs without isolation. If SQLite contention is detected, remaining tasks fall back to serial execution. Merge conflicts halt the process and surface details for manual resolution.
+**`/pd:implement` — parallel task execution:** parallel-safe tasks are dispatched in git worktrees under `.pd-worktrees/` (gitignored); merge conflicts halt with details for manual resolution. The `qa-executor` agent then verifies by RUNNING — suites, end-to-end flows, edge cases — and returns evidence, not opinions.
 
-**`/pd:finish-feature` — security review:** After pre-merge checks pass, pd runs `/security-review` if the command is available in `.claude/commands/`. Critical or high-severity findings block the merge. If the command is not installed, this step is skipped with a warning.
+### Rework
 
-### Phase Context on Rework
+Backward moves are engine-recorded: `record_backward_event` captures source, target, and reason, and reviewer notes live on each phase's completed event. Re-entering a phase, the engine's event history is the context — query it via `/pd:show-status` or `get_phase`; there is no injected prose block to maintain.
 
-When a reviewer sends a feature backward, pd automatically injects a `## Phase Context` block at the start of the re-entered phase. This block contains:
+## The Express Lane
 
-- **Reviewer Referral** — the specific issues flagged by the reviewer that triggered rework
-- **Prior Phase Summaries** — key decisions, artifacts produced, and reviewer notes from earlier passes through each phase (up to the 2 most recent per phase)
-
-This means re-entering a phase is never a blank slate. Prior decisions are visible so you don't re-litigate resolved issues.
-
-Example of what gets injected:
-
-```markdown
-## Phase Context
-### Reviewer Referral
-**Source phase:** design
-- [spec.md > AC-3] Gap in acceptance criteria — add edge case for empty input
-
-### Prior Phase Summaries
-**specify** (2026-04-02T08:00:00Z): Specification complete (3 iterations).
-  Key decisions: Chose append-list storage over keyed dict for rework history.
-  Artifacts: spec.md
-```
-
-## Common Workflows
-
-### Explore Before Building
+For small, low-uncertainty changes:
 
 ```bash
-/pd:brainstorm "topic or problem"
-# Review the PRD produced, then:
-/pd:create-feature "feature description"
-```
-
-### Build Directly
-
-```bash
-/pd:create-feature "add user auth"
-/pd:specify
-/pd:design
-/pd:create-plan
-/pd:implement
+/pd:create-feature --express "the change, stated as a mini-spec"
+/pd:implement      # mini-spec is the plan; one combined QA+review pass
 /pd:finish-feature
 ```
 
-### Check Progress
+The mini-spec is recorded as a `mini_spec` event (the audit record — no artifact files exist); skipped phases are recorded as `skipped` events. Same entity, same tracking, same finish. If the change turns out bigger than it looked, escalation goes backward to specify with the mini-spec as input — no restart penalty.
+
+## Check Progress
 
 ```bash
-/pd:show-status      # Current phase and feature state
-/pd:list-features    # All active features and branches
+/pd:show-status      # Engine state for active features, brainstorms, backlog
+/pd:list-features    # All features by status
 ```
 
 ## Autonomous Mode (YOLO)
 
-To run the workflow without manual confirmation at each phase gate:
-
 ```bash
-/pd:yolo on                                    # Enable YOLO mode
-/pd:secretary orchestrate "add user auth"      # Build end-to-end
-/pd:secretary continue                         # Resume from last phase
-/pd:yolo off                                   # Return to manual mode
+/pd:yolo on                                # Enable
+/pd:secretary "add user auth"              # Triage + run end-to-end
+/pd:yolo off                               # Back to manual
 ```
 
-Quality reviewers still run in YOLO mode. Autonomous operation pauses automatically on review failures, merge conflicts, or missing prerequisites.
+One global rule (workflow-transitions skill): auto-select recommended options, propagate the flag into every dispatch, keep going through recoverable errors. Hard stops in every mode: engine transition rejection, merge conflicts, a review gate still failing after its fix round, and safety keywords.
 
 ## Project-Level Work
 
-For larger initiatives with multiple features:
-
 ```bash
-/pd:create-project "prd description"   # AI decomposes PRD into features
+/pd:create-project "prd description"   # Decompose a PRD into planned features
 ```
 
 ## Utilities
@@ -117,10 +83,10 @@ For larger initiatives with multiple features:
 | Command | What it does |
 |---------|-------------|
 | `/pd:add-to-backlog <idea>` | Capture an idea without starting a feature |
-| `/pd:retrospect` | Run a retrospective on a completed feature |
-| `/pd:show-lineage` | Display entity relationships for the current feature |
+| `/pd:retrospect` | Run a retrospective on a feature |
+| `/pd:show-lineage` | Display entity relationships |
 | `/pd:doctor` | Check workspace health |
-| `/pd:cleanup-brainstorms` | Delete old brainstorm scratch files |
+| `/pd:cleanup-brainstorms` | Archive old brainstorm files |
 
 ## File Layout
 
@@ -130,14 +96,13 @@ pd creates files under your project's `docs/` directory (configurable via `artif
 docs/
 ├── brainstorms/           # Brainstorm PRDs
 ├── features/{id}-{name}/  # Feature artifacts
-│   ├── spec.md
-│   ├── design.md
-│   ├── plan.md
-│   ├── tasks.md
-│   └── .meta.json         # Phase state and summaries
-├── projects/{id}-{name}/  # Project PRDs and roadmaps
-└── retrospectives/        # Retrospective outputs (retro.md per feature)
+│   ├── prd.md             # Promoted brainstorm (when one existed)
+│   ├── shape.md           # ## Requirements + ## Design (one document)
+│   ├── plan.md            # Ordered tasks with per-task verification
+│   ├── retro.md           # Retrospective (written before cleanup)
+│   └── .meta.json         # READ-ONLY projection of engine state
+└── projects/{id}-{name}/  # Project PRDs and roadmaps
 ```
 
-The `.meta.json` file tracks phase state and stores accumulated phase summaries. These summaries are what pd injects as context when a phase is re-entered during rework.
+Express features have no artifact files — their record is the event stream (mini_spec + skipped events), which `.meta.json` projects. State lives in the entity DB; `.meta.json` is a generated projection — never hand-edit it.
 <!-- AUTO-GENERATED: END -->
