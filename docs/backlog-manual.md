@@ -1,10 +1,11 @@
-# Backlog (manual register)
+# Backlog (historical archive)
 
-Durable, git-tracked MANUAL backlog. Distinct from `docs/backlog.md` (the
-gitignored DB projection, `.gitignore:69`) because the entity-DB backlog
-write path is silently lossy — see #060. This file is the source of truth
-until #060 is diagnosed / the P004 cutover (feature 132) restores a
-reliable DB path; entries then migrate into the DB and this file retires.
+RETIRED as source of truth 2026-07-25 (feature 134): #060 closed
+(write path regression-pinned durable), every open item registered as a
+backlog entity, and `docs/backlog.md` (gitignored DB projection) is live
+again. This file remains as the long-form detail annex for pre-134 items —
+entities reference it via `metadata.source`. New items go DB-only via
+`/pd:add-to-backlog`.
 
 ## Open
 
@@ -62,7 +63,8 @@ reliable DB path; entries then migrate into the DB and this file retires.
   in 1 round — proposal untested there; weak n=2 signal that the DESIGN gate
   specifically is the lowest-yield dispatch.
 
-- **#059 — Stabilize TestMigration11ConcurrentRunners fork-race flake** *(source: feature 129 QA gate T1, MED)*
+- **#059 — CLOSED 2026-07-25 (feature 134)** — root cause was the WAL mode-switch returning SQLITE_BUSY without consulting the busy handler; explicit retry in _set_pragmas; 12/12 stress runs (was ~40% failing on the 134 branch, ~5% develop). Original entry:
+  **Stabilize TestMigration11ConcurrentRunners fork-race flake** *(source: feature 129 QA gate T1, MED)*
   `test_database.py` `test_migration_11_concurrent_runners`: pre-existing flake
   (develop ~5% isolated-rerun fail) measurably worse on the 129 branch (12/19 targeted
   stress reruns; `database is locked` from the forked child's `PRAGMA journal_mode=WAL`
@@ -241,7 +243,7 @@ Root cause: `_process_transition_phase` (workflow_state_server.py) parsed the MC
 **Source:** feature 133 test-deepener (2026-07-16), surfaced while probing SC1 fault-control alternatives; echoed by the 133 implementation battery. **Type:** error-handling hygiene, LOW-MED.
 `check_missed_cascade` (doctor/checks.py, ~:453 region post-133) wraps its scan in a bare `except sqlite3.Error` that returns a clean/empty result — a DB with a corrupt or absent `entity_relations` table yields a FALSE ALL-CLEAR instead of a loud failure. Contradicts the repo standard ("do not silently swallow database exceptions", CLAUDE.md SQLite guidance) and the 128 fail-loud posture. Pre-existing (shipped at 124), NOT a 133 regression — 133 deliberately left retained checks byte-untouched. Candidate fix: convert the swallow to a failed CheckResult naming the exception (the runner's per-check isolation already contains crashes), one red-first test. Related: [[#080]] (same check's producer window).
 
-- **#086 — Fresh-file concurrent bootstrap races the v1 migration chain** *(source: feature 134 qa-mig3 probe, 2026-07-25)*
+- **#088 — Fresh-file concurrent bootstrap races the v1 migration chain** *(source: feature 134 qa-mig3 probe, 2026-07-25; renumbered from a #086 collision)*
   Two processes opening a NOT-YET-EXISTING entities.db simultaneously fail 7/8
   (unguarded v1 chain replay: "no such column: entity_type", "foreign key
   mismatch"). Verified pre-existing on develop (identical 7/8); MIGRATIONS[20]/[21]

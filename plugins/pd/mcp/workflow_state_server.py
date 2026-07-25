@@ -646,6 +646,17 @@ def _project_backlog_md(db: EntityDatabase) -> str:
                 if isinstance(raw_md, str)
                 else raw_md
             )
+            # Historical MCP-era rows carry DOUBLE-encoded metadata (the
+            # documented json.dumps-twice gotcha; 117 such rows survived the
+            # cutover verbatim). One more tolerant decode; still-not-a-dict
+            # degrades to {} rather than crashing the whole projection.
+            if isinstance(md, str):
+                try:
+                    md = json.loads(md)
+                except (TypeError, ValueError):
+                    md = {}
+            if not isinstance(md, dict):
+                md = {}
         else:
             md = {}
 
