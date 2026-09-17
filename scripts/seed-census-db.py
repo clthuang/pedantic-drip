@@ -5,8 +5,9 @@
 Bootstraps schema_v2 + events (+ any other registered DDL) into a target
 directory and seeds ~533 entities across 7 workspaces with a full
 `initialized` (+ phase) event stream per entity, so a future consumer
-(127) has a realistic-scale v2 database to run project_meta against for
-DB-direct-read benchmarking (compared against 5a's file-based reads).
+(127) has a realistic-scale v2 database to run .meta.json-projection reads
+against for DB-direct-read benchmarking (compared against 5a's file-based
+reads).
 
 ALL data is synthetic — no live repo content is read or copied. Entity
 type_ids are SEQUENTIAL and deterministic (`feature:{i:04d}-{slug}`), so
@@ -97,9 +98,9 @@ def _seed_workspaces(conn, rng: random.Random, workspace_count: int) -> list[str
 
 
 def _seed_entity_row(conn, *, entity_uuid: str, workspace_uuid: str, type_id: str, slug: str) -> None:
-    # kind="feature" (meta_projection's only supported kind, design D3
-    # kind guard); type/lifecycle_class mirror the convention established
-    # by test_meta_projection.py's own _seed_entity helper.
+    # kind="feature" (design D3 kind guard — the only kind the retired
+    # meta_projection module supported); type/lifecycle_class mirror the
+    # v2 suite's seeding convention.
     conn.execute(
         "INSERT INTO entities (uuid, workspace_uuid, type, kind, lifecycle_class, "
         "type_id, name, artifact_path, parent_uuid, created_at, updated_at, metadata) "
@@ -115,7 +116,7 @@ def _seed_entity_row(conn, *, entity_uuid: str, workspace_uuid: str, type_id: st
 def _append_event_stream(conn, rng: random.Random, *, entity_uuid: str, status: str) -> None:
     # NOTE (127): `status` drives event-stream DEPTH only, not the PROJECTED
     # status — init emits to_value="planned" and no status_changed/activated
-    # events are seeded, so project_meta reports "planned" for these rows.
+    # events are seeded, so the projected status for these rows is "planned".
     # 5b is a scale substrate, not a status-distribution reproduction.
     """Append a synthetic initialized (+ phase) event stream for one
     entity, shaped by *status* (design D1 grammar; census-proportioned
@@ -162,7 +163,7 @@ def seed_census_db(target_dir: str, *, entity_count: int, workspace_count: int, 
 
     Returns a summary dict: db_path, entities/events/workspaces row
     counts, and first_entity_uuid (any seeded entity always has an
-    `initialized` event, so it always round-trips through project_meta).
+    `initialized` event at the head of a full synthetic stream).
     """
     os.makedirs(target_dir, exist_ok=True)
     db_path = os.path.join(target_dir, "v2.db")

@@ -40,7 +40,8 @@ def parse_args(argv=None):
         default=None,
         help=(
             "Optional workspace UUID (feature 108 / Decision 6 / Decision 11). "
-            "If unset, resolved via resolve_workspace_uuid(project_root)."
+            "If unset, resolved via resolve_workspace_uuid(project_root, "
+            "db_path=--entity-db)."
         ),
     )
     parser.add_argument(
@@ -60,8 +61,10 @@ def _resolve_workspace_uuid_with_precedence(args) -> str:
     """Resolve workspace UUID using FR-3 / Decision 11 precedence.
 
     Order: ENTITY_WORKSPACE_UUID env > --workspace-uuid CLI flag >
-           resolve_workspace_uuid(project_root) (which itself walks
-           workspace.json → DB → fresh-write).
+           resolve_workspace_uuid(project_root, db_path=args.entity_db)
+           (which itself walks workspace.json → DB → fresh-write; db_path
+           threaded so registration lands in the SAME DB the run targets,
+           not the real ~/.claude default — 2026-09-17 leak fix).
     """
     env_uuid = os.environ.get("ENTITY_WORKSPACE_UUID")
     if env_uuid:
@@ -69,7 +72,7 @@ def _resolve_workspace_uuid_with_precedence(args) -> str:
     flag_uuid = getattr(args, "workspace_uuid", None)
     if flag_uuid:
         return flag_uuid
-    return resolve_workspace_uuid(args.project_root)
+    return resolve_workspace_uuid(args.project_root, db_path=args.entity_db)
 
 
 def run(args):

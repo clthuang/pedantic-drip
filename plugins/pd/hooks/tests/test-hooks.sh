@@ -9,6 +9,11 @@ HOOKS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # Walk up to find repo root (has .git directory)
 PROJECT_ROOT="$(cd "${HOOKS_DIR}" && while [[ ! -d .git ]] && [[ $PWD != / ]]; do cd ..; done && pwd)"
 
+# Isolate entity-DB writes: hook children inherit this and register temp
+# workspaces in a throwaway DB, not ~/.claude/pd/entities/entities.db
+# (2,305-row shell-mktemp leak purged 2026-09-17).
+export ENTITY_DB_PATH="$(mktemp -d)/entities.db"
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'

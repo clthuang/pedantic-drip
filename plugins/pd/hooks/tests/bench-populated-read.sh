@@ -29,6 +29,11 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
 SESSION_START_SH="plugins/pd/hooks/session-start.sh"
+
+# Isolate entity-DB writes: hook children inherit this and register temp
+# workspaces in a throwaway DB, not ~/.claude/pd/entities/entities.db
+# (2,305-row shell-mktemp leak purged 2026-09-17).
+export ENTITY_DB_PATH="$(mktemp -d)/entities.db"
 SEED=0x126
 N_ITERATIONS=120
 SMOKE=0

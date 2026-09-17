@@ -25,8 +25,7 @@ snapshot/restore fixture idiom plus pytest's collect-time module imports
 mean a self-registering trigger would land in feature 120's and 126's
 already-bootstrapped test databases too — and those suites legitimately
 write out-of-vocabulary pipeline/execution values (test_views.py's
-alpha/delta/epsilon pool; test_meta_projection.py's deliberate
-"database-migration-dry-run" fixture). This module's own tests call
+alpha/delta/epsilon pool). This module's own tests call
 ``register_vocab_ddl()`` INSIDE the snapshot/restore fixture scope so
 nothing leaks to sibling suites (SC6's structural isolation guarantee).
 

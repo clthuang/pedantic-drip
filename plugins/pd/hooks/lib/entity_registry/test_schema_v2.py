@@ -517,11 +517,11 @@ class TestSequencesBusinessKeyNonUniqueness:
 # Every dark v2 module this guard exempts from being its own offender (a
 # dark module's own source legitimately mentions its sibling dark modules
 # — e.g. events.py imports schema_v2, display.py imports events, views.py
-# imports events, meta_projection.py imports events). uuid7.py is
+# imports events). uuid7.py is
 # deliberately NOT in this set: it is already live via database.py's
 # uuid7 mints (design D6).
 _V2_DARK_MODULES = {
-    "schema_v2.py", "events.py", "display.py", "views.py", "meta_projection.py",
+    "schema_v2.py", "events.py", "display.py", "views.py",
     "axes.py",
 }
 
@@ -543,9 +543,6 @@ _V2_LIVE_REFERENCE_NEEDLES = (
     "entity_registry.views",
     "from entity_registry import views",
     "from .views import",
-    "entity_registry.meta_projection",
-    "from entity_registry import meta_projection",
-    "from .meta_projection import",
     "entity_registry.axes",
     "from entity_registry import axes",
     "from .axes import",
@@ -561,7 +558,7 @@ _V2_LIVE_REFERENCE_NEEDLES = (
 # path, wiring the event core in on purpose. Re-adjudicated here as a WIDEN
 # of the sanctioned-importer set, not a retirement of the guard: the guard
 # still has residual value for every OTHER file under hooks/lib (an
-# accidental schema_v2/axes/display/views/meta_projection import anywhere
+# accidental schema_v2/axes/display/views import anywhere
 # else remains exactly the class of bug this scan exists to catch), so the
 # class itself and its five seeded-offender teeth tests below are unchanged
 # and still exercise tmp_path fixtures unrelated to this exemption.
@@ -571,7 +568,7 @@ _V2_LIVE_REFERENCE_NEEDLES = (
 # integer so v2-generation files are judged against their own lineage
 # instead of the v1 chain max. That is a constant read, not v2 DB access,
 # so only the "schema_v2" needle is sanctioned there — wiring
-# events/display/views/meta_projection/axes into doctor still trips the
+# events/display/views/axes into doctor still trips the
 # guard (pinned by test_scan_still_flags_needle_outside_a_files_exemption).
 _SANCTIONED_V2_IMPORTERS: dict[str, frozenset[str]] = {
     "rebuild_tool.py": frozenset(_V2_LIVE_REFERENCE_NEEDLES),
@@ -877,75 +874,10 @@ class TestSchemaV2SanctionedImporters:
         assert offending_files == [str(offender_path)]
 
     # -------------------------------------------------------------
-    # Design D7 (feature 126): meta_projection.py joins the dark-module
-    # set — its own three-way needle coverage (dotted / non-dotted /
-    # relative) gets the same seeded-offender teeth as the
-    # events.py/display.py/views.py pairs above.
-    # -------------------------------------------------------------
-    def test_scan_flags_seeded_offender_with_meta_projection_nondotted_import_spelling(
-        self, tmp_path
-    ):
-        """Mirrors test_scan_flags_seeded_offender_with_nondotted_import_spelling
-        above, for the "meta_projection" needle set instead of "events"."""
-        offender_path = tmp_path / "some_meta_projection_consumer.py"
-        offender_path.write_text("from entity_registry import meta_projection\n")
-
-        offending_files = _scan_for_live_v2_references(
-            tmp_path, _V2_DARK_MODULES, _V2_LIVE_REFERENCE_NEEDLES
-        )
-
-        assert offending_files == [str(offender_path)]
-
-    def test_scan_flags_seeded_offender_with_meta_projection_dotted_import_spelling(
-        self, tmp_path
-    ):
-        """Mirrors test_scan_flags_seeded_offender_with_dotted_import_spelling
-        above, for the "meta_projection" needle set instead of "events"."""
-        offender_path = tmp_path / "some_other_meta_projection_consumer.py"
-        offender_path.write_text(
-            "import entity_registry.meta_projection\n"
-            "\n"
-            "def wire_it_up():\n"
-            "    entity_registry.meta_projection.project_meta(conn, 'entity-uuid')\n"
-        )
-
-        offending_files = _scan_for_live_v2_references(
-            tmp_path, _V2_DARK_MODULES, _V2_LIVE_REFERENCE_NEEDLES
-        )
-
-        assert offending_files == [str(offender_path)]
-
-    def test_scan_flags_seeded_offender_with_meta_projection_relative_import_spelling(
-        self, tmp_path
-    ):
-        """The relative spelling — exactly how a same-package sibling
-        module would wire meta_projection.py in: neither of the two
-        sibling tests above seeds this form, so a typo'd or dropped
-        "from .meta_projection import" entry in
-        _V2_LIVE_REFERENCE_NEEDLES would pass both of them silently.
-
-        Anticipate: an implementation of the needle-set widening that
-        added only the dotted and non-dotted meta_projection spellings
-        (the pattern the existing events.py/display.py/views.py pairs
-        already established) and forgot the relative form would still
-        pass both sibling tests above — this test fails against that
-        specific omission because its fixture contains ONLY the
-        relative spelling.
-        """
-        offender_path = tmp_path / "some_relative_meta_projection_consumer.py"
-        offender_path.write_text("from .meta_projection import project_meta\n")
-
-        offending_files = _scan_for_live_v2_references(
-            tmp_path, _V2_DARK_MODULES, _V2_LIVE_REFERENCE_NEEDLES
-        )
-
-        assert offending_files == [str(offender_path)]
-
-    # -------------------------------------------------------------
     # Design D5 group 6 (feature 122): axes.py joins the dark-module set —
     # its own three-way needle coverage (dotted / non-dotted / relative)
     # gets the same seeded-offender teeth as the events.py/display.py/
-    # views.py/meta_projection.py pairs above.
+    # views.py pairs above.
     # -------------------------------------------------------------
     def test_scan_flags_seeded_offender_with_axes_nondotted_import_spelling(
         self, tmp_path
@@ -991,7 +923,7 @@ class TestSchemaV2SanctionedImporters:
 
         Anticipate: an implementation of the needle-set widening that
         added only the dotted and non-dotted axes spellings (the pattern
-        the existing events.py/display.py/views.py/meta_projection.py
+        the existing events.py/display.py/views.py
         pairs already established) and forgot the relative form would
         still pass both sibling tests above — this test fails against
         that specific omission because its fixture contains ONLY the

@@ -10,7 +10,6 @@ from pathlib import Path
 import pytest
 
 from entity_registry import events
-from entity_registry import meta_projection
 
 # entity_registry/test_census_seeder.py -> entity_registry -> lib -> hooks
 # -> pd -> plugins -> repo root.
@@ -47,22 +46,6 @@ class TestSeederSmoke:
         assert summary["events"] == 211
         assert summary["workspaces"] == 2
 
-    def test_seeded_feature_entity_round_trips_through_project_meta(self, tmp_path):
-        module = _load_seed_census_db_module()
-        summary = module.seed_census_db(
-            str(tmp_path), entity_count=20, workspace_count=2, seed=0x126,
-        )
-        conn = events.connect_v2(summary["db_path"])
-        try:
-            meta = meta_projection.project_meta(conn, summary["first_entity_uuid"])
-        finally:
-            conn.close()
-
-        assert meta["id"] == "0000"
-        assert meta["slug"]
-        assert meta["status"] is not None
-        assert meta["mode"] in ("standard", "full")
-
 
 # ---------------------------------------------------------------------------
 # Seeder determinism (test-deepening dimension 5): two independent runs at
@@ -72,10 +55,10 @@ class TestSeederSmoke:
 # VALUES legitimately differ run-to-run (generate_uuid7() is never seeded,
 # per the script's own docstring) -- determinism lives in the SEEDED
 # content (type_id, status, mode, phase depth, iterations, reviewerNotes),
-# which is why this test compares type_id + project_meta shape, not uuids.
+# which is why this test compares seeded type_id content, not uuids.
 # ---------------------------------------------------------------------------
 class TestSeederDeterminism:
-    def test_two_runs_with_same_seed_produce_identical_type_ids_and_meta_shape(
+    def test_two_runs_with_same_seed_produce_identical_type_ids(
         self, tmp_path
     ):
         module = _load_seed_census_db_module()
@@ -106,18 +89,6 @@ class TestSeederDeterminism:
                 "SELECT type_id FROM entities ORDER BY type_id"
             ).fetchall()
             assert type_ids_1 == type_ids_2
-
-            # And the first entity's projected shape (status/mode/phase
-            # set) matches too -- proving determinism survives the full
-            # event-append + project_meta round trip, not just the raw
-            # entities-row INSERT.
-            meta_1 = meta_projection.project_meta(conn_1, summary_1["first_entity_uuid"])
-            meta_2 = meta_projection.project_meta(conn_2, summary_2["first_entity_uuid"])
-            assert meta_1["id"] == meta_2["id"] == "0000"
-            assert meta_1["slug"] == meta_2["slug"]
-            assert meta_1["status"] == meta_2["status"]
-            assert meta_1["mode"] == meta_2["mode"]
-            assert meta_1["phases"].keys() == meta_2["phases"].keys()
         finally:
             conn_1.close()
             conn_2.close()

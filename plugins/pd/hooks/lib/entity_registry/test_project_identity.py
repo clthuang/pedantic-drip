@@ -336,6 +336,10 @@ class TestResolveWorkspaceUuidPrecedence:
         from entity_registry.project_identity import resolve_workspace_uuid
 
         monkeypatch.delenv("ENTITY_WORKSPACE_UUID", raising=False)
+        # This test exercises the env-unset fallback (HOME-derived DB path,
+        # faked below) — the session-wide ENTITY_DB_PATH isolation default
+        # from conftest must not preempt it.
+        monkeypatch.delenv("ENTITY_DB_PATH", raising=False)
 
         # Set up an isolated entities.db with a workspaces row pointing
         # at our tmp_path.

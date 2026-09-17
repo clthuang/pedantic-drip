@@ -18,6 +18,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 HOOKS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PROJECT_ROOT="$(cd "${HOOKS_DIR}" && while [[ ! -d .git ]] && [[ $PWD != / ]]; do cd ..; done && pwd)"
 
+# Isolate entity-DB writes: hook children inherit this and register temp
+# workspaces in a throwaway DB, not ~/.claude/pd/entities/entities.db
+# (2,305-row shell-mktemp leak purged 2026-09-17).
+export ENTITY_DB_PATH="$(mktemp -d)/entities.db"
+
 GUARD_SCRIPT="${HOOKS_DIR}/data-file-guard.sh"
 HOOKS_JSON="${HOOKS_DIR}/hooks.json"
 LEGACY_GUARD="${HOOKS_DIR}/meta-json-guard.sh"

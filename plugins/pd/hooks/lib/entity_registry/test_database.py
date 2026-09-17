@@ -56,7 +56,7 @@ def _reset_ddl_registry_for_v2_fixtures():
     without this, "axes_vocab_triggers" would leak into whatever test
     runs next in this process (H4/H6 discipline: this suite's OWN
     fixtures must not become a NEW dark-suite-reconciliation hazard for
-    test_views.py/test_meta_projection.py/test_events.py, which
+    test_views.py/test_events.py, which
     deliberately write out-of-vocabulary axis values in their own,
     unrelated tests)."""
     original_registry = list(schema_v2.DDL_REGISTRY)
