@@ -15,10 +15,10 @@ Contract command. Shared mechanics (entry, exit, YOLO, review gate, dispatch hyg
 
 **Steps:**
 1. If a feature is already active, confirm via AskUserQuestion before minting a second one.
-2. `allocate_entity_id(entity_type="feature", name=<description>)` — the returned `entity_id` is the authoritative `{id}-{slug}` for directory, branch, and registration. An error envelope stops the command; never derive an id locally.
+2. `allocate_entity_id(entity_type="feature", name=<description>)` — the returned `entity_id` is the authoritative `{id}-{slug}` for directory, branch, and registration; never derive an id locally. **Two hard stops, both creating nothing:** an allocation error envelope, or an `{id}` at or below an existing `{pd_artifacts_root}/features/{NNN}-*` directory number — sequence drift, which no doctor check detects: stop, report it, and correct the workspace's `sequences` counter before anything is minted.
 3. `mkdir -p {pd_artifacts_root}/features/{id}-{slug}/`. With `--prd`, copy the PRD into it as `prd.md` and stop if the copy is missing or empty.
 4. `register_entity(entity_type="feature", entity_id="{id}-{slug}", name=<description>, status="planned", ...)` — promotion sources go in `metadata` (brainstorm stem, backlog id, or both) with `parent_uuid` resolved from that source, never into prose. `status="planned"` is what the next step requires.
 5. Activate per the workflow-state skill: `activate_feature`, then the feature branch.
 6. `--express`: `record_mini_spec(feature_type_id="feature:{id}-{slug}", text="<mini-spec>")`, then hand `/pd:implement` its entry skip set — every phase before implement in workflow-state's sequence, passed as `skipped_phases`. Otherwise continue into `/pd:specify`.
 
-**Constraints:** an allocation or registration error stops the command — a half-minted feature costs more than none. No state writes outside MCP tools; no phase-sequence or status-vocabulary restatement.
+**Constraints:** an allocation, drift, or registration error stops the command — a half-minted feature costs more than none. No state writes outside MCP tools; no phase-sequence or status-vocabulary restatement.

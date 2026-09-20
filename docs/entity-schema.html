@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>pd entity registry — data schema</title>
+<style>
+:root{--bg:#fff;--fg:#1d1c1a;--mut:#6b6864;--line:#e3e0db;--card:#fff;--accent:#7a5cff;--warn:#b4531f;--code:#f4f2ef}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 ui-sans-serif,-apple-system,"Segoe UI",Inter,sans-serif}
+.wrap{max-width:1080px;margin:0 auto;padding:48px 24px 120px}
+h1{font-size:2rem;margin:0 0 .3em;letter-spacing:-.02em}
+h2{font-size:1.35rem;margin:3em 0 .6em;padding-bottom:.3em;border-bottom:2px solid var(--line)}
+h3{font-size:1.1rem;margin:2.4em 0 .2em;color:var(--accent)}
+h4{font-size:1rem;margin:0 0 .4em;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+h5{font-size:.78rem;margin:.9em 0 .3em;color:var(--mut);text-transform:uppercase;letter-spacing:.07em}
+p{margin:.5em 0} .lede{font-size:1.08rem;color:var(--mut);max-width:70ch}
+.blurb{color:var(--mut);max-width:78ch;margin-bottom:1.2em}
+.note{font-size:.9rem;color:var(--mut);max-width:80ch;margin-bottom:.9em}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.88em;background:var(--code);padding:.1em .35em;border-radius:4px}
+pre{background:var(--code);padding:14px;border-radius:8px;overflow-x:auto;font-size:.8rem;line-height:1.5;margin:.6em 0}
+pre.inl{margin:0;background:none;padding:0;font-size:.74rem}
+.tbl{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin:14px 0}
+.rows{float:right;font:400 .75rem/1.6 ui-sans-serif;color:var(--mut)}
+table{width:100%;border-collapse:collapse;margin:.5em 0;font-size:.86rem}
+th{text-align:left;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);border-bottom:1px solid var(--line);padding:6px 8px}
+td{padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:none}
+td.c{font-family:ui-monospace,Menlo,monospace;font-size:.84em;white-space:nowrap}
+td.ty{color:var(--mut);font-family:ui-monospace,Menlo,monospace;font-size:.8em}
+.b{display:inline-block;font-size:.68rem;padding:.1em .45em;border-radius:4px;margin:0 3px 3px 0;white-space:nowrap;border:1px solid var(--line)}
+.pk{background:var(--accent);color:#fff;border-color:transparent}
+.nn{color:var(--mut)} .fk{color:var(--accent);border-color:var(--accent)}
+.od{color:var(--warn);border-color:var(--warn)} .df{color:var(--mut)}
+details summary{cursor:pointer;font-size:.8rem;color:var(--mut);margin-top:.5em}
+.sub ul{margin:.2em 0;padding-left:1.2em;font-size:.84rem}
+ul.toc{columns:2;font-size:.92rem;padding-left:1.1em}
+a{color:var(--accent)}
+.flag{border-left:3px solid var(--warn);background:var(--card);padding:12px 16px;border-radius:0 8px 8px 0;margin:12px 0}
+.flag b{color:var(--warn)}
+svg{max-width:100%;height:auto;display:block;margin:1.2em 0}
+.meta{font-size:.8rem;color:var(--mut);border-top:1px solid var(--line);margin-top:3em;padding-top:1em}
+
+.scroll{overflow-x:auto;margin:1em 0}
+table.matrix{font-size:.82rem;min-width:760px}
+table.matrix th.rot{height:96px;width:34px;padding:0;vertical-align:bottom;border-bottom:1px solid var(--line)}
+table.matrix th.rot span{display:block;transform:rotate(-60deg);transform-origin:left bottom;white-space:nowrap;font-family:ui-monospace,Menlo,monospace;font-size:.72rem;text-transform:none;letter-spacing:0;padding-left:4px}
+table.matrix th.act,table.matrix td.act{text-align:left;min-width:260px;padding-right:14px}
+td.act code{font-size:.82em;background:none;padding:0;font-weight:600}
+td.act .sf{display:block;font-size:.66rem;color:var(--accent);letter-spacing:.04em;text-transform:uppercase}
+td.act .ds{display:block;font-size:.76rem;color:var(--mut);line-height:1.4}
+td.m{text-align:center;width:34px;font-family:ui-monospace,Menlo,monospace;font-size:.7rem;font-weight:700}
+td.m.w{background:rgba(180,83,31,.14);color:var(--warn)}
+td.m.r{background:rgba(122,92,255,.12);color:var(--accent)}
+td.m.via{color:var(--mut);opacity:.75;font-weight:400}
+</style></head><body><div class="wrap">
+
+<h1>pd entity registry — data schema</h1>
+<p class="lede">Every table in <code>~/.claude/pd/entities/entities.db</code>, how they connect, and what the live data currently looks like. Generated directly from the database, not from documentation.</p>
+<p class="note"><strong>20</strong> tables · <strong>3</strong> views · <strong>13</strong> triggers · <strong>11</strong> foreign keys · schema_version 3, generation v2 · WAL mode</p>
+
+<h2>How it fits together</h2>
+<p class="blurb">Four concentric rings. <code>workspaces</code> scopes everything; <code>entities</code> is the hub; identity, history and relationships hang off <code>entities.uuid</code>; FTS shadows the text.</p>
+
+<svg viewBox="0 0 900 420" role="img" aria-label="Entity relationship diagram">
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+<path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker></defs>
+<g font-family="ui-monospace,Menlo,monospace" font-size="12" color="currentColor">
+<rect x="20" y="180" width="130" height="52" rx="8" fill="none" stroke="currentColor" stroke-width="2"/>
+<text x="85" y="202" text-anchor="middle" font-weight="700">workspaces</text>
+<text x="85" y="219" text-anchor="middle" font-size="10" opacity=".65">24 rows</text>
+
+<rect x="330" y="170" width="150" height="72" rx="8" fill="none" stroke="currentColor" stroke-width="3"/>
+<text x="405" y="197" text-anchor="middle" font-weight="700">entities</text>
+<text x="405" y="214" text-anchor="middle" font-size="10" opacity=".65">579 · uuid PK</text>
+<text x="405" y="229" text-anchor="middle" font-size="10" opacity=".65">kind · type_id</text>
+
+<rect x="620" y="30" width="150" height="50" rx="8" fill="none" stroke="currentColor"/>
+<text x="695" y="50" text-anchor="middle">entity_display</text>
+<text x="695" y="66" text-anchor="middle" font-size="10" opacity=".65">399 · seq, slug</text>
+
+<rect x="620" y="100" width="150" height="50" rx="8" fill="none" stroke="currentColor"/>
+<text x="695" y="120" text-anchor="middle">events</text>
+<text x="695" y="136" text-anchor="middle" font-size="10" opacity=".65">2,195 · NO CASCADE</text>
+
+<rect x="620" y="170" width="150" height="50" rx="8" fill="none" stroke="currentColor"/>
+<text x="695" y="190" text-anchor="middle">workflow_phases</text>
+<text x="695" y="206" text-anchor="middle" font-size="10" opacity=".65">523</text>
+
+<rect x="620" y="240" width="150" height="50" rx="8" fill="none" stroke="currentColor"/>
+<text x="695" y="260" text-anchor="middle">entity_relations</text>
+<text x="695" y="276" text-anchor="middle" font-size="10" opacity=".65">33 · blocks</text>
+
+<rect x="620" y="310" width="150" height="50" rx="8" fill="none" stroke="currentColor"/>
+<text x="695" y="330" text-anchor="middle">entities_fts</text>
+<text x="695" y="346" text-anchor="middle" font-size="10" opacity=".65">FTS5 shadow</text>
+
+<rect x="330" y="310" width="150" height="50" rx="8" fill="none" stroke="currentColor"/>
+<text x="405" y="330" text-anchor="middle">sequences</text>
+<text x="405" y="346" text-anchor="middle" font-size="10" opacity=".65">19 · next_val</text>
+
+<rect x="330" y="60" width="150" height="50" rx="8" fill="none" stroke="currentColor" stroke-dasharray="5 4"/>
+<text x="405" y="80" text-anchor="middle" opacity=".7">phase_events</text>
+<text x="405" y="96" text-anchor="middle" font-size="10" opacity=".55">1,445 · no FK</text>
+
+<line x1="150" y1="206" x2="322" y2="206" stroke="currentColor" stroke-width="2" marker-end="url(#a)"/>
+<line x1="85" y1="232" x2="85" y2="335" stroke="currentColor" stroke-width="1.5"/>
+<line x1="85" y1="335" x2="322" y2="335" stroke="currentColor" stroke-width="1.5" marker-end="url(#a)"/>
+<line x1="480" y1="190" x2="612" y2="60" stroke="currentColor" marker-end="url(#a)"/>
+<line x1="480" y1="196" x2="612" y2="128" stroke="currentColor" stroke-width="2.5" marker-end="url(#a)"/>
+<line x1="480" y1="206" x2="612" y2="196" stroke="currentColor" marker-end="url(#a)"/>
+<line x1="480" y1="216" x2="612" y2="264" stroke="currentColor" marker-end="url(#a)"/>
+<line x1="480" y1="226" x2="612" y2="334" stroke="currentColor" stroke-dasharray="4 3" marker-end="url(#a)"/>
+<line x1="405" y1="170" x2="405" y2="118" stroke="currentColor" stroke-dasharray="5 4" opacity=".6"/>
+<path d="M345 178 C300 150 300 250 345 234" fill="none" stroke="currentColor" marker-end="url(#a)"/>
+<text x="290" y="208" font-size="10" text-anchor="middle" opacity=".7">parent_uuid</text>
+<text x="236" y="200" font-size="10" text-anchor="middle" opacity=".7">scopes</text>
+<text x="560" y="105" font-size="10" opacity=".7">blocks delete</text>
+</g></svg>
+
+<div class="flag"><b>The one edge that matters most.</b> <code>events.entity_uuid</code> is <code>NOT NULL REFERENCES entities(uuid)</code> with no <code>ON DELETE</code> clause, and every one of the 579 entities has at least one event row. <strong>No entity can be deleted.</strong> Archival is the only available terminal operation — which the append-only design arguably intends, but nothing in the API says so.</div>
+
+<h2>Tables</h2>
+<ul class="toc"><li><a href="#g0">Identity core</a></li><li><a href="#g1">History &amp; state</a></li><li><a href="#g2">Relationships</a></li><li><a href="#g3">Full-text search</a></li><li><a href="#g4">Operational</a></li></ul>
+<div id="g0"><h3>Identity core</h3><p class="blurb">The rows that define what an entity <em>is</em>. Every other table hangs off <code>entities.uuid</code>.</p><section class="tbl" id="t-workspaces">
+<h4>workspaces <span class="rows">24 rows</span></h4>
+<p class="note">Project-root scoping. <code>project_id_legacy</code> is the pre-uuid identifier still accepted by several APIs.</p><table class="cols"><thead><tr><th>Column</th><th>Type</th><th>Constraints</th></tr></thead><tbody><tr><td class="c">uuid</td><td class="ty">TEXT</td><td><span class="b pk">PK</span> <span class="b nn">NOT NULL</span></td></tr><tr><td class="c">project_id_legacy</td><td class="ty">TEXT</td><td></td></tr><tr><td class="c">project_root</td><td class="ty">TEXT</td><td></td></tr><tr><td class="c">created_at</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span></td></tr><tr><td class="c">updated_at</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span></td></tr></tbody></table><div class="sub"><h5>Indexes</h5><ul><li><code>idx_workspaces_legacy</code> (index) on <code>project_id_legacy</code></li></ul></div>
+<details><summary>CREATE statement</summary><pre>CREATE TABLE workspaces (
+        uuid               TEXT NOT NULL PRIMARY KEY,
+        project_id_legacy  TEXT UNIQUE,
+        project_root       TEXT,
+        created_at         TEXT NOT NULL,
+        updated_at         TEXT NOT NULL
+    )</pre></details>
+</section><section class="tbl" id="t-entities">
+<h4>entities <span class="rows">579 rows</span></h4>
+<p class="note">The central table. <code>uuid</code> is machine identity (UUIDv7, immutable by trigger). <code>type_id</code> = <code>{kind}:{entity_id}</code> is the business key, unique per workspace. <code>kind</code> is the structural discriminator — the column that should drive dispatch. A CHECK constraint pins the legal <code>type</code>/<code>kind</code> pairs.</p><table class="cols"><thead><tr><th>Column</th><th>Type</th><th>Constraints</th></tr></thead><tbody><tr><td class="c">uuid</td><td class="ty">TEXT</td><td><span class="b pk">PK</span> <span class="b nn">NOT NULL</span></td></tr><tr><td class="c">workspace_uuid</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span> <span class="b fk">FK&nbsp;&rarr;&nbsp;workspaces.uuid</span> <span class="b od">ON DELETE NO ACTION</span></td></tr><tr><td class="c">type_id</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span></td></tr><tr><td class="c">entity_id</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span></td></tr><tr><td class="c">name</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span></td></tr><tr><td class="c">status</td><td class="ty">TEXT</td><td></td></tr><tr><td class="c">parent_uuid</td><td class="ty">TEXT</td><td><span class="b fk">FK&nbsp;&rarr;&nbsp;entities.uuid</span> <span class="b od">ON DELETE NO ACTION</span></td></tr><tr><td class="c">artifact_path</td><td class="ty">TEXT</td><td></td></tr><tr><td class="c">created_at</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span></td></tr><tr><td class="c">updated_at</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span></td></tr><tr><td class="c">metadata</td><td class="ty">TEXT</td><td></td></tr><tr><td class="c">type</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span> <span class="b df">default &#x27;work&#x27;</span></td></tr><tr><td class="c">kind</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span> <span class="b df">default &#x27;feature&#x27;</span></td></tr><tr><td class="c">lifecycle_class</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span> <span class="b df">default &#x27;feature_flow&#x27;</span></td></tr></tbody></table><div class="sub"><h5>Indexes</h5><ul><li><code>idx_entities_type_kind</code> (index) on <code>type, kind</code></li><li><code>idx_workspace_uuid</code> (index) on <code>workspace_uuid</code></li><li><code>idx_parent_uuid</code> (index) on <code>parent_uuid</code></li><li><code>idx_status</code> (index) on <code>status</code></li></ul></div><div class="sub"><h5>Triggers</h5><ul><li><code>enforce_immutable_created_at</code></li><li><code>enforce_immutable_uuid</code></li><li><code>enforce_immutable_workspace_uuid</code></li><li><code>enforce_no_self_parent_uuid_insert</code></li><li><code>enforce_no_self_parent_uuid_update</code></li></ul></div>
+<details><summary>CREATE statement</summary><pre>CREATE TABLE &quot;entities&quot; (
+            uuid           TEXT NOT NULL PRIMARY KEY,
+            workspace_uuid TEXT NOT NULL
+                           REFERENCES workspaces(uuid),
+            type_id        TEXT NOT NULL,
+            entity_id      TEXT NOT NULL,
+            name           TEXT NOT NULL,
+            status         TEXT,
+            parent_uuid    TEXT REFERENCES &quot;entities&quot;(uuid),
+            artifact_path  TEXT,
+            created_at     TEXT NOT NULL,
+            updated_at     TEXT NOT NULL,
+            metadata       TEXT,
+            type           TEXT NOT NULL DEFAULT &#x27;work&#x27;,
+            kind           TEXT NOT NULL DEFAULT &#x27;feature&#x27;,
+            lifecycle_class TEXT NOT NULL DEFAULT &#x27;feature_flow&#x27;,
+            UNIQUE(workspace_uuid, type_id),
+            CHECK (
+                (type=&#x27;workspace&#x27; AND kind=&#x27;workspace&#x27;) OR
+                (type=&#x27;brainstorm&#x27; AND kind=&#x27;brainstorm&#x27;) OR
+                (type=&#x27;container&#x27; AND kind=&#x27;project&#x27;) OR
+                (type=&#x27;work&#x27; AND kind IN (
+                    &#x27;feature&#x27;,&#x27;backlog&#x27;,&#x27;bug&#x27;,&#x27;initiative&#x27;,&#x27;objective&#x27;,&#x27;key_result&#x27;,&#x27;task&#x27;
+                ))
+            )
+        )</pre></details>
+</section><section class="tbl" id="t-entity_display">
+<h4>entity_display <span class="rows">399 rows</span></h4>
+<p class="note">Structured display identity: <code>seq</code> and <code>slug</code> as columns rather than substrings of <code>entity_id</code>. This is the intended source of truth for numbering. <strong>180 of 579 entities have no row here</strong> — see integrity notes.</p><table class="cols"><thead><tr><th>Column</th><th>Type</th><th>Constraints</th></tr></thead><tbody><tr><td class="c">uuid</td><td class="ty">TEXT</td><td><span class="b pk">PK</span> <span class="b fk">FK&nbsp;&rarr;&nbsp;entities.uuid</span> <span class="b od">ON DELETE CASCADE</span></td></tr><tr><td class="c">seq</td><td class="ty">INTEGER</td><td><span class="b nn">NOT NULL</span></td></tr><tr><td class="c">slug</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span></td></tr></tbody></table><div class="sub"><h5>Indexes</h5><ul><li><code>idx_entity_display_seq</code> (index) on <code>seq</code></li></ul></div>
+<details><summary>CREATE statement</summary><pre>CREATE TABLE entity_display (
+                uuid TEXT PRIMARY KEY,
+                seq  INTEGER NOT NULL,
+                slug TEXT NOT NULL,
+                FOREIGN KEY (uuid) REFERENCES entities(uuid) ON DELETE CASCADE
+            )</pre></details>
+</section><section class="tbl" id="t-sequences">
+<h4>sequences <span class="rows">19 rows</span></h4>
+<p class="note">Per <code>(workspace_uuid, entity_type)</code> allocation counter. Read-modify-write under <code>BEGIN IMMEDIATE</code>. This is the only structure that reserves a number.</p><table class="cols"><thead><tr><th>Column</th><th>Type</th><th>Constraints</th></tr></thead><tbody><tr><td class="c">workspace_uuid</td><td class="ty">TEXT</td><td><span class="b pk">PK</span> <span class="b nn">NOT NULL</span> <span class="b fk">FK&nbsp;&rarr;&nbsp;workspaces.uuid</span> <span class="b od">ON DELETE NO ACTION</span></td></tr><tr><td class="c">entity_type</td><td class="ty">TEXT</td><td><span class="b pk">PK</span> <span class="b nn">NOT NULL</span></td></tr><tr><td class="c">next_val</td><td class="ty">INTEGER</td><td><span class="b nn">NOT NULL</span> <span class="b df">default 1</span></td></tr></tbody></table>
+<details><summary>CREATE statement</summary><pre>CREATE TABLE &quot;sequences&quot; (
+                workspace_uuid TEXT NOT NULL,
+                entity_type    TEXT NOT NULL,
+                next_val       INTEGER NOT NULL DEFAULT 1,
+                PRIMARY KEY (workspace_uuid, entity_type),
+                FOREIGN KEY (workspace_uuid) REFERENCES workspaces(uuid)
+            )</pre></details>
+</section></div><div id="g1"><h3>History &amp; state</h3><p class="blurb">Append-only record and its projections. <code>events</code> is the v2 core; <code>phase_events</code> and <code>workflow_phases</code> are the v1-era lineage still in live use.</p><section class="tbl" id="t-events">
+<h4>events <span class="rows">2,195 rows</span></h4>
+<p class="note">v2 append-only event core. <code>entity_uuid</code> is <code>NOT NULL REFERENCES entities(uuid)</code> with <strong>no ON DELETE clause</strong> — and all 579 entities have at least one event row, so <code>delete_entity</code> cannot succeed for any entity.</p><table class="cols"><thead><tr><th>Column</th><th>Type</th><th>Constraints</th></tr></thead><tbody><tr><td class="c">uuid</td><td class="ty">TEXT</td><td><span class="b pk">PK</span></td></tr><tr><td class="c">entity_uuid</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span> <span class="b fk">FK&nbsp;&rarr;&nbsp;entities.uuid</span> <span class="b od">ON DELETE NO ACTION</span></td></tr><tr><td class="c">event_type</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span></td></tr><tr><td class="c">axis</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span></td></tr><tr><td class="c">from_value</td><td class="ty">TEXT</td><td></td></tr><tr><td class="c">to_value</td><td class="ty">TEXT</td><td></td></tr><tr><td class="c">actor</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span></td></tr><tr><td class="c">timestamp</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span></td></tr><tr><td class="c">payload</td><td class="ty">TEXT</td><td></td></tr></tbody></table><div class="sub"><h5>Indexes</h5><ul><li><code>idx_events_timestamp</code> (index) on <code>timestamp</code></li><li><code>idx_events_entity_axis</code> (index) on <code>entity_uuid, axis</code></li></ul></div><div class="sub"><h5>Triggers</h5><ul><li><code>events_no_delete</code></li><li><code>events_no_replace</code></li><li><code>events_no_update</code></li><li><code>events_vocab_execution</code></li><li><code>events_vocab_pipeline</code></li></ul></div>
+<details><summary>CREATE statement</summary><pre>CREATE TABLE events (
+  uuid        TEXT PRIMARY KEY,
+  entity_uuid TEXT NOT NULL REFERENCES entities(uuid),
+  event_type  TEXT NOT NULL CHECK(length(event_type) &gt; 0),
+  axis        TEXT NOT NULL CHECK(axis IN (&#x27;pipeline&#x27;,&#x27;execution&#x27;,&#x27;lifecycle&#x27;)),
+  from_value  TEXT,
+  to_value    TEXT,
+  actor       TEXT NOT NULL CHECK(length(actor) &gt; 0),
+  timestamp   TEXT NOT NULL,
+  payload     TEXT
+)</pre></details>
+</section><section class="tbl" id="t-phase_events">
+<h4>phase_events <span class="rows">1,445 rows</span></h4>
+<p class="note">v1-era event log, still the live write path for status changes. Carries no FK to <code>entities</code>; it is joined by <code>type_id</code> text.</p><table class="cols"><thead><tr><th>Column</th><th>Type</th><th>Constraints</th></tr></thead><tbody><tr><td class="c">id</td><td class="ty">INTEGER</td><td><span class="b pk">PK</span></td></tr><tr><td class="c">type_id</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span></td></tr><tr><td class="c">project_id</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span></td></tr><tr><td class="c">phase</td><td class="ty">TEXT</td><td></td></tr><tr><td class="c">event_type</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span></td></tr><tr><td class="c">timestamp</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span></td></tr><tr><td class="c">iterations</td><td class="ty">INTEGER</td><td></td></tr><tr><td class="c">reviewer_notes</td><td class="ty">TEXT</td><td></td></tr><tr><td class="c">backward_reason</td><td class="ty">TEXT</td><td></td></tr><tr><td class="c">backward_target</td><td class="ty">TEXT</td><td></td></tr><tr><td class="c">source</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span> <span class="b df">default &#x27;live&#x27;</span></td></tr><tr><td class="c">created_at</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span></td></tr><tr><td class="c">metadata</td><td class="ty">TEXT</td><td></td></tr></tbody></table><div class="sub"><h5>Indexes</h5><ul><li><code>phase_events_backfill_dedup</code> (unique) on <code>type_id, phase, event_type, timestamp</code></li><li><code>idx_pe_timestamp</code> (index) on <code>timestamp</code></li><li><code>idx_pe_project</code> (index) on <code>project_id, event_type</code></li><li><code>idx_pe_lookup</code> (index) on <code>type_id, phase, event_type</code></li></ul></div>
+<details><summary>CREATE statement</summary><pre>CREATE TABLE &quot;phase_events&quot; (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                type_id         TEXT NOT NULL,
+                project_id      TEXT NOT NULL,
+                phase           TEXT,
+                event_type      TEXT NOT NULL CHECK(event_type IN (
+                    &#x27;started&#x27;, &#x27;completed&#x27;, &#x27;skipped&#x27;, &#x27;backward&#x27;,
+                    &#x27;entity_created&#x27;, &#x27;entity_status_changed&#x27;,
+                    &#x27;entity_promoted&#x27;, &#x27;spawned_child&#x27;, &#x27;cascade_ready&#x27;,
+                    &#x27;mini_spec&#x27;
+                )),
+                timestamp       TEXT NOT NULL,
+                iterations      INTEGER,
+                reviewer_notes  TEXT,
+                backward_reason TEXT,
+                backward_target TEXT,
+                source          TEXT NOT NULL DEFAULT &#x27;live&#x27; CHECK(
+                    source IN (&#x27;live&#x27;, &#x27;backfill&#x27;)
+                ),
+                created_at      TEXT NOT NULL,
+                metadata        TEXT
+            )</pre></details>
+</section><section class="tbl" id="t-workflow_phases">
+<h4>workflow_phases <span class="rows">523 rows</span></h4>
+<p class="note">Per-entity workflow position. Two axes since feature 122: <code>kanban_column</code> (board) and <code>workflow_phase</code> (pipeline).</p><table class="cols"><thead><tr><th>Column</th><th>Type</th><th>Constraints</th></tr></thead><tbody><tr><td class="c">type_id</td><td class="ty">TEXT</td><td><span class="b pk">PK</span></td></tr><tr><td class="c">workflow_phase</td><td class="ty">TEXT</td><td></td></tr><tr><td class="c">kanban_column</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span> <span class="b df">default &#x27;backlog&#x27;</span></td></tr><tr><td class="c">last_completed_phase</td><td class="ty">TEXT</td><td></td></tr><tr><td class="c">mode</td><td class="ty">TEXT</td><td></td></tr><tr><td class="c">backward_transition_reason</td><td class="ty">TEXT</td><td></td></tr><tr><td class="c">updated_at</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span></td></tr><tr><td class="c">uuid</td><td class="ty">TEXT</td><td></td></tr><tr><td class="c">workspace_uuid</td><td class="ty">TEXT</td><td><span class="b fk">FK&nbsp;&rarr;&nbsp;workspaces.uuid</span> <span class="b od">ON DELETE NO ACTION</span></td></tr></tbody></table><div class="sub"><h5>Indexes</h5><ul><li><code>idx_wp_workspace_uuid</code> (index) on <code>workspace_uuid</code></li><li><code>idx_wp_uuid</code> (index) on <code>uuid</code></li><li><code>idx_wp_workflow_phase</code> (index) on <code>workflow_phase</code></li><li><code>idx_wp_kanban_column</code> (index) on <code>kanban_column</code></li></ul></div><div class="sub"><h5>Triggers</h5><ul><li><code>enforce_immutable_wp_type_id</code></li><li><code>wp_autofill_workspace_uuid</code></li><li><code>wp_reject_orphaned_insert</code></li></ul></div>
+<details><summary>CREATE statement</summary><pre>CREATE TABLE &quot;workflow_phases&quot; (
+                type_id                    TEXT PRIMARY KEY,
+                workflow_phase             TEXT CHECK(workflow_phase IN (
+                                               &#x27;brainstorm&#x27;,&#x27;specify&#x27;,&#x27;design&#x27;,
+                                               &#x27;create-plan&#x27;,&#x27;implement&#x27;,&#x27;finish&#x27;,
+                                               &#x27;draft&#x27;,&#x27;reviewing&#x27;,&#x27;promoted&#x27;,&#x27;abandoned&#x27;,
+                                               &#x27;open&#x27;,&#x27;triaged&#x27;,&#x27;dropped&#x27;,
+                                               &#x27;discover&#x27;,&#x27;define&#x27;,&#x27;deliver&#x27;,&#x27;debrief&#x27;
+                                           ) OR workflow_phase IS NULL),
+                kanban_column              TEXT NOT NULL DEFAULT &#x27;backlog&#x27;
+                                           CHECK(kanban_column IN (
+                                               &#x27;backlog&#x27;,&#x27;prioritised&#x27;,&#x27;wip&#x27;,
+                                               &#x27;agent_review&#x27;,&#x27;human_review&#x27;,
+                                               &#x27;blocked&#x27;,&#x27;documenting&#x27;,&#x27;completed&#x27;
+                                           )),
+                last_completed_phase       TEXT CHECK(last_completed_phase IN (
+                                               &#x27;brainstorm&#x27;,&#x27;specify&#x27;,&#x27;design&#x27;,
+                                               &#x27;create-plan&#x27;,&#x27;implement&#x27;,&#x27;finish&#x27;,
+                                               &#x27;draft&#x27;,&#x27;reviewing&#x27;,&#x27;promoted&#x27;,&#x27;abandoned&#x27;,
+                                               &#x27;open&#x27;,&#x27;triaged&#x27;,&#x27;dropped&#x27;,
+                                               &#x27;discover&#x27;,&#x27;define&#x27;,&#x27;deliver&#x27;,&#x27;debrief&#x27;
+                                           ) OR last_completed_phase IS NULL),
+                mode                       TEXT CHECK(mode IN (
+                                               &#x27;standard&#x27;, &#x27;full&#x27;, &#x27;light&#x27;
+                                           ) OR mode IS NULL),
+                backward_transition_reason TEXT,
+                updated_at                 TEXT NOT NULL,
+                uuid                       TEXT
+            , workspace_uuid TEXT REFERENCES workspaces(uuid))</pre></details>
+</section></div><div id="g2"><h3>Relationships</h3><p class="blurb">Edges between entities. All keyed on uuid — no text inference.</p><section class="tbl" id="t-entity_relations">
+<h4>entity_relations <span class="rows">33 rows</span></h4>
+<p class="note">Uuid-keyed edges. <code>kind</code> is CHECK-constrained to <code>('fixes','blocks')</code>. This table is the one part of the schema that has never produced an identity defect.</p><table class="cols"><thead><tr><th>Column</th><th>Type</th><th>Constraints</th></tr></thead><tbody><tr><td class="c">id</td><td class="ty">INTEGER</td><td><span class="b pk">PK</span></td></tr><tr><td class="c">from_uuid</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span> <span class="b fk">FK&nbsp;&rarr;&nbsp;entities.uuid</span> <span class="b od">ON DELETE CASCADE</span></td></tr><tr><td class="c">to_uuid</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span> <span class="b fk">FK&nbsp;&rarr;&nbsp;entities.uuid</span> <span class="b od">ON DELETE CASCADE</span></td></tr><tr><td class="c">kind</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span></td></tr><tr><td class="c">created_at</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span></td></tr></tbody></table><div class="sub"><h5>Indexes</h5><ul><li><code>idx_entity_relations_to</code> (index) on <code>to_uuid</code></li><li><code>idx_entity_relations_from</code> (index) on <code>from_uuid</code></li><li><code>idx_entity_relations_unique</code> (unique) on <code>from_uuid, to_uuid, kind</code></li></ul></div>
+<details><summary>CREATE statement</summary><pre>CREATE TABLE &quot;entity_relations&quot; (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                from_uuid TEXT NOT NULL,
+                to_uuid TEXT NOT NULL,
+                kind TEXT NOT NULL CHECK(kind IN (&#x27;fixes&#x27;, &#x27;blocks&#x27;)),
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (from_uuid) REFERENCES entities(uuid)
+                    ON DELETE CASCADE,
+                FOREIGN KEY (to_uuid) REFERENCES entities(uuid)
+                    ON DELETE CASCADE
+            )</pre></details>
+</section><section class="tbl" id="t-cross_workspace_allowlist">
+<h4>cross_workspace_allowlist <span class="rows">0 rows</span></h4>
+<table class="cols"><thead><tr><th>Column</th><th>Type</th><th>Constraints</th></tr></thead><tbody><tr><td class="c">id</td><td class="ty">INTEGER</td><td><span class="b pk">PK</span></td></tr><tr><td class="c">parent_uuid</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span> <span class="b fk">FK&nbsp;&rarr;&nbsp;entities.uuid</span> <span class="b od">ON DELETE CASCADE</span></td></tr><tr><td class="c">child_uuid</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span> <span class="b fk">FK&nbsp;&rarr;&nbsp;entities.uuid</span> <span class="b od">ON DELETE CASCADE</span></td></tr><tr><td class="c">reason</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span></td></tr><tr><td class="c">grandfathered_by</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span> <span class="b df">default &#x27;operator&#x27;</span></td></tr><tr><td class="c">created_at</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span> <span class="b df">default CURRENT_TIMESTAMP</span></td></tr></tbody></table>
+<details><summary>CREATE statement</summary><pre>CREATE TABLE cross_workspace_allowlist (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                parent_uuid TEXT NOT NULL,
+                child_uuid TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                grandfathered_by TEXT NOT NULL DEFAULT &#x27;operator&#x27;,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(parent_uuid, child_uuid),
+                FOREIGN KEY (parent_uuid) REFERENCES entities(uuid) ON DELETE CASCADE,
+                FOREIGN KEY (child_uuid) REFERENCES entities(uuid) ON DELETE CASCADE
+            )</pre></details>
+</section><section class="tbl" id="t-entity_okr_alignment">
+<h4>entity_okr_alignment <span class="rows">0 rows</span></h4>
+<table class="cols"><thead><tr><th>Column</th><th>Type</th><th>Constraints</th></tr></thead><tbody><tr><td class="c">entity_uuid</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span></td></tr><tr><td class="c">key_result_uuid</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span></td></tr></tbody></table><div class="sub"><h5>Indexes</h5><ul><li><code>idx_eoa_key_result_uuid</code> (index) on <code>key_result_uuid</code></li><li><code>idx_eoa_entity_uuid</code> (index) on <code>entity_uuid</code></li></ul></div>
+<details><summary>CREATE statement</summary><pre>CREATE TABLE entity_okr_alignment (
+                entity_uuid      TEXT NOT NULL,
+                key_result_uuid  TEXT NOT NULL,
+                UNIQUE(entity_uuid, key_result_uuid)
+            )</pre></details>
+</section><section class="tbl" id="t-entity_tags">
+<h4>entity_tags <span class="rows">0 rows</span></h4>
+<table class="cols"><thead><tr><th>Column</th><th>Type</th><th>Constraints</th></tr></thead><tbody><tr><td class="c">entity_uuid</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span></td></tr><tr><td class="c">tag</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span></td></tr></tbody></table><div class="sub"><h5>Indexes</h5><ul><li><code>idx_et_tag</code> (index) on <code>tag</code></li><li><code>idx_et_entity_uuid</code> (index) on <code>entity_uuid</code></li></ul></div>
+<details><summary>CREATE statement</summary><pre>CREATE TABLE entity_tags (
+                entity_uuid TEXT NOT NULL,
+                tag         TEXT NOT NULL,
+                UNIQUE(entity_uuid, tag)
+            )</pre></details>
+</section></div><div id="g3"><h3>Full-text search</h3><p class="blurb">SQLite FTS5 shadow tables. Managed by FTS itself; never written directly.</p><section class="tbl" id="t-entities_fts">
+<h4>entities_fts <span class="rows">579 rows</span></h4>
+<p class="note">FTS5 virtual table over entity text. The <code>_content</code>/<code>_data</code>/<code>_idx</code>/<code>_docsize</code>/<code>_config</code> tables are its internal shadow storage.</p><table class="cols"><thead><tr><th>Column</th><th>Type</th><th>Constraints</th></tr></thead><tbody><tr><td class="c">name</td><td class="ty">—</td><td></td></tr><tr><td class="c">entity_id</td><td class="ty">—</td><td></td></tr><tr><td class="c">kind</td><td class="ty">—</td><td></td></tr><tr><td class="c">status</td><td class="ty">—</td><td></td></tr><tr><td class="c">metadata_text</td><td class="ty">—</td><td></td></tr></tbody></table>
+<details><summary>CREATE statement</summary><pre>CREATE VIRTUAL TABLE entities_fts USING fts5(name, entity_id, kind, status, metadata_text)</pre></details>
+</section><section class="tbl" id="t-entities_fts_config">
+<h4>entities_fts_config <span class="rows">1 rows</span></h4>
+<table class="cols"><thead><tr><th>Column</th><th>Type</th><th>Constraints</th></tr></thead><tbody><tr><td class="c">k</td><td class="ty">—</td><td><span class="b pk">PK</span> <span class="b nn">NOT NULL</span></td></tr><tr><td class="c">v</td><td class="ty">—</td><td></td></tr></tbody></table>
+<details><summary>CREATE statement</summary><pre>CREATE TABLE &#x27;entities_fts_config&#x27;(k PRIMARY KEY, v) WITHOUT ROWID</pre></details>
+</section><section class="tbl" id="t-entities_fts_content">
+<h4>entities_fts_content <span class="rows">579 rows</span></h4>
+<table class="cols"><thead><tr><th>Column</th><th>Type</th><th>Constraints</th></tr></thead><tbody><tr><td class="c">id</td><td class="ty">INTEGER</td><td><span class="b pk">PK</span></td></tr><tr><td class="c">c0</td><td class="ty">—</td><td></td></tr><tr><td class="c">c1</td><td class="ty">—</td><td></td></tr><tr><td class="c">c2</td><td class="ty">—</td><td></td></tr><tr><td class="c">c3</td><td class="ty">—</td><td></td></tr><tr><td class="c">c4</td><td class="ty">—</td><td></td></tr></tbody></table>
+<details><summary>CREATE statement</summary><pre>CREATE TABLE &#x27;entities_fts_content&#x27;(id INTEGER PRIMARY KEY, c0, c1, c2, c3, c4)</pre></details>
+</section><section class="tbl" id="t-entities_fts_data">
+<h4>entities_fts_data <span class="rows">106 rows</span></h4>
+<table class="cols"><thead><tr><th>Column</th><th>Type</th><th>Constraints</th></tr></thead><tbody><tr><td class="c">id</td><td class="ty">INTEGER</td><td><span class="b pk">PK</span></td></tr><tr><td class="c">block</td><td class="ty">BLOB</td><td></td></tr></tbody></table>
+<details><summary>CREATE statement</summary><pre>CREATE TABLE &#x27;entities_fts_data&#x27;(id INTEGER PRIMARY KEY, block BLOB)</pre></details>
+</section><section class="tbl" id="t-entities_fts_docsize">
+<h4>entities_fts_docsize <span class="rows">579 rows</span></h4>
+<table class="cols"><thead><tr><th>Column</th><th>Type</th><th>Constraints</th></tr></thead><tbody><tr><td class="c">id</td><td class="ty">INTEGER</td><td><span class="b pk">PK</span></td></tr><tr><td class="c">sz</td><td class="ty">BLOB</td><td></td></tr></tbody></table>
+<details><summary>CREATE statement</summary><pre>CREATE TABLE &#x27;entities_fts_docsize&#x27;(id INTEGER PRIMARY KEY, sz BLOB)</pre></details>
+</section><section class="tbl" id="t-entities_fts_idx">
+<h4>entities_fts_idx <span class="rows">104 rows</span></h4>
+<table class="cols"><thead><tr><th>Column</th><th>Type</th><th>Constraints</th></tr></thead><tbody><tr><td class="c">segid</td><td class="ty">—</td><td><span class="b pk">PK</span> <span class="b nn">NOT NULL</span></td></tr><tr><td class="c">term</td><td class="ty">—</td><td><span class="b pk">PK</span> <span class="b nn">NOT NULL</span></td></tr><tr><td class="c">pgno</td><td class="ty">—</td><td></td></tr></tbody></table>
+<details><summary>CREATE statement</summary><pre>CREATE TABLE &#x27;entities_fts_idx&#x27;(segid, term, pgno, PRIMARY KEY(segid, term)) WITHOUT ROWID</pre></details>
+</section></div><div id="g4"><h3>Operational</h3><p class="blurb">Schema metadata and migration bookkeeping. <code>projects</code> is a dead v1 table — 0 rows, 7 stale code references.</p><section class="tbl" id="t-_metadata">
+<h4>_metadata <span class="rows">3 rows</span></h4>
+<p class="note">Key/value schema state: <code>schema_version</code>, <code>schema_generation</code>, and the now-inert <code>audit_emit_failed_count</code>.</p><table class="cols"><thead><tr><th>Column</th><th>Type</th><th>Constraints</th></tr></thead><tbody><tr><td class="c">key</td><td class="ty">TEXT</td><td><span class="b pk">PK</span></td></tr><tr><td class="c">value</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span></td></tr></tbody></table>
+<details><summary>CREATE statement</summary><pre>CREATE TABLE _metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)</pre></details>
+</section><section class="tbl" id="t-migration_audit_log">
+<h4>migration_audit_log <span class="rows">1 rows</span></h4>
+<table class="cols"><thead><tr><th>Column</th><th>Type</th><th>Constraints</th></tr></thead><tbody><tr><td class="c">id</td><td class="ty">INTEGER</td><td><span class="b pk">PK</span></td></tr><tr><td class="c">migration_version</td><td class="ty">INTEGER</td><td><span class="b nn">NOT NULL</span></td></tr><tr><td class="c">event_type</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span></td></tr><tr><td class="c">payload</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span></td></tr><tr><td class="c">created_at</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span></td></tr></tbody></table>
+<details><summary>CREATE statement</summary><pre>CREATE TABLE migration_audit_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                migration_version INTEGER NOT NULL,
+                event_type TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )</pre></details>
+</section><section class="tbl" id="t-projects">
+<h4>projects <span class="rows">0 rows</span></h4>
+<p class="note">Dead. 0 rows. Superseded by <code>entities</code> rows with <code>kind='project'</code>, but 7 code references survive.</p><table class="cols"><thead><tr><th>Column</th><th>Type</th><th>Constraints</th></tr></thead><tbody><tr><td class="c">project_id</td><td class="ty">TEXT</td><td><span class="b pk">PK</span></td></tr><tr><td class="c">name</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span></td></tr><tr><td class="c">root_commit_sha</td><td class="ty">TEXT</td><td></td></tr><tr><td class="c">remote_url</td><td class="ty">TEXT</td><td></td></tr><tr><td class="c">normalized_url</td><td class="ty">TEXT</td><td></td></tr><tr><td class="c">remote_host</td><td class="ty">TEXT</td><td></td></tr><tr><td class="c">remote_owner</td><td class="ty">TEXT</td><td></td></tr><tr><td class="c">remote_repo</td><td class="ty">TEXT</td><td></td></tr><tr><td class="c">default_branch</td><td class="ty">TEXT</td><td></td></tr><tr><td class="c">project_root</td><td class="ty">TEXT</td><td></td></tr><tr><td class="c">is_git_repo</td><td class="ty">INTEGER</td><td><span class="b nn">NOT NULL</span> <span class="b df">default 1</span></td></tr><tr><td class="c">created_at</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span></td></tr><tr><td class="c">updated_at</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span></td></tr><tr><td class="c">workspace_uuid</td><td class="ty">TEXT</td><td><span class="b nn">NOT NULL</span> <span class="b fk">FK&nbsp;&rarr;&nbsp;workspaces.uuid</span> <span class="b od">ON DELETE NO ACTION</span></td></tr></tbody></table>
+<details><summary>CREATE statement</summary><pre>CREATE TABLE &quot;projects&quot; (
+                project_id      TEXT PRIMARY KEY,
+                name            TEXT NOT NULL,
+                root_commit_sha TEXT,
+                remote_url      TEXT,
+                normalized_url  TEXT,
+                remote_host     TEXT,
+                remote_owner    TEXT,
+                remote_repo     TEXT,
+                default_branch  TEXT,
+                project_root    TEXT,
+                is_git_repo     INTEGER NOT NULL DEFAULT 1,
+                created_at      TEXT NOT NULL,
+                updated_at      TEXT NOT NULL,
+                workspace_uuid  TEXT NOT NULL REFERENCES workspaces(uuid)
+            )</pre></details>
+</section></div>
+
+<h2>Foreign keys</h2>
+<p class="blurb">All 11 declared edges. Note how few there are relative to the number of tables — <code>phase_events</code>, <code>entity_tags</code> and <code>entity_okr_alignment</code> hold entity references with no FK at all.</p>
+<table><thead><tr><th>From</th><th></th><th>To</th><th>On delete</th></tr></thead><tbody><tr><td class="c">cross_workspace_allowlist.child_uuid</td><td>&rarr;</td><td class="c">entities.uuid</td><td>CASCADE</td></tr><tr><td class="c">cross_workspace_allowlist.parent_uuid</td><td>&rarr;</td><td class="c">entities.uuid</td><td>CASCADE</td></tr><tr><td class="c">entities.parent_uuid</td><td>&rarr;</td><td class="c">entities.uuid</td><td>NO ACTION</td></tr><tr><td class="c">entities.workspace_uuid</td><td>&rarr;</td><td class="c">workspaces.uuid</td><td>NO ACTION</td></tr><tr><td class="c">entity_display.uuid</td><td>&rarr;</td><td class="c">entities.uuid</td><td>CASCADE</td></tr><tr><td class="c">entity_relations.from_uuid</td><td>&rarr;</td><td class="c">entities.uuid</td><td>CASCADE</td></tr><tr><td class="c">entity_relations.to_uuid</td><td>&rarr;</td><td class="c">entities.uuid</td><td>CASCADE</td></tr><tr><td class="c">events.entity_uuid</td><td>&rarr;</td><td class="c">entities.uuid</td><td>NO ACTION</td></tr><tr><td class="c">projects.workspace_uuid</td><td>&rarr;</td><td class="c">workspaces.uuid</td><td>NO ACTION</td></tr><tr><td class="c">sequences.workspace_uuid</td><td>&rarr;</td><td class="c">workspaces.uuid</td><td>NO ACTION</td></tr><tr><td class="c">workflow_phases.workspace_uuid</td><td>&rarr;</td><td class="c">workspaces.uuid</td><td>NO ACTION</td></tr></tbody></table>
+
+<h2>Views</h2>
+<section class="tbl"><h4>entity_axis_state</h4><pre>CREATE VIEW entity_axis_state AS
+SELECT entity_uuid, axis, to_value, MAX(uuid) AS event_uuid, timestamp
+FROM events
+WHERE to_value IS NOT NULL AND event_type != &#x27;skipped&#x27;
+GROUP BY entity_uuid, axis</pre></section><section class="tbl"><h4>entity_phase_status</h4><pre>CREATE VIEW entity_phase_status AS
+SELECT entity_uuid,
+       pipeline_value  AS pipeline_phase,  pipeline_at,
+       execution_value AS execution_status, execution_at
+FROM entity_state</pre></section><section class="tbl"><h4>entity_state</h4><pre>CREATE VIEW entity_state AS
+SELECT
+  ent.uuid AS entity_uuid,
+  (SELECT to_value  FROM entity_axis_state s WHERE s.entity_uuid = ent.uuid AND s.axis = &#x27;pipeline&#x27;)  AS pipeline_value,
+  (SELECT timestamp FROM entity_axis_state s WHERE s.entity_uuid = ent.uuid AND s.axis = &#x27;pipeline&#x27;)  AS pipeline_at,
+  (SELECT to_value  FROM entity_axis_state s WHERE s.entity_uuid = ent.uuid AND s.axis = &#x27;execution&#x27;) AS execution_value,
+  (SELECT timestamp FROM entity_axis_state s WHERE s.entity_uuid = ent.uuid AND s.axis = &#x27;execution&#x27;) AS execution_at,
+  (SELECT to_value  FROM entity_axis_state s WHERE s.entity_uuid = ent.uuid AND s.axis = &#x27;lifecycle&#x27;) AS lifecycle_value,
+  (SELECT timestamp FROM entity_axis_state s WHERE s.entity_uuid = ent.uuid AND s.axis = &#x27;lifecycle&#x27;) AS lifecycle_at
+FROM entities ent</pre></section>
+
+<h2>Triggers</h2>
+<p class="blurb">13 triggers, mostly immutability guards on <code>entities</code> and vocabulary CHECKs on the event tables.</p>
+<table><thead><tr><th>Name</th><th>Definition</th></tr></thead><tbody><tr><td class="c">enforce_immutable_created_at</td><td><pre class="inl">CREATE TRIGGER enforce_immutable_created_at
+            BEFORE UPDATE OF created_at ON entities
+            BEGIN SELECT RAISE(ABORT, &#x27;created_at is immutable&#x27;); END</pre></td></tr><tr><td class="c">enforce_immutable_uuid</td><td><pre class="inl">CREATE TRIGGER enforce_immutable_uuid
+            BEFORE UPDATE OF uuid ON entities
+            BEGIN SELECT RAISE(ABORT, &#x27;uuid is immutable&#x27;); END</pre></td></tr><tr><td class="c">enforce_immutable_workspace_uuid</td><td><pre class="inl">CREATE TRIGGER enforce_immutable_workspace_uuid
+            BEFORE UPDATE OF workspace_uuid ON entities
+            BEGIN SELECT RAISE(ABORT, &#x27;workspace_uuid is immutable — use re-attribution API&#x27;); END</pre></td></tr><tr><td class="c">enforce_immutable_wp_type_id</td><td><pre class="inl">CREATE TRIGGER enforce_immutable_wp_type_id
+            BEFORE UPDATE OF type_id ON workflow_phases
+            BEGIN
+                SELECT RAISE(ABORT, &#x27;workflow_phases.type_id is immutable&#x27;);
+            END</pre></td></tr><tr><td class="c">enforce_no_self_parent_uuid_insert</td><td><pre class="inl">CREATE TRIGGER enforce_no_self_parent_uuid_insert
+            BEFORE INSERT ON entities
+            WHEN NEW.parent_uuid IS NOT NULL AND NEW.parent_uuid = NEW.uuid
+            BEGIN SELECT RAISE(ABORT, &#x27;entity cannot be its own parent (uuid)&#x27;); END</pre></td></tr><tr><td class="c">enforce_no_self_parent_uuid_update</td><td><pre class="inl">CREATE TRIGGER enforce_no_self_parent_uuid_update
+            BEFORE UPDATE OF parent_uuid ON entities
+            WHEN NEW.parent_uuid IS NOT NULL AND NEW.parent_uuid = NEW.uuid
+            BEGIN SELECT RAISE(ABORT, &#x27;entity cannot be its own parent (uuid)&#x27;); END</pre></td></tr><tr><td class="c">events_no_delete</td><td><pre class="inl">CREATE TRIGGER events_no_delete BEFORE DELETE ON events
+BEGIN SELECT RAISE(ABORT, &#x27;events rows are immutable (PRD NFR-4)&#x27;); END</pre></td></tr><tr><td class="c">events_no_replace</td><td><pre class="inl">CREATE TRIGGER events_no_replace BEFORE INSERT ON events
+WHEN EXISTS(SELECT 1 FROM events WHERE uuid = NEW.uuid)
+BEGIN SELECT RAISE(ABORT, &#x27;events rows are immutable (PRD NFR-4)&#x27;); END</pre></td></tr><tr><td class="c">events_no_update</td><td><pre class="inl">CREATE TRIGGER events_no_update BEFORE UPDATE ON events
+BEGIN SELECT RAISE(ABORT, &#x27;events rows are immutable (PRD NFR-4)&#x27;); END</pre></td></tr><tr><td class="c">events_vocab_execution</td><td><pre class="inl">CREATE TRIGGER events_vocab_execution BEFORE INSERT ON events
+WHEN NEW.axis = &#x27;execution&#x27; AND NEW.to_value IS NOT NULL
+     AND NEW.to_value NOT IN (&#x27;backlog&#x27;, &#x27;prioritised&#x27;, &#x27;ready&#x27;, &#x27;wip&#x27;, &#x27;blocked&#x27;, &#x27;documenting&#x27;, &#x27;completed&#x27;)
+BEGIN SELECT RAISE(ABORT, &#x27;out-of-vocabulary to_value &#x27; || quote(NEW.to_value) || &#x27; on execution axis (feature 122 — see entity_registry/axes.py EXECUTION_STATUSES)&#x27;); END</pre></td></tr><tr><td class="c">events_vocab_pipeline</td><td><pre class="inl">CREATE TRIGGER events_vocab_pipeline BEFORE INSERT ON events
+WHEN NEW.axis = &#x27;pipeline&#x27; AND NEW.to_value IS NOT NULL
+     AND NEW.to_value NOT IN (&#x27;brainstorm&#x27;, &#x27;specify&#x27;, &#x27;design&#x27;, &#x27;create-plan&#x27;, &#x27;implement&#x27;, &#x27;finish&#x27;)
+BEGIN SELECT RAISE(ABORT, &#x27;out-of-vocabulary to_value &#x27; || quote(NEW.to_value) || &#x27; on pipeline axis (feature 122 — see entity_registry/axes.py PIPELINE_PHASES)&#x27;); END</pre></td></tr><tr><td class="c">wp_autofill_workspace_uuid</td><td><pre class="inl">CREATE TRIGGER wp_autofill_workspace_uuid
+            AFTER INSERT ON workflow_phases
+            WHEN NEW.workspace_uuid IS NULL
+                 AND EXISTS (
+                     SELECT 1 FROM entities e WHERE e.type_id = NEW.type_id
+                 )
+            BEGIN
+                UPDATE workflow_phases
+                SET workspace_uuid = (
+                    SELECT e.workspace_uuid FROM entities e
+                    WHERE e.type_id = NEW.type_id
+                )
+                WHERE rowid = NEW.rowid;
+            END</pre></td></tr><tr><td class="c">wp_reject_orphaned_insert</td><td><pre class="inl">CREATE TRIGGER wp_reject_orphaned_insert
+            BEFORE INSERT ON workflow_phases
+            WHEN NEW.workspace_uuid IS NULL
+                 AND NOT EXISTS (
+                     SELECT 1 FROM entities e WHERE e.type_id = NEW.type_id
+                 )
+            BEGIN
+                SELECT RAISE(ABORT, &#x27;workflow_phases insert references unknown entity type_id (orphaned phase row); pass workspace_uuid explicitly or register the entity first&#x27;);
+            END</pre></td></tr></tbody></table>
+
+<h2>Live data</h2>
+<h3>Display-identity coverage</h3>
+<p class="blurb">Which entities carry a structured <code>entity_display</code> row. The gaps are the whole reason numbering is fragile.</p>
+<table><thead><tr><th>Kind</th><th>Entities</th><th>Missing display</th><th>Coverage</th></tr></thead><tbody><tr><td class="c">backlog</td><td>196</td><td>166</td><td>15%</td></tr><tr><td class="c">brainstorm</td><td>100</td><td>3</td><td>97%</td></tr><tr><td class="c">feature</td><td>271</td><td>1</td><td>99%</td></tr><tr><td class="c">project</td><td>12</td><td>10</td><td>16%</td></tr></tbody></table>
+
+<h3>Entities by kind and status</h3>
+<table><thead><tr><th>Kind</th><th>Status</th><th>Count</th></tr></thead><tbody><tr><td class="c">backlog</td><td>dropped</td><td>122</td></tr><tr><td class="c">backlog</td><td>archived</td><td>26</td></tr><tr><td class="c">backlog</td><td>active</td><td>19</td></tr><tr><td class="c">backlog</td><td>promoted</td><td>18</td></tr><tr><td class="c">backlog</td><td>open</td><td>10</td></tr><tr><td class="c">backlog</td><td>completed</td><td>1</td></tr><tr><td class="c">brainstorm</td><td>promoted</td><td>72</td></tr><tr><td class="c">brainstorm</td><td>active</td><td>16</td></tr><tr><td class="c">brainstorm</td><td>(null)</td><td>8</td></tr><tr><td class="c">brainstorm</td><td>archived</td><td>2</td></tr><tr><td class="c">brainstorm</td><td>abandoned</td><td>2</td></tr><tr><td class="c">feature</td><td>archived</td><td>127</td></tr><tr><td class="c">feature</td><td>completed</td><td>98</td></tr><tr><td class="c">feature</td><td>planned</td><td>31</td></tr><tr><td class="c">feature</td><td>active</td><td>6</td></tr><tr><td class="c">feature</td><td>abandoned</td><td>4</td></tr><tr><td class="c">feature</td><td>(null)</td><td>4</td></tr><tr><td class="c">feature</td><td>in_progress</td><td>1</td></tr><tr><td class="c">project</td><td>active</td><td>7</td></tr><tr><td class="c">project</td><td>completed</td><td>2</td></tr><tr><td class="c">project</td><td>archived</td><td>2</td></tr><tr><td class="c">project</td><td>(null)</td><td>1</td></tr></tbody></table>
+
+<h3>Allocation counters</h3>
+<table><thead><tr><th>Type</th><th>Workspace</th><th>next_val</th></tr></thead><tbody><tr><td class="c">backlog</td><td>69696982</td><td>279</td></tr><tr><td class="c">backlog</td><td>d373a5ad</td><td>8</td></tr><tr><td class="c">backlog</td><td>f7b49c1d</td><td>4</td></tr><tr><td class="c">brainstorm</td><td>35d9b5f9</td><td>20,260,224</td></tr><tr><td class="c">brainstorm</td><td>69696982</td><td>20,260,711</td></tr><tr><td class="c">brainstorm</td><td>6f113c48</td><td>20,260,613</td></tr><tr><td class="c">brainstorm</td><td>7e788234</td><td>20,260,517</td></tr><tr><td class="c">brainstorm</td><td>f7b49c1d</td><td>20,260,513</td></tr><tr><td class="c">feature</td><td>35d9b5f9</td><td>22</td></tr><tr><td class="c">feature</td><td>69696982</td><td>135</td></tr><tr><td class="c">feature</td><td>6f113c48</td><td>80</td></tr><tr><td class="c">feature</td><td>7e788234</td><td>57</td></tr><tr><td class="c">feature</td><td>f7b49c1d</td><td>36</td></tr><tr><td class="c">feature</td><td>fe180347</td><td>88</td></tr><tr><td class="c">project</td><td>35d9b5f9</td><td>2</td></tr><tr><td class="c">project</td><td>69696982</td><td>5</td></tr><tr><td class="c">project</td><td>6f113c48</td><td>1</td></tr><tr><td class="c">project</td><td>7e788234</td><td>1</td></tr><tr><td class="c">project</td><td>f7b49c1d</td><td>2</td></tr></tbody></table>
+
+<h3>Workspaces</h3>
+<table><thead><tr><th>uuid</th><th>Root</th><th>Entities</th></tr></thead><tbody><tr><td class="c">69696982</td><td>/Users/terry/projects/pedantic-drip</td><td>426</td></tr><tr><td class="c">f7b49c1d</td><td>/Users/terry_agent</td><td>57</td></tr><tr><td class="c">6f113c48</td><td>/Users/terry/projects/fractorg</td><td>34</td></tr><tr><td class="c">7e788234</td><td>/Users/terry/projects/project_illium</td><td>30</td></tr><tr><td class="c">35d9b5f9</td><td>/Users/terry/projects/cast-below</td><td>28</td></tr><tr><td class="c">d373a5ad</td><td>/Users/terry/projects/illium-strategy-optimization</td><td>3</td></tr><tr><td class="c">fe180347</td><td>/Users/terry/projects/illium-regime</td><td>1</td></tr><tr><td class="c">019f7a42</td><td>/Users/terry/projects/obsidian-kb</td><td>0</td></tr><tr><td class="c">0dcd2558</td><td>/Users/terry/projects</td><td>0</td></tr><tr><td class="c">123daca1</td><td>/Users/terry/projects/illium-flash-rug-research-2</td><td>0</td></tr><tr><td class="c">2aaa4095</td><td>/Users/terry/projects/illium-golive</td><td>0</td></tr><tr><td class="c">50c4a685</td><td>/Users/terry/projects/test_project</td><td>0</td></tr><tr><td class="c">53525941</td><td>/Users/terry/projects/system_manager</td><td>0</td></tr><tr><td class="c">6250c8a6</td><td>(none)</td><td>0</td></tr><tr><td class="c">73dffec2</td><td>/Users/terry/projects/illium-live-debug</td><td>0</td></tr><tr><td class="c">9a01a02e</td><td>/Users/terry/projects/illium-dashboard</td><td>0</td></tr><tr><td class="c">c36e4781</td><td>/Users/terry/projects/illium-architecture-re-build</td><td>0</td></tr><tr><td class="c">c3ffe528</td><td>/Users/terry/projects/illium-univ4-genuine-damage-estimation</td><td>0</td></tr><tr><td class="c">c5692513</td><td>/Users/terry/projects/carousel</td><td>0</td></tr><tr><td class="c">cbab4d31</td><td>/Users/terry/projects/token-factory</td><td>0</td></tr><tr><td class="c">db6b9057</td><td>/Users/terry/projects/illium-entry-speedup</td><td>0</td></tr><tr><td class="c">db7569b5</td><td>/Users/terry</td><td>0</td></tr><tr><td class="c">dec5c65e</td><td>/Users/terry/projects/illium-improve-testing-setup</td><td>0</td></tr><tr><td class="c">f63121d2</td><td>/Users/terry/projects/crypto_arbitrage</td><td>0</td></tr></tbody></table>
+
+<h2>Actions</h2>
+<p class="blurb">Which operation touches which table. Derived by AST-walking every function in <code>entity_registry</code>, <code>workflow_engine</code>, <code>reconciliation_orchestrator</code> and <code>mcp</code>, extracting the SQL each one executes — including module-level statement constants — and following its call graph three levels deep.</p>
+<p class="note"><span class="m w" style="display:inline-block;padding:0 6px">W</span> writes and <span class="m r" style="display:inline-block;padding:0 6px">R</span> reads are <strong>direct</strong> — SQL in that function. Lowercase <span class="m via" style="display:inline-block;padding:0 6px">w</span>&nbsp;/&nbsp;<span class="m via" style="display:inline-block;padding:0 6px">r</span> are <strong>inherited</strong> through calls, resolved by function name and therefore indicative rather than exact.</p>
+<div class="scroll"><table class="matrix"><thead><tr><th class="act">Action</th><th class="rot"><span>ent</span></th><th class="rot"><span>disp</span></th><th class="rot"><span>seq</span></th><th class="rot"><span>wksp</span></th><th class="rot"><span>evt</span></th><th class="rot"><span>ph_evt</span></th><th class="rot"><span>wf_ph</span></th><th class="rot"><span>rel</span></th><th class="rot"><span>tag</span></th><th class="rot"><span>okr</span></th><th class="rot"><span>fts</span></th></tr></thead><tbody><tr><td class="act"><code>allocate_entity_id</code><span class="sf">MCP · entity</span><span class="ds">Mint the next display id before anything is written</span></td><td class="m via">r</td><td class="m"></td><td class="m via">w</td><td class="m via">w</td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m"></td></tr><tr><td class="act"><code>next_sequence_value</code><span class="sf">DB · allocator</span><span class="ds">Reserve the next number under BEGIN IMMEDIATE</span></td><td class="m r">R</td><td class="m"></td><td class="m w">W</td><td class="m via">w</td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m"></td></tr><tr><td class="act"><code>register_entity</code><span class="sf">DB · core write</span><span class="ds">Create an entity and its display row</span></td><td class="m w">W</td><td class="m w">W</td><td class="m"></td><td class="m r">R</td><td class="m via">w</td><td class="m via">w</td><td class="m via">w</td><td class="m via">w</td><td class="m"></td><td class="m"></td><td class="m w">W</td></tr><tr><td class="act"><code>upsert_entity</code><span class="sf">DB · core write</span><span class="ds">Insert, or update status if it already exists</span></td><td class="m r">R</td><td class="m via">w</td><td class="m"></td><td class="m r">R</td><td class="m via">w</td><td class="m via">w</td><td class="m via">w</td><td class="m via">w</td><td class="m"></td><td class="m"></td><td class="m via">w</td></tr><tr><td class="act"><code>update_entity</code><span class="sf">DB · core write</span><span class="ds">Mutate entity fields</span></td><td class="m w">W</td><td class="m"></td><td class="m"></td><td class="m r">R</td><td class="m via">w</td><td class="m via">w</td><td class="m w">W</td><td class="m via">r</td><td class="m"></td><td class="m"></td><td class="m w">W</td></tr><tr><td class="act"><code>delete_entity</code><span class="sf">DB · blocked</span><span class="ds">Remove an entity — blocked in practice by the events FK</span></td><td class="m w">W</td><td class="m"></td><td class="m"></td><td class="m via">r</td><td class="m"></td><td class="m via">w</td><td class="m w">W</td><td class="m via">r</td><td class="m w">W</td><td class="m w">W</td><td class="m w">W</td></tr><tr><td class="act"><code>set_parent</code><span class="sf">MCP · entity</span><span class="ds">Attach a parent by uuid</span></td><td class="m w">W</td><td class="m"></td><td class="m"></td><td class="m via">r</td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m"></td></tr><tr><td class="act"><code>add_dependency</code><span class="sf">MCP · entity</span><span class="ds">Record a blocks edge</span></td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m w">W</td><td class="m"></td><td class="m"></td><td class="m"></td></tr><tr><td class="act"><code>cascade_unblock</code><span class="sf">DB · cascade</span><span class="ds">Flip dependents blocked → ready</span></td><td class="m via">w</td><td class="m"></td><td class="m"></td><td class="m via">r</td><td class="m"></td><td class="m via">w</td><td class="m via">w</td><td class="m via">r</td><td class="m"></td><td class="m"></td><td class="m via">w</td></tr><tr><td class="act"><code>search_entities</code><span class="sf">MCP · entity</span><span class="ds">Full-text search over entity text</span></td><td class="m r">R</td><td class="m"></td><td class="m"></td><td class="m via">r</td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m r">R</td></tr><tr><td class="act"><code>get_lineage</code><span class="sf">MCP · entity</span><span class="ds">Walk ancestry via parent_uuid</span></td><td class="m via">r</td><td class="m"></td><td class="m"></td><td class="m via">r</td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m"></td></tr><tr><td class="act"><code>issue_spawn</code><span class="sf">MCP · entity</span><span class="ds">Spawn a bug or task under a parent</span></td><td class="m via">w</td><td class="m via">w</td><td class="m via">w</td><td class="m via">w</td><td class="m via">w</td><td class="m via">w</td><td class="m via">w</td><td class="m via">w</td><td class="m"></td><td class="m"></td><td class="m via">w</td></tr><tr><td class="act"><code>append_phase_event</code><span class="sf">DB · status funnel</span><span class="ds">Record a phase/status event — the sole status write path</span></td><td class="m w">W</td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m via">w</td><td class="m w">W</td><td class="m w">W</td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m"></td></tr><tr><td class="act"><code>append_event</code><span class="sf">DB · v2 events</span><span class="ds">Append to the v2 immutable event core</span></td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m w">W</td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m"></td></tr><tr><td class="act"><code>complete_phase</code><span class="sf">MCP · workflow</span><span class="ds">Close the current workflow phase</span></td><td class="m via">w</td><td class="m"></td><td class="m"></td><td class="m via">r</td><td class="m"></td><td class="m via">w</td><td class="m via">w</td><td class="m via">w</td><td class="m"></td><td class="m"></td><td class="m via">w</td></tr><tr><td class="act"><code>transition_phase</code><span class="sf">MCP · workflow</span><span class="ds">Advance to the next phase</span></td><td class="m via">w</td><td class="m"></td><td class="m"></td><td class="m via">r</td><td class="m"></td><td class="m via">w</td><td class="m via">w</td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m via">w</td></tr><tr><td class="act"><code>get_phase</code><span class="sf">MCP · workflow</span><span class="ds">Read workflow position</span></td><td class="m via">r</td><td class="m"></td><td class="m"></td><td class="m via">r</td><td class="m"></td><td class="m"></td><td class="m via">r</td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m"></td></tr><tr><td class="act"><code>run_backfill</code><span class="sf">Hook · MCP startup</span><span class="ds">Reconstruct entities from on-disk artifacts</span></td><td class="m via">r</td><td class="m"></td><td class="m"></td><td class="m via">r</td><td class="m"></td><td class="m"></td><td class="m via">w</td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m"></td></tr><tr><td class="act"><code>sync_entity_statuses</code><span class="sf">Hook · session start</span><span class="ds">Reconcile .meta.json → DB</span></td><td class="m via">w</td><td class="m via">w</td><td class="m"></td><td class="m via">r</td><td class="m"></td><td class="m via">w</td><td class="m via">w</td><td class="m"></td><td class="m via">w</td><td class="m via">w</td><td class="m via">w</td></tr><tr><td class="act"><code>_project_meta_json</code><span class="sf">Projection writer</span><span class="ds">Write the .meta.json projection</span></td><td class="m via">r</td><td class="m via">r</td><td class="m"></td><td class="m via">r</td><td class="m"></td><td class="m"></td><td class="m via">w</td><td class="m"></td><td class="m"></td><td class="m"></td><td class="m"></td></tr></tbody></table></div>
+
+<div class="flag"><b><code>append_phase_event</code> writes three tables at once.</b> It inserts into <code>phase_events</code>, updates <code>entities.status</code>, and touches <code>workflow_phases</code> — and it is the <em>only</em> sanctioned status write path. It does not consult the lifecycle machine, which lives in <code>router.py</code>, so it will persist a status the machine forbids.</div>
+<div class="flag"><b>Two event stores are written by different actions.</b> <code>append_phase_event</code> feeds v1-era <code>phase_events</code> (1,445 rows, no foreign key). <code>append_event</code> feeds the v2 immutable <code>events</code> core (2,195 rows, FK to <code>entities</code>). Nothing writes both as a single transaction by default.</div>
+<div class="flag"><b><code>delete_entity</code> touches five tables and completes none of them.</b> It cascades <code>entity_tags</code>, <code>entity_okr_alignment</code>, <code>entities_fts</code> and <code>workflow_phases</code> before removing the entity row — but the <code>events.entity_uuid</code> foreign key aborts the transaction, so in practice the whole operation rolls back for every entity in the database.</div>
+<div class="flag"><b>The allocator reads <code>entities</code> to write <code>sequences</code>.</b> <code>next_sequence_value</code> bootstraps its counter by scanning entity ids with a regex, which is why a stale counter and a text-shaped id can collide. A count taken from <code>entity_display.seq</code> would be structural.</div>
+<div class="flag"><b>Orchestrators own no SQL.</b> <code>allocate_entity_id</code>, <code>complete_phase</code>, <code>transition_phase</code>, <code>run_backfill</code> and <code>sync_entity_statuses</code> issue no statements of their own — every row in their line is inherited from what they call. That is why the <span class="m via" style="display:inline-block;padding:0 5px">r</span>/<span class="m via" style="display:inline-block;padding:0 5px">w</span> shading matters: it separates what an action does from what it causes.</div>
+
+<h2>Integrity observations</h2>
+<p class="blurb">Findings from inspecting the live database, relevant to any ground-up redesign.</p>
+<div class="flag"><b>Display identity is 69% covered.</b> 180 of 579 entities have no <code>entity_display</code> row — 166 legacy backlog (<code>{NNNNN}</code>, no slug), 10 projects (the <code>P</code> prefix defeated the backfill), 3 brainstorms, 1 feature. Numbering logic that joins this table silently under-counts.</div>
+<div class="flag"><b>Four id shapes coexist.</b> <code>{NNN}-{slug}</code>, <code>P{NNN}-{slug}</code>, bare <code>{NNNNN}</code>, and <code>{YYYYMMDD}-{slug}</code>. At least six code sites parse them, and they disagree about three of the four.</div>
+<div class="flag"><b>The registration gate rejects real data.</b> <code>register_entity</code> enforces <code>^\d+-.+</code> in production, which no project id satisfies — neither the documented <code>P{NNN}</code> nor the actual <code>P{NNN}-{slug}</code>. It has been this way since 2026-05-15.</div>
+<div class="flag"><b>The lifecycle machines do not match the data.</b> The backlog machine permits exactly one transition (<code>open → dropped</code>), yet live rows hold <code>promoted</code> and <code>archived</code>. Projects have no <code>archived</code> phase at all. <code>append_phase_event</code> writes status without consulting the machine, so validation and persistence disagree.</div>
+<div class="flag"><b><code>projects</code> is dead.</b> 0 rows, superseded by <code>entities</code> rows with <code>kind='project'</code>, but still referenced from 7 places in code.</div>
+<div class="flag"><b><code>phase_events</code> has no foreign key.</b> 1,445 rows referencing entities by <code>type_id</code> text. It is the live status write path, and it is joined by string.</div>
+
+<p class="meta">Generated 2026-09-20 from a <code>.backup</code> snapshot of the live database. Row counts and coverage reflect that moment.</p>
+</div></body></html>
