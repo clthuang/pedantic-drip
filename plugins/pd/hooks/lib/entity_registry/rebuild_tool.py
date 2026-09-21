@@ -1034,12 +1034,30 @@ def _display_number(kind: str, entity_id: str) -> int:
 
 
 def _seed_sequences(old_conn: sqlite3.Connection, new_conn: sqlite3.Connection) -> dict:
-    """D6.9: one row per (workspace, kind) PRESENT in the census, at
-    ``max(display number) + 1`` — the SAME "next value to issue" contract
-    ``next_sequence_value`` (database.py) returns for an existing row.
-    Uses the FULL raw old-file scan (not the post-dedup survivor set):
-    within-workspace duplicates share the identical entity_id/number by
-    definition, so dedup can never change the max.
+    """D6.9: one row per (workspace, kind), at a value that can never be
+    BELOW what the old file had already reserved.
+
+    ``next_val = max(stored_next_val, derived_max + 1)``.
+
+    The derived half is the text scan this function has always done:
+    ``max(display number) + 1`` over the FULL raw old-file scan (not the
+    post-dedup survivor set — within-workspace duplicates share the
+    identical entity_id/number by definition, so dedup can never change
+    the max). The stored half is the old ``sequences`` table, which this
+    function previously ignored entirely.
+
+    Ignoring it made rebuild a re-infection vector rather than a repair.
+    ``_display_number`` returns 0 for any id its regex misses — and
+    ``_PROJECT_DISPLAY_RE`` is end-anchored (``^P(\\d+)$``), so it misses
+    every project carrying a slug suffix. Measured on the live registry:
+    the project bucket held ``next_val=5`` with ``P004-entity-db-redesign``
+    present; the derived max was 3, so a rebuild LOWERED the counter to 4
+    and the next allocation reissued 4 — the number already on disk. Any
+    bucket whose ids the regex cannot parse had the same exposure.
+
+    Buckets present only in ``sequences`` (a counter with zero surviving
+    entity rows) are carried across too. Enumerating solely from the
+    entity census silently dropped their reservation.
     """
     rows = old_conn.execute(
         "SELECT workspace_uuid, kind, entity_id FROM entities "
@@ -1051,9 +1069,22 @@ def _seed_sequences(old_conn: sqlite3.Connection, new_conn: sqlite3.Connection) 
         number = _display_number(row["kind"], row["entity_id"])
         max_by_bucket[key] = max(max_by_bucket.get(key, 0), number)
 
+    stored: dict[tuple[str, str], int] = {}
+    try:
+        for row in old_conn.execute(
+            "SELECT workspace_uuid, entity_type, next_val FROM sequences"
+        ):
+            stored[(row["workspace_uuid"], row["entity_type"])] = int(row["next_val"])
+    except sqlite3.OperationalError:
+        # Pre-118 files have no ``sequences`` table; the derived floor is
+        # then the only available authority and the max() below is a no-op.
+        pass
+
+    derived = {key: value + 1 for key, value in max_by_bucket.items()}
     seeded: dict[str, dict[str, int]] = {}
-    for (ws, kind), max_seq in sorted(max_by_bucket.items()):
-        next_val = max_seq + 1
+    for key in sorted(set(derived) | set(stored)):
+        ws, kind = key
+        next_val = max(derived.get(key, 1), stored.get(key, 1))
         new_conn.execute(
             "INSERT INTO sequences (workspace_uuid, entity_type, next_val) VALUES (?, ?, ?)",
             (ws, kind, next_val),

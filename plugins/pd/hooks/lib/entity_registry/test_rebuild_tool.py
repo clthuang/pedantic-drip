@@ -1187,6 +1187,126 @@ class TestSequencesSeeded:
         assert report["sequences_seeded"]["project"]["ws-beta"] == 2
 
 
+def _seed_pair(entities, sequences):
+    """Build (old_conn, new_conn) for a direct _seed_sequences call.
+
+    entities:  list of (workspace_uuid, kind, entity_id)
+    sequences: list of (workspace_uuid, entity_type, next_val)
+    """
+    old = sqlite3.connect(":memory:")
+    old.row_factory = sqlite3.Row
+    old.execute(
+        "CREATE TABLE entities (workspace_uuid TEXT, kind TEXT, entity_id TEXT)"
+    )
+    old.executemany("INSERT INTO entities VALUES (?, ?, ?)", entities)
+    if sequences is not None:
+        old.execute(
+            "CREATE TABLE sequences (workspace_uuid TEXT, entity_type TEXT, next_val INTEGER)"
+        )
+        old.executemany("INSERT INTO sequences VALUES (?, ?, ?)", sequences)
+
+    new = sqlite3.connect(":memory:")
+    new.row_factory = sqlite3.Row
+    new.execute(
+        "CREATE TABLE sequences (workspace_uuid TEXT, entity_type TEXT, next_val INTEGER)"
+    )
+    return old, new
+
+
+def _seeded_rows(new_conn):
+    return {
+        (r["workspace_uuid"], r["entity_type"]): r["next_val"]
+        for r in new_conn.execute(
+            "SELECT workspace_uuid, entity_type, next_val FROM sequences"
+        )
+    }
+
+
+class TestSequencesSeedNeverLowersAReservation:
+    """C20a: rebuild must not hand back a number the old file reserved.
+
+    ``_seed_sequences`` derives its floor by parsing entity_id TEXT via
+    ``_display_number``, which returns 0 for anything its regex misses.
+    ``_PROJECT_DISPLAY_RE`` is end-anchored, so every slug-suffixed project
+    id misses. Before C20a the stored ``sequences`` table was ignored
+    entirely, so the derived value won unconditionally — including when it
+    was LOWER.
+    """
+
+    def test_live_incident_shape_does_not_lower_the_project_counter(self):
+        """The exact live shape: P004-entity-db-redesign with next_val=5.
+
+        Derived max is 3 (only the bare P001/P002/P003 parse), so the
+        pre-C20a seed wrote 4 — reissuing the number already carried by
+        P004-entity-db-redesign.
+        """
+        ws = "69696982-0e18-46f1-acf2-18a3edc6bbb7"
+        old, new = _seed_pair(
+            entities=[
+                (ws, "project", "P001"),
+                (ws, "project", "P002"),
+                (ws, "project", "P003"),
+                (ws, "project", "P004-entity-db-redesign"),
+                (ws, "project", "P001-openclaw-gap-analysis"),
+            ],
+            sequences=[(ws, "project", 5)],
+        )
+        assert rebuild_tool._display_number("project", "P004-entity-db-redesign") == 0, (
+            "fixture precondition: the end-anchored regex misses slug-suffixed ids"
+        )
+
+        rebuild_tool._seed_sequences(old, new)
+
+        assert _seeded_rows(new)[(ws, "project")] == 5, (
+            "rebuild lowered the project counter below its stored reservation"
+        )
+
+    def test_counter_only_bucket_keeps_its_reservation(self):
+        """A bucket with a counter but zero surviving entity rows.
+
+        Enumeration ran off the entity census alone, so such a bucket was
+        dropped from the rebuilt file and its reservation lost entirely.
+        """
+        old, new = _seed_pair(
+            entities=[("ws-a", "feature", "003-something")],
+            sequences=[("ws-a", "feature", 4), ("ws-a", "brainstorm", 20260711)],
+        )
+
+        rebuild_tool._seed_sequences(old, new)
+        rows = _seeded_rows(new)
+
+        assert rows[("ws-a", "brainstorm")] == 20260711, (
+            "counter-only bucket lost its reservation on rebuild"
+        )
+        assert rows[("ws-a", "feature")] == 4
+
+    def test_derived_floor_still_wins_when_it_is_higher(self):
+        """The stored counter is a floor, not an override.
+
+        A counter that lags the census (entities registered by a writer
+        that never bumped it) must still be raised, not preserved.
+        """
+        old, new = _seed_pair(
+            entities=[("ws-a", "feature", "009-nine")],
+            sequences=[("ws-a", "feature", 2)],
+        )
+
+        rebuild_tool._seed_sequences(old, new)
+
+        assert _seeded_rows(new)[("ws-a", "feature")] == 10
+
+    def test_pre_118_file_without_a_sequences_table_still_seeds(self):
+        """Files predating the sequences table fall back to derived-only."""
+        old, new = _seed_pair(
+            entities=[("ws-a", "feature", "007-seven")],
+            sequences=None,
+        )
+
+        rebuild_tool._seed_sequences(old, new)
+
+        assert _seeded_rows(new)[("ws-a", "feature")] == 8
+
+
 # ---------------------------------------------------------------------------
 # D7: the two on-disk report forms — the full machine JSON (entity-named,
 # outside the repo) and the counts-only committed summary (zero names).
