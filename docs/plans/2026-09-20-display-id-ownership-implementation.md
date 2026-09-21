@@ -130,6 +130,8 @@ Idioms covered: compiled-pattern `.match/.search/.fullmatch`, `re.match(pattern,
 def establish_high_water(conn) -> dict[tuple[str, str], int]:   # (kind, workspace_uuid) -> new next_val
 ```
 
+**EXECUTED 2026-09-21 against the live registry.** 19 buckets in, 19 out, 0 lowered, 2 raised (`fractorg` and `project_illium` project buckets, 1 → 2) — exactly the two the non-vacuity note below predicts are the only discriminating ones. Every archived number is now reserved by the counter.
+
 **Contract addendum.** `next_val = max(stored_next_val, computed)` — **never assignment**. The whole sweep runs inside a single `BEGIN IMMEDIATE`; the `conn` signature below cannot use `db.transaction()`, and a read-modify-write on `sequences` racing `next_sequence_value`'s own `BEGIN IMMEDIATE` (`database.py:10261`) silently loses the allocator's increment.
 
 **Verify.** For every bucket, `next_val > max(parsed legacy seq, display seq)`. Assert on **all seven workspaces holding `sequences` rows** (`69696982, d373a5ad, f7b49c1d, 35d9b5f9, 6f113c48, 7e788234, fe180347`) — 24 workspace rows exist in total; "six" was wrong in three places. The returned mapping must cover every `(kind, workspace)` present in `entities` ∪ `sequences` — **19 buckets today**.
@@ -162,7 +164,18 @@ After B6, returns 0 — the idempotence proof, and it fails today.
 
 **Depends.** B4.
 
-## B6 — Archive durably, and make it stick
+## B6 — Archive durably, and make it stick — **PARTIALLY EXECUTED 2026-09-21**
+
+**Done: the marker.** All 180 legacy rows carry `legacy-archived-2026-09`. `select_legacy_entities(conn, marker_tag=...)` now returns **0** — the idempotence proof this subtask exists to establish. Snapshot at `entities.db.pre-cleanbreak-20260921`.
+
+**Deliberately NOT done: the status change.** Two reasons, both of which would have destroyed information:
+
+1. **165 of the 176 were already terminal** (`dropped` 117, `promoted` 18, `archived` 28, `completed` 1, `abandoned` 1). Rewriting those to `archived` discards a more specific status and buys nothing — the tag already marks them.
+2. **11 are live** — 6 open backlog items and 5 projects, including `P004-entity-db-redesign`, the active project for this very effort. Archiving them removes them from the board, and **nothing recreates them until C22**, which cannot run before the Release C cutover. The plan acknowledges this gap but did not draw the conclusion: status-archiving live rows in Release B opens a hole that stays open for all of Release C.
+
+The break's purpose — legacy rows stop being identity sources, and their numbers stay reserved — is served by the tag plus B4's sweep. Status is about projections, and B7 can filter on the tag. The 11 live rows stay visible and usable until C22 can recreate them.
+
+
 
 **Contract.** Every selected entity carries a durable archival marker, retains its row, uuid, history and parent links, and keeps its `entity_id` unchanged. No number is freed. Reconciliation does not revert it.
 

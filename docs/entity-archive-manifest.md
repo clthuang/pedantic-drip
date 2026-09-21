@@ -56,181 +56,181 @@ The last column is the one that matters: rows a clean break would archive that s
 | kind | entity_id | status | disp | kids | parent | tags | name |
 |---|---|---|:--:|--:|---|---|---|
 | brainstorm | `original-ideation-prd` | archived | — |  |  | legacy-archived-2026-09 | 🎣 Cast Below |
-| project | `P001` | completed | — | 29 | 20260223-222936-world-readable |  | P001 |
+| project | `P001` | completed | — | 29 | 20260223-222936-world-readable | legacy-archived-2026-09 | P001 |
 
 ### `/Users/terry/projects/pedantic-drip`
 
 | kind | entity_id | status | disp | kids | parent | tags | name |
 |---|---|---|:--:|--:|---|---|---|
-| backlog | `00008` | dropped | — |  |  |  | add product manager, product owner team (agents, |
-| backlog | `00012` | dropped | — |  |  |  | fix the secretary AskUserQuestion formatting. Th |
-| backlog | `00014` | dropped | — |  |  |  | Security Scanning — static rule-based security s |
-| backlog | `00015` | dropped | — |  |  |  | Cross-Platform Hooks — port Bash hooks to Node.j |
-| backlog | `00017` | dropped | — |  |  |  | Unified Central Context Management — expand the  |
-| backlog | `00018` | dropped | — |  |  |  | Knowledge Bank Auto-Logging — upgrade knowledge  |
-| backlog | `00020` | promoted | — |  |  |  | Consider renaming the plugin/repository to `peda |
-| backlog | `00024` | dropped | — |  |  |  | Add `remove_entry` method to the entity registry |
-| backlog | `00026` | dropped | — |  |  |  | Add feature subfiles into the entity DB to facil |
-| backlog | `00027` | promoted | — |  |  |  | Simplify secretary by removing aware and orchest |
-| backlog | `00028` | dropped | — |  |  |  | Add software-architect, product-manager, devops- |
-| backlog | `00029` | dropped | — |  |  |  | Remove project lifetime soft constraint from cre |
-| backlog | `00030` | dropped | — |  |  |  | Fix register_entity MCP tool to correctly proces |
-| backlog | `00031` | promoted | — |  |  |  | Handle DB write lock and concurrent write — ensu |
-| backlog | `00032` | dropped | — |  |  |  | Fix the workflow progression such that if a PRD  |
-| backlog | `00033` | promoted | — |  |  |  | Reduce diff comparison for deploying reviewers.  |
-| backlog | `00034` | promoted | — |  |  |  | Update code simplifier to use Claude Code's nati |
-| backlog | `00035` | dropped | — |  |  |  | Enrich secretary problem solving frameworks and  |
-| backlog | `00036` | dropped | — |  |  |  | Add system design architect and solution archite |
-| backlog | `00038` | promoted | — |  |  |  | Knowledge bank markdown-to-DB sync gap — markdow |
-| backlog | `00039` | dropped | — |  |  |  | show-status and list-features should filter out  |
-| backlog | `00040` | promoted | — |  |  |  | Close entity registry status tracking gaps — pro |
-| backlog | `00044` | promoted | — | 1 |  |  | 5D stage context accumulation: Each 5D stage (di |
-| backlog | `00045` | promoted | — |  |  |  | Fix pd SQLite DB locking bugs: (1) MemoryDatabas |
-| backlog | `00046` | dropped | — |  |  |  | Add brainstorm review cycle to brainstorm |
-| backlog | `00047` | promoted | — |  |  |  | reconciliation_orchestrator does not detect stal |
-| backlog | `00048` | dropped | — |  |  |  | release.sh: add pre-push tag existence check (gi |
-| backlog | `00049` | promoted | — | 1 |  |  | Phase transition summary with reviewer feedback |
-| backlog | `00050` | dropped | — |  |  |  | Add lightweight pre-push git hook that validates |
-| backlog | `00051` | promoted | — |  |  |  | Extract workflow execution data from metadata JS |
-| backlog | `00052` | promoted | — | 1 |  |  | Active real-time mistake monitor — Add a PostToo |
-| backlog | `00053` | promoted | — | 2 |  |  | Memory flywheel — close the self-improvement loo |
-| backlog | `00059` | open | — |  |  |  | Pre-review lint for curly-brace template placeho |
-| backlog | `00060` | open | — |  |  |  | Structured Git Operations Reference for design p |
-| backlog | `00063` | archived | — |  |  |  | Entity rename tooling or convention for scope-pi |
-| backlog | `00064` | archived | — |  |  |  | /pd:promote-pattern classifier is too keyword-he |
-| backlog | `00065` | archived | — |  |  |  | Add "enforceability" filter to /pd:promote-patte |
-| backlog | `00066` | archived | — |  |  |  | /pd:promote-pattern bare-CLI ergonomics: arg mis |
-| backlog | `00067` | archived | — |  |  |  | Security: `entry_name` not sanitized before TD-8 |
-| backlog | `00068` | archived | — |  |  |  | Security: `~/.claude/pd/memory/influence-debug.l |
-| backlog | `00069` | archived | — |  |  |  | Operability: influence-debug.log has no size cap |
-| backlog | `00070` | archived | — |  |  |  | Code quality: `_warn_and_default`/`_ranker_warn_ |
-| backlog | `00071` | archived | — |  |  |  | Code quality: `_emit_influence_diagnostic` log s |
-| backlog | `00072` | archived | — |  |  |  | Code quality: MCP wrapper `record_influence_by_c |
-| backlog | `00073` | archived | — |  |  |  | Code quality: hook generator test-script stubs f |
-| backlog | `00074` | archived | — |  |  |  | Testability: AC-7 / AC-7b / AC-11 grep assertion |
-| backlog | `00075` | archived | — |  |  |  | No timeout cap when gtimeout/timeout absent in s |
-| backlog | `00076` | archived | — |  |  |  | Equal decay thresholds + rapid sequential calls  |
-| backlog | `00077` | archived | — |  |  |  | AC-22 test covers file-missing only; not SyntaxE |
-| backlog | `00078` | archived | — |  |  |  | `_select_candidates` accesses `db._conn` directl |
-| backlog | `00079` | archived | — |  |  |  | `updated_at IS NULL` guard in `_execute_chunk` S |
-| backlog | `00080` | archived | — |  |  |  | `__unknown__` project_id sentinel from `record_b |
-| backlog | `00081` | archived | — |  |  |  | Unknown `query_type` in `query_phase_analytics`  |
-| backlog | `00082` | archived | — |  |  |  | Missing negative tests: CHECK constraint rejecti |
-| backlog | `00083` | archived | — |  |  |  | `_compute_durations` silently drops timestamp pa |
-| backlog | `00084` | archived | — |  |  |  | AC-16 only tests transition_phase failure resili |
-| backlog | `00085` | archived | — |  |  |  | **[HIGH/security]** ReDoS in... |
-| backlog | `00086` | archived | — |  |  |  | **[HIGH/concurrency]** Async coroutine umask rac |
-| backlog | `00087` | archived | — |  |  |  | **[HIGH/testability]** FR-6 caller-passed thresh |
-| backlog | `00088` | archived | — |  |  |  | **[MED/correctness]** Missing JSON escaping in.. |
-| backlog | `00089` | dropped | — |  |  |  | **[MED/quality]** Rotation failure permanently s |
-| backlog | `00090` | dropped | — |  |  |  | **[MED/quality]** Pytest global-state pollution  |
-| backlog | `00091` | dropped | — |  |  |  | **[MED/quality]** FR-4 completeness gap — `cfg.g |
-| backlog | `00092` | dropped | — |  |  |  | **[MED/testability]** 10 MB rotation boundary of |
-| backlog | `00093` | dropped | — |  |  |  | **[MED/testability]** Shell-vs-Python regex sema |
-| backlog | `00094` | dropped | — |  |  |  | **[LOW/observation]** SC-9(a) source grep fragil |
-| backlog | `00095` | dropped | — |  |  |  | **[HIGH/security]** Python heredoc injection in. |
-| backlog | `00096` | dropped | — |  |  |  | **[HIGH/security]** OverflowError escape from `t |
-| backlog | `00097` | dropped | — |  |  |  | **[HIGH/security]** Symlink-clobber on `influenc |
-| backlog | `00098` | dropped | — |  |  |  | **[HIGH/quality]** `_resolve_int_config` clamp p |
-| backlog | `00099` | dropped | — |  |  |  | **[HIGH/correctness]** isoformat() vs strftime() |
-| backlog | `00100` | dropped | — |  |  |  | **[HIGH/implementation]** AC-11 spec requires st |
-| backlog | `00101` | dropped | — |  |  |  | **[HIGH/implementation]** AC-10 spec text still  |
-| backlog | `00102` | dropped | — |  |  |  | **[MED/security]** `memory_decay_*` config keys  |
-| backlog | `00103` | dropped | — |  |  |  | **[MED/security]** CLI `--project-root` in `main |
-| backlog | `00104` | dropped | — |  |  |  | **[MED/quality]** Test file `test_maintenance.py |
-| backlog | `00105` | dropped | — |  |  |  | **[MED/quality]** Duplicate `_warn_and_default`  |
-| backlog | `00106` | dropped | — |  |  |  | **[MED/quality]** Dead `now_iso` parameter in `_ |
-| backlog | `00107` | dropped | — |  |  |  | **[MED/security]** Unbounded SELECT in `_select_ |
-| backlog | `00108` | dropped | — |  |  |  | **[MED/implementation]** AC-20b-1/20b-2 spec tar |
-| backlog | `00109` | dropped | — |  |  |  | **[MED/implementation]** FR-2 spec NULL-branch t |
-| backlog | `00110` | dropped | — |  |  |  | **[MED/implementation]** Retro EQP file `agent_s |
-| backlog | `00111` | dropped | — |  |  |  | **[MED/quality]** Module-level `NOW = datetime(. |
-| backlog | `00112` | dropped | — |  |  |  | **[MED/security]** `run_memory_decay` in `sessio |
-| backlog | `00113` | dropped | — |  |  |  | **[MED/testability]** Boundary-equality (`last_r |
-| backlog | `00114` | dropped | — |  |  |  | **[MED/testability]** Tz-naive `now` handling si |
-| backlog | `00115` | dropped | — |  |  |  | **[MED/testability]** Zero cross-feature integra |
-| backlog | `00116` | dropped | — |  |  |  | **[LOW/testability]** Additional gaps: empty-DB  |
-| backlog | `00117` | dropped | — |  |  |  | **[HIGH/security]** Cross-project data leakage i |
-| backlog | `00118` | dropped | — |  |  |  | **[HIGH/security]** Migration 10 concurrent-invo |
-| backlog | `00119` | dropped | — |  |  |  | **[HIGH/security]** `record_backward_event` acce |
-| backlog | `00120` | dropped | — |  |  |  | **[HIGH/quality]** Both `record_backward_event`  |
-| backlog | `00121` | dropped | — |  |  |  | **[HIGH/quality]** `query_phase_events` uses `SE |
-| backlog | `00122` | dropped | — |  |  |  | **[HIGH/implementation]** `SKILL.md:402-412` cal |
-| backlog | `00123` | dropped | — |  |  |  | **[HIGH/implementation]** `_compute_durations:17 |
-| backlog | `00124` | dropped | — |  |  |  | **[MED/correctness]** Dual-write `insert_phase_e |
-| backlog | `00125` | dropped | — |  |  |  | **[MED/security]** Unbounded JSON round-trip on  |
-| backlog | `00126` | dropped | — |  |  |  | **[MED/security]** Raw `str(e)` exception leak i |
-| backlog | `00127` | dropped | — |  |  |  | **[MED/security]** Migration 10 backfill (`datab |
-| backlog | `00128` | dropped | — |  |  |  | **[MED/quality]** `_compute_durations:1737` defe |
-| backlog | `00129` | dropped | — |  |  |  | **[MED/quality]** Migration 10 top-level `except |
-| backlog | `00130` | dropped | — |  |  |  | **[MED/quality]** `test_workflow_state_server.py |
-| backlog | `00131` | dropped | — |  |  |  | **[MED/implementation]** AC-19 test only asserts |
-| backlog | `00132` | dropped | — |  |  |  | **[MED/implementation]** iteration_summary appli |
-| backlog | `00133` | dropped | — |  |  |  | **[LOW/suggestion]** `phase_duration`/`backward_ |
-| backlog | `00134` | dropped | — |  |  |  | **[HIGH/testability]** `insert_phase_event` unco |
-| backlog | `00135` | dropped | — |  |  |  | **[HIGH/testability]** Reconciliation is `phase_ |
-| backlog | `00136` | dropped | — |  |  |  | **[MED/testability]** Additional gaps: `.meta.js |
-| backlog | `00137` | dropped | — |  |  |  | **[MED/process]** Feature 084 has no `retro.md`  |
-| backlog | `00138` | dropped | — |  |  |  | Deferred 082/084 test-gap sub-items not addresse |
-| backlog | `00139` | dropped | — |  |  |  | [HIGH/security] `_coerce_bool` at `config.py:59` |
-| backlog | `00140` | dropped | — |  |  |  | [HIGH/security] `execute_test_sql_for_testing`,  |
-| backlog | `00141` | dropped | — |  |  |  | [HIGH/correctness] `_iso_utc(dt)` at `maintenanc |
-| backlog | `00142` | dropped | — |  |  |  | [HIGH/correctness] Migration 10 at `database.py: |
-| backlog | `00143` | dropped | — |  |  |  | [HIGH/security] `query_phase_analytics` at `work |
-| backlog | `00144` | dropped | — |  |  |  | [HIGH/correctness] `execute_test_sql_for_testing |
-| backlog | `00145` | dropped | — |  |  |  | [HIGH/spec-drift] AC-23 LOC target violated. Bas |
-| backlog | `00146` | dropped | — |  |  |  | [HIGH/correctness] Bundle L `_detect_phase_event |
-| backlog | `00147` | dropped | — |  |  |  | [MED/consistency] `backward_frequency` query at  |
-| backlog | `00148` | dropped | — |  |  |  | [MED/duplication] `refresh.py:180` formats times |
-| backlog | `00149` | dropped | — |  |  |  | [MED/quality] `_TRUE_VALUES`/`_FALSE_VALUES` mod |
-| backlog | `00150` | dropped | — |  |  |  | [MED/performance] `_detect_phase_events_drift` N |
-| backlog | `00151` | dropped | — |  |  |  | [MED/correctness] `entity.get('project_id') or ' |
-| backlog | `00152` | dropped | — |  |  |  | [MED/consistency] Migration 10 writes schema_ver |
-| backlog | `00153` | dropped | — |  |  |  | [MED/correctness] PATH pinning in `run_memory_de |
-| backlog | `00154` | dropped | — |  |  |  | [MED/security] O_NOFOLLOW + fchmod log-open has  |
-| backlog | `00155` | dropped | — |  |  |  | [MED/testability] `_warn_and_default` module-sta |
-| backlog | `00156` | dropped | — |  |  |  | [MED/spec-drift] AC-10 `strftime` grep-verificat |
-| backlog | `00157` | dropped | — |  |  |  | [MED/spec-drift] AC-34b targets function name `_ |
-| backlog | `00158` | dropped | — |  |  |  | [MED/spec-drift] AC-22 "line-for-line identical" |
-| backlog | `00159` | dropped | — |  |  |  | [MED/quality] `plugins/pd/mcp/test_workflow_stat |
-| backlog | `00160` | dropped | — |  |  |  | [MED/testability] `_coerce_bool` tested only for |
-| backlog | `00161` | dropped | — |  |  |  | [MED/testability] `_iso_utc(dt)` direct unit tes |
-| backlog | `00162` | dropped | — |  |  |  | [MED/testability] `scan_limit=0` edge untested.  |
-| backlog | `00163` | dropped | — |  |  |  | [MED/testability] `run_memory_decay` Python-subp |
-| backlog | `00164` | dropped | — |  |  |  | [MED/testability] `record_backward_event` server |
-| backlog | `00165` | dropped | — |  |  |  | [MED/testability] Dual-write retry semantics aft |
-| backlog | `00166` | dropped | — |  |  |  | [MED/testability] Migration-10 concurrent with l |
-| backlog | `00167` | dropped | — |  |  |  | [MED/testability] `reconcile_check → manual-fix  |
-| backlog | `00168` | dropped | — |  |  |  | [MED/testability] `_warn_unknown_keys` dedup beh |
-| backlog | `00169` | dropped | — |  |  |  | [MED/testability] `_detect_phase_events_drift` e |
-| backlog | `00170` | dropped | — |  |  |  | [MED/testability] `reviewer_notes` boundary at M |
-| backlog | `00171` | dropped | — |  |  |  | [MED/testability] Bundle L ↔ Bundle E integratio |
-| backlog | `00172` | dropped | — |  |  |  | [HIGH/implementation] AC-21 `test_decay_python_s |
-| backlog | `00173` | dropped | — |  |  |  | [MED/security] `_assert_testing_context()` at... |
-| backlog | `00174` | dropped | — |  |  |  | [MED/correctness] Migration 10 schema_version cr |
-| backlog | `00175` | dropped | — |  |  |  | [MED/correctness] `query_phase_events_bulk(event |
-| backlog | `00176` | dropped | — |  |  |  | [MED/test-drift] AC-22 test... |
-| backlog | `00177` | open | — |  |  |  | [LOW/security] `_resolve_project_id()` emits std |
-| backlog | `00178` | dropped | — |  |  |  | [LOW/security] `reset_warning_state()` public in |
-| backlog | `00179` | dropped | — |  |  |  | [LOW/security] `trap 'export PATH="$PATH_OLD"' R |
-| backlog | `00180` | open | — |  |  |  | [LOW/correctness] `_detect_phase_events_drift` w |
-| backlog | `00181` | dropped | — |  |  |  | [LOW/quality] `_coerce_bool` int-literal branche |
-| backlog | `00182` | dropped | — |  |  |  | [LOW/quality] Test parametrize sentinel `"defaul |
-| backlog | `00183` | open | — |  |  |  | [LOW/implementation] AC-5 allowlist test missing |
-| backlog | `00184` | dropped | — |  |  |  | [LOW/implementation] AC-7 `test_influence_log_re |
-| backlog | `00185` | dropped | — |  |  |  | [LOW/implementation] AC-10... |
-| backlog | `00186` | dropped | — |  |  |  | [LOW/implementation] AC-1 `test_coerce_bool_rout |
-| backlog | `00187` | dropped | — |  |  |  | [LOW/test-gap] AC-28 boundary test misses compou |
-| backlog | `00188` | dropped | — |  |  |  | [LOW/test-gap] AC-18 parametrize omits load-bear |
-| backlog | `00189` | dropped | — |  |  |  | [LOW/test-gap] AC-7 TOCTOU fd-fstat defense at ` |
-| backlog | `00190` | open | — |  |  |  | [LOW/test-gap] AC-5 rejection test misses non-st |
-| backlog | `00191` | dropped | — |  |  |  | [LOW/test-gap] Fixture asymmetry: `test_refresh. |
-| backlog | `00217` | promoted | — | 1 |  |  | Backlog #00217 |
-| backlog | `00246` | promoted | — | 1 |  |  | Backlog #00246 |
-| backlog | `00277` | promoted | — | 1 |  |  | Backlog #00277 |
+| backlog | `00008` | dropped | — |  |  | legacy-archived-2026-09 | add product manager, product owner team (agents, |
+| backlog | `00012` | dropped | — |  |  | legacy-archived-2026-09 | fix the secretary AskUserQuestion formatting. Th |
+| backlog | `00014` | dropped | — |  |  | legacy-archived-2026-09 | Security Scanning — static rule-based security s |
+| backlog | `00015` | dropped | — |  |  | legacy-archived-2026-09 | Cross-Platform Hooks — port Bash hooks to Node.j |
+| backlog | `00017` | dropped | — |  |  | legacy-archived-2026-09 | Unified Central Context Management — expand the  |
+| backlog | `00018` | dropped | — |  |  | legacy-archived-2026-09 | Knowledge Bank Auto-Logging — upgrade knowledge  |
+| backlog | `00020` | promoted | — |  |  | legacy-archived-2026-09 | Consider renaming the plugin/repository to `peda |
+| backlog | `00024` | dropped | — |  |  | legacy-archived-2026-09 | Add `remove_entry` method to the entity registry |
+| backlog | `00026` | dropped | — |  |  | legacy-archived-2026-09 | Add feature subfiles into the entity DB to facil |
+| backlog | `00027` | promoted | — |  |  | legacy-archived-2026-09 | Simplify secretary by removing aware and orchest |
+| backlog | `00028` | dropped | — |  |  | legacy-archived-2026-09 | Add software-architect, product-manager, devops- |
+| backlog | `00029` | dropped | — |  |  | legacy-archived-2026-09 | Remove project lifetime soft constraint from cre |
+| backlog | `00030` | dropped | — |  |  | legacy-archived-2026-09 | Fix register_entity MCP tool to correctly proces |
+| backlog | `00031` | promoted | — |  |  | legacy-archived-2026-09 | Handle DB write lock and concurrent write — ensu |
+| backlog | `00032` | dropped | — |  |  | legacy-archived-2026-09 | Fix the workflow progression such that if a PRD  |
+| backlog | `00033` | promoted | — |  |  | legacy-archived-2026-09 | Reduce diff comparison for deploying reviewers.  |
+| backlog | `00034` | promoted | — |  |  | legacy-archived-2026-09 | Update code simplifier to use Claude Code's nati |
+| backlog | `00035` | dropped | — |  |  | legacy-archived-2026-09 | Enrich secretary problem solving frameworks and  |
+| backlog | `00036` | dropped | — |  |  | legacy-archived-2026-09 | Add system design architect and solution archite |
+| backlog | `00038` | promoted | — |  |  | legacy-archived-2026-09 | Knowledge bank markdown-to-DB sync gap — markdow |
+| backlog | `00039` | dropped | — |  |  | legacy-archived-2026-09 | show-status and list-features should filter out  |
+| backlog | `00040` | promoted | — |  |  | legacy-archived-2026-09 | Close entity registry status tracking gaps — pro |
+| backlog | `00044` | promoted | — | 1 |  | legacy-archived-2026-09 | 5D stage context accumulation: Each 5D stage (di |
+| backlog | `00045` | promoted | — |  |  | legacy-archived-2026-09 | Fix pd SQLite DB locking bugs: (1) MemoryDatabas |
+| backlog | `00046` | dropped | — |  |  | legacy-archived-2026-09 | Add brainstorm review cycle to brainstorm |
+| backlog | `00047` | promoted | — |  |  | legacy-archived-2026-09 | reconciliation_orchestrator does not detect stal |
+| backlog | `00048` | dropped | — |  |  | legacy-archived-2026-09 | release.sh: add pre-push tag existence check (gi |
+| backlog | `00049` | promoted | — | 1 |  | legacy-archived-2026-09 | Phase transition summary with reviewer feedback |
+| backlog | `00050` | dropped | — |  |  | legacy-archived-2026-09 | Add lightweight pre-push git hook that validates |
+| backlog | `00051` | promoted | — |  |  | legacy-archived-2026-09 | Extract workflow execution data from metadata JS |
+| backlog | `00052` | promoted | — | 1 |  | legacy-archived-2026-09 | Active real-time mistake monitor — Add a PostToo |
+| backlog | `00053` | promoted | — | 2 |  | legacy-archived-2026-09 | Memory flywheel — close the self-improvement loo |
+| backlog | `00059` | open | — |  |  | legacy-archived-2026-09 | Pre-review lint for curly-brace template placeho |
+| backlog | `00060` | open | — |  |  | legacy-archived-2026-09 | Structured Git Operations Reference for design p |
+| backlog | `00063` | archived | — |  |  | legacy-archived-2026-09 | Entity rename tooling or convention for scope-pi |
+| backlog | `00064` | archived | — |  |  | legacy-archived-2026-09 | /pd:promote-pattern classifier is too keyword-he |
+| backlog | `00065` | archived | — |  |  | legacy-archived-2026-09 | Add "enforceability" filter to /pd:promote-patte |
+| backlog | `00066` | archived | — |  |  | legacy-archived-2026-09 | /pd:promote-pattern bare-CLI ergonomics: arg mis |
+| backlog | `00067` | archived | — |  |  | legacy-archived-2026-09 | Security: `entry_name` not sanitized before TD-8 |
+| backlog | `00068` | archived | — |  |  | legacy-archived-2026-09 | Security: `~/.claude/pd/memory/influence-debug.l |
+| backlog | `00069` | archived | — |  |  | legacy-archived-2026-09 | Operability: influence-debug.log has no size cap |
+| backlog | `00070` | archived | — |  |  | legacy-archived-2026-09 | Code quality: `_warn_and_default`/`_ranker_warn_ |
+| backlog | `00071` | archived | — |  |  | legacy-archived-2026-09 | Code quality: `_emit_influence_diagnostic` log s |
+| backlog | `00072` | archived | — |  |  | legacy-archived-2026-09 | Code quality: MCP wrapper `record_influence_by_c |
+| backlog | `00073` | archived | — |  |  | legacy-archived-2026-09 | Code quality: hook generator test-script stubs f |
+| backlog | `00074` | archived | — |  |  | legacy-archived-2026-09 | Testability: AC-7 / AC-7b / AC-11 grep assertion |
+| backlog | `00075` | archived | — |  |  | legacy-archived-2026-09 | No timeout cap when gtimeout/timeout absent in s |
+| backlog | `00076` | archived | — |  |  | legacy-archived-2026-09 | Equal decay thresholds + rapid sequential calls  |
+| backlog | `00077` | archived | — |  |  | legacy-archived-2026-09 | AC-22 test covers file-missing only; not SyntaxE |
+| backlog | `00078` | archived | — |  |  | legacy-archived-2026-09 | `_select_candidates` accesses `db._conn` directl |
+| backlog | `00079` | archived | — |  |  | legacy-archived-2026-09 | `updated_at IS NULL` guard in `_execute_chunk` S |
+| backlog | `00080` | archived | — |  |  | legacy-archived-2026-09 | `__unknown__` project_id sentinel from `record_b |
+| backlog | `00081` | archived | — |  |  | legacy-archived-2026-09 | Unknown `query_type` in `query_phase_analytics`  |
+| backlog | `00082` | archived | — |  |  | legacy-archived-2026-09 | Missing negative tests: CHECK constraint rejecti |
+| backlog | `00083` | archived | — |  |  | legacy-archived-2026-09 | `_compute_durations` silently drops timestamp pa |
+| backlog | `00084` | archived | — |  |  | legacy-archived-2026-09 | AC-16 only tests transition_phase failure resili |
+| backlog | `00085` | archived | — |  |  | legacy-archived-2026-09 | **[HIGH/security]** ReDoS in... |
+| backlog | `00086` | archived | — |  |  | legacy-archived-2026-09 | **[HIGH/concurrency]** Async coroutine umask rac |
+| backlog | `00087` | archived | — |  |  | legacy-archived-2026-09 | **[HIGH/testability]** FR-6 caller-passed thresh |
+| backlog | `00088` | archived | — |  |  | legacy-archived-2026-09 | **[MED/correctness]** Missing JSON escaping in.. |
+| backlog | `00089` | dropped | — |  |  | legacy-archived-2026-09 | **[MED/quality]** Rotation failure permanently s |
+| backlog | `00090` | dropped | — |  |  | legacy-archived-2026-09 | **[MED/quality]** Pytest global-state pollution  |
+| backlog | `00091` | dropped | — |  |  | legacy-archived-2026-09 | **[MED/quality]** FR-4 completeness gap — `cfg.g |
+| backlog | `00092` | dropped | — |  |  | legacy-archived-2026-09 | **[MED/testability]** 10 MB rotation boundary of |
+| backlog | `00093` | dropped | — |  |  | legacy-archived-2026-09 | **[MED/testability]** Shell-vs-Python regex sema |
+| backlog | `00094` | dropped | — |  |  | legacy-archived-2026-09 | **[LOW/observation]** SC-9(a) source grep fragil |
+| backlog | `00095` | dropped | — |  |  | legacy-archived-2026-09 | **[HIGH/security]** Python heredoc injection in. |
+| backlog | `00096` | dropped | — |  |  | legacy-archived-2026-09 | **[HIGH/security]** OverflowError escape from `t |
+| backlog | `00097` | dropped | — |  |  | legacy-archived-2026-09 | **[HIGH/security]** Symlink-clobber on `influenc |
+| backlog | `00098` | dropped | — |  |  | legacy-archived-2026-09 | **[HIGH/quality]** `_resolve_int_config` clamp p |
+| backlog | `00099` | dropped | — |  |  | legacy-archived-2026-09 | **[HIGH/correctness]** isoformat() vs strftime() |
+| backlog | `00100` | dropped | — |  |  | legacy-archived-2026-09 | **[HIGH/implementation]** AC-11 spec requires st |
+| backlog | `00101` | dropped | — |  |  | legacy-archived-2026-09 | **[HIGH/implementation]** AC-10 spec text still  |
+| backlog | `00102` | dropped | — |  |  | legacy-archived-2026-09 | **[MED/security]** `memory_decay_*` config keys  |
+| backlog | `00103` | dropped | — |  |  | legacy-archived-2026-09 | **[MED/security]** CLI `--project-root` in `main |
+| backlog | `00104` | dropped | — |  |  | legacy-archived-2026-09 | **[MED/quality]** Test file `test_maintenance.py |
+| backlog | `00105` | dropped | — |  |  | legacy-archived-2026-09 | **[MED/quality]** Duplicate `_warn_and_default`  |
+| backlog | `00106` | dropped | — |  |  | legacy-archived-2026-09 | **[MED/quality]** Dead `now_iso` parameter in `_ |
+| backlog | `00107` | dropped | — |  |  | legacy-archived-2026-09 | **[MED/security]** Unbounded SELECT in `_select_ |
+| backlog | `00108` | dropped | — |  |  | legacy-archived-2026-09 | **[MED/implementation]** AC-20b-1/20b-2 spec tar |
+| backlog | `00109` | dropped | — |  |  | legacy-archived-2026-09 | **[MED/implementation]** FR-2 spec NULL-branch t |
+| backlog | `00110` | dropped | — |  |  | legacy-archived-2026-09 | **[MED/implementation]** Retro EQP file `agent_s |
+| backlog | `00111` | dropped | — |  |  | legacy-archived-2026-09 | **[MED/quality]** Module-level `NOW = datetime(. |
+| backlog | `00112` | dropped | — |  |  | legacy-archived-2026-09 | **[MED/security]** `run_memory_decay` in `sessio |
+| backlog | `00113` | dropped | — |  |  | legacy-archived-2026-09 | **[MED/testability]** Boundary-equality (`last_r |
+| backlog | `00114` | dropped | — |  |  | legacy-archived-2026-09 | **[MED/testability]** Tz-naive `now` handling si |
+| backlog | `00115` | dropped | — |  |  | legacy-archived-2026-09 | **[MED/testability]** Zero cross-feature integra |
+| backlog | `00116` | dropped | — |  |  | legacy-archived-2026-09 | **[LOW/testability]** Additional gaps: empty-DB  |
+| backlog | `00117` | dropped | — |  |  | legacy-archived-2026-09 | **[HIGH/security]** Cross-project data leakage i |
+| backlog | `00118` | dropped | — |  |  | legacy-archived-2026-09 | **[HIGH/security]** Migration 10 concurrent-invo |
+| backlog | `00119` | dropped | — |  |  | legacy-archived-2026-09 | **[HIGH/security]** `record_backward_event` acce |
+| backlog | `00120` | dropped | — |  |  | legacy-archived-2026-09 | **[HIGH/quality]** Both `record_backward_event`  |
+| backlog | `00121` | dropped | — |  |  | legacy-archived-2026-09 | **[HIGH/quality]** `query_phase_events` uses `SE |
+| backlog | `00122` | dropped | — |  |  | legacy-archived-2026-09 | **[HIGH/implementation]** `SKILL.md:402-412` cal |
+| backlog | `00123` | dropped | — |  |  | legacy-archived-2026-09 | **[HIGH/implementation]** `_compute_durations:17 |
+| backlog | `00124` | dropped | — |  |  | legacy-archived-2026-09 | **[MED/correctness]** Dual-write `insert_phase_e |
+| backlog | `00125` | dropped | — |  |  | legacy-archived-2026-09 | **[MED/security]** Unbounded JSON round-trip on  |
+| backlog | `00126` | dropped | — |  |  | legacy-archived-2026-09 | **[MED/security]** Raw `str(e)` exception leak i |
+| backlog | `00127` | dropped | — |  |  | legacy-archived-2026-09 | **[MED/security]** Migration 10 backfill (`datab |
+| backlog | `00128` | dropped | — |  |  | legacy-archived-2026-09 | **[MED/quality]** `_compute_durations:1737` defe |
+| backlog | `00129` | dropped | — |  |  | legacy-archived-2026-09 | **[MED/quality]** Migration 10 top-level `except |
+| backlog | `00130` | dropped | — |  |  | legacy-archived-2026-09 | **[MED/quality]** `test_workflow_state_server.py |
+| backlog | `00131` | dropped | — |  |  | legacy-archived-2026-09 | **[MED/implementation]** AC-19 test only asserts |
+| backlog | `00132` | dropped | — |  |  | legacy-archived-2026-09 | **[MED/implementation]** iteration_summary appli |
+| backlog | `00133` | dropped | — |  |  | legacy-archived-2026-09 | **[LOW/suggestion]** `phase_duration`/`backward_ |
+| backlog | `00134` | dropped | — |  |  | legacy-archived-2026-09 | **[HIGH/testability]** `insert_phase_event` unco |
+| backlog | `00135` | dropped | — |  |  | legacy-archived-2026-09 | **[HIGH/testability]** Reconciliation is `phase_ |
+| backlog | `00136` | dropped | — |  |  | legacy-archived-2026-09 | **[MED/testability]** Additional gaps: `.meta.js |
+| backlog | `00137` | dropped | — |  |  | legacy-archived-2026-09 | **[MED/process]** Feature 084 has no `retro.md`  |
+| backlog | `00138` | dropped | — |  |  | legacy-archived-2026-09 | Deferred 082/084 test-gap sub-items not addresse |
+| backlog | `00139` | dropped | — |  |  | legacy-archived-2026-09 | [HIGH/security] `_coerce_bool` at `config.py:59` |
+| backlog | `00140` | dropped | — |  |  | legacy-archived-2026-09 | [HIGH/security] `execute_test_sql_for_testing`,  |
+| backlog | `00141` | dropped | — |  |  | legacy-archived-2026-09 | [HIGH/correctness] `_iso_utc(dt)` at `maintenanc |
+| backlog | `00142` | dropped | — |  |  | legacy-archived-2026-09 | [HIGH/correctness] Migration 10 at `database.py: |
+| backlog | `00143` | dropped | — |  |  | legacy-archived-2026-09 | [HIGH/security] `query_phase_analytics` at `work |
+| backlog | `00144` | dropped | — |  |  | legacy-archived-2026-09 | [HIGH/correctness] `execute_test_sql_for_testing |
+| backlog | `00145` | dropped | — |  |  | legacy-archived-2026-09 | [HIGH/spec-drift] AC-23 LOC target violated. Bas |
+| backlog | `00146` | dropped | — |  |  | legacy-archived-2026-09 | [HIGH/correctness] Bundle L `_detect_phase_event |
+| backlog | `00147` | dropped | — |  |  | legacy-archived-2026-09 | [MED/consistency] `backward_frequency` query at  |
+| backlog | `00148` | dropped | — |  |  | legacy-archived-2026-09 | [MED/duplication] `refresh.py:180` formats times |
+| backlog | `00149` | dropped | — |  |  | legacy-archived-2026-09 | [MED/quality] `_TRUE_VALUES`/`_FALSE_VALUES` mod |
+| backlog | `00150` | dropped | — |  |  | legacy-archived-2026-09 | [MED/performance] `_detect_phase_events_drift` N |
+| backlog | `00151` | dropped | — |  |  | legacy-archived-2026-09 | [MED/correctness] `entity.get('project_id') or ' |
+| backlog | `00152` | dropped | — |  |  | legacy-archived-2026-09 | [MED/consistency] Migration 10 writes schema_ver |
+| backlog | `00153` | dropped | — |  |  | legacy-archived-2026-09 | [MED/correctness] PATH pinning in `run_memory_de |
+| backlog | `00154` | dropped | — |  |  | legacy-archived-2026-09 | [MED/security] O_NOFOLLOW + fchmod log-open has  |
+| backlog | `00155` | dropped | — |  |  | legacy-archived-2026-09 | [MED/testability] `_warn_and_default` module-sta |
+| backlog | `00156` | dropped | — |  |  | legacy-archived-2026-09 | [MED/spec-drift] AC-10 `strftime` grep-verificat |
+| backlog | `00157` | dropped | — |  |  | legacy-archived-2026-09 | [MED/spec-drift] AC-34b targets function name `_ |
+| backlog | `00158` | dropped | — |  |  | legacy-archived-2026-09 | [MED/spec-drift] AC-22 "line-for-line identical" |
+| backlog | `00159` | dropped | — |  |  | legacy-archived-2026-09 | [MED/quality] `plugins/pd/mcp/test_workflow_stat |
+| backlog | `00160` | dropped | — |  |  | legacy-archived-2026-09 | [MED/testability] `_coerce_bool` tested only for |
+| backlog | `00161` | dropped | — |  |  | legacy-archived-2026-09 | [MED/testability] `_iso_utc(dt)` direct unit tes |
+| backlog | `00162` | dropped | — |  |  | legacy-archived-2026-09 | [MED/testability] `scan_limit=0` edge untested.  |
+| backlog | `00163` | dropped | — |  |  | legacy-archived-2026-09 | [MED/testability] `run_memory_decay` Python-subp |
+| backlog | `00164` | dropped | — |  |  | legacy-archived-2026-09 | [MED/testability] `record_backward_event` server |
+| backlog | `00165` | dropped | — |  |  | legacy-archived-2026-09 | [MED/testability] Dual-write retry semantics aft |
+| backlog | `00166` | dropped | — |  |  | legacy-archived-2026-09 | [MED/testability] Migration-10 concurrent with l |
+| backlog | `00167` | dropped | — |  |  | legacy-archived-2026-09 | [MED/testability] `reconcile_check → manual-fix  |
+| backlog | `00168` | dropped | — |  |  | legacy-archived-2026-09 | [MED/testability] `_warn_unknown_keys` dedup beh |
+| backlog | `00169` | dropped | — |  |  | legacy-archived-2026-09 | [MED/testability] `_detect_phase_events_drift` e |
+| backlog | `00170` | dropped | — |  |  | legacy-archived-2026-09 | [MED/testability] `reviewer_notes` boundary at M |
+| backlog | `00171` | dropped | — |  |  | legacy-archived-2026-09 | [MED/testability] Bundle L ↔ Bundle E integratio |
+| backlog | `00172` | dropped | — |  |  | legacy-archived-2026-09 | [HIGH/implementation] AC-21 `test_decay_python_s |
+| backlog | `00173` | dropped | — |  |  | legacy-archived-2026-09 | [MED/security] `_assert_testing_context()` at... |
+| backlog | `00174` | dropped | — |  |  | legacy-archived-2026-09 | [MED/correctness] Migration 10 schema_version cr |
+| backlog | `00175` | dropped | — |  |  | legacy-archived-2026-09 | [MED/correctness] `query_phase_events_bulk(event |
+| backlog | `00176` | dropped | — |  |  | legacy-archived-2026-09 | [MED/test-drift] AC-22 test... |
+| backlog | `00177` | open | — |  |  | legacy-archived-2026-09 | [LOW/security] `_resolve_project_id()` emits std |
+| backlog | `00178` | dropped | — |  |  | legacy-archived-2026-09 | [LOW/security] `reset_warning_state()` public in |
+| backlog | `00179` | dropped | — |  |  | legacy-archived-2026-09 | [LOW/security] `trap 'export PATH="$PATH_OLD"' R |
+| backlog | `00180` | open | — |  |  | legacy-archived-2026-09 | [LOW/correctness] `_detect_phase_events_drift` w |
+| backlog | `00181` | dropped | — |  |  | legacy-archived-2026-09 | [LOW/quality] `_coerce_bool` int-literal branche |
+| backlog | `00182` | dropped | — |  |  | legacy-archived-2026-09 | [LOW/quality] Test parametrize sentinel `"defaul |
+| backlog | `00183` | open | — |  |  | legacy-archived-2026-09 | [LOW/implementation] AC-5 allowlist test missing |
+| backlog | `00184` | dropped | — |  |  | legacy-archived-2026-09 | [LOW/implementation] AC-7 `test_influence_log_re |
+| backlog | `00185` | dropped | — |  |  | legacy-archived-2026-09 | [LOW/implementation] AC-10... |
+| backlog | `00186` | dropped | — |  |  | legacy-archived-2026-09 | [LOW/implementation] AC-1 `test_coerce_bool_rout |
+| backlog | `00187` | dropped | — |  |  | legacy-archived-2026-09 | [LOW/test-gap] AC-28 boundary test misses compou |
+| backlog | `00188` | dropped | — |  |  | legacy-archived-2026-09 | [LOW/test-gap] AC-18 parametrize omits load-bear |
+| backlog | `00189` | dropped | — |  |  | legacy-archived-2026-09 | [LOW/test-gap] AC-7 TOCTOU fd-fstat defense at ` |
+| backlog | `00190` | open | — |  |  | legacy-archived-2026-09 | [LOW/test-gap] AC-5 rejection test misses non-st |
+| backlog | `00191` | dropped | — |  |  | legacy-archived-2026-09 | [LOW/test-gap] Fixture asymmetry: `test_refresh. |
+| backlog | `00217` | promoted | — | 1 |  | legacy-archived-2026-09 | Backlog #00217 |
+| backlog | `00246` | promoted | — | 1 |  | legacy-archived-2026-09 | Backlog #00246 |
+| backlog | `00277` | promoted | — | 1 |  | legacy-archived-2026-09 | Backlog #00277 |
 | brainstorm | `20260324-000000-causal-inference-training` | archived | yes |  |  |  | 20260324-000000-causal-inference-training |
-| brainstorm | `original_claude_code_special_force_design` | abandoned | — |  |  |  | original_claude_code_special_force_design |
-| brainstorm | `vast-mixing-lerdorf` | promoted | — | 1 |  |  | External: /Users/terry/.claude/plans/vast-mixing |
+| brainstorm | `original_claude_code_special_force_design` | abandoned | — |  |  | legacy-archived-2026-09 | original_claude_code_special_force_design |
+| brainstorm | `vast-mixing-lerdorf` | promoted | — | 1 |  | legacy-archived-2026-09 | External: /Users/terry/.claude/plans/vast-mixing |
 | feature | `001-entity-uuid-primary-key-migrat` | archived | yes |  | P001 |  | Entity Uuid Primary Key Migrat |
 | feature | `002-change-workflow-ordering` | archived | yes |  |  |  | Change Workflow Ordering |
 | feature | `002-markdown-entity-file-header-sc` | archived | yes |  | P001 |  | Markdown Entity File Header Sc |
@@ -358,13 +358,13 @@ The last column is the one that matters: rows a clean break would archive that s
 | feature | `109-polymorphic-taxonomy-and-event` | archived | yes |  | P003 |  | Polymorphic Taxonomy and Event-Sourced State |
 | feature | `112-workspace-identity-cleanup` | archived | yes |  | P003-entity-system-redesign |  | Workspace Identity Cleanup |
 | feature | `113-feature-112-qa-followups` | archived | yes |  |  |  | Feature 112 Qa Followups |
-| project | `P001` | *(NULL)* | — |  |  |  | P001 |
-| project | `P001-openclaw-gap-analysis` | active | — |  |  |  | Openclaw Gap Analysis |
-| project | `P002` | active | — | 5 | 20260415-100000-memory-flywheel |  | memory-flywheel |
-| project | `P002-memory-flywheel` | archived | — |  |  |  | Memory Flywheel |
-| project | `P003` | active | — | 4 | 20260510-152932-entity-system-redesign |  | entity-system-redesign |
-| project | `P003-entity-system-redesign` | archived | — | 1 |  |  | Entity System Redesign |
-| project | `P004-entity-db-redesign` | active | — | 16 | 20260710-153600-entity-db-redesign |  | Entity Db Redesign |
+| project | `P001` | *(NULL)* | — |  |  | legacy-archived-2026-09 | P001 |
+| project | `P001-openclaw-gap-analysis` | active | — |  |  | legacy-archived-2026-09 | Openclaw Gap Analysis |
+| project | `P002` | active | — | 5 | 20260415-100000-memory-flywheel | legacy-archived-2026-09 | memory-flywheel |
+| project | `P002-memory-flywheel` | archived | — |  |  | legacy-archived-2026-09 | Memory Flywheel |
+| project | `P003` | active | — | 4 | 20260510-152932-entity-system-redesign | legacy-archived-2026-09 | entity-system-redesign |
+| project | `P003-entity-system-redesign` | archived | — | 1 |  | legacy-archived-2026-09 | Entity System Redesign |
+| project | `P004-entity-db-redesign` | active | — | 16 | 20260710-153600-entity-db-redesign | legacy-archived-2026-09 | Entity Db Redesign |
 
 ### `/Users/terry/projects/project_illium`
 
