@@ -252,7 +252,17 @@ Plus **monotonicity pin**: archive the highest-numbered feature, allocate, asser
 
 **Verify.** AST count of executable f-strings producing `{seq:03d}` → exactly 1 (a textual `grep -c` also counts documentation examples) — **plus a table-driven assertion of rendered output for each production kind.** The count alone is satisfied by consolidating two identical kind-blind bodies into one kind-blind function, which is exactly the bug: today the project `P` prefix comes from neither call site but from the caller, `init_project_state` (`feature_lifecycle.py:314`), and C7 removes `entity_id` from the signature, so the prefix loses its owner.
 
-**Open decision — project id shape.** Two shapes are live: `P00N` (10 rows) and `001-slug` (2 rows, `fractorg` and `project_illium`, minted through kind-blind `allocate_entity_id` at `entity_server.py:692`). C4 cannot be specified until one is canonical. Brainstorm is excluded: its identity is a timestamp, not a sequence.
+**DECIDED 2026-09-21 — the `P` prefix is dropped.** Projects render `{seq:03d}-{slug}`, identical to every other sequence-numbered kind. `render_display_id` therefore has no kind-specific branch for projects at all.
+
+This removes the special case that caused the original incident: `_PROJECT_DISPLAY_RE = ^P(\d+)$` existed only to parse the prefix back off, and its end anchor is what silently returned 0 for every slug-suffixed project id. Two workspaces (`fractorg`, `project_illium`) already use the prefix-free shape, so this makes them canonical rather than exceptional.
+
+Consequences to carry:
+- `create-project.md` must stop instructing "build `P{NNN}` from the returned `seq`" and stop discarding the returned `entity_id`.
+- The `P{NNN}-*` directory guard in `create-project.md` no longer matches; it becomes `{NNN}-*`.
+- `_PROJECT_DISPLAY_RE` and the `kind == "project"` branch in `_display_number` (`rebuild_tool.py:1026-1034`) are deleted, not repaired.
+- Existing `P00N` directories on disk keep their names — they belong to entities the clean break archives, and nothing renames them.
+
+**Brainstorm is excluded from this renderer.** Its identity is a timestamp (`{YYYYMMDD-HHMMSS}-{slug}`, `commands/brainstorm.md:14`), not a sequence, and no brainstorm path calls the allocator.
 
 **Depends.** Nothing.
 
@@ -388,11 +398,13 @@ The string form is defeated by a second producer in the same function. `_scan_pr
 
 ## C22 — Recreate the live remainder
 
-**Contract.** The 6 open backlog items and the live projects — **7 non-terminal project rows across three workspaces**, not ~3, and three of them are duplicate pairs of the same project (`P002`/`P002-memory-flywheel`, `P003`/`P003-entity-system-redesign`, `P001`/`P001-agent-orchestrator`) whose children are split across both halves — exist in the new shape with fresh uuids, display rows, and **newly issued** numbers. No recreated entity reuses an archived entity's number.
+**Contract.** The **15 live rows** identified in [entity-archive-manifest.md](../entity-archive-manifest.md) — 6 open backlog items, 7 project rows across three workspaces, 1 brainstorm and 1 feature — exist in the new shape with fresh uuids, display rows, and **newly issued** numbers. No recreated entity reuses an archived entity's number.
 
 **Interface.** Ordinary creation paths only (`/pd:add-to-backlog`, project creation) — through the *new* writer. No bespoke insert.
 
-**Verify.** Each new entity has an `entity_display` row; every issued `seq` exceeds the bucket's pre-break high-water mark recorded by B4; the **4** live children remain attached to their archived parents (79 children total hang off display-less parents; 4 are non-terminal under production's `TERMINAL_STATUSES` — the count of 3 assumed NULL was terminal). **This Verify covers only entities C22 created and is structurally incapable of detecting the set never created** — that gap is B5's grouped release blocker.
+**Verify.** Each new entity has an `entity_display` row; **DECIDED 2026-09-21 — duplicate project pairs collapse onto the most recent row, and all children re-parent to it.** Three pairs are the same project registered twice (`P002`/`P002-memory-flywheel`, `P003`/`P003-entity-system-redesign`, `P001`/`P001-agent-orchestrator`), with children split across both halves. The surviving row is the one with the later `created_at`; every child of the other half re-parents to it via `parent_uuid`, which is a uuid foreign key and needs no text.
+
+**Verify.** Each new entity has an `entity_display` row; every issued `seq` exceeds the bucket's pre-break high-water mark recorded by B4; after the pair collapse **no entity retains a `parent_uuid` pointing at a non-surviving half**, and the total child count per collapsed pair is preserved (5+0, 4+1, 12+3 today). The **4** live children remain attached to their archived parents (79 children total hang off display-less parents; 4 are non-terminal under production's `TERMINAL_STATUSES` — the count of 3 assumed NULL was terminal). **This Verify covers only entities C22 created and is structurally incapable of detecting the set never created** — that gap is B5's grouped release blocker.
 
 **Depends.** C5, C7, C15–C16. *(This was Release B's recreate step. It cannot close inside Release B — recreating through the new writer requires the cutover, so "all of B closes before C" was never achievable.)*
 
