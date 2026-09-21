@@ -25,11 +25,11 @@ Restoration is a forward write through the sanctioned path, not a rollback. Two 
 
 | Workspace | No display row | Archived | **live, no display row** |
 |---|---:|---:|---:|
-| `/Users/terry/projects/cast-below` | 2 | 0 | **1** |
+| `/Users/terry/projects/cast-below` | 2 | 1 | **0** |
 | `/Users/terry/projects/pedantic-drip` | 175 | 156 | **11** |
 | `/Users/terry/projects/project_illium` | 0 | 1 | **0** |
 | `/Users/terry_agent` | 3 | 12 | **0** |
-| **Total** | **180** | **169** | **12** |
+| **Total** | **180** | **170** | **11** |
 
 The last column is the one that matters: rows a clean break would archive that someone might still be relying on.
 
@@ -37,7 +37,6 @@ The last column is the one that matters: rows a clean break would archive that s
 
 | Workspace | kind | entity_id | status | kids | name |
 |---|---|---|---|--:|---|
-| `cast-below` | brainstorm | `original-ideation-prd` | *(NULL)* |  | 🎣 Cast Below |
 | `pedantic-drip` | backlog | `00059` | open |  | Pre-review lint for curly-brace template place |
 | `pedantic-drip` | backlog | `00060` | open |  | Structured Git Operations Reference for design |
 | `pedantic-drip` | backlog | `00177` | open |  | [LOW/security] `_resolve_project_id()` emits s |
@@ -56,7 +55,7 @@ The last column is the one that matters: rows a clean break would archive that s
 
 | kind | entity_id | status | disp | kids | parent | tags | name |
 |---|---|---|:--:|--:|---|---|---|
-| brainstorm | `original-ideation-prd` | *(NULL)* | — |  |  |  | 🎣 Cast Below |
+| brainstorm | `original-ideation-prd` | archived | — |  |  | legacy-archived-2026-09 | 🎣 Cast Below |
 | project | `P001` | completed | — | 29 | 20260223-222936-world-readable |  | P001 |
 
 ### `/Users/terry/projects/pedantic-drip`

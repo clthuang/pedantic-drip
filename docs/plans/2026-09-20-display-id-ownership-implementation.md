@@ -152,13 +152,9 @@ def establish_high_water(conn) -> dict[tuple[str, str], int]:   # (kind, workspa
 
 **Resolved 2026-09-21 — `/Users/terry_agent`.** The workspace had been dormant since 2026-05-12. Its 12 non-terminal entities were archived; the 45 already-terminal rows were left untouched, because rewriting `completed`/`promoted` to `archived` would discard a more specific status. Two distinct tags were used so the record stays honest: `legacy-archived-2026-09` for the 3 genuinely legacy rows the break claims, and `workspace-retired-2026-09` for the 9 display-bearing rows that were never legacy and are being stood down for a different reason. Snapshot at `entities.db.pre-terryagent-20260921`.
 
-**Still open:**
+**Resolved 2026-09-21 — `cast-below`.** `brainstorm:original-ideation-prd` archived and tagged `legacy-archived-2026-09`. Its content was never in the database: the row is a pointer, and the 407-line PRD already exists at the `artifact_path` it records. Archival asserts the artifact is present on disk first, so the row is never orphaned from its content. Snapshot at `entities.db.pre-castbelow-20260921`. (`cast-below`'s `project:P001` is `completed` and was never a blocker.)
 
-| workspace | kind | entity_id | status |
-|---|---|---|---|
-| `cast-below` | brainstorm | `original-ideation-prd` | NULL |
-
-(`cast-below`'s `project:P001` is `completed`, hence not a blocker.) Cross-workspace live rows fell 4 → 1.
+**Cross-workspace live rows: 4 → 0. This blocker is CLEARED.** B6 may now proceed scoped to pedantic-drip without stranding another repository's working state. The remaining 176 unmarked legacy rows are all in pedantic-drip; 11 of them are live.
 
 C22 recreates via "ordinary creation paths", which run in the *current* project's context — nothing recreates another repo's entities. **Design D0's scope table counts NULL as terminal**, which is how it reports "0 to recreate" for brainstorm and feature; production's own `TERMINAL_STATUSES = {promoted, abandoned, archived}` (`entity_status.py:10`) does not.
 
