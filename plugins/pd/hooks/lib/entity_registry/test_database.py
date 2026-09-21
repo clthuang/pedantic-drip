@@ -417,7 +417,7 @@ class TestMigration2:
         cur = db._conn.execute("PRAGMA table_info(entities)")
         columns = cur.fetchall()
         # 16 since v1 migrations 22/23 added is_legacy / is_archived.
-        assert len(columns) == 16
+        assert len(columns) == 17
 
         db.close()
 
@@ -507,7 +507,7 @@ class TestSchemaCreation:
             "name", "status", "parent_uuid",
             "artifact_path", "created_at", "updated_at", "metadata",
             "type", "kind", "lifecycle_class",
-            "is_legacy", "is_archived",
+            "is_legacy", "is_archived", "is_deleted",
         ]
         assert col_names == expected
 
@@ -631,6 +631,7 @@ class TestIndexes:
             # Feature 109 (AC-1.6): composite polymorphic-query index
             # added to migration 12.
             "idx_entities_is_archived",
+            "idx_entities_is_deleted",
             "idx_entities_is_legacy",
             "idx_entities_type_kind",
             # Feature 110 (FR-8.1): index on entity_display(seq) added
@@ -5366,13 +5367,19 @@ class TestDeleteEntity:
         # Entity row gone
         assert db.get_entity("feature:001-test") is None
         # workflow_phases row gone
-        assert db.get_workflow_phase("feature:001-test") is None
+        # #081/D3: soft delete performs no cascade. The workflow row
+        # survives so that restore is lossless; it is the ENTITY that is
+        # hidden, not its satellite state.
+        assert db.get_workflow_phase("feature:001-test") is not None
         # FTS entry gone
         fts = db._conn.execute(
             "SELECT * FROM entities_fts WHERE entities_fts MATCH ?",
             ('"Test Feature"',)
         ).fetchall()
-        assert len(fts) == 0
+        # #081/D3a: the FTS row is NOT removed (no cascade). Deleted
+        # entities are kept out of results by search_entities' filter
+        # instead — see test_delete_entity_fts_cleaned.
+        assert len(fts) == 1
 
     def test_delete_entity_with_children_rejected(self, db: EntityDatabase):
         """AC-3: Cannot delete entity that has children."""
@@ -5424,7 +5431,10 @@ class TestDeleteEntity:
                 return getattr(real_conn, name)
 
             def execute(self, sql, params=()):
-                if isinstance(sql, str) and sql.strip().startswith("DELETE FROM entities"):
+                # #081: delete_entity now UPDATEs is_deleted rather than
+                # issuing DELETE FROM entities. Targeting the old statement
+                # made this proxy inert and the test vacuous.
+                if isinstance(sql, str) and "is_deleted = 1" in sql:
                     raise RuntimeError("Simulated failure")
                 return original_execute(sql, params)
 
@@ -6772,9 +6782,15 @@ class TestDeleteCascade:
         mem_db.delete_entity("feature:del1", project_id=TEST_PROJECT_ID)
 
         # Verify all junction table rows are gone
-        assert len(mem_db.get_tags(uid)) == 0
-        assert len(mem_db.query_dependencies(entity_uuid=uid)) == 0
-        assert len(mem_db.get_okr_alignments(uid)) == 0
+        # #081/D3: the five-table cascade is deliberately a no-op now.
+        # Deleting a row's tags, dependencies and OKR links would make
+        # restore lossy, which defeats the point of a soft delete. The
+        # entity is hidden from reads; its satellite state is untouched.
+        assert mem_db.get_entity_by_uuid(uid) is None
+        assert mem_db.get_entity_by_uuid(uid, include_deleted=True) is not None
+        assert len(mem_db.get_tags(uid)) == 2
+        assert len(mem_db.query_dependencies(entity_uuid=uid)) == 1
+        assert len(mem_db.get_okr_alignments(uid)) == 1
 
     def test_delete_cascade_project_scoped(self, mem_db):
         """Delete resolves entity within project scope."""
@@ -6818,7 +6834,10 @@ class TestDeleteCascadeUnblock:
 
         # Edge is gone (FK ON DELETE CASCADE -- the live deletion mechanism
         # post-124, not a manual DELETE).
-        assert mem_db.query_dependencies(entity_uuid=b) == []
+        # #081/D3: soft delete leaves the edge in place. What matters is
+        # that the deleted blocker stops blocking (design D5) — asserted by
+        # the status flip below, which is the actual behaviour under test.
+        assert len(mem_db.query_dependencies(entity_uuid=b)) == 1
         entity_b = mem_db.get_entity_by_uuid(b)
         assert entity_b["status"] == "ready"
         events = mem_db.query_phase_events(
@@ -6853,9 +6872,11 @@ class TestDeleteCascadeUnblock:
 
         mem_db.delete_entity("feature:d03-a", project_id=TEST_PROJECT_ID)
 
+        # Both edges survive the soft delete; the deleted one simply
+        # stops counting. c is the blocker that still blocks.
         remaining = mem_db.query_dependencies(entity_uuid=b)
-        assert len(remaining) == 1
-        assert remaining[0]["blocked_by_uuid"] == c
+        assert len(remaining) == 2
+        assert c in [r["blocked_by_uuid"] for r in remaining]
         entity_b = mem_db.get_entity_by_uuid(b)
         assert entity_b["status"] == "blocked"
 
@@ -6881,9 +6902,12 @@ class TestDeleteCascadeUnblock:
 
         mem_db.delete_entity("feature:d06-a", project_id=TEST_PROJECT_ID)
 
+        # Both edges survive the soft delete (#081/D3); the deleted
+        # blocker stops counting and the already-resolved one never did,
+        # so b flips.
         remaining = mem_db.query_dependencies(entity_uuid=b)
-        assert len(remaining) == 1
-        assert remaining[0]["blocked_by_uuid"] == c
+        assert len(remaining) == 2
+        assert c in [r["blocked_by_uuid"] for r in remaining]
         entity_b = mem_db.get_entity_by_uuid(b)
         assert entity_b["status"] == "ready"
 
@@ -9592,68 +9616,79 @@ class TestSC8DualWritePerClass:
         assert v2_db.get_entity("backlog:012-never") is None
 
 
-class TestDeleteEntityV2GenerationFKFinding:
-    """Feature 132 task-3 finding (see delete_entity's docstring for the
-    full analysis): once ANY events row exists for an entity -- which
-    register_entity's own entity_created dual-write guarantees at birth
-    on a v2-generation file -- delete_entity's hard ``DELETE FROM
-    entities`` can never succeed again. ``events.entity_uuid`` is ``NOT
-    NULL REFERENCES entities(uuid)`` with no ``ON DELETE`` clause, and
-    ``events_no_delete`` fires even on an FK CASCADE-induced delete
-    (verified empirically, all 3 statement orderings, with and without
-    ``PRAGMA defer_foreign_keys``). This is an emergent consequence of
-    dual-write landing at all, NOT something delete_entity's own code
-    introduces (task 3 deliberately does NOT wire an emit into it).
-    Pinned here as an HONEST regression test -- not a fabricated success
-    case -- so a future v1-retirement effort has a concrete starting
-    point (options: a nullable entity_uuid + ON DELETE SET NULL in
-    events.py, or a soft-delete redesign of delete_entity's contract;
-    both are design decisions outside task 3's scope).
+class TestDeleteEntityIsSoft:
+    """#081, resolved 2026-09-22.
+
+    This class previously pinned the OPPOSITE: that delete_entity always
+    raised IntegrityError once an entity had any events row — which is all
+    of them, since register_entity's own entity_created dual-write
+    guarantees one at birth. events.entity_uuid is NOT NULL REFERENCES
+    entities(uuid) with no ON DELETE, and events_no_delete fires even on an
+    FK CASCADE delete.
+
+    That test named the two ways out: a nullable entity_uuid with ON DELETE
+    SET NULL, or a soft-delete redesign of delete_entity's contract. The
+    second was taken — cascading deletes into an append-only audit ledger
+    would let deleting an entity destroy the record of everything that ever
+    happened to it. The immutability is the feature.
+
+    So the contract is inverted here, deliberately, rather than deleted.
     """
 
-    def test_delete_entity_raises_once_the_entity_has_any_v2_event(self, v2_db):
+    def test_delete_succeeds_and_keeps_the_row_and_its_history(self, v2_db):
         ws_uuid = _bootstrap_test_workspace(v2_db, "del-proj")
         entity_uuid = v2_db.register_entity(
             "feature", "099-doomed", "Doomed Feature", workspace_uuid=ws_uuid,
         )
-        pre_events = v2_db._conn.execute(
+        assert v2_db._conn.execute(
             "SELECT COUNT(*) FROM events WHERE entity_uuid = ?", (entity_uuid,)
-        ).fetchone()[0]
-        assert pre_events == 1  # register_entity's own entity_created row
+        ).fetchone()[0] == 1
 
-        with pytest.raises(sqlite3.IntegrityError):
-            v2_db.delete_entity("feature:099-doomed", workspace_uuid=ws_uuid)
+        v2_db.delete_entity("feature:099-doomed", workspace_uuid=ws_uuid)
 
-        # delete_entity's own (feature-132-unrelated) except/rollback
-        # already leaves the entity intact.
-        assert v2_db.get_entity("feature:099-doomed") is not None
+        row = v2_db._conn.execute(
+            "SELECT is_deleted, status FROM entities WHERE uuid = ?", (entity_uuid,)
+        ).fetchone()
+        assert row is not None, "soft delete must not remove the row"
+        assert row["is_deleted"] == 1
+        # The events row that made hard delete impossible is still there,
+        # plus the entity_deleted event that was previously unwritable.
+        assert v2_db._conn.execute(
+            "SELECT COUNT(*) FROM events WHERE entity_uuid = ?", (entity_uuid,)
+        ).fetchone()[0] == 2
 
-    def test_delete_entity_still_works_on_v1_file(self, db: EntityDatabase):
-        """Confirms the finding is v2-only: a v1 file has no events table
-        at all, so delete_entity's existing (pre-132) behavior is
-        completely unaffected -- see also TestDeleteEntity::
-        test_delete_entity_success above, this just makes the v1/v2
-        contrast explicit in one place."""
-        ws_uuid = _bootstrap_test_workspace(db, "del-v1-proj")
-        entity_uuid = db.register_entity(
-            "feature", "098-fine", "Fine Feature", workspace_uuid=ws_uuid,
+    def test_deleted_entity_is_hidden_from_reads_but_reachable(self, v2_db):
+        ws_uuid = _bootstrap_test_workspace(v2_db, "del-proj")
+        v2_db.register_entity(
+            "feature", "099-doomed", "Doomed Feature", workspace_uuid=ws_uuid,
         )
-        db.delete_entity("feature:098-fine", workspace_uuid=ws_uuid)
-        assert db.get_entity("feature:098-fine") is None
+        v2_db.delete_entity("feature:099-doomed", workspace_uuid=ws_uuid)
 
+        assert v2_db.get_entity("feature:099-doomed") is None
+        assert v2_db.get_entity("feature:099-doomed", include_deleted=True) is not None
+        assert not any(
+            e["type_id"] == "feature:099-doomed"
+            for e in v2_db.list_entities(workspace_uuid=ws_uuid)
+        )
 
-# ---------------------------------------------------------------------------
-# Test-deepening addition: TestSC8DualWritePerClass's rollback tests above
-# all use an INJECTED proxy failure (_EventsInsertFailureProxy);
-# TestVocabTriggerRejection (test_axes.py) proves the REAL 122 vocab
-# trigger rejects a raw INSERT, never through append_phase_event's own
-# production call path. Closes that gap: an out-of-vocabulary phase value
-# on a feature-kind entity's phase transition hits the SAME production
-# ``_emit_v2_event`` call as every legitimate transition and must roll
-# back the v1 phase_events INSERT + workflow_phases UPDATE too --
-# both-or-neither via the REAL mechanism, not a synthetic substitute.
-# dimension:error_paths, dimension:concurrency
-# ---------------------------------------------------------------------------
+    def test_restore_is_lossless(self, v2_db):
+        ws_uuid = _bootstrap_test_workspace(v2_db, "del-proj")
+        v2_db.register_entity(
+            "feature", "099-doomed", "Doomed Feature", status="completed",
+            workspace_uuid=ws_uuid,
+        )
+        before = dict(v2_db.get_entity("feature:099-doomed"))
+        v2_db.delete_entity("feature:099-doomed", workspace_uuid=ws_uuid)
+        v2_db.set_deleted("feature:099-doomed", False, workspace_uuid=ws_uuid)
+        after = dict(v2_db.get_entity("feature:099-doomed"))
+
+        differing = {
+            k for k in before
+            if before[k] != after[k] and k not in ("updated_at", "is_deleted")
+        }
+        assert not differing, f"restore lost {differing}"
+        assert after["status"] == "completed"
+
 class TestRealVocabTriggerRejectionRollsBackDualWrite:
     def test_append_phase_event_real_vocab_rejection_rolls_back_v1_write_too(
         self, v2_db,

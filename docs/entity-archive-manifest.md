@@ -1,6 +1,6 @@
 # Entity Archive Manifest
 
-**Generated:** 2026-09-21 by `scripts/gen_archive_manifest.py` (read-only).
+**Generated:** 2026-09-22 by `scripts/gen_archive_manifest.py` (read-only).
 
 Every entity flagged **`entities.is_archived`** or **`entities.is_legacy`**. Legacy means the identity predates the structural model, so its sequence number and slug exist only inside its `entity_id` text.
 

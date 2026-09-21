@@ -6350,11 +6350,42 @@ def _v2_migration_5_explicit_archived_flag(conn: sqlite3.Connection) -> None:
     _upsert_metadata(conn, "migration_5_statuses_restored", str(restored))
 
 
+def _v2_migration_6_soft_delete(conn: sqlite3.Connection) -> None:
+    """v2 migration 6 / v1 migration 24 — ``entities.is_deleted`` (#081).
+
+    Hard delete is structurally impossible and always was:
+    ``events.entity_uuid`` is ``NOT NULL REFERENCES entities(uuid)`` with no
+    ``ON DELETE``, and ``events_no_delete`` fires even on an FK-cascade
+    delete, so the final ``DELETE FROM entities`` raises for any entity that
+    has ever been touched — which is all 579 of them.
+
+    Adding ``ON DELETE CASCADE`` to ``events`` would "fix" that by letting a
+    delete destroy the audit record of everything that ever happened to the
+    entity. The immutability is the feature. Deletion becomes soft instead.
+
+    No row is marked deleted here: the column exists so deletion has
+    somewhere to go, and the behaviour change is inert until something is
+    actually deleted.
+
+    Replay-safe: probes ``PRAGMA table_info`` and returns if present.
+    """
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(entities)")}
+    if "is_deleted" in cols:
+        return
+    conn.execute(
+        "ALTER TABLE entities ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_entities_is_deleted ON entities(is_deleted)"
+    )
+
+
 V2_MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _v2_migration_2_mini_spec,
     3: _v2_migration_3_state_only_axis_views,
     4: _v2_migration_4_explicit_legacy_flag,
     5: _v2_migration_5_explicit_archived_flag,
+    6: _v2_migration_6_soft_delete,
 }
 
 # Both flag migrations are generation-agnostic — they probe PRAGMA
@@ -6365,6 +6396,7 @@ V2_MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
 # functions are defined after MIGRATIONS.
 MIGRATIONS[22] = _v2_migration_4_explicit_legacy_flag
 MIGRATIONS[23] = _v2_migration_5_explicit_archived_flag
+MIGRATIONS[24] = _v2_migration_6_soft_delete
 
 # qa-mig3 MEDIUM: the stamp sites write schema_v2.V2_SCHEMA_VERSION; a bump
 # without the matching chain entry strands stamped files unfixably
@@ -6878,8 +6910,14 @@ class EntityDatabase:
     # UUID lookup and flexible ref resolution (Task 1b.3a)
     # ------------------------------------------------------------------
 
-    def get_entity_by_uuid(self, uuid: str) -> dict | None:
+    def get_entity_by_uuid(
+        self, uuid: str, *, include_deleted: bool = False
+    ) -> dict | None:
         """Retrieve a single entity by UUID.
+
+        Soft-deleted entities (``is_deleted``, #081) are excluded unless
+        *include_deleted*. They are still present in the table; deletion
+        never removes a row, because the events ledger is immutable.
 
         Returns entity dict or None if not found (or input is not a valid UUID).
 
@@ -6898,7 +6936,14 @@ class EntityDatabase:
             "WHERE e.uuid = ?",
             (uuid,),
         ).fetchone()
-        return dict(row) if row else None
+        if row is None:
+            return None
+        result = dict(row)
+        # #081: soft-deleted rows stay in the table; hide them from the
+        # default read so callers see what deletion means.
+        if result.get("is_deleted") and not include_deleted:
+            return None
+        return result
 
     # ------------------------------------------------------------------
     # Feature 111 helpers — closure-transaction primitives used by F10
@@ -8034,8 +8079,12 @@ class EntityDatabase:
             # Step 6: return updated entity dict via EXISTING helper.
             return self.get_entity_by_uuid(uuid)
 
-    def get_entity(self, type_id: str) -> dict | None:
+    def get_entity(
+        self, type_id: str, *, include_deleted: bool = False
+    ) -> dict | None:
         """Retrieve a single entity by UUID or type_id.
+
+        Soft-deleted entities are excluded unless *include_deleted* (#081).
 
         Returns ``None`` if not found.
 
@@ -8058,7 +8107,12 @@ class EntityDatabase:
             "WHERE e.uuid = ?",
             (uuid,),
         ).fetchone()
-        return dict(row) if row else None
+        if row is None:
+            return None
+        result = dict(row)
+        if result.get("is_deleted") and not include_deleted:
+            return None
+        return result
 
     def list_entities(
         self,
@@ -8066,6 +8120,7 @@ class EntityDatabase:
         project_id: str | None = None,
         *,
         workspace_uuid: str | None = None,
+        include_deleted: bool = False,
     ) -> list[dict]:
         """Return all entities, optionally filtered by entity_type and workspace.
 
@@ -8118,7 +8173,10 @@ class EntityDatabase:
         if conditions:
             sql += " WHERE " + " AND ".join(conditions)
         cur = self._conn.execute(sql, params)
-        return [dict(row) for row in cur.fetchall()]
+        rows = [dict(row) for row in cur.fetchall()]
+        if not include_deleted:
+            rows = [r for r in rows if not r.get("is_deleted")]
+        return rows
 
     def get_lineage(
         self,
@@ -8246,6 +8304,38 @@ class EntityDatabase:
         with self.transaction():
             cur = self._conn.execute(sql, params)
             if cur.rowcount == 0:
+                raise ValueError(
+                    f"no entity with type_id {type_id!r}"
+                    + (f" in workspace {workspace_uuid!r}" if workspace_uuid else "")
+                )
+
+    def set_deleted(
+        self,
+        type_id: str,
+        deleted: bool = True,
+        *,
+        workspace_uuid: str | None = None,
+    ) -> None:
+        """Mark an entity deleted, or restore it. Writes only the flag.
+
+        The mirror of :meth:`set_archived`, and the restore half of
+        :meth:`delete_entity`. Because soft delete performs no cascade, the
+        delete/restore round trip is lossless — tags, workflow row, FTS row
+        and status all survive underneath.
+
+        Prefer ``delete_entity`` for deletion: it also enforces the
+        no-children guard and emits the lifecycle event. This is the direct
+        flag write, and the only supported way back.
+
+        Raises ``ValueError`` when *type_id* resolves to no entity.
+        """
+        params: list = [1 if deleted else 0, self._now_iso(), type_id]
+        sql = "UPDATE entities SET is_deleted = ?, updated_at = ? WHERE type_id = ?"
+        if workspace_uuid is not None:
+            sql += " AND workspace_uuid = ?"
+            params.append(workspace_uuid)
+        with self.transaction():
+            if self._conn.execute(sql, params).rowcount == 0:
                 raise ValueError(
                     f"no entity with type_id {type_id!r}"
                     + (f" in workspace {workspace_uuid!r}" if workspace_uuid else "")
@@ -8816,31 +8906,32 @@ class EntityDatabase:
                     f"Cannot delete entity with children: {type_id}"
                 )
 
-            # 3. Extended cascade: junction tables by UUID (TD-6)
+            # 3. Soft delete (#081, v2 migration 6). The former cascade —
+            # entity_tags, entity_okr_alignment, entities_fts,
+            # workflow_phases, then the entity row — is deliberately NOT
+            # performed. Deleting a row's tags and workflow state would make
+            # restore lossy, which defeats the point of a soft delete; the
+            # FTS row is handled by filtering the read instead (design D3a).
+            #
+            # The hard DELETE that used to sit here could never succeed:
+            # events.entity_uuid is NOT NULL REFERENCES entities(uuid) with
+            # no ON DELETE and events_no_delete fires even on an FK cascade,
+            # so it raised IntegrityError for every entity that has ever
+            # been touched. The whole method rolled back, making it inert.
             self._conn.execute(
-                "DELETE FROM entity_tags WHERE entity_uuid = ?",
-                (entity_uuid,),
-            )
-            self._conn.execute(
-                "DELETE FROM entity_okr_alignment "
-                "WHERE entity_uuid = ? OR key_result_uuid = ?",
-                (entity_uuid, entity_uuid),
-            )
-
-            # 4. Delete FTS entry
-            self._conn.execute(
-                "DELETE FROM entities_fts WHERE rowid = ?", (row["rowid"],)
-            )
-
-            # 5. Delete workflow_phases
-            self._conn.execute(
-                "DELETE FROM workflow_phases WHERE type_id = ?",
-                (resolved_type_id,),
+                "UPDATE entities SET is_deleted = 1, updated_at = ? WHERE uuid = ?",
+                (self._now_iso(), entity_uuid),
             )
 
-            # 6. Delete entity row by UUID
-            self._conn.execute(
-                "DELETE FROM entities WHERE uuid = ?", (entity_uuid,)
+            # 4. The lifecycle event #081 calls structurally impossible. It
+            # was impossible only because the row had to vanish before an
+            # event could reference it; nothing vanishes now.
+            self._emit_v2_event(
+                entity_uuid=entity_uuid,
+                event_type="entity_deleted",
+                axis="lifecycle",
+                to_value="deleted",
+                actor="delete_entity",
             )
 
             self._commit()
@@ -9014,6 +9105,7 @@ class EntityDatabase:
         limit: int = 20,
         project_id: str | None = None,
         *,
+        include_deleted: bool = False,
         workspace_uuid: str | None = None,
     ) -> list[dict]:
         """Full-text search over entities.
@@ -9096,7 +9188,12 @@ class EntityDatabase:
         except sqlite3.OperationalError as exc:
             raise ValueError(f"invalid_search_query: {exc}") from exc
 
-        return [dict(r) for r in rows]
+        results = [dict(r) for r in rows]
+        # FTS rows are not removed on soft delete (design D3a), so the
+        # filter must happen here or deleted entities stay searchable.
+        if not include_deleted:
+            results = [r for r in results if not r.get("is_deleted")]
+        return results
 
     # ------------------------------------------------------------------
     # Export

@@ -413,7 +413,7 @@ def _entities_insert_sql(cols: tuple[str, ...]) -> str:
 # Kept for the v14-shaped path; the live path derives its columns from the
 # target file so later additions (is_legacy, is_archived) are carried rather
 # than silently dropped.
-_FLAG_COLUMNS = ("is_legacy", "is_archived")
+_FLAG_COLUMNS = ("is_legacy", "is_archived", "is_deleted")
 _ENTITIES_INSERT_SQL = _entities_insert_sql(
     database._V14_ENTITIES_COLUMNS + _FLAG_COLUMNS
 )
@@ -613,6 +613,7 @@ def _import_entities(old_conn: sqlite3.Connection, new_conn: sqlite3.Connection)
                 parent_new, row["artifact_path"], row["created_at"], row["updated_at"],
                 row["metadata"], row["type"], row["kind"], row["lifecycle_class"],
                 _flag(row, "is_legacy"), _flag(row, "is_archived"),
+                _flag(row, "is_deleted"),
             ),
         )
 

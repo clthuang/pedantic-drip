@@ -142,8 +142,19 @@ class DependencyManager:
         and flips.
         """
         for blocker_uuid in self.get_blockers(db, entity_uuid):
-            blocker = db.get_entity_by_uuid(blocker_uuid)
-            if blocker is None or not _blocker_completed(blocker):
+            # include_deleted so a soft-deleted blocker is distinguishable
+            # from a dangling edge. Without it the default read returns None
+            # for both, and #081's soft delete would leave every dependent
+            # blocked forever: under hard delete the edge was cascade-removed
+            # so get_blockers returned nothing and the vacuous-truth path
+            # below did the work. The edge now survives the delete.
+            blocker = db.get_entity_by_uuid(blocker_uuid, include_deleted=True)
+            if blocker is None:
+                return False
+            if blocker.get("is_deleted"):
+                # Design D5: a deleted blocker is not blocking anything.
+                continue
+            if not _blocker_completed(blocker):
                 return False
         return True
 
