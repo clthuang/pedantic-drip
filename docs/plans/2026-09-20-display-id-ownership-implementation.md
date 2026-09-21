@@ -148,15 +148,17 @@ def establish_high_water(conn) -> dict[tuple[str, str], int]:   # (kind, workspa
 
 **Verify.** Emit the selected set **grouped by `(workspace_uuid, kind, status)`**, not as a single total — the totals (166 backlog + 3 brainstorm + 1 feature + 10 project = 180) are measured on a shared registry that 23 other workspaces keep writing to, and every project created anywhere before B5 runs adds a display-less row. Asserting the literals invites re-baselining whatever drift appeared.
 
-**Release blocker.** Any **non-terminal** row outside the invoking workspace requires a named owner before B6 runs. Today that set is non-empty:
+**Release blocker.** Any **non-terminal** row outside the invoking workspace requires a named owner before B6 runs.
+
+**Resolved 2026-09-21 — `/Users/terry_agent`.** The workspace had been dormant since 2026-05-12. Its 12 non-terminal entities were archived; the 45 already-terminal rows were left untouched, because rewriting `completed`/`promoted` to `archived` would discard a more specific status. Two distinct tags were used so the record stays honest: `legacy-archived-2026-09` for the 3 genuinely legacy rows the break claims, and `workspace-retired-2026-09` for the 9 display-bearing rows that were never legacy and are being stood down for a different reason. Snapshot at `entities.db.pre-terryagent-20260921`.
+
+**Still open:**
 
 | workspace | kind | entity_id | status |
 |---|---|---|---|
-| `/Users/terry_agent` | project | `P001` | **active** |
-| `/Users/terry_agent` | project | `P001-agent-orchestrator` | **active** |
-| `/Users/terry_agent` | feature | `unnamed-b43fd0f1` | NULL |
 | `cast-below` | brainstorm | `original-ideation-prd` | NULL |
-| `cast-below` | project | `P001` | completed |
+
+(`cast-below`'s `project:P001` is `completed`, hence not a blocker.) Cross-workspace live rows fell 4 → 1.
 
 C22 recreates via "ordinary creation paths", which run in the *current* project's context — nothing recreates another repo's entities. **Design D0's scope table counts NULL as terminal**, which is how it reports "0 to recreate" for brainstorm and feature; production's own `TERMINAL_STATUSES = {promoted, abandoned, archived}` (`entity_status.py:10`) does not.
 
