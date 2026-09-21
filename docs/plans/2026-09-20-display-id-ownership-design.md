@@ -33,14 +33,20 @@ Three properties status alone does not provide, and which D0 therefore requires 
 
 Measured scope:
 
-| Kind | Legacy rows | Already terminal | To recreate |
-|---|---|---|---|
-| backlog | 166 | 160 | 6 (all LOW test-gap/lint items) |
-| brainstorm | 3 | 3 | 0 |
-| feature | 1 | 1 | 0 |
-| project | 10 | 4 | ~3 live; the rest are bare-`P` duplicates |
+"Terminal" below means production's own `TERMINAL_STATUSES = {promoted, abandoned, archived}` (`entity_status.py:10`). **NULL is not terminal** — an earlier revision of this table counted it as such, which is how brainstorm and feature reported "0 to recreate".
 
-Lineage survives untouched: `parent_uuid` is a uuid foreign key, so archiving a parent is a status change, not a removal. Of 79 entities with legacy parents, 76 are themselves terminal; the 3 live children stay attached to their archived originals, which remains historically truthful.
+| Kind | Legacy rows | Already terminal | To recreate | Outside this workspace |
+|---|---|---|---|---|
+| backlog | 166 | 160 | 6 (all LOW test-gap/lint items) | — |
+| brainstorm | 3 | 2 | 1 (NULL status) | `cast-below`: `original-ideation-prd` |
+| feature | 1 | 0 | 1 (NULL status) | `/Users/terry_agent`: `unnamed-b43fd0f1` |
+| project | 10 | 3 | 7 non-terminal rows | `/Users/terry_agent`: `P001` + `P001-agent-orchestrator`, both **active** |
+
+Three of the project rows are duplicate *pairs* of the same project (`P002`/`P002-memory-flywheel`, `P003`/`P003-entity-system-redesign`, `P001`/`P001-agent-orchestrator`) — not "bare-`P` duplicates" of a canonical row, since `/Users/terry_agent`'s pair is slug-form on both halves. Children are split across both halves of each pair, so which half is authoritative is an open decision, not a detail.
+
+**Cross-workspace rows are a release blocker, not a footnote.** The recreate step uses ordinary creation commands, which run in the current project's context; nothing recreates another repo's entities.
+
+Lineage survives untouched: `parent_uuid` is a uuid foreign key, so archiving a parent is a status change, not a removal. Of 79 entities with legacy parents, 75 are themselves terminal; the **4** live children stay attached to their archived originals, which remains historically truthful.
 
 **Archival is the only available operation anyway.** `delete_entity` cannot succeed for *any* entity — all 579 carry `events` rows under a `NOT NULL REFERENCES entities(uuid)` constraint with no `ON DELETE` clause (backlog #081, recorded at `database.py:8537-8543`). An append-only event core makes archive-not-delete native rather than a compromise.
 
@@ -118,7 +124,7 @@ Rev 2's in-place backfill of 180 display rows is replaced by D0. With it go the 
 
 ## D9 — Reading an archived parent
 
-D0 deliberately leaves three live children attached to archived parents that have no display row. D5 assigns parent reads to `parent_uuid → parent row → parent display`, which those parents cannot satisfy, and D8's missing-parent policy does not apply because the parent *exists*.
+D0 deliberately leaves **four** live children attached to archived parents that have no display row. D5 assigns parent reads to `parent_uuid → parent row → parent display`, which those parents cannot satisfy, and D8's missing-parent policy does not apply because the parent *exists*.
 
 **Distinguish two different needs.** Reading a parent's *stored opaque identity* (`entities.entity_id`, which frontmatter uses today at `frontmatter_inject.py:90`) is not text inference — it is reading a column. Deriving `seq`/`slug` from that identity is. Parent readers may read the stored identity opaquely; they may not decompose it. Archived parents are therefore readable, and only their structural decomposition is unavailable.
 
@@ -132,6 +138,6 @@ D0 deliberately leaves three live children attached to archived parents that hav
 
 ## Risks
 
-- **D0 is still a data migration**, just a far smaller one. Same discipline: `.backup` snapshot (not `cp` — the DB is in WAL mode), `PRAGMA integrity_check` and `foreign_key_check` after, and a recount of all five other workspaces.
+- **D0 is still a data migration**, just a far smaller one. Same discipline: `.backup` snapshot (not `cp` — the DB is in WAL mode), `PRAGMA integrity_check` and `foreign_key_check` after, and a recount of the other six workspaces holding entities (seven hold `sequences` rows; 24 workspace rows exist in total).
 - **Archival must exclude from projections without excluding from the census.** These pull in opposite directions; D2 pins the resolution and it must not be "simplified" later.
 - **D3 changes a public signature** used across fixtures and must land atomically — the largest single unit of work, and the main argument for rehearsing on a copy.
