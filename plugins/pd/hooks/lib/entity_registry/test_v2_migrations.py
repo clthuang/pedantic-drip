@@ -280,7 +280,7 @@ class TestV2Migration3StateOnlyViews:
         version = db._conn.execute(
             "SELECT value FROM _metadata WHERE key='schema_version'"
         ).fetchone()[0]
-        assert version == "21"
+        assert version == "23"
         db.close()
 
 

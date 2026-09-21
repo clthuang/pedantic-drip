@@ -129,7 +129,7 @@ class TestMissingMetaJsonArchived:
         assert result["warnings"] == []
 
         entity = db.get_entity(f"feature:{folder}")
-        assert entity["status"] == "archived"
+        assert entity["is_archived"] == 1
 
 
 class TestMalformedJsonWarned:
@@ -245,7 +245,7 @@ class TestProjectsScanned:
         assert result["archived"] == 1
 
         entity = db.get_entity(f"project:{folder}")
-        assert entity["status"] == "archived"
+        assert entity["is_archived"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -321,7 +321,7 @@ class TestSyncBrainstormEntities:
 
         assert result["archived"] == 1
         entity = db.get_entity("brainstorm:foo")
-        assert entity["status"] == "archived"
+        assert entity["is_archived"] == 1
 
     def test_terminal_brainstorm_not_rearchived(self, tmp_path):
         """Brainstorm with terminal status (promoted) -> not re-archived even if file missing."""
@@ -497,7 +497,7 @@ def _setup_site_47_meta_json_archive(db, ws_uuid, tmp_path):
 
     def verify(db, result):
         entity = db.get_entity(f"feature:{folder}")
-        assert entity["status"] == "archived", (
+        assert entity["is_archived"] == 1, (
             f"site 47 archive branch did not fire: entity status={entity['status']!r}, "
             f"result={result!r}"
         )
@@ -553,7 +553,7 @@ def _setup_site_189_brainstorm_archive(db, ws_uuid, tmp_path):
 
     def verify(db, result):
         entity = db.get_entity("brainstorm:archived-bs")
-        assert entity["status"] == "archived", (
+        assert entity["is_archived"] == 1, (
             f"site 189 brainstorm archive did not fire: entity status="
             f"{entity['status']!r}, result={result!r}"
         )

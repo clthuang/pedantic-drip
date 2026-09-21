@@ -34,6 +34,12 @@ _PERMITTED_ENCLOSING_DEFS = frozenset({
     "update_workflow_phase",
     "create_workflow_phase",
     "update_entity",
+    # One-time migration repair, named explicitly rather than matched by a
+    # prefix pattern: v2 migration 5 restores the status that archiving used
+    # to overwrite (125 of 170 archived rows had been 'completed'). It is
+    # undoing a bad write, not performing a transition, so emitting 163
+    # phase events would misrepresent a repair as history.
+    "_v2_migration_5_explicit_archived_flag",
     # This very function contains the grep search-strings it audits for.
     "check_status_write_path",
 })

@@ -22,9 +22,11 @@ from contextlib import contextmanager
 #   3 — entity_axis_state/entity_state rebuilt state-only (feature 134 qa-mig3)
 #   4 — entities.is_legacy: legacy-ness stated, not inferred from a missing
 #       entity_display row (clean break, 2026-09-21)
+#   5 — entities.is_archived: archiving is orthogonal to workflow state;
+#       restores the status archiving used to overwrite (2026-09-21)
 # Bumping this constant WITHOUT adding the matching V2_MIGRATIONS entry
 # strands every already-stamped file at the older shape; the two move together.
-V2_SCHEMA_VERSION = 4
+V2_SCHEMA_VERSION = 5
 
 # Per-connection, non-persistent (SQLite resets it on every new connection).
 # Matches the v17 EntityDatabase._set_pragmas() value (database.py) for

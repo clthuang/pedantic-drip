@@ -416,7 +416,8 @@ class TestMigration2:
         # and Group 7 dropped entity_type → 14 columns total.
         cur = db._conn.execute("PRAGMA table_info(entities)")
         columns = cur.fetchall()
-        assert len(columns) == 14
+        # 16 since v1 migrations 22/23 added is_legacy / is_archived.
+        assert len(columns) == 16
 
         db.close()
 
@@ -506,6 +507,7 @@ class TestSchemaCreation:
             "name", "status", "parent_uuid",
             "artifact_path", "created_at", "updated_at", "metadata",
             "type", "kind", "lifecycle_class",
+            "is_legacy", "is_archived",
         ]
         assert col_names == expected
 
@@ -628,6 +630,8 @@ class TestIndexes:
         expected = [
             # Feature 109 (AC-1.6): composite polymorphic-query index
             # added to migration 12.
+            "idx_entities_is_archived",
+            "idx_entities_is_legacy",
             "idx_entities_type_kind",
             # Feature 110 (FR-8.1): index on entity_display(seq) added
             # by migration 13.

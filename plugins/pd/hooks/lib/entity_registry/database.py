@@ -4415,6 +4415,44 @@ def _append_migration_audit_log(
 # Post-migration-12 entities table column list (the 14 columns produced by
 # Migration 12 Group 7's entity_type drop). Used by Migration 14's copy-rename
 # to build the INSERT-SELECT column list and to declare the new table.
+# Post-flag-migration column list. _V14_ENTITIES_COLUMNS is frozen at the
+# 14 columns migration 14 knew about and MUST stay that way — migration 14
+# runs long before the flag migrations, and widening it would make its
+# column-set guard reject every real database.
+#
+# Anything operating on a FULLY migrated file wants this list instead.
+# rebuild_tool builds its INSERT from it; using the v14 list there silently
+# dropped is_legacy/is_archived on every rebuild — the same class of defect
+# as _seed_sequences discarding the counter.
+def current_entities_columns(conn: sqlite3.Connection) -> tuple[str, ...]:
+    """Columns actually present on ``entities``, in declared order."""
+    return tuple(r[1] for r in conn.execute("PRAGMA table_info(entities)"))
+
+
+def _restore_indexes_skipping_dropped_columns(conn, saved_indexes, table: str) -> None:
+    """Replay saved index DDL, skipping any index over a column the rebuilt
+    table no longer has.
+
+    A copy-rename that NARROWS a table (a down-migration) captures the
+    indexes of the wide table. Replaying one that references a dropped
+    column raises "no such column". Written as a general guard rather than
+    a name check for is_legacy/is_archived, so the next column addition
+    does not reopen it.
+    """
+    present = {r[1].lower() for r in conn.execute(f"PRAGMA table_info({table})")}
+    for _name, idx_sql in saved_indexes:
+        if not idx_sql:
+            continue
+        inner = idx_sql[idx_sql.find("(") + 1: idx_sql.rfind(")")] if "(" in idx_sql else ""
+        cols = {
+            c.strip().strip('"').strip("`").strip("[]").split()[0].lower()
+            for c in inner.split(",") if c.strip()
+        }
+        if cols and not cols.issubset(present):
+            continue
+        conn.execute(idx_sql)
+
+
 _V14_ENTITIES_COLUMNS: tuple[str, ...] = (
     "uuid",
     "workspace_uuid",
@@ -4569,9 +4607,7 @@ def _copy_rename_entities_for_v14(conn: sqlite3.Connection) -> None:
     conn.execute("ALTER TABLE entities_new RENAME TO entities")
 
     # Recreate captured user-defined indexes verbatim.
-    for _, idx_sql in saved_indexes:
-        if idx_sql:
-            conn.execute(idx_sql)
+    _restore_indexes_skipping_dropped_columns(conn, saved_indexes, "entities")
 
     # Recreate captured triggers ON entities verbatim.
     for _, trg_sql in saved_triggers:
@@ -5104,9 +5140,7 @@ def _copy_rename_entities_to_v13(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA legacy_alter_table = OFF")
     conn.execute("ALTER TABLE entities_new RENAME TO entities")
 
-    for _, idx_sql in saved_indexes:
-        if idx_sql:
-            conn.execute(idx_sql)
+    _restore_indexes_skipping_dropped_columns(conn, saved_indexes, "entities")
     for _, trg_sql in saved_triggers:
         if trg_sql:
             conn.execute(trg_sql)
@@ -6248,11 +6282,89 @@ def _v2_migration_4_explicit_legacy_flag(conn: sqlite3.Connection) -> None:
     )
 
 
+def _v2_migration_5_explicit_archived_flag(conn: sqlite3.Connection) -> None:
+    """v2 migration 5 — archived becomes a flag, and statuses are restored.
+
+    ``archived`` was a value in the ``status`` enum, so archiving an entity
+    OVERWROTE what it was. Archiving is orthogonal to workflow state:
+    "completed and archived" is an ordinary thing to be, and the model
+    could not express it. The cost was not theoretical — of 170 archived
+    rows, **125 were `completed`** before archival and said so nowhere.
+
+    It also blocked correct work twice during the clean break: batches of
+    already-terminal rows were deliberately left un-archived precisely
+    because archiving them would have discarded `completed`/`promoted`.
+
+    This adds ``is_archived`` and restores the original status from
+    ``phase_events.metadata.old_status``, which recorded it all along (the
+    v2 ``events.from_value`` did not — it is NULL on every one of these,
+    a separate gap). 163 of 170 are recoverable. The remaining 7 have no
+    recorded prior status and keep ``status = 'archived'``; that is honest
+    rather than a guess, and ``is_archived`` is set for them either way.
+
+    Replay-safe: probes ``PRAGMA table_info`` and returns if present.
+    """
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(entities)")}
+    if "is_archived" in cols:
+        return
+
+    conn.execute(
+        "ALTER TABLE entities ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0"
+    )
+    conn.execute("UPDATE entities SET is_archived = 1 WHERE status = 'archived'")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_entities_is_archived ON entities(is_archived)"
+    )
+
+    has_phase_events = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='phase_events'"
+    ).fetchone() is not None
+    if not has_phase_events:
+        return
+
+    import json as _json
+
+    restored = 0
+    for row in conn.execute(
+        "SELECT uuid, type_id FROM entities WHERE is_archived = 1 AND status = 'archived'"
+    ).fetchall():
+        prior = None
+        for ev in conn.execute(
+            "SELECT metadata FROM phase_events WHERE type_id = ? "
+            "AND event_type = 'entity_status_changed' ORDER BY id DESC",
+            (row[1],),
+        ):
+            try:
+                meta = _json.loads(ev[0] or "{}")
+            except (ValueError, TypeError):
+                continue
+            if meta.get("new_status") == "archived" and meta.get("old_status"):
+                prior = meta["old_status"]
+                break
+        # 'archived' as a prior value carries no information; leave it.
+        if prior and prior != "archived":
+            conn.execute(
+                "UPDATE entities SET status = ? WHERE uuid = ?", (prior, row[0])
+            )
+            restored += 1
+    _upsert_metadata(conn, "migration_5_statuses_restored", str(restored))
+
+
 V2_MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _v2_migration_2_mini_spec,
     3: _v2_migration_3_state_only_axis_views,
     4: _v2_migration_4_explicit_legacy_flag,
+    5: _v2_migration_5_explicit_archived_flag,
 }
+
+# Both flag migrations are generation-agnostic — they probe PRAGMA
+# table_info and ALTER — so the v1 chain gets them too. Without this a
+# fresh database (which is created v1-generation) has neither column, and
+# every caller of set_archived / the is_legacy selector fails on it.
+# Registered by assignment rather than in the literal above because the
+# functions are defined after MIGRATIONS.
+MIGRATIONS[22] = _v2_migration_4_explicit_legacy_flag
+MIGRATIONS[23] = _v2_migration_5_explicit_archived_flag
 
 # qa-mig3 MEDIUM: the stamp sites write schema_v2.V2_SCHEMA_VERSION; a bump
 # without the matching chain entry strands stamped files unfixably
@@ -8097,6 +8209,47 @@ class EntityDatabase:
             (resolved_uuid, max_depth),
         )
         return [dict(row) for row in cur.fetchall()]
+
+    def set_archived(
+        self,
+        type_id: str,
+        archived: bool = True,
+        *,
+        workspace_uuid: str | None = None,
+        actor: str = "system",
+    ) -> None:
+        """Archive or un-archive an entity WITHOUT touching its status.
+
+        Archiving is orthogonal to workflow state (v2 migration 5). Before
+        that, archiving wrote ``status = 'archived'`` and so destroyed what
+        the entity actually was — 125 of 170 archived rows had been
+        ``completed``. Un-archiving was therefore impossible in any
+        meaningful sense: there was nothing left to restore.
+
+        This writes only ``is_archived``, so archive/un-archive is a true
+        round trip. It is not a status mutation and deliberately does not
+        route through ``append_phase_event``; the ``check_status_write_path``
+        guard governs ``status``/``workflow_phase``, neither of which this
+        touches.
+
+        Raises ``ValueError`` when *type_id* resolves to no entity in the
+        given workspace — same contract as ``update_entity``.
+        """
+        params: list = [1 if archived else 0, self._now_iso(), type_id]
+        sql = (
+            "UPDATE entities SET is_archived = ?, updated_at = ? "
+            "WHERE type_id = ?"
+        )
+        if workspace_uuid is not None:
+            sql += " AND workspace_uuid = ?"
+            params.append(workspace_uuid)
+        with self.transaction():
+            cur = self._conn.execute(sql, params)
+            if cur.rowcount == 0:
+                raise ValueError(
+                    f"no entity with type_id {type_id!r}"
+                    + (f" in workspace {workspace_uuid!r}" if workspace_uuid else "")
+                )
 
     def update_entity(
         self,

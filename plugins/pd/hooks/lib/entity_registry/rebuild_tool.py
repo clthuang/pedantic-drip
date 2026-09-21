@@ -403,10 +403,25 @@ def _import_workspaces(old_conn: sqlite3.Connection, new_conn: sqlite3.Connectio
 
 _DISPLAY_ID_RE = re.compile(r"^(\d+)-(.+)$")
 
-_ENTITIES_INSERT_SQL = (
-    "INSERT INTO entities (" + ",".join(database._V14_ENTITIES_COLUMNS) + ") "
-    "VALUES (" + ",".join("?" for _ in database._V14_ENTITIES_COLUMNS) + ")"
+def _entities_insert_sql(cols: tuple[str, ...]) -> str:
+    return (
+        "INSERT INTO entities (" + ",".join(cols) + ") "
+        "VALUES (" + ",".join("?" for _ in cols) + ")"
+    )
+
+
+# Kept for the v14-shaped path; the live path derives its columns from the
+# target file so later additions (is_legacy, is_archived) are carried rather
+# than silently dropped.
+_FLAG_COLUMNS = ("is_legacy", "is_archived")
+_ENTITIES_INSERT_SQL = _entities_insert_sql(
+    database._V14_ENTITIES_COLUMNS + _FLAG_COLUMNS
 )
+
+
+def _flag(row, name: str) -> int:
+    """Read a flag column defensively — old files predate both."""
+    return int(row[name]) if name in row.keys() and row[name] is not None else 0
 
 
 def _dedup_entities(
@@ -597,6 +612,7 @@ def _import_entities(old_conn: sqlite3.Connection, new_conn: sqlite3.Connection)
                 new_uuid, ws, type_id_new, entity_id_new, name_new, row["status"],
                 parent_new, row["artifact_path"], row["created_at"], row["updated_at"],
                 row["metadata"], row["type"], row["kind"], row["lifecycle_class"],
+                _flag(row, "is_legacy"), _flag(row, "is_archived"),
             ),
         )
 

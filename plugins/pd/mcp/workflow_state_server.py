@@ -633,7 +633,11 @@ def _project_backlog_md(db: EntityDatabase) -> str:
     rows = db.list_entities(entity_type="backlog")
 
     # Exclude archived rows from the main projection (per design TD-10).
-    rows = [r for r in rows if (r.get("status") or "") != "archived"]
+    # Filter on the FLAG, not on status == "archived". Archiving is
+    # orthogonal to workflow state (v2 migration 5): an archived row keeps
+    # the status it actually had, so a status comparison now misses every
+    # archived-but-completed row — 125 of them at migration time.
+    rows = [r for r in rows if not r.get("is_archived")]
 
     # Decorate rows with parsed metadata + (seq, slug) from entity_display
     # (preferred) or entity_id fallback. NO datetime.now/utcnow call here.

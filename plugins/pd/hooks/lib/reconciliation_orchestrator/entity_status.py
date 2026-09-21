@@ -14,8 +14,11 @@ import os
 # Feature/project valid statuses
 STATUS_MAP = {"active", "completed", "abandoned", "planned", "promoted"}
 
-# Brainstorm statuses that should not be re-archived
-TERMINAL_STATUSES = {"promoted", "abandoned", "archived"}
+# Brainstorm statuses that should not be re-archived. "archived" is no
+# longer among them: archiving is a flag (entities.is_archived, v2
+# migration 5), not a status, so an already-archived row is skipped by the
+# is_archived check rather than by its status.
+TERMINAL_STATUSES = {"promoted", "abandoned"}
 
 
 def _sync_meta_json_entities(db, full_artifacts_path, subdir, entity_type, project_id, workspace_uuid=None):
@@ -50,12 +53,9 @@ def _sync_meta_json_entities(db, full_artifacts_path, subdir, entity_type, proje
         if not os.path.isfile(meta_path):
             # .meta.json deleted — archive entity if it exists
             try:
-                db.update_entity(
-                    type_id,
-                    status="archived",
-                    project_id=effective_project_id,
-                    workspace_uuid=workspace_uuid,
-                )
+                # Set the flag, do not overwrite the status: an entity whose
+                # .meta.json vanished keeps whatever it had completed as.
+                db.set_archived(type_id, True, workspace_uuid=workspace_uuid)
                 results["archived"] += 1
             except ValueError:
                 pass  # entity not in registry, skip
@@ -212,15 +212,12 @@ def _sync_brainstorm_entities(
             continue
         if entity.get("status", "") in TERMINAL_STATUSES:
             continue
+        if entity.get("is_archived"):
+            continue
         if not entity.get("artifact_path"):
             continue
         try:
-            db.update_entity(
-                entity["type_id"],
-                status="archived",
-                project_id=effective_project_id,
-                workspace_uuid=workspace_uuid,
-            )
+            db.set_archived(entity["type_id"], True, workspace_uuid=workspace_uuid)
             results["archived"] += 1
         except ValueError:
             pass  # entity disappeared between list and update, skip

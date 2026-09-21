@@ -148,6 +148,8 @@ def _relax_entities_unique_constraint(conn: sqlite3.Connection) -> None:
             type           TEXT NOT NULL DEFAULT 'work',
             kind           TEXT NOT NULL DEFAULT 'feature',
             lifecycle_class TEXT NOT NULL DEFAULT 'feature_flow',
+            is_legacy      INTEGER NOT NULL DEFAULT 0,
+            is_archived    INTEGER NOT NULL DEFAULT 0,
             CHECK (
                 (type='workspace' AND kind='workspace') OR
                 (type='brainstorm' AND kind='brainstorm') OR

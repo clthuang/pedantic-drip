@@ -27,7 +27,7 @@ LIVE = {"open", "active", "planned", ""}
 QUERY = """
 SELECT w.project_root, e.uuid, e.kind, e.entity_id, e.name,
        COALESCE(NULLIF(e.status,''),'') AS status,
-       e.is_legacy AS is_legacy,
+       e.is_legacy AS is_legacy, e.is_archived AS is_archived,
        (d.uuid IS NULL) AS no_display,
        (SELECT entity_id FROM entities p WHERE p.uuid = e.parent_uuid) AS parent_eid,
        (SELECT COUNT(*) FROM entities c WHERE c.parent_uuid = e.uuid) AS n_children,
@@ -35,7 +35,7 @@ SELECT w.project_root, e.uuid, e.kind, e.entity_id, e.name,
 FROM entities e
 JOIN workspaces w ON w.uuid = e.workspace_uuid
 LEFT JOIN entity_display d ON d.uuid = e.uuid
-WHERE e.is_legacy = 1 OR e.status = 'archived'
+WHERE e.is_legacy = 1 OR e.is_archived = 1
 ORDER BY w.project_root, e.kind, e.entity_id
 """
 
@@ -56,7 +56,7 @@ def main() -> int:
     a(f"**Generated:** {datetime.date.today().isoformat()} by "
       "`scripts/gen_archive_manifest.py` (read-only).")
     a("")
-    a("Every entity that is **already archived** or flagged "
+    a("Every entity flagged **`entities.is_archived`** or "
       "**`entities.is_legacy`**. Legacy means the identity predates the "
       "structural model, so its sequence number and slug exist only inside "
       "its `entity_id` text.")
@@ -93,6 +93,13 @@ def main() -> int:
       "`workspace-retired-*` remains because it says something different — "
       "a dormant workspace was stood down, and those rows were never legacy.")
     a("")
+    a("**Archiving no longer overwrites status** (v2 migration 5). `status` "
+      "is workflow state; `is_archived` is whether it is put away. Of 170 "
+      "archived rows, 125 had been `completed` and said so nowhere — "
+      "archiving had destroyed it. 163 were restored from "
+      "`phase_events.metadata.old_status`; the remaining 7 have no recorded "
+      "prior status and keep `status = 'archived'`.")
+    a("")
     a("## Summary by workspace")
     a("")
     a("`live` = status `open`/`active`/`planned`/NULL. Everything else is "
@@ -103,7 +110,7 @@ def main() -> int:
     t = [0, 0, 0]
     for ws, rs in sorted(by_ws.items()):
         nd = sum(1 for r in rs if r["is_legacy"])
-        ar = sum(1 for r in rs if r["status"] == "archived")
+        ar = sum(1 for r in rs if r["is_archived"])
         lv = sum(1 for r in rs if r["is_legacy"] and r["status"] in LIVE)
         t = [t[0] + nd, t[1] + ar, t[2] + lv]
         a(f"| `{ws}` | {nd} | {ar} | **{lv}** |")
@@ -137,6 +144,7 @@ def main() -> int:
         for r in rs:
             name = (r["name"] or "")[:48].replace("|", "\\|")
             a(f"| {r['kind']} | `{r['entity_id']}` | {r['status'] or '*(NULL)*'} | "
+              f"{'yes' if r['is_archived'] else '—'} | "
               f"{'yes' if r['is_legacy'] else '—'} | "
               f"{'—' if r['no_display'] else 'yes'} | {r['n_children'] or ''} | "
               f"{r['parent_eid'] or ''} | {r['tags'] or ''} | {name} |")
