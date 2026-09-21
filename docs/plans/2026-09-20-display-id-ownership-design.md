@@ -7,6 +7,23 @@
 
 ## Governing rules
 
+**Rule 0 — state facts, do not imply them.** *(added 2026-09-21)* A semantic
+fact gets a column that says it. It is not encoded as the absence of a row
+in another table, not as a magic tag string, and not inferred from a
+status that also means three other things.
+
+This was applied to legacy-ness itself. "Legacy" originally meant *"a LEFT
+JOIN onto `entity_display` finds no row"* — the same defect class as
+parsing a kind out of an id, one level up: a semantic fact derived from a
+structural accident, unqueryable, unindexable, and silently conflating two
+unrelated populations (identities that predate the structural model, and
+rows a buggy non-strict write failed to give a display row). v2 migration 4
+adds `entities.is_legacy`, and the interim `legacy-archived-2026-09` tag
+was deleted once the column existed — two homes for one fact is the thing
+being removed.
+
+
+
 1. **A human-readable id is for humans to read.** No code infers anything from it.
 2. **Kind and inter-entity relationships come from data structure**, never from parsing text.
 3. **Sequences are monotonic and never recycled.** A number, once issued, is never issued again — not after abandonment, not after archival, not ever. Gaps are normal and carry no meaning.

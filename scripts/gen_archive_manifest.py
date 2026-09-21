@@ -27,6 +27,7 @@ LIVE = {"open", "active", "planned", ""}
 QUERY = """
 SELECT w.project_root, e.uuid, e.kind, e.entity_id, e.name,
        COALESCE(NULLIF(e.status,''),'') AS status,
+       e.is_legacy AS is_legacy,
        (d.uuid IS NULL) AS no_display,
        (SELECT entity_id FROM entities p WHERE p.uuid = e.parent_uuid) AS parent_eid,
        (SELECT COUNT(*) FROM entities c WHERE c.parent_uuid = e.uuid) AS n_children,
@@ -34,7 +35,7 @@ SELECT w.project_root, e.uuid, e.kind, e.entity_id, e.name,
 FROM entities e
 JOIN workspaces w ON w.uuid = e.workspace_uuid
 LEFT JOIN entity_display d ON d.uuid = e.uuid
-WHERE d.uuid IS NULL OR e.status = 'archived'
+WHERE e.is_legacy = 1 OR e.status = 'archived'
 ORDER BY w.project_root, e.kind, e.entity_id
 """
 
@@ -55,11 +56,17 @@ def main() -> int:
     a(f"**Generated:** {datetime.date.today().isoformat()} by "
       "`scripts/gen_archive_manifest.py` (read-only).")
     a("")
-    a("Every entity that is **already archived** or that **lacks an "
-      "`entity_display` row**. The second group is the set a clean-break "
-      "archival would touch: having no display row is exactly what makes an "
-      "entity \"legacy\", because its sequence number and slug exist only "
-      "inside its `entity_id` text.")
+    a("Every entity that is **already archived** or flagged "
+      "**`entities.is_legacy`**. Legacy means the identity predates the "
+      "structural model, so its sequence number and slug exist only inside "
+      "its `entity_id` text.")
+    a("")
+    a("`is_legacy` is a stated column (v2 migration 4), not an inference. It "
+      "previously meant \"has no `entity_display` row\", which derived a "
+      "semantic fact from a structural accident and conflated two unrelated "
+      "populations: genuine pre-structural rows, and rows a buggy non-strict "
+      "write failed to give a display row. The second is now visible as "
+      "`is_legacy = 0` with no display row — a bug, not history.")
     a("")
     a("## Recovery")
     a("")
@@ -80,23 +87,24 @@ def main() -> int:
       "rollback. Two costs: each archive/restore pair leaves ~2 permanently "
       "immutable `events` rows, and the sequence number is never released.")
     a("")
-    a("**Tags distinguish why a row was archived.** `legacy-archived-*` means "
-      "the clean break took it; `workspace-retired-*` means a dormant "
-      "workspace was stood down and the row was never legacy. Conflating "
-      "them would make healthy display-bearing entities look like legacy.")
+    a("**Legacy-ness lives in `entities.is_legacy`, not in a tag.** The "
+      "earlier `legacy-archived-2026-09` tag was removed once the column "
+      "existed: two homes for one fact is the defect this effort removes. "
+      "`workspace-retired-*` remains because it says something different — "
+      "a dormant workspace was stood down, and those rows were never legacy.")
     a("")
     a("## Summary by workspace")
     a("")
     a("`live` = status `open`/`active`/`planned`/NULL. Everything else is "
       "finished work whose archival changes nothing anyone is using.")
     a("")
-    a("| Workspace | No display row | Archived | **live, no display row** |")
+    a("| Workspace | is_legacy | Archived | **live + legacy** |")
     a("|---|---:|---:|---:|")
     t = [0, 0, 0]
     for ws, rs in sorted(by_ws.items()):
-        nd = sum(1 for r in rs if r["no_display"])
+        nd = sum(1 for r in rs if r["is_legacy"])
         ar = sum(1 for r in rs if r["status"] == "archived")
-        lv = sum(1 for r in rs if r["no_display"] and r["status"] in LIVE)
+        lv = sum(1 for r in rs if r["is_legacy"] and r["status"] in LIVE)
         t = [t[0] + nd, t[1] + ar, t[2] + lv]
         a(f"| `{ws}` | {nd} | {ar} | **{lv}** |")
     a(f"| **Total** | **{t[0]}** | **{t[1]}** | **{t[2]}** |")
@@ -111,7 +119,7 @@ def main() -> int:
     n_live = 0
     for ws, rs in sorted(by_ws.items()):
         for r in rs:
-            if r["no_display"] and r["status"] in LIVE:
+            if r["is_legacy"] and r["status"] in LIVE:
                 n_live += 1
                 a(f"| `{os.path.basename(ws)}` | {r['kind']} | `{r['entity_id']}` | "
                   f"{r['status'] or '*(NULL)*'} | {r['n_children'] or ''} | "
@@ -129,6 +137,7 @@ def main() -> int:
         for r in rs:
             name = (r["name"] or "")[:48].replace("|", "\\|")
             a(f"| {r['kind']} | `{r['entity_id']}` | {r['status'] or '*(NULL)*'} | "
+              f"{'yes' if r['is_legacy'] else '—'} | "
               f"{'—' if r['no_display'] else 'yes'} | {r['n_children'] or ''} | "
               f"{r['parent_eid'] or ''} | {r['tags'] or ''} | {name} |")
         a("")

@@ -84,22 +84,30 @@ class LegacyRow:
 def select_legacy_entities(
     conn: sqlite3.Connection, *, marker_tag: str | None = None
 ) -> list[LegacyRow]:
-    """Every entity with no ``entity_display`` row. Read-only.
+    """Every entity flagged ``is_legacy``. Read-only.
 
-    Selection is by the **absence of a display row**, and — once *marker_tag*
-    is supplied — by the absence of that tag. Status cannot be the
-    discriminator: 168 of the 180 rows are already terminal, so status
-    cannot distinguish "archived by the break" from "already dropped".
-    Supplying *marker_tag* after the break returns 0; that is the
+    Selection reads the **stated fact** (``entities.is_legacy``, v2
+    migration 4), not the absence of an ``entity_display`` row. The
+    absence form was the same defect this effort removes — a semantic fact
+    derived from a structural accident — and it conflated two unrelated
+    populations: an entity whose identity predates the structural model,
+    and an entity a buggy non-strict write failed to give a display row.
+    Those now differ visibly: the second has ``is_legacy = 0`` and no
+    display row, which is a bug, not history.
+
+    Status cannot be the discriminator either: 165 of the 176 were already
+    terminal, so status cannot distinguish "archived by the break" from
+    "already dropped".
+
+    Supplying *marker_tag* excludes rows already carrying it; that is the
     idempotence proof.
     """
     sql = """
         SELECT e.uuid, e.workspace_uuid, w.project_root, e.kind, e.entity_id,
                e.status, e.name
         FROM entities e
-        LEFT JOIN entity_display d ON d.uuid = e.uuid
         LEFT JOIN workspaces w ON w.uuid = e.workspace_uuid
-        WHERE d.uuid IS NULL
+        WHERE e.is_legacy = 1
     """
     params: list[str] = []
     if marker_tag is not None:

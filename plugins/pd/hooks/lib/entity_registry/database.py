@@ -6204,9 +6204,54 @@ def _v2_migration_3_state_only_axis_views(conn: sqlite3.Connection) -> None:
     conn.executescript(_views._VIEWS_DDL)
 
 
+def _v2_migration_4_explicit_legacy_flag(conn: sqlite3.Connection) -> None:
+    """v2 migration 4 — state legacy-ness as a column instead of inferring it.
+
+    Before this, "legacy" was an ABSENCE: an entity was legacy if a LEFT
+    JOIN onto ``entity_display`` found no row. That is the same defect
+    class this whole effort removes — a semantic fact derived from a
+    structural accident rather than stated. It also could not be queried,
+    indexed, or asserted, and it silently conflated two different things:
+    an entity whose identity predates the structural model, and an entity
+    a buggy non-strict write failed to give a display row.
+
+    ``is_legacy`` states the first. The second is now visible as exactly
+    what it is — a row with ``is_legacy = 0`` and no display row, i.e. a
+    bug, not a historical artefact.
+
+    The UPDATE below is the ONE sanctioned read of the implicit signal, at
+    the migration boundary, for the sole purpose of retiring it — the same
+    licence the legacy id parse gets in ``clean_break.parse_legacy_seq``.
+
+    Replay-safe: probes ``PRAGMA table_info`` and returns if the column is
+    already present.
+    """
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(entities)")}
+    if "is_legacy" in cols:
+        return
+
+    conn.execute(
+        "ALTER TABLE entities ADD COLUMN is_legacy INTEGER NOT NULL DEFAULT 0"
+    )
+
+    has_display = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='entity_display'"
+    ).fetchone() is not None
+    if has_display:
+        conn.execute(
+            "UPDATE entities SET is_legacy = 1 "
+            "WHERE uuid NOT IN (SELECT uuid FROM entity_display)"
+        )
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_entities_is_legacy ON entities(is_legacy)"
+    )
+
+
 V2_MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _v2_migration_2_mini_spec,
     3: _v2_migration_3_state_only_axis_views,
+    4: _v2_migration_4_explicit_legacy_flag,
 }
 
 # qa-mig3 MEDIUM: the stamp sites write schema_v2.V2_SCHEMA_VERSION; a bump

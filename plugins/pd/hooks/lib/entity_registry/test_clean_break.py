@@ -20,17 +20,24 @@ def make_conn(entities=(), display=(), sequences=(), tags=()):
     c.executescript("""
         CREATE TABLE workspaces (uuid TEXT PRIMARY KEY, project_root TEXT);
         CREATE TABLE entities (uuid TEXT PRIMARY KEY, workspace_uuid TEXT,
-                               kind TEXT, entity_id TEXT, status TEXT, name TEXT);
+                               kind TEXT, entity_id TEXT, status TEXT, name TEXT,
+                               is_legacy INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE entity_display (uuid TEXT PRIMARY KEY, seq INTEGER, slug TEXT);
         CREATE TABLE sequences (workspace_uuid TEXT, entity_type TEXT, next_val INTEGER);
         CREATE TABLE entity_tags (entity_uuid TEXT, tag TEXT);
     """)
     seen = set()
+    with_display = {d[0] for d in display}
     for (u, ws, kind, eid, status) in entities:
         if ws not in seen:
             c.execute("INSERT INTO workspaces VALUES (?,?)", (ws, f"/repo/{ws}"))
             seen.add(ws)
-        c.execute("INSERT INTO entities VALUES (?,?,?,?,?,?)", (u, ws, kind, eid, status, eid))
+        # Mirrors v2 migration 4's one-time conversion: absence of a display
+        # row becomes a STATED flag. After that point the two can diverge,
+        # and is_legacy is the truth — see
+        # test_display_less_but_not_legacy_is_a_bug_not_history.
+        c.execute("INSERT INTO entities VALUES (?,?,?,?,?,?,?)",
+                  (u, ws, kind, eid, status, eid, 0 if u in with_display else 1))
     c.executemany("INSERT INTO entity_display VALUES (?,?,?)", display)
     c.executemany("INSERT INTO sequences VALUES (?,?,?)", sequences)
     c.executemany("INSERT INTO entity_tags VALUES (?,?)", tags)
@@ -87,6 +94,22 @@ class TestSelectLegacyEntities:
         )
         got = {r.entity_id for r in select_legacy_entities(conn)}
         assert got == {"002-b", "00059"}
+
+    def test_display_less_but_not_legacy_is_a_bug_not_history(self):
+        """The distinction the absence-based form could not express.
+
+        A non-strict write creates an entity with no display row. Under the
+        old LEFT-JOIN-IS-NULL rule that entity was indistinguishable from a
+        genuine pre-structural row, so the clean break would have swept up
+        a live bug as if it were history. is_legacy states which is which.
+        """
+        conn = make_conn(entities=[("u1", "ws-a", "feature", "007-fresh", "active")])
+        conn.execute("UPDATE entities SET is_legacy = 0 WHERE uuid = 'u1'")
+        assert conn.execute(
+            "SELECT COUNT(*) FROM entities e LEFT JOIN entity_display d "
+            "ON d.uuid = e.uuid WHERE d.uuid IS NULL"
+        ).fetchone()[0] == 1, "fixture precondition: it has no display row"
+        assert select_legacy_entities(conn) == []
 
     def test_marker_tag_makes_it_idempotent(self):
         """After the break every selected row carries the tag, so it returns 0."""
