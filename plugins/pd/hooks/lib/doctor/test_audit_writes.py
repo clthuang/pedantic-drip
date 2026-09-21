@@ -469,109 +469,123 @@ def test_audit_comments_present() -> None:
 
 
 # ---------------------------------------------------------------------------
-# TD-7b entity_id parsing audit lint (Group 15)
+# Identity-text inference inventory (replaces the TD-7b grep lint)
 # ---------------------------------------------------------------------------
+#
+# The previous lint grepped four fixed patterns, keyed on the literal name
+# ``entity_id``, and carried ``@pytest.mark.xfail(strict=False)`` — so it
+# could not fail, and found none of the 25 real sites. It was satisfied by
+# its own blindness.
+#
+# This replaces it with an INVENTORY, not an emptiness check. The detected
+# set must EQUAL the list below:
+#
+#   * a new parsing site appears        -> fails (nobody can add one)
+#   * a listed site is fixed but not
+#     removed from this list            -> fails (shrinkage must be declared)
+#
+# So the tree is green at every point in the migration, and the list is the
+# migration checklist. Done is when it reaches zero.
+#
+# Regenerate the detected set with:
+#   python -c "import sys;sys.path[:0]=['plugins/pd/hooks/lib'];\
+#   from pathlib import Path;from doctor.identity_inference import scan_roots;\
+#   [print(s) for s in scan_roots([Path('plugins/pd/hooks/lib'),Path('plugins/pd/mcp')])]"
 
-_SCAN_ROOTS = [
+from doctor.identity_inference import scan_roots  # noqa: E402
+
+_INFERENCE_SCAN_ROOTS = [
     _PLUGIN_PD_DIR / "hooks" / "lib",
     _PLUGIN_PD_DIR / "mcp",
 ]
 
-_AUDIT_PATTERN = (
-    r'\.split\(":"\)|'
-    r'substr\(.*entity_id|'
-    r'instr\(.*entity_id|'
-    r're\.match.*entity_id'
-)
-
-
-def _run_audit_grep() -> list[tuple[str, int, str]]:
-    args = ["grep", "-rnIE", "--include=*.py", _AUDIT_PATTERN]
-    for root in _SCAN_ROOTS:
-        if root.exists():
-            args.append(str(root))
-    result = subprocess.run(args, capture_output=True, text=True, check=False)
-    if result.returncode == 1:
-        return []
-    if result.returncode == 2:
-        raise RuntimeError(
-            f"audit grep failed: stderr={result.stderr!r}, stdout={result.stdout!r}"
-        )
-    hits: list[tuple[str, int, str]] = []
-    for line in result.stdout.splitlines():
-        parts = line.split(":", 2)
-        if len(parts) != 3:
-            continue
-        path, lineno_s, text = parts
-        try:
-            lineno = int(lineno_s)
-        except ValueError:
-            continue
-        hits.append((path, lineno, text))
-    return hits
-
-
-def _function_enclosing(path: Path, line: int) -> str | None:
-    try:
-        src = path.read_text()
-    except OSError:
-        return None
-    try:
-        tree = ast.parse(src, filename=str(path))
-    except SyntaxError:
-        return None
-    enclosing: str | None = None
-    enclosing_span = (0, 0)
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            start = node.lineno
-            end = node.end_lineno or start
-            if start <= line <= end:
-                span = end - start
-                if enclosing is None or span < (enclosing_span[1] - enclosing_span[0]):
-                    enclosing = node.name
-                    enclosing_span = (start, end)
-    return enclosing
-
-
-def _classify_hit(path: str, line: int) -> str:
-    p = Path(path)
-    if p.name.startswith("test_") and p.suffix == ".py":
-        return "allowed_test"
-    fn = _function_enclosing(p, line)
-    if fn is not None and fn.startswith("_migration_13_"):
-        return "allowed_migration_13"
-    return "unallowed"
-
-
-_CURRENT_UNALLOWED = [
-    (path, line, text)
-    for (path, line, text) in _run_audit_grep()
-    if _classify_hit(path, line) == "unallowed"
+# (relative path, lineno, idiom, owning task)
+_KNOWN_INFERENCE_SITES: list[tuple[str, int, str, str]] = [
+    ("entity_registry/backfill.py",        752,  "split",      "C13 missing-parent policy"),
+    ("entity_registry/database.py",        927,  "split",      "UNOWNED - 6th bootstrap census"),
+    ("entity_registry/database.py",        2755, "sql",        "migration internal - sanctioned"),
+    ("entity_registry/database.py",        4198, "sql",        "migration internal - sanctioned"),
+    ("entity_registry/database.py",        4261, "sql",        "migration internal - sanctioned"),
+    ("entity_registry/database.py",        7302, "regex",      "C6 delete registration parsers"),
+    ("entity_registry/database.py",        7436, "slice",      "C6 delete registration parsers"),
+    ("entity_registry/database.py",        7437, "slice",      "C6 delete registration parsers"),
+    ("entity_registry/database.py",        7438, "slice",      "C6 delete registration parsers"),
+    ("entity_registry/database.py",        7815, "split",      "C12 re-kind from columns"),
+    ("entity_registry/database.py",        10281, "regex",     "C2 monotonic issuance"),
+    ("entity_registry/frontmatter_inject.py", 82,  "split",    "C9 seq/slug from entity_display"),
+    ("entity_registry/frontmatter_inject.py", 103, "split",    "C10 parent kind + opaque identity"),
+    ("entity_registry/frontmatter_sync.py",  109, "split",     "C8 kind from entities.kind"),
+    ("entity_registry/rebuild_tool.py",    1032, "regex",      "C19/C20b - deleted with the P prefix"),
+    ("entity_registry/rebuild_tool.py",    1138, "split",      "C19 rebuild seeds from structure"),
+    ("workflow_engine/engine.py",          376,  "split",      "C11 artifact path"),
+    ("workflow_engine/feature_lifecycle.py", 97, "split",      "UNOWNED - C11 category"),
+    ("workflow_engine/reconciliation.py",  787,  "startswith", "UNOWNED - C8 category"),
+    ("workflow_engine/router.py",          358,  "split",      "C8 kind from entities.kind"),
+    ("workflow_engine/router.py",          421,  "split",      "C8 kind from entities.kind"),
+    ("../mcp/workflow_state_server.py",    485,  "split",      "C9 seq/slug from entity_display"),
+    ("../mcp/workflow_state_server.py",    676,  "split",      "C9 seq/slug from entity_display"),
+    ("../mcp/workflow_state_server.py",    1113, "startswith", "C8 kind from entities.kind"),
+    ("../mcp/workflow_state_server.py",    1395, "startswith", "C8 kind from entities.kind"),
 ]
 
 
-@pytest.mark.xfail(
-    bool(_CURRENT_UNALLOWED),
-    reason=(
-        f"TD-7b followup: {len(_CURRENT_UNALLOWED)} entity_id-parsing site(s) "
-        "pending port. Sites: "
-        + "; ".join(f"{p}:{ln}" for (p, ln, _t) in _CURRENT_UNALLOWED[:5])
-    ),
-    strict=False,
-)
-def test_entity_id_parsing_audit_lint() -> None:
-    """TD-7b lint: every entity_id-suffix-parsing call site outside test
-    files MUST live inside a ``_migration_13_*`` function."""
-    hits = _run_audit_grep()
-    unallowed: list[tuple[str, int, str]] = []
-    for path, line, text in hits:
-        if _classify_hit(path, line) == "unallowed":
-            unallowed.append((path, line, text))
-    if unallowed:
-        bullets = "\n".join(f"  - {p}:{ln}: {t.strip()}" for (p, ln, t) in unallowed)
-        pytest.fail(
-            "TD-7b audit lint: found entity_id-parsing call sites outside "
-            "the allow-list.\n"
-            f"Unallowed hits ({len(unallowed)}):\n{bullets}"
+def _relative_site_key(path: str) -> str:
+    lib = (_PLUGIN_PD_DIR / "hooks" / "lib").resolve()
+    resolved = Path(path).resolve()
+    try:
+        return str(resolved.relative_to(lib))
+    except ValueError:
+        return "../" + str(resolved.relative_to(_PLUGIN_PD_DIR.resolve()))
+
+
+def test_identity_inference_inventory_is_exact() -> None:
+    """The detected inference sites must EQUAL the declared inventory.
+
+    Not "must be empty" — that would be red for the whole migration and
+    would simply get skipped. Not "must be a subset" either: a site fixed
+    without being struck off the list would leave the inventory
+    permanently overstating the work remaining, and the list is the
+    checklist.
+    """
+    detected = {
+        (_relative_site_key(s.path), s.lineno, s.idiom)
+        for s in scan_roots(_INFERENCE_SCAN_ROOTS)
+    }
+    declared = {(p, ln, idiom) for (p, ln, idiom, _owner) in _KNOWN_INFERENCE_SITES}
+
+    added = sorted(detected - declared)
+    resolved = sorted(declared - detected)
+
+    problems = []
+    if added:
+        problems.append(
+            "NEW identity-text inference site(s) — read the value from a "
+            "column instead (entities.kind, entity_display.seq/slug, "
+            "parent_uuid):\n"
+            + "\n".join(f"  + {p}:{ln} [{i}]" for (p, ln, i) in added)
         )
+    if resolved:
+        owners = {(p, ln): o for (p, ln, _i, o) in _KNOWN_INFERENCE_SITES}
+        problems.append(
+            "Site(s) no longer detected. If you fixed them, delete them from "
+            "_KNOWN_INFERENCE_SITES in this file. If a line number merely "
+            "shifted, update it:\n"
+            + "\n".join(
+                f"  - {p}:{ln} [{i}] ({owners.get((p, ln), '?')})"
+                for (p, ln, i) in resolved
+            )
+        )
+    if problems:
+        pytest.fail("\n\n".join(problems))
+
+
+def test_inventory_shrinks_to_zero_eventually() -> None:
+    """A tripwire on the finish line, not a check of today's count.
+
+    Asserting an exact total here would make every migration step edit two
+    places. This only pins the direction: the inventory never grows past
+    its starting size.
+    """
+    assert len(_KNOWN_INFERENCE_SITES) <= 25, (
+        "the identity-inference inventory grew; it is only allowed to shrink"
+    )
