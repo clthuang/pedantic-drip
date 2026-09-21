@@ -344,415 +344,6 @@ class TestSyncBrainstormEntities:
         assert entity["status"] == "promoted"
 
 
-# ---------------------------------------------------------------------------
-# Backlog sync helpers
-# ---------------------------------------------------------------------------
-
-def seed_backlog(db: EntityDatabase, entity_id: str, status: str | None = None) -> None:
-    """Register a backlog entity with the given ID and status."""
-    db.register_entity(
-        entity_type="backlog",
-        entity_id=entity_id,
-        name=entity_id,
-        artifact_path="docs/backlog.md",
-        status=status or "open",
-        project_id="test-project",
-    )
-
-
-def write_backlog_md(tmp_path, rows: list[tuple[str, str, str]]) -> None:
-    """Write a pipe-delimited markdown table to tmp_path/backlog.md.
-
-    Each row is (id, timestamp, description).
-    """
-    lines = [
-        "| ID | Added | Description |",
-        "|------|-------|-------------|",
-    ]
-    for row_id, ts, desc in rows:
-        lines.append(f"| {row_id} | {ts} | {desc} |")
-    (tmp_path / "backlog.md").write_text("\n".join(lines) + "\n")
-
-
-# ---------------------------------------------------------------------------
-# Backlog sync tests
-# ---------------------------------------------------------------------------
-
-class TestSyncBacklogEntities:
-    """Tests for _sync_backlog_entities()."""
-
-    # Feature 111 / FR-CL.1b: free-text suffix parsers removed.
-    # Parser-only tests (test_closed_status_mapped_to_dropped,
-    # test_promoted_status_mapped, test_fixed_status_mapped_to_dropped,
-    # test_already_implemented_mapped_to_dropped) DELETED \u2014 see
-    # docs/features/111-issue-lifecycle-closure/cleanup-inventory.md.
-
-    def test_no_marker_registered_as_open(self, tmp_path):
-        """Task 1.6: No status marker in description -> registered as open."""
-        db = make_db()
-        # No seed -- entity does not exist in DB yet
-        write_backlog_md(tmp_path, [
-            ("00016", "2026-01-01T00:00:00Z", "Multi-Model Orchestration"),
-        ])
-
-        result = entity_status._sync_backlog_entities(db, str(tmp_path), "docs", "test-project")
-
-        entity = db.get_entity("backlog:00016")
-        assert entity is not None
-        assert entity["status"] == "open"
-        assert result["registered"] == 1
-
-    def test_junk_ids_deleted(self, tmp_path):
-        """Task 1.7: Non-5-digit entity IDs are deleted from DB."""
-        db = make_db()
-        seed_backlog(db, "B2")
-        seed_backlog(db, "#")
-        seed_backlog(db, "~~B1~~")
-        write_backlog_md(tmp_path, [
-            ("00001", "2026-01-01T00:00:00Z", "Valid item"),
-        ])
-
-        result = entity_status._sync_backlog_entities(db, str(tmp_path), "docs", "test-project")
-
-        assert db.get_entity("backlog:B2") is None
-        assert db.get_entity("backlog:#") is None
-        assert db.get_entity("backlog:~~B1~~") is None
-        assert result["deleted"] == 3
-
-    def test_junk_deletion_skips_entity_with_children(self, tmp_path):
-        """Task 1.8: Junk deletion handles ValueError (entity with children) gracefully."""
-        db = make_db()
-        seed_backlog(db, "JUNK1")
-        write_backlog_md(tmp_path, [
-            ("00001", "2026-01-01T00:00:00Z", "Valid item"),
-        ])
-
-        with patch.object(db, "delete_entity", side_effect=ValueError("has children")):
-            result = entity_status._sync_backlog_entities(db, str(tmp_path), "docs", "test-project")
-
-        assert len(result["warnings"]) >= 1
-        assert any("JUNK1" in w for w in result["warnings"])
-
-    def test_same_project_dedup(self, tmp_path):
-        """Task 1.9: Duplicate backlog entities with same project_id are deduplicated.
-
-        The DB schema has UNIQUE(project_id, type_id) which normally prevents
-        duplicates. This test simulates legacy data by rebuilding the table
-        without the constraint, then verifying dedup cleans up.
-        """
-        db = make_db()
-        seed_backlog(db, "00020", status="open")
-
-        # db._conn bypass: UNIQUE(workspace_uuid, type_id) prevents duplicates
-        # via public API. Raw SQL is the only way to simulate legacy duplicate
-        # data for dedup testing. Feature 108 Migration 11: replace the table
-        # with a non-UNIQUE clone using the post-Migration-11 column layout.
-        import uuid as uuid_mod
-        ws_row = db._conn.execute(
-            "SELECT uuid FROM workspaces WHERE project_id_legacy = ?",
-            ("test-project",),
-        ).fetchone()
-        ws_uuid = ws_row["uuid"]
-        db._conn.execute("CREATE TABLE entities_bak AS SELECT * FROM entities")
-        db._conn.execute("DROP TABLE entities")
-        # Feature 109 Migration 12 added 3 columns (type/kind/
-        # lifecycle_class) and Group 7 dropped entity_type. The fixture
-        # rebuilds the table without the UNIQUE(workspace_uuid, type_id)
-        # constraint for dedup testing but must mirror the post-v12
-        # column layout so the ``INSERT INTO entities SELECT * FROM
-        # entities_bak`` row-shape match keeps working.
-        db._conn.execute("""
-            CREATE TABLE entities (
-                uuid TEXT NOT NULL PRIMARY KEY,
-                workspace_uuid TEXT NOT NULL,
-                type_id TEXT NOT NULL,
-                entity_id TEXT NOT NULL,
-                name TEXT NOT NULL,
-                status TEXT,
-                parent_uuid TEXT,
-                artifact_path TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                metadata TEXT,
-                type TEXT NOT NULL DEFAULT 'work',
-                kind TEXT NOT NULL DEFAULT 'feature',
-                lifecycle_class TEXT NOT NULL DEFAULT 'feature_flow'
-            )
-        """)
-        db._conn.execute("INSERT INTO entities SELECT * FROM entities_bak")
-        db._conn.execute("DROP TABLE entities_bak")
-        # Now insert the duplicate (same workspace_uuid + type_id,
-        # different uuid). F11 (Group 7): kind replaces entity_type;
-        # supply the (type, lifecycle_class) discriminators per FR-1.
-        db._conn.execute(
-            "INSERT INTO entities (uuid, kind, entity_id, type_id, name, "
-            "artifact_path, status, workspace_uuid, created_at, updated_at, "
-            "type, lifecycle_class) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), "
-            "'work', 'work_flow')",
-            (str(uuid_mod.uuid4()), "backlog", "00020", "backlog:00020",
-             "00020", "docs/backlog.md", None, ws_uuid),
-        )
-        db._conn.commit()
-
-        write_backlog_md(tmp_path, [
-            ("00020", "2026-01-01T00:00:00Z", "Rename plugin"),
-        ])
-
-        result = entity_status._sync_backlog_entities(db, str(tmp_path), "docs", "test-project")
-
-        # One duplicate should have been removed
-        remaining = db.list_entities(entity_type="backlog", project_id="test-project")
-        backlog_20 = [e for e in remaining if e["entity_id"] == "00020"]
-        assert len(backlog_20) == 1
-        assert result["deleted"] >= 1
-
-    def test_missing_backlog_md_returns_empty(self, tmp_path):
-        """Task 1.10: No backlog.md file -> return empty results dict."""
-        db = make_db()
-        # No backlog.md written
-
-        result = entity_status._sync_backlog_entities(db, str(tmp_path), "docs", "test-project")
-
-        assert result == {
-            "updated": 0,
-            "skipped": 0,
-            "registered": 0,
-            "deleted": 0,
-            "warnings": [],
-        }
-
-
-# ---------------------------------------------------------------------------
-# Deepened tests — boundary values, adversarial, error propagation, mutation
-# ---------------------------------------------------------------------------
-
-
-class TestBacklogBoundaryValues:
-    """Boundary value tests for backlog ID validation and name handling."""
-
-    def test_backlog_id_exactly_5_digits_accepted(self, tmp_path):
-        """BVA: 5-digit IDs at boundaries (00001 and 99999) are valid, not junk.
-        derived_from: spec:AC-6 (junk entity deletion — ^[0-9]{5}$ regex)
-        """
-        # Given backlog entities with boundary 5-digit IDs
-        db = make_db()
-        seed_backlog(db, "00001", status="open")
-        seed_backlog(db, "99999", status="open")
-        write_backlog_md(tmp_path, [
-            ("00001", "2026-01-01T00:00:00Z", "First item"),
-            ("99999", "2026-01-01T00:00:00Z", "Last item"),
-        ])
-
-        # When backlog sync runs
-        result = entity_status._sync_backlog_entities(db, str(tmp_path), "docs", "test-project")
-
-        # Then both entities survive (not deleted as junk)
-        assert db.get_entity("backlog:00001") is not None
-        assert db.get_entity("backlog:99999") is not None
-        assert result["deleted"] == 0
-
-    def test_backlog_id_4_digits_is_junk(self, tmp_path):
-        """BVA: 4-digit ID '0001' fails ^[0-9]{5}$ — deleted as junk.
-        derived_from: spec:AC-6 (junk entity deletion)
-        """
-        # Given a backlog entity with a 4-digit ID (boundary: min-1 digits)
-        db = make_db()
-        seed_backlog(db, "0001", status="open")
-        write_backlog_md(tmp_path, [
-            ("00001", "2026-01-01T00:00:00Z", "Valid item"),
-        ])
-
-        # When backlog sync runs
-        result = entity_status._sync_backlog_entities(db, str(tmp_path), "docs", "test-project")
-
-        # Then the 4-digit entity is deleted
-        assert db.get_entity("backlog:0001") is None
-        assert result["deleted"] == 1
-
-    def test_backlog_id_6_digits_is_junk(self, tmp_path):
-        """BVA: 6-digit ID '000001' fails ^[0-9]{5}$ — deleted as junk.
-        derived_from: spec:AC-6 (junk entity deletion)
-        """
-        # Given a backlog entity with a 6-digit ID (boundary: max+1 digits)
-        db = make_db()
-        seed_backlog(db, "000001", status="open")
-        write_backlog_md(tmp_path, [
-            ("00001", "2026-01-01T00:00:00Z", "Valid item"),
-        ])
-
-        # When backlog sync runs
-        result = entity_status._sync_backlog_entities(db, str(tmp_path), "docs", "test-project")
-
-        # Then the 6-digit entity is deleted
-        assert db.get_entity("backlog:000001") is None
-        assert result["deleted"] == 1
-
-    def test_empty_backlog_md_produces_zero_counts(self, tmp_path):
-        """BVA: backlog.md with header only, no data rows → zero registered/updated.
-        derived_from: dimension:boundary_values (empty collection)
-        """
-        # Given a backlog.md with only the header row
-        db = make_db()
-        (tmp_path / "backlog.md").write_text(
-            "| ID | Added | Description |\n"
-            "|------|-------|-------------|\n"
-        )
-
-        # When backlog sync runs
-        result = entity_status._sync_backlog_entities(db, str(tmp_path), "docs", "test-project")
-
-        # Then all counts are zero
-        assert result["registered"] == 0
-        assert result["updated"] == 0
-        assert result["skipped"] == 0
-
-    def test_backlog_name_truncated_at_200_chars(self, tmp_path):
-        """BVA: Description longer than 200 chars → name truncated to 200.
-        derived_from: dimension:boundary_values (string length max)
-        """
-        # Given a backlog row with a 250-char description
-        db = make_db()
-        long_desc = "A" * 250
-        write_backlog_md(tmp_path, [
-            ("00001", "2026-01-01T00:00:00Z", long_desc),
-        ])
-
-        # When backlog sync runs
-        result = entity_status._sync_backlog_entities(db, str(tmp_path), "docs", "test-project")
-
-        # Then the registered entity name is at most 200 chars
-        entity = db.get_entity("backlog:00001")
-        assert entity is not None
-        assert len(entity["name"]) <= 200
-        assert result["registered"] == 1
-
-
-class TestBacklogAdversarial:
-    """Adversarial tests for backlog edge cases.
-
-    Feature 111 / FR-CL.1b: free-text suffix parsers removed.
-    Parser-only adversarial tests
-    (test_standalone_already_implemented_mapped_to_dropped,
-    test_promoted_with_unicode_arrow_mapped,
-    test_backlog_row_with_multiple_status_markers,
-    test_backlog_row_with_parenthetical_not_a_status_marker,
-    test_name_stripping_removes_status_marker_not_entire_description)
-    DELETED — see cleanup-inventory.md.
-    """
-
-    def test_cross_project_duplicates_not_touched(self, tmp_path):
-        """Adversarial: duplicates with DIFFERENT project_ids are NOT deduped.
-        derived_from: spec:AC-7 (out of scope: cross-project dedup)
-        """
-        # Given two entities with the same entity_id but different project_ids.
-        # Feature 108 Migration 11: pre-bootstrap workspaces rows for both
-        # legacy ids so register_entity resolves.
-        from entity_registry.test_helpers import bootstrap_test_workspace
-        db = make_db()
-        bootstrap_test_workspace(db, "project-A")
-        bootstrap_test_workspace(db, "project-B")
-        db.register_entity(
-            entity_type="backlog", entity_id="00020", name="Item",
-            artifact_path="docs/backlog.md", status="open",
-            project_id="project-A",
-        )
-        db.register_entity(
-            entity_type="backlog", entity_id="00020", name="Item",
-            artifact_path="docs/backlog.md", status="open",
-            project_id="project-B",
-        )
-        write_backlog_md(tmp_path, [
-            ("00020", "2026-01-01T00:00:00Z", "Some item"),
-        ])
-
-        # When backlog sync runs for project-A
-        result = entity_status._sync_backlog_entities(
-            db, str(tmp_path), "docs", "project-A"
-        )
-
-        # Then both entities still exist (cross-project dups not touched)
-        all_20 = [e for e in db.list_entities(entity_type="backlog") if e["entity_id"] == "00020"]
-        assert len(all_20) == 2
-
-
-class TestDedupEdgeCases:
-    """Adversarial/boundary tests for dedup logic."""
-
-    def test_dedup_both_entities_have_null_status(self, tmp_path):
-        """Adversarial: both duplicates have null status → tie-break by uuid, one survives.
-        derived_from: spec:AC-7 (dedup — null-status tie-break)
-        """
-        # Given two entities with the same ID and project_id, both with null status
-        db = make_db()
-        import uuid as uuid_mod
-
-        # db._conn bypass: UNIQUE(workspace_uuid, type_id) prevents duplicates
-        # via public API. Raw SQL is the only way to simulate legacy duplicate
-        # data for dedup testing. Feature 108 Migration 11: replace the table
-        # with a non-UNIQUE clone using the post-Migration-11 column layout.
-        ws_row = db._conn.execute(
-            "SELECT uuid FROM workspaces WHERE project_id_legacy = ?",
-            ("test-project",),
-        ).fetchone()
-        ws_uuid = ws_row["uuid"]
-        db._conn.execute("CREATE TABLE entities_bak AS SELECT * FROM entities")
-        db._conn.execute("DROP TABLE entities")
-        # Feature 109 Migration 12 added 3 columns (type/kind/
-        # lifecycle_class) and Group 7 dropped entity_type. The fixture
-        # rebuilds the table without the UNIQUE(workspace_uuid, type_id)
-        # constraint for dedup testing but must mirror the post-v12
-        # column layout so the ``INSERT INTO entities SELECT * FROM
-        # entities_bak`` row-shape match keeps working.
-        db._conn.execute("""
-            CREATE TABLE entities (
-                uuid TEXT NOT NULL PRIMARY KEY,
-                workspace_uuid TEXT NOT NULL,
-                type_id TEXT NOT NULL,
-                entity_id TEXT NOT NULL,
-                name TEXT NOT NULL,
-                status TEXT,
-                parent_uuid TEXT,
-                artifact_path TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                metadata TEXT,
-                type TEXT NOT NULL DEFAULT 'work',
-                kind TEXT NOT NULL DEFAULT 'feature',
-                lifecycle_class TEXT NOT NULL DEFAULT 'feature_flow'
-            )
-        """)
-        db._conn.execute("INSERT INTO entities SELECT * FROM entities_bak")
-        db._conn.execute("DROP TABLE entities_bak")
-
-        # Insert two entities with null status. F11 (Group 7): kind
-        # replaces entity_type; supply (type, lifecycle_class) per FR-1.
-        for _ in range(2):
-            db._conn.execute(
-                "INSERT INTO entities (uuid, kind, entity_id, type_id, name, "
-                "artifact_path, status, workspace_uuid, created_at, updated_at, "
-                "type, lifecycle_class) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), "
-                "'work', 'work_flow')",
-                (str(uuid_mod.uuid4()), "backlog", "00050", "backlog:00050",
-                 "Test item", "docs/backlog.md", None, ws_uuid),
-            )
-        db._conn.commit()
-
-        write_backlog_md(tmp_path, [
-            ("00050", "2026-01-01T00:00:00Z", "Test item"),
-        ])
-
-        # When backlog sync runs
-        result = entity_status._sync_backlog_entities(db, str(tmp_path), "docs", "test-project")
-
-        # Then exactly one entity remains
-        remaining = db.list_entities(entity_type="backlog", project_id="test-project")
-        backlog_50 = [e for e in remaining if e["entity_id"] == "00050"]
-        assert len(backlog_50) == 1
-        assert result["deleted"] >= 1
-
-
 class TestBrainstormAdversarial:
     """Adversarial tests for brainstorm sync edge cases."""
 
@@ -801,54 +392,6 @@ class TestBrainstormAdversarial:
 class TestMutationMindset:
     """Mutation-mindset tests: would swapping operators break things?"""
 
-    def test_junk_regex_anchored_both_ends(self, tmp_path):
-        """Mutation: if JUNK_ID_RE lost $ anchor, '12345x' would pass. Verify it doesn't.
-        derived_from: dimension:mutation_mindset (regex anchoring)
-        """
-        # Given a backlog entity with ID that has valid prefix but trailing char
-        db = make_db()
-        seed_backlog(db, "12345x", status="open")
-        write_backlog_md(tmp_path, [
-            ("00001", "2026-01-01T00:00:00Z", "Valid item"),
-        ])
-
-        # When backlog sync runs
-        result = entity_status._sync_backlog_entities(db, str(tmp_path), "docs", "test-project")
-
-        # Then '12345x' is deleted as junk ($ anchor prevents partial match)
-        assert db.get_entity("backlog:12345x") is None
-        assert result["deleted"] == 1
-
-    def test_execution_order_junk_before_dedup_before_sync(self, tmp_path):
-        """Mutation: if junk cleanup ran AFTER sync, junk entities could get
-        updated instead of deleted. Verify junk deletion happens first.
-        derived_from: dimension:mutation_mindset (execution order)
-
-        Feature 111 / FR-CL.1b: post-parser-cleanup, the "valid item updated
-        from open to dropped" leg of this test is no longer reachable via
-        backlog.md markers. The execution-order pin remains intact via the
-        junk-deletion path alone.
-        """
-        # Given both junk and valid entities exist
-        db = make_db()
-        seed_backlog(db, "JUNK", status="open")  # junk ID
-        seed_backlog(db, "00001", status="open")  # valid ID
-        write_backlog_md(tmp_path, [
-            ("00001", "2026-01-01T00:00:00Z", "Valid item"),
-        ])
-
-        # When backlog sync runs
-        result = entity_status._sync_backlog_entities(db, str(tmp_path), "docs", "test-project")
-
-        # Then junk is deleted (junk cleanup runs BEFORE parse/sync).
-        assert db.get_entity("backlog:JUNK") is None
-        assert result["deleted"] >= 1
-        # And the valid entity is skipped (status unchanged; no parser-driven
-        # status-change post-feature-111).
-        entity = db.get_entity("backlog:00001")
-        assert entity["status"] == "open"
-        assert result["skipped"] >= 1
-
     def test_project_root_derivation_when_empty(self, tmp_path):
         """Mutation: if project_root derivation logic was removed, assertion would fire.
         derived_from: dimension:mutation_mindset (conditional branch — empty project_root)
@@ -876,9 +419,9 @@ class TestMutationMindset:
 
 
 class TestUnifiedSync:
-    """Integration test: sync_entity_statuses calls all 4 helpers."""
+    """Integration test: sync_entity_statuses calls all 3 helpers."""
 
-    def test_unified_sync_all_four_types(self, tmp_path):
+    def test_unified_sync_all_three_types(self, tmp_path):
         """All entity types synced in one call; return dict has all 6 keys."""
         db = make_db()
 
@@ -900,11 +443,6 @@ class TestUnifiedSync:
         brainstorms_dir.mkdir()
         (brainstorms_dir / "bar.prd.md").touch()
 
-        # 4) Backlog: one row -> registered
-        write_backlog_md(tmp_path, [
-            ("00099", "2026-01-01T00:00:00Z", "Test backlog item"),
-        ])
-
         result = sync_entity_statuses(
             db, str(tmp_path),
             project_id="test-project",
@@ -922,10 +460,12 @@ class TestUnifiedSync:
         entity = db.get_entity(f"feature:{feature_folder}")
         assert entity["status"] == "completed"
 
-        # Brainstorm and backlog should have been registered
-        assert result["registered"] >= 2
+        # Brainstorm should have been registered
+        assert result["registered"] >= 1
         assert db.get_entity("brainstorm:bar") is not None
-        assert db.get_entity("backlog:00099") is not None
+
+        # A1: reconciliation deletes nothing, structurally.
+        assert result["deleted"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -1021,12 +561,12 @@ def _setup_site_189_brainstorm_archive(db, ws_uuid, tmp_path):
     return verify
 
 
-# Feature 111 / FR-CL.1b: _setup_site_320_backlog_status_change DELETED.
-# Site 320 used (closed: ...) marker to drive the parser-derived
-# status-change branch in _sync_backlog_entities. Post-cleanup the parser
-# is gone; the synthetic status-change is unreachable via backlog.md
-# fixtures. The remaining 3 sites (47, 72, 189) still verify the FR-10
-# conditional-kwarg pattern across distinct update_entity call sites.
+# Feature 111 / FR-CL.1b removed _setup_site_320_backlog_status_change
+# (it drove a parser-derived status-change branch via a backlog.md
+# marker). Release A then removed the backlog helper entirely — backlog is
+# DB-only and backlog.md is a projection — so no backlog site remains. The
+# 3 sites here (47, 72, 189) verify the FR-10 conditional-kwarg pattern
+# across distinct update_entity call sites.
 
 
 SITE_SETUPS = {
@@ -1096,3 +636,227 @@ class TestNoDeprecationWarningOnHappyPath:
             f"Unexpected DeprecationWarning-derived entries in result['warnings']: "
             f"{deprecation_warnings}"
         )
+
+
+# ---------------------------------------------------------------------------
+# A3 — reconciliation is non-destructive and workspace-scoped
+# ---------------------------------------------------------------------------
+
+
+class _WriteSpy:
+    """Record every mutating call reconciliation makes on the db.
+
+    Survival of a row is NOT evidence of non-deletion: every live entity
+    has an ``events`` row and ``delete_entity`` raises
+    ``sqlite3.IntegrityError`` unconditionally (database.py), so rows
+    survive a deletion attempt regardless. Only the call count
+    discriminates.
+    """
+
+    _METHODS = ("delete_entity", "upsert_entity", "register_entity", "update_entity")
+
+    def __init__(self, db):
+        self.db = db
+        self.calls: dict[str, list] = {m: [] for m in self._METHODS}
+        self._orig: dict[str, object] = {}
+
+    def __enter__(self):
+        for name in self._METHODS:
+            orig = getattr(self.db, name)
+            self._orig[name] = orig
+
+            def wrapper(*a, _orig=orig, _sink=self.calls[name], **kw):
+                _sink.append((a, kw))
+                return _orig(*a, **kw)
+
+            setattr(self.db, name, wrapper)
+        return self
+
+    def __exit__(self, *exc):
+        for name, orig in self._orig.items():
+            setattr(self.db, name, orig)
+        return False
+
+    @property
+    def deletes(self):
+        return self.calls["delete_entity"]
+
+    @property
+    def creates(self):
+        return self.calls["upsert_entity"] + self.calls["register_entity"]
+
+
+class TestReconciliationIsNonDestructive:
+    """A3: zero deletions under every scoping and data condition."""
+
+    def test_workspace_scoped_invocation_deletes_nothing(self, tmp_path):
+        """Fixture 1: workspace_uuid set, project_id suppressed."""
+        db = EntityDatabase(":memory:")
+        ws = bootstrap_test_workspace(db, "ws-a-legacy")
+        db.register_entity(entity_type="backlog", entity_id="00042",
+                           name="legacy five-digit", status="open",
+                           workspace_uuid=ws)
+        db.register_entity(entity_type="backlog", entity_id="077-modern-slug",
+                           name="modern slug id", status="open",
+                           workspace_uuid=ws)
+
+        with _WriteSpy(db) as spy:
+            result = sync_entity_statuses(
+                db, str(tmp_path), project_id="ws-a-legacy",
+                project_root=str(tmp_path), workspace_uuid=ws,
+            )
+
+        assert spy.deletes == []
+        assert result["deleted"] == 0
+        # Both id shapes survive: neither is "junk".
+        assert db.get_entity("backlog:00042") is not None
+        assert db.get_entity("backlog:077-modern-slug") is not None
+
+    def test_brainstorm_read_is_workspace_scoped(self, tmp_path):
+        """Fixture 2 / A2: the same entity_id in two workspaces.
+
+        Scope note: this asserts the READ, because that is the whole of
+        A2's guarantee. ``update_entity`` re-resolves its target by
+        (workspace_uuid, type_id), so an unscoped read cannot produce a
+        cross-workspace WRITE — verified empirically: archiving a shared
+        type_id scoped to A leaves B untouched, and a B-only type_id
+        written via A raises ValueError (swallowed at entity_status.py's
+        archival branch). The damage is wasted iteration over rows this
+        invocation does not own, not corruption.
+        """
+        db = EntityDatabase(":memory:")
+        ws_a = bootstrap_test_workspace(db, "ws-a-legacy")
+        ws_b = bootstrap_test_workspace(db, "ws-b-legacy")
+
+        own = {}
+        for label, ws in (("a", ws_a), ("b", ws_b)):
+            own[label] = db.register_entity(
+                entity_type="brainstorm", entity_id="001-shared",
+                name="shared", status="active", workspace_uuid=ws,
+                artifact_path="docs/brainstorms/001-shared.prd.md",
+            )
+        (tmp_path / "brainstorms").mkdir(parents=True)
+
+        seen = []
+        original = db.list_entities
+
+        def spy_list(*a, **kw):
+            rows = original(*a, **kw)
+            if kw.get("entity_type") == "brainstorm":
+                seen.append([r["uuid"] for r in rows])
+            return rows
+
+        # project_id=None is load-bearing: A2's defect is that an ABSENT
+        # legacy filter makes the read unscoped. A resolvable project_id
+        # would scope the old code by accident.
+        with patch.object(db, "list_entities", side_effect=spy_list):
+            sync_entity_statuses(
+                db, str(tmp_path), project_id=None,
+                project_root=str(tmp_path), workspace_uuid=ws_a,
+            )
+
+        assert seen, "brainstorm archival read never ran"
+        for rows in seen:
+            assert own["b"] not in rows, (
+                "sync scoped to workspace A read workspace B's rows: "
+                f"{rows}"
+            )
+            assert rows == [own["a"]], f"expected only workspace A's row, got {rows}"
+
+    def test_missing_display_row_and_missing_source_survive(self, tmp_path):
+        """Fixture 3: no entity_display row AND no artifact on disk.
+
+        FORWARD GUARD — this cannot go red against the pre-A1 code, because
+        neither the old nor the new implementation uses this criterion. It
+        exists because "absent display row + absent source" is the tempting
+        replacement criterion for the text-shape one A1 removed, and 180
+        legitimate live entities match it. It goes red the moment someone
+        adopts it.
+        """
+        db = EntityDatabase(":memory:")
+        ws = bootstrap_test_workspace(db, "ws-a-legacy")
+        db.register_entity(entity_type="backlog", entity_id="00053",
+                           name="no display row, no file", status="open",
+                           workspace_uuid=ws)
+        assert db._conn.execute(
+            "SELECT COUNT(*) c FROM entity_display d "
+            "JOIN entities e ON e.uuid = d.uuid WHERE e.entity_id = '00053'"
+        ).fetchone()["c"] == 0, "fixture precondition: no display row"
+
+        with _WriteSpy(db) as spy:
+            sync_entity_statuses(
+                db, str(tmp_path), project_id="ws-a-legacy",
+                project_root=str(tmp_path), workspace_uuid=ws,
+            )
+
+        assert spy.deletes == []
+        assert db.get_entity("backlog:00053") is not None
+
+    def test_reconciliation_creates_nothing_from_a_projection(self, tmp_path):
+        """A1 amendment: zero creations, not merely zero deletions.
+
+        docs/backlog.md is a rendered projection whose ID column is
+        re-padded to five digits, so parsing it back minted a fresh entity
+        for every row whose padded id did not resolve. Zero-deletes alone
+        passes while that happens.
+        """
+        db = EntityDatabase(":memory:")
+        ws = bootstrap_test_workspace(db, "ws-a-legacy")
+        db.register_entity(entity_type="backlog", entity_id="278-entity-rename",
+                           name="live item", status="open", workspace_uuid=ws)
+        # The projection renders seq 278 as "00278" — a string that resolves
+        # to no entity. Reconciliation must not treat it as an import source.
+        (tmp_path / "docs").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "backlog.md").write_text(
+            "# Backlog\n\n| ID | Timestamp | Description |\n"
+            "|----|-----------|-------------|\n"
+            "| 00278 | 2026-01-01T00:00:00Z | live item |\n"
+            "| 00003 | 2026-01-01T00:00:00Z | belongs to another workspace |\n"
+        )
+        before = db._conn.execute("SELECT COUNT(*) c FROM entities").fetchone()["c"]
+
+        with _WriteSpy(db) as spy:
+            sync_entity_statuses(
+                db, str(tmp_path), project_id="ws-a-legacy",
+                project_root=str(tmp_path), workspace_uuid=ws,
+            )
+
+        after = db._conn.execute("SELECT COUNT(*) c FROM entities").fetchone()["c"]
+        assert spy.deletes == []
+        assert spy.creates == [], f"reconciliation created entities: {spy.creates}"
+        assert after == before, f"entity count changed {before} -> {after}"
+        assert db.get_entity("backlog:00278") is None
+        assert db.get_entity("backlog:00003") is None
+
+    def test_one_failing_row_does_not_abort_the_remaining_helpers(self, tmp_path):
+        """A3: per-helper continuation.
+
+        The junk-cleanup path raised sqlite3.IntegrityError, which the inner
+        handler (catching only ValueError) let escape and abort the whole
+        backlog sync. Each helper must be isolated.
+        """
+        db = EntityDatabase(":memory:")
+        ws = bootstrap_test_workspace(db, "ws-a-legacy")
+        seed_feature_dir = tmp_path / "features" / "042-test"
+        db.register_entity(entity_type="feature", entity_id="042-test",
+                           name="042-test", status="active", workspace_uuid=ws)
+        write_meta_json(str(seed_feature_dir), status="completed")
+        (tmp_path / "brainstorms").mkdir(parents=True)
+
+        original = db.upsert_entity
+
+        def exploding_upsert(*a, **kw):
+            if kw.get("entity_type") == "brainstorm":
+                raise RuntimeError("brainstorm helper blew up")
+            return original(*a, **kw)
+
+        (tmp_path / "brainstorms" / "boom.prd.md").touch()
+        with patch.object(db, "upsert_entity", side_effect=exploding_upsert):
+            result = sync_entity_statuses(
+                db, str(tmp_path), project_id="ws-a-legacy",
+                project_root=str(tmp_path), workspace_uuid=ws,
+            )
+
+        # The feature helper still completed despite the brainstorm failure.
+        assert db.get_entity("feature:042-test")["status"] == "completed"
+        assert any("brainstorm" in w for w in result["warnings"])
