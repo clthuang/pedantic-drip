@@ -544,6 +544,90 @@ def check_missed_cascade(
 
 
 # ---------------------------------------------------------------------------
+# Check 12: Display-row invariant (B8)
+# ---------------------------------------------------------------------------
+
+
+def check_display_row_invariant(
+    entities_conn: sqlite3.Connection, **_
+) -> CheckResult:
+    """Every entity has an ``entity_display`` row unless ``is_legacy = 1``.
+
+    This states a fact that is already exactly true — 180 legacy rows and the
+    same 180 display-less rows, set equality — and holds it true from here on.
+
+    **Why not backfill display rows for the legacy set instead.** That was the
+    original proposal and the data killed it: 176 of 180 legacy ids yield a
+    sequence, but 25 collide with an existing live display row at the same
+    (kind, workspace, seq) and 4 more collide inside the legacy set.
+    ``entity_display`` has uuid as its only primary key and a NON-unique index
+    on seq, so a backfill would not raise — it would silently install 29
+    ambiguous rows and make every future seq -> entity lookup non-deterministic.
+
+    **Why it has to exist before C3.** C3 refuses allocation for a bucket
+    holding non-legacy entities that lack display rows. Until C6 lands,
+    ``init_project_state`` still passes ``_strict_id_format=False`` and
+    ``register_entity`` writes the display row only ``if strict:``, so every
+    project created in any of the 24 workspaces adds a fresh violation and C3
+    would then refuse that bucket forever. This turns a silent accumulation
+    into a visible one the moment it starts.
+
+    Severity is ``error``: a violation is a write-path bug, not drift. Note
+    that doctor's exit code is always 0 regardless (see ``doctor/__main__``),
+    so the enforcing gate is the pytest sibling of this check, not the doctor
+    run — the same arrangement ``check_status_write_path`` uses.
+    """
+    start = time.monotonic()
+    issues: list[Issue] = []
+
+    try:
+        # Deliberately does NOT select e.kind. The column arrived in
+        # migration 12; selecting it makes the whole query raise on a
+        # pre-12 file, the except below swallows that, and the check
+        # reports green having never run. It was not used anyway.
+        cursor = entities_conn.execute(
+            "SELECT e.uuid, e.type_id "
+            "FROM entities e "
+            "LEFT JOIN entity_display d ON d.uuid = e.uuid "
+            "WHERE d.uuid IS NULL "
+            "AND NOT COALESCE(e.is_legacy, 0) "
+            "AND NOT COALESCE(e.is_deleted, 0)"
+        )
+        for entity_uuid, type_id in cursor:
+            issues.append(Issue(
+                check="display_row_invariant",
+                severity="error",
+                entity=type_id,
+                message=(
+                    f"Entity '{entity_uuid}' ({type_id}) has no entity_display "
+                    "row and is not marked is_legacy. Its sequence number and "
+                    "slug exist only inside its entity_id text, which is the "
+                    "condition this effort removes."
+                ),
+                fix_hint=(
+                    "Write the entity_display row from the seq/slug the "
+                    "registrar already had. Do NOT set is_legacy to silence "
+                    "this - is_legacy means 'predates the structural model', "
+                    "and using it as a mute button makes C3 permit exactly "
+                    "the bucket it exists to refuse."
+                ),
+            ))
+    except sqlite3.Error:
+        # Pre-migration-13 files have no entity_display table at all. A
+        # missing table is not a violation; it is a database this check does
+        # not apply to.
+        pass
+
+    elapsed = int((time.monotonic() - start) * 1000)
+    return CheckResult(
+        name="display_row_invariant",
+        passed=len(issues) == 0,
+        issues=issues,
+        elapsed_ms=elapsed,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Check 10: Configuration Validity
 # ---------------------------------------------------------------------------
 

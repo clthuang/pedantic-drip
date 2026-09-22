@@ -586,7 +586,7 @@ class TestSchemaCreation:
 
 
 class TestTriggers:
-    def test_has_eight_triggers(self, db: EntityDatabase):
+    def test_has_nine_triggers(self, db: EntityDatabase):
         # Feature 108 Migration 11: project_id triggers removed; replaced
         # by workspace_uuid auto-fill / orphan-rejection / immutability.
         # Feature 109 Migration 12: enforce_immutable_entity_type and
@@ -597,8 +597,12 @@ class TestTriggers:
             "SELECT name FROM sqlite_master WHERE type='trigger' ORDER BY name"
         )
         trigger_names = [row[0] for row in cur.fetchall()]
+        # B8 v2 migration 7: enforce_immutable_is_legacy joins the set.
+        # is_legacy states WHEN an identity was minted, which is history;
+        # leaving it writable gave B8's invariant an escape hatch.
         expected = [
             "enforce_immutable_created_at",
+            "enforce_immutable_is_legacy",
             "enforce_immutable_uuid",
             "enforce_immutable_workspace_uuid",
             "enforce_immutable_wp_type_id",

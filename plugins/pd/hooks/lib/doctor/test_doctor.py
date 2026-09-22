@@ -15,6 +15,7 @@ def test_check_order_preserved_post_f116():
         "check_db_readiness",
         "check_referential_integrity",
         "check_missed_cascade",
+        "check_display_row_invariant",
         "check_config_validity",
         "check_security_review_command",
         "check_stale_worktrees",

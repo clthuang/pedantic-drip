@@ -28,7 +28,7 @@ from contextlib import contextmanager
 #       immutable and hard delete cannot work (#081, 2026-09-22)
 # Bumping this constant WITHOUT adding the matching V2_MIGRATIONS entry
 # strands every already-stamped file at the older shape; the two move together.
-V2_SCHEMA_VERSION = 6
+V2_SCHEMA_VERSION = 7
 
 # Per-connection, non-persistent (SQLite resets it on every new connection).
 # Matches the v17 EntityDatabase._set_pragmas() value (database.py) for

@@ -17,6 +17,7 @@ from doctor.check_v2_cutover_window import check_v2_cutover_window
 from doctor.checks import (
     check_config_validity,
     check_db_readiness,
+    check_display_row_invariant,
     check_missed_cascade,
     check_referential_integrity,
     check_security_review_command,
@@ -30,6 +31,9 @@ CHECK_ORDER = [
     check_db_readiness,
     check_referential_integrity,
     check_missed_cascade,
+    # B8 (completion plan, 2026-09-22): every entity has an entity_display
+    # row unless is_legacy. Reads the DB, so it belongs in _ENTITY_DB_CHECKS.
+    check_display_row_invariant,
     check_config_validity,
     check_security_review_command,
     check_stale_worktrees,
@@ -52,6 +56,7 @@ CHECK_ORDER = [
 _ENTITY_DB_CHECKS = {
     "check_referential_integrity",
     "check_missed_cascade",
+    "check_display_row_invariant",
 }
 
 

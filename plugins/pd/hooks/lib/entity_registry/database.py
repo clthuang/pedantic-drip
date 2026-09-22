@@ -6380,12 +6380,48 @@ def _v2_migration_6_soft_delete(conn: sqlite3.Connection) -> None:
     )
 
 
+def _v2_migration_7_immutable_is_legacy(conn: sqlite3.Connection) -> None:
+    """v2 migration 7 / v1 migration 25 — ``is_legacy`` becomes immutable (B8).
+
+    ``is_legacy`` means "this entity's identity predates the structural
+    model". That is a statement about history, and history does not change,
+    so the column should never have been writable after the clean break.
+
+    It matters because of what B8's invariant says: every entity has an
+    ``entity_display`` row UNLESS ``is_legacy = 1``. A writable flag turns
+    that into an invariant with an escape hatch. Between now and C6,
+    ``init_project_state`` still passes ``_strict_id_format=False`` and
+    ``register_entity`` writes the display row only ``if strict:``, so
+    display-less rows keep appearing — and the cheapest way to green a red
+    check would be to mark the new rows legacy. C3 would then PERMIT exactly
+    the bucket it exists to refuse, and ``clean_break`` already says that row
+    shape "is a bug, not history". Since #081 removed hard delete, there is
+    no other remediation, which is what makes the hatch attractive.
+
+    Mirrors ``enforce_immutable_uuid`` / ``_created_at`` / ``_workspace_uuid``
+    on this same table; ``is_legacy`` was simply left out of that set.
+
+    Replay-safe: ``CREATE TRIGGER IF NOT EXISTS``. The one legitimate writer
+    is the migration-4 backfill, which runs before this trigger exists.
+    """
+    conn.execute(
+        "CREATE TRIGGER IF NOT EXISTS enforce_immutable_is_legacy "
+        "BEFORE UPDATE OF is_legacy ON entities "
+        "WHEN NEW.is_legacy IS NOT OLD.is_legacy "
+        "BEGIN SELECT RAISE(ABORT, "
+        "'is_legacy is immutable \u2014 it states when an identity was minted, "
+        "not a state you can change; do not use it to silence the "
+        "display-row invariant'); END"
+    )
+
+
 V2_MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _v2_migration_2_mini_spec,
     3: _v2_migration_3_state_only_axis_views,
     4: _v2_migration_4_explicit_legacy_flag,
     5: _v2_migration_5_explicit_archived_flag,
     6: _v2_migration_6_soft_delete,
+    7: _v2_migration_7_immutable_is_legacy,
 }
 
 # Both flag migrations are generation-agnostic — they probe PRAGMA
@@ -6397,6 +6433,7 @@ V2_MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
 MIGRATIONS[22] = _v2_migration_4_explicit_legacy_flag
 MIGRATIONS[23] = _v2_migration_5_explicit_archived_flag
 MIGRATIONS[24] = _v2_migration_6_soft_delete
+MIGRATIONS[25] = _v2_migration_7_immutable_is_legacy
 
 # qa-mig3 MEDIUM: the stamp sites write schema_v2.V2_SCHEMA_VERSION; a bump
 # without the matching chain entry strands stamped files unfixably

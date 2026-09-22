@@ -113,7 +113,7 @@ Found while scoping. Each changes what a task must do, so each is listed before 
 
 ---
 
-# Part 1 — Finish Release B
+# Part 1 — Finish Release B — **COMPLETE 2026-09-22**
 
 Four tasks, none of which depends on the cutover. **B2, B3b and B8 are shippable as soon as their scope questions are answered; B7 is blocked on a decision** (which rows `backlog.md` should show) and on carrying its five downstream consumers.
 
@@ -217,7 +217,7 @@ Legacy-ness plays no part in the projection. All 6 open legacy items stay visibl
 
 **Depends.** Nothing. (The parent plan's `Depends: B6` was satisfied when the marker shipped.)
 
-## B8 — The display-row invariant
+## B8 — The display-row invariant — **SHIPPED 2026-09-22**
 
 **Contract.** The registry states and enforces: every entity has an `entity_display` row unless `is_legacy = 1`. Green today; red the first time a writer creates a non-legacy entity without a display row. `is_legacy` becomes immutable, so the invariant cannot be satisfied by relabelling.
 

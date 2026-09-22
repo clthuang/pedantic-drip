@@ -35,7 +35,10 @@ _MCP = str(_REPO_ROOT / "plugins" / "pd" / "mcp")
 if _MCP not in sys.path:
     sys.path.insert(0, _MCP)
 
-from entity_registry.database import EntityDatabase  # noqa: E402
+from entity_registry.database import (  # noqa: E402
+    EntityDatabase,
+    _v2_migration_7_immutable_is_legacy,
+)
 from workflow_state_server import (  # noqa: E402
     _project_backlog_md,
     _project_meta_json,
@@ -694,7 +697,13 @@ class TestBacklogProjectionIdentity:
         db = EntityDatabase(str(tmp_path / "e.db"))
         ws = _bootstrap_ws(db, tmp_path)
         uuid = self._seed(db, ws, "00059", status="open")
+        # is_legacy is immutable (v2 migration 7), so this constructs a state
+        # production can no longer reach: the flag was set once, by the
+        # migration-4 backfill, before the trigger existed. Dropping and
+        # restoring the trigger is the honest way to build a historical row.
+        db._conn.execute("DROP TRIGGER enforce_immutable_is_legacy")
         db._conn.execute("UPDATE entities SET is_legacy=1 WHERE uuid=?", (uuid,))
+        _v2_migration_7_immutable_is_legacy(db._conn)
         db._conn.commit()
 
         assert self._rows(_project_backlog_md(db, workspace_uuid=ws)) == ["00059"]

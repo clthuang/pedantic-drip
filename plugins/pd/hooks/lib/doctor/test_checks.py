@@ -41,6 +41,16 @@ def _make_db(tmp_path, name: str = "entities.db") -> str:
         );
         INSERT OR REPLACE INTO _metadata(key, value) VALUES('schema_version', '9');
 
+        -- B8: present so check_display_row_invariant actually RUNS against
+        -- this fixture. Without the table its query raises OperationalError,
+        -- the check swallows it, and every doctor test would report the
+        -- invariant green while never having evaluated it.
+        CREATE TABLE IF NOT EXISTS entity_display (
+            uuid TEXT PRIMARY KEY,
+            seq  INTEGER NOT NULL,
+            slug TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS entities (
             uuid        TEXT NOT NULL PRIMARY KEY,
             type_id     TEXT NOT NULL,
@@ -55,6 +65,10 @@ def _make_db(tmp_path, name: str = "entities.db") -> str:
             created_at  TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
             metadata    TEXT,
+            -- B8: the flag columns the invariant reads. Absent, its query
+            -- raises and the check reports green without having run.
+            is_legacy   INTEGER NOT NULL DEFAULT 0,
+            is_deleted  INTEGER NOT NULL DEFAULT 0,
             UNIQUE(project_id, type_id)
         );
 
@@ -1048,15 +1062,18 @@ class TestCheck10MissingConfigFileUsesDefaults:
 # Feature 131 removed check_project_attribution: 21 checks -> 20. Feature 129
 # removed check_cross_workspace_parent_uuid: 20 checks -> 19. Single source
 # for the orchestrator/CLI check-count assertions below.
-EXPECTED_CHECK_COUNT = 10
+# Bumped 10 -> 11 by B8 (check_display_row_invariant, 2026-09-22). This
+# constant is asserted at a dozen call sites precisely so that adding a check
+# is a deliberate edit here rather than a surprise in each of them.
+EXPECTED_CHECK_COUNT = 11
 
 
-class TestOrchestratorReportHas10Checks:
+class TestOrchestratorReportHasAllChecks:
     """Orchestrator: report always has 10 checks (feature 133's
     post-retirement CHECK_ORDER membership; see EXPECTED_CHECK_COUNT).
     """
 
-    def test_report_has_10_checks(self, tmp_path):
+    def test_report_has_all_checks(self, tmp_path):
         from doctor import run_diagnostics
 
         db_path = _make_db(tmp_path)
@@ -1414,12 +1431,12 @@ def _doctor_lib_path():
     )
 
 
-class TestCliJsonOutputHas10Checks:
+class TestCliJsonOutputHasAllChecks:
     """CLI: JSON output contains 10 checks (feature 133's post-retirement
     CHECK_ORDER membership; see EXPECTED_CHECK_COUNT).
     """
 
-    def test_cli_json_output_has_10_checks(self, tmp_path):
+    def test_cli_json_output_has_all_checks(self, tmp_path):
         db_path = _make_db(tmp_path)
         (tmp_path / "docs").mkdir(exist_ok=True)
 
@@ -2201,3 +2218,80 @@ class TestCheckStaleWorktreesMultipleOrphans:
         assert "task-b" in messages
 
 
+
+
+from doctor.checks import check_display_row_invariant  # noqa: E402
+
+
+class TestDisplayRowInvariant:
+    """B8: every entity has an entity_display row unless is_legacy."""
+
+    def _conn(self, tmp_path):
+        return sqlite3.connect(_make_db(tmp_path))
+
+    @staticmethod
+    def _entity(conn, uuid, type_id, *, is_legacy=0, is_deleted=0, display=True):
+        conn.execute(
+            "INSERT INTO entities (uuid, type_id, entity_type, entity_id, name, "
+            "is_legacy, is_deleted) VALUES (?,?,?,?,?,?,?)",
+            (uuid, type_id, "feature", type_id.split(":")[1], type_id,
+             is_legacy, is_deleted),
+        )
+        if display:
+            conn.execute(
+                "INSERT INTO entity_display (uuid, seq, slug) VALUES (?,?,?)",
+                (uuid, 1, "slug"),
+            )
+        conn.commit()
+
+    def test_green_when_every_entity_has_a_display_row(self, tmp_path):
+        conn = self._conn(tmp_path)
+        self._entity(conn, "u1", "feature:001-a")
+        result = check_display_row_invariant(conn)
+        assert result.passed
+        assert result.issues == []
+
+    def test_red_on_a_display_less_non_legacy_entity(self, tmp_path):
+        """The failing state — without this, every other test here is vacuous.
+
+        The check swallows sqlite3.Error so that a pre-migration-13 file is
+        not reported as violating. That swallow is also how a fixture missing
+        entity_display or is_legacy would report green while never running, so
+        one test must observe the check actually firing.
+        """
+        conn = self._conn(tmp_path)
+        self._entity(conn, "u1", "feature:001-a", display=False)
+        result = check_display_row_invariant(conn)
+        assert not result.passed
+        assert [i.entity for i in result.issues] == ["feature:001-a"]
+        assert result.issues[0].severity == "error"
+
+    def test_legacy_rows_are_exempt(self, tmp_path):
+        """The 180 legacy rows are the whole reason the invariant has an 'unless'."""
+        conn = self._conn(tmp_path)
+        self._entity(conn, "u1", "feature:001-a", is_legacy=1, display=False)
+        assert check_display_row_invariant(conn).passed
+
+    def test_soft_deleted_rows_are_exempt(self, tmp_path):
+        conn = self._conn(tmp_path)
+        self._entity(conn, "u1", "feature:001-a", is_deleted=1, display=False)
+        assert check_display_row_invariant(conn).passed
+
+    def test_is_legacy_cannot_be_used_to_silence_a_violation(self, tmp_path):
+        """The escape hatch, closed.
+
+        Without v2 migration 7 the cheapest fix for a red check is
+        `UPDATE entities SET is_legacy=1`, which greens it while leaving the
+        row display-less — and then C3 PERMITS the bucket it exists to refuse.
+        This asserts the write raises rather than that the check still fails,
+        because a check that merely stays red can be silenced a second way.
+        """
+        from entity_registry.database import _v2_migration_7_immutable_is_legacy
+
+        conn = self._conn(tmp_path)
+        _v2_migration_7_immutable_is_legacy(conn)
+        self._entity(conn, "u1", "feature:001-a", display=False)
+        assert not check_display_row_invariant(conn).passed
+
+        with pytest.raises(sqlite3.IntegrityError, match="is_legacy is immutable"):
+            conn.execute("UPDATE entities SET is_legacy = 1 WHERE uuid = 'u1'")
