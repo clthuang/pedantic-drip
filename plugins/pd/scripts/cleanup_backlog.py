@@ -48,6 +48,20 @@ ITEM_RE = re.compile(r'^- (~~)?\*\*#[^*\s]+\*\*')
 # Top-level table rows. Leading digit excludes the `|---|` separator
 # and the `| ID |` header without needing to special-case either.
 TABLE_ITEM_RE = re.compile(r'^\|\s*\d[^|\s]*\s*\|')
+
+
+# Whether the most recent apply_archival actually rewrote backlog.md. The
+# CLI printed "re-projected <path>" unconditionally, including on the
+# paths that deliberately refuse to write.
+_LAST_APPLY = {"reprojected": False}
+
+
+def _has_item_rows(text: str) -> bool:
+    """True if *text* carries at least one backlog item, in either form."""
+    return any(
+        ITEM_RE.match(line) or TABLE_ITEM_RE.match(line)
+        for line in text.splitlines()
+    )
 SECTION_HEADER_RE = re.compile(r'^## From ')
 ANY_H2_RE = re.compile(r'^## ')
 CLOSED_MARKERS = ('(closed:', '(promoted →', '(fixed in feature:', '**CLOSED')
@@ -176,7 +190,7 @@ def _setup_db_imports() -> None:
             sys.path.insert(0, sp)
 
 
-def apply_archival(backlog_path: Path, archive_path: Path) -> int:
+def apply_archival(backlog_path: Path, archive_path: Path) -> int:  # noqa: C901
     """Archive archivable sections via ``set_archived``.
 
     Per feature 110 FR-4.3 / design §2.3:
@@ -196,6 +210,7 @@ def apply_archival(backlog_path: Path, archive_path: Path) -> int:
 
     Returns the count of archived SECTIONS (not items).
     """
+    _LAST_APPLY["reprojected"] = False
     content = backlog_path.read_text()
     sections = parse_sections(content)
     archivable = [s for s in sections if s["is_archivable"]]
@@ -217,7 +232,6 @@ def apply_archival(backlog_path: Path, archive_path: Path) -> int:
     _setup_db_imports()
     try:
         from entity_registry.database import EntityDatabase
-        from entity_registry.project_identity import resolve_workspace_uuid
         from workflow_state_server import _project_backlog_md
     except Exception as exc:
         sys.stderr.write(
@@ -247,25 +261,48 @@ def apply_archival(backlog_path: Path, archive_path: Path) -> int:
             failures.append((type_id, str(exc)))
 
     # Re-project scoped to THIS workspace (B7). An unscoped re-projection
-    # would write other repos' backlog items into this repo's file — 4 such
-    # rows were present before B7. Resolution failure is not fatal, but it
-    # must not silently fall back to unscoped: skip the write instead, so a
-    # stale-but-correct file beats a fresh-but-cross-contaminated one.
+    # writes other repos' backlog items into this repo's file — 4 such rows
+    # were present before B7.
+    #
+    # Look the workspace up READ-ONLY by project_root rather than calling
+    # resolve_workspace_uuid: that helper's last resort is to MINT a fresh
+    # uuid for any directory containing .claude/, which (a) matches no
+    # entities, so the projection comes back empty, and (b) leaves a stray
+    # workspace.json behind in a directory that is not a workspace. Both
+    # were reproduced against a --backlog-path override.
     project_root = str(backlog_path.resolve().parent.parent)
-    try:
-        workspace_uuid = resolve_workspace_uuid(project_root, db_path=db_path)
-    except Exception as exc:
+    row = db._conn.execute(
+        "SELECT uuid FROM workspaces WHERE project_root = ?", (project_root,)
+    ).fetchone()
+    if row is None:
         sys.stderr.write(
-            f"error: workspace resolution failed for {project_root}: {exc}\n"
-            "       archival succeeded; backlog.md NOT re-projected.\n"
+            f"error: {project_root} is not a known workspace; "
+            "archival succeeded, backlog.md NOT re-projected.\n"
         )
+        _LAST_APPLY["reprojected"] = False
         return len(archivable)
+    workspace_uuid = row[0]
 
     try:
         projected = _project_backlog_md(db, workspace_uuid=workspace_uuid)
+        # Never replace content with nothing. A projection that comes back
+        # empty against a non-empty file means the rows went somewhere this
+        # code cannot see — wrong workspace, unmigrated DB, a future bug —
+        # and overwriting is unrecoverable, because backlog.md is gitignored
+        # and this is its only writer.
+        if not _has_item_rows(projected) and _has_item_rows(backlog_path.read_text()):
+            sys.stderr.write(
+                "error: re-projection produced no items but the existing "
+                f"{backlog_path.name} has some; refusing to overwrite. "
+                "Archival succeeded; the file is unchanged.\n"
+            )
+            _LAST_APPLY["reprojected"] = False
+            return len(archivable)
         backlog_path.write_text(projected)
+        _LAST_APPLY["reprojected"] = True
     except Exception as exc:
         sys.stderr.write(f"error: re-projection failed after archival: {exc}\n")
+        _LAST_APPLY["reprojected"] = False
         # Even if projection fails, the DB writes already happened — do
         # NOT touch the file in that case (preserves audit trail).
 
@@ -311,10 +348,16 @@ def main():
         # Post-feature-110, the archive file is no longer written; the
         # DB ``is_archived`` flag IS the archive surface and
         # ``_project_backlog_md`` excludes archived rows.
-        print(
-            f"Archived {moved} section(s) via set_archived(); "
-            f"re-projected {backlog_path}."
-        )
+        if _LAST_APPLY["reprojected"]:
+            print(
+                f"Archived {moved} section(s) via set_archived(); "
+                f"re-projected {backlog_path}."
+            )
+        else:
+            print(
+                f"Archived {moved} section(s) via set_archived(); "
+                f"{backlog_path} was NOT re-projected (see stderr)."
+            )
         return 0
 
     # Default: dry-run.

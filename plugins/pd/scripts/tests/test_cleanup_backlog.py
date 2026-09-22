@@ -294,3 +294,118 @@ def test_count_active_counts_table_rows_not_only_bullets(tmp_path):
     # 2 table rows + 1 open bullet = 3; the struck bullet and the header and
     # separator rows must not count.
     assert cleanup_backlog.count_active(backlog) == 3
+
+
+def test_reprojection_is_scoped_and_refuses_to_empty_the_file(tmp_path):
+    """Covers the two paths the sibling apply test never reaches.
+
+    That test points ENTITY_DB_PATH at a nonexistent file and its tmp_path
+    has no .claude/, so apply_archival returns before the re-projection.
+    Everything after workspace resolution — scoping, the empty-projection
+    guard, the file write — was dead code under test: reverting
+    `_project_backlog_md(db, workspace_uuid=...)` to the unscoped call left
+    the whole suite green.
+
+    Here the backlog's parent.parent IS a registered workspace holding one
+    live item, and a second workspace holds another. The written file must
+    contain only the first.
+    """
+    import sqlite3
+    import uuid as _uuid
+
+    sys.path.insert(0, str(SCRIPT_PATH.parent))
+    sys.path.insert(0, str(SCRIPT_PATH.parent.parent / "hooks" / "lib"))
+    sys.path.insert(0, str(SCRIPT_PATH.parent.parent / "mcp"))
+    import cleanup_backlog
+    from entity_registry.database import EntityDatabase
+
+    root = tmp_path / "repo"
+    (root / "docs").mkdir(parents=True)
+    backlog = root / "docs" / "backlog.md"
+    # The archivable section is load-bearing, not decoration: apply_archival
+    # returns at `if not archivable` before ever re-projecting, so without a
+    # fully-closed `## From` section this test would pass with the scoping
+    # reverted. Verified by mutation.
+    backlog.write_text(
+        "# Backlog\n\n| ID | Timestamp | Description |\n|----|-----------|-------------|\n"
+        "| 001-mine | 2026-07-25T00:00:00+00:00 | mine |\n"
+        "\n## From Feature Z QA (2026-01-01)\n\n"
+        "- ~~**#99500**~~ closed, makes this section archivable\n"
+    )
+
+    db_path = tmp_path / "e.db"
+    db = EntityDatabase(str(db_path))
+    now = db._now_iso()
+    ids = {}
+    for tag, proot in (("mine", str(root)), ("theirs", str(tmp_path / "other"))):
+        u = str(_uuid.uuid4())
+        db._conn.execute(
+            "INSERT INTO workspaces (uuid, project_id_legacy, project_root, "
+            "created_at, updated_at) VALUES (?,?,?,?,?)",
+            (u, f"__{tag}__", proot, now, now),
+        )
+        ids[tag] = u
+    db._conn.commit()
+    db.register_entity("backlog", entity_id="001-mine", name="mine",
+                       workspace_uuid=ids["mine"], status="open",
+                       _strict_id_format=False)
+    db.register_entity("backlog", entity_id="002-theirs", name="theirs",
+                       workspace_uuid=ids["theirs"], status="open",
+                       _strict_id_format=False)
+
+    prev = os.environ.get("ENTITY_DB_PATH")
+    os.environ["ENTITY_DB_PATH"] = str(db_path)
+    try:
+        cleanup_backlog.apply_archival(backlog, tmp_path / "archive.md")
+    finally:
+        if prev is None:
+            os.environ.pop("ENTITY_DB_PATH", None)
+        else:
+            os.environ["ENTITY_DB_PATH"] = prev
+
+    written = backlog.read_text()
+    assert "001-mine" in written
+    assert "002-theirs" not in written, (
+        "the re-projection is unscoped; another workspace's backlog item "
+        "was written into this repo's file"
+    )
+
+
+def test_reprojection_refuses_when_it_would_empty_a_populated_file(tmp_path):
+    """backlog.md is gitignored and this is its only writer, so an
+    overwrite with nothing is unrecoverable.
+
+    Reproduces the reported data loss: a --backlog-path whose parent.parent
+    is not a registered workspace. Previously resolve_workspace_uuid minted
+    a fresh uuid for it, the projection matched no entities, and a populated
+    266-byte file was replaced with a 77-byte empty one.
+    """
+    sys.path.insert(0, str(SCRIPT_PATH.parent))
+    import cleanup_backlog
+
+    root = tmp_path / "elsewhere"
+    (root / "docs").mkdir(parents=True)
+    (root / "docs" / ".claude").mkdir()
+    backlog = root / "docs" / "pd" / "backlog.md"
+    backlog.parent.mkdir()
+    original = (
+        "# Backlog\n\n| ID | Timestamp | Description |\n|----|-----------|-------------|\n"
+        "| 00059 | 2026-04-15T00:00:00+00:00 | a real live item |\n"
+        "\n## From Feature X QA (2026-01-01)\n\n- ~~**#99001**~~ closed\n"
+    )
+    backlog.write_text(original)
+
+    prev = os.environ.get("ENTITY_DB_PATH")
+    os.environ["ENTITY_DB_PATH"] = str(tmp_path / "empty.db")
+    try:
+        cleanup_backlog.apply_archival(backlog, tmp_path / "archive.md")
+    finally:
+        if prev is None:
+            os.environ.pop("ENTITY_DB_PATH", None)
+        else:
+            os.environ["ENTITY_DB_PATH"] = prev
+
+    assert backlog.read_text() == original, "a populated backlog was overwritten"
+    assert not (root / "docs" / ".claude" / "pd" / "workspace.json").exists(), (
+        "minted a workspace.json in a directory that is not a workspace"
+    )

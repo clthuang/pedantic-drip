@@ -2295,3 +2295,48 @@ class TestDisplayRowInvariant:
 
         with pytest.raises(sqlite3.IntegrityError, match="is_legacy is immutable"):
             conn.execute("UPDATE entities SET is_legacy = 1 WHERE uuid = 'u1'")
+
+
+class TestDisplayRowInvariantSchemaProbes:
+    """The check must not report green on a schema it cannot evaluate.
+
+    The first version selected e.kind (migration 12) and reported green on
+    any older file because the except swallowed the error. Dropping e.kind
+    fixed that instance and left two worse ones — is_legacy (migration 22)
+    and is_deleted (migration 24), both strictly later and so strictly more
+    likely to be missing. These pin all three.
+    """
+
+    BASE = (
+        "CREATE TABLE entity_display (uuid TEXT PRIMARY KEY, seq INTEGER, slug TEXT);"
+        "CREATE TABLE entities (uuid TEXT PRIMARY KEY, type_id TEXT NOT NULL {extra});"
+        "INSERT INTO entities (uuid, type_id) VALUES ('u1','feature:001-a');"
+    )
+
+    @pytest.mark.parametrize("label,extra", [
+        ("full", ", is_legacy INTEGER DEFAULT 0, is_deleted INTEGER DEFAULT 0"),
+        ("no_is_legacy", ", is_deleted INTEGER DEFAULT 0"),
+        ("no_is_deleted", ", is_legacy INTEGER DEFAULT 0"),
+        ("neither_flag", ""),
+    ])
+    def test_violation_is_reported_on_every_schema_generation(self, label, extra):
+        conn = sqlite3.connect(":memory:")
+        conn.executescript(self.BASE.format(extra=extra))
+        result = check_display_row_invariant(conn)
+        assert not result.passed, (
+            f"schema {label!r}: u1 has no display row and is not exempt, so "
+            "this must be a violation. A green here means the query named a "
+            "column this schema lacks and the error was swallowed."
+        )
+        assert [i.entity for i in result.issues] == ["feature:001-a"]
+
+    def test_missing_entity_display_table_is_info_not_silent(self):
+        """Pre-migration-13 files are genuinely out of scope — but say so."""
+        conn = sqlite3.connect(":memory:")
+        conn.executescript(
+            "CREATE TABLE entities (uuid TEXT PRIMARY KEY, type_id TEXT NOT NULL);"
+        )
+        result = check_display_row_invariant(conn)
+        assert result.passed
+        assert [i.severity for i in result.issues] == ["info"]
+        assert "not evaluated" in result.issues[0].message

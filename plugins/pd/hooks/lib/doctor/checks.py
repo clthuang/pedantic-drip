@@ -548,6 +548,22 @@ def check_missed_cascade(
 # ---------------------------------------------------------------------------
 
 
+def _not_applicable(reason: str, start: float) -> CheckResult:
+    """A database this check cannot evaluate. Informational, not a pass."""
+    return CheckResult(
+        name="display_row_invariant",
+        passed=True,
+        issues=[Issue(
+            check="display_row_invariant",
+            severity="info",
+            entity=None,
+            message=f"display-row invariant not evaluated: {reason}",
+            fix_hint=None,
+        )],
+        elapsed_ms=int((time.monotonic() - start) * 1000),
+    )
+
+
 def check_display_row_invariant(
     entities_conn: sqlite3.Connection, **_
 ) -> CheckResult:
@@ -581,17 +597,40 @@ def check_display_row_invariant(
     issues: list[Issue] = []
 
     try:
-        # Deliberately does NOT select e.kind. The column arrived in
-        # migration 12; selecting it makes the whole query raise on a
-        # pre-12 file, the except below swallows that, and the check
-        # reports green having never run. It was not used anyway.
+        # Every column this query names must be probed first, not assumed.
+        # The first version selected e.kind (migration 12); on an older file
+        # the whole statement raised, the except below swallowed it, and the
+        # check reported green having never run. Dropping e.kind fixed that
+        # one instance and left two worse ones: is_legacy arrived in
+        # migration 22 and is_deleted in 24, both strictly LATER than 12 and
+        # so strictly more likely to be absent.
+        cols = {row[1] for row in entities_conn.execute(
+            "PRAGMA table_info(entities)"
+        )}
+        if not {"uuid", "type_id"} <= cols:
+            return _not_applicable(
+                "entities lacks uuid/type_id", start
+            )
+        if "entity_display" not in {
+            row[0] for row in entities_conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }:
+            return _not_applicable("no entity_display table (pre-migration 13)", start)
+
+        # Exemption clauses are added only for columns that exist. A file
+        # predating them has no exempt rows, which is the correct reading:
+        # before is_legacy existed, no entity was marked legacy.
+        where = ["d.uuid IS NULL"]
+        for flag in ("is_legacy", "is_deleted"):
+            if flag in cols:
+                where.append(f"NOT COALESCE(e.{flag}, 0)")
+
         cursor = entities_conn.execute(
             "SELECT e.uuid, e.type_id "
             "FROM entities e "
             "LEFT JOIN entity_display d ON d.uuid = e.uuid "
-            "WHERE d.uuid IS NULL "
-            "AND NOT COALESCE(e.is_legacy, 0) "
-            "AND NOT COALESCE(e.is_deleted, 0)"
+            "WHERE " + " AND ".join(where)
         )
         for entity_uuid, type_id in cursor:
             issues.append(Issue(
@@ -612,11 +651,23 @@ def check_display_row_invariant(
                     "the bucket it exists to refuse."
                 ),
             ))
-    except sqlite3.Error:
-        # Pre-migration-13 files have no entity_display table at all. A
-        # missing table is not a violation; it is a database this check does
-        # not apply to.
-        pass
+    except sqlite3.Error as exc:
+        # Reached only for something the probes above did not anticipate.
+        # Report it rather than swallowing it: CheckResult has no
+        # "not applicable" state, so a swallowed error is indistinguishable
+        # from a clean database.
+        return CheckResult(
+            name="display_row_invariant",
+            passed=False,
+            issues=[Issue(
+                check="display_row_invariant",
+                severity="warning",
+                entity=None,
+                message=f"could not evaluate the display-row invariant: {exc}",
+                fix_hint="Inspect the entities/entity_display schema.",
+            )],
+            elapsed_ms=int((time.monotonic() - start) * 1000),
+        )
 
     elapsed = int((time.monotonic() - start) * 1000)
     return CheckResult(
