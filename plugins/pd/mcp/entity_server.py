@@ -27,7 +27,11 @@ from entity_registry.database import (
     EntityNotFoundError,
     PromotionConflictError,
 )
-from entity_registry.id_generator import _slugify, generate_entity_id
+from entity_registry.id_generator import (
+    _slugify,
+    generate_entity_id,
+    render_display_id,
+)
 from entity_registry.project_identity import (
     GitProjectInfo,
     _compute_legacy_project_id,
@@ -689,7 +693,9 @@ async def allocate_entity_id(entity_type: str = "", name: str = "") -> str:   # 
             "recovery_hint": "supply a descriptive name containing letters/digits",
         })
     seq = _db.next_sequence_value(entity_type=entity_type, workspace_uuid=_workspace_uuid)
-    return json.dumps({"seq": seq, "entity_id": f"{seq:03d}-{slug}"})
+    return json.dumps(
+        {"seq": seq, "entity_id": render_display_id(entity_type, seq, slug)}
+    )
 
 
 # ---------------------------------------------------------------------------

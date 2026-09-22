@@ -6415,6 +6415,24 @@ def _v2_migration_7_immutable_is_legacy(conn: sqlite3.Connection) -> None:
     )
 
 
+# SQLite authorizer actions that mutate. Used by C23's future-file guard.
+_WRITE_ACTIONS = frozenset({
+    sqlite3.SQLITE_INSERT,
+    sqlite3.SQLITE_UPDATE,
+    sqlite3.SQLITE_DELETE,
+    sqlite3.SQLITE_CREATE_TABLE,
+    sqlite3.SQLITE_CREATE_INDEX,
+    sqlite3.SQLITE_CREATE_TRIGGER,
+    sqlite3.SQLITE_CREATE_VIEW,
+    sqlite3.SQLITE_DROP_TABLE,
+    sqlite3.SQLITE_DROP_INDEX,
+    sqlite3.SQLITE_DROP_TRIGGER,
+    sqlite3.SQLITE_DROP_VIEW,
+    sqlite3.SQLITE_ALTER_TABLE,
+    sqlite3.SQLITE_REINDEX,
+})
+
+
 V2_MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _v2_migration_2_mini_spec,
     3: _v2_migration_3_state_only_axis_views,
@@ -6718,6 +6736,10 @@ class EntityDatabase:
 
     def __init__(self, db_path: str, *, check_same_thread: bool = True) -> None:
         self._in_transaction = False
+        # Kept for diagnostics: C23's future-file guard names the file it is
+        # refusing to write, and "which database?" is the first question when
+        # 24 workspaces share one.
+        self._db_path = db_path
         self._conn = sqlite3.connect(db_path, timeout=5.0, check_same_thread=check_same_thread)
         self._conn.row_factory = sqlite3.Row
         self._set_pragmas()
@@ -10850,6 +10872,23 @@ class EntityDatabase:
         self._is_v2_generation = (
             generation_row is not None and generation_row[0] == "v2"
         )
+        # C23: refuse to WRITE a file newer than this build understands.
+        #
+        # Both migration loops are `range(current + 1, target + 1)`, so a
+        # file stamped ABOVE this build's max iterates zero times and then
+        # proceeds to write normally. Nothing else on the write path reads
+        # the version: the only V2_SCHEMA_VERSION reference is an
+        # import-time assert comparing the build to itself.
+        #
+        # This matters because the plugin is installed once, globally, and
+        # shared by every workspace. Updating it does not restart running
+        # MCP servers, so an old process keeps serving requests against a
+        # file a new process has already migrated. run_backfill fires at
+        # every MCP start and swallows failures to stderr, which MCP does
+        # not surface — so an old writer corrupts quietly.
+        if self._refuse_if_file_is_from_the_future():
+            return
+
         if self._is_v2_generation:
             # Feature 134 NFR-4: a v2 file skips the v1 chain but is NOT
             # frozen — it runs its own forward-only lineage instead.
@@ -10864,6 +10903,52 @@ class EntityDatabase:
             migration_fn(self._conn)
             _upsert_metadata(self._conn, "schema_version", str(version))
             self._commit()
+
+    def _refuse_if_file_is_from_the_future(self) -> bool:
+        """Disable writes when the file's version exceeds this build's max.
+
+        Returns True when the guard fired, so the caller skips migration.
+
+        Reads stay available deliberately. Schema growth here is additive,
+        a newer file is almost always readable, and refusing to OPEN would
+        break read-only consumers — doctor, the UI, every census — for
+        everyone on the old build rather than only the writers. What must
+        not happen is a write shaped by migrations this build has never
+        seen.
+
+        Enforced with a SQLite authorizer rather than a check in
+        ``_commit``: nine call sites already commit via ``self._conn``
+        directly, and a caller holding ``db._conn`` can bypass any
+        Python-level guard entirely. The authorizer sits below all of them
+        and costs nothing measurable on reads.
+        """
+        file_version = self.get_schema_version()
+        build_max = max(V2_MIGRATIONS) if self._is_v2_generation else max(MIGRATIONS)
+        if file_version <= build_max:
+            return False
+
+        generation = "v2" if self._is_v2_generation else "v1"
+        self.future_file_build_max = build_max
+        self.future_file_version = file_version
+
+        def _deny_writes(action, *_args):
+            return (
+                sqlite3.SQLITE_DENY
+                if action in _WRITE_ACTIONS
+                else sqlite3.SQLITE_OK
+            )
+
+        self._conn.set_authorizer(_deny_writes)
+        sys.stderr.write(
+            f"entity-registry: REFUSING WRITES to {self._db_path}\n"
+            f"  file schema_version={file_version} ({generation} generation), "
+            f"this build knows up to {build_max}.\n"
+            f"  A newer build wrote this file. Reads still work; writes are "
+            f"disabled so this process cannot\n"
+            f"  produce rows shaped by migrations it has never seen. "
+            f"Update the pd plugin and restart this process.\n"
+        )
+        return True
 
     def _migrate_v2(self) -> None:
         """Apply pending ``V2_MIGRATIONS`` to a v2-generation file.
