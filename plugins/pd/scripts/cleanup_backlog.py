@@ -9,7 +9,7 @@ Feature 110 FR-4.3 — Archival semantics changed (design §2.3):
   writes. Post-feature-110, ``docs/backlog.md`` is a deterministic
   projection of DB state (``_project_backlog_md``) and is GUARDED by
   ``data-file-guard.sh``. The archival path now routes through
-  ``update_entity(type_id, status='archived')`` (per design §2.3
+  ``set_archived(type_id)`` (per design §2.3
   ``cleanup_backlog.py`` row) — flipping the DB status flag is sufficient
   because ``_project_backlog_md`` excludes archived rows from the main
   table (per design TD-10). After flipping all status flags, the script
@@ -19,14 +19,14 @@ Feature 110 FR-4.3 — Archival semantics changed (design §2.3):
 
 CLI:
   --dry-run        Default mode. Print archivable-section table.
-  --apply          Perform writes via update_entity + re-project.
+  --apply          Perform writes via set_archived + re-project.
   --count-active   Print active-item count to stdout (used by FR-6b doctor + AC-X1).
   --backlog-path   Override default backlog path.
   --archive-path   DEPRECATED (feature 110 FR-4.3). Retained for CLI
                    backward compatibility; ignored when ``--apply`` routes
-                   through ``update_entity``. The standalone archive
+                   through ``set_archived``. The standalone archive
                    file is no longer maintained — archived rows are
-                   identified via DB ``status='archived'`` flag.
+                   identified via DB ``is_archived`` flag.
 
 The script NEVER commits. Commit responsibility belongs to the slash-command (cleanup-backlog.md).
 """
@@ -157,16 +157,16 @@ def _setup_db_imports() -> None:
 
 
 def apply_archival(backlog_path: Path, archive_path: Path) -> int:
-    """Archive archivable sections via ``update_entity(status='archived')``.
+    """Archive archivable sections via ``set_archived``.
 
     Per feature 110 FR-4.3 / design §2.3:
       * Parse the current backlog file to identify archivable sections
         (closed-items-only sections — same predicate as pre-110).
       * For each item ID in those sections, call
-        ``db.update_entity(type_id="backlog:{ID}", status="archived")``.
+        ``db.set_archived(type_id="backlog:{ID}")``.
       * After flipping all status flags, invoke ``_project_backlog_md(db)``
         and write the result to ``backlog_path``. The projection excludes
-        ``status='archived'`` rows (design TD-10), so the file shrinks
+        ``is_archived`` rows (design TD-10), so the file shrinks
         deterministically.
 
     The ``archive_path`` argument is retained for CLI signature
@@ -214,14 +214,14 @@ def apply_archival(backlog_path: Path, archive_path: Path) -> int:
         sys.stderr.write(f"error: failed to open entity DB at {db_path}: {exc}\n")
         return 0
 
-    # Route each archival through update_entity. Continue on individual
+    # Route each archival through set_archived. Continue on individual
     # failures (e.g., type_id not registered in DB) — surface aggregate
     # failures to stderr at the end.
     failures: list = []
     for item_id in item_ids:
         type_id = f"backlog:{item_id}"
         try:
-            db.update_entity(type_id=type_id, status="archived")
+            db.set_archived(type_id=type_id)
         except Exception as exc:
             failures.append((type_id, str(exc)))
 
@@ -236,7 +236,7 @@ def apply_archival(backlog_path: Path, archive_path: Path) -> int:
 
     if failures:
         sys.stderr.write(
-            f"warning: {len(failures)} update_entity call(s) failed:\n"
+            f"warning: {len(failures)} set_archived call(s) failed:\n"
         )
         for type_id, msg in failures:
             sys.stderr.write(f"  - {type_id}: {msg}\n")
@@ -274,10 +274,10 @@ def main():
     if args.apply:
         moved = apply_archival(backlog_path, archive_path)
         # Post-feature-110, the archive file is no longer written; the
-        # DB ``status='archived'`` flag IS the archive surface and
+        # DB ``is_archived`` flag IS the archive surface and
         # ``_project_backlog_md`` excludes archived rows.
         print(
-            f"Archived {moved} section(s) via update_entity(status='archived'); "
+            f"Archived {moved} section(s) via set_archived(); "
             f"re-projected {backlog_path}."
         )
         return 0

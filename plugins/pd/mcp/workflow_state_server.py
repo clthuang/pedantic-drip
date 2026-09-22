@@ -623,7 +623,7 @@ def _project_backlog_md(db: EntityDatabase) -> str:
     Returns
     -------
     str
-        Markdown string. Archived rows (``status='archived'``) are
+        Markdown string. Archived rows (``is_archived``) are
         excluded from the main table per design TD-10.
     """
     # Collect every backlog entity across all workspaces (cross-project

@@ -174,3 +174,87 @@ def test_count_active_cli(tmp_backlog):
     # Actually re-reading fixture: #99003 has "(closed: rationale)" marker → closed. So TestA all closed.
     # Active items overall: only #99030 and #99032.
     assert count == 2
+
+
+def test_archival_preserves_status_and_sets_the_flag(tmp_backlog, tmp_archive, tmp_path):
+    """Archival writes ``is_archived`` and leaves ``status`` alone.
+
+    The sibling AC-9 test points ``ENTITY_DB_PATH`` at a non-existent file,
+    so it exercises the degraded path and passes under any writer. This one
+    uses a real DB and asserts the two facts that distinguish the writers:
+    the flag flipped, and the workflow status the entity actually had is
+    still there.
+
+    Before v2 migration 5, archival wrote ``status='archived'`` and so
+    destroyed what the entity was — 125 of 170 archived rows had been
+    ``completed`` and said so nowhere. The reader moved to ``is_archived``
+    in bb0fb55e; this pins the writer to the same column.
+    """
+    import sqlite3
+
+    sys.path.insert(0, str(SCRIPT_PATH.parent))
+    sys.path.insert(0, str(SCRIPT_PATH.parent.parent / "hooks" / "lib"))
+    sys.path.insert(0, str(SCRIPT_PATH.parent.parent / "mcp"))
+    from entity_registry.database import EntityDatabase
+
+    import cleanup_backlog
+
+    import uuid as _uuid
+
+    db_path = tmp_path / "entities.db"
+    db = EntityDatabase(str(db_path))
+    ws = str(_uuid.uuid4())
+    now = db._now_iso()
+    db._conn.execute(
+        "INSERT OR IGNORE INTO workspaces "
+        "(uuid, project_id_legacy, project_root, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (ws, "__cleanup_backlog_test__", str(tmp_path), now, now),
+    )
+    db._conn.commit()
+
+    # Two items in the fixture's archivable section, registered completed.
+    content = tmp_backlog.read_text()
+    sections = cleanup_backlog.parse_sections(content)
+    archivable = [s for s in sections if s["is_archivable"]]
+    item_ids = []
+    for sec in archivable:
+        item_ids.extend(cleanup_backlog._extract_item_ids(sec["items"]))
+    assert item_ids, "fixture must contain archivable items for this test to mean anything"
+
+    for n, item_id in enumerate(item_ids):
+        db.register_entity(
+            "backlog",
+            entity_id=item_id,
+            name=f"item {item_id}",
+            workspace_uuid=ws,
+            status="completed",
+            _strict_id_format=False,
+        )
+
+    monkey = os.environ.get("ENTITY_DB_PATH")
+    os.environ["ENTITY_DB_PATH"] = str(db_path)
+    try:
+        cleanup_backlog.apply_archival(tmp_backlog, tmp_archive)
+    finally:
+        if monkey is None:
+            os.environ.pop("ENTITY_DB_PATH", None)
+        else:
+            os.environ["ENTITY_DB_PATH"] = monkey
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    for item_id in item_ids:
+        row = conn.execute(
+            "SELECT status, is_archived FROM entities WHERE type_id = ?",
+            (f"backlog:{item_id}",),
+        ).fetchone()
+        assert row is not None, f"backlog:{item_id} vanished"
+        assert row["is_archived"] == 1, (
+            f"backlog:{item_id} was not archived — the flag is the archive surface"
+        )
+        assert row["status"] == "completed", (
+            f"backlog:{item_id} status is {row['status']!r}, not 'completed'. "
+            "Archival overwrote workflow state; it must write is_archived only."
+        )
+    conn.close()
