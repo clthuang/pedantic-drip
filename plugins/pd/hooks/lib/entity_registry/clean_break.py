@@ -21,6 +21,8 @@ import re
 import sqlite3
 from dataclasses import dataclass
 
+from entity_registry.id_generator import NON_SEQUENCE_KINDS
+
 # The one sanctioned legacy parse. Four historical shapes, in the order a
 # real id must be tested:
 #   P004-entity-db-redesign / P001   -> 4, 1     (pre-decision project form)
@@ -37,7 +39,10 @@ _LEGACY_DATE = re.compile(r"^(\d{8})[-T]")
 # Kinds whose identity is a timestamp, not a sequence. They have rows in
 # ``sequences`` only because an earlier text scan parsed their date prefix
 # as a number; no creation path allocates from that counter.
-DATE_SHAPED_KINDS = frozenset({"brainstorm"})
+#
+# Imported, not redeclared — id_generator owns this fact because it is the
+# module that must refuse to compose an id for these kinds (C4).
+DATE_SHAPED_KINDS = NON_SEQUENCE_KINDS
 
 
 def parse_legacy_seq(kind: str, entity_id: str) -> int | None:

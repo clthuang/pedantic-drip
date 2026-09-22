@@ -531,9 +531,9 @@ _INFERENCE_SCAN_ROOTS = [
 #                          change it silently.
 _KNOWN_INFERENCE_SITES: list[tuple[str, int, str, str]] = [
     ("entity_registry/backfill.py",           756, "split",       "C13 missing-parent policy"),
-    ("entity_registry/clean_break.py",        54, "regex",       "B4 SANCTIONED - the one legacy parse"),
-    ("entity_registry/clean_break.py",        56, "regex",       "B4 SANCTIONED - the one legacy parse"),
     ("entity_registry/clean_break.py",        59, "regex",       "B4 SANCTIONED - the one legacy parse"),
+    ("entity_registry/clean_break.py",        61, "regex",       "B4 SANCTIONED - the one legacy parse"),
+    ("entity_registry/clean_break.py",        64, "regex",       "B4 SANCTIONED - the one legacy parse"),
     ("entity_registry/database.py",           927, "split",       "migration internal - sanctioned"),
     ("entity_registry/database.py",           2755, "sql",         "migration internal - sanctioned"),
     ("entity_registry/database.py",           4198, "sql",         "migration internal - sanctioned"),
@@ -547,8 +547,8 @@ _KNOWN_INFERENCE_SITES: list[tuple[str, int, str, str]] = [
     ("entity_registry/frontmatter_inject.py", 82, "split",       "C9 seq/slug from entity_display"),
     ("entity_registry/frontmatter_inject.py", 103, "split",       "C10 parent kind + opaque identity"),
     ("entity_registry/frontmatter_sync.py",   109, "split",       "C8 kind from entities.kind"),
-    ("entity_registry/rebuild_tool.py",       1049, "regex",       "C19/C20b - deleted with the P prefix"),
-    ("entity_registry/rebuild_tool.py",       1155, "split",       "C19 rebuild seeds from structure"),
+    ("entity_registry/rebuild_tool.py",       1060, "regex",       "C19/C20b rebuild seeds from structure"),
+    ("entity_registry/rebuild_tool.py",       1169, "split",       "C19 rebuild seeds from structure"),
     ("workflow_engine/engine.py",             376, "split",       "C11 artifact path"),
     ("workflow_engine/feature_lifecycle.py",  97, "split",       "C11 artifact path"),
     ("workflow_engine/reconciliation.py",     787, "startswith",  "C8 kind from entities.kind"),

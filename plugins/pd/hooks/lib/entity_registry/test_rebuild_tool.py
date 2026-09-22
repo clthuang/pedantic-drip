@@ -1180,14 +1180,22 @@ class TestSequencesSeeded:
         assert rows[("ws-alpha", "backlog")] == 7
         # bug: 008-a-bug.
         assert rows[("ws-alpha", "bug")] == 9
-        # project: P{NNN} pattern, regex-blind to the leading "P" for the
-        # GENERIC pattern — the kind='project' special-case must still
-        # resolve P001 -> 1 -> next_val 2, independently per workspace.
-        assert rows[("ws-alpha", "project")] == 2
-        assert rows[("ws-beta", "project")] == 2
+        # project: the fixture's ids are LEGACY "P001" rows, and C4 deleted
+        # the kind='project' special-case that used to parse the leading "P".
+        # The generic pattern does not match it, so the census derives 0 and
+        # the seed is 1 — not 2.
+        #
+        # That is correct, and it is not the whole protection. This fixture
+        # carries no `sequences` rows, so only the derived half runs. On a
+        # real file the stored counter is the guard: B4 raised every live
+        # bucket above its true max precisely because legacy ids are opaque
+        # to the census. test_live_incident_shape_does_not_lower_the_project
+        # _counter pins that half, with the real P004 shape and next_val=5.
+        assert rows[("ws-alpha", "project")] == 1
+        assert rows[("ws-beta", "project")] == 1
 
-        assert report["sequences_seeded"]["project"]["ws-alpha"] == 2
-        assert report["sequences_seeded"]["project"]["ws-beta"] == 2
+        assert report["sequences_seeded"]["project"]["ws-alpha"] == 1
+        assert report["sequences_seeded"]["project"]["ws-beta"] == 1
 
 
 def _seed_pair(entities, sequences):
@@ -1254,8 +1262,19 @@ class TestSequencesSeedNeverLowersAReservation:
             ],
             sequences=[(ws, "project", 5)],
         )
-        assert rebuild_tool._display_number("project", "P004-entity-db-redesign") == 0, (
-            "fixture precondition: the end-anchored regex misses slug-suffixed ids"
+        # Fixture precondition. Pre-C4 this was 0 only for SLUG-SUFFIXED ids,
+        # because ^P(\d+)$ matched bare P001 and missed P004-entity-db-
+        # redesign. C4 deleted that pattern, so now EVERY P-prefixed id reads
+        # 0 — legacy projects are entirely opaque to the census and the
+        # stored counter is their sole protection. Both are asserted so a
+        # future change to _display_number cannot quietly alter either.
+        assert rebuild_tool._display_number("project", "P004-entity-db-redesign") == 0
+        assert rebuild_tool._display_number("project", "P001") == 0, (
+            "post-C4 the generic pattern must not parse a leading 'P'"
+        )
+        assert rebuild_tool._display_number("project", "004-entity-db-redesign") == 4, (
+            "the CURRENT project shape must parse, or the census is blind to "
+            "every project C4 onward creates"
         )
 
         rebuild_tool._seed_sequences(old, new)

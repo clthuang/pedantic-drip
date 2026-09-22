@@ -303,11 +303,16 @@ def init_project_state(
         # Use ``project_id="__unknown__"`` so the canonical workspaces row is
         # auto-bootstrapped on fresh in-memory DBs (matches feature 108 pattern).
         # F12 audit: conflict-is-error → register_entity, EntityExistsError handled
-        # Projects use "P{NNN}-{slug}" ids, which sit outside the feature-110
-        # seq-slug display contract (_ENTITY_ID_FORMAT_RE requires a numeric
-        # prefix, so the strict gate rejects the 'P'). Projects carry no
-        # entity_display row — same shape as the pre-gate P001/P002 rows —
-        # hence _strict_id_format=False here.
+        # C4 dropped the project "P" prefix: projects now render
+        # "{NNN}-{slug}" like every other sequence-numbered kind, so the
+        # strict gate's numeric-prefix requirement no longer rejects them.
+        #
+        # _strict_id_format=False REMAINS, for a different reason than
+        # before: strict mode also writes the entity_display row, and this
+        # caller has no seq to write — it receives project_id as text and
+        # composes "{project_id}-{slug}". C5/C6/C7 give it structured
+        # identity and remove this flag; until then, flipping it here would
+        # mint display-less rows that B8's invariant reports and C3 refuses.
         try:
             db.register_entity(
                 entity_type="project",

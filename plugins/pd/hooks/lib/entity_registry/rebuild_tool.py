@@ -1035,18 +1035,29 @@ def _emit_all_events(
 # kind's numbering post-cutover.
 # ---------------------------------------------------------------------------
 
-# Project ids are "P{NNN}" (no dash-slug suffix, commands/create-project.md)
-# — the generic leading-digit-run pattern next_sequence_value's own
-# bootstrap uses (database.py) is regex-blind to the leading "P"; every
-# other kind uses "{seq:03d}-{slug}" (entity_server.py's allocate_entity_id,
-# task 5's D6.9 cutover — "project" is no longer refused there either).
-_PROJECT_DISPLAY_RE = re.compile(r"^P(\d+)$")
+# One pattern for every kind. Projects used to need their own, end-anchored
+# ``^P(\d+)$`` — which is the original incident: it matched bare ``P004``
+# and returned NOTHING for ``P004-entity-db-redesign``, so _display_number
+# gave 0, the derived max came out below the stored counter, and a rebuild
+# reissued a number already on disk as a directory and a branch.
+#
+# C4 dropped the ``P`` prefix, so projects render ``{seq:03d}-{slug}`` like
+# everything else and the special case has no reason to exist. The generic
+# pattern is deliberately NOT end-anchored: it reads the leading digit run
+# of both id generations (``004-slug`` and the legacy ``P004-slug`` still on
+# disk — for the latter it returns 0, which _seed_sequences' max() against
+# the stored counter is what protects; see its docstring).
 _GENERIC_DISPLAY_RE = re.compile(r"^(\d+)")
 
 
 def _display_number(kind: str, entity_id: str) -> int:
-    pattern = _PROJECT_DISPLAY_RE if kind == "project" else _GENERIC_DISPLAY_RE
-    match = pattern.match(entity_id)
+    """Leading sequence number of *entity_id*, or 0 if it has none.
+
+    *kind* is retained in the signature because callers pass it and the
+    parameter documents that this is a per-kind census; it no longer
+    selects a pattern.
+    """
+    match = _GENERIC_DISPLAY_RE.match(entity_id)
     return int(match.group(1)) if match else 0
 
 
@@ -1064,9 +1075,12 @@ def _seed_sequences(old_conn: sqlite3.Connection, new_conn: sqlite3.Connection) 
     function previously ignored entirely.
 
     Ignoring it made rebuild a re-infection vector rather than a repair.
-    ``_display_number`` returns 0 for any id its regex misses — and
-    ``_PROJECT_DISPLAY_RE`` is end-anchored (``^P(\\d+)$``), so it misses
-    every project carrying a slug suffix. Measured on the live registry:
+    ``_display_number`` returns 0 for any id its regex misses. Until C4
+    that included every slug-suffixed project, because the project pattern
+    was end-anchored (``^P(\\d+)$``). C4 removed the prefix and the special
+    case, but legacy ``P{NNN}-{slug}`` rows remain on disk and still yield
+    0, so the ``max(stored, derived)`` below is what protects them — not the
+    regex. Measured on the live registry before the fix:
     the project bucket held ``next_val=5`` with ``P004-entity-db-redesign``
     present; the derived max was 3, so a rebuild LOWERED the counter to 4
     and the next allocation reissued 4 — the number already on disk. Any

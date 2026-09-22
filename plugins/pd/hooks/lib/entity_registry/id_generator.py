@@ -38,6 +38,57 @@ def _slugify(name: str, *, max_length: int = 30) -> str:
     return truncated.rstrip("-")
 
 
+# Kinds whose identity is NOT a sequence number, so ``render_display_id``
+# cannot produce a valid id for them. Brainstorm identity is a timestamp
+# (``{YYYYMMDD-HHMMSS}-{slug}``, commands/brainstorm.md) and no brainstorm
+# path calls the allocator — measured on the live registry: 96 of 100
+# brainstorms are date-shaped, 1 is seq-shaped, 3 predate the convention.
+#
+# Canonical home for this fact. ``entity_registry.clean_break`` imports it
+# rather than keeping a second copy; two homes for one fact is the defect
+# this effort exists to remove.
+NON_SEQUENCE_KINDS = frozenset({"brainstorm"})
+
+
+def render_display_id(kind: str, seq: int, slug: str) -> str:
+    r"""Compose the one canonical display id: ``{seq:03d}-{slug}``.
+
+    THE single place that turns structured identity into display text. The
+    allocator (``entity_server.allocate_entity_id``) and the registrar
+    (``generate_entity_id``) previously each hardcoded this f-string and
+    could therefore disagree.
+
+    **No project branch.** Projects render exactly like every other
+    sequence-numbered kind. The ``P`` prefix was never produced here or at
+    either call site — it came from the caller, ``create-project.md``, which
+    built ``P{NNN}`` from the returned ``seq`` and discarded the returned
+    ``entity_id``. Dropping it removes the special case behind the original
+    incident: ``_PROJECT_DISPLAY_RE = ^P(\d+)$`` existed only to parse the
+    prefix back off, and its end anchor silently returned nothing for every
+    slug-suffixed project id.
+
+    *kind* is not decorative: it refuses kinds that do not use sequence
+    identity at all, rather than minting a plausible-looking wrong id for
+    them.
+
+    Raises
+    ------
+    ValueError
+        If *kind* has no sequence identity, if *seq* is not a positive
+        integer, or if *slug* is empty.
+    """
+    if kind in NON_SEQUENCE_KINDS:
+        raise ValueError(
+            f"{kind!r} identity is not a sequence; render_display_id cannot "
+            f"compose an id for it"
+        )
+    if not isinstance(seq, int) or isinstance(seq, bool) or seq < 1:
+        raise ValueError(f"seq must be a positive int, got {seq!r}")
+    if not slug:
+        raise ValueError("slug must be non-empty")
+    return f"{seq:03d}-{slug}"
+
+
 def generate_entity_id(
     db: "EntityDatabase", entity_type: str, name: str, project_id: str
 ) -> str:
@@ -65,4 +116,4 @@ def generate_entity_id(
     if not slug:
         slug = "unnamed"
 
-    return f"{seq:03d}-{slug}"
+    return render_display_id(entity_type, seq, slug)

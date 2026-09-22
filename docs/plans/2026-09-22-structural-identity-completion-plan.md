@@ -270,6 +270,9 @@ Task definitions are in the parent plan. This section only sequences them and ma
 
 ## Wave 2 — the locked core
 
+**C4 SHIPPED 2026-09-22** — `render_display_id` is the sole composer; the `P` prefix is gone; `_PROJECT_DISPLAY_RE` deleted.
+
+
 > ### ⛔ STOP-THE-WORLD GATE — run before the first Wave 2 commit lands
 >
 > Wave 2 changes `register_entity`'s signature and deletes the registration parsers. A process on the old build keeps calling `register_entity(entity_id=…, _strict_id_format=False)` and mints display-less rows into whichever of the 24 workspaces it is serving. `run_backfill` fires at every MCP start and swallows failures to stderr, which MCP does not surface — so **nothing reports this while it happens**.

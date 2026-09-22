@@ -475,7 +475,7 @@ def _project_meta_json(
         metadata = {}
 
     if kind == "project":
-        # D5: PROJECT shape -- id/slug split from type_id (the 'P{NNN}-slug'
+        # D5: PROJECT shape -- id/slug split from type_id (the '{NNN}-slug'
         # convention feature_lifecycle.init_project_state mints); features/
         # milestones/brainstorm_source recovered from DB metadata (stored
         # there by init_project_state, feature_lifecycle.py:257-264);
