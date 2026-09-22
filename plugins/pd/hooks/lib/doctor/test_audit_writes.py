@@ -499,6 +499,9 @@ from doctor.identity_inference import scan_roots  # noqa: E402
 _INFERENCE_SCAN_ROOTS = [
     _PLUGIN_PD_DIR / "hooks" / "lib",
     _PLUGIN_PD_DIR / "mcp",
+    # B2: the UI is where a wrongly-inferred kind becomes something a person
+    # acts on, so templates are in scope exactly as .py files are.
+    _PLUGIN_PD_DIR / "ui" / "templates",
 ]
 
 # (relative path, lineno, idiom, owning task)
@@ -555,6 +558,8 @@ _KNOWN_INFERENCE_SITES: list[tuple[str, int, str, str]] = [
     ("../mcp/workflow_state_server.py",       680, "split",       "C9 seq/slug from entity_display"),
     ("../mcp/workflow_state_server.py",       1117, "startswith",  "C8 kind from entities.kind"),
     ("../mcp/workflow_state_server.py",       1399, "startswith",  "C8 kind from entities.kind"),
+    ("../ui/templates/_card.html",            4, "split",       "C8 kind - template, view must pass kind"),
+    ("../ui/templates/_card.html",            10, "split",       "C8 kind - template, view must pass kind"),
 ]
 
 
@@ -608,13 +613,36 @@ def test_identity_inference_inventory_is_exact() -> None:
         pytest.fail("\n\n".join(problems))
 
 
+# High-water mark for the inventory. It moves UP only when the detector's
+# reach widens and the newly-visible sites were always there; it moves DOWN
+# whenever a site is actually removed, and never back up for that reason.
+#
+#   28  initial, scanning hooks/lib + mcp
+#   30  B2 (2026-09-22) added ui/templates, surfacing _card.html:4 and :10
+#
+# Raising this is a deliberate act with a line in that table, not a way to
+# quiet a red test. If the number rose because production grew a NEW parser,
+# the entry belongs in the diff being reviewed, not here.
+_INVENTORY_HIGH_WATER = 30
+
+
 def test_inventory_shrinks_to_zero_eventually() -> None:
     """A tripwire on the finish line, not a check of today's count.
 
     Asserting an exact total here would make every migration step edit two
     places. This only pins the direction: the inventory never grows past
-    its starting size.
+    the high-water mark, and the mark only moves when DETECTION widens.
+
+    The distinction matters. B2 took this from 28 to 30 without a single new
+    parser being written — the two template sites predate the effort and were
+    invisible because the scan roots did not include ``ui/templates``. A
+    tripwire that cannot tell "we found more" from "we wrote more" reports
+    the first as a regression and trains its reader to raise the number.
     """
-    assert len(_KNOWN_INFERENCE_SITES) <= 28, (
-        "the identity-inference inventory grew; it is only allowed to shrink"
+    assert len(_KNOWN_INFERENCE_SITES) <= _INVENTORY_HIGH_WATER, (
+        f"the identity-inference inventory grew past its high-water mark "
+        f"({_INVENTORY_HIGH_WATER}); it is only allowed to shrink. If a new "
+        f"scan root made previously-invisible sites visible, raise the mark "
+        f"and add a line to its table. If production grew a new parser, do "
+        f"not."
     )

@@ -123,11 +123,13 @@ Four tasks, none of which depends on the cutover. **B2, B3b and B8 are shippable
 
 **Interface.** `_INFERENCE_SCAN_ROOTS` (`test_audit_writes.py:499`) gains `plugins/pd/ui/templates`. `identity_inference.scan_roots` grows a Jinja expression extractor — parse `{{ … }}` and `{% set … %}` bodies, feed each to the existing `iter_inference_sites`. Both new sites join `_KNOWN_INFERENCE_SITES` with owner `C8 kind from entities.kind`.
 
+**SHIPPED 2026-09-22.** Both sites reported at exactly lines 4 and 10.
+
 **Verify.** `_card.html:4` and `_card.html:10` are both reported, with idiom `split`. `test_identity_inference_inventory_is_exact` (`test_audit_writes.py:597`) is the exact-set lint — detected == declared — and enforces no count; it goes from 28 to 30 declared sites and still fails on any addition **and** any undeclared removal.
 
 **Two decisions B2 must make explicitly, not discover.**
 
-1. **The `<= 28` ceiling.** `test_inventory_shrinks_to_zero_eventually` (`test_audit_writes.py:586-596`) hard-asserts `len(_KNOWN_INFERENCE_SITES) <= 28` with the message *"the identity-inference inventory grew; it is only allowed to shrink"*. B2 fails at 29. Raising a never-grows tripwire is a decision: the inventory is not growing, **detection** is. State that in the test's docstring and move the ceiling to 30, or the next reader reads it as a regression.
+1. **The `<= 28` ceiling.** ~~`test_inventory_shrinks_to_zero_eventually` hard-asserts `<= 28`; B2 fails at 29.~~ **Done.** Replaced with `_INVENTORY_HIGH_WATER = 30` carrying a table of why it moved (28 initial → 30 for B2's scan root), and a docstring distinguishing "we found more" from "we wrote more". The old bare ceiling reported a detection widening as a regression.
 2. **Who removes the two template sites.** They are labelled `C8 kind from entities.kind`, but parent C8's site list is Python-only (`router.py:358,421`; `frontmatter_sync.py:109`; `workflow_state_server.py:1113,1395`) and Wave 4 widens C8 only by a fixture. Removing a Jinja `type_id.split(':')` means the **view** passes `kind` into template context — a different change in a different layer. Either widen C8's scope to name the template and its view, or create a UI task. Left as-is, parent C21's lint-green contract cannot be met.
 
 **Non-vacuity gate.** Assert the reported line numbers are 4 and 10. A root that scans the directory but extracts nothing reports zero sites and passes an "audit ran" assertion.

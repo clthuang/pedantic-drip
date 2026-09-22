@@ -188,8 +188,66 @@ def scan_file(path: Path) -> list[InferenceSite]:
     return list(iter_inference_sites(tree, str(path)))
 
 
+# Jinja expression sites: ``{{ ... }}`` and ``{% set x = ... %}``. A template
+# that decomposes a type_id is inferring exactly as a .py file does, and the
+# UI is where a wrong kind becomes something a person acts on.
+_JINJA_OUTPUT = re.compile(r"\{\{(.*?)\}\}", re.S)
+_JINJA_SET = re.compile(r"\{%-?\s*set\s+[A-Za-z_][A-Za-z0-9_]*\s*=(.*?)-?%\}", re.S)
+
+
+def scan_template(path: Path) -> list[InferenceSite]:
+    """Report identity inference inside a Jinja template.
+
+    Each expression is parsed as a Python expression and handed to the same
+    ``iter_inference_sites`` the .py path uses, so the two surfaces cannot
+    drift apart in what they consider inference.
+
+    Jinja and Python overlap more than they look like they do, so coverage is
+    wider than a first guess suggests. Filters (``| upper``, ``| default(x)``)
+    parse as Python ``BinOp``; so do ``is defined`` and ``and``/``or`` chains.
+    All of those are analysed normally.
+
+    Two Jinja-only forms do NOT parse and are skipped, measured rather than
+    assumed:
+
+      * ``~`` string concatenation   -- ``x.type_id.split(':')[0] ~ 'a'``
+      * ``if`` without ``else``      -- ``x.type_id.split(':')[0] if cond``
+
+    A site spelled either way goes unreported. That gap is accepted, not
+    overlooked: adding a Jinja parser to a lint is more machinery than two
+    known sites justify. ``TestTemplateScanning`` pins both forms so the
+    blind spot stays a decision on record.
+    """
+    try:
+        src = path.read_text()
+    except OSError:
+        return []
+    sites: list[InferenceSite] = []
+    for pattern in (_JINJA_OUTPUT, _JINJA_SET):
+        for m in pattern.finditer(src):
+            expr = m.group(1).strip()
+            if not expr:
+                continue
+            try:
+                tree = ast.parse(expr, mode="eval")
+            except SyntaxError:
+                continue
+            # ast linenos are relative to the snippet; rebase onto the file.
+            base = src.count("\n", 0, m.start(1)) + 1
+            for site in iter_inference_sites(tree, str(path)):
+                sites.append(
+                    InferenceSite(
+                        path=site.path,
+                        lineno=base + site.lineno - 1,
+                        idiom=site.idiom,
+                        receiver=site.receiver,
+                    )
+                )
+    return sites
+
+
 def scan_roots(roots, *, skip_tests: bool = True) -> list[InferenceSite]:
-    """Scan every ``*.py`` under *roots*, sorted by (path, lineno)."""
+    """Scan every ``*.py`` and ``*.html`` under *roots*, sorted by (path, lineno)."""
     sites: list[InferenceSite] = []
     for root in roots:
         root = Path(root)
@@ -201,4 +259,8 @@ def scan_roots(roots, *, skip_tests: bool = True) -> list[InferenceSite]:
             if ".venv" in py.parts:
                 continue
             sites.extend(scan_file(py))
+        for tpl in sorted(root.rglob("*.html")):
+            if ".venv" in tpl.parts:
+                continue
+            sites.extend(scan_template(tpl))
     return sorted(sites, key=lambda s: (s.path, s.lineno))

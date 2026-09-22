@@ -12,7 +12,13 @@ import ast
 
 import pytest
 
-from doctor.identity_inference import InferenceSite, iter_inference_sites
+from pathlib import Path
+
+from doctor.identity_inference import (
+    InferenceSite,
+    iter_inference_sites,
+    scan_template,
+)
 
 
 def sites(src: str) -> list[InferenceSite]:
@@ -129,3 +135,78 @@ def test_a_site_reports_its_line_and_idiom():
     assert found[0].lineno == 3
     assert found[0].idiom == "split"
     assert found[0].receiver == "type_id"
+
+
+class TestTemplateScanning:
+    """B2: Jinja templates are scanned exactly as .py files are."""
+
+    def test_reports_type_id_split_in_an_output_expression(self, tmp_path):
+        tpl = tmp_path / "t.html"
+        tpl.write_text(
+            "<div>\n"
+            "  {{ item.entity_name or item.type_id.split(':')[1] }}\n"
+            "</div>\n"
+        )
+        sites = scan_template(tpl)
+        assert [(s.lineno, s.idiom) for s in sites] == [(2, "split")]
+
+    def test_reports_type_id_split_in_a_set_tag(self, tmp_path):
+        tpl = tmp_path / "t.html"
+        tpl.write_text("{% set kind = item.type_id.split(':')[0] %}\n")
+        sites = scan_template(tpl)
+        assert [(s.lineno, s.idiom) for s in sites] == [(1, "split")]
+
+    def test_line_numbers_are_rebased_onto_the_template(self, tmp_path):
+        """The offending line, not the first line of the file.
+
+        ast parses each expression standalone, so its linenos start at 1. A
+        detector that forgot to rebase would report every template site at
+        line 1 and still look like it worked.
+        """
+        tpl = tmp_path / "t.html"
+        tpl.write_text("\n" * 40 + "{{ e.type_id.split(':')[0] }}\n")
+        assert [s.lineno for s in scan_template(tpl)] == [41]
+
+    def test_plain_markup_is_not_a_site(self, tmp_path):
+        tpl = tmp_path / "t.html"
+        tpl.write_text(
+            "<a href='/entities/{{ item.type_id }}'>{{ item.name }}</a>\n"
+            "{# item.type_id.split(':') in a comment #}\n"
+        )
+        assert scan_template(tpl) == []
+
+    def test_jinja_filters_and_tests_still_parse(self, tmp_path):
+        """Filters are Python BinOp, so they do NOT defeat detection.
+
+        Worth pinning because it is counterintuitive: ``|`` and ``is`` read as
+        Jinja-only syntax but are valid Python operators, so these sites are
+        analysed normally rather than silently skipped.
+        """
+        tpl = tmp_path / "t.html"
+        tpl.write_text(
+            "{{ item.type_id.split(':')[0] | upper }}\n"
+            "{{ item.type_id.split(':')[1] | default('x') }}\n"
+        )
+        assert [s.lineno for s in scan_template(tpl)] == [1, 2]
+
+    def test_jinja_only_syntax_is_skipped_not_crashed(self, tmp_path):
+        """The two real blind spots, pinned so they stay deliberate.
+
+        Jinja's ``~`` concatenation and its ``if`` without ``else`` are not
+        valid Python, so those expressions do not parse and any site inside
+        them goes unreported. Accepted cost of reusing the Python AST walker;
+        this test exists so the gap is on record rather than a surprise.
+        """
+        tpl = tmp_path / "t.html"
+        tpl.write_text(
+            "{{ item.type_id.split(':')[0] ~ '-suffix' }}\n"
+            "{{ item.type_id.split(':')[1] if item }}\n"
+        )
+        assert scan_template(tpl) == []
+
+    def test_real_card_template_reports_both_known_sites(self):
+        card = (
+            Path(__file__).resolve().parents[3] / "ui" / "templates" / "_card.html"
+        )
+        assert card.exists(), "the B2 fixture template moved"
+        assert sorted(s.lineno for s in scan_template(card)) == [4, 10]
