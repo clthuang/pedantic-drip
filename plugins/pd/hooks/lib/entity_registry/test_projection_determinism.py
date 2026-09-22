@@ -705,6 +705,14 @@ class TestBacklogProjectionIdentity:
         db._conn.execute("UPDATE entities SET is_legacy=1 WHERE uuid=?", (uuid,))
         _v2_migration_7_immutable_is_legacy(db._conn)
         db._conn.commit()
+        # Assert the premise. Without this the setup can silently fail to set
+        # the flag and the test still passes — verified by mutation: binding
+        # the UPDATE to a nonexistent uuid left it green AND left it green
+        # with an is_legacy filter added to the projection, i.e. it stopped
+        # guarding the regression it exists to catch.
+        assert db._conn.execute(
+            "SELECT is_legacy FROM entities WHERE uuid=?", (uuid,)
+        ).fetchone()[0] == 1, "setup failed: the row under test is not legacy"
 
         assert self._rows(_project_backlog_md(db, workspace_uuid=ws)) == ["00059"]
 

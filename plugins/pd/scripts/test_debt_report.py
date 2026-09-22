@@ -26,8 +26,11 @@ _NORMALIZE_LOC_RE = re.compile(r'([^/\s]+\.[a-zA-Z0-9]+:\d+)')
 # B7 (2026-09-22): backlog.md renders each row's real entity_id, which is
 # either NNNNN (6 surviving legacy rows) or NNN-slug (19 current rows).
 # Matching `\d[^|\s]*` / `[^*\s]+` instead of counting digits accepts both
-# and any future shape; the old \d{5} matched zero rows post-B7 and the
-# parser would have reported success while doing nothing.
+# and any future shape. The old \d{5} kept matching the 6 legacy ids while
+# silently dropping the other 19 — measured on the real projection: 25 rows
+# parsed with this pattern, 6 with the old one. Partial success is worse than
+# none here, because every one of these parsers reports success on a short
+# match and nothing downstream notices the missing rows.
 _BACKLOG_TESTABILITY_RE = re.compile(r'^- \*\*#([^*\s]+)\*\* \[[^/]+/testability\]')
 
 REVIEWER_CATEGORY_MAP = {

@@ -39,9 +39,15 @@ from pathlib import Path
 # B7 (2026-09-22): backlog.md renders each row's real entity_id, which is
 # either NNNNN (6 surviving legacy rows) or NNN-slug (19 current rows).
 # Matching `\d[^|\s]*` / `[^*\s]+` instead of counting digits accepts both
-# and any future shape; the old \d{5} matched zero rows post-B7 and the
-# parser would have reported success while doing nothing.
+# and any future shape. The old \d{5} kept matching the 6 legacy ids while
+# silently dropping the other 19 — measured on the real projection: 25 rows
+# parsed with this pattern, 6 with the old one. Partial success is worse than
+# none here, because every one of these parsers reports success on a short
+# match and nothing downstream notices the missing rows.
 ITEM_RE = re.compile(r'^- (~~)?\*\*#[^*\s]+\*\*')
+# Top-level table rows. Leading digit excludes the `|---|` separator
+# and the `| ID |` header without needing to special-case either.
+TABLE_ITEM_RE = re.compile(r'^\|\s*\d[^|\s]*\s*\|')
 SECTION_HEADER_RE = re.compile(r'^## From ')
 ANY_H2_RE = re.compile(r'^## ')
 CLOSED_MARKERS = ('(closed:', '(promoted →', '(fixed in feature:', '**CLOSED')
@@ -55,18 +61,27 @@ def is_item_closed(line: str) -> bool:
 
 
 def count_active(backlog_path: Path) -> int:
-    """Per FR-6b: count active backlog items.
+    """Per FR-6b: count active backlog items, in BOTH rendered forms.
 
-    Algorithm:
-      1. Read file. Split into lines.
-      2. For each line matching ITEM_RE: if not is_item_closed → increment.
-      3. Return counter.
+    Counts a line if it is an open item, whether it is rendered as a
+    ``## From Feature N`` bullet (``- **#id** ...``) or as a row of the
+    top-level table (``| id | ts | desc |``).
+
+    The bullet-only version returned 0 for the entire life of this check:
+    ``docs/backlog.md`` is projected from the entity registry and every row
+    is table-form unless its metadata says ``format == "bullet_item"``, of
+    which there are currently none. ``doctor.sh``'s FR-6b check therefore
+    reported "Active backlog: 0 items" unconditionally and could never cross
+    its threshold. This predates B7 — measured 0 both before and after —
+    but B7 touched these same patterns, so it is repaired here rather than
+    left as a check that cannot fail.
     """
     if not backlog_path.exists():
         return 0
     count = 0
     for line in backlog_path.read_text().splitlines():
-        if ITEM_RE.match(line) and not is_item_closed(line):
+        is_item = bool(ITEM_RE.match(line)) or bool(TABLE_ITEM_RE.match(line))
+        if is_item and not is_item_closed(line):
             count += 1
     return count
 

@@ -164,16 +164,19 @@ def test_count_active_cli(tmp_backlog):
     result = _run("--count-active", "--backlog-path", str(tmp_backlog))
     assert result.returncode == 0
     count = int(result.stdout.strip())
-    # Fixture has 3 active items in MixedQA (#99030, #99032) — wait, #99031 is closed.
-    # MixedQA: #99030 active, #99031 closed, #99032 active = 2 active.
-    # Plus top-level table item #00099 — but FR-6a says top-level table is OUT OF SCOPE for sections.
-    # FR-6b counts active items via `^- \*\*#[0-9]+\*\*` (regardless of section). So count includes
-    # all active items in the file: #99030, #99032 from MixedQA. Plus archivable sections still
-    # count their items (we're counting active before archive). Active items per section:
-    #   TestA: 1 (#99003 — has (closed: marker, so it's CLOSED — actually re-check)
-    # Actually re-reading fixture: #99003 has "(closed: rationale)" marker → closed. So TestA all closed.
-    # Active items overall: only #99030 and #99032.
-    assert count == 2
+    # Three open items in the fixture:
+    #   | 00099 |   top-level table row, no closure marker
+    #   - **#99030**   MixedQA, active
+    #   - **#99032**   MixedQA, active
+    # Everything else carries a closure marker or strikethrough.
+    #
+    # Was 2 until 2026-09-22. count_active matched bullets only, so the
+    # top-level table row was invisible to it — and since the real
+    # docs/backlog.md is entirely table-form, the check returned 0 for every
+    # actual backlog and doctor.sh's FR-6b threshold could never fire.
+    # FR-6a's "top-level table is out of scope" governs which SECTIONS are
+    # archivable; it does not mean a table row is not an open item.
+    assert count == 3
 
 
 def test_archival_preserves_status_and_sets_the_flag(tmp_backlog, tmp_archive, tmp_path):
@@ -258,3 +261,36 @@ def test_archival_preserves_status_and_sets_the_flag(tmp_backlog, tmp_archive, t
             "Archival overwrote workflow state; it must write is_archived only."
         )
     conn.close()
+
+
+def test_count_active_counts_table_rows_not_only_bullets(tmp_path):
+    """FR-6b counted bullets only, so it returned 0 for every real backlog.
+
+    docs/backlog.md is projected from the entity registry and every row is
+    table-form unless its metadata says format == "bullet_item" — of which
+    there are none. The bullet-only counter therefore reported 0
+    unconditionally and doctor.sh's threshold check could never fire.
+
+    Asserting the COUNT rather than "no exception" is the point: the old
+    implementation raised nothing and returned a confidently wrong 0.
+    """
+    sys.path.insert(0, str(SCRIPT_PATH.parent))
+    import cleanup_backlog
+
+    backlog = tmp_path / "backlog.md"
+    backlog.write_text(
+        "# Backlog\n"
+        "\n"
+        "| ID | Timestamp | Description |\n"
+        "|----|-----------|-------------|\n"
+        "| 00059 | 2026-04-15T14:10:49+00:00 | legacy-form open item |\n"
+        "| 063-watch-the-thing | 2026-07-25T11:23:36+00:00 | modern-form open item |\n"
+        "\n"
+        "## From Feature TestZ QA (2026-01-01)\n"
+        "\n"
+        "- **#99001** bullet-form open item\n"
+        "- ~~**#99002**~~ bullet-form CLOSED item\n"
+    )
+    # 2 table rows + 1 open bullet = 3; the struck bullet and the header and
+    # separator rows must not count.
+    assert cleanup_backlog.count_active(backlog) == 3
