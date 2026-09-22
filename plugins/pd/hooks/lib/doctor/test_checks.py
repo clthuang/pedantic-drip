@@ -1069,7 +1069,7 @@ EXPECTED_CHECK_COUNT = 11
 
 
 class TestOrchestratorReportHasAllChecks:
-    """Orchestrator: report always has 10 checks (feature 133's
+    """Orchestrator: report always has EXPECTED_CHECK_COUNT checks (feature 133's
     post-retirement CHECK_ORDER membership; see EXPECTED_CHECK_COUNT).
     """
 
@@ -1084,9 +1084,9 @@ class TestOrchestratorReportHasAllChecks:
 
 
 class TestOrchestratorReportEvenWhenLocked:
-    """Orchestrator: 10 checks even when DB is locked."""
+    """Orchestrator: the full check set runs even when the DB is locked."""
 
-    def test_report_10_checks_even_when_locked(self, tmp_path):
+    def test_report_all_checks_even_when_locked(self, tmp_path):
         from doctor import run_diagnostics
 
         db_path = _make_db(tmp_path)
@@ -1432,7 +1432,7 @@ def _doctor_lib_path():
 
 
 class TestCliJsonOutputHasAllChecks:
-    """CLI: JSON output contains 10 checks (feature 133's post-retirement
+    """CLI: JSON output contains EXPECTED_CHECK_COUNT checks (feature 133's post-retirement
     CHECK_ORDER membership; see EXPECTED_CHECK_COUNT).
     """
 

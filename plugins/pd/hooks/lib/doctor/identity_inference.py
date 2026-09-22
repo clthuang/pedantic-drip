@@ -192,7 +192,41 @@ def scan_file(path: Path) -> list[InferenceSite]:
 # that decomposes a type_id is inferring exactly as a .py file does, and the
 # UI is where a wrong kind becomes something a person acts on.
 _JINJA_OUTPUT = re.compile(r"\{\{(.*?)\}\}", re.S)
-_JINJA_SET = re.compile(r"\{%-?\s*set\s+[A-Za-z_][A-Za-z0-9_]*\s*=(.*?)-?%\}", re.S)
+# Statement tags. One pattern for all of them; _tag_expressions works out
+# which part of the body is an expression. A per-keyword regex missed
+# {% if %}, {% for %} and tuple-target {% set a, b = ... %} entirely.
+_JINJA_TAG = re.compile(r"\{%-?(.*?)-?%\}", re.S)
+
+# Leading keywords whose remainder is itself an expression.
+_TAG_KEYWORDS = ("if", "elif", "for")
+
+
+def _tag_expressions(body: str):
+    """Yield parseable expression substrings of a ``{% ... %}`` body.
+
+    Tried in order, first hit wins:
+
+      ``{% if X %}`` / ``{% elif X %}``  -> X after the keyword
+      ``{% for t in X %}``               -> the whole ``t in X``, which is a
+                                            valid Python comparison
+      ``{% set a, b = X %}``             -> X after the first top-level ``=``
+
+    Anything else (``block``, ``endfor``, ``include``) yields nothing.
+    """
+    stripped = body.strip()
+    if not stripped:
+        return
+    head = stripped.split(None, 1)
+    keyword = head[0] if head else ""
+    rest = head[1] if len(head) > 1 else ""
+
+    if keyword in _TAG_KEYWORDS and rest:
+        # `for t in X` parses whole as a comparison; `if X` needs the head off.
+        yield rest if keyword != "for" else rest
+        return
+    if keyword == "set" and "=" in rest:
+        yield rest.split("=", 1)[1]
+        return
 
 
 def scan_template(path: Path) -> list[InferenceSite]:
@@ -223,27 +257,42 @@ def scan_template(path: Path) -> list[InferenceSite]:
     except OSError:
         return []
     sites: list[InferenceSite] = []
-    for pattern in (_JINJA_OUTPUT, _JINJA_SET):
-        for m in pattern.finditer(src):
-            expr = m.group(1).strip()
-            if not expr:
-                continue
-            try:
-                tree = ast.parse(expr, mode="eval")
-            except SyntaxError:
-                continue
-            # ast linenos are relative to the snippet; rebase onto the file.
-            base = src.count("\n", 0, m.start(1)) + 1
-            for site in iter_inference_sites(tree, str(path)):
-                sites.append(
-                    InferenceSite(
-                        path=site.path,
-                        lineno=base + site.lineno - 1,
-                        idiom=site.idiom,
-                        receiver=site.receiver,
-                    )
+    candidates = []
+    for m in _JINJA_OUTPUT.finditer(src):
+        candidates.append((m.start(1), m.group(1)))
+    for m in _JINJA_TAG.finditer(src):
+        for expr in _tag_expressions(m.group(1)):
+            # Locate the expression inside the original body so the line
+            # rebase below stays anchored to real file offsets.
+            off = src.find(expr, m.start(1), m.end(1))
+            candidates.append((off if off != -1 else m.start(1), expr))
+
+    for start, raw in candidates:
+        expr = raw.strip()
+        if not expr:
+            continue
+        try:
+            tree = ast.parse(expr, mode="eval")
+        except SyntaxError:
+            continue
+        # Rebase ast's snippet-relative linenos onto the file. Anchor on the
+        # STRIPPED expression, not on the match start: `.strip()` eats the
+        # newlines of a multi-line tag, so anchoring on the raw start
+        # reported `{{\n x.split(y)\n}}` one line early.
+        anchor = start + (len(raw) - len(raw.lstrip()))
+        base = src.count("\n", 0, anchor) + 1
+        for site in iter_inference_sites(tree, str(path)):
+            sites.append(
+                InferenceSite(
+                    path=site.path,
+                    lineno=base + site.lineno - 1,
+                    idiom=site.idiom,
+                    receiver=site.receiver,
                 )
-    return sites
+            )
+    # One expression can be reached by both the output and tag scans; a
+    # duplicate site would make the inventory lint unsatisfiable.
+    return sorted(set(sites), key=lambda s: (s.lineno, s.idiom))
 
 
 def scan_roots(roots, *, skip_tests: bool = True) -> list[InferenceSite]:

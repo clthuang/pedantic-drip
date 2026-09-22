@@ -156,6 +156,38 @@ class TestTemplateScanning:
         sites = scan_template(tpl)
         assert [(s.lineno, s.idiom) for s in sites] == [(1, "split")]
 
+    @pytest.mark.parametrize("label,src", [
+        ("if", "{% if item.type_id.split(':')[0] == 'feature' %}x{% endif %}\n"),
+        ("elif", "{% if x %}a{% elif item.type_id.split(':')[0] %}b{% endif %}\n"),
+        ("for", "{% for p in item.type_id.split(':') %}x{% endfor %}\n"),
+        ("tuple_set", "{% set a, b = item.type_id.split(':') %}\n"),
+    ])
+    def test_statement_tags_are_scanned(self, tmp_path, label, src):
+        """All four were MISSED before the tag scan was generalised.
+
+        The first version had a `set`-only regex requiring a single
+        identifier target, so an if/for/elif tag or a tuple target carried an
+        undetected parser straight past the cutover.
+        """
+        tpl = tmp_path / f"{label}.html"
+        tpl.write_text(src)
+        assert [s.idiom for s in scan_template(tpl)] == ["split"]
+
+    def test_tags_without_identity_are_not_sites(self, tmp_path):
+        tpl = tmp_path / "t.html"
+        tpl.write_text(
+            "{% block title %}hello{% endblock %}\n"
+            "{% for x in items %}{{ x.name }}{% endfor %}\n"
+        )
+        assert scan_template(tpl) == []
+
+    def test_multiline_expression_reports_the_offending_line(self, tmp_path):
+        """`.strip()` eats the leading newline, so anchoring the rebase on the
+        match start reported this one line early."""
+        tpl = tmp_path / "t.html"
+        tpl.write_text("<div>\n  {{\n    item.type_id.split(':')[0]\n  }}\n</div>\n")
+        assert [s.lineno for s in scan_template(tpl)] == [3]
+
     def test_line_numbers_are_rebased_onto_the_template(self, tmp_path):
         """The offending line, not the first line of the file.
 
@@ -168,12 +200,25 @@ class TestTemplateScanning:
         assert [s.lineno for s in scan_template(tpl)] == [41]
 
     def test_plain_markup_is_not_a_site(self, tmp_path):
+        """A comment body that IS valid Python, so this tests exclusion.
+
+        The original used ``{# item.type_id.split(':') in a comment #}``,
+        whose body fails to parse ("unexpected indent") — so it passed via
+        the parse guard and would have kept passing even if ``{# #}`` were
+        scanned. This body parses cleanly, so the only thing keeping it out
+        of the results is that comments are not matched at all.
+        """
         tpl = tmp_path / "t.html"
         tpl.write_text(
             "<a href='/entities/{{ item.type_id }}'>{{ item.name }}</a>\n"
-            "{# item.type_id.split(':') in a comment #}\n"
+            "{#item.type_id.split(':')[0]#}\n"
         )
         assert scan_template(tpl) == []
+
+    def test_a_comment_does_not_shift_a_real_site(self, tmp_path):
+        tpl = tmp_path / "t.html"
+        tpl.write_text("{#item.type_id.split(':')[0]#}\n{{ e.type_id.split(':')[0] }}\n")
+        assert [s.lineno for s in scan_template(tpl)] == [2]
 
     def test_jinja_filters_and_tests_still_parse(self, tmp_path):
         """Filters are Python BinOp, so they do NOT defeat detection.
