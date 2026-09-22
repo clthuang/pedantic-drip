@@ -502,12 +502,36 @@ _INFERENCE_SCAN_ROOTS = [
 ]
 
 # (relative path, lineno, idiom, owning task)
+#
+# Owner assignment for the three formerly-UNOWNED sites (B3b, 2026-09-22):
+#
+#   database.py:927        sits inside _schema_expansion_v6 (v1 migration 6),
+#                          seeding next_seq_{type} from historical entity_id
+#                          text at migration time. Same class as :2755, :4198
+#                          and :4261. Sanctioned; relabelled, not fixed.
+#
+#   feature_lifecycle.py:97  _validate_feature_type_id splits type_id on ":"
+#                          to build {artifacts_root}/features/{slug}. The path
+#                          belongs in entities.artifact_path -> C11. NOTE it is
+#                          a TRUST BOUNDARY: it rejects NUL and does a realpath
+#                          containment check. A stored artifact_path is not
+#                          more trustworthy than a parsed slug -- C11 must move
+#                          the source WITHOUT removing the containment check.
+#
+#   reconciliation.py:787  row["type_id"].startswith("feature:") filters
+#                          list_workflow_phases output by kind -> C8. NOTE the
+#                          query LEFT JOINs entities, so orphan rows (e.uuid IS
+#                          NULL, retained deliberately for anomaly visibility)
+#                          get entity_type=None while the current text check
+#                          still classifies them as features. C8 must decide
+#                          that deliberately and fixture it, not let the join
+#                          change it silently.
 _KNOWN_INFERENCE_SITES: list[tuple[str, int, str, str]] = [
     ("entity_registry/backfill.py",           752, "split",       "C13 missing-parent policy"),
     ("entity_registry/clean_break.py",        54, "regex",       "B4 SANCTIONED - the one legacy parse"),
     ("entity_registry/clean_break.py",        56, "regex",       "B4 SANCTIONED - the one legacy parse"),
     ("entity_registry/clean_break.py",        59, "regex",       "B4 SANCTIONED - the one legacy parse"),
-    ("entity_registry/database.py",           927, "split",       "UNOWNED - 6th bootstrap census"),
+    ("entity_registry/database.py",           927, "split",       "migration internal - sanctioned"),
     ("entity_registry/database.py",           2755, "sql",         "migration internal - sanctioned"),
     ("entity_registry/database.py",           4198, "sql",         "migration internal - sanctioned"),
     ("entity_registry/database.py",           4261, "sql",         "migration internal - sanctioned"),
@@ -523,8 +547,8 @@ _KNOWN_INFERENCE_SITES: list[tuple[str, int, str, str]] = [
     ("entity_registry/rebuild_tool.py",       1049, "regex",       "C19/C20b - deleted with the P prefix"),
     ("entity_registry/rebuild_tool.py",       1155, "split",       "C19 rebuild seeds from structure"),
     ("workflow_engine/engine.py",             376, "split",       "C11 artifact path"),
-    ("workflow_engine/feature_lifecycle.py",  97, "split",       "UNOWNED - C11 category"),
-    ("workflow_engine/reconciliation.py",     787, "startswith",  "UNOWNED - C8 category"),
+    ("workflow_engine/feature_lifecycle.py",  97, "split",       "C11 artifact path"),
+    ("workflow_engine/reconciliation.py",     787, "startswith",  "C8 kind from entities.kind"),
     ("workflow_engine/router.py",             358, "split",       "C8 kind from entities.kind"),
     ("workflow_engine/router.py",             421, "split",       "C8 kind from entities.kind"),
     ("../mcp/workflow_state_server.py",       485, "split",       "C9 seq/slug from entity_display"),

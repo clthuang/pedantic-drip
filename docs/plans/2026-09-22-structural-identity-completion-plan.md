@@ -150,7 +150,9 @@ Four tasks, none of which depends on the cutover. **B2, B3b and B8 are shippable
 
 **Carry into C8.** `list_workflow_phases` already returns `e.kind AS entity_type`, so the swap looks free. It is not: the query **LEFT JOINs** entities, and orphan rows (`e.uuid IS NULL` — retained deliberately for anomaly visibility) get `entity_type = None`. Today's `startswith("feature:")` reads the `workflow_phases` row's own `type_id` and therefore **still classifies orphans as features**. The C8 fixture must contain an orphan `workflow_phases` row whose `type_id` starts `feature:` and assert which way the reconciler's `db_only` set goes. Decide it deliberately; do not let the join change it silently.
 
-**Verify.** `grep -c UNOWNED plugins/pd/hooks/lib/doctor/test_audit_writes.py` → 0. Sanctioned count rises 6 → 7; removable count falls 22 → 21.
+**Verify.** No inventory *entry* carries owner `UNOWNED` (grep the tuple lines, not the file — the rationale comment above the inventory names the token deliberately). Sanctioned rises 6 → 7; removable falls 22 → 21. Measured after: 28 entries, 7 sanctioned, 21 to remove, 0 unowned.
+
+**SHIPPED 2026-09-22.**
 
 **Depends.** Nothing.
 
