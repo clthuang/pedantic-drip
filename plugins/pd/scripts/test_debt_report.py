@@ -23,7 +23,12 @@ from pathlib import Path
 _NORMALIZE_LOC_RE = re.compile(r'([^/\s]+\.[a-zA-Z0-9]+:\d+)')
 
 # Active testability backlog tag pattern.
-_BACKLOG_TESTABILITY_RE = re.compile(r'^- \*\*#(\d+)\*\* \[[^/]+/testability\]')
+# B7 (2026-09-22): backlog.md renders each row's real entity_id, which is
+# either NNNNN (6 surviving legacy rows) or NNN-slug (19 current rows).
+# Matching `\d[^|\s]*` / `[^*\s]+` instead of counting digits accepts both
+# and any future shape; the old \d{5} matched zero rows post-B7 and the
+# parser would have reported success while doing nothing.
+_BACKLOG_TESTABILITY_RE = re.compile(r'^- \*\*#([^*\s]+)\*\* \[[^/]+/testability\]')
 
 REVIEWER_CATEGORY_MAP = {
     'pd:test-deepener': 'testability',

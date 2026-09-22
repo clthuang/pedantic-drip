@@ -590,7 +590,14 @@ def _project_meta_json(
 
 
 # F4-AUDIT: backlog projection (feature 110 FR-4.2, TD-10).
-def _project_backlog_md(db: EntityDatabase) -> str:
+# Statuses a backlog item can hold and still be backlog. Everything else
+# (dropped, promoted, completed, abandoned) is finished work.
+_BACKLOG_LIVE_STATUSES = frozenset({"open", "active"})
+
+
+def _project_backlog_md(
+    db: EntityDatabase, *, workspace_uuid: str | None = None
+) -> str:
     """Build a deterministic markdown representation of ``docs/backlog.md``
     from the entity registry (feature 110 FR-4.2 / TD-10).
 
@@ -603,7 +610,7 @@ def _project_backlog_md(db: EntityDatabase) -> str:
       - ``metadata.format == "table_row"`` (default for general backlog
         items): emitted as a pipe-table row under the top-level table.
       - ``metadata.format == "bullet_item"``: emitted as a bullet
-        (``- **#{seq:05d}** {name}``) under the appropriate
+        (``- **#{entity_id}** {name}``) under the appropriate
         ``## From Feature N ...`` section identified by
         ``metadata.section``.
 
@@ -620,24 +627,44 @@ def _project_backlog_md(db: EntityDatabase) -> str:
         entity bearing that subsection within a section. Only the first
         occurrence per ``(section, subsection)`` pair emits the header.
 
+    Row selection (B7, decision 1 of the 2026-09-22 completion plan):
+    ``NOT is_archived AND status IN ('open','active')``, scoped to
+    *workspace_uuid* when given.
+
+    Deliberately NOT filtered on ``is_legacy``. The parent plan's B7 said
+    marked entities should not appear, and the marker became ``is_legacy``
+    — but 6 of the open items carry legacy ids and are live work whose
+    identity merely predates the structural model. "Is this row old?" and
+    "is this work open?" are different facts and a backlog wants the
+    second; filtering on legacy-ness would be the same inference-from-a-
+    structural-accident this effort exists to remove.
+
+    Parameters
+    ----------
+    workspace_uuid:
+        Scope rows to one workspace. ``None`` preserves the historical
+        unscoped read, which is what the determinism fixtures use.
+
     Returns
     -------
     str
-        Markdown string. Archived rows (``is_archived``) are
-        excluded from the main table per design TD-10.
+        Markdown string.
     """
     # Collect every backlog entity across all workspaces (cross-project
     # backlog is a single file). ``list_entities`` returns dict rows with
     # ``entity_id``, ``name``, ``created_at``, ``metadata``, ``status``,
     # ``uuid``.
-    rows = db.list_entities(entity_type="backlog")
+    rows = db.list_entities(entity_type="backlog", workspace_uuid=workspace_uuid)
 
-    # Exclude archived rows from the main projection (per design TD-10).
-    # Filter on the FLAG, not on status == "archived". Archiving is
-    # orthogonal to workflow state (v2 migration 5): an archived row keeps
-    # the status it actually had, so a status comparison now misses every
-    # archived-but-completed row — 125 of them at migration time.
+    # Exclude archived rows. Filter on the FLAG, not on status == "archived".
+    # Archiving is orthogonal to workflow state (v2 migration 5): an archived
+    # row keeps the status it actually had, so a status comparison misses
+    # every archived-but-completed row — 125 of them at migration time.
     rows = [r for r in rows if not r.get("is_archived")]
+
+    # Exclude terminal rows. Without this the "backlog" showed 117 dropped
+    # and 17 promoted items as though they were open work — 134 of 170.
+    rows = [r for r in rows if (r.get("status") or "") in _BACKLOG_LIVE_STATUSES]
 
     # Decorate rows with parsed metadata + (seq, slug) from entity_display
     # (preferred) or entity_id fallback. NO datetime.now/utcnow call here.
@@ -740,7 +767,10 @@ def _project_backlog_md(db: EntityDatabase) -> str:
     out.append("| ID | Timestamp | Description |")
     out.append("|----|-----------|-------------|")
     for d in table_rows:
-        seq_str = f"{d['seq']:05d}"
+        # Render the row's OWN entity_id. Re-padding seq to 5 digits made
+        # live "063-watch-…" display as "00063", which is a different,
+        # archived entity — 25 of 30 display-bearing rows collided that way.
+        seq_str = d["entity_id"]
         # Escape pipe characters in name (description) to avoid breaking
         # the markdown table layout (matches add-to-backlog convention).
         name_escaped = d["name"].replace("|", "\\|")
@@ -786,7 +816,7 @@ def _project_backlog_md(db: EntityDatabase) -> str:
             if first_bullet_pending:
                 out.append("")
                 first_bullet_pending = False
-            seq_str = f"{d['seq']:05d}"
+            seq_str = d["entity_id"]
             name_escaped = d["name"]
             out.append(f"- **#{seq_str}** {name_escaped}")
 

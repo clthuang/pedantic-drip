@@ -2,32 +2,7 @@
 
 Structured feature development workflow with skills, agents, and commands for methodical development from ideation to implementation.
 
-```mermaid
-flowchart TD
-    SEC["/secretary<br/>Triage: deep · express · specialist"] -->|Explore| BS["/brainstorm<br/>Explore & Research"]
-    SEC -->|Deep| CF["/create-feature"]
-    SEC -->|Express| CFX["/create-feature --express<br/>inline mini-spec"]
-    SEC -->|Debug| RCA["/root-cause-analysis"]
-    SEC -->|Specialist| AGENT["Agent / Skill<br/>Direct Dispatch"]
-
-    BS -->|PRD| SPEC
-    CF --> SPEC
-    RCA -->|Fix| SPEC
-
-    SPEC["/specify<br/>shape.md · ## Requirements"] --> G1{{"phase-gate.sh specify"}}
-    G1 --> DES["/design<br/>shape.md · ## Design"]
-    DES --> G2{{"phase-gate.sh design"}}
-    G2 --> DR["pd:design-reviewer<br/>review moment 1 of 2"]
-    DR --> PLN["/create-plan<br/>plan.md · ## Plan"]
-    PLN --> G3{{"phase-gate.sh create-plan"}}
-    G3 --> IMP
-    CFX -->|skips specify/design/create-plan| IMP
-
-    IMP["/implement<br/>tasks derived from plan.md"] --> QA["pd:qa-executor<br/>runs suites + flows"]
-    QA --> CQ["pd:code-quality-reviewer<br/>review moment 2 of 2"]
-    CQ --> FIN["/finish-feature<br/>QA battery · retro · merge"]
-    FIN --> DONE([Complete])
-```
+See the [workflow diagram](../../README.md#workflow) in the repository README.
 
 ## Components
 

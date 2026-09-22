@@ -598,3 +598,113 @@ def test_compare_backlog_projection_script_no_drift(tmp_path: Path) -> None:
         f"compare_backlog_projection.py reported drift on byte-identical "
         f"fixture:\n  stdout={proc.stdout!r}\n  stderr={proc.stderr!r}"
     )
+
+
+def _bootstrap_ws(db, tmp_path, tag: str = "ws") -> str:
+    """Insert a workspaces row and return its uuid (Migration-11 prereq)."""
+    ws = str(_uuid.uuid4())
+    now = db._now_iso()
+    db._conn.execute(
+        "INSERT OR IGNORE INTO workspaces "
+        "(uuid, project_id_legacy, project_root, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (ws, f"__{tag}_{ws[:8]}__", str(tmp_path / tag), now, now),
+    )
+    db._conn.commit()
+    return ws
+
+
+class TestBacklogProjectionIdentity:
+    """B7: every rendered row shows its OWN entity_id, scoped to one workspace."""
+
+    @staticmethod
+    def _seed(db, ws, entity_id, *, status="open", seq=None, slug=None,
+              is_archived=0, name=None):
+        db.register_entity(
+            "backlog", entity_id=entity_id, name=name or f"item {entity_id}",
+            workspace_uuid=ws, status=status, _strict_id_format=False,
+        )
+        uuid = db._conn.execute(
+            "SELECT uuid FROM entities WHERE type_id=? AND workspace_uuid=?",
+            (f"backlog:{entity_id}", ws),
+        ).fetchone()[0]
+        if seq is not None:
+            db._conn.execute(
+                "INSERT OR REPLACE INTO entity_display(uuid, seq, slug) VALUES(?,?,?)",
+                (uuid, seq, slug or ""),
+            )
+        if is_archived:
+            db._conn.execute(
+                "UPDATE entities SET is_archived=1 WHERE uuid=?", (uuid,))
+        db._conn.commit()
+        return uuid
+
+    def _rows(self, text):
+        return [
+            l.split("|")[1].strip()
+            for l in text.splitlines()
+            if l.startswith("| ") and not l.startswith("| ID") and not l.startswith("|--")
+        ]
+
+    def test_row_renders_its_own_id_not_a_padded_seq(self, tmp_path):
+        """The collision that motivated B7, as a fixture.
+
+        A live row with seq=63 and a DIFFERENT archived row whose entity_id is
+        literally "00063". The old renderer padded seq to 5 digits and so
+        displayed the archived row's identity on the live row — 25 of 30
+        display-bearing rows collided this way on the real registry.
+
+        Asserting only "ids are unique" would pass on the old code, because
+        the colliding row is excluded from the projection. The assertion has
+        to compare each rendered id to ITS OWN entity_id.
+        """
+
+        db = EntityDatabase(str(tmp_path / "e.db"))
+        ws = _bootstrap_ws(db, tmp_path)
+        self._seed(db, ws, "063-watch-the-thing", seq=63, slug="watch-the-thing")
+        self._seed(db, ws, "00063", is_archived=1)
+
+        rendered = self._rows(_project_backlog_md(db, workspace_uuid=ws))
+        assert rendered == ["063-watch-the-thing"], (
+            f"rendered {rendered!r}; a row must show its own entity_id"
+        )
+
+    def test_terminal_and_archived_rows_are_excluded(self, tmp_path):
+
+        db = EntityDatabase(str(tmp_path / "e.db"))
+        ws = _bootstrap_ws(db, tmp_path)
+        self._seed(db, ws, "001-open", status="open")
+        self._seed(db, ws, "002-active", status="active")
+        self._seed(db, ws, "003-dropped", status="dropped")
+        self._seed(db, ws, "004-promoted", status="promoted")
+        self._seed(db, ws, "005-archived", status="open", is_archived=1)
+
+        assert self._rows(_project_backlog_md(db, workspace_uuid=ws)) == [
+            "001-open", "002-active",
+        ]
+
+    def test_legacy_rows_are_not_filtered_out(self, tmp_path):
+        """Decision 1: legacy-ness plays no part in the projection.
+
+        Six open items carry legacy 5-digit ids and are live work. A filter on
+        is_legacy would hide them until C22, which cannot run until after the
+        cutover.
+        """
+
+        db = EntityDatabase(str(tmp_path / "e.db"))
+        ws = _bootstrap_ws(db, tmp_path)
+        uuid = self._seed(db, ws, "00059", status="open")
+        db._conn.execute("UPDATE entities SET is_legacy=1 WHERE uuid=?", (uuid,))
+        db._conn.commit()
+
+        assert self._rows(_project_backlog_md(db, workspace_uuid=ws)) == ["00059"]
+
+    def test_other_workspaces_are_excluded(self, tmp_path):
+
+        db = EntityDatabase(str(tmp_path / "e.db"))
+        mine = _bootstrap_ws(db, tmp_path, "mine")
+        theirs = _bootstrap_ws(db, tmp_path, "theirs")
+        self._seed(db, mine, "001-mine")
+        self._seed(db, theirs, "002-theirs")
+
+        assert self._rows(_project_backlog_md(db, workspace_uuid=mine)) == ["001-mine"]

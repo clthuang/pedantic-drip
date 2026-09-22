@@ -36,7 +36,12 @@ import re
 import sys
 from pathlib import Path
 
-ITEM_RE = re.compile(r'^- (~~)?\*\*#\d+\*\*')
+# B7 (2026-09-22): backlog.md renders each row's real entity_id, which is
+# either NNNNN (6 surviving legacy rows) or NNN-slug (19 current rows).
+# Matching `\d[^|\s]*` / `[^*\s]+` instead of counting digits accepts both
+# and any future shape; the old \d{5} matched zero rows post-B7 and the
+# parser would have reported success while doing nothing.
+ITEM_RE = re.compile(r'^- (~~)?\*\*#[^*\s]+\*\*')
 SECTION_HEADER_RE = re.compile(r'^## From ')
 ANY_H2_RE = re.compile(r'^## ')
 CLOSED_MARKERS = ('(closed:', '(promoted →', '(fixed in feature:', '**CLOSED')
@@ -128,7 +133,7 @@ def render_dry_run_table(sections: list) -> str:
     return "\n".join(out)
 
 
-ITEM_ID_RE = re.compile(r'^- (?:~~)?\*\*#(?P<id>\d{5})\*\*')
+ITEM_ID_RE = re.compile(r'^- (?:~~)?\*\*#(?P<id>[^*\s]+)\*\*')
 
 
 def _extract_item_ids(section_lines: list) -> list:
@@ -197,6 +202,7 @@ def apply_archival(backlog_path: Path, archive_path: Path) -> int:
     _setup_db_imports()
     try:
         from entity_registry.database import EntityDatabase
+        from entity_registry.project_identity import resolve_workspace_uuid
         from workflow_state_server import _project_backlog_md
     except Exception as exc:
         sys.stderr.write(
@@ -225,9 +231,23 @@ def apply_archival(backlog_path: Path, archive_path: Path) -> int:
         except Exception as exc:
             failures.append((type_id, str(exc)))
 
-    # Re-project backlog.md from DB state (archived rows excluded).
+    # Re-project scoped to THIS workspace (B7). An unscoped re-projection
+    # would write other repos' backlog items into this repo's file — 4 such
+    # rows were present before B7. Resolution failure is not fatal, but it
+    # must not silently fall back to unscoped: skip the write instead, so a
+    # stale-but-correct file beats a fresh-but-cross-contaminated one.
+    project_root = str(backlog_path.resolve().parent.parent)
     try:
-        projected = _project_backlog_md(db)
+        workspace_uuid = resolve_workspace_uuid(project_root, db_path=db_path)
+    except Exception as exc:
+        sys.stderr.write(
+            f"error: workspace resolution failed for {project_root}: {exc}\n"
+            "       archival succeeded; backlog.md NOT re-projected.\n"
+        )
+        return len(archivable)
+
+    try:
+        projected = _project_backlog_md(db, workspace_uuid=workspace_uuid)
         backlog_path.write_text(projected)
     except Exception as exc:
         sys.stderr.write(f"error: re-projection failed after archival: {exc}\n")

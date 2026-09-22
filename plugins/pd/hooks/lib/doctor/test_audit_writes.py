@@ -530,7 +530,7 @@ _INFERENCE_SCAN_ROOTS = [
 #                          that deliberately and fixture it, not let the join
 #                          change it silently.
 _KNOWN_INFERENCE_SITES: list[tuple[str, int, str, str]] = [
-    ("entity_registry/backfill.py",           752, "split",       "C13 missing-parent policy"),
+    ("entity_registry/backfill.py",           756, "split",       "C13 missing-parent policy"),
     ("entity_registry/clean_break.py",        54, "regex",       "B4 SANCTIONED - the one legacy parse"),
     ("entity_registry/clean_break.py",        56, "regex",       "B4 SANCTIONED - the one legacy parse"),
     ("entity_registry/clean_break.py",        59, "regex",       "B4 SANCTIONED - the one legacy parse"),
@@ -555,9 +555,9 @@ _KNOWN_INFERENCE_SITES: list[tuple[str, int, str, str]] = [
     ("workflow_engine/router.py",             358, "split",       "C8 kind from entities.kind"),
     ("workflow_engine/router.py",             421, "split",       "C8 kind from entities.kind"),
     ("../mcp/workflow_state_server.py",       485, "split",       "C9 seq/slug from entity_display"),
-    ("../mcp/workflow_state_server.py",       680, "split",       "C9 seq/slug from entity_display"),
-    ("../mcp/workflow_state_server.py",       1117, "startswith",  "C8 kind from entities.kind"),
-    ("../mcp/workflow_state_server.py",       1399, "startswith",  "C8 kind from entities.kind"),
+    ("../mcp/workflow_state_server.py",       707, "split",       "C9 seq/slug from entity_display"),
+    ("../mcp/workflow_state_server.py",       1147, "startswith",  "C8 kind from entities.kind"),
+    ("../mcp/workflow_state_server.py",       1429, "startswith",  "C8 kind from entities.kind"),
     ("../ui/templates/_card.html",            4, "split",       "C8 kind - template, view must pass kind"),
     ("../ui/templates/_card.html",            10, "split",       "C8 kind - template, view must pass kind"),
 ]

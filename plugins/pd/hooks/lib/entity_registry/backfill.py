@@ -24,8 +24,12 @@ logger = logging.getLogger(__name__)
 ENTITY_SCAN_ORDER = ["backlog", "brainstorm", "project", "feature"]
 
 # Regex patterns for backlog marker extraction from brainstorm PRDs
-BACKLOG_MARKER_PATTERN_1 = r"\*Source:\s*Backlog\s*#(\d{5})\*"
-BACKLOG_MARKER_PATTERN_2 = r"\*\*Backlog Item:\*\*\s*(\d{5})"
+# B7 (2026-09-22): widened from \d{5}. These markers are hand-copied out of
+# backlog.md into PRDs, so after B7 people write "#063-watch-…" while every
+# document already on disk says "#00063". BOTH must keep resolving or the
+# backlog->feature link is silently lost for one generation of documents.
+BACKLOG_MARKER_PATTERN_1 = r"\*Source:\s*Backlog\s*#([0-9][^\s*]*)\*"
+BACKLOG_MARKER_PATTERN_2 = r"\*\*Backlog Item:\*\*\s*([0-9][^\s*]*)"
 
 PHASE_SEQUENCE: tuple[str, ...] = (
     "brainstorm", "specify", "design", "create-plan",

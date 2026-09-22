@@ -34,11 +34,16 @@ from pathlib import Path
 #    where seq is a 5-digit zero-padded integer.
 #  - Per-section bullet row: ``- **#{seq}** ...`` (with optional ``~~``
 #    strikethrough wrapper).
+# B7 (2026-09-22): backlog.md renders each row's real entity_id, which is
+# either NNNNN (6 surviving legacy rows) or NNN-slug (19 current rows).
+# Matching `\d[^|\s]*` / `[^*\s]+` instead of counting digits accepts both
+# and any future shape; the old \d{5} matched zero rows post-B7 and the
+# parser would have reported success while doing nothing.
 TABLE_ROW_RE = re.compile(
-    r"^\|\s*(?P<id>\d{5})\s*\|\s*(?P<ts>[^|]+?)\s*\|\s*(?P<desc>.*?)\s*\|\s*$"
+    r"^\|\s*(?P<id>\d[^|\s]*)\s*\|\s*(?P<ts>[^|]+?)\s*\|\s*(?P<desc>.*?)\s*\|\s*$"
 )
 BULLET_ROW_RE = re.compile(
-    r"^-\s+(?P<strike>~~)?\*\*#(?P<id>\d{5})\*\*~?~?\s*(?P<desc>.*?)\s*$"
+    r"^-\s+(?P<strike>~~)?\*\*#(?P<id>[^*\s]+)\*\*~?~?\s*(?P<desc>.*?)\s*$"
 )
 H2_RE = re.compile(r"^##\s+(?P<heading>.+?)\s*$")
 H3_RE = re.compile(r"^###\s+(?P<heading>.+?)\s*$")

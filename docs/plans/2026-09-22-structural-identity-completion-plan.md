@@ -158,7 +158,7 @@ Four tasks, none of which depends on the cutover. **B2, B3b and B8 are shippable
 
 **Depends.** Nothing.
 
-## B7 — Render real identity, scope the read
+## B7 — Render real identity, scope the read — **SHIPPED 2026-09-22**
 
 The parent plan's B7 has two halves. The archived filter shipped with `is_archived` (`bb0fb55e`) — `_project_backlog_md` now filters on the flag, not on `status == "archived"`. What remains is the renderer and the scope.
 
