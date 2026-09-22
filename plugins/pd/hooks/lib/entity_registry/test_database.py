@@ -6439,7 +6439,7 @@ class TestNextSequenceValue:
     """
 
     def test_sequence_bootstrap_from_entities(self):
-        """Bootstrap: empty sequences table scans entities for max seq."""
+        """Bootstrap: empty sequences table reads the structural census."""
         db = EntityDatabase(":memory:")
         try:
             ws_uuid = _bootstrap_test_workspace(db)
@@ -6470,9 +6470,26 @@ class TestNextSequenceValue:
             )
             db._conn.commit()
             db._conn.execute("PRAGMA foreign_keys = ON")
-            val = db.next_sequence_value(TEST_PROJECT_ID, "feature")
-            # Should bootstrap from max(5, 10) = 10, so next = 11
-            assert val == 11
+            # C1/C2: bootstrap reads entity_display, not entity_id text.
+            # These rows were inserted raw, so they have no display rows and
+            # their numbers live only in their ids — which this function no
+            # longer reads. It refuses rather than issuing 1 and colliding
+            # with 005-alpha. The old behaviour (parse text -> 11) was safe
+            # only because it inferred identity from text.
+            with pytest.raises(ValueError, match="unknowable from structure"):
+                db.next_sequence_value(TEST_PROJECT_ID, "feature")
+
+            # Give the same rows display rows and the census can see them.
+            for eid, seq in (("005-alpha", 5), ("010-beta", 10)):
+                uid = db._conn.execute(
+                    "SELECT uuid FROM entities WHERE entity_id = ?", (eid,)
+                ).fetchone()[0]
+                db._conn.execute(
+                    "INSERT INTO entity_display(uuid, seq, slug) VALUES(?,?,?)",
+                    (uid, seq, eid.split("-", 1)[1]),
+                )
+            db._conn.commit()
+            assert db.next_sequence_value(TEST_PROJECT_ID, "feature") == 11
         finally:
             db.close()
 

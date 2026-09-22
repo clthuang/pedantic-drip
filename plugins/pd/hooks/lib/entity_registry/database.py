@@ -6415,6 +6415,42 @@ def _v2_migration_7_immutable_is_legacy(conn: sqlite3.Connection) -> None:
     )
 
 
+def _census_max(
+    conn: sqlite3.Connection, *, kind: str, workspace_uuid: str
+) -> int | None:
+    r"""Highest issued sequence number for a bucket, read from STRUCTURE.
+
+    C1. The number lives in ``entity_display.seq``; this never looks at
+    ``entity_id`` text. The predecessor did ``re.match(r"^(\d+)", eid)``,
+    which returns nothing for a legacy ``P004-entity-db-redesign`` and so
+    reported a max of 3 for a bucket whose true max was 4 — the original
+    incident.
+
+    Counts every display-bearing row REGARDLESS of status or archival. A
+    number is spent the moment it is issued; archiving the entity that
+    holds it must not hand it out again.
+
+    Returns ``None`` for a bucket with no display-bearing rows, which is
+    different from 0: 0 would mean "the highest number is zero" and make
+    the next value 1 for a bucket that may well have legacy rows.
+
+    **What this deliberately cannot see.** Legacy entities have no
+    ``entity_display`` row — that is what legacy means (B8's invariant:
+    every entity has one unless ``is_legacy``). They are invisible to this
+    join by construction, and their numbers are reserved by the stored
+    counter, which B4's high-water sweep raised above every legacy id. The
+    census is a repair floor, not the sole guard; ``next_sequence_value``
+    takes the max of both.
+    """
+    row = conn.execute(
+        "SELECT MAX(d.seq) FROM entities e "
+        "JOIN entity_display d ON d.uuid = e.uuid "
+        "WHERE e.kind = ? AND e.workspace_uuid = ?",
+        (kind, workspace_uuid),
+    ).fetchone()
+    return row[0] if row and row[0] is not None else None
+
+
 # SQLite authorizer actions that mutate. Used by C23's future-file guard.
 _WRITE_ACTIONS = frozenset({
     sqlite3.SQLITE_INSERT,
@@ -10620,29 +10656,55 @@ class EntityDatabase:
                 (ws_uuid, entity_type),
             ).fetchone()
 
+            # C1/C2: the census is structural. The text scan this replaced
+            # (``re.match(r"^(\d+)", eid)``) returned nothing for a legacy
+            # ``P004-...`` id, so a bucket whose true max was 4 bootstrapped
+            # to 4 and reissued a number already on disk.
+            census = _census_max(
+                self._conn, kind=entity_type, workspace_uuid=ws_uuid
+            )
+            census_floor = (census + 1) if census is not None else 1
+
             if row is None:
-                # Bootstrap: scan entities for max sequence prefix.
-                # F11 (Group 6): the entities table no longer has an
-                # ``entity_type`` column; filter on ``kind`` (same value
-                # for the 5 production kinds per FR-1).
-                entity_rows = self._conn.execute(
-                    "SELECT entity_id FROM entities "
-                    "WHERE workspace_uuid = ? AND kind = ?",
-                    (ws_uuid, entity_type),
-                ).fetchall()
-                max_seq = 0
-                for (eid,) in entity_rows:
-                    match = re.match(r"^(\d+)", eid)
-                    if match:
-                        max_seq = max(max_seq, int(match.group(1)))
-                next_val = max_seq + 1
+                # No counter AND no census, but the bucket holds entities:
+                # every number in it lives only in entity_id text, which
+                # this function no longer reads. Issuing 1 here would
+                # collide with whatever those rows already carry.
+                #
+                # The predecessor parsed the text and got away with it.
+                # Refusing is the C3 posture — fail closed rather than
+                # reissue — applied at the one place that needs it before
+                # C3 itself can ship (C3 waits on C6). Measured on the live
+                # registry: 0 of 19 buckets are in this state, because B4's
+                # high-water sweep gave every bucket a counter.
+                if census is None and self._conn.execute(
+                    "SELECT 1 FROM entities WHERE kind = ? AND workspace_uuid = ? "
+                    "LIMIT 1",
+                    (entity_type, ws_uuid),
+                ).fetchone() is not None:
+                    raise ValueError(
+                        f"cannot allocate {entity_type!r} in workspace "
+                        f"{ws_uuid}: the bucket has entities but no "
+                        f"entity_display rows and no sequences counter, so "
+                        f"its highest issued number is unknowable from "
+                        f"structure. Repair with establish_high_water() "
+                        f"before allocating."
+                    )
+                next_val = census_floor
                 self._conn.execute(
                     "INSERT INTO sequences(workspace_uuid, entity_type, next_val) "
                     "VALUES(?, ?, ?)",
                     (ws_uuid, entity_type, next_val + 1),
                 )
             else:
-                next_val = row[0]
+                # C2: never below the stored counter and never below the
+                # census. The stored half covers legacy rows the census
+                # cannot see (no entity_display row); the census half
+                # repairs a counter that drifted BELOW reality — which a
+                # pre-C20a rebuild could produce. Taking one without the
+                # other reissues a live number in one direction or the
+                # other. Gaps are permitted and never reclaimed.
+                next_val = max(row[0], census_floor)
                 self._conn.execute(
                     "UPDATE sequences SET next_val = ? "
                     "WHERE workspace_uuid = ? AND entity_type = ?",
