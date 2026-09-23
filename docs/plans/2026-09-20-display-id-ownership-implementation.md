@@ -247,6 +247,8 @@ Plus **monotonicity pin**: archive the highest-numbered feature, allocate, asser
 
 **Contract.** Allocation refuses when its bucket has **non-marker-archived** entities lacking display rows. The predicate is **B6's tag**, not `status`: `_sync_meta_json_entities` writes `.meta.json` status back over the entity whenever they differ (`entity_status.py:84-88`), and `"archived"` is not in `STATUS_MAP`, so a status-based predicate flips back at the next session start and C3 then refuses forever. Archived legacy rows neither satisfy nor violate the guard — scoping it to all entities would refuse every bucket the clean break touches, including the ones B6's replacements need. An empty bucket is complete. No census maximum means zero; an absent counter starts at one. The check examines existing entities, never the pending allocation. Failure rolls back **without advancing the counter**. Repair happens outside the transaction — no recursive migration or registration while holding the write lock.
 
+**Amended 2026-09-23 ([completion plan](./2026-09-22-structural-identity-completion-plan.md), Wave 2 / D3).** Brainstorms now register with no display row by design, so the invariant this guard enforces reads: every entity has a display row unless `is_legacy = 1` or its kind is in `NON_SEQUENCE_KINDS`, as `check_display_row_invariant` states it. The completion plan also moved the predicate from B6's tag to `is_legacy`.
+
 **Interface.** Private helper called inside the existing `BEGIN IMMEDIATE` (`:10261`); raises a typed error.
 
 **Verify.** Fresh DB allocates `1` (empty bucket is complete). A bucket with one display-less entity refuses **and** leaves `sequences.next_val` unchanged — assert the counter, not just the exception.
