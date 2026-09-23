@@ -1388,3 +1388,134 @@ class TestIncidentReplay:
             assert _uuid.UUID(uuid_out)
         finally:
             db.close()
+
+
+def _git(*args, cwd):
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", *args],
+        cwd=cwd, check=True, capture_output=True,
+    )
+
+
+def _pd_checkout(path) -> str:
+    """Give a checkout pd's ``.claude/pd`` marker; return its real path."""
+    (path / ".claude" / "pd").mkdir(parents=True, exist_ok=True)
+    return os.path.realpath(str(path))
+
+
+class TestWorktreeResolvesToRepository:
+    """C17a (completion plan decision 6): a linked git worktree uses its
+    repository's workspace. ``project_id`` already did — every worktree
+    shares the repository's root commit — while ``resolve_workspace_uuid``
+    minted one workspace per worktree, so allocation and registration from
+    inside a worktree landed in different workspaces. Real git repos, not
+    mocks: the layouts are the thing under test."""
+
+    def _repo_with_worktree(self, tmp_path):
+        main = tmp_path / "main"
+        main.mkdir()
+        _git("init", "-q", cwd=main)
+        _git("commit", "-q", "--allow-empty", "-m", "root", cwd=main)
+        _git("worktree", "add", "-q", str(tmp_path / "wt"), cwd=main)
+        return _pd_checkout(main), _pd_checkout(tmp_path / "wt")
+
+    def test_worktree_resolves_to_the_workspace_project_id_names(
+        self, monkeypatch, tmp_path
+    ):
+        """The live 2026-09-23 shape: the worktree already has its own row
+        and its own workspace.json. It must resolve to the repository's
+        workspace — the one its ``project_id`` resolves to."""
+        from entity_registry.project_identity import (
+            _atomic_workspace_json_write,
+            _compute_legacy_project_id,
+            resolve_workspace_uuid,
+        )
+
+        monkeypatch.delenv("ENTITY_WORKSPACE_UUID", raising=False)
+        main, wt = self._repo_with_worktree(tmp_path)
+        legacy = _compute_legacy_project_id(wt)
+        assert legacy == _compute_legacy_project_id(main)  # shared root commit
+        db = str(tmp_path / "e.db")
+        _make_v11_db(db, [(_UUID_A, legacy, main), (_UUID_B, None, wt)])
+        monkeypatch.setenv("ENTITY_DB_PATH", db)
+        _atomic_workspace_json_write(
+            os.path.join(wt, ".claude", "pd", "workspace.json"), _UUID_B
+        )
+
+        conn = _sqlite3.connect(db)
+        try:
+            (named_by_project_id,) = conn.execute(
+                "SELECT uuid FROM workspaces WHERE project_id_legacy = ?",
+                (legacy,),
+            ).fetchone()
+        finally:
+            conn.close()
+        assert resolve_workspace_uuid(wt) == named_by_project_id == _UUID_A
+
+    def test_startup_does_not_readopt_the_worktree_row(
+        self, monkeypatch, tmp_path
+    ):
+        """session-start exports the resolved uuid as WORKSPACE_UUID. The
+        MCP lifespan reconciles it against its project_root; with the
+        worktree's own row still present, reconciling against the
+        worktree's path would treat the repository's uuid as foreign and
+        adopt the worktree's row back."""
+        from entity_registry.project_identity import (
+            resolve_startup_workspace_uuid,
+        )
+
+        main, wt = self._repo_with_worktree(tmp_path)
+        db = str(tmp_path / "e.db")
+        _make_v11_db(db, [(_UUID_A, "leg", main), (_UUID_B, None, wt)])
+        monkeypatch.delenv("ENTITY_WORKSPACE_UUID", raising=False)
+        monkeypatch.setenv("WORKSPACE_UUID", _UUID_A)
+        assert resolve_startup_workspace_uuid(wt, db_path=db) == _UUID_A
+
+    def test_separate_git_dir_checkout_keeps_its_own_workspace(
+        self, monkeypatch, tmp_path
+    ):
+        """terry_agent's shape: the checkout's git directory lives in
+        another directory (``git init --separate-git-dir``). It is the only
+        checkout, so it is the repository's workspace. Redirecting it to
+        the git directory's parent would hand it a directory pd never
+        ran in. The store is named ``.git`` on purpose: what marks this
+        checkout as the only one is its git dir BEING the common dir, not
+        the store's name."""
+        from entity_registry.project_identity import resolve_workspace_uuid
+
+        monkeypatch.delenv("ENTITY_WORKSPACE_UUID", raising=False)
+        solo = tmp_path / "solo"
+        (tmp_path / "store").mkdir()  # git will not create the store's parent
+        _git(
+            "init", "-q", f"--separate-git-dir={tmp_path / 'store' / '.git'}",
+            str(solo), cwd=tmp_path,
+        )
+        _git("commit", "-q", "--allow-empty", "-m", "root", cwd=solo)
+        root = _pd_checkout(solo)
+        db = str(tmp_path / "e.db")
+        _make_v11_db(db, [(_UUID_A, "leg", root)])
+        monkeypatch.setenv("ENTITY_DB_PATH", db)
+        assert resolve_workspace_uuid(root) == _UUID_A
+
+    def test_worktree_of_a_bare_repository_keeps_its_own_workspace(
+        self, monkeypatch, tmp_path
+    ):
+        """A bare repository has no main checkout to map to; its common git
+        directory is not named ``.git``. The worktree keeps resolving by
+        its own path rather than to the bare directory's parent."""
+        from entity_registry.project_identity import resolve_workspace_uuid
+
+        monkeypatch.delenv("ENTITY_WORKSPACE_UUID", raising=False)
+        seed = tmp_path / "seed"
+        seed.mkdir()
+        _git("init", "-q", cwd=seed)
+        _git("commit", "-q", "--allow-empty", "-m", "root", cwd=seed)
+        _git("clone", "-q", "--bare", str(seed), str(tmp_path / "store.git"),
+             cwd=tmp_path)
+        _git("worktree", "add", "-q", str(tmp_path / "w1"),
+             cwd=tmp_path / "store.git")
+        root = _pd_checkout(tmp_path / "w1")
+        db = str(tmp_path / "e.db")
+        _make_v11_db(db, [(_UUID_A, "leg", root)])
+        monkeypatch.setenv("ENTITY_DB_PATH", db)
+        assert resolve_workspace_uuid(root) == _UUID_A

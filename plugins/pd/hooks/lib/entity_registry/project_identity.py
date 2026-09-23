@@ -556,6 +556,8 @@ def resolve_workspace_uuid(
 
     Precedence chain:
       1. ``ENTITY_WORKSPACE_UUID`` env var (test override).
+         A linked git worktree then resolves as its repository's main
+         checkout (:func:`_repository_root`); steps 2-4 key on that path.
       2. ``<working_dir>/.claude/pd/workspace.json`` (file-based; project-level)
          — self-healing: an orphaned file uuid is reconciled against the
          workspaces table (adopt the project_root row, or insert the missing
@@ -591,6 +593,7 @@ def resolve_workspace_uuid(
     if env_uuid:
         return _validate_workspace_uuid(env_uuid)
 
+    cwd = _repository_root(cwd)
     target_path = os.path.join(cwd, ".claude", "pd", "workspace.json")
     # ENTITY_DB_PATH-aware (matches the MCP servers); historically this was
     # hard-coded to the global store, which diverged under test harnesses.
@@ -711,8 +714,13 @@ def resolve_startup_workspace_uuid(
     When both are set, ``ENTITY_WORKSPACE_UUID`` wins (the historical
     short-circuit is preserved). With neither set, falls back to the full
     file→DB→mint :func:`resolve_workspace_uuid` (which self-heals).
+
+    ``project_root`` is mapped through :func:`_repository_root` first, as the
+    resolver does. Reconciling against a linked worktree's own path would
+    treat the repository's uuid as foreign and adopt the worktree's row back.
     """
     db = db_path if db_path is not None else _entities_db_path()
+    project_root = _repository_root(project_root)
     env_abs = os.environ.get("ENTITY_WORKSPACE_UUID")
     if env_abs:
         return _validate_workspace_uuid(env_abs)
@@ -808,8 +816,37 @@ def _run_git(args: list[str], working_dir: str) -> subprocess.CompletedProcess:
     )
 
 
+def _repository_root(path: str) -> str:
+    """Map a linked git worktree to its repository's main checkout.
+
+    Workspaces are per repository (completion plan decision 6). Every linked
+    worktree shares the repository's root commit, so ``project_id`` already
+    names the repository's workspace; path-keyed resolution must agree or
+    allocation and registration land in different workspaces. Anything
+    else comes back unchanged: the main checkout, a non-git directory, a
+    ``--separate-git-dir`` checkout, and a worktree of a bare repository.
+    """
+    try:
+        result = _run_git(
+            ["rev-parse", "--path-format=absolute", "--git-dir",
+             "--git-common-dir"],
+            path,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return path
+    dirs = result.stdout.splitlines()
+    if result.returncode != 0 or len(dirs) != 2:
+        return path
+    git_dir, common_dir = dirs
+    # ponytail: a bare repository has no main checkout, so each of its
+    # worktrees keeps its own workspace; key on common_dir if that matters.
+    if git_dir == common_dir or os.path.basename(common_dir) != ".git":
+        return path
+    return os.path.dirname(common_dir)
+
+
 def _compute_legacy_project_id(working_dir: str | None = None) -> str:
-    """Migration-time-only helper: compute the legacy 12-char hex project_id.
+    """Compute the legacy 12-char hex project_id.
 
     Reuses the historical git-SHA fallback chain:
 
@@ -817,12 +854,15 @@ def _compute_legacy_project_id(working_dir: str | None = None) -> str:
     2. HEAD SHA truncated to 12 chars
     3. SHA-256 of absolute path truncated to 12 chars
 
-    NOT cached. NOT consulted by the runtime ``resolve_workspace_uuid``
-    precedence chain — this helper is used ONLY by Migration 11 step 0
-    to populate ``workspaces.project_id_legacy`` for entries that pre-date
-    feature 108. Per design §3.4 / Decision 5, this helper does NOT read
-    any env var (test/CI overrides go via ``ENTITY_WORKSPACE_UUID`` →
-    ``resolve_workspace_uuid``, not here).
+    NOT cached. Despite the name it is live, not migration-only: both MCP
+    servers, the reconciliation orchestrator and task promotion derive
+    their ``project_id`` from it at startup, and it records
+    ``workspaces.project_id_legacy`` when a workspace row is first written.
+    Every linked worktree shares its repository's root commit, so it
+    returns the repository's id; :func:`_repository_root` makes path-keyed
+    workspace resolution agree. Per design §3.4 / Decision 5, this helper
+    does NOT read any env var (test/CI overrides go via
+    ``ENTITY_WORKSPACE_UUID`` → ``resolve_workspace_uuid``, not here).
 
     Parameters
     ----------
