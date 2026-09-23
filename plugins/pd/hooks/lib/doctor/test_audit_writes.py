@@ -502,6 +502,10 @@ _INFERENCE_SCAN_ROOTS = [
     # B2: the UI is where a wrongly-inferred kind becomes something a person
     # acts on, so templates are in scope exactly as .py files are.
     _PLUGIN_PD_DIR / "ui" / "templates",
+    # Wave 2 step 3 (calvin L15): scripts/ holds a registrar,
+    # parse_backlog_md.py, that no root reached. It had no inference site when
+    # added, so covering it cost nothing and keeps the next one visible.
+    _PLUGIN_PD_DIR / "scripts",
 ]
 
 # (relative path, lineno, idiom, owning task)

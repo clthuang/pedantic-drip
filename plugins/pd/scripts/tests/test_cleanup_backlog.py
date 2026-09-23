@@ -226,6 +226,10 @@ def test_archival_preserves_status_and_sets_the_flag(tmp_backlog, tmp_archive, t
     assert item_ids, "fixture must contain archivable items for this test to mean anything"
 
     for n, item_id in enumerate(item_ids):
+        # A legacy backlog row: cleanup_backlog finds it by the text id the
+        # backlog.md row carries ("99001"), which has no sequence/slug form.
+        # Only the entity_id text form can register it; step 5 removes that
+        # form and must seed the row directly instead.
         db.register_entity(
             "backlog",
             entity_id=item_id,
@@ -346,12 +350,10 @@ def test_reprojection_is_scoped_and_refuses_to_empty_the_file(tmp_path):
         )
         ids[tag] = u
     db._conn.commit()
-    db.register_entity("backlog", entity_id="001-mine", name="mine",
-                       workspace_uuid=ids["mine"], status="open",
-                       _strict_id_format=False)
-    db.register_entity("backlog", entity_id="002-theirs", name="theirs",
-                       workspace_uuid=ids["theirs"], status="open",
-                       _strict_id_format=False)
+    db.register_entity("backlog", seq=1, slug="mine", name="mine",
+                       workspace_uuid=ids["mine"], status="open")
+    db.register_entity("backlog", seq=2, slug="theirs", name="theirs",
+                       workspace_uuid=ids["theirs"], status="open")
 
     prev = os.environ.get("ENTITY_DB_PATH")
     os.environ["ENTITY_DB_PATH"] = str(db_path)
@@ -417,7 +419,7 @@ def test_reprojection_from_a_git_worktree_uses_the_repository_workspace(tmp_path
         (ws, "__main__", os.path.realpath(main), now, now),
     )
     db._conn.commit()
-    db.register_entity("backlog", entity_id="001-mine", name="mine",
+    db.register_entity("backlog", seq=1, slug="mine", name="mine",
                        workspace_uuid=ws, status="open")
 
     prev = os.environ.get("ENTITY_DB_PATH")

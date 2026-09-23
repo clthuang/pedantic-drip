@@ -19,6 +19,7 @@ from entity_registry import schema_v2
 # schema_v2.DDL_REGISTRY BEFORE _reset_ddl_registry_for_v2_fixtures' first
 # snapshot, so that fixture's restore never wipes them back out).
 from entity_registry import rebuild_tool
+from entity_registry.test_helpers import identity_kwargs
 
 
 # ---------------------------------------------------------------------------
@@ -54,7 +55,7 @@ def mgr():
 def _reg(db, suffix: str, *, status: str | None = None) -> str:
     """Register a feature and return its uuid."""
     return db.register_entity(
-        "feature", f"001-{suffix}", f"Feature {suffix}",
+        "feature", name=f"Feature {suffix}", **identity_kwargs("feature", f"001-{suffix}"),
         status=status, project_id="__unknown__",
     )
 
@@ -476,11 +477,11 @@ class TestCascadeCrossWorkspace:
 
         # Blocker lives in workspace Y, blocked entity lives in workspace X.
         blocker = db.register_entity(
-            "feature", "001-blocker", "Blocker", status="completed",
+            "feature", name="Blocker", seq=1, slug="blocker", status="completed",
             workspace_uuid=ws_y,
         )
         blocked = db.register_entity(
-            "feature", "002-blocked", "Blocked", status="blocked",
+            "feature", name="Blocked", seq=2, slug="blocked", status="blocked",
             workspace_uuid=ws_x,
         )
         mgr.add_dependency(db, blocked, blocker)
@@ -505,11 +506,11 @@ class TestCascadeCrossWorkspace:
         ws_dependent = bootstrap_test_workspace(db, "evt-fields-dependent-ws")
 
         blocker = db.register_entity(
-            "feature", "001-evtf-blocker", "Blocker", status="completed",
+            "feature", name="Blocker", seq=1, slug="evtf-blocker", status="completed",
             workspace_uuid=ws_blocker,
         )
         dependent = db.register_entity(
-            "feature", "001-evtf-dependent", "Dependent", status="blocked",
+            "feature", name="Dependent", seq=1, slug="evtf-dependent", status="blocked",
             workspace_uuid=ws_dependent,
         )
         mgr.add_dependency(db, dependent, blocker)
@@ -565,7 +566,7 @@ class TestPerformance:
         nodes = []
         for i in range(1000):
             nodes.append(
-                db.register_entity("feature", f"001-perf-{i:04d}", f"Perf {i}", project_id="__unknown__")
+                db.register_entity("feature", name=f"Perf {i}", **identity_kwargs("feature", f"001-perf-{i:04d}"), project_id="__unknown__")
             )
         start = time.time()
         for i in range(999):

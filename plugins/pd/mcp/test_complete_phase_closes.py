@@ -30,6 +30,7 @@ from workflow_engine.entity_engine import EntityWorkflowEngine
 
 import workflow_state_server as wss
 from workflow_state_server import _process_complete_phase
+from entity_registry.test_helpers import identity_kwargs
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +82,7 @@ def seeded(db, engine, entity_engine, tmp_path):
     caller resolution matches features registered with project_id='__unknown__'.
     """
     db.register_entity(
-        "feature", "111-closer", "Feature 111 closer test",
+        "feature", name="Feature 111 closer test", seq=111, slug="closer",
         status="active", project_id="__unknown__",
     )
     db.create_workflow_phase("feature:111-closer", workflow_phase="finish")
@@ -107,7 +108,7 @@ def _register_bug(db, entity_id: str, name: str = "A bug",
     """Register a bug entity; returns its uuid."""
     return db.register_entity(
         entity_type="bug",
-        entity_id=entity_id,
+        **identity_kwargs("bug", entity_id),
         name=name,
         status=status,
         project_id=project_id,
@@ -118,7 +119,7 @@ def _register_task(db, entity_id: str, name: str = "A task",
                    project_id: str = "__unknown__", status: str = "open") -> str:
     return db.register_entity(
         entity_type="task",
-        entity_id=entity_id,
+        **identity_kwargs("task", entity_id),
         name=name,
         status=status,
         project_id=project_id,
@@ -129,7 +130,7 @@ def _register_backlog(db, entity_id: str, name: str = "A backlog item",
                       project_id: str = "__unknown__", status: str = "open") -> str:
     return db.register_entity(
         entity_type="backlog",
-        entity_id=entity_id,
+        **identity_kwargs("backlog", entity_id),
         name=name,
         status=status,
         project_id=project_id,
@@ -243,7 +244,7 @@ class TestAc10_3AtomicRollbackOnInvalidTarget:
 
         # Register a sibling feature; lifecycle_class='feature_flow' → not closable.
         u_other_feature = db.register_entity(
-            "feature", "111-sibling", "Sibling feature",
+            "feature", name="Sibling feature", seq=111, slug="sibling",
             status="active", project_id="__unknown__",
         )
 
@@ -349,7 +350,7 @@ class TestAc10_5CrossCloserConflict:
 
         # Register a DIFFERENT closer feature.
         db.register_entity(
-            "feature", "112-other", "Other feature",
+            "feature", name="Other feature", seq=112, slug="other",
             status="active", project_id="__unknown__",
         )
         db.create_workflow_phase("feature:112-other", workflow_phase="implement")
@@ -403,7 +404,7 @@ class TestAc10_6CrossWorkspacePermitted:
         )
         u_bug_ws2 = db.register_entity(
             entity_type="bug",
-            entity_id="006-foreign",
+            seq=6, slug="foreign",
             name="Foreign bug",
             status="open",
             workspace_uuid=ws2_uuid,
@@ -546,7 +547,7 @@ class TestAc10_10FeatureNotClosableViaCloses:
         db = seeded["db"]
         # Register another feature; its lifecycle_class is feature_flow.
         db.register_entity(
-            "feature", "111-target-feat", "Target feature",
+            "feature", name="Target feature", seq=111, slug="target-feat",
             status="active", project_id="__unknown__",
         )
         u_feature = _get_uuid(db, "feature:111-target-feat")

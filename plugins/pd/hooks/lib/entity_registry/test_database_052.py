@@ -37,9 +37,9 @@ def db():
 @pytest.fixture
 def populated_db(db):
     """DB with 3 entities pre-registered for ref resolution and tagging tests."""
-    db.register_entity("feature", "050-alpha", "Alpha Feature", project_id="__unknown__")
-    db.register_entity("feature", "051-beta", "Beta Feature", project_id="__unknown__")
-    db.register_entity("feature", "052-gamma", "Gamma Feature", project_id="__unknown__")
+    db.register_entity("feature", name="Alpha Feature", seq=50, slug="alpha", project_id="__unknown__")
+    db.register_entity("feature", name="Beta Feature", seq=51, slug="beta", project_id="__unknown__")
+    db.register_entity("feature", name="Gamma Feature", seq=52, slug="gamma", project_id="__unknown__")
     return db
 
 
@@ -50,7 +50,7 @@ def populated_db(db):
 
 class TestGetEntityByUuid:
     def test_returns_entity_dict_for_valid_uuid(self, db):
-        entity_uuid = db.register_entity("feature", "001-test", "Test Feature", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test Feature", seq=1, slug="test", project_id="__unknown__")
         result = db.get_entity_by_uuid(entity_uuid)
         assert result is not None
         assert result["uuid"] == entity_uuid
@@ -68,7 +68,7 @@ class TestGetEntityByUuid:
 
     def test_returns_full_entity_dict(self, db):
         entity_uuid = db.register_entity(
-            "feature", "002-full", "Full Feature",
+            "feature", name="Full Feature", seq=2, slug="full",
             status="active", artifact_path="/some/path",
             metadata={"key": "value"},
             project_id="__unknown__",
@@ -170,8 +170,8 @@ class TestSearchByTypeIdPrefix:
         assert r["name"] == "Gamma Feature"
 
     def test_prefix_across_types(self, db):
-        db.register_entity("feature", "001-x", "Feature X", project_id="__unknown__")
-        db.register_entity("project", "001-y", "Project Y", project_id="__unknown__")
+        db.register_entity("feature", name="Feature X", seq=1, slug="x", project_id="__unknown__")
+        db.register_entity("project", name="Project Y", seq=1, slug="y", project_id="__unknown__")
         results = db.search_by_type_id_prefix("feature:001")
         assert len(results) == 1
         assert results[0]["type_id"] == "feature:001-x"
@@ -189,7 +189,7 @@ class TestSearchByTypeIdPrefix:
 class TestBeginImmediate:
     def test_commits_on_success(self, db):
         """Context manager commits when block completes without exception."""
-        entity_uuid = db.register_entity("feature", "001-test", "Test", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test", seq=1, slug="test", project_id="__unknown__")
         with db.begin_immediate():
             db._conn.execute(
                 "UPDATE entities SET name = ? WHERE uuid = ?",
@@ -203,7 +203,7 @@ class TestBeginImmediate:
 
     def test_rolls_back_on_exception(self, db):
         """Context manager rolls back when block raises."""
-        entity_uuid = db.register_entity("feature", "001-test", "Test", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test", seq=1, slug="test", project_id="__unknown__")
         with pytest.raises(RuntimeError):
             with db.begin_immediate():
                 db._conn.execute(
@@ -232,58 +232,58 @@ class TestBeginImmediate:
 
 class TestAddTag:
     def test_add_single_tag(self, db):
-        entity_uuid = db.register_entity("feature", "001-test", "Test", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test", seq=1, slug="test", project_id="__unknown__")
         db.add_tag(entity_uuid, "security")
         tags = db.get_tags(entity_uuid)
         assert tags == ["security"]
 
     def test_add_multiple_tags(self, db):
-        entity_uuid = db.register_entity("feature", "001-test", "Test", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test", seq=1, slug="test", project_id="__unknown__")
         db.add_tag(entity_uuid, "security")
         db.add_tag(entity_uuid, "platform")
         tags = db.get_tags(entity_uuid)
         assert sorted(tags) == ["platform", "security"]
 
     def test_duplicate_tag_is_idempotent(self, db):
-        entity_uuid = db.register_entity("feature", "001-test", "Test", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test", seq=1, slug="test", project_id="__unknown__")
         db.add_tag(entity_uuid, "security")
         db.add_tag(entity_uuid, "security")  # should not raise
         tags = db.get_tags(entity_uuid)
         assert tags == ["security"]
 
     def test_invalid_tag_uppercase_raises(self, db):
-        entity_uuid = db.register_entity("feature", "001-test", "Test", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test", seq=1, slug="test", project_id="__unknown__")
         with pytest.raises(ValueError, match="[Ii]nvalid tag"):
             db.add_tag(entity_uuid, "Security")
 
     def test_invalid_tag_spaces_raises(self, db):
-        entity_uuid = db.register_entity("feature", "001-test", "Test", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test", seq=1, slug="test", project_id="__unknown__")
         with pytest.raises(ValueError, match="[Ii]nvalid tag"):
             db.add_tag(entity_uuid, "my tag")
 
     def test_invalid_tag_too_long_raises(self, db):
-        entity_uuid = db.register_entity("feature", "001-test", "Test", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test", seq=1, slug="test", project_id="__unknown__")
         long_tag = "a" * 51
         with pytest.raises(ValueError, match="[Ii]nvalid tag"):
             db.add_tag(entity_uuid, long_tag)
 
     def test_invalid_tag_empty_raises(self, db):
-        entity_uuid = db.register_entity("feature", "001-test", "Test", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test", seq=1, slug="test", project_id="__unknown__")
         with pytest.raises(ValueError, match="[Ii]nvalid tag"):
             db.add_tag(entity_uuid, "")
 
     def test_valid_tag_with_hyphens(self, db):
-        entity_uuid = db.register_entity("feature", "001-test", "Test", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test", seq=1, slug="test", project_id="__unknown__")
         db.add_tag(entity_uuid, "my-security-tag")
         assert db.get_tags(entity_uuid) == ["my-security-tag"]
 
     def test_valid_tag_with_numbers(self, db):
-        entity_uuid = db.register_entity("feature", "001-test", "Test", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test", seq=1, slug="test", project_id="__unknown__")
         db.add_tag(entity_uuid, "phase-2")
         assert db.get_tags(entity_uuid) == ["phase-2"]
 
     def test_valid_tag_max_length(self, db):
-        entity_uuid = db.register_entity("feature", "001-test", "Test", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test", seq=1, slug="test", project_id="__unknown__")
         tag_50 = "a" * 50
         db.add_tag(entity_uuid, tag_50)
         assert db.get_tags(entity_uuid) == [tag_50]
@@ -291,11 +291,11 @@ class TestAddTag:
 
 class TestGetTags:
     def test_empty_tags(self, db):
-        entity_uuid = db.register_entity("feature", "001-test", "Test", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test", seq=1, slug="test", project_id="__unknown__")
         assert db.get_tags(entity_uuid) == []
 
     def test_tags_sorted_alphabetically(self, db):
-        entity_uuid = db.register_entity("feature", "001-test", "Test", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test", seq=1, slug="test", project_id="__unknown__")
         db.add_tag(entity_uuid, "zebra")
         db.add_tag(entity_uuid, "alpha")
         db.add_tag(entity_uuid, "middle")
@@ -347,9 +347,9 @@ class TestQueryByTag:
 
     def test_query_across_entity_types(self, db):
         """Tags work across entity types (AC-36)."""
-        u1 = db.register_entity("feature", "001-feat", "Feature One", project_id="__unknown__")
-        u2 = db.register_entity("project", "001-proj", "Project One", project_id="__unknown__")
-        u3 = db.register_entity("brainstorm", "001-brain", "Brainstorm One", project_id="__unknown__")
+        u1 = db.register_entity("feature", name="Feature One", seq=1, slug="feat", project_id="__unknown__")
+        u2 = db.register_entity("project", name="Project One", seq=1, slug="proj", project_id="__unknown__")
+        u3 = db.register_entity("brainstorm", name="Brainstorm One", display_id="001-brain", project_id="__unknown__")
 
         db.add_tag(u1, "security")
         db.add_tag(u2, "security")
@@ -363,17 +363,17 @@ class TestQueryByTag:
 
 class TestRemoveTag:
     def test_remove_existing_tag(self, db):
-        entity_uuid = db.register_entity("feature", "001-test", "Test", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test", seq=1, slug="test", project_id="__unknown__")
         db.add_tag(entity_uuid, "security")
         db.remove_tag(entity_uuid, "security")
         assert db.get_tags(entity_uuid) == []
 
     def test_remove_nonexistent_tag_is_silent(self, db):
-        entity_uuid = db.register_entity("feature", "001-test", "Test", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test", seq=1, slug="test", project_id="__unknown__")
         db.remove_tag(entity_uuid, "nonexistent")  # should not raise
 
     def test_remove_only_specified_tag(self, db):
-        entity_uuid = db.register_entity("feature", "001-test", "Test", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test", seq=1, slug="test", project_id="__unknown__")
         db.add_tag(entity_uuid, "security")
         db.add_tag(entity_uuid, "platform")
         db.remove_tag(entity_uuid, "security")
@@ -399,7 +399,7 @@ class TestMcpAddEntityTag:
     @pytest.mark.asyncio
     async def test_add_tag_success(self, mcp_db):
         import entity_server
-        mcp_db.register_entity("feature", "001-test", "Test Feature", project_id="__unknown__")
+        mcp_db.register_entity("feature", name="Test Feature", seq=1, slug="test", project_id="__unknown__")
         result = await entity_server.add_entity_tag("feature:001-test", "security")
         parsed = json.loads(result)
         assert "result" in parsed
@@ -408,7 +408,7 @@ class TestMcpAddEntityTag:
     @pytest.mark.asyncio
     async def test_add_tag_invalid_format(self, mcp_db):
         import entity_server
-        mcp_db.register_entity("feature", "001-test", "Test Feature", project_id="__unknown__")
+        mcp_db.register_entity("feature", name="Test Feature", seq=1, slug="test", project_id="__unknown__")
         result = await entity_server.add_entity_tag("feature:001-test", "INVALID")
         parsed = json.loads(result)
         assert "error" in parsed
@@ -424,7 +424,7 @@ class TestMcpGetEntityTags:
     @pytest.mark.asyncio
     async def test_get_tags_success(self, mcp_db):
         import entity_server
-        entity_uuid = mcp_db.register_entity("feature", "001-test", "Test", project_id="__unknown__")
+        entity_uuid = mcp_db.register_entity("feature", name="Test", seq=1, slug="test", project_id="__unknown__")
         mcp_db.add_tag(entity_uuid, "security")
         mcp_db.add_tag(entity_uuid, "platform")
         result = await entity_server.get_entity_tags("feature:001-test")

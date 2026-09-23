@@ -11,6 +11,7 @@ from entity_registry.database import EntityDatabase
 from entity_registry.test_helpers import bootstrap_test_workspace
 from reconciliation_orchestrator import entity_status
 from reconciliation_orchestrator.entity_status import sync_entity_statuses
+from entity_registry.test_helpers import identity_kwargs
 
 
 # ---------------------------------------------------------------------------
@@ -34,7 +35,7 @@ def seed_feature(db: EntityDatabase, folder: str, status: str) -> None:
     """Register a feature entity with the given folder name and status."""
     db.register_entity(
         entity_type="feature",
-        entity_id=folder,
+        **identity_kwargs("feature", folder),
         name=folder,
         status=status,
         project_id="__unknown__",
@@ -45,7 +46,7 @@ def seed_project(db: EntityDatabase, folder: str, status: str) -> None:
     """Register a project entity with the given folder name and status."""
     db.register_entity(
         entity_type="project",
-        entity_id=folder,
+        **identity_kwargs("project", folder),
         name=folder,
         status=status,
         project_id="__unknown__",
@@ -258,7 +259,7 @@ def seed_brainstorm(db: EntityDatabase, entity_id: str, status: str = "active",
     """Register a brainstorm entity for testing."""
     db.register_entity(
         entity_type="brainstorm",
-        entity_id=entity_id,
+        **identity_kwargs("brainstorm", entity_id),
         name=entity_id,
         status=status,
         artifact_path=artifact_path,
@@ -428,7 +429,7 @@ class TestUnifiedSync:
         # 1) Feature: seed as active, .meta.json says completed -> drift -> updated
         feature_folder = "042-test"
         db.register_entity(
-            entity_type="feature", entity_id=feature_folder,
+            entity_type="feature", **identity_kwargs("feature", feature_folder),
             name=feature_folder, status="active", project_id="test-project",
         )
         write_meta_json(str(tmp_path / "features" / feature_folder), status="completed")
@@ -487,7 +488,7 @@ def _setup_site_47_meta_json_archive(db, ws_uuid, tmp_path):
     folder = "042-archive-me"
     db.register_entity(
         entity_type="feature",
-        entity_id=folder,
+        **identity_kwargs("feature", folder),
         name=folder,
         status="active",
         workspace_uuid=ws_uuid,
@@ -515,7 +516,7 @@ def _setup_site_72_meta_json_status_change(db, ws_uuid, tmp_path):
     folder = "043-drift-me"
     db.register_entity(
         entity_type="feature",
-        entity_id=folder,
+        **identity_kwargs("feature", folder),
         name=folder,
         status="active",
         workspace_uuid=ws_uuid,
@@ -542,7 +543,7 @@ def _setup_site_189_brainstorm_archive(db, ws_uuid, tmp_path):
     """
     db.register_entity(
         entity_type="brainstorm",
-        entity_id="20260101-000001-archived-bs",
+        display_id="20260101-000001-archived-bs",
         name="20260101-000001-archived-bs",
         status="active",
         artifact_path="docs/brainstorms/archived-bs.prd.md",
@@ -693,10 +694,10 @@ class TestReconciliationIsNonDestructive:
         """Fixture 1: workspace_uuid set, project_id suppressed."""
         db = EntityDatabase(":memory:")
         ws = bootstrap_test_workspace(db, "ws-a-legacy")
-        db.register_entity(entity_type="backlog", entity_id="042-backlog",
+        db.register_entity(entity_type="backlog", seq=42, slug="backlog",
                            name="legacy five-digit", status="open",
                            workspace_uuid=ws)
-        db.register_entity(entity_type="backlog", entity_id="077-modern-slug",
+        db.register_entity(entity_type="backlog", seq=77, slug="modern-slug",
                            name="modern slug id", status="open",
                            workspace_uuid=ws)
 
@@ -731,7 +732,7 @@ class TestReconciliationIsNonDestructive:
         own = {}
         for label, ws in (("a", ws_a), ("b", ws_b)):
             own[label] = db.register_entity(
-                entity_type="brainstorm", entity_id="001-shared",
+                entity_type="brainstorm", display_id="001-shared",
                 name="shared", status="active", workspace_uuid=ws,
                 artifact_path="docs/brainstorms/001-shared.prd.md",
             )
@@ -776,7 +777,7 @@ class TestReconciliationIsNonDestructive:
         db = EntityDatabase(":memory:")
         ws = bootstrap_test_workspace(db, "ws-a-legacy")
         entity_uuid = db.register_entity(
-            entity_type="backlog", entity_id="053-backlog",
+            entity_type="backlog", seq=53, slug="backlog",
             name="no display row, no file", status="open", workspace_uuid=ws,
         )
         # Registration always writes a display row; drop it for the legacy
@@ -806,7 +807,7 @@ class TestReconciliationIsNonDestructive:
         """
         db = EntityDatabase(":memory:")
         ws = bootstrap_test_workspace(db, "ws-a-legacy")
-        db.register_entity(entity_type="backlog", entity_id="278-entity-rename",
+        db.register_entity(entity_type="backlog", seq=278, slug="entity-rename",
                            name="live item", status="open", workspace_uuid=ws)
         # The projection renders seq 278 as "00278" — a string that resolves
         # to no entity. Reconciliation must not treat it as an import source.
@@ -842,7 +843,7 @@ class TestReconciliationIsNonDestructive:
         db = EntityDatabase(":memory:")
         ws = bootstrap_test_workspace(db, "ws-a-legacy")
         seed_feature_dir = tmp_path / "features" / "042-test"
-        db.register_entity(entity_type="feature", entity_id="042-test",
+        db.register_entity(entity_type="feature", seq=42, slug="test",
                            name="042-test", status="active", workspace_uuid=ws)
         write_meta_json(str(seed_feature_dir), status="completed")
         (tmp_path / "brainstorms").mkdir(parents=True)

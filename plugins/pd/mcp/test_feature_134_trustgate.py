@@ -34,7 +34,7 @@ def tool_env(tmp_path, monkeypatch):
     db = EntityDatabase(str(tmp_path / "entities.db"))
     ws_uuid = _bootstrap_test_workspace(db, "P-134")
     db.register_entity(
-        "feature", "134-t", "T", status="active", project_id="P-134",
+        "feature", name="T", seq=134, slug="t", status="active", project_id="P-134",
         workspace_uuid=ws_uuid,
     )
     db.create_workflow_phase(

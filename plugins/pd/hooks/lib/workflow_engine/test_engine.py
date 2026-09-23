@@ -22,6 +22,7 @@ from workflow_engine.models import (
     WorkflowDBUnavailableError,
     db_unavailable_error,
 )
+from entity_registry.test_helpers import identity_kwargs
 
 
 # ---------------------------------------------------------------------------
@@ -43,7 +44,7 @@ def _register_feature(
     type_id = f"feature:{slug}"
     db.register_entity(
         entity_type="feature",
-        entity_id=slug,
+        **identity_kwargs("feature", slug),
         name=f"Test Feature {slug}",
         status=status,
         project_id="__unknown__",
@@ -831,7 +832,7 @@ class TestBatchQueries:
         db = _make_db()
         # Create 3 features in different phases
         for i, phase in enumerate(["design", "design", "implement"]):
-            slug = f"00{i}-feat"
+            slug = f"{i + 1:03d}-feat"
             tid = _register_feature(db, slug)
             db.create_workflow_phase(tid, workflow_phase=phase)
 
@@ -911,8 +912,8 @@ class TestBatchQueriesWorkspaceScoping:
         ws_b = bootstrap_test_workspace(db, "ws-engine-phase-b")
         tid_a = "feature:001-a"
         tid_b = "feature:001-b"
-        db.register_entity("feature", "001-a", "Feature A", workspace_uuid=ws_a)
-        db.register_entity("feature", "001-b", "Feature B", workspace_uuid=ws_b)
+        db.register_entity("feature", name="Feature A", seq=1, slug="a", workspace_uuid=ws_a)
+        db.register_entity("feature", name="Feature B", seq=1, slug="b", workspace_uuid=ws_b)
         db.create_workflow_phase(tid_a, workflow_phase="design")
         db.create_workflow_phase(tid_b, workflow_phase="design")
 
@@ -931,10 +932,10 @@ class TestBatchQueriesWorkspaceScoping:
         tid_a = "feature:001-a"
         tid_b = "feature:001-b"
         db.register_entity(
-            "feature", "001-a", "Feature A", status="active", workspace_uuid=ws_a
+            "feature", name="Feature A", seq=1, slug="a", status="active", workspace_uuid=ws_a
         )
         db.register_entity(
-            "feature", "001-b", "Feature B", status="active", workspace_uuid=ws_b
+            "feature", name="Feature B", seq=1, slug="b", status="active", workspace_uuid=ws_b
         )
         db.create_workflow_phase(tid_a, workflow_phase="design")
         db.create_workflow_phase(tid_b, workflow_phase="implement")
@@ -955,7 +956,7 @@ class TestBatchQueriesWorkspaceScoping:
         ws_a = bootstrap_test_workspace(db, "ws-engine-status-both")
         tid_a = "feature:001-a"
         db.register_entity(
-            "feature", "001-a", "Feature A", status="active", workspace_uuid=ws_a
+            "feature", name="Feature A", seq=1, slug="a", status="active", workspace_uuid=ws_a
         )
         db.create_workflow_phase(tid_a, workflow_phase="design")
 
@@ -1018,7 +1019,7 @@ class TestIntegration:
         type_id = f"feature:{slug}"
         db.register_entity(
             entity_type="feature",
-            entity_id=slug,
+            **identity_kwargs("feature", slug),
             name="Lifecycle Test Feature",
             status="active",
             project_id="__unknown__",
@@ -1105,7 +1106,7 @@ class TestIntegration:
         type_id = f"feature:{slug}"
         db.register_entity(
             entity_type="feature",
-            entity_id=slug,
+            **identity_kwargs("feature", slug),
             name="Gate Coverage Test",
             status="active",
             project_id="__unknown__",
@@ -1197,7 +1198,7 @@ class TestIntegration:
         type_id = f"feature:{slug}"
         db.register_entity(
             entity_type="feature",
-            entity_id=slug,
+            **identity_kwargs("feature", slug),
             name="Hydration Transition Test",
             status="active",
             project_id="__unknown__",
@@ -1362,7 +1363,7 @@ class TestDeepenedBoundaryValues:
         for i, phase in enumerate(
             ["design", "design", "specify", "implement", "finish"]
         ):
-            slug = f"00{i}-feat"
+            slug = f"{i + 1:03d}-feat"
             tid = _register_feature(db, slug)
             db.create_workflow_phase(tid, workflow_phase=phase)
 
@@ -1875,7 +1876,7 @@ class TestDeepenedPerformance:
         # Given 100 registered features with workflow rows
         db = _make_db()
         for i in range(100):
-            slug = f"{i:03d}-perf-feature"
+            slug = f"{i + 1:03d}-perf-feature"
             tid = _register_feature(db, slug, status="active")
             phase = ["specify", "design", "implement"][i % 3]
             db.create_workflow_phase(tid, workflow_phase=phase)
@@ -3072,7 +3073,7 @@ class TestListByPhaseFallback:
         """Normal list_by_phase still returns source='db' results."""
         db = _make_db()
         for i, phase in enumerate(["specify", "specify", "design"]):
-            slug = f"00{i}-feat"
+            slug = f"{i + 1:03d}-feat"
             tid = _register_feature(db, slug)
             db.create_workflow_phase(tid, workflow_phase=phase)
 
@@ -3106,7 +3107,7 @@ class TestIntegrationDegradation:
         type_id = f"feature:{slug}"
         db.register_entity(
             entity_type="feature",
-            entity_id=slug,
+            **identity_kwargs("feature", slug),
             name="Integration Get State Test",
             status="active",
             project_id="__unknown__",
@@ -3160,7 +3161,7 @@ class TestIntegrationDegradation:
         type_id = f"feature:{slug}"
         db.register_entity(
             entity_type="feature",
-            entity_id=slug,
+            **identity_kwargs("feature", slug),
             name="Integration Complete Phase Test",
             status="active",
             project_id="__unknown__",
@@ -3216,7 +3217,7 @@ class TestIntegrationDegradation:
             type_id = f"feature:{slug}"
             db.register_entity(
                 entity_type="feature",
-                entity_id=slug,
+                **identity_kwargs("feature", slug),
                 name=f"Test {slug}",
                 status="active",
                 project_id="__unknown__",
@@ -3270,7 +3271,7 @@ class TestIntegrationDegradation:
             type_id = f"feature:{slug}"
             db.register_entity(
                 entity_type="feature",
-                entity_id=slug,
+                **identity_kwargs("feature", slug),
                 name=f"Test {slug}",
                 status=status,
                 project_id="__unknown__",
@@ -3957,7 +3958,7 @@ class TestEngineWorkspaceUuidForwarding:
         type_id = f"feature:{slug}"
         db.register_entity(
             entity_type="feature",
-            entity_id=slug,
+            **identity_kwargs("feature", slug),
             name=f"Test Feature {slug}",
             status="active",
             workspace_uuid=ws_a_uuid,

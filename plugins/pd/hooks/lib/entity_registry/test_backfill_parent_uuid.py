@@ -12,6 +12,7 @@ import pytest
 
 from entity_registry.backfill import backfill_workflow_phases
 from entity_registry.database import EntityDatabase
+from entity_registry.test_helpers import identity_kwargs
 
 
 # ---------------------------------------------------------------------------
@@ -44,9 +45,9 @@ class TestParentUuidPreference:
         db, artifacts_root = db_and_root
 
         # Register brainstorm with a child feature
-        bs_uuid = db.register_entity("brainstorm", "20260101-000038-test-bs", "Test Brainstorm", project_id="__unknown__")
+        bs_uuid = db.register_entity("brainstorm", name="Test Brainstorm", display_id="20260101-000038-test-bs", project_id="__unknown__")
         feat_uuid = db.register_entity(
-            "feature", "001-child", "Child Feature",
+            "feature", name="Child Feature", seq=1, slug="child",
             parent_type_id="brainstorm:20260101-000038-test-bs",
             project_id="__unknown__",
         )
@@ -88,11 +89,11 @@ class TestParentUuidPreference:
         db, artifacts_root = db_and_root
 
         # Register brainstorm
-        bs_uuid = db.register_entity("brainstorm", "20260101-000025-legacy-bs", "Legacy BS", project_id="__unknown__")
+        bs_uuid = db.register_entity("brainstorm", name="Legacy BS", display_id="20260101-000025-legacy-bs", project_id="__unknown__")
 
         # Register child feature
         feat_uuid = db.register_entity(
-            "feature", "002-legacy", "Legacy Child",
+            "feature", name="Legacy Child", seq=2, slug="legacy",
             parent_type_id="brainstorm:20260101-000025-legacy-bs",
             project_id="__unknown__",
         )
@@ -132,12 +133,12 @@ class TestParentUuidPreference:
         db, artifacts_root = db_and_root
 
         # Register brainstorm parent
-        bs_uuid = db.register_entity("brainstorm", "20260101-000033-parent-bs", "Parent BS", project_id="__unknown__")
+        bs_uuid = db.register_entity("brainstorm", name="Parent BS", display_id="20260101-000033-parent-bs", project_id="__unknown__")
 
         # Register two child features with parent_uuid
         for i in range(1, 3):
             db.register_entity(
-                "feature", f"00{i}-c", f"Child {i}",
+                "feature", name=f"Child {i}", **identity_kwargs("feature", f"00{i}-c"),
                 parent_type_id="brainstorm:20260101-000033-parent-bs",
                 project_id="__unknown__",
             )
@@ -166,11 +167,11 @@ class TestParentUuidPreference:
         """Some children have parent_uuid, some only parent_type_id."""
         db, artifacts_root = db_and_root
 
-        bs_uuid = db.register_entity("brainstorm", "20260101-000028-mix-bs", "Mixed BS", project_id="__unknown__")
+        bs_uuid = db.register_entity("brainstorm", name="Mixed BS", display_id="20260101-000028-mix-bs", project_id="__unknown__")
 
         # Child 1: has parent_uuid (normal)
         feat1_uuid = db.register_entity(
-            "feature", "001-mix", "Mix Child 1",
+            "feature", name="Mix Child 1", seq=1, slug="mix",
             parent_type_id="brainstorm:20260101-000028-mix-bs",
             project_id="__unknown__",
         )
@@ -178,7 +179,7 @@ class TestParentUuidPreference:
 
         # Child 2: parent_uuid cleared (legacy)
         feat2_uuid = db.register_entity(
-            "feature", "002-mix", "Mix Child 2",
+            "feature", name="Mix Child 2", seq=2, slug="mix",
             parent_type_id="brainstorm:20260101-000028-mix-bs",
             project_id="__unknown__",
         )

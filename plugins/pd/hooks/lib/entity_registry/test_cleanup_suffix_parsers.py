@@ -219,14 +219,14 @@ class TestACCL3DoctorIdentifiesClosureViaDb:
             # Register a feature (the closer) and a backlog (the closed).
             feat_uuid = db.register_entity(
                 entity_type="feature",
-                entity_id="999-closer",
+                seq=999, slug="closer",
                 name="Closer Feature",
                 status="active",
                 workspace_uuid=ws,
             )
             bl_uuid = db.register_entity(
                 entity_type="backlog",
-                entity_id="777-backlog",
+                seq=777, slug="backlog",
                 name="Some backlog",
                 artifact_path="docs/backlog.md",
                 status="dropped",  # already terminal

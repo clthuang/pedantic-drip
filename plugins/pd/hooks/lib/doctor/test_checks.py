@@ -198,12 +198,11 @@ def _register_live_feature(
         name = f"{kind.title()} {entity_id}"
     db.register_entity(
         kind,
-        entity_id,
-        name,
+        name=name,
+        **identity_kwargs(kind, entity_id),
         workspace_uuid=workspace_uuid,
         artifact_path=artifact_path,
         status=status,
-        _strict_id_format=False,
     )
     return f"{kind}:{entity_id}"
 
@@ -2221,6 +2220,7 @@ class TestCheckStaleWorktreesMultipleOrphans:
 
 
 from doctor.checks import check_display_row_invariant  # noqa: E402
+from entity_registry.test_helpers import identity_kwargs
 
 
 class TestDisplayRowInvariant:

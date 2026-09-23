@@ -14,6 +14,7 @@ from workflow_engine.router import (
     init_entity_workflow,
     transition_entity_phase,
 )
+from entity_registry.test_helpers import identity_kwargs
 
 
 # ---------------------------------------------------------------------------
@@ -35,7 +36,7 @@ def _create_brainstorm(db: EntityDatabase, entity_id: str = "20260101-000019-ide
     type_id = f"brainstorm:{entity_id}"
     db.register_entity(
         entity_type="brainstorm",
-        entity_id=entity_id,
+        **identity_kwargs("brainstorm", entity_id),
         name=f"Test brainstorm {entity_id}",
         status="draft",
         project_id="__unknown__",
@@ -48,7 +49,7 @@ def _create_backlog(db: EntityDatabase, entity_id: str = "001-item-1") -> str:
     type_id = f"backlog:{entity_id}"
     db.register_entity(
         entity_type="backlog",
-        entity_id=entity_id,
+        **identity_kwargs("backlog", entity_id),
         name=f"Test backlog {entity_id}",
         status="open",
         project_id="__unknown__",
@@ -113,7 +114,7 @@ class TestInitEntityWorkflow:
     def test_init_feature_type_rejected(self, db):
         db.register_entity(
             entity_type="feature",
-            entity_id="001-feat-1",
+            seq=1, slug="feat-1",
             name="Test feature",
             status="active",
             project_id="__unknown__",
@@ -124,7 +125,7 @@ class TestInitEntityWorkflow:
     def test_init_project_type_rejected(self, db):
         db.register_entity(
             entity_type="project",
-            entity_id="001-proj-1",
+            seq=1, slug="proj-1",
             name="Test project",
             status="active",
             project_id="__unknown__",
@@ -291,7 +292,7 @@ class TestTransitionEntityPhase:
         # ws_a: 'brainstorm:foo' + workflow_phase row.
         db.register_entity(
             entity_type="brainstorm",
-            entity_id="20260101-000018-foo",
+            display_id="20260101-000018-foo",
             name="Foo brainstorm in ws-a",
             status="draft",
             workspace_uuid=ws_a_uuid,
@@ -313,7 +314,7 @@ class TestTransitionEntityPhase:
         # cross-workspace isolation witness.
         db.register_entity(
             entity_type="brainstorm",
-            entity_id="20260101-000032-other",
+            display_id="20260101-000032-other",
             name="Other brainstorm in ws-b",
             status="draft",
             workspace_uuid=ws_b_uuid,
@@ -391,7 +392,7 @@ class TestTransitionEntityPhase:
         # symmetric scope rejection contract.
         db.register_entity(
             entity_type="brainstorm",
-            entity_id="20260101-000002-bar",
+            display_id="20260101-000002-bar",
             name="Bar brainstorm in ws-a",
             status="draft",
             workspace_uuid=ws_a_uuid,
@@ -431,7 +432,7 @@ class TestTransitionEntityPhaseStatusOnlyBugTask:
         # missing-entity branch).
         db.register_entity(
             entity_type="bug",
-            entity_id="001-defensive-bug",
+            seq=1, slug="defensive-bug",
             name="Defensive raise check",
             status="open",
             project_id="__unknown__",
@@ -448,7 +449,7 @@ class TestTransitionEntityPhaseStatusOnlyBugTask:
     def test_transition_entity_phase_rejects_task_type_id(self, db):
         db.register_entity(
             entity_type="task",
-            entity_id="002-defensive-task",
+            seq=2, slug="defensive-task",
             name="Defensive raise check task",
             status="open",
             project_id="__unknown__",

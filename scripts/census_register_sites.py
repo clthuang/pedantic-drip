@@ -244,6 +244,10 @@ def main(argv: list[str]) -> int:
         rejected = sum(1 for s in test if category(s) == "C" and not STRICT_ID_RE.match(s.literal))
         print(f"            C: {cats['C'] - rejected} pass the strict regex, {rejected} rewritten at step 1")
     print(f"            {sum(s.is_mcp_tool for s in test)} call the MCP register_entity tool, not the database")
+    # Wave 2 step 3's exit check: only calls to the MCP tool, which moves at
+    # step 4, may still pass the entity_id text form.
+    text_form = [s for s in test if s.entity_id is not None and not s.is_mcp_tool]
+    print(f"            {len(text_form)} other test calls still pass entity_id")
     entries = find_entries()
     routes = collections.Counter(s.route for s in entries)
     kinds = collections.Counter(category(s) for s in entries)
@@ -254,6 +258,8 @@ def main(argv: list[str]) -> int:
     for lit, paths in sorted(multi.items()):
         print(f"  {lit!r:30} {', '.join(p.rsplit('/', 1)[-1] for p in paths)}")
     if "--list" in argv:
+        for s in text_form:
+            print(f"  entity_id {s.path}:{s.line}  {ast.unparse(s.entity_id)[:60]}")
         pending = [s for s in test if category(s) == "D"] + [s for s in entries if category(s) != "A"]
         for s in sorted(pending, key=lambda s: (s.path, s.line)):
             print(f"  {category(s)} {s.route:6} {s.path}:{s.line}  {s.kind or '?'}  {ast.unparse(s.entity_id)[:60]}")

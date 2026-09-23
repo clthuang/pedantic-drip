@@ -116,11 +116,11 @@ def cross_workspace_pair(db, tmp_path):
         (ws_b_uuid, "ws-b-mcp-regress", str(tmp_path / "ws_b"), now, now),
     )
     entity_a_uuid = db.register_entity(
-        entity_type="feature", entity_id="301-entity-a", name="Entity A",
+        entity_type="feature", seq=301, slug="entity-a", name="Entity A",
         status="active", project_id="__unknown__",
     )
     entity_b_uuid = db.register_entity(
-        entity_type="backlog", entity_id="302-entity-b", name="Entity B",
+        entity_type="backlog", seq=302, slug="entity-b", name="Entity B",
         workspace_uuid=ws_b_uuid,
     )
     return entity_a_uuid, entity_b_uuid

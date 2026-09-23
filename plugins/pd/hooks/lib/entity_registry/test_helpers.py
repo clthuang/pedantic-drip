@@ -5,7 +5,27 @@ import sqlite3
 import uuid as _uuid
 from pathlib import Path
 
+from entity_registry.id_generator import NON_SEQUENCE_KINDS, render_display_id
+
 TEST_PROJECT_ID = "__test__"
+
+
+def identity_kwargs(kind: str, display_text: str) -> dict:
+    """``register_entity``'s identity keywords for a test id written as display text.
+
+    Fixtures write ids the way they display (``"001-f1"``); registration takes
+    them as data. A sequence kind splits into ``seq`` and ``slug``, and the
+    split must render back to the same text; any other kind passes through as
+    ``display_id``. Literal ids are written out as ``seq=``/``slug=`` instead;
+    this is for ids a test builds or forwards.
+    """
+    if kind in NON_SEQUENCE_KINDS:
+        return {"display_id": display_text}
+    seq, _, slug = display_text.partition("-")
+    identity = {"seq": int(seq), "slug": slug}
+    if render_display_id(kind, identity["seq"], slug) != display_text:
+        raise ValueError(f"{display_text!r} does not round-trip as a {kind} id")
+    return identity
 
 
 def bootstrap_test_workspace(db, legacy_id: str = TEST_PROJECT_ID) -> str:

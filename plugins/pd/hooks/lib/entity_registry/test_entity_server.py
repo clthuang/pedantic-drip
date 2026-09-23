@@ -17,6 +17,7 @@ if _mcp_dir not in sys.path:
 import entity_server
 from entity_registry.database import EntityDatabase
 from entity_registry.test_helpers import bootstrap_test_workspace
+from entity_registry.test_helpers import identity_kwargs
 
 _UUID_V4_RE = re.compile(
     r"[0-9a-f]{8}-[0-9a-f]{4}-[1-7][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
@@ -37,8 +38,8 @@ async def test_set_parent_handler_concise_message(db):
     """set_parent handler returns concise message with only type_ids, no UUIDs.
     derived_from: feature:045-mcp-audit-token-efficiency P1-C3
     """
-    parent_uuid = db.register_entity("project", "001-parent", "Parent Project", status="active", project_id="__unknown__")
-    child_uuid = db.register_entity("feature", "001-child", "Child Feature", project_id="__unknown__")
+    parent_uuid = db.register_entity("project", name="Parent Project", seq=1, slug="parent", status="active", project_id="__unknown__")
+    child_uuid = db.register_entity("feature", name="Child Feature", seq=1, slug="child", project_id="__unknown__")
 
     result = await entity_server.set_parent("feature:001-child", "project:001-parent")
 
@@ -54,7 +55,7 @@ async def test_update_entity_handler_concise_message(db):
     """update_entity handler returns concise message with only type_id, no UUID.
     derived_from: feature:045-mcp-audit-token-efficiency P1-C3
     """
-    entity_uuid = db.register_entity("feature", "001-f1", "Feature One", status="active", project_id="__unknown__")
+    entity_uuid = db.register_entity("feature", name="Feature One", seq=1, slug="f1", status="active", project_id="__unknown__")
 
     result = await entity_server.update_entity("feature:001-f1", status="completed")
 
@@ -92,8 +93,8 @@ async def test_set_parent_handler_uses_uuid_identifiers(db):
     dual-read resolution, UUID input would fail.
     derived_from: spec:R27, dimension:adversarial
     """
-    parent_uuid = db.register_entity("project", "001-parent2", "Parent", project_id="__unknown__")
-    child_uuid = db.register_entity("feature", "001-child2", "Child", project_id="__unknown__")
+    parent_uuid = db.register_entity("project", name="Parent", seq=1, slug="parent2", project_id="__unknown__")
+    child_uuid = db.register_entity("feature", name="Child", seq=1, slug="child2", project_id="__unknown__")
     # Use UUID for child and type_id for parent
     result = await entity_server.set_parent(child_uuid, "project:001-parent2")
     assert isinstance(result, str)
@@ -110,7 +111,7 @@ async def test_get_entity_handler_compact_output(db):
     know the type_id they queried with, and uuid/parent_uuid are internal.
     derived_from: feature:045-mcp-audit-token-efficiency P1-C2
     """
-    db.register_entity("feature", "001-get-test", "Get Test", status="active", project_id="__unknown__")
+    db.register_entity("feature", name="Get Test", seq=1, slug="get-test", status="active", project_id="__unknown__")
     result = await entity_server.get_entity("feature:001-get-test")
     assert isinstance(result, str)
     parsed = json.loads(result)
@@ -160,8 +161,8 @@ async def test_set_parent_delegates_to_server_helpers(db):
     by the MCP tool. This test verifies the delegation chain works end-to-end.
     """
     # Given parent and child entities
-    db.register_entity("project", "002-p1", "Parent Project", status="active", project_id="__unknown__")
-    db.register_entity("feature", "001-c1", "Child Feature", status="active", project_id="__unknown__")
+    db.register_entity("project", name="Parent Project", seq=2, slug="p1", status="active", project_id="__unknown__")
+    db.register_entity("feature", name="Child Feature", seq=1, slug="c1", status="active", project_id="__unknown__")
     # When setting parent via MCP handler
     result = await entity_server.set_parent("feature:001-c1", "project:002-p1")
     # Then success message is returned
@@ -184,7 +185,7 @@ async def test_entity_lifecycle_valueerror_caught_by_mcp_decorator(db):
     import workflow_state_server as ws_mod
 
     # Given a brainstorm entity but NO workflow_phases row
-    db.register_entity("brainstorm", "20260101-000016-err-test", "Error Test", status="draft", project_id="__unknown__")
+    db.register_entity("brainstorm", name="Error Test", display_id="20260101-000016-err-test", status="draft", project_id="__unknown__")
 
     # When attempting to transition without initializing workflow first
     result = ws_mod._process_transition_entity_phase(
@@ -249,7 +250,7 @@ class TestMetadataDictCoercion:
 
     def test_update_entity_metadata_dict(self, db: EntityDatabase):
         """AC-2: Dict metadata accepted by update_entity, stored as JSON string."""
-        db.register_entity("feature", "001-meta-upd-001", "Update Test", status="active", project_id="__unknown__")
+        db.register_entity("feature", name="Update Test", seq=1, slug="meta-upd-001", status="active", project_id="__unknown__")
         entity_server._db = db
         import asyncio
         result = asyncio.run(
@@ -329,7 +330,7 @@ class TestProjectStartup:
 
         # Register an entity with __unknown__ project_id and matching artifact_path
         db.register_entity(
-            "feature", "001-bf-test", "Backfill Test",
+            "feature", name="Backfill Test", seq=1, slug="bf-test",
             artifact_path="/tmp/my-project/docs/features/test/design.md",
             project_id="__unknown__",
         )
@@ -393,11 +394,11 @@ class TestSearchProjectFiltering:
         bootstrap_test_workspace(db, "project_bbb")
         # Register entities under different projects
         db.register_entity(
-            "feature", "001-proj-a-feat", "Project A Feature",
+            "feature", name="Project A Feature", seq=1, slug="proj-a-feat",
             status="active", project_id="project_aaa",
         )
         db.register_entity(
-            "feature", "001-proj-b-feat", "Project B Feature",
+            "feature", name="Project B Feature", seq=1, slug="proj-b-feat",
             status="active", project_id="project_bbb",
         )
 
@@ -533,7 +534,7 @@ class TestBackfillWorkspaceTarget:
 
     def _register_unknown(self, db, eid, root):
         db.register_entity(
-            "feature", eid, eid.title(),
+            "feature", name=eid.title(), **identity_kwargs("feature", eid),
             artifact_path=f"{root}/docs/features/{eid}/design.md",
             project_id="__unknown__",
         )

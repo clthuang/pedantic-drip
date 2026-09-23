@@ -24,6 +24,7 @@ from workflow_engine.reconciliation import (
     apply_workflow_reconciliation,
     check_workflow_drift,
 )
+from entity_registry.test_helpers import identity_kwargs
 
 
 # ---------------------------------------------------------------------------
@@ -45,7 +46,7 @@ def _register_feature(
     type_id = f"feature:{slug}"
     db.register_entity(
         entity_type="feature",
-        entity_id=slug,
+        **identity_kwargs("feature", slug),
         name=f"Test Feature {slug}",
         status=status,
         project_id="__unknown__",
@@ -713,7 +714,7 @@ class TestCheckWorkflowDrift:
         # Non-feature entity with workflow_phases row
         db.register_entity(
             entity_type="brainstorm",
-            entity_id="20260101-000036-some-brainstorm",
+            display_id="20260101-000036-some-brainstorm",
             name="Some Brainstorm",
             project_id="__unknown__",
         )
@@ -784,7 +785,7 @@ class TestCheckWorkflowDrift:
         # Workspace A: live entity + workflow_phases row, no .meta.json ->
         # db_only under an A-scoped scan.
         db.register_entity(
-            entity_type="feature", entity_id="001-feat-a", name="Feat A",
+            entity_type="feature", seq=1, slug="feat-a", name="Feat A",
             status="active", workspace_uuid=ws_a,
         )
         db.create_workflow_phase(
@@ -795,7 +796,7 @@ class TestCheckWorkflowDrift:
         # Workspace B: live entity + workflow_phases row, no .meta.json --
         # would ALSO be db_only if unscoped, so exclusion is non-vacuous.
         db.register_entity(
-            entity_type="feature", entity_id="002-feat-b", name="Feat B",
+            entity_type="feature", seq=2, slug="feat-b", name="Feat B",
             status="active", workspace_uuid=ws_b,
         )
         db.create_workflow_phase(
@@ -848,7 +849,7 @@ class TestCheckWorkflowDrift:
         # db_only under an A-scoped scan (in-scope control, mirrors the
         # sibling test above).
         db.register_entity(
-            entity_type="feature", entity_id="003-feat-a", name="Feat A3",
+            entity_type="feature", seq=3, slug="feat-a", name="Feat A3",
             status="active", workspace_uuid=ws_a,
         )
         db.create_workflow_phase(
@@ -1388,7 +1389,7 @@ class TestApplyWorkflowReconciliation:
         type_id = type_id = "feature:010-test"
         db.register_entity(
             entity_type="feature",
-            entity_id="010-test",
+            seq=10, slug="test",
             name="Test",
             status="active",
             workspace_uuid=ws_a,
@@ -1447,7 +1448,7 @@ class TestApplyWorkflowReconciliation:
         type_id = "feature:020-kanban"
         db.register_entity(
             entity_type="feature",
-            entity_id="020-kanban",
+            seq=20, slug="kanban",
             name="Kanban Test",
             status="active",
             workspace_uuid=ws_a,
@@ -3044,7 +3045,7 @@ class TestDepthContextReporting:
         parent_tid = f"feature:{parent_slug}"
         db.register_entity(
             entity_type="feature",
-            entity_id=parent_slug,
+            **identity_kwargs("feature", parent_slug),
             name="Parent Feature",
             status="active",
             project_id="__unknown__",
@@ -3054,7 +3055,7 @@ class TestDepthContextReporting:
         child_tid = f"feature:{child_slug}"
         db.register_entity(
             entity_type="feature",
-            entity_id=child_slug,
+            **identity_kwargs("feature", child_slug),
             name="Child Feature",
             status="active",
             project_id="__unknown__",
@@ -3116,16 +3117,16 @@ class TestDepthContextReporting:
         # Create 3-level hierarchy: root -> parent -> child
         root_slug = "080-root"
         root_tid = f"feature:{root_slug}"
-        db.register_entity(entity_type="feature", entity_id=root_slug, name="Root", status="active", project_id="__unknown__")
+        db.register_entity(entity_type="feature", **identity_kwargs("feature", root_slug), name="Root", status="active", project_id="__unknown__")
 
         parent_slug = "081-parent"
         parent_tid = f"feature:{parent_slug}"
-        db.register_entity(entity_type="feature", entity_id=parent_slug, name="Parent", status="active", project_id="__unknown__")
+        db.register_entity(entity_type="feature", **identity_kwargs("feature", parent_slug), name="Parent", status="active", project_id="__unknown__")
         db.set_parent(parent_tid, root_tid)
 
         child_slug = "082-child"
         child_tid = f"feature:{child_slug}"
-        db.register_entity(entity_type="feature", entity_id=child_slug, name="Child", status="active", project_id="__unknown__")
+        db.register_entity(entity_type="feature", **identity_kwargs("feature", child_slug), name="Child", status="active", project_id="__unknown__")
         db.set_parent(child_tid, parent_tid)
 
         # Create workflow phase for child
@@ -3297,7 +3298,7 @@ class TestRecoverPendingCascades:
             _json.dump(meta, f)
 
         parent_uuid = db.register_entity(
-            entity_type="feature", entity_id=slug,
+            entity_type="feature", **identity_kwargs("feature", slug),
             name="Cascade Parent", status="active",
             project_id="__unknown__",
         )
@@ -3307,7 +3308,7 @@ class TestRecoverPendingCascades:
         )
 
         child_uuid = db.register_entity(
-            entity_type="task", entity_id="001-child",
+            entity_type="task", seq=1, slug="child",
             name="Child Task", status=child_status,
             parent_type_id=f"feature:{slug}",
             project_id="__unknown__",
@@ -3381,7 +3382,7 @@ class TestRecoverPendingCascades:
 
         # Register a standalone feature with no children
         db.register_entity(
-            entity_type="feature", entity_id="030-solo",
+            entity_type="feature", seq=30, slug="solo",
             name="Solo Feature", status="active",
             project_id="__unknown__",
         )
@@ -3419,13 +3420,13 @@ class TestOKRScoreReconciliation:
         db = _make_db()
         # Create objective with stale score
         obj_uuid = db.register_entity(
-            entity_type="objective", entity_id="001-obj-stale",
+            entity_type="objective", seq=1, slug="obj-stale",
             name="Stale Objective", metadata={"score": 0.0},
             project_id="__unknown__",
         )
         # Add KR child with baseline_target score=1.0 (compute_okr_score reads this)
         db.register_entity(
-            entity_type="key_result", entity_id="001-kr-done",
+            entity_type="key_result", seq=1, slug="kr-done",
             name="Done KR", status="active",
             parent_type_id="objective:001-obj-stale",
             metadata={"metric_type": "baseline_target", "score": 1.0},
@@ -3447,12 +3448,12 @@ class TestOKRScoreReconciliation:
 
         db = _make_db()
         obj_uuid = db.register_entity(
-            entity_type="objective", entity_id="001-obj-correct",
+            entity_type="objective", seq=1, slug="obj-correct",
             name="Correct Objective",
             project_id="__unknown__",
         )
         db.register_entity(
-            entity_type="key_result", entity_id="001-kr-ok",
+            entity_type="key_result", seq=1, slug="kr-ok",
             name="OK KR", status="active",
             parent_type_id="objective:001-obj-correct",
             metadata={"metric_type": "baseline_target", "score": 1.0},
@@ -3475,7 +3476,7 @@ class TestOKRScoreReconciliation:
 
         db = _make_db()
         db.register_entity(
-            entity_type="objective", entity_id="001-obj-empty",
+            entity_type="objective", seq=1, slug="obj-empty",
             name="Empty Objective",
             project_id="__unknown__",
         )
@@ -3488,12 +3489,12 @@ class TestOKRScoreReconciliation:
 
         db = _make_db()
         obj_uuid = db.register_entity(
-            entity_type="objective", entity_id="001-obj-noscore",
+            entity_type="objective", seq=1, slug="obj-noscore",
             name="No Score Objective",
             project_id="__unknown__",
         )
         db.register_entity(
-            entity_type="key_result", entity_id="001-kr-new",
+            entity_type="key_result", seq=1, slug="kr-new",
             name="New KR", status="active",
             parent_type_id="objective:001-obj-noscore",
             project_id="__unknown__",
@@ -3511,19 +3512,19 @@ class TestOKRScoreReconciliation:
 
         db = _make_db()
         obj_uuid = db.register_entity(
-            entity_type="objective", entity_id="001-obj-weighted",
+            entity_type="objective", seq=1, slug="obj-weighted",
             name="Weighted Objective", metadata={"score": 0.0},
             project_id="__unknown__",
         )
         db.register_entity(
-            entity_type="key_result", entity_id="001-kr-heavy",
+            entity_type="key_result", seq=1, slug="kr-heavy",
             name="Heavy KR", status="active",
             parent_type_id="objective:001-obj-weighted",
             metadata={"metric_type": "baseline_target", "score": 1.0, "weight": 3.0},
             project_id="__unknown__",
         )
         db.register_entity(
-            entity_type="key_result", entity_id="001-kr-light",
+            entity_type="key_result", seq=1, slug="kr-light",
             name="Light KR", status="active",
             parent_type_id="objective:001-obj-weighted",
             metadata={"metric_type": "baseline_target", "score": 0.0, "weight": 1.0},

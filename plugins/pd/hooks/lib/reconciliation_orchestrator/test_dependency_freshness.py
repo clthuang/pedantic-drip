@@ -16,11 +16,11 @@ class TestCleanupStaleDependencies:
         db = EntityDatabase(db_path)
 
         uuid_blocked = db.register_entity(
-            "feature", "001-fresh-blocked", "Blocked Entity",
+            "feature", name="Blocked Entity", seq=1, slug="fresh-blocked",
             status="blocked", project_id="__unknown__",
         )
         uuid_blocker = db.register_entity(
-            "feature", "001-fresh-blocker", "Completed Blocker",
+            "feature", name="Completed Blocker", seq=1, slug="fresh-blocker",
             status="active", project_id="__unknown__",
         )
         db.add_dependency(uuid_blocked, uuid_blocker)

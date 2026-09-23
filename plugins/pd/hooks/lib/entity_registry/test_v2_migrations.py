@@ -213,7 +213,7 @@ class TestV2Migration3StateOnlyViews:
             (str(tmp_path), now, now),
         )
         db._conn.commit()
-        db.register_entity("feature", "300-v", "V", status="active", project_id="P-v")
+        db.register_entity("feature", name="V", seq=300, slug="v", status="active", project_id="P-v")
         db.create_workflow_phase(
             "feature:300-v", workflow_phase="brainstorm",
             last_completed_phase=None, mode="standard",

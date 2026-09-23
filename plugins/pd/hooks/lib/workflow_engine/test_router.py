@@ -37,6 +37,7 @@ from workflow_engine.router import (
     transition_entity_phase,
 )
 from workflow_engine.templates import get_template
+from entity_registry.test_helpers import identity_kwargs
 
 
 @pytest.fixture
@@ -59,7 +60,7 @@ class TestSC4BrainstormReviewingWritesWip:
 
     def test_draft_to_reviewing_writes_wip(self, db):
         db.register_entity(
-            entity_type="brainstorm", entity_id="20260101-000034-sc4-probe",
+            entity_type="brainstorm", display_id="20260101-000034-sc4-probe",
             name="SC4 probe", status="draft", project_id="__unknown__",
         )
         type_id = "brainstorm:20260101-000034-sc4-probe"
@@ -534,7 +535,7 @@ class TestTransitionEntityPhaseDelegatesToMachineValidate:
     ):
         # Given an entity parked at a real current phase
         db.register_entity(
-            entity_type=kind, entity_id=entity_id, name="Probe",
+            entity_type=kind, **identity_kwargs(kind, entity_id), name="Probe",
             status=current, project_id="__unknown__",
         )
         type_id = f"{kind}:{entity_id}"

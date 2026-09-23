@@ -8,6 +8,7 @@ import sys
 from unittest.mock import MagicMock
 
 import pytest
+from entity_registry.test_helpers import identity_kwargs
 
 
 # ---------------------------------------------------------------------------
@@ -259,7 +260,7 @@ class TestDetectDrift:
         from entity_registry.frontmatter_sync import detect_drift
 
         db = EntityDatabase(":memory:")
-        entity_uuid = db.register_entity("feature", "001-test", "Test Feature", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test Feature", seq=1, slug="test", project_id="__unknown__")
         entity = db.get_entity("feature:001-test")
 
         filepath = tmp_path / "spec.md"
@@ -290,7 +291,7 @@ class TestDetectDrift:
         from entity_registry.frontmatter_sync import detect_drift
 
         db = EntityDatabase(":memory:")
-        db.register_entity("feature", "001-test", "Test Feature", project_id="__unknown__")
+        db.register_entity("feature", name="Test Feature", seq=1, slug="test", project_id="__unknown__")
 
         filepath = tmp_path / "spec.md"
         _write_file(filepath, "# Spec\n\nBody content, no frontmatter.\n")
@@ -305,7 +306,7 @@ class TestDetectDrift:
         from entity_registry.frontmatter_sync import detect_drift
 
         db = EntityDatabase(":memory:")
-        entity_uuid = db.register_entity("feature", "001-test", "Test Feature", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test Feature", seq=1, slug="test", project_id="__unknown__")
 
         # File header has wrong type_id
         filepath = tmp_path / "spec.md"
@@ -352,7 +353,7 @@ class TestDetectDrift:
         from entity_registry.frontmatter_sync import detect_drift
 
         db = EntityDatabase(":memory:")
-        db.register_entity("feature", "001-test", "Test Feature", project_id="__unknown__")
+        db.register_entity("feature", name="Test Feature", seq=1, slug="test", project_id="__unknown__")
 
         # File has a completely different UUID
         different_uuid = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
@@ -393,7 +394,7 @@ class TestStampHeader:
         from entity_registry.frontmatter_sync import stamp_header
 
         db = EntityDatabase(":memory:")
-        entity_uuid = db.register_entity("feature", "001-test", "Test Feature", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test Feature", seq=1, slug="test", project_id="__unknown__")
         db_entity = db.get_entity("feature:001-test")
 
         filepath = tmp_path / "spec.md"
@@ -418,7 +419,7 @@ class TestStampHeader:
 
         db = EntityDatabase(":memory:")
         db.register_entity(
-            "feature", "001-test", "Test Feature",
+            "feature", name="Test Feature", seq=1, slug="test",
             metadata={"project_id": "001-p001"},
             project_id="__unknown__",
         )
@@ -443,7 +444,7 @@ class TestStampHeader:
         from entity_registry.frontmatter_sync import stamp_header
 
         db = EntityDatabase(":memory:")
-        entity_uuid = db.register_entity("feature", "001-test", "Test Feature", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test Feature", seq=1, slug="test", project_id="__unknown__")
 
         # Write initial frontmatter with an older created_at
         original_created = "2024-01-01T00:00:00+00:00"
@@ -465,7 +466,7 @@ class TestStampHeader:
         from entity_registry.frontmatter_sync import stamp_header
 
         db = EntityDatabase(":memory:")
-        db.register_entity("feature", "001-test", "Test Feature", project_id="__unknown__")
+        db.register_entity("feature", name="Test Feature", seq=1, slug="test", project_id="__unknown__")
 
         # Write frontmatter with a different UUID
         different_uuid = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
@@ -496,7 +497,7 @@ class TestStampHeader:
         from entity_registry.frontmatter_sync import stamp_header
 
         db = EntityDatabase(":memory:")
-        db.register_entity("feature", "001-test", "Test Feature", project_id="__unknown__")
+        db.register_entity("feature", name="Test Feature", seq=1, slug="test", project_id="__unknown__")
 
         body_content = "# Spec\n\nThis is the body.\n\n## Section 2\n\nMore content.\n"
         filepath = tmp_path / "spec.md"
@@ -519,7 +520,7 @@ class TestStampHeader:
         from entity_registry.frontmatter_sync import stamp_header
 
         db = EntityDatabase(":memory:")
-        entity_uuid = db.register_entity("feature", "001-test", "Test Feature", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test Feature", seq=1, slug="test", project_id="__unknown__")
 
         # Header without entity_uuid
         filepath = tmp_path / "spec.md"
@@ -539,7 +540,7 @@ class TestStampHeader:
         from entity_registry.frontmatter_sync import stamp_header
 
         db = EntityDatabase(":memory:")
-        db.register_entity("feature", "001-test", "Test Feature", project_id="__unknown__")
+        db.register_entity("feature", name="Test Feature", seq=1, slug="test", project_id="__unknown__")
 
         filepath = tmp_path / "spec.md"
         _write_file(filepath, "# Spec\n")
@@ -561,7 +562,7 @@ class TestIngestHeader:
         from entity_registry.frontmatter_sync import ingest_header
 
         db = EntityDatabase(":memory:")
-        entity_uuid = db.register_entity("feature", "001-test", "Test Feature", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test Feature", seq=1, slug="test", project_id="__unknown__")
 
         filepath = tmp_path / "spec.md"
         _write_file(filepath, _make_frontmatter(entity_uuid, "feature:001-test"))
@@ -621,7 +622,7 @@ class TestIngestHeader:
         from entity_registry.frontmatter_sync import ingest_header
 
         db = EntityDatabase(":memory:")
-        entity_uuid = db.register_entity("feature", "001-test", "Test Feature", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test Feature", seq=1, slug="test", project_id="__unknown__")
 
         filepath = tmp_path / "spec.md"
         _write_file(filepath, _make_frontmatter(entity_uuid, "feature:001-test"))
@@ -659,7 +660,7 @@ class TestBackfillHeaders:
         # Register 3 features and create directories with 2 files each
         for i in range(1, 4):
             entity_id = f"00{i}-feature-{i}"
-            db.register_entity("feature", entity_id, f"Feature {i}", project_id="__unknown__")
+            db.register_entity("feature", name=f"Feature {i}", **identity_kwargs("feature", entity_id), project_id="__unknown__")
             feature_dir = tmp_path / "features" / entity_id
             feature_dir.mkdir(parents=True)
             (feature_dir / "spec.md").write_text(f"# Spec for feature {i}\n")
@@ -693,7 +694,7 @@ class TestBackfillHeaders:
         db = EntityDatabase(":memory:")
         artifacts_root = str(tmp_path)
 
-        db.register_entity("feature", "001-test", "Test Feature", project_id="__unknown__")
+        db.register_entity("feature", name="Test Feature", seq=1, slug="test", project_id="__unknown__")
         feature_dir = tmp_path / "features" / "001-test"
         feature_dir.mkdir(parents=True)
         (feature_dir / "spec.md").write_text("# Spec\n")
@@ -723,7 +724,7 @@ class TestBackfillHeaders:
         db = EntityDatabase(":memory:")
         artifacts_root = str(tmp_path)
 
-        db.register_entity("feature", "001-test", "Test Feature", project_id="__unknown__")
+        db.register_entity("feature", name="Test Feature", seq=1, slug="test", project_id="__unknown__")
         feature_dir = tmp_path / "features" / "001-test"
         feature_dir.mkdir(parents=True)
 
@@ -746,7 +747,7 @@ class TestBackfillHeaders:
         artifacts_root = str(tmp_path)
 
         # Register entity but do NOT create the directory
-        db.register_entity("feature", "999-no-dir", "Missing Dir Feature", project_id="__unknown__")
+        db.register_entity("feature", name="Missing Dir Feature", seq=999, slug="no-dir", project_id="__unknown__")
 
         results = backfill_headers(db, artifacts_root)
         assert len(results) == 1
@@ -783,14 +784,14 @@ class TestScanAll:
         artifacts_root = str(tmp_path)
 
         # Feature 1: stamped
-        uuid1 = db.register_entity("feature", "001-stamped", "Stamped Feature", project_id="__unknown__")
+        uuid1 = db.register_entity("feature", name="Stamped Feature", seq=1, slug="stamped", project_id="__unknown__")
         dir1 = tmp_path / "features" / "001-stamped"
         dir1.mkdir(parents=True)
         (dir1 / "spec.md").write_text("# Spec\n")
         stamp_header(db, str(dir1 / "spec.md"), "feature:001-stamped", "spec")
 
         # Feature 2: not stamped
-        db.register_entity("feature", "002-plain", "Plain Feature", project_id="__unknown__")
+        db.register_entity("feature", name="Plain Feature", seq=2, slug="plain", project_id="__unknown__")
         dir2 = tmp_path / "features" / "002-plain"
         dir2.mkdir(parents=True)
         (dir2 / "spec.md").write_text("# Spec without frontmatter\n")
@@ -841,7 +842,7 @@ class TestScanAll:
 
         # Workspace A: 1 feature with spec.md (no frontmatter -> db_only)
         db.register_entity(
-            "feature", "100-a", "Feature A",
+            "feature", name="Feature A", seq=100, slug="a",
             status="active", workspace_uuid=ws_a,
         )
         feat_dir_a = tmp_path / "features" / "100-a"
@@ -850,7 +851,7 @@ class TestScanAll:
 
         # Workspace B: 1 feature with spec.md (no frontmatter -> db_only)
         db.register_entity(
-            "feature", "200-b", "Feature B",
+            "feature", name="Feature B", seq=200, slug="b",
             status="active", workspace_uuid=ws_b,
         )
         feat_dir_b = tmp_path / "features" / "200-b"
@@ -885,7 +886,7 @@ class TestScanAll:
         ws_b = bootstrap_test_workspace(db, "ws-b-fr112-default")
 
         db.register_entity(
-            "feature", "100-a", "Feature A",
+            "feature", name="Feature A", seq=100, slug="a",
             status="active", workspace_uuid=ws_a,
         )
         feat_dir_a = tmp_path / "features" / "100-a"
@@ -893,7 +894,7 @@ class TestScanAll:
         (feat_dir_a / "spec.md").write_text("# Spec A\n")
 
         db.register_entity(
-            "feature", "200-b", "Feature B",
+            "feature", name="Feature B", seq=200, slug="b",
             status="active", workspace_uuid=ws_b,
         )
         feat_dir_b = tmp_path / "features" / "200-b"
@@ -933,7 +934,7 @@ class TestBackfillHeaderAware:
         artifacts_root = str(tmp_path)
 
         # Register a feature entity and create its artifact files
-        db.register_entity("feature", "001-test", "Test Feature", project_id="__unknown__")
+        db.register_entity("feature", name="Test Feature", seq=1, slug="test", project_id="__unknown__")
         feature_dir = tmp_path / "features" / "001-test"
         feature_dir.mkdir(parents=True)
         (feature_dir / "spec.md").write_text("# Spec\n")
@@ -962,7 +963,7 @@ class TestBackfillHeaderAware:
         artifacts_root = str(tmp_path)
 
         # Register a feature entity and create its artifact files
-        db.register_entity("feature", "001-test", "Test Feature", project_id="__unknown__")
+        db.register_entity("feature", name="Test Feature", seq=1, slug="test", project_id="__unknown__")
         feature_dir = tmp_path / "features" / "001-test"
         feature_dir.mkdir(parents=True)
         (feature_dir / "spec.md").write_text("# Spec\n")
@@ -1009,7 +1010,7 @@ class TestCLI:
         # Set up a DB and a file with matching frontmatter
         db_path = str(tmp_path / "test.db")
         db = EntityDatabase(db_path)
-        entity_uuid = db.register_entity("feature", "001-test", "Test Feature", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test Feature", seq=1, slug="test", project_id="__unknown__")
         db.close()
 
         filepath = tmp_path / "spec.md"
@@ -1032,7 +1033,7 @@ class TestCLI:
 
         db_path = str(tmp_path / "test.db")
         db = EntityDatabase(db_path)
-        db.register_entity("feature", "001-test", "Test Feature", project_id="__unknown__")
+        db.register_entity("feature", name="Test Feature", seq=1, slug="test", project_id="__unknown__")
         db.close()
 
         feature_dir = tmp_path / "features" / "001-test"
@@ -1055,7 +1056,7 @@ class TestCLI:
 
         db_path = str(tmp_path / "test.db")
         db = EntityDatabase(db_path)
-        db.register_entity("feature", "001-test", "Test Feature", project_id="__unknown__")
+        db.register_entity("feature", name="Test Feature", seq=1, slug="test", project_id="__unknown__")
         db.close()
 
         feature_dir = tmp_path / "features" / "001-test"
@@ -1175,7 +1176,7 @@ class TestErrorHandling:
         from entity_registry.frontmatter_sync import stamp_header
 
         db = EntityDatabase(":memory:")
-        db.register_entity("feature", "001-test", "Test Feature", project_id="__unknown__")
+        db.register_entity("feature", name="Test Feature", seq=1, slug="test", project_id="__unknown__")
         nonexistent = str(tmp_path / "does_not_exist.md")
 
         result = stamp_header(db, nonexistent, "feature:001-test", "spec")
@@ -1222,7 +1223,7 @@ class TestBoundaryValues:
 
         # Given an entity in DB (uuid is lowercase by default)
         db = EntityDatabase(":memory:")
-        entity_uuid = db.register_entity("feature", "001-test", "Test Feature", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test Feature", seq=1, slug="test", project_id="__unknown__")
 
         # When the file has the same UUID but in uppercase
         filepath = tmp_path / "spec.md"
@@ -1247,7 +1248,7 @@ class TestBoundaryValues:
 
         # Given an entity in DB with lowercase type_id
         db = EntityDatabase(":memory:")
-        entity_uuid = db.register_entity("feature", "001-test", "Test Feature", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test Feature", seq=1, slug="test", project_id="__unknown__")
 
         # When the file header has a differently-cased type_id
         filepath = tmp_path / "spec.md"
@@ -1405,7 +1406,7 @@ class TestBoundaryValues:
 
         # Given a feature with spec.md and an extra notes.md
         db = EntityDatabase(":memory:")
-        db.register_entity("feature", "001-test", "Test Feature", project_id="__unknown__")
+        db.register_entity("feature", name="Test Feature", seq=1, slug="test", project_id="__unknown__")
         feature_dir = tmp_path / "features" / "001-test"
         feature_dir.mkdir(parents=True)
         (feature_dir / "spec.md").write_text("# Spec\n")
@@ -1434,7 +1435,7 @@ class TestBoundaryValues:
 
         # Given an entity in DB
         db = EntityDatabase(":memory:")
-        entity_uuid = db.register_entity("feature", "001-test", "Test Feature", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test Feature", seq=1, slug="test", project_id="__unknown__")
         entity = db.get_entity("feature:001-test")
 
         # When the file has matching UUID and type_id but different created_at
@@ -1461,7 +1462,7 @@ class TestBoundaryValues:
 
         # Given an entity in DB
         db = EntityDatabase(":memory:")
-        entity_uuid = db.register_entity("feature", "001-test", "Test Feature", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test Feature", seq=1, slug="test", project_id="__unknown__")
 
         # When we create a file and ingest using a path (tmp_path is already absolute)
         filepath = tmp_path / "spec.md"
@@ -1503,7 +1504,7 @@ class TestAdversarial:
 
         # Given a project entity in DB
         db = EntityDatabase(":memory:")
-        db.register_entity("project", "001-p001", "My Project", project_id="__unknown__")
+        db.register_entity("project", name="My Project", seq=1, slug="p001", project_id="__unknown__")
 
         filepath = tmp_path / "spec.md"
         _write_file(filepath, "# Spec\n")
@@ -1533,7 +1534,7 @@ class TestAdversarial:
         # Given an entity with a known name and status
         db = EntityDatabase(":memory:")
         entity_uuid = db.register_entity(
-            "feature", "001-test", "Original Name", status="active",
+            "feature", name="Original Name", seq=1, slug="test", status="active",
             project_id="__unknown__",
         )
 
@@ -1563,8 +1564,8 @@ class TestAdversarial:
 
         # Given a project entity and a feature entity
         db = EntityDatabase(":memory:")
-        db.register_entity("project", "001-p001", "My Project", project_id="__unknown__")
-        db.register_entity("feature", "001-test", "Test Feature", project_id="__unknown__")
+        db.register_entity("project", name="My Project", seq=1, slug="p001", project_id="__unknown__")
+        db.register_entity("feature", name="Test Feature", seq=1, slug="test", project_id="__unknown__")
 
         feature_dir = tmp_path / "features" / "001-test"
         feature_dir.mkdir(parents=True)
@@ -1597,8 +1598,8 @@ class TestAdversarial:
 
         # Given two distinct entities in DB
         db = EntityDatabase(":memory:")
-        uuid_a = db.register_entity("feature", "001-entity-a", "Entity A", project_id="__unknown__")
-        uuid_b = db.register_entity("feature", "002-entity-b", "Entity B", project_id="__unknown__")
+        uuid_a = db.register_entity("feature", name="Entity A", seq=1, slug="entity-a", project_id="__unknown__")
+        uuid_b = db.register_entity("feature", name="Entity B", seq=2, slug="entity-b", project_id="__unknown__")
 
         # When file has UUID of entity A but we pass type_id of entity B
         filepath = tmp_path / "spec.md"
@@ -1670,8 +1671,8 @@ class TestErrorPropagation:
 
         # Given two features, one with a conflicting UUID and one clean
         db = EntityDatabase(":memory:")
-        db.register_entity("feature", "001-clean", "Clean Feature", project_id="__unknown__")
-        db.register_entity("feature", "002-conflict", "Conflict Feature", project_id="__unknown__")
+        db.register_entity("feature", name="Clean Feature", seq=1, slug="clean", project_id="__unknown__")
+        db.register_entity("feature", name="Conflict Feature", seq=2, slug="conflict", project_id="__unknown__")
 
         # Create directories
         dir1 = tmp_path / "features" / "001-clean"
@@ -1783,7 +1784,7 @@ class TestMutationMindset:
 
         # Given an entity in DB
         db = EntityDatabase(":memory:")
-        entity_uuid = db.register_entity("feature", "001-test", "Test Feature", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test Feature", seq=1, slug="test", project_id="__unknown__")
 
         # When file has correct UUID but wrong type_id
         filepath = tmp_path / "spec.md"
@@ -1807,7 +1808,7 @@ class TestMutationMindset:
         from entity_registry.frontmatter_sync import stamp_header
 
         db = EntityDatabase(":memory:")
-        entity_uuid = db.register_entity("feature", "001-test", "Test Feature", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test Feature", seq=1, slug="test", project_id="__unknown__")
 
         # Path 1: No existing header -> 'created'
         filepath_new = tmp_path / "new_spec.md"
@@ -1838,8 +1839,8 @@ class TestMutationMindset:
 
         # Given two entities
         db = EntityDatabase(":memory:")
-        uuid_a = db.register_entity("feature", "001-entity-a", "Entity A", project_id="__unknown__")
-        uuid_b = db.register_entity("feature", "002-entity-b", "Entity B", project_id="__unknown__")
+        uuid_a = db.register_entity("feature", name="Entity A", seq=1, slug="entity-a", project_id="__unknown__")
+        uuid_b = db.register_entity("feature", name="Entity B", seq=2, slug="entity-b", project_id="__unknown__")
 
         # When file is stamped with entity A's UUID
         filepath = tmp_path / "spec.md"
@@ -1870,7 +1871,7 @@ class TestMutationMindset:
 
         # Given an entity with no artifact_path
         db = EntityDatabase(":memory:")
-        entity_uuid = db.register_entity("feature", "001-test", "Test Feature", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test Feature", seq=1, slug="test", project_id="__unknown__")
         entity_before = db.get_entity("feature:001-test")
         assert entity_before["artifact_path"] is None
 
@@ -1899,7 +1900,7 @@ class TestMutationMindset:
 
         # Given an entity in DB
         db = EntityDatabase(":memory:")
-        entity_uuid = db.register_entity("feature", "001-test", "Test Feature", project_id="__unknown__")
+        entity_uuid = db.register_entity("feature", name="Test Feature", seq=1, slug="test", project_id="__unknown__")
 
         # When file has a different (but valid) UUID
         different_uuid = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
@@ -1953,7 +1954,7 @@ class TestMutationMindset:
 
         # Given an already-backfilled DB with a registered feature
         db = EntityDatabase(":memory:")
-        db.register_entity("feature", "001-test", "Test Feature", project_id="__unknown__")
+        db.register_entity("feature", name="Test Feature", seq=1, slug="test", project_id="__unknown__")
         db.set_metadata("backfill_complete", "1")
 
         feature_dir = tmp_path / "features" / "001-test"

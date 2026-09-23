@@ -28,6 +28,7 @@ from entity_registry.test_helpers import (
     bootstrap_test_workspace,
     make_v12_db,
 )
+from entity_registry.test_helpers import identity_kwargs
 
 
 # Anchor at the repo's ``plugins/pd/`` directory regardless of the cwd this
@@ -288,7 +289,7 @@ def _register_for_event(db, *, entity_id: str, status: str | None = None) -> tup
     """
     type_id = f"feature:{entity_id}"
     db.register_entity(
-        "feature", entity_id, f"Test {entity_id}",
+        "feature", name=f"Test {entity_id}", **identity_kwargs("feature", entity_id),
         project_id=TEST_PROJECT_ID, status=status,
     )
     ws_row = db._conn.execute(

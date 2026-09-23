@@ -134,7 +134,7 @@ def test_apply_mode_updates_existing_entity(db, monkeypatch):
     # Pre-register a backlog entity WITHOUT format metadata.
     db.register_entity(
         entity_type="backlog",
-        entity_id="010-existing",
+        seq=10, slug="existing",
         name="Existing item",
         project_id=TEST_PROJECT_ID,
         status="open",
@@ -174,7 +174,7 @@ def test_apply_mode_idempotent(db, monkeypatch):
     # Pre-register with the exact metadata we'll try to apply.
     db.register_entity(
         entity_type="backlog",
-        entity_id="020-idempotent",
+        seq=20, slug="idempotent",
         name="Idempotent test",
         project_id=TEST_PROJECT_ID,
         status="open",

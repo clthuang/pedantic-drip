@@ -973,7 +973,7 @@ class TestFrontmatterInjectCLI:
         db = EntityDatabase(db_path)
         entity_uuid = db.register_entity(
             entity_type="feature",
-            entity_id="002-test-feature",
+            seq=2, slug="test-feature",
             name="Test Feature",
             project_id="__unknown__",
         )

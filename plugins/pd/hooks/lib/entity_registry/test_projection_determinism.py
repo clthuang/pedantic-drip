@@ -43,6 +43,7 @@ from workflow_state_server import (  # noqa: E402
     _project_backlog_md,
     _project_meta_json,
 )
+from entity_registry.test_helpers import identity_kwargs
 
 
 # ---------------------------------------------------------------------------
@@ -78,8 +79,8 @@ def _seed_feature(
     os.makedirs(feature_dir, exist_ok=True)
     db.register_entity(
         "feature",
-        entity_id,
-        name,
+        name=name,
+        **identity_kwargs("feature", entity_id),
         artifact_path=feature_dir,
         status="active",
         metadata=metadata,
@@ -624,8 +625,8 @@ class TestBacklogProjectionIdentity:
     def _seed(db, ws, entity_id, *, status="open", seq=None, slug=None,
               is_archived=0, name=None):
         db.register_entity(
-            "backlog", entity_id=entity_id, name=name or f"item {entity_id}",
-            workspace_uuid=ws, status=status, _strict_id_format=False,
+            "backlog", **identity_kwargs("backlog", entity_id), name=name or f"item {entity_id}",
+            workspace_uuid=ws, status=status,
         )
         uuid = db._conn.execute(
             "SELECT uuid FROM entities WHERE type_id=? AND workspace_uuid=?",

@@ -727,11 +727,11 @@ class TestFixMissedCascade:
         db = EntityDatabase(db_path)
 
         uuid_blocked = db.register_entity(
-            "feature", "001-stale-blocked", "Blocked Entity",
+            "feature", name="Blocked Entity", seq=1, slug="stale-blocked",
             status="blocked", project_id="__unknown__",
         )
         uuid_blocker = db.register_entity(
-            "feature", "001-stale-blocker", "Completed Blocker",
+            "feature", name="Completed Blocker", seq=1, slug="stale-blocker",
             status="completed", project_id="__unknown__",
         )
         db.add_dependency(uuid_blocked, uuid_blocker)
