@@ -23,6 +23,8 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
+from entity_registry.id_generator import NON_SEQUENCE_KINDS, render_display_id
+
 _UUID_RE = re.compile(
     r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-7][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
 )
@@ -7557,12 +7559,12 @@ class EntityDatabase:
         #      ('1' = strict, '0' = permissive).
         #   3. Default: True (strict — matches spec FR-8 / Task 2.0 DoD).
         #
-        # The env var is a transition-window escape hatch so legacy tests
-        # whose fixtures use non-conformant ids (e.g., 'test-bs') can be
-        # run without per-call _register_entity_no_display rewrites. Test
-        # suites that opt out (via conftest setenv) MUST be migrated to
-        # conformant ids in a follow-up. Production callers do NOT set the
-        # env var → they get strict mode by default.
+        # The env var is a transition-window escape hatch. Since Wave 2
+        # step 2 the test suites run strict too; the one remaining setter is
+        # hooks/lib/conftest.py's _strict_id_format_off_until_c7, for backfill
+        # tests whose fixture files hold legacy ids, until C7 (step 4). C6
+        # deletes the variable. Production callers do NOT set it → they get
+        # strict mode by default.
         if _strict_id_format is None:
             env_flag = os.environ.get("PD_REGISTER_ENTITY_STRICT_ID_FORMAT")
             if env_flag is None:
@@ -10439,8 +10441,12 @@ class EntityDatabase:
         for row in rows:
             seq = row["seq"]
             slug = row["slug"]
-            if seq is not None and slug is not None:
-                out.append(f"{seq}-{slug}")
+            if entity_type in NON_SEQUENCE_KINDS:
+                # Stored verbatim: any display row such an entity has is a
+                # migration-13 parse accident, not its identity.
+                out.append(row["entity_id"])
+            elif seq is not None and slug is not None:
+                out.append(render_display_id(entity_type, seq, slug))
             else:
                 # Defense-in-depth: entity_display row missing (e.g., test
                 # fixture used _register_entity_no_display / raw SQL insert).

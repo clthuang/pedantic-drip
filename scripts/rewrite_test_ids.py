@@ -45,20 +45,22 @@ HELPER = "_register_entity_no_display"
 _EDGE = r"A-Za-z0-9_-"
 _SEQ_SLUG = re.compile(r"(\d+)-(.+)")
 # Occurrences --check tolerates after hand review: (path, line, old literal) -> why.
+# Lines as of Wave 2 step 2; an edit that shifts one shows as an unexplained hit
+# plus an allowed entry nothing matches - move the entry, don't add one.
 PATH_NOT_ID = "an artifact path; it names no entity"
 NAME_NOT_ID = "display-name text"
 PROSE = "docstring prose"
 ALLOWED: dict[tuple[str, int, str], str] = {
-    ("hooks/lib/entity_registry/test_backfill.py", 776, "00050"):
+    ("hooks/lib/entity_registry/test_backfill.py", 790, "00050"):
         "a backlog.md row the production backfill parses; step 2's list (backfill registers raw row ids)",
     ("hooks/lib/entity_registry/test_census_and_issuance.py", 132, "P001"): PROSE,
-    ("hooks/lib/entity_registry/test_database.py", 787, "f1"): PATH_NOT_ID,
-    ("hooks/lib/entity_registry/test_database.py", 796, "f1"): PATH_NOT_ID,
-    ("hooks/lib/entity_registry/test_database.py", 1590, "00099"): NAME_NOT_ID,
-    ("hooks/lib/entity_registry/test_database.py", 3649, "f1"): PATH_NOT_ID,
-    ("hooks/lib/entity_registry/test_database.py", 3656, "f1"): PATH_NOT_ID,
-    ("hooks/lib/entity_registry/test_database.py", 6753, "P1"): NAME_NOT_ID,
-    ("hooks/lib/entity_registry/test_database.py", 6758, "P1"): NAME_NOT_ID,
+    ("hooks/lib/entity_registry/test_database.py", 788, "f1"): PATH_NOT_ID,
+    ("hooks/lib/entity_registry/test_database.py", 797, "f1"): PATH_NOT_ID,
+    ("hooks/lib/entity_registry/test_database.py", 1591, "00099"): NAME_NOT_ID,
+    ("hooks/lib/entity_registry/test_database.py", 3647, "f1"): PATH_NOT_ID,
+    ("hooks/lib/entity_registry/test_database.py", 3654, "f1"): PATH_NOT_ID,
+    ("hooks/lib/entity_registry/test_database.py", 6757, "P1"): NAME_NOT_ID,
+    ("hooks/lib/entity_registry/test_database.py", 6762, "P1"): NAME_NOT_ID,
     ("hooks/lib/entity_registry/test_projection_determinism.py", 653, "00063"): PROSE,
     ("hooks/lib/entity_registry/test_server_helpers.py", 253, "f1"): PATH_NOT_ID,
     ("hooks/lib/entity_registry/test_server_helpers.py", 254, "f1"): PATH_NOT_ID,
@@ -67,7 +69,7 @@ ALLOWED: dict[tuple[str, int, str], str] = {
     ("hooks/lib/entity_registry/test_server_helpers.py", 623, "f1"): PATH_NOT_ID,
     ("hooks/lib/reconciliation_orchestrator/test_entity_status.py", 548, "archived-bs"):
         "the path of a brainstorm file the test keeps absent",
-    ("mcp/test_workflow_state_server.py", 768, "fin-test"): "a .meta.json slug, not the entity id",
+    ("mcp/test_workflow_state_server.py", 769, "fin-test"): "a .meta.json slug, not the entity id",
     ("ui/tests/test_entities.py", 655, "feat-alpha"): PROSE,
     ("ui/tests/test_entities.py", 655, "proj-one"): PROSE,
 }

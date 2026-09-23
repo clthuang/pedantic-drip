@@ -13,6 +13,7 @@ import pytest
 from entity_registry.database import (
     EntityDatabase,
     EntityExistsError,
+    EntityIdFormatError,
     MIGRATIONS,
     _UUID_RE,
     _add_project_scoping,
@@ -1801,17 +1802,14 @@ class TestBoundaryEntityIdEmpty:
     derived_from: dimension:boundary_values
     """
 
-    def test_entity_id_empty_string_registered(self, db: EntityDatabase):
+    def test_entity_id_empty_string_rejected(self, db: EntityDatabase):
         # Given an empty entity_id string
         # When registering with entity_id=""
-        entity_uuid = db.register_entity("feature", "", "Empty ID Feature", project_id="__unknown__")
-        # Then the return is a UUID
-        assert _UUID_RE.match(entity_uuid)
-        # And the type_id is "feature:" (colon-separated format), retrievable
-        entity = db.get_entity("feature:")
-        assert entity is not None
-        assert entity["entity_id"] == ""
-        assert entity["type_id"] == "feature:"
+        # Then registration refuses it, as it refuses any id without a sequence
+        with pytest.raises(EntityIdFormatError):
+            db.register_entity("feature", "", "Empty ID Feature", project_id="__unknown__")
+        # And nothing was written
+        assert db.get_entity("feature:") is None
 
 
 class TestDescendantTreeEdgeCases:
@@ -5676,6 +5674,12 @@ class TestUtilityMethods:
         assert "001-scan-1" in ids
         assert "001-scan-2" in ids
         assert "001-task-1" not in ids
+
+    def test_scan_entity_ids_returns_a_brainstorm_id_verbatim(self, db):
+        # Registration parses a brainstorm stem into a display row too (seq 1,
+        # slug "idea" here); rebuilding from that row would drop the padding.
+        db.register_entity("brainstorm", "001-idea", "Idea", project_id="__unknown__")
+        assert db.scan_entity_ids("brainstorm") == ["001-idea"]
 
     def test_scan_entity_ids_empty(self, db):
         assert db.scan_entity_ids("feature") == []

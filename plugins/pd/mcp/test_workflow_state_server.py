@@ -83,6 +83,7 @@ from workflow_state_server import (
     _process_transition_phase,
     _process_validate_prerequisites,
     _project_meta_json,
+    _read_entity_display,
     _serialize_drift_report,
     _serialize_reconcile_action,
     _serialize_result,
@@ -4485,11 +4486,29 @@ class TestProjectMetaJson:
         meta_path = os.path.join(feature_dir, ".meta.json")
         with open(meta_path) as f:
             meta = json.load(f)
-        # Should have defaults, not crash
-        assert meta["id"] == ""
-        assert meta["slug"] == ""
+        # Should have defaults, not crash; id and slug come from the display row
+        assert meta["id"] == "041"
+        assert meta["slug"] == "nullmeta"
         assert meta["mode"] == "standard"
         assert meta["phases"] == {}
+
+    def test_row_without_display_row_falls_back_to_metadata_with_a_warning(self, db, capsys):
+        """A row with no entity_display row, as every legacy row is: its id and
+        slug come from metadata, and the fallback says so on stderr."""
+        entity_uuid = db.register_entity(
+            "feature", "043-legacy", "legacy",
+            metadata={"id": "7", "slug": "from-metadata"},
+            project_id="__unknown__",
+        )
+        db._conn.execute("DELETE FROM entity_display WHERE uuid = ?", (entity_uuid,))
+
+        result = _read_entity_display(
+            db, entity_uuid, "feature:043-legacy", {"id": "7", "slug": "from-metadata"},
+            entity_id_hint="043-legacy",
+        )
+
+        assert result == ("7", "from-metadata")
+        assert "no entity_display row for 'feature:043-legacy'" in capsys.readouterr().err
 
     def test_no_artifact_path_and_no_feature_dir_returns_warning(self, db, tmp_path):
         """Entity with no artifact_path and no feature_dir param returns warning."""

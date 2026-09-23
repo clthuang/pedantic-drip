@@ -10,8 +10,10 @@ out="${1:?usage: capture_test_manifest.sh <out-dir>}"
 cd "$(git rev-parse --show-toplevel)" || exit 1
 mkdir -p "$out"
 py=plugins/pd/.venv/bin/python
-# One process for all four: the conftests' strict-off default is session-scoped
-# and process-wide, so a scope run on its own is strict and not comparable.
+# One process for all four, as every manifest since step 0 was taken. (Until
+# Wave 2 step 2 a conftest's session-scoped strict-off default made a scope run
+# on its own strict and not comparable; the forced-strict run below is kept so
+# later manifests stay comparable with the earlier ones.)
 scopes=(plugins/pd/hooks/lib plugins/pd/mcp plugins/pd/ui/tests plugins/pd/scripts/tests)
 
 git rev-parse HEAD > "$out/COMMIT"

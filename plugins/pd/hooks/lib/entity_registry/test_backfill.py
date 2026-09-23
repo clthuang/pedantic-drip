@@ -84,6 +84,7 @@ def test_fixtures_smoke(artifacts):
 
 
 class TestScanOrder:
+    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_backlog_registered_before_brainstorms(self, artifacts):
         """Backlog items should exist in DB before brainstorms that reference them."""
         root, db = artifacts
@@ -99,6 +100,7 @@ class TestScanOrder:
         brainstorm = db.get_entity("brainstorm:20260227-lineage")
         assert brainstorm is not None
 
+    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_all_entity_types_registered(self, artifacts):
         """After backfill, entities of all scanned types should be present."""
         root, db = artifacts
@@ -123,6 +125,7 @@ class TestScanOrder:
 
 
 class TestParentDerivation:
+    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_feature_to_brainstorm_via_meta(self, artifacts):
         """Feature with brainstorm_source should link to brainstorm parent."""
         root, db = artifacts
@@ -134,6 +137,7 @@ class TestParentDerivation:
         assert feature is not None
         assert feature["parent_type_id"] == "brainstorm:20260227-lineage"
 
+    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_feature_to_project_via_meta(self, tmp_path):
         """Feature with project_id should link to project parent (priority over brainstorm)."""
         # Create project
@@ -169,6 +173,7 @@ class TestParentDerivation:
         finally:
             db.close()
 
+    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_brainstorm_to_backlog_format1(self, artifacts):
         """Brainstorm with '*Source: Backlog #00019*' should link to backlog."""
         root, db = artifacts
@@ -180,6 +185,7 @@ class TestParentDerivation:
         assert brainstorm is not None
         assert brainstorm["parent_type_id"] == "backlog:00019"
 
+    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_brainstorm_to_backlog_format2(self, tmp_path):
         """Brainstorm with '**Backlog Item:** 00019' should link to backlog."""
         # Create backlog
@@ -248,6 +254,7 @@ class TestParentDerivation:
 
 
 class TestOrphanedAndExternal:
+    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_orphaned_backlog_gets_synthetic_entity(self, tmp_path):
         """Feature referencing non-existent backlog_source creates orphaned synthetic."""
         # No backlog.md at all -- backlog:00099 won't be found
@@ -280,6 +287,7 @@ class TestOrphanedAndExternal:
         finally:
             db.close()
 
+    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_external_brainstorm_gets_synthetic_entity(self, tmp_path):
         """Feature referencing external brainstorm_source creates external synthetic."""
         (tmp_path / "brainstorms").mkdir()
@@ -312,6 +320,7 @@ class TestOrphanedAndExternal:
         finally:
             db.close()
 
+    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_external_absolute_path_detection(self, tmp_path):
         """Absolute paths should be detected as external."""
         (tmp_path / "brainstorms").mkdir()
@@ -343,6 +352,7 @@ class TestOrphanedAndExternal:
 
 
 class TestIdempotencyAndPriority:
+    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_backfill_idempotent(self, artifacts):
         """Running backfill twice produces same result (no duplicates, no errors)."""
         root, db = artifacts
@@ -708,6 +718,7 @@ class TestIsExternalPath:
 
 
 class TestBackfillCompleteMarker:
+    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_marker_set_after_full_run(self, artifacts):
         """backfill_complete should be '1' in _metadata after successful run."""
         root, db = artifacts
@@ -717,6 +728,7 @@ class TestBackfillCompleteMarker:
         run_backfill(db, str(root))
         assert db.get_metadata("backfill_complete") == "1"
 
+    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_marker_not_set_skips_rerun(self, artifacts):
         """When backfill_complete is '1', run_backfill should skip entirely."""
         root, db = artifacts
@@ -739,6 +751,7 @@ class TestBackfillCompleteMarker:
         # New feature should NOT be registered (run was skipped)
         assert db.get_entity("feature:099-new-feature") is None
 
+    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_marker_not_set_allows_rerun(self, artifacts):
         """When backfill_complete is not '1', run_backfill should execute."""
         root, db = artifacts
@@ -765,6 +778,7 @@ class TestBackfillCompleteMarker:
         assert db.get_entity("feature:099-new-feature") is not None
         assert db.get_metadata("backfill_complete") == "1"
 
+    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_partial_failure_recovery(self, tmp_path):
         """If backfill fails mid-way, re-run should recover via INSERT OR IGNORE."""
         (tmp_path / "brainstorms").mkdir()
@@ -865,6 +879,7 @@ class TestExtractPrdTitle:
 class TestBacklogTitleTruncation:
     """Tests for backlog title/description splitting in _scan_backlog."""
 
+    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_short_description_no_truncation(self, tmp_path):
         """Descriptions ≤ 80 chars are used as-is."""
         short = "Fix the login bug"
@@ -888,6 +903,7 @@ class TestBacklogTitleTruncation:
         finally:
             db.close()
 
+    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_long_description_truncated_at_word_boundary(self, tmp_path):
         """Descriptions > 80 chars are truncated at last space before char 80."""
         long_desc = "Implement a comprehensive logging framework that captures all API calls and responses for debugging purposes"
@@ -914,6 +930,7 @@ class TestBacklogTitleTruncation:
         finally:
             db.close()
 
+    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_backlog_metadata_description_full_text(self, tmp_path):
         """metadata.description contains the full untruncated text."""
         long_desc = "Implement a comprehensive logging framework that captures all API calls and responses for debugging purposes"
@@ -938,6 +955,7 @@ class TestBacklogTitleTruncation:
         finally:
             db.close()
 
+    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_backlog_no_spaces_in_first_80(self, tmp_path):
         """Description with no spaces in first 80 chars truncates at char 80."""
         no_space = "a" * 100  # 100 chars, no spaces
@@ -984,6 +1002,7 @@ class TestBacklogStatusDerivation:
         (tmp_path / "features").mkdir(exist_ok=True)
         (tmp_path / "backlog.md").write_text(backlog_md)
 
+    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_no_annotation_leaves_status_null(self, tmp_path):
         self._make_backlog(tmp_path, "00005", "Add retry logic to webhook delivery")
         db = EntityDatabase(str(tmp_path / "test.db"))

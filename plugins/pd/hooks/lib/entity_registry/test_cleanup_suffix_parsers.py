@@ -148,6 +148,7 @@ class TestACCL2BackfillNoMarkerDerivation:
             lines.append(f"| {row_id} | {ts} | {desc} |")
         (tmp_path / "backlog.md").write_text("\n".join(lines) + "\n")
 
+    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_backfill_does_not_set_status_dropped_for_closed_marker(self, tmp_path):
         """Pre-feature-111 the parser would set status='dropped' on '(closed: ...)'.
         Post-feature-111 status remains as it was (None for a brand-new row)."""
@@ -172,6 +173,7 @@ class TestACCL2BackfillNoMarkerDerivation:
         finally:
             db.close()
 
+    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_backfill_does_not_set_status_promoted_for_promoted_marker(self, tmp_path):
         from entity_registry.database import EntityDatabase
         from entity_registry.backfill import run_backfill

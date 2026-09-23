@@ -775,9 +775,13 @@ class TestReconciliationIsNonDestructive:
         """
         db = EntityDatabase(":memory:")
         ws = bootstrap_test_workspace(db, "ws-a-legacy")
-        db.register_entity(entity_type="backlog", entity_id="053-backlog",
-                           name="no display row, no file", status="open",
-                           workspace_uuid=ws)
+        entity_uuid = db.register_entity(
+            entity_type="backlog", entity_id="053-backlog",
+            name="no display row, no file", status="open", workspace_uuid=ws,
+        )
+        # Registration always writes a display row; drop it for the legacy
+        # rows' shape.
+        db._conn.execute("DELETE FROM entity_display WHERE uuid = ?", (entity_uuid,))
         assert db._conn.execute(
             "SELECT COUNT(*) c FROM entity_display d "
             "JOIN entities e ON e.uuid = d.uuid WHERE e.entity_id = '053-backlog'"

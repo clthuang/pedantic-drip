@@ -52,18 +52,6 @@ def _run(coro):
 
 
 @pytest.fixture(autouse=True)
-def _strict_id_format_for_entity_display(monkeypatch):
-    """Force strict id-format mode so register_entity populates entity_display.
-
-    The MCP conftest defaults ``PD_REGISTER_ENTITY_STRICT_ID_FORMAT=0`` for
-    legacy fixture compatibility, but ``issue_spawn``'s auto_id path always
-    produces conformant ``{seq:03d}-{slug}`` ids. Strict mode is the
-    production code path AC-9.7 (entity_display 1:1) exercises.
-    """
-    monkeypatch.setenv("PD_REGISTER_ENTITY_STRICT_ID_FORMAT", "1")
-
-
-@pytest.fixture(autouse=True)
 def _reset_entity_server_globals():
     """Save / restore ``entity_server`` module globals per test."""
     saved_db = entity_server._db

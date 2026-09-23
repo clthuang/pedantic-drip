@@ -508,10 +508,10 @@ _INFERENCE_SCAN_ROOTS = [
 #
 # Owner assignment for the three formerly-UNOWNED sites (B3b, 2026-09-22):
 #
-#   database.py:927        sits inside _schema_expansion_v6 (v1 migration 6),
+#   database.py:929        sits inside _schema_expansion_v6 (v1 migration 6),
 #                          seeding next_seq_{type} from historical entity_id
-#                          text at migration time. Same class as :2755, :4198
-#                          and :4261. Sanctioned; relabelled, not fixed.
+#                          text at migration time. Same class as :2756, :4199
+#                          and :4262. Sanctioned; relabelled, not fixed.
 #
 #   feature_lifecycle.py:97  _validate_feature_type_id splits type_id on ":"
 #                          to build {artifacts_root}/features/{slug}. The path
@@ -534,14 +534,14 @@ _KNOWN_INFERENCE_SITES: list[tuple[str, int, str, str]] = [
     ("entity_registry/clean_break.py",        59, "regex",       "B4 SANCTIONED - the one legacy parse"),
     ("entity_registry/clean_break.py",        61, "regex",       "B4 SANCTIONED - the one legacy parse"),
     ("entity_registry/clean_break.py",        64, "regex",       "B4 SANCTIONED - the one legacy parse"),
-    ("entity_registry/database.py",           927, "split",       "migration internal - sanctioned"),
-    ("entity_registry/database.py",           2754, "sql",         "migration internal - sanctioned"),
-    ("entity_registry/database.py",           4197, "sql",         "migration internal - sanctioned"),
-    ("entity_registry/database.py",           4260, "sql",         "migration internal - sanctioned"),
-    ("entity_registry/database.py",           7575, "regex",       "C6 delete registration parsers"),
-    ("entity_registry/database.py",           7709, "slice",       "C6 delete registration parsers"),
-    ("entity_registry/database.py",           7710, "slice",       "C6 delete registration parsers"),
+    ("entity_registry/database.py",           929, "split",       "migration internal - sanctioned"),
+    ("entity_registry/database.py",           2756, "sql",         "migration internal - sanctioned"),
+    ("entity_registry/database.py",           4199, "sql",         "migration internal - sanctioned"),
+    ("entity_registry/database.py",           4262, "sql",         "migration internal - sanctioned"),
+    ("entity_registry/database.py",           7577, "regex",       "C6 delete registration parsers"),
     ("entity_registry/database.py",           7711, "slice",       "C6 delete registration parsers"),
+    ("entity_registry/database.py",           7712, "slice",       "C6 delete registration parsers"),
+    ("entity_registry/database.py",           7713, "slice",       "C6 delete registration parsers"),
     ("entity_registry/frontmatter_inject.py", 82, "split",       "C9 seq/slug from entity_display"),
     ("entity_registry/frontmatter_inject.py", 103, "split",       "C10 parent kind + opaque identity"),
     ("entity_registry/frontmatter_sync.py",   109, "split",       "C8 kind from entities.kind"),
