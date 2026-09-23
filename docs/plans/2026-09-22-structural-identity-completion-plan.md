@@ -23,10 +23,17 @@ Every number below was read from the live registry or the tree today. Re-derive 
 | Entities with **no** `entity_display` row | **180 — exactly the `is_legacy` set** |
 | Legacy rows, by filter | **180** raw · **148** `AND NOT is_archived` · **16** `AND` live status · **11** with both |
 | Children whose `parent_uuid` points at a legacy row | **79** (16 under `P004-entity-db-redesign`, 29 under cast-below's `P001`, 15 under terry_agent's pair) |
-| Identity-inference sites detected | 28 (6 sanctioned, 22 to remove) |
-| Python suite | 3902 passed / 3 skipped |
+| Identity-inference sites detected | **28 declared** (7 sanctioned, 21 to remove) — `promote_entity`'s `type_id.split` left with it in `2d654e1a` |
+| Python suite | 3902 passed / 3 skipped — **now 3970 / 3**, after C4/C23/C1/C2 and `2d654e1a` (six promotion tests removed) |
 | `./validate.sh` | 0 errors / 0 warnings |
 | Hook integration tests | 66/66 passed, 1 skipped |
+| `register_entity`/`upsert_entity`/`register_entities_batch`/`_register_entity_no_display` call sites | **13 external production · 3 internal · 1,153 test** across 49 files (a 3-name census undercounts by 25) |
+| Tests that fail once identity is mandatory (`STRICT_ID_FORMAT=1`) | **751** (707 failed + 44 errors) across 26 files — **693** `EntityIdFormatError`, 14 assertion-shaped (13 downstream of it, **1 a second class**) |
+| Live `schema_version` vs build | file **6** · build `V2_SCHEMA_VERSION` **7** — migration 7 not yet applied live |
+| Brainstorms | 100 · **97 carry display rows** (all non-legacy) · 3 without, all `is_legacy=1` |
+| Workspaces with no `project_id_legacy` | **10 of 24** — 7 are deleted directories (4 stranded entities, a dead counter at 88); **3 are live worktrees of project_illium**, which `project_id` resolves to the **parent's** workspace (measured 2026-09-23) |
+| Feature directories the registry has never seen | **152** — project_illium 78, fractorg 57, terry_agent 16, pedantic-drip 1 (read-only scan, 2026-09-23) |
+| Feature counters behind their disk | project_illium 57 vs dirs to 114, terry_agent 36 vs 50 — **raised to 115 and 51 on 2026-09-23** (snapshot `entities.db.pre-counterfix-20260923`); the 3 illium worktrees' own buckets clear with C17a |
 
 **Shipped since the parent plan was written:** Release A (`96b2f88a`), C20a (`12f1b571`), B1 (`b7bf5040`), B3 (`b7bf5040`), B4 (`6f971b28`), B5 (`6faf7222`), B6's marker half (`6f971b28`), three orthogonal flags — `is_legacy` (`d42689b1`), `is_archived` (`bb0fb55e`), `is_deleted` (`76c4a4cc`).
 
@@ -51,6 +58,10 @@ C22 calls it for the **25** children of recreated projects (`P002` 5, `P003` 4, 
 **4. Wave 2 is a hard cutover with a manual stop.** Single operator, single machine, all sessions under one person's control — so the mixed-version window is closed by stopping everything, not by code.
 
 C23 is therefore **not** load-bearing for this cutover and does not need splitting. It ships in Wave 2 as written and protects the *next* one. What protects *this* one is the gate below.
+
+**5. `promote_entity` is deleted** (2026-09-23, `2d654e1a`). Feature 109 built it to replace the backlog→feature path and never switched a caller over. Promotion registers a new feature entity with the source as its parent, and every status/phase change goes through `append_phase_event()`, so nothing depended on it. It was the only runtime writer of `entities.kind` and held C12's `type_id.split`; both went with it.
+
+**6. A git worktree uses its repository's workspace** (2026-09-23). One number sequence per repository, so a feature minted on a worktree branch cannot reuse main's numbers when the branch merges. The repository is identified by `git rev-parse --git-common-dir`, not the root commit, which separate clones also share. terry_agent's working tree keeps its git directory in a bare repository, so "the repository" does not always have a main checkout to map to. Implementation is **C17a**, under Wave 4.
 
 ---
 
@@ -90,7 +101,7 @@ Found while scoping. Each changes what a task must do, so each is listed before 
    select_legacy_entities(conn, marker_tag='legacy-archived-2026-09') -> 180
    ```
 
-   `select_legacy_entities` keys on `is_legacy = 1` (`clean_break.py:110`) and returns 180 unconditionally, forever. It is a **selector of the legacy set**, not a worklist that drains — the "returns 0 after" framing only ever made sense under the tag model. C3's gate as written can never go green. **B8 is its replacement.**
+   `select_legacy_entities` keys on `is_legacy = 1` (`clean_break.py:115`) and returns 180 unconditionally, forever. It is a **selector of the legacy set**, not a worklist that drains — the "returns 0 after" framing only ever made sense under the tag model. C3's gate as written can never go green. **B8 is its replacement.**
 
 3. **Neither plan has ever enumerated C22's pair-collapse scope correctly.** There are **four** duplicate project pairs. The parent names three; my first revision named a different three. Union 4, intersection 2.
 
@@ -110,6 +121,14 @@ Found while scoping. Each changes what a task must do, so each is listed before 
 5. **Release C's ordering hazards are encoded; its `Depends` graph is not wrong.** No correction needed — noted so the next reader does not re-verify it.
 
 6. **The parent plan miscites `TERMINAL_STATUSES`, twice over.** It reads *"production's own `TERMINAL_STATUSES = {promoted, abandoned, archived}` (`entity_status.py:10`)"*. Actual: `entity_status.py:21`, and the set is `{"promoted", "abandoned"}` — `archived` was removed when archival became a flag. B5's cross-workspace blocker was cleared using `clean_break.py:81`'s `is_live` predicate; under the authority B5 actually cites, the clearance does not follow. The blocker's *conclusion* still holds on the evidence recorded in B5, but its stated basis does not.
+
+7. **Neither plan ever sized Wave 2's test surface.** The parent plan's *"roughly 15 production sites"* is accurate (16 measured). What no revision counted is **1,153 test call sites across 49 files** (a three-name census undercounts by 25 — `_register_entity_no_display` is a fourth), or the **751 tests** that fail the moment structured identity becomes mandatory, which itself cannot see those 25. Wave 2's cost is in the suite, not in production. Re-planned in full below.
+
+8. **C5 removes two parameters too many.** `project_id` and `parent_type_id` appear nowhere in `_KNOWN_INFERENCE_SITES` and involve no schema change, so they split out as **C5b**. The justification is design risk, not edit count — 7 of 13 external production sites pass `project_id` with no `workspace_uuid`, and in git worktrees `project_id` resolves to the parent repository's workspace (decision 6, C17a). (Rev 1 of Wave 2 argued from an edit count of 1,072; that figure double-counted two overlapping sets — the union is 973, and 960 of those ride along on lines C5 already rewrites. Withdrawn.) See Wave 2 / D1.
+
+9. **B8's invariant goes false the moment brainstorm takes the `display_id` path.** "Every entity has an `entity_display` row unless `is_legacy = 1`" has no exemption for kinds that have no sequence identity, so the first brainstorm registered after Wave 2 turns `check_display_row_invariant` red. The invariant is restated — and its eight restatements swept, including the check's own SQL, its operator-facing message, and parent C3's predicate — inside the C5 commit. See Wave 2 / D3.
+
+10. **Correction 9 must carry into C18, not only the doctor check.** Parent `## C18`'s Verify states *"every entity `run_backfill` creates has an `entity_display` row and an `entity_id` equal to `render_display_id(kind, seq, slug)`"*. `run_backfill` creates brainstorms (`backfill.py:191` → `_register_brainstorm` at `:837`), which post-D3 have no display row, and `render_display_id` **raises** for brainstorm (`id_generator.py:80`). C18's Verify gains the same `NON_SEQUENCE_KINDS` exemption: such entities carry a verbatim `display_id` and no display row. Half-sweeping this is the exact class the Corrections section exists to close.
 
 ---
 
@@ -246,7 +265,7 @@ Measured: `is_legacy INTEGER NOT NULL DEFAULT 0`, no trigger, no guard, no docto
 
 **Exit code — the doc's earlier claim was wrong.** An earlier revision said B8 would "exit non-zero, unlike `check_status_write_path` which is warning-only". The first half is unachievable and the contrast is false: `doctor/__main__.py:8` states *"Exit code is always 0"* and `main()` contains no `sys.exit` — **no** doctor check affects the exit code. Giving doctor a failing exit code silently re-contracts all 10 existing checks and is out of scope here. B8's enforcing gate is therefore **pytest**, on the pattern the repo already uses for `check_status_write_path` (whose authoritative gate is `test_event_sourced_state.py`, not the doctor run).
 
-**Why it must land before C3.** C3's guard refuses allocation when a bucket holds non-legacy entities lacking display rows. Between now and C6, `init_project_state` still passes `_strict_id_format=False` (`feature_lifecycle.py:321`) and `register_entity` writes the display row only `if strict:` (`database.py:7637`) — so **every project created in any of the 24 workspaces adds a fresh violation**. C3 then refuses that bucket forever. B8 turns a silent accumulation into a failing check the moment it starts. It also replaces parent C3's live-precondition gate, which is unsatisfiable as written (see Correction 2).
+**Why it must land before C3.** C3's guard refuses allocation when a bucket holds non-legacy entities lacking display rows. Between now and C6, `init_project_state` still passes `_strict_id_format=False` (`feature_lifecycle.py:326`) and `register_entity` writes the display row only `if strict:` (`database.py:7637`) — so **every project created in any of the 24 workspaces adds a fresh violation**. C3 then refuses that bucket forever. B8 turns a silent accumulation into a failing check the moment it starts. It also replaces parent C3's live-precondition gate, which is unsatisfiable as written (see Correction 2).
 
 **Verify.** Green on the live registry (0 rows — confirmed today). Insert a non-legacy entity with no display row into a fixture; assert the check fails and names that uuid. Then assert that `UPDATE entities SET is_legacy = 1` on that row **raises**, rather than turning the check green — that assertion is the whole point of part (b).
 
@@ -258,51 +277,296 @@ Measured: `is_legacy INTEGER NOT NULL DEFAULT 0`, no trigger, no guard, no docto
 
 # Part 2 — Release C, the cutover
 
-Task definitions are in the parent plan. This section only sequences them and marks where the corrections above apply. Nothing in Part 2 has started.
+Task definitions are in the parent plan. This section only sequences them and marks where the corrections above apply. **Shipped from Part 2 as of 2026-09-22:** C4 (`235f7d0f`), C23 (`c621f3e5`), C1 and C2 (`e9f5774f`). Wave 2's remaining core — C5, C6, C7 — is re-planned below and unstarted.
 
 ## Wave 1 — version guard for the next cutover
 
-**C23.** No dependencies; ships first. An old MCP server holding the shared plugin cannot write to a post-cutover file. Without it, `_migrate_v2` loops zero times on a file newer than the build (`database.py:10850`) and writes anyway — the only `V2_SCHEMA_VERSION` reference on the write path is the import-time `assert max(V2_MIGRATIONS) == _V2_SCHEMA_VERSION` at `:6406`, which compares the build to itself.
+**C23.** No dependencies; ships first. An old MCP server holding the shared plugin cannot write to a post-cutover file. Without it, `_migrate_v2` loops zero times on a file newer than the build (`database.py:10876`) and writes anyway — the only `V2_SCHEMA_VERSION` reference on the write path is the import-time `assert max(V2_MIGRATIONS) == _V2_SCHEMA_VERSION` at `:6496`, which compares the build to itself.
 
 **C23 cannot protect its own cutover.** The assertion lives in `EntityDatabase.__init__` of the build that also performs the version bump, so it is absent from every process that predates it. That is not a defect to fix here — it is inherent to a read-side guard shipping alongside the write it guards.
 
-**This cutover is protected operationally instead (decision 4):** a hard stop-the-world before Wave 2, cued to the operator, verified with `ps` and `lsof`. See the gate at the top of Wave 2. C23 ships in Wave 2 as written and guards the *next* version bump, when every running process will already carry it.
+**This cutover is protected operationally instead (decision 4):** a hard stop-the-world before Wave 2, cued to the operator, verified with `ps` and `lsof`. See the gate at the top of Wave 2. C23 **shipped 2026-09-22 (`c621f3e5`)** ahead of Wave 2 and guards the *next* version bump, when every running process will already carry it.
 
-## Wave 2 — the locked core
+## Wave 2 — the locked core — **RE-PLANNED 2026-09-22, rev 2 after review**
 
 **C4 SHIPPED 2026-09-22** — `render_display_id` is the sole composer; the `P` prefix is gone; `_PROJECT_DISPLAY_RE` deleted.
 
+Rev 1 of this section stopped at the pre-flight gate and re-planned the wave around a measured test surface. Review found three blockers in rev 1 and two wrong claims of its own; rev 2 records the corrected measurement, drops the red-window build order for one that is never red, and states the errors rather than quietly fixing them. Line numbers are as of `2d654e1a`, which shifted `database.py` and `entity_server.py`.
 
-> ### ⛔ STOP-THE-WORLD GATE — run before the first Wave 2 commit lands
->
-> Wave 2 changes `register_entity`'s signature and deletes the registration parsers. A process on the old build keeps calling `register_entity(entity_id=…, _strict_id_format=False)` and mints display-less rows into whichever of the 24 workspaces it is serving. `run_backfill` fires at every MCP start and swallows failures to stderr, which MCP does not surface — so **nothing reports this while it happens**.
->
-> **1. Cue the operator.** Wave 2 does not begin until every other Claude Code instance is stopped. This is a person-in-the-loop step by design (decision 4); do not proceed on the assumption it happened.
->
-> **2. Verify, do not assume:**
->
-> ```bash
-> ps -axww | grep -i "entity_server\|workflow_state_server" | grep -v grep   # expect no output
-> lsof ~/.claude/pd/entities/entities.db                                      # expect no output
-> ```
->
-> `lsof` alone is insufficient — MCP servers connect on demand, so a live server shows in `ps` while holding no file handle. At the time this plan was written: **0 file holders, 2 live server processes.** Check both.
->
-> **3. Snapshot after the world is stopped, not before** — a snapshot taken while a writer is live is a torn read of the very state you are protecting.
->
-> **4. Restart normally afterwards.** The first process to start on the new build performs the migration; the rest see the bumped version.
+### Measured 2026-09-23 — re-derive before execution
 
-**C4 → C5 → C6 → C7.** The parent plan's largest unit; C5 and C7 land together. This is where the `P` prefix is dropped (decided 2026-09-21) and where `register_entity` starts taking `seq`/`slug` as data.
+Call sites counted by AST walk over `plugins/pd/**/*.py` across **four** names — `register_entity`, `upsert_entity`, `register_entities_batch`, **and `_register_entity_no_display`**. Rev 1 counted three and was wrong by 25 sites.
 
-Apply **correction 4**: C7's site enumeration must add `entity_status.py:190` and `plugins/pd/scripts/parse_backlog_md.py:254`, and `plugins/pd/scripts/` needs a decision — either bring it into the scan roots or state explicitly that it is a utility directory the lint does not cover. Leaving it undeclared is how a parser survives the cutover. Note B7 already has to touch four files in that directory, so the decision lands before Wave 2 either way.
+| | Sites |
+|---|---|
+| Production, external callers | **13** |
+| Production, internal delegations | 3 — `:7814` (inside **`_register_entity_no_display`**, a test-only helper living in production code), `:7874` (`upsert_entity`), `:10698` (`register_entities_batch`) |
+| Test / conftest | **1,153** across 49 files |
+
+| Parameter | External prod | Internal | Test |
+|---|---|---|---|
+| `entity_id` | 13 | **3** | 1,113 (150 keyword + 963 positional) |
+| `project_id` | **13 — every one** | 2 | 973 |
+| `parent_type_id` | **0** | 2 | 99 — **a subset of the 973, not additive** |
+| `_strict_id_format` | 1 | 2 | 7 explicit + **25 via `_register_entity_no_display`** |
+
+Counts include positional arguments, not just keywords — all 3 internal delegations pass `entity_id` positionally. Rev 1 counted keywords only for the internal column and reported `0`.
+
+
+### The experiment, and the hole in it
+
+```bash
+PD_REGISTER_ENTITY_STRICT_ID_FORMAT=1 plugins/pd/.venv/bin/python -m pytest \
+  plugins/pd/hooks/lib plugins/pd/mcp plugins/pd/ui/tests -q -p no:randomly
+# 707 failed, 3225 passed, 3 skipped, 44 errors
+```
+
+**751 tests across 26 files** depend on identity being optional. Counted by failing *test* (one `--tb=line` cause per test), not by matching output lines:
+
+| Cause | Failing tests |
+|---|---|
+| `EntityIdFormatError` | **693** |
+| assertion-shaped (9 bare `assert`, 5 `AssertionError`) | **14** |
+
+Rev 1 reported "`EntityIdFormatError` ×1,431 against 10 `AssertionError`" and concluded "one defect, 751 times". Both figures were `grep -o` artefacts counting output lines; the conclusion was wrong in a way that matters.
+
+**Thirteen of the 14 are downstream of the same error** — 7 assert on the error text outright, the rest on counts and lookups that fail because registration did. **One is not.** `mcp/test_workflow_state_server.py:4489` registers the *conformant* id `041-nullmeta`, so strict mode writes the display row and `_project_meta_json` returns `id='041'` where the test expects `''`. That is the display-row write path going live — exactly what C5 makes unconditional.
+
+So there is a **second class**, small but real: tests whose expectations encode display-less behaviour. It is not a defect to fix; the test's expectation is what is stale. Step 2 of the build order is where this class surfaces, and it is the only step whose residue is genuinely new behaviour rather than id format.
+
+**The experiment cannot see `_register_entity_no_display`.** Resolution order at `database.py:7566-7573` gives the explicit kwarg precedence over the env var, and that helper hardcodes `_strict_id_format=False` (`database.py:7823`). Proof: `pytest plugins/pd/ui/tests/test_entities.py` with the flag forced on is **91 passed**. Its 25 call sites are therefore absent from the 751 *and*, in rev 1, from the category split. They are category **F** below.
+
+### D1 — C5 sheds two parameters, not four
+
+`_KNOWN_INFERENCE_SITES` (`test_audit_writes.py:532`) attributes exactly four lines in `register_entity` to C6 — `database.py:7575` (regex) and `:7709/:7710/:7711` (slice). `project_id` and `parent_type_id` appear nowhere in it, and correctly so: they are SQL/uuid lookups, not text parses.
+
+**Decision unchanged: C5 removes `entity_id` and `_strict_id_format` only.** `project_id` and `parent_type_id` defer to **C5b**.
+
+**Rev 1's stated reason was wrong and is withdrawn.** It claimed the aliases carry "1,072 test-site edits on an orthogonal axis". Two errors: the two sets overlap (all 99 `parent_type_id` sites are among the 973 `project_id` sites, so the union is **973**, not 1,072), and **960 of those 973 — 98.7% — also supply `entity_id`**, landing on lines C5 already rewrites. Deferring does not avoid those edits; it re-opens them. On edit count alone, deferral is the more expensive option.
+
+**The real reason to defer is design risk, not edit count:**
+
+- **7 of 13 external production sites pass `project_id` with no `workspace_uuid`** — `backfill.py:443/:570/:617/:735/:837`, `entity_server.py:474`, `scripts/parse_backlog_md.py:262`. Each needs genuine re-homing design.
+- **`project_id` resolves to the wrong workspace in git worktrees.** Rev 2 said it "cannot address 10 of 24 workspaces"; corrected 2026-09-23. Of the 10 with no `project_id_legacy`, 7 are deleted directories. The other 3 are live worktrees of project_illium, and `_compute_legacy_project_id` gives every one of them the repository's root-commit id, so each `project_id`-only write resolves to **project_illium's** workspace. Startup backfill (`entity_server.py:276`) would register a worktree's artifacts there, and MCP `register_entity` with `auto_id` (`entity_server.py:597-624`) takes the number from project_illium's counter but registers the row in the worktree's own workspace. Nothing is damaged yet — the three worktree workspaces are empty. Decision 6 settles which workspace is right; **C17a** implements it.
+- **`project_id` is not only a workspace alias.** At `database.py:7635-7645` the explicit kwarg is *also* the `entity_created` phase-event label, falling back to `workspaces.project_id_legacy` only when absent. Dropping it changes event metadata on an append-only table. C5b's Verify must assert those labels are byte-unchanged at all 13 sites.
+
+Design risk of that shape is exactly what does not belong in the irreversible wave. Edit count was never the argument.
+
+**C5b scope and dependencies (rev 1 under-scoped both):**
+
+- **`Depends: C7`.** C5b re-touches the same 13 production sites C7 migrates. Rev 1 gave it no `Depends` edge at all.
+- **C5b must include the allocator, not just the registrar.** `generate_entity_id(db, entity_type, name, project_id)` (`id_generator.py:92`) has **no `workspace_uuid` parameter**. Remove `project_id` from registration alone and the registrar becomes `workspace_uuid`-only while the allocator stays `project_id`-only — the two halves structurally forced onto different axes, which is the inverse of **C17**'s contract. C5b and C17 are one unit, and both follow **C17a** (decision 6), which makes `project_id` and `workspace_uuid` agree for worktrees before either axis is removed.
+- Rev 1 cited `database.py:7315`/`:7332` for the two resolution points, copied from the parent plan and never checked. Both are wrong — the first points at `if self._in_transaction:`. The real sites are **`:7588`** (workspace) and **`:7605`** (parent), as of `2d654e1a`. Re-derive rather than copy — this section's own C7 table exists because the parent plan's line numbers drifted.
+
+### D2 — the signature
+
+```python
+def register_entity(
+    self,
+    entity_type: str,
+    *,
+    name: str,
+    seq: int | None = None,
+    slug: str | None = None,
+    display_id: str | None = None,
+    workspace_uuid=None, project_id=None,          # unchanged, deprecated — C5b
+    artifact_path=None, status=None,
+    parent_uuid=None, parent_type_id=None,         # unchanged, deprecated — C5b
+    metadata=None,
+) -> str
+```
+
+`upsert_entity`'s signature is byte-identical by contract (feature 109 AC-4.3) and changes in lockstep.
+
+Exactly one of `(seq, slug)` or `display_id`; both or neither raises.
+
+- **`(seq, slug)`** — sequence kinds. `entity_id = render_display_id(entity_type, seq, slug)`. Display row written **unconditionally**.
+- **`display_id`** — `NON_SEQUENCE_KINDS` only, stored verbatim, no display row (D3).
+
+**Why `display_id` is not the alias C5 forbids.** The "No alias" clause exists to stop a *parsed* alias hiding in a `_migration_13_*`-named helper where the audit auto-approves it. `display_id` is never parsed and is rejected for every sequence kind.
+
+**The `display_id` path has two callers, both filename-stem sourced** (rev 1 claimed one, from a single site it did not sweep):
+
+| Site | Source |
+|---|---|
+| `entity_status.py:190` | `.prd.md` stem from the brainstorms directory scan |
+| `backfill.py:837` (`_register_brainstorm`) | `_brainstorm_stem`, same shape |
+
+`backfill.py:837` additionally carries `_derive_parent` → `_safe_set_parent` handling, so it is a design decision, not a mechanical edit.
+
+`entity_type` keeps its name — `kind` equals the old `entity_type` value and result dicts carry both as aliases, so renaming would churn 1,153 sites for nothing.
+
+### D3 — B8's invariant must be restated, and its enforcers swept
+
+Under D2 a brainstorm registered after cutover has no display row and is not legacy, so `check_display_row_invariant` goes red on the first brainstorm reconciliation.
+
+**Restated:** every entity has an `entity_display` row unless `is_legacy = 1`, **or its `kind` is in `NON_SEQUENCE_KINDS`**.
+
+**This is the third exemption clause, not the second.** `checks.py:625-628` already loops `for flag in ("is_legacy", "is_deleted")`, and `is_deleted` has no immutability trigger and no silencing test. Rev 1 described the kind clause as the second exemption and did not notice the existing one.
+
+**Sweep targets — prose, SQL, operator text, and tests. Rev 1 listed only the first.**
+
+| Location | What stales |
+|---|---|
+| `doctor/checks.py:570` | the check's docstring |
+| `doctor/checks.py:625-655` | **the SQL itself**, plus the `message` and `fix_hint` operator text, which both say "no entity_display row and is not marked is_legacy" |
+| `doctor/__init__.py:35` | check-registry comment |
+| `doctor/test_checks.py:2227`, `:2270`, **plus 7 further tests in that file** | test docstrings and assertions restating the invariant |
+| `database.py:6390`, `:6393` (migration-7 docstrings), `:6438` (`_census_max`'s) | `:6393` asserts the display row is written "only `if strict:`", false once C5 lands |
+| `database.py:6411-6413` | the trigger's ABORT message |
+| **parent plan `## C3`**, and this document's own C3 line under Wave 3 | C3's guard predicate refuses buckets holding display-less non-archived rows — post-D3 brainstorms are display-less **by design** |
+| `clean_break.py:92-97` | `select_legacy_entities` docstring restating "display-less + not legacy is a bug, not history" |
+
+**The SQL change re-introduces the column that caused a vacuous green, and must not repeat it.** `checks.py:600-606` records it verbatim: the first version selected `e.kind`, older files raised, the `except` swallowed it, and the check reported green having never run. The existing `cols = PRAGMA table_info(entities)` probe at `:607` handles that — but its documented reading ("a file predating the column has no exempt rows") is **correct for `is_legacy` and wrong for `kind`**: a pre-migration-12 file still holds brainstorms, under `entity_type`. **Interface:** probe for `kind`, fall back to `entity_type` when absent, and never silently drop the clause.
+
+**The only fixture that runs this check cannot reach the new branch.** `_make_db` (`test_checks.py:20`) stamps `schema_version = 9` and its `entities` table has `entity_type TEXT NOT NULL` and **no `kind` column**; `_entity()` (`:2233`) hardcodes `entity_type='feature'` and takes no kind parameter. Both need extending, or the exemption ships with zero coverage. Two red-first tests: brainstorm-without-display passes; feature-without-display still fails.
+
+**The kind exemption is not the `is_legacy`-class hatch.** Since `2d654e1a` nothing at runtime writes `kind`: `promote_entity` was the only writer. The `enforce_immutable_entity_type`/`_type_id` triggers are still absent (dropped at migration 12; `test_database.py:948`/`:2604` pin that), but the `entities` CHECK pairs `type` with `kind` (`type='brainstorm' AND kind='brainstorm'` / `type='work' AND kind IN (…)`), so every single-column route into `NON_SEQUENCE_KINDS` is blocked — verified on a scratch copy of the live DDL, never the live file. Muting a row would take deliberate two-column SQL (`SET type='brainstorm', kind='brainstorm'`), which nothing in the codebase does. **Add one red-first test** asserting a single-column re-kind into `NON_SEQUENCE_KINDS` raises `IntegrityError`. With no runtime writer left, a `type`/`kind` immutability trigger is now possible — Wave 3, because it is a migration and Wave 2 deliberately has none.
+
+**The 97 existing brainstorm display rows stay.** Measured live: 100 brainstorms, **97** with display rows, all non-legacy; the 3 without are all `is_legacy=1`; 0 violations today. Rev 1 said 96. They hold migration-13 parse-accident values (`20260221-012305-slug` → `seq=20260221`), and `_read_entity_display` (`workflow_state_server.py:371`) **prefers** a present row, so deleting them would flip 97 entities onto its stderr-WARN fallback. Doing nothing is both lazy and safe.
+
+**Stated cost of doing nothing:** `_census_max(kind='brainstorm')` is frozen at seq **20260710** permanently. Inert — nothing allocates brainstorm sequences — but recorded rather than discovered later.
+
+**Row-level exemption was considered and rejected:** `entity_display.seq` is `INTEGER NOT NULL`, so a NULL-seq marker needs a migration and would break this wave's "no migration" rollback property.
+
+### D4 — the test migration is a codemod with a repo-wide completeness gate
+
+| | Category | Sites | Treatment |
+|---|---|---|---|
+| **A** | round-trips exactly through `render_display_id` | **298** | Pure codemod; id unchanged. |
+| **C** | non-sequence kind (brainstorm) | **42** | `display_id=` verbatim; id unchanged. |
+| **B** | id must change | **675** | Codemod + reference sweep. |
+| **D** | dynamic (f-string / variable / expr) | **98** | Hand review. |
+| **E** | no `entity_id` argument | **15** | Inspect. |
+| **F** | **via `_register_entity_no_display`** | **25** | **New in rev 2.** All in `ui/tests/test_entities.py`; 25 distinct ids, **0 conformant**, 92 in-file references. C6 deletes the helper, so these become ordinary registrations — decide per site whether the display-less fallback in `workflow_state_server.py:371` keeps a fixture or loses its only coverage. |
+
+Total **1,153**. A + C = 340 byte-identical rewrites carrying no downstream risk.
+
+**Rule 3 dominates and rev 1 left it undefined.** Of the literal-id sites, **665 have no leading digit** — `P001`, `bs-mixed`, `''` — so the "per-file counter + slug from the old text" rule is the majority case, not the footnote rev 1's table implied. It must specify counter seed, slug derivation, and collision policy against ids already present in the file. A per-file counter is also **not deterministic across files**, which the word "deterministic" in rev 1 wrongly implied.
+
+| Old shape | Example | New | Precondition |
+|---|---|---|---|
+| `^(\d+)-(.+)$` | `1-a`, `00010-existing` | `001-a`, `010-existing` | **`seq >= 1`** |
+| `^(\d+)$` | `00042` | `042-<stable token>` | `seq >= 1` |
+| no leading digits (**majority, 665**) | `P001`, `bs-mixed`, `''` | per-file counter + slug from old text | — |
+
+**`seq >= 1` is load-bearing:** `test_database.py:9317` registers `backlog` with `'000-v1'`. Rule 1 maps it to itself, but `render_display_id('backlog', 0, 'v1')` raises `seq must be a positive int` (`id_generator.py:85`). Route it to category D; a per-file gate would pass it silently because the literal never changed.
+
+**The completeness gate is repo-wide, not per-file.** 86.0% of literal ids are referenced elsewhere in their own file (872 of 1,014 non-empty literals; the 1,015th is the empty string `''`, which no sweep can key on and which therefore goes to hand review), **and 33 distinct literals are registered in two or more files** — `'001-test'` in four, `'f1'` in four, `'child'` in three, `'P001'` in `test_database.py` + `test_frontmatter_sync.py`. A per-file gate cannot see those, and a per-file counter would hand the same literal two different new ids. After all files are rewritten, assert zero occurrences of each old literal **across the whole `plugins/pd` tree**, and pre-compute the 33 so the executor decides per id whether the two uses are independent fixtures or one contract.
+
+**Substring hazard:** `'1-a'` is a substring of `'1-alpha'`; category F adds `'lim'`, `'older'`, `'newer'`. Replace string **constants** and `f"{kind}:{id}"` composites **via AST**, never `str.replace` over file text.
+
+### D5 — the exit criterion that cannot be faked
+
+Wave 2 is done when the strict flag is **deleted** — from `database.py`, `hooks/lib/conftest.py:37`, `mcp/conftest.py:31` — *and* `_register_entity_no_display` is gone, and the suite is green.
+
+```bash
+rg -l 'PD_REGISTER_ENTITY_STRICT_ID_FORMAT|_strict_id_format|_register_entity_no_display' plugins/pd
+test $? -eq 1   # exit 1 = no matches = clean
+```
+
+Rev 1 wrote `rg -c … # expect 0`. `rg -c` prints per-file counts and prints **nothing** on a clean tree, exiting 1 — it never emits `0`, so the stated expectation could not be checked. Note `rg` honours `.gitignore`, which correctly skips `plugins/pd/.venv`.
+
+After C6 there is no flag to set, so a green suite with the flag absent is green on the production path by construction. Today that path is reached by **all 13 tests in `mcp/test_issue_spawn.py`** — `:63` sits inside a module-scope `@pytest.fixture(autouse=True)` declared at `:54`, so it applies to the whole file. There is exactly one opt-in *site* repo-wide, which is not the same as one test; rev 1 conflated them. No test passes `_strict_id_format=True`; all 7 explicit sites pass `False`, and 25 more take `False` via the helper.
+
+### ⛔ STOP-THE-WORLD GATE — it guards the merge, not the first commit
+
+Wave 2 is built on a feature branch against temp databases; branch commits touch no live state. The hazard is a process on the **old build** writing display-less rows once the new build is in place.
+
+**1. Cue the operator.** Person-in-the-loop by design (decision 4).
+
+**2. Verify, do not assume:**
+
+```bash
+ps -axww | grep -i "entity_server\|workflow_state_server" | grep -v grep   # expect no output
+lsof ~/.claude/pd/entities/entities.db                                      # expect no output
+```
+
+`lsof` alone is insufficient — servers connect on demand. **Verified 2026-09-22 21:31: 0 processes, 0 file holders.** The executing session cannot stop itself; stated exception.
+
+**3. Snapshot after the world is stopped.** `.backup`, never `cp`; verify it **read-only** (`file:…?mode=ro`). Opening a snapshot read-write is what left `-shm`/`-wal` siblings beside six existing ones.
+
+**4. Restart normally.** Live file is `schema_version 6`, build is `V2_SCHEMA_VERSION = 7`; the first process to open applies migration 7 (B8's trigger), which has not yet run live.
+
+### Build order — never red
+
+Rev 1 ordered the work C5 → C7 → codemod → C6 and accepted ~751 red tests across three steps. **That red window was never necessary.** The strict gate at `database.py:7575` only *rejects* non-conformant ids — conformant ones already pass today — and no display row is written either way while `strict` is false (`:7708`). So the id migration is independently shippable **green, right now**, before any signature change. Rev 1's "red is expected and is the point of using a branch" was an assertion, not a justification.
+
+Each step below diffs against a green predecessor, so every failure is attributable to the step that caused it.
+
+| # | Step | Gate |
+|---|---|---|
+| **0** | Commit the census walker (`scripts/census_register_sites.py`) with the four headline counts as its self-check. Capture the **node-id manifest** for all gate scopes. | green, unchanged |
+| **1** | Codemod ids to conformant form (A, B, F) + repo-wide reference sweep. **No signature change.** | green |
+| **2** | Delete both conftest `setdefault`s so strict defaults on; fix the now-small attributable residue. | green |
+| **3** | **C5** — signature, unconditional display write, **D3's restated invariant + its eight sweep targets + the fixture extension**. | green |
+| **4** | **C7-prod** — 13 external sites + the 3 upstream contracts. | green |
+| **5** | **C6** — delete the 4 inference lines, the strict flag, and `_register_entity_no_display`. | green |
+| **6** | Gates + D5's grep + manifest comparison. | green |
+
+**The node-id manifest is not optional, and it is the one place the Risks section's "assert shapes, not counts" is suspended.** After a machine rewrite of 675+ call sites, "suite green" is satisfiable by a suite that tests strictly less — a codemod that deletes, renames, or collapses a test passes step 6 exactly as well as a correct one. At step 6 assert `passed_after ⊇ passed_before` **by node id**, and `collected_after == collected_before` modulo an enumerated delta with a one-line reason per entry. These are counts diffed against a manifest taken on the same tree, not measurements of the shared live registry, which is what that Risks rule actually governs.
+
+**`_KNOWN_INFERENCE_SITES` needs an explicit rebase step, twice.** It is an EXACT-SET lint on `(path, lineno, idiom)` (`test_audit_writes.py:573`) — it fails on any line shift, not only on added or removed sites. Steps 3 and 4 shift `workflow_state_server.py:485/:707/:1147/:1429` and `backfill.py:756`. Step 5 must additionally strike the four C6 tuples and **lower `_INVENTORY_HIGH_WATER` from 28 to 24** (`:626`), whose comment says it moves down when a site is removed and never back up. Run `pytest plugins/pd/hooks/lib/doctor/test_audit_writes.py -q` after **each** of steps 3, 4 and 5 — the same rebase was already required for C23 and again for C1/C2 in this campaign.
+
+**Every step's gate includes `plugins/pd/scripts/tests`.** Six family call sites live under `plugins/pd/scripts` — `parse_backlog_md.py:262` plus 5 test sites — and that directory is outside the 3-path suite the Gates section flags as historically missed. A codemod regression there would otherwise surface only at step 6.
+
+C7's three upstream contracts, unchanged from the parent plan:
+- `generate_entity_id()` (`id_generator.py:92`) returns a string and discards `seq`/`slug`. It must return both.
+- **Two** MCP tool surfaces expose `entity_id`, not one: `register_entity` (`entity_server.py:515`, param at `:517`) and `create_key_result` (`:1419`, param at `:1424`). Both become `seq`/`slug`. Rev 1 cited `:475`, which is a `db.register_entity(...)` **call site** inside `_process_create_key_result` (`:449`) — correct in the C7 drift table, wrong as a tool surface, and it hid the second tool entirely.
+- `upsert_entity`'s **conflict lookup** (`WHERE workspace_uuid = ? AND type_id = ?`) moves to structured identity without breaking three-branch insert-or-update semantics.
+
+### C7's call sites — re-derived, parent-plan line drift corrected
+
+| Site | Plan said | Actual |
+|---|---|---|
+| `entity_status.py` | :190 | **:190** ✓ |
+| `scripts/parse_backlog_md.py` | :254 | **:262** |
+| `database.py` (batch delegation) | :10432 → :10727 | **:10698** |
+| `feature_lifecycle.py` | :205, :312 | **:205, :317** |
+| `entity_server.py` | :471, :853 | **:474, :858** |
+| `server_helpers.py` | :278 | **:278** ✓ |
+| `backfill.py` | :439, :566, :613, :731, :833 | **:443, :570, :617, :735, :837** |
+| `task_promotion.py` | :367 | **:367** ✓ |
+
+Re-derive with the step-0 walker rather than reading these literals. Rev 1 wrote this table and then cited two stale line numbers of its own in D1 — the defect is not hard to repeat.
+
+**`plugins/pd/scripts/` still needs its declared decision** (into `_INFERENCE_SCAN_ROOTS`, or explicitly uncovered). `parse_backlog_md.py:262` is a caller the lint will never name.
+
+### Rollback — Wave 2 adds no migration
+
+`V2_MIGRATIONS` ends at **7**, `V2_SCHEMA_VERSION = 7`, and entry 7 is B8's trigger, already shipped. C5/C6/C7 are signature and call-site changes that **add no migration and write nothing to the live registry**. Code rollback is `git revert`.
+
+The residual risk is data written by an **old build during the mixed-version window** — what the stop-the-world gate closes. Those rows are identifiable by the existing detector: non-legacy, non-exempt entities with no display row. Remediate only rows created after the cutover timestamp.
+
+**Do not restore the snapshot wholesale.** One file holds seven workspaces' entities; a full restore reverts ~153 rows in six uninvolved repos and resets `sequences.next_val` below numbers already materialised as directories and branches — feature counters as of 2026-09-23: 135 pedantic-drip, 115 project_illium, 80 fractorg, 51 terry_agent, 22 cast-below. project_illium's and terry_agent's were raised that day to clear drift, so restoring any earlier snapshot puts both back behind their disk. `/pd:create-feature` hard-stops on that (step 2 of the command); a path without that prose guard would re-mint a number that already owns a directory — the RCA's opening incident. The snapshot is forensic evidence, not a rollback plan.
+
+### Found during review, deliberately out of scope
+
+Both pre-existing, neither caused by Wave 2, neither blocking it:
+
+- ~~**`promote_entity` is type-locked.**~~ **Resolved 2026-09-23 — deleted in `2d654e1a` (decision 5).** The framing here was wrong: its spec allowed only kind changes the `type`/`kind` CHECK permits, and its designed use, backlog → feature, worked. The defect was that it had never been called.
+- **`_compute_legacy_project_id`'s docstring is false** (`project_identity.py:811`). It says migration-only, but it is `project_id`'s live source in both MCP servers (`entity_server.py:235`, `workflow_state_server.py:237`) and in `reconciliation_orchestrator/__main__.py:104` and `task_promotion.py:354`. What it hid is D1's worktree misrouting. **Moved into C17a (decision 6)**, which fixes both.
 
 ## Wave 3 — census, allocator, guard
 
 **C1 → C2 → C3**, with C3 also waiting on C6. C3's predicate is now `is_legacy`, and **B8** is what keeps its precondition true across Wave 2.
 
+**Amended by Wave 2 / D3.** C3's guard refuses a bucket holding non-archived entities that lack display rows. After D3, brainstorms are display-less **by design**, so C3's predicate becomes `is_legacy = 1 OR kind IN NON_SEQUENCE_KINDS` — otherwise the guard refuses every brainstorm bucket permanently, the first time the new exemption is exercised. This is the same restatement sweep D3 applies to the doctor check; C3 restates the invariant one wave later.
+
+**C1 and C2 SHIPPED 2026-09-22 (`e9f5774f`).**
+
 ## Wave 4 — readers and producers
 
 Parallel once Wave 2 lands: **C8–C12**, **C13**, **C14**, **C15–C16**, **C17**, **C18**, **C19/C20b**.
+
+**C17a — a git worktree resolves to its repository's workspace** (decision 6). Independent of Wave 2 — no schema change and no `register_entity` signature change — so it can land before it, and should land before any pd session runs in a project_illium worktree.
+
+- **Contract.** `resolve_workspace_uuid` maps a worktree to the workspace of its `git rev-parse --git-common-dir`, not its root commit, which separate clones share. A working tree whose git directory lives in a bare repository (terry_agent: `/Users/terry_agent` → `~/projects/terry_agent-control/terry_agent.git`) is that repository's only workspace.
+- **Scope.** Retire the three empty worktree **workspace rows** — `illium-golive`, `illium-live-debug`, `illium-architecture-re-build`, 0 entities each. Registry rows only; the directories stay, and `illium-golive` is protected. Correct `_compute_legacy_project_id`'s docstring (`project_identity.py:811`).
+- **Verify, red-first.** From inside a worktree, allocation and registration land in the repository's workspace. Today the number comes from project_illium's counter and the row lands in the worktree's own workspace (`entity_server.py:597-624`).
+- **Unblocks** C5b and C17: once `project_id` and `workspace_uuid` agree for worktrees, C5b goes back to plain alias removal.
+
+**C12 shrinks by one site.** Its `type_id.split` inside `promote_entity` left with the method in `2d654e1a`.
 
 Apply **correction 3b** (from B3b): C8 gains the orphan-row fixture; C11 gains `feature_lifecycle.py:97` and must preserve its realpath containment check.
 
@@ -353,7 +617,12 @@ Part 2   C23 ──────────────────────�
                    ├─ C14 ─────────────────────┤
                    ├─ C17 ─────────────────────┤
                    └─ C19 ── C20b ─────────────┘
+
+         C17a (worktree → repository's workspace) ── C5b (project_id / parent_type_id removal), C17
+         (C17a has no Wave 2 dependency; C5b ships after Wave 2)
 ```
+
+**C5b is new (Wave 2 re-plan, D1).** It is deliberately *not* a Wave 2 predecessor: it removes the two deprecated aliases, involves no schema change, and is revertible, so it ships after the cutover rather than inside it. **C17a is new (decision 6)** and precedes both C5b and C17; it does not depend on Wave 2.
 
 B8 is not a formal predecessor of C3 — C3 would compile without it — but shipping C3 without B8 means its live precondition degrades unobserved from the day B6 ran. Treat it as one.
 
@@ -361,12 +630,12 @@ B8 is not a formal predecessor of C3 — C3 would compile without it — but shi
 
 ## Gates
 
-Every task re-runs all four. **`plugins/pd/scripts/` is outside the standard suite scope**, which is how a live archival regression shipped unnoticed: `cleanup_backlog.py` kept writing `status='archived'` after the reader moved to the `is_archived` flag, and no gate covered it. Any task touching that directory — B7 touches four files in it — must run its tests explicitly. **Only two gates run in CI** — `.github/workflows/ci.yml` invokes `./validate.sh` and `test-hooks.sh` and nothing else, so the 3902-test suite and the audit are local-only. A task that ships green on CI has had its two weakest gates checked. Baseline as of 2026-09-22:
+Every task re-runs all four. **`plugins/pd/scripts/` is outside the standard suite scope**, which is how a live archival regression shipped unnoticed: `cleanup_backlog.py` kept writing `status='archived'` after the reader moved to the `is_archived` flag, and no gate covered it. Any task touching that directory — B7 touches four files in it — must run its tests explicitly. **Only two gates run in CI** — `.github/workflows/ci.yml` invokes `./validate.sh` and `test-hooks.sh` and nothing else, so the full suite and the audit are local-only. A task that ships green on CI has had its two weakest gates checked. Baseline **re-derived 2026-09-23**, after C4/C23/C1/C2 and `2d654e1a` (the 3902 figure this plan was written with predates them; a 4024 figure recorded mid-session was never reproducible):
 
 ```bash
-plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib plugins/pd/mcp plugins/pd/ui/tests -q   # 3902 passed / 3 skipped  (the standard 3-path scope every recorded pd figure uses)
-plugins/pd/.venv/bin/python -m pytest plugins/pd/scripts/tests -q                                  # 30 passed             (OUTSIDE the 3-path scope — see note)
-plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/doctor/test_audit_writes.py -q
+plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib plugins/pd/mcp plugins/pd/ui/tests -q   # 3970 passed / 3 skipped  (the standard 3-path scope every recorded pd figure uses)
+plugins/pd/.venv/bin/python -m pytest plugins/pd/scripts/tests -q                                  # 48 passed             (OUTSIDE the 3-path scope — see note)
+plugins/pd/.venv/bin/python -m pytest plugins/pd/hooks/lib/doctor/test_audit_writes.py -q         # scripts + audit together: 55 passed
 ./validate.sh                                                                                       # 0 / 0
 bash plugins/pd/hooks/tests/test-hooks.sh                                                                                 # 66/66 passed, 1 skipped
 ```
@@ -383,9 +652,11 @@ sqlite3 <snapshot> "PRAGMA integrity_check; SELECT COUNT(*) FROM entities;"
 ## Risks
 
 - **The registry is shared and live.** 24 workspaces write to one file. Every literal in this document is a measurement with a timestamp, not a constant. Re-derive at execution; assert shapes and invariants, not counts.
-- **Wave 2 is the only irreversible step.** There is no `V2_MIGRATIONS_DOWN`. Reversal is a forward compensating write, and the event log keeps both sides forever. Rehearse on a `.backup` copy.
-- **`.backup` is not a rollback, and Gates prescribes it anyway.** One file, seven workspaces with entities. A restore reverts ~153 rows in six uninvolved repos and resets `feature next_val` below numbers already materialised as directories and branches — 135 pedantic-drip, 88 illium-regime, 80 fractorg, 57 project_illium, 36 terry_agent, 22 cast-below. The next `/pd:create-feature` in any of them re-mints a number that already owns a `docs/features/NNN-*` directory and a branch: the RCA's opening incident, in four repos at once. Nothing compares `sequences.next_val` to what is on disk. **This plan has no restore procedure; it needs one before Wave 2.** Note also that `~/.claude/pd/entities/` already holds `.db.pre-*` snapshots with `-shm`/`-wal` siblings — made with `cp`, which Gates forbids — and restoring one of those is a torn read on top of all the above.
+- **~~Wave 2 is the only irreversible step.~~ Corrected 2026-09-22 (Wave 2 re-plan).** Checked: `V2_MIGRATIONS` ends at 7, `V2_SCHEMA_VERSION = 7`, and entry 7 is B8's trigger — already shipped. C5/C6/C7 are signature and call-site changes that **add no migration and write nothing to the live registry**, so the code rollback is `git revert`. What is genuinely irreversible is data written by an *old build during the mixed-version window*, which is what the stop-the-world gate closes. There is still no `V2_MIGRATIONS_DOWN`, so this reasoning must be re-checked for any later wave that does add one.
+- **`.backup` is not a rollback, and Gates prescribes it anyway.** One file, seven workspaces with entities. A restore reverts ~153 rows in six uninvolved repos and resets `feature next_val` below numbers already materialised as directories and branches — feature counters as of 2026-09-23: 135 pedantic-drip, 115 project_illium, 80 fractorg, 51 terry_agent, 22 cast-below. Nothing in code compares `sequences.next_val` to what is on disk; only `/pd:create-feature`'s prose hard stop does, and on 2026-09-23 it would have fired — see *Counter drift* below. **Closed 2026-09-22** — see *Rollback* at the end of Wave 2: detect via `check_display_row_invariant`, remediate only rows created after the cutover timestamp, never restore the file wholesale. Note also that `~/.claude/pd/entities/` already holds `.db.pre-*` snapshots with `-shm`/`-wal` siblings — made with `cp`, which Gates forbids — and restoring one of those is a torn read on top of all the above.
 - **The gap between now and C6 keeps producing display-less rows.** B8 makes that visible; it does not stop it. Only C5/C6 stop it.
+- **The suite has never exercised the display-row write.** Both conftests default `PD_REGISTER_ENTITY_STRICT_ID_FORMAT=0`, so the `if strict:` branch at `database.py:7708` is reached only by the 13 tests of `mcp/test_issue_spawn.py`, via a module-scope autouse fixture at `:54`. Forcing the flag on today fails 751 of them. C5 makes that branch unconditional, which is why D5 makes *deleting* the flag the exit criterion.
+- **Counter drift, found 2026-09-23.** A read-only scan of all 24 workspaces found project_illium's feature counter at 57 with directories up to 114, and terry_agent's at 36 with directories up to 50; both would have hard-stopped `/pd:create-feature`. Raised to 115 and 51 (snapshot `entities.db.pre-counterfix-20260923`), written with plain `sqlite3` so the live file stayed at schema 6 rather than being migrated as a side effect. Behind it are **152 feature directories the registry has never seen** (project_illium 78, fractorg 57, terry_agent 16, pedantic-drip 1). project_illium's 53 numbered 057–114 are in no snapshot back to May and have no event: pd stopped recording that repository's features in June 2026, the weeks its worktrees appeared. The census cannot protect numbers it cannot see, so C19/C20 (seed from disk) is the systematic fix, and C17a stops worktrees issuing numbers outside their repository's sequence.
 - **Reviewer claims are not self-verifying.** Verify any claim about a symbol against `file:line` before absorbing it here.
 
 ---
