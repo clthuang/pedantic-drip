@@ -2271,7 +2271,7 @@ class TestDisplayRowInvariant:
         assert result.issues[0].severity == "error"
 
     def test_legacy_rows_are_exempt(self, tmp_path):
-        """The 180 legacy rows are the whole reason the invariant has an 'unless'."""
+        """The 180 legacy rows are why the invariant has its first 'unless'."""
         conn = self._conn(tmp_path)
         self._entity(conn, "u1", "feature:001-a", is_legacy=1, display=False)
         assert check_display_row_invariant(conn).passed
