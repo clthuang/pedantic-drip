@@ -202,6 +202,7 @@ def apply_records(records: list[dict], db_path: str | None = None) -> dict:
     _setup_db_imports()
     try:
         from entity_registry.database import EntityDatabase
+        from entity_registry.id_generator import registration_identity
     except Exception as exc:
         sys.stderr.write(
             f"error: failed to import entity_registry.database: {exc}\n"
@@ -250,6 +251,12 @@ def apply_records(records: list[dict], db_path: str | None = None) -> dict:
         # is conventionally workspace-uniform, but defensiveness is free).
         matching = [r for r in rows if r.get("entity_id") == rec["entity_id"]]
 
+        identity = registration_identity("backlog", rec["entity_id"])
+        if not matching and identity is None:
+            # A legacy id (00019) has no seq/slug form: skipped, never guessed at.
+            sys.stderr.write(f"skipping {type_id}: no seq/slug form\n")
+            skipped += 1
+            continue
         if not matching:
             # Defensive insert. The backlog entity SHOULD already exist
             # (created via /pd:add-to-backlog) but this path covers
@@ -261,7 +268,7 @@ def apply_records(records: list[dict], db_path: str | None = None) -> dict:
             try:
                 db.register_entity(
                     entity_type="backlog",
-                    entity_id=rec["entity_id"],
+                    **identity,
                     name=rec.get("name") or "",
                     project_id="__unknown__",
                     status="open",

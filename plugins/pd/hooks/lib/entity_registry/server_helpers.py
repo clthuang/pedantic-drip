@@ -12,6 +12,7 @@ import sys
 from collections import defaultdict
 
 from entity_registry.database import EntityExistsError
+from entity_registry.id_generator import render_display_id
 from entity_registry.metadata import parse_metadata as _parse_metadata
 from sqlite_retry import with_retry
 
@@ -197,7 +198,7 @@ def resolve_output_path(
 def _process_register_entity(
     db,
     entity_type: str,
-    entity_id: str,
+    identity: dict,
     name: str,
     artifact_path: str | None,
     status: str | None,
@@ -216,8 +217,9 @@ def _process_register_entity(
         An EntityDatabase instance.
     entity_type:
         One of: backlog, brainstorm, project, feature.
-    entity_id:
-        Unique identifier within the entity_type namespace.
+    identity:
+        ``register_entity``'s identity keywords: ``seq`` and ``slug``, or
+        ``display_id`` for a kind with no sequence.
     name:
         Human-readable name.
     artifact_path:
@@ -231,7 +233,7 @@ def _process_register_entity(
     project_id:
         Project scope for the entity.
     auto_id:
-        Whether the entity_id was auto-generated (informational only).
+        Whether the identity was allocated here (informational only).
 
     Returns
     -------
@@ -240,7 +242,9 @@ def _process_register_entity(
         Never raises exceptions.
     """
     try:
-        type_id = f"{entity_type}:{entity_id}"
+        display = identity.get("display_id") or render_display_id(
+            entity_type, identity.get("seq"), identity.get("slug"))
+        type_id = f"{entity_type}:{display}"
         existing = db.get_entity(type_id)
         existing_parent = existing["parent_type_id"] if existing else None
         # Feature 112 / FR-4: parent_uuid is the canonical kwarg passed to
@@ -277,7 +281,7 @@ def _process_register_entity(
         try:
             db.register_entity(
                 entity_type=entity_type,
-                entity_id=entity_id,
+                **identity,
                 name=name,
                 artifact_path=artifact_path,
                 status=status,

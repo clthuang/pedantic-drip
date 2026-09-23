@@ -517,7 +517,7 @@ _INFERENCE_SCAN_ROOTS = [
 #                          text at migration time. Same class as :2756, :4199
 #                          and :4262. Sanctioned; relabelled, not fixed.
 #
-#   feature_lifecycle.py:97  _validate_feature_type_id splits type_id on ":"
+#   feature_lifecycle.py:98  _validate_feature_type_id splits type_id on ":"
 #                          to build {artifacts_root}/features/{slug}. The path
 #                          belongs in entities.artifact_path -> C11. NOTE it is
 #                          a TRUST BOUNDARY: it rejects NUL and does a realpath
@@ -534,7 +534,7 @@ _INFERENCE_SCAN_ROOTS = [
 #                          that deliberately and fixture it, not let the join
 #                          change it silently.
 _KNOWN_INFERENCE_SITES: list[tuple[str, int, str, str]] = [
-    ("entity_registry/backfill.py",           756, "split",       "C13 missing-parent policy"),
+    ("entity_registry/backfill.py",           795, "split",       "C13 missing-parent policy"),
     ("entity_registry/clean_break.py",        59, "regex",       "B4 SANCTIONED - the one legacy parse"),
     ("entity_registry/clean_break.py",        61, "regex",       "B4 SANCTIONED - the one legacy parse"),
     ("entity_registry/clean_break.py",        64, "regex",       "B4 SANCTIONED - the one legacy parse"),
@@ -552,7 +552,7 @@ _KNOWN_INFERENCE_SITES: list[tuple[str, int, str, str]] = [
     ("entity_registry/rebuild_tool.py",       1060, "regex",       "C19/C20b rebuild seeds from structure"),
     ("entity_registry/rebuild_tool.py",       1169, "split",       "C19 rebuild seeds from structure"),
     ("workflow_engine/engine.py",             376, "split",       "C11 artifact path"),
-    ("workflow_engine/feature_lifecycle.py",  97, "split",       "C11 artifact path"),
+    ("workflow_engine/feature_lifecycle.py",  98, "split",       "C11 artifact path"),
     ("workflow_engine/reconciliation.py",     787, "startswith",  "C8 kind from entities.kind"),
     ("workflow_engine/router.py",             358, "split",       "C8 kind from entities.kind"),
     ("workflow_engine/router.py",             421, "split",       "C8 kind from entities.kind"),

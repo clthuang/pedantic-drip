@@ -161,7 +161,7 @@ class TestBacklogRegisterRegression060:
         db._conn.commit()
 
         result = _process_register_entity(
-            db, "backlog", "060-regression-pin", "Regression pin",
+            db, "backlog", {"seq": 60, "slug": "regression-pin"}, "Regression pin",
             None, None, None, None,
             project_id="__unknown__", workspace_uuid=ws_uuid,
         )

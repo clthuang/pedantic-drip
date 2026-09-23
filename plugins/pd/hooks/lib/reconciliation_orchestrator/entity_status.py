@@ -189,7 +189,7 @@ def _sync_brainstorm_entities(
         # F12 audit: idempotent reconciliation → upsert_entity
         db.upsert_entity(
             entity_type="brainstorm",
-            entity_id=stem,
+            display_id=stem,
             name=stem,
             artifact_path=artifact_path,
             status="active",

@@ -77,7 +77,7 @@ async def test_register_entity_handler_concise_message(db):
     """
     result = await entity_server.register_entity(
         entity_type="feature",
-        entity_id="001-reg-test",
+        seq=1, slug="reg-test",
         name="Registration Test",
     )
     assert isinstance(result, str)
@@ -212,7 +212,7 @@ class TestMetadataDictCoercion:
         import asyncio
         result = asyncio.run(
             entity_server.register_entity(
-                entity_type="feature", entity_id="001-meta-dict-001",
+                entity_type="feature", seq=1, slug="meta-dict-001",
                 name="Dict Test", metadata={"description": "test value"},
             )
         )
@@ -227,7 +227,7 @@ class TestMetadataDictCoercion:
         import asyncio
         result = asyncio.run(
             entity_server.register_entity(
-                entity_type="feature", entity_id="001-meta-str-001",
+                entity_type="feature", seq=1, slug="meta-str-001",
                 name="String Test", metadata='{"key": "val"}',
             )
         )
@@ -242,7 +242,7 @@ class TestMetadataDictCoercion:
         import asyncio
         result = asyncio.run(
             entity_server.register_entity(
-                entity_type="feature", entity_id="001-meta-none-001",
+                entity_type="feature", seq=1, slug="meta-none-001",
                 name="None Test", metadata=None,
             )
         )
@@ -272,7 +272,7 @@ class TestMetadataDictCoercion:
         import asyncio
         result = asyncio.run(
             entity_server.register_entity(
-                entity_type="feature", entity_id="001-meta-bad-001",
+                entity_type="feature", seq=1, slug="meta-bad-001",
                 name="Bad JSON Test", metadata="{bad json}",
             )
         )
@@ -435,12 +435,34 @@ class TestCreateKeyResultMissingParent:
             _process_create_key_result(
                 db,
                 parent_type_id="objective:nonexistent",
-                eid="missing-parent-kr",
                 name="KR Without Parent",
                 status="active",
                 metadata_json=json.dumps({"score": 0.0}),
                 weight=1.0,
             )
+
+    def test_create_key_result_registers_under_its_parent(self, db):
+        """The registration itself: C7 moves this call, so it is covered first."""
+        from entity_server import _process_create_key_result
+
+        objective_uuid = db.register_entity("objective", name="Grow", seq=1, slug="grow",
+                                            project_id="__unknown__")
+        result = json.loads(_process_create_key_result(
+            db,
+            parent_type_id="objective:001-grow",
+            name="Double revenue",
+            status="active",
+            metadata_json=json.dumps({"score": 0.0}),
+            weight=0.5,
+        ))
+        # A real allocation: the first key result takes seq 1.
+        assert result["type_id"] == "key_result:001-double-revenue"
+        row = db.get_entity(result["type_id"])
+        assert row["uuid"] == result["uuid"]
+        assert row["kind"] == "key_result"
+        assert row["parent_uuid"] == objective_uuid
+        assert row["name"] == "Double revenue"
+        assert result["weight"] == 0.5
 
 
 def _upsert(db, project_id, project_root, workspace_uuid=None, name="p"):
@@ -666,7 +688,7 @@ class TestAllocateEntityId:
             entity_type="feature", name="Atomic Display Id Allocation"
         )
         parsed = json.loads(result)
-        assert parsed == {"seq": 1, "entity_id": "001-atomic-display-id-allocation"}
+        assert parsed == {"seq": 1, "slug": "atomic-display-id-allocation", "entity_id": "001-atomic-display-id-allocation"}
 
     @pytest.mark.asyncio
     async def test_same_workspace_two_connections_distinct(self, tmp_path, monkeypatch):
@@ -696,8 +718,8 @@ class TestAllocateEntityId:
 
         parsed_a = json.loads(result_a)
         parsed_b = json.loads(result_b)
-        assert parsed_a == {"seq": 1, "entity_id": "001-connection-a"}
-        assert parsed_b == {"seq": 2, "entity_id": "002-connection-b"}
+        assert parsed_a == {"seq": 1, "slug": "connection-a", "entity_id": "001-connection-a"}
+        assert parsed_b == {"seq": 2, "slug": "connection-b", "entity_id": "002-connection-b"}
 
     @pytest.mark.asyncio
     async def test_cross_workspace_independent_sequences(self, ws_db, monkeypatch):
@@ -786,7 +808,7 @@ class TestAllocateEntityId:
             entity_type="project", name="Post Cutover Project"
         )
         parsed = json.loads(result)
-        assert parsed == {"seq": 5, "entity_id": "005-post-cutover-project"}
+        assert parsed == {"seq": 5, "slug": "post-cutover-project", "entity_id": "005-post-cutover-project"}
 
         # A second, distinct allocation in the same workspace continues
         # sequentially -- two concurrent-ish allocations land distinct,
@@ -856,7 +878,7 @@ class TestAllocateEntityId:
             entity_type="feature", name="- a -"
         )
         parsed = json.loads(result)
-        assert parsed == {"seq": 1, "entity_id": "001-a"}
+        assert parsed == {"seq": 1, "slug": "a", "entity_id": "001-a"}
 
     @pytest.mark.asyncio
     async def test_long_name_truncates_on_hyphen_boundary_through_tool_wiring(
@@ -875,7 +897,7 @@ class TestAllocateEntityId:
             entity_type="feature", name="enterprise reliability platform"
         )
         parsed = json.loads(result)
-        assert parsed == {"seq": 1, "entity_id": "001-enterprise-reliability"}
+        assert parsed == {"seq": 1, "slug": "enterprise-reliability", "entity_id": "001-enterprise-reliability"}
         assert not parsed["entity_id"].endswith("-")
 
     @pytest.mark.asyncio
@@ -903,7 +925,7 @@ class TestAllocateEntityId:
             entity_type="feature", name="Boundary Seq"
         )
         parsed = json.loads(result)
-        assert parsed == {"seq": 1000, "entity_id": "1000-boundary-seq"}
+        assert parsed == {"seq": 1000, "slug": "boundary-seq", "entity_id": "1000-boundary-seq"}
 
     @pytest.mark.asyncio
     async def test_next_sequence_value_operational_error_propagates_unhandled(
@@ -958,7 +980,7 @@ class TestRegisterEntityBlankNameGuard:
         explicit-id call with a blank name reached the DB-layer raise
         unguarded."""
         result = await entity_server.register_entity(
-            entity_type="feature", entity_id="001-explicit-blank", name="   ",
+            entity_type="feature", seq=1, slug="explicit-blank", name="   ",
         )
         parsed = json.loads(result)
         assert parsed["error"] is True
@@ -1004,6 +1026,6 @@ class TestRegisterEntityToolProjectIdKwargRemoved:
     def test_project_id_kwarg_raises_type_error_not_silently_accepted(self):
         with pytest.raises(TypeError, match="project_id"):
             entity_server.register_entity(
-                entity_type="feature", entity_id="001-x", name="X",
+                entity_type="feature", seq=1, slug="x", name="X",
                 project_id="should-not-exist",
             )

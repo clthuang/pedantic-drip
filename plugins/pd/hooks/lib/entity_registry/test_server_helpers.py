@@ -308,7 +308,7 @@ class TestProcessRegisterEntity:
     def test_happy_path_returns_success_string(self, db: EntityDatabase):
         """Successful registration returns a string containing the type_id."""
         result = _process_register_entity(
-            db, "feature", "001-f1", "Feature One",
+            db, "feature", {"seq": 1, "slug": "f1"}, "Feature One",
             artifact_path=None, status="active",
             parent_type_id=None, metadata=None,
         )
@@ -318,7 +318,7 @@ class TestProcessRegisterEntity:
     def test_entity_actually_registered(self, db: EntityDatabase):
         """The entity should exist in the database after registration."""
         _process_register_entity(
-            db, "project", "002-p1", "Project One",
+            db, "project", {"seq": 2, "slug": "p1"}, "Project One",
             artifact_path="/docs/p1", status="active",
             parent_type_id=None, metadata=None,
         )
@@ -331,7 +331,7 @@ class TestProcessRegisterEntity:
         """Registration with parent and metadata should succeed."""
         db.register_entity("project", name="Parent", seq=1, slug="parent", project_id="__unknown__")
         result = _process_register_entity(
-            db, "feature", "001-child", "Child Feature",
+            db, "feature", {"seq": 1, "slug": "child"}, "Child Feature",
             artifact_path=None, status=None,
             parent_type_id="project:001-parent",
             metadata={"key": "value"},
@@ -345,7 +345,7 @@ class TestProcessRegisterEntity:
     def test_invalid_entity_type_returns_error_string(self, db: EntityDatabase):
         """Invalid entity_type should return an error string, not raise."""
         result = _process_register_entity(
-            db, "invalid_type", "x", "Bad",
+            db, "invalid_type", {"seq": 1, "slug": "x"}, "Bad",
             artifact_path=None, status=None,
             parent_type_id=None, metadata=None,
         )
@@ -355,7 +355,7 @@ class TestProcessRegisterEntity:
     def test_invalid_parent_registers_with_null_parent_uuid(self, db: EntityDatabase):
         """Referencing a non-existent parent registers entity with NULL parent_uuid."""
         result = _process_register_entity(
-            db, "feature", "001-f1", "Feature",
+            db, "feature", {"seq": 1, "slug": "f1"}, "Feature",
             artifact_path=None, status=None,
             parent_type_id="project:nonexistent",
             metadata=None,
@@ -369,7 +369,7 @@ class TestProcessRegisterEntity:
         """_process_register_entity should never raise exceptions."""
         # Even with bizarre inputs, it should return a string
         result = _process_register_entity(
-            db, "", "", "",
+            db, "", {}, "",
             artifact_path=None, status=None,
             parent_type_id=None, metadata=None,
         )
@@ -382,7 +382,7 @@ class TestProcessRegisterEntity:
         plain 'Error registering entity: ...' string, not a raised exception
         — that string IS the MCP-visible result."""
         result = _process_register_entity(
-            db, "feature", "001-orphan-ws", "Orphan WS",
+            db, "feature", {"seq": 1, "slug": "orphan-ws"}, "Orphan WS",
             artifact_path=None, status=None,
             parent_type_id=None, metadata=None,
             workspace_uuid="aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa",
@@ -672,7 +672,7 @@ class TestErrorPropagation:
         db.register_entity("feature", name="Feature One", seq=1, slug="f1", project_id="__unknown__")
         # When setting parent to nonexistent entity via _process helper
         result = _process_register_entity(
-            db, "feature", "001-orphan-child", "Orphan",
+            db, "feature", {"seq": 1, "slug": "orphan-child"}, "Orphan",
             artifact_path=None, status=None,
             parent_type_id="project:nonexistent",
             metadata=None,
@@ -895,7 +895,7 @@ class TestRegisterEntityDualIdentityMessage:
         # Given a database
         # When registering an entity
         result = _process_register_entity(
-            db, "project", "002-p1", "Project One",
+            db, "project", {"seq": 2, "slug": "p1"}, "Project One",
             artifact_path=None, status="active",
             parent_type_id=None, metadata=None,
         )
@@ -913,14 +913,14 @@ class TestRegisterEntityDualIdentityMessage:
         """
         # Given an already-registered entity
         first_result = _process_register_entity(
-            db, "feature", "001-f1", "Feature One",
+            db, "feature", {"seq": 1, "slug": "f1"}, "Feature One",
             artifact_path=None, status=None,
             parent_type_id=None, metadata=None,
         )
         assert first_result == "Registered: feature:001-f1"
         # When registering again
         second_result = _process_register_entity(
-            db, "feature", "001-f1", "Feature One Updated",
+            db, "feature", {"seq": 1, "slug": "f1"}, "Feature One Updated",
             artifact_path=None, status=None,
             parent_type_id=None, metadata=None,
         )
@@ -936,12 +936,12 @@ class TestRegisterEntityDualIdentityMessage:
             project_id="__unknown__",
         )
         _process_register_entity(
-            db, "feature", "001-f2", "Feature Two",
+            db, "feature", {"seq": 1, "slug": "f2"}, "Feature Two",
             artifact_path=None, status=None,
             parent_type_id=None, metadata=None,
         )
         result = _process_register_entity(
-            db, "feature", "001-f2", "Feature Two",
+            db, "feature", {"seq": 1, "slug": "f2"}, "Feature Two",
             artifact_path=None, status=None,
             parent_type_id="project:001-parent-p", metadata=None,
         )
@@ -1807,7 +1807,7 @@ class TestParentResolutionNarrowExcept:
         result = _process_register_entity(
             db,
             entity_type="feature",
-            entity_id="001-db-err-child",
+            identity={"seq": 1, "slug": "db-err-child"},
             name="Child",
             artifact_path=None,
             status=None,
@@ -1862,7 +1862,7 @@ class TestParentResolutionNarrowExcept:
         result = _process_register_entity(
             db,
             entity_type="feature",
-            entity_id="runtime-child",
+            identity={"seq": 1, "slug": "runtime-child"},
             name="Child",
             artifact_path=None,
             status=None,

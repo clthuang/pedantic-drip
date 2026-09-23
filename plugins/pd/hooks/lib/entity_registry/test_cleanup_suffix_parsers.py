@@ -148,7 +148,6 @@ class TestACCL2BackfillNoMarkerDerivation:
             lines.append(f"| {row_id} | {ts} | {desc} |")
         (tmp_path / "backlog.md").write_text("\n".join(lines) + "\n")
 
-    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_backfill_does_not_set_status_dropped_for_closed_marker(self, tmp_path):
         """Pre-feature-111 the parser would set status='dropped' on '(closed: ...)'.
         Post-feature-111 status remains as it was (None for a brand-new row)."""
@@ -157,12 +156,12 @@ class TestACCL2BackfillNoMarkerDerivation:
 
         self._make_artifacts(
             tmp_path,
-            [("00101", "2026-01-01T00:00:00Z", "Cleanup something (closed: parser removed)")],
+            [("101-closed-item", "2026-01-01T00:00:00Z", "Cleanup something (closed: parser removed)")],
         )
         db = EntityDatabase(str(tmp_path / "test.db"))
         try:
             run_backfill(db, str(tmp_path))
-            entity = db.get_entity("backlog:00101")
+            entity = db.get_entity("backlog:101-closed-item")
             assert entity is not None, "backlog entity should be registered"
             # Post-cleanup: backfill no longer mints status='dropped' from markers.
             # The status defaults to None (per the upsert call which omits status).
@@ -173,19 +172,18 @@ class TestACCL2BackfillNoMarkerDerivation:
         finally:
             db.close()
 
-    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_backfill_does_not_set_status_promoted_for_promoted_marker(self, tmp_path):
         from entity_registry.database import EntityDatabase
         from entity_registry.backfill import run_backfill
 
         self._make_artifacts(
             tmp_path,
-            [("00102", "2026-01-01T00:00:00Z", "Thing (promoted → feature:111)")],
+            [("102-promoted-item", "2026-01-01T00:00:00Z", "Thing (promoted → feature:111)")],
         )
         db = EntityDatabase(str(tmp_path / "test.db"))
         try:
             run_backfill(db, str(tmp_path))
-            entity = db.get_entity("backlog:00102")
+            entity = db.get_entity("backlog:102-promoted-item")
             assert entity is not None
             assert entity["status"] in (None, "", "open"), (
                 f"backfill should NOT derive status='promoted' from prose marker; "

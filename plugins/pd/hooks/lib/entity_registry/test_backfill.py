@@ -32,7 +32,7 @@ def artifacts(tmp_path):
         "id": "029",
         "slug": "entity-lineage-tracking",
         "brainstorm_source": "docs/brainstorms/20260227-lineage.prd.md",
-        "backlog_source": "00019",
+        "backlog_source": "019-entity-lineage",
     }
     (feat_dir / ".meta.json").write_text(json.dumps(meta))
 
@@ -40,7 +40,7 @@ def artifacts(tmp_path):
     bs_dir = tmp_path / "brainstorms"
     bs_dir.mkdir()
     (bs_dir / "20260227-lineage.prd.md").write_text(
-        "# Brainstorm\n\n*Source: Backlog #00019*\n\nSome content.\n"
+        "# Brainstorm\n\n*Source: Backlog #019-entity-lineage*\n\nSome content.\n"
     )
 
     # --- projects (empty) ---
@@ -51,7 +51,7 @@ def artifacts(tmp_path):
         "# Backlog\n\n"
         "| ID | Timestamp | Description |\n"
         "|----|-----------|-------------|\n"
-        "| 00019 | 2026-02-27T05:00:00Z | Entity lineage tracking |\n"
+        "| 019-entity-lineage | 2026-02-27T05:00:00Z | Entity lineage tracking |\n"
     )
     (tmp_path / "backlog.md").write_text(backlog_md)
 
@@ -85,7 +85,6 @@ def test_fixtures_smoke(artifacts):
 
 
 class TestScanOrder:
-    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_backlog_registered_before_brainstorms(self, artifacts):
         """Backlog items should exist in DB before brainstorms that reference them."""
         root, db = artifacts
@@ -94,14 +93,13 @@ class TestScanOrder:
         run_backfill(db, str(root))
 
         # Backlog entity should exist
-        backlog = db.get_entity("backlog:00019")
+        backlog = db.get_entity("backlog:019-entity-lineage")
         assert backlog is not None
 
         # Brainstorm that references backlog should have parent link
         brainstorm = db.get_entity("brainstorm:20260227-lineage")
         assert brainstorm is not None
 
-    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_all_entity_types_registered(self, artifacts):
         """After backfill, entities of all scanned types should be present."""
         root, db = artifacts
@@ -109,7 +107,7 @@ class TestScanOrder:
 
         run_backfill(db, str(root))
 
-        assert db.get_entity("backlog:00019") is not None
+        assert db.get_entity("backlog:019-entity-lineage") is not None
         assert db.get_entity("brainstorm:20260227-lineage") is not None
         assert db.get_entity("feature:029-entity-lineage-tracking") is not None
 
@@ -126,7 +124,6 @@ class TestScanOrder:
 
 
 class TestParentDerivation:
-    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_feature_to_brainstorm_via_meta(self, artifacts):
         """Feature with brainstorm_source should link to brainstorm parent."""
         root, db = artifacts
@@ -138,14 +135,14 @@ class TestParentDerivation:
         assert feature is not None
         assert feature["parent_type_id"] == "brainstorm:20260227-lineage"
 
-    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_feature_to_project_via_meta(self, tmp_path):
         """Feature with project_id should link to project parent (priority over brainstorm)."""
         # Create project
-        proj_dir = tmp_path / "projects" / "P001"
+        proj_dir = tmp_path / "projects" / "001-test-project"
         proj_dir.mkdir(parents=True)
         (proj_dir / ".meta.json").write_text(json.dumps({
-            "id": "P001",
+            "id": "001",
+            "slug": "test-project",
             "name": "Test Project",
         }))
 
@@ -155,7 +152,7 @@ class TestParentDerivation:
         (feat_dir / ".meta.json").write_text(json.dumps({
             "id": "030",
             "slug": "some-feature",
-            "project_id": "P001",
+            "project_id": "001-test-project",
             "brainstorm_source": "docs/brainstorms/20260227-some.prd.md",
         }))
 
@@ -170,13 +167,12 @@ class TestParentDerivation:
             feature = db.get_entity("feature:030-some-feature")
             assert feature is not None
             # project_id takes precedence over brainstorm_source
-            assert feature["parent_type_id"] == "project:P001"
+            assert feature["parent_type_id"] == "project:001-test-project"
         finally:
             db.close()
 
-    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_brainstorm_to_backlog_format1(self, artifacts):
-        """Brainstorm with '*Source: Backlog #00019*' should link to backlog."""
+        """Brainstorm with '*Source: Backlog #019-entity-lineage*' should link to backlog."""
         root, db = artifacts
         from entity_registry.backfill import run_backfill
 
@@ -184,24 +180,23 @@ class TestParentDerivation:
 
         brainstorm = db.get_entity("brainstorm:20260227-lineage")
         assert brainstorm is not None
-        assert brainstorm["parent_type_id"] == "backlog:00019"
+        assert brainstorm["parent_type_id"] == "backlog:019-entity-lineage"
 
-    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_brainstorm_to_backlog_format2(self, tmp_path):
-        """Brainstorm with '**Backlog Item:** 00019' should link to backlog."""
+        """Brainstorm with '**Backlog Item:** 019-entity-lineage' should link to backlog."""
         # Create backlog
         (tmp_path / "backlog.md").write_text(
             "# Backlog\n\n"
             "| ID | Timestamp | Description |\n"
             "|----|-----------|-------------|\n"
-            "| 00020 | 2026-02-28T00:00:00Z | Another item |\n"
+            "| 020-another-item | 2026-02-28T00:00:00Z | Another item |\n"
         )
 
         # Create brainstorm with format 2
         bs_dir = tmp_path / "brainstorms"
         bs_dir.mkdir()
         (bs_dir / "20260228-another.prd.md").write_text(
-            "# Brainstorm\n\n**Backlog Item:** 00020\n\nSome content.\n"
+            "# Brainstorm\n\n**Backlog Item:** 020-another-item\n\nSome content.\n"
         )
 
         (tmp_path / "features").mkdir()
@@ -215,7 +210,7 @@ class TestParentDerivation:
 
             brainstorm = db.get_entity("brainstorm:20260228-another")
             assert brainstorm is not None
-            assert brainstorm["parent_type_id"] == "backlog:00020"
+            assert brainstorm["parent_type_id"] == "backlog:020-another-item"
         finally:
             db.close()
 
@@ -255,10 +250,9 @@ class TestParentDerivation:
 
 
 class TestOrphanedAndExternal:
-    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_orphaned_backlog_gets_synthetic_entity(self, tmp_path):
         """Feature referencing non-existent backlog_source creates orphaned synthetic."""
-        # No backlog.md at all -- backlog:00099 won't be found
+        # No backlog.md at all -- backlog:099-orphan-item won't be found
         (tmp_path / "brainstorms").mkdir()
         (tmp_path / "projects").mkdir()
         feat_dir = tmp_path / "features" / "031-orphan-test"
@@ -266,7 +260,7 @@ class TestOrphanedAndExternal:
         (feat_dir / ".meta.json").write_text(json.dumps({
             "id": "031",
             "slug": "orphan-test",
-            "backlog_source": "00099",
+            "backlog_source": "099-orphan-item",
         }))
 
         db = EntityDatabase(str(tmp_path / "test.db"))
@@ -276,19 +270,18 @@ class TestOrphanedAndExternal:
             run_backfill(db, str(tmp_path))
 
             # Synthetic orphaned backlog should exist
-            orphan = db.get_entity("backlog:00099")
+            orphan = db.get_entity("backlog:099-orphan-item")
             assert orphan is not None
             assert orphan["status"] == "orphaned"
-            assert "00099" in orphan["name"]
+            assert "099-orphan-item" in orphan["name"]
 
             # Feature should be parented to the synthetic backlog
             feature = db.get_entity("feature:031-orphan-test")
             assert feature is not None
-            assert feature["parent_type_id"] == "backlog:00099"
+            assert feature["parent_type_id"] == "backlog:099-orphan-item"
         finally:
             db.close()
 
-    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_external_brainstorm_gets_synthetic_entity(self, tmp_path):
         """Feature referencing external brainstorm_source creates external synthetic."""
         (tmp_path / "brainstorms").mkdir()
@@ -321,7 +314,6 @@ class TestOrphanedAndExternal:
         finally:
             db.close()
 
-    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_external_absolute_path_detection(self, tmp_path):
         """Absolute paths should be detected as external."""
         (tmp_path / "brainstorms").mkdir()
@@ -353,7 +345,6 @@ class TestOrphanedAndExternal:
 
 
 class TestIdempotencyAndPriority:
-    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_backfill_idempotent(self, artifacts):
         """Running backfill twice produces same result (no duplicates, no errors)."""
         root, db = artifacts
@@ -362,7 +353,7 @@ class TestIdempotencyAndPriority:
         run_backfill(db, str(root))
 
         # Capture state after first run
-        backlog1 = db.get_entity("backlog:00019")
+        backlog1 = db.get_entity("backlog:019-entity-lineage")
         brainstorm1 = db.get_entity("brainstorm:20260227-lineage")
         feature1 = db.get_entity("feature:029-entity-lineage-tracking")
 
@@ -373,7 +364,7 @@ class TestIdempotencyAndPriority:
         run_backfill(db, str(root))
 
         # Entities should be identical (INSERT OR IGNORE preserves originals)
-        backlog2 = db.get_entity("backlog:00019")
+        backlog2 = db.get_entity("backlog:019-entity-lineage")
         brainstorm2 = db.get_entity("brainstorm:20260227-lineage")
         feature2 = db.get_entity("feature:029-entity-lineage-tracking")
 
@@ -719,7 +710,6 @@ class TestIsExternalPath:
 
 
 class TestBackfillCompleteMarker:
-    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_marker_set_after_full_run(self, artifacts):
         """backfill_complete should be '1' in _metadata after successful run."""
         root, db = artifacts
@@ -729,7 +719,6 @@ class TestBackfillCompleteMarker:
         run_backfill(db, str(root))
         assert db.get_metadata("backfill_complete") == "1"
 
-    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_marker_not_set_skips_rerun(self, artifacts):
         """When backfill_complete is '1', run_backfill should skip entirely."""
         root, db = artifacts
@@ -752,7 +741,6 @@ class TestBackfillCompleteMarker:
         # New feature should NOT be registered (run was skipped)
         assert db.get_entity("feature:099-new-feature") is None
 
-    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_marker_not_set_allows_rerun(self, artifacts):
         """When backfill_complete is not '1', run_backfill should execute."""
         root, db = artifacts
@@ -779,7 +767,6 @@ class TestBackfillCompleteMarker:
         assert db.get_entity("feature:099-new-feature") is not None
         assert db.get_metadata("backfill_complete") == "1"
 
-    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_partial_failure_recovery(self, tmp_path):
         """If backfill fails mid-way, re-run should recover via INSERT OR IGNORE."""
         (tmp_path / "brainstorms").mkdir()
@@ -791,7 +778,7 @@ class TestBackfillCompleteMarker:
             "# Backlog\n\n"
             "| ID | Timestamp | Description |\n"
             "|----|-----------|-------------|\n"
-            "| 00050 | 2026-03-01T00:00:00Z | Partial test |\n"
+            "| 050-partial-test | 2026-03-01T00:00:00Z | Partial test |\n"
         )
 
         db = EntityDatabase(str(tmp_path / "test.db"))
@@ -880,7 +867,6 @@ class TestExtractPrdTitle:
 class TestBacklogTitleTruncation:
     """Tests for backlog title/description splitting in _scan_backlog."""
 
-    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_short_description_no_truncation(self, tmp_path):
         """Descriptions ≤ 80 chars are used as-is."""
         short = "Fix the login bug"
@@ -888,7 +874,7 @@ class TestBacklogTitleTruncation:
             "# Backlog\n\n"
             "| ID | Timestamp | Description |\n"
             "|----|-----------|-------------|\n"
-            f"| 00001 | 2026-01-01T00:00:00Z | {short} |\n"
+            f"| 001-title-item | 2026-01-01T00:00:00Z | {short} |\n"
         )
         (tmp_path / "brainstorms").mkdir()
         (tmp_path / "projects").mkdir()
@@ -899,12 +885,11 @@ class TestBacklogTitleTruncation:
         try:
             from entity_registry.backfill import run_backfill
             run_backfill(db, str(tmp_path))
-            entity = db.get_entity("backlog:00001")
+            entity = db.get_entity("backlog:001-title-item")
             assert entity["name"] == short
         finally:
             db.close()
 
-    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_long_description_truncated_at_word_boundary(self, tmp_path):
         """Descriptions > 80 chars are truncated at last space before char 80."""
         long_desc = "Implement a comprehensive logging framework that captures all API calls and responses for debugging purposes"
@@ -914,7 +899,7 @@ class TestBacklogTitleTruncation:
             "# Backlog\n\n"
             "| ID | Timestamp | Description |\n"
             "|----|-----------|-------------|\n"
-            f"| 00001 | 2026-01-01T00:00:00Z | {long_desc} |\n"
+            f"| 001-title-item | 2026-01-01T00:00:00Z | {long_desc} |\n"
         )
         (tmp_path / "brainstorms").mkdir()
         (tmp_path / "projects").mkdir()
@@ -925,13 +910,12 @@ class TestBacklogTitleTruncation:
         try:
             from entity_registry.backfill import run_backfill
             run_backfill(db, str(tmp_path))
-            entity = db.get_entity("backlog:00001")
+            entity = db.get_entity("backlog:001-title-item")
             assert entity["name"].endswith("\u2026")
             assert len(entity["name"]) <= 83  # 80 + "…"
         finally:
             db.close()
 
-    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_backlog_metadata_description_full_text(self, tmp_path):
         """metadata.description contains the full untruncated text."""
         long_desc = "Implement a comprehensive logging framework that captures all API calls and responses for debugging purposes"
@@ -939,7 +923,7 @@ class TestBacklogTitleTruncation:
             "# Backlog\n\n"
             "| ID | Timestamp | Description |\n"
             "|----|-----------|-------------|\n"
-            f"| 00001 | 2026-01-01T00:00:00Z | {long_desc} |\n"
+            f"| 001-title-item | 2026-01-01T00:00:00Z | {long_desc} |\n"
         )
         (tmp_path / "brainstorms").mkdir()
         (tmp_path / "projects").mkdir()
@@ -950,13 +934,12 @@ class TestBacklogTitleTruncation:
         try:
             from entity_registry.backfill import run_backfill
             run_backfill(db, str(tmp_path))
-            entity = db.get_entity("backlog:00001")
+            entity = db.get_entity("backlog:001-title-item")
             meta = json.loads(entity["metadata"]) if isinstance(entity["metadata"], str) else entity["metadata"]
             assert meta["description"] == long_desc
         finally:
             db.close()
 
-    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_backlog_no_spaces_in_first_80(self, tmp_path):
         """Description with no spaces in first 80 chars truncates at char 80."""
         no_space = "a" * 100  # 100 chars, no spaces
@@ -964,7 +947,7 @@ class TestBacklogTitleTruncation:
             "# Backlog\n\n"
             "| ID | Timestamp | Description |\n"
             "|----|-----------|-------------|\n"
-            f"| 00001 | 2026-01-01T00:00:00Z | {no_space} |\n"
+            f"| 001-title-item | 2026-01-01T00:00:00Z | {no_space} |\n"
         )
         (tmp_path / "brainstorms").mkdir()
         (tmp_path / "projects").mkdir()
@@ -975,7 +958,7 @@ class TestBacklogTitleTruncation:
         try:
             from entity_registry.backfill import run_backfill
             run_backfill(db, str(tmp_path))
-            entity = db.get_entity("backlog:00001")
+            entity = db.get_entity("backlog:001-title-item")
             assert entity["name"] == "a" * 80 + "\u2026"
         finally:
             db.close()
@@ -1003,14 +986,13 @@ class TestBacklogStatusDerivation:
         (tmp_path / "features").mkdir(exist_ok=True)
         (tmp_path / "backlog.md").write_text(backlog_md)
 
-    @pytest.mark.usefixtures("_strict_id_format_off_until_c7")
     def test_no_annotation_leaves_status_null(self, tmp_path):
-        self._make_backlog(tmp_path, "00005", "Add retry logic to webhook delivery")
+        self._make_backlog(tmp_path, "005-webhook-retry", "Add retry logic to webhook delivery")
         db = EntityDatabase(str(tmp_path / "test.db"))
         try:
             from entity_registry.backfill import run_backfill
             run_backfill(db, str(tmp_path))
-            entity = db.get_entity("backlog:00005")
+            entity = db.get_entity("backlog:005-webhook-retry")
             assert entity["status"] is None or entity["status"] == ""
         finally:
             db.close()
@@ -2102,3 +2084,208 @@ class TestWorkflowPhaseBackfill:
             f"Expected 2 top-level batched transactions for 25 entities, "
             f"got {top_level_count}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Wave 2 step 4: an id with no seq/slug form is skipped and logged
+# ---------------------------------------------------------------------------
+
+
+class TestLegacyIdsAreSkipped:
+    """Registration takes only structured identity. A legacy id (``00019``,
+    ``P001``) has none, so backfill skips it with a log line instead of
+    stopping, as the strict gate made it stop before."""
+
+    def _tree(self, root, backlog_rows, marker="019-kept-item"):
+        (root / "backlog.md").write_text(
+            "| ID | Timestamp | Description |\n|----|-----------|-------------|\n"
+            + "".join(f"| {row} | 2026-01-01T00:00:00Z | Item {row} |\n" for row in backlog_rows)
+        )
+        (root / "brainstorms").mkdir()
+        (root / "brainstorms" / "20260101-idea.prd.md").write_text(
+            f"# Idea\n\n*Source: Backlog #{marker}*\n")
+        (root / "features").mkdir()
+        (root / "projects").mkdir()
+
+    def test_a_legacy_id_is_skipped_and_the_scan_goes_on(self, tmp_path, capsys):
+        from entity_registry.backfill import run_backfill
+
+        self._tree(tmp_path, ["00019", "019-kept-item"])
+        old_project = tmp_path / "projects" / "P001-old"
+        old_project.mkdir()
+        (old_project / ".meta.json").write_text(json.dumps({"id": "P001", "slug": "old"}))
+        db = EntityDatabase(str(tmp_path / "test.db"))
+        try:
+            run_backfill(db, str(tmp_path))
+            err = capsys.readouterr().err
+            assert db.get_entity("backlog:00019") is None
+            assert "skipping backlog '00019': no seq/slug form" in err
+            assert db.get_entity("project:P001-old") is None
+            assert "skipping project 'P001-old': no seq/slug form" in err
+            # The scan went on past both: later rows and scanners still ran.
+            assert db.get_entity("backlog:019-kept-item") is not None
+            assert db.get_entity("brainstorm:20260101-idea")["parent_type_id"] == "backlog:019-kept-item"
+            assert db.get_metadata("backfill_complete") == "1"
+        finally:
+            db.close()
+
+    def test_a_legacy_parent_already_in_the_registry_is_still_linked(self, tmp_path):
+        """Documents on disk say ``#00019``; the registry holds that row as history.
+        A pin: this linked before step 4 and must keep linking."""
+        from entity_registry.backfill import run_backfill
+        from entity_registry.test_helpers import seed_legacy_entity
+
+        self._tree(tmp_path, [], marker="00019")
+        db = EntityDatabase(str(tmp_path / "test.db"))
+        try:
+            seed_legacy_entity(db, "backlog", "00019", "Old item")
+            run_backfill(db, str(tmp_path))
+            assert db.get_entity("brainstorm:20260101-idea")["parent_type_id"] == "backlog:00019"
+        finally:
+            db.close()
+
+    def test_a_missing_legacy_parent_gets_no_placeholder(self, tmp_path, capsys):
+        from entity_registry.backfill import run_backfill
+
+        self._tree(tmp_path, [])
+        feature_dir = tmp_path / "features" / "031-orphan-test"
+        feature_dir.mkdir()
+        (feature_dir / ".meta.json").write_text(json.dumps(
+            {"id": "031", "slug": "orphan-test", "backlog_source": "00099"}))
+        db = EntityDatabase(str(tmp_path / "test.db"))
+        try:
+            run_backfill(db, str(tmp_path))
+            assert db.get_entity("backlog:00099") is None
+            assert "skipping backlog '00099': no seq/slug form" in capsys.readouterr().err
+            assert db.get_entity("feature:031-orphan-test")["parent_type_id"] is None
+        finally:
+            db.close()
+
+
+class TestBackfillLeavesTheRegistryAlone:
+    """Found running step 4's backfill on a snapshot of the live registry: once
+    it could finish, it marked 30 planned features in other workspaces finished,
+    replaced parents set since, and minted brainstorms from non-brainstorm files."""
+
+    def _empty_tree(self, root):
+        for sub in ("brainstorms", "features", "projects"):
+            (root / sub).mkdir()
+
+    def _feature(self, root, seq, slug, **meta):
+        feature_dir = root / "features" / f"{seq:03d}-{slug}"
+        feature_dir.mkdir()
+        (feature_dir / ".meta.json").write_text(json.dumps({"id": f"{seq:03d}", "slug": slug, **meta}))
+
+    def test_the_null_phase_cleanup_stays_in_its_workspace_and_on_done_entities(self, tmp_path):
+        from entity_registry.backfill import run_backfill
+        from entity_registry.test_helpers import bootstrap_test_workspace
+
+        self._empty_tree(tmp_path)
+        db = EntityDatabase(str(tmp_path / "test.db"))
+        try:
+            ours = bootstrap_test_workspace(db, "ours")
+            theirs = bootstrap_test_workspace(db, "theirs")
+            for seq, slug, status, ws in ((1, "planned-here", "planned", ours),
+                                          (2, "abandoned-here", "abandoned", ours),
+                                          (3, "abandoned-there", "abandoned", theirs)):
+                db.register_entity("feature", name=slug, seq=seq, slug=slug, status=status,
+                                   workspace_uuid=ws)
+                db.create_workflow_phase(f"feature:{seq:03d}-{slug}")
+            run_backfill(db, str(tmp_path), project_id="ours")
+            phase = {row["type_id"]: row["workflow_phase"] for row in db.list_workflow_phases()}
+            assert phase["feature:002-abandoned-here"] == "finish"
+            assert phase["feature:001-planned-here"] is None
+            assert phase["feature:003-abandoned-there"] is None
+        finally:
+            db.close()
+
+    def test_an_existing_parent_is_never_replaced(self, tmp_path):
+        from entity_registry.backfill import run_backfill
+
+        self._empty_tree(tmp_path)
+        (tmp_path / "brainstorms" / "20260101-idea.prd.md").write_text("# Idea\n")
+        self._feature(tmp_path, 29, "kept", brainstorm_source="docs/brainstorms/20260101-idea.prd.md")
+        db = EntityDatabase(str(tmp_path / "test.db"))
+        try:
+            db.register_entity("project", name="Owner", seq=1, slug="owner", project_id="__unknown__")
+            db.register_entity("feature", name="Kept", seq=29, slug="kept", project_id="__unknown__")
+            db.set_parent("feature:029-kept", "project:001-owner")
+            run_backfill(db, str(tmp_path))
+            assert db.get_entity("feature:029-kept")["parent_type_id"] == "project:001-owner"
+        finally:
+            db.close()
+
+    def test_a_brainstorm_source_written_as_a_type_id_is_used_as_is(self, tmp_path):
+        from entity_registry.backfill import run_backfill
+
+        self._empty_tree(tmp_path)
+        (tmp_path / "brainstorms" / "20260101-idea.prd.md").write_text("# Idea\n")
+        self._feature(tmp_path, 30, "newer", brainstorm_source="brainstorm:20260101-idea")
+        db = EntityDatabase(str(tmp_path / "test.db"))
+        try:
+            run_backfill(db, str(tmp_path))
+            assert db.get_entity("feature:030-newer")["parent_type_id"] == "brainstorm:20260101-idea"
+            assert db.get_entity("brainstorm:brainstorm:20260101-idea") is None
+        finally:
+            db.close()
+
+    def test_a_source_that_is_not_a_brainstorm_file_is_no_parent(self, tmp_path):
+        from entity_registry.backfill import run_backfill
+
+        self._empty_tree(tmp_path)
+        self._feature(tmp_path, 31, "from-a-project",
+                      brainstorm_source="docs/projects/001-x/prd.md")
+        db = EntityDatabase(str(tmp_path / "test.db"))
+        try:
+            run_backfill(db, str(tmp_path))
+            assert db.get_entity("brainstorm:prd") is None
+            assert db.get_entity("feature:031-from-a-project")["parent_type_id"] is None
+        finally:
+            db.close()
+
+    def test_a_placeholder_never_overwrites_a_registered_parent(self, tmp_path):
+        """terry_agent: the parent brainstorm exists in two workspaces, so
+        get_entity(type_id) sees none, and the placeholder upsert used to
+        rewrite the real row's status to 'orphaned'."""
+        from entity_registry.backfill import run_backfill
+        from entity_registry.test_helpers import bootstrap_test_workspace
+
+        self._empty_tree(tmp_path)
+        self._feature(tmp_path, 40, "child", brainstorm_source="docs/brainstorms/20260101-shared.prd.md")
+        db = EntityDatabase(str(tmp_path / "test.db"))
+        try:
+            ours = bootstrap_test_workspace(db, "ours")
+            theirs = bootstrap_test_workspace(db, "theirs")
+            for ws in (ours, theirs):
+                db.register_entity("brainstorm", name="Shared", display_id="20260101-shared",
+                                   status="active", workspace_uuid=ws)
+            run_backfill(db, str(tmp_path), project_id="ours")
+            [ours_row] = [e for e in db.list_entities(workspace_uuid=ours)
+                          if e["type_id"] == "brainstorm:20260101-shared"]
+            assert ours_row["status"] == "active"
+        finally:
+            db.close()
+
+    @pytest.mark.parametrize("kind, folder", [("feature", "features"), ("project", "projects")])
+    def test_a_row_stored_under_an_unpadded_id_is_not_registered_twice(self, tmp_path, kind, folder):
+        """fractorg: the registry holds 66-x, .meta.json says 066. Looking up by
+        type_id missed the row and registered a second entity with seq 66."""
+        from entity_registry.backfill import run_backfill
+
+        self._empty_tree(tmp_path)
+        (tmp_path / folder / "066-old-form").mkdir()
+        (tmp_path / folder / "066-old-form" / ".meta.json").write_text(
+            json.dumps({"id": "066", "slug": "old-form"}))
+        db = EntityDatabase(str(tmp_path / "test.db"))
+        try:
+            entity_uuid = db.register_entity(kind, name="Old form", seq=66, slug="old-form",
+                                             project_id="__unknown__")
+            # How pre-padding registries stored it; nothing guards type_id since migration 12.
+            db._conn.execute("UPDATE entities SET type_id = ?, entity_id = ? WHERE uuid = ?",
+                             (f"{kind}:66-old-form", "66-old-form", entity_uuid))
+            db._conn.commit()
+            run_backfill(db, str(tmp_path))
+            assert db.get_entity(f"{kind}:066-old-form") is None
+            assert db.get_entity(f"{kind}:66-old-form")["uuid"] == entity_uuid
+        finally:
+            db.close()

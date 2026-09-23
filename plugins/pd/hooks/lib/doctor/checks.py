@@ -585,13 +585,12 @@ def check_display_row_invariant(
     ambiguous rows and make every future seq -> entity lookup non-deterministic.
 
     **Why it has to exist before C3.** C3 refuses allocation for a bucket
-    holding non-legacy entities that lack display rows. Until C7 moves it to
-    seq/slug (Wave 2 step 4), ``init_project_state`` passes the ``entity_id``
-    text form with ``_strict_id_format=False``, and that form writes the
-    display row only ``if strict:``, so every project it creates in any
-    workspace adds a fresh violation and C3 would then refuse that bucket
-    forever. This turns a silent accumulation into a visible one the moment
-    it starts.
+    holding non-legacy entities that lack display rows. Until Wave 2 step 4,
+    ``init_project_state`` registered every project without one, so each
+    project it created added a fresh violation and C3 would then have
+    refused that bucket forever. Every registration now passes seq/slug,
+    which always writes the row; this check makes any write path that skips
+    it visible the moment it starts.
 
     Severity is ``error``: a violation is a write-path bug, not drift. Note
     that doctor's exit code is always 0 regardless (see ``doctor/__main__``),

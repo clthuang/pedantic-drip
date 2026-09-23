@@ -225,19 +225,14 @@ def test_archival_preserves_status_and_sets_the_flag(tmp_backlog, tmp_archive, t
         item_ids.extend(cleanup_backlog._extract_item_ids(sec["items"]))
     assert item_ids, "fixture must contain archivable items for this test to mean anything"
 
-    for n, item_id in enumerate(item_ids):
+    from entity_registry.test_helpers import seed_legacy_entity
+
+    for item_id in item_ids:
         # A legacy backlog row: cleanup_backlog finds it by the text id the
-        # backlog.md row carries ("99001"), which has no sequence/slug form.
-        # Only the entity_id text form can register it; step 5 removes that
-        # form and must seed the row directly instead.
-        db.register_entity(
-            "backlog",
-            entity_id=item_id,
-            name=f"item {item_id}",
-            workspace_uuid=ws,
-            status="completed",
-            _strict_id_format=False,
-        )
+        # backlog.md row carries ("99001"), which has no seq/slug form, so
+        # the row can only exist as history.
+        seed_legacy_entity(db, "backlog", item_id, f"item {item_id}",
+                           workspace_uuid=ws, status="completed")
 
     monkey = os.environ.get("ENTITY_DB_PATH")
     os.environ["ENTITY_DB_PATH"] = str(db_path)

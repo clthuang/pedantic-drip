@@ -13,7 +13,8 @@ import os
 import re
 import sys
 
-from entity_registry.database import EntityDatabase
+from entity_registry.database import EntityDatabase, EntityExistsError
+from entity_registry.id_generator import registration_identity, render_display_id
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,10 @@ ENTITY_SCAN_ORDER = ["backlog", "brainstorm", "project", "feature"]
 # backlog->feature link is silently lost for one generation of documents.
 BACKLOG_MARKER_PATTERN_1 = r"\*Source:\s*Backlog\s*#([0-9][^\s*]*)\*"
 BACKLOG_MARKER_PATTERN_2 = r"\*\*Backlog Item:\*\*\s*([0-9][^\s*]*)"
+
+# Statuses after which an entity's work is over; the NULL-phase cleanup
+# marks only these finished.
+_DONE_STATUSES = frozenset({"completed", "abandoned"})
 
 PHASE_SEQUENCE: tuple[str, ...] = (
     "brainstorm", "specify", "design", "create-plan",
@@ -196,15 +201,23 @@ def run_backfill(
     for entity_type in ENTITY_SCAN_ORDER:
         scanners[entity_type](db, artifacts_root, project_id=project_id)
 
-    # Fix orphaned NULL workflow_phase values (e.g. abandoned entities)
-    with db.transaction():
-        all_phases = db.list_workflow_phases()
-        for row in all_phases:
-            if row["workflow_phase"] is None:
-                try:
-                    db.update_workflow_phase(row["type_id"], workflow_phase="finish")
-                except ValueError:
-                    pass  # TOCTOU: row deleted between list and update
+    # A NULL workflow_phase on an entity already done (e.g. abandoned) means
+    # it finished. Only this workspace's rows, and only done entities: a
+    # planned feature has no phase yet, and another workspace's rows are not
+    # this backfill's to change.
+    workspace_uuid = db._resolve_optional_workspace_filter(
+        None, project_id, _caller="run_backfill")
+    if workspace_uuid is not None:
+        done = {e["type_id"] for e in db.list_entities(workspace_uuid=workspace_uuid)
+                if e["status"] in _DONE_STATUSES}
+        with db.transaction():
+            for row in db.list_workflow_phases(workspace_uuid=workspace_uuid):
+                if row["workflow_phase"] is None and row["type_id"] in done:
+                    try:
+                        db.update_workflow_phase(row["type_id"], workflow_phase="finish",
+                                                 workspace_uuid=workspace_uuid)
+                    except ValueError:
+                        pass  # TOCTOU: row deleted between list and update
 
     # Mark backfill as complete with current version
     db.set_metadata("backfill_complete", "1")
@@ -431,6 +444,10 @@ def _scan_backlog(db: EntityDatabase, artifacts_root: str, project_id: str = "__
         # Skip header row and separator row
         if item_id == "ID" or item_id.startswith("-"):
             continue
+        identity = registration_identity("backlog", item_id)
+        if identity is None:
+            _log_skipped("backlog", item_id)
+            continue
 
         description = cells[2]
         if len(description) <= 80:
@@ -442,7 +459,7 @@ def _scan_backlog(db: EntityDatabase, artifacts_root: str, project_id: str = "__
         # F12 audit: idempotent backfill → upsert_entity
         db.upsert_entity(
             entity_type="backlog",
-            entity_id=item_id,
+            **identity,
             name=title,
             artifact_path=backlog_path,
             metadata={"description": description},
@@ -548,6 +565,7 @@ def _scan_projects(db: EntityDatabase, artifacts_root: str, project_id: str = "_
         return
 
     meta_files = sorted(glob.glob(os.path.join(proj_dir, "*", ".meta.json")))
+    by_display = _registered_by_display(db, "project", project_id)
     for path in meta_files:
         meta = _read_json(path)
         if meta is None:
@@ -561,23 +579,30 @@ def _scan_projects(db: EntityDatabase, artifacts_root: str, project_id: str = "_
         # fallback for first-pass invocations.
         row = _read_entity_display_for_project(db, meta)
         if row is None:
-            proj_entity_id = meta.get("id", "")
+            proj_entity_id = f"{meta.get('id', '')}-{meta.get('slug', '')}"
+            identity = registration_identity("project", proj_entity_id)
+            if identity is None:
+                _log_skipped("project", proj_entity_id)
+                continue
         else:
-            proj_entity_id = str(row["seq"])
+            identity = {"seq": row["seq"], "slug": row["slug"]}
+            proj_entity_id = render_display_id("project", row["seq"], row["slug"])
         name = meta.get("name", proj_entity_id)
 
         # F12 audit: idempotent backfill → upsert_entity
-        db.upsert_entity(
-            entity_type="project",
-            entity_id=proj_entity_id,
-            name=name,
-            artifact_path=os.path.dirname(path),
-            project_id=project_id,
-        )
+        type_id = by_display.get((identity["seq"], identity["slug"]))
+        if type_id is None or type_id == f"project:{proj_entity_id}":
+            type_id = db.upsert_entity(
+                entity_type="project",
+                **identity,
+                name=name,
+                artifact_path=os.path.dirname(path),
+                project_id=project_id,
+            )
 
         parent_type_id = _derive_parent("project", meta, None)
         if parent_type_id:
-            _safe_set_parent(db, f"project:{proj_entity_id}", parent_type_id)
+            _safe_set_parent(db, type_id, parent_type_id)
 
 
 def _scan_features(db: EntityDatabase, artifacts_root: str, project_id: str = "__unknown__") -> None:
@@ -587,6 +612,7 @@ def _scan_features(db: EntityDatabase, artifacts_root: str, project_id: str = "_
         return
 
     meta_files = sorted(glob.glob(os.path.join(feat_dir, "*", ".meta.json")))
+    by_display = _registered_by_display(db, "feature", project_id)
     for path in meta_files:
         meta = _read_json(path)
         if meta is None:
@@ -600,10 +626,15 @@ def _scan_features(db: EntityDatabase, artifacts_root: str, project_id: str = "_
         if row is None:
             feat_id = meta.get("id", "")
             slug = meta.get("slug", "")
+            entity_id = f"{feat_id}-{slug}" if slug else feat_id
+            identity = registration_identity("feature", entity_id)
+            if identity is None:
+                _log_skipped("feature", entity_id)
+                continue
         else:
-            feat_id = str(row["seq"])
             slug = row["slug"]
-        entity_id = f"{feat_id}-{slug}" if slug else feat_id
+            identity = {"seq": row["seq"], "slug": slug}
+            entity_id = render_display_id("feature", row["seq"], slug)
         name = meta.get("name", "")
         if not name:
             name = _humanize_slug(slug or entity_id)
@@ -614,14 +645,16 @@ def _scan_features(db: EntityDatabase, artifacts_root: str, project_id: str = "_
             entity_meta = {"depends_on_features": meta["depends_on_features"]}
 
         # F12 audit: idempotent backfill → upsert_entity
-        type_id = db.upsert_entity(
-            entity_type="feature",
-            entity_id=entity_id,
-            name=name,
-            artifact_path=os.path.dirname(path),
-            metadata=entity_meta,
-            project_id=project_id,
-        )
+        type_id = by_display.get((identity["seq"], identity["slug"]))
+        if type_id is None or type_id == f"feature:{entity_id}":
+            type_id = db.upsert_entity(
+                entity_type="feature",
+                **identity,
+                name=name,
+                artifact_path=os.path.dirname(path),
+                metadata=entity_meta,
+                project_id=project_id,
+            )
 
         # Update name if existing entity has a slug-style name (no spaces)
         existing = db.get_entity(f"feature:{entity_id}")
@@ -636,8 +669,7 @@ def _scan_features(db: EntityDatabase, artifacts_root: str, project_id: str = "_
                 _register_synthetic_for_missing_parent(
                     db, parent_type_id, meta, project_id=project_id,
                 )
-            if db.get_entity(parent_type_id) is not None:
-                db.set_parent(type_id, parent_type_id)
+            _safe_set_parent(db, type_id, parent_type_id)
 
         # Handle backlog_source for direct backlog link (if no other parent set)
         if not parent_type_id and meta.get("backlog_source"):
@@ -649,7 +681,7 @@ def _scan_features(db: EntityDatabase, artifacts_root: str, project_id: str = "_
                     f"Backlog #{bl_id} (orphaned)", "orphaned",
                     project_id=project_id,
                 )
-            db.set_parent(type_id, bl_type_id)
+            _safe_set_parent(db, type_id, bl_type_id)
 
 
 # ---------------------------------------------------------------------------
@@ -690,11 +722,7 @@ def _derive_parent(
         return None
 
     if entity_type == "project":
-        bs_source = meta.get("brainstorm_source")
-        if bs_source:
-            stem = _brainstorm_stem(bs_source)
-            return f"brainstorm:{stem}"
-        return None
+        return _brainstorm_parent(meta.get("brainstorm_source"))
 
     if entity_type == "feature":
         # Priority 1: project_id
@@ -703,10 +731,9 @@ def _derive_parent(
             return f"project:{project_id}"
 
         # Priority 2: brainstorm_source
-        bs_source = meta.get("brainstorm_source")
-        if bs_source:
-            stem = _brainstorm_stem(bs_source)
-            return f"brainstorm:{stem}"
+        parent = _brainstorm_parent(meta.get("brainstorm_source"))
+        if parent:
+            return parent
 
         # Priority 3: backlog_source (handled separately in _scan_features)
         return None
@@ -726,19 +753,31 @@ def _register_synthetic(
     name: str,
     status: str,
     project_id: str = "__unknown__",
-) -> str:
+) -> str | None:
     """Register a synthetic entity (orphaned/external).
 
-    Returns the constructed type_id.
+    Returns the constructed type_id, or None when ``entity_id`` has no
+    seq/slug form and is skipped.
     """
-    # F12 audit: idempotent backfill → upsert_entity
-    return db.upsert_entity(
-        entity_type=entity_type,
-        entity_id=entity_id,
-        name=name,
-        status=status,
-        project_id=project_id,
-    )
+    identity = registration_identity(entity_type, entity_id)
+    if identity is None:
+        _log_skipped(entity_type, entity_id)
+        return None
+    # F12 audit: conflict-is-error → register_entity, EntityExistsError handled.
+    # Only when absent: the caller's get_entity(type_id) sees nothing when the
+    # id exists in two workspaces, and an upsert would then rewrite this
+    # workspace's real row (its status became 'orphaned').
+    try:
+        db.register_entity(
+            entity_type=entity_type,
+            **identity,
+            name=name,
+            status=status,
+            project_id=project_id,
+        )
+    except EntityExistsError:
+        pass
+    return f"{entity_type}:{entity_id}"
 
 
 def _register_synthetic_for_missing_parent(
@@ -836,7 +875,7 @@ def _register_brainstorm(db: EntityDatabase, path: str, stem: str, project_id: s
     # F12 audit: idempotent backfill → upsert_entity
     db.upsert_entity(
         entity_type="brainstorm",
-        entity_id=stem,
+        display_id=stem,
         name=title,
         artifact_path=path,
         project_id=project_id,
@@ -844,6 +883,25 @@ def _register_brainstorm(db: EntityDatabase, path: str, stem: str, project_id: s
     db.update_entity(type_id=f"brainstorm:{stem}", name=title, project_id=project_id)
     if parent_type_id:
         _safe_set_parent(db, f"brainstorm:{stem}", parent_type_id)
+
+
+def _brainstorm_parent(bs_source: str | None) -> str | None:
+    """The brainstorm type_id a ``brainstorm_source`` names, or None.
+
+    Newer ``.meta.json`` files write the type_id itself
+    (``brainstorm:20260710-…``), used as-is. A path inside the repository
+    names a brainstorm only if it is in a ``brainstorms`` directory; any other
+    file (a project's ``prd.md``) is not one, and inventing a brainstorm for it
+    mints a phantom entity. External paths keep their placeholder.
+    """
+    if not bs_source:
+        return None
+    if bs_source.startswith("brainstorm:"):
+        return bs_source
+    if not _is_external_path(bs_source) and \
+            os.path.basename(os.path.dirname(bs_source)) != "brainstorms":
+        return None
+    return f"brainstorm:{_brainstorm_stem(bs_source)}"
 
 
 def _brainstorm_stem(path: str) -> str:
@@ -885,10 +943,40 @@ def _read_json(path: str) -> dict | None:
         return None
 
 
+def _registered_by_display(db: EntityDatabase, kind: str, project_id: str) -> dict:
+    """(seq, slug) -> type_id for this workspace's registered ``kind`` entities.
+
+    A registry older than zero-padding holds ``feature:66-x`` where
+    ``.meta.json`` says ``066``; a type_id lookup misses that row and
+    would register the feature a second time.
+    """
+    workspace_uuid = db._resolve_optional_workspace_filter(
+        None, project_id, _caller="backfill")
+    found: dict = {}
+    for entity in db.list_entities(entity_type=kind, workspace_uuid=workspace_uuid):
+        display = db.get_entity_display(entity["uuid"])
+        if display is not None:
+            found.setdefault((display["seq"], display["slug"]), entity["type_id"])
+    return found
+
+
+def _log_skipped(kind: str, text_id: str) -> None:
+    """An id with no seq/slug form (``00019``, ``P001``) is skipped, never guessed at."""
+    print(f"entity-server: backfill: skipping {kind} {text_id!r}: no seq/slug form",
+          file=sys.stderr)
+
+
 def _safe_set_parent(
     db: EntityDatabase, type_id: str, parent_type_id: str
 ) -> None:
-    """Set parent, logging a warning if the operation fails."""
+    """Fill a missing parent, logging a warning if the operation fails.
+
+    A parent already set is left alone: backfill derives parents from files
+    on disk, which are older than what the registry has since recorded.
+    """
+    child = db.get_entity(type_id)
+    if child is None or child["parent_uuid"] is not None:
+        return
     if db.get_entity(parent_type_id) is not None:
         try:
             db.set_parent(type_id, parent_type_id)

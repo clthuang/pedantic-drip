@@ -405,22 +405,21 @@ class TestInitProjectState:
             db=mock_db,
             artifacts_root=str(tmp_path),
             project_dir=project_dir,
-            project_id="P01",
+            project_id="001",
             slug="my-proj",
-            branch="feature/P01",
+            branch="feature/001",
             features='["feat-a","feat-b"]',
             milestones='["m1"]',
         )
 
         assert result["created"] is True
-        assert result["project_type_id"] == "project:P01-my-proj"
+        assert result["project_type_id"] == "project:001-my-proj"
         assert os.path.isfile(result["meta_json_path"])
         mock_db.register_entity.assert_called_once()
 
-    def test_project_id_bypasses_strict_display_gate(self, mock_db, tmp_path):
-        """P{NNN}-prefixed project ids sit outside the feature-110 seq-slug
-        display contract — registration must pass _strict_id_format=False or
-        the ^\\d+-.+ gate rejects every project (create-project regression)."""
+    def test_project_registers_with_seq_and_slug(self, mock_db, tmp_path):
+        """C4 dropped the P prefix: the allocated id splits into seq and slug,
+        so registration writes the display row like any sequence kind."""
         project_dir = str(tmp_path / "projects" / "entity-db-redesign")
         os.makedirs(project_dir, exist_ok=True)
 
@@ -428,16 +427,34 @@ class TestInitProjectState:
             db=mock_db,
             artifacts_root=str(tmp_path),
             project_dir=project_dir,
-            project_id="P004",
+            project_id="004",
             slug="entity-db-redesign",
-            branch="feature/P004",
+            branch="feature/004",
             features="[]",
             milestones="[]",
         )
 
         kwargs = mock_db.register_entity.call_args.kwargs
-        assert kwargs["entity_id"] == "P004-entity-db-redesign"
-        assert kwargs["_strict_id_format"] is False
+        assert (kwargs["seq"], kwargs["slug"]) == (4, "entity-db-redesign")
+        assert "entity_id" not in kwargs
+
+    def test_an_unallocated_project_id_is_refused_before_any_write(self, mock_db, tmp_path):
+        project_dir = str(tmp_path / "projects" / "entity-db-redesign")
+        os.makedirs(project_dir, exist_ok=True)
+
+        with pytest.raises(ValueError, match="not an allocated id"):
+            init_project_state(
+                db=mock_db,
+                artifacts_root=str(tmp_path),
+                project_dir=project_dir,
+                project_id="P004",
+                slug="entity-db-redesign",
+                branch="feature/P004",
+                features="[]",
+                milestones="[]",
+            )
+        mock_db.register_entity.assert_not_called()
+        assert not os.path.exists(os.path.join(project_dir, ".meta.json"))
 
     def test_idempotent_existing_project(self, mock_db, tmp_path):
         """If project entity already exists, skip registration."""
@@ -449,9 +466,9 @@ class TestInitProjectState:
             db=mock_db,
             artifacts_root=str(tmp_path),
             project_dir=project_dir,
-            project_id="P01",
+            project_id="001",
             slug="my-proj",
-            branch="feature/P01",
+            branch="feature/001",
             features='["feat-a"]',
             milestones='["m1"]',
         )
@@ -467,9 +484,9 @@ class TestInitProjectState:
             db=mock_db,
             artifacts_root=str(tmp_path),
             project_dir=project_dir,
-            project_id="P01",
+            project_id="001",
             slug="my-proj",
-            branch="feature/P01",
+            branch="feature/001",
             features='["feat-a"]',
             milestones='["m1","m2"]',
             brainstorm_source="brainstorm:001",
@@ -477,7 +494,7 @@ class TestInitProjectState:
 
         with open(result["meta_json_path"]) as f:
             meta = json.load(f)
-        assert meta["id"] == "P01"
+        assert meta["id"] == "001"
         assert meta["slug"] == "my-proj"
         assert meta["features"] == ["feat-a"]
         assert meta["milestones"] == ["m1", "m2"]
@@ -489,9 +506,9 @@ class TestInitProjectState:
                 db=mock_db,
                 artifacts_root=str(tmp_path),
                 project_dir="/some/dir\0evil",
-                project_id="P01",
+                project_id="001",
                 slug="my-proj",
-                branch="feature/P01",
+                branch="feature/001",
                 features="[]",
                 milestones="[]",
             )
@@ -502,9 +519,9 @@ class TestInitProjectState:
                 db=mock_db,
                 artifacts_root=str(tmp_path),
                 project_dir="/nonexistent/dir",
-                project_id="P01",
+                project_id="001",
                 slug="my-proj",
-                branch="feature/P01",
+                branch="feature/001",
                 features="[]",
                 milestones="[]",
             )
@@ -518,9 +535,9 @@ class TestInitProjectState:
                 db=mock_db,
                 artifacts_root=str(tmp_path),
                 project_dir=project_dir,
-                project_id="P01",
+                project_id="001",
                 slug="my-proj",
-                branch="feature/P01",
+                branch="feature/001",
                 features="not-json",
                 milestones="[]",
             )

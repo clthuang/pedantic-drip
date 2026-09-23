@@ -89,10 +89,29 @@ def render_display_id(kind: str, seq: int, slug: str) -> str:
     return f"{seq:03d}-{slug}"
 
 
+def registration_identity(kind: str, display_text: str) -> dict | None:
+    """``register_entity``'s identity keywords for an id written as display
+    text, or ``None`` when that text has no structured form.
+
+    A non-sequence kind passes through as ``display_id``. A sequence kind
+    splits into ``seq`` and ``slug`` only when ``render_display_id`` gives the
+    same text back, so a legacy id (``00019``, ``P001``, ``00019-slug``) has
+    none: callers skip it rather than guess.
+    """
+    if kind in NON_SEQUENCE_KINDS:
+        return {"display_id": display_text}
+    seq_text, _, slug = display_text.partition("-")
+    if not seq_text.isdigit() or int(seq_text) < 1 or not slug:
+        return None
+    if render_display_id(kind, int(seq_text), slug) != display_text:
+        return None
+    return {"seq": int(seq_text), "slug": slug}
+
+
 def generate_entity_id(
     db: "EntityDatabase", entity_type: str, name: str, project_id: str
-) -> str:
-    """Generate a standardised ``{seq}-{slug}`` entity ID.
+) -> tuple[int, str]:
+    """Allocate the next sequence value and derive the slug for a new entity.
 
     Parameters
     ----------
@@ -107,8 +126,9 @@ def generate_entity_id(
 
     Returns
     -------
-    str
-        Entity ID in ``{seq:03d}-{slug}`` format.
+    tuple[int, str]
+        ``(seq, slug)``, which ``register_entity`` takes as they are;
+        ``render_display_id`` gives the display text.
     """
     seq = db.next_sequence_value(project_id, entity_type)
     slug = _slugify(name)
@@ -116,4 +136,4 @@ def generate_entity_id(
     if not slug:
         slug = "unnamed"
 
-    return render_display_id(entity_type, seq, slug)
+    return seq, slug
